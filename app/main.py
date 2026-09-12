@@ -28,7 +28,7 @@ from linebot.v3.webhooks import (
     VideoMessageContent,
 )
 
-from app import combat, creation, dice, keeper, pdf_loader, pregen_extractor
+from app import combat, creation, dice, keeper, locks, pdf_loader, pregen_extractor
 from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from app.models import OCCUPATIONS, GroupState, generate_investigator
 from app.state import load_state, save_state
@@ -156,18 +156,27 @@ _UNSUPPORTED_MESSAGE_LABELS: list[tuple[type, str]] = [
 
 
 async def _handle_message_event(event: MessageEvent) -> None:
+    # Every branch below that touches this group's data/groups/*.json (load_state
+    # through however many save_state calls it triggers) runs inside this group's
+    # lock, so two messages landing in the same group can't race on the same file
+    # — see app/locks.py. Acquired once per branch here (not inside the handlers
+    # themselves) since asyncio.Lock isn't reentrant.
     group_id = _source_id(event.source)
     user_id = getattr(event.source, "user_id", "") or ""
+    group_lock = locks.get_group_lock(group_id)
 
     if isinstance(event.message, FileMessageContent):
-        await _handle_file_message(event, group_id)
+        async with group_lock:
+            await _handle_file_message(event, group_id)
         return
 
     if not isinstance(event.message, TextMessageContent):
         for msg_type, label in _UNSUPPORTED_MESSAGE_LABELS:
             if isinstance(event.message, msg_type):
-                state = load_state(group_id)
-                if state.active:
+                async with group_lock:
+                    state = load_state(group_id)
+                    active = state.active
+                if active:
                     await _reply(
                         event.reply_token,
                         f"（守密人目前只讀得懂文字訊息和 PDF 檔案，收到的{label}不會被處理；"
@@ -179,26 +188,28 @@ async def _handle_message_event(event: MessageEvent) -> None:
     text = event.message.text.strip()
 
     if text.startswith("/roll"):
-        await _handle_roll_command(event, text)
+        await _handle_roll_command(event, text)  # no group state touched
         return
 
     if text.startswith("/coc"):
         display_name = await _display_name(event.source, user_id)
-        await _handle_coc_command(event, group_id, user_id, display_name, text)
+        async with group_lock:
+            await _handle_coc_command(event, group_id, user_id, display_name, text)
         return
 
-    state = load_state(group_id)
-    if not state.active:
-        return  # ignore ordinary chit-chat until a scenario is actually loaded and running
+    async with group_lock:
+        state = load_state(group_id)
+        if not state.active:
+            return  # ignore ordinary chit-chat until a scenario is actually loaded and running
 
-    if user_id not in state.characters:
-        display_name = await _display_name(event.source, user_id)
-        await _reply(event.reply_token, f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
-        return
+        if user_id not in state.characters:
+            display_name = await _display_name(event.source, user_id)
+            await _reply(event.reply_token, f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+            return
 
-    display_name = state.characters[user_id].name
-    reply_text = await run_in_threadpool(keeper.run_turn, state, display_name, text)
-    await _reply(event.reply_token, reply_text)
+        display_name = state.characters[user_id].name
+        reply_text = await run_in_threadpool(keeper.run_turn, state, display_name, text)
+        await _reply(event.reply_token, reply_text)
 
 
 async def _handle_file_message(event: MessageEvent, group_id: str) -> None:
@@ -209,7 +220,7 @@ async def _handle_file_message(event: MessageEvent, group_id: str) -> None:
 
     content = await line_bot_blob_api.get_message_content(event.message.id)
     try:
-        text, low_text_pages = await run_in_threadpool(pdf_loader.extract_text, content)
+        text, low_text_pages, truncated = await run_in_threadpool(pdf_loader.extract_text, content)
     except ValueError as exc:
         await _reply(event.reply_token, f"讀取 PDF 失敗：{exc}")
         return
@@ -225,10 +236,15 @@ async def _handle_file_message(event: MessageEvent, group_id: str) -> None:
     warning = ""
     if low_text_pages:
         pages_str = "、".join(str(p) for p in low_text_pages)
-        warning = (
+        warning += (
             f"\n\n⚠️ 第 {pages_str} 頁偵測到文字內容偏少（可能是地圖、手卡或圖片化的內容），"
             "已嘗試自動辨識，但仍建議你人工核對一下；如果有遺漏的重要線索，"
             "之後可以直接把那頁的文字內容貼在群組訊息裡讓守密人知道。"
+        )
+    if truncated:
+        warning += (
+            f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
+            "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
         )
 
     await _reply(

@@ -35,7 +35,18 @@ def run_conversation(
         {"type": "text", "text": dynamic_system},
     ]
 
-    messages = [{"role": e["role"], "content": e["content"]} for e in history]
+    # `history` is the persisted log tail (see app/keeper.py) — a stable prefix
+    # between consecutive turns as long as app/state.py hasn't trimmed it, so
+    # caching through its last entry lets a long conversation reuse almost all of
+    # it on every turn instead of re-billing the whole thing each time. Only the
+    # newest 1-2 entries (this call's new_message, and whatever wasn't cached
+    # yet) are ever paid for in full.
+    messages = []
+    for i, entry in enumerate(history):
+        content = entry["content"]
+        if i == len(history) - 1:
+            content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        messages.append({"role": entry["role"], "content": content})
     messages.append({"role": "user", "content": new_message})
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"

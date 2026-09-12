@@ -38,13 +38,16 @@ def _ocr_page(page: "pymupdf.Page") -> str:
         return ""
 
 
-def extract_text(pdf_bytes: bytes) -> tuple[str, list[int]]:
+def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool]:
     """Extract scenario text.
 
-    Returns (full_text, low_text_pages) where low_text_pages is a 1-indexed list of
-    pages that had little extractable text despite containing images — likely a
-    handout, map, or heavily-styled page whose content may not be fully captured.
-    Callers should surface that list to the user so nothing silently goes missing.
+    Returns (full_text, low_text_pages, truncated):
+    - low_text_pages: 1-indexed pages that had little extractable text despite
+      containing images — likely a handout, map, or heavily-styled page whose
+      content may not be fully captured.
+    - truncated: True if the scenario exceeded MAX_SCENARIO_CHARS and everything
+      past that cut-off point was dropped.
+    Callers should surface both to the uploader so nothing silently goes missing.
     """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     parts: list[str] = []
@@ -71,9 +74,10 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int]]:
             "這份 PDF 抽不出任何文字內容（可能整份都是掃描圖片，且沒有安裝 OCR，"
             "或本機沒有裝 tesseract）"
         )
-    if len(full_text) > MAX_SCENARIO_CHARS:
+    truncated = len(full_text) > MAX_SCENARIO_CHARS
+    if truncated:
         full_text = full_text[:MAX_SCENARIO_CHARS] + "\n\n[...劇本內容過長，已截斷...]"
-    return full_text, low_text_pages
+    return full_text, low_text_pages, truncated
 
 
 _PAGE_MARKER_RE = re.compile(r"^-*\s*第\s*\d+\s*頁\s*-*$")
