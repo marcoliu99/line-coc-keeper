@@ -1,0 +1,309 @@
+"""Investigator (character) model and quick-generation for COC 7th Edition."""
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass, field, asdict
+from typing import Any
+
+# Standard COC7e base skill percentages (subset covering the common cases).
+# Dodge and "Language (Own)" are computed per-investigator, not listed here.
+BASE_SKILLS: dict[str, int] = {
+    "會計": 5, "人類學": 1, "估價": 5, "考古學": 1, "魅惑": 15, "攀爬": 20,
+    "信用評級": 0, "克蘇魯神話": 0, "偽裝": 5, "汽車駕駛": 20, "電器維修": 10,
+    "話術": 5, "格鬥（鬥毆）": 25, "射擊（手槍）": 20, "射擊（步槍/霰彈槍）": 25,
+    "急救": 30, "歷史": 5, "恐嚇": 15, "跳躍": 20, "外語（其他）": 1, "法律": 5,
+    "圖書館使用": 20, "聆聽": 20, "開鎖": 1, "機械維修": 10, "醫學": 1,
+    "自然學": 10, "領航": 10, "神秘學": 5, "重機械操作": 1, "說服": 10,
+    "駕駛（其他載具）": 1, "心理學": 10, "精神分析": 1, "騎術": 5, "巧手": 10,
+    "偵查": 25, "潛行": 20, "生存": 10, "游泳": 20, "投擲": 20, "追蹤": 10,
+    "電腦使用": 5, "科學（生物）": 1, "科學（化學）": 1, "科學（物理）": 1,
+}
+
+OCCUPATIONS: dict[str, dict[str, int]] = {
+    "記者": {
+        "圖書館使用": 70, "說服": 60, "心理學": 50, "話術": 60,
+        "偵查": 50, "歷史": 40, "汽車駕駛": 40,
+    },
+    "私家偵探": {
+        "偵查": 70, "圖書館使用": 60, "心理學": 60, "潛行": 50,
+        "法律": 40, "射擊（手槍）": 50, "說服": 50, "話術": 50,
+    },
+    "醫生": {
+        "醫學": 70, "急救": 80, "心理學": 50, "說服": 40,
+        "科學（生物）": 50, "信用評級": 60, "偵查": 40,
+    },
+    "教授": {
+        "圖書館使用": 80, "歷史": 60, "心理學": 50, "神秘學": 40,
+        "說服": 50, "偵查": 40, "信用評級": 50,
+    },
+    "警察": {
+        "射擊（手槍）": 60, "格鬥（鬥毆）": 60, "偵查": 60, "法律": 50,
+        "心理學": 40, "汽車駕駛": 50, "急救": 40, "恐嚇": 50,
+    },
+    "骨董商": {
+        "歷史": 60, "估價": 60, "圖書館使用": 60, "偵查": 50,
+        "說服": 40, "神秘學": 40, "信用評級": 50,
+    },
+    "神職人員": {
+        "說服": 60, "心理學": 50, "圖書館使用": 50, "話術": 40,
+        "神秘學": 30, "急救": 30, "信用評級": 40,
+    },
+    "流浪漢": {
+        "潛行": 50, "偵查": 50, "話術": 50, "巧手": 40,
+        "生存": 50, "格鬥（鬥毆）": 40, "開鎖": 40,
+    },
+}
+
+
+def _roll(expr_dice: int, expr_sides: int, mult: int = 1) -> int:
+    return sum(random.randint(1, expr_sides) for _ in range(expr_dice)) * mult
+
+
+@dataclass
+class Character:
+    name: str
+    owner_id: str
+    occupation: str = "自由人"
+
+    str_: int = 50
+    con: int = 50
+    siz: int = 50
+    dex: int = 50
+    app: int = 50
+    int_: int = 50
+    pow_: int = 50
+    edu: int = 50
+    luck: int = 50
+
+    hp: int = 10
+    hp_max: int = 10
+    mp: int = 10
+    mp_max: int = 10
+    san: int = 50
+    san_max: int = 99
+    move: int = 8
+    damage_bonus: str = "0"
+    build: int = 0
+
+    skills: dict[str, int] = field(default_factory=dict)
+    notes: str = ""
+    status_tags: list[str] = field(default_factory=list)  # e.g. ["昏迷", "瀕死"]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "Character":
+        return Character(**data)
+
+    def sheet_text(self) -> str:
+        lines = [
+            f"【{self.name}】職業：{self.occupation}（玩家：{self.owner_id}）",
+            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} "
+            f"APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu} LUCK {self.luck}",
+            f"HP {self.hp}/{self.hp_max}　MP {self.mp}/{self.mp_max}　SAN {self.san}/{self.san_max}　"
+            f"MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
+        ]
+        if self.status_tags:
+            lines.append("狀態：" + "、".join(self.status_tags))
+        top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
+        if top_skills:
+            lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
+        return "\n".join(lines)
+
+
+def damage_bonus_and_build(str_: int, siz: int) -> tuple[str, int]:
+    total = str_ + siz
+    if total <= 64:
+        return "-2", -2
+    if total <= 84:
+        return "-1", -1
+    if total <= 124:
+        return "0", 0
+    if total <= 164:
+        return "+1d4", 1
+    if total <= 204:
+        return "+1d6", 2
+    # roughly +1d6 per additional 80 points beyond 204
+    extra_steps = (total - 205) // 80 + 2
+    return f"+{extra_steps}d6", extra_steps + 1
+
+
+def move_rate(str_: int, dex: int, siz: int) -> int:
+    if dex < siz and str_ < siz:
+        return 7
+    if dex > siz and str_ > siz:
+        return 9
+    return 8
+
+
+def generate_investigator(name: str, owner_id: str, occupation: str | None = None) -> Character:
+    """Quick-generate a rolled COC7e investigator (classic 3d6 method)."""
+    str_ = _roll(3, 6, 5)
+    con = _roll(3, 6, 5)
+    dex = _roll(3, 6, 5)
+    app = _roll(3, 6, 5)
+    pow_ = _roll(3, 6, 5)
+    siz = _roll(2, 6, 5) + 30
+    int_ = _roll(2, 6, 5) + 30
+    edu = _roll(2, 6, 5) + 30
+    luck = _roll(3, 6, 5)
+
+    hp_max = (con + siz) // 10
+    mp_max = pow_ // 5
+    san_max = 99
+    san = min(pow_, san_max)
+    db, build = damage_bonus_and_build(str_, siz)
+    move = move_rate(str_, dex, siz)
+
+    skills = dict(BASE_SKILLS)
+    skills["閃避"] = dex // 2
+    skills["母語"] = edu
+
+    occ_key = occupation if occupation in OCCUPATIONS else None
+    if occ_key:
+        for skill, value in OCCUPATIONS[occ_key].items():
+            skills[skill] = max(skills.get(skill, 0), value)
+
+    return Character(
+        name=name,
+        owner_id=owner_id,
+        occupation=occ_key or (occupation or "自由人"),
+        str_=str_, con=con, siz=siz, dex=dex, app=app, int_=int_, pow_=pow_, edu=edu, luck=luck,
+        hp=hp_max, hp_max=hp_max,
+        mp=mp_max, mp_max=mp_max,
+        san=san, san_max=san_max,
+        move=move, damage_bonus=db, build=build,
+        skills=skills,
+    )
+
+
+@dataclass
+class CreationSession:
+    """In-progress interactive character creation (rolled attributes, unspent
+    occupation/interest skill point pools). One per owner_id, held on GroupState
+    until finalized into a real Character."""
+
+    name: str
+    owner_id: str
+    occupation: str = "自由人"
+
+    str_: int = 0
+    con: int = 0
+    siz: int = 0
+    dex: int = 0
+    app: int = 0
+    int_: int = 0
+    pow_: int = 0
+    edu: int = 0
+    luck: int = 0
+
+    occ_points_total: int = 0
+    occ_points_remaining: int = 0
+    interest_points_total: int = 0
+    interest_points_remaining: int = 0
+
+    skills: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "CreationSession":
+        return CreationSession(**data)
+
+
+@dataclass
+class Combatant:
+    """One participant in an active combat's initiative order."""
+
+    name: str
+    dex: int
+    hp: int
+    hp_max: int
+    is_pc: bool = False
+    defeated: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "Combatant":
+        return Combatant(**data)
+
+
+@dataclass
+class CombatState:
+    """Formal initiative-order combat tracker for a group. Kept separate from the
+    freeform narrative loop so turn order and HP are enforced by code, not left to
+    the Keeper's own judgement."""
+
+    active: bool = False
+    round_number: int = 0
+    order: list[Combatant] = field(default_factory=list)
+    current_index: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "active": self.active,
+            "round_number": self.round_number,
+            "order": [c.to_dict() for c in self.order],
+            "current_index": self.current_index,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "CombatState":
+        return CombatState(
+            active=data.get("active", False),
+            round_number=data.get("round_number", 0),
+            order=[Combatant.from_dict(c) for c in data.get("order", [])],
+            current_index=data.get("current_index", 0),
+        )
+
+
+@dataclass
+class GroupState:
+    group_id: str
+    scenario_title: str = ""
+    scenario_text: str = ""
+    active: bool = False
+    characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
+    log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
+    creation_sessions: dict[str, CreationSession] = field(default_factory=dict)  # keyed by owner_id
+    pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
+    combat: CombatState = field(default_factory=CombatState)
+
+    def get_character_by_name(self, name: str) -> Character | None:
+        for c in self.characters.values():
+            if c.name == name:
+                return c
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group_id": self.group_id,
+            "scenario_title": self.scenario_title,
+            "scenario_text": self.scenario_text,
+            "active": self.active,
+            "characters": {k: v.to_dict() for k, v in self.characters.items()},
+            "log": self.log,
+            "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
+            "pregens": self.pregens,
+            "combat": self.combat.to_dict(),
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "GroupState":
+        return GroupState(
+            group_id=data["group_id"],
+            scenario_title=data.get("scenario_title", ""),
+            scenario_text=data.get("scenario_text", ""),
+            active=data.get("active", False),
+            characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
+            log=data.get("log", []),
+            creation_sessions={
+                k: CreationSession.from_dict(v) for k, v in data.get("creation_sessions", {}).items()
+            },
+            pregens=data.get("pregens", []),
+            combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
+        )
