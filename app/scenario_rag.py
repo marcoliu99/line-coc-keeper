@@ -1,4 +1,5 @@
-"""Local, lexical (BM25-style) retrieval over a loaded scenario's text.
+"""Retrieval over a loaded scenario's text — BM25 always on, optionally
+blended with OpenAI embeddings for semantic matching.
 
 This is the third layer from the architecture sketch the user described
 (Intent Parser -> Keeper Skill -> Deterministic Engine -> Map/Scene Engine ->
@@ -7,17 +8,21 @@ prompt (what app/keeper.py does by default, capped by MAX_SCENARIO_CHARS), a
 loaded scenario can be indexed once and queried per-turn, returning only the
 pages that actually match — see app/config.py's SCENARIO_RAG_ENABLED.
 
-Deliberately NOT embeddings-based: this project has stayed cost/dependency
-conscious throughout (prompt caching, a regex-only intent parser instead of
-another LLM call, ...), and real semantic retrieval would mean a second paid
-API (Anthropic has no embeddings endpoint; the usual choice is Voyage AI or
-OpenAI) plus a vector store, for a bot whose scenarios have, in practice, all
-fit comfortably under MAX_SCENARIO_CHARS so far. A from-scratch BM25 over
-whitespace/CJK-bigram tokens costs nothing extra and is good enough to
-retrieve "which pages mention this NPC/location/item" — see README for the
-honest trade-off against full-context (it can miss a paraphrase that shares
-no vocabulary with the query, and loses the "whole scenario visible at once"
-property that lets the Keeper freely connect clues across pages on its own).
+BM25 over whitespace/CJK-bigram tokens is the baseline: zero extra cost, zero
+extra dependency, works for anyone regardless of which LLM_PROVIDER or keys
+they have configured. It's good at "which pages mention this NPC/location/
+item" but — being purely lexical — misses a paraphrase that shares no
+vocabulary with the query (a query for "地下室" won't match a page that only
+says "地窖" or "陰暗的樓下空間").
+
+Embeddings close that gap when OPENAI_API_KEY is available (this project
+already needs OpenAI for the Keeper/vision paths once LLM_PROVIDER=openai —
+reusing that key here means no new provider/dependency, just an additional
+API call): each chunk gets embedded once at index-build time, each query
+gets embedded once at search time, and the two scores are combined into one
+ranking (see search() and SCENARIO_RAG_EMBEDDING_WEIGHT). No OPENAI_API_KEY
+still works fine — build_index simply leaves embeddings unset and search()
+falls back to pure BM25, exactly like before embeddings existed here.
 """
 from __future__ import annotations
 
@@ -25,6 +30,8 @@ import hashlib
 import math
 import re
 from dataclasses import dataclass, field
+
+from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _PAGE_SPLIT_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
@@ -40,6 +47,7 @@ class _Chunk:
     text: str
     tokens: list[str] = field(default_factory=list)
     term_counts: dict[str, int] = field(default_factory=dict)
+    embedding: list[float] | None = None
 
 
 @dataclass
@@ -48,6 +56,7 @@ class ScenarioIndex:
     doc_freq: dict[str, int]  # term -> number of chunks containing it
     avg_length: float
     text_hash: str
+    has_embeddings: bool = False
 
 
 def _tokenize(text: str) -> list[str]:
@@ -80,6 +89,38 @@ def split_pages(scenario_text: str) -> list[tuple[int, str]]:
     return pages
 
 
+def _embed_texts(texts: list[str]) -> list[list[float]] | None:
+    """Best-effort: embed a batch of texts via OpenAI. Returns None if
+    unavailable (no OPENAI_API_KEY) or the call fails for any reason —
+    callers should fall back to pure BM25 in that case, not treat it as an
+    error. Order matches the input list regardless of what order the API
+    returns embeddings in (each Embedding carries its own .index)."""
+    if not OPENAI_API_KEY or not texts:
+        return None
+    try:
+        import openai
+
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=texts)
+        ordered = [None] * len(texts)
+        for item in response.data:
+            ordered[item.index] = item.embedding
+        if any(v is None for v in ordered):
+            return None
+        return ordered
+    except Exception:
+        return None
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
 def build_index(scenario_text: str) -> ScenarioIndex:
     pages = split_pages(scenario_text) or [(1, scenario_text)]  # no page markers: one big chunk
     chunks = []
@@ -97,7 +138,20 @@ def build_index(scenario_text: str) -> ScenarioIndex:
 
     avg_length = (total_length / len(chunks)) if chunks else 0.0
     text_hash = hashlib.md5(scenario_text.encode("utf-8")).hexdigest()
-    return ScenarioIndex(chunks=chunks, doc_freq=doc_freq, avg_length=avg_length, text_hash=text_hash)
+
+    # One batched embeddings call for the whole scenario, done once at index-
+    # build time (cached by get_index below) rather than per search — a
+    # scenario is typically tens of pages, well within a single embeddings
+    # request's batch limits.
+    embeddings = _embed_texts([c.text for c in chunks])
+    has_embeddings = embeddings is not None
+    if embeddings is not None:
+        for chunk, emb in zip(chunks, embeddings):
+            chunk.embedding = emb
+
+    return ScenarioIndex(
+        chunks=chunks, doc_freq=doc_freq, avg_length=avg_length, text_hash=text_hash, has_embeddings=has_embeddings
+    )
 
 
 def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk) -> float:
@@ -117,16 +171,61 @@ def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk) ->
 
 def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     """Returns up to top_k {"page": int, "text": str, "score": float} results,
-    highest-scoring first, for chunks with a positive score. An empty/no-match
-    query returns an empty list rather than an arbitrary top_k — callers
-    should treat that as "nothing found", not an error."""
+    highest-scoring first. An empty/no-match query returns an empty list
+    rather than an arbitrary top_k — callers should treat that as "nothing
+    found", not an error.
+
+    Pure BM25 when the index has no embeddings (no OPENAI_API_KEY at index-
+    build time, or the embeddings call failed). Otherwise hybrid: BM25 scores
+    are min-max normalized to 0-1 across the chunks that matched at least one
+    query token, cosine similarity (already roughly 0-1) is computed against
+    every chunk regardless of lexical overlap — this is exactly what lets a
+    query surface a page that uses different wording for the same thing —
+    and the two are combined via SCENARIO_RAG_EMBEDDING_WEIGHT. A chunk only
+    needs to score on *either* signal to be a candidate, not both."""
     query_tokens = _tokenize(query)
     if not query_tokens:
         return []
-    scored = [(_bm25_score(index, query_tokens, c), c) for c in index.chunks]
-    scored = [(s, c) for s, c in scored if s > 0]
-    scored.sort(key=lambda sc: -sc[0])
-    return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+
+    bm25_raw = {id(c): _bm25_score(index, query_tokens, c) for c in index.chunks}
+    matched = [c for c in index.chunks if bm25_raw[id(c)] > 0]
+
+    if not index.has_embeddings:
+        scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
+        return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+
+    query_embedding = _embed_texts([query])
+    if query_embedding is None:
+        # Embeddings worked at index time but the query-time call just failed
+        # (transient error, key revoked mid-session, ...) — degrade to BM25
+        # for this one search rather than returning nothing.
+        scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
+        return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+    query_vec = query_embedding[0]
+
+    max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
+    weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
+
+    candidates = {id(c) for c in matched}
+    cosine_scores: dict[int, float] = {}
+    for c in index.chunks:
+        if c.embedding is None:
+            continue
+        cos = _cosine_similarity(query_vec, c.embedding)
+        cosine_scores[id(c)] = cos
+        if cos > 0:
+            candidates.add(id(c))
+
+    by_id = {id(c): c for c in index.chunks}
+    combined: list[tuple[float, _Chunk]] = []
+    for cid in candidates:
+        c = by_id[cid]
+        bm25_norm = bm25_raw.get(cid, 0.0) / max_bm25
+        cos = cosine_scores.get(cid, 0.0)
+        score = weight * cos + (1 - weight) * bm25_norm
+        combined.append((score, c))
+    combined.sort(key=lambda sc: -sc[0])
+    return [{"page": c.page, "text": c.text, "score": s} for s, c in combined[:top_k]]
 
 
 def format_results(results: list[dict]) -> str:

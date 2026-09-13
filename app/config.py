@@ -78,3 +78,13 @@ MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 # would blow past MAX_SCENARIO_CHARS entirely. See README's 限制 section.
 SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", 5))
+
+# Hybrid search: BM25 (always on, zero cost) blended with OpenAI embeddings
+# (skipped automatically if OPENAI_API_KEY isn't set — falls back to pure
+# BM25, no error). SCENARIO_RAG_EMBEDDING_WEIGHT is how much weight the
+# semantic (cosine similarity) score gets vs. BM25's lexical score in the
+# 0-1 combined ranking; 0.5 means an even split. Double-check the current
+# embedding model name at platform.openai.com/docs/models before relying on
+# this default — same caveat as OPENAI_MODEL.
+SCENARIO_RAG_EMBEDDING_MODEL = os.environ.get("SCENARIO_RAG_EMBEDDING_MODEL", "text-embedding-3-small")
+SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEIGHT", 0.5))
