@@ -22,6 +22,7 @@ themselves, since asyncio.Lock isn't reentrant.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Awaitable, Callable
 
 from app import combat, creation, dice, intent_parser, keeper, locks, pdf_loader, pregen_extractor, scenario_rag
@@ -29,6 +30,8 @@ from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import OCCUPATIONS, GroupState, generate_investigator
 from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
+
+_logger = logging.getLogger(__name__)
 
 Reply = Callable[[str], Awaitable[None]]
 GetDisplayName = Callable[[], Awaitable[str]]
@@ -218,7 +221,7 @@ async def _deliver_side_effects(
         try:
             await send_dm(owner_id, f"🤫（私訊）{message}")
         except Exception:
-            pass
+            _logger.exception("send_dm failed for owner_id=%s in conversation_id=%s", owner_id, conversation_id)
 
     for owner_id, page_number in image_requests:
         png_bytes = load_page_image(conversation_id, page_number)
@@ -230,7 +233,9 @@ async def _deliver_side_effects(
             else:
                 await send_image(png_bytes, conversation_id, page_number)
         except Exception:
-            pass
+            _logger.exception(
+                "send_dm_image/send_image failed for owner_id=%s in conversation_id=%s", owner_id, conversation_id
+            )
 
 
 def _skill_names_match(a: str, b: str) -> bool:
@@ -670,7 +675,7 @@ async def _handle_coc_command(
             try:
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{secret_goal}")
             except Exception:
-                pass
+                _logger.exception("send_dm (secret_goal on /coc pc) failed for user_id=%s", user_id)
         return
 
     if sub == "sheet":
@@ -888,7 +893,7 @@ async def _handle_coc_command(
             try:
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")
             except Exception:
-                pass
+                _logger.exception("send_dm (secret_goal on /coc pregen) failed for user_id=%s", user_id)
         return
 
     if sub == "away":
