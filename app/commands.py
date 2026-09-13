@@ -532,8 +532,9 @@ async def handle_check_command(
         save_state(state)
         options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
         dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
+        check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
         await reply(
-            f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {_CHECK_TIER_ZH[r.tier]}\n"
+            f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_CHECK_TIER_ZH[r.tier]}\n"
             f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
             f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
         )
