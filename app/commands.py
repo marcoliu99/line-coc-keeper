@@ -44,12 +44,14 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・上傳一份 PDF 劇本檔案 → 載入劇本並開始遊戲
 
 【建立角色，三選一】
-・/coc pc 角色名 [職業] → 快速隨機生成一位調查員（一鍵完成）
+・/coc pc 角色名 [職業] → 快速隨機生成一位調查員（一鍵完成，每個人在同一局只能建一次，直到 /coc end）
   可選職業：""" + "、".join(OCCUPATIONS.keys()) + """
 ・/coc create 角色名 [職業] → 互動式建角：先擲屬性，再自己分配職業/興趣技能點數
   接著用 /coc alloc occ|int 技能名 點數 分配，/coc create status 查看進度，
   /coc create done 完成、/coc create cancel 放棄
-・/coc pregens → 查看這份劇本有沒有附帶的預製調查員；/coc usepregen 編號 [自訂名稱] 直接使用
+・/coc pregens → 查看這份劇本有沒有附帶的預製調查員
+・/coc pregen 編號 → 選之前先看某位預製角色的完整屬性與技能
+・/coc usepregen 編號 [自訂名稱] → 直接使用某位預製角色（每個人只能用一次，直到 /coc end；每個角色只能被一人選走）
 
 【角色管理】
 ・/coc sheet → 查看自己的角色卡
@@ -146,7 +148,8 @@ async def handle_pdf_upload(
 
     await push(
         f"已載入劇本《{title}》（{len(text)} 字）。\n"
-        "這份劇本如果有附帶預製調查員，建議先輸入「/coc pregens」看看有哪些角色可選——"
+        "這份劇本如果有附帶預製調查員，建議先輸入「/coc pregens」看看有哪些角色可選、"
+        "「/coc pregen 編號」看某位的完整能力——"
         "有內建角色的話，「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n"
         "如果這份劇本沒有內建角色（或想先跳過這步），可以直接用「/coc pc 角色名 職業」"
         "快速生成，這時職業可選：\n"
@@ -232,6 +235,60 @@ async def handle_text_message(
             pass
 
 
+def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | None:
+    """Returns a rejection message if this player already has a character and
+    the current game is still active, else None. Without this, re-running
+    /coc pc/create/usepregen (e.g. by accident, or to "try again") would
+    silently overwrite the character they're already playing mid-game. /coc end
+    (which sets state.active = False) lifts the restriction — characters
+    themselves aren't cleared until /coc newgame, but a player is free to
+    rebuild once the game they were in has actually ended."""
+    if not state.active:
+        return None
+    char = state.characters.get(user_id)
+    if not char:
+        return None
+    return (
+        f"你已經有角色「{char.name}」了，這局遊戲進行中不能重新建角（避免蓋掉正在用的角色）。"
+        "如果真的要換角色，請先讓這局遊戲結束（/coc end），或開新的一局（/coc newgame）。"
+    )
+
+
+def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
+    """Full-detail, read-only preview of a scenario pregen for a player deciding
+    whether to claim it — unlike Character.sheet_text() this shows every skill
+    the scenario listed (not just the top 12), since the whole point is letting
+    someone compare candidates before committing via /coc usepregen. Deliberately
+    excludes secret_goal: that's only ever revealed privately after a claim (see
+    /coc pc and /coc usepregen), never in a pre-selection preview anyone can run."""
+    lines = [
+        f"【預製角色 #{index}】{pregen.get('name', '未命名')}　職業：{pregen.get('occupation', '未知職業')}",
+    ]
+    attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "luck"]
+    labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU", "luck": "LUCK"}
+    attr_line = " ".join(f"{labels[a]} {pregen[a]}" for a in attrs if isinstance(pregen.get(a), (int, float)))
+    if attr_line:
+        lines.append(attr_line)
+    vitals = []
+    if isinstance(pregen.get("hp_max"), (int, float)):
+        vitals.append(f"HP {pregen['hp_max']}")
+    if isinstance(pregen.get("mp_max"), (int, float)):
+        vitals.append(f"MP {pregen['mp_max']}")
+    if isinstance(pregen.get("san_max"), (int, float)):
+        vitals.append(f"SAN {pregen['san_max']}")
+    if vitals:
+        lines.append("　".join(vitals))
+    skills = pregen.get("skills") or {}
+    if skills:
+        ranked = sorted(skills.items(), key=lambda kv: -kv[1] if isinstance(kv[1], (int, float)) else 0)
+        lines.append("技能：" + "、".join(f"{k} {v}%" for k, v in ranked))
+    if pregen.get("notes"):
+        lines.append(f"背景：{pregen['notes']}")
+    if pregen.get("claimed_by"):
+        lines.append("（此角色已被選走）")
+    return "\n".join(lines)
+
+
 def _find_pregen_by_occupation(state: GroupState, occupation: str) -> dict | None:
     """Fuzzy match a requested occupation against the currently loaded scenario's
     cached pregens (state.pregens — reset on every new PDF upload, so this only
@@ -282,6 +339,11 @@ async def _handle_coc_command(
             if state.scenario_text:
                 occ_hint += "\n（想用這份劇本裡的職業？先輸入 /coc pregens 讓守密人讀取劇本裡的角色卡）"
             await reply("用法：/coc pc 角色名 [職業]\n可選職業：" + occ_hint)
+            return
+
+        blocked = _blocked_by_existing_character(state, user_id)
+        if blocked:
+            await reply(blocked)
             return
 
         name = parts[2]
@@ -413,6 +475,11 @@ async def _handle_coc_command(
             await reply("你已經有一個建角流程進行中了，先用「/coc create done」完成或「/coc create cancel」取消。")
             return
 
+        blocked = _blocked_by_existing_character(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
+
         name = action
         occupation = parts[3] if len(parts) > 3 else None
         session = creation.start_creation(state, user_id, name, occupation)
@@ -460,8 +527,27 @@ async def _handle_coc_command(
             claimed_by = p.get("claimed_by")
             tag = "（已被選走）" if claimed_by else ""
             lines.append(f"{i}. {p.get('name', '未命名')}（{p.get('occupation', '未知職業')}）{tag}")
-        lines.append("輸入「/coc usepregen 編號 [自訂名稱]」使用其中一位。")
+        lines.append("輸入「/coc pregen 編號」查看某位角色的完整能力，或直接「/coc usepregen 編號 [自訂名稱]」使用。")
         await reply("\n".join(lines))
+        return
+
+    if sub == "pregen":
+        if len(parts) < 3:
+            await reply("用法：/coc pregen 編號（先用 /coc pregens 看編號對照）")
+            return
+        state = load_state(conversation_id)
+        if not state.pregens:
+            await reply("還沒有抓取過預製角色，先輸入「/coc pregens」看看有哪些。")
+            return
+        try:
+            idx = int(parts[2])
+        except ValueError:
+            await reply("編號必須是數字。")
+            return
+        if not (1 <= idx <= len(state.pregens)):
+            await reply(f"編號超出範圍，目前有 {len(state.pregens)} 位預製角色。")
+            return
+        await reply(_pregen_full_sheet_text(state.pregens[idx - 1], idx))
         return
 
     if sub == "usepregen":
@@ -479,6 +565,10 @@ async def _handle_coc_command(
             return
         if not (1 <= idx <= len(state.pregens)):
             await reply(f"編號超出範圍，目前有 {len(state.pregens)} 位預製角色。")
+            return
+        blocked = _blocked_by_existing_character(state, user_id)
+        if blocked:
+            await reply(blocked)
             return
         pregen = state.pregens[idx - 1]
         claimed_by = pregen.get("claimed_by")
