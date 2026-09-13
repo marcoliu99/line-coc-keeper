@@ -8,3 +8,5 @@ pymupdf>=1.24.0
 pytesseract>=0.3.10
 pillow>=10.0.0
 python-dotenv>=1.0.1
+markitdown[pdf]>=0.1.7
+markitdown-ocr>=0.1.0

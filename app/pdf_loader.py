@@ -1,10 +1,15 @@
 """Extract plain text from an uploaded scenario PDF.
 
 COC7e scenario PDFs are rarely plain text — they usually mix body copy with maps,
-handouts, and stat-block graphics on the same page ("文圖並茂"). PyMuPDF (fitz) is
-used instead of a bare text-layer reader because it keeps reading order sane on
-multi-column/graphic layouts, and because it lets us render a page to an image for
-the two graphic-page fallbacks below.
+handouts, and stat-block graphics on the same page ("文圖並茂"). The primary text
+layer now comes from MarkItDown (+ the markitdown-ocr plugin, see
+app/markitdown_shim.py) — see _markitdown_page_texts — which keeps document
+structure (headings, tables) more faithfully than a bare text-layer reader and
+OCRs embedded raster images inline using our own vision prompt. PyMuPDF (fitz)
+stays in the loop regardless, for two things MarkItDown doesn't do at all:
+rendering a page to an image (needed for the two graphic-page fallbacks below,
+which run independently of whichever text layer supplied the page's text), and
+as the fallback text layer itself if MarkItDown is unavailable or fails.
 
 Floor plans and maps are a specific, real failure mode of plain text extraction:
 room-name labels are positioned in 2D on the page, but a text-layer reader can
@@ -13,10 +18,17 @@ routinely comes out as an unordered list of room names with no spatial relations
 between them — a Keeper reading that will genuinely guess wrong about which room
 is where (confirmed in play: a player entering a door expected the bedroom on the
 right, the Keeper — reading only the scrambled label order — placed the kitchen
-there instead). Vision description (_vision_describe_image) is the fix: handing
-the actual page image to a vision-capable Claude call and asking it to describe
-spatial layout directly solves this, whereas OCR (_ocr_image) only recovers text
-that isn't already selectable and still loses the spatial arrangement.
+there instead). This is exactly why the graphic-page fallback below still renders
+the *whole page* to an image and asks Claude to describe spatial layout directly,
+rather than relying on markitdown-ocr's embedded-image detection alone: a
+vector-drawn floor plan (lines/rectangles, not a raster image object) has no
+"image" for markitdown-ocr's pdfplumber-based detection to find, so it would
+silently fall through untouched — this fallback is what actually catches it,
+and stays wired to a whole-page-render regardless of what the text layer found.
+Vision description (_vision_describe_image) is the fix: handing the actual page
+image to a vision-capable Claude call and asking it to describe spatial layout
+directly solves this, whereas OCR (_ocr_image) only recovers text that isn't
+already selectable and still loses the spatial arrangement.
 """
 from __future__ import annotations
 
@@ -27,6 +39,7 @@ import re
 import pymupdf
 
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, MAX_SCENARIO_CHARS
+from app.markitdown_shim import build_markitdown
 from app.scene_map import extract_scene_map
 
 # Below this many extracted characters, a page that also contains an image is
@@ -129,6 +142,51 @@ def _describe_graphic_page(png_bytes: bytes) -> str:
     return _vision_describe_image(png_bytes) or _ocr_image(png_bytes)
 
 
+_MARKITDOWN_PAGE_RE = re.compile(r"^##\s*Page\s+(\d+)\s*$", re.MULTILINE)
+
+
+def _markitdown_page_texts(pdf_bytes: bytes) -> dict[int, str] | None:
+    """Best-effort: convert the whole PDF via MarkItDown (+ markitdown-ocr,
+    see app/markitdown_shim.py — its PDF converter emits a "## Page N" header
+    before every page's content, which is what this splits back apart into a
+    1-indexed page-number -> text dict). Any embedded raster image markitdown-
+    ocr detects gets OCR'd inline using our own _VISION_PROMPT, not its
+    generic default, so a character-sheet photo embedded this way gets the
+    same exhaustive-transcription treatment as the whole-page fallback below.
+
+    Returns None on any failure (no ANTHROPIC_API_KEY, markitdown/markitdown-
+    ocr not installed, the call raised, or the output had no recognizable
+    page markers to align against actual page numbers) — callers must fall
+    back to PyMuPDF's own text layer per page in that case, exactly as this
+    module worked before MarkItDown was wired in."""
+    md = build_markitdown(_VISION_PROMPT)
+    if md is None:
+        return None
+    try:
+        from markitdown import StreamInfo
+
+        result = md.convert(io.BytesIO(pdf_bytes), stream_info=StreamInfo(extension=".pdf"))
+        text = result.text_content
+    except Exception:
+        return None
+    if not text or not text.strip():
+        return None
+
+    matches = list(_MARKITDOWN_PAGE_RE.finditer(text))
+    if not matches:
+        return None  # can't align without page markers — don't guess
+
+    pages: dict[int, str] = {}
+    for i, m in enumerate(matches):
+        page_num = int(m.group(1))
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        page_text = text[m.end() : end].strip()
+        page_text = re.sub(r"[ \t]+", " ", page_text)
+        page_text = re.sub(r"\n{3,}", "\n\n", page_text)
+        pages[page_num] = page_text
+    return pages
+
+
 def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
     """Extract scenario text.
 
@@ -155,18 +213,31 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
     silently goes missing.
     """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    markitdown_pages = _markitdown_page_texts(pdf_bytes)  # dict[int, str] or None — see that function's docstring
+
     page_texts: list[str] = []
     low_text_pages: list[int] = []
     pending: dict[int, bytes] = {}  # page index -> rendered PNG, needs vision/OCR
 
     for i, page in enumerate(doc):
-        text = page.get_text("text") or ""
-        text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        page_number = i + 1
+        if markitdown_pages is not None and page_number in markitdown_pages:
+            text = markitdown_pages[page_number]
+        else:
+            text = page.get_text("text") or ""
+            text = re.sub(r"[ \t]+", " ", text)
+            text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
+        # has_images gates the whole-page vision/scene-map fallback below on
+        # PyMuPDF's own page.get_images() regardless of which text layer was
+        # used above — this is what still catches a vector-drawn floor plan
+        # markitdown-ocr's embedded-raster-image detection would miss (see
+        # this module's docstring). A page markitdown-ocr already enriched via
+        # inline embedded-image OCR will usually already be >= the threshold
+        # here, so this naturally skips a redundant second vision call for it.
         has_images = len(page.get_images()) > 0
         if len(text) < _LOW_TEXT_THRESHOLD and has_images:
-            low_text_pages.append(i + 1)
+            low_text_pages.append(page_number)
             pending[i] = _render_page_png(page)
 
         page_texts.append(text)

@@ -59,7 +59,8 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
 - `app/scenario_rag.py`：本地 BM25 式關鍵字檢索（`SCENARIO_RAG_ENABLED=true` 時才啟用），取代「整份劇本塞進 system prompt」，改成 Keeper 用 `search_scenario` 工具按需查詢
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
 - `app/models.py`：角色卡／聊天室狀態資料結構與快速生成（3d6 法）
-- `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（用 PyMuPDF 處理圖文混排版面，圖片偏多的頁面會用 Claude 視覺理解／OCR 備援，並保留這些頁面的實際圖片供之後展示；平面圖頁面會額外呼叫 `app/scene_map.py` 拆出結構化房間圖）
+- `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（文字層改用 MarkItDown + markitdown-ocr 預處理，PyMuPDF 負責頁面轉圖片與備援文字層；圖片偏多的頁面會用 Claude 視覺理解／OCR 備援，並保留這些頁面的實際圖片供之後展示；平面圖頁面會額外呼叫 `app/scene_map.py` 拆出結構化房間圖）
+- `app/markitdown_shim.py`：讓 `markitdown-ocr` 插件（原生設計走 OpenAI 介面）改用這個專案既有的 `ANTHROPIC_API_KEY`，不用另外申請 OpenAI 帳號
 - `app/state.py`：以 JSON 檔案保存每個聊天室的遊戲狀態（檔名依平台加前綴，例如 `line-group-xxx.json`、`discord-channel-xxx.json`，避免兩邊 ID 撞在一起），劇本頁面圖片另外存成 PNG 檔案
 
 想只用 LINE、只用 Discord、還是兩個都開，完全取決於你要不要啟動哪個入口（`app/main.py` 用 `uvicorn` 跑、`app/discord_bot.py` 直接 `python -m` 跑），兩者可以同時執行，互不影響，因為狀態檔案已經照平台分開命名。
@@ -340,15 +341,16 @@ python -m app.discord_bot
 
 ### 3. 圖文混排的頁面（手卡／地圖／插圖）可能抽不完整，整份純掃描 PDF 沒裝 OCR 就讀不出來
 
-- **現在怎麼做**：`app/pdf_loader.py` 改用 PyMuPDF 逐頁抽文字，閱讀順序比單純的文字圖層讀取器更穩，多欄排版、文字繞著插圖排的頁面通常都抽得出正確內容。針對「文字很少但頁面有圖片」的頁面（門檻是 200 字，含很多手卡、地圖、印章這類把文字刻進圖片裡的內容），會把那一頁轉成圖片，優先請 Claude **用視覺直接讀圖**（有 `ANTHROPIC_API_KEY` 才會走這條路），讀不到才退回本機 `tesseract` OCR；上傳完成後 Bot 也會列出哪幾頁被判定「文字偏少」，提醒你自己核對。
-  - **平面圖／地圖是特別驗證過的案例**：純文字抽取對平面圖幾乎注定失敗——房間名稱在頁面上是 2D 排列的，文字抽取只能拉成一維序列，「進門右手邊第一個房間」這種相對位置關係在抽取過程就丟失了。這不是理論推測：實測時真的發生過，玩家說進門右手邊該是寢室，守密人（讀到的是打亂順序的房間名稱清單）卻說成廚房。改成請 Claude 直接看圖描述空間佈局後，重新測同一頁面，正確重建出了完整動線（正門進去左手邊臥鋪房、右手邊書房、走廊底端連接燈塔），而且抓出了純文字抽取完全不可能拿到的細節（走廊盡頭有個染血的通道，暗示案發地點）。
+- **現在怎麼做**：`app/pdf_loader.py` 的文字層改用 [MarkItDown](https://github.com/microsoft/markitdown)（+ `markitdown-ocr` 插件）預處理，取代原本單純的 PyMuPDF 文字抽取——保留文件結構（標題、表格）比純文字讀取器更完整，而且 `markitdown-ocr` 會偵測頁面裡「內嵌的點陣圖片」自動做圖片理解（見下方說明）。`app/markitdown_shim.py` 讓這個 OCR 插件走**我們自己既有的 `ANTHROPIC_API_KEY`**，不需要另外申請 OpenAI 帳號——`markitdown-ocr` 原生設計是接 OpenAI 的 Chat Completions 介面（`client.chat.completions.create(...)`），所以寫了一個薄薄的轉接層把這個介面轉呼叫 Anthropic，讀了 `markitdown` 和 `markitdown-ocr` 的原始碼才確認這樣接得通，不是照抄教學文章的 OpenAI 範例。PyMuPDF 沒有被拿掉，還是負責兩件 MarkItDown 完全不做的事：把頁面轉成圖片（給下面兩個「整頁圖片」備援用）、以及 MarkItDown 不可用或轉換失敗時的備援文字層——任何一步失敗都會自動退回舊行為，不會整份炸掉。
+  - **平面圖／地圖是特別驗證過的案例**：純文字抽取對平面圖幾乎注定失敗——房間名稱在頁面上是 2D 排列的，文字抽取只能拉成一維序列，「進門右手邊第一個房間」這種相對位置關係在抽取過程就丟失了。這不是理論推測：實測時真的發生過，玩家說進門右手邊該是寢室，守密人（讀到的是打亂順序的房間名稱清單）卻說成廚房。改成請 Claude 直接看圖描述空間佈局後，重新測同一頁面，正確重建出了完整動線（正門進去左手邊臥鋪房、右手邊書房、走廊底端連接燈塔），而且抓出了純文字抽取完全不可能拿到的細節（走廊盡頭有個染血的通道，暗示案發地點）。**這一步刻意保留、沒有改用 MarkItDown 取代**：`markitdown-ocr` 的圖片理解只認得到 PDF 裡「內嵌的點陣圖片物件」，一張用向量線條畫出來的平面圖（矩形、直線畫出來的房間格局，不是一張圖片）在它眼裡根本沒有圖片可以辨識，會直接被跳過；`app/pdf_loader.py` 自己「把整頁渲染成圖片」的備援機制不管頁面是向量畫的還是點陣圖片，一律能抓到，這正是它還留著、而且優先權比較高的原因。
   - 一份 43 頁的真實劇本裡，符合「文字偏少」門檻的頁面高達 24 頁（角色卡、地圖、插圖），這些頁面用 6-12 條並行連線一起處理，但因為受 Anthropic 那端速率限制影響，整體還是要跑上將近一分鐘——所以上傳 PDF 時 Bot 會先回一句「收到了，正在讀取劇本內容」的立即回覆，等處理完才用另一則訊息公布結果，而不是讓你對著沒反應的畫面等一分鐘懷疑 Bot 是不是掛了（細節見下面「LINE reply token 的 60 秒限制」那條）。
 - **還是有的限制**：
-  1. 沒有 `ANTHROPIC_API_KEY`（例如你 `LLM_PROVIDER=gemini` 又沒填 Anthropic 金鑰）時，圖片理解這步會直接跳過，退回本機 `tesseract` OCR；OCR 沒裝或語言包不齊全時，該頁就只剩下原本抽到的少量文字。
+  1. 沒有 `ANTHROPIC_API_KEY`（例如你 `LLM_PROVIDER=gemini` 又沒填 Anthropic 金鑰）時，MarkItDown 的 OCR 插件跟原本「整頁圖片理解」這步都會直接跳過，MarkItDown 本身仍會嘗試純文字轉換，圖片內容則退回本機 `tesseract` OCR；OCR 沒裝或語言包不齊全時，該頁就只剩下原本抽到的少量文字。
   2. 如果整份 PDF 從頭到尾都是掃描頁（完全沒有文字圖層），又沒有 Anthropic 金鑰也沒裝 OCR，還是會直接抽不出任何內容，Bot 會回覆「這份 PDF 抽不出任何文字內容」。
-  3. 圖片理解花的是你自己 Anthropic 帳號的用量（一份劇本可能觸發十幾到二十幾次呼叫），雖然單次都不貴，但劇本圖片越多，上傳時花的錢跟等待時間就越多。
-- **現在的權宜作法**：確保 `.env` 裡有填 `ANTHROPIC_API_KEY`（就算 `LLM_PROVIDER=gemini` 也一樣，這步驟目前固定用 Anthropic），就能吃到圖片理解的完整效果；如果真的沒有金鑰，退回裝 `brew install tesseract tesseract-lang`，效果會差一截但總比沒有好。
-- **之後要擴充的話**：讓圖片理解也支援 Gemini（目前寫死用 Anthropic，跟 `LLM_PROVIDER` 設定無關），或是把「這頁是不是平面圖」的判斷做得更精準，避免對純插圖頁也跑一次比較貴的圖片理解呼叫。
+  3. 圖片理解花的是你自己 Anthropic 帳號的用量（一份劇本可能觸發十幾到二十幾次呼叫），雖然單次都不貴，但劇本圖片越多，上傳時花的錢跟等待時間就越多；`markitdown-ocr` 又是完全獨立的第二輪呼叫（偵測頁面內嵌圖片時觸發），實測發現同一頁如果 `markitdown-ocr` 抽到的內嵌圖片說明本身還是偏短（例如一張純裝飾用的小插圖），頁面文字總長度可能還是低於 200 字門檻，導致原本「整頁圖片理解」備援又跑一次幾乎一樣的內容——這是已知、會多花一點錢但不影響正確性的重複，還沒有進一步優化掉。
+  4. `markitdown` 的 PDF 轉換偶爾會把沒有實際格線的並排文字（例如純用空格對齊、沒畫框線的技能表）拆成一欄一欄分開輸出，而不是照原本一行一行的順序——這種情況下反而比單純的 PyMuPDF 文字層更難讓 LLM 正確配對「技能名稱」跟「數值」；`app/pdf_loader.py` 目前沒有偵測這種情況並自動改用 PyMuPDF 的機制，需要之後拿到更多真實劇本測試後再決定要不要加。
+- **現在的權宜作法**：確保 `.env` 裡有填 `ANTHROPIC_API_KEY`（就算 `LLM_PROVIDER=gemini` 也一樣，這步驟目前固定用 Anthropic），就能吃到 MarkItDown OCR 跟整頁圖片理解的完整效果；如果真的沒有金鑰，退回裝 `brew install tesseract tesseract-lang`，效果會差一截但總比沒有好。
+- **之後要擴充的話**：讓圖片理解也支援 Gemini（目前寫死用 Anthropic，跟 `LLM_PROVIDER` 設定無關）；把「這頁是不是平面圖」的判斷做得更精準，避免對純插圖頁也跑一次比較貴的圖片理解呼叫；針對第 4 點，拿更多真實劇本測過 MarkItDown 的表格辨識準確度後，考慮加一個「這頁的欄位順序看起來被打亂了」的偵測，自動退回 PyMuPDF 那頁的文字層。
 
 ### 4. Map/Scene Engine 是簡化的羅盤模型，不是真正的 3D 空間
 
