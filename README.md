@@ -65,6 +65,16 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
 
 想只用 LINE、只用 Discord、還是兩個都開，完全取決於你要不要啟動哪個入口（`app/main.py` 用 `uvicorn` 跑、`app/discord_bot.py` 直接 `python -m` 跑），兩者可以同時執行，互不影響，因為狀態檔案已經照平台分開命名。
 
+### 設計文件（`docs/`）
+
+`app/keeper.py` 的系統提示詞是一大段塞在 Python f-string 裡的繁體中文，改起來要在程式碼裡找對位置；`docs/` 底下是同樣規則的可讀版本，之後要調整 Keeper 行為時建議先看這裡：
+
+- `docs/keeper_skill.md`：完整行為規格（敘事節奏、文風、檢定流程、NPC 隊友、地圖引擎整合……），對應 `_build_static_prompt()` 實際的內容
+- `docs/references/gameplay_style.md`：NPC 隊友設計與資訊流控制的完整版（`keeper_skill.md` 裡的只是精簡版）
+- `docs/references/rules_reference.md`：COC7e 規則 vs. 目前程式碼實作的落差清單（對抗檢定、組合技能檢定、重傷判定、瘋狂發作表……哪些做了、哪些沒做，之後要擴充規則引擎的施工清單）
+- `docs/references/carry_audit.md`：攜帶物合理性審查的設計規格（**目前完全沒實作**，純備忘）
+- `docs/references/prep_persistence.md`：跟參考的 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 那種手動檔案式備團工作流的對應表，列出我們用 `data/groups/*.json` 自動化掉了哪些事、還缺哪些（NPC 隊友結構化資料、長戰役的劇情摘要）
+
 ## 第一步 A：申請 LINE Messaging API Channel（只想用 Discord 的話可以跳過這整節）
 
 這一步是在 LINE 官方後台建立一個「機器人身分」，之後你的程式才有東西可以連。整個過程都在網頁上點一點，不需要寫程式，大約 10 分鐘。
