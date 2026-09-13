@@ -9,7 +9,7 @@
 | `01_模组原文/<scenario>.txt`（抽出的劇本全文） | `GroupState.scenario_text`，上傳 PDF 時由 `app/pdf_loader.py` 自動抽取寫入 |
 | `00_守秘人资料/模组框架.md`（KP 專屬地點/NPC/線索索引） | 沒有獨立索引檔——Keeper 每次都重新讀 `scenario_text`（配 prompt caching，見下）；`SCENARIO_RAG_ENABLED=true` 時改成 `app/scenario_rag.py` 的 BM25 索引，按查詢取回相關頁面 |
 | `02_玩家资料/handouts/` + 索引 | `data/groups/<id>_images/page_<n>.png`，由 `app/state.py` 的 `save_page_image`/`load_page_image` 管理；「索引」就是 `GroupState.scene_maps`（地圖類）和低文字頁清單，不是人工維護的 md |
-| `03_角色卡/调查员_<name>.md` | `GroupState.characters[owner_id]`（`Character` dataclass），`/coc sheet` 隨時可查，不需要另外開檔案 |
+| `03_角色卡/调查员_<name>.md` | `GroupState.characters[owner_id]`（`Character` dataclass），`/coc sheet` 隨時可查，不需要另外開檔案；`app/state.py` 的 `save_state` 額外會同步寫一份 `data/groups/characters/<Discord user id>.json`（純 GM 自己 `cat`/`jq` 用，Bot 本身不讀），算是離這個概念最近的東西 |
 | `03_角色卡/NPC队友_<name>.md` | **沒有對應機制**——見下方「落差」 |
 | `04_跑团记录/session_log.md`（策展過的重點摘要） | `GroupState.log`，是**完整逐句對話紀錄**（`role`/`content`），不是策展摘要，受 `MAX_LOG_TURNS` 限制會被裁切——見下方「落差」 |
 | `05_规则与流程/车卡与跑团格式.md` | `app/models.py` 的 `OCCUPATIONS`、`app/creation.py` 的建角流程本身就是「格式」，不需要另外寫文件描述 |
