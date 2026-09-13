@@ -181,15 +181,20 @@ cp .env.example .env
 #   ANTHROPIC_API_KEY=...   （去 https://console.anthropic.com 申請，跟你平常用的 Claude Code 登入是分開的）
 ```
 
-### 切換 LLM 供應商：Claude 或 Gemini
+### 切換 LLM 供應商：Claude、Gemini 或 OpenAI
 
-`.env` 裡的 `LLM_PROVIDER` 決定守密人由誰扮演，兩邊共用同一套遊戲邏輯（工具定義、規則判定、狀態管理都在 `app/keeper.py`），只有 `app/providers/` 底下各自的介面卡不一樣，隨時可以改 `.env` 切換，不用動到程式碼。
+`.env` 裡的 `LLM_PROVIDER` 決定守密人由誰扮演，三邊共用同一套遊戲邏輯（工具定義、規則判定、狀態管理都在 `app/keeper.py`），只有 `app/providers/` 底下各自的介面卡不一樣，隨時可以改 `.env` 切換，不用動到程式碼。
 
 - **`LLM_PROVIDER=anthropic`**（預設）：用 Claude，走 `app/providers/anthropic_provider.py`，需要 `ANTHROPIC_API_KEY`。有做 prompt caching（見下面「已知限制」的說明），劇本內容重複的部分幾乎不會重複計費。這是目前唯一實際跑過真實 API 驗證過的路徑。
 - **`LLM_PROVIDER=gemini`**：用 Google Gemini，走 `app/providers/gemini_provider.py`，需要 `GEMINI_API_KEY`（去 [aistudio.google.com/apikey](https://aistudio.google.com/apikey) 申請）。Gemini Flash 系列通常比 Claude 便宜不少，如果主要考量是成本，這是值得一試的選項。
   - **請注意**：這條路徑是照 Google 官方 `google-genai` SDK 文件寫的（手動 function-calling 迴圈：`client.models.generate_content` + `FunctionDeclaration`/`Tool`），程式碼結構跟工具 schema 都用真的 SDK 型別測過可以正常建構，但因為手上沒有 Gemini API key，**沒有實際打過一次真的 API 呼叫**驗證端到端行為。Google 的 Gen AI SDK 這一兩年變動蠻快的，如果切過去發現守密人完全沒反應或行為怪怪的，先去對一下 `app/providers/gemini_provider.py` 裡用到的屬性名稱（`response.function_calls`、`response.text`、`Part.from_function_response` 等）跟當時最新的 SDK 文件是否還一致，再懷疑是遊戲邏輯本身的問題。
   - Gemini 目前沒有做 prompt caching（Google 那邊叫 context caching，跟 Anthropic 的做法不同、而且門檻可能要幾萬 token 起跳），劇本內容會整包重新送——如果之後真的固定用 Gemini，這是下一個值得補的優化。
   - `GEMINI_MODEL` 預設值請自己去 [ai.google.dev](https://ai.google.dev) 核對當下實際可用的 flash 模型名稱再決定要不要改，模型 id 會隨時間變動。
+- **`LLM_PROVIDER=openai`**：用 ChatGPT，走 `app/providers/openai_provider.py`，需要 `OPENAI_API_KEY`（[platform.openai.com](https://platform.openai.com) 申請）。標準 Chat Completions 工具呼叫迴圈（`client.chat.completions.create(..., tools=[...])`，讀 `message.tool_calls`）。
+  - **請注意**：跟 Gemini 一樣，程式碼結構經過假 client 測過訊息／工具呼叫的組裝邏輯正確，但**沒有實際打過一次真的 API 呼叫**驗證端到端行為，因為寫這段的時候手上沒有可用的 OpenAI 金鑰。
+  - `OPENAI_MODEL` 預設值 `gpt-5.6-luna` 是照使用者口頭講的名字直接轉成設定值，**不是查證過的正式模型 id**——用之前務必自己去 [platform.openai.com/docs/models](https://platform.openai.com/docs/models) 核對正確字串再決定要不要改，跟 `GEMINI_MODEL` 的提醒是同一個道理：供應商的模型 id／別名會隨時間變動。
+  - 目前沒有做 prompt caching（OpenAI 那邊的對應功能是 prompt caching，跟 Anthropic 的手動 `cache_control` 不同，是自動命中，不需要特別設定，但這條路徑還沒驗證過實際能不能吃到）。
+  - `app/markitdown_shim.py`（見下面「圖文混排的頁面」那條）在偵測到 `OPENAI_API_KEY` 時，會自動改用真正的 `openai.OpenAI()` client 餵給 `markitdown-ocr`，不再透過 Anthropic 轉接殼——`markitdown-ocr` 原生就是設計給 OpenAI 用的，兩邊共用同一把金鑰之後就不需要那層轉接了；沒有設定 `OPENAI_API_KEY` 時才會退回 Anthropic 轉接殼。
 
 ### （可選）開啟 Scenario RAG
 

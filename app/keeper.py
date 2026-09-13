@@ -10,10 +10,10 @@ from __future__ import annotations
 from app import combat, dice, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import Character, GroupState
-from app.providers import anthropic_provider, gemini_provider
+from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.state import save_state
 
-_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider}
+_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 
 _ATTR_ALIASES = {
     "STR": "str_", "力量": "str_", "CON": "con", "體質": "con", "SIZ": "siz", "體型": "siz",
@@ -564,7 +564,7 @@ def run_turn(
     nothing here sends anything itself."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
     if provider is None:
-        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic 或 gemini）", [], []
+        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic、gemini 或 openai）", [], []
 
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state, resolved_location)

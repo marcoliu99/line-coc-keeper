@@ -21,7 +21,8 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # Token). Only needed if you're running app/discord_bot.py.
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 
-# Which LLM plays the Keeper: "anthropic" (Claude) or "gemini" (Google Gemini).
+# Which LLM plays the Keeper: "anthropic" (Claude), "gemini" (Google Gemini), or
+# "openai" (ChatGPT).
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -31,6 +32,13 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 # Double-check the current flash model name at https://ai.google.dev before relying
 # on this default — Google renames/retires model ids over time.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+# "gpt-5.6-luna" is a best-effort transcription of what the user asked for, not a
+# verified model id — double-check the exact string at platform.openai.com/docs
+# before relying on this default; OpenAI model ids/aliases change over time, same
+# caveat as GEMINI_MODEL above.
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data/groups"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
