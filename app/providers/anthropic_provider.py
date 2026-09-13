@@ -111,3 +111,29 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         return None
     except Exception:
         return None
+
+
+def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+    """Text-only sibling of analyze_image above — a single forced tool call,
+    no image. Used by app/pregen_extractor.py. Returns the tool's input dict,
+    or None on any failure (no ANTHROPIC_API_KEY, the call raised, or no
+    matching tool_use came back)."""
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=4096,
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool["name"]},
+            messages=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
+        )
+        for block in response.content:
+            if block.type == "tool_use" and block.name == tool["name"]:
+                return block.input
+        return None
+    except Exception:
+        return None

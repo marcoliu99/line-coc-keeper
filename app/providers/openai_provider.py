@@ -145,3 +145,33 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         return None
     except Exception:
         return None
+
+
+def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+    """Text-only sibling of analyze_image above — a single forced tool call,
+    no image. Used by app/pregen_extractor.py. Returns the tool call's parsed
+    arguments dict, or None on any failure (no OPENAI_API_KEY, the call
+    raised, or no matching function_call came back)."""
+    if not OPENAI_API_KEY:
+        return None
+    try:
+        import openai
+
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            input=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
+            tools=[{
+                "type": "function",
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["input_schema"],
+            }],
+            tool_choice={"type": "function", "name": tool["name"]},
+        )
+        for item in response.output:
+            if item.type == "function_call" and item.name == tool["name"]:
+                return json.loads(item.arguments or "{}")
+        return None
+    except Exception:
+        return None

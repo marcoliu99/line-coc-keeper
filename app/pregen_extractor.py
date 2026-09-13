@@ -1,18 +1,20 @@
 """Pull any built-in pregenerated investigator sheets out of a scenario's text.
 
 Many published COC7e scenarios ship with ready-made pregens so a group can skip
-character creation entirely. This does a single forced tool-call to Claude asking
-it to report only what's explicitly written in the text (never invent numbers),
-so `/coc pregens` can offer them instead of everyone rolling a fresh investigator.
+character creation entirely. This does a single forced tool-call (via whichever
+LLM_PROVIDER is configured — see app/providers/*.py's analyze_text) asking it to
+report only what's explicitly written in the text (never invent numbers), so
+`/coc pregens` can offer them instead of everyone rolling a fresh investigator.
 """
 from __future__ import annotations
 
 from typing import Any
 
-import anthropic
-
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+from app.config import LLM_PROVIDER
 from app.models import Character, damage_bonus_and_build, move_rate
+from app.providers import anthropic_provider, gemini_provider, openai_provider
+
+_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 
 _REPORT_TOOL = {
     "name": "report_pregens",
@@ -77,28 +79,24 @@ _REPORT_TOOL = {
 
 
 def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
-    if not ANTHROPIC_API_KEY or not scenario_text.strip():
+    """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text
+    functions) rather than being hard-coded to Anthropic — this used to always
+    call ANTHROPIC_API_KEY regardless of which provider was actually
+    configured for the Keeper (the same class of bug app/scene_map.py's
+    analyze_page_image docstring describes fixing there), so /coc pregens
+    could fail even with LLM_PROVIDER switched away from Anthropic."""
+    provider = _PROVIDERS.get(LLM_PROVIDER)
+    if provider is None or not scenario_text.strip():
         return []
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=4096,
-        tools=[_REPORT_TOOL],
-        tool_choice={"type": "tool", "name": "report_pregens"},
-        messages=[{
-            "role": "user",
-            "content": (
-                "以下是一份 COC7e 劇本的文字內容。請找出裡面是否附有『預製調查員角色卡』"
-                "（通常會列出角色姓名、職業、一串屬性數字如 STR/CON/SIZ/DEX/APP/INT/POW/EDU、"
-                "以及一份技能列表）。用 report_pregens 工具回報結果。\n\n" + scenario_text
-            ),
-        }],
+    result = provider.analyze_text(
+        scenario_text,
+        _REPORT_TOOL,
+        "以下是一份 COC7e 劇本的文字內容。請找出裡面是否附有『預製調查員角色卡』"
+        "（通常會列出角色姓名、職業、一串屬性數字如 STR/CON/SIZ/DEX/APP/INT/POW/EDU、"
+        "以及一份技能列表）。用 report_pregens 工具回報結果。",
     )
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "report_pregens":
-            return block.input.get("pregens", []) or []
-    return []
+    return (result or {}).get("pregens", []) or []
 
 
 def _int_or(value: Any, default: int) -> int:

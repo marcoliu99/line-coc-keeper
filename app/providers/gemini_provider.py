@@ -106,3 +106,34 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         return None
     except Exception:
         return None
+
+
+def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+    """Text-only sibling of analyze_image above — a single forced tool call,
+    no image. Used by app/pregen_extractor.py. Returns the tool call's args
+    dict, or None on any failure (no GEMINI_API_KEY, the call raised, or no
+    matching function call came back)."""
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        function_declaration = types.FunctionDeclaration(
+            name=tool["name"], description=tool["description"], parameters_json_schema=tool["input_schema"]
+        )
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(function_declarations=[function_declaration])],
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[tool["name"]])
+            ),
+        )
+        contents = [types.Content(role="user", parts=[types.Part(text=f"{prompt_text}\n\n{text}")])]
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
+        for fc in response.function_calls or []:
+            if fc.name == tool["name"]:
+                return dict(fc.args or {})
+        return None
+    except Exception:
+        return None
