@@ -612,15 +612,27 @@ async def handle_text_message(
         return
 
     if text.startswith("/coc check"):
-        async with locks.get_conversation_lock(conversation_id):
-            await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
+        if not locks.try_acquire_check(conversation_id, user_id):
+            await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
+            return
+        try:
+            async with locks.get_conversation_lock(conversation_id):
+                await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
+        finally:
+            locks.release_check(conversation_id, user_id)
         return
 
     if text.startswith("/coc luck"):
         parts = text.split()
         choice = parts[2] if len(parts) > 2 else "skip"
-        async with locks.get_conversation_lock(conversation_id):
-            await handle_luck_decision(conversation_id, user_id, choice, reply, send_dm, send_image, send_dm_image)
+        if not locks.try_acquire_check(conversation_id, user_id):
+            await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
+            return
+        try:
+            async with locks.get_conversation_lock(conversation_id):
+                await handle_luck_decision(conversation_id, user_id, choice, reply, send_dm, send_image, send_dm_image)
+        finally:
+            locks.release_check(conversation_id, user_id)
         return
 
     if text.startswith("/coc"):

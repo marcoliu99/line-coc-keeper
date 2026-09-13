@@ -138,23 +138,33 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
         if str(interaction.user.id) != self.owner_id:
             await interaction.response.send_message("這不是你的檢定，換你自己的角色來按。", ephemeral=True)
             return
-        await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
-        reply = _make_interaction_reply(interaction)
-        send_image = _make_send_image(interaction.channel)
-        command_text = f"/coc check {self.option}" if self.option else "/coc check"
-        async with locks.get_conversation_lock(self.conversation_id):
-            state_before = load_group_state(self.conversation_id)
-            before_pending = dict(state_before.pending_checks)
-            before_luck_pending = dict(state_before.pending_luck_decisions)
-            await commands.handle_check_command(
-                self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, command_text
-            )
-        await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
-        await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
+        if not locks.try_acquire_check(self.conversation_id, self.owner_id):
+            # A slow Keeper call from a first click (or an earlier /coc check)
+            # is still in flight — reject outright rather than letting a
+            # second click queue behind get_conversation_lock and run as a
+            # genuinely separate, duplicate roll once its turn comes.
+            await interaction.response.send_message("上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。", ephemeral=True)
+            return
         try:
-            await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
-        except Exception:
-            pass
+            await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
+            reply = _make_interaction_reply(interaction)
+            send_image = _make_send_image(interaction.channel)
+            command_text = f"/coc check {self.option}" if self.option else "/coc check"
+            async with locks.get_conversation_lock(self.conversation_id):
+                state_before = load_group_state(self.conversation_id)
+                before_pending = dict(state_before.pending_checks)
+                before_luck_pending = dict(state_before.pending_luck_decisions)
+                await commands.handle_check_command(
+                    self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, command_text
+                )
+            await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
+            await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
+            try:
+                await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
+            except Exception:
+                pass
+        finally:
+            locks.release_check(self.conversation_id, self.owner_id)
 
 
 async def _post_check_buttons(channel: discord.abc.Messageable, conversation_id: str, before_pending: dict) -> None:
@@ -213,19 +223,25 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
         if str(interaction.user.id) != self.owner_id:
             await interaction.response.send_message("這不是你的 Luck 花費決定，換你自己的角色來按。", ephemeral=True)
             return
-        await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
-        reply = _make_interaction_reply(interaction)
-        send_image = _make_send_image(interaction.channel)
-        async with locks.get_conversation_lock(self.conversation_id):
-            before_pending = dict(load_group_state(self.conversation_id).pending_checks)
-            await commands.handle_luck_decision(
-                self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image, _send_dm_image
-            )
-        await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
+        if not locks.try_acquire_check(self.conversation_id, self.owner_id):
+            await interaction.response.send_message("上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。", ephemeral=True)
+            return
         try:
-            await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
-        except Exception:
-            pass
+            await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
+            reply = _make_interaction_reply(interaction)
+            send_image = _make_send_image(interaction.channel)
+            async with locks.get_conversation_lock(self.conversation_id):
+                before_pending = dict(load_group_state(self.conversation_id).pending_checks)
+                await commands.handle_luck_decision(
+                    self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image, _send_dm_image
+                )
+            await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
+            try:
+                await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
+            except Exception:
+                pass
+        finally:
+            locks.release_check(self.conversation_id, self.owner_id)
 
 
 async def _post_luck_buttons(channel: discord.abc.Messageable, conversation_id: str, before_pending: dict) -> None:
