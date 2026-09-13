@@ -276,6 +276,22 @@ async def on_message(message: discord.Message) -> None:
             await commands.handle_pdf_upload(conversation_id, reply, reply, content, attachment.filename)
             return
 
+        map_attachments = [a for a in message.attachments if a.filename.lower().endswith((".yaml", ".yml"))]
+        if map_attachments:
+            attachment = map_attachments[0]
+            content = await attachment.read()
+            await commands.handle_map_upload(conversation_id, reply, reply, content, attachment.filename)
+            return
+
+        compare_attachments = [a for a in message.attachments if a.filename.lower().endswith((".txt", ".md"))]
+        if compare_attachments:
+            attachment = compare_attachments[0]
+            content = await attachment.read()
+            await commands.handle_scenario_compare_upload(
+                conversation_id, reply, reply, content.decode("utf-8", errors="replace"), attachment.filename
+            )
+            return
+
         text = (message.content or "").strip()
         if not text:
             if message.attachments:

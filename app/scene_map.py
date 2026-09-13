@@ -172,6 +172,53 @@ def resolve_direction(facing: str, relative: str) -> str:
     return _COMPASS[(idx + _RELATIVE_TO_TURN[relative]) % len(_COMPASS)]
 
 
+def validate_scene_map(data: Any) -> list[str]:
+    """Structural validation for a hand-authored scene_map (see
+    app/commands.py's handle_map_upload) — the same shape analyze_page_image
+    above produces, just typed by a human instead of extracted by vision.
+    Returns a list of human-readable problems (empty = valid); callers should
+    refuse to store anything if this is non-empty rather than silently
+    accepting a map resolve_move would later choke on."""
+    errors: list[str] = []
+    if not isinstance(data, dict):
+        return ["最外層必須是一個物件（YAML mapping），不是列表或純文字"]
+
+    rooms = data.get("rooms")
+    if not isinstance(rooms, list) or not rooms:
+        errors.append("rooms 必須是至少一筆的房間列表")
+        return errors  # nothing else here is checkable without rooms
+
+    seen_ids: set[str] = set()
+    valid_compass = set(_COMPASS) | set(_VERTICAL)
+    for i, room in enumerate(rooms):
+        if not isinstance(room, dict) or not room.get("id") or not room.get("name"):
+            errors.append(f"第 {i + 1} 個房間缺少必要欄位 id/name")
+            continue
+        room_id = room["id"]
+        if room_id in seen_ids:
+            errors.append(f"房間 id「{room_id}」重複")
+        seen_ids.add(room_id)
+
+    for room in rooms:
+        if not isinstance(room, dict):
+            continue
+        for exit_ in room.get("exits", []) or []:
+            if not isinstance(exit_, dict):
+                errors.append(f"房間「{room.get('id')}」有一個格式錯誤的 exit")
+                continue
+            if exit_.get("compass") not in valid_compass:
+                errors.append(f"房間「{room.get('id')}」的 exit 方位「{exit_.get('compass')}」不是合法值（{'/'.join(sorted(valid_compass))}）")
+            to_id = exit_.get("to")
+            if to_id not in seen_ids:
+                errors.append(f"房間「{room.get('id')}」的 exit 指向不存在的房間「{to_id}」")
+
+    entry_room_id = data.get("entry_room_id")
+    if entry_room_id and entry_room_id not in seen_ids:
+        errors.append(f"entry_room_id「{entry_room_id}」不是 rooms 裡任何一個房間的 id")
+
+    return errors
+
+
 def get_room(scene_map: dict[str, Any], room_id: str) -> dict[str, Any] | None:
     for room in scene_map.get("rooms", []):
         if room.get("id") == room_id:

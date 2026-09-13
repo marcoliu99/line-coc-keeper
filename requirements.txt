@@ -11,3 +11,4 @@ pillow>=10.0.0
 python-dotenv>=1.0.1
 markitdown[pdf]>=0.1.7
 markitdown-ocr>=0.1.0
+PyYAML>=6.0

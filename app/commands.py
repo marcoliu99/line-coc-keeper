@@ -23,9 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Awaitable, Callable
 
-from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor, scenario_rag
+import yaml
+
+from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor
+from app import scenario_compare, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import OCCUPATIONS, GroupState, generate_investigator
@@ -188,6 +192,71 @@ async def handle_pdf_upload(
         + warning
         + map_note,
     )
+
+
+async def handle_map_upload(
+    conversation_id: str,
+    reply: Reply,
+    push: Reply,
+    yaml_bytes: bytes,
+    file_name: str,
+) -> None:
+    """A hand-authored alternative to app/scene_map.py's vision-extracted room
+    graphs — same reply/push split as handle_pdf_upload above, though parsing
+    a small YAML file is fast enough that both callbacks will usually land at
+    the same time on any platform. Stored under a "custom_<filename>" key
+    (never a bare digit, so it can't collide with a PDF page-number key) —
+    `/coc enter custom_<filename>` loads it exactly like any extracted map."""
+    try:
+        data = yaml.safe_load(yaml_bytes)
+    except yaml.YAMLError as exc:
+        await reply(f"YAML 格式錯誤，請檢查語法：{exc}")
+        return
+
+    errors = scene_map_engine.validate_scene_map(data)
+    if errors:
+        error_list = "\n".join(f"・{e}" for e in errors)
+        await reply(f"這份地圖資料有問題，尚未儲存：\n{error_list}")
+        return
+
+    key = f"custom_{Path(file_name).stem}"
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        state.scene_maps[key] = data
+        save_state(state)
+
+    entry_room = scene_map_engine.get_room(data, data.get("entry_room_id", ""))
+    entry_note = f"，入口房間「{entry_room['name']}」" if entry_room else ""
+    await push(
+        f"地圖「{data.get('location_name') or key}」已儲存（{len(data['rooms'])} 個房間{entry_note}）。\n"
+        f"用「/coc enter {key}」載入這張地圖。"
+    )
+
+
+async def handle_scenario_compare_upload(
+    conversation_id: str,
+    reply: Reply,
+    push: Reply,
+    alt_text: str,
+    file_name: str,
+) -> None:
+    """GM-triggered QA check — compares this bot's own extracted scenario_text
+    against an independently-produced alternate parse of the same PDF (see
+    app/scenario_compare.py), to catch content our pipeline missed or
+    garbled. Read-only: doesn't touch GroupState, so no lock/save needed."""
+    state = load_state(conversation_id)
+    if not state.scenario_text.strip():
+        await reply("目前還沒有載入任何劇本，請先上傳劇本 PDF，才有東西可以比對。")
+        return
+
+    await reply("收到了，正在比對兩份擷取結果，請稍候...")
+    discrepancies = await asyncio.to_thread(scenario_compare.compare_scenario_text, state.scenario_text, alt_text)
+    if not discrepancies:
+        await push("比對完成，沒有發現明顯的實質內容落差。")
+        return
+
+    lines = [f"・{d.get('location_hint', '')}：{d.get('issue', '')}" for d in discrepancies]
+    await push(f"比對完成，發現 {len(discrepancies)} 處可能的落差：\n" + "\n".join(lines))
 
 
 async def handle_roll_command(reply: Reply, text: str) -> None:
