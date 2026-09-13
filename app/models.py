@@ -339,9 +339,18 @@ class GroupState:
     # string (JSON object keys are always strings, so this avoids an int/str
     # round-trip mismatch between what's written and what's read back).
     scene_maps: dict[str, dict[str, Any]] = field(default_factory=dict)
-    current_map_page: str = ""  # "" means the party isn't inside any extracted map right now
-    current_room_id: str = ""
-    party_facing: str = "N"
+
+    # Per-character position — each entry keyed by owner_id, independent of
+    # every other character. Deliberately NOT a single shared "party
+    # location": scenarios vary in how (and whether) they split investigators
+    # up, so instead of assuming any fixed squad structure, each character
+    # just tracks their own map page/room/facing, and a "group" is whatever
+    # set of characters happens to share the same (page, room) right now —
+    # nothing has to be declared in advance. A character with no entry in
+    # current_room_id hasn't entered any tracked map yet.
+    current_map_page: dict[str, str] = field(default_factory=dict)  # owner_id -> page key
+    current_room_id: dict[str, str] = field(default_factory=dict)  # owner_id -> room id
+    party_facing: dict[str, str] = field(default_factory=dict)  # owner_id -> compass, default "N" when absent
 
     # A check the Keeper asked for but hasn't been rolled yet — keyed by
     # owner_id, cleared once /coc check resolves it. See app/keeper.py's
@@ -391,8 +400,13 @@ class GroupState:
             pregens=data.get("pregens", []),
             combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
             scene_maps=data.get("scene_maps", {}),
-            current_map_page=data.get("current_map_page", ""),
-            current_room_id=data.get("current_room_id", ""),
-            party_facing=data.get("party_facing", "N"),
+            # .get(..., {}) with an isinstance check rather than a bare .get
+            # default: a save from before this became per-character tracking
+            # left these as plain strings ("" / "N"), which would otherwise
+            # silently poison these dicts on load — treat that old shape as
+            # "no per-character data yet" instead of crashing or propagating it.
+            current_map_page=data["current_map_page"] if isinstance(data.get("current_map_page"), dict) else {},
+            current_room_id=data["current_room_id"] if isinstance(data.get("current_room_id"), dict) else {},
+            party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
         )

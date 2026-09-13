@@ -549,7 +549,7 @@ def _build_static_prompt(state: GroupState) -> str:
 """
 
 
-def _build_dynamic_prompt(state: GroupState, resolved_location: dict | None = None) -> str:
+def _build_dynamic_prompt(state: GroupState, user_id: str, resolved_location: dict | None = None) -> str:
     """Character sheets + combat status. Changes every turn (HP/SAN/turn order all
     move), so this stays OUTSIDE the cached block — it's small and cheap to
     resend, and keeping it separate means those changes don't invalidate the much
@@ -568,10 +568,12 @@ def _build_dynamic_prompt(state: GroupState, resolved_location: dict | None = No
 調查員這次的移動已經由地圖引擎依房間圖算出結果：現在人在「{resolved_location.get('room_name', '')}」{desc_part}。
 照這個地點來描述場景，不要自己另外猜測或改成別的房間；地圖引擎沒解析出結果時（沒有這個區塊時），才照舊由你自己判斷移動去了哪裡。"""
 
-    active_map = state.scene_maps.get(state.current_map_page) if state.current_map_page else None
+    current_page = state.current_map_page.get(user_id, "")
+    active_map = state.scene_maps.get(current_page) if current_page else None
     if active_map and not resolved_location:
+        current_room_id = state.current_room_id.get(user_id, "")
         current_room = next(
-            (r for r in active_map.get("rooms", []) if r.get("id") == state.current_room_id), None
+            (r for r in active_map.get("rooms", []) if r.get("id") == current_room_id), None
         )
         if current_room:
             exits = current_room.get("exits", [])
@@ -607,7 +609,7 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 
 
 def run_turn(
-    state: GroupState, speaker_name: str, message_text: str, resolved_location: dict | None = None
+    state: GroupState, user_id: str, speaker_name: str, message_text: str, resolved_location: dict | None = None
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """Returns (public_reply_text, private_messages, image_requests):
     - private_messages: (owner_id, message) pairs queued via send_private_info.
@@ -616,15 +618,17 @@ def run_turn(
     `resolved_location` is app/commands.py's Map/Scene Engine result (see
     _resolve_map_action there) — {"room_name", "room_description"} when this
     message's movement was already resolved deterministically against a
-    scenario floor plan, else None. The caller is responsible for actually
-    delivering private_messages/image_requests via platform-specific channels;
-    nothing here sends anything itself."""
+    scenario floor plan, else None. `user_id` is the speaking character's
+    owner_id, used to look up their per-character map position when
+    resolved_location wasn't computed this turn (see GroupState.current_map_page).
+    The caller is responsible for actually delivering private_messages/image_requests
+    via platform-specific channels; nothing here sends anything itself."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
     if provider is None:
         return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic、gemini 或 openai）", [], []
 
     static_prompt = _build_static_prompt(state)
-    dynamic_prompt = _build_dynamic_prompt(state, resolved_location)
+    dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location)
     history = state.log[-MAX_LOG_TURNS * 2 :]
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []

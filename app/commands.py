@@ -352,9 +352,9 @@ async def handle_check_command(
             f"不要重新判定或改變這個結果。）"
         )
 
-    resolved_location = _resolve_map_action(state, keeper_message)
+    resolved_location = _resolve_map_action(state, user_id, keeper_message)
     keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-        keeper.run_turn, state, char.name, keeper_message, resolved_location
+        keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
     )
     await reply(f"{roll_line}\n\n{keeper_reply}")
     await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
@@ -399,9 +399,9 @@ async def handle_text_message(
             return
 
         display_name = state.characters[user_id].name
-        resolved_location = _resolve_map_action(state, text)
+        resolved_location = _resolve_map_action(state, user_id, text)
         reply_text, private_messages, image_requests = await asyncio.to_thread(
-            keeper.run_turn, state, display_name, text, resolved_location
+            keeper.run_turn, state, user_id, display_name, text, resolved_location
         )
         await reply(reply_text)
 
@@ -422,12 +422,17 @@ def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str,
     return None
 
 
-def _resolve_map_action(state: GroupState, text: str) -> dict | None:
+def _resolve_map_action(state: GroupState, user_id: str, text: str) -> dict | None:
     """Runs the Map/Scene Engine (app/scene_map.py) against a player's raw
     message *before* any LLM call, exactly per this feature's whole point:
     the destination room is computed deterministically in code, not guessed
     by the Keeper from prose. Mutates state.current_map_page/current_room_id/
-    party_facing in place when it resolves something.
+    party_facing **for this one user_id only** — see GroupState's own
+    comment on why position tracking is per-character rather than a single
+    shared party location: a scenario might split the group in ways this
+    project has no reason to assume in advance, so each character just
+    tracks their own position, and "the group" is whatever set of
+    characters happens to share a (page, room) right now.
 
     Returns a small dict for the Keeper prompt (app/keeper.py's
     `resolved_location`), or None if the message didn't trigger a resolvable
@@ -435,30 +440,34 @@ def _resolve_map_action(state: GroupState, text: str) -> dict | None:
     callers should fall back to letting the Keeper narrate movement itself,
     exactly like before this feature existed."""
     resolved_room: dict | None = None
+    current_page = state.current_map_page.get(user_id, "")
+    current_room = state.current_room_id.get(user_id, "")
+    facing = state.party_facing.get(user_id, "N")
 
     location_candidate = intent_parser.extract_entered_location(text)
     if location_candidate:
         found = _find_scene_map_by_location(state, location_candidate)
         if found:
             page_key, scene_map = found
-            if page_key != state.current_map_page:
-                state.current_map_page = page_key
-                state.party_facing = "N"
-                entry_id = scene_map.get("entry_room_id", "")
-                state.current_room_id = entry_id
-                resolved_room = scene_map_engine.get_room(scene_map, entry_id)
+            if page_key != current_page:
+                current_page = page_key
+                facing = "N"
+                current_room = scene_map.get("entry_room_id", "")
+                state.current_map_page[user_id] = current_page
+                state.current_room_id[user_id] = current_room
+                state.party_facing[user_id] = facing
+                resolved_room = scene_map_engine.get_room(scene_map, current_room)
 
-    active_map = state.scene_maps.get(state.current_map_page) if state.current_map_page else None
+    active_map = state.scene_maps.get(current_page) if current_page else None
     if active_map:
         movement = intent_parser.parse_movement_intent(text)
         if movement:
             result = scene_map_engine.resolve_move(
-                active_map, state.current_room_id, state.party_facing,
-                movement["relative_direction"], movement["order"],
+                active_map, current_room, facing, movement["relative_direction"], movement["order"],
             )
             if result["ok"]:
-                state.current_room_id = result["room"]["id"]
-                state.party_facing = result["facing"]
+                state.current_room_id[user_id] = result["room"]["id"]
+                state.party_facing[user_id] = result["facing"]
                 resolved_room = result["room"]
             # result["ok"] is False (no matching exit): deliberately not
             # returned as an error here — let the Keeper's own dynamic prompt
@@ -478,13 +487,18 @@ def _resolve_map_action(state: GroupState, text: str) -> dict | None:
             if target_room is None and SCENARIO_RAG_ENABLED and state.scenario_text:
                 target_room = _find_room_via_rag(state, active_map, text)
             if target_room is not None:
-                state.current_room_id = target_room["id"]
-                state.party_facing = "N"  # arbitrary jump, no direction to carry forward
+                state.current_room_id[user_id] = target_room["id"]
+                state.party_facing[user_id] = "N"  # arbitrary jump, no direction to carry forward
                 resolved_room = target_room
 
     if resolved_room is None:
         return None
-    return {"room_name": resolved_room.get("name", ""), "room_description": resolved_room.get("description", "")}
+    char = state.characters.get(user_id)
+    return {
+        "character_name": char.name if char else "",
+        "room_name": resolved_room.get("name", ""),
+        "room_description": resolved_room.get("description", ""),
+    }
 
 
 def _find_room_via_rag(state: GroupState, scene_map: dict, text: str) -> dict | None:
