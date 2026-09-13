@@ -98,6 +98,13 @@ class Character:
     build: int = 0
 
     skills: dict[str, int] = field(default_factory=dict)
+    # Ammo-tracked firearms only — name -> {"ammo": current, "ammo_max": capacity}.
+    # Melee/thrown weapons have nothing to track and aren't listed here; the
+    # full weapon writeup (damage, range, malfunction number, ...) still lives
+    # as descriptive text in `notes`, this is only the "current game state"
+    # number that actually changes turn to turn — see app/keeper.py's
+    # adjust_ammo tool and sheet_text() below.
+    weapons: dict[str, dict[str, int]] = field(default_factory=dict)
     notes: str = ""
     key_connection: str = ""  # "關鍵背景連結★" — a person/place/object this character
     # cannot lose without a saving roll first (see keeper.py's static prompt);
@@ -130,6 +137,8 @@ class Character:
             tags.append("暫離")
         if tags:
             lines.append("狀態：" + "、".join(tags))
+        if self.weapons:
+            lines.append("彈藥：" + "、".join(f"{name} {w['ammo']}/{w['ammo_max']}" for name, w in self.weapons.items()))
         if self.key_connection:
             lines.append(f"★ 關鍵背景連結：{self.key_connection}")
         top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]

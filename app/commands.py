@@ -502,12 +502,14 @@ async def handle_check_command(
         await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
         return
 
+    is_pushed = False
     if choice_skill_name is not None:
         skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
         display_label = choice_display_label
     else:
         if pending:
             skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
+            is_pushed = bool(pending.get("pushed", False))
         else:
             skill_name = skill_arg
             value = keeper.resolve_skill_value(char, skill_name)
@@ -519,9 +521,11 @@ async def handle_check_command(
 
     # Luck-spend: only proactively offered when it's a near-miss (the cheapest
     # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
-    # excluded (handled above, already finalized by this point).
-    luck_options = luck.buyable_options(value, r.roll, r.tier, char.luck)
-    gate_cost = luck.cheapest_cost(value, r.roll, r.tier)
+    # excluded (handled above, already finalized by this point), and so is a
+    # Pushed Roll (COC7e optional rule: a pushed reroll's result is final,
+    # can't be bought up again with Luck on top of it).
+    luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck)
+    gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier)
     if luck_options and gate_cost is not None and gate_cost <= 7:
         state.pending_luck_decisions[user_id] = {
             "skill_name": skill_name, "display_label": display_label,

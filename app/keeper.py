@@ -58,6 +58,15 @@ TOOLS = [
                 "skill": {"type": "string", "description": "技能或屬性名稱，例如：偵查、潛行、STR、POW"},
                 "bonus_dice": {"type": "integer", "description": "獎勵骰數量（情境有利時），預設 0"},
                 "penalty_dice": {"type": "integer", "description": "懲罰骰數量（情境不利時），預設 0"},
+                "pushed": {
+                    "type": "boolean",
+                    "description": (
+                        "這是不是「孤注一擲」(Pushed Roll，見下方系統提示同名段落) 的重新擲骰——"
+                        "玩家第一次檢定失敗、你提議孤注一擲、玩家講了更冒險的做法後才呼叫的那一次，"
+                        "設為 true；一般的第一次檢定不要設或設 false。COC7e 規則：孤注一擲的結果"
+                        "不能再花 Luck 修改，設對這個欄位系統才擋得住。"
+                    ),
+                },
             },
             "required": ["investigator", "skill"],
         },
@@ -126,6 +135,25 @@ TOOLS = [
                 "delta": {"type": "integer", "description": "變化量，扣減用負數"},
             },
             "required": ["investigator", "field", "delta"],
+        },
+    },
+    {
+        "name": "adjust_ammo",
+        "description": (
+            "調整角色某把已登記彈藥的槍械目前剩餘彈數（例如開槍後扣彈、換彈匣/裝填後補滿或設成特定數量）。"
+            "只對角色卡上『彈藥』欄位已經有的槍械有效（近戰/投擲武器沒有彈藥可調）；weapon 要打角色卡上"
+            "顯示的槍械名稱。delta 為正負整數變化量（開一槍通常是 -1，全連發視情境可以扣更多），"
+            "reload_full 設 true 會忽略 delta、直接補滿到彈匣容量（換上新彈匣/裝填完畢時用這個更準確）。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string"},
+                "weapon": {"type": "string", "description": "角色卡『彈藥』欄位裡的槍械名稱"},
+                "delta": {"type": "integer", "description": "彈數變化量，開槍扣彈用負數，預設 0"},
+                "reload_full": {"type": "boolean", "description": "true 的話直接補滿彈匣，忽略 delta"},
+            },
+            "required": ["investigator", "weapon"],
         },
     },
     {
@@ -333,6 +361,7 @@ def _execute_tool(
             state.pending_checks[char.owner_id] = {
                 "type": "skill", "skill": tool_input["skill"], "skill_value": value,
                 "bonus_dice": bonus, "penalty_dice": penalty,
+                "pushed": bool(tool_input.get("pushed", False)),
             }
             save_state(state)
             return {
@@ -397,6 +426,22 @@ def _execute_tool(
             setattr(char, cur_attr, new_val)
             save_state(state)
             return {"ok": True, "investigator": char.name, "field": field_name, "value": new_val}
+
+        if name == "adjust_ammo":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            weapon = tool_input.get("weapon", "")
+            entry = char.weapons.get(weapon)
+            if entry is None:
+                available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
+                return {"ok": False, "error": f"「{char.name}」的彈藥欄位裡沒有「{weapon}」，目前有：{available}"}
+            if tool_input.get("reload_full"):
+                entry["ammo"] = entry["ammo_max"]
+            else:
+                entry["ammo"] = max(0, min(entry["ammo_max"], entry["ammo"] + int(tool_input.get("delta") or 0)))
+            save_state(state)
+            return {"ok": True, "investigator": char.name, "weapon": weapon, "ammo": entry["ammo"], "ammo_max": entry["ammo_max"]}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -526,7 +571,7 @@ def _build_static_prompt(state: GroupState) -> str:
   給選項（至少兩個），不要用 `skill_check` 自己決定用哪個技能，也不要自己選好了才呼叫 `skill_check`。
 
 # 孤注一擲（Pushed Roll）
-- 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check『請』玩家孤注一擲重新擲骰，而不是玩家講完就直接算過。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
+- 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check『請』玩家孤注一擲重新擲骰，而不是玩家講完就直接算過。這次呼叫 skill_check 一定要把 `pushed` 參數設成 true（COC7e 規則：孤注一擲的結果是最終結果，不能再花 Luck 修改，系統要靠這個參數才擋得住，不設的話玩家還是會看到花 Luck 的選項）。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
 - 只有技能／屬性檢定可以孤注一擲；理智檢定、幸運檢定、戰鬥的命中/閃避/傷害擲骰都不能重來。
 - 你手上的「劇本內容」是只有你知道的機密資料。絕對不要主動把劇本裡的謎底、幕後真相或玩家尚未發現的資訊直接告訴玩家，要透過調查、檢定、線索慢慢揭露。
 - 不用每次有不確定性的行動都要求玩家檢定——只在下列情況才呼叫 skill_check 工具『請』玩家檢定：
@@ -538,6 +583,7 @@ def _build_static_prompt(state: GroupState) -> str:
   不管是否呼叫這個工具，都不可以自己憑空決定成敗，也不可以自己骰。
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
+- 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
 - 一般描述性的擲骰（例如傷害骰）用 roll_dice。
 - 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。

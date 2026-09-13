@@ -34,6 +34,8 @@ class LuckOption:
 
 
 def _candidates(skill_value: int, roll: int, current_tier: str) -> list[LuckOption]:
+    if current_tier == "fumble":
+        return []  # COC7e optional rule: a Fumble can never be bought off with Luck
     current_rank = _TIER_RANK.get(current_tier, 1)
     candidates = []
     for tier in _BUYABLE_TIERS:

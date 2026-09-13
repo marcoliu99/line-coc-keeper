@@ -141,6 +141,32 @@ def _leading_number(value: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _parse_weapon_ammo(weapons_text: str) -> dict[str, dict[str, int]]:
+    """Pulls out just the ammo-tracked firearms from a 【武器】 section —
+    e.g. ".38 左輪手槍\n技能：50／25／10\n...\n彈容量：6" — into {name:
+    {"ammo": capacity, "ammo_max": capacity}} (starts fully loaded). A block
+    whose first line is itself a "label：value" pair (e.g. "徒手：60／30／
+    12", COC7e's unarmed entry) has no separate name line and is skipped —
+    melee/thrown weapons have nothing to track anyway. Blocks are separated
+    by a blank line, matching how these sheets lay out multiple weapons."""
+    weapons: dict[str, dict[str, int]] = {}
+    for block in re.split(r"\n\s*\n", weapons_text.strip()):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        name = lines[0]
+        if "：" in name or ":" in name:
+            continue
+        fields = _parse_fields("\n".join(lines[1:]))
+        capacity_text = next((v for k, v in fields.items() if "彈容量" in k or "彈匣" in k), None)
+        if capacity_text is None:
+            continue
+        capacity = _leading_number(capacity_text)
+        if capacity:
+            weapons[name] = {"ammo": capacity, "ammo_max": capacity}
+    return weapons
+
+
 def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
     """Parses a hand-authored COC7e pregen character sheet in the
     【角色資料】/【屬性】/【技能】/... section format (see app/commands.py's
@@ -201,6 +227,7 @@ def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
         if section_name not in ("角色資料", "屬性", "技能", "角色背景", "武器", "角色扮演動機") and body:
             notes_parts.append(f"【{section_name}】\n{body}")
     pregen["notes"] = "\n\n".join(notes_parts)
+    pregen["weapons"] = _parse_weapon_ammo(sections.get("武器", ""))
 
     pregen["secret_goal"] = sections.get("角色扮演動機", "")
     pregen["key_connection"] = ""
@@ -251,6 +278,7 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str) -> Character:
         san=san, san_max=san_max,
         move=move, damage_bonus=db, build=build,
         skills=skills,
+        weapons=pregen.get("weapons") or {},
         notes=pregen.get("notes", "") or "",
         key_connection=pregen.get("key_connection", "") or "",
         secret_goal=pregen.get("secret_goal", "") or "",
