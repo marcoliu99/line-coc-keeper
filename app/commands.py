@@ -24,8 +24,9 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable
 
-from app import combat, creation, dice, intent_parser, keeper, locks, pdf_loader, pregen_extractor
+from app import combat, creation, dice, intent_parser, keeper, locks, pdf_loader, pregen_extractor, scenario_rag
 from app import scene_map as scene_map_engine
+from app.config import SCENARIO_RAG_ENABLED
 from app.models import OCCUPATIONS, GroupState, generate_investigator
 from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
 
@@ -463,10 +464,45 @@ def _resolve_map_action(state: GroupState, text: str) -> dict | None:
             # returned as an error here — let the Keeper's own dynamic prompt
             # (see _build_dynamic_prompt) decide how to narrate a blocked or
             # ambiguous direction instead of the engine flatly refusing it.
+        elif intent_parser.has_movement_verb(text):
+            # No relative-direction word matched, but this still reads as a
+            # movement attempt — most often the player named the destination
+            # room directly ("我去廚房看看") instead of describing it by
+            # direction. Try a free local match against the current map's own
+            # room names first (no API call); only fall back to Scenario RAG
+            # (a real embeddings call when configured — see scenario_rag.py)
+            # if that comes up empty. This is deliberately best-effort: a miss
+            # here just falls through to the Keeper narrating movement itself,
+            # exactly like before this fallback existed.
+            target_room = scene_map_engine.find_room_by_text(active_map, text)
+            if target_room is None and SCENARIO_RAG_ENABLED and state.scenario_text:
+                target_room = _find_room_via_rag(state, active_map, text)
+            if target_room is not None:
+                state.current_room_id = target_room["id"]
+                state.party_facing = "N"  # arbitrary jump, no direction to carry forward
+                resolved_room = target_room
 
     if resolved_room is None:
         return None
     return {"room_name": resolved_room.get("name", ""), "room_description": resolved_room.get("description", "")}
+
+
+def _find_room_via_rag(state: GroupState, scene_map: dict, text: str) -> dict | None:
+    """Scenario RAG fallback for room-name resolution (see
+    _resolve_map_action above) — RAG has no concept of room IDs, so the
+    connection is made by searching the scenario text for the player's raw
+    phrase and checking whether any of the current map's room names appear
+    in whichever page(s) came back as relevant. This is genuinely a second
+    real API call on top of the Keeper's own turn when embeddings are
+    configured (see scenario_rag.py), so it's only reached after the free
+    local name match in _resolve_map_action has already failed."""
+    index = scenario_rag.get_index(state.group_id, state.scenario_text)
+    results = scenario_rag.search(index, text, top_k=3)
+    for result in results:
+        room = scene_map_engine.find_room_by_text(scene_map, result["text"])
+        if room:
+            return room
+    return None
 
 
 def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | None:

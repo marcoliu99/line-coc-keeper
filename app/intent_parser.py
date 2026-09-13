@@ -63,6 +63,18 @@ def parse_movement_intent(text: str) -> dict | None:
     return None
 
 
+def has_movement_verb(text: str) -> bool:
+    """True if the message contains a movement-flavored verb even when
+    parse_movement_intent couldn't extract a specific direction — e.g. the
+    player named a destination room directly ("我去廚房看看") instead of
+    describing it relative to where they're standing. Callers (see
+    app/commands.py's _resolve_map_action) use this as the cheap gate before
+    trying a room-name match, and only fall back to Scenario RAG (a real API
+    call when embeddings are configured) if that also fails — this function
+    itself makes no API call and costs nothing."""
+    return bool(_MOVEMENT_VERB_RE.search(text))
+
+
 def extract_entered_location(text: str) -> str | None:
     """Returns a raw location-name candidate when the message says the party
     is entering/arriving somewhere (e.g. "我進入燈塔" -> "燈塔"), for the

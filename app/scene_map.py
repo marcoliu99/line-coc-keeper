@@ -181,6 +181,20 @@ def get_room(scene_map: dict[str, Any], room_id: str) -> dict[str, Any] | None:
     return None
 
 
+def find_room_by_text(scene_map: dict[str, Any], text: str) -> dict[str, Any] | None:
+    """Fuzzy: does any of this map's room names appear as a substring of
+    `text`? Used when a player names a destination room directly (e.g. "我去
+    廚房看看") rather than describing it by relative direction, or against a
+    Scenario RAG search result's text — see app/commands.py's
+    _resolve_map_action, which tries a direct match here first and only
+    falls back to a Scenario RAG search when that fails."""
+    for room in scene_map.get("rooms", []):
+        name = str(room.get("name", "")).strip()
+        if name and name in text:
+            return room
+    return None
+
+
 def resolve_move(
     scene_map: dict[str, Any], current_room_id: str, facing: str, relative_direction: str, order: int = 1
 ) -> dict[str, Any]:
