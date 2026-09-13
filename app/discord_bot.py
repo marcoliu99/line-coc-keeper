@@ -12,8 +12,9 @@ import io
 
 import discord
 
-from app import commands
+from app import commands, locks
 from app.config import DISCORD_BOT_TOKEN
+from app.state import load_state as load_group_state
 
 MAX_DISCORD_MESSAGE_CHARS = 1900  # Discord's hard limit is 2000; leave a margin
 MAX_REPLY_MESSAGES = 10
@@ -67,6 +68,97 @@ async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, 
     await user.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
 
 
+def _make_interaction_reply(interaction: discord.Interaction) -> commands.Reply:
+    # Used only after interaction.response.defer() (see CheckButton.callback),
+    # so the actual send has to go through followup, not response.send_message.
+    async def reply(text: str) -> None:
+        for chunk in _chunk_text(text):
+            await interaction.followup.send(chunk)
+
+    return reply
+
+
+def _check_button_label(check: dict) -> tuple[str, bool]:
+    if check.get("type") == "sanity":
+        return "🎲 理智檢定", True
+    return f"🎲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False
+
+
+_CHECK_BUTTON_ID_TEMPLATE = r"coc_check:(?P<conversation_id>discord-channel-\d+):(?P<owner_id>\d+)"
+
+
+class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):
+    """A "🎲 roll" button under the Keeper's message whenever it asks for a
+    check — see app/keeper.py's skill_check/sanity_check tools, which now only
+    *register* a pending check (GroupState.pending_checks) instead of secretly
+    rolling for the player. Clicking this runs exactly what typing
+    "/coc check" would (see app/commands.py's handle_check_command).
+
+    Registered as a *dynamic* item (client.add_dynamic_items below, matched by
+    the custom_id pattern above) rather than a plain per-message View, so it
+    keeps working across bot restarts — this project restarts the Discord
+    process after nearly every deploy, and a plain View() only lives in this
+    process's memory, so a button clicked after a restart would otherwise
+    silently fail ("This interaction failed") even though nothing about the
+    game state was actually lost.
+    """
+
+    def __init__(self, conversation_id: str, owner_id: str, label: str, danger: bool = False) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.danger if danger else discord.ButtonStyle.primary,
+                custom_id=f"coc_check:{conversation_id}:{owner_id}",
+            )
+        )
+        self.conversation_id = conversation_id
+        self.owner_id = owner_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        danger = item.style == discord.ButtonStyle.danger
+        return cls(match["conversation_id"], match["owner_id"], item.label or "🎲 擲骰", danger)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if str(interaction.user.id) != self.owner_id:
+            await interaction.response.send_message("這不是你的檢定，換你自己的角色來按。", ephemeral=True)
+            return
+        await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
+        reply = _make_interaction_reply(interaction)
+        send_image = _make_send_image(interaction.channel)
+        async with locks.get_conversation_lock(self.conversation_id):
+            before_pending = dict(load_group_state(self.conversation_id).pending_checks)
+            await commands.handle_check_command(
+                self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, "/coc check"
+            )
+        await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
+        try:
+            await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
+        except Exception:
+            pass
+
+
+async def _post_check_buttons(channel: discord.abc.Messageable, conversation_id: str, before_pending: dict) -> None:
+    """Posts a roll button for every pending check that's new (or changed —
+    e.g. the Keeper immediately asked for a different check right after this
+    one resolved) since `before_pending` was snapshotted. Content-diffed, not
+    just key-diffed, so a replaced check for the same player still gets a
+    fresh button; a stale/duplicate pending entry never gets re-posted."""
+    state = load_group_state(conversation_id)
+    for owner_id, check in state.pending_checks.items():
+        if before_pending.get(owner_id) == check:
+            continue
+        label, danger = _check_button_label(check)
+        char = state.characters.get(owner_id)
+        name = char.name if char else "你"
+        view = discord.ui.View(timeout=None)
+        view.add_item(CheckButton(conversation_id, owner_id, label, danger))
+        await channel.send(f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）：", view=view)
+
+
+client.add_dynamic_items(CheckButton)
+
+
 @client.event
 async def on_ready() -> None:
     print(f"Discord bot 已上線：{client.user}")
@@ -101,9 +193,11 @@ async def on_message(message: discord.Message) -> None:
                 await commands.handle_unsupported_message(conversation_id, reply, "附件")
             return
 
+        before_pending = dict(load_group_state(conversation_id).pending_checks)
         await commands.handle_text_message(
             conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text
         )
+        await _post_check_buttons(message.channel, conversation_id, before_pending)
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         try:
             await reply(f"發生錯誤了：{exc}")

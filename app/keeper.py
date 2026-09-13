@@ -41,9 +41,12 @@ TOOLS = [
     {
         "name": "skill_check",
         "description": (
-            "進行一次 COC7e 技能或屬性百分比檢定（d100 對抗技能值），回傳成功等級"
-            "（大失敗/失敗/成功/困難成功/極難成功/大成功）。角色要嘗試任何有不確定性、"
-            "有失敗風險的行動時都必須呼叫此工具，不可以自行判定成敗。"
+            "『請求』一次 COC7e 技能或屬性百分比檢定——這個工具不會幫玩家骰骰子，"
+            "只會記錄下這次檢定要用哪個技能、目標值多少、有沒有獎懲骰，讓玩家自己用 "
+            "/coc check 指令擲骰。呼叫完之後，只能敘述『需要做這個檢定』的當下場景，"
+            "絕對不能自己編一個成功或失敗的結果——真正的結果會在玩家擲骰後，由系統以"
+            "訊息回饋給你，那時候才能描述後續發展。角色要嘗試任何有不確定性、有失敗"
+            "風險的行動時都要呼叫此工具請玩家檢定，不可以自行判定成敗。"
         ),
         "input_schema": {
             "type": "object",
@@ -59,8 +62,10 @@ TOOLS = [
     {
         "name": "sanity_check",
         "description": (
-            "進行理智檢定（SAN check）。用於角色目擊恐怖事物、遭遇超自然現象等場合。"
-            "會自動依成功/失敗擲出對應的理智損失並更新角色理智值。"
+            "『請求』一次理智檢定（SAN check）——用於角色目擊恐怖事物、遭遇超自然現象等場合，"
+            "但跟 skill_check 一樣不會幫玩家骰骰子，只記錄下成功/失敗各自的理智損失公式，"
+            "讓玩家自己用 /coc check 擲骰。呼叫完之後只能敘述『需要做理智檢定』的當下，"
+            "不能自己編結果或先扣理智，等玩家擲出結果、系統回饋給你之後才描述反應。"
         ),
         "input_schema": {
             "type": "object",
@@ -226,7 +231,7 @@ _SEARCH_SCENARIO_TOOL = {
 }
 
 
-def _find_character(state: GroupState, name: str) -> Character | None:
+def find_character(state: GroupState, name: str) -> Character | None:
     if not name:
         return None
     exact = state.get_character_by_name(name)
@@ -239,7 +244,7 @@ def _find_character(state: GroupState, name: str) -> Character | None:
     return None
 
 
-def _resolve_skill_value(char: Character, skill_name: str) -> int:
+def resolve_skill_value(char: Character, skill_name: str) -> int:
     key = skill_name.strip()
     if key in char.skills:
         return char.skills[key]
@@ -269,34 +274,40 @@ def _execute_tool(
             return {"ok": True, "expression": r.expression, "rolls": r.rolls, "modifier": r.modifier, "total": r.total}
 
         if name == "skill_check":
-            char = _find_character(state, tool_input.get("investigator", ""))
+            char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            value = _resolve_skill_value(char, tool_input["skill"])
+            value = resolve_skill_value(char, tool_input["skill"])
             bonus = int(tool_input.get("bonus_dice") or 0)
             penalty = int(tool_input.get("penalty_dice") or 0)
-            r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
+            state.pending_checks[char.owner_id] = {
+                "type": "skill", "skill": tool_input["skill"], "skill_value": value,
+                "bonus_dice": bonus, "penalty_dice": penalty,
+            }
             save_state(state)
             return {
-                "ok": True, "investigator": char.name, "skill": tool_input["skill"],
-                "skill_value": r.skill_value, "roll": r.roll, "tier": r.tier, "success": r.success,
+                "ok": True, "pending": True, "investigator": char.name, "skill": tool_input["skill"],
+                "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty,
+                "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
             }
 
         if name == "sanity_check":
-            char = _find_character(state, tool_input.get("investigator", ""))
+            char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            r = dice.sanity_check(char.san, tool_input.get("loss_success", "0"), tool_input.get("loss_failure", "1d4"))
-            char.san = r.san_after
+            loss_success = tool_input.get("loss_success", "0")
+            loss_failure = tool_input.get("loss_failure", "1d4")
+            state.pending_checks[char.owner_id] = {
+                "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
+            }
             save_state(state)
             return {
-                "ok": True, "investigator": char.name, "roll": r.check.roll, "success": r.check.success,
-                "san_before": r.san_before, "san_after": r.san_after, "loss": r.loss,
-                "risk_of_madness": r.risk_of_madness, "insane": r.san_after <= 0,
+                "ok": True, "pending": True, "investigator": char.name, "current_san": char.san,
+                "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
             }
 
         if name == "adjust_character":
-            char = _find_character(state, tool_input.get("investigator", ""))
+            char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             field_name = tool_input["field"]
@@ -311,7 +322,7 @@ def _execute_tool(
             return {"ok": True, "investigator": char.name, "field": field_name, "value": new_val}
 
         if name == "set_skill":
-            char = _find_character(state, tool_input.get("investigator", ""))
+            char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             value = max(0, min(100, int(tool_input["value"])))
@@ -320,7 +331,7 @@ def _execute_tool(
             return {"ok": True, "investigator": char.name, "skill": tool_input["skill"], "value": value}
 
         if name == "get_character_sheet":
-            char = _find_character(state, tool_input.get("investigator", ""))
+            char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             return {"ok": True, "sheet": char.to_dict()}
@@ -360,7 +371,7 @@ def _execute_tool(
             return {"ok": True}
 
         if name == "send_private_info":
-            char = _find_character(state, tool_input.get("investigator", ""))
+            char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             private_messages.append((char.owner_id, tool_input["message"]))
@@ -370,7 +381,7 @@ def _execute_tool(
             investigator = tool_input.get("investigator")
             owner_id = None
             if investigator:
-                char = _find_character(state, investigator)
+                char = find_character(state, investigator)
                 if not char:
                     return {"ok": False, "error": f"找不到角色「{investigator}」"}
                 owner_id = char.owner_id
@@ -424,12 +435,23 @@ def _build_static_prompt(state: GroupState) -> str:
 - 用流暢的敘事散文寫場景，把擲骰結果和判定自然編織進句子裡（例如「你屏息潛行，腳步聲被雨聲蓋過——潛行檢定成功」），不要把骰子結果或數值單獨列成一行、條列項目或標籤格式（像是「【檢定結果】」這種）。
 - 回覆裡不要用條列清單、表格、或「你可以選擇 1/2/3」這種選單式收尾；除非玩家已經卡住很久明確需要選項，否則讓玩家自己決定要做什麼，用一個開放的畫面或 NPC 反應收尾就好。
 
+# 檢定由玩家自己擲骰，不是你代骰
+- skill_check／sanity_check 這兩個工具現在只是「請求」一次檢定，不會幫你骰出結果：呼叫之後只會拿到
+  目標值、獎懲骰之類的設定資訊，沒有成功或失敗的結果。你要做的是在敘述裡明確講清楚「現在需要一次
+  什麼檢定、目標值大概怎樣、有沒有優勢劣勢」，然後停在那裡，等玩家自己輸入 `/coc check` 擲骰。
+- **絕對不要自己編一個檢定結果**——不管是「大失敗」「成功」還是任何等級，只要玩家還沒有真的擲出來，
+  你就不知道結果，也不能假裝知道。玩家擲骰後，系統會用一則訊息把真正的結果（擲出多少、什麼等級）
+  回饋給你，那時候你才能根據那個既定事實描述後續發展——這則訊息裡的結果是不能改的既定事實，
+  跟 Map Engine 解析出的位置一樣，你只負責敘述，不負責判定。
+- 這個規則的例外只有：`roll_dice`（單純的道具/傷害骰，不是角色的技能檢定，繼續由你直接呼叫）、
+  以及本來就不會有玩家角色可以骰的情境（例如純粹的環境描述、劇情事件擲骰）。
+
 # 孤注一擲（Pushed Roll）
-- 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check 重新判定，而不是玩家講完就直接算過。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
+- 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check『請』玩家孤注一擲重新擲骰，而不是玩家講完就直接算過。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
 - 只有技能／屬性檢定可以孤注一擲；理智檢定、幸運檢定、戰鬥的命中/閃避/傷害擲骰都不能重來。
 - 你手上的「劇本內容」是只有你知道的機密資料。絕對不要主動把劇本裡的謎底、幕後真相或玩家尚未發現的資訊直接告訴玩家，要透過調查、檢定、線索慢慢揭露。
-- 任何有不確定性、有失敗可能的行動（技能檢定、屬性對抗、戰鬥命中、說服 NPC 等）都必須呼叫 skill_check 工具判定，不可以自己憑空決定成敗。
-- 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具。
+- 任何有不確定性、有失敗可能的行動（技能檢定、屬性對抗、戰鬥命中、說服 NPC 等）都必須呼叫 skill_check 工具『請』玩家檢定，不可以自己憑空決定成敗，也不可以自己骰。
+- 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 一般描述性的擲骰（例如傷害骰）用 roll_dice。
 - 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
@@ -451,8 +473,8 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色卡標示「（暫離）」代表玩家目前不在，不管是不是在戰鬥中，都不需要特別等他、也不要主動描述
   他的角色在做什麼；照常推進其他人的劇情就好，他回來（狀態變回正常）之後再自然地把他寫回場景裡。
 - 角色卡如果標示「★ 關鍵背景連結」，代表那是這個角色最重要的一段個人連結（人、地、物）。不能不由分說就
-  直接摧毀、殺死或永久奪走它——真的走到這個地步時，要先讓玩家有機會擲骰搶救（用 skill_check 或
-  adjust_character 視情境判斷合適的檢定），檢定失敗、連結真的失去時才呼叫 sanity_check，損失設為
+  直接摧毀、殺死或永久奪走它——真的走到這個地步時，要先呼叫 skill_check 請玩家自己擲骰搶救（視情境判斷
+  合適的技能），玩家真的擲出失敗、連結真的失去時才呼叫 sanity_check 請他做理智檢定，損失設為
   '1'/'1d6'。這個欄位是公開的（不像秘密目標），可以正常寫進公開敘述裡。
 
 # NPC 隊友

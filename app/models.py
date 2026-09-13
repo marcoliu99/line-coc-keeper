@@ -343,6 +343,15 @@ class GroupState:
     current_room_id: str = ""
     party_facing: str = "N"
 
+    # A check the Keeper asked for but hasn't been rolled yet — keyed by
+    # owner_id, cleared once /coc check resolves it. See app/keeper.py's
+    # skill_check/sanity_check tools (they register one of these instead of
+    # rolling) and app/commands.py's _handle_check_command (the player rolls).
+    # Shape: {"type": "skill", "skill": str, "skill_value": int, "bonus_dice":
+    # int, "penalty_dice": int} or {"type": "sanity", "loss_success": str,
+    # "loss_failure": str}.
+    pending_checks: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
             if c.name == name:
@@ -364,6 +373,7 @@ class GroupState:
             "current_map_page": self.current_map_page,
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
+            "pending_checks": self.pending_checks,
         }
 
     @staticmethod
@@ -384,4 +394,5 @@ class GroupState:
             current_map_page=data.get("current_map_page", ""),
             current_room_id=data.get("current_room_id", ""),
             party_facing=data.get("party_facing", "N"),
+            pending_checks=data.get("pending_checks", {}),
         )

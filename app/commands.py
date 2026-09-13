@@ -54,6 +54,9 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc pregen 編號 → 選之前先看某位預製角色的完整屬性與技能
 ・/coc usepregen 編號 [自訂名稱] → 直接使用某位預製角色（每個人只能用一次，直到 /coc end；每個角色只能被一人選走）
 
+【檢定】
+・/coc check → 守密人請你檢定時，自己擲骰（不是守密人幫你骰）；也可以自己主動打 /coc check 技能名 [獎勵骰數] [懲罰骰數]
+
 【角色管理】
 ・/coc sheet → 查看自己的角色卡
 ・/coc status → 查看目前劇本與所有角色狀態
@@ -194,6 +197,129 @@ async def handle_roll_command(reply: Reply, text: str) -> None:
     await reply(f"🎲 {result.describe()}")
 
 
+async def _deliver_side_effects(
+    conversation_id: str,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    private_messages: list[tuple[str, str]],
+    image_requests: list[tuple[str | None, int]],
+) -> None:
+    """Shared by handle_text_message and handle_check_command — delivers
+    whatever the Keeper queued via send_private_info/show_scenario_image.
+    Must be called outside any conversation lock: pure I/O, no state access.
+    Best-effort: a DM can fail (LINE requires the player to have friended the
+    bot; Discord requires them to allow DMs from server members) and we
+    deliberately don't fall back to posting the content publicly, since that
+    would defeat the entire point of it being private."""
+    for owner_id, message in private_messages:
+        try:
+            await send_dm(owner_id, f"🤫（私訊）{message}")
+        except Exception:
+            pass
+
+    for owner_id, page_number in image_requests:
+        png_bytes = load_page_image(conversation_id, page_number)
+        if not png_bytes:
+            continue  # Keeper referenced a page with no stored image — quietly skip
+        try:
+            if owner_id:
+                await send_dm_image(owner_id, png_bytes, conversation_id, page_number)
+            else:
+                await send_image(png_bytes, conversation_id, page_number)
+        except Exception:
+            pass
+
+
+def _skill_names_match(a: str, b: str) -> bool:
+    a, b = a.strip().lower(), b.strip().lower()
+    return bool(a) and bool(b) and (a == b or a in b or b in a)
+
+
+_CHECK_TIER_ZH = {
+    "fumble": "大失敗", "fail": "失敗", "regular": "成功",
+    "hard": "困難成功", "extreme": "極難成功", "critical": "大成功",
+}
+
+
+async def handle_check_command(
+    conversation_id: str,
+    user_id: str,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    text: str,
+) -> None:
+    """/coc check [技能名] [獎勵骰數] [懲罰骰數] — the player's own roll, in
+    code, visible to the group immediately, instead of the Keeper (LLM)
+    quietly deciding a result. Pairs with keeper.py's skill_check/sanity_check
+    tools, which now only *register* a pending check (see GroupState.
+    pending_checks) instead of rolling — this command is what actually rolls
+    the dice, then feeds the outcome back to the Keeper as an established
+    fact for it to narrate, exactly like a normal free-text turn."""
+    state = load_state(conversation_id)
+    if not state.active:
+        await reply("目前沒有進行中的遊戲。")
+        return
+    char = state.characters.get(user_id)
+    if not char:
+        await reply("你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+        return
+
+    parts = text.split()
+    skill_arg = parts[2] if len(parts) > 2 else None
+    pending = state.pending_checks.pop(user_id, None)
+
+    if skill_arg is None:
+        if not pending:
+            await reply("目前沒有守密人請你做的檢定。用法：/coc check 技能名 [獎勵骰數] [懲罰骰數] 可以自己主動檢定。")
+            return
+    elif not (pending and pending.get("type") == "skill" and _skill_names_match(pending.get("skill", ""), skill_arg)):
+        # Named a skill that doesn't match what was pending (or nothing was
+        # pending, or the pending one was a SAN check): a fresh, self-initiated
+        # check, bonus/penalty from the command's own args instead.
+        pending = None
+
+    if pending and pending.get("type") == "sanity":
+        san_before = char.san
+        r = dice.sanity_check(san_before, pending.get("loss_success", "0"), pending.get("loss_failure", "1d4"))
+        char.san = r.san_after
+        save_state(state)
+        outcome = "通過" if r.check.success else "失敗"
+        roll_line = f"🎲 {char.name} 的理智檢定：SAN {san_before}，擲出 {r.check.roll} → {outcome}，損失 {r.loss} 點理智（現在 SAN {r.san_after}）"
+        keeper_message = (
+            f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
+            f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
+            f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
+        )
+    else:
+        if pending:
+            skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
+        else:
+            skill_name = skill_arg
+            value = keeper.resolve_skill_value(char, skill_name)
+            bonus = int(parts[3]) if len(parts) > 3 and parts[3].lstrip("-").isdigit() else 0
+            penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
+            save_state(state)  # resolve_skill_value may have registered a new default-value skill
+        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
+        tier_zh = _CHECK_TIER_ZH[r.tier]
+        dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
+        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}"
+        keeper_message = (
+            f"（{char.name} 擲骰做了一次「{skill_name}」檢定：技能值 {value}%{dice_note}，"
+            f"擲出 {r.roll} → {tier_zh}。這是已經確定的結果，請根據這個結果描述後續發展，"
+            f"不要重新判定或改變這個結果。）"
+        )
+
+    resolved_location = _resolve_map_action(state, keeper_message)
+    keeper_reply, private_messages, image_requests = await asyncio.to_thread(
+        keeper.run_turn, state, char.name, keeper_message, resolved_location
+    )
+    await reply(f"{roll_line}\n\n{keeper_reply}")
+    await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
+
+
 async def handle_text_message(
     conversation_id: str,
     user_id: str,
@@ -208,6 +334,11 @@ async def handle_text_message(
 
     if text.startswith("/roll"):
         await handle_roll_command(reply, text)  # no group state touched, no lock needed
+        return
+
+    if text.startswith("/coc check"):
+        async with locks.get_conversation_lock(conversation_id):
+            await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
         return
 
     if text.startswith("/coc"):
@@ -234,28 +365,7 @@ async def handle_text_message(
         )
         await reply(reply_text)
 
-    # Delivered outside the lock — pure I/O, no state access needed. Best-effort:
-    # a DM can fail (LINE requires the player to have friended the bot; Discord
-    # requires them to allow DMs from server members) and we deliberately don't
-    # fall back to posting the content publicly, since that would defeat the
-    # entire point of it being private.
-    for owner_id, message in private_messages:
-        try:
-            await send_dm(owner_id, f"🤫（私訊）{message}")
-        except Exception:
-            pass
-
-    for owner_id, page_number in image_requests:
-        png_bytes = load_page_image(conversation_id, page_number)
-        if not png_bytes:
-            continue  # Keeper referenced a page with no stored image — quietly skip
-        try:
-            if owner_id:
-                await send_dm_image(owner_id, png_bytes, conversation_id, page_number)
-            else:
-                await send_image(png_bytes, conversation_id, page_number)
-        except Exception:
-            pass
+    await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
 
 
 def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str, dict] | None:
