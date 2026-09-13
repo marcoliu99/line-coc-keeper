@@ -8,6 +8,10 @@ load_dotenv()
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
+# Discord bot token (discord.com/developers/applications > your app > Bot > Reset
+# Token). Only needed if you're running app/discord_bot.py.
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
+
 # Which LLM plays the Keeper: "anthropic" (Claude) or "gemini" (Google Gemini).
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
 

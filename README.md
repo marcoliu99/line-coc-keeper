@@ -1,60 +1,77 @@
-# LINE COC7e 守密人 Bot
+# COC7e 守密人 Bot（LINE / Discord）
 
-在 LINE 群組裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在群組裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）和 Gemini（Google）之間切換，見下面「切換 LLM 供應商」段落。
+在 LINE 群組或 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）和 Gemini（Google）之間切換，見下面「切換 LLM 供應商」段落；前端聊天平台可以在 LINE 和 Discord 之間切換（甚至兩個同時開），見「切換／同時使用聊天平台」段落。
 
 ## 架構
 
 ```
-LINE 群組 ──(webhook)──▶ FastAPI (/callback) ──▶ app/keeper.py（守密人邏輯，供應商無關）
-                                                        │
-                                                        ▼
-                                        app/providers/anthropic_provider.py
-                                        app/providers/gemini_provider.py      ← LLM_PROVIDER 決定走哪一條
-                                                        │
-                                                        ▼
-                                工具呼叫（擲骰／技能檢定／SAN／角色數值／戰鬥）
-                                                        │
-                                                        ▼
-                                     data/groups/*.json （每個群組的角色卡、劇本、對話紀錄）
+LINE 群組 ──(webhook)──▶ app/main.py ────────┐
+                                              │
+Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
+                                              ▼
+                              app/commands.py（指令與遊戲邏輯，平台無關）
+                                              │
+                                              ▼
+                                      app/keeper.py（守密人邏輯，LLM 供應商無關）
+                                              │
+                                              ▼
+                              app/providers/anthropic_provider.py
+                              app/providers/gemini_provider.py      ← LLM_PROVIDER 決定走哪一條
+                                              │
+                                              ▼
+                        工具呼叫（擲骰／技能檢定／SAN／角色數值／戰鬥）
+                                              │
+                                              ▼
+                   data/groups/*.json （每個聊天室的角色卡、劇本、對話紀錄）
 ```
 
-- `app/main.py`：LINE webhook 入口與指令處理（`/coc`、`/roll`）
+- `app/main.py`：LINE 專用 webhook 入口，把 LINE 的事件轉譯成呼叫 `app/commands.py`
+- `app/discord_bot.py`：Discord 專用的常駐連線入口，把 Discord 的事件轉譯成呼叫 `app/commands.py`
+- `app/commands.py`：**平台無關**的指令解析與遊戲流程（`/coc`、`/roll`、PDF 上傳、自由文字轉守密人），兩個前端共用同一份
 - `app/keeper.py`：守密人的遊戲邏輯（系統提示詞、工具定義、工具執行），不綁定特定 LLM
 - `app/providers/anthropic_provider.py`：Claude（Anthropic Messages API）介面卡，含 prompt caching
 - `app/providers/gemini_provider.py`：Gemini（google-genai SDK）介面卡
+- `app/locks.py`：per-conversation 鎖，防止同一個聊天室的兩則訊息互相覆蓋對方的存檔
 - `app/combat.py`：正式戰鬥輪次狀態機（先攻順位、回合、HP）
 - `app/creation.py`：互動式建角流程（擲屬性、分配職業/興趣技能點數）
 - `app/pregen_extractor.py`：從劇本文字中抽取內建的預製調查員
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
-- `app/models.py`：角色卡／群組狀態資料結構與快速生成（3d6 法）
+- `app/models.py`：角色卡／聊天室狀態資料結構與快速生成（3d6 法）
 - `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（用 PyMuPDF 處理圖文混排版面，圖片偏多的頁面會嘗試 OCR 備援）
-- `app/state.py`：以 JSON 檔案保存每個群組的遊戲狀態
+- `app/state.py`：以 JSON 檔案保存每個聊天室的遊戲狀態（檔名依平台加前綴，例如 `line-group-xxx.json`、`discord-channel-xxx.json`，避免兩邊 ID 撞在一起）
 
-## 第一步：申請 LINE Messaging API Channel
+想只用 LINE、只用 Discord、還是兩個都開，完全取決於你要不要啟動哪個入口（`app/main.py` 用 `uvicorn` 跑、`app/discord_bot.py` 直接 `python -m` 跑），兩者可以同時執行，互不影響，因為狀態檔案已經照平台分開命名。
+
+## 第一步 A：申請 LINE Messaging API Channel（只想用 Discord 的話可以跳過這整節）
 
 這一步是在 LINE 官方後台建立一個「機器人身分」，之後你的程式才有東西可以連。整個過程都在網頁上點一點，不需要寫程式，大約 10 分鐘。
 
-### 1. 登入 LINE Developers Console
+> LINE 的計費規則是「Reply（回覆）免費不限量，只有 Push（主動推播）才計費」，這個 Bot 完全只用 Reply API，正常使用不會產生 LINE 訊息費用。
 
-前往 [https://developers.line.biz/console/](https://developers.line.biz/console/)，用你平常用的 **LINE 帳號**登入（跟你手機上的 LINE App 是同一組帳號）。第一次登入可能會要求你補填開發者名稱、Email 等基本資料，照著填完即可。
+> **2024 年 9 月後的政策改動**：LINE 已經不能再直接在 Developers Console 裡建立 Messaging API Channel，改成要先建立一個「LINE 官方帳號（LINE Official Account）」，再從官方帳號後台開通 Messaging API——開通的當下會自動在 Developers Console 生出對應的 Channel，之後（步驟 4 開始）的操作都還是在 Developers Console 裡完成。以下是更新後的正確流程：
 
-### 2. 建立 Provider（開發者／公司身分）
+### 1. 建立 LINE 官方帳號
 
-- Provider 是一個「誰擁有這個機器人」的分類容器，底下可以放多個 Channel。個人玩票用途的話，名稱隨便取，例如 `我的跑團`、`marcoliu`。
-- 登入後若還沒有任何 Provider，畫面會直接引導你建立一個：填名稱 → 按 **Create**。
-- 若已經有 Provider，在左上角的下拉選單可以選擇，或按 **Create a new provider** 再建一個新的。
+- 前往 [https://developers.line.biz/console/](https://developers.line.biz/console/)，用你平常用的 **LINE 帳號**登入（跟你手機上的 LINE App 是同一組帳號）。
+- 畫面上會有 **Create a LINE Official Account** 按鈕，點下去。
+- 用手機門號做簡訊驗證。
+- 填官方帳號的基本資料（帳號名稱、行業別等），內容隨便填合理的即可，不影響 API 功能——帳號名稱可以直接用你想要的 Bot 名稱，例如 `COC守密人`。
 
-### 3. 建立 Messaging API Channel
+### 2. 從 LINE Official Account Manager 開通 Messaging API
 
-- 選定 Provider 後，點 **Create a Messaging API channel**（或在 Provider 頁面裡點 Channels 分頁旁的建立按鈕）。
-- 會出現一個表單，需要填：
-  - **Channel icon**：Bot 的大頭貼圖片，選填，可以之後再補。
-  - **Channel name**：Bot 顯示名稱，也就是玩家在 LINE 群組裡看到「誰在說話」的名字，例如 `COC守密人`（20 字以內，且不能包含 LINE 這幾個字）。
-  - **Channel description**：簡短說明，隨便寫，例如「COC7e 跑團守密人」。
-  - **Category / Subcategory**：LINE 要求選一個產業分類，找不到完全符合的就選接近的（例如「Entertainment」之類），這欄不影響功能。
-  - **Email address**：預設會帶入你的登入信箱，不用改。
-- 勾選底下的服務條款同意欄位，按 **Create**。
-- 建立完成後會跳出一個確認畫面，按 **OK** 進入這個 Channel 的管理頁面。
+- 建立完成後會導去（或請你自己去）[LINE Official Account Manager](https://manager.line.biz/)，用同一組帳號登入。
+- 畫面右上角找 **設定 / Settings**。
+- 左側選單找 **Messaging API**。
+- 點 **啟用 Messaging API / Enable Messaging API**。
+- Provider 選擇 **新增 Provider / New provider**，輸入一個名稱（個人用途隨便取，例如你的名字或 `我的跑團`）。
+- 同意條款、按確認，Messaging API 就開通了——這一步會自動在 Developers Console 建立對應的 Channel。
+
+### 3. 回到 LINE Developers Console
+
+- 重新整理或回到 [https://developers.line.biz/console/](https://developers.line.biz/console/)，應該就能看到剛剛自動建立好的 Provider 和 Channel 了，點進去這個 Channel。
+- 接下來（步驟 4 開始）跟原本的流程一樣，都是在這個 Channel 的管理頁面裡操作。
+
+> 上面官方帳號後台的確切按鈕文字，可能因為帳號語言設定顯示中文或英文而略有不同，跟著畫面上意思相近的選項點就好；如果卡在某一步找不到對應按鈕，把畫面截圖或文字描述貼給我，我可以幫你確認。
 
 ### 4. 拿到 Channel secret 和 Channel access token
 
@@ -77,6 +94,9 @@ LINE 群組 ──(webhook)──▶ FastAPI (/callback) ──▶ app/keeper.py
 - 找到 **Auto-reply messages** 和 **Greeting messages** 這兩列，右邊通常會有一個「Edit」連結，點下去會跳到另一個網站叫 **LINE Official Account Manager**（這是 LINE 官方帳號的另一個管理後台，跟 Developers Console 是分開的兩個系統，但用同一組帳號登入即可進去）。在那邊把「Auto-reply messages（自動回應訊息）」和「Greeting messages（加入好友歡迎訊息）」都切成關閉。
   - 為什麼要關：這兩個是 LINE 官方帳號內建的罐頭回覆功能，如果開著，玩家傳訊息時可能會同時收到 LINE 內建的罐頭回覆，又收到你程式的回覆，變成兩個聲音在搶答。
 - 繼續往下捲，找到 **Allow bot to join group chats**，切成 **Enabled**。這個一定要開，否則之後想把 Bot 拉進 LINE 群組時會直接失敗。
+- 同一區塊還會看到 **Webhook redelivery** 和 **Error statistics aggregation** 兩個選項：
+  - **Webhook redelivery（重新傳送）建議先關掉**：這個專案沒有做事件去重複，如果 LINE 因為你的伺服器一時沒回應而重送同一個事件，同一句話可能會被守密人處理兩次（重複擲骰、角色數值扣兩次）；測試階段常常重開伺服器，更容易踩到。
+  - **Error statistics aggregation（錯誤統計）可以開著**，純粹是讓你在 Console 看得到 webhook 錯誤率，沒有副作用。
 
 ### 6. 把 Bot 加好友並拉進群組
 
@@ -84,7 +104,30 @@ LINE 群組 ──(webhook)──▶ FastAPI (/callback) ──▶ app/keeper.py
 - 用手機 LINE App 的「加好友」功能掃描這個 QR Code，把 Bot 加為好友（加好友這步驟是必要的，LINE 的機制上機器人一定要先被加好友才能被拉進群組）。
 - 打開你要跑團的 LINE 群組 → 點右上角的群組設定（人形圖示或選單）→ 找「邀請」→ 從好友清單裡選到剛剛加的 Bot → 邀請它加入群組。
 
+> **如果群組裡傳訊息完全沒反應，但跟 Bot 的一對一聊天正常**：很可能是「先拉進群組、後開啟 Allow bot to join group chats」的時間差造成的，權限沒有套用到已經存在的群組成員關係上。把 Bot 從群組移除，重新邀請一次即可。
+
 到這裡，LINE 這邊的設定就完成了，剩下的 Webhook URL 要等你把伺服器跑起來、透過 ngrok 拿到對外網址之後再回來補。
+
+## 第一步 B：建立 Discord Bot（只想用 LINE 的話可以跳過這整節）
+
+Discord 這邊比 LINE 簡單很多：不需要 webhook、不需要 ngrok，Bot 用一條常駐連線直接跟 Discord 對接。
+
+### 1. 建立 Discord Application 和 Bot
+
+1. 前往 [https://discord.com/developers/applications](https://discord.com/developers/applications)，用你的 Discord 帳號登入。
+2. 點 **New Application**，取個名字（例如 `COC守密人`），建立。
+3. 左側選單點 **Bot**，如果還沒有 Bot 身分會提示你建立，按下去。
+4. 在同一頁找到 **Privileged Gateway Intents** 區塊，把 **Message Content Intent** 打開並存檔——這個一定要開，不然 Bot 收到的訊息內容永遠是空的，完全沒辦法判斷指令。
+5. 在 **Token** 區塊按 **Reset Token**（第一次是 **Copy**），複製這串 token，填進 `.env` 的 `DISCORD_BOT_TOKEN`。這串等同密碼，一樣不要外流。
+
+### 2. 把 Bot 邀請進你的伺服器
+
+1. 左側選單點 **OAuth2** → **URL Generator**。
+2. **Scopes** 勾選 **bot**。
+3. 下面出現的 **Bot Permissions** 至少勾選 **Send Messages**、**Read Message History**、**Attach Files**（讀取劇本 PDF 附件需要）。
+4. 頁面最下面會生成一個邀請連結，複製起來，用瀏覽器打開，選擇要加入的伺服器、授權完成。
+
+到這裡 Discord 那邊就設定完了，不需要再回來設定任何 Webhook URL。
 
 ## 第二步：設定專案
 
@@ -124,9 +167,11 @@ brew install tesseract tesseract-lang   # tesseract-lang 才有繁體中文語�
 
 不裝也可以正常使用，純文字排版的劇本不受影響。
 
-## 第三步：本機啟動 + ngrok 對外
+## 第三步：本機啟動
 
-啟動 FastAPI 伺服器：
+兩個前端是完全獨立的兩個程式進場，跑其中一個、兩個都跑，或都不跑，各自獨立。
+
+### LINE：啟動 FastAPI 伺服器 + ngrok 對外
 
 ```bash
 source .venv/bin/activate
@@ -148,6 +193,17 @@ https://xxxx.ngrok-free.app/callback
 按 **Verify**，應該會顯示成功（此時伺服器要正在跑）。
 
 > ngrok 免費版每次重啟網址都會變，記得每次都要回 LINE Developers Console 更新 Webhook URL。之後若要長期使用，建議换成正式主機（Render / Railway / Fly.io / 自己的雲端主機），屆時只要把 uvicorn 換成常駐服務、Webhook URL 換成正式網域即可，程式碼不用改。
+
+### Discord：直接啟動常駐連線
+
+不需要 ngrok，也不需要任何對外網址：
+
+```bash
+source .venv/bin/activate
+python -m app.discord_bot
+```
+
+看到終端機印出「Discord bot 已上線：...」就代表連上了，直接去伺服器頻道打字測試即可。這個程式會一直佔用終端機、持續連線，測試完想關掉就 `Ctrl+C`；長期使用一樣建議換成正式主機常駐執行（跟 LINE 那邊一樣，程式碼不用改，只是部署方式換掉，也不需要 webhook URL 那一段）。
 
 ## 玩法
 
