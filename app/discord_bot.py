@@ -283,6 +283,18 @@ async def on_message(message: discord.Message) -> None:
             await commands.handle_map_upload(conversation_id, reply, reply, content, attachment.filename)
             return
 
+        role_attachments = [
+            a for a in message.attachments
+            if a.filename.lower().startswith("role_") and a.filename.lower().endswith((".txt", ".md"))
+        ]
+        if role_attachments:
+            attachment = role_attachments[0]
+            content = await attachment.read()
+            await commands.handle_role_sheet_upload(
+                conversation_id, reply, content.decode("utf-8", errors="replace"), attachment.filename
+            )
+            return
+
         compare_attachments = [a for a in message.attachments if a.filename.lower().endswith((".txt", ".md"))]
         if compare_attachments:
             attachment = compare_attachments[0]

@@ -269,6 +269,44 @@ async def handle_scenario_compare_upload(
     await push(f"比對完成，發現 {len(discrepancies)} 處可能的落差：\n" + "\n".join(lines))
 
 
+async def handle_role_sheet_upload(
+    conversation_id: str,
+    reply: Reply,
+    file_text: str,
+    file_name: str,
+) -> None:
+    """A hand-transcribed pregen character sheet (【角色資料】/【屬性】/【技能】/...
+    sections — see pregen_extractor.parse_role_sheet_text), uploaded as a
+    "role_"-prefixed .txt/.md attachment — see app/discord_bot.py's on_message,
+    which is what tells this apart from handle_scenario_compare_upload's
+    full-scenario alternate-text attachments. A deterministic, GM-verified
+    alternative to /coc pregens' LLM-based extraction from the raw scenario
+    PDF text. Re-uploading a corrected sheet for the same occupation replaces
+    the previous entry rather than duplicating it."""
+    pregen = pregen_extractor.parse_role_sheet_text(file_text)
+    if pregen is None:
+        await reply(f"「{file_name}」看起來不是預期的角色卡格式（找不到【屬性】區塊），沒有儲存。")
+        return
+
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        existing_index = next(
+            (i for i, p in enumerate(state.pregens) if p.get("occupation") == pregen["occupation"]), None
+        )
+        if existing_index is not None:
+            state.pregens[existing_index] = pregen
+        else:
+            state.pregens.append(pregen)
+        save_state(state)
+
+    name_note = f"「{pregen['name']}」" if pregen["name"] else "（姓名由玩家決定）"
+    action = "已更新" if existing_index is not None else "已新增"
+    await reply(
+        f"角色卡{action}：{name_note}，職業「{pregen['occupation']}」，"
+        f"{len(pregen['skills'])} 項技能。用「/coc pregens」查看目前所有預製角色。"
+    )
+
+
 async def handle_roll_command(reply: Reply, text: str) -> None:
     parts = text.split(maxsplit=1)
     if len(parts) < 2:
@@ -749,7 +787,7 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     excludes secret_goal: that's only ever revealed privately after a claim (see
     /coc pc and /coc usepregen), never in a pre-selection preview anyone can run."""
     lines = [
-        f"【預製角色 #{index}】{pregen.get('name', '未命名')}　職業：{pregen.get('occupation', '未知職業')}",
+        f"【預製角色 #{index}】{pregen.get('name') or '未命名'}　職業：{pregen.get('occupation', '未知職業')}",
     ]
     attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "luck"]
     labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU", "luck": "LUCK"}
@@ -965,8 +1003,8 @@ async def _handle_coc_command(
 
     if sub == "pregens":
         state = load_state(conversation_id)
-        if not state.scenario_text:
-            await reply("目前還沒有載入劇本，上傳 PDF 之後才能抓取內建角色卡。")
+        if not state.scenario_text and not state.pregens:
+            await reply("目前還沒有載入劇本，上傳 PDF 之後才能抓取內建角色卡（或直接上傳 role_ 開頭的角色卡檔案）。")
             return
         if not state.pregens:
             pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, state.scenario_text)
@@ -979,7 +1017,7 @@ async def _handle_coc_command(
         for i, p in enumerate(state.pregens, start=1):
             claimed_by = p.get("claimed_by")
             tag = "（已被選走）" if claimed_by else ""
-            lines.append(f"{i}. {p.get('name', '未命名')}（{p.get('occupation', '未知職業')}）{tag}")
+            lines.append(f"{i}. {p.get('name') or '未命名'}（{p.get('occupation', '未知職業')}）{tag}")
         lines.append("輸入「/coc pregen 編號」查看某位角色的完整能力，或直接「/coc usepregen 編號 [自訂名稱]」使用。")
         await reply("\n".join(lines))
         return

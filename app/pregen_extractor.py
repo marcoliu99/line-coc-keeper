@@ -8,6 +8,7 @@ report only what's explicitly written in the text (never invent numbers), so
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.config import LLM_PROVIDER
@@ -98,6 +99,112 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         "以及一份技能列表）。用 report_pregens 工具回報結果。",
     )
     return (result or {}).get("pregens", []) or []
+
+
+_SECTION_RE = re.compile(r"^【(.+?)】\s*$", re.MULTILINE)
+_FIELD_RE = re.compile(r"^(.+?)[：:]\s*(.*)$")
+
+# Chinese label -> Character/pregen attribute field, matched by substring so
+# either the bare Chinese term or "力量 STR" (Chinese + English abbreviation on
+# the same line) both work.
+_ATTR_LABELS = [
+    ("力量", "str_"), ("體質", "con"), ("體型", "siz"), ("敏捷", "dex"), ("外貌", "app"),
+    ("智力", "int_"), ("意志", "pow_"), ("教育", "edu"), ("幸運", "luck"),
+]
+
+_NAME_PLACEHOLDER_RE = re.compile(r"玩家決定|由玩家")
+
+
+def _split_sections(text: str) -> dict[str, str]:
+    matches = list(_SECTION_RE.finditer(text))
+    sections: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections[m.group(1).strip()] = text[m.end() : end].strip()
+    return sections
+
+
+def _parse_fields(body: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in body.splitlines():
+        m = _FIELD_RE.match(line.strip())
+        if m:
+            fields[m.group(1).strip()] = m.group(2).strip()
+    return fields
+
+
+def _leading_number(value: str) -> int | None:
+    """First number in a "60／30／12"-style value (COC7e's regular/hard/extreme
+    triple — only the base value is needed, the other two are always
+    derivable from it) or a plain "60"; None if nothing numeric is found."""
+    m = re.match(r"\s*(\d+)", value.replace("/", "／").split("／")[0])
+    return int(m.group(1)) if m else None
+
+
+def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
+    """Parses a hand-authored COC7e pregen character sheet in the
+    【角色資料】/【屬性】/【技能】/... section format (see app/commands.py's
+    handle_role_sheet_upload — triggered by a "role_"-prefixed .txt/.md
+    upload) into the same pregen dict shape pregen_to_character below
+    expects, as a deterministic alternative to extract_pregens' LLM-based
+    extraction from raw scenario text.
+
+    Deliberately doesn't parse hp_max/mp_max/san/move/damage_bonus/build from
+    the text even though the sheet lists them — pregen_to_character already
+    derives all of these from the nine base attributes via the same COC7e
+    formulas the sheet itself was generated from, confirmed to reproduce the
+    source numbers exactly against real example sheets; parsing them
+    separately would only add another way for the two to silently disagree.
+
+    Returns None if this doesn't look like a character sheet at all (no
+    【屬性】 section) — callers should treat that as "not this format", not
+    a partial/best-effort result to store anyway."""
+    sections = _split_sections(text)
+    if "屬性" not in sections:
+        return None
+
+    info = _parse_fields(sections.get("角色資料", ""))
+    attrs = _parse_fields(sections["屬性"])
+
+    name = info.get("姓名", "")
+    if not name or _NAME_PLACEHOLDER_RE.search(name):
+        name = ""
+    occupation = info.get("職業", "")
+
+    pregen: dict[str, Any] = {"name": name, "occupation": occupation}
+    for label, field_name in _ATTR_LABELS:
+        matched_value = next((v for k, v in attrs.items() if label in k), None)
+        if matched_value is not None:
+            number = _leading_number(matched_value)
+            if number is not None:
+                pregen[field_name] = number
+
+    skills: dict[str, int] = {}
+    for skill_name, value in _parse_fields(sections.get("技能", "")).items():
+        number = _leading_number(value)
+        if number is not None:
+            skills[skill_name] = number
+    pregen["skills"] = skills
+
+    # Flavor fields our schema has no dedicated slot for, plus whole sections
+    # (background, weapons, any scenario-specific extra section like "其他住
+    # 戶") — folded into notes rather than dropped, matching this session's
+    # "never silently discard authored content" approach for the map importer.
+    notes_parts = []
+    flavor = {k: v for k, v in info.items() if k not in ("姓名", "玩家", "職業") and v}
+    if flavor:
+        notes_parts.append("、".join(f"{k}：{v}" for k, v in flavor.items()))
+    for section_name in ("角色背景", "武器"):
+        if sections.get(section_name):
+            notes_parts.append(f"【{section_name}】\n{sections[section_name]}")
+    for section_name, body in sections.items():
+        if section_name not in ("角色資料", "屬性", "技能", "角色背景", "武器", "角色扮演動機") and body:
+            notes_parts.append(f"【{section_name}】\n{body}")
+    pregen["notes"] = "\n\n".join(notes_parts)
+
+    pregen["secret_goal"] = sections.get("角色扮演動機", "")
+    pregen["key_connection"] = ""
+    return pregen
 
 
 def _int_or(value: Any, default: int) -> int:
