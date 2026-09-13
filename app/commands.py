@@ -71,15 +71,30 @@ async def handle_unsupported_message(conversation_id: str, reply: Reply, label: 
         )
 
 
-async def handle_pdf_upload(conversation_id: str, reply: Reply, pdf_bytes: bytes, file_name: str) -> None:
+async def handle_pdf_upload(
+    conversation_id: str,
+    reply: Reply,
+    push: Reply,
+    pdf_bytes: bytes,
+    file_name: str,
+) -> None:
+    """`reply` must land inside whatever immediate response window the platform
+    gives an incoming event (LINE's reply token expires after 60s and is
+    single-use); `push` is for the actual result, sent once extraction — which
+    can run a vision/OCR pass over every graphic-heavy page and, on a
+    picture-heavy scenario, comfortably exceed that window — finishes. On a
+    platform with no such constraint (Discord), an adapter can just pass the
+    same callback for both."""
     if not file_name.lower().endswith(".pdf"):
         await reply("目前只支援上傳 PDF 劇本檔案喔。")
         return
 
+    await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
+
     try:
         text, low_text_pages, truncated = await asyncio.to_thread(pdf_loader.extract_text, pdf_bytes)
     except ValueError as exc:
-        await reply(f"讀取 PDF 失敗：{exc}")
+        await push(f"讀取 PDF 失敗：{exc}")
         return
 
     title = pdf_loader.guess_title(text, file_name=file_name)
@@ -105,7 +120,7 @@ async def handle_pdf_upload(conversation_id: str, reply: Reply, pdf_bytes: bytes
             "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
         )
 
-    await reply(
+    await push(
         f"已載入劇本《{title}》（{len(text)} 字）。\n"
         "接下來請每位玩家輸入「/coc pc 角色名 職業」建立調查員，職業可選：\n"
         + "、".join(OCCUPATIONS.keys())

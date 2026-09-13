@@ -63,7 +63,9 @@ async def on_message(message: discord.Message) -> None:
         if pdf_attachments:
             attachment = pdf_attachments[0]
             content = await attachment.read()
-            await commands.handle_pdf_upload(conversation_id, reply, content, attachment.filename)
+            # No reply-token/time-window constraint here, so the same callback
+            # serves as both the immediate ack and the final result.
+            await commands.handle_pdf_upload(conversation_id, reply, reply, content, attachment.filename)
             return
 
         text = (message.content or "").strip()

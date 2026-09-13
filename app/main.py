@@ -15,6 +15,7 @@ from linebot.v3.messaging import (
     AsyncMessagingApi,
     AsyncMessagingApiBlob,
     Configuration,
+    PushMessageRequest,
     ReplyMessageRequest,
     TextMessage,
 )
@@ -75,6 +76,20 @@ def _make_reply(reply_token: str) -> commands.Reply:
     return reply
 
 
+def _make_push(to_id: str) -> commands.Reply:
+    # For results that can't make LINE's 60-second, single-use reply token
+    # window — see the docstring on commands.handle_pdf_upload. Push messages
+    # count against LINE's paid quota (unlike replies, which are free and
+    # unlimited), but this only fires once per PDF upload, not per turn.
+    async def push(text: str) -> None:
+        messages = [TextMessage(text=c) for c in _chunk_text(text)]
+        await line_bot_api.push_message_with_http_info(
+            PushMessageRequest(to=to_id, messages=messages)
+        )
+
+    return push
+
+
 def _conversation_id(source) -> str:
     if isinstance(source, GroupSource):
         return f"line-group-{source.group_id}"
@@ -83,6 +98,16 @@ def _conversation_id(source) -> str:
     if isinstance(source, UserSource):
         return f"line-user-{source.user_id}"
     return "line-unknown"
+
+
+def _push_target_id(source) -> str:
+    if isinstance(source, GroupSource):
+        return source.group_id
+    if isinstance(source, RoomSource):
+        return source.room_id
+    if isinstance(source, UserSource):
+        return source.user_id
+    return ""
 
 
 async def _display_name(source, user_id: str) -> str:
@@ -138,7 +163,8 @@ async def _handle_message_event(event: MessageEvent) -> None:
     if isinstance(event.message, FileMessageContent):
         file_name = getattr(event.message, "file_name", "") or ""
         content = await line_bot_blob_api.get_message_content(event.message.id)
-        await commands.handle_pdf_upload(conversation_id, reply, content, file_name)
+        push = _make_push(_push_target_id(event.source))
+        await commands.handle_pdf_upload(conversation_id, reply, push, content, file_name)
         return
 
     if not isinstance(event.message, TextMessageContent):
