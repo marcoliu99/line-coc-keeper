@@ -5,8 +5,12 @@ Discord, ...). Nothing in here knows about LINE or Discord — it only deals wit
 plain strings (conversation_id, user_id, text) and things the adapter supplies:
 a `reply` callback to send text back to the conversation, a `get_display_name`
 callback (async, since some platforms need an API call for it and some don't),
-and a `send_dm` callback for whispering a private message to one specific
-player (used by the Keeper's send_private_info tool — see app/keeper.py).
+a `send_dm` callback for whispering a private message to one specific player
+(used by the Keeper's send_private_info tool — see app/keeper.py), and
+`send_image`/`send_dm_image` for posting a scenario page's actual picture
+(publicly or privately) — used by /coc showpage and the Keeper's
+show_scenario_image tool, so a map or handout can be shown as a real image
+instead of just the Keeper's text description of it.
 
 Per-conversation locking (app/locks.py) is handled here, not by each adapter,
 since it protects GroupState file I/O — a game-state concern, not a platform
@@ -22,11 +26,19 @@ from typing import Awaitable, Callable
 
 from app import combat, creation, dice, keeper, locks, pdf_loader, pregen_extractor
 from app.models import OCCUPATIONS, GroupState, generate_investigator
-from app.state import load_state, save_state
+from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
 
 Reply = Callable[[str], Awaitable[None]]
 GetDisplayName = Callable[[], Awaitable[str]]
 SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
+# (png_bytes, conversation_id, page_number) -> None, posts publicly. conversation_id
+# and page_number are included alongside the raw bytes because LINE can't attach
+# bytes directly to an image message — it needs a real HTTPS URL, which its
+# adapter builds by pointing back at this server's own /images/... route (see
+# app/main.py) rather than using png_bytes at all; Discord's adapter just
+# attaches png_bytes and ignores the other two.
+SendImage = Callable[[bytes, str, int], Awaitable[None]]
+SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, png_bytes, conversation_id, page_number)
 
 HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・上傳一份 PDF 劇本檔案 → 載入劇本並開始遊戲
@@ -44,6 +56,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc status → 查看目前劇本與所有角色狀態
 ・/coc setskill 角色名 技能名 數值 → 手動修正自己角色的技能值
 ・/coc away → 標記自己暫離（戰鬥中會自動跳過你的回合）；/coc back → 回來繼續玩
+・/coc showpage 頁碼 → 直接看劇本某一頁的實際圖片（地圖、手卡等），守密人提到「第 X 頁」時可以用
 
 【戰鬥】
 ・/coc combat start → 開始正式戰鬥（依 DEX 排先攻順位）
@@ -96,7 +109,7 @@ async def handle_pdf_upload(
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
 
     try:
-        text, low_text_pages, truncated = await asyncio.to_thread(pdf_loader.extract_text, pdf_bytes)
+        text, low_text_pages, truncated, page_images = await asyncio.to_thread(pdf_loader.extract_text, pdf_bytes)
     except ValueError as exc:
         await push(f"讀取 PDF 失敗：{exc}")
         return
@@ -112,6 +125,10 @@ async def handle_pdf_upload(
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.
         save_state(state)
+        clear_page_images(conversation_id)  # same reasoning — don't let a new
+        # scenario's /coc showpage 5 show the OLD scenario's page 5.
+        for page_number, png_bytes in page_images.items():
+            save_page_image(conversation_id, page_number, png_bytes)
 
     warning = ""
     if low_text_pages:
@@ -155,6 +172,8 @@ async def handle_text_message(
     get_display_name: GetDisplayName,
     reply: Reply,
     send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
     text: str,
 ) -> None:
     text = text.strip()
@@ -165,10 +184,11 @@ async def handle_text_message(
 
     if text.startswith("/coc"):
         async with locks.get_conversation_lock(conversation_id):
-            await _handle_coc_command(conversation_id, user_id, reply, send_dm, text)
+            await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, text)
         return
 
     private_messages: list[tuple[str, str]] = []
+    image_requests: list[tuple[str | None, int]] = []
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if not state.active:
@@ -180,7 +200,9 @@ async def handle_text_message(
             return
 
         display_name = state.characters[user_id].name
-        reply_text, private_messages = await asyncio.to_thread(keeper.run_turn, state, display_name, text)
+        reply_text, private_messages, image_requests = await asyncio.to_thread(
+            keeper.run_turn, state, display_name, text
+        )
         await reply(reply_text)
 
     # Delivered outside the lock — pure I/O, no state access needed. Best-effort:
@@ -191,6 +213,18 @@ async def handle_text_message(
     for owner_id, message in private_messages:
         try:
             await send_dm(owner_id, f"🤫（私訊）{message}")
+        except Exception:
+            pass
+
+    for owner_id, page_number in image_requests:
+        png_bytes = load_page_image(conversation_id, page_number)
+        if not png_bytes:
+            continue  # Keeper referenced a page with no stored image — quietly skip
+        try:
+            if owner_id:
+                await send_dm_image(owner_id, png_bytes, conversation_id, page_number)
+            else:
+                await send_image(png_bytes, conversation_id, page_number)
         except Exception:
             pass
 
@@ -209,7 +243,9 @@ def _find_pregen_by_occupation(state: GroupState, occupation: str) -> dict | Non
     return None
 
 
-async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, send_dm: SendDM, text: str) -> None:
+async def _handle_coc_command(
+    conversation_id: str, user_id: str, reply: Reply, send_dm: SendDM, send_image: SendImage, text: str
+) -> None:
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
 
@@ -437,6 +473,22 @@ async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, 
         char.away = False
         save_state(state)
         await reply(f"{char.name} 回來了，恢復正常參與。")
+        return
+
+    if sub == "showpage":
+        if len(parts) < 3:
+            await reply("用法：/coc showpage 頁碼（例如 /coc showpage 16；守密人提到「第 X 頁」時可以用那個數字）")
+            return
+        try:
+            page_number = int(parts[2])
+        except ValueError:
+            await reply("頁碼必須是數字。")
+            return
+        png_bytes = load_page_image(conversation_id, page_number)
+        if not png_bytes:
+            await reply(f"第 {page_number} 頁沒有存圖（可能是純文字頁面，或劇本裡根本沒有這一頁）。")
+            return
+        await send_image(png_bytes, conversation_id, page_number)
         return
 
     if sub == "combat":

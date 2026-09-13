@@ -8,6 +8,15 @@ load_dotenv()
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
+# Public HTTPS base URL this FastAPI server is reachable at (your ngrok URL while
+# testing, your real domain in production) — WITHOUT a trailing slash. Only
+# needed for /coc showpage and the Keeper's show_scenario_image tool on LINE:
+# LINE's image message type can't take raw bytes, it needs a real URL, which
+# app/main.py builds by pointing back at its own /images/... route. Changes
+# every time your ngrok tunnel restarts, same as the Webhook URL — see the
+# README. Discord doesn't need this at all; it attaches image bytes directly.
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
 # Discord bot token (discord.com/developers/applications > your app > Bot > Reset
 # Token). Only needed if you're running app/discord_bot.py.
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")

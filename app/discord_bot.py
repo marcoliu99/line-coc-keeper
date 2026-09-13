@@ -8,6 +8,8 @@ there's no webhook URL or ngrok tunnel needed for this adapter at all.
 """
 from __future__ import annotations
 
+import io
+
 import discord
 
 from app import commands
@@ -50,6 +52,21 @@ async def _send_dm(owner_id: str, text: str) -> None:
         await user.send(chunk)
 
 
+def _make_send_image(channel: discord.abc.Messageable) -> commands.SendImage:
+    async def send_image(png_bytes: bytes, conversation_id: str, page_number: int) -> None:
+        # conversation_id/page_number are part of the shared SendImage signature
+        # (LINE's adapter needs them to build a URL) but unused here — Discord
+        # just attaches the bytes directly.
+        await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
+
+    return send_image
+
+
+async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, page_number: int) -> None:
+    user = client.get_user(int(owner_id)) or await client.fetch_user(int(owner_id))
+    await user.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
+
+
 @client.event
 async def on_ready() -> None:
     print(f"Discord bot 已上線：{client.user}")
@@ -63,6 +80,7 @@ async def on_message(message: discord.Message) -> None:
     conversation_id = _conversation_id(message.channel.id)
     user_id = str(message.author.id)
     reply = _make_reply(message.channel)
+    send_image = _make_send_image(message.channel)
 
     async def get_display_name() -> str:
         return message.author.display_name
@@ -83,7 +101,9 @@ async def on_message(message: discord.Message) -> None:
                 await commands.handle_unsupported_message(conversation_id, reply, "附件")
             return
 
-        await commands.handle_text_message(conversation_id, user_id, get_display_name, reply, _send_dm, text)
+        await commands.handle_text_message(
+            conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text
+        )
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         try:
             await reply(f"發生錯誤了：{exc}")

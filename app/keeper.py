@@ -176,6 +176,24 @@ TOOLS = [
             "required": ["investigator", "message"],
         },
     },
+    {
+        "name": "show_scenario_image",
+        "description": (
+            "把劇本裡某一頁的實際圖片（例如地圖、平面圖、手卡）秀給玩家看，而不是只用文字描述。"
+            "只有在『目前劇本內容』裡看到那一頁被明確標示為圖片/地圖/手卡（劇本文字用"
+            "『--- 第 X 頁 ---』標示頁碼）時才能用，不確定那頁有沒有存圖就不要亂猜頁碼。"
+            "如果只有某位特定調查員該看到（例如他自己的私人手卡），填 investigator；"
+            "要給所有人看到（例如大家一起發現的地圖）就不要填 investigator。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "page_number": {"type": "integer", "description": "劇本裡的頁碼，對應內文的『第 X 頁』標示"},
+                "investigator": {"type": "string", "description": "只給這位調查員看；不填就是公開給所有人看"},
+            },
+            "required": ["page_number"],
+        },
+    },
 ]
 # Common {name, description, input_schema} shape works unmodified for both Claude
 # and Gemini; any provider-specific extras (e.g. Anthropic's cache_control) are
@@ -212,7 +230,13 @@ def _resolve_skill_value(char: Character, skill_name: str) -> int:
     return default_value
 
 
-def _execute_tool(state: GroupState, name: str, tool_input: dict, private_messages: list[tuple[str, str]]) -> dict:
+def _execute_tool(
+    state: GroupState,
+    name: str,
+    tool_input: dict,
+    private_messages: list[tuple[str, str]],
+    image_requests: list[tuple[str | None, int]],
+) -> dict:
     try:
         if name == "roll_dice":
             r = dice.roll_expression(tool_input["expression"])
@@ -310,6 +334,17 @@ def _execute_tool(state: GroupState, name: str, tool_input: dict, private_messag
             private_messages.append((char.owner_id, tool_input["message"]))
             return {"ok": True, "delivered_to": char.name}
 
+        if name == "show_scenario_image":
+            investigator = tool_input.get("investigator")
+            owner_id = None
+            if investigator:
+                char = _find_character(state, investigator)
+                if not char:
+                    return {"ok": False, "error": f"找不到角色「{investigator}」"}
+                owner_id = char.owner_id
+            image_requests.append((owner_id, int(tool_input["page_number"])))
+            return {"ok": True, "page": tool_input["page_number"], "target": "private" if owner_id else "public"}
+
         return {"ok": False, "error": f"未知工具 {name}"}
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}
@@ -332,6 +367,7 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 一般描述性的擲骰（例如傷害骰）用 roll_dice。
 - 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
+- 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
 - 角色 HP 降到 0 時描述瀕死或死亡過程；SAN 降到 0 時描述永久性失常的下場。
@@ -384,19 +420,24 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 """
 
 
-def run_turn(state: GroupState, speaker_name: str, message_text: str) -> tuple[str, list[tuple[str, str]]]:
-    """Returns (public_reply_text, private_messages) where private_messages is a
-    list of (owner_id, message) pairs queued via the send_private_info tool —
-    the caller (app/commands.py) is responsible for actually delivering those
-    via a platform-specific DM channel; nothing here sends anything itself."""
+def run_turn(
+    state: GroupState, speaker_name: str, message_text: str
+) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
+    """Returns (public_reply_text, private_messages, image_requests):
+    - private_messages: (owner_id, message) pairs queued via send_private_info.
+    - image_requests: (owner_id_or_None, page_number) pairs queued via
+      show_scenario_image — owner_id is None for a public post.
+    The caller (app/commands.py) is responsible for actually delivering both via
+    platform-specific channels; nothing here sends anything itself."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
     if provider is None:
-        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic 或 gemini）", []
+        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic 或 gemini）", [], []
 
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state)
     history = state.log[-MAX_LOG_TURNS * 2 :]
     private_messages: list[tuple[str, str]] = []
+    image_requests: list[tuple[str | None, int]] = []
 
     final_text = provider.run_conversation(
         static_prompt,
@@ -404,7 +445,7 @@ def run_turn(state: GroupState, speaker_name: str, message_text: str) -> tuple[s
         TOOLS,
         history,
         f"{speaker_name}：{message_text}",
-        lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages),
+        lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),
         MAX_TOOL_ITERATIONS,
     )
 
@@ -413,4 +454,4 @@ def run_turn(state: GroupState, speaker_name: str, message_text: str) -> tuple[s
     if len(state.log) > MAX_LOG_TURNS * 4:
         state.log = state.log[-MAX_LOG_TURNS * 2 :]
     save_state(state)
-    return final_text, private_messages
+    return final_text, private_messages, image_requests

@@ -124,16 +124,22 @@ def _describe_graphic_page(png_bytes: bytes) -> str:
     return _vision_describe_image(png_bytes) or _ocr_image(png_bytes)
 
 
-def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool]:
+def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, bytes]]:
     """Extract scenario text.
 
-    Returns (full_text, low_text_pages, truncated):
+    Returns (full_text, low_text_pages, truncated, page_images):
     - low_text_pages: 1-indexed pages that had little extractable text despite
       containing images — likely a handout, map, or heavily-styled page whose
       content may not be fully captured.
     - truncated: True if the scenario exceeded MAX_SCENARIO_CHARS and everything
       past that cut-off point was dropped.
-    Callers should surface both to the uploader so nothing silently goes missing.
+    - page_images: 1-indexed page number -> rendered PNG bytes, for every page in
+      low_text_pages (the maps/handouts/character-sheet pages already rendered
+      for vision/OCR here). Lets a caller show a player the actual picture
+      instead of just the Keeper's text description of it — see /coc showpage
+      and the show_scenario_image tool in app/keeper.py.
+    Callers should surface low_text_pages/truncated to the uploader so nothing
+    silently goes missing.
     """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     page_texts: list[str] = []
@@ -175,7 +181,9 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool]:
     truncated = len(full_text) > MAX_SCENARIO_CHARS
     if truncated:
         full_text = full_text[:MAX_SCENARIO_CHARS] + "\n\n[...劇本內容過長，已截斷...]"
-    return full_text, low_text_pages, truncated
+
+    page_images = {idx + 1: png_bytes for idx, png_bytes in pending.items()}
+    return full_text, low_text_pages, truncated, page_images
 
 
 _PAGE_MARKER_RE = re.compile(r"^-*\s*第\s*\d+\s*頁\s*-*$")

@@ -2,6 +2,19 @@
 
 在 LINE 群組或 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）和 Gemini（Google）之間切換，見下面「切換 LLM 供應商」段落；前端聊天平台可以在 LINE 和 Discord 之間切換（甚至兩個同時開），見「切換／同時使用聊天平台」段落。
 
+## 快速開始（Bot 已經跑起來、已經加進群組/伺服器的前提下）
+
+1. **上傳劇本**：把 COC7e 劇本 PDF 檔案直接傳到群組/頻道裡。圖片較多的劇本要等一下（會先回「處理中」，實際結果晚一點才會出現）。
+2. **建立角色**（任一位玩家都要做這步）：
+   ```
+   /coc pc 角色名 職業
+   ```
+   例如 `/coc pc 陳月 記者`。想用更符合規則的建角流程或劇本內建的預製角色，見下面「玩法」段落的完整說明。
+3. **開始玩**：角色建好之後，直接在群組/頻道裡打字描述你的角色要做什麼（不用加任何指令），守密人就會接手敘事、要求擲骰、更新 HP/SAN。
+4. 隨時可以 `/coc help` 看完整指令列表、`/coc status` 看目前進度、`/coc sheet` 看自己的角色卡。
+
+其餘章節是給還沒把 Bot 架起來的人看的完整設定教學（申請 LINE/Discord 憑證、部署伺服器等）。
+
 ## 架構
 
 ```
@@ -37,8 +50,8 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
 - `app/pregen_extractor.py`：從劇本文字中抽取內建的預製調查員
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
 - `app/models.py`：角色卡／聊天室狀態資料結構與快速生成（3d6 法）
-- `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（用 PyMuPDF 處理圖文混排版面，圖片偏多的頁面會嘗試 OCR 備援）
-- `app/state.py`：以 JSON 檔案保存每個聊天室的遊戲狀態（檔名依平台加前綴，例如 `line-group-xxx.json`、`discord-channel-xxx.json`，避免兩邊 ID 撞在一起）
+- `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（用 PyMuPDF 處理圖文混排版面，圖片偏多的頁面會用 Claude 視覺理解／OCR 備援，並保留這些頁面的實際圖片供之後展示）
+- `app/state.py`：以 JSON 檔案保存每個聊天室的遊戲狀態（檔名依平台加前綴，例如 `line-group-xxx.json`、`discord-channel-xxx.json`，避免兩邊 ID 撞在一起），劇本頁面圖片另外存成 PNG 檔案
 
 想只用 LINE、只用 Discord、還是兩個都開，完全取決於你要不要啟動哪個入口（`app/main.py` 用 `uvicorn` 跑、`app/discord_bot.py` 直接 `python -m` 跑），兩者可以同時執行，互不影響，因為狀態檔案已經照平台分開命名。
 
@@ -124,8 +137,11 @@ Discord 這邊比 LINE 簡單很多：不需要 webhook、不需要 ngrok，Bot 
 
 1. 左側選單點 **OAuth2** → **URL Generator**。
 2. **Scopes** 勾選 **bot**。
-3. 下面出現的 **Bot Permissions** 至少勾選 **Send Messages**、**Read Message History**、**Attach Files**（讀取劇本 PDF 附件需要）。
-4. 頁面最下面會生成一個邀請連結，複製起來，用瀏覽器打開，選擇要加入的伺服器、授權完成。
+3. **Integration Type** 選 **Guild Install**（不是 User Install——Bot 一定要以伺服器成員的身分才能用常駐連線讀取一般訊息）。
+4. 下面出現的 **Bot Permissions** 至少勾選 **View Channel**（檢視頻道）、**Send Messages**（傳送訊息）、**Read Message History**（讀取訊息紀錄）、**Attach Files**（附加檔案——`/coc showpage` 和守密人主動秀劇本圖片給玩家看時需要，Discord 傳圖片是直接附加檔案，不像 LINE 需要額外的公開網址）。
+5. 頁面最下面會生成一個邀請連結，複製起來，用瀏覽器打開，選擇要加入的伺服器、授權完成。
+
+如果 Bot 已經加入伺服器後才想到要多勾 **Attach Files**，不用重新邀請，直接去伺服器設定 → 身分組 → 找到 Bot 的身分組 → 打開 **Attach Files** 權限存檔即可。
 
 到這裡 Discord 那邊就設定完了，不需要再回來設定任何 Webhook URL。
 
@@ -192,7 +208,9 @@ https://xxxx.ngrok-free.app/callback
 
 按 **Verify**，應該會顯示成功（此時伺服器要正在跑）。
 
-> ngrok 免費版每次重啟網址都會變，記得每次都要回 LINE Developers Console 更新 Webhook URL。之後若要長期使用，建議换成正式主機（Render / Railway / Fly.io / 自己的雲端主機），屆時只要把 uvicorn 換成常駐服務、Webhook URL 換成正式網域即可，程式碼不用改。
+**如果想用 `/coc showpage` 或讓守密人主動秀劇本圖片給玩家看**，還要多一步：把 `.env` 的 `PUBLIC_BASE_URL` 設成同一個 ngrok 網址（不要加 `/callback`，也不要有結尾斜線），例如 `PUBLIC_BASE_URL=https://xxxx.ngrok-free.app`，改完要重啟伺服器才會生效。這個功能對 Discord 是選用的（Discord 直接附加圖片檔案，不需要這個設定），但**對 LINE 是必要的**，因為 LINE 的圖片訊息不能夾帶檔案本體，只能給一個網址讓 LINE 自己去抓圖，`PUBLIC_BASE_URL` 就是用來讓 LINE 抓到我們伺服器上存的劇本圖片。
+
+> ngrok 免費版每次重啟網址都會變，記得每次都要回 LINE Developers Console 更新 Webhook URL，**如果有設定 `PUBLIC_BASE_URL` 也要一起更新**（不然圖片功能會找不到路，`/coc showpage` 或守密人秀圖時會失敗）。之後若要長期使用，建議换成正式主機（Render / Railway / Fly.io / 自己的雲端主機），屆時只要把 uvicorn 換成常駐服務、Webhook URL 和 `PUBLIC_BASE_URL` 都換成正式網域即可，程式碼不用改。
 
 ### Discord：直接啟動常駐連線
 
@@ -236,6 +254,7 @@ python -m app.discord_bot
 3. 建好角色後，直接在群組裡打字描述行動或對話（不用加任何指令），守密人就會接手描述場景、要求擲骰、更新 HP/SAN。
    - 有些資訊守密人會**私訊**給特定玩家，而不是公開在群組裡（例如：只有你發現的線索、秘密檢定結果、私人物品內容），會用「🤫（私訊）」開頭。私訊走的是 LINE/Discord 的個人對話，**前提是那位玩家已經把 Bot 加為好友（LINE）或允許伺服器成員私訊（Discord）**——沒有的話私訊會送不出去，而且目前是靜默失敗，不會在群組裡另外提示。
    - 如果劇本內建角色卡有寫「秘密目標」（例如 FBI 探員的目標是找到某人、骨董商想搞清楚某件事），用 `/coc pc` 或 `/coc usepregen` 建立那個角色的當下，會立刻私訊告訴那位玩家他的秘密目標，之後也只有守密人自己知道，不會出現在公開的角色卡（`/coc sheet`）或群組對話裡；守密人後續會透過劇情委婉引導，不會直接講白。
+   - 劇本裡的地圖、平面圖、手卡這類圖片內容，守密人在適當時機（例如玩家拿到手卡、看到地圖）會直接把**實際圖片**貼出來，而不是只用文字描述；只有特定人該看到的（例如某人的私人手卡）會私訊給那個人，其他人不會看到。也可以自己主動用 `/coc showpage 頁碼` 指定看某一頁（守密人敘述中提到「第 X 頁」時可以用那個數字）。
 4. 打起來的時候，守密人通常會自己判斷該開戰、依序處理每個人的回合，**嚴格按照 DEX 排出的先攻順位進行**——DEX 不同的人行動跟敘述都要照順序來，只有 DEX 剛好相同的人才會敘述成同時行動（細節見下面「戰鬥」段落）；也可以自己手動控制：
    - `/coc combat start`：開始戰鬥，依目前角色的 DEX 排出先攻順位
    - `/coc combat addnpc 名稱 DEX HP`：加入一個敵人
@@ -249,6 +268,7 @@ python -m app.discord_bot
    - `/coc status`：看目前劇本與所有人狀態
    - `/coc setskill 角色名 技能名 數值`：手動修正自己角色的技能值
    - `/coc away`／`/coc back`：標記暫離／回來（見上）
+   - `/coc showpage 頁碼`：看劇本某一頁的實際圖片（見上）
    - `/roll 1d100`、`/roll 3d6+2`：純擲骰，不經過守密人
    - `/coc newgame`：清空重來
    - `/coc end`：結束這一局（角色與紀錄仍保留）

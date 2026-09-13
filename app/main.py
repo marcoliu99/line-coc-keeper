@@ -6,7 +6,7 @@ app/discord_bot.py for the Discord equivalent.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
@@ -15,6 +15,7 @@ from linebot.v3.messaging import (
     AsyncMessagingApi,
     AsyncMessagingApiBlob,
     Configuration,
+    ImageMessage,
     PushMessageRequest,
     ReplyMessageRequest,
     TextMessage,
@@ -34,7 +35,8 @@ from linebot.v3.webhooks import (
 )
 
 from app import commands
-from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
+from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, PUBLIC_BASE_URL
+from app.state import load_page_image
 
 app = FastAPI(title="LINE COC7e Keeper Bot")
 
@@ -96,6 +98,49 @@ async def _send_dm(owner_id: str, text: str) -> None:
     # if that user hasn't added the bot as a friend; commands.py swallows the
     # exception (see its docstring on why it doesn't fall back to posting publicly).
     await _make_push(owner_id)(text)
+
+
+@app.get("/images/{conversation_id}/{page_number}.png")
+async def get_page_image(conversation_id: str, page_number: int):
+    png_bytes = load_page_image(conversation_id, page_number)
+    if png_bytes is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    return Response(content=png_bytes, media_type="image/png")
+
+
+def _image_url(conversation_id: str, page_number: int) -> str:
+    if not PUBLIC_BASE_URL:
+        raise RuntimeError("PUBLIC_BASE_URL 尚未設定，LINE 無法用圖片訊息（見 .env.example 的說明）")
+    return f"{PUBLIC_BASE_URL}/images/{conversation_id}/{page_number}.png"
+
+
+async def _send_image_to(to_id: str, png_bytes: bytes, conversation_id: str, page_number: int) -> None:
+    # png_bytes is unused here — LINE's image message can't carry raw bytes, it
+    # needs a URL, which is why the get_page_image route above exists: LINE's own
+    # servers fetch that URL when actually rendering the image to the user.
+    url = _image_url(conversation_id, page_number)
+    await line_bot_api.push_message_with_http_info(
+        PushMessageRequest(to=to_id, messages=[ImageMessage(original_content_url=url, preview_image_url=url)])
+    )
+
+
+async def _send_image(png_bytes: bytes, conversation_id: str, page_number: int) -> None:
+    to_id = _push_target_id_from_conversation(conversation_id)
+    await _send_image_to(to_id, png_bytes, conversation_id, page_number)
+
+
+async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, page_number: int) -> None:
+    await _send_image_to(owner_id, png_bytes, conversation_id, page_number)
+
+
+def _push_target_id_from_conversation(conversation_id: str) -> str:
+    # Reverses _conversation_id's namespacing to recover the raw LINE id
+    # push_message needs, since /coc showpage only has conversation_id on hand
+    # (unlike the file-upload path, which still has the original event.source).
+    for prefix in ("line-group-", "line-room-", "line-user-"):
+        if conversation_id.startswith(prefix):
+            return conversation_id[len(prefix):]
+    return conversation_id
 
 
 def _conversation_id(source) -> str:
@@ -186,5 +231,5 @@ async def _handle_message_event(event: MessageEvent) -> None:
         return await _display_name(event.source, user_id)
 
     await commands.handle_text_message(
-        conversation_id, user_id, get_display_name, reply, _send_dm, event.message.text
+        conversation_id, user_id, get_display_name, reply, _send_dm, _send_image, _send_dm_image, event.message.text
     )
