@@ -26,7 +26,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+from app.config import LLM_PROVIDER
+from app.providers import anthropic_provider, gemini_provider, openai_provider
+
+_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 
 # 8-way compass, plus up/down for stairs/floors. "N" is only ever a convention
 # for "further into the page/building" — extraction doesn't have a real compass
@@ -35,26 +38,48 @@ from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 _COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 _VERTICAL = ["U", "D"]
 
-_MAP_TOOL = {
-    "name": "report_scene_map",
+_ANALYZE_TOOL = {
+    "name": "analyze_page_image",
     "description": (
-        "回報這張圖片是否為平面圖／地圖。如果是，把圖上看得到的每個房間拆成節點，"
-        "每個房門/通道拆成一條邊，並幫每條邊標一個『從起點房間看，通往終點房間的方位』"
-        "（N/NE/E/SE/S/SW/W/NW，以圖片本身的上方當作 N 就好，只要整張圖前後一致即可；"
-        "如果是樓梯往其他樓層，方位用 U（上樓）或 D（下樓））。只回報圖上實際畫出來、"
-        "標示得出來的房間與連接關係，不要編造圖上沒有的房間、門，或看不出來的方位。"
+        "分析這是一份 COC7e 劇本 PDF 裡的一頁圖片，判斷它屬於 map（平面圖/地圖）、"
+        "character_sheet（調查員角色卡/數值卡）、還是 other（插圖、封面、人物肖像等其他內容），"
+        "並依分類回報對應欄位。只描述圖片裡實際看到的內容，不要編造或推測沒看到的細節。"
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "is_map": {"type": "boolean", "description": "這張圖是不是平面圖/地圖（不是的話其他欄位可以留空）"},
+            "page_type": {
+                "type": "string",
+                "enum": ["map", "character_sheet", "other"],
+                "description": (
+                    "map：平面圖或地圖。character_sheet：調查員角色卡／數值卡（有 STR/DEX/CON/APP/POW/SIZ/"
+                    "EDU/INT 等屬性欄位、HP/MP/SAN、或一排排技能名稱與百分比數字）。"
+                    "other：插圖、封面、人物肖像等跟前兩者都無關的內容。"
+                ),
+            },
+            "description": {
+                "type": "string",
+                "description": (
+                    "依 page_type 決定寫法：\n"
+                    "- map：詳細描述空間佈局與相對位置關係（例如：從正門進入後，右手邊第一個房間是什麼、"
+                    "左手邊是什麼、走廊盡頭是什麼、樓上/樓下有哪些房間），盡量具體、按方位描述，方便之後"
+                    "主持人依此正確描述場景給玩家，不要弄錯房間的相對位置。\n"
+                    "- character_sheet：**逐一列出每一個看得到數字的欄位**，屬性、HP/MP/SAN/Luck、每一項"
+                    "技能的名稱與百分比都要完整列出來，不要只說「列出了完整技能」卻不寫出實際數字，這種"
+                    "摘要方式完全沒用；同時也要抄錄卡片上手寫或印刷填好的個人背景欄位，特別是角色姓名、"
+                    "職業、個人特質、信念、重要他人、珍藏物品，以及任何「角色扮演鉤子／秘密目標／Your "
+                    "goal」之類只屬於這個角色自己的動機段落，一字不漏抄下來；欄位是空白的就不用提。\n"
+                    "- other：簡短描述畫面內容就好（一兩句話）。"
+                ),
+            },
             "location_name": {
                 "type": "string",
-                "description": "這張平面圖對應的地點名稱（例如「燈塔一樓」「莊園二樓」），劇本上下文有寫的話填，沒有就留空",
+                "description": "page_type 為 map 時，這張平面圖對應的地點名稱（例如「燈塔一樓」），劇本上下文有寫的話填，沒有就留空；其他 page_type 留空",
             },
-            "entry_room_id": {"type": "string", "description": "從外面/正門進入時，第一個抵達的房間 id"},
+            "entry_room_id": {"type": "string", "description": "page_type 為 map 時，從外面/正門進入時第一個抵達的房間 id；其他 page_type 留空"},
             "rooms": {
                 "type": "array",
+                "description": "page_type 為 map 時才需要填；其他 page_type 留空陣列",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -70,7 +95,7 @@ _MAP_TOOL = {
                                     "compass": {
                                         "type": "string",
                                         "enum": _COMPASS + _VERTICAL,
-                                        "description": "從這個房間出發，通往 to 房間的方位",
+                                        "description": "從這個房間出發，通往 to 房間的方位（N/NE/E/SE/S/SW/W/NW，以圖片本身的上方當作 N 就好，只要整張圖前後一致即可；樓梯往其他樓層用 U 上樓或 D 下樓）",
                                     },
                                     "label": {"type": "string", "description": "這個連接的簡短描述，例如「木門」「走廊盡頭」"},
                                 },
@@ -82,49 +107,47 @@ _MAP_TOOL = {
                 },
             },
         },
-        "required": ["is_map"],
+        "required": ["page_type", "description"],
     },
 }
 
 
-def extract_scene_map(png_bytes: bytes) -> dict[str, Any] | None:
-    """Best-effort: ask Claude whether a page image is a floor plan and, if so,
-    extract its room graph. Returns None if unavailable (no API key), the page
-    isn't a map, or the call fails for any reason — callers should treat that
-    as "no structured map for this page" and fall back to the existing prose
-    vision description (app/pdf_loader._vision_describe_image), not an error.
+def analyze_page_image(png_bytes: bytes) -> tuple[str, dict[str, Any] | None]:
+    """Single combined vision call — replaces what used to be two separate
+    API calls per low-text page (a free-text description pass, and a forced
+    tool call to check "is this a map"). Now one forced tool call does both,
+    halving vision cost for scenarios with floor plans.
+
+    Returns (description_text, scene_map_or_None):
+    - description_text: prose description matching the old three-branch
+      prompt (map spatial layout / character-sheet exhaustive number
+      transcription / brief description for anything else) — this is what
+      app/pdf_loader.py appends to the page's extracted text.
+    - scene_map: the structured room graph (see resolve_move below) when the
+      page was classified as a map with rooms, else None.
+    Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_image
+    functions) rather than being hard-coded to Anthropic — this was a real
+    problem in practice: this call used to always use ANTHROPIC_API_KEY
+    regardless of which provider was actually configured for the Keeper, so
+    a scenario upload could still fail here even after switching LLM_PROVIDER
+    away from Anthropic (e.g. because that account ran out of credit).
+
+    On any failure (no API key for the configured provider, the call raised,
+    or LLM_PROVIDER isn't a recognized provider) returns ("", None) —
+    callers should fall back to local OCR for the text half; there is no
+    fallback for the map half.
     """
-    if not ANTHROPIC_API_KEY:
-        return None
-    try:
-        import base64
-
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
-        response = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=2048,
-            tools=[_MAP_TOOL],
-            tool_choice={"type": "tool", "name": "report_scene_map"},
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
-                    {"type": "text", "text": "這是一份 COC7e 劇本 PDF 裡的一頁圖片，請依工具欄位判斷並回報。"},
-                ],
-            }],
-        )
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "report_scene_map":
-                result = block.input
-                if not result.get("is_map") or not result.get("rooms"):
-                    return None
-                return result
-        return None
-    except Exception:
-        return None
+    provider = _PROVIDERS.get(LLM_PROVIDER)
+    if provider is None:
+        return "", None
+    result = provider.analyze_image(png_bytes, _ANALYZE_TOOL, "請依工具欄位分析這張圖片。")
+    if not result:
+        return "", None
+    description = (result.get("description") or "").strip()
+    scene_map = None
+    if result.get("page_type") == "map" and result.get("rooms"):
+        scene_map = result
+    return description, scene_map
 
 
 _RELATIVE_TO_TURN = {"front": 0, "right": 2, "back": 4, "left": -2}  # steps around _COMPASS (45° each)

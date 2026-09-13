@@ -25,7 +25,7 @@ vector-drawn floor plan (lines/rectangles, not a raster image object) has no
 "image" for markitdown-ocr's pdfplumber-based detection to find, so it would
 silently fall through untouched — this fallback is what actually catches it,
 and stays wired to a whole-page-render regardless of what the text layer found.
-Vision description (_vision_describe_image) is the fix: handing the actual page
+Vision description (_analyze_graphic_page) is the fix: handing the actual page
 image to a vision-capable Claude call and asking it to describe spatial layout
 directly solves this, whereas OCR (_ocr_image) only recovers text that isn't
 already selectable and still loses the spatial arrangement.
@@ -38,9 +38,9 @@ import re
 
 import pymupdf
 
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, MAX_SCENARIO_CHARS
+from app.config import MAX_SCENARIO_CHARS
 from app.markitdown_shim import build_markitdown
-from app.scene_map import extract_scene_map
+from app.scene_map import analyze_page_image
 
 # Below this many extracted characters, a page that also contains an image is
 # treated as "probably graphic content" (handout/map/cover) and gets a
@@ -60,6 +60,13 @@ _LOW_TEXT_THRESHOLD = 200
 # next thing to try if that's still too slow in practice.
 _MAX_CONCURRENT_PAGE_CALLS = 12
 
+# Plain-text prompt for markitdown-ocr's embedded-image OCR (see
+# _markitdown_page_texts/app/markitdown_shim.py) — that path calls a simple
+# text-completion-style API (OCRResult.text), not a forced tool call, so it
+# can't return the structured fields app/scene_map.py's analyze_page_image
+# tool schema does. Kept as plain prose matching the same three-branch
+# classification (map / character sheet / other) for consistency, even
+# though only the text half is usable here.
 _VISION_PROMPT = (
     "這是一份 COC7e 桌上角色扮演遊戲劇本 PDF 裡的一頁圖片，請判斷它屬於下面三種情況的哪一種：\n\n"
     "1. 如果是平面圖或地圖：詳細描述空間佈局與相對位置關係（例如：從正門進入後，右手邊第一個房間是"
@@ -83,7 +90,7 @@ def _render_page_png(page: "pymupdf.Page", dpi: int = 200) -> bytes:
 def _ocr_image(png_bytes: bytes) -> str:
     """Best-effort OCR of a page image. Returns "" if OCR isn't available/fails
     (missing pytesseract, missing the tesseract binary, missing language pack, ...).
-    Recovers text-in-image content, but — unlike _vision_describe_image — has no
+    Recovers text-in-image content, but — unlike _analyze_graphic_page — has no
     way to reconstruct the spatial relationships between what it reads.
     """
     try:
@@ -98,48 +105,17 @@ def _ocr_image(png_bytes: bytes) -> str:
         return ""
 
 
-def _vision_describe_image(png_bytes: bytes) -> str:
-    """Best-effort: ask Claude to describe a page image, emphasizing spatial
-    layout when it looks like a floor plan or map. Returns "" if unavailable
-    (no ANTHROPIC_API_KEY — this is independent of LLM_PROVIDER, since Gemini
-    isn't wired up for this yet — or the call fails for any reason), so callers
-    should fall back to plain OCR.
-    """
-    if not ANTHROPIC_API_KEY:
-        return ""
-    try:
-        import base64
-
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
-        response = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            # Generous on purpose: this prompt (asking for careful spatial
-            # reasoning about a floor plan) reliably triggers extended thinking
-            # on claude-sonnet-5, and 1024 was observed being fully consumed by
-            # the thinking block alone — stop_reason "max_tokens" with no
-            # TextBlock at all, so the caller silently got "" back. 4096 leaves
-            # room for both the thinking and the actual answer.
-            max_tokens=4096,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
-                    {"type": "text", "text": _VISION_PROMPT},
-                ],
-            }],
-        )
-        return "".join(b.text for b in response.content if b.type == "text").strip()
-    except Exception:
-        return ""
-
-
-def _describe_graphic_page(png_bytes: bytes) -> str:
-    """Vision description first (handles spatial layout), OCR as a fallback
-    (no ANTHROPIC_API_KEY, or the vision call failed for any reason)."""
-    return _vision_describe_image(png_bytes) or _ocr_image(png_bytes)
+def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
+    """One combined vision call (scene_map.analyze_page_image — see its own
+    docstring for why this used to be two separate API calls per page)
+    handles both the prose description (spatial layout for maps, exhaustive
+    number transcription for character sheets, brief description otherwise)
+    and, when the page turns out to be a map, the structured room graph.
+    Falls back to local OCR for the text half only if the vision call
+    produced nothing (no ANTHROPIC_API_KEY, or the call failed) — there's no
+    fallback for the map half, a page just won't get one."""
+    description, scene_map = analyze_page_image(png_bytes)
+    return description or _ocr_image(png_bytes), scene_map
 
 
 _MARKITDOWN_PAGE_RE = re.compile(r"^##\s*Page\s+(\d+)\s*$", re.MULTILINE)
@@ -204,11 +180,10 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
     - page_maps: 1-indexed page number -> structured room-graph dict (see
       app/scene_map.py), for whichever low_text_pages turned out to actually be
       a floor plan/map (most won't be — character sheets and illustrations are
-      also low-text pages, extract_scene_map returns None for those and they're
-      just not in this dict). This is a second vision call per low-text page on
-      top of the existing prose description below, since there's no way to know
-      a page is a map without asking; real added cost, only pays off for
-      scenarios that actually have floor plans.
+      also low-text pages, scene_map.analyze_page_image returns None for those
+      and they're just not in this dict). Comes from the same single vision
+      call as the prose description below (see analyze_page_image's own
+      docstring on why this used to be two separate calls per low-text page).
     Callers should surface low_text_pages/truncated to the uploader so nothing
     silently goes missing.
     """
@@ -245,24 +220,17 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
     page_maps: dict[int, dict] = {}
 
     if pending:
-        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(pending) * 2)
+        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            desc_futures = {
-                executor.submit(_describe_graphic_page, png_bytes): idx
+            analyze_futures = {
+                executor.submit(_analyze_graphic_page, png_bytes): idx
                 for idx, png_bytes in pending.items()
             }
-            map_futures = {
-                executor.submit(extract_scene_map, png_bytes): idx
-                for idx, png_bytes in pending.items()
-            }
-            for future in concurrent.futures.as_completed(desc_futures):
-                idx = desc_futures[future]
-                extra = future.result()
+            for future in concurrent.futures.as_completed(analyze_futures):
+                idx = analyze_futures[future]
+                extra, scene_map = future.result()
                 if extra:
                     page_texts[idx] = f"{page_texts[idx]}\n{extra}".strip() if page_texts[idx] else extra
-            for future in concurrent.futures.as_completed(map_futures):
-                idx = map_futures[future]
-                scene_map = future.result()
                 if scene_map:
                     page_maps[idx + 1] = scene_map
 

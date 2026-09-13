@@ -102,3 +102,46 @@ def run_conversation(
             })
 
     return final_text
+
+
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+    """Vision + a single forced tool call via the Responses API — used by
+    app/scene_map.py's analyze_page_image, not the Keeper conversation loop
+    above. Image input uses the {"type": "input_image", "image_url": <data
+    URL>} shape (ResponseInputImageContentParam) and tool_choice forces the
+    one tool by name (ToolChoiceFunctionParam) — both confirmed against this
+    project's installed `openai` SDK type stubs. Returns the tool call's
+    parsed arguments dict, or None on any failure (no OPENAI_API_KEY, the
+    call raised, or no matching function_call came back)."""
+    if not OPENAI_API_KEY:
+        return None
+    try:
+        import base64
+
+        import openai
+
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            input=[{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt_text},
+                    {"type": "input_image", "image_url": f"data:image/png;base64,{image_b64}"},
+                ],
+            }],
+            tools=[{
+                "type": "function",
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["input_schema"],
+            }],
+            tool_choice={"type": "function", "name": tool["name"]},
+        )
+        for item in response.output:
+            if item.type == "function_call" and item.name == tool["name"]:
+                return json.loads(item.arguments or "{}")
+        return None
+    except Exception:
+        return None

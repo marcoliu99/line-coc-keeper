@@ -76,3 +76,38 @@ def run_conversation(
         messages.append({"role": "user", "content": tool_results})
 
     return final_text
+
+
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+    """Vision + a single forced tool call — used by app/scene_map.py's
+    analyze_page_image, not the Keeper conversation loop above. Returns the
+    tool's input dict, or None on any failure (no ANTHROPIC_API_KEY, the call
+    raised, or no matching tool_use came back)."""
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        import base64
+
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
+        response = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=4096,
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool["name"]},
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
+                    {"type": "text", "text": prompt_text},
+                ],
+            }],
+        )
+        for block in response.content:
+            if block.type == "tool_use" and block.name == tool["name"]:
+                return block.input
+        return None
+    except Exception:
+        return None

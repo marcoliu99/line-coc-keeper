@@ -69,3 +69,40 @@ def run_conversation(
         contents.append(types.Content(role="user", parts=response_parts))
 
     return final_text
+
+
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+    """Vision + a single forced tool call — used by app/scene_map.py's
+    analyze_page_image, not the Keeper conversation loop above. Forces the
+    one tool via ToolConfig(function_calling_config=FunctionCallingConfig(
+    mode="ANY", allowed_function_names=[...])) — same "not exercised against
+    a live key" caveat as the rest of this module applies here. Returns the
+    tool call's args dict, or None on any failure (no GEMINI_API_KEY, the
+    call raised, or no matching function call came back)."""
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        function_declaration = types.FunctionDeclaration(
+            name=tool["name"], description=tool["description"], parameters_json_schema=tool["input_schema"]
+        )
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(function_declarations=[function_declaration])],
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[tool["name"]])
+            ),
+        )
+        contents = [types.Content(role="user", parts=[
+            types.Part.from_bytes(data=png_bytes, mime_type="image/png"),
+            types.Part(text=prompt_text),
+        ])]
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
+        for fc in response.function_calls or []:
+            if fc.name == tool["name"]:
+                return dict(fc.args or {})
+        return None
+    except Exception:
+        return None
