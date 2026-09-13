@@ -256,22 +256,57 @@ async def _handle_coc_command(
 
     if sub == "pc":
         state = load_state(conversation_id)
-        scenario_occupations = list(dict.fromkeys(p.get("occupation") for p in state.pregens if p.get("occupation")))
+        # Once a scenario has its own pregens, quick-gen is scoped to exactly
+        # those — a random unrelated occupation wouldn't have a reason to be in
+        # this specific story, and the scenario is usually balanced/written
+        # around this exact cast. Only fall back to the generic table when the
+        # scenario genuinely has none (or /coc pregens hasn't been run yet).
+        available_occupations = [
+            p.get("occupation") for p in state.pregens if p.get("occupation") and not p.get("claimed_by")
+        ]
+        available_occupations = list(dict.fromkeys(available_occupations))  # de-dupe, keep order
 
         if len(parts) < 3:
+            if state.pregens:
+                if available_occupations:
+                    await reply(
+                        "用法：/coc pc 角色名 職業\n這份劇本的角色（尚未被選走的）：" + "、".join(available_occupations)
+                    )
+                else:
+                    await reply("這份劇本的預製角色都已經被選走了，跟其他玩家喬一下，或改用 /coc create 自己建角。")
+                return
             occ_hint = "、".join(OCCUPATIONS.keys())
-            if scenario_occupations:
-                occ_hint += "\n這份劇本裡的職業（技能會參考劇本內建角色卡）：" + "、".join(scenario_occupations)
-            elif state.scenario_text:
+            if state.scenario_text:
                 occ_hint += "\n（想用這份劇本裡的職業？先輸入 /coc pregens 讓守密人讀取劇本裡的角色卡）"
             await reply("用法：/coc pc 角色名 [職業]\n可選職業：" + occ_hint)
             return
 
         name = parts[2]
         occupation = parts[3] if len(parts) > 3 else None
-        pregen_match = _find_pregen_by_occupation(state, occupation) if occupation else None
-        occupation_skills = pregen_match.get("skills") if pregen_match else None
-        secret_goal = (pregen_match.get("secret_goal") or "") if pregen_match else ""
+
+        if state.pregens:
+            pregen_match = _find_pregen_by_occupation(state, occupation) if occupation else None
+            if not pregen_match:
+                await reply(
+                    "這份劇本有內建角色，請從這些職業裡選一個：" + "、".join(available_occupations)
+                    + "\n用法：/coc pc 角色名 職業"
+                )
+                return
+            claimed_by = pregen_match.get("claimed_by")
+            if claimed_by and claimed_by != user_id:
+                await reply(
+                    f"「{pregen_match.get('occupation')}」已經被其他玩家選走了，"
+                    "剩下可選的：" + ("、".join(available_occupations) or "（都選完了）")
+                )
+                return
+            pregen_match["claimed_by"] = user_id
+            occupation_skills = pregen_match.get("skills")
+            secret_goal = pregen_match.get("secret_goal") or ""
+        else:
+            pregen_match = None
+            occupation_skills = None
+            secret_goal = ""
+
         char = generate_investigator(
             name=name, owner_id=user_id, occupation=occupation,
             occupation_skills=occupation_skills, secret_goal=secret_goal,
@@ -419,7 +454,9 @@ async def _handle_coc_command(
             return
         lines = ["這份劇本內建了以下預製調查員："]
         for i, p in enumerate(state.pregens, start=1):
-            lines.append(f"{i}. {p.get('name', '未命名')}（{p.get('occupation', '未知職業')}）")
+            claimed_by = p.get("claimed_by")
+            tag = "（已被選走）" if claimed_by else ""
+            lines.append(f"{i}. {p.get('name', '未命名')}（{p.get('occupation', '未知職業')}）{tag}")
         lines.append("輸入「/coc usepregen 編號 [自訂名稱]」使用其中一位。")
         await reply("\n".join(lines))
         return
@@ -440,10 +477,16 @@ async def _handle_coc_command(
         if not (1 <= idx <= len(state.pregens)):
             await reply(f"編號超出範圍，目前有 {len(state.pregens)} 位預製角色。")
             return
-        char = pregen_extractor.pregen_to_character(state.pregens[idx - 1], user_id)
+        pregen = state.pregens[idx - 1]
+        claimed_by = pregen.get("claimed_by")
+        if claimed_by and claimed_by != user_id:
+            await reply("這位角色已經被其他玩家選走了，輸入「/coc pregens」看看還有哪些可選。")
+            return
+        char = pregen_extractor.pregen_to_character(pregen, user_id)
         if len(parts) > 3:
             char.name = parts[3]
         state.characters[user_id] = char
+        pregen["claimed_by"] = user_id
         save_state(state)
         await reply(f"已使用預製角色！\n\n{char.sheet_text()}")
         if char.secret_goal:
