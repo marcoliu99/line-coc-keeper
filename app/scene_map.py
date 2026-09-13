@@ -29,11 +29,11 @@ from app.providers import anthropic_provider, gemini_provider, openai_provider
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 
-# 8-way compass, plus up/down for stairs/floors. "N" is only ever a convention
+# 16-way compass, plus up/down for stairs/floors. "N" is only ever a convention
 # for "further into the page/building" — extraction doesn't have a real compass
 # to read off a floor plan, it just needs to be internally consistent so two
 # edges between the same two rooms agree on direction.
-_COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+_COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 _VERTICAL = ["U", "D"]
 
 _ANALYZE_TOOL = {
@@ -148,7 +148,7 @@ def analyze_page_image(png_bytes: bytes) -> tuple[str, dict[str, Any] | None]:
     return description, scene_map
 
 
-_RELATIVE_TO_TURN = {"front": 0, "right": 2, "back": 4, "left": -2}  # steps around _COMPASS (45° each)
+_RELATIVE_TO_TURN = {"front": 0, "right": 4, "back": 8, "left": -4}  # steps around _COMPASS (22.5° each)
 
 
 _VERTICAL_ALIASES = {"up": "U", "down": "D"}
@@ -217,6 +217,85 @@ def validate_scene_map(data: Any) -> list[str]:
         errors.append(f"entry_room_id「{entry_room_id}」不是 rooms 裡任何一個房間的 id")
 
     return errors
+
+
+# English direction words (as used by a hand-authored node-graph map — see
+# import_node_graph below) -> this module's own compass tokens.
+_DIRECTION_WORD_TO_COMPASS = {
+    "north": "N", "north_northeast": "NNE", "northeast": "NE", "east_northeast": "ENE",
+    "east": "E", "east_southeast": "ESE", "southeast": "SE", "south_southeast": "SSE",
+    "south": "S", "south_southwest": "SSW", "southwest": "SW", "west_southwest": "WSW",
+    "west": "W", "west_northwest": "WNW", "northwest": "NW", "north_northwest": "NNW",
+    "up": "U", "down": "D",
+}
+
+
+def import_node_graph(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Converts a hand-authored node-graph map (top-level `nodes`: a dict of
+    room-slug -> {name, connections: [{to, direction, ...}], adjacent: [...]})
+    into this module's canonical scene_map shape (location_name/entry_room_id/
+    rooms/exits — see validate_scene_map). This is a *different*, richer
+    authoring convention than a native rooms/exits YAML (distances, named
+    routes, terrain, undirected "nearby" links) — see app/commands.py's
+    handle_map_upload for how the two are told apart.
+
+    A room's id is its own dict key in `nodes` (not the separate, sometimes-
+    missing/inconsistent `id` field some nodes carry) — always present, never
+    colliding. The first key in `nodes` (dict/YAML insertion order) becomes
+    entry_room_id, since this format has no explicit entry marker.
+
+    Fields this module's schema has no dedicated slot for (distance_m, route,
+    terrain) are folded into the exit's label text rather than silently
+    dropped. `adjacent` entries carry no direction at all, so they can't
+    become a traversable exit — folded into the room's description as a
+    "鄰近地點" line instead; still reachable in play via find_room_by_text's
+    name-based fallback, just not via directional movement.
+
+    Returns (scene_map, warnings) — warnings for anything skipped (an
+    unrecognized direction word, a malformed connection), never a hard
+    failure; callers should still run validate_scene_map on the result."""
+    warnings: list[str] = []
+    nodes = data.get("nodes")
+    if not isinstance(nodes, dict) or not nodes:
+        return {}, ["nodes 必須是至少一筆的節點物件"]
+
+    node_keys = list(nodes.keys())
+    rooms: list[dict[str, Any]] = []
+    for key in node_keys:
+        node = nodes[key]
+        if not isinstance(node, dict):
+            warnings.append(f"節點「{key}」格式錯誤，已略過")
+            continue
+
+        exits: list[dict[str, Any]] = []
+        for conn in node.get("connections", []) or []:
+            if not isinstance(conn, dict) or not conn.get("to"):
+                warnings.append(f"節點「{key}」有一筆格式錯誤的 connection，已略過")
+                continue
+            direction_word = str(conn.get("direction", "")).strip().lower()
+            compass = _DIRECTION_WORD_TO_COMPASS.get(direction_word)
+            if compass is None:
+                warnings.append(f"節點「{key}」的連結方向「{conn.get('direction')}」無法辨識，已略過這條連結")
+                continue
+            label_parts = [str(conn[f]) for f in ("route", "terrain") if conn.get(f)]
+            if conn.get("distance_m") is not None:
+                label_parts.append(f"約{conn['distance_m']}公尺")
+            exits.append({"to": conn["to"], "compass": compass, "label": "，".join(label_parts)})
+
+        description = str(node.get("description", "") or "")
+        adjacent = [str(a) for a in (node.get("adjacent") or [])]
+        if adjacent:
+            nearby_line = f"鄰近地點：{'、'.join(adjacent)}"
+            description = f"{description}\n{nearby_line}".strip()
+
+        rooms.append({"id": key, "name": str(node.get("name", key)), "description": description, "exits": exits})
+
+    scene_map = {
+        "location_name": str(data.get("map", "")),
+        "entry_room_id": node_keys[0],
+        "rooms": rooms,
+    }
+    return scene_map, warnings
 
 
 def get_room(scene_map: dict[str, Any], room_id: str) -> dict[str, Any] | None:

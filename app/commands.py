@@ -213,6 +213,13 @@ async def handle_map_upload(
         await reply(f"YAML 格式錯誤，請檢查語法：{exc}")
         return
 
+    import_warnings: list[str] = []
+    if isinstance(data, dict) and "nodes" in data and "rooms" not in data:
+        # A different, richer authoring convention (node-graph: distances, named
+        # routes, terrain, undirected "nearby" links) than this module's native
+        # rooms/exits shape — see scene_map.import_node_graph's own docstring.
+        data, import_warnings = scene_map_engine.import_node_graph(data)
+
     errors = scene_map_engine.validate_scene_map(data)
     if errors:
         error_list = "\n".join(f"・{e}" for e in errors)
@@ -227,9 +234,12 @@ async def handle_map_upload(
 
     entry_room = scene_map_engine.get_room(data, data.get("entry_room_id", ""))
     entry_note = f"，入口房間「{entry_room['name']}」" if entry_room else ""
+    warning_note = ""
+    if import_warnings:
+        warning_note = "\n\n⚠️ 轉換時有幾個地方略過了：\n" + "\n".join(f"・{w}" for w in import_warnings)
     await push(
         f"地圖「{data.get('location_name') or key}」已儲存（{len(data['rooms'])} 個房間{entry_note}）。\n"
-        f"用「/coc enter {key}」載入這張地圖。"
+        f"用「/coc enter {key}」載入這張地圖。" + warning_note
     )
 
 
