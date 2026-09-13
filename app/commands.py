@@ -104,6 +104,9 @@ async def handle_pdf_upload(
         state.scenario_text = text
         state.scenario_title = title
         state.active = True
+        state.pregens = []  # clear the previous scenario's cached pregens — otherwise
+        # a group that switches PDFs without running /coc newgame first would keep
+        # seeing (and could even build a character off) the old scenario's pregens.
         save_state(state)
 
     warning = ""
@@ -175,6 +178,20 @@ async def handle_text_message(
         await reply(reply_text)
 
 
+def _find_pregen_by_occupation(state: GroupState, occupation: str) -> dict | None:
+    """Fuzzy match a requested occupation against the currently loaded scenario's
+    cached pregens (state.pregens — reset on every new PDF upload, so this only
+    ever matches against whatever scenario is active right now)."""
+    if not occupation:
+        return None
+    norm = occupation.strip().lower()
+    for p in state.pregens:
+        occ = str(p.get("occupation", "")).strip().lower()
+        if occ and (norm == occ or norm in occ or occ in norm):
+            return p
+    return None
+
+
 async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, text: str) -> None:
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
@@ -185,16 +202,29 @@ async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, 
         return
 
     if sub == "pc":
+        state = load_state(conversation_id)
+        scenario_occupations = list(dict.fromkeys(p.get("occupation") for p in state.pregens if p.get("occupation")))
+
         if len(parts) < 3:
-            await reply("用法：/coc pc 角色名 [職業]\n可選職業：" + "、".join(OCCUPATIONS.keys()))
+            occ_hint = "、".join(OCCUPATIONS.keys())
+            if scenario_occupations:
+                occ_hint += "\n這份劇本裡的職業（技能會參考劇本內建角色卡）：" + "、".join(scenario_occupations)
+            elif state.scenario_text:
+                occ_hint += "\n（想用這份劇本裡的職業？先輸入 /coc pregens 讓守密人讀取劇本裡的角色卡）"
+            await reply("用法：/coc pc 角色名 [職業]\n可選職業：" + occ_hint)
             return
+
         name = parts[2]
         occupation = parts[3] if len(parts) > 3 else None
-        state = load_state(conversation_id)
-        char = generate_investigator(name=name, owner_id=user_id, occupation=occupation)
+        pregen_match = _find_pregen_by_occupation(state, occupation) if occupation else None
+        occupation_skills = pregen_match.get("skills") if pregen_match else None
+        char = generate_investigator(
+            name=name, owner_id=user_id, occupation=occupation, occupation_skills=occupation_skills
+        )
         state.characters[user_id] = char
         save_state(state)
-        await reply(f"調查員建立完成！\n\n{char.sheet_text()}")
+        note = "\n（技能參考自劇本內建角色卡）" if pregen_match else ""
+        await reply(f"調查員建立完成！\n\n{char.sheet_text()}{note}")
         return
 
     if sub == "sheet":

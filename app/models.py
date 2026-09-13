@@ -52,6 +52,18 @@ OCCUPATIONS: dict[str, dict[str, int]] = {
         "潛行": 50, "偵查": 50, "話術": 50, "巧手": 40,
         "生存": 50, "格鬥（鬥毆）": 40, "開鎖": 40,
     },
+    "藝術家": {
+        "藝術／工藝（繪畫）": 60, "魅惑": 50, "心理學": 40, "圖書館使用": 40,
+        "歷史": 40, "估價": 40, "話術": 40,
+    },
+    "海洋生物學家": {
+        "科學（生物）": 70, "游泳": 60, "自然學": 60, "圖書館使用": 60,
+        "科學（化學）": 40, "急救": 40, "電腦使用": 40, "領航": 40,
+    },
+    "FBI探員": {
+        "射擊（手槍）": 60, "法律": 50, "心理學": 50, "偵查": 60,
+        "格鬥（鬥毆）": 50, "汽車駕駛": 50, "說服": 40, "恐嚇": 40,
+    },
 }
 
 
@@ -137,8 +149,21 @@ def move_rate(str_: int, dex: int, siz: int) -> int:
     return 8
 
 
-def generate_investigator(name: str, owner_id: str, occupation: str | None = None) -> Character:
-    """Quick-generate a rolled COC7e investigator (classic 3d6 method)."""
+def generate_investigator(
+    name: str,
+    owner_id: str,
+    occupation: str | None = None,
+    occupation_skills: dict[str, int] | None = None,
+) -> Character:
+    """Quick-generate a rolled COC7e investigator (classic 3d6 method).
+
+    `occupation_skills`, when given, overrides the built-in OCCUPATIONS lookup —
+    used by /coc pc to pull the skill bonus from a scenario's own extracted
+    pregen (see app/commands.py) instead of the generic occupation list, so a
+    quick-gen character built with e.g. "海洋生物學家" from a specific scenario
+    actually gets that scenario's real skill values rather than a made-up label
+    with no bonus at all.
+    """
     str_ = _roll(3, 6, 5)
     con = _roll(3, 6, 5)
     dex = _roll(3, 6, 5)
@@ -160,15 +185,22 @@ def generate_investigator(name: str, owner_id: str, occupation: str | None = Non
     skills["閃避"] = dex // 2
     skills["母語"] = edu
 
-    occ_key = occupation if occupation in OCCUPATIONS else None
-    if occ_key:
-        for skill, value in OCCUPATIONS[occ_key].items():
-            skills[skill] = max(skills.get(skill, 0), value)
+    if occupation_skills:
+        for skill, value in occupation_skills.items():
+            if isinstance(value, (int, float)):
+                skills[skill] = max(skills.get(skill, 0), int(value))
+        occ_label = occupation or "自由人"
+    else:
+        occ_key = occupation if occupation in OCCUPATIONS else None
+        if occ_key:
+            for skill, value in OCCUPATIONS[occ_key].items():
+                skills[skill] = max(skills.get(skill, 0), value)
+        occ_label = occ_key or (occupation or "自由人")
 
     return Character(
         name=name,
         owner_id=owner_id,
-        occupation=occ_key or (occupation or "自由人"),
+        occupation=occ_label,
         str_=str_, con=con, siz=siz, dex=dex, app=app, int_=int_, pow_=pow_, edu=edu, luck=luck,
         hp=hp_max, hp_max=hp_max,
         mp=mp_max, mp_max=mp_max,

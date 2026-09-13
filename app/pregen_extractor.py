@@ -29,8 +29,15 @@ _REPORT_TOOL = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "調查員姓名"},
-                        "occupation": {"type": "string"},
+                        "name": {"type": "string", "description": "調查員姓名（維持原文，通常是專有名詞）"},
+                        "occupation": {
+                            "type": "string",
+                            "description": (
+                                "職業，請翻譯成繁體中文（例如英文劇本寫 'Artist' 就回報'藝術家'，"
+                                "'Antiques Dealer' 回報'骨董商'），方便玩家之後用 /coc pc 角色名 職業 "
+                                "直接指定這個職業。只翻譯這個欄位的用詞，不要連帶編造或更動任何數值。"
+                            ),
+                        },
                         "str_": {"type": "integer"}, "con": {"type": "integer"}, "siz": {"type": "integer"},
                         "dex": {"type": "integer"}, "app": {"type": "integer"}, "int_": {"type": "integer"},
                         "pow_": {"type": "integer"}, "edu": {"type": "integer"}, "luck": {"type": "integer"},
