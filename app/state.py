@@ -31,9 +31,25 @@ def load_state(group_id: str) -> GroupState:
     return GroupState.from_dict(data)
 
 
+def _characters_dir() -> Path:
+    return DATA_DIR / "characters"
+
+
 def save_state(state: GroupState) -> None:
     path = _path_for(state.group_id)
     path.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # A flat, cat/jq-able file per Discord user id, independent of which group
+    # this character belongs to — separate from the group blob above so
+    # checking one player's sheet doesn't require knowing (or parsing) the
+    # whole conversation's state file.
+    characters_dir = _characters_dir()
+    characters_dir.mkdir(parents=True, exist_ok=True)
+    for owner_id, char in state.characters.items():
+        index_entry = {"conversation_id": state.group_id, "name": char.name, "occupation": char.occupation, "sheet": char.to_dict()}
+        (characters_dir / f"{_safe_id(owner_id)}.json").write_text(
+            json.dumps(index_entry, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def _images_dir(group_id: str) -> Path:

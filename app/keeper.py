@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from app import combat, dice, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
-from app.models import Character, GroupState
+from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.skill_aliases import canonical_skill_name
 from app.state import save_state
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
@@ -282,14 +283,29 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
         return char.skills[key]
     if key.upper() in _ATTR_ALIASES:
         return getattr(char, _ATTR_ALIASES[key.upper()])
+
+    # Canonicalize both the query and every existing key (see app/skill_aliases.py)
+    # before comparing — catches e.g. "手槍" vs char.skills' own "射擊（手槍）",
+    # which used to silently miss each other and fall through to the substring
+    # fallback below (or worse, register a brand new duplicate skill).
+    canonical_query = canonical_skill_name(key)
+    if canonical_query in char.skills:
+        return char.skills[canonical_query]
+    for k, v in char.skills.items():
+        if canonical_skill_name(k) == canonical_query:
+            return v
+
     norm = key.replace(" ", "").lower()
     for k, v in char.skills.items():
         kk = k.replace(" ", "").lower()
         if norm == kk or norm in kk or kk in norm:
             return v
-    # Unknown skill: register with a modest default so future calls stay consistent.
-    default_value = 20
-    char.skills[key] = default_value
+
+    # Unknown skill: register under its canonical name (not the raw LLM
+    # phrasing) so future lookups stay consistent, using the real COC7e base
+    # rate when we recognize it instead of always guessing a flat 20.
+    default_value = BASE_SKILLS.get(canonical_query, 20)
+    char.skills[canonical_query] = default_value
     return default_value
 
 
@@ -333,6 +349,12 @@ def _execute_tool(
             options = []
             for opt in raw_options:
                 value = resolve_skill_value(char, opt["skill"])
+                if "反擊" in opt["label"]:
+                    # House rule: counter-attacking works offense and defense at
+                    # once, so it's one difficulty tier harder than a plain dodge
+                    # — enforced here rather than left to the Keeper's own
+                    # judgment call, which was inconsistent in practice.
+                    value = value // 2
                 options.append({
                     "label": opt["label"], "skill": opt["skill"], "skill_value": value,
                     "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),

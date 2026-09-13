@@ -13,6 +13,7 @@ from typing import Any
 from app.config import LLM_PROVIDER
 from app.models import Character, damage_bonus_and_build, move_rate
 from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.skill_aliases import canonical_skill_name
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 
@@ -121,7 +122,15 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str) -> Character:
     db, build = damage_bonus_and_build(str_, siz)
     move = move_rate(str_, dex, siz)
 
-    skills = {k: int(v) for k, v in (pregen.get("skills") or {}).items() if isinstance(v, (int, float))}
+    # Canonicalize each incoming skill name (see app/skill_aliases.py) — the LLM
+    # extraction translates whatever the scenario itself calls a skill into
+    # Traditional Chinese, which won't necessarily match the exact spelling the
+    # Keeper uses when it later calls skill_check for the same skill.
+    skills = {
+        canonical_skill_name(k): int(v)
+        for k, v in (pregen.get("skills") or {}).items()
+        if isinstance(v, (int, float))
+    }
     skills.setdefault("閃避", dex // 2)
     skills.setdefault("母語", edu)
 
