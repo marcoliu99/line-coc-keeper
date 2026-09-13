@@ -48,6 +48,15 @@ _REPORT_TOOL = {
                             "additionalProperties": {"type": "integer"},
                         },
                         "notes": {"type": "string", "description": "簡短背景介紹，若劇本有寫的話"},
+                        "secret_goal": {
+                            "type": "string",
+                            "description": (
+                                "這位調查員的秘密目標／個人動機／hook，若劇本裡有寫的話（通常會有類似"
+                                "『你的目標是...』『Your goal:』這種段落，只屬於這位調查員自己，"
+                                "劇本設計上通常不會讓其他玩家知道）。翻譯成繁體中文，維持原意，"
+                                "不要編造劇本沒寫的內容；沒有的話留空字串即可。"
+                            ),
+                        },
                     },
                     "required": ["name"],
                 },
@@ -120,4 +129,5 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str) -> Character:
         move=move, damage_bonus=db, build=build,
         skills=skills,
         notes=pregen.get("notes", "") or "",
+        secret_goal=pregen.get("secret_goal", "") or "",
     )

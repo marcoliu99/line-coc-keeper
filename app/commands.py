@@ -2,9 +2,11 @@
 
 Shared by every front-end adapter (app/main.py for LINE, app/discord_bot.py for
 Discord, ...). Nothing in here knows about LINE or Discord — it only deals with
-plain strings (conversation_id, user_id, text) and two things the adapter
-supplies: a `reply` callback to send text back, and a `get_display_name`
-callback (async, since some platforms need an API call for it and some don't).
+plain strings (conversation_id, user_id, text) and things the adapter supplies:
+a `reply` callback to send text back to the conversation, a `get_display_name`
+callback (async, since some platforms need an API call for it and some don't),
+and a `send_dm` callback for whispering a private message to one specific
+player (used by the Keeper's send_private_info tool — see app/keeper.py).
 
 Per-conversation locking (app/locks.py) is handled here, not by each adapter,
 since it protects GroupState file I/O — a game-state concern, not a platform
@@ -24,6 +26,7 @@ from app.state import load_state, save_state
 
 Reply = Callable[[str], Awaitable[None]]
 GetDisplayName = Callable[[], Awaitable[str]]
+SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
 
 HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・上傳一份 PDF 劇本檔案 → 載入劇本並開始遊戲
@@ -40,6 +43,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc sheet → 查看自己的角色卡
 ・/coc status → 查看目前劇本與所有角色狀態
 ・/coc setskill 角色名 技能名 數值 → 手動修正自己角色的技能值
+・/coc away → 標記自己暫離（戰鬥中會自動跳過你的回合）；/coc back → 回來繼續玩
 
 【戰鬥】
 ・/coc combat start → 開始正式戰鬥（依 DEX 排先攻順位）
@@ -150,6 +154,7 @@ async def handle_text_message(
     user_id: str,
     get_display_name: GetDisplayName,
     reply: Reply,
+    send_dm: SendDM,
     text: str,
 ) -> None:
     text = text.strip()
@@ -160,9 +165,10 @@ async def handle_text_message(
 
     if text.startswith("/coc"):
         async with locks.get_conversation_lock(conversation_id):
-            await _handle_coc_command(conversation_id, user_id, reply, text)
+            await _handle_coc_command(conversation_id, user_id, reply, send_dm, text)
         return
 
+    private_messages: list[tuple[str, str]] = []
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if not state.active:
@@ -174,8 +180,19 @@ async def handle_text_message(
             return
 
         display_name = state.characters[user_id].name
-        reply_text = await asyncio.to_thread(keeper.run_turn, state, display_name, text)
+        reply_text, private_messages = await asyncio.to_thread(keeper.run_turn, state, display_name, text)
         await reply(reply_text)
+
+    # Delivered outside the lock — pure I/O, no state access needed. Best-effort:
+    # a DM can fail (LINE requires the player to have friended the bot; Discord
+    # requires them to allow DMs from server members) and we deliberately don't
+    # fall back to posting the content publicly, since that would defeat the
+    # entire point of it being private.
+    for owner_id, message in private_messages:
+        try:
+            await send_dm(owner_id, f"🤫（私訊）{message}")
+        except Exception:
+            pass
 
 
 def _find_pregen_by_occupation(state: GroupState, occupation: str) -> dict | None:
@@ -192,7 +209,7 @@ def _find_pregen_by_occupation(state: GroupState, occupation: str) -> dict | Non
     return None
 
 
-async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, text: str) -> None:
+async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, send_dm: SendDM, text: str) -> None:
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
 
@@ -218,13 +235,20 @@ async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, 
         occupation = parts[3] if len(parts) > 3 else None
         pregen_match = _find_pregen_by_occupation(state, occupation) if occupation else None
         occupation_skills = pregen_match.get("skills") if pregen_match else None
+        secret_goal = (pregen_match.get("secret_goal") or "") if pregen_match else ""
         char = generate_investigator(
-            name=name, owner_id=user_id, occupation=occupation, occupation_skills=occupation_skills
+            name=name, owner_id=user_id, occupation=occupation,
+            occupation_skills=occupation_skills, secret_goal=secret_goal,
         )
         state.characters[user_id] = char
         save_state(state)
         note = "\n（技能參考自劇本內建角色卡）" if pregen_match else ""
         await reply(f"調查員建立完成！\n\n{char.sheet_text()}{note}")
+        if secret_goal:
+            try:
+                await send_dm(user_id, f"🤫（私訊）你的秘密目標：{secret_goal}")
+            except Exception:
+                pass
         return
 
     if sub == "sheet":
@@ -386,6 +410,33 @@ async def _handle_coc_command(conversation_id: str, user_id: str, reply: Reply, 
         state.characters[user_id] = char
         save_state(state)
         await reply(f"已使用預製角色！\n\n{char.sheet_text()}")
+        if char.secret_goal:
+            try:
+                await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")
+            except Exception:
+                pass
+        return
+
+    if sub == "away":
+        state = load_state(conversation_id)
+        char = state.characters.get(user_id)
+        if not char:
+            await reply("你還沒有角色。")
+            return
+        char.away = True
+        save_state(state)
+        await reply(f"{char.name} 已標記為暫離，戰鬥中會自動跳過他的回合，直到輸入「/coc back」回來。")
+        return
+
+    if sub == "back":
+        state = load_state(conversation_id)
+        char = state.characters.get(user_id)
+        if not char:
+            await reply("你還沒有角色。")
+            return
+        char.away = False
+        save_state(state)
+        await reply(f"{char.name} 回來了，恢復正常參與。")
         return
 
     if sub == "combat":

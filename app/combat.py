@@ -73,19 +73,29 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
     }
 
 
+def _is_skippable(state: GroupState, combatant: Combatant) -> bool:
+    if combatant.defeated:
+        return True
+    if combatant.is_pc:
+        pc = state.get_character_by_name(combatant.name)
+        if pc and pc.away:
+            return True  # player stepped out (/coc away) — don't stall the group waiting on them
+    return False
+
+
 def advance_turn(state: GroupState) -> dict:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
-    if all(c.defeated for c in combat.order):
-        return {"ok": False, "error": "所有戰鬥角色都已倒下，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
+    if all(_is_skippable(state, c) for c in combat.order):
+        return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     n = len(combat.order)
     for _ in range(n):
         combat.current_index = (combat.current_index + 1) % n
         if combat.current_index == 0:
             combat.round_number += 1
-        if not combat.order[combat.current_index].defeated:
+        if not _is_skippable(state, combat.order[combat.current_index]):
             break
 
     current = combat.order[combat.current_index]
@@ -103,8 +113,10 @@ def status_text(state: GroupState) -> str:
 
     lines = [f"⚔️ 戰鬥中 - 第 {combat.round_number} 輪"]
     for i, c in enumerate(combat.order):
-        marker = "👉 " if i == combat.current_index and not c.defeated else "　　"
-        tag = "（倒下）" if c.defeated else ""
+        skippable = _is_skippable(state, c)
+        marker = "👉 " if i == combat.current_index and not skippable else "　　"
+        away = c.is_pc and not c.defeated and skippable
+        tag = "（倒下）" if c.defeated else "（暫離）" if away else ""
         side = "我方" if c.is_pc else "敵方"
         lines.append(f"{marker}{c.name}［{side}］DEX {c.dex}　HP {c.hp}/{c.hp_max}{tag}")
     return "\n".join(lines)

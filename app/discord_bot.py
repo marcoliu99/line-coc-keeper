@@ -41,6 +41,15 @@ def _conversation_id(channel_id: int) -> str:
     return f"discord-channel-{channel_id}"
 
 
+async def _send_dm(owner_id: str, text: str) -> None:
+    # owner_id is str(discord.Member.id), as stored on Character.owner_id. Raises
+    # if the user has DMs from server members disabled; commands.py swallows
+    # that (see its docstring on why it doesn't fall back to posting publicly).
+    user = client.get_user(int(owner_id)) or await client.fetch_user(int(owner_id))
+    for chunk in _chunk_text(text):
+        await user.send(chunk)
+
+
 @client.event
 async def on_ready() -> None:
     print(f"Discord bot 已上線：{client.user}")
@@ -74,7 +83,7 @@ async def on_message(message: discord.Message) -> None:
                 await commands.handle_unsupported_message(conversation_id, reply, "附件")
             return
 
-        await commands.handle_text_message(conversation_id, user_id, get_display_name, reply, text)
+        await commands.handle_text_message(conversation_id, user_id, get_display_name, reply, _send_dm, text)
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         try:
             await reply(f"發生錯誤了：{exc}")

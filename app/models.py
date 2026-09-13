@@ -99,7 +99,9 @@ class Character:
 
     skills: dict[str, int] = field(default_factory=dict)
     notes: str = ""
+    secret_goal: str = ""  # personal hook/motivation — Keeper-only, see keeper_notes_text()
     status_tags: list[str] = field(default_factory=list)  # e.g. ["昏迷", "瀕死"]
+    away: bool = False  # player stepped out — combat.py auto-skips their turn
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -109,6 +111,10 @@ class Character:
         return Character(**data)
 
     def sheet_text(self) -> str:
+        # Player-facing only — never include secret_goal here. This is what
+        # /coc sheet and /coc pc's completion message show, both of which
+        # reply publicly to the whole conversation; see keeper_notes_text()
+        # for the Keeper-only counterpart.
         lines = [
             f"【{self.name}】職業：{self.occupation}（玩家：{self.owner_id}）",
             f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} "
@@ -116,12 +122,26 @@ class Character:
             f"HP {self.hp}/{self.hp_max}　MP {self.mp}/{self.mp_max}　SAN {self.san}/{self.san_max}　"
             f"MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
         ]
-        if self.status_tags:
-            lines.append("狀態：" + "、".join(self.status_tags))
+        tags = list(self.status_tags)
+        if self.away:
+            tags.append("暫離")
+        if tags:
+            lines.append("狀態：" + "、".join(tags))
         top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
         if top_skills:
             lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
         return "\n".join(lines)
+
+    def keeper_notes_text(self) -> str:
+        """Extra context for the Keeper's own prompt only (see
+        app/keeper.py:_build_dynamic_prompt) — never rendered anywhere a player
+        would see it. Currently just the secret goal, sent to the player
+        privately once when the character is created (see app/commands.py) and
+        repeated here so the Keeper can keep nudging toward it narratively
+        without re-exposing it in a public reply."""
+        if not self.secret_goal:
+            return ""
+        return f"（{self.name} 的秘密目標，只有你知道，不要在公開回覆裡洩漏：{self.secret_goal}）"
 
 
 def damage_bonus_and_build(str_: int, siz: int) -> tuple[str, int]:
@@ -154,6 +174,7 @@ def generate_investigator(
     owner_id: str,
     occupation: str | None = None,
     occupation_skills: dict[str, int] | None = None,
+    secret_goal: str = "",
 ) -> Character:
     """Quick-generate a rolled COC7e investigator (classic 3d6 method).
 
@@ -207,6 +228,7 @@ def generate_investigator(
         san=san, san_max=san_max,
         move=move, damage_bonus=db, build=build,
         skills=skills,
+        secret_goal=secret_goal,
     )
 
 

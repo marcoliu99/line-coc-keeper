@@ -158,6 +158,24 @@ TOOLS = [
         "description": "結束目前的戰鬥，清除戰鬥狀態（先攻順位、回合數）。戰鬥明確分出勝負或雙方脫離後呼叫。",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "send_private_info",
+        "description": (
+            "私下告訴某位調查員一段只有他自己知道的資訊（例如：秘密檢定結果、只有他發現的線索、"
+            "私人物品內容、跟其他玩家角色無關的祕密）。這段內容只會送到那位玩家自己手上，"
+            "群組裡的其他人看不到。呼叫這個工具之後，公開回覆仍然要正常描述場景，"
+            "但不能把這段私人內容洩漏在公開回覆裡；可以用中性、不劇透的方式帶過"
+            "（例如「他若有所思地看著手上的東西，沒有多說什麼」）。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string", "description": "要私訊的調查員角色名稱"},
+                "message": {"type": "string", "description": "要私下告訴他的內容"},
+            },
+            "required": ["investigator", "message"],
+        },
+    },
 ]
 # Common {name, description, input_schema} shape works unmodified for both Claude
 # and Gemini; any provider-specific extras (e.g. Anthropic's cache_control) are
@@ -194,7 +212,7 @@ def _resolve_skill_value(char: Character, skill_name: str) -> int:
     return default_value
 
 
-def _execute_tool(state: GroupState, name: str, tool_input: dict) -> dict:
+def _execute_tool(state: GroupState, name: str, tool_input: dict, private_messages: list[tuple[str, str]]) -> dict:
     try:
         if name == "roll_dice":
             r = dice.roll_expression(tool_input["expression"])
@@ -285,6 +303,13 @@ def _execute_tool(state: GroupState, name: str, tool_input: dict) -> dict:
             save_state(state)
             return {"ok": True}
 
+        if name == "send_private_info":
+            char = _find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            private_messages.append((char.owner_id, tool_input["message"]))
+            return {"ok": True, "delivered_to": char.name}
+
         return {"ok": False, "error": f"未知工具 {name}"}
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}
@@ -297,7 +322,7 @@ def _build_static_prompt(state: GroupState) -> str:
     of re-billed on every single message. (Gemini's context caching isn't wired up
     yet; see app/providers/gemini_provider.py.)"""
     scenario = state.scenario_text or "（尚未載入劇本，請提醒玩家用 /coc 上傳 PDF 劇本）"
-    return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在 LINE 群組中透過文字對話主持一場遊戲。
+    return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
 
 # 行為準則
 - 全程使用繁體中文，營造洛夫克拉夫特式的懸疑恐怖氛圍，但訊息長度要適合聊天軟體閱讀：每次回覆盡量 3 到 8 句，避免長篇大論、避免使用 Markdown 標題或表格。
@@ -310,6 +335,19 @@ def _build_static_prompt(state: GroupState) -> str:
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
 - 角色 HP 降到 0 時描述瀕死或死亡過程；SAN 降到 0 時描述永久性失常的下場。
+- 有些資訊只該讓特定調查員知道（秘密檢定結果、只有他發現的線索、私人物品內容等），這種時候呼叫
+  send_private_info 私下告訴那位玩家，不要寫進公開回覆裡；公開回覆一樣要正常描述當下場景，
+  只是用中性、不劇透的方式帶過那個角色在做什麼，不要讓其他玩家從公開內容反推出私人資訊是什麼。
+- **絕對不要在公開回覆裡寫出任何形式的「後設說明」或「條件式旁白」**，例如「（如果骨董商在場，這裡
+  就會認出這是卡西迪——但目前無人認得他）」這種句子。這種寫法就算沒直接講出答案，也已經洩漏了「這裡
+  有東西可以被特定人物認出來」這個事實本身，等於變相劇透。正確做法：如果符合條件的角色真的在場，
+  直接用 send_private_info 告訴那位玩家他認出了什麼；如果沒有符合條件的角色在場，就完全不要提這件事，
+  當作沒發生過，等以後有對的人在場、或用其他方式調查到才揭露。公開回覆只寫玩家角色們實際上看到、
+  聽到、感受到的內容，不要有任何括號旁白解釋你身為守密人知道但玩家不知道的事。
+- 角色卡上如果附了「秘密目標」，那是只有你知道、只屬於那位玩家的私人動機，不要在公開回覆裡提到；
+  可以在適當時機透過劇情發展或 NPC 對話委婉暗示、引導那位玩家往那個方向行動，但不要直接講白。
+- 角色卡標示「（暫離）」代表玩家目前不在，不管是不是在戰鬥中，都不需要特別等他、也不要主動描述
+  他的角色在做什麼；照常推進其他人的劇情就好，他回來（狀態變回正常）之後再自然地把他寫回場景裡。
 
 # 目前劇本內容（機密，僅供你判斷用，勿直接洩漏給玩家）
 {scenario}
@@ -322,6 +360,8 @@ def _build_dynamic_prompt(state: GroupState) -> str:
     resend, and keeping it separate means those changes don't invalidate the much
     larger cached scenario block above."""
     chars_text = "\n\n".join(c.sheet_text() for c in state.characters.values()) or "（目前尚無登記角色）"
+    secret_goals = "\n".join(c.keeper_notes_text() for c in state.characters.values() if c.secret_goal)
+    secret_block = f"\n\n{secret_goals}" if secret_goals else ""
 
     combat_block = ""
     if state.combat.active:
@@ -330,25 +370,33 @@ def _build_dynamic_prompt(state: GroupState) -> str:
 # 目前戰鬥狀態
 {combat.status_text(state)}
 
-戰鬥規則：目前正在進行正式戰鬥，一次只處理「輪到的角色」的行動。某位戰鬥員的行動（含擲骰結果）處理完後，
-必須呼叫 advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、
-死亡要呼叫 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色
-行動，禮貌提醒他們要等輪到自己；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。"""
+戰鬥規則：目前正在進行正式戰鬥，一次只處理「輪到的角色」的行動，嚴格按照上面列出的先攻順位進行——
+DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情方便就打亂順序或把不同 DEX 的人合併敘述成同時
+發生；只有 DEX 剛好相同的戰鬥員才可以敘述成同時行動。某位戰鬥員的行動（含擲骰結果）處理完後，必須呼叫
+advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
+呼叫 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
+禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
+不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。"""
 
     return f"""# 目前登記的調查員角色
-{chars_text}
+{chars_text}{secret_block}
 {combat_block}
 """
 
 
-def run_turn(state: GroupState, speaker_name: str, message_text: str) -> str:
+def run_turn(state: GroupState, speaker_name: str, message_text: str) -> tuple[str, list[tuple[str, str]]]:
+    """Returns (public_reply_text, private_messages) where private_messages is a
+    list of (owner_id, message) pairs queued via the send_private_info tool —
+    the caller (app/commands.py) is responsible for actually delivering those
+    via a platform-specific DM channel; nothing here sends anything itself."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
     if provider is None:
-        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic 或 gemini）"
+        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic 或 gemini）", []
 
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state)
     history = state.log[-MAX_LOG_TURNS * 2 :]
+    private_messages: list[tuple[str, str]] = []
 
     final_text = provider.run_conversation(
         static_prompt,
@@ -356,7 +404,7 @@ def run_turn(state: GroupState, speaker_name: str, message_text: str) -> str:
         TOOLS,
         history,
         f"{speaker_name}：{message_text}",
-        lambda name, tool_input: _execute_tool(state, name, tool_input),
+        lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages),
         MAX_TOOL_ITERATIONS,
     )
 
@@ -365,4 +413,4 @@ def run_turn(state: GroupState, speaker_name: str, message_text: str) -> str:
     if len(state.log) > MAX_LOG_TURNS * 4:
         state.log = state.log[-MAX_LOG_TURNS * 2 :]
     save_state(state)
-    return final_text
+    return final_text, private_messages

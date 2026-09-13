@@ -90,6 +90,14 @@ def _make_push(to_id: str) -> commands.Reply:
     return push
 
 
+async def _send_dm(owner_id: str, text: str) -> None:
+    # owner_id is the raw LINE user id stored on Character.owner_id — push_message's
+    # `to` field accepts that directly, so this just reuses _make_push. Will raise
+    # if that user hasn't added the bot as a friend; commands.py swallows the
+    # exception (see its docstring on why it doesn't fall back to posting publicly).
+    await _make_push(owner_id)(text)
+
+
 def _conversation_id(source) -> str:
     if isinstance(source, GroupSource):
         return f"line-group-{source.group_id}"
@@ -177,4 +185,6 @@ async def _handle_message_event(event: MessageEvent) -> None:
     async def get_display_name() -> str:
         return await _display_name(event.source, user_id)
 
-    await commands.handle_text_message(conversation_id, user_id, get_display_name, reply, event.message.text)
+    await commands.handle_text_message(
+        conversation_id, user_id, get_display_name, reply, _send_dm, event.message.text
+    )
