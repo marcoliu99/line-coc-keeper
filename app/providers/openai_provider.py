@@ -1,14 +1,18 @@
-"""OpenAI (Chat Completions API) provider adapter.
+"""OpenAI provider adapter — uses the **Responses API**
+(`client.responses.create(...)`), not the older Chat Completions API.
 
-Built from the `openai` Python SDK's standard Chat Completions tool-calling
-loop (`client.chat.completions.create(..., tools=[{"type": "function", ...}])`,
-reading `message.tool_calls` back off the response) — the same interface
-`app/markitdown_shim.py` already targets for markitdown-ocr, just used here
-directly instead of through a shim, since this *is* real OpenAI. Not
-exercised against a live API key during development (same caveat as
-app/providers/gemini_provider.py): if this misbehaves, check the exact
-OPENAI_MODEL string and the current `openai` SDK's tool-calling shape before
-assuming the game logic is at fault.
+This project originally used Chat Completions (matching markitdown-ocr's
+hard-coded shape — see app/markitdown_shim.py, which still targets that on
+purpose). But OpenAI's own current Python library docs
+(https://developers.openai.com/api/docs/libraries?language=python — checked
+directly, not assumed from memory) show `client.responses.create(model=...,
+input=...)` as the recommended call for new integrations, so the Keeper path
+was rewritten to match. The exact field names below (FunctionToolParam's
+flat {type, name, description, parameters} shape, ResponseFunctionToolCall's
+{call_id, name, arguments}, FunctionCallOutput's {type: "function_call_output",
+call_id, output}) were confirmed against this project's installed `openai`
+SDK's actual type stubs (openai/types/responses/*.py), not guessed from the
+docs page alone.
 """
 from __future__ import annotations
 
@@ -34,55 +38,67 @@ def run_conversation(
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
+    # Responses API tools are flat (no nested "function" wrapper, unlike Chat
+    # Completions) — see FunctionToolParam in the SDK's type stubs.
     openai_tools = [
         {
             "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": t["input_schema"],
-            },
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"],
         }
         for t in tools
     ]
 
-    messages: list[dict] = [{"role": "system", "content": f"{static_system}\n\n{dynamic_system}"}]
-    for entry in history:
-        messages.append({"role": entry["role"], "content": entry["content"]})
-    messages.append({"role": "user", "content": new_message})
+    # instructions is the Responses API's dedicated system-prompt field —
+    # unlike the Chat Completions provider, this doesn't need a "system" role
+    # message mixed into the input list.
+    instructions = f"{static_system}\n\n{dynamic_system}"
+
+    input_items: list[dict] = [{"role": entry["role"], "content": entry["content"]} for entry in history]
+    input_items.append({"role": "user", "content": new_message})
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     for _ in range(max_iterations):
-        response = client.chat.completions.create(
+        response = client.responses.create(
             model=OPENAI_MODEL,
-            messages=messages,
+            instructions=instructions,
+            input=input_items,
             tools=openai_tools,
         )
-        message = response.choices[0].message
 
-        assistant_entry: dict = {"role": "assistant", "content": message.content}
-        if message.tool_calls:
-            assistant_entry["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                }
-                for tc in message.tool_calls
-            ]
-        messages.append(assistant_entry)
+        function_calls = [item for item in response.output if item.type == "function_call"]
 
-        if not message.tool_calls:
-            final_text = (message.content or "").strip() or final_text
+        # Echo the model's own output back into the next call's input — explicit
+        # per-item-type conversion (rather than passing the raw response.output
+        # pydantic objects straight through) so this stays plain-dict JSON and
+        # easy to test against a fake response object.
+        for item in response.output:
+            if item.type == "function_call":
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": item.call_id,
+                    "name": item.name,
+                    "arguments": item.arguments,
+                })
+            elif item.type == "message":
+                text = "".join(c.text for c in item.content if getattr(c, "type", None) == "output_text")
+                if text:
+                    input_items.append({"role": "assistant", "content": text})
+            # Other item types (reasoning, etc.) are intentionally dropped —
+            # not needed for this project's tool-calling loop.
+
+        if not function_calls:
+            final_text = (response.output_text or "").strip() or final_text
             break
 
-        for tc in message.tool_calls:
-            args = json.loads(tc.function.arguments or "{}")
-            result = execute_tool(tc.function.name, args)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(result, ensure_ascii=False),
+        for fc in function_calls:
+            args = json.loads(fc.arguments or "{}")
+            result = execute_tool(fc.name, args)
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": fc.call_id,
+                "output": json.dumps(result, ensure_ascii=False),
             })
 
     return final_text
