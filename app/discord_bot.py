@@ -9,12 +9,15 @@ there's no webhook URL or ngrok tunnel needed for this adapter at all.
 from __future__ import annotations
 
 import io
+import logging
 
 import discord
 
 from app import commands, locks
 from app.config import DISCORD_BOT_TOKEN
 from app.state import load_state as load_group_state
+
+_logger = logging.getLogger(__name__)
 
 MAX_DISCORD_MESSAGE_CHARS = 1900  # Discord's hard limit is 2000; leave a margin
 MAX_REPLY_MESSAGES = 10
@@ -150,15 +153,21 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
             command_text = f"/coc check {self.option}" if self.option else "/coc check"
-            async with locks.get_conversation_lock(self.conversation_id):
-                state_before = load_group_state(self.conversation_id)
-                before_pending = dict(state_before.pending_checks)
-                before_luck_pending = dict(state_before.pending_luck_decisions)
-                await commands.handle_check_command(
-                    self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, command_text
-                )
-            await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
-            await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
+            state_before = load_group_state(self.conversation_id)
+            before_pending = dict(state_before.pending_checks)
+            before_luck_pending = dict(state_before.pending_luck_decisions)
+            try:
+                async with locks.get_conversation_lock(self.conversation_id):
+                    await commands.handle_check_command(
+                        self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, command_text
+                    )
+            finally:
+                # Always attempt this, even if handle_check_command raised
+                # partway through — see app/discord_bot.py's on_message for
+                # why (a check can already be registered/saved before a later
+                # failure in the same turn).
+                await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
+                await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
             try:
                 await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
             except Exception:
@@ -177,12 +186,21 @@ async def _post_check_buttons(channel: discord.abc.Messageable, conversation_id:
     for owner_id, check in state.pending_checks.items():
         if before_pending.get(owner_id) == check:
             continue
-        char = state.characters.get(owner_id)
-        name = char.name if char else "你"
-        view = discord.ui.View(timeout=None)
-        for label, danger, option in _check_button_specs(check):
-            view.add_item(CheckButton(conversation_id, owner_id, label, danger, option))
-        await channel.send(f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）：", view=view)
+        try:
+            char = state.characters.get(owner_id)
+            name = char.name if char else "你"
+            view = discord.ui.View(timeout=None)
+            for label, danger, option in _check_button_specs(check):
+                view.add_item(CheckButton(conversation_id, owner_id, label, danger, option))
+            await channel.send(f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）：", view=view)
+        except Exception:
+            # Never let one broken/unpostable entry (a malformed check dict,
+            # a transient Discord API error, ...) silently swallow every
+            # other pending check's button in the same batch, or propagate
+            # up and mask whatever the caller's own try/finally is protecting.
+            _logger.exception(
+                "failed to post check button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
+            )
 
 
 _TIER_ZH = {"regular": "一般成功", "hard": "困難成功", "extreme": "極難成功"}
@@ -230,12 +248,19 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
-            async with locks.get_conversation_lock(self.conversation_id):
-                before_pending = dict(load_group_state(self.conversation_id).pending_checks)
-                await commands.handle_luck_decision(
-                    self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image, _send_dm_image
-                )
-            await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
+            state_before = load_group_state(self.conversation_id)
+            before_pending = dict(state_before.pending_checks)
+            before_luck_pending = dict(state_before.pending_luck_decisions)
+            try:
+                async with locks.get_conversation_lock(self.conversation_id):
+                    await commands.handle_luck_decision(
+                        self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image, _send_dm_image
+                    )
+            finally:
+                # See on_message's own comment: always attempt this, even if
+                # handle_luck_decision raised partway through.
+                await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
+                await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
             try:
                 await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
             except Exception:
@@ -251,14 +276,19 @@ async def _post_luck_buttons(channel: discord.abc.Messageable, conversation_id: 
     for owner_id, decision in state.pending_luck_decisions.items():
         if before_pending.get(owner_id) == decision:
             continue
-        char = state.characters.get(owner_id)
-        name = char.name if char else "你"
-        view = discord.ui.View(timeout=None)
-        for option in decision["options"]:
-            label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
-            view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
-        view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True))
-        await channel.send(f"🍀 {name}，要花 Luck 買到更好的結果嗎？", view=view)
+        try:
+            char = state.characters.get(owner_id)
+            name = char.name if char else "你"
+            view = discord.ui.View(timeout=None)
+            for option in decision["options"]:
+                label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
+                view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
+            view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True))
+            await channel.send(f"🍀 {name}，要花 Luck 買到更好的結果嗎？", view=view)
+        except Exception:
+            _logger.exception(
+                "failed to post luck button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
+            )
 
 
 client.add_dynamic_items(CheckButton, LuckSpendButton)
@@ -329,11 +359,18 @@ async def on_message(message: discord.Message) -> None:
         state_before = load_group_state(conversation_id)
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
-        await commands.handle_text_message(
-            conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text
-        )
-        await _post_check_buttons(message.channel, conversation_id, before_pending)
-        await _post_luck_buttons(message.channel, conversation_id, before_luck_pending)
+        try:
+            await commands.handle_text_message(
+                conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text
+            )
+        finally:
+            # Always attempt this, even if handle_text_message raised partway
+            # through a turn — a check can already be registered and saved
+            # (e.g. skill_check's tool call) before a *later* tool call in the
+            # same turn blows up, and that would otherwise silently strand a
+            # pending check with no button ever posted for it.
+            await _post_check_buttons(message.channel, conversation_id, before_pending)
+            await _post_luck_buttons(message.channel, conversation_id, before_luck_pending)
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         try:
             await reply(f"發生錯誤了：{exc}")
