@@ -15,12 +15,10 @@ from paragraphs of text on every turn. The Keeper is then handed the already-
 resolved destination and told not to override it (see app/keeper.py's
 `resolved_location` prompt block and app/commands.py's use of resolve_move).
 
-Deliberately out of scope for this first pass: multi-party split locations
-(GroupState tracks one shared current_room_id, matching how split-party play
-was already being handled narratively rather than with per-player state —
-see app/keeper.py's system prompt), and non-compass exits like "up"/"down"
-between floors, which are treated as their own direction tokens rather than
-real 3D geometry.
+Deliberately out of scope for this first pass: non-compass exits like
+"up"/"down" between floors, which are treated as their own direction tokens
+rather than real 3D geometry. (Split-party locations ARE tracked — see
+GroupState.current_room_id, keyed per character rather than one shared room.)
 """
 from __future__ import annotations
 

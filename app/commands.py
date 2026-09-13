@@ -141,9 +141,9 @@ async def handle_pdf_upload(
         # seeing (and could even build a character off) the old scenario's pregens.
         state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
         # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
-        state.current_map_page = ""
-        state.current_room_id = ""
-        state.party_facing = "N"
+        state.current_map_page = {}
+        state.current_room_id = {}
+        state.party_facing = {}
         save_state(state)
         clear_page_images(conversation_id)  # same reasoning — don't let a new
         # scenario's /coc showpage 5 show the OLD scenario's page 5.
@@ -931,18 +931,19 @@ async def _handle_coc_command(
 
     if sub == "where":
         state = load_state(conversation_id)
-        if not state.current_map_page:
+        current_page = state.current_map_page.get(user_id, "")
+        if not current_page:
             await reply("目前不在任何有地圖的地點裡（或這份劇本沒有偵測到平面圖）。")
             return
-        scene_map = state.scene_maps.get(state.current_map_page)
-        room = scene_map_engine.get_room(scene_map, state.current_room_id) if scene_map else None
+        scene_map = state.scene_maps.get(current_page)
+        room = scene_map_engine.get_room(scene_map, state.current_room_id.get(user_id, "")) if scene_map else None
         if not room:
             await reply("地圖資料異常，目前所在房間找不到對應資料，可以用「/coc leavemap」重置。")
             return
         exits = room.get("exits", [])
         exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
         desc = f"\n{room['description']}" if room.get("description") else ""
-        await reply(f"目前在「{room.get('name', '')}」（第 {state.current_map_page} 頁的地圖）{desc}\n出口：{exits_text}")
+        await reply(f"目前在「{room.get('name', '')}」（第 {current_page} 頁的地圖）{desc}\n出口：{exits_text}")
         return
 
     if sub == "enter":
@@ -956,19 +957,19 @@ async def _handle_coc_command(
             available = "、".join(sorted(state.scene_maps.keys())) or "（沒有偵測到任何平面圖）"
             await reply(f"第 {page_key} 頁沒有偵測到平面圖。有地圖資料的頁碼：{available}")
             return
-        state.current_map_page = page_key
-        state.current_room_id = scene_map.get("entry_room_id", "")
-        state.party_facing = "N"
+        state.current_map_page[user_id] = page_key
+        state.current_room_id[user_id] = scene_map.get("entry_room_id", "")
+        state.party_facing[user_id] = "N"
         save_state(state)
-        room = scene_map_engine.get_room(scene_map, state.current_room_id)
+        room = scene_map_engine.get_room(scene_map, state.current_room_id[user_id])
         await reply(f"已進入第 {page_key} 頁的地圖，目前在「{room.get('name', '') if room else '未知位置'}」。")
         return
 
     if sub == "leavemap":
         state = load_state(conversation_id)
-        state.current_map_page = ""
-        state.current_room_id = ""
-        state.party_facing = "N"
+        state.current_map_page.pop(user_id, None)
+        state.current_room_id.pop(user_id, None)
+        state.party_facing.pop(user_id, None)
         save_state(state)
         await reply("已離開目前的地圖追蹤，移動改回完全由守密人自己判斷。")
         return
