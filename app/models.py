@@ -335,6 +335,14 @@ class GroupState:
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
 
+    # Map/Scene Engine (see app/scene_map.py) — keyed by page number as a
+    # string (JSON object keys are always strings, so this avoids an int/str
+    # round-trip mismatch between what's written and what's read back).
+    scene_maps: dict[str, dict[str, Any]] = field(default_factory=dict)
+    current_map_page: str = ""  # "" means the party isn't inside any extracted map right now
+    current_room_id: str = ""
+    party_facing: str = "N"
+
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
             if c.name == name:
@@ -352,6 +360,10 @@ class GroupState:
             "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
             "pregens": self.pregens,
             "combat": self.combat.to_dict(),
+            "scene_maps": self.scene_maps,
+            "current_map_page": self.current_map_page,
+            "current_room_id": self.current_room_id,
+            "party_facing": self.party_facing,
         }
 
     @staticmethod
@@ -368,4 +380,8 @@ class GroupState:
             },
             pregens=data.get("pregens", []),
             combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
+            scene_maps=data.get("scene_maps", {}),
+            current_map_page=data.get("current_map_page", ""),
+            current_room_id=data.get("current_room_id", ""),
+            party_facing=data.get("party_facing", "N"),
         )

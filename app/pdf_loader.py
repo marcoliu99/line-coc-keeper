@@ -27,6 +27,7 @@ import re
 import pymupdf
 
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, MAX_SCENARIO_CHARS
+from app.scene_map import extract_scene_map
 
 # Below this many extracted characters, a page that also contains an image is
 # treated as "probably graphic content" (handout/map/cover) and gets a
@@ -128,10 +129,10 @@ def _describe_graphic_page(png_bytes: bytes) -> str:
     return _vision_describe_image(png_bytes) or _ocr_image(png_bytes)
 
 
-def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, bytes]]:
+def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
     """Extract scenario text.
 
-    Returns (full_text, low_text_pages, truncated, page_images):
+    Returns (full_text, low_text_pages, truncated, page_images, page_maps):
     - low_text_pages: 1-indexed pages that had little extractable text despite
       containing images — likely a handout, map, or heavily-styled page whose
       content may not be fully captured.
@@ -142,6 +143,14 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
       for vision/OCR here). Lets a caller show a player the actual picture
       instead of just the Keeper's text description of it — see /coc showpage
       and the show_scenario_image tool in app/keeper.py.
+    - page_maps: 1-indexed page number -> structured room-graph dict (see
+      app/scene_map.py), for whichever low_text_pages turned out to actually be
+      a floor plan/map (most won't be — character sheets and illustrations are
+      also low-text pages, extract_scene_map returns None for those and they're
+      just not in this dict). This is a second vision call per low-text page on
+      top of the existing prose description below, since there's no way to know
+      a page is a map without asking; real added cost, only pays off for
+      scenarios that actually have floor plans.
     Callers should surface low_text_pages/truncated to the uploader so nothing
     silently goes missing.
     """
@@ -162,18 +171,29 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
 
         page_texts.append(text)
 
+    page_maps: dict[int, dict] = {}
+
     if pending:
-        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))
+        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(pending) * 2)
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_index = {
+            desc_futures = {
                 executor.submit(_describe_graphic_page, png_bytes): idx
                 for idx, png_bytes in pending.items()
             }
-            for future in concurrent.futures.as_completed(future_to_index):
-                idx = future_to_index[future]
+            map_futures = {
+                executor.submit(extract_scene_map, png_bytes): idx
+                for idx, png_bytes in pending.items()
+            }
+            for future in concurrent.futures.as_completed(desc_futures):
+                idx = desc_futures[future]
                 extra = future.result()
                 if extra:
                     page_texts[idx] = f"{page_texts[idx]}\n{extra}".strip() if page_texts[idx] else extra
+            for future in concurrent.futures.as_completed(map_futures):
+                idx = map_futures[future]
+                scene_map = future.result()
+                if scene_map:
+                    page_maps[idx + 1] = scene_map
 
     parts = [f"--- 第 {i + 1} 頁 ---\n{t}" for i, t in enumerate(page_texts) if t]
     full_text = "\n\n".join(parts).strip()
@@ -187,7 +207,7 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
         full_text = full_text[:MAX_SCENARIO_CHARS] + "\n\n[...劇本內容過長，已截斷...]"
 
     page_images = {idx + 1: png_bytes for idx, png_bytes in pending.items()}
-    return full_text, low_text_pages, truncated, page_images
+    return full_text, low_text_pages, truncated, page_images, page_maps
 
 
 _PAGE_MARKER_RE = re.compile(r"^-*\s*第\s*\d+\s*頁\s*-*$")

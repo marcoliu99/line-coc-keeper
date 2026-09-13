@@ -24,7 +24,8 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable
 
-from app import combat, creation, dice, keeper, locks, pdf_loader, pregen_extractor
+from app import combat, creation, dice, intent_parser, keeper, locks, pdf_loader, pregen_extractor
+from app import scene_map as scene_map_engine
 from app.models import OCCUPATIONS, GroupState, generate_investigator
 from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
 
@@ -60,6 +61,9 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc setconnection 角色名 敘述 → 設定「★ 關鍵背景連結」（你最重要的人/地/物，守密人不能沒收你搶救的機會）
 ・/coc away → 標記自己暫離（戰鬥中會自動跳過你的回合）；/coc back → 回來繼續玩
 ・/coc showpage 頁碼 → 直接看劇本某一頁的實際圖片（地圖、手卡等），守密人提到「第 X 頁」時可以用
+・/coc where → 查看地圖引擎追蹤中的目前所在房間與出口
+・/coc enter 頁碼 → 手動進入某一頁的平面圖（通常會自動偵測，這是備用手動指令）
+・/coc leavemap → 離開目前的地圖追蹤，移動改回完全由守密人判斷
 
 【戰鬥】
 ・/coc combat start → 開始正式戰鬥（依 DEX 排先攻順位）
@@ -113,7 +117,9 @@ async def handle_pdf_upload(
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
 
     try:
-        text, low_text_pages, truncated, page_images = await asyncio.to_thread(pdf_loader.extract_text, pdf_bytes)
+        text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
+            pdf_loader.extract_text, pdf_bytes
+        )
     except ValueError as exc:
         await push(f"讀取 PDF 失敗：{exc}")
         return
@@ -128,6 +134,11 @@ async def handle_pdf_upload(
         state.pregens = []  # clear the previous scenario's cached pregens — otherwise
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.
+        state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
+        # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
+        state.current_map_page = ""
+        state.current_room_id = ""
+        state.party_facing = "N"
         save_state(state)
         clear_page_images(conversation_id)  # same reasoning — don't let a new
         # scenario's /coc showpage 5 show the OLD scenario's page 5.
@@ -147,6 +158,14 @@ async def handle_pdf_upload(
             f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
             "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
         )
+    map_note = ""
+    if page_maps:
+        pages_str = "、".join(str(p) for p in sorted(page_maps.keys()))
+        map_note = (
+            f"\n\n🗺️ 第 {pages_str} 頁偵測到平面圖，已經拆解成房間圖——玩家在裡面移動時"
+            "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
+            "用 `/coc where` 可以看目前在哪個房間。"
+        )
 
     await push(
         f"已載入劇本《{title}》（{len(text)} 字）。\n"
@@ -157,7 +176,8 @@ async def handle_pdf_upload(
         "快速生成，這時職業可選：\n"
         + "、".join(OCCUPATIONS.keys())
         + "\n建好角色後，直接在群組打字描述行動即可開始冒險！"
-        + warning,
+        + warning
+        + map_note,
     )
 
 
@@ -208,8 +228,9 @@ async def handle_text_message(
             return
 
         display_name = state.characters[user_id].name
+        resolved_location = _resolve_map_action(state, text)
         reply_text, private_messages, image_requests = await asyncio.to_thread(
-            keeper.run_turn, state, display_name, text
+            keeper.run_turn, state, display_name, text, resolved_location
         )
         await reply(reply_text)
 
@@ -235,6 +256,68 @@ async def handle_text_message(
                 await send_image(png_bytes, conversation_id, page_number)
         except Exception:
             pass
+
+
+def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str, dict] | None:
+    """Fuzzy match a raw "entering X" text candidate against the location_name
+    of any map extracted from this scenario (see app/scene_map.py). Mirrors
+    _find_pregen_by_occupation's fuzzy-substring approach below."""
+    norm = candidate.strip().lower()
+    if not norm:
+        return None
+    for page_key, scene_map in state.scene_maps.items():
+        name = str(scene_map.get("location_name", "")).strip().lower()
+        if name and (norm == name or norm in name or name in norm):
+            return page_key, scene_map
+    return None
+
+
+def _resolve_map_action(state: GroupState, text: str) -> dict | None:
+    """Runs the Map/Scene Engine (app/scene_map.py) against a player's raw
+    message *before* any LLM call, exactly per this feature's whole point:
+    the destination room is computed deterministically in code, not guessed
+    by the Keeper from prose. Mutates state.current_map_page/current_room_id/
+    party_facing in place when it resolves something.
+
+    Returns a small dict for the Keeper prompt (app/keeper.py's
+    `resolved_location`), or None if the message didn't trigger a resolvable
+    map action (no map loaded, no direction detected, or no matching exit) —
+    callers should fall back to letting the Keeper narrate movement itself,
+    exactly like before this feature existed."""
+    resolved_room: dict | None = None
+
+    location_candidate = intent_parser.extract_entered_location(text)
+    if location_candidate:
+        found = _find_scene_map_by_location(state, location_candidate)
+        if found:
+            page_key, scene_map = found
+            if page_key != state.current_map_page:
+                state.current_map_page = page_key
+                state.party_facing = "N"
+                entry_id = scene_map.get("entry_room_id", "")
+                state.current_room_id = entry_id
+                resolved_room = scene_map_engine.get_room(scene_map, entry_id)
+
+    active_map = state.scene_maps.get(state.current_map_page) if state.current_map_page else None
+    if active_map:
+        movement = intent_parser.parse_movement_intent(text)
+        if movement:
+            result = scene_map_engine.resolve_move(
+                active_map, state.current_room_id, state.party_facing,
+                movement["relative_direction"], movement["order"],
+            )
+            if result["ok"]:
+                state.current_room_id = result["room"]["id"]
+                state.party_facing = result["facing"]
+                resolved_room = result["room"]
+            # result["ok"] is False (no matching exit): deliberately not
+            # returned as an error here — let the Keeper's own dynamic prompt
+            # (see _build_dynamic_prompt) decide how to narrate a blocked or
+            # ambiguous direction instead of the engine flatly refusing it.
+
+    if resolved_room is None:
+        return None
+    return {"room_name": resolved_room.get("name", ""), "room_description": resolved_room.get("description", "")}
 
 
 def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | None:
@@ -645,6 +728,50 @@ async def _handle_coc_command(
             await reply(f"第 {page_number} 頁沒有存圖（可能是純文字頁面，或劇本裡根本沒有這一頁）。")
             return
         await send_image(png_bytes, conversation_id, page_number)
+        return
+
+    if sub == "where":
+        state = load_state(conversation_id)
+        if not state.current_map_page:
+            await reply("目前不在任何有地圖的地點裡（或這份劇本沒有偵測到平面圖）。")
+            return
+        scene_map = state.scene_maps.get(state.current_map_page)
+        room = scene_map_engine.get_room(scene_map, state.current_room_id) if scene_map else None
+        if not room:
+            await reply("地圖資料異常，目前所在房間找不到對應資料，可以用「/coc leavemap」重置。")
+            return
+        exits = room.get("exits", [])
+        exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
+        desc = f"\n{room['description']}" if room.get("description") else ""
+        await reply(f"目前在「{room.get('name', '')}」（第 {state.current_map_page} 頁的地圖）{desc}\n出口：{exits_text}")
+        return
+
+    if sub == "enter":
+        if len(parts) < 3:
+            await reply("用法：/coc enter 頁碼（先用 /coc showpage 或劇本內文找到平面圖在第幾頁）")
+            return
+        page_key = parts[2]
+        state = load_state(conversation_id)
+        scene_map = state.scene_maps.get(page_key)
+        if not scene_map:
+            available = "、".join(sorted(state.scene_maps.keys())) or "（沒有偵測到任何平面圖）"
+            await reply(f"第 {page_key} 頁沒有偵測到平面圖。有地圖資料的頁碼：{available}")
+            return
+        state.current_map_page = page_key
+        state.current_room_id = scene_map.get("entry_room_id", "")
+        state.party_facing = "N"
+        save_state(state)
+        room = scene_map_engine.get_room(scene_map, state.current_room_id)
+        await reply(f"已進入第 {page_key} 頁的地圖，目前在「{room.get('name', '') if room else '未知位置'}」。")
+        return
+
+    if sub == "leavemap":
+        state = load_state(conversation_id)
+        state.current_map_page = ""
+        state.current_room_id = ""
+        state.party_facing = "N"
+        save_state(state)
+        await reply("已離開目前的地圖追蹤，移動改回完全由守密人自己判斷。")
         return
 
     if sub == "combat":
