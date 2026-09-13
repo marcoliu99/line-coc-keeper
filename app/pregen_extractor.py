@@ -57,6 +57,15 @@ _REPORT_TOOL = {
                                 "不要編造劇本沒寫的內容；沒有的話留空字串即可。"
                             ),
                         },
+                        "key_connection": {
+                            "type": "string",
+                            "description": (
+                                "劇本角色卡裡如果有標示『重要之人』『重要地點』『珍藏物品』之類，且明確寫"
+                                "這是這位調查員最重要、失去會很痛的一段連結，抄錄下來翻成繁體中文（跟"
+                                "secret_goal 不同，這個是公開的，不是秘密）；劇本沒有特別標示哪個最重要"
+                                "的話，留空字串，不要自己猜一個出來。"
+                            ),
+                        },
                     },
                     "required": ["name"],
                 },
@@ -129,5 +138,6 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str) -> Character:
         move=move, damage_bonus=db, build=build,
         skills=skills,
         notes=pregen.get("notes", "") or "",
+        key_connection=pregen.get("key_connection", "") or "",
         secret_goal=pregen.get("secret_goal", "") or "",
     )

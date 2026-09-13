@@ -28,11 +28,11 @@ def start_combat(state: GroupState) -> CombatState:
     return state.combat
 
 
-def add_npc(state: GroupState, name: str, dex: int, hp: int) -> CombatState:
+def add_npc(state: GroupState, name: str, dex: int, hp: int, is_ally: bool = False) -> CombatState:
     _ensure_started(state)
     current_name = state.combat.order[state.combat.current_index].name if state.combat.order else None
 
-    state.combat.order.append(Combatant(name=name, dex=dex, hp=hp, hp_max=max(1, hp), is_pc=False))
+    state.combat.order.append(Combatant(name=name, dex=dex, hp=hp, hp_max=max(1, hp), is_pc=False, is_ally=is_ally))
     state.combat.order.sort(key=lambda c: -c.dex)
 
     if current_name:
@@ -117,6 +117,6 @@ def status_text(state: GroupState) -> str:
         marker = "👉 " if i == combat.current_index and not skippable else "　　"
         away = c.is_pc and not c.defeated and skippable
         tag = "（倒下）" if c.defeated else "（暫離）" if away else ""
-        side = "我方" if c.is_pc else "敵方"
+        side = "我方" if c.is_pc else "隊友" if c.is_ally else "敵方"
         lines.append(f"{marker}{c.name}［{side}］DEX {c.dex}　HP {c.hp}/{c.hp_max}{tag}")
     return "\n".join(lines)

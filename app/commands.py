@@ -57,12 +57,14 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc sheet → 查看自己的角色卡
 ・/coc status → 查看目前劇本與所有角色狀態
 ・/coc setskill 角色名 技能名 數值 → 手動修正自己角色的技能值
+・/coc setconnection 角色名 敘述 → 設定「★ 關鍵背景連結」（你最重要的人/地/物，守密人不能沒收你搶救的機會）
 ・/coc away → 標記自己暫離（戰鬥中會自動跳過你的回合）；/coc back → 回來繼續玩
 ・/coc showpage 頁碼 → 直接看劇本某一頁的實際圖片（地圖、手卡等），守密人提到「第 X 頁」時可以用
 
 【戰鬥】
 ・/coc combat start → 開始正式戰鬥（依 DEX 排先攻順位）
 ・/coc combat addnpc 名稱 DEX HP → 加入一個敵人
+・/coc combat addally 名稱 DEX HP → 加入一個站在我方的 NPC 隊友
 ・/coc combat status → 查看目前回合與先攻順位
 ・/coc combat next → 推進到下一位的回合
 ・/coc combat damage 名稱 增減量 → 調整某人的 HP（受傷用負數）
@@ -284,6 +286,8 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
         lines.append("技能：" + "、".join(f"{k} {v}%" for k, v in ranked))
     if pregen.get("notes"):
         lines.append(f"背景：{pregen['notes']}")
+    if pregen.get("key_connection"):
+        lines.append(f"★ 關鍵背景連結：{pregen['key_connection']}")
     if pregen.get("claimed_by"):
         lines.append("（此角色已被選走）")
     return "\n".join(lines)
@@ -435,6 +439,22 @@ async def _handle_coc_command(
         char.skills[skill] = value
         save_state(state)
         await reply(f"已將 {name} 的「{skill}」設為 {value}%。")
+        return
+
+    if sub == "setconnection":
+        if len(parts) < 4:
+            await reply("用法：/coc setconnection 角色名 敘述（例如：/coc setconnection 小明 你失散多年的妹妹）")
+            return
+        name = parts[2]
+        description = " ".join(parts[3:])
+        state = load_state(conversation_id)
+        char = state.characters.get(user_id)
+        if not char or char.name != name:
+            await reply("只能修改你自己建立的角色（角色名稱需完全相符）。")
+            return
+        char.key_connection = description
+        save_state(state)
+        await reply(f"已將 {name} 的「★ 關鍵背景連結」設為：{description}")
         return
 
     if sub == "create":
@@ -644,9 +664,9 @@ async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: l
         await reply(combat.status_text(state))
         return
 
-    if action == "addnpc":
+    if action in ("addnpc", "addally"):
         if len(parts) < 6:
-            await reply("用法：/coc combat addnpc 名稱 DEX HP")
+            await reply(f"用法：/coc combat {action} 名稱 DEX HP")
             return
         name, dex_str, hp_str = parts[3], parts[4], parts[5]
         try:
@@ -654,7 +674,7 @@ async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: l
         except ValueError:
             await reply("DEX 和 HP 必須是整數。")
             return
-        combat.add_npc(state, name, dex, hp)
+        combat.add_npc(state, name, dex, hp, is_ally=(action == "addally"))
         save_state(state)
         await reply(combat.status_text(state))
         return
@@ -701,6 +721,7 @@ async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: l
         "用法：\n"
         "/coc combat start → 開始戰鬥\n"
         "/coc combat addnpc 名稱 DEX HP → 加入敵人\n"
+        "/coc combat addally 名稱 DEX HP → 加入站在我方的 NPC 隊友\n"
         "/coc combat status → 查看目前狀態\n"
         "/coc combat next → 推進到下一位的回合\n"
         "/coc combat damage 名稱 增減量 → 調整 HP\n"

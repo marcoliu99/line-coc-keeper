@@ -99,6 +99,9 @@ class Character:
 
     skills: dict[str, int] = field(default_factory=dict)
     notes: str = ""
+    key_connection: str = ""  # "關鍵背景連結★" — a person/place/object this character
+    # cannot lose without a saving roll first (see keeper.py's static prompt);
+    # player-facing, unlike secret_goal. Set via /coc setconnection.
     secret_goal: str = ""  # personal hook/motivation — Keeper-only, see keeper_notes_text()
     status_tags: list[str] = field(default_factory=list)  # e.g. ["昏迷", "瀕死"]
     away: bool = False  # player stepped out — combat.py auto-skips their turn
@@ -127,6 +130,8 @@ class Character:
             tags.append("暫離")
         if tags:
             lines.append("狀態：" + "、".join(tags))
+        if self.key_connection:
+            lines.append(f"★ 關鍵背景連結：{self.key_connection}")
         top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
         if top_skills:
             lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
@@ -276,6 +281,9 @@ class Combatant:
     hp: int
     hp_max: int
     is_pc: bool = False
+    is_ally: bool = False  # Keeper-run NPC fighting on the investigators' side
+    # (a hired guide, a friendly cultist defector, ...) — distinct from is_pc since
+    # it has no Character to sync HP back to, but shares "our side" in status_text.
     defeated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
