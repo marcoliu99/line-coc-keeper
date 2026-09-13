@@ -60,6 +60,38 @@ TOOLS = [
         },
     },
     {
+        "name": "offer_check_choice",
+        "description": (
+            "『請求』一次有多個互斥選項的檢定——用在玩家要在幾個技能之間選一個的情境"
+            "（COC7e 規則書的典型例子：近戰中被攻擊時，防守方要選擇『閃避』還是『反擊』，"
+            "兩者只能選一個，不能都做）。跟 skill_check 一樣不會幫玩家骰骰子，只記錄下"
+            "選項清單，讓玩家自己選一個、用 /coc check <選項名稱> 擲骰。呼叫完之後只能"
+            "敘述『需要在這幾個選項裡選一個』的當下場景，不能自己選、不能自己編結果。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string", "description": "調查員角色名稱"},
+                "options": {
+                    "type": "array",
+                    "minItems": 2,
+                    "description": "至少兩個互斥選項",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "description": "選項顯示名稱，例如「閃避」「反擊」"},
+                            "skill": {"type": "string", "description": "這個選項要用的技能或屬性名稱"},
+                            "bonus_dice": {"type": "integer", "description": "獎勵骰數量，預設 0"},
+                            "penalty_dice": {"type": "integer", "description": "懲罰骰數量，預設 0"},
+                        },
+                        "required": ["label", "skill"],
+                    },
+                },
+            },
+            "required": ["investigator", "options"],
+        },
+    },
+    {
         "name": "sanity_check",
         "description": (
             "『請求』一次理智檢定（SAN check）——用於角色目擊恐怖事物、遭遇超自然現象等場合，"
@@ -291,6 +323,27 @@ def _execute_tool(
                 "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
             }
 
+        if name == "offer_check_choice":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            raw_options = tool_input.get("options") or []
+            if len(raw_options) < 2:
+                return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
+            options = []
+            for opt in raw_options:
+                value = resolve_skill_value(char, opt["skill"])
+                options.append({
+                    "label": opt["label"], "skill": opt["skill"], "skill_value": value,
+                    "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
+                })
+            state.pending_checks[char.owner_id] = {"type": "choice", "options": options}
+            save_state(state)
+            return {
+                "ok": True, "pending": True, "investigator": char.name, "options": options,
+                "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
+            }
+
         if name == "sanity_check":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
@@ -445,6 +498,8 @@ def _build_static_prompt(state: GroupState) -> str:
   跟 Map Engine 解析出的位置一樣，你只負責敘述，不負責判定。
 - 這個規則的例外只有：`roll_dice`（單純的道具/傷害骰，不是角色的技能檢定，繼續由你直接呼叫）、
   以及本來就不會有玩家角色可以骰的情境（例如純粹的環境描述、劇情事件擲骰）。
+- 玩家要在幾個互斥的技能之間自己選一個時（不是你幫他決定，是他要選），呼叫 `offer_check_choice`
+  給選項（至少兩個），不要用 `skill_check` 自己決定用哪個技能，也不要自己選好了才呼叫 `skill_check`。
 
 # 孤注一擲（Pushed Roll）
 - 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check『請』玩家孤注一擲重新擲骰，而不是玩家講完就直接算過。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
@@ -541,7 +596,9 @@ DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情�
 advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
 呼叫 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
-不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。"""
+不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色在近戰中被攻擊時，防守方要在
+「閃避」跟「反擊」之間選一個（COC7e 規則），呼叫 offer_check_choice 給這兩個選項讓玩家自己選，不要自己
+幫玩家決定要閃避還是反擊。"""
 
     return f"""# 目前登記的調查員角色
 {chars_text}{secret_block}

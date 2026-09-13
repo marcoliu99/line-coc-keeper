@@ -56,6 +56,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 
 【檢定】
 ・/coc check → 守密人請你檢定時，自己擲骰（不是守密人幫你骰）；也可以自己主動打 /coc check 技能名 [獎勵骰數] [懲罰骰數]
+・如果守密人給的是「閃避 vs 反擊」這種多選一的檢定，用 /coc check <選項名稱> 指定要選哪個（Discord 會直接看到對應的按鈕）
 
 【角色管理】
 ・/coc sheet → 查看自己的角色卡
@@ -271,7 +272,34 @@ async def handle_check_command(
     skill_arg = parts[2] if len(parts) > 2 else None
     pending = state.pending_checks.pop(user_id, None)
 
-    if skill_arg is None:
+    # A pending "choice" check (see keeper.py's offer_check_choice — e.g. 閃避
+    # vs 反擊) needs the player to name one of the options; unlike the plain
+    # skill/sanity cases below, an unmatched or missing skill_arg here puts
+    # the pending check back rather than discarding it, since silently losing
+    # the whole choice prompt over a typo would be a worse experience than a
+    # skill/sanity mismatch just falling through to a fresh check.
+    choice_skill_name = choice_display_label = None
+    choice_value = choice_bonus = choice_penalty = None
+    if pending and pending.get("type") == "choice":
+        if skill_arg is None:
+            state.pending_checks[user_id] = pending
+            options_text = "、".join(f"{o['label']}（{o['skill']} {o['skill_value']}%）" for o in pending["options"])
+            await reply(f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}")
+            return
+        matched = next(
+            (o for o in pending["options"]
+             if _skill_names_match(o["label"], skill_arg) or _skill_names_match(o["skill"], skill_arg)),
+            None,
+        )
+        if not matched:
+            state.pending_checks[user_id] = pending
+            options_text = "、".join(o["label"] for o in pending["options"])
+            await reply(f"沒有「{skill_arg}」這個選項，可選：{options_text}")
+            return
+        choice_skill_name, choice_display_label = matched["skill"], matched["label"]
+        choice_value, choice_bonus, choice_penalty = matched["skill_value"], matched["bonus_dice"], matched["penalty_dice"]
+        pending = None
+    elif skill_arg is None:
         if not pending:
             await reply("目前沒有守密人請你做的檢定。用法：/coc check 技能名 [獎勵骰數] [懲罰骰數] 可以自己主動檢定。")
             return
@@ -292,6 +320,17 @@ async def handle_check_command(
             f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
             f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
             f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
+        )
+    elif choice_skill_name is not None:
+        skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
+        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
+        tier_zh = _CHECK_TIER_ZH[r.tier]
+        dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
+        roll_line = f"🎲 {char.name} 選擇「{choice_display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}"
+        keeper_message = (
+            f"（{char.name} 在多個選項裡選了「{choice_display_label}」，擲骰做了一次「{skill_name}」檢定："
+            f"技能值 {value}%{dice_note}，擲出 {r.roll} → {tier_zh}。這是已經確定的結果，請根據這個結果"
+            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）"
         )
     else:
         if pending:

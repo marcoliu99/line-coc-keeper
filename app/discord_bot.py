@@ -78,21 +78,35 @@ def _make_interaction_reply(interaction: discord.Interaction) -> commands.Reply:
     return reply
 
 
-def _check_button_label(check: dict) -> tuple[str, bool]:
+def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
+    """Returns (label, danger, option) triples — however many buttons this
+    pending check needs. A plain skill/sanity check needs exactly one
+    (option="", meaning "just /coc check", no option name to pass); a
+    "choice" check (see keeper.py's offer_check_choice — e.g. 閃避 vs 反擊)
+    needs one button per option, each resolving to "/coc check <該選項>"."""
     if check.get("type") == "sanity":
-        return "🎲 理智檢定", True
-    return f"🎲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False
+        return [("🎲 理智檢定", True, "")]
+    if check.get("type") == "choice":
+        return [
+            (f"🎲 {o['label']}（{o['skill']} {o['skill_value']}%）", False, o["label"])
+            for o in check.get("options", [])
+        ]
+    return [(f"🎲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False, "")]
 
 
-_CHECK_BUTTON_ID_TEMPLATE = r"coc_check:(?P<conversation_id>discord-channel-\d+):(?P<owner_id>\d+)"
+# The trailing option segment can be empty (plain check) or a Chinese option
+# label (e.g. "閃避") from offer_check_choice — [^:]* rather than \w+ so it
+# isn't restricted to ASCII word characters.
+_CHECK_BUTTON_ID_TEMPLATE = r"coc_check:(?P<conversation_id>discord-channel-\d+):(?P<owner_id>\d+):(?P<option>[^:]*)"
 
 
 class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):
     """A "🎲 roll" button under the Keeper's message whenever it asks for a
-    check — see app/keeper.py's skill_check/sanity_check tools, which now only
-    *register* a pending check (GroupState.pending_checks) instead of secretly
-    rolling for the player. Clicking this runs exactly what typing
-    "/coc check" would (see app/commands.py's handle_check_command).
+    check — see app/keeper.py's skill_check/sanity_check/offer_check_choice
+    tools, which now only *register* a pending check (GroupState.
+    pending_checks) instead of secretly rolling for the player. Clicking this
+    runs exactly what typing "/coc check" (or "/coc check <option>" for a
+    choice) would — see app/commands.py's handle_check_command.
 
     Registered as a *dynamic* item (client.add_dynamic_items below, matched by
     the custom_id pattern above) rather than a plain per-message View, so it
@@ -103,21 +117,22 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
     game state was actually lost.
     """
 
-    def __init__(self, conversation_id: str, owner_id: str, label: str, danger: bool = False) -> None:
+    def __init__(self, conversation_id: str, owner_id: str, label: str, danger: bool = False, option: str = "") -> None:
         super().__init__(
             discord.ui.Button(
                 label=label,
                 style=discord.ButtonStyle.danger if danger else discord.ButtonStyle.primary,
-                custom_id=f"coc_check:{conversation_id}:{owner_id}",
+                custom_id=f"coc_check:{conversation_id}:{owner_id}:{option}",
             )
         )
         self.conversation_id = conversation_id
         self.owner_id = owner_id
+        self.option = option
 
     @classmethod
     async def from_custom_id(cls, interaction, item, match):
         danger = item.style == discord.ButtonStyle.danger
-        return cls(match["conversation_id"], match["owner_id"], item.label or "🎲 擲骰", danger)
+        return cls(match["conversation_id"], match["owner_id"], item.label or "🎲 擲骰", danger, match["option"])
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != self.owner_id:
@@ -126,10 +141,11 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
         await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
         reply = _make_interaction_reply(interaction)
         send_image = _make_send_image(interaction.channel)
+        command_text = f"/coc check {self.option}" if self.option else "/coc check"
         async with locks.get_conversation_lock(self.conversation_id):
             before_pending = dict(load_group_state(self.conversation_id).pending_checks)
             await commands.handle_check_command(
-                self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, "/coc check"
+                self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, command_text
             )
         await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
         try:
@@ -139,20 +155,20 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
 
 
 async def _post_check_buttons(channel: discord.abc.Messageable, conversation_id: str, before_pending: dict) -> None:
-    """Posts a roll button for every pending check that's new (or changed —
-    e.g. the Keeper immediately asked for a different check right after this
-    one resolved) since `before_pending` was snapshotted. Content-diffed, not
-    just key-diffed, so a replaced check for the same player still gets a
-    fresh button; a stale/duplicate pending entry never gets re-posted."""
+    """Posts a roll button (or, for a "choice" check, one button per option —
+    e.g. 閃避／反擊ーー in the same message) for every pending check that's
+    new or changed since `before_pending` was snapshotted. Content-diffed,
+    not just key-diffed, so a replaced check for the same player still gets
+    fresh buttons; a stale/duplicate pending entry never gets re-posted."""
     state = load_group_state(conversation_id)
     for owner_id, check in state.pending_checks.items():
         if before_pending.get(owner_id) == check:
             continue
-        label, danger = _check_button_label(check)
         char = state.characters.get(owner_id)
         name = char.name if char else "你"
         view = discord.ui.View(timeout=None)
-        view.add_item(CheckButton(conversation_id, owner_id, label, danger))
+        for label, danger, option in _check_button_specs(check):
+            view.add_item(CheckButton(conversation_id, owner_id, label, danger, option))
         await channel.send(f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）：", view=view)
 
 

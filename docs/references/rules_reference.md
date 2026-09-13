@@ -15,9 +15,9 @@
 
 RAW：雙方各自宣告互斥目標，各自擲骰，**成功等級高者贏**（大成功 > 極難 > 困難 > 常規 > 失敗/大失敗），等級相同比技能值高低，再相同才真的算平手。**對抗檢定不能孤注一擲。**
 
-我們的實作：**完全沒有**——`skill_check` 工具是單方面判定，沒有「跟另一個技能值比較成功等級」的邏輯。目前戰鬥裡的攻防（見下面「戰鬥」）也沒有走對抗檢定，是簡化過的。
+我們的實作：**部分做了「選哪個技能」，完全沒做「比較兩邊結果」**——`offer_check_choice` 工具（見 `docs/keeper_skill.md` 的工具速查表）讓玩家在互斥的技能之間自己選一個要骰哪個（例如閃避 vs 反擊，Discord 上會看到兩顆對應的按鈕），但骰出來之後就只是一次普通的 `skill_check`，**沒有**自動去跟對手的另一次擲骰比較成功等級高低——「誰贏」還是要靠守密人敘事判斷。也就是說 RAW 的「雙方各自擲骰、比較成功等級」這個核心機制還是沒有程式碼支援，只是把「選技能」這一半的決定權從守密人手上還給了玩家。
 
-如果要做：`app/dice.py` 加一個 `opposed_check(value_a, value_b) -> tuple[SkillCheckResult, SkillCheckResult, str]`，回傳誰贏；`app/keeper.py` 加一個新工具 `opposed_check`，input 是雙方 investigator/skill，內部各自建立一筆 pending check 讓雙方玩家分別 `/coc check`，兩邊都骰完才比較——這個順序比一般 pending check 複雜一點（要等兩個人都骰完），值得先想清楚 `GroupState.pending_checks` 的資料結構夠不夠用。
+如果要做完整版：`app/dice.py` 加一個 `opposed_check(value_a, value_b) -> tuple[SkillCheckResult, SkillCheckResult, str]`，回傳誰贏；`app/keeper.py` 的 `offer_check_choice` 或一個新工具在雙方都是玩家角色時，各自建立一筆 pending check 讓雙方玩家分別 `/coc check`，兩邊都骰完才比較——這個順序比一般 pending check 複雜一點（要等兩個人都骰完），值得先想清楚 `GroupState.pending_checks` 的資料結構夠不夠用（目前是一個玩家一筆，沒有「這筆檢定在等另一筆」的關聯欄位）。
 
 ### 難度等級（难度等级）
 
