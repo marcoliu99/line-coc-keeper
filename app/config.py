@@ -58,3 +58,15 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", 240_000))
 MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 80))
 
 MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
+
+# Scenario RAG (app/scenario_rag.py) — opt-in, defaults off. Off: the full
+# scenario text is stuffed into the cached system prompt block, same as
+# always, capped by MAX_SCENARIO_CHARS. On: the static prompt gets a small
+# stub instead, and the Keeper is given a search_scenario tool that retrieves
+# only the top-matching pages per query via local lexical (BM25-style)
+# search — no embeddings API, no extra cost beyond the tool-call round trip.
+# Trades away the "whole scenario visible at once" property that lets the
+# Keeper freely connect clues across pages, in exchange for scenarios that
+# would blow past MAX_SCENARIO_CHARS entirely. See README's 限制 section.
+SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", 5))

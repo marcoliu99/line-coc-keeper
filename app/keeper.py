@@ -7,8 +7,8 @@ which one is active.
 """
 from __future__ import annotations
 
-from app import combat, dice
-from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS
+from app import combat, dice, scenario_rag
+from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import Character, GroupState
 from app.providers import anthropic_provider, gemini_provider
 from app.state import save_state
@@ -204,6 +204,27 @@ TOOLS = [
 # and Gemini; any provider-specific extras (e.g. Anthropic's cache_control) are
 # added by the adapter in app/providers/, not here.
 
+# Only added to the tool list when SCENARIO_RAG_ENABLED (see run_turn below) —
+# with the full scenario text already in the cached static prompt (the default),
+# this tool would be redundant; it only exists to compensate for that text being
+# withheld under RAG mode (see _build_static_prompt's scenario stub above).
+_SEARCH_SCENARIO_TOOL = {
+    "name": "search_scenario",
+    "description": (
+        "在劇本全文裡搜尋跟這個查詢最相關的段落（依頁面為單位），回傳前幾筆最符合的內容。"
+        "劇本改用檢索模式時（看到『這份劇本改用檢索模式』的提示）必須用這個工具查詢，"
+        "不能憑空想像劇本內容；查詢字詞盡量用劇本裡可能出現的具體名詞（人名、地名、物品、關鍵字），"
+        "不要問完整句子。"
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "要查詢的關鍵字或名詞，例如「卡西迪」「地下室」「儀式」"},
+        },
+        "required": ["query"],
+    },
+}
+
 
 def _find_character(state: GroupState, name: str) -> Character | None:
     if not name:
@@ -356,6 +377,13 @@ def _execute_tool(
             image_requests.append((owner_id, int(tool_input["page_number"])))
             return {"ok": True, "page": tool_input["page_number"], "target": "private" if owner_id else "public"}
 
+        if name == "search_scenario":
+            if not state.scenario_text:
+                return {"ok": False, "error": "目前沒有載入劇本可以搜尋"}
+            index = scenario_rag.get_index(state.group_id, state.scenario_text)
+            results = scenario_rag.search(index, tool_input.get("query", ""), top_k=SCENARIO_RAG_TOP_K)
+            return {"ok": True, "results": scenario_rag.format_results(results)}
+
         return {"ok": False, "error": f"未知工具 {name}"}
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}
@@ -367,7 +395,20 @@ def _build_static_prompt(state: GroupState) -> str:
     part (the full scenario text) and gets reused across an entire session instead
     of re-billed on every single message. (Gemini's context caching isn't wired up
     yet; see app/providers/gemini_provider.py.)"""
-    scenario = state.scenario_text or "（尚未載入劇本，請提醒玩家用 /coc 上傳 PDF 劇本）"
+    if not state.scenario_text:
+        scenario = "（尚未載入劇本，請提醒玩家用 /coc 上傳 PDF 劇本）"
+    elif SCENARIO_RAG_ENABLED:
+        # Full text withheld on purpose — see search_scenario in TOOLS/_execute_tool
+        # and app/scenario_rag.py. Keeps this (cached) block small regardless of
+        # scenario length, at the cost of the Keeper needing to actually remember
+        # to search instead of already having everything in view.
+        scenario = (
+            "（這份劇本改用檢索模式：完整內容沒有直接放在這裡，需要任何劇本細節"
+            "——地點、NPC、線索、數值、劇情走向——都要呼叫 search_scenario 工具查詢，"
+            "不要憑空想像或用你自己對「典型 COC 劇本」的印象腦補劇本沒查到的內容。）"
+        )
+    else:
+        scenario = state.scenario_text
     return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
 
 # 行為準則
@@ -508,11 +549,12 @@ def run_turn(
     history = state.log[-MAX_LOG_TURNS * 2 :]
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
+    tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
 
     final_text = provider.run_conversation(
         static_prompt,
         dynamic_prompt,
-        TOOLS,
+        tools,
         history,
         f"{speaker_name}：{message_text}",
         lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),

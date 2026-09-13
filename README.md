@@ -30,6 +30,9 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
                                               ▼
                                       app/keeper.py（守密人邏輯，LLM 供應商無關）
                                               │
+                              app/scenario_rag.py（Scenario RAG，SCENARIO_RAG_ENABLED=true
+                              時才啟用，本地 BM25 檢索取代整份劇本塞進 prompt）
+                                              │
                                               ▼
                               app/providers/anthropic_provider.py
                               app/providers/gemini_provider.py      ← LLM_PROVIDER 決定走哪一條
@@ -53,6 +56,7 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
 - `app/pregen_extractor.py`：從劇本文字中抽取內建的預製調查員
 - `app/intent_parser.py`：規則式（regex，不額外呼叫 LLM）偵測玩家訊息裡的移動意圖與「進入某地點」意圖
 - `app/scene_map.py`：把劇本平面圖轉成結構化房間圖（節點＋方位邊），並提供「目前位置＋朝向＋方向＋第幾個門 → 目的地房間」的純程式碼解析（不靠 LLM 猜）
+- `app/scenario_rag.py`：本地 BM25 式關鍵字檢索（`SCENARIO_RAG_ENABLED=true` 時才啟用），取代「整份劇本塞進 system prompt」，改成 Keeper 用 `search_scenario` 工具按需查詢
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
 - `app/models.py`：角色卡／聊天室狀態資料結構與快速生成（3d6 法）
 - `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（用 PyMuPDF 處理圖文混排版面，圖片偏多的頁面會用 Claude 視覺理解／OCR 備援，並保留這些頁面的實際圖片供之後展示；平面圖頁面會額外呼叫 `app/scene_map.py` 拆出結構化房間圖）
@@ -175,6 +179,10 @@ cp .env.example .env
   - **請注意**：這條路徑是照 Google 官方 `google-genai` SDK 文件寫的（手動 function-calling 迴圈：`client.models.generate_content` + `FunctionDeclaration`/`Tool`），程式碼結構跟工具 schema 都用真的 SDK 型別測過可以正常建構，但因為手上沒有 Gemini API key，**沒有實際打過一次真的 API 呼叫**驗證端到端行為。Google 的 Gen AI SDK 這一兩年變動蠻快的，如果切過去發現守密人完全沒反應或行為怪怪的，先去對一下 `app/providers/gemini_provider.py` 裡用到的屬性名稱（`response.function_calls`、`response.text`、`Part.from_function_response` 等）跟當時最新的 SDK 文件是否還一致，再懷疑是遊戲邏輯本身的問題。
   - Gemini 目前沒有做 prompt caching（Google 那邊叫 context caching，跟 Anthropic 的做法不同、而且門檻可能要幾萬 token 起跳），劇本內容會整包重新送——如果之後真的固定用 Gemini，這是下一個值得補的優化。
   - `GEMINI_MODEL` 預設值請自己去 [ai.google.dev](https://ai.google.dev) 核對當下實際可用的 flash 模型名稱再決定要不要改，模型 id 會隨時間變動。
+
+### （可選）開啟 Scenario RAG
+
+`.env` 裡的 `SCENARIO_RAG_ENABLED=true` 可以把「整份劇本塞進 system prompt」改成「Keeper 用 `search_scenario` 工具按需檢索」，不需要另外申請任何金鑰（本地 BM25 關鍵字比對，不是語意檢索）。預設是 `false`（關閉），一般長度的劇本建議保持關閉；細節、取捨、什麼時候該開，見下面「已知限制」的「Scenario RAG 是可選功能」那條。
 
 ### （建議）安裝 OCR，讓圖片化的手卡/地圖也能被讀到
 
@@ -356,7 +364,20 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 
 唯一要注意的權衡：push message 會計入 LINE 的付費配額（reply 不會），但這裡只有上傳 PDF 這個低頻動作會觸發一次，不影響「Reply 免費不限量」對日常遊玩的結論。
 
-### 5. 本機測試階段，ngrok 網址每次重啟都會變
+### 5. Scenario RAG 是可選功能，預設關閉
+
+- **這個專案現在怎麼做**：`SCENARIO_RAG_ENABLED=true`（`.env`）開啟後，`app/keeper.py` 不再把整份劇本文字放進（快取的）system prompt，改放一小段提示文字，並多給 Keeper 一個 `search_scenario` 工具；`app/scenario_rag.py` 把劇本依「--- 第 N 頁 ---」分頁切成 chunk，用純本地的 BM25 關鍵字檢索（CJK 用 bigram 分詞，沒有另外裝分詞套件；ASCII 用單字），Keeper 每次要查劇本細節就呼叫這個工具查詢，只拿到最相關的幾頁內容，而不是整份都在眼前。**預設是關閉的**——不開的話行為跟這個功能出現之前完全一樣，整份劇本照舊放進 system prompt。
+- **為什麼不用真正的語意檢索（embeddings）**：這個專案一直很在意額外的花費和依賴（prompt caching、規則式 Intent Parser 不額外呼叫 LLM 都是同樣的考量）。真正的語意檢索需要另一組付費 API（Anthropic 本身沒有 embeddings 端點，常見選擇是 Voyage AI 或 OpenAI）加一個向量資料庫，而目前測過的劇本都還在 `MAX_SCENARIO_CHARS` 上限內、用不到。BM25 是純字面比對，零額外成本、零新依賴，換來的是準度打折。
+- **還是有的限制**：
+  1. 純字面比對，不是語意理解——玩家問的詞如果劇本裡用完全不同的說法描述（同一個角色，劇本寫全名，玩家只講外號），可能查不到；沒有同義詞或改寫的容錯能力。
+  2. 檢索粒度是「一整頁」，不是更細的段落，一頁如果混雜好幾個不相關的主題，查到的內容可能夾雜不需要的部分。
+  3. **關掉「整份劇本一次全部在眼前」這件事本身就是取捨**——原本 Keeper 能自己把跨頁的線索兜在一起（例如「這個符號在第 3 頁提過，第 20 頁又出現」），開啟 RAG 後這種跨頁關聯只在 Keeper 主動查了兩次、剛好都查到才會發生，沒有整份文字時那麼可靠。
+  4. Keeper 是否記得在需要時呼叫 `search_scenario`，靠的是系統提示詞的自律（跟這個專案其他工具呼叫的約束方式一致），沒有程式碼強制「回覆前一定要先查過劇本」。
+  5. 索引依 `group_id` 快取在記憶體裡（跟著程式行程活，不寫到 `data/groups/*.json`），重啟 LINE/Discord 常駐行程後第一次查詢會重建一次索引（純 CPU，很快，沒有額外呼叫）。
+- **什麼時候該開**：劇本長度逼近或超過 `MAX_SCENARIO_CHARS`（240,000 字）時，或想省掉「劇本內容佔掉大部分 prompt caching 額度」的成本時，可以考慮開啟；一般長度的劇本，關閉（預設值）通常敘事品質更好、更省心。
+- **之後要擴充的話**：真的需要語意檢索時，再接一個 embeddings 供應商做混合檢索（BM25 + 向量取交集/加權）；或是把檢索粒度從整頁再切細一點。
+
+### 6. 本機測試階段，ngrok 網址每次重啟都會變
 
 - **原因**：ngrok 免費方案沒有固定網域，每次執行 `ngrok http 8000`（不管是你自己重開終端機、電腦重開機、還是 ngrok 連線斷掉重連）都會重新配一個隨機網址，例如這次是 `https://a1b2c3d4.ngrok-free.app`，下次可能變成完全不同的一串。
 - **影響**：網址一變，LINE Developers Console 裡設定的 Webhook URL 就失效了（因為指向舊網址），Bot 在群組裡會完全沒反應，需要你手動回 Console 重新貼上新網址、按 **Verify** 確認連得到，才能恢復。
@@ -382,4 +403,4 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - 敘事節奏紀律、文風、孤注一擲、NPC 隊友設計指南（見「玩法」段落第 5 點）目前全都是系統提示詞層面的行為要求，沒有程式碼強制執行——參考了 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 這個純 prompt 型 KP skill 的做法。跟這個專案既有的 DEX 先攻順位、暫離跳過等規則不同的是，這幾項完全靠 LLM 自己遵守提示詞，沒有像 `app/combat.py` 那樣的程式碼守門，理論上模型偶爾還是可能忘記（例如孤注一擲問一半又自己算過、或一次講太多場景），沒有自動化測試能保證每次都遵守。
 - 「★ 關鍵背景連結」（`/coc setconnection`）目前只是一個自由文字欄位加上提示詞層面「不能沒收搶救機會」的約束，沒有真的擋住守密人的 `adjust_character`／`sanity_check` 工具呼叫；換句話說技術上守密人還是叫得動工具直接刪掉，全靠提示詞自律。`/coc create` 互動建角流程也還沒有讓玩家在建角當下就設定這個欄位，得建完角色後另外呼叫 `/coc setconnection`。
 - NPC 隊友（`/coc combat addally`）只在戰鬥的先攻順位裡多一個「隊友」分類；戰鬥外沒有獨立的「NPC 隊友角色卡」資料結構（不像玩家角色有 `Character`），完全由守密人在敘事裡自己記住並扮演，沒有結構化資料能查詢或跨場景保留 NPC 隊友的技能數值。
-- 使用者提過一張更大的目標架構圖（玩家訊息 → Intent Parser → Keeper Skill → Deterministic Engine → Map/Scene Engine → Scenario RAG → LLM）。目前做了 Map/Scene Engine（`app/scene_map.py`）和規則式的 Intent Parser（`app/intent_parser.py`，只做移動意圖偵測，不是那張圖上完整的意圖分類器），Deterministic Engine 對應既有的 `app/dice.py`／`app/combat.py`。**Scenario RAG 還沒做**——目前劇本還是整份塞進 system prompt（配 prompt caching），不是檢索式的，見上面「劇本內容 vs 對話紀錄長度上限」那條的說明和取捨。
+- 使用者提過一張更大的目標架構圖（玩家訊息 → Intent Parser → Keeper Skill → Deterministic Engine → Map/Scene Engine → Scenario RAG → LLM）。五層都做了對應版本：Map/Scene Engine（`app/scene_map.py`）、規則式的 Intent Parser（`app/intent_parser.py`，只做移動意圖偵測，不是那張圖上完整的意圖分類器）、Deterministic Engine 對應既有的 `app/dice.py`／`app/combat.py`、Scenario RAG（`app/scenario_rag.py`，見下方「Scenario RAG 是可選功能」那條）。
