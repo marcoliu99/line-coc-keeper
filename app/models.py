@@ -361,6 +361,14 @@ class GroupState:
     # "loss_failure": str}.
     pending_checks: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # A rolled check awaiting the player's Luck-spend decision (see app/luck.py
+    # and app/commands.py's _finalize_check_result/handle_luck_decision) —
+    # keyed by owner_id, cleared once they pick an option (or "skip"). Shape:
+    # {"skill_name": str, "display_label": str | None, "value": int, "roll":
+    # int, "bonus_dice": int, "penalty_dice": int, "original_tier": str,
+    # "options": [{"tier": str, "cost": int}, ...]}.
+    pending_luck_decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
             if c.name == name:
@@ -383,6 +391,7 @@ class GroupState:
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
+            "pending_luck_decisions": self.pending_luck_decisions,
         }
 
     @staticmethod
@@ -409,4 +418,5 @@ class GroupState:
             current_room_id=data["current_room_id"] if isinstance(data.get("current_room_id"), dict) else {},
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
+            pending_luck_decisions=data.get("pending_luck_decisions", {}),
         )

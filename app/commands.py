@@ -25,7 +25,7 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
-from app import combat, creation, dice, intent_parser, keeper, locks, pdf_loader, pregen_extractor, scenario_rag
+from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import OCCUPATIONS, GroupState, generate_investigator
@@ -61,6 +61,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 【檢定】
 ・/coc check → 守密人請你檢定時，自己擲骰（不是守密人幫你骰）；也可以自己主動打 /coc check 技能名 [獎勵骰數] [懲罰骰數]
 ・如果守密人給的是「閃避 vs 反擊」這種多選一的檢定，用 /coc check <選項名稱> 指定要選哪個（Discord 會直接看到對應的按鈕）
+・擲骰結果離成功很近時（差 7 點以內），系統會主動問要不要花 Luck 買到更好的結果，點按鈕或用 /coc luck skip|regular|hard|extreme 回應
 
 【角色管理】
 ・/coc sheet → 查看自己的角色卡
@@ -249,6 +250,60 @@ _CHECK_TIER_ZH = {
 }
 
 
+def _build_check_narration(
+    char, skill_name: str, display_label: str | None, value: int, r, bonus: int, penalty: int,
+    luck_spent: int = 0, original_tier: str | None = None,
+) -> tuple[str, str]:
+    """Builds (roll_line, keeper_message) for a resolved skill/choice check —
+    shared by the immediate-finalize path and handle_luck_decision (after a
+    Luck spend has overridden r.tier). luck_spent > 0 adds a note both humans
+    and the Keeper can see that the tier was bought up, not rolled naturally."""
+    tier_zh = _CHECK_TIER_ZH[r.tier]
+    dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
+    luck_note = ""
+    if luck_spent:
+        luck_note = f"（花費 {luck_spent} 點 Luck，將結果從「{_CHECK_TIER_ZH[original_tier]}」提升為「{tier_zh}」）"
+
+    if display_label is not None:
+        roll_line = f"🎲 {char.name} 選擇「{display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}{luck_note}"
+        keeper_message = (
+            f"（{char.name} 在多個選項裡選了「{display_label}」，擲骰做了一次「{skill_name}」檢定："
+            f"技能值 {value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果"
+            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）"
+        )
+    else:
+        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}"
+        keeper_message = (
+            f"（{char.name} 擲骰做了一次「{skill_name}」檢定：技能值 {value}%{dice_note}，"
+            f"擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果描述後續發展，"
+            f"不要重新判定或改變這個結果。）"
+        )
+    return roll_line, keeper_message
+
+
+async def _finalize_check_result(
+    conversation_id: str,
+    user_id: str,
+    state: GroupState,
+    char,
+    roll_line: str,
+    keeper_message: str,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+) -> None:
+    """Shared tail for every resolved check (sanity, choice, plain skill, and
+    a Luck-spend decision) — hands the already-determined result to the
+    Keeper for narration and delivers whatever it queued."""
+    resolved_location = _resolve_map_action(state, user_id, keeper_message)
+    keeper_reply, private_messages, image_requests = await asyncio.to_thread(
+        keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
+    )
+    await reply(f"{roll_line}\n\n{keeper_reply}")
+    await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
+
+
 async def handle_check_command(
     conversation_id: str,
     user_id: str,
@@ -327,17 +382,12 @@ async def handle_check_command(
             f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
             f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
         )
-    elif choice_skill_name is not None:
+        await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
+        return
+
+    if choice_skill_name is not None:
         skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
-        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
-        tier_zh = _CHECK_TIER_ZH[r.tier]
-        dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
-        roll_line = f"🎲 {char.name} 選擇「{choice_display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}"
-        keeper_message = (
-            f"（{char.name} 在多個選項裡選了「{choice_display_label}」，擲骰做了一次「{skill_name}」檢定："
-            f"技能值 {value}%{dice_note}，擲出 {r.roll} → {tier_zh}。這是已經確定的結果，請根據這個結果"
-            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）"
-        )
+        display_label = choice_display_label
     else:
         if pending:
             skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
@@ -347,22 +397,85 @@ async def handle_check_command(
             bonus = int(parts[3]) if len(parts) > 3 and parts[3].lstrip("-").isdigit() else 0
             penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
             save_state(state)  # resolve_skill_value may have registered a new default-value skill
-        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
-        tier_zh = _CHECK_TIER_ZH[r.tier]
-        dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
-        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}"
-        keeper_message = (
-            f"（{char.name} 擲骰做了一次「{skill_name}」檢定：技能值 {value}%{dice_note}，"
-            f"擲出 {r.roll} → {tier_zh}。這是已經確定的結果，請根據這個結果描述後續發展，"
-            f"不要重新判定或改變這個結果。）"
-        )
+        display_label = None
+    r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
 
-    resolved_location = _resolve_map_action(state, user_id, keeper_message)
-    keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-        keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
+    # Luck-spend: only proactively offered when it's a near-miss (the cheapest
+    # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
+    # excluded (handled above, already finalized by this point).
+    luck_options = luck.buyable_options(value, r.roll, r.tier, char.luck)
+    gate_cost = luck.cheapest_cost(value, r.roll, r.tier)
+    if luck_options and gate_cost is not None and gate_cost <= 7:
+        state.pending_luck_decisions[user_id] = {
+            "skill_name": skill_name, "display_label": display_label,
+            "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
+            "original_tier": r.tier,
+            "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
+        }
+        save_state(state)
+        options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
+        dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
+        await reply(
+            f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {_CHECK_TIER_ZH[r.tier]}\n"
+            f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
+            f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
+        )
+        return
+
+    roll_line, keeper_message = _build_check_narration(char, skill_name, display_label, value, r, bonus, penalty)
+    await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
+
+
+async def handle_luck_decision(
+    conversation_id: str,
+    user_id: str,
+    choice: str,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+) -> None:
+    """Resolves a pending Luck-spend decision (see handle_check_command above
+    and app/luck.py) — either "skip" (keep the natural roll) or a tier name
+    ("regular"/"hard"/"extreme") to buy up to, deducting the cost from the
+    character's Luck before handing the (possibly improved) result to the
+    Keeper exactly like a normal check."""
+    state = load_state(conversation_id)
+    pending = state.pending_luck_decisions.pop(user_id, None)
+    if not pending:
+        await reply("目前沒有待決定的 Luck 花費。")
+        return
+    char = state.characters.get(user_id)
+    if not char:
+        await reply("找不到你的角色。")
+        return
+
+    tier = pending["original_tier"]
+    luck_spent = 0
+    if choice != "skip":
+        option = next((o for o in pending["options"] if o["tier"] == choice), None)
+        if not option:
+            state.pending_luck_decisions[user_id] = pending  # not a valid/still-affordable option — put it back
+            save_state(state)
+            options_text = "、".join(f"{o['tier']}（{o['cost']} 點）" for o in pending["options"])
+            await reply(f"這不是有效的選項，可選：{options_text}、skip")
+            return
+        luck_spent = option["cost"]
+        char.luck = max(0, char.luck - luck_spent)
+        tier = choice
+    save_state(state)
+
+    success = tier in ("critical", "extreme", "hard", "regular")
+    r = dice.SkillCheckResult(
+        skill_value=pending["value"], roll=pending["roll"], bonus_dice=pending["bonus_dice"],
+        penalty_dice=pending["penalty_dice"], tier=tier, success=success,
     )
-    await reply(f"{roll_line}\n\n{keeper_reply}")
-    await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
+    roll_line, keeper_message = _build_check_narration(
+        char, pending["skill_name"], pending["display_label"], pending["value"], r,
+        pending["bonus_dice"], pending["penalty_dice"],
+        luck_spent=luck_spent, original_tier=pending["original_tier"],
+    )
+    await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
 
 
 async def handle_text_message(
@@ -384,6 +497,13 @@ async def handle_text_message(
     if text.startswith("/coc check"):
         async with locks.get_conversation_lock(conversation_id):
             await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
+        return
+
+    if text.startswith("/coc luck"):
+        parts = text.split()
+        choice = parts[2] if len(parts) > 2 else "skip"
+        async with locks.get_conversation_lock(conversation_id):
+            await handle_luck_decision(conversation_id, user_id, choice, reply, send_dm, send_image, send_dm_image)
         return
 
     if text.startswith("/coc"):
@@ -415,8 +535,7 @@ async def handle_text_message(
 
 def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str, dict] | None:
     """Fuzzy match a raw "entering X" text candidate against the location_name
-    of any map extracted from this scenario (see app/scene_map.py). Mirrors
-    _find_pregen_by_occupation's fuzzy-substring approach below."""
+    of any map extracted from this scenario (see app/scene_map.py)."""
     norm = candidate.strip().lower()
     if not norm:
         return None
@@ -580,18 +699,6 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     return "\n".join(lines)
 
 
-def _find_pregen_by_occupation(state: GroupState, occupation: str) -> dict | None:
-    """Fuzzy match a requested occupation against the currently loaded scenario's
-    cached pregens (state.pregens — reset on every new PDF upload, so this only
-    ever matches against whatever scenario is active right now)."""
-    if not occupation:
-        return None
-    norm = occupation.strip().lower()
-    for p in state.pregens:
-        occ = str(p.get("occupation", "")).strip().lower()
-        if occ and (norm == occ or norm in occ or occ in norm):
-            return p
-    return None
 
 
 async def _handle_coc_command(
@@ -607,25 +714,13 @@ async def _handle_coc_command(
 
     if sub == "pc":
         state = load_state(conversation_id)
-        # Once a scenario has its own pregens, quick-gen is scoped to exactly
-        # those — a random unrelated occupation wouldn't have a reason to be in
-        # this specific story, and the scenario is usually balanced/written
-        # around this exact cast. Only fall back to the generic table when the
-        # scenario genuinely has none (or /coc pregens hasn't been run yet).
-        available_occupations = [
-            p.get("occupation") for p in state.pregens if p.get("occupation") and not p.get("claimed_by")
-        ]
-        available_occupations = list(dict.fromkeys(available_occupations))  # de-dupe, keep order
+        # A scenario with its own pregens is meant to be played with exactly
+        # that cast — no custom quick-gen once any exist, only /coc pregen.
+        if state.pregens:
+            await reply("這份劇本有預製角色，請用「/coc pregens」查看、「/coc pregen 編號」選一位，這份劇本不開放自訂角色。")
+            return
 
         if len(parts) < 3:
-            if state.pregens:
-                if available_occupations:
-                    await reply(
-                        "用法：/coc pc 角色名 職業\n這份劇本的角色（尚未被選走的）：" + "、".join(available_occupations)
-                    )
-                else:
-                    await reply("這份劇本的預製角色都已經被選走了，跟其他玩家喬一下，或改用 /coc create 自己建角。")
-                return
             occ_hint = "、".join(OCCUPATIONS.keys())
             if state.scenario_text:
                 occ_hint += "\n（想用這份劇本裡的職業？先輸入 /coc pregens 讓守密人讀取劇本裡的角色卡）"
@@ -640,42 +735,10 @@ async def _handle_coc_command(
         name = parts[2]
         occupation = parts[3] if len(parts) > 3 else None
 
-        if state.pregens:
-            pregen_match = _find_pregen_by_occupation(state, occupation) if occupation else None
-            if not pregen_match:
-                await reply(
-                    "這份劇本有內建角色，請從這些職業裡選一個：" + "、".join(available_occupations)
-                    + "\n用法：/coc pc 角色名 職業"
-                )
-                return
-            claimed_by = pregen_match.get("claimed_by")
-            if claimed_by and claimed_by != user_id:
-                await reply(
-                    f"「{pregen_match.get('occupation')}」已經被其他玩家選走了，"
-                    "剩下可選的：" + ("、".join(available_occupations) or "（都選完了）")
-                )
-                return
-            pregen_match["claimed_by"] = user_id
-            occupation_skills = pregen_match.get("skills")
-            secret_goal = pregen_match.get("secret_goal") or ""
-        else:
-            pregen_match = None
-            occupation_skills = None
-            secret_goal = ""
-
-        char = generate_investigator(
-            name=name, owner_id=user_id, occupation=occupation,
-            occupation_skills=occupation_skills, secret_goal=secret_goal,
-        )
+        char = generate_investigator(name=name, owner_id=user_id, occupation=occupation)
         state.characters[user_id] = char
         save_state(state)
-        note = "\n（技能參考自劇本內建角色卡）" if pregen_match else ""
-        await reply(f"調查員建立完成！\n\n{char.sheet_text()}{note}")
-        if secret_goal:
-            try:
-                await send_dm(user_id, f"🤫（私訊）你的秘密目標：{secret_goal}")
-            except Exception:
-                _logger.exception("send_dm (secret_goal on /coc pc) failed for user_id=%s", user_id)
+        await reply(f"調查員建立完成！\n\n{char.sheet_text()}")
         return
 
     if sub == "sheet":
@@ -772,6 +835,10 @@ async def _handle_coc_command(
             ok = creation.cancel(state, user_id)
             save_state(state)
             await reply("已取消建角流程。" if ok else "目前沒有進行中的建角流程。")
+            return
+
+        if state.pregens:
+            await reply("這份劇本有預製角色，請用「/coc pregens」查看、「/coc pregen 編號」選一位，這份劇本不開放自訂角色。")
             return
 
         if not action:
