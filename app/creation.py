@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import random
 
-from app.models import BASE_SKILLS, Character, CreationSession, GroupState, damage_bonus_and_build, move_rate
+from app.models import (
+    BASE_SKILLS,
+    OCCUPATION_EQUIPMENT,
+    Character,
+    CreationSession,
+    GroupState,
+    damage_bonus_and_build,
+    move_rate,
+)
 
 _SKILL_CAP = 90  # soft cap on any single skill at character creation
 
@@ -116,6 +124,12 @@ def finalize(state: GroupState, owner_id: str) -> Character | None:
         san=san, san_max=san_max,
         move=move, damage_bonus=db, build=build,
         skills=dict(session.skills),
+        # Only matches when the player typed one of the built-in occupation
+        # labels exactly (see OCCUPATION_EQUIPMENT's own docstring in
+        # app/models.py) — a custom free-text occupation gets no default
+        # items, same as it already gets no default skill bonus in this
+        # player-driven creation flow.
+        carried_items=list(OCCUPATION_EQUIPMENT.get(session.occupation, [])),
     )
     state.characters[owner_id] = char
     return char

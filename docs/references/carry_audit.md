@@ -2,7 +2,14 @@
 
 **狀態：已實作**（動態審查部分——玩家宣稱攜帶什麼東西時的四項合理性檢查）。這份文件原本是照 [coc-kp-host/references/carry_audit.md](https://github.com/SumanasJ/coc-kp-host/blob/main/references/carry_audit.md) 改編的設計規格，記錄「如果之後要做，應該怎麼做」；下面「如果之後要實作」一節列的最小可行版本（純提示詞規則，不用新工具/新指令）現在已經照那個規格加進 `app/keeper.py` 的 `_build_static_prompt`（可讀版本見 `docs/keeper_skill.md` 的「攜帶物合理性審查」一節），實測過會擋下不合理的裝備宣稱（例如圖書館員宣稱身上有一把湯普森衝鋒槍），也確認日常小物不會被誤擋。
 
-**還沒做的部分**：建角流程（`/coc pc`／`/coc create`／`/coc usepregen`）仍然沒有隨身物品欄位或建角時的靜態審查——這份文件「建角時的靜態審查」一節描述的規則還沒對應到任何程式碼或提示詞，純粹是遊戲中途宣稱攜帶物品時的動態審查生效。
+**建角時的靜態審查也做了一部分**：`/coc pc`（`generate_investigator`）跟 `/coc create`（`creation.finalize`）現在會依職業自動帶入 `app/models.py` 的 `OCCUPATION_EQUIPMENT` 預設隨身物品清單（例如警察帶警徽/警棍/手銬，記者帶記者證/筆記本/相機），不用玩家自己宣告，這些物品已經預先審查過符合四項檢查（年代/來源/負擔能力/合法性），不需要再走一次動態審查。
+
+**劇本／角色卡的內容永遠優先，這份通用清單只在完全沒有劇本資訊可用時才補位**——不是額外規則，是現有資料流本來就這樣分層：
+- `/coc usepregen`（劇本自己的預製角色）完全不會碰到 `OCCUPATION_EQUIPMENT`，走的是 `pregen_extractor.pregen_to_character`，裝備以劇本角色卡自己寫的（`weapons`／`notes`）為準。
+- `/coc pc` 帶 `occupation_skills`（劇本抽出的職業技能加成，例如「這份劇本裡的海洋生物學家技能是這樣」）時，`generate_investigator` 也完全不會套用這份清單——只有沒有任何劇本職業資料、純粹通用建角（`occupation_skills` 沒給、`occupation` 剛好對到下面 `OCCUPATIONS` 裡的通用職業）時才會用上。
+- `/coc create` 是完全由玩家手動分配技能點數的建角流程，目前設計上就沒有介面能帶入劇本資料，所以只要玩家輸入的職業字串跟 `OCCUPATION_EQUIPMENT` 的 key 完全相符就會套用（自訂職業字串則不會）。
+
+（附帶一提：`generate_investigator` 的 `occupation_skills` 參數是在早於「劇本有預製角色時 `/coc pc` 直接整個被擋下」這個規則之前設計的，目前程式碼裡已經沒有任何地方真的傳入這個參數了——`/coc pc` 只要劇本有 `pregens` 就直接拒絕，不會走到這條路。這是既有的、跟這次改動無關的死路徑，這次沒有動它，僅供之後想清理程式碼時參考。）
 
 （`Character` 現在確實有兩個相關但範圍窄很多的欄位，跟這份文件講的「審查」是兩回事，不要搞混：`weapons` 追蹤**已經確定持有**的槍械目前剩餘彈數（`role_` 角色卡上傳時從【武器】區塊的「彈容量」解析，開槍呼叫 `adjust_ammo` 扣彈）；`carried_items` 是一個純粹的自由文字清單，記錄角色撿到/拿到的東西（`add_carried_item`/`remove_carried_item`），單純「有沒有記住這個東西存在」，沒有做任何年代/來源/負擔能力/合法性的判斷——Keeper 判斷「這樣東西合不合理」還是完全靠系統提示詞的自由心證，不是這份文件講的結構化四項審查。）
 

@@ -66,6 +66,36 @@ OCCUPATIONS: dict[str, dict[str, int]] = {
     },
 }
 
+# Default starting carried items per built-in occupation — see
+# docs/references/carry_audit.md's "建角時的靜態審查" section: rather than
+# reviewing a player's own equipment claims at creation time (there's nothing
+# to review yet; /coc pc and /coc create never asked about gear before this),
+# these are pre-authored to already pass the four-point reasonableness check
+# for their occupation (era-appropriate 1920s items, obviously justified by
+# the job itself, nothing requiring a credit-rating judgment call). Kept to
+# flavor/utility items only, deliberately no firearms — a default sidearm
+# would need ammo-tracking data (see Character.weapons) this dict has no way
+# to supply, and an occupation that plausibly carries one (警察, FBI探員) can
+# still add it during play via the dynamic carry-audit rules in
+# app/keeper.py's system prompt, same as any other claimed item. Only looked
+# up for an occupation that exactly matches one of these keys — a custom
+# free-text occupation (str for /coc create's occupation field isn't
+# restricted to this dict) simply gets no default items, same as it already
+# gets no default skill bonus.
+OCCUPATION_EQUIPMENT: dict[str, list[str]] = {
+    "記者": ["記者證", "筆記本與鋼筆", "口袋型相機"],
+    "私家偵探": ["偵探執照", "放大鏡", "隨身筆記本"],
+    "醫生": ["醫師執業證", "醫藥包"],
+    "教授": ["教職員證", "鋼筆與筆記本", "懷錶"],
+    "警察": ["警徽與委任證", "警棍", "手銬"],
+    "骨董商": ["古董商執照", "放大鏡", "鑑定用手套"],
+    "神職人員": ["聖職證明", "隨身聖經（或對應信仰經典）"],
+    "流浪漢": ["破舊背包", "打火石"],
+    "藝術家": ["素描本與炭筆", "小型畫具箱"],
+    "海洋生物學家": ["研究機構識別證", "野外筆記本", "採樣瓶"],
+    "FBI探員": ["聯邦探員證件", "手銬"],
+}
+
 
 def _roll(expr_dice: int, expr_sides: int, mult: int = 1) -> int:
     return sum(random.randint(1, expr_sides) for _ in range(expr_dice)) * mult
@@ -270,6 +300,7 @@ def generate_investigator(
     skills["閃避"] = dex // 2
     skills["母語"] = edu
 
+    carried_items: list[str] = []
     if occupation_skills:
         for skill, value in occupation_skills.items():
             if isinstance(value, (int, float)):
@@ -280,6 +311,7 @@ def generate_investigator(
         if occ_key:
             for skill, value in OCCUPATIONS[occ_key].items():
                 skills[skill] = max(skills.get(skill, 0), value)
+            carried_items = list(OCCUPATION_EQUIPMENT.get(occ_key, []))
         occ_label = occ_key or (occupation or "自由人")
 
     return Character(
@@ -292,6 +324,7 @@ def generate_investigator(
         san=san, san_max=san_max,
         move=move, damage_bonus=db, build=build,
         skills=skills,
+        carried_items=carried_items,
         secret_goal=secret_goal,
     )
 
