@@ -89,6 +89,7 @@
 | 角色卡有登記彈藥的槍開槍/裝填 | `adjust_ammo` |
 | 角色撿到/拿到/交出值得記住的東西 | `add_carried_item` / `remove_carried_item` |
 | 道具/傷害骰等一般擲骰 | `roll_dice` |
+| 一般命中（非極限成功）的武器傷害 | `roll_weapon_damage`（自動查角色 DB 並正確加總，不用自己拼骰子表示式） |
 | 攻擊擲骰是極限成功（非反擊）的加成傷害 | `roll_impaling_damage`（武器＋DB 算最大值；穿刺武器再額外重骰一次武器傷害） |
 | 打起來了 | `start_combat` → `add_npc_to_combat`（敵人）／`add_npc_to_combat(is_ally=true)`（隊友）→ 每人行動完 `advance_combat_turn` |
 | 劇本頁面是圖片內容，玩家實際看到了 | `show_scenario_image`（可指定 `investigator` 只給特定人看） |
@@ -120,7 +121,7 @@
 
 ## 戰鬥規則
 
-DEX 排先攻順位，一次只處理輪到的角色，DEX 不同的人行動跟敘述都要照順序來，只有 DEX 剛好相同的人才可以敘述成同時行動。某人行動處理完必須呼叫 `advance_combat_turn` 推進，不可以自己心裡默默跳過。HP/DEX/先攻順位、以及玩家 vs NPC 的閃避/反擊對抗檢定（`npc_skill_check` + `offer_check_choice` 的 `attacker_tier`）都是程式碼管的；傷害加值自動套用、重傷判定、戰技、玩家 vs 玩家的對抗檢定都還沒實作——見 `docs/references/rules_reference.md` 的落差清單。
+DEX 排先攻順位，一次只處理輪到的角色，DEX 不同的人行動跟敘述都要照順序來，只有 DEX 剛好相同的人才可以敘述成同時行動。某人行動處理完必須呼叫 `advance_combat_turn` 推進，不可以自己心裡默默跳過。HP/DEX/先攻順位、玩家 vs NPC 的閃避/反擊對抗檢定（`npc_skill_check` + `offer_check_choice` 的 `attacker_tier`）、一般命中與極限成功的傷害加值自動套用都是程式碼管的；重傷判定、戰技、玩家 vs 玩家的對抗檢定都還沒實作——見 `docs/references/rules_reference.md` 的落差清單。
 
 ## 地圖引擎整合
 
