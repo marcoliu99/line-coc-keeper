@@ -155,6 +155,7 @@ async def handle_pdf_upload(
         state.scenario_text = text
         state.scenario_title = title
         state.active = True
+        state.openai_previous_response_id = ""
         state.pregens = []  # clear the previous scenario's cached pregens — otherwise
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.

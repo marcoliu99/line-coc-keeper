@@ -334,3 +334,39 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - 「★ 關鍵背景連結」（`/coc setconnection`）目前只是一個自由文字欄位加上提示詞層面「不能沒收搶救機會」的約束，沒有真的擋住守密人的 `adjust_character`／`sanity_check` 工具呼叫；換句話說技術上守密人還是叫得動工具直接刪掉，全靠提示詞自律。`/coc create` 互動建角流程也還沒有讓玩家在建角當下就設定這個欄位，得建完角色後另外呼叫 `/coc setconnection`。
 - NPC 隊友（`/coc combat addally`）只在戰鬥的先攻順位裡多一個「隊友」分類；戰鬥外沒有獨立的「NPC 隊友角色卡」資料結構（不像玩家角色有 `Character`），完全由守密人在敘事裡自己記住並扮演，沒有結構化資料能查詢或跨場景保留 NPC 隊友的技能數值。
 - 使用者提過一張更大的目標架構圖（玩家訊息 → Intent Parser → Keeper Skill → Deterministic Engine → Map/Scene Engine → Scenario RAG → LLM）。五層都做了對應版本：Map/Scene Engine（`app/scene_map.py`）、規則式的 Intent Parser（`app/intent_parser.py`，只做移動意圖偵測，不是那張圖上完整的意圖分類器）、Deterministic Engine 對應既有的 `app/dice.py`／`app/combat.py`、Scenario RAG（`app/scenario_rag.py`，見下方「Scenario RAG 是可選功能」那條）。
+
+### 17. GroupState 新增 OpenAI Response ID 持久化欄位
+
+- **這次實際完成**：`app/models.py` 的 `GroupState` 新增 `openai_previous_response_id: str = ""`，並同步加入 `GroupState.to_dict()` 與 `GroupState.from_dict()`，讓每個跑團/session 的 JSON state 可以保存與讀回這個欄位。舊 JSON 沒有這個欄位時會用空字串作為預設值，不影響既有存檔讀取。
+- **這次沒有做**：尚未修改 `keeper.py` 或 `openai_provider.py`，也尚未開始把這個欄位傳給 OpenAI Responses API 的 `previous_response_id`。
+
+### 18. OpenAI Responses API 同回合 Tool Loop 改用 previous_response_id
+
+- **這次實際完成**：只修改 `app/providers/openai_provider.py` 的 `run_conversation()` 內部 tool loop。第一次 Responses API 呼叫仍維持原本的 `history + 玩家訊息`；如果模型要求工具呼叫，執行工具後的下一次呼叫改用上一個 `response.id` 作為 `previous_response_id`，並且 `input` 只送這一次新產生的 `function_call_output`，不再重複送整段 history、玩家訊息、舊的 function call 或舊的 tool output。
+- **保留不變**：`run_conversation()` 的函式參數與回傳型別仍是 `-> str`；每次呼叫仍傳目前的 `instructions` 與 `tools`；`analyze_image()`、`analyze_text()`、Anthropic/Gemini provider、`keeper.py`、`GroupState` 都沒有修改。
+
+### 19. OpenAI run_conversation 支援選擇性接收上一回合 response ID
+
+- **這次實際完成**：只修改 `app/providers/openai_provider.py` 的 `run_conversation()` 簽名，在最後新增 `previous_response_id: str = ""` 與 `on_response_id: Callable[[str], None] | None = None` 兩個 optional 參數；既有呼叫不用傳新參數仍維持原本行為。沒有傳入 `previous_response_id` 時，第一次 Responses API 呼叫仍送 `history + 玩家訊息`；有傳入時，第一次呼叫改帶該 ID 並且 `input` 只送本輪玩家訊息，不再重送 history。同回合工具迴圈仍沿用上一段改動：工具 follow-up 會改用剛取得的新 `response.id`，只送新產生的 `function_call_output`。
+- **回報最後 response ID**：當一回合成功取得沒有 function call 的最終 response 時，如果有提供 `on_response_id` callback，就用最後那個 response 的 `id` 呼叫 callback；`run_conversation()` 本身仍只回傳最終文字 `str`。
+- **保留不變**：沒有修改 `keeper.py`、`GroupState`、Anthropic/Gemini provider、`analyze_image()` 或 `analyze_text()`。
+
+### 20. keeper.run_turn 接上 OpenAI 上一回合 response ID
+
+- **這次實際完成**：只修改 `app/keeper.py` 的 provider 呼叫分支。當 `LLM_PROVIDER == "openai"` 時，`keeper.run_turn()` 會把 `state.openai_previous_response_id` 傳給 OpenAI provider 的 `run_conversation()`，並提供 `on_response_id` callback，在 OpenAI 成功完成整個回合後把最後的 `response.id` 寫回 `state.openai_previous_response_id`。
+- **保留不變**：Anthropic/Gemini 仍使用原本的 `run_conversation()` 呼叫方式，不傳 OpenAI 專屬參數；`final_text` 仍是字串；沒有新增 `save_state()`，仍沿用 `run_turn()` 結尾既有的 `save_state(state)`；沒有刪除 `state.log`、`campaign_summary`，也沒有修改 memory RAG。
+
+### 21. OpenAI 舊 previous_response_id 失效時安全退回 history
+
+- **這次實際完成**：只修改 `app/providers/openai_provider.py` 的 `run_conversation()`，新增對「跨回合傳入的舊 `previous_response_id` 明確失效」的窄範圍 fallback。只有本回合第一次 API 呼叫、且確實使用外部傳入的非空 `previous_response_id` 時，如果 OpenAI SDK 回報 `BadRequestError`／`NotFoundError`，且錯誤內容明確提到 `previous_response_id` 或指出舊 response ID 無效／不存在，才會移除 `previous_response_id`，改用 `history + 玩家訊息` 重試一次，重新建立 conversation chain。
+- **保留不變**：同一回合 tool loop 中新產生的 `response.id` 不做這個 fallback；rate limit、network、authentication、model、tool schema，以及其他沒有明確指向舊 `previous_response_id` 的錯誤仍維持原本 exception 行為。成功 fallback 後，後續 tool loop 仍使用新的 `response.id` 串接，最後 `on_response_id` 仍只回報整個回合最後成功的 response ID。
+
+### 22. 上傳新 PDF 劇本時清除 OpenAI conversation chain
+
+- **這次實際完成**：只修改 `app/commands.py` 的 `handle_pdf_upload()`。當新 PDF 劇本內容正式寫入 `GroupState` 時，同步把 `state.openai_previous_response_id` 設回空字串，避免新劇本沿用上一個劇本留下的 OpenAI Responses conversation chain。
+- **保留不變**：沒有修改 `/coc newgame`、`/coc end`、`state.log`、`campaign_summary`、`characters`、`combat` 或 `pending_checks`。
+
+### 23. 收窄 OpenAI previous_response_id fallback 的錯誤判斷
+
+- **這次實際完成**：只修改 `app/providers/openai_provider.py` 的 `_is_invalid_previous_response_id_error()`，移除「錯誤訊息只要提到 `previous_response_id` 就 fallback」的寬鬆判斷。現在仍必須是 OpenAI SDK 的 `BadRequestError` 或 `NotFoundError`，而且錯誤內容要明確表示舊 response ID 無效、找不到、不存在或已無法使用，才會觸發 fallback。
+- **保留不變**：沒有改變 `run_conversation()` 的 fallback 流程；不支援 `previous_response_id`、模型不能使用該參數、request shape 錯誤、一般 400、rate limit 或 network 類錯誤都不會被誤當成舊 chain 失效。

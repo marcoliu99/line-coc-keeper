@@ -53,6 +53,67 @@ def _create_response(client, **kwargs):
             kwargs.pop(offending, None)
 
 
+def _is_invalid_previous_response_id_error(
+    exc: Exception,
+    openai_module,
+    previous_response_id: str,
+) -> bool:
+    sdk_error_types = tuple(
+        error_type
+        for name in ("BadRequestError", "NotFoundError")
+        if isinstance(error_type := getattr(openai_module, name, None), type)
+    )
+    if sdk_error_types and not isinstance(exc, sdk_error_types):
+        return False
+
+    message = str(exc).lower()
+    unsupported_markers = (
+        "unsupported parameter",
+        "cannot be used",
+        "can't be used",
+        "request shape",
+        "invalid request",
+        "schema",
+    )
+    if any(marker in message for marker in unsupported_markers):
+        return False
+
+    invalid_markers = (
+        "invalid",
+        "not found",
+        "does not exist",
+        "doesn't exist",
+        "no such",
+        "unknown",
+        "expired",
+        "stale",
+    )
+
+    previous_id_markers = (
+        "previous_response_id",
+        "previous response",
+        "previous_response",
+        previous_response_id.lower(),
+    )
+    if any(marker in message for marker in previous_id_markers) and any(
+        marker in message for marker in invalid_markers
+    ):
+        return True
+
+    response_missing_markers = (
+        "response not found",
+        "response does not exist",
+        "response doesn't exist",
+        "no such response",
+        "unknown response",
+        "response id not found",
+        "response_id not found",
+        "response id does not exist",
+        "response_id does not exist",
+    )
+    return any(marker in message for marker in response_missing_markers)
+
+
 def run_conversation(
     static_system: str,
     dynamic_system: str,
@@ -61,6 +122,8 @@ def run_conversation(
     new_message: str,
     execute_tool: Callable[[str, dict], dict],
     max_iterations: int,
+    previous_response_id: str = "",
+    on_response_id: Callable[[str], None] | None = None,
 ) -> str:
     if not OPENAI_API_KEY:
         return "（尚未設定 OPENAI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
@@ -86,8 +149,13 @@ def run_conversation(
     # message mixed into the input list.
     instructions = f"{static_system}\n\n{dynamic_system}"
 
-    input_items: list[dict] = [{"role": entry["role"], "content": entry["content"]} for entry in history]
-    input_items.append({"role": "user", "content": new_message})
+    if previous_response_id:
+        input_items: list[dict] = [{"role": "user", "content": new_message}]
+        active_previous_response_id: str | None = previous_response_id
+    else:
+        input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
+        input_items.append({"role": "user", "content": new_message})
+        active_previous_response_id = None
 
     # Omitted entirely (not sent as an empty/None value) when
     # KEEPER_REASONING_EFFORT="" — that's the escape hatch back to the old
@@ -95,50 +163,54 @@ def run_conversation(
     reasoning_kwargs = {"reasoning": {"effort": KEEPER_REASONING_EFFORT}} if KEEPER_REASONING_EFFORT else {}
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
-    for _ in range(max_iterations):
-        response = _create_response(
-            client,
-            model=OPENAI_MODEL,
-            instructions=instructions,
-            input=input_items,
-            tools=openai_tools,
-            temperature=KEEPER_TEMPERATURE,
+    for iteration in range(max_iterations):
+        request_kwargs = {
+            "model": OPENAI_MODEL,
+            "instructions": instructions,
+            "input": input_items,
+            "tools": openai_tools,
+            "temperature": KEEPER_TEMPERATURE,
             **reasoning_kwargs,
-        )
+        }
+        if active_previous_response_id:
+            request_kwargs["previous_response_id"] = active_previous_response_id
+        try:
+            response = _create_response(client, **request_kwargs)
+        except Exception as exc:
+            if (
+                iteration == 0
+                and previous_response_id
+                and active_previous_response_id == previous_response_id
+                and _is_invalid_previous_response_id_error(exc, openai, previous_response_id)
+            ):
+                input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
+                input_items.append({"role": "user", "content": new_message})
+                active_previous_response_id = None
+                request_kwargs["input"] = input_items
+                request_kwargs.pop("previous_response_id", None)
+                response = _create_response(client, **request_kwargs)
+            else:
+                raise
 
         function_calls = [item for item in response.output if item.type == "function_call"]
 
-        # Echo the model's own output back into the next call's input — explicit
-        # per-item-type conversion (rather than passing the raw response.output
-        # pydantic objects straight through) so this stays plain-dict JSON and
-        # easy to test against a fake response object.
-        for item in response.output:
-            if item.type == "function_call":
-                input_items.append({
-                    "type": "function_call",
-                    "call_id": item.call_id,
-                    "name": item.name,
-                    "arguments": item.arguments,
-                })
-            elif item.type == "message":
-                text = "".join(c.text for c in item.content if getattr(c, "type", None) == "output_text")
-                if text:
-                    input_items.append({"role": "assistant", "content": text})
-            # Other item types (reasoning, etc.) are intentionally dropped —
-            # not needed for this project's tool-calling loop.
-
         if not function_calls:
             final_text = (response.output_text or "").strip() or final_text
+            if on_response_id is not None:
+                on_response_id(response.id)
             break
 
+        next_input_items: list[dict] = []
         for fc in function_calls:
             args = json.loads(fc.arguments or "{}")
             result = execute_tool(fc.name, args)
-            input_items.append({
+            next_input_items.append({
                 "type": "function_call_output",
                 "call_id": fc.call_id,
                 "output": json.dumps(result, ensure_ascii=False),
             })
+        active_previous_response_id = response.id
+        input_items = next_input_items
 
     return final_text
 
