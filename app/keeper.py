@@ -7,12 +7,16 @@ which one is active.
 """
 from __future__ import annotations
 
+import logging
+
 from app import combat, dice, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
 from app.state import save_state
+
+_logger = logging.getLogger(__name__)
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 
@@ -642,6 +646,12 @@ def _build_static_prompt(state: GroupState) -> str:
         scenario = state.scenario_text
 
     static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.characters.values()) or "（目前尚無登記角色）"
+    summary_block = ""
+    if state.campaign_summary:
+        summary_block = f"""
+
+# 先前劇情摘要（更早之前的對話已經被裁掉，這是那些內容的精簡摘要，記得參考，不要當作沒發生過）
+{state.campaign_summary}"""
     return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
 
 # 行為準則
@@ -724,7 +734,7 @@ def _build_static_prompt(state: GroupState) -> str:
 # 已登記的調查員（屬性、職業、技能——這些幾乎不會變動，數值以這裡為準，不要自己憑印象講一個不一樣的
 數字；HP/SAN/Luck/彈藥/攜帶物品這些每回合會變的東西不在這裡，在每則訊息的動態資訊區塊裡，那邊的
 數字才是當下最新的）
-{static_chars_text}
+{static_chars_text}{summary_block}
 
 # 目前劇本內容（機密，僅供你判斷用，勿直接洩漏給玩家）
 {scenario}
@@ -794,6 +804,57 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 """
 
 
+_SUMMARY_TOOL = {
+    "name": "report_summary",
+    "description": "回報融合後的劇情進度摘要文字。",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": (
+                    "融合「現有摘要」和「待整合的舊對話」後、更新過的劇情進度摘要，300 字以內。"
+                    "必須保留：關鍵道具、重要 NPC 互動、已解決或未解決的任務線、地點變更。"
+                ),
+            },
+        },
+        "required": ["summary"],
+    },
+}
+
+
+def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]) -> str:
+    """Rolling summarization — see run_turn below, called only on the rare
+    turn where state.log is about to be trimmed past MAX_LOG_TURNS*4. Folds
+    old_messages (the chunk about to be dropped) into current_summary via one
+    forced tool call, dispatched through whichever LLM_PROVIDER is configured
+    (same analyze_text pattern as app/pregen_extractor.py/scenario_compare.py
+    — never hard-coded to one vendor's client, since this project's whole
+    point is LLM_PROVIDER being freely switchable).
+
+    Degrades gracefully: no provider configured, the call raises, or it
+    returns nothing usable all fall back to returning current_summary
+    unchanged (logged, not raised) — a failed summarization should never
+    crash the turn or lose the existing summary, only leave it stale."""
+    provider = _PROVIDERS.get(LLM_PROVIDER)
+    if provider is None:
+        return current_summary
+    try:
+        formatted_history = "\n".join(f"{m['role']}: {m['content']}" for m in old_messages)
+        result = provider.analyze_text(
+            formatted_history,
+            _SUMMARY_TOOL,
+            "你是一個 TRPG 遊戲紀錄員。請將「待整合的舊對話」融合進「現有摘要」，"
+            "更新成一份精煉的劇情進度摘要，用 report_summary 工具回報。\n\n"
+            f"【現有摘要】\n{current_summary or '（目前尚無摘要）'}",
+        )
+        summary = (result or {}).get("summary", "").strip()
+        return summary or current_summary
+    except Exception:
+        _logger.exception("summarize_log_chunk failed, keeping previous summary unchanged")
+        return current_summary
+
+
 def run_turn(
     state: GroupState, user_id: str, speaker_name: str, message_text: str, resolved_location: dict | None = None
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
@@ -833,6 +894,13 @@ def run_turn(
     state.log.append({"role": "user", "content": f"{speaker_name}：{message_text}"})
     state.log.append({"role": "assistant", "content": final_text})
     if len(state.log) > MAX_LOG_TURNS * 4:
-        state.log = state.log[-MAX_LOG_TURNS * 2 :]
+        # Rolling summarization (see summarize_log_chunk above): fold the
+        # chunk about to be dropped into campaign_summary *before* dropping
+        # it, instead of just discarding it — this is the one rare turn every
+        # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
+        # early plot points survive past what the verbatim log can hold.
+        keep_from = -MAX_LOG_TURNS * 2
+        state.campaign_summary = summarize_log_chunk(state.campaign_summary, state.log[:keep_from])
+        state.log = state.log[keep_from:]
     save_state(state)
     return final_text, private_messages, image_requests

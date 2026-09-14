@@ -390,6 +390,13 @@ class GroupState:
     active: bool = False
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
     log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
+    # Rolling summary of whatever's been trimmed off the front of `log` so far
+    # (see app/keeper.py's run_turn/summarize_log_chunk) — the "campaign so
+    # far" recap that survives past MAX_LOG_TURNS*4, so the Keeper doesn't
+    # lose track of early plot points once the verbatim log can no longer
+    # hold everything. Fed into the (cached) static prompt, not re-summarized
+    # every turn — only updated on the rare turn where a trim actually fires.
+    campaign_summary: str = ""
     creation_sessions: dict[str, CreationSession] = field(default_factory=dict)  # keyed by owner_id
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
@@ -442,6 +449,7 @@ class GroupState:
             "active": self.active,
             "characters": {k: v.to_dict() for k, v in self.characters.items()},
             "log": self.log,
+            "campaign_summary": self.campaign_summary,
             "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
             "pregens": self.pregens,
             "combat": self.combat.to_dict(),
@@ -462,6 +470,7 @@ class GroupState:
             active=data.get("active", False),
             characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
             log=data.get("log", []),
+            campaign_summary=data.get("campaign_summary", ""),
             creation_sessions={
                 k: CreationSession.from_dict(v) for k, v in data.get("creation_sessions", {}).items()
             },
