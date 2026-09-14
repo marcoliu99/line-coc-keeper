@@ -65,14 +65,20 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 # conversation history, and the response itself are all accounted for.
 MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", 240_000))
 
-# MAX_LOG_TURNS: how many recent chat turns stay in the Keeper's context (and, at
-# 2x this, how many are kept on disk before older ones are trimmed). Raised from
-# 40 now that app/providers/anthropic_provider.py caches the conversation-history
-# prefix too (not just the scenario text), so a longer history costs much less
-# per turn than it used to — see the cache_control comment there. This delays,
-# but doesn't eliminate, the Keeper "forgetting" very early plot points in a long
-# campaign; a real fix would need periodic summarization, which isn't built yet.
-MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 80))
+# MAX_LOG_TURNS: how many recent chat turns stay verbatim in the Keeper's
+# context (trim triggers at 4x this many log entries — see app/keeper.py's
+# run_turn — keeping 2x after trimming). app/providers/anthropic_provider.py
+# caches the conversation-history prefix too (not just the scenario text), so
+# a longer history costs much less per turn than a naive re-send would.
+# Trimmed content isn't just dropped — the same trim point folds it into
+# GroupState.campaign_summary (rolling summarization) and indexes its
+# original wording into app/memory_rag.py for semantic recall later, so
+# lowering this only affects how much RECENT detail stays verbatim, not
+# whether old plot points are remembered at all. 40 (trim at 160 entries,
+# keep 80) — lowered from 80 to summarize more often, trading a bit more
+# per-summarization LLM cost for less compression buildup in any one
+# campaign_summary pass.
+MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 40))
 
 MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 
