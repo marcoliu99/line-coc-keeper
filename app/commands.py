@@ -808,9 +808,11 @@ def _resolve_map_action(state: GroupState, user_id: str, text: str) -> dict | No
         movement = intent_parser.parse_movement_intent(text)
         if movement:
             result = scene_map_engine.resolve_move(
-                active_map, current_room, facing, movement["relative_direction"], movement["order"],
+                state.scene_maps, current_page, current_room, facing, movement["relative_direction"], movement["order"],
             )
             if result["ok"]:
+                if "map_key" in result:  # crossed into a different map — see scene_map.py's module docstring
+                    state.current_map_page[user_id] = result["map_key"]
                 state.current_room_id[user_id] = result["room"]["id"]
                 state.party_facing[user_id] = result["facing"]
                 resolved_room = result["room"]
@@ -1284,7 +1286,13 @@ async def _handle_coc_command(
         exits = room.get("exits", [])
         exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
         desc = f"\n{room['description']}" if room.get("description") else ""
-        await reply(f"目前在「{room.get('name', '')}」（第 {current_page} 頁的地圖）{desc}\n出口：{exits_text}")
+        # current_page is a raw PDF page number for a vision-extracted map, or a
+        # "custom_<filename>" key for a hand-authored YAML upload — showing the
+        # literal key (not just "第 X 頁", which reads oddly for the custom_ case
+        # and is also what a map author needs to write a cross-map exit
+        # "to": "<this key>:<room_id>" pointing at this map from another one).
+        location_note = f"第 {current_page} 頁的地圖" if current_page.isdigit() else f"地圖「{current_page}」"
+        await reply(f"目前在「{room.get('name', '')}」（{location_note}）{desc}\n出口：{exits_text}")
         return
 
     if sub == "enter":

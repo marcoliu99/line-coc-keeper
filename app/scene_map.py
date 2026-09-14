@@ -19,6 +19,22 @@ Deliberately out of scope for this first pass: non-compass exits like
 "up"/"down" between floors, which are treated as their own direction tokens
 rather than real 3D geometry. (Split-party locations ARE tracked — see
 GroupState.current_room_id, keyed per character rather than one shared room.)
+
+Cross-map exits: a scenario often has more than one floor plan (a building's
+interior plus a separate map of the grounds/island it sits on, say) —
+GroupState.scene_maps already stores each as its own independent entry, but
+by default an exit's `to` only ever names a room *within the same map*, so
+walking out the front door of one map has no way to land you on a room in
+another. Writing `"to": "<other_map_key>:<room_id>"` instead of the plain
+`"<room_id>"` on any exit crosses into that other map — resolve_move detects
+the ":" and looks the target room up there instead, returning a "map_key"
+field so the caller (app/commands.py's _resolve_map_action) knows to switch
+GroupState.current_map_page for that character too, not just current_room_id.
+`<other_map_key>` is whatever key that other map is stored under in
+scene_maps — a PDF page number as a string, or a "custom_<filename>" key for
+a hand-authored YAML upload (see handle_map_upload) — so cross-linking two
+maps means knowing (or checking, e.g. via /coc where) the other one's key
+before writing the exit.
 """
 from __future__ import annotations
 
@@ -210,7 +226,19 @@ def validate_scene_map(data: Any) -> list[str]:
             if exit_.get("compass") not in valid_compass:
                 errors.append(f"房間「{room.get('id')}」的 exit 方位「{exit_.get('compass')}」不是合法值（{'/'.join(sorted(valid_compass))}）")
             to_id = exit_.get("to")
-            if to_id not in seen_ids:
+            if isinstance(to_id, str) and ":" in to_id:
+                # Cross-map exit ("<other_map_key>:<room_id>") — can't check the
+                # target map/room actually exists here, since this function only
+                # ever sees one map's own data, and the referenced map might
+                # legitimately not be uploaded yet (or this one might be
+                # uploaded first). Just check the format isn't degenerate
+                # (neither side of the colon empty); resolve_move reports a
+                # clear error at actual move time if the target turns out
+                # missing.
+                other_map_key, _, other_room_id = to_id.partition(":")
+                if not other_map_key or not other_room_id:
+                    errors.append(f"房間「{room.get('id')}」的跨地圖 exit「{to_id}」格式錯誤，應為「地圖key:房間id」")
+            elif to_id not in seen_ids:
                 errors.append(f"房間「{room.get('id')}」的 exit 指向不存在的房間「{to_id}」")
 
     entry_room_id = data.get("entry_room_id")
@@ -356,16 +384,35 @@ def find_room_by_text(scene_map: dict[str, Any], text: str) -> dict[str, Any] | 
 
 
 def resolve_move(
-    scene_map: dict[str, Any], current_room_id: str, facing: str, relative_direction: str, order: int = 1
+    scene_maps: dict[str, dict[str, Any]],
+    current_map_key: str,
+    current_room_id: str,
+    facing: str,
+    relative_direction: str,
+    order: int = 1,
 ) -> dict[str, Any]:
     """The actual "player_location + facing + direction + door_index -> target
     room" resolution, computed in code before any LLM call is made — see this
     module's docstring. Returns {"ok": True, "room": {...}, "facing": <new
-    absolute compass>} on success, or {"ok": False, "error": ...} when there's
+    absolute compass>, "map_key": <only present if the move crossed into a
+    different map>} on success, or {"ok": False, "error": ...} when there's
     no matching exit (ambiguous, blocked, or the player named a direction that
     doesn't lead anywhere from here) — callers should fall back to letting the
     Keeper LLM handle the turn normally in that case, not treat it as a hard
-    failure."""
+    failure.
+
+    Takes the *whole* scene_maps dict (keyed by map key — a page number
+    string or a "custom_<filename>" key, same as GroupState.scene_maps)
+    rather than a single map, so an exit's `to` can point at a room in a
+    *different* map: `"to": "<other_map_key>:<room_id>"` instead of the
+    plain `"<room_id>"` used for a same-map exit — see this module's
+    docstring for how a map author writes one. Most calls still only ever
+    touch `current_map_key`'s own map; the cross-map lookup only kicks in
+    when an exit's `to` actually contains that "<map_key>:" prefix."""
+    scene_map = scene_maps.get(current_map_key)
+    if scene_map is None:
+        return {"ok": False, "error": f"目前所在地圖 {current_map_key!r} 不存在"}
+
     room = get_room(scene_map, current_room_id)
     if room is None:
         return {"ok": False, "error": f"目前所在房間 {current_room_id!r} 不在這張地圖裡"}
@@ -378,8 +425,19 @@ def resolve_move(
     index = max(1, order) - 1
     if index >= len(matches):
         index = len(matches) - 1
-    target = get_room(scene_map, matches[index]["to"])
+    to_ref = matches[index]["to"]
+
+    if ":" in to_ref:
+        target_map_key, target_room_id = to_ref.split(":", 1)
+        target_map = scene_maps.get(target_map_key)
+        if target_map is None:
+            return {"ok": False, "error": f"地圖資料裡的跨地圖出口指向不存在的地圖「{target_map_key}」"}
+        target = get_room(target_map, target_room_id)
+        if target is None:
+            return {"ok": False, "error": "跨地圖出口指向一個不存在的房間"}
+        return {"ok": True, "room": target, "facing": absolute, "map_key": target_map_key}
+
+    target = get_room(scene_map, to_ref)
     if target is None:
         return {"ok": False, "error": "地圖資料裡的出口指向一個不存在的房間"}
-
     return {"ok": True, "room": target, "facing": absolute}
