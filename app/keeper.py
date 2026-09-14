@@ -234,6 +234,10 @@ TOOLS = [
         "description": (
             "調整角色的 HP、MP、SAN 或 LUCK 數值（例如受傷扣血、花費幸運點、恢復精神力）。"
             "field 只能是 hp/mp/san/luck，delta 為正負整數變化量。"
+            "COC7e 規則：如果這次扣血（field=hp、delta 為負）單次傷害達到角色最大 HP 的一半以上，"
+            "系統會自動接著幫玩家註冊一次 CON 檢定判斷會不會當場昏迷（重傷規則），不用你自己另外呼叫"
+            "任何工具、也不用你自己判斷有沒有觸發——回傳結果裡會清楚告訴你發生了什麼，你只要照那個"
+            "結果接續敘事即可。"
         ),
         "input_schema": {
             "type": "object",
@@ -290,6 +294,38 @@ TOOLS = [
                 "item": {"type": "string", "description": "要移除的物品描述，需跟 add_carried_item 當初加入時的文字相符或明顯對應"},
             },
             "required": ["investigator", "item"],
+        },
+    },
+    {
+        "name": "add_status_tag",
+        "description": (
+            "幫角色加上一個持續性的狀態標籤（例如「昏迷」「倒地」「中毒」「著火」），會顯示在角色卡"
+            "跟每回合給你看的動態狀態資訊裡，之後不用自己記這個角色目前是不是還處在某種異常狀態。"
+            "COC7e 重傷規則觸發時（單次傷害 ≥ 最大 HP 一半），系統會自動幫失敗的 CON 檢定加上「昏迷」"
+            "「倒地」，不用你自己另外呼叫這個工具重複加；這個工具是給其他你自己判斷需要持續追蹤的狀態用的。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string"},
+                "tag": {"type": "string", "description": "狀態標籤文字，例如「昏迷」「中毒」"},
+            },
+            "required": ["investigator", "tag"],
+        },
+    },
+    {
+        "name": "remove_status_tag",
+        "description": (
+            "移除角色身上的一個狀態標籤（狀態解除時用，例如角色甦醒後移除「昏迷」「倒地」、"
+            "解毒後移除「中毒」）。狀態標籤不會自己過期，記得在敘事上該解除時主動呼叫這個工具。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string"},
+                "tag": {"type": "string", "description": "要移除的標籤文字，需跟加入時的文字相符"},
+            },
+            "required": ["investigator", "tag"],
         },
     },
     {
@@ -659,10 +695,34 @@ def _execute_tool(
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
             cap = getattr(char, max_attr) if max_attr else 999
-            new_val = max(0, min(cap, getattr(char, cur_attr) + int(tool_input["delta"])))
+            delta = int(tool_input["delta"])
+            new_val = max(0, min(cap, getattr(char, cur_attr) + delta))
             setattr(char, cur_attr, new_val)
+
+            major_wound = False
+            # COC7e major wound rule, code-enforced the same way Bout of
+            # Madness is (see sanity_check above): a single hit dealing >=
+            # half of max HP knocks the investigator unconscious unless they
+            # pass a CON roll. Skipped when this hit already dropped HP to
+            # 0 or below — RAW already treats that as unconscious/dying on
+            # its own, so a second CON check on top would be redundant.
+            if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= char.hp_max / 2:
+                major_wound = True
+                state.pending_checks[char.owner_id] = {
+                    "type": "skill", "skill": "CON", "skill_value": resolve_skill_value(char, "CON"),
+                    "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                    "major_wound_trigger": True,
+                }
             save_state(state)
-            return {"ok": True, "investigator": char.name, "field": field_name, "value": new_val}
+            result = {"ok": True, "investigator": char.name, "field": field_name, "value": new_val}
+            if major_wound:
+                result["major_wound"] = True
+                result["note"] = (
+                    "這次單一傷害達到重傷門檻（≥ 角色最大 HP 一半），COC7e 規則：角色必須做一次 CON 檢定，"
+                    "失敗會當場昏迷倒地——系統已經幫玩家註冊這次 CON 檢定，不用你自己判斷結果，"
+                    "先描述受到重擊當下的衝擊就好（不要講有沒有昏過去），等玩家輸入 /coc check CON 才知道結果。"
+                )
+            return result
 
         if name == "adjust_ammo":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -701,6 +761,28 @@ def _execute_tool(
                 char.carried_items.remove(item)
                 save_state(state)
             return {"ok": True, "investigator": char.name, "carried_items": char.carried_items}
+
+        if name == "add_status_tag":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            tag = tool_input.get("tag", "").strip()
+            if not tag:
+                return {"ok": False, "error": "tag 不能是空字串"}
+            if tag not in char.status_tags:
+                char.status_tags.append(tag)
+                save_state(state)
+            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+
+        if name == "remove_status_tag":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            tag = tool_input.get("tag", "")
+            if tag in char.status_tags:
+                char.status_tags.remove(tag)
+                save_state(state)
+            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -934,6 +1016,10 @@ def _build_static_prompt(state: GroupState) -> str:
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
 - 角色 HP 降到 0 時描述瀕死或死亡過程；SAN 降到 0 時描述永久性失常的下場。
+- COC7e 重傷規則：如果 adjust_character 扣血後回傳結果裡有 `major_wound`，系統已經自動幫玩家註冊一次
+  CON 檢定（判斷會不會當場昏迷），不用你自己另外呼叫任何工具、也不用你自己判斷有沒有觸發——先描述
+  受到這次重擊當下的直接衝擊就好，還不知道會不會昏過去，等玩家自己用 /coc check CON 擲骰、結果出來
+  之後你才會收到確定的成敗，照那個結果接續敘事即可，不要自己先講角色昏倒了或撐住了。
 - 有些資訊只該讓特定調查員知道（秘密檢定結果、只有他發現的線索、私人物品內容等），這種時候呼叫
   send_private_info 私下告訴那位玩家，不要寫進公開回覆裡；公開回覆一樣要正常描述當下場景，
   只是用中性、不劇透的方式帶過那個角色在做什麼，不要讓其他玩家從公開內容反推出私人資訊是什麼。

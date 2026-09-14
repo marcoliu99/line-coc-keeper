@@ -432,6 +432,7 @@ def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tie
 def _build_check_narration(
     char, skill_name: str, display_label: str | None, value: int, r, bonus: int, penalty: int,
     luck_spent: int = 0, original_tier: str | None = None, attacker_tier: str | None = None,
+    major_wound_trigger: bool = False,
 ) -> tuple[str, str]:
     """Builds (roll_line, keeper_message) for a resolved skill/choice check —
     shared by the immediate-finalize path and handle_luck_decision (after a
@@ -439,7 +440,13 @@ def _build_check_narration(
     and the Keeper can see that the tier was bought up, not rolled naturally.
     attacker_tier (only set for a Dodge/Fight Back choice — see
     keeper.py's offer_check_choice/npc_skill_check) triggers the COC7e
-    opposed-roll comparison, named explicitly in both messages."""
+    opposed-roll comparison, named explicitly in both messages.
+    major_wound_trigger (see keeper.py's adjust_character tool) is the CON
+    check chained onto a single hit dealing >= half max HP — unlike the Bout
+    of Madness INT check this flows through the normal Luck-spend path
+    (success here is a plain good outcome), so the status_tags side effect
+    on failure has to live here, in the one place both the immediate and the
+    Luck-spend-decision paths converge, rather than in an early-return branch."""
     tier_zh = _tier_zh_for_result(r)
     dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
     luck_note = ""
@@ -455,19 +462,41 @@ def _build_check_narration(
         opposed_line = f"\n⚔️ {opposed_text}"
         opposed_message = f"（{opposed_text}）"
 
+    major_wound_line = ""
+    major_wound_message = ""
+    if major_wound_trigger:
+        if r.success:
+            major_wound_line = "\n💪 重傷 CON 檢定通過，勉強撐住意識，沒有昏迷"
+            major_wound_message = (
+                "（這次「CON」檢定是 COC7e 重傷規則：這次單一傷害達到角色最大 HP 一半以上，本來有"
+                "當場昏迷的風險，但檢定通過了，角色勉強撐住意識——請描述角色忍痛維持行動能力的樣子，"
+                "這仍然是一次重傷，不要讓角色表現得行動如常。）"
+            )
+        else:
+            for tag in ("昏迷", "倒地"):
+                if tag not in char.status_tags:
+                    char.status_tags.append(tag)
+            major_wound_line = "\n💥 重傷 CON 檢定失敗，角色當場昏迷倒地！"
+            major_wound_message = (
+                "（這次「CON」檢定是 COC7e 重傷規則：這次單一傷害達到角色最大 HP 一半以上，檢定失敗，"
+                "角色當場昏迷倒地——已經加上「昏迷」「倒地」狀態標籤。請描述角色失去意識倒下的過程；"
+                "昏迷期間角色沒辦法自主行動或說話，直到有人處理或角色之後自然甦醒，記得呼叫 "
+                "remove_status_tag 移除這兩個標籤。）"
+            )
+
     if display_label is not None:
-        roll_line = f"🎲 {char.name} 選擇「{display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}"
+        roll_line = f"🎲 {char.name} 選擇「{display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}{major_wound_line}"
         keeper_message = (
             f"（{char.name} 在多個選項裡選了「{display_label}」，擲骰做了一次「{skill_name}」檢定："
             f"技能值 {value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果"
-            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）{opposed_message}"
+            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）{opposed_message}{major_wound_message}"
         )
     else:
-        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}"
+        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}{major_wound_line}"
         keeper_message = (
             f"（{char.name} 擲骰做了一次「{skill_name}」檢定：技能值 {value}%{dice_note}，"
             f"擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果描述後續發展，"
-            f"不要重新判定或改變這個結果。）{opposed_message}"
+            f"不要重新判定或改變這個結果。）{opposed_message}{major_wound_message}"
         )
     return roll_line, keeper_message
 
@@ -614,6 +643,10 @@ async def handle_check_command(
     # (see keeper.py's skill_check tool difficulty param) can set this above "regular".
     madness_trigger = False  # only set True for the INT check chained onto a >=5 SAN loss — see below
     madness_realtime = True
+    major_wound_trigger = False  # only set True for the CON check chained onto a major wound — see
+    # keeper.py's adjust_character tool. Unlike madness_trigger, this does NOT get an early-return
+    # branch below: success here is a normal good outcome, so it flows through the ordinary Luck-spend
+    # path like any other skill check — only _build_check_narration needs to know about it.
     if choice_skill_name is not None:
         skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
         display_label = choice_display_label
@@ -625,6 +658,7 @@ async def handle_check_command(
             difficulty = pending.get("difficulty", "regular")
             madness_trigger = bool(pending.get("madness_trigger", False))
             madness_realtime = bool(pending.get("madness_realtime", True))
+            major_wound_trigger = bool(pending.get("major_wound_trigger", False))
         else:
             skill_name = skill_arg
             value = keeper.resolve_skill_value(char, skill_name)
@@ -677,6 +711,7 @@ async def handle_check_command(
             "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
             "original_tier": r.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
             "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
+            "major_wound_trigger": major_wound_trigger,
         }
         save_state(state)
         options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
@@ -691,7 +726,8 @@ async def handle_check_command(
         return
 
     roll_line, keeper_message = _build_check_narration(
-        char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier
+        char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier,
+        major_wound_trigger=major_wound_trigger,
     )
     await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
 
@@ -746,6 +782,7 @@ async def handle_luck_decision(
         pending["bonus_dice"], pending["penalty_dice"],
         luck_spent=luck_spent, original_tier=pending["original_tier"],
         attacker_tier=pending.get("attacker_tier"),
+        major_wound_trigger=bool(pending.get("major_wound_trigger", False)),
     )
     await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
 
