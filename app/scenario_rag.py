@@ -89,22 +89,68 @@ def split_pages(scenario_text: str) -> list[tuple[int, str]]:
     return pages
 
 
+_CHUNK_TARGET_CHARS = 400  # rough target size per sub-page chunk
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
+
+
+def _split_page_into_chunks(page_num: int, text: str) -> list[tuple[int, str]]:
+    """Splits one page's text into paragraph-sized chunks (~_CHUNK_TARGET_CHARS
+    each) instead of indexing the whole page as one unit — a page mixing
+    several unrelated topics (a room description followed by an unrelated
+    NPC's stat block, say) used to dilute a query's match against whichever
+    part it was actually about. Adjacent short paragraphs are merged up to
+    the target size (so this doesn't over-fragment into single-sentence
+    chunks that lose surrounding context); a page with no blank-line breaks
+    at all (one long unbroken block) still comes back as a single chunk —
+    finer-grained than a whole page, never worse. Every chunk keeps the same
+    page_num as its source page, so multiple search results can point back
+    to the same page (that's expected, not a bug) and callers that only care
+    about "which page" (e.g. /coc showpage) still work unchanged."""
+    paragraphs = [p.strip() for p in _PARAGRAPH_SPLIT_RE.split(text) if p.strip()]
+    if not paragraphs:
+        return []
+    result: list[tuple[int, str]] = []
+    buffer = ""
+    for para in paragraphs:
+        if buffer and len(buffer) + len(para) > _CHUNK_TARGET_CHARS:
+            result.append((page_num, buffer))
+            buffer = para
+        else:
+            buffer = f"{buffer}\n\n{para}" if buffer else para
+    if buffer:
+        result.append((page_num, buffer))
+    return result
+
+
+_EMBEDDING_BATCH_SIZE = 100  # conservative — well under OpenAI's per-request
+# input-count limit (documented up to ~2048), and keeps any one request's
+# total token count comfortable regardless of how long individual chunks
+# are. A longer scenario (or the finer per-paragraph chunking above, which
+# produces more chunks than one-per-page did) now spans multiple requests
+# instead of risking one oversized request failing outright.
+
+
 def _embed_texts(texts: list[str]) -> list[list[float]] | None:
-    """Best-effort: embed a batch of texts via OpenAI. Returns None if
-    unavailable (no OPENAI_API_KEY) or the call fails for any reason —
-    callers should fall back to pure BM25 in that case, not treat it as an
-    error. Order matches the input list regardless of what order the API
-    returns embeddings in (each Embedding carries its own .index)."""
+    """Best-effort: embed texts via OpenAI, batching requests so a large
+    input list (a long scenario, or many fine-grained chunks) can't exceed
+    a single request's limits. Returns None if unavailable (no
+    OPENAI_API_KEY) or any batch's call fails for any reason — callers
+    should fall back to pure BM25 in that case, not treat it as an error.
+    Order matches the input list regardless of what order each batch's
+    response returns embeddings in (each Embedding carries its own .index,
+    relative to its own batch)."""
     if not OPENAI_API_KEY or not texts:
         return None
     try:
         import openai
 
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=texts)
-        ordered = [None] * len(texts)
-        for item in response.data:
-            ordered[item.index] = item.embedding
+        ordered: list[list[float] | None] = [None] * len(texts)
+        for start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
+            batch = texts[start : start + _EMBEDDING_BATCH_SIZE]
+            response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=batch)
+            for item in response.data:
+                ordered[start + item.index] = item.embedding
         if any(v is None for v in ordered):
             return None
         return ordered
@@ -123,10 +169,14 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 def build_index(scenario_text: str) -> ScenarioIndex:
     pages = split_pages(scenario_text) or [(1, scenario_text)]  # no page markers: one big chunk
+    sub_chunks: list[tuple[int, str]] = []
+    for page_num, text in pages:
+        sub_chunks.extend(_split_page_into_chunks(page_num, text) or [(page_num, text)])
+
     chunks = []
     doc_freq: dict[str, int] = {}
     total_length = 0
-    for page_num, text in pages:
+    for page_num, text in sub_chunks:
         tokens = _tokenize(text)
         term_counts: dict[str, int] = {}
         for t in tokens:
@@ -139,10 +189,10 @@ def build_index(scenario_text: str) -> ScenarioIndex:
     avg_length = (total_length / len(chunks)) if chunks else 0.0
     text_hash = hashlib.md5(scenario_text.encode("utf-8")).hexdigest()
 
-    # One batched embeddings call for the whole scenario, done once at index-
-    # build time (cached by get_index below) rather than per search — a
-    # scenario is typically tens of pages, well within a single embeddings
-    # request's batch limits.
+    # Embeddings call(s) for the whole scenario, done once at index-build
+    # time (cached by get_index below) rather than per search — batched
+    # internally by _embed_texts now that a scenario can produce many more
+    # (smaller) chunks than one-per-page did.
     embeddings = _embed_texts([c.text for c in chunks])
     has_embeddings = embeddings is not None
     if embeddings is not None:
