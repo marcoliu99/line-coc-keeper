@@ -45,7 +45,7 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
                         工具呼叫（擲骰／技能檢定／SAN／角色數值／戰鬥）
                                               │
                                               ▼
-                   data/groups/*.json （每個聊天室的角色卡、劇本、對話紀錄）
+                 data/coc_bot.db （每個聊天室的角色卡、劇本、對話紀錄；頁面圖片另存 data/groups/）
 ```
 
 - `app/main.py`：LINE 專用 webhook 入口，把 LINE 的事件轉譯成呼叫 `app/commands.py`
