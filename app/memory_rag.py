@@ -20,20 +20,17 @@ working, already-tested feature by restructuring it to fit a second caller.
 Unlike scenario_rag (which rebuilds its index from state.scenario_text, a
 single string that's replaced wholesale on a new PDF upload), conversation
 memory *accumulates* — chunks are appended one at a time as they're trimmed
-off app/keeper.py's state.log, and persisted to their own side file (same
-pattern as app/state.py's save_page_image) so they survive a bot restart
-instead of only living in an in-memory cache.
+off app/keeper.py's state.log, and persisted via app/db.py (SQLite) so they
+survive a bot restart instead of only living in an in-memory cache.
 """
 from __future__ import annotations
 
-import json
 import math
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from app.config import DATA_DIR, OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
-from app.state import _safe_id
+from app import db
+from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]+")
@@ -101,22 +98,19 @@ class MemoryIndex:
     has_embeddings: bool = False
 
 
-def _memory_path(group_id: str) -> Path:
-    return DATA_DIR / f"{_safe_id(group_id)}_memory.json"
-
-
 def _load_raw_chunks(group_id: str) -> list[dict]:
-    path = _memory_path(group_id)
-    if not path.exists():
-        return []
+    """Persisted via app/db.py (SQLite) rather than a standalone
+    data/groups/<id>_memory.json file — same "one JSON blob per key" shape
+    as before, just a different storage backend. A missing row or corrupted/
+    unexpected content both degrade to "no memory yet", not a crash."""
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return db.get_json("memory_chunks", group_id) or []
     except Exception:
-        return []  # a corrupted/partial file degrades to "no memory yet", not a crash
+        return []
 
 
 def _save_raw_chunks(group_id: str, raw_chunks: list[dict]) -> None:
-    _memory_path(group_id).write_text(json.dumps(raw_chunks, ensure_ascii=False, indent=2), encoding="utf-8")
+    db.set_json("memory_chunks", group_id, raw_chunks)
 
 
 def append_memory(group_id: str, text: str) -> None:

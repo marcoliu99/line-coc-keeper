@@ -27,18 +27,16 @@ falls back to pure BM25, exactly like before embeddings existed here.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from app.config import DATA_DIR, OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+from app import db
+from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _PAGE_SPLIT_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]+")
-_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 _K1 = 1.5  # BM25 term-frequency saturation
 _B = 0.75  # BM25 length-normalization strength
@@ -298,33 +296,30 @@ def format_results(results: list[dict]) -> str:
     return "\n\n".join(f"--- 第 {r['page']} 頁 ---\n{r['text']}" for r in results)
 
 
-def _index_path(group_id: str) -> Path:
-    safe_id = _SAFE_ID_RE.sub("_", group_id)
-    return DATA_DIR / f"{safe_id}_scenario_index.json"
-
-
 def _save_index_to_disk(group_id: str, index: ScenarioIndex) -> None:
     """Best-effort: a failed write just means the next restart re-embeds from
-    scratch (same as before this existed), not a functional error."""
+    scratch (same as before this existed), not a functional error. Persisted
+    via app/db.py (SQLite) rather than a standalone data/groups/*.json file —
+    same "one JSON blob per key" shape as before, just a different storage
+    backend."""
     try:
         payload = {
             "text_hash": index.text_hash,
             "has_embeddings": index.has_embeddings,
             "chunks": [{"page": c.page, "text": c.text, "embedding": c.embedding} for c in index.chunks],
         }
-        _index_path(group_id).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        db.set_json("scenario_indexes", group_id, payload)
     except Exception:
         pass
 
 
 def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
-    """Returns None on anything unexpected (missing file, corrupt JSON, old
-    format) so callers fall back to a normal rebuild rather than crashing."""
-    path = _index_path(group_id)
-    if not path.exists():
-        return None
+    """Returns None on anything unexpected (no row yet, corrupt/old format)
+    so callers fall back to a normal rebuild rather than crashing."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = db.get_json("scenario_indexes", group_id)
+        if data is None:
+            return None
         chunks = [_Chunk(page=c["page"], text=c["text"], embedding=c.get("embedding")) for c in data["chunks"]]
         doc_freq, avg_length = _compute_bm25_stats(chunks)
         return ScenarioIndex(

@@ -43,6 +43,15 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data/groups"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# SQLite database file — see app/db.py. Replaces the previous "one flat JSON
+# file per group_id" storage (data/groups/*.json) for group state, character
+# index mirrors, the scenario RAG index cache, and memory RAG chunks; scenario
+# page images (PNG) still live as plain files under DATA_DIR, unaffected by
+# this. Defaults to sitting next to DATA_DIR rather than inside it, so it's
+# obviously a different kind of thing than the per-group image folders.
+DB_PATH = Path(os.environ.get("DB_PATH", str(DATA_DIR.parent / "coc_bot.db")))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 # Safety limits. Both are heuristics, not measured against a real token count —
 # tune them down if you're on a model with a smaller context window than Claude
 # Sonnet's ~200K tokens, or up if you've checked your model comfortably fits more.

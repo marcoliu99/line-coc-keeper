@@ -4,4 +4,7 @@ __pycache__/
 .env
 data/*.json
 data/groups/
+data/*.db
+data/*.db-wal
+data/*.db-shm
 .DS_Store
