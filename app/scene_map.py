@@ -22,6 +22,7 @@ GroupState.current_room_id, keyed per character rather than one shared room.)
 """
 from __future__ import annotations
 
+import difflib
 from typing import Any
 
 from app.config import LLM_PROVIDER
@@ -305,17 +306,52 @@ def get_room(scene_map: dict[str, Any], room_id: str) -> dict[str, Any] | None:
     return None
 
 
+_FUZZY_ROOM_MATCH_THRESHOLD = 0.6  # difflib ratio — calibrated against real
+# near-miss/typo pairs ("藏書室"/"藏書間" -> 0.67, want to match) vs. genuine
+# synonyms with different vocabulary ("地下室"/"地窖" -> 0.40, must NOT match
+# here — that needs actual semantic understanding, i.e. Scenario RAG below).
+
+
 def find_room_by_text(scene_map: dict[str, Any], text: str) -> dict[str, Any] | None:
-    """Fuzzy: does any of this map's room names appear as a substring of
-    `text`? Used when a player names a destination room directly (e.g. "我去
-    廚房看看") rather than describing it by relative direction, or against a
-    Scenario RAG search result's text — see app/commands.py's
-    _resolve_map_action, which tries a direct match here first and only
-    falls back to a Scenario RAG search when that fails."""
-    for room in scene_map.get("rooms", []):
+    """Does any of this map's room names appear (exactly, or as a close
+    near-miss) in `text`? Used when a player names a destination room
+    directly (e.g. "我去廚房看看") rather than describing it by relative
+    direction, or against a Scenario RAG search result's text — see
+    app/commands.py's _resolve_map_action, which tries a direct match here
+    first and only falls back to a Scenario RAG search when that fails.
+
+    Two passes:
+    1. Exact substring — cheap, unambiguous, the common case.
+    2. Approximate — a sliding window (roughly the room name's own length)
+       across `text`, scored by difflib's character-similarity ratio. This
+       is meant to forgive typos/minor phrasing near-misses ("藏書間" for a
+       room actually named "藏書室"), not real synonyms with genuinely
+       different vocabulary ("地窖" for "地下室") — those score too low to
+       clear _FUZZY_ROOM_MATCH_THRESHOLD on purpose, since that's a semantic
+       gap only Scenario RAG (real language understanding) can close, not
+       string similarity."""
+    rooms = scene_map.get("rooms", [])
+
+    for room in rooms:
         name = str(room.get("name", "")).strip()
         if name and name in text:
             return room
+
+    best_room, best_ratio = None, 0.0
+    for room in rooms:
+        name = str(room.get("name", "")).strip()
+        if not name:
+            continue
+        for window_len in (len(name) - 1, len(name), len(name) + 1):
+            if window_len < 1:
+                continue
+            for i in range(max(1, len(text) - window_len + 1)):
+                window = text[i : i + window_len]
+                ratio = difflib.SequenceMatcher(None, name, window).ratio()
+                if ratio > best_ratio:
+                    best_ratio, best_room = ratio, room
+    if best_ratio >= _FUZZY_ROOM_MATCH_THRESHOLD:
+        return best_room
     return None
 
 
