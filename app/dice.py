@@ -108,6 +108,54 @@ def calculate_impaling_damage(weapon_damage_expr: str, damage_bonus_expr: str, i
     )
 
 
+@dataclass
+class WeaponDamageResult:
+    weapon_damage_expr: str
+    damage_bonus_expr: str
+    weapon_roll: RollResult
+    damage_bonus_roll: RollResult | None  # None when damage_bonus_expr is a flat int (e.g. "-1"/"0"), not a dice term
+    damage_bonus_total: int
+    total: int
+
+    def describe(self) -> str:
+        weapon_part = f"武器傷害 {self.weapon_roll.describe()}"
+        if self.damage_bonus_total:
+            db_part = self.damage_bonus_roll.describe() if self.damage_bonus_roll else str(self.damage_bonus_total)
+            return f"{weapon_part}，傷害加值 {db_part} → 總傷害 {self.total}"
+        return f"{weapon_part} → 總傷害 {self.total}"
+
+
+def roll_weapon_damage(weapon_damage_expr: str, damage_bonus_expr: str) -> WeaponDamageResult:
+    """A normal (non-Extreme-success) weapon hit's damage: roll the weapon's
+    own damage dice, roll the character's damage bonus (DB) if it's a dice
+    expression (a flat "-2"/"-1"/"0" needs no roll), and return the correctly
+    combined total — the caller never has to add two separate roll results
+    together itself, or (worse) try to jam both into one dice expression
+    string like "1d8+1d4", which roll_expression's regex can't parse at all
+    (it only supports one dice term plus a single flat modifier). This is
+    exactly the gap that meant DB only ever got auto-applied on the Extreme-
+    success path (calculate_impaling_damage above) and nowhere else — an
+    ordinary hit still needed the Keeper to manually splice DB into a
+    roll_dice call, which is both the "1d8+1d4" parse failure above and
+    real arithmetic for an LLM to get wrong."""
+    weapon_roll = roll_expression(weapon_damage_expr)
+    db_clean = (damage_bonus_expr or "0").strip()
+    if not db_clean or db_clean == "0" or re.fullmatch(r"[+-]?\d+", db_clean):
+        damage_bonus_roll = None
+        damage_bonus_total = int(db_clean) if db_clean and db_clean != "0" else 0
+    else:
+        damage_bonus_roll = roll_expression(db_clean.lstrip("+"))
+        damage_bonus_total = damage_bonus_roll.total
+    return WeaponDamageResult(
+        weapon_damage_expr=weapon_damage_expr,
+        damage_bonus_expr=damage_bonus_expr,
+        weapon_roll=weapon_roll,
+        damage_bonus_roll=damage_bonus_roll,
+        damage_bonus_total=damage_bonus_total,
+        total=weapon_roll.total + damage_bonus_total,
+    )
+
+
 def d100() -> int:
     """A single percentile roll, 1-100 (00 tens + 0 ones counts as 100)."""
     return random.randint(1, 100)
