@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from app import combat, dice, scenario_rag
+from app import combat, dice, memory_rag, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -330,6 +330,23 @@ TOOLS = [
             "required": ["page_number"],
         },
     },
+    {
+        "name": "search_memory",
+        "description": (
+            "搜尋很久以前發生、已經不在目前對話紀錄或劇情摘要裡的舊事件——玩家問起一個具體的人名、"
+            "地名、物品，但你在『先前劇情摘要』和最近的對話裡都找不到時才用這個工具查詢，不要自己"
+            "編一個回答，也不要說『我不記得了』就結束。查詢字詞盡量用具體名詞（人名、地名、物品），"
+            "不要問完整句子。如果查無結果，代表這件事可能真的沒發生過，或摘要裡已經有更新的說法，"
+            "以摘要／最近對話為準。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "要查詢的關鍵字或名詞，例如「卡西迪」「黃銅鑰匙」"},
+            },
+            "required": ["query"],
+        },
+    },
 ]
 # Common {name, description, input_schema} shape works unmodified for both Claude
 # and Gemini; any provider-specific extras (e.g. Anthropic's cache_control) are
@@ -612,6 +629,10 @@ def _execute_tool(
             results = scenario_rag.search(index, tool_input.get("query", ""), top_k=SCENARIO_RAG_TOP_K)
             return {"ok": True, "results": scenario_rag.format_results(results)}
 
+        if name == "search_memory":
+            results = memory_rag.search_memory(state.group_id, tool_input.get("query", ""))
+            return {"ok": True, "results": memory_rag.format_results(results)}
+
         return {"ok": False, "error": f"未知工具 {name}"}
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}
@@ -651,7 +672,9 @@ def _build_static_prompt(state: GroupState) -> str:
         summary_block = f"""
 
 # 先前劇情摘要（更早之前的對話已經被裁掉，這是那些內容的精簡摘要，記得參考，不要當作沒發生過）
-{state.campaign_summary}"""
+{state.campaign_summary}
+如果玩家問起一個具體的人名/地名/物品，這份摘要跟最近的對話都找不到（摘要是壓縮過的，可能已經漏掉細節），
+呼叫 search_memory 工具去查更早、還沒被壓縮掉的原始對話內容，不要直接說忘記了或自己編一個答案。"""
     return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
 
 # 行為準則
@@ -900,7 +923,15 @@ def run_turn(
         # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
         # early plot points survive past what the verbatim log can hold.
         keep_from = -MAX_LOG_TURNS * 2
-        state.campaign_summary = summarize_log_chunk(state.campaign_summary, state.log[:keep_from])
+        dropped_chunk = state.log[:keep_from]
+        state.campaign_summary = summarize_log_chunk(state.campaign_summary, dropped_chunk)
+        # Also persist the chunk's *original* wording into the searchable
+        # memory index (app/memory_rag.py) — campaign_summary alone would
+        # keep recompressing an already-compressed summary on every future
+        # trim, eroding fine detail a little more each pass; this keeps the
+        # verbatim text retrievable via search_memory even after that.
+        formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
+        memory_rag.append_memory(state.group_id, formatted_chunk)
         state.log = state.log[keep_from:]
     save_state(state)
     return final_text, private_messages, image_requests
