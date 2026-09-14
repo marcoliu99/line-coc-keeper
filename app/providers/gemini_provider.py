@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from app.config import GEMINI_API_KEY, GEMINI_MODEL
+from app.config import GEMINI_API_KEY, GEMINI_MODEL, KEEPER_TEMPERATURE
 
 
 def run_conversation(
@@ -43,6 +43,7 @@ def run_conversation(
     config = types.GenerateContentConfig(
         system_instruction=f"{static_system}\n\n{dynamic_system}",
         tools=gemini_tools,
+        temperature=KEEPER_TEMPERATURE,
     )
 
     contents: list = []

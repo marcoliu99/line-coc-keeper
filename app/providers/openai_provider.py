@@ -19,7 +19,31 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from app.config import OPENAI_API_KEY, OPENAI_MODEL
+from app.config import KEEPER_TEMPERATURE, OPENAI_API_KEY, OPENAI_MODEL
+
+_temperature_unsupported = False  # set True the first time the API rejects it (see _create_response)
+
+
+def _create_response(client, **kwargs):
+    """Some model tiers (reasoning-focused releases in particular) reject the
+    `temperature` parameter outright with a 400 instead of silently ignoring
+    it. This project stays model-agnostic on purpose (OPENAI_MODEL is
+    whatever's configured in .env, not hardcoded here — see that setting's
+    own caveat), so rather than hardcoding a list of which models do or
+    don't support it, detect the rejection once per process and stop sending
+    it for the rest of this run instead of failing every single turn."""
+    global _temperature_unsupported
+    if _temperature_unsupported:
+        kwargs.pop("temperature", None)
+        return client.responses.create(**kwargs)
+    try:
+        return client.responses.create(**kwargs)
+    except Exception as exc:
+        if "temperature" in kwargs and "temperature" in str(exc).lower():
+            _temperature_unsupported = True
+            kwargs.pop("temperature", None)
+            return client.responses.create(**kwargs)
+        raise
 
 
 def run_conversation(
@@ -60,11 +84,13 @@ def run_conversation(
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     for _ in range(max_iterations):
-        response = client.responses.create(
+        response = _create_response(
+            client,
             model=OPENAI_MODEL,
             instructions=instructions,
             input=input_items,
             tools=openai_tools,
+            temperature=KEEPER_TEMPERATURE,
         )
 
         function_calls = [item for item in response.output if item.type == "function_call"]

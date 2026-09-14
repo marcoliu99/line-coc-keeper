@@ -88,3 +88,14 @@ SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", 5))
 # this default — same caveat as OPENAI_MODEL.
 SCENARIO_RAG_EMBEDDING_MODEL = os.environ.get("SCENARIO_RAG_EMBEDDING_MODEL", "text-embedding-3-small")
 SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEIGHT", 0.5))
+
+# Sampling temperature for the Keeper's own narration (app/keeper.py's
+# run_conversation call only — not analyze_image/analyze_text, which are
+# forced single-tool-call extraction and stay at each provider's default so
+# structured output doesn't get noisier). Lower than each provider's own
+# default (usually ~1.0) on purpose: the cold-observer persona in
+# docs/keeper_skill.md needs the Keeper to hold a consistent tone and not
+# drift off it turn to turn, and dice/rule outcomes it restates (rolls,
+# tiers, damage) shouldn't get creative embellishment. 0.5-0.7 is the
+# requested range; 0.6 sits in the middle.
+KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", 0.6))

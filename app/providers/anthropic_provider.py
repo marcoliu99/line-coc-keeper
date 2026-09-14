@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, KEEPER_TEMPERATURE
 
 
 def run_conversation(
@@ -54,6 +54,7 @@ def run_conversation(
         response = client.messages.create(
             model=ANTHROPIC_MODEL,
             max_tokens=1024,
+            temperature=KEEPER_TEMPERATURE,
             system=system_blocks,
             tools=anthropic_tools,
             messages=messages,
