@@ -108,3 +108,20 @@ SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEI
 # tiers, damage) shouldn't get creative embellishment. 0.5-0.7 is the
 # requested range; 0.6 sits in the middle.
 KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", 0.6))
+
+# Reasoning effort for the Keeper's own narration on OpenAI's Responses API
+# (app/providers/openai_provider.py's run_conversation only — see
+# KEEPER_TEMPERATURE above for why analyze_image/analyze_text are excluded;
+# same reasoning applies here). Confirmed against this project's installed
+# `openai` SDK type stubs (openai/types/shared_params/reasoning.py):
+# `reasoning.effort` accepts none/minimal/low/medium/high/xhigh/max. Before
+# this setting existed, the code never passed `reasoning` at all, so it
+# silently inherited whatever the API's own per-model default is — not
+# explicitly forced to "none", but an unpinned unknown rather than a
+# deliberate choice, the same class of problem KEEPER_TEMPERATURE fixed for
+# temperature. "medium" is the SDK's own listed middle value; Anthropic and
+# Gemini have no equivalent concept in this project's provider adapters, so
+# this only affects the openai path. If the configured model rejects this
+# parameter outright, openai_provider.py detects that once per process and
+# stops sending it, the same fallback pattern already used for temperature.
+KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").strip().lower()

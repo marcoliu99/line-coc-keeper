@@ -19,31 +19,38 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from app.config import KEEPER_TEMPERATURE, OPENAI_API_KEY, OPENAI_MODEL
+from app.config import KEEPER_REASONING_EFFORT, KEEPER_TEMPERATURE, OPENAI_API_KEY, OPENAI_MODEL
 
-_temperature_unsupported = False  # set True the first time the API rejects it (see _create_response)
+# Populated per-process the first time the API rejects one of these — see
+# _create_response.
+_unsupported_params: set[str] = set()
 
 
 def _create_response(client, **kwargs):
-    """Some model tiers (reasoning-focused releases in particular) reject the
-    `temperature` parameter outright with a 400 instead of silently ignoring
-    it. This project stays model-agnostic on purpose (OPENAI_MODEL is
-    whatever's configured in .env, not hardcoded here — see that setting's
-    own caveat), so rather than hardcoding a list of which models do or
-    don't support it, detect the rejection once per process and stop sending
-    it for the rest of this run instead of failing every single turn."""
-    global _temperature_unsupported
-    if _temperature_unsupported:
-        kwargs.pop("temperature", None)
-        return client.responses.create(**kwargs)
-    try:
-        return client.responses.create(**kwargs)
-    except Exception as exc:
-        if "temperature" in kwargs and "temperature" in str(exc).lower():
-            _temperature_unsupported = True
-            kwargs.pop("temperature", None)
+    """Some model tiers (reasoning-focused releases in particular) reject
+    certain optional parameters outright with a 400 instead of silently
+    ignoring them — confirmed for `temperature`; `reasoning` is the same
+    class of per-model-support risk. This project stays model-agnostic on
+    purpose (OPENAI_MODEL is whatever's configured in .env, not hardcoded
+    here — see that setting's own caveat), so rather than hardcoding which
+    models support what, detect a rejection once per process and stop
+    sending that specific parameter for the rest of this run. `while True`
+    terminates naturally: each pass either returns, raises (the failure
+    wasn't one of the two tracked params), or removes one of at most two
+    trackable params from kwargs — so within 3 attempts it's either
+    succeeded or is raising for an unrelated reason."""
+    for param in _unsupported_params:
+        kwargs.pop(param, None)
+    while True:
+        try:
             return client.responses.create(**kwargs)
-        raise
+        except Exception as exc:
+            exc_text = str(exc).lower()
+            offending = next((p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text), None)
+            if offending is None:
+                raise
+            _unsupported_params.add(offending)
+            kwargs.pop(offending, None)
 
 
 def run_conversation(
@@ -82,6 +89,11 @@ def run_conversation(
     input_items: list[dict] = [{"role": entry["role"], "content": entry["content"]} for entry in history]
     input_items.append({"role": "user", "content": new_message})
 
+    # Omitted entirely (not sent as an empty/None value) when
+    # KEEPER_REASONING_EFFORT="" — that's the escape hatch back to the old
+    # "don't touch this parameter at all" behavior for anyone who wants it.
+    reasoning_kwargs = {"reasoning": {"effort": KEEPER_REASONING_EFFORT}} if KEEPER_REASONING_EFFORT else {}
+
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     for _ in range(max_iterations):
         response = _create_response(
@@ -91,6 +103,7 @@ def run_conversation(
             input=input_items,
             tools=openai_tools,
             temperature=KEEPER_TEMPERATURE,
+            **reasoning_kwargs,
         )
 
         function_calls = [item for item in response.output if item.type == "function_call"]

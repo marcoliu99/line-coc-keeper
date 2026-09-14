@@ -211,6 +211,14 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **還是有的限制**：跟這份設計文件本來就承認的一樣，只做了「用職業給預設裝備」+「遊戲中途宣稱攜帶物品」的動態審查兩塊；設計文件裡「玩家在建角過程中主動要求邊緣裝備、需要即時審查後才決定給不給」的情境還沒做（`/coc pc`／`/coc create` 目前都不會在建角過程中額外詢問裝備）。跟這個專案其他敘事層規則一樣，動態審查那塊完全靠提示詞自律，沒有程式碼強制檢查 Keeper 是不是真的每次都四項都查過。
 - **之後要擴充的話**：如果之後真的要做「建角過程中詢問邊緣裝備並即時審查」，`docs/references/carry_audit.md`「建角時的靜態審查」一節已經寫好規格，可以直接照抄。
 
+### 17. OpenAI Reasoning Effort：從「完全沒設定」變成明確可調的參數
+
+- **這個問題怎麼發現的**：稽核一份跟 SillyTavern Context Downscaling 相關的通用排查清單時，其中一條問「確認 Luna（`gpt-5.6-luna`）的 reasoning 有沒有被設成 none」。直接讀了本專案安裝的 `openai` SDK 型別定義（`openai/types/shared_params/reasoning.py`）確認：`reasoning.effort` 支援 `none`／`minimal`／`low`／`medium`／`high`／`xhigh`／`max`；而 `app/providers/openai_provider.py` 原本從來沒有傳過 `reasoning` 這個參數——所以嚴格來說不是「被設成 none」，而是完全沒設定，繼承 API 對這個模型的內建預設值，是一個沒人知道實際數值的未知數，跟 `KEEPER_TEMPERATURE` 加入之前的情況是同一類問題。
+- **這個專案現在怎麼做**：新增 `.env` 的 `KEEPER_REASONING_EFFORT`（預設 `medium`），只用在 `app/providers/openai_provider.py` 的 `run_conversation`（Keeper 主敘事呼叫），`analyze_image`／`analyze_text` 不受影響——跟 `KEEPER_TEMPERATURE` 同一套理由，那兩個是強制單一工具呼叫的結構化抽取，不需要跟著調。留空字串（`KEEPER_REASONING_EFFORT=`）會完全不傳這個參數，退回舊行為。Anthropic／Gemini 的介面卡沒有對應概念，不受影響。
+- **把 `temperature` 那條防呆邏輯順便重構成可以同時處理多個參數**：原本 `_create_response` 只認得 `temperature` 一種可能被拒絕的參數；因為同時要加 `reasoning`，改成用一個共用的 `_unsupported_params` 集合，`while True` 迴圈每次抓錯誤訊息裡提到的是哪個追蹤中的參數、拿掉它再重試，最多兩個參數、最多重試到全部拿掉或遇到不相干的錯誤為止，不用為每個新參數各寫一份幾乎一樣的防呆程式碼。
+- **實測過**（真的 LLM 呼叫，正式環境配置的 `gpt-5.6-luna`）：同一次呼叫裡 `reasoning={"effort": "medium"}` 被正常接受（沒有被加進 `_unsupported_params`），`temperature` 一樣如預期被偵測到不支援、正確剔除——確認新的共用防呆邏輯能在同一次呼叫裡正確且獨立地處理「一個參數被接受、另一個被拒絕」這種混合情況；連續呼叫兩次也確認第二次呼叫正確跳過重試、直接用快取結果。也跑過一次完整的 `keeper.run_turn`（真實劇本場景＋工具呼叫）確認整條路徑沒有壞掉。
+- **還是有的限制**：不確定 `medium` 是不是這個模型的最佳選擇——沒有做過 A/B 測試比較不同 effort 等級對敘事品質、速度、花費的實際影響，`medium` 純粹是 SDK 文件列出的中間值，一個保守的起點。
+
 ### 其他次要限制
 
 - ~~`data/groups/*.json` 是整檔讀出、整檔覆寫，沒有加鎖，同一群組兩人幾乎同時打字可能互相覆蓋對方的 HP/SAN 變化~~ 已修正：`app/locks.py` 加了一個 per-group 的 `asyncio.Lock`，`app/main.py` 在 `load_state` 到最後一次 `save_state` 之間（包含等待守密人 LLM 回覆的期間）都持有同一把鎖，同一個群組的訊息會排隊依序處理，不同群組之間仍然完全並行、不互相卡住。用 20 次同時觸發的 HP 變化模擬測過，改動前後的結果都對得上（沒有任何一次更新遺失）。代價是同一個群組如果同時有很多人講話，訊息會變成排隊處理而不是真的同時處理——正常聊天速度感覺不出來，但如果好幾個人在戰鬥中搶著同時行動，會依訊息抵達順序一個一個處理，不會真的並行。
