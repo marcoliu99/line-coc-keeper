@@ -33,12 +33,16 @@ class LuckOption:
     cost: int
 
 
-def _candidates(skill_value: int, roll: int, current_tier: str) -> list[LuckOption]:
+def _candidates(skill_value: int, roll: int, current_tier: str, required_tier: str = "regular") -> list[LuckOption]:
     if current_tier == "fumble":
         return []  # COC7e optional rule: a Fumble can never be bought off with Luck
     current_rank = _TIER_RANK.get(current_tier, 1)
+    required_rank = _TIER_RANK.get(required_tier, _TIER_RANK["regular"])
     candidates = []
     for tier in _BUYABLE_TIERS:
+        if _TIER_RANK[tier] < required_rank:
+            continue  # wouldn't actually meet this check's difficulty (see dice.py's
+            # required_tier) even after buying up — pointless to spend Luck reaching it
         threshold = _threshold(tier, skill_value)
         if threshold >= roll:
             continue  # already achieved (or the roll doesn't need buying down to get here)
@@ -48,16 +52,23 @@ def _candidates(skill_value: int, roll: int, current_tier: str) -> list[LuckOpti
     return candidates
 
 
-def buyable_options(skill_value: int, roll: int, current_tier: str, luck_available: int) -> list[LuckOption]:
-    """Every tier strictly better than current_tier that a positive Luck spend
-    would reach, affordable with luck_available — cheapest first."""
-    candidates = [c for c in _candidates(skill_value, roll, current_tier) if c.cost <= luck_available]
+def buyable_options(
+    skill_value: int, roll: int, current_tier: str, luck_available: int, required_tier: str = "regular"
+) -> list[LuckOption]:
+    """Every tier strictly better than current_tier — and, when this check
+    has a difficulty requirement above "regular" (see dice.py's
+    required_tier), at or above that requirement too, since a tier that
+    still wouldn't count as a success isn't a meaningful upgrade — that a
+    positive Luck spend would reach, affordable with luck_available —
+    cheapest first."""
+    candidates = [c for c in _candidates(skill_value, roll, current_tier, required_tier) if c.cost <= luck_available]
     return sorted(candidates, key=lambda c: c.cost)
 
 
-def cheapest_cost(skill_value: int, roll: int, current_tier: str) -> int | None:
-    """Min cost among all better-ranked tiers, ignoring affordability — used to
-    decide whether to proactively prompt at all (see app/commands.py: only
-    offered when this is <= 7, a near-miss, not on every single roll)."""
-    candidates = _candidates(skill_value, roll, current_tier)
+def cheapest_cost(skill_value: int, roll: int, current_tier: str, required_tier: str = "regular") -> int | None:
+    """Min cost among all better-ranked (and difficulty-sufficient) tiers,
+    ignoring affordability — used to decide whether to proactively prompt at
+    all (see app/commands.py: only offered when this is <= 7, a near-miss,
+    not on every single roll)."""
+    candidates = _candidates(skill_value, roll, current_tier, required_tier)
     return min((c.cost for c in candidates), default=None)

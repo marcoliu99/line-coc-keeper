@@ -85,6 +85,20 @@ TOOLS = [
                         "不能再花 Luck 修改，設對這個欄位系統才擋得住。"
                     ),
                 },
+                "difficulty": {
+                    "type": "string",
+                    "enum": ["regular", "hard", "extreme"],
+                    "description": (
+                        "COC7e 難度等級規則：不填或設 'regular'（一般）——對抗的技能/屬性低於 50，"
+                        "或這是一般標準的任務，玩家擲出的結果只要達到『成功』（含）以上就算過；"
+                        "設 'hard'（困難）——對抗的技能/屬性達到 50 以上，或這件事本來就非常困難，"
+                        "玩家這次一定要擲到『困難成功』（含）以上才算過，只擲到『成功』視同失敗；"
+                        "設 'extreme'（極難）——對抗的技能/屬性達到 90 以上，或這件事幾乎是人類極限，"
+                        "一定要擲到『極難成功』（含）以上才算過。這是任務/對手本身的難度，"
+                        "跟 bonus_dice/penalty_dice（角色這次手氣好壞、環境優劣）是兩回事，不要混用——"
+                        "困難的任務該設這個欄位，不要用懲罰骰去模擬「這個門檻比較高」。"
+                    ),
+                },
             },
             "required": ["investigator", "skill"],
         },
@@ -488,15 +502,18 @@ def _execute_tool(
             value = resolve_skill_value(char, tool_input["skill"])
             bonus = int(tool_input.get("bonus_dice") or 0)
             penalty = int(tool_input.get("penalty_dice") or 0)
+            difficulty = tool_input.get("difficulty") or "regular"
+            if difficulty not in ("regular", "hard", "extreme"):
+                difficulty = "regular"
             state.pending_checks[char.owner_id] = {
                 "type": "skill", "skill": tool_input["skill"], "skill_value": value,
-                "bonus_dice": bonus, "penalty_dice": penalty,
+                "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                 "pushed": bool(tool_input.get("pushed", False)),
             }
             save_state(state)
             return {
                 "ok": True, "pending": True, "investigator": char.name, "skill": tool_input["skill"],
-                "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty,
+                "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                 "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
             }
 
@@ -799,6 +816,18 @@ def _build_static_prompt(state: GroupState) -> str:
   以及本來就不會有玩家角色可以骰的情境（例如純粹的環境描述、劇情事件擲骰）。
 - 玩家要在幾個互斥的技能之間自己選一個時（不是你幫他決定，是他要選），呼叫 `offer_check_choice`
   給選項（至少兩個），不要用 `skill_check` 自己決定用哪個技能，也不要自己選好了才呼叫 `skill_check`。
+- **難度等級（COC7e 規則，不是憑感覺套用，每次呼叫 skill_check 前都要想一下這條）**：`skill_check` 的
+  `difficulty` 參數決定這次判定的門檻，依 RAW 規則判斷——對抗的技能/屬性低於 50、或任務標準時不用填
+  （等同 `'regular'`）；對抗的技能/屬性達到 50 以上、或這件事本來就非常困難時設 `'hard'`；對抗的
+  技能/屬性達到 90 以上、或幾乎是人類極限時設 `'extreme'`。**只要劇本或你自己敘述裡明確給過對手/
+  障礙的技能數字，一律照這個數字判斷，不要漏掉**——例如劇本寫「這名殺手潛行 80%」，玩家要偵查/聆聽
+  察覺他時，因為 80 落在 50-89 之間，這次 skill_check 就必須帶 `difficulty='hard'`；如果數字是 92，
+  就要帶 `'extreme'`；劇本沒給數字、只是「一般的路人」「普通的鎖」這種標準任務，才維持不填。
+  設了之後，玩家這次一定要擲到那個等級（含）以上才算過，只達到較低的等級一律算失敗，系統會自動
+  判定、也會正確告訴玩家「有達到某個成功等級，但這次判定門檻更高」。**不要用 bonus_dice/penalty_dice
+  去模擬任務難度**——那是角色這次手氣好壞、環境優劣（照明差、匆忙、有人幫忙等），是完全不同的機制，
+  兩者可以同時存在（例如「對抗一個技能 70% 的高手，而且你這次很匆忙」就是 `difficulty='hard'` 加上
+  `penalty_dice=1`）。
 
 # 孤注一擲（Pushed Roll）
 - 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check『請』玩家孤注一擲重新擲骰，而不是玩家講完就直接算過。這次呼叫 skill_check 一定要把 `pushed` 參數設成 true（COC7e 規則：孤注一擲的結果是最終結果，不能再花 Luck 修改，系統要靠這個參數才擋得住，不設的話玩家還是會看到花 Luck 的選項）。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。

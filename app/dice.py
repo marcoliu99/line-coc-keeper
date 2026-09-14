@@ -72,8 +72,10 @@ class SkillCheckResult:
     roll: int
     bonus_dice: int
     penalty_dice: int
-    tier: str  # fumble | fail | regular | hard | extreme | critical
-    success: bool
+    tier: str  # fumble | fail | regular | hard | extreme | critical — the roll's own intrinsic tier
+    success: bool  # whether tier meets required_tier (see skill_check's required_tier param)
+    required_tier: str = "regular"  # the task's difficulty — RAW: opponent skill/attribute >=50 or a
+    # very difficult task needs "hard"; >=90 or near the limit of human ability needs "extreme"
 
     def describe(self, skill_name: str) -> str:
         tier_zh = {
@@ -89,6 +91,16 @@ class SkillCheckResult:
             dice_note = f"（獎勵骰 x{self.bonus_dice}）"
         elif self.penalty_dice:
             dice_note = f"（懲罰骰 x{self.penalty_dice}）"
+        # A roll that hit a nominal success tier (regular/hard) can still be an
+        # overall failure if the task demanded a higher tier than that (RAW: a
+        # Hard-difficulty task needs at least a Hard-tier roll — a Regular-tier
+        # roll against it is simply a failure, not a partial success).
+        if not self.success and self.tier in ("regular", "hard"):
+            required_zh = {"hard": "困難成功", "extreme": "極難成功"}[self.required_tier]
+            return (
+                f"{skill_name} {self.skill_value}%，擲出 {self.roll}{dice_note} → "
+                f"失敗（達到「{tier_zh}」門檻，但這次判定需要至少「{required_zh}」）"
+            )
         return f"{skill_name} {self.skill_value}%，擲出 {self.roll}{dice_note} → {tier_zh}"
 
 
@@ -104,9 +116,25 @@ def roll_percentile_with_dice_pool(bonus_dice: int = 0, penalty_dice: int = 0) -
     return 100 if value == 0 else value
 
 
-def skill_check(skill_value: int, bonus_dice: int = 0, penalty_dice: int = 0) -> SkillCheckResult:
-    """Resolve a COC7e skill/characteristic check against a percentile value."""
+_VALID_REQUIRED_TIERS = ("regular", "hard", "extreme")
+
+
+def skill_check(
+    skill_value: int, bonus_dice: int = 0, penalty_dice: int = 0, required_tier: str = "regular"
+) -> SkillCheckResult:
+    """Resolve a COC7e skill/characteristic check against a percentile value.
+
+    required_tier (RAW's difficulty-tier rule): a check against a strong
+    opponent (skill/attribute >= 50) or an inherently very difficult task
+    needs at least a Hard-tier roll to count as a success at all; against an
+    opponent >= 90 or a task near the limit of human ability, at least
+    Extreme. Defaults to "regular" (the ordinary case — opponent < 50 or a
+    standard task), matching every existing caller that doesn't pass this.
+    An unrecognized value falls back to "regular" rather than raising, same
+    defensive style as the rest of this module."""
     skill_value = max(0, min(100, skill_value))
+    if required_tier not in _VALID_REQUIRED_TIERS:
+        required_tier = "regular"
     roll = roll_percentile_with_dice_pool(bonus_dice, penalty_dice)
 
     if roll == 1:
@@ -122,7 +150,7 @@ def skill_check(skill_value: int, bonus_dice: int = 0, penalty_dice: int = 0) ->
     else:
         tier = "fail"
 
-    success = tier in ("critical", "extreme", "hard", "regular")
+    success = TIER_RANK[tier] >= TIER_RANK[required_tier]
     return SkillCheckResult(
         skill_value=skill_value,
         roll=roll,
@@ -130,6 +158,7 @@ def skill_check(skill_value: int, bonus_dice: int = 0, penalty_dice: int = 0) ->
         penalty_dice=penalty_dice,
         tier=tier,
         success=success,
+        required_tier=required_tier,
     )
 
 

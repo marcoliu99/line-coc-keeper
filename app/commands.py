@@ -390,6 +390,27 @@ _CHECK_TIER_ZH = {
 }
 
 
+def _tier_zh_for_tier(tier: str, required: str) -> str:
+    """Human-readable outcome for one (tier, required_tier) pair, accounting
+    for a required difficulty tier (dice.SkillCheckResult.required_tier —
+    see keeper.py's skill_check tool's `difficulty` param) higher than the
+    roll's own intrinsic tier. COC7e: a task flagged Hard/Extreme needs a
+    roll of at least that tier to count as a success at all — a Regular-tier
+    roll against a Hard-required task is simply a failure, not a partial
+    success, and must be displayed as one rather than misleadingly showing
+    "成功" for a check that actually failed."""
+    if required == "regular" or tier not in ("regular", "hard"):
+        return _CHECK_TIER_ZH[tier]
+    if dice.TIER_RANK[tier] >= dice.TIER_RANK[required]:
+        return _CHECK_TIER_ZH[tier]
+    required_zh = {"hard": "困難成功", "extreme": "極難成功"}[required]
+    return f"失敗（擲骰達到「{_CHECK_TIER_ZH[tier]}」，但這次判定需要至少「{required_zh}」）"
+
+
+def _tier_zh_for_result(r) -> str:
+    return _tier_zh_for_tier(r.tier, getattr(r, "required_tier", "regular"))
+
+
 def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tier: str, attacker_tier: str) -> str:
     """COC7e opposed-roll narration for a Dodge/Fight Back choice (see
     dice.resolve_opposed) — always names both sides' tiers explicitly rather
@@ -419,11 +440,12 @@ def _build_check_narration(
     attacker_tier (only set for a Dodge/Fight Back choice — see
     keeper.py's offer_check_choice/npc_skill_check) triggers the COC7e
     opposed-roll comparison, named explicitly in both messages."""
-    tier_zh = _CHECK_TIER_ZH[r.tier]
+    tier_zh = _tier_zh_for_result(r)
     dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
     luck_note = ""
     if luck_spent:
-        luck_note = f"（花費 {luck_spent} 點 Luck，將結果從「{_CHECK_TIER_ZH[original_tier]}」提升為「{tier_zh}」）"
+        original_zh = _tier_zh_for_tier(original_tier, getattr(r, "required_tier", "regular"))
+        luck_note = f"（花費 {luck_spent} 點 Luck，將結果從「{original_zh}」提升為「{tier_zh}」）"
 
     opposed_line = ""
     opposed_message = ""
@@ -558,6 +580,9 @@ async def handle_check_command(
 
     is_pushed = False
     attacker_tier = None
+    difficulty = "regular"  # offer_check_choice options and a self-initiated /coc check with no
+    # pending Keeper request have no difficulty concept — only a Keeper-registered plain skill_check
+    # (see keeper.py's skill_check tool difficulty param) can set this above "regular".
     if choice_skill_name is not None:
         skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
         display_label = choice_display_label
@@ -566,6 +591,7 @@ async def handle_check_command(
         if pending:
             skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
             is_pushed = bool(pending.get("pushed", False))
+            difficulty = pending.get("difficulty", "regular")
         else:
             skill_name = skill_arg
             value = keeper.resolve_skill_value(char, skill_name)
@@ -573,20 +599,20 @@ async def handle_check_command(
             penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
             save_state(state)  # resolve_skill_value may have registered a new default-value skill
         display_label = None
-    r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
+    r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
 
     # Luck-spend: only proactively offered when it's a near-miss (the cheapest
     # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
     # excluded (handled above, already finalized by this point), and so is a
     # Pushed Roll (COC7e optional rule: a pushed reroll's result is final,
     # can't be bought up again with Luck on top of it).
-    luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck)
-    gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier)
+    luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck, difficulty)
+    gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier, difficulty)
     if luck_options and gate_cost is not None and gate_cost <= 7:
         state.pending_luck_decisions[user_id] = {
             "skill_name": skill_name, "display_label": display_label,
             "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
-            "original_tier": r.tier, "attacker_tier": attacker_tier,
+            "original_tier": r.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
             "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
         }
         save_state(state)
@@ -595,7 +621,7 @@ async def handle_check_command(
         check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
         attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
         await reply(
-            f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_CHECK_TIER_ZH[r.tier]}{attacker_note}\n"
+            f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_tier_zh_for_result(r)}{attacker_note}\n"
             f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
             f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
         )
@@ -646,10 +672,11 @@ async def handle_luck_decision(
         tier = choice
     save_state(state)
 
-    success = tier in ("critical", "extreme", "hard", "regular")
+    required_tier = pending.get("difficulty", "regular")
+    success = dice.TIER_RANK[tier] >= dice.TIER_RANK[required_tier]
     r = dice.SkillCheckResult(
         skill_value=pending["value"], roll=pending["roll"], bonus_dice=pending["bonus_dice"],
-        penalty_dice=pending["penalty_dice"], tier=tier, success=success,
+        penalty_dice=pending["penalty_dice"], tier=tier, success=success, required_tier=required_tier,
     )
     roll_line, keeper_message = _build_check_narration(
         char, pending["skill_name"], pending["display_label"], pending["value"], r,
