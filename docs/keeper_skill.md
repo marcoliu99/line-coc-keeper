@@ -89,6 +89,7 @@
 | 角色卡有登記彈藥的槍開槍/裝填 | `adjust_ammo` |
 | 角色撿到/拿到/交出值得記住的東西 | `add_carried_item` / `remove_carried_item` |
 | 道具/傷害骰等一般擲骰 | `roll_dice` |
+| 攻擊擲骰是極限成功（非反擊）的加成傷害 | `roll_impaling_damage`（武器＋DB 算最大值；穿刺武器再額外重骰一次武器傷害） |
 | 打起來了 | `start_combat` → `add_npc_to_combat`（敵人）／`add_npc_to_combat(is_ally=true)`（隊友）→ 每人行動完 `advance_combat_turn` |
 | 劇本頁面是圖片內容，玩家實際看到了 | `show_scenario_image`（可指定 `investigator` 只給特定人看） |
 | 只有特定調查員該知道的資訊 | `send_private_info` |
