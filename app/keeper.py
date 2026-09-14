@@ -1088,7 +1088,21 @@ def run_turn(
 
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location)
-    history = state.log[-MAX_LOG_TURNS * 2 :]
+    # No extra slicing here — state.log is already bounded to at most
+    # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
+    # at that one point, back down to MAX_LOG_TURNS*2). Slicing it again on
+    # every read (e.g. state.log[-MAX_LOG_TURNS*2:]) looks harmless but
+    # actually defeats prompt caching for this entire block: once the log
+    # passes that slice's window size, the slice becomes a sliding window
+    # whose start point shifts forward every single turn, so consecutive
+    # turns' `history` never share a common prefix for Anthropic/OpenAI's
+    # cache to match against — verified by tracing the exact slice against a
+    # simulated 200-turn log, confirming zero turns after the initial ~40
+    # shared a growing prefix with the previous turn. Sending the log
+    # unsliced between trims means it only ever grows turn to turn (a real
+    # growing prefix, which caching can actually exploit) until the trim
+    # resets it — the one deliberate cache-miss point, same as before.
+    history = state.log
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
