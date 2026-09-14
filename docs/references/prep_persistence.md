@@ -29,11 +29,13 @@ coc-kp-host 對每個 NPC 隊友都有一張完整卡片（背景、屬性、技
 
 如果之後要補：可以參考他們的卡片模板（[原文見這裡](https://github.com/SumanasJ/coc-kp-host/blob/main/references/prep_persistence.md#npc-teammate-card-template)），簡化成一個 `NPCTeammate` dataclass（姓名、職業、加入理由、技能字典），存進 `GroupState.npc_teammates: dict[str, NPCTeammate]`，`/coc npc <名字>` 指令查看。目前沒有做，因為還沒有真實使用場景證明值得做。
 
-## 逐句紀錄 vs. 策展摘要（落差）
+## 逐句紀錄 vs. 策展摘要（已修正）
 
-`GroupState.log` 是逐句對話紀錄（跟他們的「verbatim transcript」概念一樣），但我們**沒有**對應他們「session_log.md」那種策展過的重點摘要（目前停點、已獲得線索、開放方向、狀態記錄、NPC 態度）。這正是 README「已知限制」裡提過的問題：`MAX_LOG_TURNS` 是硬上限，超過會裁掉最舊的對話，長戰役玩到後期 Keeper 會忘記早期的劇情細節；真正的修法是定期把舊對話摘要成一份「劇情摘要」永久保留（呼應他們的 session_log.md 概念），目前還沒做。
+`GroupState.log` 是逐句對話紀錄（跟他們的「verbatim transcript」概念一樣）。原本**沒有**對應他們「session_log.md」那種策展過的重點摘要，`MAX_LOG_TURNS` 是硬上限，超過就直接裁掉最舊的對話，長戰役玩到後期 Keeper 會忘記早期的劇情細節。
 
-如果之後要做：可以在 `keeper.run_turn` 裡，每當 `state.log` 快要被裁切之前，額外呼叫一次 LLM 把即將被丟棄的那段對話摘要成幾行重點（角色狀態變化、已知線索、NPC 態度），存進一個新的 `GroupState.campaign_summary: str` 欄位，往後每次組 system prompt 時把這個摘要也塞進去，取代逐句紀錄的那個部分。
+**已修正（滾動式摘要／Rolling Summarization）**：新增 `GroupState.campaign_summary: str` 欄位，呼應他們的 session_log.md 概念。`app/keeper.py` 的 `run_turn` 每次要裁切 `state.log`（超過 `MAX_LOG_TURNS*4`）之前，先呼叫 `summarize_log_chunk(current_summary, dropped_chunk)` 把即將被丟棄的那段對話跟現有摘要融合更新，才真的裁掉——不是每一輪都跑，只有真的觸發裁切的那一輪才會多付一次（用輕量的強制工具呼叫，透過 `LLM_PROVIDER` 走，不是寫死某個供應商的 client）。更新後的 `campaign_summary` 放進 `_build_static_prompt`（有 prompt caching 的區塊），跟角色的靜態屬性/技能同一批。摘要函式本身完全防呆：沒設定 `LLM_PROVIDER`、呼叫失敗、或沒回傳可用內容，一律原樣回傳舊摘要，不會讓遊戲進程中斷或摘要消失。
+
+**實測驗證過**（模擬真實使用情境）：手動塞進一段提到 NPC「Gardiner」和「一把生鏽鑰匙」的對話，後面接 80 輪填充閒聊直到超過裁切門檻，觸發下一輪 `run_turn` 後確認：(1) `state.log` 正確從 322 筆裁到 160 筆；(2) `campaign_summary` 正確保留了 Gardiner、鑰匙、地下室警告這些關鍵事實；(3) 直接問 Keeper「剛才 Gardiner 給的鑰匙是要開哪裡的」，即使原始那幾句對話已經不在 `state.log` 裡，Keeper 依然透過摘要正確回答出燈塔、Gardiner、鑰匙的關聯——完全對應「詢問第 2 輪的 NPC 名字或道具，AI 仍能從摘要正確提取」這個驗證標準。
 
 ## Keeper 專屬地點/NPC 索引（落差，優先度較低）
 
