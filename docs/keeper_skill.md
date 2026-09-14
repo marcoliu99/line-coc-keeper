@@ -40,6 +40,7 @@
 - Keeper 呼叫完工具後，只能敘述「需要做這個檢定」的當下場景，然後停下來，等玩家輸入 `/coc check` 真的擲骰（或 Discord 按鈕）。
 - 真正的結果會在玩家擲骰後，由系統以一則訊息回饋給 Keeper（「這是已經確定的結果，不要重新判定」），那時候才能接著敘事。
 - 例外：`roll_dice`（道具/傷害骰，不是角色的技能檢定）繼續由 Keeper 直接呼叫。
+- **難度等級**：`skill_check` 的 `difficulty` 參數（`hard`／`extreme`）——對手技能/屬性 ≥50 或任務本身很困難就要設 `hard`，≥90 或接近人類極限設 `extreme`；設了之後玩家一定要擲到那個等級（含）以上才算過，只達到較低等級一律算失敗。跟 `bonus_dice`/`penalty_dice`（角色手氣/環境優劣）是兩回事，可以同時使用。
 
 細節見 `docs/references/rules_reference.md`。
 
@@ -80,7 +81,7 @@
 
 | 情境 | 工具 |
 |---|---|
-| 需要一次技能/屬性檢定 | `skill_check`（請求，不代骰；孤注一擲重骰記得設 `pushed: true`） |
+| 需要一次技能/屬性檢定 | `skill_check`（請求，不代骰；孤注一擲重骰記得設 `pushed: true`；對手強或任務難記得設 `difficulty: 'hard'/'extreme'`） |
 | 玩家要在幾個互斥技能之間自己選一個（例如近戰被攻擊選閃避或反擊） | `offer_check_choice`（請求多選一，不代骰、不代選；是防守選擇的話先呼叫 `npc_skill_check` 拿攻擊方等級填進 `attacker_tier`，系統會自動判定對抗檢定結果） |
 | 「沒有玩家可以自己擲骰」的一方（NPC/敵人）需要一次檢定結果 | `npc_skill_check`（立刻擲骰，不用自己編） |
 | 目擊恐怖事物、SAN 動搖 | `sanity_check`（請求，不代骰） |
