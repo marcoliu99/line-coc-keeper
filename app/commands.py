@@ -29,7 +29,7 @@ from typing import Awaitable, Callable
 import yaml
 
 from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor
-from app import scenario_compare, scenario_rag
+from app import scenario_compare, scenario_index, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import OCCUPATIONS, GroupState, generate_investigator
@@ -88,6 +88,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc combat end → 結束戰鬥
 
 【其他】
+・/coc index → 從劇本抽取 NPC／怪物與地點索引，幫助守密人記住正確數值（例如同一隻怪物不同型態的 HP 不會前後不一致）
 ・/coc newgame → 重置這個群組，開始全新一局
 ・/coc end → 結束目前這局遊戲
 ・/roll 1d100 或 /roll 3d6+2 → 單純擲骰，不經過守密人
@@ -147,6 +148,8 @@ async def handle_pdf_upload(
         state.pregens = []  # clear the previous scenario's cached pregens — otherwise
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.
+        state.scenario_npc_index = []  # same reasoning — don't let a new scenario's
+        state.scenario_location_index = []  # Keeper prompt keep quoting the OLD one's NPC/monster stats.
         state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
         # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
         state.current_map_page = {}
@@ -1132,6 +1135,33 @@ async def _handle_coc_command(
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")
             except Exception:
                 _logger.exception("send_dm (secret_goal on /coc pregen) failed for user_id=%s", user_id)
+        return
+
+    if sub == "index":
+        state = load_state(conversation_id)
+        if not state.scenario_text:
+            await reply("目前還沒有載入劇本，上傳 PDF 之後才能抽取 NPC／怪物與地點索引。")
+            return
+        # A single `reply` here, not reply-then-push: unlike handle_pdf_upload
+        # (which gets separate reply/push callbacks specifically because a
+        # LINE reply token is single-use and only lasts 60s), _handle_coc_command
+        # only has one `reply` callback to work with — same constraint the
+        # "pregens" subcommand above lives with, so this follows the same
+        # single-reply-at-the-end shape rather than sending a "please wait"
+        # message first.
+        extracted = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+        state.scenario_npc_index = extracted["npcs"]
+        state.scenario_location_index = extracted["locations"]
+        save_state(state)
+        if not extracted["npcs"] and not extracted["locations"]:
+            await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
+            return
+        lines = [f"已建立劇本索引：{len(extracted['npcs'])} 個 NPC／怪物、{len(extracted['locations'])} 個地點。"]
+        for n in extracted["npcs"]:
+            hp = n.get("hp")
+            hp_note = f"HP {hp}" if isinstance(hp, (int, float)) else "（無 HP 數值）"
+            lines.append(f"・{n.get('name') or '未命名'}：{hp_note}")
+        await reply("\n".join(lines) + "\n\n之後守密人回覆時會直接參考這份索引，同一隻怪物/NPC 不會再前後數值不一致；重新上傳新劇本 PDF 後索引會清空，需要再跑一次「/coc index」才能建立新劇本的索引。")
         return
 
     if sub == "away":

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from app import combat, dice, memory_rag, scenario_rag
+from app import combat, dice, memory_rag, scenario_index, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -667,6 +667,29 @@ def _build_static_prompt(state: GroupState) -> str:
         scenario = state.scenario_text
 
     static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.characters.values()) or "（目前尚無登記角色）"
+
+    # NPC/monster + location canonical index (see app/scenario_index.py, built
+    # on demand via /coc index) — empty until someone runs that command, in
+    # which case this whole block disappears and behavior is exactly what it
+    # was before this existed. When present, this is the authoritative source
+    # for HP/stats of anything listed here, specifically to stop the Keeper
+    # from re-deriving (and drifting on) the same NPC/monster's numbers every
+    # time it comes up — e.g. quoting a different HP for the same creature in
+    # two different scenes, or conflating a monster's different life
+    # stages/individuals (a young specimen vs. a mature one) into one entry.
+    index_block = ""
+    npc_index_text = scenario_index.format_npc_index_block(state.scenario_npc_index)
+    location_index_text = scenario_index.format_location_index_block(state.scenario_location_index)
+    if npc_index_text or location_index_text:
+        index_block = "\n\n# 劇本索引（由 /coc index 抽取，僅列出劇本明確寫出的數值——這是唯一正確來源）"
+        if npc_index_text:
+            index_block += f"""
+## NPC／怪物（務必使用下面列出的數值；同一隻怪物/NPC 全場只能有一組數值，不能因為多次提到就講出不同的 HP。如果同一種生物有多個型態或個體（幼體/成年、雜兵/頭目……），下面會分開列成不同條目——先確認清楚眼前這隻是哪一條目，再照那個條目的數值呼叫 add_npc_to_combat，不要混用不同條目的數字，也不要自己另外編一個。）
+{npc_index_text}"""
+        if location_index_text:
+            index_block += f"""
+## 主要地點
+{location_index_text}"""
     summary_block = ""
     if state.campaign_summary:
         summary_block = f"""
@@ -761,7 +784,7 @@ def _build_static_prompt(state: GroupState) -> str:
 # 已登記的調查員（屬性、職業、技能——這些幾乎不會變動，數值以這裡為準，不要自己憑印象講一個不一樣的
 數字；HP/SAN/Luck/彈藥/攜帶物品這些每回合會變的東西不在這裡，在每則訊息的動態資訊區塊裡，那邊的
 數字才是當下最新的）
-{static_chars_text}{summary_block}
+{static_chars_text}{summary_block}{index_block}
 
 # 目前劇本內容（機密，僅供你判斷用，勿直接洩漏給玩家）
 {scenario}

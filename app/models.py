@@ -401,6 +401,16 @@ class GroupState:
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
 
+    # Canonical NPC/monster and location stat index (see app/scenario_index.py),
+    # built on demand via /coc index — analogous to `pregens` above but for
+    # antagonists/locations instead of playable characters. Empty until someone
+    # runs /coc index; the Keeper falls back to reading scenario_text directly
+    # when empty, same as before this existed. Each npcs entry looks like
+    # {"name", "aliases": [...], "hp", "key_stats", "page", "notes"}; each
+    # locations entry {"name", "aliases": [...], "summary", "page"}.
+    scenario_npc_index: list[dict[str, Any]] = field(default_factory=list)
+    scenario_location_index: list[dict[str, Any]] = field(default_factory=list)
+
     # Map/Scene Engine (see app/scene_map.py) — keyed by page number as a
     # string (JSON object keys are always strings, so this avoids an int/str
     # round-trip mismatch between what's written and what's read back).
@@ -452,6 +462,8 @@ class GroupState:
             "campaign_summary": self.campaign_summary,
             "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
             "pregens": self.pregens,
+            "scenario_npc_index": self.scenario_npc_index,
+            "scenario_location_index": self.scenario_location_index,
             "combat": self.combat.to_dict(),
             "scene_maps": self.scene_maps,
             "current_map_page": self.current_map_page,
@@ -475,6 +487,8 @@ class GroupState:
                 k: CreationSession.from_dict(v) for k, v in data.get("creation_sessions", {}).items()
             },
             pregens=data.get("pregens", []),
+            scenario_npc_index=data.get("scenario_npc_index", []),
+            scenario_location_index=data.get("scenario_location_index", []),
             combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
             scene_maps=data.get("scene_maps", {}),
             # .get(..., {}) with an isinstance check rather than a bare .get
