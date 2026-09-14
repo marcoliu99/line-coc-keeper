@@ -419,6 +419,42 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
     return default_value
 
 
+_NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-name fuzzy match
+
+
+def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
+    """Looks up `name` (whatever the Keeper called this NPC/monster when
+    calling add_npc_to_combat) against state.scenario_npc_index — exact match
+    against the entry's name or any alias first, then a difflib fuzzy
+    fallback (same threshold as scene_map.py's room-name matching) to still
+    catch a name that's missing punctuation or a suffix the Keeper dropped
+    (e.g. "深潛者頭目" for an entry named "深潛者（成年頭目）"). Returns None
+    if scenario_npc_index is empty (nobody's run /coc index) or nothing
+    matches closely enough — callers should trust whatever the Keeper passed
+    in that case, same as before this existed."""
+    if not name:
+        return None
+    for entry in state.scenario_npc_index:
+        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
+        if name in candidates:
+            return entry
+
+    import difflib
+
+    best_entry = None
+    best_ratio = 0.0
+    for entry in state.scenario_npc_index:
+        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
+        for candidate in candidates:
+            if not candidate:
+                continue
+            ratio = difflib.SequenceMatcher(None, name, candidate).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_entry = entry
+    return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
+
+
 def _execute_tool(
     state: GroupState,
     name: str,
@@ -576,15 +612,37 @@ def _execute_tool(
             return {"ok": True, "status": combat.status_text(state)}
 
         if name == "add_npc_to_combat":
+            npc_name = tool_input["name"]
+            hp = int(tool_input.get("hp", 10))
+            index_note = ""
+            # Code-enforced consistency check, not just a prompt-level ask: if
+            # this name matches a /coc index entry, the index's HP wins no
+            # matter what the Keeper actually passed — this is what stops the
+            # same monster (or the same life stage of one) from silently
+            # getting a different HP in a later scene, instead of relying
+            # purely on the Keeper remembering to look it up itself.
+            index_entry = _find_npc_index_entry(state, npc_name)
+            if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
+                canonical_hp = int(index_entry["hp"])
+                if canonical_hp != hp:
+                    index_note = (
+                        f"（系統已依 /coc index 索引修正：你傳入的 HP {hp} 跟索引裡「{index_entry.get('name')}」"
+                        f"登記的 HP {canonical_hp} 不一致，已強制改用索引值。這隻的數值以索引為準，"
+                        "之後同一隻不要再用別的數字。）"
+                    )
+                    hp = canonical_hp
             combat.add_npc(
                 state,
-                tool_input["name"],
+                npc_name,
                 int(tool_input.get("dex", 50)),
-                int(tool_input.get("hp", 10)),
+                hp,
                 is_ally=bool(tool_input.get("is_ally", False)),
             )
             save_state(state)
-            return {"ok": True, "status": combat.status_text(state)}
+            result = {"ok": True, "status": combat.status_text(state)}
+            if index_note:
+                result["note"] = index_note
+            return result
 
         if name == "get_combat_status":
             return {"ok": True, "status": combat.status_text(state)}
@@ -744,7 +802,6 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
-- 角色真的撿到、拿到、被交付一樣值得記住的東西時（信件、鑰匙、地圖、物證……），呼叫 add_carried_item 加進他的攜帶物品清單，之後每回合都會夾帶給你看，不用自己記這個角色手上有什麼；東西用掉、弄丟、交出去、被沒收時呼叫 remove_carried_item 拿掉。不要讓玩家「我一直都帶著 X」這種說法回溯生出一個從沒記錄過的物品——沒登記過的東西，判斷角色現在合不合理擁有，合理才用 add_carried_item 補登記，不合理就照劇情擋下來。日常小物（筆記本、零錢、一般衣物）不用特別登記，只登記真的重要、值得跨場景記住的東西。
 - 一般描述性的擲骰（例如傷害骰）用 roll_dice。
 - 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
@@ -780,6 +837,28 @@ def _build_static_prompt(state: GroupState) -> str:
   介紹登場時簡短說明這一點，不要讓他們憑空冒出來就跟主角情同手足。
 - 正式戰鬥中的 NPC 隊友（用 add_npc_to_combat 加入、is_ally 設 true）跟敵人一樣照先攻順位輪流行動，
   即使當下鏡頭焦點在玩家角色身上，也不能讓隊友原地發呆不做事——輪到他們時照樣要有動作、擲骰、反應。
+
+# 攜帶物合理性審查
+- 這是一致性與代入感的審查，不是記帳——只審查**貴重／稀有／管制或違法／跟戰鬥相關**的物品；角色生活水準內的日常小物
+  （筆記本、小刀、火柴、一般衣物、零錢）一律直接放行，不要為了瑣碎小事就搬出下面這套規則變成規則說教。
+- 落在審查範圍內的物品，用下面四項檢查：(1) **年代／科技**——這個時代/地區真的買得到嗎（1920 年代劇本不該有半自動
+  武器、無線電、抗生素這類還沒發明或還不普及的東西）；(2) **來源**——角色的職業、背景、執照，或先前劇情要能解釋
+  他為什麼有這個東西（醫生帶醫藥包合理，一般職員突然有一把衝鋒槍不合理）；(3) **負擔能力**——大致對照角色的
+  「信用評級」技能值判斷買不買得起，不用真的記帳算現金；(4) **合法性／地域**——管制或違法物品需要合法來源、
+  黑市門路，或劇本設定的地點真的買得到。四項都過才允許；有一項不過，就用劇情擋下來、換成合理的替代品，
+  或標成「需要在劇情中取得」變成一個小目標，不要直接沒收或直接說教式拒絕。
+- 玩家說「我掏出我的 X」「我包包裡有 Y」時：角色卡（攜帶物品欄位）已經登記過的，直接算他有，繼續劇情；沒登記過但
+  明顯合理（小型、符合年代、符合這個角色的生活背景）的，直接放行，值得記住的話事後補呼叫 add_carried_item 登記；
+  落在審查範圍內、而且從沒建立過合理來源的，不能悄悄生給他——用劇情解決（翻遍口袋沒找到、需要先去拿/去買、或需要
+  一次幸運/取得場景），不要讓「我一直都帶著 X」這種說法回溯武裝一個本來沒武裝的角色。
+- 場景中要購買/取得裝備：生活水準內的日常花費直接允許；貴重物品才需要認真考慮上面四項；稀有/不常見物品可以呼叫
+  skill_check 用「幸運」做一次檢定，失敗代表這裡此刻剛好買不到；管制/違法物品需要一整段合法管道或黑市門路的劇情，
+  比照一般行動判定難度、NPC 反應、時間與風險，不要用系統訊息式的條列規則講給玩家聽。
+- 審查要隱形、要快，在敘事裡自然解決；一旦某個角色有（或沒有）某樣審查範圍內的東西，整場戰役都要維持這個事實一致；
+  不要拿這套規則刁難玩家或任意沒收有用的工具，這個 skill 一貫重視推進劇情，不重視記帳。
+- 角色真的撿到、拿到、被交付一樣值得記住的東西時（信件、鑰匙、地圖、物證……不只是上面說的審查範圍那幾類），呼叫
+  add_carried_item 加進他的攜帶物品清單，之後每回合都會夾帶給你看，不用自己記這個角色手上有什麼；東西用掉、弄丟、
+  交出去、被沒收時呼叫 remove_carried_item 拿掉。日常小物不用特別登記，只登記真的重要、值得跨場景記住的東西。
 
 # 已登記的調查員（屬性、職業、技能——這些幾乎不會變動，數值以這裡為準，不要自己憑印象講一個不一樣的
 數字；HP/SAN/Luck/彈藥/攜帶物品這些每回合會變的東西不在這裡，在每則訊息的動態資訊區塊裡，那邊的

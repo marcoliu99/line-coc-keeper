@@ -88,7 +88,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc combat end → 結束戰鬥
 
 【其他】
-・/coc index → 從劇本抽取 NPC／怪物與地點索引，幫助守密人記住正確數值（例如同一隻怪物不同型態的 HP 不會前後不一致）
+・/coc index → 手動重建 NPC／怪物與地點索引（上傳劇本 PDF 時已經會自動建立一次，這個指令是需要重建時才用）
 ・/coc newgame → 重置這個群組，開始全新一局
 ・/coc end → 結束目前這局遊戲
 ・/roll 1d100 或 /roll 3d6+2 → 單純擲骰，不經過守密人
@@ -140,6 +140,15 @@ async def handle_pdf_upload(
 
     title = pdf_loader.guess_title(text, file_name=file_name)
 
+    # Built automatically here rather than left to a manual /coc index run —
+    # a NPC/monster stat index nobody remembered to build is indistinguishable
+    # from this feature not existing at all. Same text-only analyze_text call
+    # /coc index itself makes (see app/scenario_index.py), just triggered at
+    # upload time instead of on demand; degrades to {"npcs": [], "locations":
+    # []} on any failure (no provider configured, extraction call failing),
+    # same as before this existed — never blocks the upload from succeeding.
+    extracted_index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
+
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         state.scenario_text = text
@@ -148,8 +157,8 @@ async def handle_pdf_upload(
         state.pregens = []  # clear the previous scenario's cached pregens — otherwise
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.
-        state.scenario_npc_index = []  # same reasoning — don't let a new scenario's
-        state.scenario_location_index = []  # Keeper prompt keep quoting the OLD one's NPC/monster stats.
+        state.scenario_npc_index = extracted_index["npcs"]
+        state.scenario_location_index = extracted_index["locations"]
         state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
         # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
         state.current_map_page = {}
@@ -182,6 +191,15 @@ async def handle_pdf_upload(
             "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
             "用 `/coc where` 可以看目前在哪個房間。"
         )
+    index_note = ""
+    npc_count = len(extracted_index["npcs"])
+    if npc_count:
+        index_note = (
+            f"\n\n📇 已自動建立劇本索引（{npc_count} 個 NPC／怪物"
+            + (f"、{len(extracted_index['locations'])} 個地點" if extracted_index["locations"] else "")
+            + "）——守密人之後提到這些對象時會直接照索引的數值講，同一隻不會前後不一致。"
+            "劇本內容之後如果有更新，重新跑一次「/coc index」可以重建。"
+        )
 
     await push(
         f"已載入劇本《{title}》（{len(text)} 字）。\n"
@@ -193,7 +211,8 @@ async def handle_pdf_upload(
         + "、".join(OCCUPATIONS.keys())
         + "\n建好角色後，直接在群組打字描述行動即可開始冒險！"
         + warning
-        + map_note,
+        + map_note
+        + index_note,
     )
 
 
@@ -1156,12 +1175,12 @@ async def _handle_coc_command(
         if not extracted["npcs"] and not extracted["locations"]:
             await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
             return
-        lines = [f"已建立劇本索引：{len(extracted['npcs'])} 個 NPC／怪物、{len(extracted['locations'])} 個地點。"]
+        lines = [f"已重新建立劇本索引：{len(extracted['npcs'])} 個 NPC／怪物、{len(extracted['locations'])} 個地點。"]
         for n in extracted["npcs"]:
             hp = n.get("hp")
             hp_note = f"HP {hp}" if isinstance(hp, (int, float)) else "（無 HP 數值）"
             lines.append(f"・{n.get('name') or '未命名'}：{hp_note}")
-        await reply("\n".join(lines) + "\n\n之後守密人回覆時會直接參考這份索引，同一隻怪物/NPC 不會再前後數值不一致；重新上傳新劇本 PDF 後索引會清空，需要再跑一次「/coc index」才能建立新劇本的索引。")
+        await reply("\n".join(lines) + "\n\n之後守密人回覆時會直接參考這份索引，同一隻怪物/NPC 不會再前後數值不一致。這份索引現在上傳劇本 PDF 時就會自動建立，這個指令是手動重建（例如覺得抽取結果不準、或劇本內容之後有更新時再用）。")
         return
 
     if sub == "away":
