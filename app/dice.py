@@ -267,3 +267,64 @@ def sanity_check(current_san: int, loss_success: str, loss_failure: str) -> Sani
         loss_expression=loss_expr,
         risk_of_madness=loss >= 5,
     )
+
+
+# COC7e Bout of Madness (短暫瘋狂) tables — RAW: losing 5+ SAN in one go
+# (SanityCheckResult.risk_of_madness above) triggers an INT check; *succeeding*
+# means the character truly grasps the horror and suffers an immediate Bout of
+# Madness (roll here), *failing* means they repress it and nothing happens —
+# easy to get backwards, since a passed check usually means "good outcome"
+# everywhere else in this project. See app/commands.py's handle_check_command
+# for where that INT check gets registered and resolved.
+#
+# Table content is paraphrased (Keeper guidance in our own words, not a
+# verbatim rulebook quote) from the same coc-kp-host reference this project
+# already cites for other RAW gaps (docs/references/rules_reference.md) —
+# https://github.com/SumanasJ/coc-kp-host/blob/main/references/rules_reference.md
+# — itself already a condensed paraphrase of the official tables, not the
+# copyrighted rulebook text. Real-time (Table VII) is for a Bout of Madness
+# triggered mid-scene, lasting roughly 1D10 combat rounds; summary (Table
+# VIII) is for one triggered during a stretch of narrated-in-summary time,
+# lasting roughly 1D10 hours. This project always uses the real-time table
+# (see roll_madness's own docstring for why) — the summary table is here for
+# completeness in case a caller ever needs to distinguish the two.
+MADNESS_TABLE_REALTIME: dict[int, tuple[str, str]] = {
+    1: ("失憶", "角色搞不清楚自己身在何處、剛剛發生了什麼事，行為顯得困惑茫然。"),
+    2: ("偽裝殘疾", "角色深信自己失去了某種感官或肢體（失明、失聰、肢體麻痺等），演出對應的恐慌與行動障礙。"),
+    3: ("暴力衝動", "角色不分對象地攻擊身邊的人事物，可能對隊友或周遭物品出手。"),
+    4: ("偏執", "角色認定周遭的人都是威脅，表現得多疑、防衛心重、動輒指控他人。"),
+    5: ("情感依附", "角色把在場某個人當成救命稻草般的重要人物，緊黏著對方、對其言聽計從。"),
+    6: ("昏厥", "角色當場昏倒失去意識，過一段時間後才甦醒。"),
+    7: ("逃避衝動", "角色感到一股強烈的衝動想逃離現場，會不顧一切拔腿就跑。"),
+    8: ("歇斯底里", "角色情緒失控——可能突然大哭、狂笑，或語無倫次地咆哮。"),
+    9: ("恐懼症", "角色對某個具體事物產生壓倒性的恐懼——可以自己指定一個符合情境的合理恐懼對象。"),
+    10: ("狂躁症", "角色陷入某種偏執而亢奮的執念行為，情緒亢奮、被這股衝動驅使——可以自己指定一個符合情境的合理執念。"),
+}
+
+MADNESS_TABLE_SUMMARY: dict[int, tuple[str, str]] = {
+    1: ("失憶", "角色醒來時，對這段失常期間發生的事完全沒有記憶。"),
+    2: ("失竊", "角色的貴重物品在這段期間遺失了（可以視情況判斷是被偷、弄丟，或直接沒收）。"),
+    3: ("自傷", "角色在這段期間傷害了自己，HP 降到最大值的一半（不算重傷）。"),
+    4: ("暴力失控", "角色在這段期間捲入了打鬥，可以描述造成的附帶損害與傷勢。"),
+    5: ("偏激信念", "角色在失常期間形成了一個偏激而固執的信念，清醒後依然堅信不疑。"),
+    6: ("尋找重要之人", "角色在失常期間不顧一切地跑去找某個對自己重要的人，可能鬧出了一些場面。"),
+    7: ("被收容", "角色在失常期間被人發現並帶去收容——精神病院、拘留所或醫院。"),
+    8: ("逃亡在外", "角色在失常期間逃離現場，醒來時發現自己身處一個離原本地點很遠的地方。"),
+    9: ("新恐懼症", "角色從這次失常經驗中，留下了一個新的、長期的具體恐懼——可以自己指定一個符合情境的合理恐懼對象。"),
+    10: ("新狂躁症", "角色從這次失常經驗中，留下了一個新的、長期的強迫性偏執行為——可以自己指定一個符合情境的合理執念。"),
+}
+
+
+def roll_madness(realtime: bool = True) -> dict:
+    """Rolls 1D10 on the Bout of Madness table and returns
+    {"roll": int, "symptom": str, "guidance": str, "duration": str}. Always
+    realtime=True in this project for now — distinguishing "did this trigger
+    mid-scene vs. during a summarized stretch of time" isn't something this
+    bot tracks anywhere, so rather than guess, every trigger uses the
+    real-time table (roughly 1D10 rounds) and leaves it to the Keeper's own
+    narration to stretch that out if the fictional moment calls for longer."""
+    table = MADNESS_TABLE_REALTIME if realtime else MADNESS_TABLE_SUMMARY
+    roll = random.randint(1, 10)
+    symptom, guidance = table[roll]
+    duration = "1D10 個戰鬥輪" if realtime else "1D10 小時"
+    return {"roll": roll, "symptom": symptom, "guidance": guidance, "duration": duration}

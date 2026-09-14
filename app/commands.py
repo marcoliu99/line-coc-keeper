@@ -567,14 +567,43 @@ async def handle_check_command(
         san_before = char.san
         r = dice.sanity_check(san_before, pending.get("loss_success", "0"), pending.get("loss_failure", "1d4"))
         char.san = r.san_after
-        save_state(state)
         outcome = "通過" if r.check.success else "失敗"
         roll_line = f"🎲 {char.name} 的理智檢定：SAN {san_before}，擲出 {r.check.roll} → {outcome}，損失 {r.loss} 點理智（現在 SAN {r.san_after}）"
-        keeper_message = (
-            f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
-            f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
-            f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
-        )
+
+        if r.risk_of_madness:
+            # COC7e Bout of Madness: losing 5+ SAN in one go triggers a
+            # separate INT check — chained the same way a Luck-spend decision
+            # chains onto a check's result, registered as a fresh pending
+            # check the player rolls themselves (never silently resolved by
+            # the Keeper). See dice.roll_madness's own docstring for why
+            # *succeeding* this INT check is the outcome that triggers
+            # madness, not failing it — easy to get backwards.
+            int_value = keeper.resolve_skill_value(char, "INT")
+            state.pending_checks[user_id] = {
+                "type": "skill", "skill": "INT", "skill_value": int_value,
+                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                "madness_trigger": True, "madness_realtime": True,
+            }
+            save_state(state)
+            roll_line += (
+                "\n⚠️ 這次損失達到 5 點以上，觸發 COC7e「短暫瘋狂」規則：需要做一次 INT 檢定——"
+                "成功代表當場理解了這份恐怖、陷入短暫瘋狂；失敗代表壓抑下來，沒有當場失常。"
+                "請輸入 /coc check INT。"
+            )
+            keeper_message = (
+                f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
+                f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這次損失達到 5 點以上，觸發 COC7e"
+                f"「短暫瘋狂」規則的 INT 檢定，系統已經請玩家去骰，你只能先描述受到這波衝擊當下的"
+                f"直接反應，還不知道會不會當場失常，等 INT 檢定結果出來才能繼續描述後續——不要自己"
+                f"先講角色失常了或平安無事。）"
+            )
+        else:
+            save_state(state)
+            keeper_message = (
+                f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
+                f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
+                f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
+            )
         await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
         return
 
@@ -583,6 +612,8 @@ async def handle_check_command(
     difficulty = "regular"  # offer_check_choice options and a self-initiated /coc check with no
     # pending Keeper request have no difficulty concept — only a Keeper-registered plain skill_check
     # (see keeper.py's skill_check tool difficulty param) can set this above "regular".
+    madness_trigger = False  # only set True for the INT check chained onto a >=5 SAN loss — see below
+    madness_realtime = True
     if choice_skill_name is not None:
         skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
         display_label = choice_display_label
@@ -592,6 +623,8 @@ async def handle_check_command(
             skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
             is_pushed = bool(pending.get("pushed", False))
             difficulty = pending.get("difficulty", "regular")
+            madness_trigger = bool(pending.get("madness_trigger", False))
+            madness_realtime = bool(pending.get("madness_realtime", True))
         else:
             skill_name = skill_arg
             value = keeper.resolve_skill_value(char, skill_name)
@@ -600,6 +633,36 @@ async def handle_check_command(
             save_state(state)  # resolve_skill_value may have registered a new default-value skill
         display_label = None
     r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
+
+    if madness_trigger:
+        # Bout of Madness INT check (see the "sanity" branch above that
+        # registered this) — resolved separately from the generic skill-check
+        # path below since a *success* here means rolling a real madness
+        # table, not just narrating a plain check result; also deliberately
+        # skips the Luck-spend flow entirely (spending Luck to push this
+        # check toward success would be pushing toward the *worse* outcome
+        # for the character, backwards from what Luck-spend normally means).
+        tier_zh = _tier_zh_for_result(r)
+        if r.success:
+            madness = dice.roll_madness(realtime=madness_realtime)
+            roll_line = (
+                f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n"
+                f"💥 觸發短暫瘋狂（Bout of Madness）！症狀擲骰 {madness['roll']} → 「{madness['symptom']}」"
+                f"（持續約{madness['duration']}）"
+            )
+            keeper_message = (
+                f"（{char.name} 的 INT 檢定{tier_zh}，觸發了短暫瘋狂：症狀是「{madness['symptom']}」"
+                f"——{madness['guidance']}，持續約{madness['duration']}。這是已經確定的結果，"
+                f"請照這個症狀具體描述角色接下來的失常行為，不要自己另外編一個症狀，也不要忽略這個結果。）"
+            )
+        else:
+            roll_line = f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n（INT 檢定失敗，勉強壓下這股衝擊，沒有當場失常）"
+            keeper_message = (
+                f"（{char.name} 的 INT 檢定{tier_zh}，沒有觸發短暫瘋狂——角色勉強壓下了這股衝擊，"
+                f"不需要描述任何失常行為，可以正常繼續劇情，但可以帶一點事後的心理陰影或後怕細節。）"
+            )
+        await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
+        return
 
     # Luck-spend: only proactively offered when it's a near-miss (the cheapest
     # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
