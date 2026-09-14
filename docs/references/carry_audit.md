@@ -1,6 +1,8 @@
-# 攜帶物與購買合理性審查（設計文件，尚未實作）
+# 攜帶物與購買合理性審查
 
-**狀態：這份文件講的「合理性審查」機制目前完全沒有做**——玩家宣稱攜帶什麼東西，Keeper 沒有任何年代／來源／負擔能力／合法性的審查提示詞規則，`/coc pc`、`/coc create`、`/coc usepregen` 建角時也不會問隨身物品。這份文件是照 [coc-kp-host/references/carry_audit.md](https://github.com/SumanasJ/coc-kp-host/blob/main/references/carry_audit.md) 改編的設計規格，記錄「如果之後要做，應該怎麼做」，方便之後真的要實作時直接照抄，不用重新想一次規則。
+**狀態：已實作**（動態審查部分——玩家宣稱攜帶什麼東西時的四項合理性檢查）。這份文件原本是照 [coc-kp-host/references/carry_audit.md](https://github.com/SumanasJ/coc-kp-host/blob/main/references/carry_audit.md) 改編的設計規格，記錄「如果之後要做，應該怎麼做」；下面「如果之後要實作」一節列的最小可行版本（純提示詞規則，不用新工具/新指令）現在已經照那個規格加進 `app/keeper.py` 的 `_build_static_prompt`（可讀版本見 `docs/keeper_skill.md` 的「攜帶物合理性審查」一節），實測過會擋下不合理的裝備宣稱（例如圖書館員宣稱身上有一把湯普森衝鋒槍），也確認日常小物不會被誤擋。
+
+**還沒做的部分**：建角流程（`/coc pc`／`/coc create`／`/coc usepregen`）仍然沒有隨身物品欄位或建角時的靜態審查——這份文件「建角時的靜態審查」一節描述的規則還沒對應到任何程式碼或提示詞，純粹是遊戲中途宣稱攜帶物品時的動態審查生效。
 
 （`Character` 現在確實有兩個相關但範圍窄很多的欄位，跟這份文件講的「審查」是兩回事，不要搞混：`weapons` 追蹤**已經確定持有**的槍械目前剩餘彈數（`role_` 角色卡上傳時從【武器】區塊的「彈容量」解析，開槍呼叫 `adjust_ammo` 扣彈）；`carried_items` 是一個純粹的自由文字清單，記錄角色撿到/拿到的東西（`add_carried_item`/`remove_carried_item`），單純「有沒有記住這個東西存在」，沒有做任何年代/來源/負擔能力/合法性的判斷——Keeper 判斷「這樣東西合不合理」還是完全靠系統提示詞的自由心證，不是這份文件講的結構化四項審查。）
 
@@ -57,6 +59,6 @@ COC7e 規則依據：信用評級（Credit Rating）決定生活水準、起始�
 
 最小可行版本：
 
-1. ~~`Character` 加一個 `notes` 之外的 `carried_items: list[str]` 欄位（或沿用 `notes`），建角流程不用特別問，先留空。~~ 已做：`Character.carried_items` 這個欄位現在存在（`add_carried_item`/`remove_carried_item` 工具維護），但只是清單本身，沒有下面第 2、3 點講的審查規則——欄位有了，審查邏輯還沒有。
-2. `docs/keeper_skill.md` 加一節「攜帶物審查」，濃縮成幾句提示詞規則塞進 `app/keeper.py` 的系統提示詞（不用真的做成獨立工具，這是敘事判斷，跟「條件式旁白」規則一樣靠 Keeper 自己在敘述裡處理）。
-3. 不需要新工具或新指令——這整套完全可以純靠系統提示詞的行為規則達成，跟這個專案其他「敘事層面的規則」（敘事節奏、NPC 隊友）走同一套模式。
+1. ~~`Character` 加一個 `notes` 之外的 `carried_items: list[str]` 欄位（或沿用 `notes`），建角流程不用特別問，先留空。~~ 已做：`Character.carried_items` 這個欄位現在存在，`add_carried_item`/`remove_carried_item` 工具維護。
+2. ~~`docs/keeper_skill.md` 加一節「攜帶物審查」，濃縮成幾句提示詞規則塞進 `app/keeper.py` 的系統提示詞（不用真的做成獨立工具，這是敘事判斷，跟「條件式旁白」規則一樣靠 Keeper 自己在敘述裡處理）。~~ 已做：見 `docs/keeper_skill.md`「攜帶物合理性審查」一節，`app/keeper.py` `_build_static_prompt` 新增對應的行為準則段落。
+3. ~~不需要新工具或新指令——這整套完全可以純靠系統提示詞的行為規則達成，跟這個專案其他「敘事層面的規則」（敘事節奏、NPC 隊友）走同一套模式。~~ 確認：實作時也的確沒有加任何新工具/新指令，純粹是系統提示詞的行為規則，跟原設計一致。
