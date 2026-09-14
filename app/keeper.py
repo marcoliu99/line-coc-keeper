@@ -79,6 +79,10 @@ TOOLS = [
             "兩者只能選一個，不能都做）。跟 skill_check 一樣不會幫玩家骰骰子，只記錄下"
             "選項清單，讓玩家自己選一個、用 /coc check <選項名稱> 擲骰。呼叫完之後只能"
             "敘述『需要在這幾個選項裡選一個』的當下場景，不能自己選、不能自己編結果。"
+            "如果這是被攻擊時的防守選擇（閃避／反擊），這是正式的 COC7e 對抗檢定：務必先"
+            "呼叫 npc_skill_check 幫攻擊方擲出這次攻擊的結果，把回傳的 tier 填進 attacker_tier，"
+            "玩家真的擲完骰後，系統會自動比較雙方成功等級判定攻擊有沒有命中、反擊有沒有生效，"
+            "不用你自己比較或判定輸贏。"
         ),
         "input_schema": {
             "type": "object",
@@ -99,8 +103,35 @@ TOOLS = [
                         "required": ["label", "skill"],
                     },
                 },
+                "attacker_tier": {
+                    "type": "string",
+                    "enum": ["fumble", "fail", "regular", "hard", "extreme", "critical"],
+                    "description": (
+                        "這是防守方對抗攻擊的選擇（閃避／反擊）時才填：攻擊方這次攻擊的成功等級"
+                        "（先呼叫 npc_skill_check 幫攻擊方擲出來，不要自己編）。不是防守情境（單純"
+                        "多選一，不涉及被攻擊）就不用填。"
+                    ),
+                },
             },
             "required": ["investigator", "options"],
+        },
+    },
+    {
+        "name": "npc_skill_check",
+        "description": (
+            "立刻擲一次『沒有玩家可以自己擲骰』那一方（NPC、怪物、敵人）的技能百分比檢定，直接由"
+            "程式碼擲骰算出真正的擲骰值和成功等級，回傳給你——不要自己編一個 NPC 的檢定結果。"
+            "最常見的用途：offer_check_choice 的對抗檢定情境裡，攻擊方（通常是 NPC）這次攻擊的"
+            "結果；也可以用在任何劇本需要 NPC 自己做一次檢定的場合。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "skill_value": {"type": "integer", "description": "NPC 這項技能／屬性的百分比值"},
+                "bonus_dice": {"type": "integer", "description": "獎勵骰數量，預設 0"},
+                "penalty_dice": {"type": "integer", "description": "懲罰骰數量，預設 0"},
+            },
+            "required": ["skill_value"],
         },
     },
     {
@@ -154,6 +185,34 @@ TOOLS = [
                 "reload_full": {"type": "boolean", "description": "true 的話直接補滿彈匣，忽略 delta"},
             },
             "required": ["investigator", "weapon"],
+        },
+    },
+    {
+        "name": "add_carried_item",
+        "description": (
+            "把一樣角色實際拿到、帶在身上的東西加進角色卡的『攜帶物品』清單（例如一封找到的信、一把"
+            "鑰匙、一張地圖、一件從犯罪現場拿走的物證）——之後每回合都會夾帶給你看，不用自己記或猜"
+            "這個角色手上到底有什麼。item 用簡短、辨識得出來的描述就好，不用寫得像正式物品名稱。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string"},
+                "item": {"type": "string", "description": "簡短描述，例如「一封字跡潦草的信」「地下室鑰匙」"},
+            },
+            "required": ["investigator", "item"],
+        },
+    },
+    {
+        "name": "remove_carried_item",
+        "description": "角色用掉、弄丟、交出去、或以其他方式不再持有某樣攜帶物品時，把它從角色卡的『攜帶物品』清單移除。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string"},
+                "item": {"type": "string", "description": "要移除的物品描述，需跟 add_carried_item 當初加入時的文字相符或明顯對應"},
+            },
+            "required": ["investigator", "item"],
         },
     },
     {
@@ -379,23 +438,33 @@ def _execute_tool(
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
             options = []
             for opt in raw_options:
+                # Full skill value, no artificial difficulty adjustment —
+                # confirmed against the official COC7e Fight Back text:
+                # it's a normal opposed roll at the defender's own combat
+                # skill, not a harder version of Dodge. (A prior revision
+                # here halved it as a house-rule approximation; reverted.)
                 value = resolve_skill_value(char, opt["skill"])
-                if "反擊" in opt["label"]:
-                    # House rule: counter-attacking works offense and defense at
-                    # once, so it's one difficulty tier harder than a plain dodge
-                    # — enforced here rather than left to the Keeper's own
-                    # judgment call, which was inconsistent in practice.
-                    value = value // 2
                 options.append({
                     "label": opt["label"], "skill": opt["skill"], "skill_value": value,
                     "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
                 })
-            state.pending_checks[char.owner_id] = {"type": "choice", "options": options}
+            pending_choice = {"type": "choice", "options": options}
+            attacker_tier = tool_input.get("attacker_tier")
+            if attacker_tier:
+                pending_choice["attacker_tier"] = attacker_tier
+            state.pending_checks[char.owner_id] = pending_choice
             save_state(state)
             return {
                 "ok": True, "pending": True, "investigator": char.name, "options": options,
                 "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
             }
+
+        if name == "npc_skill_check":
+            skill_value = max(0, min(100, int(tool_input["skill_value"])))
+            bonus = int(tool_input.get("bonus_dice") or 0)
+            penalty = int(tool_input.get("penalty_dice") or 0)
+            r = dice.skill_check(skill_value, bonus_dice=bonus, penalty_dice=penalty)
+            return {"ok": True, "roll": r.roll, "tier": r.tier, "skill_value": skill_value}
 
         if name == "sanity_check":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -442,6 +511,28 @@ def _execute_tool(
                 entry["ammo"] = max(0, min(entry["ammo_max"], entry["ammo"] + int(tool_input.get("delta") or 0)))
             save_state(state)
             return {"ok": True, "investigator": char.name, "weapon": weapon, "ammo": entry["ammo"], "ammo_max": entry["ammo_max"]}
+
+        if name == "add_carried_item":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            item = tool_input.get("item", "").strip()
+            if not item:
+                return {"ok": False, "error": "item 不能是空字串"}
+            if item not in char.carried_items:
+                char.carried_items.append(item)
+                save_state(state)
+            return {"ok": True, "investigator": char.name, "carried_items": char.carried_items}
+
+        if name == "remove_carried_item":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            item = tool_input.get("item", "")
+            if item in char.carried_items:
+                char.carried_items.remove(item)
+                save_state(state)
+            return {"ok": True, "investigator": char.name, "carried_items": char.carried_items}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -523,11 +614,18 @@ def _execute_tool(
 
 
 def _build_static_prompt(state: GroupState) -> str:
-    """Role/rules + scenario text. Only changes when a new PDF is loaded, so this is
-    the block the Anthropic adapter marks cache_control on — it's the expensive
-    part (the full scenario text) and gets reused across an entire session instead
-    of re-billed on every single message. (Gemini's context caching isn't wired up
-    yet; see app/providers/gemini_provider.py.)"""
+    """Role/rules + scenario text + each character's *static* sheet (attributes,
+    occupation, skills — see Character.static_sheet_text). This is the block the
+    Anthropic adapter marks cache_control on — it's the expensive part (the full
+    scenario text) and gets reused across an entire session instead of re-billed
+    on every single message. Only changes when a new PDF is loaded, a character
+    joins/leaves, or a skill/attribute is edited (/coc setskill, skill growth,
+    ...) — all rare compared to HP/SAN/Luck changing almost every turn, which is
+    exactly why those live in _build_dynamic_prompt's uncached block instead: a
+    literal copy of the whole roster here on every message would only inflate
+    what has to be recomputed/re-billed whenever it changes, for no benefit,
+    since dynamic_state_text() already covers what actually needs to be fresh.
+    (Gemini's context caching isn't wired up yet; see app/providers/gemini_provider.py.)"""
     if not state.scenario_text:
         scenario = "（尚未載入劇本，請提醒玩家用 /coc 上傳 PDF 劇本）"
     elif SCENARIO_RAG_ENABLED:
@@ -542,6 +640,8 @@ def _build_static_prompt(state: GroupState) -> str:
         )
     else:
         scenario = state.scenario_text
+
+    static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.characters.values()) or "（目前尚無登記角色）"
     return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
 
 # 行為準則
@@ -584,6 +684,7 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
+- 角色真的撿到、拿到、被交付一樣值得記住的東西時（信件、鑰匙、地圖、物證……），呼叫 add_carried_item 加進他的攜帶物品清單，之後每回合都會夾帶給你看，不用自己記這個角色手上有什麼；東西用掉、弄丟、交出去、被沒收時呼叫 remove_carried_item 拿掉。不要讓玩家「我一直都帶著 X」這種說法回溯生出一個從沒記錄過的物品——沒登記過的東西，判斷角色現在合不合理擁有，合理才用 add_carried_item 補登記，不合理就照劇情擋下來。日常小物（筆記本、零錢、一般衣物）不用特別登記，只登記真的重要、值得跨場景記住的東西。
 - 一般描述性的擲骰（例如傷害骰）用 roll_dice。
 - 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
@@ -620,17 +721,24 @@ def _build_static_prompt(state: GroupState) -> str:
 - 正式戰鬥中的 NPC 隊友（用 add_npc_to_combat 加入、is_ally 設 true）跟敵人一樣照先攻順位輪流行動，
   即使當下鏡頭焦點在玩家角色身上，也不能讓隊友原地發呆不做事——輪到他們時照樣要有動作、擲骰、反應。
 
+# 已登記的調查員（屬性、職業、技能——這些幾乎不會變動，數值以這裡為準，不要自己憑印象講一個不一樣的
+數字；HP/SAN/Luck/彈藥/攜帶物品這些每回合會變的東西不在這裡，在每則訊息的動態資訊區塊裡，那邊的
+數字才是當下最新的）
+{static_chars_text}
+
 # 目前劇本內容（機密，僅供你判斷用，勿直接洩漏給玩家）
 {scenario}
 """
 
 
 def _build_dynamic_prompt(state: GroupState, user_id: str, resolved_location: dict | None = None) -> str:
-    """Character sheets + combat status. Changes every turn (HP/SAN/turn order all
-    move), so this stays OUTSIDE the cached block — it's small and cheap to
-    resend, and keeping it separate means those changes don't invalidate the much
-    larger cached scenario block above."""
-    chars_text = "\n\n".join(c.sheet_text() for c in state.characters.values()) or "（目前尚無登記角色）"
+    """Combat status + each character's *dynamic* state (HP/SAN/Luck/ammo/
+    carried items — see Character.dynamic_state_text; the static attributes/
+    skills counterpart lives in _build_static_prompt's cached block instead).
+    Changes every turn, so this stays OUTSIDE the cached block — it's small
+    and cheap to resend, and keeping it separate means those changes don't
+    invalidate the much larger cached scenario+roster block above."""
+    chars_text = "\n".join(c.dynamic_state_text() for c in state.characters.values()) or "（目前尚無登記角色）"
     secret_goals = "\n".join(c.keeper_notes_text() for c in state.characters.values() if c.secret_goal)
     secret_block = f"\n\n{secret_goals}" if secret_goals else ""
 
@@ -676,9 +784,11 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
 不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色在近戰中被攻擊時，防守方要在
 「閃避」跟「反擊」之間選一個（COC7e 規則），呼叫 offer_check_choice 給這兩個選項讓玩家自己選，不要自己
-幫玩家決定要閃避還是反擊。"""
+幫玩家決定要閃避還是反擊。這是正式的對抗檢定：先呼叫 npc_skill_check 讓攻擊方（通常是 NPC）擲出這次
+攻擊的成功等級，填進 offer_check_choice 的 attacker_tier，玩家真的擲完骰後系統會自動判定攻擊有沒有
+命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。"""
 
-    return f"""# 目前登記的調查員角色
+    return f"""# 目前動態數值（HP/SAN/Luck/彈藥/攜帶物品/狀態——這些才是當下最新的，屬性和技能請看上面的角色登記區塊）
 {chars_text}{secret_block}
 {combat_block}{location_block}
 """

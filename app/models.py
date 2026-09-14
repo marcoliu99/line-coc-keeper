@@ -105,6 +105,14 @@ class Character:
     # number that actually changes turn to turn — see app/keeper.py's
     # adjust_ammo tool and sheet_text() below.
     weapons: dict[str, dict[str, int]] = field(default_factory=dict)
+    # Free-form carried items worth tracking explicitly (a found letter, a
+    # key, a map — anything picked up/used/lost during play) so the Keeper
+    # has an authoritative list instead of having to remember or infer what
+    # this character is holding. Not a full inventory/carry-weight system —
+    # see docs/references/carry_audit.md for that (still unimplemented);
+    # this is just "what's the current list", added/removed via keeper.py's
+    # add_carried_item/remove_carried_item tools.
+    carried_items: list[str] = field(default_factory=list)
     notes: str = ""
     key_connection: str = ""  # "關鍵背景連結★" — a person/place/object this character
     # cannot lose without a saving roll first (see keeper.py's static prompt);
@@ -139,12 +147,54 @@ class Character:
             lines.append("狀態：" + "、".join(tags))
         if self.weapons:
             lines.append("彈藥：" + "、".join(f"{name} {w['ammo']}/{w['ammo_max']}" for name, w in self.weapons.items()))
+        if self.carried_items:
+            lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:
             lines.append(f"★ 關鍵背景連結：{self.key_connection}")
         top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
         if top_skills:
             lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
         return "\n".join(lines)
+
+    def static_sheet_text(self) -> str:
+        """The part of the sheet that almost never changes turn to turn
+        (attributes, occupation, skills) — see app/keeper.py's
+        _build_static_prompt, which puts this in the *cached* system-prompt
+        block. dynamic_state_text() below is the counterpart: just the
+        handful of numbers that actually change, resent fresh every turn."""
+        lines = [
+            f"【{self.name}】職業：{self.occupation}（玩家：{self.owner_id}）",
+            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} "
+            f"APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu}",
+            f"MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
+        ]
+        if self.key_connection:
+            lines.append(f"★ 關鍵背景連結：{self.key_connection}")
+        top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
+        if top_skills:
+            lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
+        return "\n".join(lines)
+
+    def dynamic_state_text(self) -> str:
+        """Just the numbers/lists that actually change during play (HP/MP/
+        SAN/Luck, ammo, carried items, status) — one line, keyed by name AND
+        owner_id so there's no ambiguity about whose state this is even
+        with several characters listed back to back. Pairs with
+        static_sheet_text() above."""
+        parts = [
+            f"HP {self.hp}/{self.hp_max}", f"MP {self.mp}/{self.mp_max}",
+            f"SAN {self.san}/{self.san_max}", f"LUCK {self.luck}",
+        ]
+        if self.weapons:
+            parts.append("彈藥 " + "、".join(f"{name} {w['ammo']}/{w['ammo_max']}" for name, w in self.weapons.items()))
+        if self.carried_items:
+            parts.append("攜帶物品 " + "、".join(self.carried_items))
+        tags = list(self.status_tags)
+        if self.away:
+            tags.append("暫離")
+        if tags:
+            parts.append("狀態 " + "、".join(tags))
+        return f"{self.name}（user_id {self.owner_id}）：" + "　".join(parts)
 
     def keeper_notes_text(self) -> str:
         """Extra context for the Keeper's own prompt only (see

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-_TIER_RANK = {"fumble": 0, "fail": 1, "regular": 2, "hard": 3, "extreme": 4, "critical": 5}
+from app.dice import TIER_RANK as _TIER_RANK
 
 # Ordered worst-cost-affordable to best, matching dice.skill_check's own tier
 # thresholds: regular=skill, hard=skill//2, extreme=skill//5.

@@ -367,33 +367,62 @@ _CHECK_TIER_ZH = {
 }
 
 
+def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tier: str, attacker_tier: str) -> str:
+    """COC7e opposed-roll narration for a Dodge/Fight Back choice (see
+    dice.resolve_opposed) — always names both sides' tiers explicitly rather
+    than just stating the verdict, so it's auditable in the channel, not a
+    black box."""
+    outcome = dice.resolve_opposed(defender_tier, attacker_tier)
+    attacker_zh = _CHECK_TIER_ZH[attacker_tier]
+    if outcome == "both_miss":
+        return f"對抗檢定：攻擊方「{attacker_zh}」，雙方都沒成功，這次攻擊沒有命中，{defender_name}沒有受傷，也沒有造成傷害。"
+    if outcome == "defender_wins":
+        if is_counter:
+            return f"對抗檢定：攻擊方「{attacker_zh}」，{defender_name}的成功等級更高，攻擊被化解，反擊命中，可以對攻擊方造成傷害。"
+        return f"對抗檢定：攻擊方「{attacker_zh}」，{defender_name}的成功等級更高，成功閃避，沒有受到傷害。"
+    tie_note = "（平手，依規則攻擊方獲勝）" if outcome == "tie_attacker_wins" else ""
+    counter_note = "，反擊沒有生效" if is_counter else ""
+    return f"對抗檢定：攻擊方「{attacker_zh}」，攻擊方成功等級較高{tie_note}，攻擊命中，{defender_name}受到傷害{counter_note}。"
+
+
 def _build_check_narration(
     char, skill_name: str, display_label: str | None, value: int, r, bonus: int, penalty: int,
-    luck_spent: int = 0, original_tier: str | None = None,
+    luck_spent: int = 0, original_tier: str | None = None, attacker_tier: str | None = None,
 ) -> tuple[str, str]:
     """Builds (roll_line, keeper_message) for a resolved skill/choice check —
     shared by the immediate-finalize path and handle_luck_decision (after a
     Luck spend has overridden r.tier). luck_spent > 0 adds a note both humans
-    and the Keeper can see that the tier was bought up, not rolled naturally."""
+    and the Keeper can see that the tier was bought up, not rolled naturally.
+    attacker_tier (only set for a Dodge/Fight Back choice — see
+    keeper.py's offer_check_choice/npc_skill_check) triggers the COC7e
+    opposed-roll comparison, named explicitly in both messages."""
     tier_zh = _CHECK_TIER_ZH[r.tier]
     dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
     luck_note = ""
     if luck_spent:
         luck_note = f"（花費 {luck_spent} 點 Luck，將結果從「{_CHECK_TIER_ZH[original_tier]}」提升為「{tier_zh}」）"
 
+    opposed_line = ""
+    opposed_message = ""
+    if attacker_tier is not None:
+        is_counter = display_label is not None and "反擊" in display_label
+        opposed_text = _describe_opposed_outcome(char.name, is_counter, r.tier, attacker_tier)
+        opposed_line = f"\n⚔️ {opposed_text}"
+        opposed_message = f"（{opposed_text}）"
+
     if display_label is not None:
-        roll_line = f"🎲 {char.name} 選擇「{display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}{luck_note}"
+        roll_line = f"🎲 {char.name} 選擇「{display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}"
         keeper_message = (
             f"（{char.name} 在多個選項裡選了「{display_label}」，擲骰做了一次「{skill_name}」檢定："
             f"技能值 {value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果"
-            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）"
+            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）{opposed_message}"
         )
     else:
-        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}"
+        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}"
         keeper_message = (
             f"（{char.name} 擲骰做了一次「{skill_name}」檢定：技能值 {value}%{dice_note}，"
             f"擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果描述後續發展，"
-            f"不要重新判定或改變這個結果。）"
+            f"不要重新判定或改變這個結果。）{opposed_message}"
         )
     return roll_line, keeper_message
 
@@ -458,6 +487,7 @@ async def handle_check_command(
     # skill/sanity mismatch just falling through to a fresh check.
     choice_skill_name = choice_display_label = None
     choice_value = choice_bonus = choice_penalty = None
+    choice_attacker_tier = None
     if pending and pending.get("type") == "choice":
         if skill_arg is None:
             state.pending_checks[user_id] = pending
@@ -476,6 +506,7 @@ async def handle_check_command(
             return
         choice_skill_name, choice_display_label = matched["skill"], matched["label"]
         choice_value, choice_bonus, choice_penalty = matched["skill_value"], matched["bonus_dice"], matched["penalty_dice"]
+        choice_attacker_tier = pending.get("attacker_tier")
         pending = None
     elif skill_arg is None:
         if not pending:
@@ -503,9 +534,11 @@ async def handle_check_command(
         return
 
     is_pushed = False
+    attacker_tier = None
     if choice_skill_name is not None:
         skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
         display_label = choice_display_label
+        attacker_tier = choice_attacker_tier
     else:
         if pending:
             skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
@@ -530,21 +563,24 @@ async def handle_check_command(
         state.pending_luck_decisions[user_id] = {
             "skill_name": skill_name, "display_label": display_label,
             "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
-            "original_tier": r.tier,
+            "original_tier": r.tier, "attacker_tier": attacker_tier,
             "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
         }
         save_state(state)
         options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
         dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
         check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
+        attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
         await reply(
-            f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_CHECK_TIER_ZH[r.tier]}\n"
+            f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_CHECK_TIER_ZH[r.tier]}{attacker_note}\n"
             f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
             f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
         )
         return
 
-    roll_line, keeper_message = _build_check_narration(char, skill_name, display_label, value, r, bonus, penalty)
+    roll_line, keeper_message = _build_check_narration(
+        char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier
+    )
     await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
 
 
@@ -596,6 +632,7 @@ async def handle_luck_decision(
         char, pending["skill_name"], pending["display_label"], pending["value"], r,
         pending["bonus_dice"], pending["penalty_dice"],
         luck_spent=luck_spent, original_tier=pending["original_tier"],
+        attacker_tier=pending.get("attacker_tier"),
     )
     await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
 

@@ -46,6 +46,26 @@ def d100() -> int:
     return random.randint(1, 100)
 
 
+TIER_RANK = {"fumble": 0, "fail": 1, "regular": 2, "hard": 3, "extreme": 4, "critical": 5}
+
+
+def resolve_opposed(defender_tier: str, attacker_tier: str) -> str:
+    """COC7e opposed-roll resolution (e.g. Dodge/Fight Back vs. an attack):
+    compare degree of success. Ties go to the active/attacking side — but if
+    *both* sides failed outright, neither effect happens at all (COC7e calls
+    this out as its own case, distinct from a tie between two successes).
+    Returns one of "defender_wins" (attack negated), "tie_attacker_wins" or
+    "attacker_wins" (attack lands), or "both_miss" (neither connects)."""
+    d_rank, a_rank = TIER_RANK[defender_tier], TIER_RANK[attacker_tier]
+    if d_rank <= TIER_RANK["fail"] and a_rank <= TIER_RANK["fail"]:
+        return "both_miss"
+    if d_rank > a_rank:
+        return "defender_wins"
+    if d_rank == a_rank:
+        return "tie_attacker_wins"
+    return "attacker_wins"
+
+
 @dataclass
 class SkillCheckResult:
     skill_value: int
