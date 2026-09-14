@@ -84,7 +84,7 @@
 | 需要一次技能/屬性檢定 | `skill_check`（請求，不代骰；孤注一擲重骰記得設 `pushed: true`；對手強或任務難記得設 `difficulty: 'hard'/'extreme'`） |
 | 玩家要在幾個互斥技能之間自己選一個（例如近戰被攻擊選閃避或反擊） | `offer_check_choice`（請求多選一，不代骰、不代選；是防守選擇的話先呼叫 `npc_skill_check` 拿攻擊方等級填進 `attacker_tier`，系統會自動判定對抗檢定結果） |
 | 「沒有玩家可以自己擲骰」的一方（NPC/敵人）需要一次檢定結果 | `npc_skill_check`（立刻擲骰，不用自己編） |
-| 目擊恐怖事物、SAN 動搖 | `sanity_check`（請求，不代骰） |
+| 目擊恐怖事物、SAN 動搖 | `sanity_check`（請求，不代骰；損失 ≥5 時系統會自動接一次 INT 檢定判斷有沒有觸發短暫瘋狂，不用你自己處理） |
 | 受傷、花幸運、恢復 MP（非戰鬥） | `adjust_character` |
 | 角色卡有登記彈藥的槍開槍/裝填 | `adjust_ammo` |
 | 角色撿到/拿到/交出值得記住的東西 | `add_carried_item` / `remove_carried_item` |
