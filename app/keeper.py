@@ -1010,15 +1010,28 @@ def run_turn(
     image_requests: list[tuple[str | None, int]] = []
     tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
 
-    final_text = provider.run_conversation(
-        static_prompt,
-        dynamic_prompt,
-        tools,
-        history,
-        f"{speaker_name}：{message_text}",
-        lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),
-        MAX_TOOL_ITERATIONS,
-    )
+    if LLM_PROVIDER == "openai":
+        final_text = provider.run_conversation(
+            static_prompt,
+            dynamic_prompt,
+            tools,
+            history,
+            f"{speaker_name}：{message_text}",
+            lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),
+            MAX_TOOL_ITERATIONS,
+            previous_response_id=state.openai_previous_response_id,
+            on_response_id=lambda response_id: setattr(state, "openai_previous_response_id", response_id),
+        )
+    else:
+        final_text = provider.run_conversation(
+            static_prompt,
+            dynamic_prompt,
+            tools,
+            history,
+            f"{speaker_name}：{message_text}",
+            lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),
+            MAX_TOOL_ITERATIONS,
+        )
 
     state.log.append({"role": "user", "content": f"{speaker_name}：{message_text}"})
     state.log.append({"role": "assistant", "content": final_text})

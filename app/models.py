@@ -430,6 +430,7 @@ class GroupState:
     # hold everything. Fed into the (cached) static prompt, not re-summarized
     # every turn — only updated on the rare turn where a trim actually fires.
     campaign_summary: str = ""
+    openai_previous_response_id: str = ""
     creation_sessions: dict[str, CreationSession] = field(default_factory=dict)  # keyed by owner_id
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
@@ -493,6 +494,7 @@ class GroupState:
             "characters": {k: v.to_dict() for k, v in self.characters.items()},
             "log": self.log,
             "campaign_summary": self.campaign_summary,
+            "openai_previous_response_id": self.openai_previous_response_id,
             "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
             "pregens": self.pregens,
             "scenario_npc_index": self.scenario_npc_index,
@@ -516,6 +518,7 @@ class GroupState:
             characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
             log=data.get("log", []),
             campaign_summary=data.get("campaign_summary", ""),
+            openai_previous_response_id=data.get("openai_previous_response_id", ""),
             creation_sessions={
                 k: CreationSession.from_dict(v) for k, v in data.get("creation_sessions", {}).items()
             },
