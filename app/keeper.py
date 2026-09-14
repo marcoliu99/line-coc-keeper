@@ -58,6 +58,29 @@ TOOLS = [
         },
     },
     {
+        "name": "roll_impaling_damage",
+        "description": (
+            "COC7e 規則：攻擊方的攻擊擲骰達到『極限成功』時（反擊不適用，只用在真正主動出手的"
+            "攻擊）造成的加成傷害。武器傷害跟傷害加值都先算到各自的最大可能值；如果攻擊用的是"
+            "穿刺武器（刀、劍、長矛、大多數槍械子彈等——尖銳、貫穿型的武器），在最大值之上再"
+            "額外擲一次武器本身的傷害骰加上去；非穿刺武器（棍棒、拳頭、鈍器）只算最大值，不會"
+            "額外重骰。不要自己心算或編一個數字，呼叫這個工具讓系統正確算出來；一般（非極限）"
+            "成功的傷害還是用 roll_dice 正常擲。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "weapon_damage": {"type": "string", "description": "武器傷害骰表示式，例如 '1d8+1'、'1d10'、徒手 '1d3'"},
+                "damage_bonus": {
+                    "type": "string",
+                    "description": "角色的傷害加值（DB），例如 '0'、'-1'、'-2'、'+1d4'、'+1d6'；角色卡上沒特別寫負值就填 '0'",
+                },
+                "impaling": {"type": "boolean", "description": "這次攻擊的武器是不是穿刺武器，true 才會額外重骰"},
+            },
+            "required": ["weapon_damage", "damage_bonus", "impaling"],
+        },
+    },
+    {
         "name": "skill_check",
         "description": (
             "『請求』一次 COC7e 技能或屬性百分比檢定——這個工具不會幫玩家骰骰子，"
@@ -495,6 +518,23 @@ def _execute_tool(
             r = dice.roll_expression(tool_input["expression"])
             return {"ok": True, "expression": r.expression, "rolls": r.rolls, "modifier": r.modifier, "total": r.total}
 
+        if name == "roll_impaling_damage":
+            try:
+                result = dice.calculate_impaling_damage(
+                    tool_input["weapon_damage"], tool_input.get("damage_bonus") or "0", bool(tool_input.get("impaling"))
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            return {
+                "ok": True,
+                "total": result.total,
+                "max_weapon_damage": result.max_weapon_damage,
+                "max_damage_bonus": result.max_damage_bonus,
+                "impaling": result.impaling,
+                "reroll_total": result.reroll.total if result.reroll else None,
+                "describe": result.describe(),
+            }
+
         if name == "skill_check":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
@@ -843,7 +883,9 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
-- 一般描述性的擲骰（例如傷害骰）用 roll_dice。
+- 一般描述性的擲骰（例如傷害骰）用 roll_dice；但如果這次攻擊的**攻擊擲骰**是極限成功（不是反擊），
+  傷害不是單純擲一次武器傷害骰，要呼叫 roll_impaling_damage 讓系統照 COC7e 規則正確算出「武器＋
+  傷害加值都算最大值，穿刺武器再額外重骰一次武器傷害」的結果，不要自己心算或用 roll_dice 湊。
 - 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。

@@ -41,6 +41,73 @@ def roll_expression(expression: str) -> RollResult:
     return RollResult(expression=expression, rolls=rolls, modifier=modifier, total=sum(rolls) + modifier)
 
 
+def _max_value_of_expression(expr: str) -> int:
+    """Highest possible value of an NdM+K expression (every die at its top
+    face, plus the modifier) — or, for a plain signed integer like a flat
+    damage bonus ("-2"/"-1"/"0"), just that integer. Used for COC7e's
+    Extreme-success "maximum damage" rule below, which needs a die's
+    ceiling, not a random roll of it."""
+    expr = (expr or "").strip()
+    if not expr:
+        return 0
+    if re.fullmatch(r"[+-]?\d+", expr):
+        return int(expr)
+    m = _DICE_RE.match(expr.lstrip("+"))
+    if not m:
+        raise ValueError(f"無法解析傷害表示式: {expr!r}（範例：1d10+2、+1d4、-1）")
+    n = int(m.group(1)) if m.group(1) else 1
+    sides = int(m.group(2))
+    modifier = int(m.group(3).replace(" ", "")) if m.group(3) else 0
+    return n * sides + modifier
+
+
+@dataclass
+class ImpalingDamageResult:
+    weapon_damage_expr: str
+    damage_bonus_expr: str
+    impaling: bool
+    max_weapon_damage: int
+    max_damage_bonus: int
+    reroll: RollResult | None  # None for a non-impaling weapon — RAW gives no extra roll there
+    total: int
+
+    def describe(self) -> str:
+        base = f"武器最大傷害 {self.max_weapon_damage}"
+        if self.max_damage_bonus:
+            base += f"，傷害加值最大 {self.max_damage_bonus}"
+        if self.impaling and self.reroll is not None:
+            return f"穿刺武器極限成功：{base}，額外重擲武器傷害 {self.reroll.describe()} → 總傷害 {self.total}"
+        return f"極限成功（非穿刺武器，不重骰）：{base} → 總傷害 {self.total}"
+
+
+def calculate_impaling_damage(weapon_damage_expr: str, damage_bonus_expr: str, impaling: bool) -> ImpalingDamageResult:
+    """COC7e Extreme-success weapon damage (Keeper Rulebook, 戰鬥／確定攻擊順序
+    一節，經官方原文核對過，不是憑印象轉述)：攻擊方擲出 Extreme 成功命中時
+    （反擊不適用這條——呼叫端只該在真正的主動攻擊擲骰上用這個函式），傷害
+    先算到武器傷害＋傷害加值的最大可能值；如果攻擊武器屬於穿刺武器（刀劍、
+    長矛、大多數槍械子彈等），在這個最大值之上，再額外擲一次武器本身的傷害骰
+    （不重擲傷害加值）加上去；非穿刺武器（棍棒、拳頭等鈍器）只算最大值，
+    不會有這次額外重骰。
+
+    damage_bonus_expr 可以是純數字（COC7e 規則書列出的 "-2"／"-1"／"0"）或骰子
+    表示式（"+1d4"／"+1d6" 等，對應體型較大角色的傷害加值），都用
+    _max_value_of_expression 算出各自的最大值。"""
+    max_weapon = _max_value_of_expression(weapon_damage_expr)
+    max_db = _max_value_of_expression(damage_bonus_expr)
+    max_base = max_weapon + max_db
+    reroll = roll_expression(weapon_damage_expr) if impaling else None
+    total = max_base + (reroll.total if reroll is not None else 0)
+    return ImpalingDamageResult(
+        weapon_damage_expr=weapon_damage_expr,
+        damage_bonus_expr=damage_bonus_expr,
+        impaling=impaling,
+        max_weapon_damage=max_weapon,
+        max_damage_bonus=max_db,
+        reroll=reroll,
+        total=total,
+    )
+
+
 def d100() -> int:
     """A single percentile roll, 1-100 (00 tens + 0 ones counts as 100)."""
     return random.randint(1, 100)
