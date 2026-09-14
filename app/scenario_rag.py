@@ -27,15 +27,18 @@ falls back to pure BM25, exactly like before embeddings existed here.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+from app.config import DATA_DIR, OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _PAGE_SPLIT_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]+")
+_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 _K1 = 1.5  # BM25 term-frequency saturation
 _B = 0.75  # BM25 length-normalization strength
@@ -167,30 +170,41 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _compute_bm25_stats(chunks: list[_Chunk]) -> tuple[dict[str, int], float]:
+    """Fills in each chunk's tokens/term_counts from its text and returns the
+    index-level doc_freq/avg_length derived from them. Pure CPU (tokenize +
+    count), cheap enough to redo whenever chunk text is available — including
+    right after loading a persisted index from disk, so the disk format only
+    needs to store text + embedding, not these derived fields."""
+    doc_freq: dict[str, int] = {}
+    total_length = 0
+    for chunk in chunks:
+        tokens = _tokenize(chunk.text)
+        term_counts: dict[str, int] = {}
+        for t in tokens:
+            term_counts[t] = term_counts.get(t, 0) + 1
+        chunk.tokens = tokens
+        chunk.term_counts = term_counts
+        for t in term_counts:
+            doc_freq[t] = doc_freq.get(t, 0) + 1
+        total_length += len(tokens)
+    avg_length = (total_length / len(chunks)) if chunks else 0.0
+    return doc_freq, avg_length
+
+
 def build_index(scenario_text: str) -> ScenarioIndex:
     pages = split_pages(scenario_text) or [(1, scenario_text)]  # no page markers: one big chunk
     sub_chunks: list[tuple[int, str]] = []
     for page_num, text in pages:
         sub_chunks.extend(_split_page_into_chunks(page_num, text) or [(page_num, text)])
 
-    chunks = []
-    doc_freq: dict[str, int] = {}
-    total_length = 0
-    for page_num, text in sub_chunks:
-        tokens = _tokenize(text)
-        term_counts: dict[str, int] = {}
-        for t in tokens:
-            term_counts[t] = term_counts.get(t, 0) + 1
-        for t in term_counts:
-            doc_freq[t] = doc_freq.get(t, 0) + 1
-        total_length += len(tokens)
-        chunks.append(_Chunk(page=page_num, text=text, tokens=tokens, term_counts=term_counts))
-
-    avg_length = (total_length / len(chunks)) if chunks else 0.0
+    chunks = [_Chunk(page=page_num, text=text) for page_num, text in sub_chunks]
+    doc_freq, avg_length = _compute_bm25_stats(chunks)
     text_hash = hashlib.md5(scenario_text.encode("utf-8")).hexdigest()
 
     # Embeddings call(s) for the whole scenario, done once at index-build
-    # time (cached by get_index below) rather than per search — batched
+    # time (cached by get_index below, and persisted to disk so a bot
+    # restart doesn't pay for this again) rather than per search — batched
     # internally by _embed_texts now that a scenario can produce many more
     # (smaller) chunks than one-per-page did.
     embeddings = _embed_texts([c.text for c in chunks])
@@ -284,10 +298,55 @@ def format_results(results: list[dict]) -> str:
     return "\n\n".join(f"--- 第 {r['page']} 頁 ---\n{r['text']}" for r in results)
 
 
-# Rebuilding the index is pure CPU (tokenize + count), no LLM call, but a long
-# scenario is still tens of thousands of tokens to re-tokenize on every single
-# message — cache the last-built index per conversation, invalidated whenever
-# the scenario text actually changes (new PDF upload / different content).
+def _index_path(group_id: str) -> Path:
+    safe_id = _SAFE_ID_RE.sub("_", group_id)
+    return DATA_DIR / f"{safe_id}_scenario_index.json"
+
+
+def _save_index_to_disk(group_id: str, index: ScenarioIndex) -> None:
+    """Best-effort: a failed write just means the next restart re-embeds from
+    scratch (same as before this existed), not a functional error."""
+    try:
+        payload = {
+            "text_hash": index.text_hash,
+            "has_embeddings": index.has_embeddings,
+            "chunks": [{"page": c.page, "text": c.text, "embedding": c.embedding} for c in index.chunks],
+        }
+        _index_path(group_id).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
+    """Returns None on anything unexpected (missing file, corrupt JSON, old
+    format) so callers fall back to a normal rebuild rather than crashing."""
+    path = _index_path(group_id)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        chunks = [_Chunk(page=c["page"], text=c["text"], embedding=c.get("embedding")) for c in data["chunks"]]
+        doc_freq, avg_length = _compute_bm25_stats(chunks)
+        return ScenarioIndex(
+            chunks=chunks,
+            doc_freq=doc_freq,
+            avg_length=avg_length,
+            text_hash=data["text_hash"],
+            has_embeddings=data.get("has_embeddings", False),
+        )
+    except Exception:
+        return None
+
+
+# Rebuilding the BM25 stats is pure CPU (tokenize + count), no LLM call, but a
+# long scenario is still tens of thousands of tokens to re-tokenize on every
+# single message — cache the last-built index per conversation in memory,
+# invalidated whenever the scenario text actually changes (new PDF upload /
+# different content). On top of the in-memory cache, the built index (chunk
+# text + embeddings) is also persisted to disk per group, so a bot restart
+# doesn't have to pay for OpenAI embeddings calls again for a scenario it has
+# already indexed before — only tokenize/count is redone (cheap) after a disk
+# load, not the embeddings call.
 _index_cache: dict[str, ScenarioIndex] = {}
 
 
@@ -296,6 +355,13 @@ def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
     cached = _index_cache.get(group_id)
     if cached is not None and cached.text_hash == text_hash:
         return cached
+
+    disk_index = _load_index_from_disk(group_id)
+    if disk_index is not None and disk_index.text_hash == text_hash:
+        _index_cache[group_id] = disk_index
+        return disk_index
+
     index = build_index(scenario_text)
     _index_cache[group_id] = index
+    _save_index_to_disk(group_id, index)
     return index
