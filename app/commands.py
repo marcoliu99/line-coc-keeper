@@ -89,6 +89,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 
 【其他】
 ・/coc index → 手動重建 NPC／怪物與地點索引（上傳劇本 PDF 時已經會自動建立一次，這個指令是需要重建時才用）
+・/coc setpersona <文字> → 自訂這個群組守密人的語氣風格（預設是冷酷旁觀者），/coc setpersona reset 重設回預設
 ・/coc newgame → 重置這個群組，開始全新一局
 ・/coc end → 結束目前這局遊戲
 ・/roll 1d100 或 /roll 3d6+2 → 單純擲骰，不經過守密人
@@ -998,6 +999,27 @@ async def _handle_coc_command(
         char.key_connection = description
         save_state(state)
         await reply(f"已將 {name} 的「★ 關鍵背景連結」設為：{description}")
+        return
+
+    if sub == "setpersona":
+        state = load_state(conversation_id)
+        if len(parts) < 3:
+            current = state.keeper_persona or f"（目前使用預設風格）\n{keeper.DEFAULT_PERSONA}"
+            await reply(
+                "用法：/coc setpersona <描述守密人語氣風格的文字> → 設定這個群組專屬的守密人語氣\n"
+                "/coc setpersona reset → 重設回預設的冷酷旁觀者風格\n\n"
+                f"目前設定：\n{current}"
+            )
+            return
+        if parts[2] == "reset" and len(parts) == 3:
+            state.keeper_persona = ""
+            save_state(state)
+            await reply("已重設回預設的冷酷旁觀者語氣風格。")
+            return
+        persona_text = " ".join(parts[2:])
+        state.keeper_persona = persona_text
+        save_state(state)
+        await reply(f"已設定這個群組的守密人語氣風格：\n{persona_text}\n\n（下一則訊息開始生效；重設回預設風格用 /coc setpersona reset）")
         return
 
     if sub == "create":

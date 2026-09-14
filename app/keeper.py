@@ -20,6 +20,20 @@ _logger = logging.getLogger(__name__)
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 
+# The Keeper's default tone/persona — a plain, importable constant (not a
+# leading-underscore private one) rather than hardcoded inline in
+# _build_static_prompt, so it can be:
+# (a) shown to a GM via /coc setpersona's usage text (see app/commands.py) as
+#     a concrete example of what a persona override looks like, and
+# (b) overridden per-group via GroupState.keeper_persona (empty string means
+#     "use this default" — see _build_static_prompt below), so different
+#     scenarios/tables running off the same bot deployment can each set their
+#     own Keeper tone instead of every game sharing one hardcoded voice.
+DEFAULT_PERSONA = """- 全程使用繁體中文。你是冷酷、嚴肅、精通克蘇魯神話的守密人（Keeper），不是客氣的助理或客服。你的文風精煉、充滿壓迫感、令人窒息且懸疑。
+- 絕對不要使用「太好了」、「沒問題」、「祝你好運」或任何過度親切、正向鼓勵的客服語氣——即使檢定成功、劇情進展順利，也不要用歡快、鼓勵的語氣去慶祝，用克制、冷淡的敘述帶過就好，恐怖氛圍不能因為一次成功就鬆懈。
+- 面對調查員受傷、San 值狂掉或遭遇恐怖事物時，以冷酷、客觀、帶有感官細節（如鐵鏽味、腐敗氣息、異樣黏稠感、體溫變化、環境聲響）的事實直擊痛點，絕不給予安慰或溫情喊話。
+- 訊息長度要適合聊天軟體閱讀：每次回覆盡量 3 到 8 句，避免長篇大論、避免使用 Markdown 標題或表格。"""
+
 _ATTR_ALIASES = {
     "STR": "str_", "力量": "str_", "CON": "con", "體質": "con", "SIZ": "siz", "體型": "siz",
     "DEX": "dex", "敏捷": "dex", "APP": "app", "外貌": "app", "INT": "int_", "智力": "int_",
@@ -756,13 +770,11 @@ def _build_static_prompt(state: GroupState) -> str:
 {state.campaign_summary}
 如果玩家問起一個具體的人名/地名/物品，這份摘要跟最近的對話都找不到（摘要是壓縮過的，可能已經漏掉細節），
 呼叫 search_memory 工具去查更早、還沒被壓縮掉的原始對話內容，不要直接說忘記了或自己編一個答案。"""
+    persona_block = state.keeper_persona.strip() or DEFAULT_PERSONA
     return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
 
 # 行為準則
-- 全程使用繁體中文。你是冷酷、嚴肅、精通克蘇魯神話的守密人（Keeper），不是客氣的助理或客服。你的文風精煉、充滿壓迫感、令人窒息且懸疑。
-- 絕對不要使用「太好了」、「沒問題」、「祝你好運」或任何過度親切、正向鼓勵的客服語氣——即使檢定成功、劇情進展順利，也不要用歡快、鼓勵的語氣去慶祝，用克制、冷淡的敘述帶過就好，恐怖氛圍不能因為一次成功就鬆懈。
-- 面對調查員受傷、San 值狂掉或遭遇恐怖事物時，以冷酷、客觀、帶有感官細節（如鐵鏽味、腐敗氣息、異樣黏稠感、體溫變化、環境聲響）的事實直擊痛點，絕不給予安慰或溫情喊話。
-- 訊息長度要適合聊天軟體閱讀：每次回覆盡量 3 到 8 句，避免長篇大論、避免使用 Markdown 標題或表格。
+{persona_block}
 
 # 敘事節奏紀律
 - 一次回覆只推進「一個場景片段」：給出一個具體的反應點就停下來，不要在同一則回覆裡串連多個場景、多個發現、或多輪 NPC 對話。如果發現自己寫到第三段還沒停，代表該收了，把剩下的留到玩家回應之後。
