@@ -1,8 +1,8 @@
 # 攜帶物與購買合理性審查（設計文件，尚未實作）
 
-**狀態：目前完全沒有做這件事**——`/coc pc`、`/coc create`、`/coc usepregen` 建出來的角色沒有「隨身物品」欄位，玩家遊戲中宣稱攜帶什麼東西，Keeper 也沒有任何合理性檢查的提示詞規則。這份文件是照 [coc-kp-host/references/carry_audit.md](https://github.com/SumanasJ/coc-kp-host/blob/main/references/carry_audit.md) 改編的設計規格，記錄「如果之後要做，應該怎麼做」，方便之後真的要實作時直接照抄，不用重新想一次規則。
+**狀態：這份文件講的「合理性審查」機制目前完全沒有做**——玩家宣稱攜帶什麼東西，Keeper 沒有任何年代／來源／負擔能力／合法性的審查提示詞規則，`/coc pc`、`/coc create`、`/coc usepregen` 建角時也不會問隨身物品。這份文件是照 [coc-kp-host/references/carry_audit.md](https://github.com/SumanasJ/coc-kp-host/blob/main/references/carry_audit.md) 改編的設計規格，記錄「如果之後要做，應該怎麼做」，方便之後真的要實作時直接照抄，不用重新想一次規則。
 
-（唯一相關但範圍窄很多的例外：`Character.weapons` 現在會追蹤**已經確定持有**的槍械目前剩餘彈數，`role_` 角色卡上傳時從【武器】區塊的「彈容量」欄位解析、開槍時 Keeper 呼叫 `adjust_ammo` 扣彈——這只是「這把已經在角色卡上的槍還剩幾發子彈」的數字追蹤，跟這份文件講的「這個東西角色合不合理擁有／買不買得到」完全是兩回事，不算這裡講的稽核機制有做了一部分。）
+（`Character` 現在確實有兩個相關但範圍窄很多的欄位，跟這份文件講的「審查」是兩回事，不要搞混：`weapons` 追蹤**已經確定持有**的槍械目前剩餘彈數（`role_` 角色卡上傳時從【武器】區塊的「彈容量」解析，開槍呼叫 `adjust_ammo` 扣彈）；`carried_items` 是一個純粹的自由文字清單，記錄角色撿到/拿到的東西（`add_carried_item`/`remove_carried_item`），單純「有沒有記住這個東西存在」，沒有做任何年代/來源/負擔能力/合法性的判斷——Keeper 判斷「這樣東西合不合理」還是完全靠系統提示詞的自由心證，不是這份文件講的結構化四項審查。）
 
 ## 目標
 
@@ -57,6 +57,6 @@ COC7e 規則依據：信用評級（Credit Rating）決定生活水準、起始�
 
 最小可行版本：
 
-1. `Character` 加一個 `notes` 之外的 `carried_items: list[str]` 欄位（或沿用 `notes`），建角流程不用特別問，先留空。
+1. ~~`Character` 加一個 `notes` 之外的 `carried_items: list[str]` 欄位（或沿用 `notes`），建角流程不用特別問，先留空。~~ 已做：`Character.carried_items` 這個欄位現在存在（`add_carried_item`/`remove_carried_item` 工具維護），但只是清單本身，沒有下面第 2、3 點講的審查規則——欄位有了，審查邏輯還沒有。
 2. `docs/keeper_skill.md` 加一節「攜帶物審查」，濃縮成幾句提示詞規則塞進 `app/keeper.py` 的系統提示詞（不用真的做成獨立工具，這是敘事判斷，跟「條件式旁白」規則一樣靠 Keeper 自己在敘述裡處理）。
 3. 不需要新工具或新指令——這整套完全可以純靠系統提示詞的行為規則達成，跟這個專案其他「敘事層面的規則」（敘事節奏、NPC 隊友）走同一套模式。

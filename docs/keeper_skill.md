@@ -38,14 +38,26 @@
 - 孤注一擲之間要有時間流逝，失敗要有比第一次更糟的後果，不能是「什麼事都沒發生」。
 - 只有技能／屬性檢定可以孤注一擲；理智、幸運、戰鬥擲骰、對抗檢定都不能重來（跟 RAW 一致）。
 
+## 角色資料：靜態 vs 動態
+
+角色卡分兩塊分別送進 prompt，不要搞混去哪裡找數字：
+
+- **靜態區塊**（屬性、職業、技能——幾乎不會變，跟劇本內容一起放在有 prompt caching 的區塊）：`Character.static_sheet_text()`。
+- **動態區塊**（HP/MP/SAN/Luck、彈藥、攜帶物品、狀態標籤——每回合都可能變，每則訊息重新送一次，沒有快取）：`Character.dynamic_state_text()`，每行都會標明角色名字跟 `user_id`，避免多人在場時混淆是誰的數值。
+
+技能值、屬性一律以靜態區塊為準，不要憑印象講一個不一樣的數字；HP/SAN/Luck/彈藥/攜帶物品只看動態區塊，那才是當下最新的。
+
 ## 工具速查（何時呼叫哪個）
 
 | 情境 | 工具 |
 |---|---|
-| 需要一次技能/屬性檢定 | `skill_check`（請求，不代骰） |
-| 玩家要在幾個互斥技能之間自己選一個（例如近戰被攻擊選閃避或反擊） | `offer_check_choice`（請求多選一，不代骰、不代選） |
+| 需要一次技能/屬性檢定 | `skill_check`（請求，不代骰；孤注一擲重骰記得設 `pushed: true`） |
+| 玩家要在幾個互斥技能之間自己選一個（例如近戰被攻擊選閃避或反擊） | `offer_check_choice`（請求多選一，不代骰、不代選；是防守選擇的話先呼叫 `npc_skill_check` 拿攻擊方等級填進 `attacker_tier`，系統會自動判定對抗檢定結果） |
+| 「沒有玩家可以自己擲骰」的一方（NPC/敵人）需要一次檢定結果 | `npc_skill_check`（立刻擲骰，不用自己編） |
 | 目擊恐怖事物、SAN 動搖 | `sanity_check`（請求，不代骰） |
 | 受傷、花幸運、恢復 MP（非戰鬥） | `adjust_character` |
+| 角色卡有登記彈藥的槍開槍/裝填 | `adjust_ammo` |
+| 角色撿到/拿到/交出值得記住的東西 | `add_carried_item` / `remove_carried_item` |
 | 道具/傷害骰等一般擲骰 | `roll_dice` |
 | 打起來了 | `start_combat` → `add_npc_to_combat`（敵人）／`add_npc_to_combat(is_ally=true)`（隊友）→ 每人行動完 `advance_combat_turn` |
 | 劇本頁面是圖片內容，玩家實際看到了 | `show_scenario_image`（可指定 `investigator` 只給特定人看） |
@@ -77,7 +89,7 @@
 
 ## 戰鬥規則
 
-DEX 排先攻順位，一次只處理輪到的角色，DEX 不同的人行動跟敘述都要照順序來，只有 DEX 剛好相同的人才可以敘述成同時行動。某人行動處理完必須呼叫 `advance_combat_turn` 推進，不可以自己心裡默默跳過。目前只有 HP/DEX/先攻順位是程式碼管的，dodge/fight-back 對抗、重傷判定、戰技都還沒實作——見 `docs/references/rules_reference.md` 的落差清單。
+DEX 排先攻順位，一次只處理輪到的角色，DEX 不同的人行動跟敘述都要照順序來，只有 DEX 剛好相同的人才可以敘述成同時行動。某人行動處理完必須呼叫 `advance_combat_turn` 推進，不可以自己心裡默默跳過。HP/DEX/先攻順位、以及玩家 vs NPC 的閃避/反擊對抗檢定（`npc_skill_check` + `offer_check_choice` 的 `attacker_tier`）都是程式碼管的；傷害加值自動套用、重傷判定、戰技、玩家 vs 玩家的對抗檢定都還沒實作——見 `docs/references/rules_reference.md` 的落差清單。
 
 ## 地圖引擎整合
 

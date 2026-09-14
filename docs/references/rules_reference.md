@@ -13,11 +13,11 @@
 
 ### 對抗檢定（對抗检定）
 
-RAW：雙方各自宣告互斥目標，各自擲骰，**成功等級高者贏**（大成功 > 極難 > 困難 > 常規 > 失敗/大失敗），等級相同比技能值高低，再相同才真的算平手。**對抗檢定不能孤注一擲。**
+RAW：雙方各自宣告互斥目標，各自擲骰，**成功等級高者贏**（大成功 > 極難 > 困難 > 常規 > 失敗/大失敗），等級相同比技能值高低（我們簡化成「平手時攻擊方獲勝」，沒有再比技能值），再相同才真的算平手。**對抗檢定不能孤注一擲。**
 
-我們的實作：**部分做了「選哪個技能」，完全沒做「比較兩邊結果」**——`offer_check_choice` 工具（見 `docs/keeper_skill.md` 的工具速查表）讓玩家在互斥的技能之間自己選一個要骰哪個（例如閃避 vs 反擊，Discord 上會看到兩顆對應的按鈕），但骰出來之後就只是一次普通的 `skill_check`，**沒有**自動去跟對手的另一次擲骰比較成功等級高低——「誰贏」還是要靠守密人敘事判斷。也就是說 RAW 的「雙方各自擲骰、比較成功等級」這個核心機制還是沒有程式碼支援，只是把「選技能」這一半的決定權從守密人手上還給了玩家。
+**已修正（限「玩家 vs NPC」的情境，例如近戰閃避/反擊）**：`app/dice.py` 的 `resolve_opposed(defender_tier, attacker_tier)` 依 `TIER_RANK` 比較雙方成功等級，回傳 `defender_wins`／`tie_attacker_wins`／`attacker_wins`／`both_miss`（雙方都失敗時互不命中，這是 RAW 明確分開的第四種情況，不是「平手」）。流程：`offer_check_choice` 多了 `attacker_tier` 參數，Keeper 先呼叫新工具 `npc_skill_check(skill_value)` 讓程式碼直接幫 NPC 擲出這次攻擊的成功等級（不是自己編），連同閃避/反擊選項一起交給玩家；玩家真的擲完骰後，`app/commands.py` 的 `_describe_opposed_outcome` 自動算出結果、把雙方的成功等級都明講出來（不是黑箱判定），只有選「反擊」時勝出才會註明可以造成傷害。曾經有一版把「反擊」的技能值直接減半當作土炮難度調整，對照官方 Fight Back 規則文字後確認那不是 RAW（反擊本來就是用正常技能值的對抗檢定），已經整個改用這套真正的對抗比較取代。
 
-如果要做完整版：`app/dice.py` 加一個 `opposed_check(value_a, value_b) -> tuple[SkillCheckResult, SkillCheckResult, str]`，回傳誰贏；`app/keeper.py` 的 `offer_check_choice` 或一個新工具在雙方都是玩家角色時，各自建立一筆 pending check 讓雙方玩家分別 `/coc check`，兩邊都骰完才比較——這個順序比一般 pending check 複雜一點（要等兩個人都骰完），值得先想清楚 `GroupState.pending_checks` 的資料結構夠不夠用（目前是一個玩家一筆，沒有「這筆檢定在等另一筆」的關聯欄位）。
+**還沒做的部分**：只有「玩家 vs NPC」的閃避/反擊走這套機制；**玩家 vs 玩家**的對抗檢定（兩邊都要自己 `/coc check`，等兩邊都骰完才比較）完全沒做——`GroupState.pending_checks` 目前一個玩家一筆，沒有「這筆檢定在等另一筆」的關聯欄位，要做的話這是主要要補的資料結構；平手時我們簡化成「攻擊方直接贏」，沒有像 RAW 那樣再比雙方技能值高低、真的相同才算平手。
 
 ### 難度等級（难度等级）
 
@@ -50,7 +50,7 @@ RAW 完整流程：先攻意外攻擊 → DEX 順位輪流行動 → 攻擊方�
 
 - ✅ DEX 排先攻順位、輪流行動、`advance_combat_turn` 推進、自動跳過已倒下/暫離的人——這部分程式碼管得很嚴謹（見 `docs/keeper_skill.md` 的「戰鬥規則」一節，DEX 不同必須依序敘述是這個專案特別修過、驗證過的規則）。
 - ✅ `damage_combatant` 直接調整 HP，玩家和 NPC 都適用。
-- ❌ **沒有**閃避/反擊的對抗檢定機制——命中與否完全交給敘事判斷，`skill_check` 工具技術上可以被 Keeper 拿來裁定「有沒有打中」，但沒有「防守方選擇閃避還是反擊」這個結構化流程。
+- ✅ 閃避/反擊的對抗檢定機制——見上面「對抗檢定」一節，`npc_skill_check` + `offer_check_choice` 的 `attacker_tier` + `dice.resolve_opposed`，玩家 vs NPC 的情境已經是真正比較雙方成功等級，不是純敘事判斷。
 - ❌ **沒有**傷害加值（DB）自動套用到武器傷害——`Character.damage_bonus` 有存這個值，但沒有工具/程式碼自動把它加進 `roll_dice` 算出來的傷害。
 - ❌ **沒有**重傷判定（單次傷害 ≥ 半血觸發 CON 檢定）——HP 數字本身是準的，但「這下傷勢很重要不要昏過去」這個判定完全沒做，靠 Keeper 敘事拿捏。
 - ❌ **沒有**戰技（擒抱、繳械、擊倒，比較 Build/體格）——`Character.build` 有存這個值，沒有對應的工具。
