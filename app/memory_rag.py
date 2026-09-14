@@ -176,18 +176,38 @@ def _bm25_score(index: MemoryIndex, query_tokens: list[str], chunk: _Chunk) -> f
     return score
 
 
+_index_cache: dict[str, MemoryIndex] = {}
+
+
+def _get_index(group_id: str, raw_chunks: list[dict]) -> MemoryIndex:
+    """Rebuilding was originally unconditional (tokenizing a handful of short
+    trimmed chunks is cheap early on), but chunks only ever accumulate as a
+    campaign goes on — a year-long campaign can build up hundreds of them,
+    and every search_memory call (one per query the Keeper decides to run)
+    was re-tokenizing all of them from scratch. Cache the built index per
+    group_id, keyed on chunk count: since append_memory only ever appends
+    (existing chunks are immutable once written), a count mismatch against
+    the freshly-loaded raw_chunks is both necessary and sufficient to detect
+    a new chunk and rebuild — no separate invalidation call needed from
+    append_memory itself."""
+    cached = _index_cache.get(group_id)
+    if cached is not None and len(cached.chunks) == len(raw_chunks):
+        return cached
+    index = _build_index(raw_chunks)
+    _index_cache[group_id] = index
+    return index
+
+
 def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
     """Returns up to top_k {"label": str, "text": str, "score": float},
     highest first. Empty list if there's no memory yet or nothing matches —
     callers should treat that as "nothing found", not an error. Same hybrid
     BM25 + (if any chunk has one) cosine-similarity blend as
-    app/scenario_rag.py's search(); rebuilt fresh each call (tokenizing a
-    handful of short trimmed chunks is cheap — nowhere near the cost of
-    re-tokenizing a whole scenario, so no cache is needed here)."""
+    app/scenario_rag.py's search()."""
     raw_chunks = _load_raw_chunks(group_id)
     if not raw_chunks:
         return []
-    index = _build_index(raw_chunks)
+    index = _get_index(group_id, raw_chunks)
 
     query_tokens = _tokenize(query)
     if not query_tokens:
