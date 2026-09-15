@@ -275,3 +275,13 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 
 - **這次實際完成**：只修改 `app/discord_bot.py` 的 `on_message()`。保留最前面的 bot 訊息忽略邏輯後，在建立 `conversation_id`、處理附件、呼叫 `commands.py`、讀寫 state 或送進 Keeper/AI 之前，先檢查玩家訊息文字；忽略前導空白後，如果內容以 `@` 開頭，或是 Discord raw mention 的 `<@` 開頭（涵蓋 user mention `<@123...>`、legacy user mention `<@!123...>`、role mention `<@&123...>`），就整則 message 直接 `return`，連附件也不處理。
 - **保留不變**：Discord channel mention `<#123...>` 不符合 `<@` 前綴，不會被這個 bypass 擋掉；一般角色扮演文字、既有附件處理流程、`/coc` 指令與 `/roll` 指令也沒有改動。
+
+### 25. Discord 擲骰與 Luck 按鈕合法點擊後立即消失
+
+- **這次實際完成**：只修改 `app/discord_bot.py` 的 `CheckButton.callback()` 與 `LuckSpendButton.callback()`。現在 Discord 玩家點一般檢定按鈕或 Luck 決策按鈕時，仍會先檢查點擊者是不是該檢定的 owner，並先成功取得 `locks.try_acquire_check()`；只有這兩個條件都通過的第一次有效點擊，才會呼叫 `interaction.response.edit_message(view=None)`，用 initial interaction response 立刻移除原訊息上的按鈕，然後才繼續執行既有的 `commands.handle_check_command()` 或 `commands.handle_luck_decision()` 流程。
+- **保留不變**：錯誤玩家與 duplicate/lock 失敗的點擊仍維持既有 ephemeral 提示，而且因為會在 `edit_message(view=None)` 之前直接 `return`，不會移除按鈕、不會重複擲骰、不會重複扣 Luck。`locks.release_check()` 仍保留在 callback 最外層的 `finally`；骰果顯示時機、Luck 計算、`pending_checks`、`pending_luck_decisions`、Keeper/AI 呼叫時機、LINE 行為與 `app/commands.py` 都沒有修改。
+
+### 26. Discord 按鈕擲骰結果先於 Keeper 敘事送出
+
+- **這次實際完成**：在 `app/commands.py` 的 `handle_check_command()`、`handle_luck_decision()` 與 `_finalize_check_result()` 新增預設為 `False` 的 `split_roll_feedback` 參數；預設模式仍維持原本「Keeper 回來後一次送出 `roll_line + 空行 + keeper_reply`」的行為。只有 `app/discord_bot.py` 的 `CheckButton.callback()` 與 `LuckSpendButton.callback()` 傳入 `split_roll_feedback=True`，因此 Discord 按鈕流程會先送出 deterministic 骰果，再呼叫 Keeper，等 AI 敘事完成後另外送出第二則訊息。
+- **保留不變**：LINE 與 Discord 文字 `/coc check`、`/coc luck` 都沒有傳入新參數，仍維持原本單則回覆行為；第一次擲出可花 Luck 的分支仍只送原本既有的原始骰果與 Luck 選項、存入 `pending_luck_decisions` 後直接 `return`，不會呼叫 Keeper，也不會因 split 模式多送一次原始骰果。為避免 Discord 按鈕 split 模式已公開骰果後 Keeper 失敗留下舊的 pending check，普通檢定／choice 在無 Luck、即將 finalize 前會先 `save_state(state)`，把已消耗的 `pending_checks` 持久化。

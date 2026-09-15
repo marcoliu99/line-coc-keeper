@@ -72,8 +72,8 @@ async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, 
 
 
 def _make_interaction_reply(interaction: discord.Interaction) -> commands.Reply:
-    # Used only after interaction.response.defer() (see CheckButton.callback),
-    # so the actual send has to go through followup, not response.send_message.
+    # Used only after the initial interaction response has been consumed
+    # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:
         for chunk in _chunk_text(text):
             await interaction.followup.send(chunk)
@@ -149,7 +149,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             await interaction.response.send_message("上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。", ephemeral=True)
             return
         try:
-            await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
+            await interaction.response.edit_message(view=None)
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
             command_text = f"/coc check {self.option}" if self.option else "/coc check"
@@ -159,7 +159,8 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             try:
                 async with locks.get_conversation_lock(self.conversation_id):
                     await commands.handle_check_command(
-                        self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image, command_text
+                        self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image,
+                        command_text, split_roll_feedback=True
                     )
             finally:
                 # Always attempt this, even if handle_check_command raised
@@ -168,10 +169,6 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
                 # failure in the same turn).
                 await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
                 await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
-            try:
-                await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
-            except Exception:
-                pass
         finally:
             locks.release_check(self.conversation_id, self.owner_id)
 
@@ -245,7 +242,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             await interaction.response.send_message("上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。", ephemeral=True)
             return
         try:
-            await interaction.response.defer()  # resolving involves a Keeper (LLM) call — can't ack within 3s otherwise
+            await interaction.response.edit_message(view=None)
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
             state_before = load_group_state(self.conversation_id)
@@ -254,17 +251,14 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             try:
                 async with locks.get_conversation_lock(self.conversation_id):
                     await commands.handle_luck_decision(
-                        self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image, _send_dm_image
+                        self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image,
+                        _send_dm_image, split_roll_feedback=True
                     )
             finally:
                 # See on_message's own comment: always attempt this, even if
                 # handle_luck_decision raised partway through.
                 await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
                 await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
-            try:
-                await interaction.message.edit(view=None)  # spent — don't let it be clicked twice
-            except Exception:
-                pass
         finally:
             locks.release_check(self.conversation_id, self.owner_id)
 
