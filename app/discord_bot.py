@@ -304,6 +304,10 @@ async def on_message(message: discord.Message) -> None:
     if message.author.bot:
         return  # ignore other bots (and echoes of our own messages)
 
+    ooc_text = (message.content or "").lstrip()
+    if ooc_text.startswith("@") or ooc_text.startswith("<@"):
+        return
+
     conversation_id = _conversation_id(message.channel.id)
     user_id = str(message.author.id)
     reply = _make_reply(message.channel)
