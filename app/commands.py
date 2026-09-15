@@ -461,15 +461,21 @@ async def _finalize_check_result(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
+    split_roll_feedback: bool = False,
 ) -> None:
     """Shared tail for every resolved check (sanity, choice, plain skill, and
     a Luck-spend decision) — hands the already-determined result to the
     Keeper for narration and delivers whatever it queued."""
+    if split_roll_feedback:
+        await reply(roll_line)
     resolved_location = _resolve_map_action(state, user_id, keeper_message)
     keeper_reply, private_messages, image_requests = await asyncio.to_thread(
         keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
     )
-    await reply(f"{roll_line}\n\n{keeper_reply}")
+    if split_roll_feedback:
+        await reply(keeper_reply)
+    else:
+        await reply(f"{roll_line}\n\n{keeper_reply}")
     await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
 
 
@@ -481,6 +487,7 @@ async def handle_check_command(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     text: str,
+    split_roll_feedback: bool = False,
 ) -> None:
     """/coc check [技能名] [獎勵骰數] [懲罰骰數] — the player's own roll, in
     code, visible to the group immediately, instead of the Keeper (LLM)
@@ -553,7 +560,10 @@ async def handle_check_command(
             f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
             f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
         )
-        await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
+        await _finalize_check_result(
+            conversation_id, user_id, state, char, roll_line, keeper_message,
+            reply, send_dm, send_image, send_dm_image, split_roll_feedback
+        )
         return
 
     is_pushed = False
@@ -604,7 +614,12 @@ async def handle_check_command(
     roll_line, keeper_message = _build_check_narration(
         char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier
     )
-    await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
+    if split_roll_feedback:
+        save_state(state)
+    await _finalize_check_result(
+        conversation_id, user_id, state, char, roll_line, keeper_message,
+        reply, send_dm, send_image, send_dm_image, split_roll_feedback
+    )
 
 
 async def handle_luck_decision(
@@ -615,6 +630,7 @@ async def handle_luck_decision(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
+    split_roll_feedback: bool = False,
 ) -> None:
     """Resolves a pending Luck-spend decision (see handle_check_command above
     and app/luck.py) — either "skip" (keep the natural roll) or a tier name
@@ -657,7 +673,10 @@ async def handle_luck_decision(
         luck_spent=luck_spent, original_tier=pending["original_tier"],
         attacker_tier=pending.get("attacker_tier"),
     )
-    await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
+    await _finalize_check_result(
+        conversation_id, user_id, state, char, roll_line, keeper_message,
+        reply, send_dm, send_image, send_dm_image, split_roll_feedback
+    )
 
 
 async def handle_text_message(
