@@ -270,3 +270,8 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 
 - **這次實際完成**：只修改 `app/providers/openai_provider.py` 的 `_is_invalid_previous_response_id_error()`，移除「錯誤訊息只要提到 `previous_response_id` 就 fallback」的寬鬆判斷。現在仍必須是 OpenAI SDK 的 `BadRequestError` 或 `NotFoundError`，而且錯誤內容要明確表示舊 response ID 無效、找不到、不存在或已無法使用，才會觸發 fallback。
 - **保留不變**：沒有改變 `run_conversation()` 的 fallback 流程；不支援 `previous_response_id`、模型不能使用該參數、request shape 錯誤、一般 400、rate limit 或 network 類錯誤都不會被誤當成舊 chain 失效。
+
+### 24. Discord OOC 訊息前綴 bypass
+
+- **這次實際完成**：只修改 `app/discord_bot.py` 的 `on_message()`。保留最前面的 bot 訊息忽略邏輯後，在建立 `conversation_id`、處理附件、呼叫 `commands.py`、讀寫 state 或送進 Keeper/AI 之前，先檢查玩家訊息文字；忽略前導空白後，如果內容以 `@` 開頭，或是 Discord raw mention 的 `<@` 開頭（涵蓋 user mention `<@123...>`、legacy user mention `<@!123...>`、role mention `<@&123...>`），就整則 message 直接 `return`，連附件也不處理。
+- **保留不變**：Discord channel mention `<#123...>` 不符合 `<@` 前綴，不會被這個 bypass 擋掉；一般角色扮演文字、既有附件處理流程、`/coc` 指令與 `/roll` 指令也沒有改動。
