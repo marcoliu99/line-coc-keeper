@@ -610,3 +610,16 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
     - 用真正的多執行緒（8 個 `threading.Thread` 同時對同一個 `group_id` 呼叫 `run_post_turn_maintenance`，並在 `summarize_log_chunk` 裡插入計數器 + `time.sleep(0.3)` 拉長視窗）確認同一時間最多只有 1 個維護任務真的在執行本體邏輯，且全部執行緒結束後 guard 有正確清空。
     - 模擬「log 比對不上」的情境（假造一個跟 `dropped_chunk` 對不上的全新 log），確認 `campaign_summary` 保持原樣沒被蓋掉、log 也完全沒被動到。
     - 重新跑一次原本那支「並發新一輪訊息 + 舊快照持久化」的資料遺失重現腳本，確認這一輪修改後，原本的 fix 依然有效（新訊息不會消失）。
+
+### 56. Discord 事件迴圈：`load_group_state` 改用 `asyncio.to_thread`，並合併重複讀取
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`discord.py` 整個 bot 是跑在單一 asyncio 事件迴圈上，任何同步阻塞操作都會卡住 Discord 網關的心跳處理；而 `app/discord_bot.py` 的 `on_message`、`CheckButton.callback`、`LuckSpendButton.callback` 這三個地方，每次都直接（沒有包 `asyncio.to_thread`）呼叫同步的 `load_group_state`（SQLite 讀取 + JSON 反序列化整個 `GroupState`），而且同一次訊息／點擊裡呼叫了三次：一次在指令執行前拿「之前」的快照，`_post_check_buttons`／`_post_luck_buttons` 各自又重新讀了一次「之後」的狀態。長期跑團的群組（劇本全文很長、對話紀錄累積很多筆）這個反序列化不是免費的，在高負載或多人同時輸入時，可能導致 Discord 網關的心跳封包延遲，出現 `Heartbeat blocked` 警告甚至斷線重連。
+- **這個專案現在怎麼做**：
+  1. 三個地方原本直接呼叫的 `load_group_state(...)`，全部改成 `await asyncio.to_thread(load_group_state, ...)`，讓這個同步操作丟到背景執行緒跑，不再佔用事件迴圈。
+  2. 新增 `_post_pending_buttons`，把「指令執行後讀一次最新狀態、分別餵給 `_post_check_buttons` 跟 `_post_luck_buttons`」這個固定會一起做的動作合併成一次共用的讀取——`_post_check_buttons`／`_post_luck_buttons` 改成接收已經讀好的 `state` 參數，不再各自重新讀一次同一份資料。三個呼叫點（`on_message`、`CheckButton.callback`、`LuckSpendButton.callback`）原本各自的兩次呼叫都改成一次 `_post_pending_buttons`。這樣每次訊息／點擊從原本最多 3 次同步讀取降到 2 次（指令前 1 次、指令後合併成 1 次），而且兩次都不再阻塞事件迴圈。
+- **實測過**：
+  - 用一個假的 Discord channel（只記錄 `send` 被呼叫了什麼），對 `_post_pending_buttons` 加 spy 監控 `load_group_state` 的呼叫次數，確認整個流程只讀了一次，而且正確依據新的 pending check 貼出對應的按鈕訊息。
+  - 用一個刻意設計成「睡 1 秒」的假 `load_group_state`，搭配一個每 0.05 秒 tick 一次、跑滿 10 次的並行協程，用 `asyncio.gather` 一起跑：確認 tick 協程在那 1 秒的讀取期間完整跑完全部 10 次，證實 `asyncio.to_thread` 真的把這個同步呼叫讓出了事件迴圈，不會卡住其他並行的協程。
+- **PR review 後修正**：review 指出「合併讀取」這個部分本身有問題——`_post_check_buttons` 迴圈裡的每一次 `channel.send()` 都是真的 `await`，是事件迴圈真的可以跑去處理別的事情的地方；如果在這段期間，剛好有別的並行處理（例如另一個並行的 `/coc newgame`，或別的路徑把某個 Luck 決定解決掉）動到了 `pending_luck_decisions`，`_post_luck_buttons` 因為共用同一份「指令執行前」讀到的 `state`，就可能貼出一個其實已經被清掉／處理掉的 Luck 按鈕——這正是原本（這個 PR 之前）的版本能避免的：`_post_luck_buttons` 本來是等所有 check 按鈕都貼完之後才重新讀一次狀態。
+  - **怎麼修的**：`_post_pending_buttons` 改回在 `_post_check_buttons` 執行完之後、呼叫 `_post_luck_buttons` 之前**再讀一次**最新狀態，不再共用同一份快照——等於保留「同步呼叫丟到背景執行緒」這個修正（仍然不阻塞事件迴圈），但撤回「合併成一次讀取」這部分，因為合併的前提（兩次呼叫之間沒有真正的 await yield point）並不成立。
+  - **實測過**：先在**沒修這個問題**的程式碼上重現：用一個假的 channel，`send()` 被呼叫時故意模擬「並行處理清掉了 `pending_luck_decisions`」（直接改資料庫），確認舊版真的會貼出一個對應已被清除決定的 Luck 按鈕（訊息內容含「要花 Luck」）。接著套用修正後重新跑同一支腳本，確認 Luck 按鈕不再被貼出（因為 `_post_luck_buttons` 這次讀到的是已經被清除之後的最新狀態）。
