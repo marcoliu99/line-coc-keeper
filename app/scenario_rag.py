@@ -238,18 +238,28 @@ def build_index(scenario_text: str) -> ScenarioIndex:
     )
 
 
-def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk) -> float:
+def _idf_cache(index: ScenarioIndex, query_tokens: list[str]) -> dict[str, float]:
+    """Precomputes each query term's IDF once per search — it only depends on
+    n_docs/doc_freq (both index-level, not per-chunk), so recomputing it
+    inside _bm25_score's per-chunk loop (as this used to) redid the same
+    math.log call once per (chunk, term) pair instead of once per term:
+    O(chunks * query_terms) work for a value that's actually O(query_terms)."""
     n_docs = len(index.chunks)
+    return {
+        term: math.log((n_docs - index.doc_freq.get(term, 0) + 0.5) / (index.doc_freq.get(term, 0) + 0.5) + 1)
+        for term in set(query_tokens)
+    }
+
+
+def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, idf_cache: dict[str, float]) -> float:
     score = 0.0
     doc_len = len(chunk.tokens)
     for term in set(query_tokens):
         freq = chunk.term_counts.get(term, 0)
         if freq == 0:
             continue
-        df = index.doc_freq.get(term, 0)
-        idf = math.log((n_docs - df + 0.5) / (df + 0.5) + 1)
         denom = freq + _K1 * (1 - _B + _B * doc_len / (index.avg_length or 1))
-        score += idf * (freq * (_K1 + 1)) / denom
+        score += idf_cache[term] * (freq * (_K1 + 1)) / denom
     return score
 
 
@@ -284,7 +294,8 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     if not query_tokens:
         return []
 
-    bm25_raw = {id(c): _bm25_score(index, query_tokens, c) for c in index.chunks}
+    idf_cache = _idf_cache(index, query_tokens)
+    bm25_raw = {id(c): _bm25_score(index, query_tokens, c, idf_cache) for c in index.chunks}
     matched = [c for c in index.chunks if bm25_raw[id(c)] > 0]
 
     if not index.has_embeddings:
