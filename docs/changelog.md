@@ -382,3 +382,56 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **這次實際完成**：修改 `app/discord_bot.py` 與 `app/commands.py`，讓 Discord LuckSpendButton 不再用 legacy conversation lock 包住完整流程；按鈕點擊後的 deterministic Luck resolution 仍透過既有短 State Lock 與最新 authoritative state 完成 pending Luck 驗證、Luck 扣除與 `save_state()`。
 - **回覆順序**：LuckSpendButton 的 split feedback 現在會先送出程式固定的 `🎲 角色｜技能 數值 / 花費 N 點幸運：骰值 → 結果 / 後續結果由守密人處理中……`，之後在 Keeper narration 前重新取得 legacy conversation lock，再取得 Keeper Turn Lock，固定維持 `Legacy -> Keeper Turn -> State` 的 lock order。
 - **保留不變**：Keeper narration 沿用既有 `🎭 角色｜技能結果` deterministic header；同一 conversation 仍只允許一個 Keeper AI turn。`/coc luck` 文字指令、CheckButton、其他 `/coc` 指令與 upload flows 都未修改。
+
+### 44. KP Assistant 持久化身分欄位第一階段
+
+- **這次實際完成**：只修改 `app/models.py`，在 `GroupState` 新增 `kp_assistant_user_id: str = ""`，用來持久化記錄目前 conversation 的 KP 助手 user_id；沒有 KP 助手時維持空字串。
+- **JSON 相容性**：`GroupState.to_dict()` 現在會寫出 `kp_assistant_user_id`；`GroupState.from_dict()` 讀取舊 JSON 時若沒有此欄位，會以空字串作為預設值，因此既有遊戲 state 可以照常載入。
+- **尚未啟用行為**：這只是 KP Assistant 功能的資料層第一階段；尚未新增 `/coc kp`、`/coc kp quit` 或任何指令，也沒有修改 `Character`、`state.characters`、combat、Keeper prompt、一般訊息處理或角色流程。
+
+### 45. KP Assistant 身分綁定指令第二階段
+
+- **這次實際完成**：只修改 `app/commands.py`，新增 `/coc kp` 與 `/coc kp quit`。`/coc kp` 可在未載入劇本、遊戲尚未 active 前登記目前 user 為本 conversation 唯一 KP 助手；`/coc kp quit` 只允許現任 KP 助手解除自己的身分。
+- **限制條件**：同一 conversation 只能有一位 KP 助手；若已由其他 user 登記，新的 `/coc kp` 會被拒絕且不覆蓋原值。登記時若目前 user 已有 `Character` 或正在 `CreationSession` 建角，也會被拒絕，維持 KP 助手與調查員角色／建角流程互斥。
+- **Help 更新**：`/coc help` 新增 KP 助手區塊，列出 `/coc kp`、`/coc kp quit`、每局唯一 KP 與 KP 助手／調查員互斥的簡短說明。
+- **尚未啟用行為**：本階段沒有實作一般聊天中的 KP Assistant 分流、Keeper prompt、ephemeral history、OpenAI `previous_response_id` 隔離、combat、Map Engine、`/coc end` 清除或反方向阻止 KP 助手建角等後續功能。
+
+### 46. KP Assistant 與角色建立反方向互斥第三階段
+
+- **這次實際完成**：只修改 `app/commands.py`，新增 `_blocked_by_kp_assistant()`，讓現任 KP Assistant 無法使用 `/coc pc`、`/coc create` 或 `/coc usepregen` 建立／選擇調查員角色，必須先用 `/coc kp quit` 解除 KP 助手身分。
+- **Creation 防護**：`/coc create` 在 status/done/cancel/開始建角等建角流程前先檢查 KP Assistant 身分；`/coc alloc` 也套用相同保護，避免防禦性情境下 KP 助手繼續分配技能點或完成角色。
+- **結束本局**：`/coc end` 除了既有的 `state.active = False`，現在只額外清空 `state.kp_assistant_user_id`；角色、建角 session、log、campaign summary、combat、map、pending checks、pending Luck、劇本資料與其他 state 都不會因此清除。
+- **Newgame 行為**：`/coc newgame` 仍維持原本重建 `GroupState(group_id=conversation_id)` 的機制，會自然讓 `kp_assistant_user_id` 回到空字串，沒有新增 KP Assistant 專用特殊處理。
+- **尚未啟用行為**：本階段沒有實作一般聊天 KP 分流、Keeper prompt、ephemeral history、OpenAI `previous_response_id` 隔離、Map Engine bypass 或 KP Assistant 對 AI 的特殊 prompt。
+
+### 47. KP Assistant 一般文字辨識與 speaker_role 第四階段
+
+- **這次實際完成**：修改 `app/commands.py` 與 `app/keeper.py`，一般非 `/coc` 文字在遊戲 active 後會用 `state.kp_assistant_user_id == user_id` 辨識 KP Assistant；KP Assistant 不需要 `Character`，會用平台提供的 display name 作為 `speaker_name` 傳給 Keeper。
+- **Map Engine 邊界**：KP Assistant 的一般文字會直接以 `resolved_location = None` 呼叫 Keeper，不會執行 `_resolve_map_action_transaction()`，因此不會改動 `current_map_page`、`current_room_id` 或 `party_facing`。正常玩家仍維持既有 Character gate、角色名稱、Map Engine 與 movement resolution 流程。
+- **明確身分傳遞**：`keeper.run_turn()` 新增 `speaker_role: str = "player"` 參數；正常玩家傳 `speaker_role="player"`，KP Assistant 傳 `speaker_role="kp_assistant"`。本階段只接收並傳遞身分，不依賴角色名、occupation 或是否存在 Character 來推測。
+- **保留不變**：Discord 端既有 `@` / `<@` bypass 仍在進入 command routing 前生效，沒有修改。遊戲未 active 時一般文字仍照舊忽略。
+- **尚未啟用行為**：本階段沒有實作完整 KP Assistant Prompt、ephemeral history、OpenAI `previous_response_id` 分支隔離、KP Assistant 工具限制，也沒有修改 log、campaign summary、Memory RAG 或 post-turn maintenance。
+
+### 48. KP Assistant OOC 主持 Prompt 第五階段
+
+- **這次實際完成**：修改 `app/keeper.py`，當 `speaker_role="kp_assistant"` 時，Keeper 的 dynamic prompt 會加入完整 KP Assistant OOC 主持規則；正常玩家不會收到這段規則，仍走原本 player prompt / message 格式。
+- **優先級規則**：Prompt 明確要求 AI 將 KP Assistant 視為 OOC 人類共同主持者；KP 明確主持指令高於 AI 自行敘事判斷、NPC 行動選擇與場景安排，但程式提供的 authoritative state（已完成骰果、Map Engine 位置、HP/SAN/MP/Luck、彈藥、戰鬥狀態、工具結果等）仍高於 KP 的自然語言要求。
+- **非玩家處理**：Prompt 明確禁止把 KP Assistant 當成玩家角色、調查員、NPC 或遊戲世界人物，也不得要求 KP Assistant 做技能檢定、SAN 檢定、加入戰鬥順位或追蹤地圖位置；回覆 KP 時可以使用正常、直接的主持討論語氣。
+- **第二層訊息標記**：KP Assistant 的 actual user message 現在會包成 `[KP ASSISTANT / OOC HOST INSTRUCTION]`，並標明「這不是玩家角色行動」與「請依照 KP 助手模式處理」。正常玩家訊息仍維持既有 `角色名：訊息` 格式。
+- **尚未啟用行為**：本階段沒有實作 ephemeral history、OpenAI `previous_response_id` 分支隔離或 KP Assistant 專用工具限制，也沒有修改 `_commit_turn_result`、state.log、campaign summary、Memory RAG 或 post-turn maintenance。
+
+### 49. KP Assistant ephemeral OOC branch 第六階段
+
+- **這次實際完成**：修改 `app/keeper.py` 與 `app/commands.py`，以 `speaker_role == "kp_assistant"` 判斷 ephemeral OOC turn。KP Assistant turn 仍讀取既有正式上下文（static/dynamic prompt、既有 `state.log`、campaign summary、角色、戰鬥、劇本與既有 Memory RAG），但不成為新的正式玩家歷史。
+- **History 隔離**：KP input 與 AI 對 KP 的 response 都不會 append 到 `state.log`；`keeper.run_turn()` 在 ephemeral turn 不呼叫 `_commit_turn_result()`。KP response 仍會正常回覆到 Discord/LINE，只是不持久化為下一個正式玩家回合的 history。
+- **Maintenance / Memory 隔離**：KP turn 的 output 後會跳過 `run_post_turn_maintenance()`，因此不會更新 `campaign_summary`，也不會把本次 KP 對話寫入 Memory RAG 或觸發本次對話相關的 log trimming/indexing。既有 memory 仍可透過原本 prompt/tool 流程被讀取。
+- **OpenAI branch isolation**：KP turn 可以使用目前 canonical `state.openai_previous_response_id` 作為 temporary branch parent；OpenAI provider 既有 tool loop 仍會在當次函式內用 local `active_previous_response_id` 串接 temporary K1/K2/K3。KP turn 回傳的新 response id 不會寫回 `state.openai_previous_response_id`，下一個正式玩家 turn 仍接續 KP 介入前的 canonical 主線。
+- **保留不變**：正常玩家 turn 仍照原本機制 append user/assistant history、執行 post-turn maintenance、更新 campaign summary / Memory RAG，並將新的 OpenAI response id 寫回 canonical state。這次沒有用整份 `GroupState` rollback，也沒有實作 KP Assistant 專用工具權限限制。
+
+### 50. KP Assistant read-only tool allowlist 第七階段
+
+- **這次實際完成**：只修改 `app/keeper.py`，在 provider-independent Keeper 層新增 `_tools_for_speaker_role()`；`speaker_role="kp_assistant"` 時改用明確 read-only allowlist，而不是從完整工具集扣掉危險工具的 denylist。
+- **KP 可用工具**：KP Assistant 目前只取得 `get_character_sheet`、`get_combat_status`、`search_memory`，以及 `SCENARIO_RAG_ENABLED=true` 時才會加入的 `search_scenario`。這些工具只讀取既有角色／戰鬥／劇本檢索／Memory RAG 資訊，不修改 `GroupState`、pending state 或 deterministic game state。
+- **KP 排除工具**：KP Assistant 不再取得會修改 state 或建立玩家流程的工具，包括 `skill_check`、`sanity_check`、`offer_check_choice`、`adjust_character`、`adjust_ammo`、`add_carried_item`、`remove_carried_item`、`set_skill`、所有 combat mutation tools，以及會產生 side effect 的 `send_private_info` / `show_scenario_image`。`roll_dice` 與 `npc_skill_check` 雖不寫 state，但會產生新的隨機判定結果，也未列入 KP read-only allowlist。
+- **防禦性保護**：`_execute_tool()` 也加入 secondary guard；若 KP Assistant turn 因 bug 嘗試執行 allowlist 以外的工具，會直接回傳錯誤，不會執行 deterministic state mutation 或玩家行動流程。
+- **保留不變**：正常玩家仍取得原本完整 tool set；Step 6 的 ephemeral history / OpenAI temporary branch isolation 未修改。本階段沒有改 KP Prompt、commands、Map Engine、combat engine、`GroupState` schema 或 history semantics。
