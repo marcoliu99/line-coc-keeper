@@ -610,7 +610,26 @@ async def _finalize_check_result(
         await reply(roll_feedback_text or roll_line)
 
     async def run_keeper_phase() -> None:
-        resolved_location = _resolve_map_action(state, user_id, keeper_message)
+        # Deliberately NOT running keeper_message through _resolve_map_action:
+        # keeper_message is a system-generated result narration (e.g. "（角色
+        # 擲骰做了一次「CON」檢定...）"), not the player's own words — but
+        # intent_parser.has_movement_verb's trigger list is broad enough (a
+        # bare "去"/"走" is enough) that ordinary narration text can trip it
+        # by accident (e.g. major-wound's "...請描述角色失去意識倒下的過程"
+        # contains "去"). When that happens, _resolve_map_action_core falls
+        # back to fuzzy-matching the *entire* narration text against every
+        # room name on the current map — any short, common room name (臥室,
+        # 書房, ...) that happens to appear as a substring anywhere in that
+        # text gets treated as "the player just moved there", handed to the
+        # Keeper as an authoritative Map Engine result it's told not to
+        # second-guess. That's a real, observed bug (an apparent teleport to
+        # an unrelated room right after a skill/sanity check), not a
+        # theoretical one. Passing None here costs nothing useful: the Keeper
+        # still learns the character's actual current room from state.
+        # current_map_page/current_room_id via _build_dynamic_prompt's own
+        # "resolved_location is None" fallback block — it just won't be
+        # mislabeled as a fresh Map Engine move this check never made.
+        resolved_location = None
         async with locks.get_keeper_turn_lock(conversation_id):
             keeper_reply, private_messages, image_requests = await asyncio.to_thread(
                 keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location, "player"
@@ -1120,10 +1139,6 @@ def _resolve_map_action_transaction(conversation_id: str, user_id: str, text: st
                 result = _resolve_map_action_core(state, user_id, text, allow_rag=False, rag_target_room=rag_room)
         _save_if_map_position_changed(state, user_id, before)
         return result.context
-
-
-def _resolve_map_action(state: GroupState, user_id: str, text: str) -> dict | None:
-    return _resolve_map_action_core(state, user_id, text).context
 
 
 def _resolve_map_action_core(
