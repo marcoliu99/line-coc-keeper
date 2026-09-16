@@ -64,6 +64,11 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc usepregen 編號 [自訂名稱] → 直接使用某位預製角色（每個人只能用一次，直到 /coc end；每個角色只能被一人選走）
 ・/coc start → 角色都建好、準備開始時輸入，守密人會生成開場白帶大家進入劇情（優先用劇本自己寫的開場文字，沒有才自動生成）
 
+【KP 助手】
+・/coc kp → 登記自己為本局唯一的 KP 助手
+・/coc kp quit → 解除自己的 KP 助手身分
+・每局只能有一位 KP 助手；KP 助手與調查員角色互斥
+
 【檢定】
 ・/coc check → 守密人請你檢定時，自己擲骰（不是守密人幫你骰）；也可以自己主動打 /coc check 技能名 [獎勵骰數] [懲罰骰數]
 ・如果守密人給的是「閃避 vs 反擊」這種多選一的檢定，用 /coc check <選項名稱> 指定要選哪個（Discord 會直接看到對應的按鈕）
@@ -390,6 +395,7 @@ async def _run_post_turn_maintenance_after_output(
     send_dm_image: SendDMImage,
     private_messages: list[tuple[str, str]],
     image_requests: list[tuple[str | None, int]],
+    run_maintenance: bool = True,
 ) -> None:
     output_error: Exception | None = None
     try:
@@ -399,16 +405,17 @@ async def _run_post_turn_maintenance_after_output(
         output_error = exc
         raise
     finally:
-        try:
-            await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
-        except Exception:
-            if output_error is not None:
-                _logger.exception(
-                    "post-turn maintenance failed after public output failed for conversation_id=%s",
-                    conversation_id,
-                )
-            else:
-                raise
+        if run_maintenance:
+            try:
+                await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+            except Exception:
+                if output_error is not None:
+                    _logger.exception(
+                        "post-turn maintenance failed after public output failed for conversation_id=%s",
+                        conversation_id,
+                    )
+                else:
+                    raise
 
 
 def _skill_names_match(a: str, b: str) -> bool:
@@ -603,7 +610,7 @@ async def _finalize_check_result(
         resolved_location = _resolve_map_action(state, user_id, keeper_message)
         async with locks.get_keeper_turn_lock(conversation_id):
             keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
+                keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location, "player"
             )
             if split_roll_feedback:
                 public_message = f"{keeper_header}\n\n{keeper_reply}" if keeper_header else keeper_reply
@@ -1024,16 +1031,23 @@ async def handle_text_message(
         if not state.active:
             return  # ignore ordinary chit-chat until a scenario is actually loaded and running
 
-        if user_id not in state.characters:
+        is_kp_assistant = state.kp_assistant_user_id == user_id
+        if is_kp_assistant:
+            display_name = await get_display_name()
+            speaker_role = "kp_assistant"
+            resolved_location = None
+        elif user_id not in state.characters:
             display_name = await get_display_name()
             await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
             return
+        else:
+            display_name = state.characters[user_id].name
+            speaker_role = "player"
+            resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
 
-        display_name = state.characters[user_id].name
-        resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
         async with locks.get_keeper_turn_lock(conversation_id):
             reply_text, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, display_name, text, resolved_location
+                keeper.run_turn, state, user_id, display_name, text, resolved_location, speaker_role
             )
             await _run_post_turn_maintenance_after_output(
                 conversation_id,
@@ -1044,6 +1058,7 @@ async def handle_text_message(
                 send_dm_image,
                 private_messages,
                 image_requests,
+                run_maintenance=not is_kp_assistant,
             )
 
 
@@ -1240,6 +1255,12 @@ def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | Non
     )
 
 
+def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
+    if state.kp_assistant_user_id != user_id:
+        return None
+    return "你目前是這局的 KP 助手，不能同時建立或使用調查員角色。請先使用「/coc kp quit」解除 KP 助手身分。"
+
+
 def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
     with locks.get_state_lock(conversation_id):
         state = load_state(conversation_id)
@@ -1307,8 +1328,47 @@ async def _handle_coc_command(
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
         return
 
+    if sub == "kp":
+        action = parts[2] if len(parts) > 2 else None
+        state = load_state(conversation_id)
+
+        if action == "quit":
+            if state.kp_assistant_user_id != user_id:
+                await reply("你目前不是這局的 KP 助手。")
+                return
+            state.kp_assistant_user_id = ""
+            save_state(state)
+            await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
+            return
+
+        if action is not None:
+            await reply("用法：/coc kp 或 /coc kp quit")
+            return
+
+        if state.kp_assistant_user_id == user_id:
+            await reply("你已經是這局的 KP 助手。")
+            return
+        if state.kp_assistant_user_id:
+            await reply("這局已經有一位 KP 助手，不能同時登記第二位。")
+            return
+        if user_id in state.characters:
+            await reply("KP 助手與調查員角色互斥；你已經有調查員角色，不能登記為 KP 助手。")
+            return
+        if user_id in state.creation_sessions:
+            await reply("KP 助手與建角流程互斥；你正在進行互動式建角，請先輸入「/coc create cancel」取消後再登記 KP 助手。")
+            return
+
+        state.kp_assistant_user_id = user_id
+        save_state(state)
+        await reply("已登記你為這局的 KP 助手。")
+        return
+
     if sub == "pc":
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
         # A scenario with its own pregens is meant to be played with exactly
         # that cast — no custom quick-gen once any exist, only /coc pregen.
         if state.pregens:
@@ -1362,8 +1422,9 @@ async def _handle_coc_command(
     if sub == "end":
         state = load_state(conversation_id)
         state.active = False
+        state.kp_assistant_user_id = ""
         save_state(state)
-        await reply("遊戲已結束，遊戲紀錄與角色仍會保留。要開新的一局請用 /coc newgame。")
+        await reply("遊戲已結束，遊戲紀錄與角色仍會保留；KP 助手身分也已解除。要開新的一局請用 /coc newgame。")
         return
 
     if sub == "setskill":
@@ -1426,6 +1487,10 @@ async def _handle_coc_command(
     if sub == "create":
         action = parts[2] if len(parts) > 2 else None
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
 
         if action == "status":
             session = state.creation_sessions.get(user_id)
@@ -1483,6 +1548,10 @@ async def _handle_coc_command(
             return
         pool, skill, points_str = parts[2], parts[3], parts[4]
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
         session = state.creation_sessions.get(user_id)
         if not session:
             await reply("目前沒有進行中的建角流程，先輸入「/coc create 角色名 [職業]」開始。")
@@ -1545,6 +1614,10 @@ async def _handle_coc_command(
             await reply("用法：/coc usepregen 編號 [自訂名稱]")
             return
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
         if not state.pregens:
             await reply("還沒有抓取過預製角色，先輸入「/coc pregens」看看有哪些。")
             return
