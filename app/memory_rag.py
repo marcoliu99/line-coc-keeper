@@ -25,12 +25,15 @@ survive a bot restart instead of only living in an in-memory cache.
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 
 from app import db
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+
+_logger = logging.getLogger(__name__)
 
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]+")
@@ -97,6 +100,28 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
 
 
+_UNIT_NORM_TOLERANCE = 0.05  # |1 - |v|| beyond this is treated as a real violation, not float noise
+
+
+def _check_unit_norm(vec: list[float], context: str) -> None:
+    """Safety net for the unit-norm assumption _cosine_similarity depends on
+    — see app/scenario_rag.py's identical helper for the full rationale.
+    Logs (never raises) if a vector's norm drifts meaningfully from 1.0.
+    Called at most once per append_memory() call (on the newly-embedded
+    chunk) and once per search_memory() call (on the query vector) — O(1)
+    per call, not O(chunks) — so it doesn't undermine the per-chunk speedup
+    _cosine_similarity exists for."""
+    norm = math.sqrt(sum(x * x for x in vec))
+    if abs(1.0 - norm) > _UNIT_NORM_TOLERANCE:
+        _logger.warning(
+            "memory_rag: %s embedding has |v|=%.4f, expected ~1.0 — "
+            "SCENARIO_RAG_EMBEDDING_MODEL may no longer be producing "
+            "unit-normalized vectors, which silently degrades "
+            "_cosine_similarity's ranking (see its docstring).",
+            context, norm,
+        )
+
+
 @dataclass
 class _Chunk:
     label: str  # human-readable "roughly when" hint, e.g. "記憶片段 #3" — not
@@ -144,6 +169,7 @@ def append_memory(group_id: str, text: str) -> None:
         embedded = _embed_texts([text])
         if embedded is not None:
             embedding = embedded[0]
+            _check_unit_norm(embedding, "memory chunk")
     except Exception:
         pass
     raw_chunks.append({"label": label, "text": text, "embedding": embedding})
@@ -248,6 +274,7 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
     query_vec = query_embedding[0]
+    _check_unit_norm(query_vec, "query")
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))

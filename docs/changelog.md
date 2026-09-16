@@ -594,3 +594,6 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - 效能：同一組向量重複比對 2000 次，完整計算版本 0.2566 秒、省略範數版本 0.0910 秒，約 **2.82 倍**。
   - `scenario_rag.search()`／`memory_rag.search_memory()` 端到端各自重新測過，確認回傳結果正常、排序不受影響。
 - **還是有的限制**：這個優化的正確性**依賴「輸入向量已經是單位向量」這個假設**，不是通用的 cosine similarity 實作——如果之後這個函式的輸入來源換成別的 embedding 服務（目前程式碼裡沒有這種路徑，但理論上 `SCENARIO_RAG_EMBEDDING_MODEL` 是可設定的），且那個服務回傳的向量沒有事先正規化，這個假設就會失效，需要把範數計算加回來。已經在函式的 docstring 裡明確寫下這個前提。
+- **PR review 後追加的安全網**：review 指出上面這個假設完全沒有 runtime 檢查——如果哪天 `SCENARIO_RAG_EMBEDDING_MODEL` 換成不是單位向量的模型，這個函式會安靜地算出錯誤尺度的分數，排序品質默默變差，不會有任何錯誤訊息或例外可以發現。新增 `_check_unit_norm(vec, context)`（`scenario_rag.py`、`memory_rag.py` 各一份，邏輯相同）：算出向量長度，跟 1.0 差距超過 `_UNIT_NORM_TOLERANCE`（0.05，遠寬於實測的 0.03% 誤差，避免正常浮點誤差誤報）就用 `logging.warning` 記錄下來，絕不拋例外——這是品質退化的訊號，不是崩潰，跟這個專案一貫「best-effort、degrade gracefully」的風格一致（比照 `_embed_texts` 失敗時回傳 `None` 而不是往外拋）。
+  - 呼叫時機刻意控制在 **O(1) 而非 O(chunks)**，不會抵銷這個優化原本要省下來的成本：`scenario_rag.build_index()`／`memory_rag.append_memory()` 各自只在拿到新 embedding 時檢查一次代表性向量（前者檢查該次索引的第一個 chunk、後者檢查剛嵌入的那個記憶片段），`search()`／`search_memory()` 則各自只檢查一次查詢向量——都不會在per-chunk 比對迴圈裡重複呼叫。
+  - **實測過**：手動餵入單位向量（長度 1.0）確認不觸發警告；手動餵入長度 3.0 跟剛好超過容忍值的 1.06 確認正確觸發警告；手動餵入容忍值以內的 1.04 確認不誤報；最後用真實 OpenAI API（真的 `build_index`／`search`／`append_memory`／`search_memory` 呼叫）跑一次端到端，確認正常操作下完全不會印出任何警告，也沒有改變任何回傳結果。

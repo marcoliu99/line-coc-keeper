@@ -27,12 +27,15 @@ falls back to pure BM25, exactly like before embeddings existed here.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 
 from app import db
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+
+_logger = logging.getLogger(__name__)
 
 _PAGE_SPLIT_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
@@ -197,6 +200,35 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
 
 
+_UNIT_NORM_TOLERANCE = 0.05  # |1 - |v|| beyond this is treated as a real violation, not float noise
+
+
+def _check_unit_norm(vec: list[float], context: str) -> None:
+    """Safety net for the unit-norm assumption _cosine_similarity depends on:
+    logs (never raises) if a vector's norm has drifted meaningfully from 1.0,
+    which would mean _cosine_similarity is silently returning wrong-scale
+    values instead of real cosine similarities — a ranking-quality bug, not a
+    crash, so easy to miss without this. The ~3e-4 deviation measured
+    directly against the configured model leaves a lot of room before
+    _UNIT_NORM_TOLERANCE (0.05) trips, so this should stay silent under
+    normal operation and only fire on an actual config/provider change (e.g.
+    SCENARIO_RAG_EMBEDDING_MODEL switched to a non-unit-normalized model).
+
+    Called at most once per search() call (on the query vector) and once per
+    build_index() call (on one representative chunk embedding) — O(1) per
+    call, not O(chunks) — so it doesn't undermine the per-chunk speedup
+    _cosine_similarity exists for."""
+    norm = math.sqrt(sum(x * x for x in vec))
+    if abs(1.0 - norm) > _UNIT_NORM_TOLERANCE:
+        _logger.warning(
+            "scenario_rag: %s embedding has |v|=%.4f, expected ~1.0 — "
+            "SCENARIO_RAG_EMBEDDING_MODEL may no longer be producing "
+            "unit-normalized vectors, which silently degrades "
+            "_cosine_similarity's ranking (see its docstring).",
+            context, norm,
+        )
+
+
 def _compute_bm25_stats(chunks: list[_Chunk]) -> tuple[dict[str, int], float]:
     """Fills in each chunk's tokens/term_counts from its text and returns the
     index-level doc_freq/avg_length derived from them. Pure CPU (tokenize +
@@ -239,6 +271,7 @@ def build_index(scenario_text: str) -> ScenarioIndex:
     if embeddings is not None:
         for chunk, emb in zip(chunks, embeddings):
             chunk.embedding = emb
+        _check_unit_norm(embeddings[0], "index chunk")
 
     return ScenarioIndex(
         chunks=chunks, doc_freq=doc_freq, avg_length=avg_length, text_hash=text_hash, has_embeddings=has_embeddings
@@ -317,6 +350,7 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
     query_vec = query_embedding[0]
+    _check_unit_norm(query_vec, "query")
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
