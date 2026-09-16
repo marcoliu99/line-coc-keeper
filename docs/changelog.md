@@ -370,3 +370,115 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 
 - **這次實際完成**：只修改 `app/providers/openai_provider.py` 的 `_is_invalid_previous_response_id_error()`，移除「錯誤訊息只要提到 `previous_response_id` 就 fallback」的寬鬆判斷。現在仍必須是 OpenAI SDK 的 `BadRequestError` 或 `NotFoundError`，而且錯誤內容要明確表示舊 response ID 無效、找不到、不存在或已無法使用，才會觸發 fallback。
 - **保留不變**：沒有改變 `run_conversation()` 的 fallback 流程；不支援 `previous_response_id`、模型不能使用該參數、request shape 錯誤、一般 400、rate limit 或 network 類錯誤都不會被誤當成舊 chain 失效。
+
+### 24. Discord OOC 訊息前綴 bypass
+
+- **這次實際完成**：只修改 `app/discord_bot.py` 的 `on_message()`。保留最前面的 bot 訊息忽略邏輯後，在建立 `conversation_id`、處理附件、呼叫 `commands.py`、讀寫 state 或送進 Keeper/AI 之前，先檢查玩家訊息文字；忽略前導空白後，如果內容以 `@` 開頭，或是 Discord raw mention 的 `<@` 開頭（涵蓋 user mention `<@123...>`、legacy user mention `<@!123...>`、role mention `<@&123...>`），就整則 message 直接 `return`，連附件也不處理。
+- **保留不變**：Discord channel mention `<#123...>` 不符合 `<@` 前綴，不會被這個 bypass 擋掉；一般角色扮演文字、既有附件處理流程、`/coc` 指令與 `/roll` 指令也沒有改動。
+
+### 25. Discord 擲骰與 Luck 按鈕合法點擊後立即消失
+
+- **這次實際完成**：只修改 `app/discord_bot.py` 的 `CheckButton.callback()` 與 `LuckSpendButton.callback()`。現在 Discord 玩家點一般檢定按鈕或 Luck 決策按鈕時，仍會先檢查點擊者是不是該檢定的 owner，並先成功取得 `locks.try_acquire_check()`；只有這兩個條件都通過的第一次有效點擊，才會呼叫 `interaction.response.edit_message(view=None)`，用 initial interaction response 立刻移除原訊息上的按鈕，然後才繼續執行既有的 `commands.handle_check_command()` 或 `commands.handle_luck_decision()` 流程。
+- **保留不變**：錯誤玩家與 duplicate/lock 失敗的點擊仍維持既有 ephemeral 提示，而且因為會在 `edit_message(view=None)` 之前直接 `return`，不會移除按鈕、不會重複擲骰、不會重複扣 Luck。`locks.release_check()` 仍保留在 callback 最外層的 `finally`；骰果顯示時機、Luck 計算、`pending_checks`、`pending_luck_decisions`、Keeper/AI 呼叫時機、LINE 行為與 `app/commands.py` 都沒有修改。
+
+### 26. Discord 按鈕擲骰結果先於 Keeper 敘事送出
+
+- **這次實際完成**：在 `app/commands.py` 的 `handle_check_command()`、`handle_luck_decision()` 與 `_finalize_check_result()` 新增預設為 `False` 的 `split_roll_feedback` 參數；預設模式仍維持原本「Keeper 回來後一次送出 `roll_line + 空行 + keeper_reply`」的行為。只有 `app/discord_bot.py` 的 `CheckButton.callback()` 與 `LuckSpendButton.callback()` 傳入 `split_roll_feedback=True`，因此 Discord 按鈕流程會先送出 deterministic 骰果，再呼叫 Keeper，等 AI 敘事完成後另外送出第二則訊息。
+- **保留不變**：LINE 與 Discord 文字 `/coc check`、`/coc luck` 都沒有傳入新參數，仍維持原本單則回覆行為；第一次擲出可花 Luck 的分支仍只送原本既有的原始骰果與 Luck 選項、存入 `pending_luck_decisions` 後直接 `return`，不會呼叫 Keeper，也不會因 split 模式多送一次原始骰果。為避免 Discord 按鈕 split 模式已公開骰果後 Keeper 失敗留下舊的 pending check，普通檢定／choice 在無 Luck、即將 finalize 前會先 `save_state(state)`，把已消耗的 `pending_checks` 持久化。
+
+### 27. 預先建立 State Lock 與 Keeper Turn Lock primitives
+
+- **這次實際完成**：只修改 `app/locks.py`，新增 per-conversation 的 State Lock（未來只用於短時間 `load_state -> mutate -> save_state` transaction）與 Keeper Turn Lock（未來用於同一 conversation 的 Keeper/LLM turn serialization）。
+- **保留不變**：現有 legacy conversation lock 與 duplicate check in-flight 機制完全保留；此步驟尚未修改任何 caller，也尚未改變任何現有執行流程。
+
+### 28. 抽離 `/coc check` 的 deterministic resolution
+
+- **這次實際完成**：只修改 `app/commands.py`，把 `/coc check` 文字指令與 Discord CheckButton 共用的本地 deterministic resolution 抽成 `_resolve_check_deterministically()`：負責 `load_state`、消耗或還原 `pending_checks`、SAN/技能擲骰、建立 Luck pending，以及在骰果/state 確定後儲存。
+- **保留不變**：`handle_check_command()` 仍由既有 caller 在 legacy conversation lock 內呼叫，尚未使用新的 State Lock 或 Keeper Turn Lock，也尚未改變任何 lock 邊界。`/coc check` 與 Discord CheckButton 的對外行為、`split_roll_feedback`、骰果文字、Luck pending 規則與 Keeper narration input 都維持原本流程；這只是後續縮短 State Lock 持有時間的前置重構。
+
+### 29. 集中 Keeper stateful tool 的 mutation/save 邊界
+
+- **這次實際完成**：只修改 `app/keeper.py`，新增 `_mutate_and_save_state()` 這個小型內部 helper，讓 Keeper 的 stateful tools 將「修改傳入的 `GroupState` + 立即 `save_state`」集中經過同一個邊界。
+- **保留不變**：所有 stateful tool 的對外回傳、實際修改內容與 save 時機維持不變；尚未導入 State Lock、Keeper Turn Lock 或 state reload，也沒有處理 `keeper.run_turn()` 結尾的 log/save。這只是後續避免 Keeper 用 stale state 覆寫較新資料的前置重構。
+
+### 30. State Lock primitive 改為 threading.RLock
+
+- **這次實際完成**：只修改 `app/locks.py`，把尚未使用的 per-conversation State Lock 從 `asyncio.Lock` 調整為 `threading.RLock`，讓後續同步 state transaction 能和 `asyncio.to_thread()` 裡執行的 Keeper worker thread 共用同一把 authoritative lock。
+- **保留不變**：Keeper Turn Lock 與 legacy conversation lock 仍維持 `asyncio.Lock`；目前尚未有 caller 使用 State Lock，也沒有修改 Keeper、Discord、commands 或任何 state load/save 時機，因此現有執行流程不變。
+
+### 31. Keeper stateful tool mutation 接入 State Lock 與最新 state reload
+
+- **這次實際完成**：只修改 `app/keeper.py`，讓 `_mutate_and_save_state()` 在執行 Keeper stateful tool mutation 前取得 per-conversation State Lock，於 lock 內重新 `load_state()` 取得最新 `GroupState`，把 mutation 套用到最新 state 後再 `save_state()`。
+- **同步同回合 snapshot**：mutation/save 完成後，會用 dataclass 欄位同步方式把最新 `GroupState` 完整拷回 `keeper.run_turn()` 手上的原本 `state` 物件，保留 object identity，讓同一 Keeper turn 後續 tool 能看到前一個 stateful tool 的結果。
+- **保留不變**：legacy conversation lock caller 尚未移除或改寫，因此目前正常 concurrency/latency 行為基本不變；`keeper.run_turn()` 結尾的 `state.log`、rolling summary、Memory RAG、`openai_previous_response_id` 與最後 `save_state(state)` 尚未處理，留待後續獨立步驟。
+
+### 32. Keeper read tools 讀取最新動態 state
+
+- **這次實際完成**：只修改 `app/keeper.py`，新增 `_refresh_state_snapshot()`，在 per-conversation State Lock 內重新 `load_state()` 並同步回 Keeper 當前 turn 手上的 `state` object。
+- **讀取最新動態值**：`get_character_sheet` 現在讀取角色 HP／MP／SAN／Luck、彈藥、攜帶物、狀態標籤等動態角色資料前會 refresh 最新 `GroupState`；`get_combat_status` 讀取 combat active、combatants、HP、initiative/order、round/current turn 等戰鬥動態資料前也會 refresh。相對靜態的技能、能力值與人物設定仍沿用目前角色資料結構。
+- **保留不變**：stateful mutation tools 仍維持上一階段的 reload/mutate/save 流程；legacy conversation lock caller、Keeper Turn Lock、`keeper.run_turn()` 結尾 log/save、Memory RAG、Scenario RAG 與 OpenAI previous_response_id 流程都沒有修改。
+
+### 33. Keeper turn 結尾改為欄位級安全提交
+
+- **這次實際完成**：只修改 `app/keeper.py`，新增 `_commit_turn_result()`，讓 Keeper turn 結尾不再用手上的整份 stale `GroupState` 直接 `save_state(state)` 覆寫持久化 state；本回合 user/assistant log 會在 State Lock 內 append 到最新 `GroupState`，避免重複或整份覆蓋。
+- **OpenAI response id**：本回合 provider callback 回報的 `openai_previous_response_id` 會作為 turn-owned 欄位寫入最新 state；沒有本回合新 response id 時不自行發明 reset 規則。
+- **Memory maintenance**：rolling summary / Memory RAG maintenance 的執行時機仍在回覆 return 前，尚未移出 critical path；但持久化改由 `_persist_memory_maintenance_state()` 只更新 `campaign_summary` 與 maintenance 負責裁切後的 `log`，不覆寫 HP／SAN／Luck／彈藥／攜帶物／combat／pending 狀態等動態遊戲資料。
+- **保留不變**：legacy conversation lock caller 尚未修改；Keeper Turn Lock 尚未投入使用；Memory RAG 策略、Scenario RAG、Discord reply 流程與 CoC 規則都沒有改動。
+
+### 34. 抽出 Keeper post-turn maintenance 函式
+
+- **這次實際完成**：只修改 `app/keeper.py`，將 `keeper.run_turn()` 結尾的 rolling summary、Memory RAG append 與 log trimming 抽成 `run_post_turn_maintenance()`。
+- **保留不變**：`run_turn()` 目前仍在 return 前同步呼叫 maintenance，因此 maintenance 執行時機、玩家等待時間、log threshold、dropped chunk 範圍、summary 內容、Memory RAG 寫入內容與 trimmed log 保留規則都維持原樣。此重構只是下一步把 maintenance 移到玩家回覆之後的前置切點。
+
+### 35. Keeper post-turn maintenance 改以 group id 讀取最新 state
+
+- **這次實際完成**：只修改 `app/keeper.py`，將 `run_post_turn_maintenance()` 改為只接受 group/conversation id，不再依賴 `keeper.run_turn()` 手上的 mutable `GroupState` snapshot；maintenance 開始時會在短暫 State Lock 內自行讀取最新 authoritative state，取得本次需要的 `log`、`campaign_summary`、dropped chunk 與 recent log working snapshot。
+- **保留不變**：rolling summary、Memory RAG append/embedding 等慢操作都在 State Lock 外執行；maintenance persistence 仍只寫回自己負責的 `campaign_summary` 與 trimmed `log` 欄位。`run_turn()` 目前仍在 return 前同步執行 maintenance，因此玩家等待時間尚未改變；這是下一階段把 maintenance 移到玩家回覆後的最後前置工作。
+
+### 36. Post-turn maintenance 移到 Keeper 公開回覆之後
+
+- **這次實際完成**：修改 `app/keeper.py` 與 `app/commands.py`，讓 `keeper.run_turn()` 結尾只負責完成 Keeper generation、stateful tools、本回合 user/assistant log 與 OpenAI response id 的安全 commit，不再同步執行 `run_post_turn_maintenance()`。
+- **回覆順序調整**：一般自由文字、`/coc check`、Discord CheckButton、`/coc luck` 與 LuckSpendButton 只要實際產生 Keeper turn，都會先送出 Keeper 公開回覆與既有 side effects，之後才透過 `asyncio.to_thread()` 執行 `run_post_turn_maintenance(group_id)`；rolling summary / Memory RAG 不再延遲當前 Keeper 公開回覆。
+- **保留不變**：maintenance 本身仍同步等待完成，尚未 background 化；legacy conversation lock 邊界尚未拆除，Keeper Turn Lock 尚未投入使用，Memory threshold、summary、RAG、log trimming 與 State Lock persistence 行為都維持不變。
+
+### 37. `/coc check` deterministic resolution 接入 State Lock
+
+- **這次實際完成**：只修改 `app/commands.py`，讓 `_resolve_check_deterministically()` 以 per-conversation State Lock 保護完整的 `load_state -> pending check 驗證/消耗或還原 -> 本地 SAN/技能擲骰 -> pending Luck 建立 -> save_state` deterministic transaction。
+- **event loop 保護**：`handle_check_command()` 現在透過 `asyncio.to_thread()` 執行這段同步 state transaction，避免 `threading.RLock` contention 或檔案 I/O 阻塞 Discord event loop。
+- **保留不變**：State Lock 不跨 Discord reply、Keeper LLM、side effects 或 post-turn maintenance；`/coc check` 與 Discord CheckButton 對外行為維持不變。legacy conversation lock 尚未移除，Keeper Turn Lock 尚未投入使用，`/coc luck` / LuckSpendButton flow 尚未 migration。
+
+### 38. `/coc luck` deterministic resolution 接入 State Lock
+
+- **這次實際完成**：只修改 `app/commands.py`，將 Luck deterministic resolution 抽成 `_resolve_luck_decision_deterministically()`，讓 `/coc luck` 與 LuckSpendButton 共用的 `load_state -> pending Luck 驗證/消耗或還原 -> 最新 Luck 驗證 -> 扣除 Luck -> save_state` transaction 以 per-conversation State Lock 保護。
+- **event loop 保護**：`handle_luck_decision()` 現在透過 `asyncio.to_thread()` 執行這段同步 Luck state transaction，避免 `threading.RLock` contention 或檔案 I/O 阻塞 Discord event loop；Luck 與 pending decision 都以 lock 內最新 authoritative state 為準。
+- **保留不變**：State Lock 不跨 Discord reply、Keeper LLM、side effects 或 post-turn maintenance；legacy conversation lock 尚未移除，Keeper Turn Lock 尚未投入使用，Luck 顯示與新骰果/「守密人處理中」UX 尚未修改。
+
+### 39. 啟用 per-conversation Keeper Turn Lock
+
+- **這次實際完成**：只修改 `app/commands.py`，正式啟用 per-conversation Keeper Turn Lock。一般自由文字與 `/coc check`、Discord CheckButton、`/coc luck`、LuckSpendButton 進入 Keeper narration 時，現在共用同一把 conversation 專屬 serialization lock。
+- **鎖定範圍**：Keeper Turn Lock 涵蓋 `keeper.run_turn()` AI generation、Keeper public reply、side effects，以及 post-turn maintenance，確保同一 conversation 不會同時執行兩個 Keeper AI turn，也不會出現後一個 Keeper turn 先完成公開輸出的順序錯亂。
+- **保留不變**：State Lock 與 Keeper Turn Lock 維持不同責任；legacy conversation lock 本步仍完整保留，Discord adapter 沒有修改。新的 🎲 / 🎭「守密人處理中」UX 尚留待下一步加入。
+
+### 40. 一般自由文字 map movement 接入 State Lock
+
+- **這次實際完成**：只修改 `app/commands.py`，讓一般自由文字進 Keeper 前的 map/location deterministic mutation 改由 per-conversation State Lock 保護；`current_map_page`、`current_room_id`、`party_facing` 的持久化更新會在 lock 內重新 `load_state()` 取得最新 authoritative `GroupState` 後計算、修改並 `save_state()`。
+- **慢操作邊界**：一般自由文字現在透過 `asyncio.to_thread()` 執行同步 map transaction，避免 `threading.RLock` contention 與檔案 I/O 阻塞 event loop。若 named-room movement 需要 Scenario RAG fallback，RAG/embedding 會在 State Lock 外執行，完成後再重新取得 State Lock、reload 最新 state 並提交仍適用的 movement。
+- **保留不變**：map interpretation、方向/房間解析、scene map topology 與 Keeper 收到的 resolved map context 行為維持不變；legacy conversation lock 與 Keeper Turn Lock 範圍尚未修改，Check/Luck/Button UX 也未修改。
+
+### 41. `/coc away` 與 `/coc back` 接入 State Lock
+
+- **這次實際完成**：只修改 `app/commands.py`，新增 `_set_character_away_state()`，讓 `/coc away` 與 `/coc back` 透過 per-conversation State Lock 重新載入最新 authoritative `GroupState`，依 `user_id` 找角色後只更新 `character.away` 並 `save_state()`。
+- **event loop 保護**：away/back 的同步 state transaction 由 `asyncio.to_thread()` 執行，避免 `threading.RLock` contention 與檔案 I/O 阻塞 event loop；成功與錯誤 reply 都在 State Lock 釋放後才送出。
+- **保留不變**：away/back 對外文字與既有語意維持不變；`away=True` 只表示暫離/戰鬥回合可跳過，不會讓角色 HP、SAN、Luck、ammo、items 等其他欄位變成凍結或 readonly。legacy conversation lock 仍保留，其他 `/coc` 指令未修改。
+
+### 42. Discord CheckButton 骰果階段脫離 legacy conversation lock
+
+- **這次實際完成**：修改 `app/discord_bot.py` 與 `app/commands.py`，讓 Discord CheckButton 不再用 legacy conversation lock 包住完整流程；按鈕點擊後的 deterministic check 仍透過既有短 State Lock 完成 `load -> roll/mutate -> save`，因此本地骰果不再等待同 conversation 內正在執行的 Keeper AI。
+- **回覆順序**：CheckButton 的 split feedback 現在會先送出程式固定的 `🎲 角色｜技能 數值 / 骰值 → 結果 / 後續結果由守密人處理中……`，之後在 Keeper narration 前重新取得 legacy conversation lock，再取得 Keeper Turn Lock，固定維持 `Legacy -> Keeper Turn -> State` 的 lock order。
+- **Keeper narration**：CheckButton 的 Keeper 回覆會加上程式固定的 `🎭 角色｜技能結果` header；同一 conversation 仍只允許一個 Keeper AI turn。`/coc check` 文字指令、LuckSpendButton、`/coc luck`、其他 `/coc` 指令與 upload flows 都未修改。
+
+### 43. Discord LuckSpendButton 骰果階段脫離 legacy conversation lock
+
+- **這次實際完成**：修改 `app/discord_bot.py` 與 `app/commands.py`，讓 Discord LuckSpendButton 不再用 legacy conversation lock 包住完整流程；按鈕點擊後的 deterministic Luck resolution 仍透過既有短 State Lock 與最新 authoritative state 完成 pending Luck 驗證、Luck 扣除與 `save_state()`。
+- **回覆順序**：LuckSpendButton 的 split feedback 現在會先送出程式固定的 `🎲 角色｜技能 數值 / 花費 N 點幸運：骰值 → 結果 / 後續結果由守密人處理中……`，之後在 Keeper narration 前重新取得 legacy conversation lock，再取得 Keeper Turn Lock，固定維持 `Legacy -> Keeper Turn -> State` 的 lock order。
+- **保留不變**：Keeper narration 沿用既有 `🎭 角色｜技能結果` deterministic header；同一 conversation 仍只允許一個 Keeper AI turn。`/coc luck` 文字指令、CheckButton、其他 `/coc` 指令與 upload flows 都未修改。

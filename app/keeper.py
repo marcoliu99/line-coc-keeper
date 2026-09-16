@@ -8,17 +8,26 @@ which one is active.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, fields
+from typing import Any, Callable, TypeVar
 
-from app import combat, dice, memory_rag, scenario_index, scenario_rag
+from app import combat, dice, locks, memory_rag, scenario_index, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
-from app.state import save_state
+from app.state import load_state, save_state
 
 _logger = logging.getLogger(__name__)
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
+_T = TypeVar("_T")
+
+
+@dataclass
+class _StateMutation:
+    value: Any = None
+    should_save: bool = True
 
 # The Keeper's default tone/persona — a plain, importable constant (not a
 # leading-underscore private one) rather than hardcoded inline in
@@ -564,6 +573,87 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
 
 
+def _sync_state_snapshot(target: GroupState, source: GroupState) -> None:
+    for field in fields(GroupState):
+        setattr(target, field.name, getattr(source, field.name))
+
+
+def _refresh_state_snapshot(state: GroupState) -> GroupState:
+    with locks.get_state_lock(state.group_id):
+        latest_state = load_state(state.group_id)
+        _sync_state_snapshot(state, latest_state)
+    return state
+
+
+def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], _T]) -> _T:
+    """Small boundary for Keeper tool state mutation.
+
+    Reloads the latest state under the synchronous state lock, mutates/saves it,
+    then refreshes the caller's existing state object so later tools in the same
+    Keeper turn see the updated snapshot.
+    """
+    with locks.get_state_lock(state.group_id):
+        latest_state = load_state(state.group_id)
+        result = mutator(latest_state)
+        should_save = True
+        if isinstance(result, _StateMutation):
+            should_save = result.should_save
+            result = result.value
+        if should_save:
+            save_state(latest_state)
+        _sync_state_snapshot(state, latest_state)
+    return result
+
+
+def _commit_turn_result(
+    state: GroupState, log_entries: list[dict[str, str]], openai_response_id: str | None = None
+) -> None:
+    with locks.get_state_lock(state.group_id):
+        latest_state = load_state(state.group_id)
+        latest_state.log.extend(log_entries)
+        if openai_response_id is not None:
+            latest_state.openai_previous_response_id = openai_response_id
+        save_state(latest_state)
+        _sync_state_snapshot(state, latest_state)
+
+
+def _persist_memory_maintenance_state(
+    group_id: str, campaign_summary: str, trimmed_log: list[dict[str, str]]
+) -> None:
+    with locks.get_state_lock(group_id):
+        latest_state = load_state(group_id)
+        latest_state.campaign_summary = campaign_summary
+        latest_state.log = trimmed_log
+        save_state(latest_state)
+
+
+def run_post_turn_maintenance(group_id: str) -> None:
+    with locks.get_state_lock(group_id):
+        latest_state = load_state(group_id)
+        if len(latest_state.log) <= MAX_LOG_TURNS * 4:
+            return
+        keep_from = -MAX_LOG_TURNS * 2
+        base_summary = latest_state.campaign_summary
+        log_snapshot = [dict(message) for message in latest_state.log]
+        dropped_chunk = log_snapshot[:keep_from]
+        trimmed_log = log_snapshot[keep_from:]
+
+    # Rolling summarization (see summarize_log_chunk above): fold the
+    # chunk about to be dropped into campaign_summary *before* dropping
+    # it, instead of just discarding it — this is the one rare turn every
+    # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
+    # early plot points survive past what the verbatim log can hold.
+    campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
+    # Also persist the chunk's *original* wording into the searchable
+    # memory index (app/memory_rag.py) — campaign_summary alone would
+    # keep recompressing an already-compressed summary on every future
+    # trim, eroding fine detail a little more each pass; this keeps the
+    # verbatim text retrievable via search_memory even after that.
+    formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
+    memory_rag.append_memory(group_id, formatted_chunk)
+    _persist_memory_maintenance_state(group_id, campaign_summary, trimmed_log)
+
+
 def _execute_tool(
     state: GroupState,
     name: str,
@@ -615,20 +705,24 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            value = resolve_skill_value(char, tool_input["skill"])
-            bonus = int(tool_input.get("bonus_dice") or 0)
-            penalty = int(tool_input.get("penalty_dice") or 0)
-            difficulty = tool_input.get("difficulty") or "regular"
-            if difficulty not in ("regular", "hard", "extreme"):
-                difficulty = "regular"
-            state.pending_checks[char.owner_id] = {
-                "type": "skill", "skill": tool_input["skill"], "skill_value": value,
-                "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
-                "pushed": bool(tool_input.get("pushed", False)),
-            }
-            save_state(state)
+            def mutate(target_state: GroupState) -> tuple[int, int, int, str]:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                value = resolve_skill_value(target_char, tool_input["skill"])
+                bonus = int(tool_input.get("bonus_dice") or 0)
+                penalty = int(tool_input.get("penalty_dice") or 0)
+                difficulty = tool_input.get("difficulty") or "regular"
+                if difficulty not in ("regular", "hard", "extreme"):
+                    difficulty = "regular"
+                target_state.pending_checks[target_char.owner_id] = {
+                    "type": "skill", "skill": tool_input["skill"], "skill_value": value,
+                    "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
+                    "pushed": bool(tool_input.get("pushed", False)),
+                }
+                return value, bonus, penalty, difficulty
+            value, bonus, penalty, difficulty = _mutate_and_save_state(state, mutate)
+            refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {
-                "ok": True, "pending": True, "investigator": char.name, "skill": tool_input["skill"],
+                "ok": True, "pending": True, "investigator": refreshed_char.name, "skill": tool_input["skill"],
                 "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                 "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
             }
@@ -640,26 +734,30 @@ def _execute_tool(
             raw_options = tool_input.get("options") or []
             if len(raw_options) < 2:
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
-            options = []
-            for opt in raw_options:
-                # Full skill value, no artificial difficulty adjustment —
-                # confirmed against the official COC7e Fight Back text:
-                # it's a normal opposed roll at the defender's own combat
-                # skill, not a harder version of Dodge. (A prior revision
-                # here halved it as a house-rule approximation; reverted.)
-                value = resolve_skill_value(char, opt["skill"])
-                options.append({
-                    "label": opt["label"], "skill": opt["skill"], "skill_value": value,
-                    "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
-                })
-            pending_choice = {"type": "choice", "options": options}
             attacker_tier = tool_input.get("attacker_tier")
-            if attacker_tier:
-                pending_choice["attacker_tier"] = attacker_tier
-            state.pending_checks[char.owner_id] = pending_choice
-            save_state(state)
+            def mutate(target_state: GroupState) -> list[dict]:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                options = []
+                for opt in raw_options:
+                    # Full skill value, no artificial difficulty adjustment —
+                    # confirmed against the official COC7e Fight Back text:
+                    # it's a normal opposed roll at the defender's own combat
+                    # skill, not a harder version of Dodge. (A prior revision
+                    # here halved it as a house-rule approximation; reverted.)
+                    value = resolve_skill_value(target_char, opt["skill"])
+                    options.append({
+                        "label": opt["label"], "skill": opt["skill"], "skill_value": value,
+                        "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
+                    })
+                pending_choice = {"type": "choice", "options": options}
+                if attacker_tier:
+                    pending_choice["attacker_tier"] = attacker_tier
+                target_state.pending_checks[target_char.owner_id] = pending_choice
+                return options
+            options = _mutate_and_save_state(state, mutate)
+            refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {
-                "ok": True, "pending": True, "investigator": char.name, "options": options,
+                "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
                 "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
             }
 
@@ -676,12 +774,15 @@ def _execute_tool(
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             loss_success = tool_input.get("loss_success", "0")
             loss_failure = tool_input.get("loss_failure", "1d4")
-            state.pending_checks[char.owner_id] = {
-                "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
-            }
-            save_state(state)
+            def mutate(target_state: GroupState) -> None:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_state.pending_checks[target_char.owner_id] = {
+                    "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
+                }
+            _mutate_and_save_state(state, mutate)
+            refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {
-                "ok": True, "pending": True, "investigator": char.name, "current_san": char.san,
+                "ok": True, "pending": True, "investigator": refreshed_char.name, "current_san": refreshed_char.san,
                 "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
             }
 
@@ -694,27 +795,33 @@ def _execute_tool(
             if field_name not in attr_map:
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
-            cap = getattr(char, max_attr) if max_attr else 999
-            delta = int(tool_input["delta"])
-            new_val = max(0, min(cap, getattr(char, cur_attr) + delta))
-            setattr(char, cur_attr, new_val)
 
-            major_wound = False
-            # COC7e major wound rule, code-enforced the same way Bout of
-            # Madness is (see sanity_check above): a single hit dealing >=
-            # half of max HP knocks the investigator unconscious unless they
-            # pass a CON roll. Skipped when this hit already dropped HP to
-            # 0 or below — RAW already treats that as unconscious/dying on
-            # its own, so a second CON check on top would be redundant.
-            if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= char.hp_max / 2:
-                major_wound = True
-                state.pending_checks[char.owner_id] = {
-                    "type": "skill", "skill": "CON", "skill_value": resolve_skill_value(char, "CON"),
-                    "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
-                    "major_wound_trigger": True,
-                }
-            save_state(state)
-            result = {"ok": True, "investigator": char.name, "field": field_name, "value": new_val}
+            def mutate(target_state: GroupState) -> tuple[int, bool]:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_cap = getattr(target_char, max_attr) if max_attr else 999
+                delta = int(tool_input["delta"])
+                new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
+                setattr(target_char, cur_attr, new_val)
+
+                major_wound = False
+                # COC7e major wound rule, code-enforced the same way Bout of
+                # Madness is (see sanity_check above): a single hit dealing >=
+                # half of max HP knocks the investigator unconscious unless they
+                # pass a CON roll. Skipped when this hit already dropped HP to
+                # 0 or below — RAW already treats that as unconscious/dying on
+                # its own, so a second CON check on top would be redundant.
+                if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2:
+                    major_wound = True
+                    target_state.pending_checks[target_char.owner_id] = {
+                        "type": "skill", "skill": "CON", "skill_value": resolve_skill_value(target_char, "CON"),
+                        "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                        "major_wound_trigger": True,
+                    }
+                return new_val, major_wound
+
+            new_val, major_wound = _mutate_and_save_state(state, mutate)
+            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            result = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
             if major_wound:
                 result["major_wound"] = True
                 result["note"] = (
@@ -733,12 +840,17 @@ def _execute_tool(
             if entry is None:
                 available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
                 return {"ok": False, "error": f"「{char.name}」的彈藥欄位裡沒有「{weapon}」，目前有：{available}"}
-            if tool_input.get("reload_full"):
-                entry["ammo"] = entry["ammo_max"]
-            else:
-                entry["ammo"] = max(0, min(entry["ammo_max"], entry["ammo"] + int(tool_input.get("delta") or 0)))
-            save_state(state)
-            return {"ok": True, "investigator": char.name, "weapon": weapon, "ammo": entry["ammo"], "ammo_max": entry["ammo_max"]}
+            def mutate(target_state: GroupState) -> None:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_entry = target_char.weapons.get(weapon)
+                if tool_input.get("reload_full"):
+                    target_entry["ammo"] = target_entry["ammo_max"]
+                else:
+                    target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
+            _mutate_and_save_state(state, mutate)
+            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_entry = refreshed_char.weapons.get(weapon)
+            return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
 
         if name == "add_carried_item":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -747,20 +859,28 @@ def _execute_tool(
             item = tool_input.get("item", "").strip()
             if not item:
                 return {"ok": False, "error": "item 不能是空字串"}
-            if item not in char.carried_items:
-                char.carried_items.append(item)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "carried_items": char.carried_items}
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = item not in target_char.carried_items
+                if changed:
+                    target_char.carried_items.append(item)
+                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
+            investigator, carried_items = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
 
         if name == "remove_carried_item":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             item = tool_input.get("item", "")
-            if item in char.carried_items:
-                char.carried_items.remove(item)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "carried_items": char.carried_items}
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = item in target_char.carried_items
+                if changed:
+                    target_char.carried_items.remove(item)
+                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
+            investigator, carried_items = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
 
         if name == "add_status_tag":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -789,70 +909,82 @@ def _execute_tool(
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             value = max(0, min(100, int(tool_input["value"])))
-            char.skills[tool_input["skill"]] = value
-            save_state(state)
-            return {"ok": True, "investigator": char.name, "skill": tool_input["skill"], "value": value}
+            def mutate(target_state: GroupState) -> None:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char.skills[tool_input["skill"]] = value
+            _mutate_and_save_state(state, mutate)
+            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            return {"ok": True, "investigator": refreshed_char.name, "skill": tool_input["skill"], "value": value}
 
         if name == "get_character_sheet":
+            _refresh_state_snapshot(state)
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             return {"ok": True, "sheet": char.to_dict()}
 
         if name == "start_combat":
-            combat.start_combat(state)
-            save_state(state)
+            def mutate(target_state: GroupState) -> None:
+                combat.start_combat(target_state)
+            _mutate_and_save_state(state, mutate)
             return {"ok": True, "status": combat.status_text(state)}
 
         if name == "add_npc_to_combat":
             npc_name = tool_input["name"]
-            hp = int(tool_input.get("hp", 10))
-            index_note = ""
-            # Code-enforced consistency check, not just a prompt-level ask: if
-            # this name matches a /coc index entry, the index's HP wins no
-            # matter what the Keeper actually passed — this is what stops the
-            # same monster (or the same life stage of one) from silently
-            # getting a different HP in a later scene, instead of relying
-            # purely on the Keeper remembering to look it up itself.
-            index_entry = _find_npc_index_entry(state, npc_name)
-            if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
-                canonical_hp = int(index_entry["hp"])
-                if canonical_hp != hp:
-                    index_note = (
-                        f"（系統已依 /coc index 索引修正：你傳入的 HP {hp} 跟索引裡「{index_entry.get('name')}」"
-                        f"登記的 HP {canonical_hp} 不一致，已強制改用索引值。這隻的數值以索引為準，"
-                        "之後同一隻不要再用別的數字。）"
-                    )
-                    hp = canonical_hp
-            combat.add_npc(
-                state,
-                npc_name,
-                int(tool_input.get("dex", 50)),
-                hp,
-                is_ally=bool(tool_input.get("is_ally", False)),
-            )
-            save_state(state)
+            requested_hp = int(tool_input.get("hp", 10))
+            def mutate(target_state: GroupState) -> str:
+                hp = requested_hp
+                index_note = ""
+                # Code-enforced consistency check, not just a prompt-level ask: if
+                # this name matches a /coc index entry, the index's HP wins no
+                # matter what the Keeper actually passed — this is what stops the
+                # same monster (or the same life stage of one) from silently
+                # getting a different HP in a later scene, instead of relying
+                # purely on the Keeper remembering to look it up itself.
+                index_entry = _find_npc_index_entry(target_state, npc_name)
+                if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
+                    canonical_hp = int(index_entry["hp"])
+                    if canonical_hp != hp:
+                        index_note = (
+                            f"（系統已依 /coc index 索引修正：你傳入的 HP {hp} 跟索引裡「{index_entry.get('name')}」"
+                            f"登記的 HP {canonical_hp} 不一致，已強制改用索引值。這隻的數值以索引為準，"
+                            "之後同一隻不要再用別的數字。）"
+                        )
+                        hp = canonical_hp
+                combat.add_npc(
+                    target_state,
+                    npc_name,
+                    int(tool_input.get("dex", 50)),
+                    hp,
+                    is_ally=bool(tool_input.get("is_ally", False)),
+                )
+                return index_note
+            index_note = _mutate_and_save_state(state, mutate)
             result = {"ok": True, "status": combat.status_text(state)}
             if index_note:
                 result["note"] = index_note
             return result
 
         if name == "get_combat_status":
+            _refresh_state_snapshot(state)
             return {"ok": True, "status": combat.status_text(state)}
 
         if name == "advance_combat_turn":
-            result = combat.advance_turn(state)
-            save_state(state)
+            def mutate(target_state: GroupState) -> dict:
+                return combat.advance_turn(target_state)
+            result = _mutate_and_save_state(state, mutate)
             return result
 
         if name == "damage_combatant":
-            result = combat.damage_combatant(state, tool_input["name"], int(tool_input["delta"]))
-            save_state(state)
+            def mutate(target_state: GroupState) -> dict:
+                return combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
+            result = _mutate_and_save_state(state, mutate)
             return result
 
         if name == "end_combat":
-            combat.end_combat(state)
-            save_state(state)
+            def mutate(target_state: GroupState) -> None:
+                combat.end_combat(target_state)
+            _mutate_and_save_state(state, mutate)
             return {"ok": True}
 
         if name == "send_private_info":
@@ -1236,7 +1368,13 @@ def run_turn(
     image_requests: list[tuple[str | None, int]] = []
     tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
 
+    openai_response_id: str | None = None
     if LLM_PROVIDER == "openai":
+        def remember_openai_response_id(response_id: str) -> None:
+            nonlocal openai_response_id
+            openai_response_id = response_id
+            state.openai_previous_response_id = response_id
+
         final_text = provider.run_conversation(
             static_prompt,
             dynamic_prompt,
@@ -1246,7 +1384,7 @@ def run_turn(
             lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),
             MAX_TOOL_ITERATIONS,
             previous_response_id=state.openai_previous_response_id,
-            on_response_id=lambda response_id: setattr(state, "openai_previous_response_id", response_id),
+            on_response_id=remember_openai_response_id,
         )
     else:
         final_text = provider.run_conversation(
@@ -1259,24 +1397,9 @@ def run_turn(
             MAX_TOOL_ITERATIONS,
         )
 
-    state.log.append({"role": "user", "content": f"{speaker_name}：{message_text}"})
-    state.log.append({"role": "assistant", "content": final_text})
-    if len(state.log) > MAX_LOG_TURNS * 4:
-        # Rolling summarization (see summarize_log_chunk above): fold the
-        # chunk about to be dropped into campaign_summary *before* dropping
-        # it, instead of just discarding it — this is the one rare turn every
-        # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
-        # early plot points survive past what the verbatim log can hold.
-        keep_from = -MAX_LOG_TURNS * 2
-        dropped_chunk = state.log[:keep_from]
-        state.campaign_summary = summarize_log_chunk(state.campaign_summary, dropped_chunk)
-        # Also persist the chunk's *original* wording into the searchable
-        # memory index (app/memory_rag.py) — campaign_summary alone would
-        # keep recompressing an already-compressed summary on every future
-        # trim, eroding fine detail a little more each pass; this keeps the
-        # verbatim text retrievable via search_memory even after that.
-        formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
-        memory_rag.append_memory(state.group_id, formatted_chunk)
-        state.log = state.log[keep_from:]
-    save_state(state)
+    turn_log_entries = [
+        {"role": "user", "content": f"{speaker_name}：{message_text}"},
+        {"role": "assistant", "content": final_text},
+    ]
+    _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     return final_text, private_messages, image_requests

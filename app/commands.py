@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -354,7 +355,6 @@ async def _deliver_side_effects(
 ) -> None:
     """Shared by handle_text_message and handle_check_command — delivers
     whatever the Keeper queued via send_private_info/show_scenario_image.
-    Must be called outside any conversation lock: pure I/O, no state access.
     Best-effort: a DM can fail (LINE requires the player to have friended the
     bot; Discord requires them to allow DMs from server members) and we
     deliberately don't fall back to posting the content publicly, since that
@@ -378,6 +378,36 @@ async def _deliver_side_effects(
             _logger.exception(
                 "send_dm_image/send_image failed for owner_id=%s in conversation_id=%s", owner_id, conversation_id
             )
+
+
+async def _run_post_turn_maintenance_after_output(
+    conversation_id: str,
+    reply: Reply,
+    public_message: str,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    private_messages: list[tuple[str, str]],
+    image_requests: list[tuple[str | None, int]],
+) -> None:
+    output_error: Exception | None = None
+    try:
+        await reply(public_message)
+        await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
+    except Exception as exc:
+        output_error = exc
+        raise
+    finally:
+        try:
+            await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+        except Exception:
+            if output_error is not None:
+                _logger.exception(
+                    "post-turn maintenance failed after public output failed for conversation_id=%s",
+                    conversation_id,
+                )
+            else:
+                raise
 
 
 def _skill_names_match(a: str, b: str) -> bool:
@@ -410,6 +440,30 @@ def _tier_zh_for_tier(tier: str, required: str) -> str:
 
 def _tier_zh_for_result(r) -> str:
     return _tier_zh_for_tier(r.tier, getattr(r, "required_tier", "regular"))
+
+
+@dataclass
+class _CheckResolution:
+    state: GroupState | None = None
+    char: object | None = None
+    roll_line: str = ""
+    keeper_message: str = ""
+    roll_feedback_text: str = ""
+    keeper_header: str = ""
+    reply_text: str = ""
+    should_finalize: bool = False
+
+
+@dataclass
+class _MapActionResolution:
+    context: dict | None = None
+    needs_rag: bool = False
+
+
+@dataclass
+class _AwayStateResult:
+    character_name: str = ""
+    error_text: str = ""
 
 
 def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tier: str, attacker_tier: str) -> str:
@@ -502,6 +556,26 @@ def _build_check_narration(
     return roll_line, keeper_message
 
 
+def _build_split_check_feedback(
+    character_name: str,
+    check_label: str,
+    value_text: str,
+    roll: int,
+    outcome_text: str,
+    opposed_text: str = "",
+    result_line: str | None = None,
+) -> tuple[str, str]:
+    opposed_line = f"\n⚔️ {opposed_text}" if opposed_text else ""
+    result_line = result_line or f"{roll} → {outcome_text}"
+    roll_feedback_text = (
+        f"🎲 {character_name}｜{check_label} {value_text}\n"
+        f"{result_line}{opposed_line}\n\n"
+        "後續結果由守密人處理中……"
+    )
+    keeper_header = f"🎭 {character_name}｜{check_label}{outcome_text}"
+    return roll_feedback_text, keeper_header
+
+
 async def _finalize_check_result(
     conversation_id: str,
     user_id: str,
@@ -513,16 +587,259 @@ async def _finalize_check_result(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
+    split_roll_feedback: bool = False,
+    acquire_legacy_for_keeper: bool = False,
+    roll_feedback_text: str = "",
+    keeper_header: str = "",
 ) -> None:
     """Shared tail for every resolved check (sanity, choice, plain skill, and
     a Luck-spend decision) — hands the already-determined result to the
     Keeper for narration and delivers whatever it queued."""
-    resolved_location = _resolve_map_action(state, user_id, keeper_message)
-    keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-        keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
-    )
-    await reply(f"{roll_line}\n\n{keeper_reply}")
-    await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
+    if split_roll_feedback:
+        await reply(roll_feedback_text or roll_line)
+
+    async def run_keeper_phase() -> None:
+        resolved_location = _resolve_map_action(state, user_id, keeper_message)
+        async with locks.get_keeper_turn_lock(conversation_id):
+            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
+            )
+            if split_roll_feedback:
+                public_message = f"{keeper_header}\n\n{keeper_reply}" if keeper_header else keeper_reply
+            else:
+                public_message = f"{roll_line}\n\n{keeper_reply}"
+            await _run_post_turn_maintenance_after_output(
+                conversation_id,
+                reply,
+                public_message,
+                send_dm,
+                send_image,
+                send_dm_image,
+                private_messages,
+                image_requests,
+            )
+
+    if acquire_legacy_for_keeper:
+        async with locks.get_conversation_lock(conversation_id):
+            await run_keeper_phase()
+    else:
+        await run_keeper_phase()
+
+
+def _resolve_check_deterministically(conversation_id: str, user_id: str, text: str) -> _CheckResolution:
+    """Resolve /coc check without invoking the Keeper.
+
+    This consumes/restores pending check state, rolls local dice, creates Luck
+    pending decisions when applicable, and saves any deterministic state changes.
+    Keeper narration stays in handle_check_command's async tail.
+    """
+    with locks.get_state_lock(conversation_id):
+        state = load_state(conversation_id)
+        if not state.active:
+            return _CheckResolution(reply_text="目前沒有進行中的遊戲。")
+        char = state.characters.get(user_id)
+        if not char:
+            return _CheckResolution(reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+
+        parts = text.split()
+        skill_arg = parts[2] if len(parts) > 2 else None
+        pending = state.pending_checks.pop(user_id, None)
+
+        # A pending "choice" check (see keeper.py's offer_check_choice — e.g. 閃避
+        # vs 反擊) needs the player to name one of the options; unlike the plain
+        # skill/sanity cases below, an unmatched or missing skill_arg here puts
+        # the pending check back rather than discarding it, since silently losing
+        # the whole choice prompt over a typo would be a worse experience than a
+        # skill/sanity mismatch just falling through to a fresh check.
+        choice_skill_name = choice_display_label = None
+        choice_value = choice_bonus = choice_penalty = None
+        choice_attacker_tier = None
+        if pending and pending.get("type") == "choice":
+            if skill_arg is None:
+                state.pending_checks[user_id] = pending
+                options_text = "、".join(f"{o['label']}（{o['skill']} {o['skill_value']}%）" for o in pending["options"])
+                return _CheckResolution(reply_text=f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}")
+            matched = next(
+                (o for o in pending["options"]
+                 if _skill_names_match(o["label"], skill_arg) or _skill_names_match(o["skill"], skill_arg)),
+                None,
+            )
+            if not matched:
+                state.pending_checks[user_id] = pending
+                options_text = "、".join(o["label"] for o in pending["options"])
+                return _CheckResolution(reply_text=f"沒有「{skill_arg}」這個選項，可選：{options_text}")
+            choice_skill_name, choice_display_label = matched["skill"], matched["label"]
+            choice_value, choice_bonus, choice_penalty = matched["skill_value"], matched["bonus_dice"], matched["penalty_dice"]
+            choice_attacker_tier = pending.get("attacker_tier")
+            pending = None
+        elif skill_arg is None:
+            if not pending:
+                return _CheckResolution(reply_text="目前沒有守密人請你做的檢定。用法：/coc check 技能名 [獎勵骰數] [懲罰骰數] 可以自己主動檢定。")
+        elif not (pending and pending.get("type") == "skill" and _skill_names_match(pending.get("skill", ""), skill_arg)):
+            # Named a skill that doesn't match what was pending (or nothing was
+            # pending, or the pending one was a SAN check): a fresh, self-initiated
+            # check, bonus/penalty from the command's own args instead.
+            pending = None
+
+        if pending and pending.get("type") == "sanity":
+            san_before = char.san
+            r = dice.sanity_check(san_before, pending.get("loss_success", "0"), pending.get("loss_failure", "1d4"))
+            char.san = r.san_after
+            outcome = "通過" if r.check.success else "失敗"
+            roll_line = f"🎲 {char.name} 的理智檢定：SAN {san_before}，擲出 {r.check.roll} → {outcome}，損失 {r.loss} 點理智（現在 SAN {r.san_after}）"
+
+            if r.risk_of_madness:
+                # COC7e Bout of Madness: losing 5+ SAN in one go triggers a
+                # separate INT check — chained the same way a Luck-spend decision
+                # chains onto a check's result, registered as a fresh pending
+                # check the player rolls themselves (never silently resolved by
+                # the Keeper). See dice.roll_madness's own docstring for why
+                # *succeeding* this INT check is the outcome that triggers
+                # madness, not failing it — easy to get backwards.
+                int_value = keeper.resolve_skill_value(char, "INT")
+                state.pending_checks[user_id] = {
+                    "type": "skill", "skill": "INT", "skill_value": int_value,
+                    "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                    "madness_trigger": True, "madness_realtime": True,
+                }
+                roll_line += (
+                    "\n⚠️ 這次損失達到 5 點以上，觸發 COC7e「短暫瘋狂」規則：需要做一次 INT 檢定——"
+                    "成功代表當場理解了這份恐怖、陷入短暫瘋狂；失敗代表壓抑下來，沒有當場失常。"
+                    "請輸入 /coc check INT。"
+                )
+                keeper_message = (
+                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
+                    f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這次損失達到 5 點以上，觸發 COC7e"
+                    f"「短暫瘋狂」規則的 INT 檢定，系統已經請玩家去骰，你只能先描述受到這波衝擊當下的"
+                    f"直接反應，還不知道會不會當場失常，等 INT 檢定結果出來才能繼續描述後續——不要自己"
+                    f"先講角色失常了或平安無事。）"
+                )
+            else:
+                keeper_message = (
+                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
+                    f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
+                    f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
+                )
+            roll_feedback_text, keeper_header = _build_split_check_feedback(
+                char.name, "理智檢定", f"SAN {san_before}", r.check.roll, outcome
+            )
+            save_state(state)
+            return _CheckResolution(
+                state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
+                roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+            )
+
+        is_pushed = False
+        attacker_tier = None
+        difficulty = "regular"  # offer_check_choice options and a self-initiated /coc check with no
+        # pending Keeper request have no difficulty concept — only a Keeper-registered plain skill_check
+        # (see keeper.py's skill_check tool difficulty param) can set this above "regular".
+        madness_trigger = False  # only set True for the INT check chained onto a >=5 SAN loss — see above
+        madness_realtime = True
+        major_wound_trigger = False  # only set True for the CON check chained onto a major wound — see
+        # keeper.py's adjust_character tool. Unlike madness_trigger, this does NOT get an early-return
+        # branch below: success here is a normal good outcome, so it flows through the ordinary Luck-spend
+        # path like any other skill check — only _build_check_narration needs to know about it.
+        if choice_skill_name is not None:
+            skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
+            display_label = choice_display_label
+            attacker_tier = choice_attacker_tier
+        else:
+            if pending:
+                skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
+                is_pushed = bool(pending.get("pushed", False))
+                difficulty = pending.get("difficulty", "regular")
+                madness_trigger = bool(pending.get("madness_trigger", False))
+                madness_realtime = bool(pending.get("madness_realtime", True))
+                major_wound_trigger = bool(pending.get("major_wound_trigger", False))
+            else:
+                skill_name = skill_arg
+                value = keeper.resolve_skill_value(char, skill_name)
+                bonus = int(parts[3]) if len(parts) > 3 and parts[3].lstrip("-").isdigit() else 0
+                penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
+                save_state(state)  # resolve_skill_value may have registered a new default-value skill
+            display_label = None
+        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
+
+        if madness_trigger:
+            # Bout of Madness INT check (see the "sanity" branch above that
+            # registered this) — resolved separately from the generic skill-check
+            # path below since a *success* here means rolling a real madness
+            # table, not just narrating a plain check result; also deliberately
+            # skips the Luck-spend flow entirely (spending Luck to push this
+            # check toward success would be pushing toward the *worse* outcome
+            # for the character, backwards from what Luck-spend normally means).
+            tier_zh = _tier_zh_for_result(r)
+            if r.success:
+                madness = dice.roll_madness(realtime=madness_realtime)
+                roll_line = (
+                    f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n"
+                    f"💥 觸發短暫瘋狂（Bout of Madness）！症狀擲骰 {madness['roll']} → 「{madness['symptom']}」"
+                    f"（持續約{madness['duration']}）"
+                )
+                keeper_message = (
+                    f"（{char.name} 的 INT 檢定{tier_zh}，觸發了短暫瘋狂：症狀是「{madness['symptom']}」"
+                    f"——{madness['guidance']}，持續約{madness['duration']}。這是已經確定的結果，"
+                    f"請照這個症狀具體描述角色接下來的失常行為，不要自己另外編一個症狀，也不要忽略這個結果。）"
+                )
+            else:
+                roll_line = f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n（INT 檢定失敗，勉強壓下這股衝擊，沒有當場失常）"
+                keeper_message = (
+                    f"（{char.name} 的 INT 檢定{tier_zh}，沒有觸發短暫瘋狂——角色勉強壓下了這股衝擊，"
+                    f"不需要描述任何失常行為，可以正常繼續劇情，但可以帶一點事後的心理陰影或後怕細節。）"
+                )
+            roll_feedback_text, keeper_header = _build_split_check_feedback(
+                char.name, "INT", str(value), r.roll, tier_zh
+            )
+            save_state(state)
+            return _CheckResolution(
+                state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
+                roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+            )
+
+        # Luck-spend: only proactively offered when it's a near-miss (the cheapest
+        # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
+        # excluded (handled above, already finalized by this point), and so is a
+        # Pushed Roll (COC7e optional rule: a pushed reroll's result is final,
+        # can't be bought up again with Luck on top of it).
+        luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck, difficulty)
+        gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier, difficulty)
+        if luck_options and gate_cost is not None and gate_cost <= 7:
+            state.pending_luck_decisions[user_id] = {
+                "skill_name": skill_name, "display_label": display_label,
+                "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
+                "original_tier": r.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
+                "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
+                "major_wound_trigger": major_wound_trigger,
+            }
+            save_state(state)
+            options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
+            dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
+            check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
+            attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
+            return _CheckResolution(
+                reply_text=(
+                    f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_tier_zh_for_result(r)}{attacker_note}\n"
+                    f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
+                    f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
+                )
+            )
+
+        roll_line, keeper_message = _build_check_narration(
+            char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier,
+            major_wound_trigger=major_wound_trigger,
+        )
+        opposed_text = ""
+        if attacker_tier is not None:
+            opposed_text = _describe_opposed_outcome(char.name, display_label is not None and "反擊" in display_label, r.tier, attacker_tier)
+        roll_feedback_text, keeper_header = _build_split_check_feedback(
+            char.name, display_label or skill_name, str(value), r.roll, _tier_zh_for_result(r), opposed_text
+        )
+        save_state(state)
+        return _CheckResolution(
+            state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
+            roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+        )
 
 
 async def handle_check_command(
@@ -533,6 +850,8 @@ async def handle_check_command(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     text: str,
+    split_roll_feedback: bool = False,
+    acquire_legacy_for_keeper: bool = False,
 ) -> None:
     """/coc check [技能名] [獎勵骰數] [懲罰骰數] — the player's own roll, in
     code, visible to the group immediately, instead of the Keeper (LLM)
@@ -541,196 +860,18 @@ async def handle_check_command(
     pending_checks) instead of rolling — this command is what actually rolls
     the dice, then feeds the outcome back to the Keeper as an established
     fact for it to narrate, exactly like a normal free-text turn."""
-    state = load_state(conversation_id)
-    if not state.active:
-        await reply("目前沒有進行中的遊戲。")
+    resolution = await asyncio.to_thread(_resolve_check_deterministically, conversation_id, user_id, text)
+    if resolution.reply_text:
+        await reply(resolution.reply_text)
         return
-    char = state.characters.get(user_id)
-    if not char:
-        await reply("你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+    if not resolution.should_finalize or resolution.state is None or resolution.char is None:
         return
-
-    parts = text.split()
-    skill_arg = parts[2] if len(parts) > 2 else None
-    pending = state.pending_checks.pop(user_id, None)
-
-    # A pending "choice" check (see keeper.py's offer_check_choice — e.g. 閃避
-    # vs 反擊) needs the player to name one of the options; unlike the plain
-    # skill/sanity cases below, an unmatched or missing skill_arg here puts
-    # the pending check back rather than discarding it, since silently losing
-    # the whole choice prompt over a typo would be a worse experience than a
-    # skill/sanity mismatch just falling through to a fresh check.
-    choice_skill_name = choice_display_label = None
-    choice_value = choice_bonus = choice_penalty = None
-    choice_attacker_tier = None
-    if pending and pending.get("type") == "choice":
-        if skill_arg is None:
-            state.pending_checks[user_id] = pending
-            options_text = "、".join(f"{o['label']}（{o['skill']} {o['skill_value']}%）" for o in pending["options"])
-            await reply(f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}")
-            return
-        matched = next(
-            (o for o in pending["options"]
-             if _skill_names_match(o["label"], skill_arg) or _skill_names_match(o["skill"], skill_arg)),
-            None,
-        )
-        if not matched:
-            state.pending_checks[user_id] = pending
-            options_text = "、".join(o["label"] for o in pending["options"])
-            await reply(f"沒有「{skill_arg}」這個選項，可選：{options_text}")
-            return
-        choice_skill_name, choice_display_label = matched["skill"], matched["label"]
-        choice_value, choice_bonus, choice_penalty = matched["skill_value"], matched["bonus_dice"], matched["penalty_dice"]
-        choice_attacker_tier = pending.get("attacker_tier")
-        pending = None
-    elif skill_arg is None:
-        if not pending:
-            await reply("目前沒有守密人請你做的檢定。用法：/coc check 技能名 [獎勵骰數] [懲罰骰數] 可以自己主動檢定。")
-            return
-    elif not (pending and pending.get("type") == "skill" and _skill_names_match(pending.get("skill", ""), skill_arg)):
-        # Named a skill that doesn't match what was pending (or nothing was
-        # pending, or the pending one was a SAN check): a fresh, self-initiated
-        # check, bonus/penalty from the command's own args instead.
-        pending = None
-
-    if pending and pending.get("type") == "sanity":
-        san_before = char.san
-        r = dice.sanity_check(san_before, pending.get("loss_success", "0"), pending.get("loss_failure", "1d4"))
-        char.san = r.san_after
-        outcome = "通過" if r.check.success else "失敗"
-        roll_line = f"🎲 {char.name} 的理智檢定：SAN {san_before}，擲出 {r.check.roll} → {outcome}，損失 {r.loss} 點理智（現在 SAN {r.san_after}）"
-
-        if r.risk_of_madness:
-            # COC7e Bout of Madness: losing 5+ SAN in one go triggers a
-            # separate INT check — chained the same way a Luck-spend decision
-            # chains onto a check's result, registered as a fresh pending
-            # check the player rolls themselves (never silently resolved by
-            # the Keeper). See dice.roll_madness's own docstring for why
-            # *succeeding* this INT check is the outcome that triggers
-            # madness, not failing it — easy to get backwards.
-            int_value = keeper.resolve_skill_value(char, "INT")
-            state.pending_checks[user_id] = {
-                "type": "skill", "skill": "INT", "skill_value": int_value,
-                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
-                "madness_trigger": True, "madness_realtime": True,
-            }
-            save_state(state)
-            roll_line += (
-                "\n⚠️ 這次損失達到 5 點以上，觸發 COC7e「短暫瘋狂」規則：需要做一次 INT 檢定——"
-                "成功代表當場理解了這份恐怖、陷入短暫瘋狂；失敗代表壓抑下來，沒有當場失常。"
-                "請輸入 /coc check INT。"
-            )
-            keeper_message = (
-                f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
-                f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這次損失達到 5 點以上，觸發 COC7e"
-                f"「短暫瘋狂」規則的 INT 檢定，系統已經請玩家去骰，你只能先描述受到這波衝擊當下的"
-                f"直接反應，還不知道會不會當場失常，等 INT 檢定結果出來才能繼續描述後續——不要自己"
-                f"先講角色失常了或平安無事。）"
-            )
-        else:
-            save_state(state)
-            keeper_message = (
-                f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
-                f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
-                f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
-            )
-        await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
-        return
-
-    is_pushed = False
-    attacker_tier = None
-    difficulty = "regular"  # offer_check_choice options and a self-initiated /coc check with no
-    # pending Keeper request have no difficulty concept — only a Keeper-registered plain skill_check
-    # (see keeper.py's skill_check tool difficulty param) can set this above "regular".
-    madness_trigger = False  # only set True for the INT check chained onto a >=5 SAN loss — see below
-    madness_realtime = True
-    major_wound_trigger = False  # only set True for the CON check chained onto a major wound — see
-    # keeper.py's adjust_character tool. Unlike madness_trigger, this does NOT get an early-return
-    # branch below: success here is a normal good outcome, so it flows through the ordinary Luck-spend
-    # path like any other skill check — only _build_check_narration needs to know about it.
-    if choice_skill_name is not None:
-        skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
-        display_label = choice_display_label
-        attacker_tier = choice_attacker_tier
-    else:
-        if pending:
-            skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
-            is_pushed = bool(pending.get("pushed", False))
-            difficulty = pending.get("difficulty", "regular")
-            madness_trigger = bool(pending.get("madness_trigger", False))
-            madness_realtime = bool(pending.get("madness_realtime", True))
-            major_wound_trigger = bool(pending.get("major_wound_trigger", False))
-        else:
-            skill_name = skill_arg
-            value = keeper.resolve_skill_value(char, skill_name)
-            bonus = int(parts[3]) if len(parts) > 3 and parts[3].lstrip("-").isdigit() else 0
-            penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
-            save_state(state)  # resolve_skill_value may have registered a new default-value skill
-        display_label = None
-    r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
-
-    if madness_trigger:
-        # Bout of Madness INT check (see the "sanity" branch above that
-        # registered this) — resolved separately from the generic skill-check
-        # path below since a *success* here means rolling a real madness
-        # table, not just narrating a plain check result; also deliberately
-        # skips the Luck-spend flow entirely (spending Luck to push this
-        # check toward success would be pushing toward the *worse* outcome
-        # for the character, backwards from what Luck-spend normally means).
-        tier_zh = _tier_zh_for_result(r)
-        if r.success:
-            madness = dice.roll_madness(realtime=madness_realtime)
-            roll_line = (
-                f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n"
-                f"💥 觸發短暫瘋狂（Bout of Madness）！症狀擲骰 {madness['roll']} → 「{madness['symptom']}」"
-                f"（持續約{madness['duration']}）"
-            )
-            keeper_message = (
-                f"（{char.name} 的 INT 檢定{tier_zh}，觸發了短暫瘋狂：症狀是「{madness['symptom']}」"
-                f"——{madness['guidance']}，持續約{madness['duration']}。這是已經確定的結果，"
-                f"請照這個症狀具體描述角色接下來的失常行為，不要自己另外編一個症狀，也不要忽略這個結果。）"
-            )
-        else:
-            roll_line = f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n（INT 檢定失敗，勉強壓下這股衝擊，沒有當場失常）"
-            keeper_message = (
-                f"（{char.name} 的 INT 檢定{tier_zh}，沒有觸發短暫瘋狂——角色勉強壓下了這股衝擊，"
-                f"不需要描述任何失常行為，可以正常繼續劇情，但可以帶一點事後的心理陰影或後怕細節。）"
-            )
-        await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
-        return
-
-    # Luck-spend: only proactively offered when it's a near-miss (the cheapest
-    # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
-    # excluded (handled above, already finalized by this point), and so is a
-    # Pushed Roll (COC7e optional rule: a pushed reroll's result is final,
-    # can't be bought up again with Luck on top of it).
-    luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck, difficulty)
-    gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier, difficulty)
-    if luck_options and gate_cost is not None and gate_cost <= 7:
-        state.pending_luck_decisions[user_id] = {
-            "skill_name": skill_name, "display_label": display_label,
-            "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
-            "original_tier": r.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
-            "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
-            "major_wound_trigger": major_wound_trigger,
-        }
-        save_state(state)
-        options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
-        dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
-        check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
-        attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
-        await reply(
-            f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_tier_zh_for_result(r)}{attacker_note}\n"
-            f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
-            f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
-        )
-        return
-
-    roll_line, keeper_message = _build_check_narration(
-        char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier,
-        major_wound_trigger=major_wound_trigger,
+    await _finalize_check_result(
+        conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
+        reply, send_dm, send_image, send_dm_image, split_roll_feedback,
+        acquire_legacy_for_keeper=acquire_legacy_for_keeper,
+        roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
     )
-    await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
 
 
 async def handle_luck_decision(
@@ -741,51 +882,95 @@ async def handle_luck_decision(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
+    split_roll_feedback: bool = False,
+    acquire_legacy_for_keeper: bool = False,
 ) -> None:
     """Resolves a pending Luck-spend decision (see handle_check_command above
     and app/luck.py) — either "skip" (keep the natural roll) or a tier name
     ("regular"/"hard"/"extreme") to buy up to, deducting the cost from the
     character's Luck before handing the (possibly improved) result to the
     Keeper exactly like a normal check."""
-    state = load_state(conversation_id)
-    pending = state.pending_luck_decisions.pop(user_id, None)
-    if not pending:
-        await reply("目前沒有待決定的 Luck 花費。")
+    resolution = await asyncio.to_thread(_resolve_luck_decision_deterministically, conversation_id, user_id, choice)
+    if resolution.reply_text:
+        await reply(resolution.reply_text)
         return
-    char = state.characters.get(user_id)
-    if not char:
-        await reply("找不到你的角色。")
+    if not resolution.should_finalize or resolution.state is None or resolution.char is None:
         return
-
-    tier = pending["original_tier"]
-    luck_spent = 0
-    if choice != "skip":
-        option = next((o for o in pending["options"] if o["tier"] == choice), None)
-        if not option:
-            state.pending_luck_decisions[user_id] = pending  # not a valid/still-affordable option — put it back
-            save_state(state)
-            options_text = "、".join(f"{o['tier']}（{o['cost']} 點）" for o in pending["options"])
-            await reply(f"這不是有效的選項，可選：{options_text}、skip")
-            return
-        luck_spent = option["cost"]
-        char.luck = max(0, char.luck - luck_spent)
-        tier = choice
-    save_state(state)
-
-    required_tier = pending.get("difficulty", "regular")
-    success = dice.TIER_RANK[tier] >= dice.TIER_RANK[required_tier]
-    r = dice.SkillCheckResult(
-        skill_value=pending["value"], roll=pending["roll"], bonus_dice=pending["bonus_dice"],
-        penalty_dice=pending["penalty_dice"], tier=tier, success=success, required_tier=required_tier,
+    await _finalize_check_result(
+        conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
+        reply, send_dm, send_image, send_dm_image, split_roll_feedback,
+        acquire_legacy_for_keeper=acquire_legacy_for_keeper,
+        roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
     )
-    roll_line, keeper_message = _build_check_narration(
-        char, pending["skill_name"], pending["display_label"], pending["value"], r,
-        pending["bonus_dice"], pending["penalty_dice"],
-        luck_spent=luck_spent, original_tier=pending["original_tier"],
-        attacker_tier=pending.get("attacker_tier"),
-        major_wound_trigger=bool(pending.get("major_wound_trigger", False)),
-    )
-    await _finalize_check_result(conversation_id, user_id, state, char, roll_line, keeper_message, reply, send_dm, send_image, send_dm_image)
+
+
+def _resolve_luck_decision_deterministically(
+    conversation_id: str, user_id: str, choice: str
+) -> _CheckResolution:
+    with locks.get_state_lock(conversation_id):
+        state = load_state(conversation_id)
+        pending = state.pending_luck_decisions.pop(user_id, None)
+        if not pending:
+            return _CheckResolution(reply_text="目前沒有待決定的 Luck 花費。")
+        char = state.characters.get(user_id)
+        if not char:
+            return _CheckResolution(reply_text="找不到你的角色。")
+
+        tier = pending["original_tier"]
+        luck_spent = 0
+        if choice != "skip":
+            option = next((o for o in pending["options"] if o["tier"] == choice), None)
+            if not option:
+                state.pending_luck_decisions[user_id] = pending  # not a valid option — put it back
+                save_state(state)
+                options_text = "、".join(f"{o['tier']}（{o['cost']} 點）" for o in pending["options"])
+                return _CheckResolution(reply_text=f"這不是有效的選項，可選：{options_text}、skip")
+            luck_spent = option["cost"]
+            if char.luck < luck_spent:
+                state.pending_luck_decisions[user_id] = pending
+                save_state(state)
+                return _CheckResolution(reply_text=f"目前 Luck 只有 {char.luck} 點，不足以花費 {luck_spent} 點。")
+            char.luck -= luck_spent
+            tier = choice
+
+        required_tier = pending.get("difficulty", "regular")
+        success = dice.TIER_RANK[tier] >= dice.TIER_RANK[required_tier]
+        r = dice.SkillCheckResult(
+            skill_value=pending["value"], roll=pending["roll"], bonus_dice=pending["bonus_dice"],
+            penalty_dice=pending["penalty_dice"], tier=tier, success=success, required_tier=required_tier,
+        )
+        # _build_check_narration can itself mutate char (e.g. appending "昏迷"/
+        # "倒地" to status_tags for a failed major_wound_trigger check — see
+        # its docstring), so save_state has to happen AFTER this call, not
+        # before it: keeper.run_turn's own state commit (_commit_turn_result)
+        # does a *fresh* load_state rather than persisting this same `state`
+        # object, so any mutation made after an earlier save here would
+        # otherwise be silently discarded.
+        roll_line, keeper_message = _build_check_narration(
+            char, pending["skill_name"], pending["display_label"], pending["value"], r,
+            pending["bonus_dice"], pending["penalty_dice"],
+            luck_spent=luck_spent, original_tier=pending["original_tier"],
+            attacker_tier=pending.get("attacker_tier"),
+            major_wound_trigger=bool(pending.get("major_wound_trigger", False)),
+        )
+        save_state(state)
+        outcome_text = _tier_zh_for_tier(tier, required_tier)
+        if luck_spent:
+            result_line = f"花費 {luck_spent} 點幸運：{pending['roll']} → {outcome_text}"
+        else:
+            result_line = f"維持原結果：{pending['roll']} → {outcome_text}"
+        roll_feedback_text, keeper_header = _build_split_check_feedback(
+            char.name,
+            pending["display_label"] or pending["skill_name"],
+            str(pending["value"]),
+            pending["roll"],
+            outcome_text,
+            result_line=result_line,
+        )
+        return _CheckResolution(
+            state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
+            roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+        )
 
 
 async def handle_text_message(
@@ -833,8 +1018,6 @@ async def handle_text_message(
             await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, text)
         return
 
-    private_messages: list[tuple[str, str]] = []
-    image_requests: list[tuple[str | None, int]] = []
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if not state.active:
@@ -846,13 +1029,21 @@ async def handle_text_message(
             return
 
         display_name = state.characters[user_id].name
-        resolved_location = _resolve_map_action(state, user_id, text)
-        reply_text, private_messages, image_requests = await asyncio.to_thread(
-            keeper.run_turn, state, user_id, display_name, text, resolved_location
-        )
-        await reply(reply_text)
-
-    await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
+        resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
+        async with locks.get_keeper_turn_lock(conversation_id):
+            reply_text, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_turn, state, user_id, display_name, text, resolved_location
+            )
+            await _run_post_turn_maintenance_after_output(
+                conversation_id,
+                reply,
+                reply_text,
+                send_dm,
+                send_image,
+                send_dm_image,
+                private_messages,
+                image_requests,
+            )
 
 
 def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str, dict] | None:
@@ -868,7 +1059,62 @@ def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str,
     return None
 
 
+def _map_position_snapshot(state: GroupState, user_id: str) -> tuple[str, str, str]:
+    return (
+        state.current_map_page.get(user_id, ""),
+        state.current_room_id.get(user_id, ""),
+        state.party_facing.get(user_id, "N"),
+    )
+
+
+def _save_if_map_position_changed(state: GroupState, user_id: str, before: tuple[str, str, str]) -> None:
+    if _map_position_snapshot(state, user_id) != before:
+        save_state(state)
+
+
+def _resolve_map_action_transaction(conversation_id: str, user_id: str, text: str) -> dict | None:
+    with locks.get_state_lock(conversation_id):
+        state = load_state(conversation_id)
+        before = _map_position_snapshot(state, user_id)
+        result = _resolve_map_action_core(state, user_id, text, allow_rag=False)
+        if not result.needs_rag:
+            _save_if_map_position_changed(state, user_id, before)
+            return result.context
+
+        rag_page = state.current_map_page.get(user_id, "")
+        rag_map = state.scene_maps.get(rag_page) if rag_page else None
+        rag_text = state.scenario_text
+
+    rag_room_id = None
+    if rag_map and rag_text:
+        rag_room = _find_room_via_rag(conversation_id, rag_text, rag_map, text)
+        rag_room_id = rag_room.get("id") if rag_room else None
+
+    with locks.get_state_lock(conversation_id):
+        state = load_state(conversation_id)
+        before = _map_position_snapshot(state, user_id)
+        result = _resolve_map_action_core(state, user_id, text, allow_rag=False)
+        if result.needs_rag and rag_room_id and state.current_map_page.get(user_id, "") == rag_page:
+            active_map = state.scene_maps.get(rag_page)
+            rag_room = scene_map_engine.get_room(active_map, rag_room_id) if active_map else None
+            if rag_room is not None:
+                result = _resolve_map_action_core(state, user_id, text, allow_rag=False, rag_target_room=rag_room)
+        _save_if_map_position_changed(state, user_id, before)
+        return result.context
+
+
 def _resolve_map_action(state: GroupState, user_id: str, text: str) -> dict | None:
+    return _resolve_map_action_core(state, user_id, text).context
+
+
+def _resolve_map_action_core(
+    state: GroupState,
+    user_id: str,
+    text: str,
+    *,
+    allow_rag: bool = True,
+    rag_target_room: dict | None = None,
+) -> _MapActionResolution:
     """Runs the Map/Scene Engine (app/scene_map.py) against a player's raw
     message *before* any LLM call, exactly per this feature's whole point:
     the destination room is computed deterministically in code, not guessed
@@ -889,6 +1135,7 @@ def _resolve_map_action(state: GroupState, user_id: str, text: str) -> dict | No
     current_page = state.current_map_page.get(user_id, "")
     current_room = state.current_room_id.get(user_id, "")
     facing = state.party_facing.get(user_id, "N")
+    needs_rag = False
 
     location_candidate = intent_parser.extract_entered_location(text)
     if location_candidate:
@@ -931,25 +1178,31 @@ def _resolve_map_action(state: GroupState, user_id: str, text: str) -> dict | No
             # if that comes up empty. This is deliberately best-effort: a miss
             # here just falls through to the Keeper narrating movement itself,
             # exactly like before this fallback existed.
-            target_room = scene_map_engine.find_room_by_text(active_map, text)
+            target_room = rag_target_room or scene_map_engine.find_room_by_text(active_map, text)
             if target_room is None and SCENARIO_RAG_ENABLED and state.scenario_text:
-                target_room = _find_room_via_rag(state, active_map, text)
+                if allow_rag:
+                    target_room = _find_room_via_rag(state.group_id, state.scenario_text, active_map, text)
+                else:
+                    needs_rag = True
             if target_room is not None:
                 state.current_room_id[user_id] = target_room["id"]
                 state.party_facing[user_id] = "N"  # arbitrary jump, no direction to carry forward
                 resolved_room = target_room
 
     if resolved_room is None:
-        return None
+        return _MapActionResolution(needs_rag=needs_rag)
     char = state.characters.get(user_id)
-    return {
-        "character_name": char.name if char else "",
-        "room_name": resolved_room.get("name", ""),
-        "room_description": resolved_room.get("description", ""),
-    }
+    return _MapActionResolution(
+        context={
+            "character_name": char.name if char else "",
+            "room_name": resolved_room.get("name", ""),
+            "room_description": resolved_room.get("description", ""),
+        },
+        needs_rag=needs_rag,
+    )
 
 
-def _find_room_via_rag(state: GroupState, scene_map: dict, text: str) -> dict | None:
+def _find_room_via_rag(group_id: str, scenario_text: str, scene_map: dict, text: str) -> dict | None:
     """Scenario RAG fallback for room-name resolution (see
     _resolve_map_action above) — RAG has no concept of room IDs, so the
     connection is made by searching the scenario text for the player's raw
@@ -958,7 +1211,7 @@ def _find_room_via_rag(state: GroupState, scene_map: dict, text: str) -> dict | 
     real API call on top of the Keeper's own turn when embeddings are
     configured (see scenario_rag.py), so it's only reached after the free
     local name match in _resolve_map_action has already failed."""
-    index = scenario_rag.get_index(state.group_id, state.scenario_text)
+    index = scenario_rag.get_index(group_id, scenario_text)
     results = scenario_rag.search(index, text, top_k=3)
     for result in results:
         room = scene_map_engine.find_room_by_text(scene_map, result["text"])
@@ -984,6 +1237,17 @@ def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | Non
         f"你已經有角色「{char.name}」了，這局遊戲進行中不能重新建角（避免蓋掉正在用的角色）。"
         "如果真的要換角色，請先讓這局遊戲結束（/coc end），或開新的一局（/coc newgame）。"
     )
+
+
+def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
+    with locks.get_state_lock(conversation_id):
+        state = load_state(conversation_id)
+        char = state.characters.get(user_id)
+        if not char:
+            return _AwayStateResult(error_text="你還沒有角色。")
+        char.away = away
+        save_state(state)
+        return _AwayStateResult(character_name=char.name)
 
 
 def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
@@ -1336,25 +1600,19 @@ async def _handle_coc_command(
         return
 
     if sub == "away":
-        state = load_state(conversation_id)
-        char = state.characters.get(user_id)
-        if not char:
-            await reply("你還沒有角色。")
+        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, True)
+        if result.error_text:
+            await reply(result.error_text)
             return
-        char.away = True
-        save_state(state)
-        await reply(f"{char.name} 已標記為暫離，戰鬥中會自動跳過他的回合，直到輸入「/coc back」回來。")
+        await reply(f"{result.character_name} 已標記為暫離，戰鬥中會自動跳過他的回合，直到輸入「/coc back」回來。")
         return
 
     if sub == "back":
-        state = load_state(conversation_id)
-        char = state.characters.get(user_id)
-        if not char:
-            await reply("你還沒有角色。")
+        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, False)
+        if result.error_text:
+            await reply(result.error_text)
             return
-        char.away = False
-        save_state(state)
-        await reply(f"{char.name} 回來了，恢復正常參與。")
+        await reply(f"{result.character_name} 回來了，恢復正常參與。")
         return
 
     if sub == "showpage":
