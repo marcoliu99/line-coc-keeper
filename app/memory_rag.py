@@ -25,12 +25,15 @@ survive a bot restart instead of only living in an in-memory cache.
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 
 from app import db
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+
+_logger = logging.getLogger(__name__)
 
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]+")
@@ -81,13 +84,24 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
         return None
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0 or norm_b == 0:
+def _vector_norm(vec: list[float]) -> float:
+    return math.sqrt(sum(x * x for x in vec))
+
+
+def _cosine_similarity(a: list[float], norm_a: float, b: list[float], norm_b: float) -> float:
+    """Exact cosine similarity, dot(a,b) / (|a|*|b|) — see
+    app/scenario_rag.py's identical function for the full rationale (an
+    earlier version here skipped normalization entirely assuming unit
+    vectors; reverted because the resulting small error could flip
+    _MIN_COSINE_RELEVANCE's gate or reorder near-tied results, both of which
+    operate on raw cosine values). norm_a/norm_b are computed once (see
+    append_memory, _build_index, search_memory below) and passed in rather
+    than recomputed per comparison — that reuse, not skipping normalization,
+    is what actually removes the redundant O(chunks) sqrt calls."""
+    denom = norm_a * norm_b
+    if denom == 0:
         return 0.0
-    return dot / (norm_a * norm_b)
+    return sum(x * y for x, y in zip(a, b)) / denom
 
 
 @dataclass
@@ -98,6 +112,9 @@ class _Chunk:
     tokens: list[str] = field(default_factory=list)
     term_counts: dict[str, int] = field(default_factory=dict)
     embedding: list[float] | None = None
+    # Cached |embedding| — computed once (_build_index), not recomputed per
+    # search/per comparison. See _cosine_similarity.
+    norm: float = 0.0
 
 
 @dataclass
@@ -156,9 +173,16 @@ def _build_index(raw_chunks: list[dict]) -> MemoryIndex:
         for t in term_counts:
             doc_freq[t] = doc_freq.get(t, 0) + 1
         total_length += len(tokens)
+        embedding = raw.get("embedding")
         chunks.append(_Chunk(
             label=raw.get("label", ""), text=text, tokens=tokens,
-            term_counts=term_counts, embedding=raw.get("embedding"),
+            term_counts=term_counts, embedding=embedding,
+            # Recomputed here rather than persisted alongside "embedding" in
+            # the stored dict: cheap (once per group's index rebuild, which
+            # is itself only triggered by a chunk-count change — see
+            # _get_index below) and avoids a schema migration for chunks
+            # already persisted before `norm` existed on this dataclass.
+            norm=_vector_norm(embedding) if embedding is not None else 0.0,
         ))
     avg_length = (total_length / len(chunks)) if chunks else 0.0
     has_embeddings = any(c.embedding is not None for c in chunks)
@@ -241,6 +265,7 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
     query_vec = query_embedding[0]
+    query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
@@ -250,7 +275,7 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
     for c in index.chunks:
         if c.embedding is None:
             continue
-        cos = _cosine_similarity(query_vec, c.embedding)
+        cos = _cosine_similarity(query_vec, query_norm, c.embedding, c.norm)
         cosine_scores[id(c)] = cos
         if cos >= _MIN_COSINE_RELEVANCE:
             candidates.add(id(c))
