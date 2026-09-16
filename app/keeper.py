@@ -924,7 +924,11 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            item = tool_input.get("item", "")
+            # .strip() to match add_carried_item's own normalization above — otherwise
+            # an item with incidental whitespace ("鑰匙 " vs "鑰匙") would silently fail
+            # to remove (the no-op-skip logic below would report "unchanged" since the
+            # stripped, stored string never string-equals the unstripped one being removed).
+            item = tool_input.get("item", "").strip()
             def mutate(target_state: GroupState) -> _StateMutation:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 changed = item in target_char.carried_items
@@ -941,20 +945,32 @@ def _execute_tool(
             tag = tool_input.get("tag", "").strip()
             if not tag:
                 return {"ok": False, "error": "tag 不能是空字串"}
-            if tag not in char.status_tags:
-                char.status_tags.append(tag)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = tag not in target_char.status_tags
+                if changed:
+                    target_char.status_tags.append(tag)
+                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
+            investigator, tags = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "remove_status_tag":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            tag = tool_input.get("tag", "")
-            if tag in char.status_tags:
-                char.status_tags.remove(tag)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+            # .strip() to match add_status_tag's own normalization above — otherwise a
+            # tag with incidental whitespace ("昏迷 " vs "昏迷") would silently fail to
+            # remove (the no-op-skip logic below would report "unchanged" since the
+            # stripped, stored string never string-equals the unstripped one being removed).
+            tag = tool_input.get("tag", "").strip()
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = tag in target_char.status_tags
+                if changed:
+                    target_char.status_tags.remove(tag)
+                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
+            investigator, tags = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
