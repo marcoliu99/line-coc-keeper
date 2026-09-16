@@ -8,6 +8,7 @@ there's no webhook URL or ngrok tunnel needed for this adapter at all.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 
@@ -15,6 +16,7 @@ import discord
 
 from app import commands, locks
 from app.config import DISCORD_BOT_TOKEN
+from app.models import GroupState
 from app.state import load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
@@ -153,7 +155,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
             command_text = f"/coc check {self.option}" if self.option else "/coc check"
-            state_before = load_group_state(self.conversation_id)
+            state_before = await asyncio.to_thread(load_group_state, self.conversation_id)
             before_pending = dict(state_before.pending_checks)
             before_luck_pending = dict(state_before.pending_luck_decisions)
             try:
@@ -166,19 +168,22 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
                 # partway through — see app/discord_bot.py's on_message for
                 # why (a check can already be registered/saved before a later
                 # failure in the same turn).
-                await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
-                await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
+                await _post_pending_buttons(interaction.channel, self.conversation_id, before_pending, before_luck_pending)
         finally:
             locks.release_check(self.conversation_id, self.owner_id)
 
 
-async def _post_check_buttons(channel: discord.abc.Messageable, conversation_id: str, before_pending: dict) -> None:
+async def _post_check_buttons(
+    channel: discord.abc.Messageable, conversation_id: str, state: GroupState, before_pending: dict
+) -> None:
     """Posts a roll button (or, for a "choice" check, one button per option —
     e.g. 閃避／反擊ーー in the same message) for every pending check that's
     new or changed since `before_pending` was snapshotted. Content-diffed,
     not just key-diffed, so a replaced check for the same player still gets
-    fresh buttons; a stale/duplicate pending entry never gets re-posted."""
-    state = load_group_state(conversation_id)
+    fresh buttons; a stale/duplicate pending entry never gets re-posted.
+    Takes an already-loaded `state` (see _post_pending_buttons) rather than
+    loading its own — every caller needs this same post-turn state for both
+    this and _post_luck_buttons, so there's no reason to read it twice."""
     for owner_id, check in state.pending_checks.items():
         if before_pending.get(owner_id) == check:
             continue
@@ -244,7 +249,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             await interaction.response.edit_message(view=None)
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
-            state_before = load_group_state(self.conversation_id)
+            state_before = await asyncio.to_thread(load_group_state, self.conversation_id)
             before_pending = dict(state_before.pending_checks)
             before_luck_pending = dict(state_before.pending_luck_decisions)
             try:
@@ -255,16 +260,17 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             finally:
                 # See on_message's own comment: always attempt this, even if
                 # handle_luck_decision raised partway through.
-                await _post_check_buttons(interaction.channel, self.conversation_id, before_pending)
-                await _post_luck_buttons(interaction.channel, self.conversation_id, before_luck_pending)
+                await _post_pending_buttons(interaction.channel, self.conversation_id, before_pending, before_luck_pending)
         finally:
             locks.release_check(self.conversation_id, self.owner_id)
 
 
-async def _post_luck_buttons(channel: discord.abc.Messageable, conversation_id: str, before_pending: dict) -> None:
+async def _post_luck_buttons(
+    channel: discord.abc.Messageable, conversation_id: str, state: GroupState, before_pending: dict
+) -> None:
     """Same content-diff pattern as _post_check_buttons, for pending Luck-spend
-    decisions (see app/commands.py's handle_check_command)."""
-    state = load_group_state(conversation_id)
+    decisions (see app/commands.py's handle_check_command). Takes an already-
+    loaded `state` for the same reason _post_check_buttons does."""
     for owner_id, decision in state.pending_luck_decisions.items():
         if before_pending.get(owner_id) == decision:
             continue
@@ -281,6 +287,45 @@ async def _post_luck_buttons(channel: discord.abc.Messageable, conversation_id: 
             _logger.exception(
                 "failed to post luck button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
             )
+
+
+async def _post_pending_buttons(
+    channel: discord.abc.Messageable,
+    conversation_id: str,
+    before_pending: dict,
+    before_luck_pending: dict,
+) -> None:
+    """Shared tail for every place that posts fresh check/Luck-spend buttons
+    after a command or turn finishes (CheckButton/LuckSpendButton callbacks,
+    on_message).
+
+    Loads state once for _post_check_buttons, then loads it AGAIN,
+    separately, right before _post_luck_buttons — this is NOT the same as
+    the two independently reloading right after each other with nothing in
+    between (which really would be a redundant read worth merging): every
+    channel.send() inside _post_check_buttons' loop is a real await, a point
+    where the event loop can run another handler (a concurrent /coc newgame,
+    another player's action, ...) that mutates pending_luck_decisions before
+    _post_luck_buttons ever runs. An earlier version of this function shared
+    one snapshot across both calls — cheaper, but meant _post_luck_buttons
+    could publish a stale Luck-spend view for a decision that had already
+    been resolved or cleared by the time it actually posted. Reverted after
+    review: the point-in-time freshness on the Luck pass matters more than
+    saving one SQLite read here.
+
+    Both loads run via asyncio.to_thread: load_group_state is a synchronous
+    SQLite read + JSON deserialize of the *whole* GroupState blob (scenario
+    text, full log, character sheets, ...). Calling it directly on
+    discord.py's single event-loop thread blocks Discord's gateway heartbeat
+    processing for however long that takes — on a long-running campaign
+    (a large scenario_text, hundreds of log entries) this is measurable, and
+    under load can trigger discord.py's own "Heartbeat blocked" warnings or
+    even a gateway reconnect. Every direct load_group_state call in this
+    module goes through to_thread for the same reason."""
+    state = await asyncio.to_thread(load_group_state, conversation_id)
+    await _post_check_buttons(channel, conversation_id, state, before_pending)
+    state = await asyncio.to_thread(load_group_state, conversation_id)
+    await _post_luck_buttons(channel, conversation_id, state, before_luck_pending)
 
 
 client.add_dynamic_items(CheckButton, LuckSpendButton)
@@ -352,7 +397,7 @@ async def on_message(message: discord.Message) -> None:
                 await commands.handle_unsupported_message(conversation_id, reply, "附件")
             return
 
-        state_before = load_group_state(conversation_id)
+        state_before = await asyncio.to_thread(load_group_state, conversation_id)
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
         try:
@@ -365,8 +410,7 @@ async def on_message(message: discord.Message) -> None:
             # (e.g. skill_check's tool call) before a *later* tool call in the
             # same turn blows up, and that would otherwise silently strand a
             # pending check with no button ever posted for it.
-            await _post_check_buttons(message.channel, conversation_id, before_pending)
-            await _post_luck_buttons(message.channel, conversation_id, before_luck_pending)
+            await _post_pending_buttons(message.channel, conversation_id, before_pending, before_luck_pending)
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         try:
             await reply(f"發生錯誤了：{exc}")

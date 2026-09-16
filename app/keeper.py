@@ -663,40 +663,88 @@ def _commit_turn_result(
 
 
 def _persist_memory_maintenance_state(
-    group_id: str, campaign_summary: str, trimmed_log: list[dict[str, str]]
+    group_id: str, campaign_summary: str, dropped_chunk: list[dict[str, str]]
 ) -> None:
     with locks.get_state_lock(group_id):
         latest_state = load_state(group_id)
-        latest_state.campaign_summary = campaign_summary
-        latest_state.log = trimmed_log
-        save_state(latest_state)
+        # Only apply anything if the front of the freshly-reloaded log still
+        # matches what was actually dropped — guards against e.g. a
+        # concurrent /coc newgame reset, or another maintenance pass having
+        # already trimmed this exact chunk. On a mismatch, skip BOTH the log
+        # trim and the campaign_summary update (not just the trim): the
+        # summary was derived from `dropped_chunk`, which no longer reflects
+        # what's actually at the front of the current log, so applying it
+        # anyway would bleed a stale/unrelated summary into whatever state
+        # is live now (e.g. a brand-new campaign after /coc newgame
+        # inheriting leftover summary text from the campaign it replaced).
+        # Skipping entirely costs nothing but retrying this trim on a later
+        # turn — never a correctness problem, and never a partial write.
+        n = len(dropped_chunk)
+        if latest_state.log[:n] == dropped_chunk:
+            latest_state.log = latest_state.log[n:]
+            latest_state.campaign_summary = campaign_summary
+            save_state(latest_state)
+
+
+# Guards against more than one run_post_turn_maintenance pass running
+# concurrently for the same group_id — see that function's own docstring.
+_maintenance_in_flight: set[str] = set()
 
 
 def run_post_turn_maintenance(group_id: str) -> None:
-    with locks.get_state_lock(group_id):
-        latest_state = load_state(group_id)
-        if len(latest_state.log) <= MAX_LOG_TURNS * 4:
-            return
-        keep_from = -MAX_LOG_TURNS * 2
-        base_summary = latest_state.campaign_summary
-        log_snapshot = [dict(message) for message in latest_state.log]
-        dropped_chunk = log_snapshot[:keep_from]
-        trimmed_log = log_snapshot[keep_from:]
+    """Called after every turn (see app/commands.py's
+    _spawn_post_turn_maintenance, which now fires this as an independent
+    background task rather than awaiting it inline). Only does real work
+    once the log actually crosses the trim threshold — every other call is a
+    cheap no-op. `_maintenance_in_flight` skips a call outright if a pass is
+    already running for this group_id: without it, several turns landing
+    back-to-back while the log is still above threshold would each spawn
+    their own full pass (duplicate LLM summarization + embedding API costs),
+    racing on the same log/memory-chunk data — memory_rag.append_memory in
+    particular does its own unlocked read-modify-write and is only ever
+    called from here, so serializing calls to this function is what actually
+    keeps two of its calls from stepping on each other, not any locking
+    inside append_memory itself.
 
-    # Rolling summarization (see summarize_log_chunk above): fold the
-    # chunk about to be dropped into campaign_summary *before* dropping
-    # it, instead of just discarding it — this is the one rare turn every
-    # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
-    # early plot points survive past what the verbatim log can hold.
-    campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
-    # Also persist the chunk's *original* wording into the searchable
-    # memory index (app/memory_rag.py) — campaign_summary alone would
-    # keep recompressing an already-compressed summary on every future
-    # trim, eroding fine detail a little more each pass; this keeps the
-    # verbatim text retrievable via search_memory even after that.
-    formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
-    memory_rag.append_memory(group_id, formatted_chunk)
-    _persist_memory_maintenance_state(group_id, campaign_summary, trimmed_log)
+    The check-then-add on `_maintenance_in_flight` below is itself wrapped in
+    `locks.get_state_lock(group_id)` — this function runs via
+    `asyncio.to_thread` (see _spawn_post_turn_maintenance), i.e. on real OS
+    worker threads, not just concurrent asyncio tasks, so the GIL making each
+    individual `in`/`.add()` call atomic does NOT make the pair atomic: two
+    threads could otherwise both observe `group_id not in
+    _maintenance_in_flight` before either adds it, both proceed, and run two
+    overlapping passes anyway — exactly the failure mode this guard exists
+    to prevent."""
+    with locks.get_state_lock(group_id):
+        if group_id in _maintenance_in_flight:
+            return
+        _maintenance_in_flight.add(group_id)
+    try:
+        with locks.get_state_lock(group_id):
+            latest_state = load_state(group_id)
+            if len(latest_state.log) <= MAX_LOG_TURNS * 4:
+                return
+            keep_from = -MAX_LOG_TURNS * 2
+            base_summary = latest_state.campaign_summary
+            log_snapshot = [dict(message) for message in latest_state.log]
+            dropped_chunk = log_snapshot[:keep_from]
+
+        # Rolling summarization (see summarize_log_chunk above): fold the
+        # chunk about to be dropped into campaign_summary *before* dropping
+        # it, instead of just discarding it — this is the one rare turn every
+        # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
+        # early plot points survive past what the verbatim log can hold.
+        campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
+        # Also persist the chunk's *original* wording into the searchable
+        # memory index (app/memory_rag.py) — campaign_summary alone would
+        # keep recompressing an already-compressed summary on every future
+        # trim, eroding fine detail a little more each pass; this keeps the
+        # verbatim text retrievable via search_memory even after that.
+        formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
+        memory_rag.append_memory(group_id, formatted_chunk)
+        _persist_memory_maintenance_state(group_id, campaign_summary, dropped_chunk)
+    finally:
+        _maintenance_in_flight.discard(group_id)
 
 
 def _execute_tool(
