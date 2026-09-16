@@ -381,11 +381,20 @@ def find_room_by_text(scene_map: dict[str, Any], text: str) -> dict[str, Any] | 
                 # ratio() is *guaranteed* to be 0 (it can't find any matching
                 # subsequence without at least one common character) — so this
                 # never changes the result, it only skips windows that would
-                # have scored exactly 0 anyway. On a realistic RAG-retrieved
+                # have scored exactly 0 anyway. Only holds when `name` is
+                # non-empty (ratio() special-cases two empty strings to 1.0,
+                # not 0.0) — safe here only because of the `if not name:
+                # continue` guard above; don't reuse this filter elsewhere
+                # without the same guarantee. On a realistic RAG-retrieved
                 # text chunk against a map's room names, most sliding windows
                 # share no characters with any given room name at all, so this
                 # prunes the large majority of SequenceMatcher calls.
-                if not (name_chars & set(window)):
+                # isdisjoint() (vs. `name_chars & set(window)`) never has to
+                # materialize a set for `window` and short-circuits on the
+                # first shared character — measurably cheaper, and unlike the
+                # set-intersection form it doesn't regress even when overlap
+                # is common enough that little actually gets pruned.
+                if name_chars.isdisjoint(window):
                     continue
                 ratio = difflib.SequenceMatcher(None, name, window).ratio()
                 if ratio > best_ratio:
