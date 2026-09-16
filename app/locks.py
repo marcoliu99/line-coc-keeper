@@ -22,8 +22,20 @@ within the same conversation queue up behind each other.
 from __future__ import annotations
 
 import asyncio
+import threading
 
+# Legacy conversation lock: used by the current coarse-grained flow and kept
+# unchanged while callers are migrated incrementally.
 _locks: dict[str, asyncio.Lock] = {}
+
+# State lock: future per-conversation synchronous state transactions around
+# load_state -> mutate -> save_state. It is a threading.RLock so Keeper worker
+# threads can use the same authoritative lock; async callers should not hold it
+# across slow event-loop work.
+_state_locks: dict[str, threading.RLock] = {}
+
+# Keeper turn lock: future serialization for Keeper/LLM turns per conversation.
+_keeper_turn_locks: dict[str, asyncio.Lock] = {}
 
 
 def get_conversation_lock(conversation_id: str) -> asyncio.Lock:
@@ -31,6 +43,22 @@ def get_conversation_lock(conversation_id: str) -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         _locks[conversation_id] = lock
+    return lock
+
+
+def get_state_lock(conversation_id: str) -> threading.RLock:
+    lock = _state_locks.get(conversation_id)
+    if lock is None:
+        lock = threading.RLock()
+        _state_locks[conversation_id] = lock
+    return lock
+
+
+def get_keeper_turn_lock(conversation_id: str) -> asyncio.Lock:
+    lock = _keeper_turn_locks.get(conversation_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _keeper_turn_locks[conversation_id] = lock
     return lock
 
 

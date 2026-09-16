@@ -157,11 +157,10 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             before_pending = dict(state_before.pending_checks)
             before_luck_pending = dict(state_before.pending_luck_decisions)
             try:
-                async with locks.get_conversation_lock(self.conversation_id):
-                    await commands.handle_check_command(
-                        self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image,
-                        command_text, split_roll_feedback=True
-                    )
+                await commands.handle_check_command(
+                    self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image,
+                    command_text, split_roll_feedback=True, acquire_legacy_for_keeper=True
+                )
             finally:
                 # Always attempt this, even if handle_check_command raised
                 # partway through — see app/discord_bot.py's on_message for
@@ -249,11 +248,10 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             before_pending = dict(state_before.pending_checks)
             before_luck_pending = dict(state_before.pending_luck_decisions)
             try:
-                async with locks.get_conversation_lock(self.conversation_id):
-                    await commands.handle_luck_decision(
-                        self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image,
-                        _send_dm_image, split_roll_feedback=True
-                    )
+                await commands.handle_luck_decision(
+                    self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image,
+                    _send_dm_image, split_roll_feedback=True, acquire_legacy_for_keeper=True
+                )
             finally:
                 # See on_message's own comment: always attempt this, even if
                 # handle_luck_decision raised partway through.
