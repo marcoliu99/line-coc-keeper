@@ -1602,6 +1602,16 @@ async def _handle_coc_command(
             if state.game_started:
                 return  # someone else already ran /coc start while this one was in flight
             opening_text = extracted["text"]
+            # Every other code path that appends to state.log does so in a
+            # user/assistant pair (see keeper.py's _commit_turn_result) — this
+            # has to keep that invariant too, not just append a lone assistant
+            # entry. Anthropic's Messages API requires the *first* message in
+            # a conversation to have role "user"; a log that starts with (or
+            # only contains) an "assistant" entry makes every subsequent turn
+            # raise on the next run_conversation call, and since that failure
+            # happens before _commit_turn_result ever runs, state.log never
+            # advances past it — the whole game is stuck until /coc newgame.
+            state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
             state.log.append({"role": "assistant", "content": opening_text})
             state.game_started = True
             save_state(state)
