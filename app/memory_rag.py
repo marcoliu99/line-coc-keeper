@@ -84,42 +84,24 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
         return None
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """True cosine similarity is dot(a,b) / (|a|*|b|), but OpenAI's embedding
-    models (the only source of vectors that ever reach this function — see
-    _embed_texts below) are documented to return unit-length vectors, and
-    this was verified directly against the actual configured model
-    (SCENARIO_RAG_EMBEDDING_MODEL): 5 real embedding calls of varying length
-    and language all came back with |v| within ~3e-4 of 1.0. With both norms
-    already ~1, the division is a no-op that still costs two full
-    sum-of-squares + two sqrt calls per comparison — for the *same* query
-    vector, recomputed identically against every chunk in the index every
-    search. Skipping it is a real, not approximate, speedup for this
-    specific vector source; if a non-unit-normalized embedding source is
-    ever plugged in here, this function would need its normalization back."""
-    return sum(x * y for x, y in zip(a, b))
+def _vector_norm(vec: list[float]) -> float:
+    return math.sqrt(sum(x * x for x in vec))
 
 
-_UNIT_NORM_TOLERANCE = 0.05  # |1 - |v|| beyond this is treated as a real violation, not float noise
-
-
-def _check_unit_norm(vec: list[float], context: str) -> None:
-    """Safety net for the unit-norm assumption _cosine_similarity depends on
-    — see app/scenario_rag.py's identical helper for the full rationale.
-    Logs (never raises) if a vector's norm drifts meaningfully from 1.0.
-    Called at most once per append_memory() call (on the newly-embedded
-    chunk) and once per search_memory() call (on the query vector) — O(1)
-    per call, not O(chunks) — so it doesn't undermine the per-chunk speedup
-    _cosine_similarity exists for."""
-    norm = math.sqrt(sum(x * x for x in vec))
-    if abs(1.0 - norm) > _UNIT_NORM_TOLERANCE:
-        _logger.warning(
-            "memory_rag: %s embedding has |v|=%.4f, expected ~1.0 — "
-            "SCENARIO_RAG_EMBEDDING_MODEL may no longer be producing "
-            "unit-normalized vectors, which silently degrades "
-            "_cosine_similarity's ranking (see its docstring).",
-            context, norm,
-        )
+def _cosine_similarity(a: list[float], norm_a: float, b: list[float], norm_b: float) -> float:
+    """Exact cosine similarity, dot(a,b) / (|a|*|b|) — see
+    app/scenario_rag.py's identical function for the full rationale (an
+    earlier version here skipped normalization entirely assuming unit
+    vectors; reverted because the resulting small error could flip
+    _MIN_COSINE_RELEVANCE's gate or reorder near-tied results, both of which
+    operate on raw cosine values). norm_a/norm_b are computed once (see
+    append_memory, _build_index, search_memory below) and passed in rather
+    than recomputed per comparison — that reuse, not skipping normalization,
+    is what actually removes the redundant O(chunks) sqrt calls."""
+    denom = norm_a * norm_b
+    if denom == 0:
+        return 0.0
+    return sum(x * y for x, y in zip(a, b)) / denom
 
 
 @dataclass
@@ -130,6 +112,9 @@ class _Chunk:
     tokens: list[str] = field(default_factory=list)
     term_counts: dict[str, int] = field(default_factory=dict)
     embedding: list[float] | None = None
+    # Cached |embedding| — computed once (_build_index), not recomputed per
+    # search/per comparison. See _cosine_similarity.
+    norm: float = 0.0
 
 
 @dataclass
@@ -169,7 +154,6 @@ def append_memory(group_id: str, text: str) -> None:
         embedded = _embed_texts([text])
         if embedded is not None:
             embedding = embedded[0]
-            _check_unit_norm(embedding, "memory chunk")
     except Exception:
         pass
     raw_chunks.append({"label": label, "text": text, "embedding": embedding})
@@ -189,9 +173,16 @@ def _build_index(raw_chunks: list[dict]) -> MemoryIndex:
         for t in term_counts:
             doc_freq[t] = doc_freq.get(t, 0) + 1
         total_length += len(tokens)
+        embedding = raw.get("embedding")
         chunks.append(_Chunk(
             label=raw.get("label", ""), text=text, tokens=tokens,
-            term_counts=term_counts, embedding=raw.get("embedding"),
+            term_counts=term_counts, embedding=embedding,
+            # Recomputed here rather than persisted alongside "embedding" in
+            # the stored dict: cheap (once per group's index rebuild, which
+            # is itself only triggered by a chunk-count change — see
+            # _get_index below) and avoids a schema migration for chunks
+            # already persisted before `norm` existed on this dataclass.
+            norm=_vector_norm(embedding) if embedding is not None else 0.0,
         ))
     avg_length = (total_length / len(chunks)) if chunks else 0.0
     has_embeddings = any(c.embedding is not None for c in chunks)
@@ -274,7 +265,7 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
     query_vec = query_embedding[0]
-    _check_unit_norm(query_vec, "query")
+    query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
@@ -284,7 +275,7 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
     for c in index.chunks:
         if c.embedding is None:
             continue
-        cos = _cosine_similarity(query_vec, c.embedding)
+        cos = _cosine_similarity(query_vec, query_norm, c.embedding, c.norm)
         cosine_scores[id(c)] = cos
         if cos >= _MIN_COSINE_RELEVANCE:
             candidates.add(id(c))

@@ -64,6 +64,9 @@ class _Chunk:
     tokens: list[str] = field(default_factory=list)
     term_counts: dict[str, int] = field(default_factory=dict)
     embedding: list[float] | None = None
+    # Cached |embedding| — computed once (build_index / _load_index_from_disk),
+    # not recomputed per search/per comparison. See _cosine_similarity.
+    norm: float = 0.0
 
 
 @dataclass
@@ -184,49 +187,40 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
         return None
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """True cosine similarity is dot(a,b) / (|a|*|b|), but OpenAI's embedding
-    models (the only source of vectors that ever reach this function — see
-    _embed_texts below) are documented to return unit-length vectors, and
-    this was verified directly against the actual configured model
-    (SCENARIO_RAG_EMBEDDING_MODEL): 5 real embedding calls of varying length
-    and language all came back with |v| within ~3e-4 of 1.0. With both norms
-    already ~1, the division is a no-op that still costs two full
-    sum-of-squares + two sqrt calls per comparison — for the *same* query
-    vector, recomputed identically against every chunk in the index every
-    search. Skipping it is a real, not approximate, speedup for this
-    specific vector source; if a non-unit-normalized embedding source is
-    ever plugged in here, this function would need its normalization back."""
-    return sum(x * y for x, y in zip(a, b))
+def _vector_norm(vec: list[float]) -> float:
+    return math.sqrt(sum(x * x for x in vec))
 
 
-_UNIT_NORM_TOLERANCE = 0.05  # |1 - |v|| beyond this is treated as a real violation, not float noise
+def _cosine_similarity(a: list[float], norm_a: float, b: list[float], norm_b: float) -> float:
+    """Exact cosine similarity, dot(a,b) / (|a|*|b|) — norms are passed in
+    pre-computed rather than recomputed here.
 
+    An earlier version of this function skipped normalization entirely,
+    assuming OpenAI's embeddings are unit vectors (measured at the time as
+    |v| within ~3e-4 of 1.0 for the configured model). That was reverted:
+    even that small a deviation isn't negligible here, because the result
+    feeds a hard threshold (_MIN_COSINE_RELEVANCE, calibrated in raw cosine
+    units) and a full ranking sort — a chunk whose true cosine sits within
+    ~1e-3 of the threshold, or within ~1e-3 of another chunk's score, could
+    have the gate or the ordering flip purely from which side of 1.0 each
+    vector's actual norm happened to land on. That's a real, not
+    theoretical, correctness risk given how close real production queries
+    scored to the threshold (see _MIN_COSINE_RELEVANCE's own comment).
 
-def _check_unit_norm(vec: list[float], context: str) -> None:
-    """Safety net for the unit-norm assumption _cosine_similarity depends on:
-    logs (never raises) if a vector's norm has drifted meaningfully from 1.0,
-    which would mean _cosine_similarity is silently returning wrong-scale
-    values instead of real cosine similarities — a ranking-quality bug, not a
-    crash, so easy to miss without this. The ~3e-4 deviation measured
-    directly against the configured model leaves a lot of room before
-    _UNIT_NORM_TOLERANCE (0.05) trips, so this should stay silent under
-    normal operation and only fire on an actual config/provider change (e.g.
-    SCENARIO_RAG_EMBEDDING_MODEL switched to a non-unit-normalized model).
-
-    Called at most once per search() call (on the query vector) and once per
-    build_index() call (on one representative chunk embedding) — O(1) per
-    call, not O(chunks) — so it doesn't undermine the per-chunk speedup
-    _cosine_similarity exists for."""
-    norm = math.sqrt(sum(x * x for x in vec))
-    if abs(1.0 - norm) > _UNIT_NORM_TOLERANCE:
-        _logger.warning(
-            "scenario_rag: %s embedding has |v|=%.4f, expected ~1.0 — "
-            "SCENARIO_RAG_EMBEDDING_MODEL may no longer be producing "
-            "unit-normalized vectors, which silently degrades "
-            "_cosine_similarity's ranking (see its docstring).",
-            context, norm,
-        )
+    What's still worth keeping from that version: recomputing norm_a (the
+    query vector's norm) and norm_b (a chunk's norm) from scratch on every
+    single comparison was the actual waste — norm_a is identical across all
+    O(chunks) comparisons in one search, and norm_b never changes once an
+    embedding is computed. So both are computed ONCE (see build_index,
+    _load_index_from_disk, and search below) and cached/passed in here,
+    instead of being recomputed per comparison — this keeps ~the same
+    speedup as skipping normalization, without the approximation, and
+    without depending on the embedding source producing unit vectors at
+    all."""
+    denom = norm_a * norm_b
+    if denom == 0:
+        return 0.0
+    return sum(x * y for x, y in zip(a, b)) / denom
 
 
 def _compute_bm25_stats(chunks: list[_Chunk]) -> tuple[dict[str, int], float]:
@@ -271,7 +265,7 @@ def build_index(scenario_text: str) -> ScenarioIndex:
     if embeddings is not None:
         for chunk, emb in zip(chunks, embeddings):
             chunk.embedding = emb
-        _check_unit_norm(embeddings[0], "index chunk")
+            chunk.norm = _vector_norm(emb)
 
     return ScenarioIndex(
         chunks=chunks, doc_freq=doc_freq, avg_length=avg_length, text_hash=text_hash, has_embeddings=has_embeddings
@@ -350,7 +344,7 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
     query_vec = query_embedding[0]
-    _check_unit_norm(query_vec, "query")
+    query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
@@ -360,7 +354,7 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     for c in index.chunks:
         if c.embedding is None:
             continue
-        cos = _cosine_similarity(query_vec, c.embedding)
+        cos = _cosine_similarity(query_vec, query_norm, c.embedding, c.norm)
         cosine_scores[id(c)] = cos
         if cos >= _MIN_COSINE_RELEVANCE:
             candidates.add(id(c))
@@ -407,7 +401,16 @@ def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
         data = db.get_json("scenario_indexes", group_id)
         if data is None:
             return None
-        chunks = [_Chunk(page=c["page"], text=c["text"], embedding=c.get("embedding")) for c in data["chunks"]]
+        chunks = []
+        for c in data["chunks"]:
+            embedding = c.get("embedding")
+            chunks.append(_Chunk(
+                page=c["page"], text=c["text"], embedding=embedding,
+                # Recomputed on load rather than persisted: cheap (O(chunks),
+                # once per bot restart) and avoids needing a schema migration
+                # for indexes saved before `norm` existed on this dataclass.
+                norm=_vector_norm(embedding) if embedding is not None else 0.0,
+            ))
         doc_freq, avg_length = _compute_bm25_stats(chunks)
         return ScenarioIndex(
             chunks=chunks,
