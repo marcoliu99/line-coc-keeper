@@ -542,12 +542,16 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **這個專案現在怎麼做**：
   - 新增 `/coc start` 指令（手動觸發，不是建角後自動發生——多人團常常不是所有人同時建好角色，交給玩家自己判斷「大家都準備好了」再觸發比較合理）。條件：劇本要先上傳、至少要有一位角色，且同一局只能觸發一次（`GroupState.game_started` 旗標擋重複觸發，想重來要 `/coc newgame`）。
   - 開場白內容分兩層：**優先**用新增的 `app/scenario_intro.py`（跟 `app/scenario_index.py` 抽 NPC／地點索引同一套「強制 tool call」手法）判斷劇本裡有沒有作者自己寫好、可以直接唸給玩家聽的開場文字——很多正式劇本本來就有這種段落，找到的話改寫成繁體中文直接用（忠於原文內容和語氣，但不逐字照抄），不用另外呼叫 LLM 生成，省一次不必要的花費；**找不到才**讓守密人自己寫，走正常的 `keeper.run_turn` 路徑，用一句 meta 指令（不是玩家台詞）請它根據劇本背景生一段開場白，控制在三百字內、第二人稱、不能假設玩家已經做了什麼、不能在開場白裡問問題。
-  - 找到現成開場文字時，直接把它寫進 `state.log`（當成一筆 assistant 訊息），不額外打一次 LLM；後續對話會自然接續這個開場，不會被 Keeper 誤讀成「還沒發生過的事」。
+  - 找到現成開場文字時，直接把它寫進 `state.log`（一筆 `user` 加一筆 `assistant`，維持跟 `_commit_turn_result` 一樣的交替慣例——原因見下方「code review 抓到的問題」），不額外打一次 LLM；後續對話會自然接續這個開場，不會被 Keeper 誤讀成「還沒發生過的事」。
 - **實測過**（真的 LLM 呼叫）：
   - `scenario_intro.extract_opening_narration`：一份劇本有明確「唸給玩家聽」的引導段落時正確判斷 found=true 並抽出忠於原文的改寫；另一份劇本只有背景說明／NPC／地點／劇情大綱、沒有真正寫給玩家聽的段落時，正確判斷 found=false，不會把背景說明硬套成開場白。空劇本、沒設定 LLM_PROVIDER 都正確回傳 found=false，不拋例外。
   - `/coc start` 完整流程：找到現成開場文字時正確寫入 log、標記 `game_started`、不重複觸發第二次（第二次呼叫會被擋下並提示已經開始過，log 也確認沒有被多寫一筆）；找不到時正確落到 LLM 生成路徑，關掉 Scenario RAG 時能正確用到劇本裡的真實地名、人名、情節（不是空泛帶過）。沒有劇本、沒有角色兩種擋下情境也都測過，訊息正確。
 - **過程中發現、順便修正的一個問題**：Scenario RAG 開啟時，`/coc start` 是整場遊戲的第一輪，沒有任何歷史對話可以借力，守密人一開始只會用「背景設定」「開場地點」這種籠統詞查 `search_scenario`，查不到就直接放棄、寫出空泛敘述。把 fallback 用的 meta 指令改得更明確——告訴它「查不到『開場』兩個字不代表沒有背景資料，換用劇本標題／委託人／地點等關鍵字再查」，不要一查不到就放棄。
+- **code review 抓到的問題，已經修正**：
+  1. **🔴 Blocking**：找到現成開場文字那條路，原本只塞一筆 `assistant` 進 `state.log`，沒有前面的 `user` 訊息——Anthropic Messages API 規定第一則訊息角色必須是 `user`，會讓下一輪玩家講話時直接 `BadRequestError`，而且因為這個例外發生在 `_commit_turn_result` 存檔之前，`state.log` 永遠卡住，整局遊戲從此打不動，除非 `/coc newgame` 重來。已補上一筆 `user` 開場指令墊在前面，並在 `LLM_PROVIDER=openai` 端到端測過、也用假的 Anthropic client 攔截驗證過組出來的第一則訊息角色確實是 `user`。
+  2. **狀態鎖一致性**：`/coc start` 兩條路徑原本各自的 `load_state → 改 game_started → save_state` 都沒有包在 `locks.get_state_lock` 裡，是整個 change 裡唯二漏掉的讀改存操作；現在都補上了，跟這個 repo 其他所有讀改存的地方一致。
+  3. **`get_keeper_turn_lock`**：fallback 路徑呼叫 `keeper.run_turn` 原本沒有包這個鎖，這個 repo 其他呼叫 `run_turn` 的地方都有包；現在補上了。
+  4. **上傳新劇本沒有重置 `game_started`**：現在 `handle_pdf_upload` 會跟著 `scenario_text`／`active` 等欄位一起把 `game_started` 重置為 `False`，中途換劇本不用再記得先 `/coc newgame`。
 - **還是有的限制**：
-  1. 開場白只在 `/coc start` 這個時間點產生一次，之後如果劇本內容有更新（重新上傳 PDF）不會自動重新觸發——但重新上傳 PDF 本來就會重置 `state.active`／`scenario_text` 等欄位，`game_started` 目前沒有跟著一起重置，如果有這個情境要注意手動配合 `/coc newgame`。
-  2. Scenario RAG 模式下，`search_scenario` 對「劇本語言跟查詢語言不同、劇本內容篇幅較小或用詞不夠具體」這幾種情況查詢效果本來就有限（見上面第 22 項「還是有的限制」）——這次只是把 fallback 的指令改得更會嘗試查詢，沒有解決 RAG 檢索品質本身的問題；劇本語言與查詢用詞落差夠大時，守密人仍然可能查不到東西、只能寫出比較空泛的開場白（但不會編造劇本沒有的具體事實）。
-  3. 這份 changelog 從第 17 項開始有重複編號（前後兩段各自的 merge 歷史各自編了一次 17～25），是先前合併 `main`／`discord-only` 兩條分支遺留下來的既有問題，不在這次修正範圍內。
+  1. Scenario RAG 模式下，`search_scenario` 對「劇本語言跟查詢語言不同、劇本內容篇幅較小或用詞不夠具體」這幾種情況查詢效果本來就有限（見上面第 22 項「還是有的限制」）——這次只是把 fallback 的指令改得更會嘗試查詢，沒有解決 RAG 檢索品質本身的問題；劇本語言與查詢用詞落差夠大時，守密人仍然可能查不到東西、只能寫出比較空泛的開場白（但不會編造劇本沒有的具體事實）。
+  2. 這份 changelog 從第 17 項開始有重複編號（前後兩段各自的 merge 歷史各自編了一次 17～25），是先前合併 `main`／`discord-only` 兩條分支遺留下來的既有問題，不在這次修正範圍內。

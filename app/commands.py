@@ -163,6 +163,9 @@ async def handle_pdf_upload(
         state.scenario_title = title
         state.active = True
         state.openai_previous_response_id = ""
+        state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
+        # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
+        # first would find /coc start permanently refusing ("already started") for the new scenario.
         state.pregens = []  # clear the previous scenario's cached pregens — otherwise
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.
@@ -1671,23 +1674,25 @@ async def _handle_coc_command(
         extracted = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
 
         if extracted["found"]:
-            state = load_state(conversation_id)  # reload: the extraction call may have taken a while
-            if state.game_started:
-                return  # someone else already ran /coc start while this one was in flight
             opening_text = extracted["text"]
-            # Every other code path that appends to state.log does so in a
-            # user/assistant pair (see keeper.py's _commit_turn_result) — this
-            # has to keep that invariant too, not just append a lone assistant
-            # entry. Anthropic's Messages API requires the *first* message in
-            # a conversation to have role "user"; a log that starts with (or
-            # only contains) an "assistant" entry makes every subsequent turn
-            # raise on the next run_conversation call, and since that failure
-            # happens before _commit_turn_result ever runs, state.log never
-            # advances past it — the whole game is stuck until /coc newgame.
-            state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
-            state.log.append({"role": "assistant", "content": opening_text})
-            state.game_started = True
-            save_state(state)
+            with locks.get_state_lock(conversation_id):
+                state = load_state(conversation_id)  # reload: the extraction call may have taken a while
+                if state.game_started:
+                    return  # someone else already ran /coc start while this one was in flight
+                # Every other code path that appends to state.log does so in a
+                # user/assistant pair (see keeper.py's _commit_turn_result) —
+                # this has to keep that invariant too, not just append a lone
+                # assistant entry. Anthropic's Messages API requires the
+                # *first* message in a conversation to have role "user"; a
+                # log that starts with (or only contains) an "assistant"
+                # entry makes every subsequent turn raise on the next
+                # run_conversation call, and since that failure happens
+                # before _commit_turn_result ever runs, state.log never
+                # advances past it — the whole game is stuck until /coc newgame.
+                state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
+                state.log.append({"role": "assistant", "content": opening_text})
+                state.game_started = True
+                save_state(state)
             await reply(opening_text)
             return
 
@@ -1705,12 +1710,14 @@ async def _handle_coc_command(
             "對調查員說話。這是遊戲的第一段敘述，還沒有任何人採取行動，不要假設玩家已經做了什麼、"
             "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
         )
-        keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-            keeper.run_turn, state, user_id, "守密人", keeper_message, None
-        )
-        state = load_state(conversation_id)
-        state.game_started = True
-        save_state(state)
+        async with locks.get_keeper_turn_lock(conversation_id):
+            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_turn, state, user_id, "守密人", keeper_message, None
+            )
+        with locks.get_state_lock(conversation_id):
+            state = load_state(conversation_id)
+            state.game_started = True
+            save_state(state)
         await _run_post_turn_maintenance_after_output(
             conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
         )
