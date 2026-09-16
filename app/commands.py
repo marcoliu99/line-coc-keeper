@@ -408,11 +408,21 @@ def _spawn_post_turn_maintenance(conversation_id: str) -> None:
     message for this conversation — even from a different player, doing
     something with nothing to do with campaign_summary or memory indexing —
     sat blocked behind that lock for however long maintenance happened to
-    take. keeper.run_post_turn_maintenance takes its own locks.get_state_lock
-    internally for the read-modify-write it actually performs (state.log,
-    campaign_summary, the memory index), so detaching it from the turn-level
-    locks here doesn't remove any protection on those fields — it only stops
-    it from also holding up unrelated turns that never needed to wait on it."""
+    take.
+
+    Detaching this from the turn-level locks is only safe because
+    keeper.run_post_turn_maintenance was hardened to tolerate running fully
+    unlocked around its own slow LLM/embedding calls: a per-group_id
+    in-flight guard keeps two passes for the same conversation from ever
+    overlapping, and its persist step re-derives what to trim from a freshly
+    reloaded state.log (content-matched against the chunk it actually
+    summarized) instead of blindly overwriting with a pre-computed snapshot
+    — otherwise a concurrent turn's _commit_turn_result landing in the gap
+    while maintenance is mid-flight would have its new log entries silently
+    discarded when maintenance's stale snapshot got written back. See
+    keeper.py's run_post_turn_maintenance/_persist_memory_maintenance_state
+    docstrings for the details; this was found and confirmed by data-loss
+    reproduction during PR review, not from first-principles design."""
     task = asyncio.create_task(_run_post_turn_maintenance_safely(conversation_id))
     _pending_maintenance_tasks.add(task)
     task.add_done_callback(_pending_maintenance_tasks.discard)

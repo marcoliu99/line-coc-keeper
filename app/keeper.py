@@ -663,40 +663,81 @@ def _commit_turn_result(
 
 
 def _persist_memory_maintenance_state(
-    group_id: str, campaign_summary: str, trimmed_log: list[dict[str, str]]
+    group_id: str, campaign_summary: str, dropped_chunk: list[dict[str, str]]
 ) -> None:
     with locks.get_state_lock(group_id):
         latest_state = load_state(group_id)
         latest_state.campaign_summary = campaign_summary
-        latest_state.log = trimmed_log
+        # Trim exactly the entries just folded into campaign_summary above,
+        # off the FRONT of the freshly-reloaded log — NOT a blind overwrite
+        # with a log snapshot computed before the slow summarize_log_chunk/
+        # append_memory calls above (that used to be the bug here: since
+        # run_post_turn_maintenance can now run as an independent background
+        # task — see app/commands.py's _spawn_post_turn_maintenance — a
+        # concurrent turn's own _commit_turn_result can append new entries
+        # to the *back* of the log while this function's caller was still
+        # mid-summarization; unconditionally replacing state.log with a
+        # stale pre-computed list would silently discard those new entries).
+        # Only trim if the front of the fresh log still matches what was
+        # actually dropped — guards against e.g. a concurrent /coc newgame,
+        # or (should the in-flight guard below ever be bypassed) another
+        # maintenance pass having already trimmed it. Skipping in that
+        # mismatch case costs nothing but retrying this trim on a later
+        # turn, never a correctness problem.
+        n = len(dropped_chunk)
+        if latest_state.log[:n] == dropped_chunk:
+            latest_state.log = latest_state.log[n:]
         save_state(latest_state)
 
 
-def run_post_turn_maintenance(group_id: str) -> None:
-    with locks.get_state_lock(group_id):
-        latest_state = load_state(group_id)
-        if len(latest_state.log) <= MAX_LOG_TURNS * 4:
-            return
-        keep_from = -MAX_LOG_TURNS * 2
-        base_summary = latest_state.campaign_summary
-        log_snapshot = [dict(message) for message in latest_state.log]
-        dropped_chunk = log_snapshot[:keep_from]
-        trimmed_log = log_snapshot[keep_from:]
+# Guards against more than one run_post_turn_maintenance pass running
+# concurrently for the same group_id — see that function's own docstring.
+_maintenance_in_flight: set[str] = set()
 
-    # Rolling summarization (see summarize_log_chunk above): fold the
-    # chunk about to be dropped into campaign_summary *before* dropping
-    # it, instead of just discarding it — this is the one rare turn every
-    # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
-    # early plot points survive past what the verbatim log can hold.
-    campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
-    # Also persist the chunk's *original* wording into the searchable
-    # memory index (app/memory_rag.py) — campaign_summary alone would
-    # keep recompressing an already-compressed summary on every future
-    # trim, eroding fine detail a little more each pass; this keeps the
-    # verbatim text retrievable via search_memory even after that.
-    formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
-    memory_rag.append_memory(group_id, formatted_chunk)
-    _persist_memory_maintenance_state(group_id, campaign_summary, trimmed_log)
+
+def run_post_turn_maintenance(group_id: str) -> None:
+    """Called after every turn (see app/commands.py's
+    _spawn_post_turn_maintenance, which now fires this as an independent
+    background task rather than awaiting it inline). Only does real work
+    once the log actually crosses the trim threshold — every other call is a
+    cheap no-op. `_maintenance_in_flight` skips a call outright if a pass is
+    already running for this group_id: without it, several turns landing
+    back-to-back while the log is still above threshold would each spawn
+    their own full pass (duplicate LLM summarization + embedding API costs),
+    racing on the same log/memory-chunk data — memory_rag.append_memory in
+    particular does its own unlocked read-modify-write and is only ever
+    called from here, so serializing calls to this function is what actually
+    keeps two of its calls from stepping on each other, not any locking
+    inside append_memory itself."""
+    if group_id in _maintenance_in_flight:
+        return
+    _maintenance_in_flight.add(group_id)
+    try:
+        with locks.get_state_lock(group_id):
+            latest_state = load_state(group_id)
+            if len(latest_state.log) <= MAX_LOG_TURNS * 4:
+                return
+            keep_from = -MAX_LOG_TURNS * 2
+            base_summary = latest_state.campaign_summary
+            log_snapshot = [dict(message) for message in latest_state.log]
+            dropped_chunk = log_snapshot[:keep_from]
+
+        # Rolling summarization (see summarize_log_chunk above): fold the
+        # chunk about to be dropped into campaign_summary *before* dropping
+        # it, instead of just discarding it — this is the one rare turn every
+        # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
+        # early plot points survive past what the verbatim log can hold.
+        campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
+        # Also persist the chunk's *original* wording into the searchable
+        # memory index (app/memory_rag.py) — campaign_summary alone would
+        # keep recompressing an already-compressed summary on every future
+        # trim, eroding fine detail a little more each pass; this keeps the
+        # verbatim text retrievable via search_memory even after that.
+        formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
+        memory_rag.append_memory(group_id, formatted_chunk)
+        _persist_memory_maintenance_state(group_id, campaign_summary, dropped_chunk)
+    finally:
+        _maintenance_in_flight.discard(group_id)
 
 
 def _execute_tool(
