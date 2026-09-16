@@ -370,11 +370,23 @@ def find_room_by_text(scene_map: dict[str, Any], text: str) -> dict[str, Any] | 
         name = str(room.get("name", "")).strip()
         if not name:
             continue
+        name_chars = set(name)
         for window_len in (len(name) - 1, len(name), len(name) + 1):
             if window_len < 1:
                 continue
             for i in range(max(1, len(text) - window_len + 1)):
                 window = text[i : i + window_len]
+                # Cheap pre-filter before the expensive SequenceMatcher DP call:
+                # if this window shares zero characters with the room name,
+                # ratio() is *guaranteed* to be 0 (it can't find any matching
+                # subsequence without at least one common character) — so this
+                # never changes the result, it only skips windows that would
+                # have scored exactly 0 anyway. On a realistic RAG-retrieved
+                # text chunk against a map's room names, most sliding windows
+                # share no characters with any given room name at all, so this
+                # prunes the large majority of SequenceMatcher calls.
+                if not (name_chars & set(window)):
+                    continue
                 ratio = difflib.SequenceMatcher(None, name, window).ratio()
                 if ratio > best_ratio:
                     best_ratio, best_room = ratio, room
