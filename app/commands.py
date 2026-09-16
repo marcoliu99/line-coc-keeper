@@ -95,6 +95,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 
 【其他】
 ・/coc index → 手動重建 NPC／怪物與地點索引（上傳劇本 PDF 時已經會自動建立一次，這個指令是需要重建時才用）
+・/coc setpersona <文字> → 自訂這個群組守密人的語氣風格（預設是冷酷旁觀者），/coc setpersona reset 重設回預設
 ・/coc newgame → 重置這個群組，開始全新一局
 ・/coc end → 結束目前這局遊戲
 ・/roll 1d100 或 /roll 3d6+2 → 單純擲骰，不經過守密人
@@ -427,6 +428,27 @@ _CHECK_TIER_ZH = {
 }
 
 
+def _tier_zh_for_tier(tier: str, required: str) -> str:
+    """Human-readable outcome for one (tier, required_tier) pair, accounting
+    for a required difficulty tier (dice.SkillCheckResult.required_tier —
+    see keeper.py's skill_check tool's `difficulty` param) higher than the
+    roll's own intrinsic tier. COC7e: a task flagged Hard/Extreme needs a
+    roll of at least that tier to count as a success at all — a Regular-tier
+    roll against a Hard-required task is simply a failure, not a partial
+    success, and must be displayed as one rather than misleadingly showing
+    "成功" for a check that actually failed."""
+    if required == "regular" or tier not in ("regular", "hard"):
+        return _CHECK_TIER_ZH[tier]
+    if dice.TIER_RANK[tier] >= dice.TIER_RANK[required]:
+        return _CHECK_TIER_ZH[tier]
+    required_zh = {"hard": "困難成功", "extreme": "極難成功"}[required]
+    return f"失敗（擲骰達到「{_CHECK_TIER_ZH[tier]}」，但這次判定需要至少「{required_zh}」）"
+
+
+def _tier_zh_for_result(r) -> str:
+    return _tier_zh_for_tier(r.tier, getattr(r, "required_tier", "regular"))
+
+
 @dataclass
 class _CheckResolution:
     state: GroupState | None = None
@@ -472,6 +494,7 @@ def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tie
 def _build_check_narration(
     char, skill_name: str, display_label: str | None, value: int, r, bonus: int, penalty: int,
     luck_spent: int = 0, original_tier: str | None = None, attacker_tier: str | None = None,
+    major_wound_trigger: bool = False,
 ) -> tuple[str, str]:
     """Builds (roll_line, keeper_message) for a resolved skill/choice check —
     shared by the immediate-finalize path and handle_luck_decision (after a
@@ -479,12 +502,19 @@ def _build_check_narration(
     and the Keeper can see that the tier was bought up, not rolled naturally.
     attacker_tier (only set for a Dodge/Fight Back choice — see
     keeper.py's offer_check_choice/npc_skill_check) triggers the COC7e
-    opposed-roll comparison, named explicitly in both messages."""
-    tier_zh = _CHECK_TIER_ZH[r.tier]
+    opposed-roll comparison, named explicitly in both messages.
+    major_wound_trigger (see keeper.py's adjust_character tool) is the CON
+    check chained onto a single hit dealing >= half max HP — unlike the Bout
+    of Madness INT check this flows through the normal Luck-spend path
+    (success here is a plain good outcome), so the status_tags side effect
+    on failure has to live here, in the one place both the immediate and the
+    Luck-spend-decision paths converge, rather than in an early-return branch."""
+    tier_zh = _tier_zh_for_result(r)
     dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
     luck_note = ""
     if luck_spent:
-        luck_note = f"（花費 {luck_spent} 點 Luck，將結果從「{_CHECK_TIER_ZH[original_tier]}」提升為「{tier_zh}」）"
+        original_zh = _tier_zh_for_tier(original_tier, getattr(r, "required_tier", "regular"))
+        luck_note = f"（花費 {luck_spent} 點 Luck，將結果從「{original_zh}」提升為「{tier_zh}」）"
 
     opposed_line = ""
     opposed_message = ""
@@ -494,19 +524,41 @@ def _build_check_narration(
         opposed_line = f"\n⚔️ {opposed_text}"
         opposed_message = f"（{opposed_text}）"
 
+    major_wound_line = ""
+    major_wound_message = ""
+    if major_wound_trigger:
+        if r.success:
+            major_wound_line = "\n💪 重傷 CON 檢定通過，勉強撐住意識，沒有昏迷"
+            major_wound_message = (
+                "（這次「CON」檢定是 COC7e 重傷規則：這次單一傷害達到角色最大 HP 一半以上，本來有"
+                "當場昏迷的風險，但檢定通過了，角色勉強撐住意識——請描述角色忍痛維持行動能力的樣子，"
+                "這仍然是一次重傷，不要讓角色表現得行動如常。）"
+            )
+        else:
+            for tag in ("昏迷", "倒地"):
+                if tag not in char.status_tags:
+                    char.status_tags.append(tag)
+            major_wound_line = "\n💥 重傷 CON 檢定失敗，角色當場昏迷倒地！"
+            major_wound_message = (
+                "（這次「CON」檢定是 COC7e 重傷規則：這次單一傷害達到角色最大 HP 一半以上，檢定失敗，"
+                "角色當場昏迷倒地——已經加上「昏迷」「倒地」狀態標籤。請描述角色失去意識倒下的過程；"
+                "昏迷期間角色沒辦法自主行動或說話，直到有人處理或角色之後自然甦醒，記得呼叫 "
+                "remove_status_tag 移除這兩個標籤。）"
+            )
+
     if display_label is not None:
-        roll_line = f"🎲 {char.name} 選擇「{display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}"
+        roll_line = f"🎲 {char.name} 選擇「{display_label}」（{skill_name} {value}%{dice_note}），擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}{major_wound_line}"
         keeper_message = (
             f"（{char.name} 在多個選項裡選了「{display_label}」，擲骰做了一次「{skill_name}」檢定："
             f"技能值 {value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果"
-            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）{opposed_message}"
+            f"描述後續發展，不要重新判定或改變這個結果，也不要質疑玩家選了哪個選項。）{opposed_message}{major_wound_message}"
         )
     else:
-        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}"
+        roll_line = f"🎲 {char.name} 的「{skill_name}」檢定：{value}%{dice_note}，擲出 {r.roll} → {tier_zh}{luck_note}{opposed_line}{major_wound_line}"
         keeper_message = (
             f"（{char.name} 擲骰做了一次「{skill_name}」檢定：技能值 {value}%{dice_note}，"
             f"擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果描述後續發展，"
-            f"不要重新判定或改變這個結果。）{opposed_message}"
+            f"不要重新判定或改變這個結果。）{opposed_message}{major_wound_message}"
         )
     return roll_line, keeper_message
 
@@ -642,11 +694,39 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             char.san = r.san_after
             outcome = "通過" if r.check.success else "失敗"
             roll_line = f"🎲 {char.name} 的理智檢定：SAN {san_before}，擲出 {r.check.roll} → {outcome}，損失 {r.loss} 點理智（現在 SAN {r.san_after}）"
-            keeper_message = (
-                f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
-                f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
-                f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
-            )
+
+            if r.risk_of_madness:
+                # COC7e Bout of Madness: losing 5+ SAN in one go triggers a
+                # separate INT check — chained the same way a Luck-spend decision
+                # chains onto a check's result, registered as a fresh pending
+                # check the player rolls themselves (never silently resolved by
+                # the Keeper). See dice.roll_madness's own docstring for why
+                # *succeeding* this INT check is the outcome that triggers
+                # madness, not failing it — easy to get backwards.
+                int_value = keeper.resolve_skill_value(char, "INT")
+                state.pending_checks[user_id] = {
+                    "type": "skill", "skill": "INT", "skill_value": int_value,
+                    "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                    "madness_trigger": True, "madness_realtime": True,
+                }
+                roll_line += (
+                    "\n⚠️ 這次損失達到 5 點以上，觸發 COC7e「短暫瘋狂」規則：需要做一次 INT 檢定——"
+                    "成功代表當場理解了這份恐怖、陷入短暫瘋狂；失敗代表壓抑下來，沒有當場失常。"
+                    "請輸入 /coc check INT。"
+                )
+                keeper_message = (
+                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
+                    f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這次損失達到 5 點以上，觸發 COC7e"
+                    f"「短暫瘋狂」規則的 INT 檢定，系統已經請玩家去骰，你只能先描述受到這波衝擊當下的"
+                    f"直接反應，還不知道會不會當場失常，等 INT 檢定結果出來才能繼續描述後續——不要自己"
+                    f"先講角色失常了或平安無事。）"
+                )
+            else:
+                keeper_message = (
+                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
+                    f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
+                    f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
+                )
             roll_feedback_text, keeper_header = _build_split_check_feedback(
                 char.name, "理智檢定", f"SAN {san_before}", r.check.roll, outcome
             )
@@ -658,6 +738,15 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
 
         is_pushed = False
         attacker_tier = None
+        difficulty = "regular"  # offer_check_choice options and a self-initiated /coc check with no
+        # pending Keeper request have no difficulty concept — only a Keeper-registered plain skill_check
+        # (see keeper.py's skill_check tool difficulty param) can set this above "regular".
+        madness_trigger = False  # only set True for the INT check chained onto a >=5 SAN loss — see above
+        madness_realtime = True
+        major_wound_trigger = False  # only set True for the CON check chained onto a major wound — see
+        # keeper.py's adjust_character tool. Unlike madness_trigger, this does NOT get an early-return
+        # branch below: success here is a normal good outcome, so it flows through the ordinary Luck-spend
+        # path like any other skill check — only _build_check_narration needs to know about it.
         if choice_skill_name is not None:
             skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
             display_label = choice_display_label
@@ -666,27 +755,69 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             if pending:
                 skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
                 is_pushed = bool(pending.get("pushed", False))
+                difficulty = pending.get("difficulty", "regular")
+                madness_trigger = bool(pending.get("madness_trigger", False))
+                madness_realtime = bool(pending.get("madness_realtime", True))
+                major_wound_trigger = bool(pending.get("major_wound_trigger", False))
             else:
                 skill_name = skill_arg
                 value = keeper.resolve_skill_value(char, skill_name)
                 bonus = int(parts[3]) if len(parts) > 3 and parts[3].lstrip("-").isdigit() else 0
                 penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
+                save_state(state)  # resolve_skill_value may have registered a new default-value skill
             display_label = None
-        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty)
+        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
+
+        if madness_trigger:
+            # Bout of Madness INT check (see the "sanity" branch above that
+            # registered this) — resolved separately from the generic skill-check
+            # path below since a *success* here means rolling a real madness
+            # table, not just narrating a plain check result; also deliberately
+            # skips the Luck-spend flow entirely (spending Luck to push this
+            # check toward success would be pushing toward the *worse* outcome
+            # for the character, backwards from what Luck-spend normally means).
+            tier_zh = _tier_zh_for_result(r)
+            if r.success:
+                madness = dice.roll_madness(realtime=madness_realtime)
+                roll_line = (
+                    f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n"
+                    f"💥 觸發短暫瘋狂（Bout of Madness）！症狀擲骰 {madness['roll']} → 「{madness['symptom']}」"
+                    f"（持續約{madness['duration']}）"
+                )
+                keeper_message = (
+                    f"（{char.name} 的 INT 檢定{tier_zh}，觸發了短暫瘋狂：症狀是「{madness['symptom']}」"
+                    f"——{madness['guidance']}，持續約{madness['duration']}。這是已經確定的結果，"
+                    f"請照這個症狀具體描述角色接下來的失常行為，不要自己另外編一個症狀，也不要忽略這個結果。）"
+                )
+            else:
+                roll_line = f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n（INT 檢定失敗，勉強壓下這股衝擊，沒有當場失常）"
+                keeper_message = (
+                    f"（{char.name} 的 INT 檢定{tier_zh}，沒有觸發短暫瘋狂——角色勉強壓下了這股衝擊，"
+                    f"不需要描述任何失常行為，可以正常繼續劇情，但可以帶一點事後的心理陰影或後怕細節。）"
+                )
+            roll_feedback_text, keeper_header = _build_split_check_feedback(
+                char.name, "INT", str(value), r.roll, tier_zh
+            )
+            save_state(state)
+            return _CheckResolution(
+                state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
+                roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+            )
 
         # Luck-spend: only proactively offered when it's a near-miss (the cheapest
         # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
         # excluded (handled above, already finalized by this point), and so is a
         # Pushed Roll (COC7e optional rule: a pushed reroll's result is final,
         # can't be bought up again with Luck on top of it).
-        luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck)
-        gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier)
+        luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck, difficulty)
+        gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier, difficulty)
         if luck_options and gate_cost is not None and gate_cost <= 7:
             state.pending_luck_decisions[user_id] = {
                 "skill_name": skill_name, "display_label": display_label,
                 "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
-                "original_tier": r.tier, "attacker_tier": attacker_tier,
+                "original_tier": r.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
                 "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
+                "major_wound_trigger": major_wound_trigger,
             }
             save_state(state)
             options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
@@ -695,20 +826,21 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
             return _CheckResolution(
                 reply_text=(
-                    f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_CHECK_TIER_ZH[r.tier]}{attacker_note}\n"
+                    f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_tier_zh_for_result(r)}{attacker_note}\n"
                     f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
                     f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
                 )
             )
 
         roll_line, keeper_message = _build_check_narration(
-            char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier
+            char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier,
+            major_wound_trigger=major_wound_trigger,
         )
         opposed_text = ""
         if attacker_tier is not None:
             opposed_text = _describe_opposed_outcome(char.name, display_label is not None and "反擊" in display_label, r.tier, attacker_tier)
         roll_feedback_text, keeper_header = _build_split_check_feedback(
-            char.name, display_label or skill_name, str(value), r.roll, _CHECK_TIER_ZH[r.tier], opposed_text
+            char.name, display_label or skill_name, str(value), r.roll, _tier_zh_for_result(r), opposed_text
         )
         save_state(state)
         return _CheckResolution(
@@ -807,20 +939,29 @@ def _resolve_luck_decision_deterministically(
                 return _CheckResolution(reply_text=f"目前 Luck 只有 {char.luck} 點，不足以花費 {luck_spent} 點。")
             char.luck -= luck_spent
             tier = choice
-        save_state(state)
 
-        success = tier in ("critical", "extreme", "hard", "regular")
+        required_tier = pending.get("difficulty", "regular")
+        success = dice.TIER_RANK[tier] >= dice.TIER_RANK[required_tier]
         r = dice.SkillCheckResult(
             skill_value=pending["value"], roll=pending["roll"], bonus_dice=pending["bonus_dice"],
-            penalty_dice=pending["penalty_dice"], tier=tier, success=success,
+            penalty_dice=pending["penalty_dice"], tier=tier, success=success, required_tier=required_tier,
         )
+        # _build_check_narration can itself mutate char (e.g. appending "昏迷"/
+        # "倒地" to status_tags for a failed major_wound_trigger check — see
+        # its docstring), so save_state has to happen AFTER this call, not
+        # before it: keeper.run_turn's own state commit (_commit_turn_result)
+        # does a *fresh* load_state rather than persisting this same `state`
+        # object, so any mutation made after an earlier save here would
+        # otherwise be silently discarded.
         roll_line, keeper_message = _build_check_narration(
             char, pending["skill_name"], pending["display_label"], pending["value"], r,
             pending["bonus_dice"], pending["penalty_dice"],
             luck_spent=luck_spent, original_tier=pending["original_tier"],
             attacker_tier=pending.get("attacker_tier"),
+            major_wound_trigger=bool(pending.get("major_wound_trigger", False)),
         )
-        outcome_text = _CHECK_TIER_ZH[tier]
+        save_state(state)
+        outcome_text = _tier_zh_for_tier(tier, required_tier)
         if luck_spent:
             result_line = f"花費 {luck_spent} 點幸運：{pending['roll']} → {outcome_text}"
         else:
@@ -1030,9 +1171,11 @@ def _resolve_map_action_core(
         movement = intent_parser.parse_movement_intent(text)
         if movement:
             result = scene_map_engine.resolve_move(
-                active_map, current_room, facing, movement["relative_direction"], movement["order"],
+                state.scene_maps, current_page, current_room, facing, movement["relative_direction"], movement["order"],
             )
             if result["ok"]:
+                if "map_key" in result:  # crossed into a different map — see scene_map.py's module docstring
+                    state.current_map_page[user_id] = result["map_key"]
                 state.current_room_id[user_id] = result["room"]["id"]
                 state.party_facing[user_id] = result["facing"]
                 resolved_room = result["room"]
@@ -1313,6 +1456,27 @@ async def _handle_coc_command(
         await reply(f"已將 {name} 的「★ 關鍵背景連結」設為：{description}")
         return
 
+    if sub == "setpersona":
+        state = load_state(conversation_id)
+        if len(parts) < 3:
+            current = state.keeper_persona or f"（目前使用預設風格）\n{keeper.DEFAULT_PERSONA}"
+            await reply(
+                "用法：/coc setpersona <描述守密人語氣風格的文字> → 設定這個群組專屬的守密人語氣\n"
+                "/coc setpersona reset → 重設回預設的冷酷旁觀者風格\n\n"
+                f"目前設定：\n{current}"
+            )
+            return
+        if parts[2] == "reset" and len(parts) == 3:
+            state.keeper_persona = ""
+            save_state(state)
+            await reply("已重設回預設的冷酷旁觀者語氣風格。")
+            return
+        persona_text = " ".join(parts[2:])
+        state.keeper_persona = persona_text
+        save_state(state)
+        await reply(f"已設定這個群組的守密人語氣風格：\n{persona_text}\n\n（下一則訊息開始生效；重設回預設風格用 /coc setpersona reset）")
+        return
+
     if sub == "create":
         action = parts[2] if len(parts) > 2 else None
         state = load_state(conversation_id)
@@ -1554,7 +1718,13 @@ async def _handle_coc_command(
         exits = room.get("exits", [])
         exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
         desc = f"\n{room['description']}" if room.get("description") else ""
-        await reply(f"目前在「{room.get('name', '')}」（第 {current_page} 頁的地圖）{desc}\n出口：{exits_text}")
+        # current_page is a raw PDF page number for a vision-extracted map, or a
+        # "custom_<filename>" key for a hand-authored YAML upload — showing the
+        # literal key (not just "第 X 頁", which reads oddly for the custom_ case
+        # and is also what a map author needs to write a cross-map exit
+        # "to": "<this key>:<room_id>" pointing at this map from another one).
+        location_note = f"第 {current_page} 頁的地圖" if current_page.isdigit() else f"地圖「{current_page}」"
+        await reply(f"目前在「{room.get('name', '')}」（{location_note}）{desc}\n出口：{exits_text}")
         return
 
     if sub == "enter":

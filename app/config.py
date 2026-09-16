@@ -43,6 +43,15 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data/groups"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# SQLite database file — see app/db.py. Replaces the previous "one flat JSON
+# file per group_id" storage (data/groups/*.json) for group state, character
+# index mirrors, the scenario RAG index cache, and memory RAG chunks; scenario
+# page images (PNG) still live as plain files under DATA_DIR, unaffected by
+# this. Defaults to sitting next to DATA_DIR rather than inside it, so it's
+# obviously a different kind of thing than the per-group image folders.
+DB_PATH = Path(os.environ.get("DB_PATH", str(DATA_DIR.parent / "coc_bot.db")))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 # Safety limits. Both are heuristics, not measured against a real token count —
 # tune them down if you're on a model with a smaller context window than Claude
 # Sonnet's ~200K tokens, or up if you've checked your model comfortably fits more.
@@ -56,14 +65,20 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # conversation history, and the response itself are all accounted for.
 MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", 240_000))
 
-# MAX_LOG_TURNS: how many recent chat turns stay in the Keeper's context (and, at
-# 2x this, how many are kept on disk before older ones are trimmed). Raised from
-# 40 now that app/providers/anthropic_provider.py caches the conversation-history
-# prefix too (not just the scenario text), so a longer history costs much less
-# per turn than it used to — see the cache_control comment there. This delays,
-# but doesn't eliminate, the Keeper "forgetting" very early plot points in a long
-# campaign; a real fix would need periodic summarization, which isn't built yet.
-MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 80))
+# MAX_LOG_TURNS: how many recent chat turns stay verbatim in the Keeper's
+# context (trim triggers at 4x this many log entries — see app/keeper.py's
+# run_turn — keeping 2x after trimming). app/providers/anthropic_provider.py
+# caches the conversation-history prefix too (not just the scenario text), so
+# a longer history costs much less per turn than a naive re-send would.
+# Trimmed content isn't just dropped — the same trim point folds it into
+# GroupState.campaign_summary (rolling summarization) and indexes its
+# original wording into app/memory_rag.py for semantic recall later, so
+# lowering this only affects how much RECENT detail stays verbatim, not
+# whether old plot points are remembered at all. 40 (trim at 160 entries,
+# keep 80) — lowered from 80 to summarize more often, trading a bit more
+# per-summarization LLM cost for less compression buildup in any one
+# campaign_summary pass.
+MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 40))
 
 MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 
@@ -99,3 +114,20 @@ SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEI
 # tiers, damage) shouldn't get creative embellishment. 0.5-0.7 is the
 # requested range; 0.6 sits in the middle.
 KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", 0.6))
+
+# Reasoning effort for the Keeper's own narration on OpenAI's Responses API
+# (app/providers/openai_provider.py's run_conversation only — see
+# KEEPER_TEMPERATURE above for why analyze_image/analyze_text are excluded;
+# same reasoning applies here). Confirmed against this project's installed
+# `openai` SDK type stubs (openai/types/shared_params/reasoning.py):
+# `reasoning.effort` accepts none/minimal/low/medium/high/xhigh/max. Before
+# this setting existed, the code never passed `reasoning` at all, so it
+# silently inherited whatever the API's own per-model default is — not
+# explicitly forced to "none", but an unpinned unknown rather than a
+# deliberate choice, the same class of problem KEEPER_TEMPERATURE fixed for
+# temperature. "medium" is the SDK's own listed middle value; Anthropic and
+# Gemini have no equivalent concept in this project's provider adapters, so
+# this only affects the openai path. If the configured model rejects this
+# parameter outright, openai_provider.py detects that once per process and
+# stops sending it, the same fallback pattern already used for temperature.
+KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").strip().lower()

@@ -73,6 +73,7 @@ Bot 架起來、角色建好之後，怎麼跟守密人互動、有哪些指令�
    - `/coc away`／`/coc back`：標記暫離／回來（見上）
    - `/coc showpage 頁碼`：看劇本某一頁的實際圖片（見上）
    - `/roll 1d100`、`/roll 3d6+2`：純擲骰，不經過守密人
+   - `/coc setpersona <文字>`：自訂這個群組守密人的語氣風格（預設是冷酷、不給安慰的旁觀者口吻），`/coc setpersona reset` 重設回預設；細節見 `docs/keeper_skill.md`「守密人語氣模板」一節
    - `/coc newgame`：清空重來
    - `/coc end`：結束這一局（角色與紀錄仍保留）
    - `/coc help`：顯示指令列表

@@ -27,21 +27,31 @@ falls back to pure BM25, exactly like before embeddings existed here.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from app.config import DATA_DIR, OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+from app import db
+from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _PAGE_SPLIT_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]+")
-_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 _K1 = 1.5  # BM25 term-frequency saturation
 _B = 0.75  # BM25 length-normalization strength
+
+# Minimum RAW cosine similarity (not the blended/normalized score used for
+# ranking below) for a chunk to be considered a candidate purely on semantic
+# grounds — see search()'s own docstring for why this has to gate on the raw
+# value specifically. Calibrated against this project's real 68-chunk
+# production scenario: a query for actual scenario content ("lighthouse
+# keeper") scored 0.43-0.48 on its best-matching chunks; a genuine paraphrase
+# sharing no literal vocabulary ("the elderly man who used to maintain the
+# tower and its light") scored 0.33-0.35; a deliberately unrelated nonsense
+# query topped out at 0.31. 0.32 sits just above that nonsense ceiling while
+# still keeping most of the paraphrase's matches.
+_MIN_COSINE_RELEVANCE = 0.32
 
 
 @dataclass
@@ -93,6 +103,7 @@ def split_pages(scenario_text: str) -> list[tuple[int, str]]:
 
 
 _CHUNK_TARGET_CHARS = 400  # rough target size per sub-page chunk
+_CHUNK_OVERLAP_RATIO = 0.15  # ~15% of target size carried over into the next chunk
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
 
 
@@ -108,16 +119,25 @@ def _split_page_into_chunks(page_num: int, text: str) -> list[tuple[int, str]]:
     finer-grained than a whole page, never worse. Every chunk keeps the same
     page_num as its source page, so multiple search results can point back
     to the same page (that's expected, not a bug) and callers that only care
-    about "which page" (e.g. /coc showpage) still work unchanged."""
+    about "which page" (e.g. /coc showpage) still work unchanged.
+
+    Adjacent chunks share a small trailing/leading overlap (the last
+    _CHUNK_OVERLAP_RATIO of the previous chunk's characters, carried into the
+    start of the next) — without it, a point made right at a chunk boundary
+    (a sentence whose context is split across the cut) could end up only
+    partially represented in either chunk, with neither one scoring well
+    against a query about it."""
     paragraphs = [p.strip() for p in _PARAGRAPH_SPLIT_RE.split(text) if p.strip()]
     if not paragraphs:
         return []
+    overlap_chars = int(_CHUNK_TARGET_CHARS * _CHUNK_OVERLAP_RATIO)
     result: list[tuple[int, str]] = []
     buffer = ""
     for para in paragraphs:
         if buffer and len(buffer) + len(para) > _CHUNK_TARGET_CHARS:
             result.append((page_num, buffer))
-            buffer = para
+            carry = buffer[-overlap_chars:] if overlap_chars else ""
+            buffer = f"{carry}\n\n{para}" if carry else para
         else:
             buffer = f"{buffer}\n\n{para}" if buffer else para
     if buffer:
@@ -246,7 +266,20 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     every chunk regardless of lexical overlap — this is exactly what lets a
     query surface a page that uses different wording for the same thing —
     and the two are combined via SCENARIO_RAG_EMBEDDING_WEIGHT. A chunk only
-    needs to score on *either* signal to be a candidate, not both."""
+    needs to score on *either* signal to be a candidate, not both.
+
+    A chunk with no literal keyword overlap (no BM25 hit) still needs its
+    RAW cosine similarity to clear _MIN_COSINE_RELEVANCE to be considered at
+    all — confirmed by testing against this project's real production
+    scenario that the *blended/normalized* score doesn't work as a relevance
+    gate: BM25's min-max normalization is relative to each query's own best
+    match, so an entirely unrelated query's best (still bad) match gets
+    normalized up to a deceptively high value, occasionally scoring higher
+    than a genuinely relevant but harder query. Raw cosine similarity alone
+    turned out to separate cleanly instead, which is why the gate uses that
+    signal specifically rather than the combined ranking score. A chunk that
+    already has a literal BM25 hit is never excluded by this gate — a real
+    keyword match is trusted regardless of what the embedding model thinks."""
     query_tokens = _tokenize(query)
     if not query_tokens:
         return []
@@ -270,14 +303,14 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
 
-    candidates = {id(c) for c in matched}
+    candidates = {id(c) for c in matched}  # a literal BM25 hit is always trusted, regardless of cosine
     cosine_scores: dict[int, float] = {}
     for c in index.chunks:
         if c.embedding is None:
             continue
         cos = _cosine_similarity(query_vec, c.embedding)
         cosine_scores[id(c)] = cos
-        if cos > 0:
+        if cos >= _MIN_COSINE_RELEVANCE:
             candidates.add(id(c))
 
     by_id = {id(c): c for c in index.chunks}
@@ -298,33 +331,30 @@ def format_results(results: list[dict]) -> str:
     return "\n\n".join(f"--- 第 {r['page']} 頁 ---\n{r['text']}" for r in results)
 
 
-def _index_path(group_id: str) -> Path:
-    safe_id = _SAFE_ID_RE.sub("_", group_id)
-    return DATA_DIR / f"{safe_id}_scenario_index.json"
-
-
 def _save_index_to_disk(group_id: str, index: ScenarioIndex) -> None:
     """Best-effort: a failed write just means the next restart re-embeds from
-    scratch (same as before this existed), not a functional error."""
+    scratch (same as before this existed), not a functional error. Persisted
+    via app/db.py (SQLite) rather than a standalone data/groups/*.json file —
+    same "one JSON blob per key" shape as before, just a different storage
+    backend."""
     try:
         payload = {
             "text_hash": index.text_hash,
             "has_embeddings": index.has_embeddings,
             "chunks": [{"page": c.page, "text": c.text, "embedding": c.embedding} for c in index.chunks],
         }
-        _index_path(group_id).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        db.set_json("scenario_indexes", group_id, payload)
     except Exception:
         pass
 
 
 def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
-    """Returns None on anything unexpected (missing file, corrupt JSON, old
-    format) so callers fall back to a normal rebuild rather than crashing."""
-    path = _index_path(group_id)
-    if not path.exists():
-        return None
+    """Returns None on anything unexpected (no row yet, corrupt/old format)
+    so callers fall back to a normal rebuild rather than crashing."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = db.get_json("scenario_indexes", group_id)
+        if data is None:
+            return None
         chunks = [_Chunk(page=c["page"], text=c["text"], embedding=c.get("embedding")) for c in data["chunks"]]
         doc_freq, avg_length = _compute_bm25_stats(chunks)
         return ScenarioIndex(

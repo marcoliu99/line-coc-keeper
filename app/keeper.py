@@ -29,6 +29,20 @@ class _StateMutation:
     value: Any = None
     should_save: bool = True
 
+# The Keeper's default tone/persona — a plain, importable constant (not a
+# leading-underscore private one) rather than hardcoded inline in
+# _build_static_prompt, so it can be:
+# (a) shown to a GM via /coc setpersona's usage text (see app/commands.py) as
+#     a concrete example of what a persona override looks like, and
+# (b) overridden per-group via GroupState.keeper_persona (empty string means
+#     "use this default" — see _build_static_prompt below), so different
+#     scenarios/tables running off the same bot deployment can each set their
+#     own Keeper tone instead of every game sharing one hardcoded voice.
+DEFAULT_PERSONA = """- 全程使用繁體中文。你是冷酷、嚴肅、精通克蘇魯神話的守密人（Keeper），不是客氣的助理或客服。你的文風精煉、充滿壓迫感、令人窒息且懸疑。
+- 絕對不要使用「太好了」、「沒問題」、「祝你好運」或任何過度親切、正向鼓勵的客服語氣——即使檢定成功、劇情進展順利，也不要用歡快、鼓勵的語氣去慶祝，用克制、冷淡的敘述帶過就好，恐怖氛圍不能因為一次成功就鬆懈。
+- 面對調查員受傷、San 值狂掉或遭遇恐怖事物時，以冷酷、客觀、帶有感官細節（如鐵鏽味、腐敗氣息、異樣黏稠感、體溫變化、環境聲響）的事實直擊痛點，絕不給予安慰或溫情喊話。
+- 訊息長度要適合聊天軟體閱讀：每次回覆盡量 3 到 8 句，避免長篇大論、避免使用 Markdown 標題或表格。"""
+
 _ATTR_ALIASES = {
     "STR": "str_", "力量": "str_", "CON": "con", "體質": "con", "SIZ": "siz", "體型": "siz",
     "DEX": "dex", "敏捷": "dex", "APP": "app", "外貌": "app", "INT": "int_", "智力": "int_",
@@ -50,6 +64,47 @@ TOOLS = [
                 "purpose": {"type": "string", "description": "這次擲骰的用途說明（例如：小刀傷害）"},
             },
             "required": ["expression"],
+        },
+    },
+    {
+        "name": "roll_impaling_damage",
+        "description": (
+            "COC7e 規則：攻擊方的攻擊擲骰達到『極限成功』時（反擊不適用，只用在真正主動出手的"
+            "攻擊）造成的加成傷害。武器傷害跟傷害加值都先算到各自的最大可能值；如果攻擊用的是"
+            "穿刺武器（刀、劍、長矛、大多數槍械子彈等——尖銳、貫穿型的武器），在最大值之上再"
+            "額外擲一次武器本身的傷害骰加上去；非穿刺武器（棍棒、拳頭、鈍器）只算最大值，不會"
+            "額外重骰。不要自己心算或編一個數字，呼叫這個工具讓系統正確算出來；一般（非極限）"
+            "成功的傷害還是用 roll_dice 正常擲。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "weapon_damage": {"type": "string", "description": "武器傷害骰表示式，例如 '1d8+1'、'1d10'、徒手 '1d3'"},
+                "damage_bonus": {
+                    "type": "string",
+                    "description": "角色的傷害加值（DB），例如 '0'、'-1'、'-2'、'+1d4'、'+1d6'；角色卡上沒特別寫負值就填 '0'",
+                },
+                "impaling": {"type": "boolean", "description": "這次攻擊的武器是不是穿刺武器，true 才會額外重骰"},
+            },
+            "required": ["weapon_damage", "damage_bonus", "impaling"],
+        },
+    },
+    {
+        "name": "roll_weapon_damage",
+        "description": (
+            "擲一次一般（非極限成功）命中的武器傷害，自動查角色卡加上他的傷害加值（DB），"
+            "不用自己把 DB 拼進骰子表示式（那種寫法系統解析不了，手動相加也容易算錯）。"
+            "只用在角色主動攻擊、命中對方的一般傷害；如果這次攻擊擲骰是極限成功（且不是反擊），"
+            "改呼叫 roll_impaling_damage，不要用這個；不是武器傷害的一般擲骰（道具、環境傷害等）"
+            "還是用 roll_dice。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string", "description": "揮出這次攻擊的角色名稱，用來查詢他的傷害加值（DB）"},
+                "weapon_damage": {"type": "string", "description": "武器本身的傷害骰表示式，例如 '1d8+1'、'1d10'、徒手 '1d3'"},
+            },
+            "required": ["investigator", "weapon_damage"],
         },
     },
     {
@@ -78,6 +133,20 @@ TOOLS = [
                         "玩家第一次檢定失敗、你提議孤注一擲、玩家講了更冒險的做法後才呼叫的那一次，"
                         "設為 true；一般的第一次檢定不要設或設 false。COC7e 規則：孤注一擲的結果"
                         "不能再花 Luck 修改，設對這個欄位系統才擋得住。"
+                    ),
+                },
+                "difficulty": {
+                    "type": "string",
+                    "enum": ["regular", "hard", "extreme"],
+                    "description": (
+                        "COC7e 難度等級規則：不填或設 'regular'（一般）——對抗的技能/屬性低於 50，"
+                        "或這是一般標準的任務，玩家擲出的結果只要達到『成功』（含）以上就算過；"
+                        "設 'hard'（困難）——對抗的技能/屬性達到 50 以上，或這件事本來就非常困難，"
+                        "玩家這次一定要擲到『困難成功』（含）以上才算過，只擲到『成功』視同失敗；"
+                        "設 'extreme'（極難）——對抗的技能/屬性達到 90 以上，或這件事幾乎是人類極限，"
+                        "一定要擲到『極難成功』（含）以上才算過。這是任務/對手本身的難度，"
+                        "跟 bonus_dice/penalty_dice（角色這次手氣好壞、環境優劣）是兩回事，不要混用——"
+                        "困難的任務該設這個欄位，不要用懲罰骰去模擬「這個門檻比較高」。"
                     ),
                 },
             },
@@ -154,6 +223,10 @@ TOOLS = [
             "但跟 skill_check 一樣不會幫玩家骰骰子，只記錄下成功/失敗各自的理智損失公式，"
             "讓玩家自己用 /coc check 擲骰。呼叫完之後只能敘述『需要做理智檢定』的當下，"
             "不能自己編結果或先扣理智，等玩家擲出結果、系統回饋給你之後才描述反應。"
+            "COC7e 規則：如果玩家擲完骰後這次損失達到 5 點以上，系統會自動接著請玩家做一次"
+            "INT 檢定判斷是否觸發『短暫瘋狂』（Bout of Madness），不用你自己另外呼叫任何工具、"
+            "也不用你自己判斷有沒有觸發——回饋訊息裡會清楚告訴你發生了什麼，你只要照那個結果"
+            "接續敘事即可。"
         ),
         "input_schema": {
             "type": "object",
@@ -170,6 +243,10 @@ TOOLS = [
         "description": (
             "調整角色的 HP、MP、SAN 或 LUCK 數值（例如受傷扣血、花費幸運點、恢復精神力）。"
             "field 只能是 hp/mp/san/luck，delta 為正負整數變化量。"
+            "COC7e 規則：如果這次扣血（field=hp、delta 為負）單次傷害達到角色最大 HP 的一半以上，"
+            "系統會自動接著幫玩家註冊一次 CON 檢定判斷會不會當場昏迷（重傷規則），不用你自己另外呼叫"
+            "任何工具、也不用你自己判斷有沒有觸發——回傳結果裡會清楚告訴你發生了什麼，你只要照那個"
+            "結果接續敘事即可。"
         ),
         "input_schema": {
             "type": "object",
@@ -226,6 +303,38 @@ TOOLS = [
                 "item": {"type": "string", "description": "要移除的物品描述，需跟 add_carried_item 當初加入時的文字相符或明顯對應"},
             },
             "required": ["investigator", "item"],
+        },
+    },
+    {
+        "name": "add_status_tag",
+        "description": (
+            "幫角色加上一個持續性的狀態標籤（例如「昏迷」「倒地」「中毒」「著火」），會顯示在角色卡"
+            "跟每回合給你看的動態狀態資訊裡，之後不用自己記這個角色目前是不是還處在某種異常狀態。"
+            "COC7e 重傷規則觸發時（單次傷害 ≥ 最大 HP 一半），系統會自動幫失敗的 CON 檢定加上「昏迷」"
+            "「倒地」，不用你自己另外呼叫這個工具重複加；這個工具是給其他你自己判斷需要持續追蹤的狀態用的。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string"},
+                "tag": {"type": "string", "description": "狀態標籤文字，例如「昏迷」「中毒」"},
+            },
+            "required": ["investigator", "tag"],
+        },
+    },
+    {
+        "name": "remove_status_tag",
+        "description": (
+            "移除角色身上的一個狀態標籤（狀態解除時用，例如角色甦醒後移除「昏迷」「倒地」、"
+            "解毒後移除「中毒」）。狀態標籤不會自己過期，記得在敘事上該解除時主動呼叫這個工具。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string"},
+                "tag": {"type": "string", "description": "要移除的標籤文字，需跟加入時的文字相符"},
+            },
+            "required": ["investigator", "tag"],
         },
     },
     {
@@ -609,26 +718,64 @@ def _execute_tool(
             r = dice.roll_expression(tool_input["expression"])
             return {"ok": True, "expression": r.expression, "rolls": r.rolls, "modifier": r.modifier, "total": r.total}
 
+        if name == "roll_impaling_damage":
+            try:
+                result = dice.calculate_impaling_damage(
+                    tool_input["weapon_damage"], tool_input.get("damage_bonus") or "0", bool(tool_input.get("impaling"))
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            return {
+                "ok": True,
+                "total": result.total,
+                "max_weapon_damage": result.max_weapon_damage,
+                "max_damage_bonus": result.max_damage_bonus,
+                "impaling": result.impaling,
+                "reroll_total": result.reroll.total if result.reroll else None,
+                "describe": result.describe(),
+            }
+
+        if name == "roll_weapon_damage":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            try:
+                result = dice.roll_weapon_damage(tool_input["weapon_damage"], char.damage_bonus)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            return {
+                "ok": True,
+                "investigator": char.name,
+                "weapon_damage_roll": result.weapon_roll.total,
+                "damage_bonus": char.damage_bonus,
+                "damage_bonus_roll": result.damage_bonus_total,
+                "total": result.total,
+                "describe": result.describe(),
+            }
+
         if name == "skill_check":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            def mutate(target_state: GroupState) -> tuple[int, int, int]:
+            def mutate(target_state: GroupState) -> tuple[int, int, int, str]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 value = resolve_skill_value(target_char, tool_input["skill"])
                 bonus = int(tool_input.get("bonus_dice") or 0)
                 penalty = int(tool_input.get("penalty_dice") or 0)
+                difficulty = tool_input.get("difficulty") or "regular"
+                if difficulty not in ("regular", "hard", "extreme"):
+                    difficulty = "regular"
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "skill", "skill": tool_input["skill"], "skill_value": value,
-                    "bonus_dice": bonus, "penalty_dice": penalty,
+                    "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                     "pushed": bool(tool_input.get("pushed", False)),
                 }
-                return value, bonus, penalty
-            value, bonus, penalty = _mutate_and_save_state(state, mutate)
+                return value, bonus, penalty, difficulty
+            value, bonus, penalty, difficulty = _mutate_and_save_state(state, mutate)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "skill": tool_input["skill"],
-                "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty,
+                "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                 "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
             }
 
@@ -700,15 +847,41 @@ def _execute_tool(
             if field_name not in attr_map:
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
-            def mutate(target_state: GroupState) -> int:
+
+            def mutate(target_state: GroupState) -> tuple[int, bool]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
-                new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + int(tool_input["delta"])))
+                delta = int(tool_input["delta"])
+                new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
                 setattr(target_char, cur_attr, new_val)
-                return new_val
-            new_val = _mutate_and_save_state(state, mutate)
+
+                major_wound = False
+                # COC7e major wound rule, code-enforced the same way Bout of
+                # Madness is (see sanity_check above): a single hit dealing >=
+                # half of max HP knocks the investigator unconscious unless they
+                # pass a CON roll. Skipped when this hit already dropped HP to
+                # 0 or below — RAW already treats that as unconscious/dying on
+                # its own, so a second CON check on top would be redundant.
+                if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2:
+                    major_wound = True
+                    target_state.pending_checks[target_char.owner_id] = {
+                        "type": "skill", "skill": "CON", "skill_value": resolve_skill_value(target_char, "CON"),
+                        "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                        "major_wound_trigger": True,
+                    }
+                return new_val, major_wound
+
+            new_val, major_wound = _mutate_and_save_state(state, mutate)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
-            return {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
+            result = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
+            if major_wound:
+                result["major_wound"] = True
+                result["note"] = (
+                    "這次單一傷害達到重傷門檻（≥ 角色最大 HP 一半），COC7e 規則：角色必須做一次 CON 檢定，"
+                    "失敗會當場昏迷倒地——系統已經幫玩家註冊這次 CON 檢定，不用你自己判斷結果，"
+                    "先描述受到重擊當下的衝擊就好（不要講有沒有昏過去），等玩家輸入 /coc check CON 才知道結果。"
+                )
+            return result
 
         if name == "adjust_ammo":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -760,6 +933,28 @@ def _execute_tool(
                 return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
             investigator, carried_items = _mutate_and_save_state(state, mutate)
             return {"ok": True, "investigator": investigator, "carried_items": carried_items}
+
+        if name == "add_status_tag":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            tag = tool_input.get("tag", "").strip()
+            if not tag:
+                return {"ok": False, "error": "tag 不能是空字串"}
+            if tag not in char.status_tags:
+                char.status_tags.append(tag)
+                save_state(state)
+            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+
+        if name == "remove_status_tag":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            tag = tool_input.get("tag", "")
+            if tag in char.status_tags:
+                char.status_tags.remove(tag)
+                save_state(state)
+            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -938,13 +1133,11 @@ def _build_static_prompt(state: GroupState) -> str:
 {state.campaign_summary}
 如果玩家問起一個具體的人名/地名/物品，這份摘要跟最近的對話都找不到（摘要是壓縮過的，可能已經漏掉細節），
 呼叫 search_memory 工具去查更早、還沒被壓縮掉的原始對話內容，不要直接說忘記了或自己編一個答案。"""
+    persona_block = state.keeper_persona.strip() or DEFAULT_PERSONA
     return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
 
 # 行為準則
-- 全程使用繁體中文。你是冷酷、嚴肅、精通克蘇魯神話的守密人（Keeper），不是客氣的助理或客服。你的文風精煉、充滿壓迫感、令人窒息且懸疑。
-- 絕對不要使用「太好了」、「沒問題」、「祝你好運」或任何過度親切、正向鼓勵的客服語氣——即使檢定成功、劇情進展順利，也不要用歡快、鼓勵的語氣去慶祝，用克制、冷淡的敘述帶過就好，恐怖氛圍不能因為一次成功就鬆懈。
-- 面對調查員受傷、San 值狂掉或遭遇恐怖事物時，以冷酷、客觀、帶有感官細節（如鐵鏽味、腐敗氣息、異樣黏稠感、體溫變化、環境聲響）的事實直擊痛點，絕不給予安慰或溫情喊話。
-- 訊息長度要適合聊天軟體閱讀：每次回覆盡量 3 到 8 句，避免長篇大論、避免使用 Markdown 標題或表格。
+{persona_block}
 
 # 敘事節奏紀律
 - 一次回覆只推進「一個場景片段」：給出一個具體的反應點就停下來，不要在同一則回覆裡串連多個場景、多個發現、或多輪 NPC 對話。如果發現自己寫到第三段還沒停，代表該收了，把剩下的留到玩家回應之後。
@@ -969,6 +1162,18 @@ def _build_static_prompt(state: GroupState) -> str:
   以及本來就不會有玩家角色可以骰的情境（例如純粹的環境描述、劇情事件擲骰）。
 - 玩家要在幾個互斥的技能之間自己選一個時（不是你幫他決定，是他要選），呼叫 `offer_check_choice`
   給選項（至少兩個），不要用 `skill_check` 自己決定用哪個技能，也不要自己選好了才呼叫 `skill_check`。
+- **難度等級（COC7e 規則，不是憑感覺套用，每次呼叫 skill_check 前都要想一下這條）**：`skill_check` 的
+  `difficulty` 參數決定這次判定的門檻，依 RAW 規則判斷——對抗的技能/屬性低於 50、或任務標準時不用填
+  （等同 `'regular'`）；對抗的技能/屬性達到 50 以上、或這件事本來就非常困難時設 `'hard'`；對抗的
+  技能/屬性達到 90 以上、或幾乎是人類極限時設 `'extreme'`。**只要劇本或你自己敘述裡明確給過對手/
+  障礙的技能數字，一律照這個數字判斷，不要漏掉**——例如劇本寫「這名殺手潛行 80%」，玩家要偵查/聆聽
+  察覺他時，因為 80 落在 50-89 之間，這次 skill_check 就必須帶 `difficulty='hard'`；如果數字是 92，
+  就要帶 `'extreme'`；劇本沒給數字、只是「一般的路人」「普通的鎖」這種標準任務，才維持不填。
+  設了之後，玩家這次一定要擲到那個等級（含）以上才算過，只達到較低的等級一律算失敗，系統會自動
+  判定、也會正確告訴玩家「有達到某個成功等級，但這次判定門檻更高」。**不要用 bonus_dice/penalty_dice
+  去模擬任務難度**——那是角色這次手氣好壞、環境優劣（照明差、匆忙、有人幫忙等），是完全不同的機制，
+  兩者可以同時存在（例如「對抗一個技能 70% 的高手，而且你這次很匆忙」就是 `difficulty='hard'` 加上
+  `penalty_dice=1`）。
 
 # 孤注一擲（Pushed Roll）
 - 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check『請』玩家孤注一擲重新擲骰，而不是玩家講完就直接算過。這次呼叫 skill_check 一定要把 `pushed` 參數設成 true（COC7e 規則：孤注一擲的結果是最終結果，不能再花 Luck 修改，系統要靠這個參數才擋得住，不設的話玩家還是會看到花 Luck 的選項）。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
@@ -984,12 +1189,21 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
-- 一般描述性的擲骰（例如傷害骰）用 roll_dice。
+- **角色用武器攻擊、命中對方時的傷害**：一般（非極限成功）命中呼叫 roll_weapon_damage（給角色名稱
+  跟武器傷害骰，系統會自動查角色的傷害加值 DB 加進去，不用你自己拼骰子表示式或手動加總——
+  `roll_dice` 沒辦法解析「武器骰+DB骰」這種混合表示式，硬湊字串只會失敗或算錯）；如果這次攻擊的
+  **攻擊擲骰**是極限成功（不是反擊），改呼叫 roll_impaling_damage，讓系統照 COC7e 規則正確算出
+  「武器＋傷害加值都算最大值，穿刺武器再額外重骰一次武器傷害」的結果。不是武器傷害的一般描述性
+  擲骰（道具檢定、環境傷害等）才用 roll_dice。
 - 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
 - 角色 HP 降到 0 時描述瀕死或死亡過程；SAN 降到 0 時描述永久性失常的下場。
+- COC7e 重傷規則：如果 adjust_character 扣血後回傳結果裡有 `major_wound`，系統已經自動幫玩家註冊一次
+  CON 檢定（判斷會不會當場昏迷），不用你自己另外呼叫任何工具、也不用你自己判斷有沒有觸發——先描述
+  受到這次重擊當下的直接衝擊就好，還不知道會不會昏過去，等玩家自己用 /coc check CON 擲骰、結果出來
+  之後你才會收到確定的成敗，照那個結果接續敘事即可，不要自己先講角色昏倒了或撐住了。
 - 有些資訊只該讓特定調查員知道（秘密檢定結果、只有他發現的線索、私人物品內容等），這種時候呼叫
   send_private_info 私下告訴那位玩家，不要寫進公開回覆裡；公開回覆一樣要正常描述當下場景，
   只是用中性、不劇透的方式帶過那個角色在做什麼，不要讓其他玩家從公開內容反推出私人資訊是什麼。
@@ -1223,7 +1437,22 @@ def run_turn(
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
     turn_message = _format_turn_message(speaker_name, message_text, speaker_role)
-    history = state.log[-MAX_LOG_TURNS * 2 :]
+
+    # No extra slicing here — state.log is already bounded to at most
+    # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
+    # at that one point, back down to MAX_LOG_TURNS*2). Slicing it again on
+    # every read (e.g. state.log[-MAX_LOG_TURNS*2:]) looks harmless but
+    # actually defeats prompt caching for this entire block: once the log
+    # passes that slice's window size, the slice becomes a sliding window
+    # whose start point shifts forward every single turn, so consecutive
+    # turns' `history` never share a common prefix for Anthropic/OpenAI's
+    # cache to match against — verified by tracing the exact slice against a
+    # simulated 200-turn log, confirming zero turns after the initial ~40
+    # shared a growing prefix with the previous turn. Sending the log
+    # unsliced between trims means it only ever grows turn to turn (a real
+    # growing prefix, which caching can actually exploit) until the trim
+    # resets it — the one deliberate cache-miss point, same as before.
+    history = state.log
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     tools = _tools_for_speaker_role(speaker_role)

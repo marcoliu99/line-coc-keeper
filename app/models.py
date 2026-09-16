@@ -446,6 +446,11 @@ class GroupState:
     scenario_npc_index: list[dict[str, Any]] = field(default_factory=list)
     scenario_location_index: list[dict[str, Any]] = field(default_factory=list)
 
+    # Per-group override of the Keeper's tone/persona (see app/keeper.py's
+    # DEFAULT_PERSONA and _build_static_prompt) — empty string means "use the
+    # built-in default cold-observer persona", set via /coc setpersona.
+    keeper_persona: str = ""
+
     # Map/Scene Engine (see app/scene_map.py) — keyed by page number as a
     # string (JSON object keys are always strings, so this avoids an int/str
     # round-trip mismatch between what's written and what's read back).
@@ -501,6 +506,7 @@ class GroupState:
             "pregens": self.pregens,
             "scenario_npc_index": self.scenario_npc_index,
             "scenario_location_index": self.scenario_location_index,
+            "keeper_persona": self.keeper_persona,
             "combat": self.combat.to_dict(),
             "scene_maps": self.scene_maps,
             "current_map_page": self.current_map_page,
@@ -528,6 +534,7 @@ class GroupState:
             pregens=data.get("pregens", []),
             scenario_npc_index=data.get("scenario_npc_index", []),
             scenario_location_index=data.get("scenario_location_index", []),
+            keeper_persona=data.get("keeper_persona", ""),
             combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
             scene_maps=data.get("scene_maps", {}),
             # .get(..., {}) with an isinstance check rather than a bare .get

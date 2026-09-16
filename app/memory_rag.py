@@ -20,26 +20,33 @@ working, already-tested feature by restructuring it to fit a second caller.
 Unlike scenario_rag (which rebuilds its index from state.scenario_text, a
 single string that's replaced wholesale on a new PDF upload), conversation
 memory *accumulates* — chunks are appended one at a time as they're trimmed
-off app/keeper.py's state.log, and persisted to their own side file (same
-pattern as app/state.py's save_page_image) so they survive a bot restart
-instead of only living in an in-memory cache.
+off app/keeper.py's state.log, and persisted via app/db.py (SQLite) so they
+survive a bot restart instead of only living in an in-memory cache.
 """
 from __future__ import annotations
 
-import json
 import math
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from app.config import DATA_DIR, OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
-from app.state import _safe_id
+from app import db
+from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]+")
 
 _K1 = 1.5  # BM25 term-frequency saturation
 _B = 0.75  # BM25 length-normalization strength
+
+# Same relevance gate and calibration as app/scenario_rag.py's
+# _MIN_COSINE_RELEVANCE — see that constant's own comment for the full
+# derivation (a blended/normalized score doesn't work as a relevance gate;
+# raw cosine similarity does). Not independently re-calibrated against real
+# memory chunk data (this project's production memory_chunks table was empty
+# at the time this was added — no long-enough campaign had triggered a trim
+# yet), but the same embedding model and scoring shape are shared with
+# scenario_rag, so the same threshold is a reasonable starting point.
+_MIN_COSINE_RELEVANCE = 0.32
 
 
 def _tokenize(text: str) -> list[str]:
@@ -101,22 +108,19 @@ class MemoryIndex:
     has_embeddings: bool = False
 
 
-def _memory_path(group_id: str) -> Path:
-    return DATA_DIR / f"{_safe_id(group_id)}_memory.json"
-
-
 def _load_raw_chunks(group_id: str) -> list[dict]:
-    path = _memory_path(group_id)
-    if not path.exists():
-        return []
+    """Persisted via app/db.py (SQLite) rather than a standalone
+    data/groups/<id>_memory.json file — same "one JSON blob per key" shape
+    as before, just a different storage backend. A missing row or corrupted/
+    unexpected content both degrade to "no memory yet", not a crash."""
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return db.get_json("memory_chunks", group_id) or []
     except Exception:
-        return []  # a corrupted/partial file degrades to "no memory yet", not a crash
+        return []
 
 
 def _save_raw_chunks(group_id: str, raw_chunks: list[dict]) -> None:
-    _memory_path(group_id).write_text(json.dumps(raw_chunks, ensure_ascii=False, indent=2), encoding="utf-8")
+    db.set_json("memory_chunks", group_id, raw_chunks)
 
 
 def append_memory(group_id: str, text: str) -> None:
@@ -203,7 +207,8 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
     highest first. Empty list if there's no memory yet or nothing matches —
     callers should treat that as "nothing found", not an error. Same hybrid
     BM25 + (if any chunk has one) cosine-similarity blend as
-    app/scenario_rag.py's search()."""
+    app/scenario_rag.py's search(), including that module's _MIN_COSINE_RELEVANCE
+    gate on purely-semantic (no literal BM25 hit) candidates."""
     raw_chunks = _load_raw_chunks(group_id)
     if not raw_chunks:
         return []
@@ -229,14 +234,14 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
 
-    candidates = {id(c) for c in matched}
+    candidates = {id(c) for c in matched}  # a literal BM25 hit is always trusted, regardless of cosine
     cosine_scores: dict[int, float] = {}
     for c in index.chunks:
         if c.embedding is None:
             continue
         cos = _cosine_similarity(query_vec, c.embedding)
         cosine_scores[id(c)] = cos
-        if cos > 0:
+        if cos >= _MIN_COSINE_RELEVANCE:
             candidates.add(id(c))
 
     by_id = {id(c): c for c in index.chunks}
@@ -252,6 +257,18 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
 
 
 def format_results(results: list[dict]) -> str:
+    """Explicitly frames what's returned as retrieved fragments from *earlier*
+    in the campaign, not live narration — matching how SillyTavern's Chat
+    Vectorization marks retrieved messages as "past events" to signal
+    temporal discontinuity to the model. Without this, a raw excerpt handed
+    back with no framing risks being read as if it were happening now,
+    especially since it's arriving mid-turn as a tool result alongside
+    otherwise-current context."""
     if not results:
         return "（沒有找到相關的舊記憶）"
-    return "\n\n".join(f"【{r['label']}】\n{r['text']}" for r in results)
+    header = (
+        "以下是從更早、已經被摺進摘要或裁切掉的原始對話裡搜出來的片段——"
+        "這些是過去發生過的事，不是現在正在進行的場景，描述時不要跟當下的情境混在一起："
+    )
+    body = "\n\n".join(f"【{r['label']}】\n{r['text']}" for r in results)
+    return f"{header}\n\n{body}"

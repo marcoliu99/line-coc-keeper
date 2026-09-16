@@ -52,6 +52,23 @@ from app.scene_map import analyze_page_image
 # chars each, comfortably past the old 40-char cutoff undetected.
 _LOW_TEXT_THRESHOLD = 200
 
+# A page with at least this many vector drawing primitives (lines, rectangles,
+# curves — pymupdf's page.get_drawings()) is treated as "probably graphic
+# content" the same way a page with an embedded raster image is (see
+# _page_has_graphic_content below). Catches a real gap: a floor plan drawn
+# entirely out of vector shapes (walls as lines/rectangles, no embedded raster
+# image anywhere on the page) used to fall through _LOW_TEXT_THRESHOLD's
+# has_images-only check completely untouched — not misclassified, just never
+# rendered or analyzed at all, contradicting this module's own stated reason
+# for keeping the whole-page-render fallback in the first place (see the
+# module docstring). 8 is a conservative floor: confirmed against two
+# synthetic pages — a plain page with just decorative top/bottom rule
+# lines came out to 2 drawing primitives, while a 3-room floor plan drawn
+# as individual wall-line segments (the way a real vector floor-plan
+# export typically looks, not one rectangle per room) came out to 13; 8
+# sits cleanly between the two.
+_MIN_VECTOR_DRAWINGS = 8
+
 # How many low-text pages to describe concurrently. A scenario can easily have
 # 15-20+ such pages (character sheets, maps, illustrations); doing them one at
 # a time risked the whole upload taking minutes — long enough that a LINE reply
@@ -81,6 +98,18 @@ _VISION_PROMPT = (
     "3. 如果只是插圖、封面、人物肖像等跟上面兩種都無關的內容：簡短描述畫面內容就好（一兩句話）。\n\n"
     "只描述圖片裡實際看到的內容，不要編造或推測沒看到的細節。"
 )
+
+
+def _page_has_graphic_content(page: "pymupdf.Page") -> bool:
+    """True if this page has an embedded raster image OR at least
+    _MIN_VECTOR_DRAWINGS vector drawing primitives (lines/rectangles/curves).
+    The raster check alone (page.get_images()) misses a floor plan drawn
+    entirely out of vector shapes — see _MIN_VECTOR_DRAWINGS' own comment for
+    why that used to mean such a page was never even rendered for the
+    vision/OCR fallback below, not just misclassified once it got there."""
+    if page.get_images():
+        return True
+    return len(page.get_drawings()) >= _MIN_VECTOR_DRAWINGS
 
 
 def _render_page_png(page: "pymupdf.Page", dpi: int = 200) -> bytes:
@@ -203,15 +232,18 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
             text = re.sub(r"[ \t]+", " ", text)
             text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
-        # has_images gates the whole-page vision/scene-map fallback below on
-        # PyMuPDF's own page.get_images() regardless of which text layer was
-        # used above — this is what still catches a vector-drawn floor plan
-        # markitdown-ocr's embedded-raster-image detection would miss (see
-        # this module's docstring). A page markitdown-ocr already enriched via
-        # inline embedded-image OCR will usually already be >= the threshold
-        # here, so this naturally skips a redundant second vision call for it.
-        has_images = len(page.get_images()) > 0
-        if len(text) < _LOW_TEXT_THRESHOLD and has_images:
+        # has_graphic_content gates the whole-page vision/scene-map fallback
+        # below on PyMuPDF's own page.get_images()/get_drawings() regardless
+        # of which text layer was used above — this is what still catches a
+        # vector-drawn floor plan markitdown-ocr's embedded-raster-image
+        # detection would miss (see this module's docstring and
+        # _page_has_graphic_content's own docstring for the vector-drawings
+        # half specifically). A page markitdown-ocr already enriched via
+        # inline embedded-image OCR will usually already be >= the text
+        # threshold here, so this naturally skips a redundant second vision
+        # call for it.
+        has_graphic_content = _page_has_graphic_content(page)
+        if len(text) < _LOW_TEXT_THRESHOLD and has_graphic_content:
             low_text_pages.append(page_number)
             pending[i] = _render_page_png(page)
 
