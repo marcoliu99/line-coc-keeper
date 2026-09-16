@@ -667,27 +667,23 @@ def _persist_memory_maintenance_state(
 ) -> None:
     with locks.get_state_lock(group_id):
         latest_state = load_state(group_id)
-        latest_state.campaign_summary = campaign_summary
-        # Trim exactly the entries just folded into campaign_summary above,
-        # off the FRONT of the freshly-reloaded log — NOT a blind overwrite
-        # with a log snapshot computed before the slow summarize_log_chunk/
-        # append_memory calls above (that used to be the bug here: since
-        # run_post_turn_maintenance can now run as an independent background
-        # task — see app/commands.py's _spawn_post_turn_maintenance — a
-        # concurrent turn's own _commit_turn_result can append new entries
-        # to the *back* of the log while this function's caller was still
-        # mid-summarization; unconditionally replacing state.log with a
-        # stale pre-computed list would silently discard those new entries).
-        # Only trim if the front of the fresh log still matches what was
-        # actually dropped — guards against e.g. a concurrent /coc newgame,
-        # or (should the in-flight guard below ever be bypassed) another
-        # maintenance pass having already trimmed it. Skipping in that
-        # mismatch case costs nothing but retrying this trim on a later
-        # turn, never a correctness problem.
+        # Only apply anything if the front of the freshly-reloaded log still
+        # matches what was actually dropped — guards against e.g. a
+        # concurrent /coc newgame reset, or another maintenance pass having
+        # already trimmed this exact chunk. On a mismatch, skip BOTH the log
+        # trim and the campaign_summary update (not just the trim): the
+        # summary was derived from `dropped_chunk`, which no longer reflects
+        # what's actually at the front of the current log, so applying it
+        # anyway would bleed a stale/unrelated summary into whatever state
+        # is live now (e.g. a brand-new campaign after /coc newgame
+        # inheriting leftover summary text from the campaign it replaced).
+        # Skipping entirely costs nothing but retrying this trim on a later
+        # turn — never a correctness problem, and never a partial write.
         n = len(dropped_chunk)
         if latest_state.log[:n] == dropped_chunk:
             latest_state.log = latest_state.log[n:]
-        save_state(latest_state)
+            latest_state.campaign_summary = campaign_summary
+            save_state(latest_state)
 
 
 # Guards against more than one run_post_turn_maintenance pass running
@@ -708,10 +704,21 @@ def run_post_turn_maintenance(group_id: str) -> None:
     particular does its own unlocked read-modify-write and is only ever
     called from here, so serializing calls to this function is what actually
     keeps two of its calls from stepping on each other, not any locking
-    inside append_memory itself."""
-    if group_id in _maintenance_in_flight:
-        return
-    _maintenance_in_flight.add(group_id)
+    inside append_memory itself.
+
+    The check-then-add on `_maintenance_in_flight` below is itself wrapped in
+    `locks.get_state_lock(group_id)` — this function runs via
+    `asyncio.to_thread` (see _spawn_post_turn_maintenance), i.e. on real OS
+    worker threads, not just concurrent asyncio tasks, so the GIL making each
+    individual `in`/`.add()` call atomic does NOT make the pair atomic: two
+    threads could otherwise both observe `group_id not in
+    _maintenance_in_flight` before either adds it, both proceed, and run two
+    overlapping passes anyway — exactly the failure mode this guard exists
+    to prevent."""
+    with locks.get_state_lock(group_id):
+        if group_id in _maintenance_in_flight:
+            return
+        _maintenance_in_flight.add(group_id)
     try:
         with locks.get_state_lock(group_id):
             latest_state = load_state(group_id)

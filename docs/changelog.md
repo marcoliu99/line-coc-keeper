@@ -603,3 +603,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
     - 額外測「比對不上就跳過」：模擬對話被重置成跟 `dropped_chunk` 完全對不上的新 log，確認裁切被安全跳過，log 內容原封不動、沒有任何損毀。
     - 額外測 in-flight guard：手動把某個 `group_id` 標成「正在維護中」，直接呼叫 `run_post_turn_maintenance`，確認整個函式立刻回傳、完全沒有呼叫 `load_state`（沒做任何工作），且正常執行完或拋例外都會在 `finally` 正確解除標記（用低於裁切門檻的 log 測試提早 return 的路徑，確認 guard 一樣會釋放）。
     - 重新確認原本這個 PR 要解的問題沒有回歸：`run_post_turn_maintenance` 本身仍然完全不持有 `get_conversation_lock`／`get_keeper_turn_lock`，`_spawn_post_turn_maintenance` 的行為未變。
+- **第二輪 review 後再修正（同一個 PR，再追加一次 commit）**：上面那次修正被獨立 review 了一次，抓到兩個問題：
+  - **`_maintenance_in_flight` 的 check-then-add 本身不是原子的，而且這次真的會被並發打到**：`run_post_turn_maintenance` 是透過 `asyncio.to_thread` 丟出去執行的（見 `app/commands.py` 的 `_spawn_post_turn_maintenance`），也就是丟到真正的 OS 執行緒（thread pool），不是單純的 asyncio coroutine 交錯排程。`if group_id in _maintenance_in_flight: return` 和 `_maintenance_in_flight.add(group_id)` 雖然各自單獨一行在 GIL 下是原子的，但這兩行合起來並不是——兩個執行緒可能都在對方呼叫 `.add()` 之前，先各自看到「沒人在跑」，然後兩個都往下跑，等於這個 guard 想擋的並發完全沒被擋住。**怎麼修的**：把 check-and-add 這兩行包進 `locks.get_state_lock(group_id)`（本來就是 `threading.RLock`，本來就是設計給多執行緒共用的鎖）底下，讓「檢查有沒有人在跑」跟「標記自己要跑」變成單一原子操作。
+  - **`campaign_summary` 沒有跟著 log 的比對結果一起被保護**：上一版的 `_persist_memory_maintenance_state` 只有 log 的裁切有做「比對不上就跳過」，但 `latest_state.campaign_summary = campaign_summary` 這一行是無條件執行的——如果真的遇到比對不上的狀況（例如同時有人 `/coc newgame` 重置戰役），log 正確地被放過了，但 `campaign_summary` 還是會被蓋成舊戰役算出來的摘要，讓一場全新的戰役開局就帶著上一場戰役的摘要殘留。**怎麼修的**：把 `campaign_summary` 的賦值跟 `save_state` 一起搬進「比對得上」的那個 `if` 分支裡，比對不上就整個跳過，log 跟 campaign_summary 要嘛一起套用最新結果、要嘛都不動，不會再有「log 保護了、summary 卻沒保護」這種不一致狀態。
+  - **實測過**：
+    - 用真正的多執行緒（8 個 `threading.Thread` 同時對同一個 `group_id` 呼叫 `run_post_turn_maintenance`，並在 `summarize_log_chunk` 裡插入計數器 + `time.sleep(0.3)` 拉長視窗）確認同一時間最多只有 1 個維護任務真的在執行本體邏輯，且全部執行緒結束後 guard 有正確清空。
+    - 模擬「log 比對不上」的情境（假造一個跟 `dropped_chunk` 對不上的全新 log），確認 `campaign_summary` 保持原樣沒被蓋掉、log 也完全沒被動到。
+    - 重新跑一次原本那支「並發新一輪訊息 + 舊快照持久化」的資料遺失重現腳本，確認這一輪修改後，原本的 fix 依然有效（新訊息不會消失）。
