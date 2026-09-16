@@ -421,6 +421,7 @@ class GroupState:
     scenario_title: str = ""
     scenario_text: str = ""
     active: bool = False
+    kp_assistant_user_id: str = ""
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
     log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
     # Rolling summary of whatever's been trimmed off the front of `log` so far
@@ -496,6 +497,7 @@ class GroupState:
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
             "active": self.active,
+            "kp_assistant_user_id": self.kp_assistant_user_id,
             "characters": {k: v.to_dict() for k, v in self.characters.items()},
             "log": self.log,
             "campaign_summary": self.campaign_summary,
@@ -521,6 +523,7 @@ class GroupState:
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
             active=data.get("active", False),
+            kp_assistant_user_id=data.get("kp_assistant_user_id", ""),
             characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
             log=data.get("log", []),
             campaign_summary=data.get("campaign_summary", ""),
