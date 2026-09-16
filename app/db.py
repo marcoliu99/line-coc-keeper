@@ -56,10 +56,19 @@ def _connect() -> Iterator[sqlite3.Connection]:
     WAL mode lets a read and a write overlap without blocking each other,
     which matters once LINE (a threaded ASGI server) and Discord (its own
     asyncio loop) are both touching the same database file from the same
-    process."""
+    process.
+
+    Only sets `synchronous` here, not `journal_mode` — WAL is a property
+    persisted in the database file's own header (see _ensure_tables, which
+    sets it once, on the very first connection this process ever makes), so
+    re-asserting it on every single connection is pure overhead: measured at
+    roughly the same per-call cost as `synchronous` itself (~0.25ms each on
+    this machine), i.e. re-running it here would silently double every
+    connection's PRAGMA cost for zero effect. `synchronous` is NOT persisted
+    to the file (it's a per-connection setting, defaulting to FULL), so it
+    does need setting on every connection to take effect for it."""
     conn = sqlite3.connect(DB_PATH)
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         yield conn
         conn.commit()
@@ -68,12 +77,44 @@ def _connect() -> Iterator[sqlite3.Connection]:
 
 
 def _ensure_tables() -> None:
-    with _connect() as conn:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")  # set once here — see _connect's docstring
         for table in _TABLES:
             conn.execute(_SCHEMA.format(table=table))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 _ensure_tables()
+
+
+@contextmanager
+def transaction() -> Iterator[sqlite3.Connection]:
+    """Public entry point for batching multiple writes into a single
+    connection/transaction — same connection lifecycle as the internal
+    _connect() (the `synchronous` pragma, commit on success, always closes),
+    just exposed under a name callers outside this module are meant to use.
+    See set_json_tx below and app/state.py's save_state, which used to call
+    set_json once per character on top of once for the group state itself —
+    N+1 separate connections (each paying its own PRAGMA overhead) for what
+    is logically one atomic save."""
+    with _connect() as conn:
+        yield conn
+
+
+def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> None:
+    """Same upsert as set_json, but writes through an already-open
+    connection (from transaction() above) instead of opening/closing its
+    own — for batching several writes into one transaction."""
+    assert table in _TABLES, f"unknown table {table!r}"
+    payload = json.dumps(value, ensure_ascii=False)
+    conn.execute(
+        f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "
+        "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+        (key, payload),
+    )
 
 
 def get_json(table: str, key: str) -> Any | None:

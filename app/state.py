@@ -41,20 +41,26 @@ def load_state(group_id: str) -> GroupState:
 
 
 def save_state(state: GroupState) -> None:
-    db.set_json("group_states", state.group_id, state.to_dict())
+    # Batched into one connection/transaction (db.transaction/set_json_tx)
+    # rather than a separate db.set_json call per write — a party of N
+    # characters used to mean N+1 independent SQLite connections (the group
+    # state, plus one per character mirror below), each paying its own
+    # connect+PRAGMA overhead for what is logically one atomic save.
+    with db.transaction() as conn:
+        db.set_json_tx(conn, "group_states", state.group_id, state.to_dict())
 
-    # A per-owner_id mirror, independent of which group this character
-    # belongs to — separate from the group blob above so looking up one
-    # player's sheet doesn't require knowing (or loading) the whole
-    # conversation's state.
-    for owner_id, char in state.characters.items():
-        index_entry = {
-            "conversation_id": state.group_id,
-            "name": char.name,
-            "occupation": char.occupation,
-            "sheet": char.to_dict(),
-        }
-        db.set_json("characters", owner_id, index_entry)
+        # A per-owner_id mirror, independent of which group this character
+        # belongs to — separate from the group blob above so looking up one
+        # player's sheet doesn't require knowing (or loading) the whole
+        # conversation's state.
+        for owner_id, char in state.characters.items():
+            index_entry = {
+                "conversation_id": state.group_id,
+                "name": char.name,
+                "occupation": char.occupation,
+                "sheet": char.to_dict(),
+            }
+            db.set_json_tx(conn, "characters", owner_id, index_entry)
 
 
 def _images_dir(group_id: str) -> Path:
