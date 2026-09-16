@@ -584,3 +584,13 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **實測過**：
   - 正確性：拿同一組房間清單（10 個常見中文房間名稱）跑 5 種輸入文字（完全沒有中文字重疊的英文劇本片段、包含完整房間名稱的句子、需要模糊比對的近似房間名稱、系統自產的檢定結果敘述、空字串邊界情況），修改前後回傳的房間（或沒有命中）完全一致。
   - 效能：同一組房間、一段 535 字沒有任何字元重疊的合成文字，跑 30 次，修改前 1.0833 秒、修改後 0.0603 秒，約 **18 倍**。這是本來就會被剪枝濾掉的最有利情境（文字語言/字元集跟房間名稱完全不重疊），實際劇本文字視內容重疊程度效果會有落差，但方向一致：文字裡真正跟任何房間名稱共享字元的視窗越少，省下的計算量越多。
+
+### 55. Discord 事件迴圈：`load_group_state` 改用 `asyncio.to_thread`，並合併重複讀取
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`discord.py` 整個 bot 是跑在單一 asyncio 事件迴圈上，任何同步阻塞操作都會卡住 Discord 網關的心跳處理；而 `app/discord_bot.py` 的 `on_message`、`CheckButton.callback`、`LuckSpendButton.callback` 這三個地方，每次都直接（沒有包 `asyncio.to_thread`）呼叫同步的 `load_group_state`（SQLite 讀取 + JSON 反序列化整個 `GroupState`），而且同一次訊息／點擊裡呼叫了三次：一次在指令執行前拿「之前」的快照，`_post_check_buttons`／`_post_luck_buttons` 各自又重新讀了一次「之後」的狀態。長期跑團的群組（劇本全文很長、對話紀錄累積很多筆）這個反序列化不是免費的，在高負載或多人同時輸入時，可能導致 Discord 網關的心跳封包延遲，出現 `Heartbeat blocked` 警告甚至斷線重連。
+- **這個專案現在怎麼做**：
+  1. 三個地方原本直接呼叫的 `load_group_state(...)`，全部改成 `await asyncio.to_thread(load_group_state, ...)`，讓這個同步操作丟到背景執行緒跑，不再佔用事件迴圈。
+  2. 新增 `_post_pending_buttons`，把「指令執行後讀一次最新狀態、分別餵給 `_post_check_buttons` 跟 `_post_luck_buttons`」這個固定會一起做的動作合併成一次共用的讀取——`_post_check_buttons`／`_post_luck_buttons` 改成接收已經讀好的 `state` 參數，不再各自重新讀一次同一份資料。三個呼叫點（`on_message`、`CheckButton.callback`、`LuckSpendButton.callback`）原本各自的兩次呼叫都改成一次 `_post_pending_buttons`。這樣每次訊息／點擊從原本最多 3 次同步讀取降到 2 次（指令前 1 次、指令後合併成 1 次），而且兩次都不再阻塞事件迴圈。
+- **實測過**：
+  - 用一個假的 Discord channel（只記錄 `send` 被呼叫了什麼），對 `_post_pending_buttons` 加 spy 監控 `load_group_state` 的呼叫次數，確認整個流程只讀了一次，而且正確依據新的 pending check 貼出對應的按鈕訊息。
+  - 用一個刻意設計成「睡 1 秒」的假 `load_group_state`，搭配一個每 0.05 秒 tick 一次、跑滿 10 次的並行協程，用 `asyncio.gather` 一起跑：確認 tick 協程在那 1 秒的讀取期間完整跑完全部 10 次，證實 `asyncio.to_thread` 真的把這個同步呼叫讓出了事件迴圈，不會卡住其他並行的協程。
