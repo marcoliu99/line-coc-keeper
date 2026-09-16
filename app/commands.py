@@ -389,6 +389,42 @@ async def _deliver_side_effects(
             )
 
 
+# Background maintenance tasks (see _spawn_post_turn_maintenance below) have
+# to be kept referenced somewhere until they finish, or asyncio is free to
+# garbage-collect a still-running Task out from under itself. This set exists
+# purely to hold that reference; each task removes itself once done.
+_pending_maintenance_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_post_turn_maintenance(conversation_id: str) -> None:
+    """Fires keeper.run_post_turn_maintenance as an independent background
+    task instead of awaiting it inline. It used to be awaited from *inside*
+    the Keeper turn lock (and, on most call paths, the coarser per-
+    conversation lock too) — see _run_post_turn_maintenance_after_output
+    below. The player already has their reply by the time this runs; when a
+    trim actually fires (roughly every MAX_LOG_TURNS*2 turns), this call
+    makes a real LLM summarization request (2-5s) plus an embeddings API call
+    (300-800ms) synchronously in a worker thread, which meant the *next*
+    message for this conversation — even from a different player, doing
+    something with nothing to do with campaign_summary or memory indexing —
+    sat blocked behind that lock for however long maintenance happened to
+    take. keeper.run_post_turn_maintenance takes its own locks.get_state_lock
+    internally for the read-modify-write it actually performs (state.log,
+    campaign_summary, the memory index), so detaching it from the turn-level
+    locks here doesn't remove any protection on those fields — it only stops
+    it from also holding up unrelated turns that never needed to wait on it."""
+    task = asyncio.create_task(_run_post_turn_maintenance_safely(conversation_id))
+    _pending_maintenance_tasks.add(task)
+    task.add_done_callback(_pending_maintenance_tasks.discard)
+
+
+async def _run_post_turn_maintenance_safely(conversation_id: str) -> None:
+    try:
+        await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+    except Exception:
+        _logger.exception("post-turn maintenance failed (background) for conversation_id=%s", conversation_id)
+
+
 async def _run_post_turn_maintenance_after_output(
     conversation_id: str,
     reply: Reply,
@@ -400,25 +436,12 @@ async def _run_post_turn_maintenance_after_output(
     image_requests: list[tuple[str | None, int]],
     run_maintenance: bool = True,
 ) -> None:
-    output_error: Exception | None = None
     try:
         await reply(public_message)
         await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
-    except Exception as exc:
-        output_error = exc
-        raise
     finally:
         if run_maintenance:
-            try:
-                await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
-            except Exception:
-                if output_error is not None:
-                    _logger.exception(
-                        "post-turn maintenance failed after public output failed for conversation_id=%s",
-                        conversation_id,
-                    )
-                else:
-                    raise
+            _spawn_post_turn_maintenance(conversation_id)
 
 
 def _skill_names_match(a: str, b: str) -> bool:

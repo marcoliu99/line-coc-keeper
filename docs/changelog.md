@@ -584,3 +584,13 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **實測過**：
   - 正確性：拿同一組房間清單（10 個常見中文房間名稱）跑 5 種輸入文字（完全沒有中文字重疊的英文劇本片段、包含完整房間名稱的句子、需要模糊比對的近似房間名稱、系統自產的檢定結果敘述、空字串邊界情況），修改前後回傳的房間（或沒有命中）完全一致。
   - 效能：同一組房間、一段 535 字沒有任何字元重疊的合成文字，跑 30 次，修改前 1.0833 秒、修改後 0.0603 秒，約 **18 倍**。這是本來就會被剪枝濾掉的最有利情境（文字語言/字元集跟房間名稱完全不重疊），實際劇本文字視內容重疊程度效果會有落差，但方向一致：文字裡真正跟任何房間名稱共享字元的視窗越少，省下的計算量越多。
+
+### 55. Post-turn maintenance 改成背景執行，不再卡住下一輪輸入
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`_run_post_turn_maintenance_after_output`（每一輪 Keeper 回覆送出後的收尾）在 `finally` 區塊裡用 `await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)` 等待維護任務跑完，但這個 `await` 是在 `run_keeper_phase` 內部、`locks.get_keeper_turn_lock` 底下執行的，而大部分呼叫路徑（一般自由文字對話）這整段又包在更外層的 `locks.get_conversation_lock` 裡——玩家雖然已經看到 Keeper 的公開回覆了，但只要這輪剛好觸發裁切門檻（大約每 `MAX_LOG_TURNS*2`＝80 輪一次），`run_post_turn_maintenance` 會同步跑一次真的 LLM 摘要請求（2-5 秒）加一次 Embeddings API 呼叫（300-800 毫秒），這段期間**同一個對話**（不管是同一位玩家還是別人）送出的下一句話，會卡在 `get_conversation_lock` 前面幾秒鐘動彈不得——即使那句話跟摘要、記憶索引完全無關。
+- **這個專案現在怎麼做**：`_run_post_turn_maintenance_after_output` 改用 `asyncio.create_task` 把 `run_post_turn_maintenance` 丟到獨立的背景協程執行，不在任何鎖底下等它完成——`finally` 區塊現在只負責「觸發」維護任務，函式本身立刻回傳，鎖也立刻釋放。維護任務本身（`run_post_turn_maintenance`）已經有自己的 `locks.get_state_lock` 保護實際會動到的欄位（`state.log`、`campaign_summary`、記憶索引），所以脫離外層的 turn lock／conversation lock 並不會失去保護，只是不再讓其他無關的下一輪對話跟著等。背景任務失敗時直接記錄例外，不會影響玩家已經拿到的回覆，也不會讓例外憑空消失在背景協程裡（新增 `_pending_maintenance_tasks` 集合持有任務參照，避免 asyncio 把還在跑的 Task 提前回收）。
+- **實測過**：
+  - 直接測 `_run_post_turn_maintenance_after_output`：把 `run_post_turn_maintenance` 換成一個真的會睡 1.5 秒的假函式，確認函式本身幾乎立刻回傳（< 0.5 秒），背景任務之後真的有跑完。
+  - 例外處理：讓維護任務直接拋例外，確認玩家的回覆照常送出、例外被記錄下來，不會往外傳播、也不會卡住任何東西。
+  - **端到端重現整個 bug**：把 `keeper.run_turn` 換成一個不打真實 LLM API、瞬間回傳的假函式（排除網路延遲的干擾），`run_post_turn_maintenance` 換成睡 1.5 秒的假函式，連續送兩輪真實對話——**在還沒修的程式碼上**，第一輪本身就要等滿 1.5 秒才回傳（因為維護任務被 await 在鎖裡）；修完之後兩輪都在幾毫秒內完成，背景維護任務照樣在背景跑完。
+  - `run_maintenance=False`（KP 助手那條路徑）確認還是正確完全不會觸發背景任務。
