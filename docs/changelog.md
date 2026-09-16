@@ -585,7 +585,66 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - 正確性：拿同一組房間清單（10 個常見中文房間名稱）跑 5 種輸入文字（完全沒有中文字重疊的英文劇本片段、包含完整房間名稱的句子、需要模糊比對的近似房間名稱、系統自產的檢定結果敘述、空字串邊界情況），修改前後回傳的房間（或沒有命中）完全一致。
   - 效能：同一組房間、一段 535 字沒有任何字元重疊的合成文字，跑 30 次，修改前 1.0833 秒、修改後 0.0603 秒，約 **18 倍**。這是本來就會被剪枝濾掉的最有利情境（文字語言/字元集跟房間名稱完全不重疊），實際劇本文字視內容重疊程度效果會有落差，但方向一致：文字裡真正跟任何房間名稱共享字元的視窗越少，省下的計算量越多。
 
-### 55. `save_state` 合併成單一 SQLite 連線／交易，PRAGMA 不再每次連線重跑
+### 55. Post-turn maintenance 改成背景執行，不再卡住下一輪輸入
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`_run_post_turn_maintenance_after_output`（每一輪 Keeper 回覆送出後的收尾）在 `finally` 區塊裡用 `await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)` 等待維護任務跑完，但這個 `await` 是在 `run_keeper_phase` 內部、`locks.get_keeper_turn_lock` 底下執行的，而大部分呼叫路徑（一般自由文字對話）這整段又包在更外層的 `locks.get_conversation_lock` 裡——玩家雖然已經看到 Keeper 的公開回覆了，但只要這輪剛好觸發裁切門檻（大約每 `MAX_LOG_TURNS*2`＝80 輪一次），`run_post_turn_maintenance` 會同步跑一次真的 LLM 摘要請求（2-5 秒）加一次 Embeddings API 呼叫（300-800 毫秒），這段期間**同一個對話**（不管是同一位玩家還是別人）送出的下一句話，會卡在 `get_conversation_lock` 前面幾秒鐘動彈不得——即使那句話跟摘要、記憶索引完全無關。
+- **這個專案現在怎麼做**：`_run_post_turn_maintenance_after_output` 改用 `asyncio.create_task` 把 `run_post_turn_maintenance` 丟到獨立的背景協程執行，不在任何鎖底下等它完成——`finally` 區塊現在只負責「觸發」維護任務，函式本身立刻回傳，鎖也立刻釋放。維護任務本身（`run_post_turn_maintenance`）已經有自己的 `locks.get_state_lock` 保護實際會動到的欄位（`state.log`、`campaign_summary`、記憶索引），所以脫離外層的 turn lock／conversation lock 並不會失去保護，只是不再讓其他無關的下一輪對話跟著等。背景任務失敗時直接記錄例外，不會影響玩家已經拿到的回覆，也不會讓例外憑空消失在背景協程裡（新增 `_pending_maintenance_tasks` 集合持有任務參照，避免 asyncio 把還在跑的 Task 提前回收）。
+- **實測過**：
+  - 直接測 `_run_post_turn_maintenance_after_output`：把 `run_post_turn_maintenance` 換成一個真的會睡 1.5 秒的假函式，確認函式本身幾乎立刻回傳（< 0.5 秒），背景任務之後真的有跑完。
+  - 例外處理：讓維護任務直接拋例外，確認玩家的回覆照常送出、例外被記錄下來，不會往外傳播、也不會卡住任何東西。
+  - **端到端重現整個 bug**：把 `keeper.run_turn` 換成一個不打真實 LLM API、瞬間回傳的假函式（排除網路延遲的干擾），`run_post_turn_maintenance` 換成睡 1.5 秒的假函式，連續送兩輪真實對話——**在還沒修的程式碼上**，第一輪本身就要等滿 1.5 秒才回傳（因為維護任務被 await 在鎖裡）；修完之後兩輪都在幾毫秒內完成，背景維護任務照樣在背景跑完。
+  - `run_maintenance=False`（KP 助手那條路徑）確認還是正確完全不會觸發背景任務。
+- **PR review 後修正（同一個 PR，追加 commit）**：上面「`run_post_turn_maintenance` 已經有自己的 `locks.get_state_lock` 保護，所以脫離 turn lock 不會失去保護」這句話，經獨立 code review 指出是錯的，並且用重現腳本證實是真的會掉資料，不是理論上的風險：
+  - **問題所在**：`_persist_memory_maintenance_state` 雖然真的在 `get_state_lock` 底下重新 `load_state()` 拿到最新狀態，但接下來卻是 `latest_state.log = trimmed_log`——直接整包覆蓋成呼叫前（LLM 摘要 + Embeddings 那幾秒）算好的**舊快照**，不是在最新狀態上做合併。修這個 PR 之前，這個問題被外層整輪都握著的 `get_conversation_lock` 蓋住了——同一個對話不可能有另一輪在這幾秒內把新訊息寫進 log。這個 PR 的目的正是要讓下一輪不用等這幾秒，等於拿掉了那層掩護：只要維護任務還在跑，同一個對話的下一輪話就可能透過 `_commit_turn_result` 把新訊息寫進 log，然後被這裡的覆蓋動作整個蓋掉、憑空消失。
+  - **重現方式**：手動照 `run_post_turn_maintenance` 的順序——先在鎖底下拍一次 log 快照、算出要丟掉的 `dropped_chunk`；接著直接呼叫 `_commit_turn_result` 模擬「維護還沒跑完時，同一對話又送出一輪新對話並已經完成」，確認新訊息當下**確實**已經寫進 log；最後才用一開始那份舊快照呼叫 `_persist_memory_maintenance_state`。結果最終 log 完全不含那兩則新訊息——複現腳本印出「CONFIRMED DATA LOSS: the concurrent turn's messages were silently discarded!」。同一份 review 也指出 `memory_rag.append_memory` 自己的讀-改-寫完全沒有鎖保護，且沒有機制防止 log 一旦超過裁切門檻，接下來每一輪都各自重新觸發一次完整維護（重複的 LLM／Embeddings 花費，還會互相搶資料）；確認 `append_memory` 在全部程式碼裡只有這一個呼叫點（`grep -rn "append_memory(" app/*.py`），所以序列化 `run_post_turn_maintenance` 本身就能一併解決這兩個問題。
+  - **怎麼修的**：新增模組層級 `_maintenance_in_flight: set[str]`，`run_post_turn_maintenance` 一開始檢查同一個 `group_id` 是否已經在跑，是的話直接跳過（`try/finally` 確保正常結束或例外都會釋放）——這保證同一個對話任何時候最多只有一個維護任務在跑，連帶讓 `append_memory` 的無鎖讀-改-寫變得安全。`_persist_memory_maintenance_state` 不再接收也不再覆蓋成 `trimmed_log`，改成接收 `dropped_chunk`（真正被拿去摘要、寫進記憶索引的那一段），在鎖底下重新讀最新的 `state.log` 之後，只有當最新 log 的開頭**內容完全比對得上** `dropped_chunk` 時才裁掉這段前綴（`latest_state.log[:n] == dropped_chunk` 才 `latest_state.log = latest_state.log[n:]`）；比對不上（例如同時有人 `/coc newgame` 重置了對話）就安全跳過，不裁切、不報錯，最多下一輪門檻到了再重新觸發一次，不會腐蝕資料。
+  - **實測過**：
+    - 用上面那支「先拍快照、模擬並發新一輪、再用舊快照呼叫」的重現腳本原封不動跑在修好的程式碼上，確認新訊息這次留住了，且 `dropped_chunk` 那段正確從最新 log 前面裁掉（前後 log 長度、內容逐筆比對正確）。
+    - 額外測「比對不上就跳過」：模擬對話被重置成跟 `dropped_chunk` 完全對不上的新 log，確認裁切被安全跳過，log 內容原封不動、沒有任何損毀。
+    - 額外測 in-flight guard：手動把某個 `group_id` 標成「正在維護中」，直接呼叫 `run_post_turn_maintenance`，確認整個函式立刻回傳、完全沒有呼叫 `load_state`（沒做任何工作），且正常執行完或拋例外都會在 `finally` 正確解除標記（用低於裁切門檻的 log 測試提早 return 的路徑，確認 guard 一樣會釋放）。
+    - 重新確認原本這個 PR 要解的問題沒有回歸：`run_post_turn_maintenance` 本身仍然完全不持有 `get_conversation_lock`／`get_keeper_turn_lock`，`_spawn_post_turn_maintenance` 的行為未變。
+- **第二輪 review 後再修正（同一個 PR，再追加一次 commit）**：上面那次修正被獨立 review 了一次，抓到兩個問題：
+  - **`_maintenance_in_flight` 的 check-then-add 本身不是原子的，而且這次真的會被並發打到**：`run_post_turn_maintenance` 是透過 `asyncio.to_thread` 丟出去執行的（見 `app/commands.py` 的 `_spawn_post_turn_maintenance`），也就是丟到真正的 OS 執行緒（thread pool），不是單純的 asyncio coroutine 交錯排程。`if group_id in _maintenance_in_flight: return` 和 `_maintenance_in_flight.add(group_id)` 雖然各自單獨一行在 GIL 下是原子的，但這兩行合起來並不是——兩個執行緒可能都在對方呼叫 `.add()` 之前，先各自看到「沒人在跑」，然後兩個都往下跑，等於這個 guard 想擋的並發完全沒被擋住。**怎麼修的**：把 check-and-add 這兩行包進 `locks.get_state_lock(group_id)`（本來就是 `threading.RLock`，本來就是設計給多執行緒共用的鎖）底下，讓「檢查有沒有人在跑」跟「標記自己要跑」變成單一原子操作。
+  - **`campaign_summary` 沒有跟著 log 的比對結果一起被保護**：上一版的 `_persist_memory_maintenance_state` 只有 log 的裁切有做「比對不上就跳過」，但 `latest_state.campaign_summary = campaign_summary` 這一行是無條件執行的——如果真的遇到比對不上的狀況（例如同時有人 `/coc newgame` 重置戰役），log 正確地被放過了，但 `campaign_summary` 還是會被蓋成舊戰役算出來的摘要，讓一場全新的戰役開局就帶著上一場戰役的摘要殘留。**怎麼修的**：把 `campaign_summary` 的賦值跟 `save_state` 一起搬進「比對得上」的那個 `if` 分支裡，比對不上就整個跳過，log 跟 campaign_summary 要嘛一起套用最新結果、要嘛都不動，不會再有「log 保護了、summary 卻沒保護」這種不一致狀態。
+  - **實測過**：
+    - 用真正的多執行緒（8 個 `threading.Thread` 同時對同一個 `group_id` 呼叫 `run_post_turn_maintenance`，並在 `summarize_log_chunk` 裡插入計數器 + `time.sleep(0.3)` 拉長視窗）確認同一時間最多只有 1 個維護任務真的在執行本體邏輯，且全部執行緒結束後 guard 有正確清空。
+    - 模擬「log 比對不上」的情境（假造一個跟 `dropped_chunk` 對不上的全新 log），確認 `campaign_summary` 保持原樣沒被蓋掉、log 也完全沒被動到。
+    - 重新跑一次原本那支「並發新一輪訊息 + 舊快照持久化」的資料遺失重現腳本，確認這一輪修改後，原本的 fix 依然有效（新訊息不會消失）。
+
+### 56. Discord 事件迴圈：`load_group_state` 改用 `asyncio.to_thread`，並合併重複讀取
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`discord.py` 整個 bot 是跑在單一 asyncio 事件迴圈上，任何同步阻塞操作都會卡住 Discord 網關的心跳處理；而 `app/discord_bot.py` 的 `on_message`、`CheckButton.callback`、`LuckSpendButton.callback` 這三個地方，每次都直接（沒有包 `asyncio.to_thread`）呼叫同步的 `load_group_state`（SQLite 讀取 + JSON 反序列化整個 `GroupState`），而且同一次訊息／點擊裡呼叫了三次：一次在指令執行前拿「之前」的快照，`_post_check_buttons`／`_post_luck_buttons` 各自又重新讀了一次「之後」的狀態。長期跑團的群組（劇本全文很長、對話紀錄累積很多筆）這個反序列化不是免費的，在高負載或多人同時輸入時，可能導致 Discord 網關的心跳封包延遲，出現 `Heartbeat blocked` 警告甚至斷線重連。
+- **這個專案現在怎麼做**：
+  1. 三個地方原本直接呼叫的 `load_group_state(...)`，全部改成 `await asyncio.to_thread(load_group_state, ...)`，讓這個同步操作丟到背景執行緒跑，不再佔用事件迴圈。
+  2. 新增 `_post_pending_buttons`，把「指令執行後讀一次最新狀態、分別餵給 `_post_check_buttons` 跟 `_post_luck_buttons`」這個固定會一起做的動作合併成一次共用的讀取——`_post_check_buttons`／`_post_luck_buttons` 改成接收已經讀好的 `state` 參數，不再各自重新讀一次同一份資料。三個呼叫點（`on_message`、`CheckButton.callback`、`LuckSpendButton.callback`）原本各自的兩次呼叫都改成一次 `_post_pending_buttons`。這樣每次訊息／點擊從原本最多 3 次同步讀取降到 2 次（指令前 1 次、指令後合併成 1 次），而且兩次都不再阻塞事件迴圈。
+- **實測過**：
+  - 用一個假的 Discord channel（只記錄 `send` 被呼叫了什麼），對 `_post_pending_buttons` 加 spy 監控 `load_group_state` 的呼叫次數，確認整個流程只讀了一次，而且正確依據新的 pending check 貼出對應的按鈕訊息。
+  - 用一個刻意設計成「睡 1 秒」的假 `load_group_state`，搭配一個每 0.05 秒 tick 一次、跑滿 10 次的並行協程，用 `asyncio.gather` 一起跑：確認 tick 協程在那 1 秒的讀取期間完整跑完全部 10 次，證實 `asyncio.to_thread` 真的把這個同步呼叫讓出了事件迴圈，不會卡住其他並行的協程。
+- **PR review 後修正**：review 指出「合併讀取」這個部分本身有問題——`_post_check_buttons` 迴圈裡的每一次 `channel.send()` 都是真的 `await`，是事件迴圈真的可以跑去處理別的事情的地方；如果在這段期間，剛好有別的並行處理（例如另一個並行的 `/coc newgame`，或別的路徑把某個 Luck 決定解決掉）動到了 `pending_luck_decisions`，`_post_luck_buttons` 因為共用同一份「指令執行前」讀到的 `state`，就可能貼出一個其實已經被清掉／處理掉的 Luck 按鈕——這正是原本（這個 PR 之前）的版本能避免的：`_post_luck_buttons` 本來是等所有 check 按鈕都貼完之後才重新讀一次狀態。
+  - **怎麼修的**：`_post_pending_buttons` 改回在 `_post_check_buttons` 執行完之後、呼叫 `_post_luck_buttons` 之前**再讀一次**最新狀態，不再共用同一份快照——等於保留「同步呼叫丟到背景執行緒」這個修正（仍然不阻塞事件迴圈），但撤回「合併成一次讀取」這部分，因為合併的前提（兩次呼叫之間沒有真正的 await yield point）並不成立。
+  - **實測過**：先在**沒修這個問題**的程式碼上重現：用一個假的 channel，`send()` 被呼叫時故意模擬「並行處理清掉了 `pending_luck_decisions`」（直接改資料庫），確認舊版真的會貼出一個對應已被清除決定的 Luck 按鈕（訊息內容含「要花 Luck」）。接著套用修正後重新跑同一支腳本，確認 Luck 按鈕不再被貼出（因為 `_post_luck_buttons` 這次讀到的是已經被清除之後的最新狀態）。
+
+### 57. Cosine similarity 省略範數計算，直接用內積
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`_cosine_similarity(a, b)`（`app/scenario_rag.py`、`app/memory_rag.py` 各有一份，邏輯相同）每次比對都重算 `norm_a`（查詢向量的長度）跟 `norm_b`（chunk 向量的長度）——`norm_a` 對同一次查詢的所有 chunk 都是同一個值，`norm_b` 也沒有跨查詢快取；更關鍵的是，OpenAI 的 embedding 模型（`text-embedding-3-small` 等）回傳的向量本來就是單位向量（長度已經是 1），既然兩邊的長度都約等於 1，`dot / (norm_a * norm_b)` 這個除法根本是白做工。
+- **這個專案現在怎麼做**：`_cosine_similarity` 直接改成只算內積（`sum(x * y for x, y in zip(a, b))`），不再算 `norm_a`／`norm_b`／除法。這個假設**先用真的 OpenAI API 呼叫驗證過**，不是憑印象：對 5 段長度、語言都不同的文字（含中文）各打一次真實 embedding，量出來的向量長度都落在 0.9997～1.0003 之間，跟 1.0 的偏差在 0.03% 以內。這個函式的向量只會來自 `_embed_texts`（同檔案裡唯一的 embedding 來源，全部走 OpenAI API），沒有其他來源會餵進不同尺度的向量。
+- **實測過**：
+  - 正確性：對 5 段真實 embedding 跟一個真實查詢向量，逐一比較「省略範數」版本跟「完整計算」版本算出來的分數，最大絕對誤差 0.000488——換算成排序結果完全一致（`sorted` 出來的順序逐項比對，兩邊分毫不差）。這是拿真實 API 資料驗證過的實際誤差量級，不是理論推算。
+  - 效能：同一組向量重複比對 2000 次，完整計算版本 0.2566 秒、省略範數版本 0.0910 秒，約 **2.82 倍**。
+  - `scenario_rag.search()`／`memory_rag.search_memory()` 端到端各自重新測過，確認回傳結果正常、排序不受影響。
+- **還是有的限制**：這個優化的正確性**依賴「輸入向量已經是單位向量」這個假設**，不是通用的 cosine similarity 實作——如果之後這個函式的輸入來源換成別的 embedding 服務（目前程式碼裡沒有這種路徑，但理論上 `SCENARIO_RAG_EMBEDDING_MODEL` 是可設定的），且那個服務回傳的向量沒有事先正規化，這個假設就會失效，需要把範數計算加回來。已經在函式的 docstring 裡明確寫下這個前提。
+- **PR review 後追加的安全網**：review 指出上面這個假設完全沒有 runtime 檢查——如果哪天 `SCENARIO_RAG_EMBEDDING_MODEL` 換成不是單位向量的模型，這個函式會安靜地算出錯誤尺度的分數，排序品質默默變差，不會有任何錯誤訊息或例外可以發現。新增 `_check_unit_norm(vec, context)`（`scenario_rag.py`、`memory_rag.py` 各一份，邏輯相同）：算出向量長度，跟 1.0 差距超過 `_UNIT_NORM_TOLERANCE`（0.05，遠寬於實測的 0.03% 誤差，避免正常浮點誤差誤報）就用 `logging.warning` 記錄下來，絕不拋例外——這是品質退化的訊號，不是崩潰，跟這個專案一貫「best-effort、degrade gracefully」的風格一致（比照 `_embed_texts` 失敗時回傳 `None` 而不是往外拋）。
+  - 呼叫時機刻意控制在 **O(1) 而非 O(chunks)**，不會抵銷這個優化原本要省下來的成本：`scenario_rag.build_index()`／`memory_rag.append_memory()` 各自只在拿到新 embedding 時檢查一次代表性向量（前者檢查該次索引的第一個 chunk、後者檢查剛嵌入的那個記憶片段），`search()`／`search_memory()` 則各自只檢查一次查詢向量——都不會在per-chunk 比對迴圈裡重複呼叫。
+  - **實測過**：手動餵入單位向量（長度 1.0）確認不觸發警告；手動餵入長度 3.0 跟剛好超過容忍值的 1.06 確認正確觸發警告；手動餵入容忍值以內的 1.04 確認不誤報；最後用真實 OpenAI API（真的 `build_index`／`search`／`append_memory`／`search_memory` 呼叫）跑一次端到端，確認正常操作下完全不會印出任何警告，也沒有改變任何回傳結果。
+- **PR 第二次 review 後整個做法反轉：改成快取範數，恢復精確計算**：review 指出「假設向量已經是單位向量、乾脆跳過除法」這個做法本身就是問題所在，不是加個警告就能解決——量出來的 0.9997～1.0003 這個誤差範圍看起來很小，但 `_cosine_similarity` 的結果同時餵給兩個對誤差敏感的地方：`_MIN_COSINE_RELEVANCE`（一個寫死的門檻值）跟排序用的分數本身。真實正式環境的查詢分數本來就會出現非常貼近 0.32 這個門檔、或者彼此分數非常接近的情況（見 `_MIN_COSINE_RELEVANCE` 旁邊的註解：真實查詢量到 0.31～0.48 都有），這種情況下，兩個向量各自的範數只要因為浮點誤差偏向不同方向，門檻判定或排序順序就可能因此翻轉——這是真的會發生的正確性問題，不是理論上的邊角案例，加警告只是讓你知道它發生了，並不會讓分數變回正確。
+  - **真正的效能問題找對了，但解法找錯了**：原本函式真正浪費的地方，不是「除法」本身，而是「同一個查詢向量的範數（`norm_a`）在整次搜尋的每一個 chunk 比對裡都被重算一次」，以及「每個 chunk 的範數（`norm_b`）明明從 embedding 算出來之後就不會再變，卻每次比對都重新算」——這才是 O(chunks) 次重複做同一件事的地方，除法本身只是 O(1) 的成本。
+  - **怎麼修的**：`_cosine_similarity` 改回真正的 `dot(a,b) / (norm_a * norm_b)`，但 `norm_a`、`norm_b` 都改成外部傳入、**只算一次、快取起來**，不再由這個函式自己重算：`_Chunk` 新增 `norm` 欄位，在 `build_index()`／`memory_rag._build_index()`（chunk 的 embedding 第一次算出來的時候）、以及 `_load_index_from_disk()`（從硬碟讀回來、對每個 chunk 的 embedding 重算一次範數，不需要額外修改儲存格式或做資料遷移）各自算好存起來；查詢向量的範數（`query_norm`）則是在 `search()`／`search_memory()` 裡對同一次搜尋只算一次，迴圈裡直接重複使用。這樣拿掉了原本重複計算的 O(chunks) 次 sqrt，同時完全不再依賴「向量是不是單位向量」這個假設——不管 embedding 來源是不是正規化過，這個函式現在算出來的都是**精確**的 cosine similarity，上面那個安全網（`_check_unit_norm`）因此整個變得不需要，一併移除。
+  - **實測過**：
+    - 正確性：用真實 OpenAI API 打出 5 個真實 embedding，逐一用「教科書版本」（每次都重新算範數）跟「快取範數」版本比對算出來的 cosine 分數，最大絕對誤差 **0.00e+00**（浮點精度內完全相等，不是近似）——這次不再有任何誤差存在，門檻判定與排序不可能因為這個函式本身而翻轉。
+    - 效能：同一組 5 個真實向量重複比對 10 萬次，快取範數版本 4.64 秒，每次都重算範數的版本 11.67 秒，約快 **2.5 倍**——雖然比「完全跳過除法」的 2.82 倍略慢一點點，換來的是完全正確、不再依賴任何假設。
+    - 端到端：`scenario_rag.build_index()` → `search()` → 存到硬碟 → 從硬碟重新讀回來 → 再 `search()` 一次，確認兩次搜尋結果的分數逐項完全相同（`norm` 從硬碟載入後正確重新算出，不是空值或 0）；`memory_rag.append_memory()` → `search_memory()` → 重建索引，確認 `norm` 有正確被填入每個 chunk。
+
+### 58. `save_state` 合併成單一 SQLite 連線／交易，PRAGMA 不再每次連線重跑
 
 - **這個問題怎麼發現的**：使用者做效能審查時指出，`app/db.py` 的 `_connect()` 每次呼叫都開一個新的 SQLite 連線並執行 2 個 PRAGMA（`journal_mode=WAL`、`synchronous=NORMAL`），而 `app/state.py` 的 `save_state` 對一場戲的 group state 存一次、還要對**每個角色**各自呼叫一次 `db.set_json("characters", ...)`——一個 4 人隊伍，光是 `save_state` 一次呼叫就開了 5 個獨立連線，每個都重跑一次 PRAGMA。一輪 Keeper 對話如果串了好幾個會扣血/扣彈藥/給物品的工具呼叫，加上結尾的存檔跟維護任務，連線數確實會疊到十幾二十次。
 - **實測過這個開銷有多大**：直接量測（不是憑印象）——單純 `sqlite3.connect()`＋`close()` 大約 0.03ms，加兩個 PRAGMA 後變成約 0.37ms，PRAGMA 本身佔了每次連線約 0.34ms（其中 `journal_mode=WAL` 跟 `synchronous=NORMAL` 各自約 0.21-0.25ms，量級差不多）。`journal_mode=WAL` 這個設定其實是**寫進資料庫檔案本身、會持久保留**的，不是每個連線各自的狀態，每次重新執行等於白做工；`synchronous` 才是每個連線都要重設才有效的設定。
