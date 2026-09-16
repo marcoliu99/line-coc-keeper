@@ -30,7 +30,7 @@ from typing import Awaitable, Callable
 import yaml
 
 from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor
-from app import scenario_compare, scenario_index, scenario_rag
+from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import OCCUPATIONS, GroupState, generate_investigator
@@ -62,6 +62,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc pregens → 查看這份劇本有沒有附帶的預製調查員
 ・/coc pregen 編號 → 選之前先看某位預製角色的完整屬性與技能
 ・/coc usepregen 編號 [自訂名稱] → 直接使用某位預製角色（每個人只能用一次，直到 /coc end；每個角色只能被一人選走）
+・/coc start → 角色都建好、準備開始時輸入，守密人會生成開場白帶大家進入劇情（優先用劇本自己寫的開場文字，沒有才自動生成）
 
 【KP 助手】
 ・/coc kp → 登記自己為本局唯一的 KP 助手
@@ -162,6 +163,9 @@ async def handle_pdf_upload(
         state.scenario_title = title
         state.active = True
         state.openai_previous_response_id = ""
+        state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
+        # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
+        # first would find /coc start permanently refusing ("already started") for the new scenario.
         state.pregens = []  # clear the previous scenario's cached pregens — otherwise
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.
@@ -1022,7 +1026,7 @@ async def handle_text_message(
 
     if text.startswith("/coc"):
         async with locks.get_conversation_lock(conversation_id):
-            await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, text)
+            await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
         return
 
     async with locks.get_conversation_lock(conversation_id):
@@ -1311,7 +1315,13 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
 
 
 async def _handle_coc_command(
-    conversation_id: str, user_id: str, reply: Reply, send_dm: SendDM, send_image: SendImage, text: str
+    conversation_id: str,
+    user_id: str,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    text: str,
 ) -> None:
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
@@ -1643,6 +1653,74 @@ async def _handle_coc_command(
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")
             except Exception:
                 _logger.exception("send_dm (secret_goal on /coc pregen) failed for user_id=%s", user_id)
+        return
+
+    if sub == "start":
+        state = load_state(conversation_id)
+        if not state.active or not state.scenario_text:
+            await reply("目前還沒有載入劇本，請先上傳 PDF 劇本。")
+            return
+        if not state.characters:
+            await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
+            return
+        if state.game_started:
+            await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
+            return
+
+        # Prefer the scenario's own read-aloud opening text (see
+        # app/scenario_intro.py) over having the Keeper improvise one — many
+        # published scenarios already wrote exactly this, tuned for tone and
+        # hook by the scenario's own author.
+        extracted = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
+
+        if extracted["found"]:
+            opening_text = extracted["text"]
+            with locks.get_state_lock(conversation_id):
+                state = load_state(conversation_id)  # reload: the extraction call may have taken a while
+                if state.game_started:
+                    return  # someone else already ran /coc start while this one was in flight
+                # Every other code path that appends to state.log does so in a
+                # user/assistant pair (see keeper.py's _commit_turn_result) —
+                # this has to keep that invariant too, not just append a lone
+                # assistant entry. Anthropic's Messages API requires the
+                # *first* message in a conversation to have role "user"; a
+                # log that starts with (or only contains) an "assistant"
+                # entry makes every subsequent turn raise on the next
+                # run_conversation call, and since that failure happens
+                # before _commit_turn_result ever runs, state.log never
+                # advances past it — the whole game is stuck until /coc newgame.
+                state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
+                state.log.append({"role": "assistant", "content": opening_text})
+                state.game_started = True
+                save_state(state)
+            await reply(opening_text)
+            return
+
+        # No usable read-aloud text in the scenario — fall back to a normal
+        # Keeper turn (same run_turn/_commit_turn_result path as any other
+        # message) with a meta/out-of-character instruction instead of a
+        # player's line, so the Keeper improvises the scene-setting itself.
+        keeper_message = (
+            "（守密人，遊戲即將開始，劇本沒有寫現成的開場白，需要你自己撰寫一段。這份劇本沒有"
+            "明確的「序幕」或「開場」段落可以直接查到，不代表劇本沒有背景資訊——如果目前是檢索模式，"
+            "請呼叫 search_scenario 查詢劇本的背景設定、調查員的委託／緣由、故事開始的地點等關鍵字"
+            "（例如劇本標題、背景、委託人、開場地點），根據查到的背景資訊撰寫開場白，不要因為查不到"
+            "「開場」兩個字面就直接放棄。撰寫一段開場白，把調查員們帶入故事的起點——描述他們此刻"
+            "身處的場景、氛圍，以及是什麼把他們捲進這個劇本裡，控制在三百字以內，用第二人稱「你」"
+            "對調查員說話。這是遊戲的第一段敘述，還沒有任何人採取行動，不要假設玩家已經做了什麼、"
+            "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
+        )
+        async with locks.get_keeper_turn_lock(conversation_id):
+            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_turn, state, user_id, "守密人", keeper_message, None
+            )
+        with locks.get_state_lock(conversation_id):
+            state = load_state(conversation_id)
+            state.game_started = True
+            save_state(state)
+        await _run_post_turn_maintenance_after_output(
+            conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
+        )
         return
 
     if sub == "index":

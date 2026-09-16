@@ -330,7 +330,7 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - LINE reply token 60 秒的限制目前只有 PDF 上傳那條路修好了（見上面「LINE reply token 的 60 秒限制」）。守密人回合本身（`keeper.run_turn`）如果剛好遇到很多次工具呼叫串在一起（例如複雜戰鬥一次要判定好幾個人的檢定），理論上一樣有機會撐超過 60 秒，這條路目前還是純用 `reply`，沒有比照 PDF 上傳做 reply+push 分流；還沒有實測案例踩到，但這是已知的同類風險，還沒修。
 - 守密人可以用 `send_private_info` 工具私訊玩家（見 [gameplay.md](gameplay.md)），但目前是**靜默失敗**：如果那位玩家在 LINE 還沒加 Bot 好友、或在 Discord 關閉了「允許伺服器成員私訊」，私訊會送不出去，`app/commands.py` 直接吞掉例外，群組裡不會有任何提示。之所以沒做失敗通知，是因為要在不洩漏私人內容本身的前提下告知「有訊息送不出去」，需要另外一條不佔用 LINE reply token 的訊息管道（跟 PDF 上傳那個 reply+push 分流是同一類問題），目前還沒有為一般對話回合做這層分流，之後如果要補，可以順便補這個。
   - 實測時還抓到一個更隱蔽的洩漏模式：守密人會在公開回覆裡寫類似「（如果骨董商在場，這裡就會認出這是卡西迪——但目前無人認得他）」這種括號旁白。這種寫法就算沒直接爆雷，也已經洩漏了「這裡有東西能被特定人物認出來」這件事本身，等於變相劇透。已經在系統提示詞裡明確禁止這種「條件式旁白／後設說明」，改成規則是：符合條件的角色真的在場就用 `send_private_info` 私訊，不在場就完全不提，不留下任何暗示。
-- 敘事節奏紀律、文風、孤注一擲、NPC 隊友設計指南（見 [gameplay.md](gameplay.md) 第 6 點）目前全都是系統提示詞層面的行為要求，沒有程式碼強制執行——參考了 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 這個純 prompt 型 KP skill 的做法。跟這個專案既有的 DEX 先攻順位、暫離跳過等規則不同的是，這幾項完全靠 LLM 自己遵守提示詞，沒有像 `app/combat.py` 那樣的程式碼守門，理論上模型偶爾還是可能忘記（例如孤注一擲問一半又自己算過、或一次講太多場景），沒有自動化測試能保證每次都遵守。
+- 敘事節奏紀律、文風、孤注一擲、NPC 隊友設計指南（見 [gameplay.md](gameplay.md) 第 7 點）目前全都是系統提示詞層面的行為要求，沒有程式碼強制執行——參考了 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 這個純 prompt 型 KP skill 的做法。跟這個專案既有的 DEX 先攻順位、暫離跳過等規則不同的是，這幾項完全靠 LLM 自己遵守提示詞，沒有像 `app/combat.py` 那樣的程式碼守門，理論上模型偶爾還是可能忘記（例如孤注一擲問一半又自己算過、或一次講太多場景），沒有自動化測試能保證每次都遵守。
 - 「★ 關鍵背景連結」（`/coc setconnection`）目前只是一個自由文字欄位加上提示詞層面「不能沒收搶救機會」的約束，沒有真的擋住守密人的 `adjust_character`／`sanity_check` 工具呼叫；換句話說技術上守密人還是叫得動工具直接刪掉，全靠提示詞自律。`/coc create` 互動建角流程也還沒有讓玩家在建角當下就設定這個欄位，得建完角色後另外呼叫 `/coc setconnection`。
 - NPC 隊友（`/coc combat addally`）只在戰鬥的先攻順位裡多一個「隊友」分類；戰鬥外沒有獨立的「NPC 隊友角色卡」資料結構（不像玩家角色有 `Character`），完全由守密人在敘事裡自己記住並扮演，沒有結構化資料能查詢或跨場景保留 NPC 隊友的技能數值。
 - 使用者提過一張更大的目標架構圖（玩家訊息 → Intent Parser → Keeper Skill → Deterministic Engine → Map/Scene Engine → Scenario RAG → LLM）。五層都做了對應版本：Map/Scene Engine（`app/scene_map.py`）、規則式的 Intent Parser（`app/intent_parser.py`，只做移動意圖偵測，不是那張圖上完整的意圖分類器）、Deterministic Engine 對應既有的 `app/dice.py`／`app/combat.py`、Scenario RAG（`app/scenario_rag.py`，見下方「Scenario RAG 是可選功能」那條）。
@@ -535,3 +535,23 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **KP 排除工具**：KP Assistant 不再取得會修改 state 或建立玩家流程的工具，包括 `skill_check`、`sanity_check`、`offer_check_choice`、`adjust_character`、`adjust_ammo`、`add_carried_item`、`remove_carried_item`、`set_skill`、所有 combat mutation tools，以及會產生 side effect 的 `send_private_info` / `show_scenario_image`。`roll_dice` 與 `npc_skill_check` 雖不寫 state，但會產生新的隨機判定結果，也未列入 KP read-only allowlist。
 - **防禦性保護**：`_execute_tool()` 也加入 secondary guard；若 KP Assistant turn 因 bug 嘗試執行 allowlist 以外的工具，會直接回傳錯誤，不會執行 deterministic state mutation 或玩家行動流程。
 - **保留不變**：正常玩家仍取得原本完整 tool set；Step 6 的 ephemeral history / OpenAI temporary branch isolation 未修改。本階段沒有改 KP Prompt、commands、Map Engine、combat engine、`GroupState` schema 或 history semantics。
+
+### 51. `/coc start`：開場白（新遊戲開場敘述）
+
+- **這個問題怎麼發現的**：使用者直接點名要做——角色建好之後，守密人完全是被動的，要等玩家自己先開口描述行動，守密人才會有任何敘事回應；沒有一個明確的「遊戲正式開始」時刻，也沒有把調查員帶進場景的開場白。
+- **這個專案現在怎麼做**：
+  - 新增 `/coc start` 指令（手動觸發，不是建角後自動發生——多人團常常不是所有人同時建好角色，交給玩家自己判斷「大家都準備好了」再觸發比較合理）。條件：劇本要先上傳、至少要有一位角色，且同一局只能觸發一次（`GroupState.game_started` 旗標擋重複觸發，想重來要 `/coc newgame`）。
+  - 開場白內容分兩層：**優先**用新增的 `app/scenario_intro.py`（跟 `app/scenario_index.py` 抽 NPC／地點索引同一套「強制 tool call」手法）判斷劇本裡有沒有作者自己寫好、可以直接唸給玩家聽的開場文字——很多正式劇本本來就有這種段落，找到的話改寫成繁體中文直接用（忠於原文內容和語氣，但不逐字照抄），不用另外呼叫 LLM 生成，省一次不必要的花費；**找不到才**讓守密人自己寫，走正常的 `keeper.run_turn` 路徑，用一句 meta 指令（不是玩家台詞）請它根據劇本背景生一段開場白，控制在三百字內、第二人稱、不能假設玩家已經做了什麼、不能在開場白裡問問題。
+  - 找到現成開場文字時，直接把它寫進 `state.log`（一筆 `user` 加一筆 `assistant`，維持跟 `_commit_turn_result` 一樣的交替慣例——原因見下方「code review 抓到的問題」），不額外打一次 LLM；後續對話會自然接續這個開場，不會被 Keeper 誤讀成「還沒發生過的事」。
+- **實測過**（真的 LLM 呼叫）：
+  - `scenario_intro.extract_opening_narration`：一份劇本有明確「唸給玩家聽」的引導段落時正確判斷 found=true 並抽出忠於原文的改寫；另一份劇本只有背景說明／NPC／地點／劇情大綱、沒有真正寫給玩家聽的段落時，正確判斷 found=false，不會把背景說明硬套成開場白。空劇本、沒設定 LLM_PROVIDER 都正確回傳 found=false，不拋例外。
+  - `/coc start` 完整流程：找到現成開場文字時正確寫入 log、標記 `game_started`、不重複觸發第二次（第二次呼叫會被擋下並提示已經開始過，log 也確認沒有被多寫一筆）；找不到時正確落到 LLM 生成路徑，關掉 Scenario RAG 時能正確用到劇本裡的真實地名、人名、情節（不是空泛帶過）。沒有劇本、沒有角色兩種擋下情境也都測過，訊息正確。
+- **過程中發現、順便修正的一個問題**：Scenario RAG 開啟時，`/coc start` 是整場遊戲的第一輪，沒有任何歷史對話可以借力，守密人一開始只會用「背景設定」「開場地點」這種籠統詞查 `search_scenario`，查不到就直接放棄、寫出空泛敘述。把 fallback 用的 meta 指令改得更明確——告訴它「查不到『開場』兩個字不代表沒有背景資料，換用劇本標題／委託人／地點等關鍵字再查」，不要一查不到就放棄。
+- **code review 抓到的問題，已經修正**：
+  1. **🔴 Blocking**：找到現成開場文字那條路，原本只塞一筆 `assistant` 進 `state.log`，沒有前面的 `user` 訊息——Anthropic Messages API 規定第一則訊息角色必須是 `user`，會讓下一輪玩家講話時直接 `BadRequestError`，而且因為這個例外發生在 `_commit_turn_result` 存檔之前，`state.log` 永遠卡住，整局遊戲從此打不動，除非 `/coc newgame` 重來。已補上一筆 `user` 開場指令墊在前面，並在 `LLM_PROVIDER=openai` 端到端測過、也用假的 Anthropic client 攔截驗證過組出來的第一則訊息角色確實是 `user`。
+  2. **狀態鎖一致性**：`/coc start` 兩條路徑原本各自的 `load_state → 改 game_started → save_state` 都沒有包在 `locks.get_state_lock` 裡，是整個 change 裡唯二漏掉的讀改存操作；現在都補上了，跟這個 repo 其他所有讀改存的地方一致。
+  3. **`get_keeper_turn_lock`**：fallback 路徑呼叫 `keeper.run_turn` 原本沒有包這個鎖，這個 repo 其他呼叫 `run_turn` 的地方都有包；現在補上了。
+  4. **上傳新劇本沒有重置 `game_started`**：現在 `handle_pdf_upload` 會跟著 `scenario_text`／`active` 等欄位一起把 `game_started` 重置為 `False`，中途換劇本不用再記得先 `/coc newgame`。
+- **還是有的限制**：
+  1. Scenario RAG 模式下，`search_scenario` 對「劇本語言跟查詢語言不同、劇本內容篇幅較小或用詞不夠具體」這幾種情況查詢效果本來就有限（見上面第 22 項「還是有的限制」）——這次只是把 fallback 的指令改得更會嘗試查詢，沒有解決 RAG 檢索品質本身的問題；劇本語言與查詢用詞落差夠大時，守密人仍然可能查不到東西、只能寫出比較空泛的開場白（但不會編造劇本沒有的具體事實）。
+  2. 這份 changelog 從第 17 項開始有重複編號（前後兩段各自的 merge 歷史各自編了一次 17～25），是先前合併 `main`／`discord-only` 兩條分支遺留下來的既有問題，不在這次修正範圍內。
