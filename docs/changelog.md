@@ -643,3 +643,17 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
     - 正確性：用真實 OpenAI API 打出 5 個真實 embedding，逐一用「教科書版本」（每次都重新算範數）跟「快取範數」版本比對算出來的 cosine 分數，最大絕對誤差 **0.00e+00**（浮點精度內完全相等，不是近似）——這次不再有任何誤差存在，門檻判定與排序不可能因為這個函式本身而翻轉。
     - 效能：同一組 5 個真實向量重複比對 10 萬次，快取範數版本 4.64 秒，每次都重算範數的版本 11.67 秒，約快 **2.5 倍**——雖然比「完全跳過除法」的 2.82 倍略慢一點點，換來的是完全正確、不再依賴任何假設。
     - 端到端：`scenario_rag.build_index()` → `search()` → 存到硬碟 → 從硬碟重新讀回來 → 再 `search()` 一次，確認兩次搜尋結果的分數逐項完全相同（`norm` 從硬碟載入後正確重新算出，不是空值或 0）；`memory_rag.append_memory()` → `search_memory()` → 重建索引，確認 `norm` 有正確被填入每個 chunk。
+
+### 58. `save_state` 合併成單一 SQLite 連線／交易，PRAGMA 不再每次連線重跑
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`app/db.py` 的 `_connect()` 每次呼叫都開一個新的 SQLite 連線並執行 2 個 PRAGMA（`journal_mode=WAL`、`synchronous=NORMAL`），而 `app/state.py` 的 `save_state` 對一場戲的 group state 存一次、還要對**每個角色**各自呼叫一次 `db.set_json("characters", ...)`——一個 4 人隊伍，光是 `save_state` 一次呼叫就開了 5 個獨立連線，每個都重跑一次 PRAGMA。一輪 Keeper 對話如果串了好幾個會扣血/扣彈藥/給物品的工具呼叫，加上結尾的存檔跟維護任務，連線數確實會疊到十幾二十次。
+- **實測過這個開銷有多大**：直接量測（不是憑印象）——單純 `sqlite3.connect()`＋`close()` 大約 0.03ms，加兩個 PRAGMA 後變成約 0.37ms，PRAGMA 本身佔了每次連線約 0.34ms（其中 `journal_mode=WAL` 跟 `synchronous=NORMAL` 各自約 0.21-0.25ms，量級差不多）。`journal_mode=WAL` 這個設定其實是**寫進資料庫檔案本身、會持久保留**的，不是每個連線各自的狀態，每次重新執行等於白做工；`synchronous` 才是每個連線都要重設才有效的設定。
+- **這個專案現在怎麼做**：
+  1. `journal_mode=WAL` 只在 `_ensure_tables()`（模組載入時）設定一次，之後每次 `_connect()` 只再設定 `synchronous=NORMAL`。
+  2. 新增 `db.transaction()`（公開版的 `_connect()`）跟 `db.set_json_tx(conn, table, key, value)`（吃既有連線、不自己開關），讓需要一次寫多個 key 的呼叫端可以共用同一個連線／交易。`save_state` 改成用這組 API，把「group state 一次寫入 + 每個角色一次寫入」全部包進同一個連線，不再各自開關。
+- **實測過**：
+  - 正確性：存一個含 4 個角色的 `GroupState`，讀回來確認 group state 跟每個角色鏡像（`characters` table）內容都正確，跟修改前行為一致。
+  - 連線數：用 spy 監控 `sqlite3.connect` 的呼叫次數，確認一次 `save_state`（4 個角色）修改前是 5 次連線，修改後正確變成 1 次。
+  - 效能：同樣情境（4 角色）跑 50 次 `save_state`，修改前約 2.25ms／次，修改後約 0.49ms／次，約 **4.6 倍**。
+  - 額外重新跑過 `roll_weapon_damage`、`add_status_tag` 兩個既有工具的端到端測試，確認這個改動沒有連帶影響其他依賴 `save_state` 的功能。
+- **還是有的限制**：這次只處理了 `save_state` 這一個明確有 N+1 連線問題的呼叫點；`scenario_indexes`、`memory_chunks` 這兩個表目前每次寫入都是單一 key，沒有迴圈寫多筆的情況，不在這次範圍內。單次連線層級的絕對耗時（幾毫秒）本來就遠小於一次 LLM API 呼叫（動輒幾秒），這個修正省下來的時間對單一使用者體感上不會太明顯，主要意義是消除純粹浪費的重工，在高併發、多群組同時活躍時比較看得出差異。
