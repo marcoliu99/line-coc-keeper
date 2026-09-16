@@ -594,3 +594,6 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **實測過**：
   - 用一個假的 Discord channel（只記錄 `send` 被呼叫了什麼），對 `_post_pending_buttons` 加 spy 監控 `load_group_state` 的呼叫次數，確認整個流程只讀了一次，而且正確依據新的 pending check 貼出對應的按鈕訊息。
   - 用一個刻意設計成「睡 1 秒」的假 `load_group_state`，搭配一個每 0.05 秒 tick 一次、跑滿 10 次的並行協程，用 `asyncio.gather` 一起跑：確認 tick 協程在那 1 秒的讀取期間完整跑完全部 10 次，證實 `asyncio.to_thread` 真的把這個同步呼叫讓出了事件迴圈，不會卡住其他並行的協程。
+- **PR review 後修正**：review 指出「合併讀取」這個部分本身有問題——`_post_check_buttons` 迴圈裡的每一次 `channel.send()` 都是真的 `await`，是事件迴圈真的可以跑去處理別的事情的地方；如果在這段期間，剛好有別的並行處理（例如另一個並行的 `/coc newgame`，或別的路徑把某個 Luck 決定解決掉）動到了 `pending_luck_decisions`，`_post_luck_buttons` 因為共用同一份「指令執行前」讀到的 `state`，就可能貼出一個其實已經被清掉／處理掉的 Luck 按鈕——這正是原本（這個 PR 之前）的版本能避免的：`_post_luck_buttons` 本來是等所有 check 按鈕都貼完之後才重新讀一次狀態。
+  - **怎麼修的**：`_post_pending_buttons` 改回在 `_post_check_buttons` 執行完之後、呼叫 `_post_luck_buttons` 之前**再讀一次**最新狀態，不再共用同一份快照——等於保留「同步呼叫丟到背景執行緒」這個修正（仍然不阻塞事件迴圈），但撤回「合併成一次讀取」這部分，因為合併的前提（兩次呼叫之間沒有真正的 await yield point）並不成立。
+  - **實測過**：先在**沒修這個問題**的程式碼上重現：用一個假的 channel，`send()` 被呼叫時故意模擬「並行處理清掉了 `pending_luck_decisions`」（直接改資料庫），確認舊版真的會貼出一個對應已被清除決定的 Luck 按鈕（訊息內容含「要花 Luck」）。接著套用修正後重新跑同一支腳本，確認 Luck 按鈕不再被貼出（因為 `_post_luck_buttons` 這次讀到的是已經被清除之後的最新狀態）。

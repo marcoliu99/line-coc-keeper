@@ -297,13 +297,25 @@ async def _post_pending_buttons(
 ) -> None:
     """Shared tail for every place that posts fresh check/Luck-spend buttons
     after a command or turn finishes (CheckButton/LuckSpendButton callbacks,
-    on_message) — loads the post-turn state exactly once and reuses it for
-    both _post_check_buttons and _post_luck_buttons, instead of each of them
-    separately re-loading the same GroupState right after each other.
+    on_message).
 
-    The load itself runs via asyncio.to_thread: load_group_state is a
-    synchronous SQLite read + JSON deserialize of the *whole* GroupState blob
-    (scenario text, full log, character sheets, ...). Calling it directly on
+    Loads state once for _post_check_buttons, then loads it AGAIN,
+    separately, right before _post_luck_buttons — this is NOT the same as
+    the two independently reloading right after each other with nothing in
+    between (which really would be a redundant read worth merging): every
+    channel.send() inside _post_check_buttons' loop is a real await, a point
+    where the event loop can run another handler (a concurrent /coc newgame,
+    another player's action, ...) that mutates pending_luck_decisions before
+    _post_luck_buttons ever runs. An earlier version of this function shared
+    one snapshot across both calls — cheaper, but meant _post_luck_buttons
+    could publish a stale Luck-spend view for a decision that had already
+    been resolved or cleared by the time it actually posted. Reverted after
+    review: the point-in-time freshness on the Luck pass matters more than
+    saving one SQLite read here.
+
+    Both loads run via asyncio.to_thread: load_group_state is a synchronous
+    SQLite read + JSON deserialize of the *whole* GroupState blob (scenario
+    text, full log, character sheets, ...). Calling it directly on
     discord.py's single event-loop thread blocks Discord's gateway heartbeat
     processing for however long that takes — on a long-running campaign
     (a large scenario_text, hundreds of log entries) this is measurable, and
@@ -312,6 +324,7 @@ async def _post_pending_buttons(
     module goes through to_thread for the same reason."""
     state = await asyncio.to_thread(load_group_state, conversation_id)
     await _post_check_buttons(channel, conversation_id, state, before_pending)
+    state = await asyncio.to_thread(load_group_state, conversation_id)
     await _post_luck_buttons(channel, conversation_id, state, before_luck_pending)
 
 
