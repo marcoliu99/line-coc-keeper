@@ -941,20 +941,28 @@ def _execute_tool(
             tag = tool_input.get("tag", "").strip()
             if not tag:
                 return {"ok": False, "error": "tag 不能是空字串"}
-            if tag not in char.status_tags:
-                char.status_tags.append(tag)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = tag not in target_char.status_tags
+                if changed:
+                    target_char.status_tags.append(tag)
+                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
+            investigator, tags = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "remove_status_tag":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             tag = tool_input.get("tag", "")
-            if tag in char.status_tags:
-                char.status_tags.remove(tag)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = tag in target_char.status_tags
+                if changed:
+                    target_char.status_tags.remove(tag)
+                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
+            investigator, tags = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
