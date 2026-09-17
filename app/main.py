@@ -6,6 +6,8 @@ app/discord_bot.py for the Discord equivalent.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, HTTPException, Request, Response
 
 from linebot.v3 import WebhookParser
@@ -37,6 +39,8 @@ from linebot.v3.webhooks import (
 from app import commands
 from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, PUBLIC_BASE_URL
 from app.state import load_page_image
+
+_logger = logging.getLogger(__name__)
 
 app = FastAPI(title="LINE COC7e Keeper Bot")
 
@@ -192,10 +196,11 @@ async def callback(request: Request):
         try:
             await _handle_message_event(event)
         except Exception as exc:  # noqa: BLE001 - keep the webhook alive, surface the error to the group
+            _logger.exception("_handle_message_event failed")
             try:
                 await _make_reply(event.reply_token)(f"發生錯誤了：{exc}")
             except Exception:
-                pass
+                _logger.exception("also failed to report the above error back via reply_token")
     return "OK"
 
 

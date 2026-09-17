@@ -665,3 +665,44 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **流程位置維持不變**：`on_message()` 仍然是在忽略 bot 訊息之後立刻做 OOC 判斷，命中就直接 `return`；位置仍早於 state 讀取、附件/文字的 `commands.py` 呼叫，以及任何 Keeper/AI 流程。
 - **已驗證**：直接用 Python assertion 確認 ASCII `@`、全形 `＠`、前置半形/全形空白、Discord user/nickname/role mention 都會被視為 OOC；一般文字中途提到 `@`、頻道 mention `<#...>`、普通角色扮演文字都不會被誤判。也跑過 `python -m py_compile app/discord_bot.py`。
 
+
+### 60. 修掉靜態分析報告裡真的成立的部分：吞掉例外的 try-except-pass、MD5 缺 usedforsecurity 標記
+
+- **這個改動怎麼來的**：使用者提供一份外部產生的靜態代碼健檢報告（`static_analysis_report.md`）跟對應
+  的實作計畫（`implementation_plan.md`），聲稱用 Mypy/Bandit/Flake8 掃描專案抓到幾個「非常有可能引發
+  AttributeError 或 Crash」的型別混淆問題，外加幾個 Bandit 抓到的壞味道。動手改之前先把這三個工具
+  （系統沒裝在這個專案的 venv，額外裝在系統 Python 底下）實際跑一次驗證，發現：
+  1. 報告引用的行號其實是針對 `character-sheet` 分支跑的（那個分支的 `commands.py` 有 2394 行），不是
+     `main`（1963 行）——但逐一核對後，報告點名的每個具體問題在 `main` 上也都存在，只是行號不同，是
+     很久以前就有的舊程式碼模式，不是哪個分支新引入的。
+  2. **Mypy 那幾項型別混淆，實測後確認都不是真的會在執行期發生的 bug**：`app/commands.py` 的
+     `r = dice.sanity_check(...)` 是在 `if pending.get("type")=="sanity": ... return` 裡面、提前
+     return，跟後面 `r = dice.skill_check(...)` 完全不會同時執行；`app/keeper.py` 的 `_execute_tool`
+     是一個巨大的 if-elif 派發函式，每個工具分支各自定義了同名的區域函式 `mutate`（或用了同名的
+     `result` 變數），互斥、各自提前處理完就結束，Python 執行時完全沒有衝突——Mypy 會抱怨純粹是因為
+     它對整個函式做型別推論，沒辦法理解「這些分支互斥、不會同時發生」，是靜態分析的假警報，不是真的
+     會讓玩家擲骰時直接炸出的 crash。而且範圍比報告/計畫講的大很多：光是 `keeper.py` 這種 `mutate`
+     重複定義的警告，實際數出來有 14 處，不是計畫講的 4 個工具。跟使用者確認過scope 後，決定這次
+     **不處理** mypy 那部分（不是真的執行期風險，硬改的話 diff 會比計畫預期的大很多，风险效益比低）。
+  3. **Bandit 抓到的兩類問題（`try-except-pass` 吞掉例外、`hashlib.md5` 缺 `usedforsecurity=False`）
+     逐一核對後確認全部真實存在，而且修起來零風險**，這次只處理這兩類。
+- **這個專案現在怎麼做**：
+  - `app/discord_bot.py`（`on_message` 的外層例外處理）、`app/main.py`（LINE webhook 的
+    `callback`）：原本 `except Exception: pass`（吞掉「連錯誤訊息都送不出去」這個次要例外）改成
+    `_logger.exception(...)`，把完整 traceback 印進 log；外層原本抓到主例外後只往頻道回一句
+    `f"發生錯誤了：{exc}"`（沒有 traceback、也沒有寫進 server 端的 log），一併補上
+    `_logger.exception(...)`，兩層都不會再無聲無息地把錯誤吃掉。`app/main.py` 原本沒有設定
+    `logging`／`_logger`，這次一起補上（跟其他檔案一致的 `logging.getLogger(__name__)` 慣例）。
+  - `app/memory_rag.py`（`append_memory` 的 embedding best-effort 區塊）、
+    `app/scenario_rag.py`（`_save_index_to_disk` 的 best-effort 寫入區塊）：同樣把 `except
+    Exception: pass` 改成 `_logger.exception(...)`——這兩處本來就是設計成「失敗了就跳過，不影響主
+    流程」（embedding 失敗還是能用 BM25 純文字搜尋；索引寫入失敗下次重啟會重建），這個行為完全不變，
+    只是失敗當下會留下 log 可查，不會變成「肉眼完全看不到任何線索」的除錯地獄。
+  - `app/scenario_rag.py` 兩處 `hashlib.md5(scenario_text.encode("utf-8"))`（`build_index`／
+    `get_index`，純粹拿來偵測劇本文字有沒有變過，不是任何安全用途）都補上 `usedforsecurity=False`，
+    避免在啟用 FIPS 之類嚴格模式的 Python 環境下丟例外。
+- **實測過**：
+  - `import app.discord_bot`／`app.main`／`app.memory_rag`／`app.scenario_rag` 全部確認可正常載入。
+  - 重新對整個 `app/` 跑一次 Bandit，確認 `B110`（try-except-pass）與 `B324`（MD5 缺
+    `usedforsecurity`）兩類問題都變成 0 筆命中，改動前這兩類各有對應筆數命中、位置跟報告描述一致。
+  - 這次刻意沒有處理 Mypy 那部分警告（詳見上方「這個改動怎麼來的」）。
