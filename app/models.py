@@ -445,7 +445,18 @@ class GroupState:
     active: bool = False
     kp_assistant_user_id: str = ""
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
+    # `log` is the canonical in-game history between players and the Keeper:
+    # player actions, Keeper narration, rolls, and other public campaign events.
     log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
+
+    # Separate KP Assistant out-of-character working memory for future private
+    # "KP Assistant <-> AI Keeper" coordination. This is deliberately separate
+    # from `log`: it is not part of the public player/Keeper game history, and
+    # future maintenance should not fold it into campaign_summary or Memory RAG.
+    # This step only adds the data structure and serialization compatibility;
+    # it does not change Keeper prompts, run_turn, tool permissions, or runtime
+    # behavior yet.
+    kp_ooc_log: list[dict[str, str]] = field(default_factory=list)
     # Rolling summary of whatever's been trimmed off the front of `log` so far
     # (see app/keeper.py's run_turn/summarize_log_chunk) — the "campaign so
     # far" recap that survives past MAX_LOG_TURNS*4, so the Keeper doesn't
@@ -552,6 +563,7 @@ class GroupState:
             "kp_assistant_user_id": self.kp_assistant_user_id,
             "characters": {k: v.to_dict() for k, v in self.characters.items()},
             "log": self.log,
+            "kp_ooc_log": self.kp_ooc_log,
             "campaign_summary": self.campaign_summary,
             "openai_previous_response_id": self.openai_previous_response_id,
             "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
@@ -581,6 +593,7 @@ class GroupState:
             kp_assistant_user_id=data.get("kp_assistant_user_id", ""),
             characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
             log=data.get("log", []),
+            kp_ooc_log=data.get("kp_ooc_log", []),
             campaign_summary=data.get("campaign_summary", ""),
             openai_previous_response_id=data.get("openai_previous_response_id", ""),
             creation_sessions={

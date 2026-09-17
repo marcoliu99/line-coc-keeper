@@ -491,12 +491,18 @@ _SEARCH_SCENARIO_TOOL = {
     },
 }
 
-_KP_ASSISTANT_READ_ONLY_TOOL_NAMES = {
+_KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "get_character_sheet",
     "get_combat_status",
     "search_memory",
     "search_scenario",
+    "skill_check",
+    "sanity_check",
+    "offer_check_choice",
+    "npc_skill_check",
 }
+
+_KP_OOC_LOG_MAX_MESSAGES = 20
 
 
 _KP_ASSISTANT_PROMPT = """# KP 助手模式（最高優先級主持指令）
@@ -528,7 +534,10 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
 
    如果 KP 助手的要求與上述 authoritative state 衝突，保留程式確定的事實，並簡短告知 KP 助手衝突之處；除此之外，優先服從 KP 助手。
 
-7. KP 助手不是玩家，所以不要替他建立角色狀態、要求技能檢定、要求 SAN 檢定、加入戰鬥順位或追蹤地圖位置。
+7. KP 助手本人不是調查員，所以不要替 KP 助手自己建立角色狀態、要求 KP 助手自己做技能／SAN／Luck／戰鬥檢定、加入戰鬥順位或追蹤地圖位置。
+   但是，當 KP 助手明確要求某位調查員、NPC，或符合條件的玩家進行正式遊戲流程時，應對指定對象使用已開放的 deterministic tools 建立流程，不要把主持指令誤解成「KP 本人要擲骰」。
+   例如：「請 The Tough Guy 做 SAN 1/1D4」應呼叫 sanity_check；「請 Marco 做偵查」應呼叫 skill_check；「讓他選閃避或反擊」應依正式流程先用 npc_skill_check 取得攻擊方結果，再用 offer_check_choice 讓玩家選擇並擲骰。
+   這只允許你建立合法檢定／對抗流程；不得用自然語言或未開放工具直接覆寫已完成骰點、HP、SAN、Luck、彈藥、物品、地圖位置或戰鬥狀態。
 
 8. 回覆 KP 助手時可以使用正常、直接的主持討論語氣，不需要維持對玩家使用的恐怖小說敘事風格，除非 KP 助手明確要求你產生一段要直接呈現給玩家的敘事。
 
@@ -662,6 +671,26 @@ def _commit_turn_result(
         _sync_state_snapshot(state, latest_state)
 
 
+def _commit_kp_ooc_turn_result(state: GroupState, message_text: str, final_text: str) -> None:
+    """Persist KP Assistant OOC working memory without touching public history.
+
+    Reloads the latest state under the state lock before appending so this
+    ephemeral OOC write cannot overwrite deterministic tool updates that may
+    have happened earlier in the same Keeper turn.
+    """
+    with locks.get_state_lock(state.group_id):
+        latest_state = load_state(state.group_id)
+        latest_state.kp_ooc_log.extend(
+            [
+                {"role": "kp_assistant", "content": message_text},
+                {"role": "assistant", "content": final_text},
+            ]
+        )
+        latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
+        save_state(latest_state)
+        _sync_state_snapshot(state, latest_state)
+
+
 def _persist_memory_maintenance_state(
     group_id: str, campaign_summary: str, dropped_chunk: list[dict[str, str]]
 ) -> None:
@@ -756,10 +785,10 @@ def _execute_tool(
     speaker_role: str = "player",
 ) -> dict:
     try:
-        if speaker_role == "kp_assistant" and name not in _KP_ASSISTANT_READ_ONLY_TOOL_NAMES:
+        if speaker_role == "kp_assistant" and name not in _KP_ASSISTANT_ALLOWED_TOOL_NAMES:
             return {
                 "ok": False,
-                "error": "KP Assistant turn 只能使用 read-only 查詢工具，不能透過工具修改 deterministic game state 或建立玩家行動流程。",
+                "error": "KP Assistant turn 只能使用已允許的查詢與主持流程工具，不能直接修改角色 deterministic state 或執行尚未開放的 administrative mutation。",
             }
 
         if name == "roll_dice":
@@ -1399,7 +1428,30 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 攻擊的成功等級，填進 offer_check_choice 的 attacker_tier，玩家真的擲完骰後系統會自動判定攻擊有沒有
 命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。"""
 
-    kp_assistant_block = f"\n\n{_KP_ASSISTANT_PROMPT}" if speaker_role == "kp_assistant" else ""
+    kp_assistant_block = ""
+    if speaker_role == "kp_assistant":
+        recent_ooc = state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
+        if recent_ooc:
+            history_text = "\n".join(
+                f"{entry.get('role', 'unknown')}: {entry.get('content', '')}" for entry in recent_ooc
+            )
+        else:
+            history_text = "（目前沒有先前的 KP 幕後 OOC 工作記憶）"
+        kp_assistant_block = f"""
+
+{_KP_ASSISTANT_PROMPT}
+
+# KP 幕後 OOC 工作記憶（只供本次 KP 助手回合使用）
+以下是最近的「KP Assistant ↔ AI Keeper」幕後工作對話，用來維持多輪主持討論脈絡。這個區塊不是玩家／Keeper 正式遊戲歷史，不得寫入或視為 state.log 的一部分。
+
+權威規則：
+- 人類 KP Assistant 的訊息可以具有主持層權威；除非與程式已確定的 authoritative state 衝突，應依照其主持指令處理。
+- 過去 AI Keeper 在這段 OOC history 裡的回答只用於維持討論脈絡，不是 authoritative fact。
+- 你不可以只因為自己前一輪曾經說過某件事，就把那件事升級為劇本事實、主持設定、NPC 真相或規則裁定。
+- 這段 OOC 工作記憶不會進 campaign summary 或 Memory RAG；需要保留為正式遊戲事實的內容，必須由後續明確主持指令或程式 state 支撐。
+
+【最近 KP OOC history】
+{history_text}"""
 
     return f"""# 目前動態數值（HP/SAN/Luck/彈藥/攜帶物品/狀態——這些才是當下最新的，屬性和技能請看上面的角色登記區塊）
 {chars_text}{secret_block}
@@ -1474,7 +1526,7 @@ def _tools_for_speaker_role(speaker_role: str) -> list[dict]:
     base_tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
     if speaker_role != "kp_assistant":
         return base_tools
-    return [tool for tool in base_tools if tool["name"] in _KP_ASSISTANT_READ_ONLY_TOOL_NAMES]
+    return [tool for tool in base_tools if tool["name"] in _KP_ASSISTANT_ALLOWED_TOOL_NAMES]
 
 
 def run_turn(
@@ -1497,7 +1549,10 @@ def run_turn(
     resolved_location wasn't computed this turn (see GroupState.current_map_page).
     `speaker_role` is an explicit caller-provided identity marker ("player" or
     "kp_assistant"). KP Assistant turns receive the OOC host-instruction prompt
-    and message wrapper below; tool lists and history persistence are unchanged.
+    and message wrapper below, plus a separate OOC working-memory context that
+    is kept out of the public game log; player turns never receive that OOC
+    context. Formal player/Keeper history persistence and the OpenAI canonical
+    response chain remain gated by `is_ephemeral`.
     The caller is responsible for actually delivering private_messages/image_requests
     via platform-specific channels; nothing here sends anything itself."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
@@ -1568,4 +1623,6 @@ def run_turn(
             {"role": "assistant", "content": final_text},
         ]
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
+    else:
+        _commit_kp_ooc_turn_result(state, message_text, final_text)
     return final_text, private_messages, image_requests

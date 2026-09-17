@@ -170,6 +170,7 @@ def _apply_new_scenario(
     state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
     # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
     # first would find /coc start permanently refusing ("already started") for the new scenario.
+    state.kp_ooc_log = []  # new scenario must not inherit the previous scenario's KP OOC memory
     state.scenario_npc_index = extracted_index["npcs"]
     state.scenario_location_index = extracted_index["locations"]
     state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
@@ -355,6 +356,7 @@ async def handle_pdf_upload(
     pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
 
     async with locks.get_conversation_lock(conversation_id):
+
         # Page images update the same way regardless of which mode a GM later
         # picks for an ambiguous re-upload (see below) — applied immediately,
         # unconditionally, so there's nothing image-related left inside the
@@ -367,6 +369,7 @@ async def handle_pdf_upload(
         # scenario the locked state update below actually ends up current.
         clear_page_images(conversation_id)  # don't let a new scenario's /coc
         # showpage 5 show the OLD scenario's page 5.
+
         for page_number, png_bytes in page_images.items():
             save_page_image(conversation_id, page_number, png_bytes)
 
@@ -1321,52 +1324,77 @@ async def handle_text_message(
             )
         return
 
-    async with locks.get_conversation_lock(conversation_id):
-        state = load_state(conversation_id)
-        if not state.active or not state.game_started:
-            # Two separate conditions on purpose (see docs/character_and_
-            # dictionary_system_spec.md's Module 7): `active` alone used to
-            # be the only gate here, but it goes True the moment a scenario
-            # PDF is uploaded — well before /coc start — so a player casually
-            # chatting during the GM's setup (uploading maps, character
-            # cards, adjusting sheets) would have that chit-chat treated as
-            # in-character play and handed straight to the Keeper. `active`
-            # also doesn't reset on its own after /coc end (only game_started
-            # would still be stale True from the ended game, since /coc end
-            # doesn't touch it), so checking `game_started` alone isn't
-            # sufficient either — both have to hold: a scenario is loaded AND
-            # /coc start has actually run for it.
-            return
-
-        is_kp_assistant = state.kp_assistant_user_id == user_id
-        if is_kp_assistant:
-            display_name = await get_display_name()
-            speaker_role = "kp_assistant"
-            resolved_location = None
-        elif user_id not in state.characters:
-            display_name = await get_display_name()
-            await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
-            return
-        else:
-            display_name = state.characters[user_id].name
-            speaker_role = "player"
-            resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
-
-        async with locks.get_keeper_turn_lock(conversation_id):
-            reply_text, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, display_name, text, resolved_location, speaker_role
+    # KP Assistant is optional. Only when this conversation currently has a KP
+    # Assistant do ordinary Keeper turns use the priority gate; otherwise we
+    # intentionally bypass it and preserve the original conversation-lock path.
+    scheduling_state = load_state(conversation_id)
+    if not scheduling_state.kp_assistant_user_id:
+        async with locks.get_conversation_lock(conversation_id):
+            await _handle_ordinary_text_message_locked(
+                conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
             )
-            await _run_post_turn_maintenance_after_output(
-                conversation_id,
-                reply,
-                reply_text,
-                send_dm,
-                send_image,
-                send_dm_image,
-                private_messages,
-                image_requests,
-                run_maintenance=not is_kp_assistant,
+        return
+
+    is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
+    async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp_priority):
+        async with locks.get_conversation_lock(conversation_id):
+            await _handle_ordinary_text_message_locked(
+                conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
             )
+
+
+async def _handle_ordinary_text_message_locked(
+    conversation_id: str,
+    user_id: str,
+    get_display_name: GetDisplayName,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    text: str,
+) -> None:
+    """Handle an ordinary non-command text message.
+
+    The caller must already hold get_conversation_lock(conversation_id). This
+    function always reloads state itself; any pre-gate scheduling snapshot is
+    only a priority hint and never authoritative game state.
+    """
+    state = load_state(conversation_id)
+    if not state.active or not state.game_started:
+        # Ordinary text only becomes in-character play after a scenario is
+        # loaded AND /coc start has actually begun the game. PDF upload sets
+        # active=True during GM setup; /coc end sets active=False.
+        return
+
+    is_kp_assistant = state.kp_assistant_user_id == user_id
+    if is_kp_assistant:
+        display_name = await get_display_name()
+        speaker_role = "kp_assistant"
+        resolved_location = None
+    elif user_id not in state.characters:
+        display_name = await get_display_name()
+        await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+        return
+    else:
+        display_name = state.characters[user_id].name
+        speaker_role = "player"
+        resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
+
+    async with locks.get_keeper_turn_lock(conversation_id):
+        reply_text, private_messages, image_requests = await asyncio.to_thread(
+            keeper.run_turn, state, user_id, display_name, text, resolved_location, speaker_role
+        )
+        await _run_post_turn_maintenance_after_output(
+            conversation_id,
+            reply,
+            reply_text,
+            send_dm,
+            send_image,
+            send_dm_image,
+            private_messages,
+            image_requests,
+            run_maintenance=not is_kp_assistant,
+        )
 
 
 def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str, dict] | None:
@@ -1750,6 +1778,7 @@ async def _handle_coc_command(
                 await reply("你目前不是這局的 KP 助手。")
                 return
             state.kp_assistant_user_id = ""
+            state.kp_ooc_log = []
             save_state(state)
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             return
@@ -1771,6 +1800,7 @@ async def _handle_coc_command(
             await reply("KP 助手與建角流程互斥；你正在進行互動式建角，請先輸入「/coc create cancel」取消後再登記 KP 助手。")
             return
 
+        state.kp_ooc_log = []
         state.kp_assistant_user_id = user_id
         save_state(state)
         await reply("已登記你為這局的 KP 助手。")
@@ -1836,6 +1866,7 @@ async def _handle_coc_command(
         state = load_state(conversation_id)
         state.active = False
         state.kp_assistant_user_id = ""
+        state.kp_ooc_log = []
         save_state(state)
         await reply("遊戲已結束，遊戲紀錄與角色仍會保留；KP 助手身分也已解除。要開新的一局請用 /coc newgame。")
         return
