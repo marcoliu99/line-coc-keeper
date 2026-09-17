@@ -482,3 +482,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **這次實際完成**：修改 `app/discord_bot.py` 與 `app/commands.py`，讓 Discord LuckSpendButton 不再用 legacy conversation lock 包住完整流程；按鈕點擊後的 deterministic Luck resolution 仍透過既有短 State Lock 與最新 authoritative state 完成 pending Luck 驗證、Luck 扣除與 `save_state()`。
 - **回覆順序**：LuckSpendButton 的 split feedback 現在會先送出程式固定的 `🎲 角色｜技能 數值 / 花費 N 點幸運：骰值 → 結果 / 後續結果由守密人處理中……`，之後在 Keeper narration 前重新取得 legacy conversation lock，再取得 Keeper Turn Lock，固定維持 `Legacy -> Keeper Turn -> State` 的 lock order。
 - **保留不變**：Keeper narration 沿用既有 `🎭 角色｜技能結果` deterministic header；同一 conversation 仍只允許一個 Keeper AI turn。`/coc luck` 文字指令、CheckButton、其他 `/coc` 指令與 upload flows 都未修改。
+
+### 44. Discord OOC bypass 支援全形 `＠`
+
+- **這次實際完成**：只修改 `app/discord_bot.py` 與 `docs/changelog.md`。`app/discord_bot.py` 新增 `_is_ooc_message(text)` 純函式，只對「判斷用的副本」做 `unicodedata.normalize("NFKC", text or "")`，再 `.lstrip()`，最後沿用原本的 `startswith("@") or startswith("<@")` 判斷；原始 `message.content` 不會被改寫。
+- **修正內容**：Discord OOC bypass 原本只吃 ASCII `@` 與 `<@`，玩家輸入全形 `＠`（U+FF20）開頭時會繼續進入一般訊息流程。NFKC normalization 後，全形 `＠` 與全形空白開頭的 `＠` 訊息都會正確被視為 OOC。
+- **流程位置維持不變**：`on_message()` 仍然是在忽略 bot 訊息之後立刻做 OOC 判斷，命中就直接 `return`；位置仍早於 state 讀取、附件/文字的 `commands.py` 呼叫，以及任何 Keeper/AI 流程。
+- **已驗證**：直接用 Python assertion 確認 ASCII `@`、全形 `＠`、前置半形/全形空白、Discord user/nickname/role mention 都會被視為 OOC；一般文字中途提到 `@`、頻道 mention `<#...>`、普通角色扮演文字都不會被誤判。也跑過 `python -m py_compile app/discord_bot.py`。

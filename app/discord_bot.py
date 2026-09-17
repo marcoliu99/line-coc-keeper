@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+import unicodedata
 
 import discord
 
@@ -27,6 +28,11 @@ intents.message_content = True  # privileged intent — must also be switched on
 # for this bot under Developer Portal > your app > Bot > Privileged Gateway Intents,
 # or on_message will only ever see empty message content.
 client = discord.Client(intents=intents)
+
+
+def _is_ooc_message(text: str) -> bool:
+    ooc_text = unicodedata.normalize("NFKC", text or "").lstrip()
+    return ooc_text.startswith("@") or ooc_text.startswith("<@")
 
 
 def _chunk_text(text: str) -> list[str]:
@@ -296,8 +302,7 @@ async def on_message(message: discord.Message) -> None:
     if message.author.bot:
         return  # ignore other bots (and echoes of our own messages)
 
-    ooc_text = (message.content or "").lstrip()
-    if ooc_text.startswith("@") or ooc_text.startswith("<@"):
+    if _is_ooc_message(message.content):
         return
 
     conversation_id = _conversation_id(message.channel.id)
