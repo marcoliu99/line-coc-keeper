@@ -969,6 +969,13 @@ def _execute_tool(
             if entry is None:
                 available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
                 return {"ok": False, "error": f"「{char.name}」的彈藥欄位裡沒有「{weapon}」，目前有：{available}"}
+            if "ammo_max" not in entry:
+                # A recognized weapon whose ammo isn't tracked (melee, or an
+                # ammo category this project's table doesn't cover) — see
+                # pregen_extractor._resolve_weapon_ammo, which stores these as
+                # {}. Without this check, `entry["ammo_max"]` below would
+                # KeyError instead of giving the Keeper a usable error.
+                return {"ok": False, "error": f"「{weapon}」沒有追蹤彈藥數（近戰武器或未登記彈藥表的槍械），不需要（也無法）裝填。"}
             def mutate(target_state: GroupState) -> None:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 target_entry = target_char.weapons.get(weapon)
