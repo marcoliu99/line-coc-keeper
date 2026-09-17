@@ -96,6 +96,46 @@ _REPORT_TOOL = {
 }
 
 
+# Every top-level scalar property _REPORT_TOOL's schema actually declares —
+# used by _clean_pregen_keys below to recognize a hallucinated variant of one
+# of these (see that function's own docstring). Deliberately excludes
+# "skills"/"skill_translations" (nested objects, handled separately — a
+# malformed key there just means one skill doesn't translate, not a whole
+# attribute silently defaulting to a wrong number) and "name"/"notes"/
+# "secret_goal"/"key_connection" (free text, no numeric default to protect).
+_EXPECTED_PREGEN_ATTR_KEYS = (
+    "str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "luck",
+    "hp_max", "mp_max", "san_max",
+)
+
+
+def _clean_pregen_keys(pregen: dict[str, Any]) -> None:
+    """Defends against occasional LLM tool-call noise where a property name
+    comes back with stray punctuation stuck to it — observed directly during
+    testing (2026-09-17): a real extraction returned "edu?:" instead of
+    "edu", which pregen_to_character's _int_or then silently treated as a
+    missing attribute and defaulted to 50, discarding whatever number the
+    LLM actually read off the page. Mutates `pregen` in place: strips common
+    stray punctuation from each of _EXPECTED_PREGEN_ATTR_KEYS' names and, if
+    the result exactly matches a key actually present in `pregen`, renames it
+    back to the correct schema key (only when the correct key doesn't
+    already exist — never overwrites a legitimately-present correct value
+    with a stray duplicate's). Every other key is left completely untouched:
+    this is purely a punctuation-noise fix for the fixed, known attribute
+    names, never a fuzzy/typo matcher that could misfire on a genuinely
+    different field."""
+    renames = {}
+    for expected in _EXPECTED_PREGEN_ATTR_KEYS:
+        if expected in pregen:
+            continue
+        for key in pregen:
+            if key.strip(" \t?:：？，,.") == expected:
+                renames[key] = expected
+                break
+    for old_key, new_key in renames.items():
+        pregen[new_key] = pregen.pop(old_key)
+
+
 def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text
     functions) rather than being hard-coded to Anthropic — this used to always
@@ -119,6 +159,7 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     )
     pregens = (result or {}).get("pregens", []) or []
     for pregen in pregens:
+        _clean_pregen_keys(pregen)
         # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above —
         # see that function's own comment for why reconciliation needs this.
         pregen["source"] = "llm_extracted"
@@ -430,8 +471,29 @@ def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
     return pregen
 
 
+def _coerce_int(value: Any) -> int | None:
+    """Best-effort int coercion tolerating a numeric string (an occasionally
+    observed LLM tool-call quirk — a real extraction returned skill values
+    as "65" instead of 65; see _clean_pregen_keys' docstring for the sibling
+    issue on property *names* rather than values) as well as the expected
+    int/float. Returns None for anything genuinely non-numeric (including
+    bool — an int subclass in Python, but never a real attribute/skill
+    value) rather than raising, so callers can tell "not a number" apart
+    from "coerced to 0"."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip().rstrip("%")
+        if stripped.lstrip("-").isdigit():
+            return int(stripped)
+    return None
+
+
 def _int_or(value: Any, default: int) -> int:
-    return int(value) if isinstance(value, (int, float)) else default
+    coerced = _coerce_int(value)
+    return coerced if coerced is not None else default
 
 
 def _resolve_weapon_ammo(weapons: dict[str, dict[str, Any]], era: str) -> dict[str, dict[str, int]]:
@@ -486,9 +548,9 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
     skills["閃避"] = dex // 2
     skills["母語"] = edu
     skills.update({
-        canonical_skill_name(k): int(v)
+        canonical_skill_name(k): coerced
         for k, v in (pregen.get("skills") or {}).items()
-        if isinstance(v, (int, float))
+        if (coerced := _coerce_int(v)) is not None
     })
 
     return Character(
