@@ -30,14 +30,20 @@ SKILL_ALIASES: dict[str, str] = {
     "偵察": "偵查",
     "聆聲": "聆聽",
     "聽力": "聆聽",
-    "駕駛": "汽車駕駛",
+    # NOT "駕駛": "汽車駕駛" — that used to be here, back when bare "駕駛" was
+    # an ambiguous term this project chose to assume meant car-driving. Now
+    # that BASE_SKILLS' official term for Pilot IS bare "駕駛" (see the
+    # 2026-09-17 terminology-table rename), that entry would be unreachable
+    # anyway (canonical_skill_name checks BASE_SKILLS membership first) and,
+    # worse, its presence would misleadingly suggest "駕駛" still means Drive
+    # Auto. Car-driving still has its own unambiguous "汽車駕駛"/"開車".
     "開車": "汽車駕駛",
     "電腦": "電腦使用",
     "電腦操作": "電腦使用",
     "急救術": "急救",
     "急救包紮": "急救",
     "說服力": "說服",
-    "話術溝通": "話術",
+    "話術溝通": "快速交談",
     "克蘇魯神話學": "克蘇魯神話",
     "神話學": "克蘇魯神話",
     "信用": "信用評級",
@@ -46,7 +52,7 @@ SKILL_ALIASES: dict[str, str] = {
     "潛行術": "潛行",
     "偽裝術": "偽裝",
     "開鎖技巧": "開鎖",
-    "巧手技藝": "巧手",
+    "巧手技藝": "妙手",
     "醫療": "醫學",
     "騎馬": "騎術",
     "游泳術": "游泳",
@@ -59,17 +65,32 @@ SKILL_ALIASES: dict[str, str] = {
     "歷史學": "歷史",
     "人類學識": "人類學",
     "考古學識": "考古學",
-    "估價鑑定": "估價",
+    "估價鑑定": "鑑定",
     "會計學": "會計",
     "法律知識": "法律",
     "機械維修技術": "機械維修",
-    "電器維修技術": "電器維修",
-    "重機械操作技術": "重機械操作",
-    "領航術": "領航",
-    "外語": "外語（其他）",
+    "電器維修技術": "電氣維修",
+    "重機械操作技術": "重型機械操作",
+    "領航術": "導航",
+    "外語": "其他語言",
     "投擲物": "投擲",
     "魅力": "魅惑",
     "恐嚇威脅": "恐嚇",
+
+    # Reverse aliases for this project's OLD terminology (2026-09-17
+    # terminology-table rename — see BASE_SKILLS' own comment) — so text
+    # still using the old names (a player's habit, an old saved macro, a
+    # not-yet-migrated pregen — see scripts/migrate_skill_names.py)
+    # continues to normalize to the current official term instead of being
+    # treated as an unrecognized skill.
+    "估價": "鑑定",
+    "話術": "快速交談",
+    "領航": "導航",
+    "巧手": "妙手",
+    "駕駛（其他載具）": "駕駛",
+    "電器維修": "電氣維修",
+    "外語（其他）": "其他語言",
+    "重機械操作": "重型機械操作",
 }
 
 

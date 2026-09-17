@@ -7,26 +7,42 @@ from typing import Any
 
 # Standard COC7e base skill percentages (subset covering the common cases).
 # Dodge and "Language (Own)" are computed per-investigator, not listed here.
+# Chinese skill names follow the official terminology table the project
+# owner supplied (2026-09-17) — some of these differ from earlier
+# ad-hoc translations this project used before that table existed:
+# Appraise 估價->鑑定, Fast Talk 話術->快速交談, Navigate 領航->導航,
+# Sleight of Hand 巧手->妙手, Pilot 駕駛（其他載具）->駕駛,
+# Electrical Repair 電器維修->電氣維修, Language (Other) 外語（其他）->其他語言,
+# Operate Heavy Machinery 重機械操作->重型機械操作. Deliberately NOT renamed:
+# Fighting (Brawl) stays 格鬥（鬥毆）rather than the table's plain 格鬥, and
+# Firearms/Science stay split into their (手槍)/(步槍/霰彈槍) and
+# (生物)/(化學)/(物理) variants rather than merged into one bare skill —
+# those splits track a real COC7e 7th-edition mechanical distinction (each
+# is genuinely a separate skill with its own value), not just a wording
+# choice, so collapsing them would be a rules change, not a terminology fix.
+# See app/skill_aliases.py for reverse-alias entries keeping the old
+# spellings resolvable, and scripts/migrate_skill_names.py for renaming
+# these keys in already-persisted characters/pregens once this deploys.
 BASE_SKILLS: dict[str, int] = {
-    "會計": 5, "人類學": 1, "估價": 5, "考古學": 1, "魅惑": 15, "攀爬": 20,
-    "信用評級": 0, "克蘇魯神話": 0, "偽裝": 5, "汽車駕駛": 20, "電器維修": 10,
-    "話術": 5, "格鬥（鬥毆）": 25, "射擊（手槍）": 20, "射擊（步槍/霰彈槍）": 25,
-    "急救": 30, "歷史": 5, "恐嚇": 15, "跳躍": 20, "外語（其他）": 1, "法律": 5,
+    "會計": 5, "人類學": 1, "鑑定": 5, "考古學": 1, "魅惑": 15, "攀爬": 20,
+    "信用評級": 0, "克蘇魯神話": 0, "偽裝": 5, "汽車駕駛": 20, "電氣維修": 10,
+    "快速交談": 5, "格鬥（鬥毆）": 25, "射擊（手槍）": 20, "射擊（步槍/霰彈槍）": 25,
+    "急救": 30, "歷史": 5, "恐嚇": 15, "跳躍": 20, "其他語言": 1, "法律": 5,
     "圖書館使用": 20, "聆聽": 20, "開鎖": 1, "機械維修": 10, "醫學": 1,
-    "自然學": 10, "領航": 10, "神秘學": 5, "重機械操作": 1, "說服": 10,
-    "駕駛（其他載具）": 1, "心理學": 10, "精神分析": 1, "騎術": 5, "巧手": 10,
+    "自然學": 10, "導航": 10, "神秘學": 5, "重型機械操作": 1, "說服": 10,
+    "駕駛": 1, "心理學": 10, "精神分析": 1, "騎術": 5, "妙手": 10,
     "偵查": 25, "潛行": 20, "生存": 10, "游泳": 20, "投擲": 20, "追蹤": 10,
     "電腦使用": 5, "科學（生物）": 1, "科學（化學）": 1, "科學（物理）": 1,
 }
 
 OCCUPATIONS: dict[str, dict[str, int]] = {
     "記者": {
-        "圖書館使用": 70, "說服": 60, "心理學": 50, "話術": 60,
+        "圖書館使用": 70, "說服": 60, "心理學": 50, "快速交談": 60,
         "偵查": 50, "歷史": 40, "汽車駕駛": 40,
     },
     "私家偵探": {
         "偵查": 70, "圖書館使用": 60, "心理學": 60, "潛行": 50,
-        "法律": 40, "射擊（手槍）": 50, "說服": 50, "話術": 50,
+        "法律": 40, "射擊（手槍）": 50, "說服": 50, "快速交談": 50,
     },
     "醫生": {
         "醫學": 70, "急救": 80, "心理學": 50, "說服": 40,
@@ -41,24 +57,24 @@ OCCUPATIONS: dict[str, dict[str, int]] = {
         "心理學": 40, "汽車駕駛": 50, "急救": 40, "恐嚇": 50,
     },
     "骨董商": {
-        "歷史": 60, "估價": 60, "圖書館使用": 60, "偵查": 50,
+        "歷史": 60, "鑑定": 60, "圖書館使用": 60, "偵查": 50,
         "說服": 40, "神秘學": 40, "信用評級": 50,
     },
     "神職人員": {
-        "說服": 60, "心理學": 50, "圖書館使用": 50, "話術": 40,
+        "說服": 60, "心理學": 50, "圖書館使用": 50, "快速交談": 40,
         "神秘學": 30, "急救": 30, "信用評級": 40,
     },
     "流浪漢": {
-        "潛行": 50, "偵查": 50, "話術": 50, "巧手": 40,
+        "潛行": 50, "偵查": 50, "快速交談": 50, "妙手": 40,
         "生存": 50, "格鬥（鬥毆）": 40, "開鎖": 40,
     },
     "藝術家": {
         "藝術／工藝（繪畫）": 60, "魅惑": 50, "心理學": 40, "圖書館使用": 40,
-        "歷史": 40, "估價": 40, "話術": 40,
+        "歷史": 40, "鑑定": 40, "快速交談": 40,
     },
     "海洋生物學家": {
         "科學（生物）": 70, "游泳": 60, "自然學": 60, "圖書館使用": 60,
-        "科學（化學）": 40, "急救": 40, "電腦使用": 40, "領航": 40,
+        "科學（化學）": 40, "急救": 40, "電腦使用": 40, "導航": 40,
     },
     "FBI探員": {
         "射擊（手槍）": 60, "法律": 50, "心理學": 50, "偵查": 60,

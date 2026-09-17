@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app import character_matcher
+from app import character_matcher, dictionary
 from app.config import LLM_PROVIDER
 from app.models import BASE_SKILLS, Character, damage_bonus_and_build, move_rate
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -100,11 +100,27 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         "以及一份技能列表）。用 report_pregens 工具回報結果。",
     )
     pregens = (result or {}).get("pregens", []) or []
-    # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above — see
-    # that function's own comment for why reconciliation needs this.
     for pregen in pregens:
+        # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above —
+        # see that function's own comment for why reconciliation needs this.
         pregen["source"] = "llm_extracted"
+        pregen["skills"] = _translate_skill_names(pregen.get("skills") or {})
     return pregens
+
+
+def _translate_skill_names(skills: dict[str, Any]) -> dict[str, Any]:
+    """Looks each skill name up against app/dictionary.py's seeded/learned
+    skills table before storing. _REPORT_TOOL's schema above only instructs
+    the LLM to translate the occupation field into Chinese — not skills — so
+    an English scenario's raw extraction would otherwise keep skill names
+    like "Spot Hidden" untranslated, unable to line up with a Chinese-
+    authored role sheet's "偵查" for either app/character_matcher.py's
+    occupation+skills gate or a later skill_check. A name with no dictionary
+    entry (yet) is kept as-is rather than dropped — this is deliberately
+    just the free, already-seeded/learned lookup, not a translation call of
+    its own; see dictionary.py's own docstring for the "look up first, only
+    the first-ever miss costs anything" design this is meant to fit into."""
+    return {(dictionary.lookup_skill(name) or name): value for name, value in skills.items()}
 
 
 _SECTION_RE = re.compile(r"^【(.+?)】\s*$", re.MULTILINE)
