@@ -371,7 +371,19 @@ async def handle_pdf_upload(
             save_page_image(conversation_id, page_number, png_bytes)
 
         state = load_state(conversation_id)
-        if state.scenario_text.strip():
+        # Re-checked here, INSIDE the lock, not just the early check above —
+        # the early check runs before extraction (which can take up to ~a
+        # minute per the ack message below), so two PDFs landing close
+        # together both pass it before either has a pending_pdf_upload saved
+        # yet, then race for this lock. Without re-checking here, whichever
+        # one acquires the lock second would silently overwrite the first
+        # one's still-unresolved pending_pdf_upload — same clobbering bug the
+        # early check exists to prevent, just via the concurrent path instead
+        # of the sequential one.
+        if state.pending_pdf_upload is not None:
+            raced = True
+        elif state.scenario_text.strip():
+            raced = False
             state.pending_pdf_upload = {
                 "text": text,
                 "title": title,
@@ -386,10 +398,18 @@ async def handle_pdf_upload(
             current_title = state.scenario_title
             confirmation_pending = True
         else:
+            raced = False
             _apply_new_scenario(state, text, title, extracted_index, page_maps, pregens)
             save_state(state)
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
+
+    if raced:
+        await push(
+            f"這份《{title}》來得比較慢——另一份幾乎同時上傳的 PDF 先卡進待確認狀態了，請先處理完"
+            "上一則訊息的選擇，再重新上傳這份。"
+        )
+        return
 
     if confirmation_pending:
         await push(

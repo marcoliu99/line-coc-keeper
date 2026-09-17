@@ -993,3 +993,28 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - `import app.commands`／`app.discord_bot`／`app.main` 全部確認可正常載入。
   - 這個 worktree 用的是自己獨立的本機 DB（不是正式環境共用的那份），測試用的 key 也都用
     `db.delete_json` 清乾淨，過程中確認正式環境資料庫完全沒被動到。
+
+### 70. 再審一輪：修掉「兩份 PDF 幾乎同時上傳」的殘留競態
+
+- **這個改動怎麼來的**：#69 修完後請「代码审查员」針對最新版本重新審查一次（不只看修復本身，也重新
+  過一次整個 PR 的累積 diff）。審查結果：#69 的其他修復（`_SOURCE_PRIORITY`、`get_state_lock`、
+  已認領池子跳過、未追蹤彈藥 KeyError、LINE `/coc pdf`、`FormatMention`）全部確認正確完整；唯獨
+  「第二次 PDF 上傳擋掉待決選擇」這個防呆只堵住了**先後上傳**的情況，沒堵住**幾乎同時上傳**的情況。
+- **問題所在**：`handle_pdf_upload` 開頭那個早期檢查（`existing_state.pending_pdf_upload is not
+  None`）是在耗時的 OCR/LLM 抽取（訊息裡自己講「可能要一分鐘左右」）**之前**做的，沒有上鎖。如果
+  兩份 PDF 幾乎同時上傳到同一個群組，兩邊都會在對方都還沒存進 `pending_pdf_upload` 之前通過這個早期
+  檢查，各自跑完抽取後才依序搶 `get_conversation_lock`。搶到鎖的第一個會把 `pending_pdf_upload` 設成
+  自己的內容並存檔；第二個進鎖後重新讀到的 `state.scenario_text` 依然非空，但**沒有重新檢查
+  `pending_pdf_upload` 是不是已經被別人佔用**，直接覆蓋。結果 GM 會看到兩則各自標題正確的「請選擇」
+  訊息，但只有後上鎖那份的內容真的留在 `pending_pdf_upload` 裡——點第一則訊息的按鈕，套用的會是第二
+  份 PDF 的內容。跟 #69 想堵的是同一種資料錯置，只是走並發路徑而不是先後路徑。
+- **這個專案現在怎麼做**：在鎖裡、實際寫入 `pending_pdf_upload`之前再檢查一次
+  `state.pending_pdf_upload is not None`——如果鎖內重讀時發現已經被別人（這次是真正並發搶到鎖的
+  那位）佔用，就不再覆蓋，改回覆「這份來得比較慢，請先處理完上一則的選擇再重新上傳」，而不是靜默蓋
+  過去。
+- **實測過**：用 `asyncio.gather` 真的同時觸發兩次 `handle_pdf_upload`（换成同步的假
+  `pdf_loader.extract_text`／`scenario_index.extract_scenario_index`／
+  `pregen_extractor.extract_pregens`，讓第一個上傳的抽取刻意睡 0.3 秒製造出跟真實抽取一樣的競爭
+  視窗，藉此重現「兩者都先通過早期檢查、才依序搶鎖」的確切情境），確認最終剛好一邊變成真正待確認的
+  `pending_pdf_upload`、另一邊收到「來得比較慢」的訊息，沒有任何一邊被靜默蓋過去。測試用的 key 也
+  用 `db.delete_json` 清乾淨，正式環境資料庫全程沒有被動到。
