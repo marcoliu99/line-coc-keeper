@@ -650,6 +650,17 @@ PDF 當下就會變 `True`），不是 `state.game_started`（只有 `/coc start
 完備」這兩項確認 Character 建立路徑（`generate_investigator`／`pregen_to_character`）本來就保證
 一定完整，不需要額外檢查。
 
+⚠️ 實作備註（2026-09-17，追加討論定案）：「打印全團調查員集結就緒名冊」原本只列姓名/職業/玩家，
+補上附錄「範例二」示範的格式——每位角色的 HP/SAN、武器彈藥（有追蹤彈藥的顯示目前/上限，沒追蹤的
+只顯示武器名稱）、隨身物品，沒有武器/物品的角色不會印出多餘的空白欄位。
+
+另外新增「劇本開場白內建檢定」的支援：`app/scenario_intro.py` 的抽取結果多一個 `opening_check`
+欄位（nullable）——只有開場白文字本身**明確要求**全隊一開始就做一次檢定（技能或理智）時才會有值，
+劇本沒有明確要求就是 `None`，不會自己發明一個檢定。`/coc start` 抽到這個欄位有值時，對每一位已
+綁定角色各自註冊一筆 `pending_checks`（技能檢定用該角色自己實際的技能值，不是套用同一個數字），
+跟 `app/keeper.py` 的 `skill_check`／`sanity_check` 工具用的是同一套資料結構，`app/discord_bot.py`
+既有的 pending_checks 比對＋自動貼按鈕機制直接生效，不用另外寫按鈕邏輯。
+
 ---
 
 ## 10. 附錄：GM 載入完成報告與開團就緒報告範例

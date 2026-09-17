@@ -1603,12 +1603,26 @@ def _heal_character(char: Character) -> list[str]:
 
 def _build_readiness_roster(state: GroupState, healed_notes: dict[str, list[str]]) -> str:
     """The "全團調查員集結就緒名冊" /coc start announces before the opening
-    narration — see docs/character_and_dictionary_system_spec.md's Module 7.
-    `healed_notes` is owner_id -> whatever _heal_character found for them
-    (empty list if nothing needed fixing)."""
+    narration — see docs/character_and_dictionary_system_spec.md's Module 7's
+    own "範例二" for the format this follows (HP/SAN/weapons/items per
+    character, not just name/occupation — a GM glancing at this should be
+    able to tell at a glance whether everyone's actually equipped, not just
+    who's playing who). `healed_notes` is owner_id -> whatever
+    _heal_character found for them (empty list if nothing needed fixing)."""
     lines = ["📋 全團調查員集結就緒名冊", ""]
     for owner_id, char in state.characters.items():
-        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{owner_id}）")
+        weapon_parts = []
+        for weapon_name, ammo_info in char.weapons.items():
+            if ammo_info.get("ammo_max"):
+                weapon_parts.append(f"{weapon_name} ({ammo_info['ammo']}/{ammo_info['ammo_max']})")
+            else:
+                weapon_parts.append(weapon_name)  # untracked ammo — see app/pregen_extractor.py
+        stats = f"HP {char.hp}/{char.hp_max}, SAN {char.san}/{char.san_max}"
+        if weapon_parts:
+            stats += "，彈藥：" + "、".join(weapon_parts)
+        if char.carried_items:
+            stats += "，物品：" + "、".join(char.carried_items)
+        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{owner_id}）：{stats}")
         for note in healed_notes.get(owner_id, []):
             lines.append(f"　　└ {note}")
     unclaimed = sum(1 for p in state.pregens if not p.get("claimed_by"))
@@ -2032,8 +2046,34 @@ async def _handle_coc_command(
                 state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
                 state.log.append({"role": "assistant", "content": opening_text})
                 state.game_started = True
+                # Some published scenarios' opening text itself demands an
+                # immediate check ("everyone roll a Spot Hidden") rather than
+                # that only coming up once play is under way — see
+                # app/scenario_intro.py's opening_check. Registered the same
+                # way app/keeper.py's skill_check/sanity_check tools do
+                # (state.pending_checks, one entry per bound character), so
+                # the existing pending_checks diff-and-post machinery in
+                # app/discord_bot.py posts real buttons for it automatically
+                # — no separate button-posting path needed here.
+                opening_check = extracted.get("opening_check")
+                if opening_check:
+                    for owner_id, char in state.characters.items():
+                        if opening_check["type"] == "skill":
+                            value = keeper.resolve_skill_value(char, opening_check["skill"])
+                            state.pending_checks[owner_id] = {
+                                "type": "skill", "skill": opening_check["skill"], "skill_value": value,
+                                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular", "pushed": False,
+                            }
+                        else:  # "sanity"
+                            state.pending_checks[owner_id] = {
+                                "type": "sanity",
+                                "loss_success": opening_check.get("loss_success", "0"),
+                                "loss_failure": opening_check.get("loss_failure", "1d4"),
+                            }
                 save_state(state)
             await reply(opening_text)
+            if opening_check and opening_check.get("reason"):
+                await reply(f"👉 {opening_check['reason']}——請各自用「/coc check」擲骰。")
             return
 
         # No usable read-aloud text in the scenario — fall back to a normal
