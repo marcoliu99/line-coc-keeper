@@ -657,3 +657,11 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - 效能：同樣情境（4 角色）跑 50 次 `save_state`，修改前約 2.25ms／次，修改後約 0.49ms／次，約 **4.6 倍**。
   - 額外重新跑過 `roll_weapon_damage`、`add_status_tag` 兩個既有工具的端到端測試，確認這個改動沒有連帶影響其他依賴 `save_state` 的功能。
 - **還是有的限制**：這次只處理了 `save_state` 這一個明確有 N+1 連線問題的呼叫點；`scenario_indexes`、`memory_chunks` 這兩個表目前每次寫入都是單一 key，沒有迴圈寫多筆的情況，不在這次範圍內。單次連線層級的絕對耗時（幾毫秒）本來就遠小於一次 LLM API 呼叫（動輒幾秒），這個修正省下來的時間對單一使用者體感上不會太明顯，主要意義是消除純粹浪費的重工，在高併發、多群組同時活躍時比較看得出差異。
+
+### 59. Discord OOC bypass 支援全形 `＠`
+
+- **這次實際完成**：只修改 `app/discord_bot.py` 與 `docs/changelog.md`。`app/discord_bot.py` 新增 `_is_ooc_message(text)` 純函式，只對「判斷用的副本」做 `unicodedata.normalize("NFKC", text or "")`，再 `.lstrip()`，最後沿用原本的 `startswith("@") or startswith("<@")` 判斷；原始 `message.content` 不會被改寫。
+- **修正內容**：Discord OOC bypass 原本只吃 ASCII `@` 與 `<@`，玩家輸入全形 `＠`（U+FF20）開頭時會繼續進入一般訊息流程。NFKC normalization 後，全形 `＠` 與全形空白開頭的 `＠` 訊息都會正確被視為 OOC。
+- **流程位置維持不變**：`on_message()` 仍然是在忽略 bot 訊息之後立刻做 OOC 判斷，命中就直接 `return`；位置仍早於 state 讀取、附件/文字的 `commands.py` 呼叫，以及任何 Keeper/AI 流程。
+- **已驗證**：直接用 Python assertion 確認 ASCII `@`、全形 `＠`、前置半形/全形空白、Discord user/nickname/role mention 都會被視為 OOC；一般文字中途提到 `@`、頻道 mention `<#...>`、普通角色扮演文字都不會被誤判。也跑過 `python -m py_compile app/discord_bot.py`。
+
