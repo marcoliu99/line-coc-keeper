@@ -665,3 +665,71 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **流程位置維持不變**：`on_message()` 仍然是在忽略 bot 訊息之後立刻做 OOC 判斷，命中就直接 `return`；位置仍早於 state 讀取、附件/文字的 `commands.py` 呼叫，以及任何 Keeper/AI 流程。
 - **已驗證**：直接用 Python assertion 確認 ASCII `@`、全形 `＠`、前置半形/全形空白、Discord user/nickname/role mention 都會被視為 OOC；一般文字中途提到 `@`、頻道 mention `<#...>`、普通角色扮演文字都不會被誤判。也跑過 `python -m py_compile app/discord_bot.py`。
 
+### 60. KP Assistant 幕後 OOC 記憶：先新增獨立 state 欄位
+
+- **這次實際完成**：只在 `GroupState` 新增 `kp_ooc_log: list[dict[str, str]]`，作為之後「KP Assistant ↔ AI Keeper」幕後工作對話的獨立儲存欄位；同時補上 `to_dict()`／`from_dict()` 的序列化與反序列化，`from_dict()` 使用 `data.get("kp_ooc_log", [])`，讓舊有 SQLite state 或舊存檔沒有這個欄位時仍可正常載入。
+- **刻意維持不變**：`log` 仍然是正式玩家／Keeper 遊戲歷史，`kp_ooc_log` 不會在這一步接入 Keeper prompt、`run_turn`、campaign summary、Memory RAG、任何 provider、tool allowlist、Discord 流程、OpenAI `previous_response_id`，也沒有新增任何清除 `kp_ooc_log` 的邏輯。
+- **目前狀態**：這只是 KP Assistant OOC 記憶架構的第一個資料結構步驟，尚未接入 Keeper OOC 記憶讀寫流程，也尚未修改 KP Assistant 的 tool permission。
+
+### 61. KP Assistant OOC 工作記憶接入 runtime
+
+- **這次實際完成**：KP Assistant 現在會使用獨立的 `GroupState.kp_ooc_log` 作為幕後 OOC 工作記憶，最多保留最近 20 則 message（約 10 組「人類 KP Assistant ↔ AI Keeper」往返）。每次 KP turn 完成後只保存本輪原始 KP 訊息與 AI Keeper 的 OOC 回答，不保存完整 `[KP ASSISTANT / OOC HOST INSTRUCTION]` wrapper。
+- **注入範圍**：`kp_ooc_log` 只在 `speaker_role == "kp_assistant"` 的 turn 注入 `_build_dynamic_prompt()` 產生的 hidden dynamic context；一般 player turn 完全不讀取、不注入這段 OOC history。
+- **權威界線**：OOC context 內明確區分 authority：人類 KP Assistant 的訊息可以具有主持層權威；過去 AI Keeper 在 OOC history 裡的回答只作為討論脈絡，不是 authoritative fact；AI 不能只因為自己前一輪說過某件事，就把它升級成劇本事實或主持設定。
+- **隔離維持不變**：這段 OOC 記憶不寫入 `state.log`，不進 campaign summary，不進 Memory RAG，也不更新 OpenAI canonical `openai_previous_response_id` chain；正式玩家／Keeper history 的既有 `is_ephemeral` 行為維持不變。
+- **安全保存**：保存 OOC turn 時會在 `locks.get_state_lock(state.group_id)` 底下重新 `load_state()`，對最新 state 追加 `kp_ooc_log`、裁到最後 20 則、再 `save_state()`，避免用 Keeper turn 一開始的舊 snapshot 覆蓋同一輪中其他 deterministic tool 已經寫入的 state。
+- **仍未修改**：KP Assistant tool permission 尚未修改；沒有開放 `skill_check`、`sanity_check`、`offer_check_choice`、`npc_skill_check` 或 mutation tools，也沒有新增 `keeper_notes`／`kp_directives`，清除 lifecycle 也尚未實作。
+
+### 62. KP Assistant OOC 工作記憶 lifecycle cleanup
+
+- **這次實際完成**：`kp_ooc_log` 現在會在幾個生命週期事件清空，避免舊 KP 或舊劇本的幕後工作記憶污染下一局或下一位 KP。
+- **清除時機**：
+  - `/coc kp quit` 成功解除目前 KP Assistant 身分時，會同時清空 `kp_assistant_user_id` 與 `kp_ooc_log`。
+  - `/coc kp` 成功登記新 KP Assistant 時，會 defensive 地先清空 `kp_ooc_log`，再保存新的 `kp_assistant_user_id`；「已有 KP」「使用者已有角色」「正在建角」等失敗路徑不會清資料。
+  - `/coc end` 結束遊戲時，會在保留既有遊戲紀錄、角色與劇本資料的前提下，同時清空 `kp_assistant_user_id` 與 `kp_ooc_log`。
+  - `/coc newgame` 仍維持既有 `save_state(GroupState(group_id=conversation_id))` reset 行為，新的 `GroupState` 會自然讓 `kp_ooc_log` 回到空 list，沒有額外加多餘清除程式。
+  - 新 PDF scenario 成功解析、索引建立完成，並正式取代舊 `scenario_text`／`scenario_title` 的同一段 reset 流程中，會清空 `kp_ooc_log`；PDF 解析失敗會在替換 state 前 return，不會先清掉目前 OOC 工作記憶。
+- **仍未修改**：KP Assistant tool permission 尚未修改；沒有開放檢定／戰鬥相關工具，沒有修改 OpenAI `previous_response_id`，沒有新增第二條 OpenAI chain，也沒有新增 `keeper_notes`／`kp_directives`。
+
+### 63. KP Assistant 允許建立正式 deterministic 檢定流程
+
+- **這次實際完成**：KP Assistant 的工具 allowlist 從原本四個查詢工具，擴充為 `get_character_sheet`、`get_combat_status`、`search_memory`、`search_scenario`、`skill_check`、`sanity_check`、`offer_check_choice`、`npc_skill_check`。常數名稱也從 read-only 語意改成 `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`，避免命名誤導。
+- **用途邊界**：新開放的四個工具只用於建立玩家／NPC 的正式 deterministic 檢定流程，例如請指定調查員做技能檢定、SAN 檢定，或在戰鬥中依正式流程建立 NPC 攻擊結果與玩家「閃避／反擊」選擇。
+- **仍未開放**：直接修改 HP、SAN、Luck、彈藥、攜帶物品、角色技能、combat state 等 mutation tools 仍不在 KP Assistant allowlist；`adjust_character`、`adjust_ammo`、`set_skill`、物品增刪、戰鬥狀態 mutation tools 與其他未列入 allowlist 的 administrative mutation 仍會被 `_execute_tool()` 的第二層防線擋下。
+- **Prompt 修正**：KP Assistant prompt 現在明確區分「KP Assistant 本人不是調查員，不應替 KP 本人擲骰」和「KP Assistant 可以要求指定玩家或 NPC 進入正式檢定流程」，避免模型誤以為 KP turn 完全不能要求玩家檢定。
+- **未改動**：`kp_ooc_log` 的注入、保存、20-message cap 與 lifecycle cleanup 本次沒有改動；`state.log`、campaign summary、Memory RAG、OpenAI canonical `previous_response_id` chain、provider、Discord button callback、`/coc start`、`keeper_notes`／`kp_directives` 也都沒有改動。
+
+### 64. KP Assistant v2 針對性測試
+
+- **這次實際完成**：新增 `tests/test_kp_assistant_v2.py`，使用標準函式庫 `unittest` 與局部 monkeypatch，避免外部 LLM API、真實 PDF/OCR 依賴與平台連線，針對 Step 1～4 已完成的 KP Assistant v2 行為做局部驗證。
+- **覆蓋範圍**：測試 `GroupState.kp_ooc_log` 預設值與 `to_dict()`／`from_dict()` 相容性、KP OOC dynamic prompt 只注入 KP turn 且不注入 player turn、OOC authority 說明、KP turn 完成後只寫入 `kp_ooc_log` 且不污染 `state.log`／OpenAI canonical chain、20-message cap、`/coc kp quit`／`/coc end`／新 KP 成功登記／`/coc newgame`／新 PDF 成功替換劇本／PDF 解析失敗的 lifecycle 行為、KP Assistant tool allowlist 與 `_execute_tool()` 第二層防線。
+- **SAN 重現案例**：測試建立只有一名調查員 `The Tough Guy/Dame` 的 state，放入前一輪 OOC context「開場看到屍體要做 SAN，成功 1、失敗 1D4」，再直接透過 KP Assistant 路徑呼叫 `sanity_check(investigator="The Tough Guy/Dame", loss_success="1", loss_failure="1d4")`，確認會建立該角色的 pending SAN check，不需要外部 LLM。
+- **測試結果**：`python -m unittest tests.test_kp_assistant_v2` 通過（7 tests）。本次沒有發現需要修正的 production bug，沒有修改 KP Assistant tool permission 以外的新功能，也沒有新增 `keeper_notes`／`kp_directives`。
+
+### 65. KP Assistant / Player priority gate 基礎元件
+
+- **這次實際完成**：在 `app/locks.py` 新增 per-conversation async priority gate，public API 為 `async with locks.get_keeper_priority_gate(conversation_id, is_kp=True|False): ...`。它是獨立的 process-memory scheduling 元件，沒有寫入 `GroupState`、SQLite、JSON，也沒有跟 `kp_ooc_log` lifecycle 混在一起。
+- **排程規則**：同一 conversation 同一時間只允許一個 holder；已開始執行的 turn 不可被搶占；holder release 後，等待中的 KP Assistant 會優先於尚未開始的 Player waiter；同級內維持 FIFO；不同 conversation 的 gate 彼此獨立，可以並行。
+- **未改動既有 lock**：`get_conversation_lock()`、`get_state_lock()`、`get_keeper_turn_lock()` 與 check duplicate guard 的既有用途都沒有修改或取代。
+- **尚未接線**：目前 priority gate 尚未接入 `app/commands.py`，也沒有修改 Discord／LINE runtime flow，所以實際遊戲行為尚未改變；Step 6B 才會處理接線。
+- **測試**：新增 `tests/test_keeper_priority_gate.py`，涵蓋 KP 插到等待中的 player 前面、多個 KP FIFO、沒有 KP 時 player FIFO、running player 不可被 KP preempt、不同 conversation 可並行、exception-safe release、cancellation-safe release。`python -m unittest tests.test_keeper_priority_gate tests.test_kp_assistant_v2` 通過（14 tests）。
+
+### 66. Priority gate 接入 ordinary Keeper text turns
+
+- **這次實際完成**：把 Step 6A 的 per-conversation priority gate 只接到普通非指令文字的 Keeper turn。當本局存在 `kp_assistant_user_id` 時，ordinary KP Assistant 訊息會以 `is_kp=True` 進 gate；其他 ordinary player 訊息會以 `is_kp=False` 進 gate；gate 之後仍照原本順序取得 `conversation_lock`，再進既有 ordinary message handling 與 `keeper_turn_lock`。
+- **無 KP fast path**：如果 scheduling snapshot 顯示本局沒有 KP Assistant，ordinary player 訊息會刻意完全 bypass priority gate，直接走原本 `conversation_lock` 路徑，避免 optional KP 功能改變沒有 KP 的一般排序行為。
+- **stale state 防線**：入隊前讀到的 scheduling snapshot 只用來決定「要不要進 gate」與 `is_kp` priority；真正取得 gate 與 `conversation_lock` 後，ordinary handler 會重新 `load_state(conversation_id)`，以最新 state 判斷 active、speaker role、角色、地圖位置與 Keeper turn，不把 snapshot 當 authoritative game state。
+- **刻意未接入**：`/roll`、`/coc ...` commands、`/coc check`、`/coc luck`、Discord buttons、PDF upload、unsupported-message flow 等仍未使用 priority gate，維持既有 lock 行為。
+- **測試**：新增接線測試確認沒有 KP 時完全不呼叫 gate 且 player turn 仍可完成；有 KP 時 KP ordinary message 使用 KP priority；有 KP 時 player ordinary message 使用 Player priority；以及 scheduling snapshot 不會一路傳入 Keeper 當正式 state。`python -m unittest tests.test_keeper_priority_gate tests.test_kp_assistant_v2` 通過（18 tests）。尚未做完整 concurrency integration 測試（例如 A running、B/C/D waiting、K arrives 的實際 commands flow），留到下一步。
+
+### 67. Priority gate ordinary flow 併發整合測試
+
+- **這次實際完成**：新增 `tests/test_keeper_priority_integration.py`，讓每筆 ordinary text message 都實際經過 `commands.handle_text_message()`、scheduling snapshot、priority gate、`conversation_lock`、ordinary handler、`keeper_turn_lock` 與 mocked `keeper.run_turn`，不直接測 gate 本體、不呼叫外部 LLM API。
+- **驗證結果**：
+  - A 已經進入 mocked Keeper turn，B/C/D 已送出但尚未開始，K 後來送出時，實際 `keeper.run_turn` 開始順序為 `A → K → B → C → D`。
+  - A running、B/C waiting、K1/K2 依序到達時，實際順序為 `A → K1 → K2 → B → C`，多筆 KP 訊息維持 FIFO。
+  - A running 時 K 到達不會 preempt A，同 conversation 的 ordinary Keeper turn `max_concurrent_keeper_turns` 維持 1。
+  - 沒有 KP Assistant 時，A running、B/C/D 隨後送出仍維持 `A → B → C → D`，且測試中 `get_keeper_priority_gate()` 完全沒有被呼叫，證明無 KP flow 仍 bypass gate、依賴原本 `conversation_lock`。
+- **未修改 runtime**：本次只新增 integration tests，沒有修改 production code，也沒有改 priority gate 演算法、tool permission、`kp_ooc_log`、OpenAI chain、provider 或 `/coc start`。
+- **測試結果**：`python -m unittest tests.test_keeper_priority_gate tests.test_kp_assistant_v2 tests.test_keeper_priority_integration` 通過（22 tests）。
+
