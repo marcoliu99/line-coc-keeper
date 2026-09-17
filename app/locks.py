@@ -23,6 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections import deque
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from typing import AsyncIterator
 
 # Legacy conversation lock: used by the current coarse-grained flow and kept
 # unchanged while callers are migrated incrementally.
@@ -36,6 +40,57 @@ _state_locks: dict[str, threading.RLock] = {}
 
 # Keeper turn lock: future serialization for Keeper/LLM turns per conversation.
 _keeper_turn_locks: dict[str, asyncio.Lock] = {}
+
+
+@dataclass
+class _KeeperPriorityGate:
+    active: bool = False
+    kp_waiters: deque[asyncio.Future[None]] = field(default_factory=deque)
+    player_waiters: deque[asyncio.Future[None]] = field(default_factory=deque)
+
+    async def acquire(self, *, is_kp: bool) -> None:
+        loop = asyncio.get_running_loop()
+        if not self.active and not self.kp_waiters and not self.player_waiters:
+            self.active = True
+            return
+
+        future: asyncio.Future[None] = loop.create_future()
+        queue = self.kp_waiters if is_kp else self.player_waiters
+        queue.append(future)
+        try:
+            await future
+        except BaseException:
+            if future.done() and not future.cancelled():
+                # This waiter had already been selected as the next holder,
+                # but the task was cancelled before entering the protected
+                # block. Hand the gate to the next waiter instead of leaving
+                # `active` stuck forever.
+                self.release()
+            else:
+                future.cancel()
+                try:
+                    queue.remove(future)
+                except ValueError:
+                    pass
+            raise
+
+    def release(self) -> None:
+        while self.kp_waiters:
+            future = self.kp_waiters.popleft()
+            if not future.done():
+                future.set_result(None)
+                return
+
+        while self.player_waiters:
+            future = self.player_waiters.popleft()
+            if not future.done():
+                future.set_result(None)
+                return
+
+        self.active = False
+
+
+_keeper_priority_gates: dict[str, _KeeperPriorityGate] = {}
 
 
 def get_conversation_lock(conversation_id: str) -> asyncio.Lock:
@@ -60,6 +115,27 @@ def get_keeper_turn_lock(conversation_id: str) -> asyncio.Lock:
         lock = asyncio.Lock()
         _keeper_turn_locks[conversation_id] = lock
     return lock
+
+
+@asynccontextmanager
+async def get_keeper_priority_gate(conversation_id: str, *, is_kp: bool) -> AsyncIterator[None]:
+    """Per-conversation async gate for future Keeper turn scheduling.
+
+    This is intentionally separate from the existing conversation/state/turn
+    locks and is not wired into message handling yet. It admits at most one
+    holder per conversation; when the holder releases, queued KP Assistant
+    turns are admitted before queued player turns, with FIFO order preserved
+    inside each priority class. A running holder is never preempted.
+    """
+    gate = _keeper_priority_gates.get(conversation_id)
+    if gate is None:
+        gate = _KeeperPriorityGate()
+        _keeper_priority_gates[conversation_id] = gate
+    await gate.acquire(is_kp=is_kp)
+    try:
+        yield
+    finally:
+        gate.release()
 
 
 # A resolved check/Luck-decision involves a slow Keeper (LLM) call, so a

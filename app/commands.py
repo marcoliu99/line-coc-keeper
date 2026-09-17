@@ -33,13 +33,22 @@ from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
-from app.models import OCCUPATIONS, GroupState, generate_investigator
+from app.models import BASE_SKILLS, OCCUPATIONS, Character, GroupState, generate_investigator
 from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
 
 _logger = logging.getLogger(__name__)
 
 Reply = Callable[[str], Awaitable[None]]
 GetDisplayName = Callable[[], Awaitable[str]]
+# (owner_id) -> a platform-appropriate way to reference that player in text —
+# Discord supplies "<@{owner_id}>" (a real clickable mention, resolved
+# client-side, no API call needed); an adapter with nothing better (LINE has
+# no equivalent lightweight mention token) can default to the bare owner_id,
+# which is also this type's default via _build_readiness_roster's own
+# parameter default — kept adapter-injected rather than hardcoded here so
+# this module stays platform-agnostic (see app/main.py, the LINE adapter,
+# which shares every function in this file with app/discord_bot.py).
+FormatMention = Callable[[str], str]
 SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
 # (png_bytes, conversation_id, page_number) -> None, posts publicly. conversation_id
 # and page_number are included alongside the raw bytes because LINE can't attach
@@ -118,6 +127,156 @@ async def handle_unsupported_message(conversation_id: str, reply: Reply, label: 
         )
 
 
+def _merge_extracted_pregens(state: GroupState, pregens: list[dict]) -> None:
+    """Reconciles freshly LLM-extracted pregens (see handle_pdf_upload, which
+    now always runs extract_pregens at upload time — not lazily behind
+    /coc pregens, which used to mean a manually-uploaded role_ card sitting
+    in state.pregens FIRST would make /coc pregens' own `if not
+    state.pregens:` guard skip extraction entirely, so the scenario's own
+    cast never even got a chance to reconcile against it) into state.pregens
+    via the same identity-matching merge a manual role-sheet upload uses
+    (pregen_extractor.reconcile_pregen_into_pool) — never a blind
+    overwrite, and never simply discarded either. This is what makes upload
+    order irrelevant: a role card uploaded before OR after the scenario PDF
+    ends up correctly merged with (or kept alongside) the scenario's own
+    embedded pregens either way, matching Module 4's design. The only place
+    that still does a full wipe is /coc newgame (a fresh, all-defaults
+    GroupState()) — a PDF upload, new scenario or corrected, never has to
+    guess "is this pregen pool stale" the way an earlier version of this
+    function did (it used to unconditionally reset state.pregens = [] on
+    every new-scenario upload, which — this was reported directly — could
+    also destroy a role card uploaded moments before the group's very first
+    PDF, since that path has no existing scenario to be ambiguous against
+    and so never even offers the new-vs-correction button)."""
+    for pregen in pregens:
+        state.pregens, _ = pregen_extractor.reconcile_pregen_into_pool(state.pregens, pregen)
+
+
+def _apply_new_scenario(
+    state: GroupState,
+    text: str,
+    title: str,
+    extracted_index: dict[str, list],
+    page_maps: dict,
+    pregens: list[dict],
+) -> None:
+    """"全新劇本" (see handle_pdf_upload/resolve_pdf_upload_choice below),
+    and also what a conversation's very first-ever PDF upload does, since
+    there's no existing position to protect yet in that case either way."""
+    state.scenario_text = text
+    state.scenario_title = title
+    state.active = True
+    state.openai_previous_response_id = ""
+    state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
+    # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
+    # first would find /coc start permanently refusing ("already started") for the new scenario.
+    state.kp_ooc_log = []  # new scenario must not inherit the previous scenario's KP OOC memory
+    state.scenario_npc_index = extracted_index["npcs"]
+    state.scenario_location_index = extracted_index["locations"]
+    state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
+    # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
+    state.current_map_page = {}
+    state.current_room_id = {}
+    state.party_facing = {}
+    _merge_extracted_pregens(state, pregens)
+
+
+def _apply_scenario_correction(
+    state: GroupState, text: str, title: str, extracted_index: dict[str, list], pregens: list[dict]
+) -> None:
+    """"修正目前劇本" — updates the scenario's own text/index (the corrected
+    content) but deliberately leaves scene_maps/current_map_page/
+    current_room_id/party_facing/openai_previous_response_id/game_started
+    untouched. That's exactly what "protect the party's existing position
+    and progress" means when the scenario hasn't actually restarted — see
+    docs/character_and_dictionary_system_spec.md's Module 1. pregens is NOT
+    in that protected list — a corrected PDF's own re-extracted cast is
+    reconciled in (see _merge_extracted_pregens), the same as _apply_new_
+    scenario, since fixing e.g. a garbled stat in an embedded pregen is
+    exactly the kind of correction this mode exists for; reconciliation
+    (not a wipe) is what keeps an already-claimed pregen's claimed_by intact
+    through that update. Page images are handled by the caller,
+    unconditionally, before this ever runs — see handle_pdf_upload's own
+    comment on why they don't depend on this choice at all."""
+    state.scenario_title = title
+    state.scenario_text = text
+    state.scenario_npc_index = extracted_index["npcs"]
+    state.scenario_location_index = extracted_index["locations"]
+    _merge_extracted_pregens(state, pregens)
+
+
+def _pdf_upload_confirmation_text(
+    title: str,
+    text: str,
+    low_text_pages: list[int],
+    truncated: bool,
+    page_maps: dict,
+    extracted_index: dict,
+    pregen_count: int,
+) -> str:
+    """Shared by the immediate (first-ever upload) and deferred (button-
+    resolved) paths through handle_pdf_upload — the message is identical
+    either way, just built at a different point in the flow."""
+    warning = ""
+    if low_text_pages:
+        pages_str = "、".join(str(p) for p in low_text_pages)
+        warning += (
+            f"\n\n⚠️ 第 {pages_str} 頁偵測到文字內容偏少（可能是地圖、手卡或圖片化的內容），"
+            "已嘗試自動辨識，但仍建議你人工核對一下；如果有遺漏的重要線索，"
+            "之後可以直接把那頁的文字內容貼在群組訊息裡讓守密人知道。"
+        )
+    if truncated:
+        warning += (
+            f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
+            "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
+        )
+    map_note = ""
+    if page_maps:
+        # Keys may be plain ints (fresh from pdf_loader.extract_text) or
+        # strings (round-tripped through pending_pdf_upload's JSON storage —
+        # see resolve_pdf_upload_choice) — sort numerically either way so a
+        # page 10 doesn't sort before page 2.
+        pages_str = "、".join(str(p) for p in sorted(page_maps.keys(), key=lambda k: int(k)))
+        map_note = (
+            f"\n\n🗺️ 第 {pages_str} 頁偵測到平面圖，已經拆解成房間圖——玩家在裡面移動時"
+            "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
+            "用 `/coc where` 可以看目前在哪個房間。"
+        )
+    index_note = ""
+    npc_count = len(extracted_index["npcs"])
+    if npc_count:
+        index_note = (
+            f"\n\n📇 已自動建立劇本索引（{npc_count} 個 NPC／怪物"
+            + (f"、{len(extracted_index['locations'])} 個地點" if extracted_index["locations"] else "")
+            + "）——守密人之後提到這些對象時會直接照索引的數值講，同一隻不會前後不一致。"
+            "劇本內容之後如果有更新，重新跑一次「/coc index」可以重建。"
+        )
+
+    if pregen_count:
+        # Extraction (see handle_pdf_upload) already ran by the time this
+        # message is built, so this can state a fact instead of the old
+        # conditional "先輸入 /coc pregens 看看有沒有" hedge.
+        pregen_note = (
+            f"這份劇本內建了 {pregen_count} 位預製調查員，輸入「/coc pregens」查看、"
+            "「/coc pregen 編號」看某位的完整能力——有內建角色的話，"
+            "「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n"
+        )
+    else:
+        pregen_note = (
+            "這份劇本沒有偵測到內建的預製調查員，直接用「/coc pc 角色名 職業」快速生成即可，"
+            "這時職業可選：\n" + "、".join(OCCUPATIONS.keys()) + "\n"
+        )
+
+    return (
+        f"已載入劇本《{title}》（{len(text)} 字）。\n"
+        + pregen_note
+        + "建好角色後，直接在群組打字描述行動即可開始冒險！"
+        + warning
+        + map_note
+        + index_note
+    )
+
+
 async def handle_pdf_upload(
     conversation_id: str,
     reply: Reply,
@@ -131,9 +290,38 @@ async def handle_pdf_upload(
     can run a vision/OCR pass over every graphic-heavy page and, on a
     picture-heavy scenario, comfortably exceed that window — finishes. On a
     platform with no such constraint (Discord), an adapter can just pass the
-    same callback for both."""
+    same callback for both.
+
+    If a scenario is already running (state.scenario_text non-empty), this
+    doesn't guess whether the new upload is a genuinely new scenario or a
+    corrected re-upload of the same one — it stashes the extraction into
+    state.pending_pdf_upload and asks the GM to pick, via
+    resolve_pdf_upload_choice (an adapter posts the actual buttons — see
+    app/discord_bot.py's _post_pdf_upload_buttons, the same diff-and-post
+    pattern as pending_checks/pending_luck_decisions). Guessing wrong here is
+    worse than one extra click: a wrongly-preserved position could point at a
+    room that doesn't exist in the new scenario's map at all. A
+    conversation's very first upload has no existing scenario to be
+    ambiguous against, so it always applies immediately with no button."""
     if not file_name.lower().endswith(".pdf"):
         await reply("目前只支援上傳 PDF 劇本檔案喔。")
+        return
+
+    # Checked before any of the expensive extraction work below (and before
+    # clear_page_images, which unconditionally wipes the current scenario's
+    # page images) — a second PDF landing while an earlier pending_pdf_upload
+    # choice is still unresolved would otherwise silently overwrite it, and
+    # whichever button the GM clicks afterward (still labelled for the FIRST
+    # upload — buttons carry no upload-specific id) would end up applying the
+    # SECOND upload's content instead, which is especially bad for "全新劇本"
+    # (wipes map position, resets the LLM conversation thread).
+    existing_state = load_state(conversation_id)
+    if existing_state.pending_pdf_upload is not None:
+        await reply(
+            f"上一次上傳的《{existing_state.pending_pdf_upload['title']}》還沒選擇「全新劇本」"
+            "還是「修正目前劇本」，請先點上一則訊息的按鈕選完，再上傳這份新的 PDF——不然這份新的"
+            "會蓋掉還沒處理的那份，之後點到舊按鈕會套用到錯的內容。"
+        )
         return
 
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
@@ -157,75 +345,128 @@ async def handle_pdf_upload(
     # same as before this existed — never blocks the upload from succeeding.
     extracted_index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
 
+    # Also extracted eagerly, at upload time, rather than lazily behind the
+    # first /coc pregens call the old code waited for — that lazy trigger
+    # had its own bug: /coc pregens only ever calls extract_pregens when
+    # state.pregens is currently empty, so a role_ card uploaded before
+    # anyone ran /coc pregens would make that guard skip extraction forever,
+    # and the scenario's own embedded cast would never even get a chance to
+    # reconcile against it. See _merge_extracted_pregens for how this result
+    # gets folded into state.pregens without regard to upload order.
+    pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
+
     async with locks.get_conversation_lock(conversation_id):
-        state = load_state(conversation_id)
-        state.scenario_text = text
-        state.scenario_title = title
-        state.active = True
-        state.openai_previous_response_id = ""
-        state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
-        # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
-        # first would find /coc start permanently refusing ("already started") for the new scenario.
-        state.pregens = []  # clear the previous scenario's cached pregens — otherwise
-        # a group that switches PDFs without running /coc newgame first would keep
-        # seeing (and could even build a character off) the old scenario's pregens.
-        state.scenario_npc_index = extracted_index["npcs"]
-        state.scenario_location_index = extracted_index["locations"]
-        state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
-        # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
-        state.current_map_page = {}
-        state.current_room_id = {}
-        state.party_facing = {}
-        save_state(state)
-        clear_page_images(conversation_id)  # same reasoning — don't let a new
-        # scenario's /coc showpage 5 show the OLD scenario's page 5.
+
+        # Page images update the same way regardless of which mode a GM later
+        # picks for an ambiguous re-upload (see below) — applied immediately,
+        # unconditionally, so there's nothing image-related left inside the
+        # pending choice to defer. Done INSIDE get_conversation_lock (moved
+        # here from before the lock) — two PDFs landing for the same
+        # conversation close together both run their (unlocked, concurrent)
+        # extraction, and without this serialization their image writes can
+        # interleave (A clears, B clears+writes, A writes-after-B) leaving
+        # /coc showpage serving the wrong upload's pages for whichever
+        # scenario the locked state update below actually ends up current.
+        clear_page_images(conversation_id)  # don't let a new scenario's /coc
+        # showpage 5 show the OLD scenario's page 5.
+
         for page_number, png_bytes in page_images.items():
             save_page_image(conversation_id, page_number, png_bytes)
 
-    warning = ""
-    if low_text_pages:
-        pages_str = "、".join(str(p) for p in low_text_pages)
-        warning += (
-            f"\n\n⚠️ 第 {pages_str} 頁偵測到文字內容偏少（可能是地圖、手卡或圖片化的內容），"
-            "已嘗試自動辨識，但仍建議你人工核對一下；如果有遺漏的重要線索，"
-            "之後可以直接把那頁的文字內容貼在群組訊息裡讓守密人知道。"
-        )
-    if truncated:
-        warning += (
-            f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
-            "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
-        )
-    map_note = ""
-    if page_maps:
-        pages_str = "、".join(str(p) for p in sorted(page_maps.keys()))
-        map_note = (
-            f"\n\n🗺️ 第 {pages_str} 頁偵測到平面圖，已經拆解成房間圖——玩家在裡面移動時"
-            "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
-            "用 `/coc where` 可以看目前在哪個房間。"
-        )
-    index_note = ""
-    npc_count = len(extracted_index["npcs"])
-    if npc_count:
-        index_note = (
-            f"\n\n📇 已自動建立劇本索引（{npc_count} 個 NPC／怪物"
-            + (f"、{len(extracted_index['locations'])} 個地點" if extracted_index["locations"] else "")
-            + "）——守密人之後提到這些對象時會直接照索引的數值講，同一隻不會前後不一致。"
-            "劇本內容之後如果有更新，重新跑一次「/coc index」可以重建。"
-        )
+        state = load_state(conversation_id)
+        # Re-checked here, INSIDE the lock, not just the early check above —
+        # the early check runs before extraction (which can take up to ~a
+        # minute per the ack message below), so two PDFs landing close
+        # together both pass it before either has a pending_pdf_upload saved
+        # yet, then race for this lock. Without re-checking here, whichever
+        # one acquires the lock second would silently overwrite the first
+        # one's still-unresolved pending_pdf_upload — same clobbering bug the
+        # early check exists to prevent, just via the concurrent path instead
+        # of the sequential one.
+        if state.pending_pdf_upload is not None:
+            raced = True
+        elif state.scenario_text.strip():
+            raced = False
+            state.pending_pdf_upload = {
+                "text": text,
+                "title": title,
+                "low_text_pages": low_text_pages,
+                "truncated": truncated,
+                "npcs": extracted_index["npcs"],
+                "locations": extracted_index["locations"],
+                "page_maps": {str(k): v for k, v in page_maps.items()},
+                "pregens": pregens,
+            }
+            save_state(state)
+            current_title = state.scenario_title
+            confirmation_pending = True
+        else:
+            raced = False
+            _apply_new_scenario(state, text, title, extracted_index, page_maps, pregens)
+            save_state(state)
+            confirmation_pending = False
+            final_pregen_count = len(state.pregens)
 
-    await push(
-        f"已載入劇本《{title}》（{len(text)} 字）。\n"
-        "這份劇本如果有附帶預製調查員，建議先輸入「/coc pregens」看看有哪些角色可選、"
-        "「/coc pregen 編號」看某位的完整能力——"
-        "有內建角色的話，「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n"
-        "如果這份劇本沒有內建角色（或想先跳過這步），可以直接用「/coc pc 角色名 職業」"
-        "快速生成，這時職業可選：\n"
-        + "、".join(OCCUPATIONS.keys())
-        + "\n建好角色後，直接在群組打字描述行動即可開始冒險！"
-        + warning
-        + map_note
-        + index_note,
+    if raced:
+        await push(
+            f"這份《{title}》來得比較慢——另一份幾乎同時上傳的 PDF 先卡進待確認狀態了，請先處理完"
+            "上一則訊息的選擇，再重新上傳這份。"
+        )
+        return
+
+    if confirmation_pending:
+        await push(
+            f"這個群組目前正在跑《{current_title}》。新上傳的《{title}》"
+            "是要開始一個全新的劇本，還是修正/補完目前這份劇本？請點下面的按鈕選擇——"
+            "選錯的代價不小（位置可能對到新劇本裡不存在的房間），拿不準的話選「修正目前劇本」比較安全。"
+        )
+        return
+
+    await push(_pdf_upload_confirmation_text(
+        title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
+    ))
+
+
+def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
+    """Body of resolve_pdf_upload_choice, factored out so it can be called
+    from a context that already holds get_conversation_lock (see the "/coc
+    pdf new"/"/coc pdf fix" text-command path below, which runs inside
+    _handle_coc_command — itself already called under that same lock by
+    handle_text_message; asyncio.Lock isn't reentrant, so calling the
+    lock-acquiring version from in there would deadlock). Returns the
+    confirmation text to send; the caller does the actual reply/push."""
+    state = load_state(conversation_id)
+    pending = state.pending_pdf_upload
+    if pending is None:
+        return "這個上傳選擇已經處理過了，或已經過期失效，請重新上傳 PDF。"
+    extracted_index = {"npcs": pending["npcs"], "locations": pending["locations"]}
+    pending_pregens = pending.get("pregens", [])
+    if choice == "new":
+        _apply_new_scenario(
+            state, pending["text"], pending["title"], extracted_index, pending["page_maps"], pending_pregens
+        )
+    else:
+        _apply_scenario_correction(state, pending["text"], pending["title"], extracted_index, pending_pregens)
+    state.pending_pdf_upload = None
+    save_state(state)
+    final_pregen_count = len(state.pregens)
+    return _pdf_upload_confirmation_text(
+        pending["title"], pending["text"], pending["low_text_pages"], pending["truncated"],
+        pending["page_maps"], extracted_index, final_pregen_count,
     )
+
+
+async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
+    """Called by an adapter's button callback (see app/discord_bot.py's
+    PdfUploadChoiceButton) once the GM picks between the two options
+    handle_pdf_upload's pending_pdf_upload flow offers. `choice` must be
+    "new" or "fix". LINE has no button/interaction mechanism, so it has no
+    caller for this — see the "/coc pdf new"/"/coc pdf fix" text-command
+    path in _handle_coc_command, which every platform (including Discord,
+    for parity) can use instead."""
+    async with locks.get_conversation_lock(conversation_id):
+        text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
+    await push(text)
 
 
 async def handle_map_upload(
@@ -315,8 +556,13 @@ async def handle_role_sheet_upload(
     which is what tells this apart from handle_scenario_compare_upload's
     full-scenario alternate-text attachments. A deterministic, GM-verified
     alternative to /coc pregens' LLM-based extraction from the raw scenario
-    PDF text. Re-uploading a corrected sheet for the same occupation replaces
-    the previous entry rather than duplicating it."""
+    PDF text. Re-uploading a sheet that character_matcher.is_same_character
+    judges to be the same investigator as an existing pool entry reconciles
+    into it (merging if the two came from different sources, replacing if
+    the same — see pregen_extractor.reconcile_pregen_into_pool) instead of
+    always dead-reckoning on an exact occupation-string match, which used to
+    incorrectly collide two different players both wanting to play e.g. a
+    "警察"."""
     pregen = pregen_extractor.parse_role_sheet_text(file_text)
     if pregen is None:
         await reply(f"「{file_name}」看起來不是預期的角色卡格式（找不到【屬性】區塊），沒有儲存。")
@@ -324,19 +570,13 @@ async def handle_role_sheet_upload(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
-        existing_index = next(
-            (i for i, p in enumerate(state.pregens) if p.get("occupation") == pregen["occupation"]), None
-        )
-        if existing_index is not None:
-            state.pregens[existing_index] = pregen
-        else:
-            state.pregens.append(pregen)
+        state.pregens, action = pregen_extractor.reconcile_pregen_into_pool(state.pregens, pregen)
         save_state(state)
 
     name_note = f"「{pregen['name']}」" if pregen["name"] else "（姓名由玩家決定）"
-    action = "已更新" if existing_index is not None else "已新增"
+    action_note = {"added": "已新增", "replaced": "已更新", "merged": "已與現有角色比對成功，完成擇優融合"}[action]
     await reply(
-        f"角色卡{action}：{name_note}，職業「{pregen['occupation']}」，"
+        f"角色卡{action_note}：{name_note}，職業「{pregen['occupation']}」，"
         f"{len(pregen['skills'])} 項技能。用「/coc pregens」查看目前所有預製角色。"
     )
 
@@ -1050,6 +1290,7 @@ async def handle_text_message(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     text: str,
+    format_mention: FormatMention = lambda owner_id: owner_id,
 ) -> None:
     text = text.strip()
 
@@ -1083,43 +1324,82 @@ async def handle_text_message(
 
     if text.startswith("/coc"):
         async with locks.get_conversation_lock(conversation_id):
-            await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
+            await _handle_coc_command(
+                conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text, format_mention
+            )
         return
 
-    async with locks.get_conversation_lock(conversation_id):
-        state = load_state(conversation_id)
-        if not state.active:
-            return  # ignore ordinary chit-chat until a scenario is actually loaded and running
-
-        is_kp_assistant = state.kp_assistant_user_id == user_id
-        if is_kp_assistant:
-            display_name = await get_display_name()
-            speaker_role = "kp_assistant"
-            resolved_location = None
-        elif user_id not in state.characters:
-            display_name = await get_display_name()
-            await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
-            return
-        else:
-            display_name = state.characters[user_id].name
-            speaker_role = "player"
-            resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
-
-        async with locks.get_keeper_turn_lock(conversation_id):
-            reply_text, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, display_name, text, resolved_location, speaker_role
+    # KP Assistant is optional. Only when this conversation currently has a KP
+    # Assistant do ordinary Keeper turns use the priority gate; otherwise we
+    # intentionally bypass it and preserve the original conversation-lock path.
+    scheduling_state = load_state(conversation_id)
+    if not scheduling_state.kp_assistant_user_id:
+        async with locks.get_conversation_lock(conversation_id):
+            await _handle_ordinary_text_message_locked(
+                conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
             )
-            await _run_post_turn_maintenance_after_output(
-                conversation_id,
-                reply,
-                reply_text,
-                send_dm,
-                send_image,
-                send_dm_image,
-                private_messages,
-                image_requests,
-                run_maintenance=not is_kp_assistant,
+        return
+
+    is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
+    async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp_priority):
+        async with locks.get_conversation_lock(conversation_id):
+            await _handle_ordinary_text_message_locked(
+                conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
             )
+
+
+async def _handle_ordinary_text_message_locked(
+    conversation_id: str,
+    user_id: str,
+    get_display_name: GetDisplayName,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    text: str,
+) -> None:
+    """Handle an ordinary non-command text message.
+
+    The caller must already hold get_conversation_lock(conversation_id). This
+    function always reloads state itself; any pre-gate scheduling snapshot is
+    only a priority hint and never authoritative game state.
+    """
+    state = load_state(conversation_id)
+    if not state.active or not state.game_started:
+        # Ordinary text only becomes in-character play after a scenario is
+        # loaded AND /coc start has actually begun the game. PDF upload sets
+        # active=True during GM setup; /coc end sets active=False.
+        return
+
+    is_kp_assistant = state.kp_assistant_user_id == user_id
+    if is_kp_assistant:
+        display_name = await get_display_name()
+        speaker_role = "kp_assistant"
+        resolved_location = None
+    elif user_id not in state.characters:
+        display_name = await get_display_name()
+        await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+        return
+    else:
+        display_name = state.characters[user_id].name
+        speaker_role = "player"
+        resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
+
+    async with locks.get_keeper_turn_lock(conversation_id):
+        reply_text, private_messages, image_requests = await asyncio.to_thread(
+            keeper.run_turn, state, user_id, display_name, text, resolved_location, speaker_role
+        )
+        await _run_post_turn_maintenance_after_output(
+            conversation_id,
+            reply,
+            reply_text,
+            send_dm,
+            send_image,
+            send_dm_image,
+            private_messages,
+            image_requests,
+            run_maintenance=not is_kp_assistant,
+        )
 
 
 def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str, dict] | None:
@@ -1365,6 +1645,98 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     return "\n".join(lines)
 
 
+def _heal_character(char: Character) -> list[str]:
+    """Run once per bound character right before /coc start actually opens
+    the game (see docs/character_and_dictionary_system_spec.md's Module 7) —
+    Character creation today (generate_investigator / pregen_to_character)
+    always produces complete derived stats and the full BASE_SKILLS set, so
+    a character built through either of those paths should never actually
+    trip any of these; this exists for characters built before this
+    project's own bug fixes shipped (see docs/changelog.md's Module 2
+    entries — pregen_to_character used to only default 閃避/母語, and
+    weapons/carried_items used to not get populated at all), which are
+    exactly the kind of "known-good fix exists, just never applied
+    retroactively" gap this can safely repair on the spot. Mutates `char`
+    in place; returns human-readable notes about what got healed or, for
+    what genuinely can't be healed, what needs the GM's own attention.
+    Caller is responsible for saving state if this list is non-empty."""
+    notes: list[str] = []
+
+    missing_skills = [s for s in BASE_SKILLS if s not in char.skills]
+    if missing_skills:
+        for skill in missing_skills:
+            char.skills[skill] = BASE_SKILLS[skill]
+        notes.append(f"補上 {len(missing_skills)} 項缺少的官方技能預設值")
+
+    # HP/MP/SAN are pure functions of already-present base attributes (CON+SIZ,
+    # POW, POW again) — unlike the 9 base attributes themselves, these are
+    # always safe to recompute from data that's still there, never a guess.
+    # <=0 can't legitimately happen from real COC7e attribute ranges (see
+    # generate_investigator's roll ranges) — only from data built before a
+    # fix, or direct DB tampering.
+    if char.hp_max <= 0:
+        char.hp_max = max(1, (char.con + char.siz) // 10)
+        char.hp = min(char.hp, char.hp_max) if char.hp > 0 else char.hp_max
+        notes.append("生命值上限異常，已依現有 CON/SIZ 重新算過")
+    if char.mp_max <= 0:
+        char.mp_max = max(1, char.pow_ // 5)
+        char.mp = min(char.mp, char.mp_max) if char.mp > 0 else char.mp_max
+        notes.append("魔法值上限異常，已依現有 POW 重新算過")
+    if char.san_max <= 0:
+        char.san_max = min(char.pow_, 99) or 99
+        char.san = min(char.san, char.san_max) if char.san > 0 else char.san_max
+        notes.append("理智值上限異常，已依現有 POW 重新算過")
+
+    # The 9 base attributes (STR/CON/SIZ/DEX/APP/INT/POW/EDU/LUCK) have no
+    # formula to reconstruct them from — unlike HP/MP/SAN above, there's
+    # nothing to safely recompute here. All nine landing on exactly 50 (the
+    # extraction pipeline's own fallback default — see pregen_extractor.py's
+    # _int_or) is a strong enough coincidence that real attribute rolls or a
+    # real scenario's own pregen numbers essentially never produce it, so
+    # this is flagged for the GM to manually verify, never silently guessed
+    # at or auto-corrected.
+    all_nine = (char.str_, char.con, char.siz, char.dex, char.app, char.int_, char.pow_, char.edu, char.luck)
+    if len(set(all_nine)) == 1 and all_nine[0] == 50:
+        notes.append("⚠️ 9 大屬性剛好全部是 50，可能是舊資料遺失、不是真實數值，建議人工核對角色卡")
+
+    return notes
+
+
+def _build_readiness_roster(
+    state: GroupState, healed_notes: dict[str, list[str]], format_mention: FormatMention = lambda owner_id: owner_id
+) -> str:
+    """The "全團調查員集結就緒名冊" /coc start announces before the opening
+    narration — see docs/character_and_dictionary_system_spec.md's Module 7's
+    own "範例二" for the format this follows (HP/SAN/weapons/items per
+    character, not just name/occupation — a GM glancing at this should be
+    able to tell at a glance whether everyone's actually equipped, not just
+    who's playing who). `healed_notes` is owner_id -> whatever
+    _heal_character found for them (empty list if nothing needed fixing).
+    `format_mention` renders each owner_id for display (see FormatMention) —
+    defaults to the bare id, same as before this parameter existed, for any
+    caller that doesn't have a better option (LINE)."""
+    lines = ["📋 全團調查員集結就緒名冊", ""]
+    for owner_id, char in state.characters.items():
+        weapon_parts = []
+        for weapon_name, ammo_info in char.weapons.items():
+            if ammo_info.get("ammo_max"):
+                weapon_parts.append(f"{weapon_name} ({ammo_info['ammo']}/{ammo_info['ammo_max']})")
+            else:
+                weapon_parts.append(weapon_name)  # untracked ammo — see app/pregen_extractor.py
+        stats = f"HP {char.hp}/{char.hp_max}, SAN {char.san}/{char.san_max}"
+        if weapon_parts:
+            stats += "，彈藥：" + "、".join(weapon_parts)
+        if char.carried_items:
+            stats += "，物品：" + "、".join(char.carried_items)
+        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{format_mention(owner_id)}）：{stats}")
+        for note in healed_notes.get(owner_id, []):
+            lines.append(f"　　└ {note}")
+    unclaimed = sum(1 for p in state.pregens if not p.get("claimed_by"))
+    if unclaimed:
+        lines.append("")
+        lines.append(f"（尚有 {unclaimed} 位預製角色未被認領，本次以此陣容出戰）")
+    return "\n".join(lines)
+
 
 
 async def _handle_coc_command(
@@ -1375,6 +1747,7 @@ async def _handle_coc_command(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     text: str,
+    format_mention: FormatMention = lambda owner_id: owner_id,
 ) -> None:
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
@@ -1382,6 +1755,23 @@ async def _handle_coc_command(
     if sub == "newgame":
         save_state(GroupState(group_id=conversation_id))
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
+        return
+
+    if sub == "pdf":
+        # Text-command equivalent of Discord's PdfUploadChoiceButton (see
+        # _resolve_pdf_upload_choice_locked) — LINE has no button/interaction
+        # mechanism at all, so without this a pending_pdf_upload on LINE (a
+        # scenario already running, a second PDF lands) had no way to ever
+        # get resolved: handle_pdf_upload would stash it and just sit there
+        # forever, scenario_text never updating, every further PDF upload
+        # refused by the "resolve the pending one first" guard. Works on
+        # Discord too, as a text-based fallback alongside the buttons.
+        choice_word = parts[2] if len(parts) > 2 else ""
+        choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
+        if choice is None:
+            await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
+            return
+        await reply(_resolve_pdf_upload_choice_locked(conversation_id, choice))
         return
 
     if sub == "kp":
@@ -1393,6 +1783,7 @@ async def _handle_coc_command(
                 await reply("你目前不是這局的 KP 助手。")
                 return
             state.kp_assistant_user_id = ""
+            state.kp_ooc_log = []
             save_state(state)
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             return
@@ -1414,6 +1805,7 @@ async def _handle_coc_command(
             await reply("KP 助手與建角流程互斥；你正在進行互動式建角，請先輸入「/coc create cancel」取消後再登記 KP 助手。")
             return
 
+        state.kp_ooc_log = []
         state.kp_assistant_user_id = user_id
         save_state(state)
         await reply("已登記你為這局的 KP 助手。")
@@ -1479,6 +1871,7 @@ async def _handle_coc_command(
         state = load_state(conversation_id)
         state.active = False
         state.kp_assistant_user_id = ""
+        state.kp_ooc_log = []
         save_state(state)
         await reply("遊戲已結束，遊戲紀錄與角色仍會保留；KP 助手身分也已解除。要開新的一局請用 /coc newgame。")
         return
@@ -1538,6 +1931,26 @@ async def _handle_coc_command(
         state.keeper_persona = persona_text
         save_state(state)
         await reply(f"已設定這個群組的守密人語氣風格：\n{persona_text}\n\n（下一則訊息開始生效；重設回預設風格用 /coc setpersona reset）")
+        return
+
+    if sub == "era":
+        state = load_state(conversation_id)
+        if len(parts) < 3:
+            await reply(
+                "用法：/coc era 1920 → 設定 1920 年代經典設定\n"
+                "/coc era modern → 設定現代／當代設定\n\n"
+                f"目前設定：{'1920 年代' if state.era == '1920s' else '現代／當代'}\n"
+                "（影響角色卡上傳時，武器只寫泛稱、沒寫具體型號的情況下，自動補上的預設彈藥容量）"
+            )
+            return
+        choice = parts[2].strip().lower()
+        era_map = {"1920": "1920s", "1920s": "1920s", "modern": "modern"}
+        if choice not in era_map:
+            await reply("年代設定只接受「1920」或「modern」。")
+            return
+        state.era = era_map[choice]
+        save_state(state)
+        await reply(f"已設定這個群組的年代為：{'1920 年代' if state.era == '1920s' else '現代／當代'}。")
         return
 
     if sub == "create":
@@ -1694,7 +2107,7 @@ async def _handle_coc_command(
         if claimed_by and claimed_by != user_id:
             await reply("這位角色已經被其他玩家選走了，輸入「/coc pregens」看看還有哪些可選。")
             return
-        char = pregen_extractor.pregen_to_character(pregen, user_id)
+        char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era)
         if len(parts) > 3:
             char.name = parts[3]
         state.characters[user_id] = char
@@ -1719,6 +2132,29 @@ async def _handle_coc_command(
         if state.game_started:
             await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
             return
+
+        # Readiness gate (see docs/character_and_dictionary_system_spec.md's
+        # Module 7): heal whatever _heal_character can safely fix on every
+        # bound character, then announce the roster — before the opening
+        # narration, as its own message — so the GM sees exactly who's
+        # playing what and what (if anything) got quietly repaired, rather
+        # than that only surfacing later as a confusing mid-game symptom.
+        # Guarded by get_state_lock like the two save_state calls further
+        # below in this same subcommand — /coc check's self-initiated check
+        # path only gates on state.active (not game_started), so a Keeper
+        # turn's background maintenance task can still be in flight here even
+        # during the lobby phase; an unguarded load-mutate-save would risk a
+        # lost update against that task's own state_lock-guarded save.
+        with locks.get_state_lock(conversation_id):
+            state = load_state(conversation_id)
+            healed_notes: dict[str, list[str]] = {}
+            for owner_id, char in state.characters.items():
+                notes = _heal_character(char)
+                if notes:
+                    healed_notes[owner_id] = notes
+            if healed_notes:
+                save_state(state)
+        await reply(_build_readiness_roster(state, healed_notes, format_mention))
 
         # Prefer the scenario's own read-aloud opening text (see
         # app/scenario_intro.py) over having the Keeper improvise one — many
@@ -1745,8 +2181,34 @@ async def _handle_coc_command(
                 state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
                 state.log.append({"role": "assistant", "content": opening_text})
                 state.game_started = True
+                # Some published scenarios' opening text itself demands an
+                # immediate check ("everyone roll a Spot Hidden") rather than
+                # that only coming up once play is under way — see
+                # app/scenario_intro.py's opening_check. Registered the same
+                # way app/keeper.py's skill_check/sanity_check tools do
+                # (state.pending_checks, one entry per bound character), so
+                # the existing pending_checks diff-and-post machinery in
+                # app/discord_bot.py posts real buttons for it automatically
+                # — no separate button-posting path needed here.
+                opening_check = extracted.get("opening_check")
+                if opening_check:
+                    for owner_id, char in state.characters.items():
+                        if opening_check["type"] == "skill":
+                            value = keeper.resolve_skill_value(char, opening_check["skill"])
+                            state.pending_checks[owner_id] = {
+                                "type": "skill", "skill": opening_check["skill"], "skill_value": value,
+                                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular", "pushed": False,
+                            }
+                        else:  # "sanity"
+                            state.pending_checks[owner_id] = {
+                                "type": "sanity",
+                                "loss_success": opening_check.get("loss_success", "0"),
+                                "loss_failure": opening_check.get("loss_failure", "1d4"),
+                            }
                 save_state(state)
             await reply(opening_text)
+            if opening_check and opening_check.get("reason"):
+                await reply(f"👉 {opening_check['reason']}——請各自用「/coc check」擲骰。")
             return
 
         # No usable read-aloud text in the scenario — fall back to a normal
