@@ -610,6 +610,20 @@ Library Use、Dodge、Occult...），不用等第一次真的遇到英文劇本�
    * 切換 `state.game_started = True`。
    * 朗讀劇本開場白，正式啟動遊戲。
 
+⚠️ 實作備註（2026-09-17 討論定案）：追蹤 `app/commands.py` 的 `handle_text_message` 後，發現「整備
+階段一般訊息不會觸發 Keeper」這個防護機制**原本根本不存在**——唯一的守門條件是 `state.active`（上傳
+PDF 當下就會變 `True`），不是 `state.game_started`（只有 `/coc start` 才會變 `True`）。已修正為兩個
+條件都要成立（`if not state.active or not state.game_started: return`）；`/coc end` 只重置
+`state.active`、不會動到 `state.game_started`，所以缺一不可。
+
+「全員角色卡與裝備 Loading 完成度確認」改成**能自動修的就自動修，修不了的才提醒 GM**，而不是單純擋
+下來：技能缺項（角色建立在模組二的 bug 修好之前，就會缺這個）用 `BASE_SKILLS` 補齊；HP/MP/SAN 上限
+異常（≤0）用現有的 CON/SIZ/POW 重新算一次補上，這兩者都是「解法已知、資料還在」的情況，可以安全
+自動修。**9 大基礎屬性（含 EDU）本身沒有公式可以反推**——如果 9 項剛好全部都是 50（抽取失敗時的
+預設值），只標記警告提醒 GM 人工核對，不會自動猜一個數字填進去。「武裝彈藥滿彈」「隨身物品載入
+完備」這兩項確認 Character 建立路徑（`generate_investigator`／`pregen_to_character`）本來就保證
+一定完整，不需要額外檢查。
+
 ---
 
 ## 10. 附錄：GM 載入完成報告與開團就緒報告範例

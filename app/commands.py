@@ -33,7 +33,7 @@ from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
-from app.models import OCCUPATIONS, GroupState, generate_investigator
+from app.models import BASE_SKILLS, OCCUPATIONS, Character, GroupState, generate_investigator
 from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
 
 _logger = logging.getLogger(__name__)
@@ -1255,8 +1255,20 @@ async def handle_text_message(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
-        if not state.active:
-            return  # ignore ordinary chit-chat until a scenario is actually loaded and running
+        if not state.active or not state.game_started:
+            # Two separate conditions on purpose (see docs/character_and_
+            # dictionary_system_spec.md's Module 7): `active` alone used to
+            # be the only gate here, but it goes True the moment a scenario
+            # PDF is uploaded — well before /coc start — so a player casually
+            # chatting during the GM's setup (uploading maps, character
+            # cards, adjusting sheets) would have that chit-chat treated as
+            # in-character play and handed straight to the Keeper. `active`
+            # also doesn't reset on its own after /coc end (only game_started
+            # would still be stale True from the ended game, since /coc end
+            # doesn't touch it), so checking `game_started` alone isn't
+            # sufficient either — both have to hold: a scenario is loaded AND
+            # /coc start has actually run for it.
+            return
 
         is_kp_assistant = state.kp_assistant_user_id == user_id
         if is_kp_assistant:
@@ -1531,6 +1543,79 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
         lines.append("（此角色已被選走）")
     return "\n".join(lines)
 
+
+def _heal_character(char: Character) -> list[str]:
+    """Run once per bound character right before /coc start actually opens
+    the game (see docs/character_and_dictionary_system_spec.md's Module 7) —
+    Character creation today (generate_investigator / pregen_to_character)
+    always produces complete derived stats and the full BASE_SKILLS set, so
+    a character built through either of those paths should never actually
+    trip any of these; this exists for characters built before this
+    project's own bug fixes shipped (see docs/changelog.md's Module 2
+    entries — pregen_to_character used to only default 閃避/母語, and
+    weapons/carried_items used to not get populated at all), which are
+    exactly the kind of "known-good fix exists, just never applied
+    retroactively" gap this can safely repair on the spot. Mutates `char`
+    in place; returns human-readable notes about what got healed or, for
+    what genuinely can't be healed, what needs the GM's own attention.
+    Caller is responsible for saving state if this list is non-empty."""
+    notes: list[str] = []
+
+    missing_skills = [s for s in BASE_SKILLS if s not in char.skills]
+    if missing_skills:
+        for skill in missing_skills:
+            char.skills[skill] = BASE_SKILLS[skill]
+        notes.append(f"補上 {len(missing_skills)} 項缺少的官方技能預設值")
+
+    # HP/MP/SAN are pure functions of already-present base attributes (CON+SIZ,
+    # POW, POW again) — unlike the 9 base attributes themselves, these are
+    # always safe to recompute from data that's still there, never a guess.
+    # <=0 can't legitimately happen from real COC7e attribute ranges (see
+    # generate_investigator's roll ranges) — only from data built before a
+    # fix, or direct DB tampering.
+    if char.hp_max <= 0:
+        char.hp_max = max(1, (char.con + char.siz) // 10)
+        char.hp = min(char.hp, char.hp_max) if char.hp > 0 else char.hp_max
+        notes.append("生命值上限異常，已依現有 CON/SIZ 重新算過")
+    if char.mp_max <= 0:
+        char.mp_max = max(1, char.pow_ // 5)
+        char.mp = min(char.mp, char.mp_max) if char.mp > 0 else char.mp_max
+        notes.append("魔法值上限異常，已依現有 POW 重新算過")
+    if char.san_max <= 0:
+        char.san_max = min(char.pow_, 99) or 99
+        char.san = min(char.san, char.san_max) if char.san > 0 else char.san_max
+        notes.append("理智值上限異常，已依現有 POW 重新算過")
+
+    # The 9 base attributes (STR/CON/SIZ/DEX/APP/INT/POW/EDU/LUCK) have no
+    # formula to reconstruct them from — unlike HP/MP/SAN above, there's
+    # nothing to safely recompute here. All nine landing on exactly 50 (the
+    # extraction pipeline's own fallback default — see pregen_extractor.py's
+    # _int_or) is a strong enough coincidence that real attribute rolls or a
+    # real scenario's own pregen numbers essentially never produce it, so
+    # this is flagged for the GM to manually verify, never silently guessed
+    # at or auto-corrected.
+    all_nine = (char.str_, char.con, char.siz, char.dex, char.app, char.int_, char.pow_, char.edu, char.luck)
+    if len(set(all_nine)) == 1 and all_nine[0] == 50:
+        notes.append("⚠️ 9 大屬性剛好全部是 50，可能是舊資料遺失、不是真實數值，建議人工核對角色卡")
+
+    return notes
+
+
+def _build_readiness_roster(state: GroupState, healed_notes: dict[str, list[str]]) -> str:
+    """The "全團調查員集結就緒名冊" /coc start announces before the opening
+    narration — see docs/character_and_dictionary_system_spec.md's Module 7.
+    `healed_notes` is owner_id -> whatever _heal_character found for them
+    (empty list if nothing needed fixing)."""
+    lines = ["📋 全團調查員集結就緒名冊", ""]
+    for owner_id, char in state.characters.items():
+        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{owner_id}）")
+        for note in healed_notes.get(owner_id, []):
+            lines.append(f"　　└ {note}")
+    unclaimed = sum(1 for p in state.pregens if not p.get("claimed_by"))
+    if unclaimed:
+        lines.append("")
+        lines.append(f"（尚有 {unclaimed} 位預製角色未被認領，本次以此陣容出戰）")
+    return "\n".join(lines)
 
 
 
@@ -1906,6 +1991,21 @@ async def _handle_coc_command(
         if state.game_started:
             await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
             return
+
+        # Readiness gate (see docs/character_and_dictionary_system_spec.md's
+        # Module 7): heal whatever _heal_character can safely fix on every
+        # bound character, then announce the roster — before the opening
+        # narration, as its own message — so the GM sees exactly who's
+        # playing what and what (if anything) got quietly repaired, rather
+        # than that only surfacing later as a confusing mid-game symptom.
+        healed_notes: dict[str, list[str]] = {}
+        for owner_id, char in state.characters.items():
+            notes = _heal_character(char)
+            if notes:
+                healed_notes[owner_id] = notes
+        if healed_notes:
+            save_state(state)
+        await reply(_build_readiness_roster(state, healed_notes))
 
         # Prefer the scenario's own read-aloud opening text (see
         # app/scenario_intro.py) over having the Keeper improvise one — many
