@@ -44,6 +44,39 @@ _REPORT_TOOL = {
                 ),
             },
             "page": {"type": "integer", "description": "這段開場文字主要出現在劇本的第幾頁，找不到就填 0"},
+            "opening_check": {
+                "type": ["object", "null"],
+                "description": (
+                    "只有在這段開場白／開場介紹文字本身**明確要求**每位調查員在遊戲一開始就做一次"
+                    "檢定時才填（例如開場文字寫「請所有調查員進行一次偵查檢定」「請做一次理智檢定」）"
+                    "——這是全隊共同的開場檢定，不是劇本某個later章節、某個特定場景才會觸發的檢定，"
+                    "也不是你自己覺得「這邊感覺應該要檢定」而推薦的。沒有這種明確要求就填 null，"
+                    "不要自己發明一個檢定。"
+                ),
+                "properties": {
+                    "type": {
+                        "type": "string", "enum": ["skill", "sanity"],
+                        "description": "skill＝技能檢定（例如偵查／聆聽），sanity＝理智檢定",
+                    },
+                    "skill": {
+                        "type": "string",
+                        "description": "type 為 skill 時，官方技能的繁體中文名稱（例如「偵查」）；type 為 sanity 時不用填",
+                    },
+                    "loss_success": {
+                        "type": "string",
+                        "description": "type 為 sanity 時，檢定成功的理智損失（如 '0'、'1'、'1d4'）；type 為 skill 時不用填",
+                    },
+                    "loss_failure": {
+                        "type": "string",
+                        "description": "type 為 sanity 時，檢定失敗的理智損失（如 '1d6'、'1d10'）；type 為 skill 時不用填",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "為什麼要做這個檢定的簡短說明，翻成繁體中文（例如「注意到巷子裡有東西在動」）",
+                    },
+                },
+                "required": ["type"],
+            },
         },
         "required": ["found", "text"],
     },
@@ -53,24 +86,47 @@ _REPORT_TOOL = {
 def extract_opening_narration(scenario_text: str) -> dict[str, Any]:
     """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text),
     same provider-agnostic pattern as app/scenario_index.py/app/pregen_extractor.py.
-    Returns {"found": bool, "text": str, "page": int} — found=False (with an
-    empty text) on any failure (no provider configured, empty scenario text,
-    the call itself failing, or the scenario genuinely not having one) so
-    callers can treat all of those the same way: fall back to having the
-    Keeper improvise instead."""
+    Returns {"found": bool, "text": str, "page": int, "opening_check": dict | None}
+    — found=False (with an empty text, opening_check=None) on any failure (no
+    provider configured, empty scenario text, the call itself failing, or the
+    scenario genuinely not having one) so callers can treat all of those the
+    same way: fall back to having the Keeper improvise instead.
+
+    opening_check, when present, is {"type": "skill"|"sanity", "skill"?: str,
+    "loss_success"?: str, "loss_failure"?: str, "reason"?: str} — some
+    published scenarios open with an explicit "everyone roll a Spot Hidden"
+    (or a Sanity check) as part of the prologue itself, not something that
+    only comes up once play is already underway; see app/commands.py's
+    "start" subcommand, which registers this as a pending_checks entry for
+    every bound character (the same mechanism app/keeper.py's skill_check/
+    sanity_check tools use during normal play) so it gets real Discord
+    buttons via the existing pending_checks diff-and-post machinery, instead
+    of needing a separate one-off code path."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
     if provider is None or not scenario_text.strip():
-        return {"found": False, "text": "", "page": 0}
+        return {"found": False, "text": "", "page": 0, "opening_check": None}
 
     result = provider.analyze_text(
         scenario_text,
         _REPORT_TOOL,
         "以下是一份 COC7e 劇本的文字內容。請判斷裡面有沒有明確寫給守密人、可以直接唸給玩家聽的"
-        "開場白／開場介紹文字，用 report_opening_narration 工具回報。",
+        "開場白／開場介紹文字，以及這段開場白本身有沒有明確要求全隊在遊戲一開始就做一次檢定，"
+        "用 report_opening_narration 工具回報。",
     )
     if not result or not result.get("found"):
-        return {"found": False, "text": "", "page": 0}
+        return {"found": False, "text": "", "page": 0, "opening_check": None}
     text = (result.get("text") or "").strip()
     if not text:
-        return {"found": False, "text": "", "page": 0}
-    return {"found": True, "text": text, "page": result.get("page") or 0}
+        return {"found": False, "text": "", "page": 0, "opening_check": None}
+
+    opening_check = result.get("opening_check")
+    if isinstance(opening_check, dict):
+        check_type = opening_check.get("type")
+        if check_type == "skill" and not (opening_check.get("skill") or "").strip():
+            opening_check = None  # malformed — a skill check with no skill name is unusable
+        elif check_type not in ("skill", "sanity"):
+            opening_check = None
+    else:
+        opening_check = None
+
+    return {"found": True, "text": text, "page": result.get("page") or 0, "opening_check": opening_check}

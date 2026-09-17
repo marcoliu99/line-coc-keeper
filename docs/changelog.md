@@ -665,3 +665,363 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **流程位置維持不變**：`on_message()` 仍然是在忽略 bot 訊息之後立刻做 OOC 判斷，命中就直接 `return`；位置仍早於 state 讀取、附件/文字的 `commands.py` 呼叫，以及任何 Keeper/AI 流程。
 - **已驗證**：直接用 Python assertion 確認 ASCII `@`、全形 `＠`、前置半形/全形空白、Discord user/nickname/role mention 都會被視為 OOC；一般文字中途提到 `@`、頻道 mention `<#...>`、普通角色扮演文字都不會被誤判。也跑過 `python -m py_compile app/discord_bot.py`。
 
+### 60. 角色卡與字典系統：檔案分流、自動補齊、跨語言比對、擇優融合（模組一～五）
+
+- **這個改動怎麼來的**：使用者提供一份完整的規格書（`docs/character_and_dictionary_system_spec.md`），描述 GM 集中上傳劇本／地圖／全團角色卡時，現有系統的一系列已知痛點（角色卡上傳後沒真的綁定給玩家、同職業角色卡互相洗掉、中英劇本跟中文角色卡對不上、角色卡漏彈藥／漏裝備、技能名稱沒有官方預設值）。逐一模組討論定案後才動手實作，每個模組的規格書段落都補上「⚠️ 實作備註」記錄討論結果（見該檔案），這裡只記錄最終落地的程式碼變更。
+- **模組一（檔案分流與增量載入）**：
+  - 角色卡多檔上傳：`app/discord_bot.py` 的 `on_message` 原本只處理一則訊息裡第一個 `role_` 開頭附件（`role_attachments[0]`），GM 一次拖選全團角色卡進同一則訊息時，除了第一張以外全部被靜默忽略。改成迴圈處理該則訊息裡所有 `role_` 附件。
+  - 地圖檔改成強制要求 `map_` 前綴（原本任何 `.yaml`/`.yml` 都當地圖），沒有前綴的檔案會收到明確提示要求改檔名重傳，不會被靜默忽略。
+  - PDF 重新上傳新增「全新劇本／修正目前劇本」按鈕選擇（`app/commands.py` 的 `handle_pdf_upload`／`resolve_pdf_upload_choice`，`app/discord_bot.py` 的 `PdfUploadChoiceButton`）：偵測到 `state.scenario_text` 已非空時，不再無條件重置整個群組狀態，而是把抽取結果暫存進新增的 `GroupState.pending_pdf_upload` 欄位（跟 `pending_checks`／`pending_luck_decisions` 一樣的持久化 pending-按鈕模式，撐得過部署重啟），讓 GM 明確選擇：「全新劇本」維持原本的全部重置行為；「修正目前劇本」只更新 `scenario_text`／`scenario_title`／NPC／地點索引，保留 `scene_maps`／`current_map_page`／`current_room_id`／`party_facing`／`pregens`／`openai_previous_response_id`／`game_started`。頁面圖片兩種模式都會更新，跟選擇無關，所以立即套用不需要暫存等待。首次上傳（群組還沒有任何劇本）沒有歧義，直接照「全新劇本」流程走，不會跳出按鈕。
+- **模組二（有缺的補上——自動補齊引擎）**：
+  - 核對後確認衍生數值公式（HP/MP/SAN/Build/DB/MOV）本來就正確實作，這塊沒有改動。
+  - `app/pregen_extractor.py` 的 `pregen_to_character`（角色卡上傳路徑）原本只補「閃避」「母語」兩個技能預設值，其餘官方 46 項技能完全缺席；改成先 `dict(BASE_SKILLS)` 再疊上角色卡實際數值，跟 `/coc pc` 快速建角的做法一致。
+  - 武器／道具解析整個重寫：新增 `_ITEM_SECTION_NAMES`，「武器」「裝備」「隨身物品」「攜帶物品」「道具」全部視為同一種區塊，逐段（不再限定按標題分類）用內容判斷是武器還是普通道具——有彈容量／彈匣欄位、有戰鬥技能欄位、或名稱命中槍械關鍵字庫，判定為武器；否則寫進新增的 `Character.carried_items`（原本這些內容只會整段原文複製進 `notes`，一個一次性寫入、Keeper 容易淡忘的靜態欄位，不會像 `carried_items`一樣每輪重新提醒）。新增 `GroupState.era`（預設 `1920s`，`/coc era 1920`／`/coc era modern` 切換）與涵蓋左輪手槍／半自動手槍／霰彈槍／步槍／衝鋒槍的官方槍械彈藥庫，讓角色卡只寫泛稱（沒寫具體型號）的槍枝也能補上跟年代相符的預設彈容量；具體型號、或角色卡自己寫明彈容量的槍枝，行為不受影響。
+- **模組三（跨語言對齊與數值指紋）**：新增 `app/dictionary.py`（自學習中英字典，持久化在 SQLite 新增的 `dictionary` table，一筆 `"global"` row，`skills` 分類上線前先種好官方 46 項技能的常見英文對照）與 `app/character_matcher.py`（三道閘門，任一通過即判定同一角色：① 括號別名／已學過的姓名字典比對、② 9 大屬性數值指紋 ≥7/9 完全相同、③ 職業相同且 ≥3 項技能數值完全相同）。刻意不做「Malcolm ↔ 馬爾科姆」這種純字串音譯猜測——`extract_pregens` 的姓名欄位本來就要求保留原文不翻譯，兩種語言的姓名字面上通常沒有共同字元，真正扛住這種情況的是語言無關的數值指紋；指紋或技能比對判定成功後，姓名配對會自動存進字典的 `character_aliases`，下次同一組姓名直接命中，不用重跑完整比對。
+- **模組四（重複角色衝突比對與擇優融合）**：核對後確認 `state.pregens`（角色池）跟 `state.characters`（真正出戰角色）在現有架構下完全獨立（認領當下用 `pregen_to_character` 複製一份，之後互不影響），規格書「保護已出戰角色的當前 HP/SAN/Luck」這條規則在這個範圍下不適用（沒有機制會回頭動到已認領的角色），所以縮小範圍：擇優融合只發生在角色池裡還沒被認領的 pregen 之間。`parse_role_sheet_text`／`extract_pregens` 產生的 pregen 各自標記 `source: "manual"`／`"llm_extracted"`；新增 `reconcile_pregen_into_pool`（取代原本「職業字串相同就覆蓋」的去重邏輯，改用 `character_matcher.is_same_character` 判斷整個角色池，不再限定同職業才比對），比對到同一角色時：來源不同就用 `_merge_pregens` 做規格書表格定義的欄位級融合（屬性/衍生值/背景以手傳卡為準，技能取聯集手傳卡優先，秘密動機從 LLM 抽取版繼承，保留既有的 `claimed_by`）；來源相同（例如同一個人重傳兩次手打角色卡）沒有優先順序可套用，新的直接覆蓋舊的。`app/commands.py` 的 `handle_role_sheet_upload` 改用這條新邏輯。
+- **實測過**（每個模組都用真實物件跑過，沒有 mock）：
+  - 模組一：多角色卡附件上傳（真的丟 2 個 `role_` 附件進同一則假訊息，確認 2 張都被處理、都存進角色池）；`map_` 前綴強制（沒前綴的 `.yaml` 收到改檔名提示、有前綴的正常存檔，用真的 `discord.ui` View 檢查按鈕確實被貼出）；PDF 重傳流程整個跑過一輪（真實 PDF bytes，用 `pymupdf` 現場產生）——先驗證「已有劇本時重傳」不會立即套用、只會暫存＋跳按鈕；模擬點擊「修正目前劇本」按鈕（真的呼叫 `PdfUploadChoiceButton.callback`），確認劇本文字更新但地圖位置／角色池／`openai_previous_response_id`／`game_started` 全部原封不動；再測「全新劇本」選擇確認維持原本的全部重置行為；額外測了重複解析同一個已處理過的 pending 選擇會得到清楚的「已過期」提示，不會出錯。
+  - 模組二：混合標題（「裝備」同時放一把沒寫彈容量的手槍跟一支手電筒、「道具」放純道具清單、「武器」放明確寫彈容量的左輪手槍）跑過完整分流，確認槍枝進 `weapons`、道具進 `carried_items`、且不再重複進 `notes`；`/coc era` 切換前後，同一把「半自動手槍」在 1920s 拿到 7 發、modern 拿到 15 發，具體型號＋明確彈容量的左輪手槍兩個年代都不受影響；不認得的武器名稱仍然被記錄（只是不追蹤彈藥），不會整個消失；官方 46 項技能全部確認補齊。
+  - 模組三：括號別名（`卡特(Malcolm Carter)`）比對成功；完全沒有括號的英文/中文姓名配對（9 項屬性 8 項相同）透過數值指紋比對成功，且確認比對後真的寫回字典、第二次遇到同一組姓名直接命中不需要重跑指紋比對；刻意測了「兩筆資料都很空，剛好唯一一個共同屬性相同」不會被誤判成同一人（指紋比對需要 ≥7 項相同，不是隨便幾項）；同職業但技能重疊不足 3 項的兩個角色正確判定為不同人。
+  - 模組四：兩個玩家都想玩「警察」的角色卡，確認正確被判定為兩個不同角色（這正是規格書開頭指出的既有 bug，重現過舊邏輯的行為並確認新邏輯修正）；同一玩家重傳修正版角色卡正確覆蓋而非新增第三筆；一筆英文 LLM 抽取版跟一筆中文手打版對到同一個「卡特」，確認欄位級融合結果——屬性用手傳卡的、技能聯集且手傳卡優先、秘密動機繼承自 LLM 版、背景用手傳卡的。
+  - 完整串接：模擬一次真實 GM 流程（上傳劇本 → 設定年代 → 上傳含混合裝備的角色卡 → 玩家認領 → 上傳第二張不同角色的角色卡），逐步確認每個環節的資料在最終 `Character` 物件上都正確銜接。
+- **還是有的限制**：`extract_pregens`（劇本 PDF 的 LLM 抽取路徑）目前沒有把技能名稱翻譯成繁體中文（`occupation` 欄位有明確的翻譯指示，`skills` 沒有）——這代表英文劇本抽出來的 pregen，技能名稱目前仍可能是英文（例如 `Spot Hidden`），跟中文角色卡的「偵查」不會被 `canonical_skill_name` 自動視為同一項技能，模組三的「職業＋技能」閘門（第 3 道）在這種情況下無法命中；數值指紋（第 2 道，語言無關）不受影響，跨語言比對整體仍然可行，只是這一道閘門的覆蓋率會打折扣，直到 `extract_pregens` 也接上模組五字典的翻譯流程（比照 `occupation` 欄位的做法，或先查字典、查不到才用 LLM 翻譯並存回字典）——這是後續可以再做的延伸，不影響這次已經定案的範圍。
+
+### 61. 官方技能中文譯名改用專案擁有者提供的對照表，並補上 `extract_pregens` 的技能字典查表
+
+- **這個改動怎麼來的**：使用者提供一份完整的 CoC 7e 官方中英文術語對照表（角色卡欄位、屬性、技能、武器等），並指出這份表格裡有幾個技能的中文翻譯跟這個專案原本用的不一樣，要求整個專案改用這份表格的譯名。核對後找出 8 處需要改的技能名稱（比原本回報給使用者的 5 處還多找到 3 處：`Electrical Repair`／`Language (Other)`／`Operate Heavy Machinery`）：
+  - `估價`→`鑑定`（Appraise）、`話術`→`快速交談`（Fast Talk）、`領航`→`導航`（Navigate）、`巧手`→`妙手`（Sleight of Hand）、`駕駛（其他載具）`→`駕駛`（Pilot）
+  - `電器維修`→`電氣維修`（Electrical Repair）、`外語（其他）`→`其他語言`（Language (Other)）、`重機械操作`→`重型機械操作`（Operate Heavy Machinery）
+  - 刻意沒有照表格改的：`格鬥（鬥毆）`維持不變（不改成表格的單純「格鬥」）、`射擊（手槍）`／`射擊（步槍/霰彈槍）`維持拆成兩個技能、`科學（生物）`／`（化學）`／`（物理）`維持拆分——這些是 CoC 7e 規則本身就有的技能拆分（同一個大類底下其實是不同技能、各自有獨立數值），表格上的簡稱是分類名稱，不是要合併成一個技能，照改會變成規則變動而不是單純換用詞。
+  - 使用者也追問「`extract_pregens` 為什麼沒有先查表就好」——確認這確實是一個範圍評估時漏掉、成本很低的缺口，這次一併補上。
+- **這個專案現在怎麼做**：
+  1. `app/models.py` 的 `BASE_SKILLS` 與 `OCCUPATIONS`（職業技能加值表）裡，上述 8 個技能名稱全部改成新譯名。
+  2. `app/skill_aliases.py`：既有指向舊譯名的別名（例如「話術溝通」原本對到「話術」）改成指向新譯名；新增舊譯名本身的反向別名（例如「估價」→「鑑定」），讓還在用舊說法的文字輸入依然能正確解析成新的官方技能。另外移除了一條本來就會失效、語意也已經反過來的舊別名（`"駕駛": "汽車駕駛"`——`駕駛` 現在是 `BASE_SKILLS` 收錄的正式技能（Pilot），`canonical_skill_name` 檢查 `BASE_SKILLS` 是否收錄的順序在別名表之前，這條舊別名早就無法被觸發到，留著只會誤導人以為「駕駛」還是指開車）。
+  3. `app/dictionary.py` 的 `_SEED_SKILLS` 全部改用新譯名。
+  4. `app/pregen_extractor.py` 的 `extract_pregens` 新增 `_translate_skill_names`：LLM 抽取出來的每個技能名稱，先查 `app/dictionary.py` 的字典（查得到就用查到的中文譯名，查不到就保留原文，不會被丟掉）——這樣「Spot Hidden」這類已經在字典裡的官方技能名稱，從英文劇本抽出來時就能直接對應到「偵查」，不用等到之後才有機會比對成功。
+  5. 新增 `scripts/migrate_skill_names.py`：一次性遷移腳本，把已經存在資料庫裡（`group_states` 表的 `characters`／`pregens`，以及 `characters` 表的角色鏡像）舊譯名底下的技能數值搬到新譯名底下，純新增性質、可重複執行不會出錯（舊 key 不存在就跳過，新 key 已經有值就不覆蓋）。**這支腳本還沒有對正式環境資料庫執行**——這個分支還沒合併部署，等合併上線時需要手動跑一次 `python -m scripts.migrate_skill_names`，避免正式環境裡已經存在的角色（例如任何角色身上原本就有的「估價」欄位，因為 `/coc pc`／角色卡上傳本來就會把整套 `BASE_SKILLS` 複製進每個角色）技能值變成查不到。
+- **實測過**：
+  - 技能改名＋別名解析：確認新舊 8 個技能名稱雙向都能正確解析（新名稱查得到自己、舊名稱正確導向新名稱），既有的別名變體（「話術溝通」「巧手技藝」「估價鑑定」「領航術」）都正確導向新譯名；刻意測了 `駕駛` 現在正確解析成 Pilot（不再是移除掉的舊別名指向的汽車駕駛），確認 `汽車駕駛`／`開車` 這組獨立的別名完全不受影響。
+  - `/coc pc` 快速建角（`generate_investigator`）跟角色卡上傳（`pregen_to_character`）兩條路徑都重新測過，確認職業加值技能（例如流浪漢的「妙手」「快速交談」）跟角色卡手寫的舊譯名技能（例如寫「估價」「話術溝通」）都正確落在新譯名底下。
+  - `extract_pregens` 的字典查表：直接餵一組模擬的英文技能字典（`Spot Hidden`／`Listen`／`Firearms (Handgun)`／一個字典沒收錄的自創技能名），確認官方技能正確翻成中文、自創技能原文保留（不會憑空消失）；也確認改名的 8 個技能，英文名稱一樣能正確查到新譯名。
+  - 遷移腳本：建一個測試用的 `GroupState`（含一個角色跟兩筆 pregen，技能故意用舊譯名寫死）跟一筆獨立的 `characters` 表鏡像，跑過一次遷移，確認三個地方的舊技能 key 都正確搬到新 key、數值沒有遺失；已經是新譯名的技能（模擬「已經遷移過的角色」）維持不動；重跑第二次確認完全冪等（沒有任何變動，不會出錯）。
+  - 全專案 `py_compile` 過一輪；重新跑過完整 GM 流程串接測試（上傳劇本 → 設定年代 → 上傳含混合裝備的角色卡 → 玩家認領），確認武器分流、彈藥年代查表、`carried_items`、技能補齊在改名後全部正確銜接，新譯名技能（如「鑑定」）正確出現、舊譯名（「話術」「估價」）確認不再出現在最終角色身上。身分比對（模組三）、擇優融合（模組四）、PDF 重傳按鈕（模組一）這幾塊邏輯沒有動到任何技能名稱，改名前的測試結果依然成立，這次沒有重跑。
+
+### 62. 修正 pregens 角色池的兩個上傳順序 bug，PDF 上傳改成立即抽取內建角色卡
+
+- **這個改動怎麼來的**：使用者問「上傳完劇本會自動翻譯嗎」，追問後確認 `extract_pregens`（劇本內建角色卡的 LLM 抽取）現況是在 `/coc pregens` 指令才會懶惰觸發，不是上傳 PDF 當下——使用者接著要求改成「上傳完劇本就翻譯」。改到一半，使用者主動問「如果我傳 PDF 後傳角色卡，或是先傳角色卡再讀 PDF」會怎樣，這問題直接點出兩個原本就存在、跟上傳順序有關的真實 bug：
+  1. **先傳 PDF 再傳角色卡**：`/coc pregens` 原本的判斷是「`state.pregens` 是空的才問 LLM」——角色卡先上傳、角色池已經有一筆手打資料的話，這個判斷會直接跳過抽取，劇本自己內建的角色卡永遠不會被抽出來，模組四的擇優融合永遠沒有機會發生。
+  2. **先傳角色卡再傳 PDF**：群組第一次上傳 PDF（沒有既有劇本，不會走「全新／修正」按鈕分岔）原本會無條件執行 `state.pregens = []`，把剛上傳的角色卡直接洗掉。
+  - 使用者確認「`/coc newgame` 本來就會整個丟棄，這樣可以」——確定了「整個清空角色池」這件事只保留在 `/coc newgame`，PDF 上傳的任何分支都不應該自己再做一次清空。
+- **這個專案現在怎麼做**：
+  1. `handle_pdf_upload` 改成每次都立即（不等 `/coc pregens`）呼叫 `pregen_extractor.extract_pregens`，抽取結果（含技能字典查表翻譯，見第 60 條）一律透過模組四的 `reconcile_pregen_into_pool`（跟手打角色卡上傳同一套身分比對＋擇優融合邏輯）合併進 `state.pregens`，新增 `_merge_extracted_pregens` 共用這段邏輯。
+  2. 「全新劇本」「修正目前劇本」「群組第一次上傳」三條路徑，現在對 `pregens` 都是同一種行為：合併，不整包覆蓋、也不整包清空——`_apply_new_scenario` 移除了原本無條件的 `state.pregens = []`。角色池唯一還會整個清空的地方是 `/coc newgame`（本來就是重置成全新的 `GroupState()`）。
+  3. 上傳完成的確認訊息也跟著改進：因為抽取已經在上傳當下完成，原本「這份劇本如果有附帶預製調查員，建議先輸入 /coc pregens 看看」這句條件式提示，改成直接講事實——「這份劇本內建了 N 位預製調查員」或「這份劇本沒有偵測到內建的預製調查員」。
+  4. 同步更新了 `docs/character_and_dictionary_system_spec.md` 模組一的「PDF 重新上傳的位置保護」段落，記錄這次追加的討論定案。
+- **實測過**：
+  - 用真實 LLM 呼叫（沒有 mock `extract_pregens`）分別測了兩種上傳順序：（a）先傳一份內建「Malcolm Carter」預製角色的英文劇本 PDF，再傳一份寫「卡特」的中文角色卡；（b）反過來，先傳中文角色卡，再傳同一份英文劇本 PDF。兩種順序最後都正確合併成同一筆 `source: "merged"` 的角色池項目，跟上傳順序無關——順序 (b) 特別驗證了角色卡沒有被第一次 PDF 上傳洗掉（這正是原本的 bug 2）。
+  - 確認上傳劇本當下的確認訊息會直接報告「這份劇本內建了 1 位預製調查員」，不再是原本的條件式提示文字。
+  - 正式環境資料庫全程沒有被動到（本地測試用獨立的 `DB_PATH` 環境變數隔離）。
+
+### 63. 模組五補完：字典真正會「學」，遊戲中的技能檢定也接得到動態學到的詞彙
+
+- **這個改動怎麼來的**：使用者直接審查了模組五現有的實作，指出雖然字典的查詢機制（`lookup_skill`／`lookup_occupation`）跟種子資料都做了，但「自學習」這個核心承諾其實沒有兌現——`dictionary.py` 的 `learn_skill`／`learn_occupation` 全專案沒有任何地方呼叫（dead code）；`extract_pregens` 的 LLM schema 只要求回傳翻譯後的職業，從來沒有要求回傳「原文」，系統根本無從得知配對是什麼，也就沒東西可以學；技能完全沒有翻譯機制；而且就算字典裡真的學到了新詞彙，遊戲中實際執行技能檢定用的 `canonical_skill_name`（`app/skill_aliases.py`）也完全沒有查過這個動態字典，只查寫死的 `SKILL_ALIASES`——就算學會了「Spot Hidden→偵查」，玩家在遊戲裡輸入還是會查不到。使用者提供了具體的實作計畫（改 schema 讓 LLM 同時回報原文與翻譯、抽取完成後呼叫 `learn_*`、把 `canonical_skill_name` 接上動態字典），核對後確認方向正確，照案實作。
+- **這個專案現在怎麼做**：
+  1. `app/pregen_extractor.py` 的 `_REPORT_TOOL` schema：`occupation` 欄位拆成 `occupation_original`（劇本原文，一字不改照抄）與 `occupation_translated`（中文翻譯）；新增 `skill_translations`（技能中文名稱 → 劇本原文寫法的對照，key 要求跟 `skills` 的 key 完全一致），要求 LLM 抽取角色卡時一併回報每個技能的原文寫法。
+  2. 新增 `_learn_translations_from_pregen`：在 `_translate_skill_names` 執行**之前**，先把 LLM 這次回報的原文／翻譯配對呼叫 `dictionary.learn_occupation`／`dictionary.learn_skill` 存進字典——這樣接下來的查表翻譯保證命中（不需要另外再打一次 LLM 補問），字典也真的會隨著每次抽取越學越多。抽取完成後把 `occupation_original`／`occupation_translated` 收斂回單一的 `occupation` 欄位（其餘所有呼叫端——`pregen_to_character`、`character_matcher`、`reconcile_pregen_into_pool`、顯示文字——都只認識這一個欄位，不需要知道背後拆過欄位）。
+  3. `app/skill_aliases.py` 的 `canonical_skill_name`：查完 `BASE_SKILLS` 跟寫死的 `SKILL_ALIASES` 都沒命中，改成再查一次 `dictionary.lookup_skill`——這是唯一一個 `resolve_skill_value`（`app/keeper.py`，遊戲中所有技能檢定都會經過這裡）會呼叫的正規化函式，接上之後，動態學到的詞彙才會真的在遊戲進行中派上用場，不會只停留在抽取角色卡那一步。
+- **實測過**：
+  - 用真實 LLM 呼叫（沒有 mock）餵一份內建「Malcolm Carter / Private Investigator / Spot Hidden 65% / Psychology 50%」的英文劇本，確認：抽取結果 `occupation` 正確收斂成單一中文欄位（不再殘留 `occupation_original`／`occupation_translated`）、`skills` 正確含有「偵查」「心理學」；直接查資料庫確認 `dictionary.lookup_occupation("Private Investigator")`、`dictionary.lookup_skill("Spot Hidden")` 真的查得到剛剛學會的翻譯——證實 `learn_occupation`／`learn_skill` 這次是真的被呼叫、真的寫進資料庫，不是只停留在函式定義。
+  - 模擬遊戲中的檢定情境：直接呼叫 `canonical_skill_name("Spot Hidden")`，確認回傳「偵查」——這正是使用者要求驗證的「`/coc check Spot Hidden` 能不能正確抓到偵查」，`resolve_skill_value` 呼叫的就是這個函式，所以確認這個函式行為正確等同確認整個檢定流程會正確運作。
+  - 額外測了字典完全沒學過的生字（`Some Totally Novel Skill`）仍然原封不動通過、不會出錯或誤判。
+  - 重新跑一次先前的「上傳順序無關」回歸測試（先傳 PDF 再傳角色卡），確認這次的 schema 改動沒有連帶破壞先前第 61 條修好的合併邏輯。
+  - 正式環境資料庫全程沒有被動到。
+### 64. 修正 LLM 抽取角色卡時兩個「安靜地用錯資料」的既有小缺口
+
+- **這個改動怎麼來的**：上一條（第 62 條）測試過程中觀察到一次 LLM 抽取結果把 EDU 屬性的 key 回傳成
+  `"edu?:"` 而不是 `"edu"`，當時記錄成「不在這次範圍內」；使用者接著要求直接處理。動手處理的過程中，
+  同一輪測試又意外抓到第二個同類型的問題——某次抽取結果的技能數值是字串 `"65"` 而不是整數 `65`，
+  `pregen_to_character` 合併技能的邏輯是 `if isinstance(v, (int, float))`，字串會直接被濾掉、整個技能
+  憑空消失（比「用錯預設值」更糟，是「完全遺失」）。兩個問題本質上是同一類：LLM tool-calling 偶爾
+  沒有完全照 schema 給資料，程式碼原本對這種「非預期但其實看得懂」的情況處理得太嚴格，安靜地用預設值
+  或直接丟棄，而不是真的去讀懂那個值。
+- **這個專案現在怎麼做**：
+  1. 新增 `_clean_pregen_keys`：抽取結果一拿到就先跑一次，把 9 大屬性／`hp_max`／`mp_max`／`san_max`
+     這些固定已知的欄位名稱，去掉常見的雜訊標點（問號、冒號、逗號、句點、全形符號、前後空白）之後比對
+     ——比對得上就改名回正確的 key（前提是正確的 key 還沒真的存在，不會覆蓋掉本來就正確的值）。只處理
+     這 12 個已知欄位，不會對其他任意欄位做模糊猜測。
+  2. 新增 `_coerce_int`：容忍數字字串（含結尾的 `%`）、也正確排除 `bool`（Python 裡 `bool` 其實是
+     `int` 的子類別，但技能／屬性數值從來不該是 `True`/`False`）。`_int_or`（原本用在 9 大屬性）
+     改成呼叫這個共用函式；角色卡技能合併那段原本嚴格的 `isinstance(v, (int, float))` 判斷也換成用
+     `_coerce_int`，字串數值不再被整個丟棄。
+  3. 核對過 `app/models.py` 的 `generate_investigator`（`/coc pc` 快速建角）也有一段類似的嚴格型別
+     判斷（`occupation_skills` 參數），但確認這個參數目前全專案沒有任何呼叫端真的傳入過（死路徑），
+     這次沒有跟著動，避免修改用不到的程式碼。
+- **實測過**：
+  - 直接重現觀察到的兩個異常：`edu?:` 正確改名回 `edu`；技能數值字串 `"65"` 正確轉成整數 `65`，
+    不再消失。
+  - 邊界測試：已經有正確 `edu` 值時，一個多餘的 `edu?:` 不會覆蓋掉正確的值；完全不相干的欄位名稱
+    （不是任何已知屬性的雜訊變體）完全不會被動到，確認這不是模糊猜測、只是清雜訊；`bool`／`None`／
+    完全不是數字的字串都正確被當成「非數字」處理，不會誤判成 0 或崩潰。
+  - 端到端：整份角色卡（含字串型態的屬性跟技能數值）跑過 `pregen_to_character`，確認最終 `Character`
+    物件的屬性跟技能數值都正確，不是安靜地退回預設值或憑空消失。
+  - 重新跑一次真實 LLM 抽取（沒有 mock）跟先前的「上傳順序無關」回歸測試，確認這次改動沒有連帶影響
+    先前第 61、62 條修好的邏輯。
+  - 正式環境資料庫全程沒有被動到。
+
+### 65. 新增 `role_` 角色卡上傳範本，並用官方屬性表核對 `BASE_SKILLS`
+
+- **這個改動怎麼來的**：討論模組七（整備階段閘門）的完整度檢查時，使用者提供了一份完整的官方
+  1920s 年代調查員角色卡（含全部技能的官方基礎百分比、衍生數值公式）。核對後確認 `BASE_SKILLS`
+  現有的 46 項技能百分比全部跟官方數值一致（含前幾輪改名的 8 個技能），沒有發現數值錯誤。這份參考
+  資料同時也帶出一個範圍外但真實存在的發現（見下方「另外發現但不在這次範圍內」）。使用者接著要求
+  把這份參考資料做成 markdown 範本，方便 GM／玩家直接拿來填寫上傳。
+- **這個專案現在怎麼做**：新增 `docs/references/role_card_template.md`——**不是**單純的靜態參考文件，
+  而是直接照 `app/pregen_extractor.py` 的 `parse_role_sheet_text` 解析格式（【角色資料】/【屬性】/
+  【技能】/【武器】/【裝備】/【角色背景】/【角色扮演動機】區塊、全形冒號「：」）寫的**可直接使用的
+  上傳範本**：47 項技能（含 46 項官方技能＋閃避／母語留給系統自動算）已經照官方預設百分比＋這個
+  專案目前的正式技能譯名先填好，GM／玩家只要複製、改成實際數值、存成 `role_` 開頭的檔名上傳即可，
+  不用自己從零整理一次官方技能表。使用說明（怎麼用、填寫注意事項）刻意放在範本內容**之前**、不在
+  任何【】區塊裡面——因為武器／裝備這幾個區塊（`_classify_item_blocks`）會把區塊裡的**每一行**都當
+  成真的道具內容解析，混進說明文字或 markdown 分隔線「---」會被誤判成武器或道具名稱。
+- **實測過**：
+  - 直接用真正的 `parse_role_sheet_text` 解析範本檔案本身（空白、還沒填數值的版本），確認：46 項
+    官方技能全部存在且數值跟 `BASE_SKILLS` 逐一比對完全一致；武器區塊正確解析出「.38 左輪手槍」
+    （彈容量 6/6）；裝備區塊正確解析出 3 項道具，沒有混入任何說明文字或分隔線。
+  - 修正過程中先抓到真的問題：第一版範本把使用說明跟「---」分隔線放在區塊內部，直接測試就重現了
+    「說明文字被當成武器/道具名稱解析」的錯誤（例如整段使用說明被誤判成一把武器的名稱）——確認問題
+    後才調整成「說明統一放在範本內容之前」的寫法，重新測過確認乾淨。
+  - 額外測了「複製範本、填入一個完整虛構角色的數值」，跑過 `parse_role_sheet_text` →
+    `pregen_to_character` 全流程，確認最終 `Character` 物件的屬性、技能、武器彈藥、隨身物品全部正確
+    （`sheet_text()` 輸出檢查過一輪，格式跟數值都合理）。
+  - 正式環境資料庫全程沒有被動到。
+- **另外發現但不在這次範圍內的東西**：使用者提供的官方角色卡明確寫出「最大理智值 = 99 − 克蘇魯神話
+  技能」，但這個專案的 `san_max` 現在從建角色那一刻就寫死成 99（`app/models.py`、
+  `app/pregen_extractor.py`），完全沒有任何地方會在克蘇魯神話技能變動時同步扣減理智上限。核對後確認
+  這個問題**不影響模組七的完整度檢查**——新角色的克蘇魯神話技能一定是初始值（通常 0%），99−0=99，
+  建角當下算出來剛好還是對的；真正會出錯的情境是「遊戲進行中，角色的克蘇魯神話技能透過劇情成長，
+  最大理智值沒有跟著往下修正」，這是戰鬥／技能成長系統的範圍，不屬於這個分支（角色卡與字典系統）
+  原本處理的東西，先記錄下來，之後有需要可以再處理。
+
+### 66. 模組七：修正「整備階段防誤觸」真的沒做到的 bug，`/coc start` 新增完整度自動修復＋開場就緒名冊
+
+- **這個改動怎麼來的**：延續模組七的討論，追蹤 `handle_text_message` 的訊息路由邏輯後，發現規格書講的
+  「整備階段（Lobby Phase）一般訊息不會觸發 Keeper 推進劇情」這個保護機制**現在根本不存在**——一般
+  聊天訊息唯一的守門條件是 `if not state.active`，但 `state.active` 是**上傳劇本 PDF 的當下就會變
+  True**（不是 `/coc start` 才變 True 的 `state.game_started`）。實際情境：GM 上傳劇本 → 玩家認領
+  角色（整備階段該做的事）→ 玩家隨口聊一句話 → Keeper 立刻當成角色行動、開始推進劇情——正是規格書
+  開頭要防範的情況，卻完全沒有防護。另外討論完整度檢查時，使用者確認過去真的遇過角色資料不完整的
+  狀況，因此把「完整度確認」從單純擋下來，改成「能自動修的就自動修，修不了的才提醒 GM」。
+- **這個專案現在怎麼做**：
+  1. **階段隔離修復**：`handle_text_message`（`app/commands.py`）判斷要不要把訊息交給 Keeper 的條件，
+     從 `if not state.active` 改成 `if not state.active or not state.game_started`——兩個條件都要
+     成立（劇本已載入 *且* 遊戲已經正式開始）才會進 Keeper。核對過 `/coc end` 只會把 `state.active`
+     設回 `False`，不會重置 `state.game_started`，所以兩個條件都要檢查，不能只看其中一個。
+  2. **完整度自動修復**：新增 `_heal_character(char)`，在 `/coc start` 真正開場前，對每個已綁定角色
+     跑一次：
+     - **技能**：用 `BASE_SKILLS` 補齊缺少的官方技能預設值（不覆蓋已有值）——這正是模組二那批 bug
+       修好之前建立的角色會缺的東西，現在直接在開團前順手補齊，不用 GM 自己一個個角色檢查。
+     - **HP／MP／SAN 上限**：這三個是從 CON/SIZ、POW 這些「還在」的基礎屬性算出來的衍生值，
+       ≤0（正常情況不可能發生）時可以安全地用現有屬性重新算一次補上。
+     - **9 大基礎屬性（含 EDU）**：這幾個沒有公式可以反推，沒辦法自動修——如果剛好 9 項屬性全部都
+       是 50（抽取失敗時的預設值，正常角色卡幾乎不可能剛好撞在一起），只標記成警告提醒 GM 人工核對，
+       絕不自己亂猜一個數字填進去。
+  3. **開場就緒名冊**：新增 `_build_readiness_roster`，`/coc start` 在原本三個既有檢查（劇本已載入、
+     至少一位角色、還沒開始過）之後，先跑完上面的自動修復（有修過的角色會存檔），組一則「📋 全團
+     調查員集結就緒名冊」訊息（列出每位角色的姓名／職業／玩家、被修過什麼、還有幾位預製角色沒被
+     認領），在開場白**之前**先發出去——不管劇本有沒有現成的開場白文字（走 `scenario_intro` 抽取，
+     或退回 Keeper 即興撰寫這兩條既有分支），名冊都會先發，兩條分支都不用改。
+- **實測過**：
+  - 階段隔離：用假的 `keeper.run_turn`（只計數有沒有被呼叫，不測 Keeper 本身的敘事品質，那是另外
+    測過的）驗證三種情境——劇本已上傳、角色已認領、但還沒 `/coc start` 時，一般聊天訊息完全不會碰到
+    Keeper；`/coc start` 後同樣的訊息正確送進 Keeper；模擬 `/coc end`（只設 `active=False`，維持
+    `game_started=True` 不動）後，訊息正確又被擋下——證實兩個條件缺一不可，不是只看 `game_started`
+    就夠。
+  - `_heal_character`：缺技能的角色正確補齊、已有的技能數值不被覆蓋；HP/MP/SAN 為 0 時正確用現有
+    CON/SIZ/POW 重新算出正確數字；正常、完整的角色完全不會被動到（沒有任何修復訊息）；9 大屬性剛好
+    全部是 50 時正確跳出警告、但屬性值本身完全不變；9 大屬性沒有剛好全部相同時（例如只有一項不是
+    50）確認不會誤判成警告。
+  - `/coc start` 端到端：模擬一個技能不完整的舊角色＋一個正常角色＋一個未認領的預製角色，跑一次
+    `/coc start`，確認就緒名冊正確列出兩位角色、正確顯示技能修復訊息、正確提到還有 1 位未認領角色；
+    確認修復結果真的存進資料庫（不是只在訊息裡講講而已）；確認劇本有現成開場白、跟劇本沒有現成開場白
+    （Keeper 即興撰寫）兩種分支，名冊都會先發、開場白照樣正常接著發出。
+  - 正式環境資料庫全程沒有被動到。
+
+### 67. 就緒名冊補上 HP/SAN/裝備，新增劇本開場白內建檢定的自動支援
+
+- **這個改動怎麼來的**：核對規格書附錄「範例二：執行 /coc start 時的全體就緒呈報」的格式，發現現有
+  的 `_build_readiness_roster` 只列姓名/職業/玩家，沒有 HP/SAN/彈藥/物品，跟規格書示範的格式有落差。
+  使用者順帶指出：有些劇本的開場白本身就會要求全員做一次檢定（例如「請所有調查員進行一次偵查檢定」），
+  這個時機也該一起處理。
+- **這個專案現在怎麼做**：
+  1. `_build_readiness_roster` 補上每位角色的 HP/SAN、武器彈藥（有追蹤彈藥的顯示 `(目前/上限)`，
+     沒追蹤的只顯示武器名稱）、隨身物品——沒有武器或物品的角色就不會印出對應那段，不會留下多餘的
+     「彈藥：」空白。
+  2. `app/scenario_intro.py` 的 `_REPORT_TOOL` schema 新增 `opening_check`（nullable 物件）：只有
+     開場白文字本身**明確要求**全隊一開始就做一次檢定時才回報（技能檢定或理智檢定），劇本沒有明確
+     要求就是 `null`，不自己發明一個檢定。`extract_opening_narration` 回傳值同步加上這個欄位，並在
+     函式內部驗證格式（例如技能檢定沒填技能名稱、或 type 不是 skill/sanity 就視為無效，一律當
+     `null` 處理，不會讓格式不對的資料流進遊戲邏輯）。
+  3. `/coc start` 抽出劇本自帶開場白時，如果 `opening_check` 有值，對**每一位**已綁定角色各自註冊
+     一筆 `pending_checks`（技能檢定會用 `keeper.resolve_skill_value` 查該角色自己的實際技能值，
+     不是套用同一個數字），跟 `app/keeper.py` 的 `skill_check`／`sanity_check` 工具註冊 pending
+     check 用的是同一套資料結構——這代表 `app/discord_bot.py` 既有的 pending_checks 比對＋自動貼
+     按鈕機制會直接生效，不用另外寫一套按鈕邏輯。註冊完會額外發一則訊息講「為什麼要檢定」（劇本開場
+     白裡的理由，翻成中文），提醒玩家用 `/coc check` 擲骰。劇本沒有內建開場檢定的情況（多數劇本）
+     完全不受影響，這段邏輯整個跳過。
+- **實測過**：
+  - 名冊格式：手動建構含武器彈藥、隨身物品的角色，確認 HP/SAN/彈藥/物品都正確印出；沒有武器的角色
+    確認不會印出多餘的「彈藥：」字樣。
+  - `opening_check` 抽取（真實 LLM 呼叫，沒有 mock）：餵一份開場白明確要求「請每位調查員進行一次
+    偵查檢定」的劇本文字，確認正確抽出 `type: skill, skill: 偵查`；餵一份開場白正常、完全沒有提到
+    檢定的劇本文字，確認 `opening_check` 正確回傳 `None`，不會自己發明一個檢定。
+  - `/coc start` 端到端：兩位技能值不同的角色（偵查 65% 跟 40%），跑一次帶開場檢定的 `/coc start`，
+    確認兩人各自拿到自己真實的技能值，不是同一個數字；確認提醒訊息正確發出。
+  - Discord 按鈕層：完整跑過 `discord_bot.on_message` 處理 `/coc start`，確認 pending_checks 的
+    diff-and-post 機制真的自動幫這個開場檢定貼出真實的擲骰按鈕，不需要額外寫按鈕邏輯。
+  - 回歸測試：劇本沒有內建開場檢定的情況（`opening_check` 缺欄位或為 `None`）重新測過，確認
+    `pending_checks` 維持空字典，行為跟改動前一致。
+  - 正式環境資料庫全程沒有被動到。
+
+### 68. 裝備區塊標題新增「個人物品」別名
+
+- **這個改動怎麼來的**：逐段核對規格書附錄「核心模組範例代碼」跟現有實作，發現範例代碼的裝備區塊
+  辨識除了「武器/裝備/隨身物品/攜帶物品/道具」，還多列了「個人物品」（以及純英文的 inventory／
+  equipment，考量這個專案角色卡格式本來就是中文 bracket 區塊，確認不需要支援純英文標題）。同一輪
+  比對也確認了其他幾處看起來的落差其實不是問題：數值指紋比對門檻數學上等價、姓名子字串比對這邊
+  現有實作反而比範例多了最短長度防呆、範例代碼示範的「連已出戰角色都一起熱更新」正是模組四討論時
+  已經確認縮小範圍（選 A）的部分，不是漏做。
+- **這個專案現在怎麼做**：`app/pregen_extractor.py` 的 `_ITEM_SECTION_NAMES` 加入「個人物品」。
+  `notes` 欄位的排除清單直接從這個常數展開（`*_ITEM_SECTION_NAMES`），不用另外改。
+- **實測過**：角色卡寫【個人物品】區塊，確認正確被解析進 `carried_items`，不會落入 `notes`。
+- **不算落差、記錄一下**：規格書的 `verify_readiness_for_start` 範例代碼裡 `unclaimed_count =
+  len(state.pregens)` 沒有過濾 `claimed_by`，等於認領過的角色也會被算進「未認領」——這是範例代碼
+  本身的小疏忽，現有實作（`_build_readiness_roster`）已經正確過濾，不需要改動。
+
+### 69. 修掉 PR #15 代碼審查抓到的問題：合併邏輯資料毀損、鎖沒包到、上傳按鈕互踩
+
+- **這個改動怎麼來的**：開 PR #15 後請「代码审查员」子代理審查整個 character-sheet 分支，回報一個
+  會阻擋合併的資料毀損 bug，外加三個建議修的問題。
+- **🔴 阻擋合併：`_merge_pregens` 在池子條目已經被合併過一次後會認錯哪邊是「手動」資料**
+  （`app/pregen_extractor.py`）：原本用 `existing.get("source") == "manual"` 反推「不是 manual
+  就當作 new 是 manual」，但這個函式自己的輸出會標成 `source: "merged"` 寫回池子——GM 用「修正目前
+  劇本」重傳 PDF 時，新抽出的資料是 `llm_extracted`，跟池子裡已經是 `merged` 的舊條目比對時，
+  `existing.source != "manual"` 成立，於是把剛重新抽取（可能有 OCR 雜訊）的 LLM 資料當成「手動」
+  那一方，直接覆蓋掉先前保留下來的人工驗證資料，整個違反模組四「手傳卡優先」的保證。改成用
+  `_SOURCE_PRIORITY = {"manual": 2, "merged": 1, "llm_extracted": 0}` 的優先順位判斷，而不是用
+  「不是這個就當作是那個」反推——`merged` 因為本身已經承接過人工資料，優先度高於新鮮的
+  `llm_extracted`，但低於真正的新 `manual` 上傳。
+- **🟡 `/coc start` 的自動修復步驟沒包 `get_state_lock`**（`app/commands.py`）：同一段落後面兩處
+  save_state 都有包鎖，唯獨最前面的 heal 迴圈是裸的 load→mutate→save。`/coc check` 的自我檢定路徑
+  只檢查 `state.active`、沒檢查 `game_started`，所以 lobby 階段仍可能背景跑出一次 Keeper turn 的
+  maintenance task，跟這裡的裸寫入形成 lost-update。補上跟旁邊一致的 `with
+  locks.get_state_lock(conversation_id):` 包住整段 heal+save。
+- **🟡 池子合併邏輯跟文件宣稱的「只作用於未認領池」不一致**（`app/pregen_extractor.py`）：
+  `reconcile_pregen_into_pool` 原本對已認領的池子條目也會照樣比對合併，跟規格書模組四的說明（選 A：
+  只在未認領池裡去重）不符——雖然不會動到已經 claim 進 `state.characters` 的角色本體，但池子條目
+  本身的屬性/技能會被後續重傳的 PDF 悄悄改掉。改成比對迴圈一開頭就跳過 `claimed_by` 有值的條目；
+  如果新上傳的角色跟某個已認領條目其實是同一人，就直接變成一筆新的未認領池子條目（不會覆蓋、也不會
+  消失）。
+- **🟡 第二次 PDF 上傳會悄悄蓋掉還沒被回覆的 `pending_pdf_upload`**（`app/commands.py`）：
+  `handle_pdf_upload` 原本沒檢查是否已經有一筆待決的選擇，第二份 PDF 一上傳就直接覆蓋
+  `state.pending_pdf_upload`；GM 如果這時候才點第一則訊息的按鈕（按鈕本身不帶上傳識別碼），套用的
+  會是第二份 PDF 的內容，「全新劇本」選錯代價又特別高（清地圖位置、重置 LLM 對話串）。在昂貴的 OCR
+  抽取與 `clear_page_images`（會整批清掉目前劇本的頁面圖）**之前**，先檢查是否已有待決選擇，有的話
+  直接請對方先處理完上一個再上傳新的。
+- **💭 順手處理的兩個 minor**：`pregen_to_character` 的 `hp_max`/`mp_max`/`san_max` 拿掉多餘的
+  `or default`（`_int_or` 本身已經處理好 fallback，多一層 `or` 只會在合法抽到 0 時又誤觸發一次
+  fallback，徒增混淆）；規格書裡四處寫錯的「47 項官方技能」訂正為實際的 46 項。
+  審查員也提到就緒名冊印 `玩家：{owner_id}`（原始平台 ID）不如 Discord 的 `<@id>` mention 好讀、
+  以及 PDF 選擇按鈕沒有限定只有 GM 能按——這兩點沒有動：`app/commands.py` 是刻意保持平台無關的共用
+  邏輯（`Reply` 只是個泛型 callback，沒有 import 任何 adapter），硬塞 Discord 專屬的 mention 語法
+  會破壞這個分層；按鈕權限則是審查員自己也標注為「已記錄的取捨、不是疏漏」，留給之後要不要做角色
+  權限管控時再處理。
+- **實測過**：
+  - `_merge_pregens` 修復：完整重現審查員描述的情境（manual+llm 先合併一次成 `merged`，接著模擬
+    GM 重傳修正版 PDF、帶一份較吵雜的 `llm_extracted` 再合併一次），確認第二次合併後 EDU、
+    notes、技能值全部仍是原本的人工資料，沒有被覆蓋；`secret_goal`（設計上由劇本端提供）確認正常
+    更新成新版本。
+  - `claimed_by` 跳過邏輯：模擬一個已認領的池子條目 + 一份會誤判成同一人的重新抽取結果，確認
+    action 是 `added` 而不是 `merged`／`replaced`，已認領條目的 EDU、`claimed_by` 完全沒被動到；
+    回歸測過未認領對未認領的情況，確認仍然正常合併成 `merged`。
+  - `import app.commands`／`import app.pregen_extractor` 確認語法正確、可正常載入。
+  - 正式環境資料庫全程沒有被動到（純函式層級的重現測試，沒有連任何真實群組的 state）。
+
+### 70. 追加審查發現：未追蹤彈藥武器導致 KeyError 當機、LINE 端 PDF 待決選擇無法解決、頁面圖片寫入競態、就緒名冊玩家欄位改用平台 mention
+
+- **這個改動怎麼來的**：PR #15 推上去後，自動審查工具針對推上去的內容又抓到幾個新問題（跟上一輪
+  #68 修的不是同一批），加上使用者對「就緒名冊印 owner_id、不印 mention」這個決定提出質疑，回頭確認
+  才發現這個專案其實**真的有一個正在跑的 LINE 端**（`app/main.py`，`linebot.v3`）——上一輪 #68 說
+  「這個 codebase 目前只有 Discord」是我當時只用檔名關鍵字搜尋「line」漏看了 `app/main.py`（它的
+  檔名沒有 line 字樣）得出的錯誤結論，需要更正。
+- **🔴 未追蹤彈藥的武器會讓角色卡直接當機**（`app/models.py`）：`_resolve_weapon_ammo`
+  （`app/pregen_extractor.py`）對近戰武器或辨識不出彈藥類別的槍械，會把該武器存成 `{}`（沒有
+  `ammo`/`ammo_max` 欄位）。但 `Character.sheet_text()`／`dynamic_state_text()` 原本無條件讀
+  `w['ammo']`／`w['ammo_max']`——只要角色帶一把近戰武器，`/coc usepregen` 顯示角色卡、或之後每一輪
+  Keeper 組 prompt 都會直接 `KeyError`，角色完全沒辦法用。改成沒有 `ammo_max` 就只印武器名稱（跟
+  就緒名冊 `_build_readiness_roster` 原本就有的處理方式一致）。順帶在 `app/keeper.py` 的
+  `adjust_ammo` 工具補上同樣的檢查——原本只檢查武器存不存在（`entry is None`），沒檢查武器存在但
+  沒追蹤彈藥的情況，會在 `mutate` 內部 `KeyError`；改成先回傳清楚的錯誤訊息給 Keeper。
+- **🔴 LINE 端完全沒有解決 `pending_pdf_upload` 的方法**（`app/commands.py`）：LINE 沒有按鈕／
+  互動元件機制，`app/main.py` 只呼叫得到 `handle_pdf_upload`，從來沒有呼叫
+  `resolve_pdf_upload_choice` 的地方——LINE 群組只要劇本進行中又上傳一次 PDF，就會卡在「待確認」
+  狀態永遠出不來（`scenario_text` 不會更新，之後每次再傳 PDF 都會被上一輪 #68 加的「先解決待決選擇」
+  guard 擋掉）。新增 `/coc pdf new`／`/coc pdf fix` 文字指令（也接受「全新」「全新劇本」「修正」
+  「修正目前劇本」），兩個平台都能用（Discord 保留原本的按鈕，文字指令是額外的備援）。實作上把
+  `resolve_pdf_upload_choice` 內部邏輯拆成 `_resolve_pdf_upload_choice_locked`（假設呼叫者已經拿到
+  `get_conversation_lock`）——因為 `/coc pdf ...` 是在 `_handle_coc_command` 裡處理，而
+  `_handle_coc_command` 的唯一呼叫者（`handle_text_message` 的 `/coc` 分支）已經包了一層
+  `get_conversation_lock`，`asyncio.Lock` 不可重入，如果直接呼叫原本會自己再上鎖一次的
+  `resolve_pdf_upload_choice` 會直接死鎖；按鈕那邊（本來就沒有持有這個鎖）維持呼叫外層有上鎖版本的
+  `resolve_pdf_upload_choice`。
+- **🟡 兩份 PDF 幾乎同時上傳，頁面圖片寫入可能跟狀態更新對不上**（`app/commands.py`）：
+  `clear_page_images`／`save_page_image` 原本在 `get_conversation_lock` 之外執行，跟耗時的 OCR
+  抽取一樣沒有序列化——兩份 PDF 幾乎同時上傳時，圖片清除／寫入可能交錯（A 清除、B 清除+寫入、A 才
+  寫入），導致 `/coc showpage` 最後顯示的圖片跟鎖內決定出來的「目前劇本」對不上。搬進
+  `get_conversation_lock` 區塊內，跟狀態更新一起序列化。
+- **就緒名冊玩家欄位改用平台 mention，不再印原始 ID**（`app/commands.py` 新增 `FormatMention` 型別、
+  `app/discord_bot.py`）：上一輪 #68 判斷「`app/commands.py` 是刻意保持平台無關，硬塞 Discord 的
+  `<@id>` 語法會破壞這層抽象」本身沒錯——這個模組真的同時被 LINE（`app/main.py`）和 Discord
+  （`app/discord_bot.py`）共用——但正確做法是比照現有的 `GetDisplayName` callback 模式（用來解析
+  「當前發話者」的顯示名稱），新增一個平行的 `FormatMention`（解析「任意 owner_id」該怎麼顯示）由
+  adapter 注入，而不是整個放棄這個功能。`handle_text_message`／`_handle_coc_command`／
+  `_build_readiness_roster` 都新增這個參數（預設值是原樣印出 owner_id，所以沒傳這個參數的呼叫端
+  行為完全不變）；Discord 端傳入 `lambda owner_id: f"<@{owner_id}>"`（不需要額外呼叫 API，Discord
+  client 端就能把 `<@id>` 解析成可點擊的名字）；LINE 端維持用預設值，沒有改動 `app/main.py`。
+- **實測過**：
+  - `sheet_text()`／`dynamic_state_text()`：混合一把有追蹤彈藥的槍跟一把沒追蹤彈藥的近戰武器（拳頭），
+    確認兩種輸出都不再 `KeyError`，近戰武器只印名字、槍照樣印彈藥數。
+  - `adjust_ammo`：對只帶近戰武器的角色呼叫 `adjust_ammo`，確認回傳清楚的 `ok: False` 錯誤，不是
+    `KeyError` 例外。
+  - `/coc pdf fix`（真實端到端，走 `handle_text_message` 完整路徑，不是只測內部函式）：模擬一個進行中
+    的舊劇本 + 一筆待決的 `pending_pdf_upload`，發送「/coc pdf fix」文字訊息，確認在 5 秒逾時內正常
+    回應完成（沒有死鎖）、`pending_pdf_upload` 正確清空、`scenario_title` 正確變成新劇本標題。
+  - `_build_readiness_roster`：分別用預設（印 `u1`）跟傳入 `format_mention`（印 `<@u1>`）呼叫，確認
+    兩種輸出都正確、其餘格式不受影響。
+  - `import app.commands`／`app.discord_bot`／`app.main` 全部確認可正常載入。
+  - 這個 worktree 用的是自己獨立的本機 DB（不是正式環境共用的那份），測試用的 key 也都用
+    `db.delete_json` 清乾淨，過程中確認正式環境資料庫完全沒被動到。
+
+### 71. 再審一輪：修掉「兩份 PDF 幾乎同時上傳」的殘留競態
+
+- **這個改動怎麼來的**：#69 修完後請「代码审查员」針對最新版本重新審查一次（不只看修復本身，也重新
+  過一次整個 PR 的累積 diff）。審查結果：#69 的其他修復（`_SOURCE_PRIORITY`、`get_state_lock`、
+  已認領池子跳過、未追蹤彈藥 KeyError、LINE `/coc pdf`、`FormatMention`）全部確認正確完整；唯獨
+  「第二次 PDF 上傳擋掉待決選擇」這個防呆只堵住了**先後上傳**的情況，沒堵住**幾乎同時上傳**的情況。
+- **問題所在**：`handle_pdf_upload` 開頭那個早期檢查（`existing_state.pending_pdf_upload is not
+  None`）是在耗時的 OCR/LLM 抽取（訊息裡自己講「可能要一分鐘左右」）**之前**做的，沒有上鎖。如果
+  兩份 PDF 幾乎同時上傳到同一個群組，兩邊都會在對方都還沒存進 `pending_pdf_upload` 之前通過這個早期
+  檢查，各自跑完抽取後才依序搶 `get_conversation_lock`。搶到鎖的第一個會把 `pending_pdf_upload` 設成
+  自己的內容並存檔；第二個進鎖後重新讀到的 `state.scenario_text` 依然非空，但**沒有重新檢查
+  `pending_pdf_upload` 是不是已經被別人佔用**，直接覆蓋。結果 GM 會看到兩則各自標題正確的「請選擇」
+  訊息，但只有後上鎖那份的內容真的留在 `pending_pdf_upload` 裡——點第一則訊息的按鈕，套用的會是第二
+  份 PDF 的內容。跟 #69 想堵的是同一種資料錯置，只是走並發路徑而不是先後路徑。
+- **這個專案現在怎麼做**：在鎖裡、實際寫入 `pending_pdf_upload`之前再檢查一次
+  `state.pending_pdf_upload is not None`——如果鎖內重讀時發現已經被別人（這次是真正並發搶到鎖的
+  那位）佔用，就不再覆蓋，改回覆「這份來得比較慢，請先處理完上一則的選擇再重新上傳」，而不是靜默蓋
+  過去。
+- **實測過**：用 `asyncio.gather` 真的同時觸發兩次 `handle_pdf_upload`（换成同步的假
+  `pdf_loader.extract_text`／`scenario_index.extract_scenario_index`／
+  `pregen_extractor.extract_pregens`，讓第一個上傳的抽取刻意睡 0.3 秒製造出跟真實抽取一樣的競爭
+  視窗，藉此重現「兩者都先通過早期檢查、才依序搶鎖」的確切情境），確認最終剛好一邊變成真正待確認的
+  `pending_pdf_upload`、另一邊收到「來得比較慢」的訊息，沒有任何一邊被靜默蓋過去。測試用的 key 也
+  用 `db.delete_json` 清乾淨，正式環境資料庫全程沒有被動到。

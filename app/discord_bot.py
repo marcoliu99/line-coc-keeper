@@ -334,7 +334,67 @@ async def _post_pending_buttons(
     await _post_luck_buttons(channel, conversation_id, state, before_luck_pending)
 
 
-client.add_dynamic_items(CheckButton, LuckSpendButton)
+# choice is restricted to these two literal tokens (see app/commands.py's
+# resolve_pdf_upload_choice) rather than [^:]* — nothing about it is freeform
+# player text.
+_PDF_CHOICE_BUTTON_ID_TEMPLATE = r"coc_pdfchoice:(?P<conversation_id>discord-channel-\d+):(?P<choice>new|fix)"
+
+
+class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=_PDF_CHOICE_BUTTON_ID_TEMPLATE):
+    """Posted after a PDF re-upload while a scenario is already running (see
+    app/commands.py's handle_pdf_upload, which stashes the extraction into
+    state.pending_pdf_upload rather than guessing) — lets the GM pick whether
+    the new upload is a fresh scenario or a corrected re-upload of the
+    current one. Not restricted to a specific user (unlike CheckButton/
+    LuckSpendButton, which resolve one particular player's own roll/decision)
+    — this is a group-level call about which scenario is running, and this
+    project has no separate "who's the GM" role to check against. Dynamic
+    (not a plain View) for the same reason CheckButton/LuckSpendButton are:
+    this project restarts on almost every deploy, and pending_pdf_upload is
+    persisted specifically so this button still works across one."""
+
+    def __init__(self, conversation_id: str, choice: str, label: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.danger if choice == "new" else discord.ButtonStyle.primary,
+                custom_id=f"coc_pdfchoice:{conversation_id}:{choice}",
+            )
+        )
+        self.conversation_id = conversation_id
+        self.choice = choice
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["conversation_id"], match["choice"], item.label or "")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(view=None)
+        push = _make_reply(interaction.channel)
+        await commands.resolve_pdf_upload_choice(self.conversation_id, self.choice, push)
+
+
+async def _post_pdf_upload_buttons(channel: discord.abc.Messageable, conversation_id: str) -> None:
+    """Checks whether the PDF upload that just ran (see on_message's .pdf
+    branch) left a pending new-scenario-vs-correction choice for the GM (see
+    app/commands.py's handle_pdf_upload) and, if so, posts the two buttons
+    that resolve it. No "before" snapshot is needed the way
+    _post_check_buttons/_post_luck_buttons need one: a fresh PDF upload is
+    the only thing that ever sets pending_pdf_upload (see
+    handle_pdf_upload/resolve_pdf_upload_choice, the latter always clearing
+    it), so simply checking whether it's non-None right after the call is
+    unambiguous — there's no pre-existing pending choice this could be
+    confused with."""
+    state = await asyncio.to_thread(load_group_state, conversation_id)
+    if state.pending_pdf_upload is None:
+        return
+    view = discord.ui.View(timeout=None)
+    view.add_item(PdfUploadChoiceButton(conversation_id, "new", "🆕 全新劇本"))
+    view.add_item(PdfUploadChoiceButton(conversation_id, "fix", "🩹 修正目前劇本"))
+    await channel.send("👉 請選擇：", view=view)
+
+
+client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton)
 
 
 @client.event
@@ -358,6 +418,12 @@ async def on_message(message: discord.Message) -> None:
     async def get_display_name() -> str:
         return message.author.display_name
 
+    def format_mention(owner_id: str) -> str:
+        # owner_id is str(message.author.id) — a Discord snowflake — so this
+        # needs no API call, unlike get_display_name; Discord resolves
+        # <@id> to a clickable name client-side.
+        return f"<@{owner_id}>"
+
     try:
         pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
         if pdf_attachments:
@@ -366,13 +432,35 @@ async def on_message(message: discord.Message) -> None:
             # No reply-token/time-window constraint here, so the same callback
             # serves as both the immediate ack and the final result.
             await commands.handle_pdf_upload(conversation_id, reply, reply, content, attachment.filename)
+            await _post_pdf_upload_buttons(message.channel, conversation_id)
             return
 
-        map_attachments = [a for a in message.attachments if a.filename.lower().endswith((".yaml", ".yml"))]
+        # Requires the map_ prefix (see docs/character_and_dictionary_system_
+        # spec.md's Module 1) — a bare .yaml/.yml attachment is no longer
+        # assumed to be a map on extension alone.
+        map_attachments = [
+            a for a in message.attachments
+            if a.filename.lower().startswith("map_") and a.filename.lower().endswith((".yaml", ".yml"))
+        ]
         if map_attachments:
             attachment = map_attachments[0]
             content = await attachment.read()
             await commands.handle_map_upload(conversation_id, reply, reply, content, attachment.filename)
+            return
+
+        # A .yaml/.yml file that's missing the map_ prefix isn't silently
+        # dropped (it wouldn't match anything else below either) — tell the
+        # GM exactly what to rename it to, rather than leaving them wondering
+        # why nothing happened.
+        unprefixed_map_attachments = [
+            a for a in message.attachments
+            if a.filename.lower().endswith((".yaml", ".yml")) and not a.filename.lower().startswith("map_")
+        ]
+        if unprefixed_map_attachments:
+            await reply(
+                f"「{unprefixed_map_attachments[0].filename}」看起來是地圖資料，"
+                "但檔名需要以 map_ 開頭（例如 map_lighthouse.yaml）才會被辨識，請改檔名後重新上傳。"
+            )
             return
 
         role_attachments = [
@@ -380,11 +468,16 @@ async def on_message(message: discord.Message) -> None:
             if a.filename.lower().startswith("role_") and a.filename.lower().endswith((".txt", ".md"))
         ]
         if role_attachments:
-            attachment = role_attachments[0]
-            content = await attachment.read()
-            await commands.handle_role_sheet_upload(
-                conversation_id, reply, content.decode("utf-8", errors="replace"), attachment.filename
-            )
+            # A GM handing out the whole party's cards often drags every
+            # role_*.txt into one message (Discord natively supports multiple
+            # attachments per message) — this used to only ever look at
+            # attachments[0], silently dropping every other card in the same
+            # message with no feedback at all.
+            for attachment in role_attachments:
+                content = await attachment.read()
+                await commands.handle_role_sheet_upload(
+                    conversation_id, reply, content.decode("utf-8", errors="replace"), attachment.filename
+                )
             return
 
         compare_attachments = [a for a in message.attachments if a.filename.lower().endswith((".txt", ".md"))]
@@ -407,7 +500,8 @@ async def on_message(message: discord.Message) -> None:
         before_luck_pending = dict(state_before.pending_luck_decisions)
         try:
             await commands.handle_text_message(
-                conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text
+                conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
+                format_mention,
             )
         finally:
             # Always attempt this, even if handle_text_message raised partway
