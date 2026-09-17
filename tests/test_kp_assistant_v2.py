@@ -338,7 +338,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         async def noop_image(*args):
             raise AssertionError("image should not be called")
 
-        state = GroupState(group_id="g", active=True)
+        state = GroupState(group_id="g", active=True, game_started=True)
         state.characters["p1"] = Character(name="Investigator", owner_id="p1")
         calls = []
 
@@ -380,7 +380,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         async def noop_image(*args):
             raise AssertionError("image should not be called")
 
-        state = GroupState(group_id="g", active=True, kp_assistant_user_id="kp-user")
+        state = GroupState(group_id="g", active=True, game_started=True, kp_assistant_user_id="kp-user")
         gate = GateSpy()
         calls = []
 
@@ -420,7 +420,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         async def noop_image(*args):
             raise AssertionError("image should not be called")
 
-        state = GroupState(group_id="g", active=True, kp_assistant_user_id="kp-user")
+        state = GroupState(group_id="g", active=True, game_started=True, kp_assistant_user_id="kp-user")
         state.characters["p1"] = Character(name="Investigator", owner_id="p1")
         gate = GateSpy()
         calls = []
@@ -461,7 +461,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         async def noop_image(*args):
             raise AssertionError("image should not be called")
 
-        state = GroupState(group_id="g", active=True, kp_assistant_user_id="kp-user")
+        state = GroupState(group_id="g", active=True, game_started=True, kp_assistant_user_id="kp-user")
         calls = []
 
         def fake_run_turn(state_arg, user_id, display_name, text, resolved_location, speaker_role):

@@ -1096,3 +1096,44 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - 沒有 KP Assistant 時，A running、B/C/D 隨後送出仍維持 `A → B → C → D`，且測試中 `get_keeper_priority_gate()` 完全沒有被呼叫，證明無 KP flow 仍 bypass gate、依賴原本 `conversation_lock`。
 - **未修改 runtime**：本次只新增 integration tests，沒有修改 production code，也沒有改 priority gate 演算法、tool permission、`kp_ooc_log`、OpenAI chain、provider 或 `/coc start`。
 - **測試結果**：`python -m unittest tests.test_keeper_priority_gate tests.test_kp_assistant_v2 tests.test_keeper_priority_integration` 通過（22 tests）。
+
+### 80. 修掉 PR #17 測試套件的卡死問題：測試 fixture 漏設 `game_started=True`
+
+- **這個改動怎麼來的**：PR #18（靜態分析修復分支）合併 main 後，跑了一次 main 既有的測試套件驗證合併
+  沒弄壞東西，發現 `tests.test_kp_assistant_v2` 有 3 個測試失敗（1 個 `assertEqual` 失敗、2 個
+  `IndexError`），`tests.test_keeper_priority_integration` 直接卡死在
+  `test_kp_arriving_later_runs_before_waiting_players`（背景執行超過 10 分鐘沒有結束，手動 kill 掉
+  兩次確認不是單純跑得慢）。先在乾淨的 main（`29c1f4a`，沒有 PR #18 的任何改動）上重跑同一批測試，
+  確認這 4 個問題在 main 上本來就存在，跟 PR #18 完全無關，是 PR #17（KP Assistant priority gate）
+  自己的既有問題，所以另外開這個分支處理。
+- **根本原因**：這 4 個失敗／卡死的測試，各自的 `GroupState` fixture 都只設了 `active=True`，沒有
+  設 `game_started=True`。但 `app/commands.py` 的 `_handle_ordinary_text_message_locked`（這幾個
+  測試實際要測的，走一般文字訊息、不是 `/coc` 指令的路徑）第一件事就是檢查
+  `if not state.active or not state.game_started: return`——這是模組七那次修的「整備階段防誤觸」
+  合法防呆（劇本上傳後 `active` 就變 True，但要等 `/coc start` 真的執行過 `game_started` 才會變
+  True，用意是避免 GM 設定階段的閒聊被誤判成正式遊戲）。這幾個測試從來沒有真的執行過 `/coc start`，
+  `game_started` 停留在預設值 `False`，導致每個情境都在真正碰到 priority gate／`keeper.run_turn`
+  之前就被這個合法防呆擋掉、直接無聲 return：
+  - `test_ordinary_message_without_kp_bypasses_priority_gate`／`test_ordinary_kp_message_uses_kp_priority_when_kp_exists`／
+    `test_ordinary_player_message_uses_player_priority_when_kp_exists`／
+    `test_scheduling_snapshot_does_not_become_authoritative_state`：`fake_run_turn` 從沒被呼叫過，
+    `calls` 是空列表，`calls[0][5]` 直接 `IndexError`；`reply.messages` 也因此停留在空列表。
+  - `test_kp_arriving_later_runs_before_waiting_players`（`test_keeper_priority_integration.py`）：
+    `FakeKeeperRunner.__call__` 同樣從沒被呼叫過，`runner.blocking_started`（一個 `asyncio.Event`）
+    永遠不會被 `.set()`，測試 scenario 裡的 `await runner.blocking_started.wait()` 因此永遠卡住——
+    這就是實際觀察到的卡死，不是 priority gate 實作本身有死鎖。
+  - 用暫時 patch 過的 fixture（加上 `game_started=True`）重跑過一次確認：4 個測試全部立刻通過（含原本
+    卡死的整合測試，`0.02` 秒內完成），確認診斷正確後才正式修。
+- **這個專案現在怎麼做**：`tests/test_kp_assistant_v2.py` 4 處、`tests/test_keeper_priority_integration.py`
+  1 處，`GroupState(...)` fixture 補上 `game_started=True`（第 5 處看起來相似的 `GroupState(group_id="g",
+  active=True, kp_assistant_user_id="kp")`，在 184 行，屬於 `/coc end` 指令測試，走的是不同的
+  `_handle_coc_command` 路徑、不受這個防呆影響，確認不需要改）。順手把 `app/locks.py` 的
+  `get_keeper_priority_gate` docstring 更新——原本寫「intentionally separate...and is not wired into
+  message handling yet」，但實際上 `app/commands.py:1339` 已經有接上，文件是舊的、之前差點誤導我以為
+  這是真的還沒接線的問題，一併訂正成準確描述目前接線的條件（只有這個 conversation 目前有 KP Assistant
+  時才會經過這個 gate，否則沿用原本的 conversation-lock-only 路徑）。
+- **實測過**：`python -m unittest tests.test_keeper_priority_gate tests.test_kp_assistant_v2
+  tests.test_keeper_priority_integration` 全部 22 個測試通過，`0.04` 秒內完成，不再卡死。
+  `import app.locks`／`app.commands` 確認可正常載入。這次改動完全沒有動到任何 production code 的
+  行為（`_handle_ordinary_text_message_locked`／priority gate 本身一行都沒改，純粹修測試 fixture 跟
+  一段過時的文件字串）。
