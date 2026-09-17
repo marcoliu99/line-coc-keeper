@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Generic, TypeVar, overload
 
 from app import combat, dice, locks, memory_rag, scenario_index, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
@@ -25,8 +25,8 @@ _T = TypeVar("_T")
 
 
 @dataclass
-class _StateMutation:
-    value: Any = None
+class _StateMutation(Generic[_T]):
+    value: _T
     should_save: bool = True
 
 # The Keeper's default tone/persona — a plain, importable constant (not a
@@ -630,12 +630,28 @@ def _refresh_state_snapshot(state: GroupState) -> GroupState:
     return state
 
 
-def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], _T]) -> _T:
+@overload
+def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], _StateMutation[_T]]) -> _T: ...
+@overload
+def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], _T]) -> _T: ...
+def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], Any]) -> Any:
     """Small boundary for Keeper tool state mutation.
 
     Reloads the latest state under the synchronous state lock, mutates/saves it,
     then refreshes the caller's existing state object so later tools in the same
     Keeper turn see the updated snapshot.
+
+    Two call shapes, both handled by the single implementation below (the
+    @overload pair above just tells mypy the actual return type each one
+    produces, since the plain-_T signature this used to have couldn't express
+    that a mutator returning _StateMutation[_T] makes this function return
+    _T, not a _StateMutation object — mypy had no way to know the isinstance
+    check below unwraps it before returning): `mutator` can return
+    _StateMutation(value, should_save) when a tool needs to skip a genuinely
+    no-op save (see add_carried_item/remove_carried_item/add_status_tag/
+    remove_status_tag above — should_save=False when the item/tag was already
+    (not) present), or return its actual value directly when every call
+    always needs a save.
     """
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -763,24 +779,27 @@ def _execute_tool(
             }
 
         if name == "roll_dice":
-            r = dice.roll_expression(tool_input["expression"])
-            return {"ok": True, "expression": r.expression, "rolls": r.rolls, "modifier": r.modifier, "total": r.total}
+            roll_result = dice.roll_expression(tool_input["expression"])
+            return {
+                "ok": True, "expression": roll_result.expression, "rolls": roll_result.rolls,
+                "modifier": roll_result.modifier, "total": roll_result.total,
+            }
 
         if name == "roll_impaling_damage":
             try:
-                result = dice.calculate_impaling_damage(
+                impale_result = dice.calculate_impaling_damage(
                     tool_input["weapon_damage"], tool_input.get("damage_bonus") or "0", bool(tool_input.get("impaling"))
                 )
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
             return {
                 "ok": True,
-                "total": result.total,
-                "max_weapon_damage": result.max_weapon_damage,
-                "max_damage_bonus": result.max_damage_bonus,
-                "impaling": result.impaling,
-                "reroll_total": result.reroll.total if result.reroll else None,
-                "describe": result.describe(),
+                "total": impale_result.total,
+                "max_weapon_damage": impale_result.max_weapon_damage,
+                "max_damage_bonus": impale_result.max_damage_bonus,
+                "impaling": impale_result.impaling,
+                "reroll_total": impale_result.reroll.total if impale_result.reroll else None,
+                "describe": impale_result.describe(),
             }
 
         if name == "roll_weapon_damage":
@@ -788,24 +807,24 @@ def _execute_tool(
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             try:
-                result = dice.roll_weapon_damage(tool_input["weapon_damage"], char.damage_bonus)
+                weapon_result = dice.roll_weapon_damage(tool_input["weapon_damage"], char.damage_bonus)
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
             return {
                 "ok": True,
                 "investigator": char.name,
-                "weapon_damage_roll": result.weapon_roll.total,
+                "weapon_damage_roll": weapon_result.weapon_roll.total,
                 "damage_bonus": char.damage_bonus,
-                "damage_bonus_roll": result.damage_bonus_total,
-                "total": result.total,
-                "describe": result.describe(),
+                "damage_bonus_roll": weapon_result.damage_bonus_total,
+                "total": weapon_result.total,
+                "describe": weapon_result.describe(),
             }
 
         if name == "skill_check":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            def mutate(target_state: GroupState) -> tuple[int, int, int, str]:
+            def _register_pending_skill_check(target_state: GroupState) -> tuple[int, int, int, str]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 value = resolve_skill_value(target_char, tool_input["skill"])
                 bonus = int(tool_input.get("bonus_dice") or 0)
@@ -819,7 +838,7 @@ def _execute_tool(
                     "pushed": bool(tool_input.get("pushed", False)),
                 }
                 return value, bonus, penalty, difficulty
-            value, bonus, penalty, difficulty = _mutate_and_save_state(state, mutate)
+            value, bonus, penalty, difficulty = _mutate_and_save_state(state, _register_pending_skill_check)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "skill": tool_input["skill"],
@@ -835,7 +854,7 @@ def _execute_tool(
             if len(raw_options) < 2:
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
             attacker_tier = tool_input.get("attacker_tier")
-            def mutate(target_state: GroupState) -> list[dict]:
+            def _register_pending_choice(target_state: GroupState) -> list[dict]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 options = []
                 for opt in raw_options:
@@ -854,7 +873,7 @@ def _execute_tool(
                     pending_choice["attacker_tier"] = attacker_tier
                 target_state.pending_checks[target_char.owner_id] = pending_choice
                 return options
-            options = _mutate_and_save_state(state, mutate)
+            options = _mutate_and_save_state(state, _register_pending_choice)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
@@ -865,8 +884,8 @@ def _execute_tool(
             skill_value = max(0, min(100, int(tool_input["skill_value"])))
             bonus = int(tool_input.get("bonus_dice") or 0)
             penalty = int(tool_input.get("penalty_dice") or 0)
-            r = dice.skill_check(skill_value, bonus_dice=bonus, penalty_dice=penalty)
-            return {"ok": True, "roll": r.roll, "tier": r.tier, "skill_value": skill_value}
+            npc_roll = dice.skill_check(skill_value, bonus_dice=bonus, penalty_dice=penalty)
+            return {"ok": True, "roll": npc_roll.roll, "tier": npc_roll.tier, "skill_value": skill_value}
 
         if name == "sanity_check":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -874,12 +893,12 @@ def _execute_tool(
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             loss_success = tool_input.get("loss_success", "0")
             loss_failure = tool_input.get("loss_failure", "1d4")
-            def mutate(target_state: GroupState) -> None:
+            def _register_pending_sanity(target_state: GroupState) -> None:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
                 }
-            _mutate_and_save_state(state, mutate)
+            _mutate_and_save_state(state, _register_pending_sanity)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "current_san": refreshed_char.san,
@@ -896,7 +915,7 @@ def _execute_tool(
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
 
-            def mutate(target_state: GroupState) -> tuple[int, bool]:
+            def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
                 delta = int(tool_input["delta"])
@@ -919,17 +938,17 @@ def _execute_tool(
                     }
                 return new_val, major_wound
 
-            new_val, major_wound = _mutate_and_save_state(state, mutate)
+            new_val, major_wound = _mutate_and_save_state(state, _apply_attribute_delta)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
-            result = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
+            response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
             if major_wound:
-                result["major_wound"] = True
-                result["note"] = (
+                response["major_wound"] = True
+                response["note"] = (
                     "這次單一傷害達到重傷門檻（≥ 角色最大 HP 一半），COC7e 規則：角色必須做一次 CON 檢定，"
                     "失敗會當場昏迷倒地——系統已經幫玩家註冊這次 CON 檢定，不用你自己判斷結果，"
                     "先描述受到重擊當下的衝擊就好（不要講有沒有昏過去），等玩家輸入 /coc check CON 才知道結果。"
                 )
-            return result
+            return response
 
         if name == "adjust_ammo":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -940,14 +959,14 @@ def _execute_tool(
             if entry is None:
                 available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
                 return {"ok": False, "error": f"「{char.name}」的彈藥欄位裡沒有「{weapon}」，目前有：{available}"}
-            def mutate(target_state: GroupState) -> None:
+            def _apply_ammo_change(target_state: GroupState) -> None:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 target_entry = target_char.weapons.get(weapon)
                 if tool_input.get("reload_full"):
                     target_entry["ammo"] = target_entry["ammo_max"]
                 else:
                     target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
-            _mutate_and_save_state(state, mutate)
+            _mutate_and_save_state(state, _apply_ammo_change)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
             refreshed_entry = refreshed_char.weapons.get(weapon)
             return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
@@ -959,13 +978,13 @@ def _execute_tool(
             item = tool_input.get("item", "").strip()
             if not item:
                 return {"ok": False, "error": "item 不能是空字串"}
-            def mutate(target_state: GroupState) -> _StateMutation:
+            def _mutate_add_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 changed = item not in target_char.carried_items
                 if changed:
                     target_char.carried_items.append(item)
                 return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, mutate)
+            investigator, carried_items = _mutate_and_save_state(state, _mutate_add_item)
             return {"ok": True, "investigator": investigator, "carried_items": carried_items}
 
         if name == "remove_carried_item":
@@ -977,13 +996,13 @@ def _execute_tool(
             # to remove (the no-op-skip logic below would report "unchanged" since the
             # stripped, stored string never string-equals the unstripped one being removed).
             item = tool_input.get("item", "").strip()
-            def mutate(target_state: GroupState) -> _StateMutation:
+            def _mutate_remove_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 changed = item in target_char.carried_items
                 if changed:
                     target_char.carried_items.remove(item)
                 return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, mutate)
+            investigator, carried_items = _mutate_and_save_state(state, _mutate_remove_item)
             return {"ok": True, "investigator": investigator, "carried_items": carried_items}
 
         if name == "add_status_tag":
@@ -993,13 +1012,13 @@ def _execute_tool(
             tag = tool_input.get("tag", "").strip()
             if not tag:
                 return {"ok": False, "error": "tag 不能是空字串"}
-            def mutate(target_state: GroupState) -> _StateMutation:
+            def _mutate_add_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 changed = tag not in target_char.status_tags
                 if changed:
                     target_char.status_tags.append(tag)
                 return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, mutate)
+            investigator, tags = _mutate_and_save_state(state, _mutate_add_tag)
             return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "remove_status_tag":
@@ -1011,13 +1030,13 @@ def _execute_tool(
             # remove (the no-op-skip logic below would report "unchanged" since the
             # stripped, stored string never string-equals the unstripped one being removed).
             tag = tool_input.get("tag", "").strip()
-            def mutate(target_state: GroupState) -> _StateMutation:
+            def _mutate_remove_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 changed = tag in target_char.status_tags
                 if changed:
                     target_char.status_tags.remove(tag)
                 return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, mutate)
+            investigator, tags = _mutate_and_save_state(state, _mutate_remove_tag)
             return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "set_skill":
@@ -1025,10 +1044,10 @@ def _execute_tool(
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             value = max(0, min(100, int(tool_input["value"])))
-            def mutate(target_state: GroupState) -> None:
+            def _mutate_set_skill(target_state: GroupState) -> None:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 target_char.skills[tool_input["skill"]] = value
-            _mutate_and_save_state(state, mutate)
+            _mutate_and_save_state(state, _mutate_set_skill)
             refreshed_char = find_character(state, tool_input.get("investigator", ""))
             return {"ok": True, "investigator": refreshed_char.name, "skill": tool_input["skill"], "value": value}
 
@@ -1040,15 +1059,15 @@ def _execute_tool(
             return {"ok": True, "sheet": char.to_dict()}
 
         if name == "start_combat":
-            def mutate(target_state: GroupState) -> None:
+            def _mutate_start_combat(target_state: GroupState) -> None:
                 combat.start_combat(target_state)
-            _mutate_and_save_state(state, mutate)
+            _mutate_and_save_state(state, _mutate_start_combat)
             return {"ok": True, "status": combat.status_text(state)}
 
         if name == "add_npc_to_combat":
             npc_name = tool_input["name"]
             requested_hp = int(tool_input.get("hp", 10))
-            def mutate(target_state: GroupState) -> str:
+            def _mutate_add_npc(target_state: GroupState) -> str:
                 hp = requested_hp
                 index_note = ""
                 # Code-enforced consistency check, not just a prompt-level ask: if
@@ -1075,32 +1094,30 @@ def _execute_tool(
                     is_ally=bool(tool_input.get("is_ally", False)),
                 )
                 return index_note
-            index_note = _mutate_and_save_state(state, mutate)
-            result = {"ok": True, "status": combat.status_text(state)}
+            index_note = _mutate_and_save_state(state, _mutate_add_npc)
+            response = {"ok": True, "status": combat.status_text(state)}
             if index_note:
-                result["note"] = index_note
-            return result
+                response["note"] = index_note
+            return response
 
         if name == "get_combat_status":
             _refresh_state_snapshot(state)
             return {"ok": True, "status": combat.status_text(state)}
 
         if name == "advance_combat_turn":
-            def mutate(target_state: GroupState) -> dict:
+            def _mutate_advance_turn(target_state: GroupState) -> dict:
                 return combat.advance_turn(target_state)
-            result = _mutate_and_save_state(state, mutate)
-            return result
+            return _mutate_and_save_state(state, _mutate_advance_turn)
 
         if name == "damage_combatant":
-            def mutate(target_state: GroupState) -> dict:
+            def _mutate_damage_combatant(target_state: GroupState) -> dict:
                 return combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
-            result = _mutate_and_save_state(state, mutate)
-            return result
+            return _mutate_and_save_state(state, _mutate_damage_combatant)
 
         if name == "end_combat":
-            def mutate(target_state: GroupState) -> None:
+            def _mutate_end_combat(target_state: GroupState) -> None:
                 combat.end_combat(target_state)
-            _mutate_and_save_state(state, mutate)
+            _mutate_and_save_state(state, _mutate_end_combat)
             return {"ok": True}
 
         if name == "send_private_info":

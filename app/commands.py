@@ -746,12 +746,17 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
 
         if pending and pending.get("type") == "sanity":
             san_before = char.san
-            r = dice.sanity_check(san_before, pending.get("loss_success", "0"), pending.get("loss_failure", "1d4"))
-            char.san = r.san_after
-            outcome = "通過" if r.check.success else "失敗"
-            roll_line = f"🎲 {char.name} 的理智檢定：SAN {san_before}，擲出 {r.check.roll} → {outcome}，損失 {r.loss} 點理智（現在 SAN {r.san_after}）"
+            sanity_result = dice.sanity_check(
+                san_before, pending.get("loss_success", "0"), pending.get("loss_failure", "1d4")
+            )
+            char.san = sanity_result.san_after
+            outcome = "通過" if sanity_result.check.success else "失敗"
+            roll_line = (
+                f"🎲 {char.name} 的理智檢定：SAN {san_before}，擲出 {sanity_result.check.roll} → {outcome}，"
+                f"損失 {sanity_result.loss} 點理智（現在 SAN {sanity_result.san_after}）"
+            )
 
-            if r.risk_of_madness:
+            if sanity_result.risk_of_madness:
                 # COC7e Bout of Madness: losing 5+ SAN in one go triggers a
                 # separate INT check — chained the same way a Luck-spend decision
                 # chains onto a check's result, registered as a fresh pending
@@ -771,20 +776,20 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     "請輸入 /coc check INT。"
                 )
                 keeper_message = (
-                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
-                    f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這次損失達到 5 點以上，觸發 COC7e"
-                    f"「短暫瘋狂」規則的 INT 檢定，系統已經請玩家去骰，你只能先描述受到這波衝擊當下的"
+                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {sanity_result.check.roll} → {outcome}，"
+                    f"損失 {sanity_result.loss} 點理智，現在 SAN {sanity_result.san_after}。這次損失達到 5 點以上，"
+                    f"觸發 COC7e「短暫瘋狂」規則的 INT 檢定，系統已經請玩家去骰，你只能先描述受到這波衝擊當下的"
                     f"直接反應，還不知道會不會當場失常，等 INT 檢定結果出來才能繼續描述後續——不要自己"
                     f"先講角色失常了或平安無事。）"
                 )
             else:
                 keeper_message = (
-                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {r.check.roll} → {outcome}，"
-                    f"損失 {r.loss} 點理智，現在 SAN {r.san_after}。這是已經確定的結果，請根據這個結果描述"
-                    f"角色的反應與後續發展，不要重新判定或改變這個結果。）"
+                    f"（{char.name} 擲骰做了理智檢定：SAN {san_before} 擲出 {sanity_result.check.roll} → {outcome}，"
+                    f"損失 {sanity_result.loss} 點理智，現在 SAN {sanity_result.san_after}。這是已經確定的結果，"
+                    f"請根據這個結果描述角色的反應與後續發展，不要重新判定或改變這個結果。）"
                 )
             roll_feedback_text, keeper_header = _build_split_check_feedback(
-                char.name, "理智檢定", f"SAN {san_before}", r.check.roll, outcome
+                char.name, "理智檢定", f"SAN {san_before}", sanity_result.check.roll, outcome
             )
             save_state(state)
             return _CheckResolution(
@@ -822,7 +827,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
                 save_state(state)  # resolve_skill_value may have registered a new default-value skill
             display_label = None
-        r = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
+        skill_result = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
 
         if madness_trigger:
             # Bout of Madness INT check (see the "sanity" branch above that
@@ -832,11 +837,11 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             # skips the Luck-spend flow entirely (spending Luck to push this
             # check toward success would be pushing toward the *worse* outcome
             # for the character, backwards from what Luck-spend normally means).
-            tier_zh = _tier_zh_for_result(r)
-            if r.success:
+            tier_zh = _tier_zh_for_result(skill_result)
+            if skill_result.success:
                 madness = dice.roll_madness(realtime=madness_realtime)
                 roll_line = (
-                    f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n"
+                    f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {skill_result.roll} → {tier_zh}\n"
                     f"💥 觸發短暫瘋狂（Bout of Madness）！症狀擲骰 {madness['roll']} → 「{madness['symptom']}」"
                     f"（持續約{madness['duration']}）"
                 )
@@ -846,13 +851,13 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     f"請照這個症狀具體描述角色接下來的失常行為，不要自己另外編一個症狀，也不要忽略這個結果。）"
                 )
             else:
-                roll_line = f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {r.roll} → {tier_zh}\n（INT 檢定失敗，勉強壓下這股衝擊，沒有當場失常）"
+                roll_line = f"🎲 {char.name} 的 INT 檢定：{value}%，擲出 {skill_result.roll} → {tier_zh}\n（INT 檢定失敗，勉強壓下這股衝擊，沒有當場失常）"
                 keeper_message = (
                     f"（{char.name} 的 INT 檢定{tier_zh}，沒有觸發短暫瘋狂——角色勉強壓下了這股衝擊，"
                     f"不需要描述任何失常行為，可以正常繼續劇情，但可以帶一點事後的心理陰影或後怕細節。）"
                 )
             roll_feedback_text, keeper_header = _build_split_check_feedback(
-                char.name, "INT", str(value), r.roll, tier_zh
+                char.name, "INT", str(value), skill_result.roll, tier_zh
             )
             save_state(state)
             return _CheckResolution(
@@ -865,13 +870,13 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         # excluded (handled above, already finalized by this point), and so is a
         # Pushed Roll (COC7e optional rule: a pushed reroll's result is final,
         # can't be bought up again with Luck on top of it).
-        luck_options = [] if is_pushed else luck.buyable_options(value, r.roll, r.tier, char.luck, difficulty)
-        gate_cost = None if is_pushed else luck.cheapest_cost(value, r.roll, r.tier, difficulty)
+        luck_options = [] if is_pushed else luck.buyable_options(value, skill_result.roll, skill_result.tier, char.luck, difficulty)
+        gate_cost = None if is_pushed else luck.cheapest_cost(value, skill_result.roll, skill_result.tier, difficulty)
         if luck_options and gate_cost is not None and gate_cost <= 7:
             state.pending_luck_decisions[user_id] = {
                 "skill_name": skill_name, "display_label": display_label,
-                "value": value, "roll": r.roll, "bonus_dice": bonus, "penalty_dice": penalty,
-                "original_tier": r.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
+                "value": value, "roll": skill_result.roll, "bonus_dice": bonus, "penalty_dice": penalty,
+                "original_tier": skill_result.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
                 "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
                 "major_wound_trigger": major_wound_trigger,
             }
@@ -882,21 +887,21 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
             return _CheckResolution(
                 reply_text=(
-                    f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {r.roll} → {_tier_zh_for_result(r)}{attacker_note}\n"
+                    f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {skill_result.roll} → {_tier_zh_for_result(skill_result)}{attacker_note}\n"
                     f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
                     f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
                 )
             )
 
         roll_line, keeper_message = _build_check_narration(
-            char, skill_name, display_label, value, r, bonus, penalty, attacker_tier=attacker_tier,
+            char, skill_name, display_label, value, skill_result, bonus, penalty, attacker_tier=attacker_tier,
             major_wound_trigger=major_wound_trigger,
         )
         opposed_text = ""
         if attacker_tier is not None:
-            opposed_text = _describe_opposed_outcome(char.name, display_label is not None and "反擊" in display_label, r.tier, attacker_tier)
+            opposed_text = _describe_opposed_outcome(char.name, display_label is not None and "反擊" in display_label, skill_result.tier, attacker_tier)
         roll_feedback_text, keeper_header = _build_split_check_feedback(
-            char.name, display_label or skill_name, str(value), r.roll, _tier_zh_for_result(r), opposed_text
+            char.name, display_label or skill_name, str(value), skill_result.roll, _tier_zh_for_result(skill_result), opposed_text
         )
         save_state(state)
         return _CheckResolution(
@@ -1612,9 +1617,9 @@ async def _handle_coc_command(
         except ValueError:
             await reply("點數必須是整數。")
             return
-        result = creation.allocate(session, pool, skill, points)
-        if not result["ok"]:
-            await reply(result["error"])
+        allocation_result = creation.allocate(session, pool, skill, points)
+        if not allocation_result["ok"]:
+            await reply(allocation_result["error"])
             return
         save_state(state)
         await reply(creation.status_text(session))
@@ -1799,19 +1804,19 @@ async def _handle_coc_command(
         return
 
     if sub == "away":
-        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, True)
-        if result.error_text:
-            await reply(result.error_text)
+        away_result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, True)
+        if away_result.error_text:
+            await reply(away_result.error_text)
             return
-        await reply(f"{result.character_name} 已標記為暫離，戰鬥中會自動跳過他的回合，直到輸入「/coc back」回來。")
+        await reply(f"{away_result.character_name} 已標記為暫離，戰鬥中會自動跳過他的回合，直到輸入「/coc back」回來。")
         return
 
     if sub == "back":
-        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, False)
-        if result.error_text:
-            await reply(result.error_text)
+        back_result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, False)
+        if back_result.error_text:
+            await reply(back_result.error_text)
             return
-        await reply(f"{result.character_name} 回來了，恢復正常參與。")
+        await reply(f"{back_result.character_name} 回來了，恢復正常參與。")
         return
 
     if sub == "showpage":
@@ -1918,12 +1923,15 @@ async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: l
         return
 
     if action == "next":
-        result = combat.advance_turn(state)
+        turn_result = combat.advance_turn(state)
         save_state(state)
-        if not result["ok"]:
-            await reply(result["error"])
+        if not turn_result["ok"]:
+            await reply(turn_result["error"])
             return
-        await reply(f"第 {result['round']} 輪，輪到「{result['current_turn']}」了（HP {result['hp']}/{result['hp_max']}）。")
+        await reply(
+            f"第 {turn_result['round']} 輪，輪到「{turn_result['current_turn']}」了"
+            f"（HP {turn_result['hp']}/{turn_result['hp_max']}）。"
+        )
         return
 
     if action == "damage":
@@ -1936,13 +1944,13 @@ async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: l
         except ValueError:
             await reply("增減量必須是整數。")
             return
-        result = combat.damage_combatant(state, name, delta)
+        damage_result = combat.damage_combatant(state, name, delta)
         save_state(state)
-        if not result["ok"]:
-            await reply(result["error"])
+        if not damage_result["ok"]:
+            await reply(damage_result["error"])
             return
-        tag = "（已倒下）" if result["defeated"] else ""
-        await reply(f"{result['name']} HP 變為 {result['hp']}/{result['hp_max']}{tag}")
+        tag = "（已倒下）" if damage_result["defeated"] else ""
+        await reply(f"{damage_result['name']} HP 變為 {damage_result['hp']}/{damage_result['hp_max']}{tag}")
         return
 
     if action == "end":

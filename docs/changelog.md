@@ -706,3 +706,62 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - 重新對整個 `app/` 跑一次 Bandit，確認 `B110`（try-except-pass）與 `B324`（MD5 缺
     `usedforsecurity`）兩類問題都變成 0 筆命中，改動前這兩類各有對應筆數命中、位置跟報告描述一致。
   - 這次刻意沒有處理 Mypy 那部分警告（詳見上方「這個改動怎麼來的」）。
+
+### 61. 修到底：把 mypy「同名變數跨互斥分支衝突」的假警報，改名改成真的乾淨
+
+- **這個改動怎麼來的**：#60 判斷 mypy 那部分是假警報、範圍比報告講的大很多（14 處不只 4 處），先跳過
+  沒修。後續使用者問「mypy 是真的假警報嗎」，用具體行號（`keeper.py` 838/868/877 等）逐一核對控制流
+  證明每個 `if name == "X": ...; return` 分支確實互斥、不會同時發生，確認是 mypy 對「互斥分支裡定義
+  同名區域函式/變數」的已知靜態分析盲點，不是執行期會發生的錯誤。使用者接著問「怎麼修比較漂亮」，
+  討論後選定方案：把每個分支裡的 `mutate`／`r`／`result` 改成該分支專屬、望文生義的名字，而不是加
+  `_1`/`_2` 這種編號或用 `# type: ignore` 壓掉——這樣除了讓 mypy 乾淨，也讓「這段在幹嘛」不用先看懂
+  在哪個分支裡，名字本身就講清楚了。使用者確認後動手，改完發現改名本身就讓 mypy 看得更清楚，多暴露出
+  一個原本被「命名衝突」蓋住的獨立問題（`_mutate_and_save_state` 的泛型簽名沒表達出它真正的執行期
+  行為），使用者說「修到底」，一併修掉。
+- **這個專案現在怎麼做**：
+  1. `app/keeper.py` 的 `_execute_tool`：14 個工具分支各自的 `mutate` 區域函式改成專屬名稱（例如
+     `_register_pending_skill_check`、`_register_pending_choice`、`_register_pending_sanity`、
+     `_apply_attribute_delta`、`_apply_ammo_change`、`_mutate_add_item`／`_mutate_remove_item`、
+     `_mutate_add_tag`／`_mutate_remove_tag`、`_mutate_set_skill`、`_mutate_start_combat`、
+     `_mutate_add_npc`、`_mutate_advance_turn`、`_mutate_damage_combatant`、`_mutate_end_combat`）；
+     `roll_dice`／`roll_impaling_damage`／`roll_weapon_damage`／`npc_skill_check` 四處重複用 `r`／
+     `result` 的擲骰結果變數改成 `roll_result`／`impale_result`／`weapon_result`／`npc_roll`；
+     `adjust_character`／`add_npc_to_combat` 兩處回傳 dict 用的 `result` 改成 `response`；
+     `advance_combat_turn`／`damage_combatant` 乾脆拿掉多餘的中繼變數，直接 `return
+     _mutate_and_save_state(state, ...)`。邏輯完全沒變，純粹改名／消掉不必要的中繼賦值。
+  2. 改名後意外多暴露的問題：`_mutate_and_save_state(state, mutator: Callable[[GroupState], _T]) ->
+     _T` 這個共用 helper，執行期遇到 `mutator` 回傳 `_StateMutation` 時會拆開回傳 `.value`（見函式
+     內的 `isinstance(result, _StateMutation)` 判斷），但型別簽名沒表達這件事，之前被命名衝突蓋住
+     沒被抓到。改成讓 `_StateMutation` 變泛型（`_StateMutation(Generic[_T])`，`value: _T`），
+     `_mutate_and_save_state` 用 `@overload` 拆成兩種呼叫形狀：`mutator` 回傳
+     `_StateMutation[_T]` 時，函式回傳 `_T`；否則回傳 `mutator` 自己的回傳型別。實作本體完全沒變，
+     純粹補齊型別標注。4 個使用 `_StateMutation` 的分支（`add_carried_item`／`remove_carried_item`／
+     `add_status_tag`／`remove_status_tag`）的回傳型別標注同步改成
+     `_StateMutation[tuple[str, list[str]]]`。
+  3. `app/commands.py` 的 `_resolve_check_deterministically`：理智檢定那段的 `r`（`SanityCheckResult`）
+     改名 `sanity_result`；技能檢定那段的 `r`（`SkillCheckResult`）改名 `skill_result`（含後面
+     Bout of Madness INT 檢定、Luck-spend 門檻判斷、`_build_check_narration` 呼叫等所有引用處，共
+     18 處引用）。`_handle_coc_command`（`/coc` 指令總派發函式）裡 5 處重複用 `result` 的地方各自
+     改名：`/coc create` 的 `allocation_result`、`/coc away`／`/coc back` 的 `away_result`／
+     `back_result`、`/coc combat next`／`/coc combat damage` 的 `turn_result`／`damage_result`。
+- **實測過**：
+  - `import app.keeper`／`app.commands` 確認可正常載入。
+  - Mypy 重新對 `app/keeper.py`／`app/commands.py` 跑過：改名前「All conditional function variants
+    must have identical signatures」（14 處）、`SanityCheckResult`／`SkillCheckResult`／
+    `_AwayStateResult` 相關的型別衝突（近 30 處），改名後全部歸零；補上 `@overload` 後，改名當下
+    多暴露出的「`_StateMutation` object is not iterable」（4 處）也歸零。剩下的錯誤（`Character |
+    None`／`Any | None` 的 Optional 窄化噪音）跟改動前後數量一致，確認沒有被這次改動影響，維持先前
+    決定的「先不處理」範圍。
+  - 真實物件呼叫每一個被改名的分支（不是只看型別檢查過關就算數）：`keeper._execute_tool` 直接呼叫
+    `add_carried_item`（含重複加同一物品觸發 `should_save=False` 的分支）、`remove_carried_item`、
+    `add_status_tag`、`remove_status_tag`、`skill_check`、`sanity_check`、`offer_check_choice`、
+    `adjust_character`、`roll_dice`、`roll_impaling_damage`、`npc_skill_check`、
+    `start_combat`／`add_npc_to_combat`／`advance_combat_turn`／`damage_combatant`／`end_combat`
+    全部組合，確認回傳值跟改動前的預期完全一致。
+  - 端到端測試（走 `commands.handle_check_command`／`handle_text_message` 完整路徑，不是只測內部
+    函式）：`/coc check`（觸發理智檢定 `sanity_result`）、`/coc check 偵查`（觸發技能檢定
+    `skill_result`）、`/coc away`／`/coc back`（`away_result`／`back_result`）、`/coc combat
+    next`／`/coc combat damage`（`turn_result`／`damage_result`）全部跑過，回覆內容正確。
+  - 重新跑一次 Bandit 確認 `B110`／`B324` 仍然是 0（這次改動完全沒碰那兩類，純粹確認沒有互相干擾）。
+  - 這個 worktree 用自己獨立的本機 DB，測試用的 key 全部用 `db.delete_json` 清乾淨，過程中正式環境
+    資料庫完全沒被動到。
