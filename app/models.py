@@ -491,6 +491,30 @@ class GroupState:
     # it in the log. Reset to False by /coc newgame like every other field.
     game_started: bool = False
 
+    # COC7e setting period for this group's campaign — affects which default
+    # ammo capacity app/pregen_extractor.py's weapon parsing looks up for a
+    # generic weapon category (e.g. "半自動手槍") that doesn't name a specific
+    # model: the same generic term means a different real-world gun (and thus
+    # a different magazine size) in a 1920s-era game than a modern one. Only
+    # two values are meaningful: "1920s" (COC7e's flagship default setting)
+    # or "modern"; set via /coc era.
+    era: str = "1920s"
+
+    # Extraction results from a PDF re-upload awaiting the GM's choice between
+    # "全新劇本" and "修正目前劇本" (see app/commands.py's handle_pdf_upload) —
+    # None means no PDF upload is currently pending a decision. Persisted
+    # (rather than kept in an in-memory cache) for the same reason
+    # pending_checks/pending_luck_decisions are: this bot restarts on almost
+    # every deploy, and a GM's re-upload flow can easily still be "waiting on
+    # a button click" when that happens. Shape: {"text": str, "title": str,
+    # "low_text_pages": list[int], "truncated": bool, "npcs": list, "locations":
+    # list, "page_maps": dict[str, dict]} — everything handle_pdf_upload
+    # needs to finish the save once the GM picks a mode. Deliberately excludes
+    # page images: those get written to disk immediately regardless of which
+    # mode is chosen (see handle_pdf_upload), so there's nothing about them to
+    # defer.
+    pending_pdf_upload: dict[str, Any] | None = None
+
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
             if c.name == name:
@@ -521,6 +545,8 @@ class GroupState:
             "pending_checks": self.pending_checks,
             "pending_luck_decisions": self.pending_luck_decisions,
             "game_started": self.game_started,
+            "era": self.era,
+            "pending_pdf_upload": self.pending_pdf_upload,
         }
 
     @staticmethod
@@ -555,4 +581,6 @@ class GroupState:
             pending_checks=data.get("pending_checks", {}),
             pending_luck_decisions=data.get("pending_luck_decisions", {}),
             game_started=data.get("game_started", False),
+            era=data.get("era", "1920s"),
+            pending_pdf_upload=data.get("pending_pdf_upload"),
         )

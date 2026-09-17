@@ -36,7 +36,7 @@ from app.config import DB_PATH
 # directly into SQL below; sqlite3's parameter binding can't parametrize
 # identifiers, only values, and every call site here is our own code, never
 # user input.
-_TABLES = ("group_states", "characters", "scenario_indexes", "memory_chunks")
+_TABLES = ("group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS {table} (

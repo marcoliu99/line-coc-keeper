@@ -118,6 +118,106 @@ async def handle_unsupported_message(conversation_id: str, reply: Reply, label: 
         )
 
 
+def _apply_new_scenario(
+    state: GroupState, text: str, title: str, extracted_index: dict[str, list], page_maps: dict
+) -> None:
+    """Full reset — what "全新劇本" means (see handle_pdf_upload/
+    resolve_pdf_upload_choice below), and also unconditionally what a
+    conversation's very first-ever PDF upload does, since there's no existing
+    position/pregens to protect yet in that case."""
+    state.scenario_text = text
+    state.scenario_title = title
+    state.active = True
+    state.openai_previous_response_id = ""
+    state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
+    # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
+    # first would find /coc start permanently refusing ("already started") for the new scenario.
+    state.pregens = []  # clear the previous scenario's cached pregens — otherwise
+    # a group that switches PDFs without running /coc newgame first would keep
+    # seeing (and could even build a character off) the old scenario's pregens.
+    state.scenario_npc_index = extracted_index["npcs"]
+    state.scenario_location_index = extracted_index["locations"]
+    state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
+    # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
+    state.current_map_page = {}
+    state.current_room_id = {}
+    state.party_facing = {}
+
+
+def _apply_scenario_correction(
+    state: GroupState, text: str, title: str, extracted_index: dict[str, list]
+) -> None:
+    """"修正目前劇本" — updates the scenario's own text/index (the corrected
+    content) but deliberately leaves scene_maps/current_map_page/
+    current_room_id/party_facing/pregens/openai_previous_response_id/
+    game_started untouched. That's exactly what "protect the party's existing
+    position and progress" means when the scenario hasn't actually restarted
+    — see docs/character_and_dictionary_system_spec.md's Module 1. Page
+    images are handled by the caller, unconditionally, before this ever runs
+    — see handle_pdf_upload's own comment on why they don't depend on this
+    choice at all."""
+    state.scenario_title = title
+    state.scenario_text = text
+    state.scenario_npc_index = extracted_index["npcs"]
+    state.scenario_location_index = extracted_index["locations"]
+
+
+def _pdf_upload_confirmation_text(
+    title: str, text: str, low_text_pages: list[int], truncated: bool, page_maps: dict, extracted_index: dict
+) -> str:
+    """Shared by the immediate (first-ever upload) and deferred (button-
+    resolved) paths through handle_pdf_upload — the message is identical
+    either way, just built at a different point in the flow."""
+    warning = ""
+    if low_text_pages:
+        pages_str = "、".join(str(p) for p in low_text_pages)
+        warning += (
+            f"\n\n⚠️ 第 {pages_str} 頁偵測到文字內容偏少（可能是地圖、手卡或圖片化的內容），"
+            "已嘗試自動辨識，但仍建議你人工核對一下；如果有遺漏的重要線索，"
+            "之後可以直接把那頁的文字內容貼在群組訊息裡讓守密人知道。"
+        )
+    if truncated:
+        warning += (
+            f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
+            "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
+        )
+    map_note = ""
+    if page_maps:
+        # Keys may be plain ints (fresh from pdf_loader.extract_text) or
+        # strings (round-tripped through pending_pdf_upload's JSON storage —
+        # see resolve_pdf_upload_choice) — sort numerically either way so a
+        # page 10 doesn't sort before page 2.
+        pages_str = "、".join(str(p) for p in sorted(page_maps.keys(), key=lambda k: int(k)))
+        map_note = (
+            f"\n\n🗺️ 第 {pages_str} 頁偵測到平面圖，已經拆解成房間圖——玩家在裡面移動時"
+            "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
+            "用 `/coc where` 可以看目前在哪個房間。"
+        )
+    index_note = ""
+    npc_count = len(extracted_index["npcs"])
+    if npc_count:
+        index_note = (
+            f"\n\n📇 已自動建立劇本索引（{npc_count} 個 NPC／怪物"
+            + (f"、{len(extracted_index['locations'])} 個地點" if extracted_index["locations"] else "")
+            + "）——守密人之後提到這些對象時會直接照索引的數值講，同一隻不會前後不一致。"
+            "劇本內容之後如果有更新，重新跑一次「/coc index」可以重建。"
+        )
+
+    return (
+        f"已載入劇本《{title}》（{len(text)} 字）。\n"
+        "這份劇本如果有附帶預製調查員，建議先輸入「/coc pregens」看看有哪些角色可選、"
+        "「/coc pregen 編號」看某位的完整能力——"
+        "有內建角色的話，「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n"
+        "如果這份劇本沒有內建角色（或想先跳過這步），可以直接用「/coc pc 角色名 職業」"
+        "快速生成，這時職業可選：\n"
+        + "、".join(OCCUPATIONS.keys())
+        + "\n建好角色後，直接在群組打字描述行動即可開始冒險！"
+        + warning
+        + map_note
+        + index_note
+    )
+
+
 async def handle_pdf_upload(
     conversation_id: str,
     reply: Reply,
@@ -131,7 +231,19 @@ async def handle_pdf_upload(
     can run a vision/OCR pass over every graphic-heavy page and, on a
     picture-heavy scenario, comfortably exceed that window — finishes. On a
     platform with no such constraint (Discord), an adapter can just pass the
-    same callback for both."""
+    same callback for both.
+
+    If a scenario is already running (state.scenario_text non-empty), this
+    doesn't guess whether the new upload is a genuinely new scenario or a
+    corrected re-upload of the same one — it stashes the extraction into
+    state.pending_pdf_upload and asks the GM to pick, via
+    resolve_pdf_upload_choice (an adapter posts the actual buttons — see
+    app/discord_bot.py's _post_pdf_upload_buttons, the same diff-and-post
+    pattern as pending_checks/pending_luck_decisions). Guessing wrong here is
+    worse than one extra click: a wrongly-preserved position could point at a
+    room that doesn't exist in the new scenario's map at all. A
+    conversation's very first upload has no existing scenario to be
+    ambiguous against, so it always applies immediately with no button."""
     if not file_name.lower().endswith(".pdf"):
         await reply("目前只支援上傳 PDF 劇本檔案喔。")
         return
@@ -157,75 +269,69 @@ async def handle_pdf_upload(
     # same as before this existed — never blocks the upload from succeeding.
     extracted_index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
 
+    # Page images update the same way regardless of which mode a GM later
+    # picks for an ambiguous re-upload (see below) — applied immediately,
+    # unconditionally, so there's nothing image-related left inside the
+    # pending choice to defer.
+    clear_page_images(conversation_id)  # don't let a new scenario's /coc
+    # showpage 5 show the OLD scenario's page 5.
+    for page_number, png_bytes in page_images.items():
+        save_page_image(conversation_id, page_number, png_bytes)
+
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
-        state.scenario_text = text
-        state.scenario_title = title
-        state.active = True
-        state.openai_previous_response_id = ""
-        state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
-        # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
-        # first would find /coc start permanently refusing ("already started") for the new scenario.
-        state.pregens = []  # clear the previous scenario's cached pregens — otherwise
-        # a group that switches PDFs without running /coc newgame first would keep
-        # seeing (and could even build a character off) the old scenario's pregens.
-        state.scenario_npc_index = extracted_index["npcs"]
-        state.scenario_location_index = extracted_index["locations"]
-        state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
-        # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
-        state.current_map_page = {}
-        state.current_room_id = {}
-        state.party_facing = {}
+        if state.scenario_text.strip():
+            state.pending_pdf_upload = {
+                "text": text,
+                "title": title,
+                "low_text_pages": low_text_pages,
+                "truncated": truncated,
+                "npcs": extracted_index["npcs"],
+                "locations": extracted_index["locations"],
+                "page_maps": {str(k): v for k, v in page_maps.items()},
+            }
+            save_state(state)
+            current_title = state.scenario_title
+            confirmation_pending = True
+        else:
+            _apply_new_scenario(state, text, title, extracted_index, page_maps)
+            save_state(state)
+            confirmation_pending = False
+
+    if confirmation_pending:
+        await push(
+            f"這個群組目前正在跑《{current_title}》。新上傳的《{title}》"
+            "是要開始一個全新的劇本，還是修正/補完目前這份劇本？請點下面的按鈕選擇——"
+            "選錯的代價不小（位置可能對到新劇本裡不存在的房間），拿不準的話選「修正目前劇本」比較安全。"
+        )
+        return
+
+    await push(_pdf_upload_confirmation_text(title, text, low_text_pages, truncated, page_maps, extracted_index))
+
+
+async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
+    """Called by an adapter's button callback (see app/discord_bot.py's
+    PdfUploadChoiceButton) once the GM picks between the two options
+    handle_pdf_upload's pending_pdf_upload flow offers. `choice` must be
+    "new" or "fix"."""
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        pending = state.pending_pdf_upload
+        if pending is None:
+            await push("這個上傳選擇已經處理過了，或已經過期失效，請重新上傳 PDF。")
+            return
+        extracted_index = {"npcs": pending["npcs"], "locations": pending["locations"]}
+        if choice == "new":
+            _apply_new_scenario(state, pending["text"], pending["title"], extracted_index, pending["page_maps"])
+        else:
+            _apply_scenario_correction(state, pending["text"], pending["title"], extracted_index)
+        state.pending_pdf_upload = None
         save_state(state)
-        clear_page_images(conversation_id)  # same reasoning — don't let a new
-        # scenario's /coc showpage 5 show the OLD scenario's page 5.
-        for page_number, png_bytes in page_images.items():
-            save_page_image(conversation_id, page_number, png_bytes)
 
-    warning = ""
-    if low_text_pages:
-        pages_str = "、".join(str(p) for p in low_text_pages)
-        warning += (
-            f"\n\n⚠️ 第 {pages_str} 頁偵測到文字內容偏少（可能是地圖、手卡或圖片化的內容），"
-            "已嘗試自動辨識，但仍建議你人工核對一下；如果有遺漏的重要線索，"
-            "之後可以直接把那頁的文字內容貼在群組訊息裡讓守密人知道。"
-        )
-    if truncated:
-        warning += (
-            f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
-            "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
-        )
-    map_note = ""
-    if page_maps:
-        pages_str = "、".join(str(p) for p in sorted(page_maps.keys()))
-        map_note = (
-            f"\n\n🗺️ 第 {pages_str} 頁偵測到平面圖，已經拆解成房間圖——玩家在裡面移動時"
-            "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
-            "用 `/coc where` 可以看目前在哪個房間。"
-        )
-    index_note = ""
-    npc_count = len(extracted_index["npcs"])
-    if npc_count:
-        index_note = (
-            f"\n\n📇 已自動建立劇本索引（{npc_count} 個 NPC／怪物"
-            + (f"、{len(extracted_index['locations'])} 個地點" if extracted_index["locations"] else "")
-            + "）——守密人之後提到這些對象時會直接照索引的數值講，同一隻不會前後不一致。"
-            "劇本內容之後如果有更新，重新跑一次「/coc index」可以重建。"
-        )
-
-    await push(
-        f"已載入劇本《{title}》（{len(text)} 字）。\n"
-        "這份劇本如果有附帶預製調查員，建議先輸入「/coc pregens」看看有哪些角色可選、"
-        "「/coc pregen 編號」看某位的完整能力——"
-        "有內建角色的話，「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n"
-        "如果這份劇本沒有內建角色（或想先跳過這步），可以直接用「/coc pc 角色名 職業」"
-        "快速生成，這時職業可選：\n"
-        + "、".join(OCCUPATIONS.keys())
-        + "\n建好角色後，直接在群組打字描述行動即可開始冒險！"
-        + warning
-        + map_note
-        + index_note,
-    )
+    await push(_pdf_upload_confirmation_text(
+        pending["title"], pending["text"], pending["low_text_pages"], pending["truncated"],
+        pending["page_maps"], extracted_index,
+    ))
 
 
 async def handle_map_upload(
@@ -315,8 +421,13 @@ async def handle_role_sheet_upload(
     which is what tells this apart from handle_scenario_compare_upload's
     full-scenario alternate-text attachments. A deterministic, GM-verified
     alternative to /coc pregens' LLM-based extraction from the raw scenario
-    PDF text. Re-uploading a corrected sheet for the same occupation replaces
-    the previous entry rather than duplicating it."""
+    PDF text. Re-uploading a sheet that character_matcher.is_same_character
+    judges to be the same investigator as an existing pool entry reconciles
+    into it (merging if the two came from different sources, replacing if
+    the same — see pregen_extractor.reconcile_pregen_into_pool) instead of
+    always dead-reckoning on an exact occupation-string match, which used to
+    incorrectly collide two different players both wanting to play e.g. a
+    "警察"."""
     pregen = pregen_extractor.parse_role_sheet_text(file_text)
     if pregen is None:
         await reply(f"「{file_name}」看起來不是預期的角色卡格式（找不到【屬性】區塊），沒有儲存。")
@@ -324,19 +435,13 @@ async def handle_role_sheet_upload(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
-        existing_index = next(
-            (i for i, p in enumerate(state.pregens) if p.get("occupation") == pregen["occupation"]), None
-        )
-        if existing_index is not None:
-            state.pregens[existing_index] = pregen
-        else:
-            state.pregens.append(pregen)
+        state.pregens, action = pregen_extractor.reconcile_pregen_into_pool(state.pregens, pregen)
         save_state(state)
 
     name_note = f"「{pregen['name']}」" if pregen["name"] else "（姓名由玩家決定）"
-    action = "已更新" if existing_index is not None else "已新增"
+    action_note = {"added": "已新增", "replaced": "已更新", "merged": "已與現有角色比對成功，完成擇優融合"}[action]
     await reply(
-        f"角色卡{action}：{name_note}，職業「{pregen['occupation']}」，"
+        f"角色卡{action_note}：{name_note}，職業「{pregen['occupation']}」，"
         f"{len(pregen['skills'])} 項技能。用「/coc pregens」查看目前所有預製角色。"
     )
 
@@ -1535,6 +1640,26 @@ async def _handle_coc_command(
         await reply(f"已設定這個群組的守密人語氣風格：\n{persona_text}\n\n（下一則訊息開始生效；重設回預設風格用 /coc setpersona reset）")
         return
 
+    if sub == "era":
+        state = load_state(conversation_id)
+        if len(parts) < 3:
+            await reply(
+                "用法：/coc era 1920 → 設定 1920 年代經典設定\n"
+                "/coc era modern → 設定現代／當代設定\n\n"
+                f"目前設定：{'1920 年代' if state.era == '1920s' else '現代／當代'}\n"
+                "（影響角色卡上傳時，武器只寫泛稱、沒寫具體型號的情況下，自動補上的預設彈藥容量）"
+            )
+            return
+        choice = parts[2].strip().lower()
+        era_map = {"1920": "1920s", "1920s": "1920s", "modern": "modern"}
+        if choice not in era_map:
+            await reply("年代設定只接受「1920」或「modern」。")
+            return
+        state.era = era_map[choice]
+        save_state(state)
+        await reply(f"已設定這個群組的年代為：{'1920 年代' if state.era == '1920s' else '現代／當代'}。")
+        return
+
     if sub == "create":
         action = parts[2] if len(parts) > 2 else None
         state = load_state(conversation_id)
@@ -1689,7 +1814,7 @@ async def _handle_coc_command(
         if claimed_by and claimed_by != user_id:
             await reply("這位角色已經被其他玩家選走了，輸入「/coc pregens」看看還有哪些可選。")
             return
-        char = pregen_extractor.pregen_to_character(pregen, user_id)
+        char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era)
         if len(parts) > 3:
             char.name = parts[3]
         state.characters[user_id] = char
