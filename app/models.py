@@ -192,7 +192,10 @@ class Character:
         if tags:
             lines.append("狀態：" + "、".join(tags))
         if self.weapons:
-            lines.append("彈藥：" + "、".join(f"{name} {w['ammo']}/{w['ammo_max']}" for name, w in self.weapons.items()))
+            lines.append("彈藥：" + "、".join(
+                f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
+                for name, w in self.weapons.items()
+            ))
         if self.carried_items:
             lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:
@@ -232,7 +235,10 @@ class Character:
             f"SAN {self.san}/{self.san_max}", f"LUCK {self.luck}",
         ]
         if self.weapons:
-            parts.append("彈藥 " + "、".join(f"{name} {w['ammo']}/{w['ammo_max']}" for name, w in self.weapons.items()))
+            parts.append("彈藥 " + "、".join(
+                f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
+                for name, w in self.weapons.items()
+            ))
         if self.carried_items:
             parts.append("攜帶物品 " + "、".join(self.carried_items))
         tags = list(self.status_tags)

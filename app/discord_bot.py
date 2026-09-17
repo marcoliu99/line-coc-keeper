@@ -413,6 +413,12 @@ async def on_message(message: discord.Message) -> None:
     async def get_display_name() -> str:
         return message.author.display_name
 
+    def format_mention(owner_id: str) -> str:
+        # owner_id is str(message.author.id) — a Discord snowflake — so this
+        # needs no API call, unlike get_display_name; Discord resolves
+        # <@id> to a clickable name client-side.
+        return f"<@{owner_id}>"
+
     try:
         pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
         if pdf_attachments:
@@ -489,7 +495,8 @@ async def on_message(message: discord.Message) -> None:
         before_luck_pending = dict(state_before.pending_luck_decisions)
         try:
             await commands.handle_text_message(
-                conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text
+                conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
+                format_mention,
             )
         finally:
             # Always attempt this, even if handle_text_message raised partway

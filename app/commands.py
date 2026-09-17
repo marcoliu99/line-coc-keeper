@@ -40,6 +40,15 @@ _logger = logging.getLogger(__name__)
 
 Reply = Callable[[str], Awaitable[None]]
 GetDisplayName = Callable[[], Awaitable[str]]
+# (owner_id) -> a platform-appropriate way to reference that player in text —
+# Discord supplies "<@{owner_id}>" (a real clickable mention, resolved
+# client-side, no API call needed); an adapter with nothing better (LINE has
+# no equivalent lightweight mention token) can default to the bare owner_id,
+# which is also this type's default via _build_readiness_roster's own
+# parameter default — kept adapter-injected rather than hardcoded here so
+# this module stays platform-agnostic (see app/main.py, the LINE adapter,
+# which shares every function in this file with app/discord_bot.py).
+FormatMention = Callable[[str], str]
 SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
 # (png_bytes, conversation_id, page_number) -> None, posts publicly. conversation_id
 # and page_number are included alongside the raw bytes because LINE can't attach
@@ -345,16 +354,22 @@ async def handle_pdf_upload(
     # gets folded into state.pregens without regard to upload order.
     pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
 
-    # Page images update the same way regardless of which mode a GM later
-    # picks for an ambiguous re-upload (see below) — applied immediately,
-    # unconditionally, so there's nothing image-related left inside the
-    # pending choice to defer.
-    clear_page_images(conversation_id)  # don't let a new scenario's /coc
-    # showpage 5 show the OLD scenario's page 5.
-    for page_number, png_bytes in page_images.items():
-        save_page_image(conversation_id, page_number, png_bytes)
-
     async with locks.get_conversation_lock(conversation_id):
+        # Page images update the same way regardless of which mode a GM later
+        # picks for an ambiguous re-upload (see below) — applied immediately,
+        # unconditionally, so there's nothing image-related left inside the
+        # pending choice to defer. Done INSIDE get_conversation_lock (moved
+        # here from before the lock) — two PDFs landing for the same
+        # conversation close together both run their (unlocked, concurrent)
+        # extraction, and without this serialization their image writes can
+        # interleave (A clears, B clears+writes, A writes-after-B) leaving
+        # /coc showpage serving the wrong upload's pages for whichever
+        # scenario the locked state update below actually ends up current.
+        clear_page_images(conversation_id)  # don't let a new scenario's /coc
+        # showpage 5 show the OLD scenario's page 5.
+        for page_number, png_bytes in page_images.items():
+            save_page_image(conversation_id, page_number, png_bytes)
+
         state = load_state(conversation_id)
         if state.scenario_text.strip():
             state.pending_pdf_upload = {
@@ -389,33 +404,46 @@ async def handle_pdf_upload(
     ))
 
 
+def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
+    """Body of resolve_pdf_upload_choice, factored out so it can be called
+    from a context that already holds get_conversation_lock (see the "/coc
+    pdf new"/"/coc pdf fix" text-command path below, which runs inside
+    _handle_coc_command — itself already called under that same lock by
+    handle_text_message; asyncio.Lock isn't reentrant, so calling the
+    lock-acquiring version from in there would deadlock). Returns the
+    confirmation text to send; the caller does the actual reply/push."""
+    state = load_state(conversation_id)
+    pending = state.pending_pdf_upload
+    if pending is None:
+        return "這個上傳選擇已經處理過了，或已經過期失效，請重新上傳 PDF。"
+    extracted_index = {"npcs": pending["npcs"], "locations": pending["locations"]}
+    pending_pregens = pending.get("pregens", [])
+    if choice == "new":
+        _apply_new_scenario(
+            state, pending["text"], pending["title"], extracted_index, pending["page_maps"], pending_pregens
+        )
+    else:
+        _apply_scenario_correction(state, pending["text"], pending["title"], extracted_index, pending_pregens)
+    state.pending_pdf_upload = None
+    save_state(state)
+    final_pregen_count = len(state.pregens)
+    return _pdf_upload_confirmation_text(
+        pending["title"], pending["text"], pending["low_text_pages"], pending["truncated"],
+        pending["page_maps"], extracted_index, final_pregen_count,
+    )
+
+
 async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
     """Called by an adapter's button callback (see app/discord_bot.py's
     PdfUploadChoiceButton) once the GM picks between the two options
     handle_pdf_upload's pending_pdf_upload flow offers. `choice` must be
-    "new" or "fix"."""
+    "new" or "fix". LINE has no button/interaction mechanism, so it has no
+    caller for this — see the "/coc pdf new"/"/coc pdf fix" text-command
+    path in _handle_coc_command, which every platform (including Discord,
+    for parity) can use instead."""
     async with locks.get_conversation_lock(conversation_id):
-        state = load_state(conversation_id)
-        pending = state.pending_pdf_upload
-        if pending is None:
-            await push("這個上傳選擇已經處理過了，或已經過期失效，請重新上傳 PDF。")
-            return
-        extracted_index = {"npcs": pending["npcs"], "locations": pending["locations"]}
-        pending_pregens = pending.get("pregens", [])
-        if choice == "new":
-            _apply_new_scenario(
-                state, pending["text"], pending["title"], extracted_index, pending["page_maps"], pending_pregens
-            )
-        else:
-            _apply_scenario_correction(state, pending["text"], pending["title"], extracted_index, pending_pregens)
-        state.pending_pdf_upload = None
-        save_state(state)
-        final_pregen_count = len(state.pregens)
-
-    await push(_pdf_upload_confirmation_text(
-        pending["title"], pending["text"], pending["low_text_pages"], pending["truncated"],
-        pending["page_maps"], extracted_index, final_pregen_count,
-    ))
+        text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
+    await push(text)
 
 
 async def handle_map_upload(
@@ -1234,6 +1262,7 @@ async def handle_text_message(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     text: str,
+    format_mention: FormatMention = lambda owner_id: owner_id,
 ) -> None:
     text = text.strip()
 
@@ -1267,7 +1296,9 @@ async def handle_text_message(
 
     if text.startswith("/coc"):
         async with locks.get_conversation_lock(conversation_id):
-            await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
+            await _handle_coc_command(
+                conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text, format_mention
+            )
         return
 
     async with locks.get_conversation_lock(conversation_id):
@@ -1618,14 +1649,19 @@ def _heal_character(char: Character) -> list[str]:
     return notes
 
 
-def _build_readiness_roster(state: GroupState, healed_notes: dict[str, list[str]]) -> str:
+def _build_readiness_roster(
+    state: GroupState, healed_notes: dict[str, list[str]], format_mention: FormatMention = lambda owner_id: owner_id
+) -> str:
     """The "全團調查員集結就緒名冊" /coc start announces before the opening
     narration — see docs/character_and_dictionary_system_spec.md's Module 7's
     own "範例二" for the format this follows (HP/SAN/weapons/items per
     character, not just name/occupation — a GM glancing at this should be
     able to tell at a glance whether everyone's actually equipped, not just
     who's playing who). `healed_notes` is owner_id -> whatever
-    _heal_character found for them (empty list if nothing needed fixing)."""
+    _heal_character found for them (empty list if nothing needed fixing).
+    `format_mention` renders each owner_id for display (see FormatMention) —
+    defaults to the bare id, same as before this parameter existed, for any
+    caller that doesn't have a better option (LINE)."""
     lines = ["📋 全團調查員集結就緒名冊", ""]
     for owner_id, char in state.characters.items():
         weapon_parts = []
@@ -1639,7 +1675,7 @@ def _build_readiness_roster(state: GroupState, healed_notes: dict[str, list[str]
             stats += "，彈藥：" + "、".join(weapon_parts)
         if char.carried_items:
             stats += "，物品：" + "、".join(char.carried_items)
-        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{owner_id}）：{stats}")
+        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{format_mention(owner_id)}）：{stats}")
         for note in healed_notes.get(owner_id, []):
             lines.append(f"　　└ {note}")
     unclaimed = sum(1 for p in state.pregens if not p.get("claimed_by"))
@@ -1658,6 +1694,7 @@ async def _handle_coc_command(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     text: str,
+    format_mention: FormatMention = lambda owner_id: owner_id,
 ) -> None:
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
@@ -1665,6 +1702,23 @@ async def _handle_coc_command(
     if sub == "newgame":
         save_state(GroupState(group_id=conversation_id))
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
+        return
+
+    if sub == "pdf":
+        # Text-command equivalent of Discord's PdfUploadChoiceButton (see
+        # _resolve_pdf_upload_choice_locked) — LINE has no button/interaction
+        # mechanism at all, so without this a pending_pdf_upload on LINE (a
+        # scenario already running, a second PDF lands) had no way to ever
+        # get resolved: handle_pdf_upload would stash it and just sit there
+        # forever, scenario_text never updating, every further PDF upload
+        # refused by the "resolve the pending one first" guard. Works on
+        # Discord too, as a text-based fallback alongside the buttons.
+        choice_word = parts[2] if len(parts) > 2 else ""
+        choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
+        if choice is None:
+            await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
+            return
+        await reply(_resolve_pdf_upload_choice_locked(conversation_id, choice))
         return
 
     if sub == "kp":
@@ -2044,7 +2098,7 @@ async def _handle_coc_command(
                     healed_notes[owner_id] = notes
             if healed_notes:
                 save_state(state)
-        await reply(_build_readiness_roster(state, healed_notes))
+        await reply(_build_readiness_roster(state, healed_notes, format_mention))
 
         # Prefer the scenario's own read-aloud opening text (see
         # app/scenario_intro.py) over having the Keeper improvise one — many

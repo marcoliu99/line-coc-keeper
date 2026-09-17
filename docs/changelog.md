@@ -938,3 +938,58 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
     回歸測過未認領對未認領的情況，確認仍然正常合併成 `merged`。
   - `import app.commands`／`import app.pregen_extractor` 確認語法正確、可正常載入。
   - 正式環境資料庫全程沒有被動到（純函式層級的重現測試，沒有連任何真實群組的 state）。
+
+### 69. 追加審查發現：未追蹤彈藥武器導致 KeyError 當機、LINE 端 PDF 待決選擇無法解決、頁面圖片寫入競態、就緒名冊玩家欄位改用平台 mention
+
+- **這個改動怎麼來的**：PR #15 推上去後，自動審查工具針對推上去的內容又抓到幾個新問題（跟上一輪
+  #68 修的不是同一批），加上使用者對「就緒名冊印 owner_id、不印 mention」這個決定提出質疑，回頭確認
+  才發現這個專案其實**真的有一個正在跑的 LINE 端**（`app/main.py`，`linebot.v3`）——上一輪 #68 說
+  「這個 codebase 目前只有 Discord」是我當時只用檔名關鍵字搜尋「line」漏看了 `app/main.py`（它的
+  檔名沒有 line 字樣）得出的錯誤結論，需要更正。
+- **🔴 未追蹤彈藥的武器會讓角色卡直接當機**（`app/models.py`）：`_resolve_weapon_ammo`
+  （`app/pregen_extractor.py`）對近戰武器或辨識不出彈藥類別的槍械，會把該武器存成 `{}`（沒有
+  `ammo`/`ammo_max` 欄位）。但 `Character.sheet_text()`／`dynamic_state_text()` 原本無條件讀
+  `w['ammo']`／`w['ammo_max']`——只要角色帶一把近戰武器，`/coc usepregen` 顯示角色卡、或之後每一輪
+  Keeper 組 prompt 都會直接 `KeyError`，角色完全沒辦法用。改成沒有 `ammo_max` 就只印武器名稱（跟
+  就緒名冊 `_build_readiness_roster` 原本就有的處理方式一致）。順帶在 `app/keeper.py` 的
+  `adjust_ammo` 工具補上同樣的檢查——原本只檢查武器存不存在（`entry is None`），沒檢查武器存在但
+  沒追蹤彈藥的情況，會在 `mutate` 內部 `KeyError`；改成先回傳清楚的錯誤訊息給 Keeper。
+- **🔴 LINE 端完全沒有解決 `pending_pdf_upload` 的方法**（`app/commands.py`）：LINE 沒有按鈕／
+  互動元件機制，`app/main.py` 只呼叫得到 `handle_pdf_upload`，從來沒有呼叫
+  `resolve_pdf_upload_choice` 的地方——LINE 群組只要劇本進行中又上傳一次 PDF，就會卡在「待確認」
+  狀態永遠出不來（`scenario_text` 不會更新，之後每次再傳 PDF 都會被上一輪 #68 加的「先解決待決選擇」
+  guard 擋掉）。新增 `/coc pdf new`／`/coc pdf fix` 文字指令（也接受「全新」「全新劇本」「修正」
+  「修正目前劇本」），兩個平台都能用（Discord 保留原本的按鈕，文字指令是額外的備援）。實作上把
+  `resolve_pdf_upload_choice` 內部邏輯拆成 `_resolve_pdf_upload_choice_locked`（假設呼叫者已經拿到
+  `get_conversation_lock`）——因為 `/coc pdf ...` 是在 `_handle_coc_command` 裡處理，而
+  `_handle_coc_command` 的唯一呼叫者（`handle_text_message` 的 `/coc` 分支）已經包了一層
+  `get_conversation_lock`，`asyncio.Lock` 不可重入，如果直接呼叫原本會自己再上鎖一次的
+  `resolve_pdf_upload_choice` 會直接死鎖；按鈕那邊（本來就沒有持有這個鎖）維持呼叫外層有上鎖版本的
+  `resolve_pdf_upload_choice`。
+- **🟡 兩份 PDF 幾乎同時上傳，頁面圖片寫入可能跟狀態更新對不上**（`app/commands.py`）：
+  `clear_page_images`／`save_page_image` 原本在 `get_conversation_lock` 之外執行，跟耗時的 OCR
+  抽取一樣沒有序列化——兩份 PDF 幾乎同時上傳時，圖片清除／寫入可能交錯（A 清除、B 清除+寫入、A 才
+  寫入），導致 `/coc showpage` 最後顯示的圖片跟鎖內決定出來的「目前劇本」對不上。搬進
+  `get_conversation_lock` 區塊內，跟狀態更新一起序列化。
+- **就緒名冊玩家欄位改用平台 mention，不再印原始 ID**（`app/commands.py` 新增 `FormatMention` 型別、
+  `app/discord_bot.py`）：上一輪 #68 判斷「`app/commands.py` 是刻意保持平台無關，硬塞 Discord 的
+  `<@id>` 語法會破壞這層抽象」本身沒錯——這個模組真的同時被 LINE（`app/main.py`）和 Discord
+  （`app/discord_bot.py`）共用——但正確做法是比照現有的 `GetDisplayName` callback 模式（用來解析
+  「當前發話者」的顯示名稱），新增一個平行的 `FormatMention`（解析「任意 owner_id」該怎麼顯示）由
+  adapter 注入，而不是整個放棄這個功能。`handle_text_message`／`_handle_coc_command`／
+  `_build_readiness_roster` 都新增這個參數（預設值是原樣印出 owner_id，所以沒傳這個參數的呼叫端
+  行為完全不變）；Discord 端傳入 `lambda owner_id: f"<@{owner_id}>"`（不需要額外呼叫 API，Discord
+  client 端就能把 `<@id>` 解析成可點擊的名字）；LINE 端維持用預設值，沒有改動 `app/main.py`。
+- **實測過**：
+  - `sheet_text()`／`dynamic_state_text()`：混合一把有追蹤彈藥的槍跟一把沒追蹤彈藥的近戰武器（拳頭），
+    確認兩種輸出都不再 `KeyError`，近戰武器只印名字、槍照樣印彈藥數。
+  - `adjust_ammo`：對只帶近戰武器的角色呼叫 `adjust_ammo`，確認回傳清楚的 `ok: False` 錯誤，不是
+    `KeyError` 例外。
+  - `/coc pdf fix`（真實端到端，走 `handle_text_message` 完整路徑，不是只測內部函式）：模擬一個進行中
+    的舊劇本 + 一筆待決的 `pending_pdf_upload`，發送「/coc pdf fix」文字訊息，確認在 5 秒逾時內正常
+    回應完成（沒有死鎖）、`pending_pdf_upload` 正確清空、`scenario_title` 正確變成新劇本標題。
+  - `_build_readiness_roster`：分別用預設（印 `u1`）跟傳入 `format_mention`（印 `<@u1>`）呼叫，確認
+    兩種輸出都正確、其餘格式不受影響。
+  - `import app.commands`／`app.discord_bot`／`app.main` 全部確認可正常載入。
+  - 這個 worktree 用的是自己獨立的本機 DB（不是正式環境共用的那份），測試用的 key 也都用
+    `db.delete_json` 清乾淨，過程中確認正式環境資料庫完全沒被動到。
