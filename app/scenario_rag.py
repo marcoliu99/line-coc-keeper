@@ -27,12 +27,15 @@ falls back to pure BM25, exactly like before embeddings existed here.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 
 from app import db
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+
+_logger = logging.getLogger(__name__)
 
 _PAGE_SPLIT_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
@@ -61,6 +64,9 @@ class _Chunk:
     tokens: list[str] = field(default_factory=list)
     term_counts: dict[str, int] = field(default_factory=dict)
     embedding: list[float] | None = None
+    # Cached |embedding| — computed once (build_index / _load_index_from_disk),
+    # not recomputed per search/per comparison. See _cosine_similarity.
+    norm: float = 0.0
 
 
 @dataclass
@@ -181,13 +187,40 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
         return None
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0 or norm_b == 0:
+def _vector_norm(vec: list[float]) -> float:
+    return math.sqrt(sum(x * x for x in vec))
+
+
+def _cosine_similarity(a: list[float], norm_a: float, b: list[float], norm_b: float) -> float:
+    """Exact cosine similarity, dot(a,b) / (|a|*|b|) — norms are passed in
+    pre-computed rather than recomputed here.
+
+    An earlier version of this function skipped normalization entirely,
+    assuming OpenAI's embeddings are unit vectors (measured at the time as
+    |v| within ~3e-4 of 1.0 for the configured model). That was reverted:
+    even that small a deviation isn't negligible here, because the result
+    feeds a hard threshold (_MIN_COSINE_RELEVANCE, calibrated in raw cosine
+    units) and a full ranking sort — a chunk whose true cosine sits within
+    ~1e-3 of the threshold, or within ~1e-3 of another chunk's score, could
+    have the gate or the ordering flip purely from which side of 1.0 each
+    vector's actual norm happened to land on. That's a real, not
+    theoretical, correctness risk given how close real production queries
+    scored to the threshold (see _MIN_COSINE_RELEVANCE's own comment).
+
+    What's still worth keeping from that version: recomputing norm_a (the
+    query vector's norm) and norm_b (a chunk's norm) from scratch on every
+    single comparison was the actual waste — norm_a is identical across all
+    O(chunks) comparisons in one search, and norm_b never changes once an
+    embedding is computed. So both are computed ONCE (see build_index,
+    _load_index_from_disk, and search below) and cached/passed in here,
+    instead of being recomputed per comparison — this keeps ~the same
+    speedup as skipping normalization, without the approximation, and
+    without depending on the embedding source producing unit vectors at
+    all."""
+    denom = norm_a * norm_b
+    if denom == 0:
         return 0.0
-    return dot / (norm_a * norm_b)
+    return sum(x * y for x, y in zip(a, b)) / denom
 
 
 def _compute_bm25_stats(chunks: list[_Chunk]) -> tuple[dict[str, int], float]:
@@ -232,24 +265,35 @@ def build_index(scenario_text: str) -> ScenarioIndex:
     if embeddings is not None:
         for chunk, emb in zip(chunks, embeddings):
             chunk.embedding = emb
+            chunk.norm = _vector_norm(emb)
 
     return ScenarioIndex(
         chunks=chunks, doc_freq=doc_freq, avg_length=avg_length, text_hash=text_hash, has_embeddings=has_embeddings
     )
 
 
-def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk) -> float:
+def _idf_cache(index: ScenarioIndex, query_tokens: list[str]) -> dict[str, float]:
+    """Precomputes each query term's IDF once per search — it only depends on
+    n_docs/doc_freq (both index-level, not per-chunk), so recomputing it
+    inside _bm25_score's per-chunk loop (as this used to) redid the same
+    math.log call once per (chunk, term) pair instead of once per term:
+    O(chunks * query_terms) work for a value that's actually O(query_terms)."""
     n_docs = len(index.chunks)
+    return {
+        term: math.log((n_docs - index.doc_freq.get(term, 0) + 0.5) / (index.doc_freq.get(term, 0) + 0.5) + 1)
+        for term in set(query_tokens)
+    }
+
+
+def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, idf_cache: dict[str, float]) -> float:
     score = 0.0
     doc_len = len(chunk.tokens)
     for term in set(query_tokens):
         freq = chunk.term_counts.get(term, 0)
         if freq == 0:
             continue
-        df = index.doc_freq.get(term, 0)
-        idf = math.log((n_docs - df + 0.5) / (df + 0.5) + 1)
         denom = freq + _K1 * (1 - _B + _B * doc_len / (index.avg_length or 1))
-        score += idf * (freq * (_K1 + 1)) / denom
+        score += idf_cache[term] * (freq * (_K1 + 1)) / denom
     return score
 
 
@@ -284,7 +328,8 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     if not query_tokens:
         return []
 
-    bm25_raw = {id(c): _bm25_score(index, query_tokens, c) for c in index.chunks}
+    idf_cache = _idf_cache(index, query_tokens)
+    bm25_raw = {id(c): _bm25_score(index, query_tokens, c, idf_cache) for c in index.chunks}
     matched = [c for c in index.chunks if bm25_raw[id(c)] > 0]
 
     if not index.has_embeddings:
@@ -299,6 +344,7 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
     query_vec = query_embedding[0]
+    query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
     weight = max(0.0, min(1.0, SCENARIO_RAG_EMBEDDING_WEIGHT))
@@ -308,7 +354,7 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     for c in index.chunks:
         if c.embedding is None:
             continue
-        cos = _cosine_similarity(query_vec, c.embedding)
+        cos = _cosine_similarity(query_vec, query_norm, c.embedding, c.norm)
         cosine_scores[id(c)] = cos
         if cos >= _MIN_COSINE_RELEVANCE:
             candidates.add(id(c))
@@ -355,7 +401,16 @@ def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
         data = db.get_json("scenario_indexes", group_id)
         if data is None:
             return None
-        chunks = [_Chunk(page=c["page"], text=c["text"], embedding=c.get("embedding")) for c in data["chunks"]]
+        chunks = []
+        for c in data["chunks"]:
+            embedding = c.get("embedding")
+            chunks.append(_Chunk(
+                page=c["page"], text=c["text"], embedding=embedding,
+                # Recomputed on load rather than persisted: cheap (O(chunks),
+                # once per bot restart) and avoids needing a schema migration
+                # for indexes saved before `norm` existed on this dataclass.
+                norm=_vector_norm(embedding) if embedding is not None else 0.0,
+            ))
         doc_freq, avg_length = _compute_bm25_stats(chunks)
         return ScenarioIndex(
             chunks=chunks,

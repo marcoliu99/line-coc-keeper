@@ -491,6 +491,51 @@ _SEARCH_SCENARIO_TOOL = {
     },
 }
 
+_KP_ASSISTANT_READ_ONLY_TOOL_NAMES = {
+    "get_character_sheet",
+    "get_combat_status",
+    "search_memory",
+    "search_scenario",
+}
+
+
+_KP_ASSISTANT_PROMPT = """# KP 助手模式（最高優先級主持指令）
+
+目前這一則訊息的發言者是「KP 助手」，不是玩家角色、調查員、NPC，也不是遊戲世界中的人物。
+
+KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者。他的訊息屬於 OOC（Out of Character）主持層指令、規則補充、劇情修正、事實更正、問題或建議。
+
+你必須遵守以下規則：
+
+1. 不得把 KP 助手的發言解讀成任何角色的台詞、行動、移動、檢定或戰鬥行動。
+
+2. 不得詢問 KP 助手「你要做什麼？」、「你要去哪裡？」或其他只適用於玩家角色的問題。
+
+3. KP 助手的明確主持指令，優先級高於你自己的敘事判斷、劇情推測、NPC 行動選擇與場景安排。
+   如果 KP 助手要求你改變、停止、重寫或修正原本準備進行的敘事，你必須依照他的指令處理。
+
+4. 如果 KP 助手指出你先前對劇本、NPC、規則、場景或事件的理解有誤，應把他的更正視為主持層修正，立即依照修正重新判斷，不要堅持先前自己的理解。
+
+5. KP 助手可以補充目前上下文中沒有的主持資訊。除非該資訊與程式提供的 authoritative state 衝突，否則應視為有效的主持資訊。
+
+6. 以下資料屬於程式已確定的 authoritative state，KP 助手不能只靠自然語言要求你竄改：
+   - 已完成的擲骰結果與成功等級
+   - Map Engine 已確定的位置
+   - HP、SAN、MP、Luck 等程式保存的數值
+   - 彈藥與其他程式追蹤的角色狀態
+   - 正式戰鬥的先攻順位與程式確定的戰鬥狀態
+   - 其他工具或規則引擎已回傳為確定事實的結果
+
+   如果 KP 助手的要求與上述 authoritative state 衝突，保留程式確定的事實，並簡短告知 KP 助手衝突之處；除此之外，優先服從 KP 助手。
+
+7. KP 助手不是玩家，所以不要替他建立角色狀態、要求技能檢定、要求 SAN 檢定、加入戰鬥順位或追蹤地圖位置。
+
+8. 回覆 KP 助手時可以使用正常、直接的主持討論語氣，不需要維持對玩家使用的恐怖小說敘事風格，除非 KP 助手明確要求你產生一段要直接呈現給玩家的敘事。
+
+9. KP 助手若要求你「重新回答」、「改成……」、「不要……」、「接下來……」、「這裡應該……」等，應將其視為對你這位 Keeper 的直接主持指令，而不是遊戲世界中的角色言論。
+
+10. 不要自行降低 KP 助手指令的權重，不要把明確指令僅視為可選建議。除非與 authoritative state 衝突，KP 助手的明確指令必須執行。"""
+
 
 def find_character(state: GroupState, name: str) -> Character | None:
     if not name:
@@ -618,40 +663,88 @@ def _commit_turn_result(
 
 
 def _persist_memory_maintenance_state(
-    group_id: str, campaign_summary: str, trimmed_log: list[dict[str, str]]
+    group_id: str, campaign_summary: str, dropped_chunk: list[dict[str, str]]
 ) -> None:
     with locks.get_state_lock(group_id):
         latest_state = load_state(group_id)
-        latest_state.campaign_summary = campaign_summary
-        latest_state.log = trimmed_log
-        save_state(latest_state)
+        # Only apply anything if the front of the freshly-reloaded log still
+        # matches what was actually dropped — guards against e.g. a
+        # concurrent /coc newgame reset, or another maintenance pass having
+        # already trimmed this exact chunk. On a mismatch, skip BOTH the log
+        # trim and the campaign_summary update (not just the trim): the
+        # summary was derived from `dropped_chunk`, which no longer reflects
+        # what's actually at the front of the current log, so applying it
+        # anyway would bleed a stale/unrelated summary into whatever state
+        # is live now (e.g. a brand-new campaign after /coc newgame
+        # inheriting leftover summary text from the campaign it replaced).
+        # Skipping entirely costs nothing but retrying this trim on a later
+        # turn — never a correctness problem, and never a partial write.
+        n = len(dropped_chunk)
+        if latest_state.log[:n] == dropped_chunk:
+            latest_state.log = latest_state.log[n:]
+            latest_state.campaign_summary = campaign_summary
+            save_state(latest_state)
+
+
+# Guards against more than one run_post_turn_maintenance pass running
+# concurrently for the same group_id — see that function's own docstring.
+_maintenance_in_flight: set[str] = set()
 
 
 def run_post_turn_maintenance(group_id: str) -> None:
-    with locks.get_state_lock(group_id):
-        latest_state = load_state(group_id)
-        if len(latest_state.log) <= MAX_LOG_TURNS * 4:
-            return
-        keep_from = -MAX_LOG_TURNS * 2
-        base_summary = latest_state.campaign_summary
-        log_snapshot = [dict(message) for message in latest_state.log]
-        dropped_chunk = log_snapshot[:keep_from]
-        trimmed_log = log_snapshot[keep_from:]
+    """Called after every turn (see app/commands.py's
+    _spawn_post_turn_maintenance, which now fires this as an independent
+    background task rather than awaiting it inline). Only does real work
+    once the log actually crosses the trim threshold — every other call is a
+    cheap no-op. `_maintenance_in_flight` skips a call outright if a pass is
+    already running for this group_id: without it, several turns landing
+    back-to-back while the log is still above threshold would each spawn
+    their own full pass (duplicate LLM summarization + embedding API costs),
+    racing on the same log/memory-chunk data — memory_rag.append_memory in
+    particular does its own unlocked read-modify-write and is only ever
+    called from here, so serializing calls to this function is what actually
+    keeps two of its calls from stepping on each other, not any locking
+    inside append_memory itself.
 
-    # Rolling summarization (see summarize_log_chunk above): fold the
-    # chunk about to be dropped into campaign_summary *before* dropping
-    # it, instead of just discarding it — this is the one rare turn every
-    # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
-    # early plot points survive past what the verbatim log can hold.
-    campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
-    # Also persist the chunk's *original* wording into the searchable
-    # memory index (app/memory_rag.py) — campaign_summary alone would
-    # keep recompressing an already-compressed summary on every future
-    # trim, eroding fine detail a little more each pass; this keeps the
-    # verbatim text retrievable via search_memory even after that.
-    formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
-    memory_rag.append_memory(group_id, formatted_chunk)
-    _persist_memory_maintenance_state(group_id, campaign_summary, trimmed_log)
+    The check-then-add on `_maintenance_in_flight` below is itself wrapped in
+    `locks.get_state_lock(group_id)` — this function runs via
+    `asyncio.to_thread` (see _spawn_post_turn_maintenance), i.e. on real OS
+    worker threads, not just concurrent asyncio tasks, so the GIL making each
+    individual `in`/`.add()` call atomic does NOT make the pair atomic: two
+    threads could otherwise both observe `group_id not in
+    _maintenance_in_flight` before either adds it, both proceed, and run two
+    overlapping passes anyway — exactly the failure mode this guard exists
+    to prevent."""
+    with locks.get_state_lock(group_id):
+        if group_id in _maintenance_in_flight:
+            return
+        _maintenance_in_flight.add(group_id)
+    try:
+        with locks.get_state_lock(group_id):
+            latest_state = load_state(group_id)
+            if len(latest_state.log) <= MAX_LOG_TURNS * 4:
+                return
+            keep_from = -MAX_LOG_TURNS * 2
+            base_summary = latest_state.campaign_summary
+            log_snapshot = [dict(message) for message in latest_state.log]
+            dropped_chunk = log_snapshot[:keep_from]
+
+        # Rolling summarization (see summarize_log_chunk above): fold the
+        # chunk about to be dropped into campaign_summary *before* dropping
+        # it, instead of just discarding it — this is the one rare turn every
+        # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
+        # early plot points survive past what the verbatim log can hold.
+        campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
+        # Also persist the chunk's *original* wording into the searchable
+        # memory index (app/memory_rag.py) — campaign_summary alone would
+        # keep recompressing an already-compressed summary on every future
+        # trim, eroding fine detail a little more each pass; this keeps the
+        # verbatim text retrievable via search_memory even after that.
+        formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
+        memory_rag.append_memory(group_id, formatted_chunk)
+        _persist_memory_maintenance_state(group_id, campaign_summary, dropped_chunk)
+    finally:
+        _maintenance_in_flight.discard(group_id)
 
 
 def _execute_tool(
@@ -660,8 +753,15 @@ def _execute_tool(
     tool_input: dict,
     private_messages: list[tuple[str, str]],
     image_requests: list[tuple[str | None, int]],
+    speaker_role: str = "player",
 ) -> dict:
     try:
+        if speaker_role == "kp_assistant" and name not in _KP_ASSISTANT_READ_ONLY_TOOL_NAMES:
+            return {
+                "ok": False,
+                "error": "KP Assistant turn 只能使用 read-only 查詢工具，不能透過工具修改 deterministic game state 或建立玩家行動流程。",
+            }
+
         if name == "roll_dice":
             r = dice.roll_expression(tool_input["expression"])
             return {"ok": True, "expression": r.expression, "rolls": r.rolls, "modifier": r.modifier, "total": r.total}
@@ -872,7 +972,11 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            item = tool_input.get("item", "")
+            # .strip() to match add_carried_item's own normalization above — otherwise
+            # an item with incidental whitespace ("鑰匙 " vs "鑰匙") would silently fail
+            # to remove (the no-op-skip logic below would report "unchanged" since the
+            # stripped, stored string never string-equals the unstripped one being removed).
+            item = tool_input.get("item", "").strip()
             def mutate(target_state: GroupState) -> _StateMutation:
                 target_char = find_character(target_state, tool_input.get("investigator", ""))
                 changed = item in target_char.carried_items
@@ -889,20 +993,32 @@ def _execute_tool(
             tag = tool_input.get("tag", "").strip()
             if not tag:
                 return {"ok": False, "error": "tag 不能是空字串"}
-            if tag not in char.status_tags:
-                char.status_tags.append(tag)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = tag not in target_char.status_tags
+                if changed:
+                    target_char.status_tags.append(tag)
+                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
+            investigator, tags = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "remove_status_tag":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            tag = tool_input.get("tag", "")
-            if tag in char.status_tags:
-                char.status_tags.remove(tag)
-                save_state(state)
-            return {"ok": True, "investigator": char.name, "status_tags": char.status_tags}
+            # .strip() to match add_status_tag's own normalization above — otherwise a
+            # tag with incidental whitespace ("昏迷 " vs "昏迷") would silently fail to
+            # remove (the no-op-skip logic below would report "unchanged" since the
+            # stripped, stored string never string-equals the unstripped one being removed).
+            tag = tool_input.get("tag", "").strip()
+            def mutate(target_state: GroupState) -> _StateMutation:
+                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                changed = tag in target_char.status_tags
+                if changed:
+                    target_char.status_tags.remove(tag)
+                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
+            investigator, tags = _mutate_and_save_state(state, mutate)
+            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -1214,7 +1330,12 @@ def _build_static_prompt(state: GroupState) -> str:
 """
 
 
-def _build_dynamic_prompt(state: GroupState, user_id: str, resolved_location: dict | None = None) -> str:
+def _build_dynamic_prompt(
+    state: GroupState,
+    user_id: str,
+    resolved_location: dict | None = None,
+    speaker_role: str = "player",
+) -> str:
     """Combat status + each character's *dynamic* state (HP/SAN/Luck/ammo/
     carried items — see Character.dynamic_state_text; the static attributes/
     skills counterpart lives in _build_static_prompt's cached block instead).
@@ -1271,9 +1392,11 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 攻擊的成功等級，填進 offer_check_choice 的 attacker_tier，玩家真的擲完骰後系統會自動判定攻擊有沒有
 命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。"""
 
+    kp_assistant_block = f"\n\n{_KP_ASSISTANT_PROMPT}" if speaker_role == "kp_assistant" else ""
+
     return f"""# 目前動態數值（HP/SAN/Luck/彈藥/攜帶物品/狀態——這些才是當下最新的，屬性和技能請看上面的角色登記區塊）
 {chars_text}{secret_block}
-{combat_block}{location_block}
+{combat_block}{location_block}{kp_assistant_block}
 """
 
 
@@ -1328,8 +1451,32 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
         return current_summary
 
 
+def _format_turn_message(speaker_name: str, message_text: str, speaker_role: str) -> str:
+    if speaker_role == "kp_assistant":
+        return (
+            "[KP ASSISTANT / OOC HOST INSTRUCTION]\n\n"
+            "以下訊息來自本局唯一的 KP 助手。這不是玩家角色行動。\n"
+            "請依照「KP 助手模式」處理，並優先執行其中的明確主持指令。\n\n"
+            f"KP助手（{speaker_name}）：\n"
+            f"{message_text}"
+        )
+    return f"{speaker_name}：{message_text}"
+
+
+def _tools_for_speaker_role(speaker_role: str) -> list[dict]:
+    base_tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
+    if speaker_role != "kp_assistant":
+        return base_tools
+    return [tool for tool in base_tools if tool["name"] in _KP_ASSISTANT_READ_ONLY_TOOL_NAMES]
+
+
 def run_turn(
-    state: GroupState, user_id: str, speaker_name: str, message_text: str, resolved_location: dict | None = None
+    state: GroupState,
+    user_id: str,
+    speaker_name: str,
+    message_text: str,
+    resolved_location: dict | None = None,
+    speaker_role: str = "player",
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """Returns (public_reply_text, private_messages, image_requests):
     - private_messages: (owner_id, message) pairs queued via send_private_info.
@@ -1338,17 +1485,23 @@ def run_turn(
     `resolved_location` is app/commands.py's Map/Scene Engine result (see
     _resolve_map_action there) — {"room_name", "room_description"} when this
     message's movement was already resolved deterministically against a
-    scenario floor plan, else None. `user_id` is the speaking character's
-    owner_id, used to look up their per-character map position when
+    scenario floor plan, else None. `user_id` is the speaker's platform user id,
+    used to look up per-character map position for player speakers when
     resolved_location wasn't computed this turn (see GroupState.current_map_page).
+    `speaker_role` is an explicit caller-provided identity marker ("player" or
+    "kp_assistant"). KP Assistant turns receive the OOC host-instruction prompt
+    and message wrapper below; tool lists and history persistence are unchanged.
     The caller is responsible for actually delivering private_messages/image_requests
     via platform-specific channels; nothing here sends anything itself."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
     if provider is None:
         return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic、gemini 或 openai）", [], []
 
+    is_ephemeral = speaker_role == "kp_assistant"
     static_prompt = _build_static_prompt(state)
-    dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location)
+    dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
+    turn_message = _format_turn_message(speaker_name, message_text, speaker_role)
+
     # No extra slicing here — state.log is already bounded to at most
     # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
     # at that one point, back down to MAX_LOG_TURNS*2). Slicing it again on
@@ -1366,22 +1519,25 @@ def run_turn(
     history = state.log
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
-    tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
+    tools = _tools_for_speaker_role(speaker_role)
 
     openai_response_id: str | None = None
     if LLM_PROVIDER == "openai":
         def remember_openai_response_id(response_id: str) -> None:
             nonlocal openai_response_id
             openai_response_id = response_id
-            state.openai_previous_response_id = response_id
+            if not is_ephemeral:
+                state.openai_previous_response_id = response_id
 
         final_text = provider.run_conversation(
             static_prompt,
             dynamic_prompt,
             tools,
             history,
-            f"{speaker_name}：{message_text}",
-            lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),
+            turn_message,
+            lambda name, tool_input: _execute_tool(
+                state, name, tool_input, private_messages, image_requests, speaker_role
+            ),
             MAX_TOOL_ITERATIONS,
             previous_response_id=state.openai_previous_response_id,
             on_response_id=remember_openai_response_id,
@@ -1392,14 +1548,17 @@ def run_turn(
             dynamic_prompt,
             tools,
             history,
-            f"{speaker_name}：{message_text}",
-            lambda name, tool_input: _execute_tool(state, name, tool_input, private_messages, image_requests),
+            turn_message,
+            lambda name, tool_input: _execute_tool(
+                state, name, tool_input, private_messages, image_requests, speaker_role
+            ),
             MAX_TOOL_ITERATIONS,
         )
 
-    turn_log_entries = [
-        {"role": "user", "content": f"{speaker_name}：{message_text}"},
-        {"role": "assistant", "content": final_text},
-    ]
-    _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
+    if not is_ephemeral:
+        turn_log_entries = [
+            {"role": "user", "content": turn_message},
+            {"role": "assistant", "content": final_text},
+        ]
+        _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     return final_text, private_messages, image_requests

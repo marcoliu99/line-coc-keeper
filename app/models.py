@@ -421,6 +421,7 @@ class GroupState:
     scenario_title: str = ""
     scenario_text: str = ""
     active: bool = False
+    kp_assistant_user_id: str = ""
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
     log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
     # Rolling summary of whatever's been trimmed off the front of `log` so far
@@ -484,6 +485,12 @@ class GroupState:
     # "options": [{"tier": str, "cost": int}, ...]}.
     pending_luck_decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # Set once /coc start successfully delivers the opening narration (see
+    # app/scenario_intro.py and app/commands.py's "start" subcommand) — guards
+    # against a second run silently re-narrating the opening and duplicating
+    # it in the log. Reset to False by /coc newgame like every other field.
+    game_started: bool = False
+
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
             if c.name == name:
@@ -496,6 +503,7 @@ class GroupState:
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
             "active": self.active,
+            "kp_assistant_user_id": self.kp_assistant_user_id,
             "characters": {k: v.to_dict() for k, v in self.characters.items()},
             "log": self.log,
             "campaign_summary": self.campaign_summary,
@@ -512,6 +520,7 @@ class GroupState:
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
             "pending_luck_decisions": self.pending_luck_decisions,
+            "game_started": self.game_started,
         }
 
     @staticmethod
@@ -521,6 +530,7 @@ class GroupState:
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
             active=data.get("active", False),
+            kp_assistant_user_id=data.get("kp_assistant_user_id", ""),
             characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
             log=data.get("log", []),
             campaign_summary=data.get("campaign_summary", ""),
@@ -544,4 +554,5 @@ class GroupState:
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
             pending_luck_decisions=data.get("pending_luck_decisions", {}),
+            game_started=data.get("game_started", False),
         )

@@ -30,7 +30,7 @@ from typing import Awaitable, Callable
 import yaml
 
 from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor
-from app import scenario_compare, scenario_index, scenario_rag
+from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import OCCUPATIONS, GroupState, generate_investigator
@@ -62,6 +62,12 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc pregens → 查看這份劇本有沒有附帶的預製調查員
 ・/coc pregen 編號 → 選之前先看某位預製角色的完整屬性與技能
 ・/coc usepregen 編號 [自訂名稱] → 直接使用某位預製角色（每個人只能用一次，直到 /coc end；每個角色只能被一人選走）
+・/coc start → 角色都建好、準備開始時輸入，守密人會生成開場白帶大家進入劇情（優先用劇本自己寫的開場文字，沒有才自動生成）
+
+【KP 助手】
+・/coc kp → 登記自己為本局唯一的 KP 助手
+・/coc kp quit → 解除自己的 KP 助手身分
+・每局只能有一位 KP 助手；KP 助手與調查員角色互斥
 
 【檢定】
 ・/coc check → 守密人請你檢定時，自己擲骰（不是守密人幫你骰）；也可以自己主動打 /coc check 技能名 [獎勵骰數] [懲罰骰數]
@@ -157,6 +163,9 @@ async def handle_pdf_upload(
         state.scenario_title = title
         state.active = True
         state.openai_previous_response_id = ""
+        state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
+        # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
+        # first would find /coc start permanently refusing ("already started") for the new scenario.
         state.pregens = []  # clear the previous scenario's cached pregens — otherwise
         # a group that switches PDFs without running /coc newgame first would keep
         # seeing (and could even build a character off) the old scenario's pregens.
@@ -380,6 +389,52 @@ async def _deliver_side_effects(
             )
 
 
+# Background maintenance tasks (see _spawn_post_turn_maintenance below) have
+# to be kept referenced somewhere until they finish, or asyncio is free to
+# garbage-collect a still-running Task out from under itself. This set exists
+# purely to hold that reference; each task removes itself once done.
+_pending_maintenance_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_post_turn_maintenance(conversation_id: str) -> None:
+    """Fires keeper.run_post_turn_maintenance as an independent background
+    task instead of awaiting it inline. It used to be awaited from *inside*
+    the Keeper turn lock (and, on most call paths, the coarser per-
+    conversation lock too) — see _run_post_turn_maintenance_after_output
+    below. The player already has their reply by the time this runs; when a
+    trim actually fires (roughly every MAX_LOG_TURNS*2 turns), this call
+    makes a real LLM summarization request (2-5s) plus an embeddings API call
+    (300-800ms) synchronously in a worker thread, which meant the *next*
+    message for this conversation — even from a different player, doing
+    something with nothing to do with campaign_summary or memory indexing —
+    sat blocked behind that lock for however long maintenance happened to
+    take.
+
+    Detaching this from the turn-level locks is only safe because
+    keeper.run_post_turn_maintenance was hardened to tolerate running fully
+    unlocked around its own slow LLM/embedding calls: a per-group_id
+    in-flight guard keeps two passes for the same conversation from ever
+    overlapping, and its persist step re-derives what to trim from a freshly
+    reloaded state.log (content-matched against the chunk it actually
+    summarized) instead of blindly overwriting with a pre-computed snapshot
+    — otherwise a concurrent turn's _commit_turn_result landing in the gap
+    while maintenance is mid-flight would have its new log entries silently
+    discarded when maintenance's stale snapshot got written back. See
+    keeper.py's run_post_turn_maintenance/_persist_memory_maintenance_state
+    docstrings for the details; this was found and confirmed by data-loss
+    reproduction during PR review, not from first-principles design."""
+    task = asyncio.create_task(_run_post_turn_maintenance_safely(conversation_id))
+    _pending_maintenance_tasks.add(task)
+    task.add_done_callback(_pending_maintenance_tasks.discard)
+
+
+async def _run_post_turn_maintenance_safely(conversation_id: str) -> None:
+    try:
+        await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+    except Exception:
+        _logger.exception("post-turn maintenance failed (background) for conversation_id=%s", conversation_id)
+
+
 async def _run_post_turn_maintenance_after_output(
     conversation_id: str,
     reply: Reply,
@@ -389,25 +444,14 @@ async def _run_post_turn_maintenance_after_output(
     send_dm_image: SendDMImage,
     private_messages: list[tuple[str, str]],
     image_requests: list[tuple[str | None, int]],
+    run_maintenance: bool = True,
 ) -> None:
-    output_error: Exception | None = None
     try:
         await reply(public_message)
         await _deliver_side_effects(conversation_id, send_dm, send_image, send_dm_image, private_messages, image_requests)
-    except Exception as exc:
-        output_error = exc
-        raise
     finally:
-        try:
-            await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
-        except Exception:
-            if output_error is not None:
-                _logger.exception(
-                    "post-turn maintenance failed after public output failed for conversation_id=%s",
-                    conversation_id,
-                )
-            else:
-                raise
+        if run_maintenance:
+            _spawn_post_turn_maintenance(conversation_id)
 
 
 def _skill_names_match(a: str, b: str) -> bool:
@@ -599,10 +643,29 @@ async def _finalize_check_result(
         await reply(roll_feedback_text or roll_line)
 
     async def run_keeper_phase() -> None:
-        resolved_location = _resolve_map_action(state, user_id, keeper_message)
+        # Deliberately NOT running keeper_message through _resolve_map_action:
+        # keeper_message is a system-generated result narration (e.g. "（角色
+        # 擲骰做了一次「CON」檢定...）"), not the player's own words — but
+        # intent_parser.has_movement_verb's trigger list is broad enough (a
+        # bare "去"/"走" is enough) that ordinary narration text can trip it
+        # by accident (e.g. major-wound's "...請描述角色失去意識倒下的過程"
+        # contains "去"). When that happens, _resolve_map_action_core falls
+        # back to fuzzy-matching the *entire* narration text against every
+        # room name on the current map — any short, common room name (臥室,
+        # 書房, ...) that happens to appear as a substring anywhere in that
+        # text gets treated as "the player just moved there", handed to the
+        # Keeper as an authoritative Map Engine result it's told not to
+        # second-guess. That's a real, observed bug (an apparent teleport to
+        # an unrelated room right after a skill/sanity check), not a
+        # theoretical one. Passing None here costs nothing useful: the Keeper
+        # still learns the character's actual current room from state.
+        # current_map_page/current_room_id via _build_dynamic_prompt's own
+        # "resolved_location is None" fallback block — it just won't be
+        # mislabeled as a fresh Map Engine move this check never made.
+        resolved_location = None
         async with locks.get_keeper_turn_lock(conversation_id):
             keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location
+                keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location, "player"
             )
             if split_roll_feedback:
                 public_message = f"{keeper_header}\n\n{keeper_reply}" if keeper_header else keeper_reply
@@ -1015,7 +1078,7 @@ async def handle_text_message(
 
     if text.startswith("/coc"):
         async with locks.get_conversation_lock(conversation_id):
-            await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, text)
+            await _handle_coc_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
         return
 
     async with locks.get_conversation_lock(conversation_id):
@@ -1023,16 +1086,23 @@ async def handle_text_message(
         if not state.active:
             return  # ignore ordinary chit-chat until a scenario is actually loaded and running
 
-        if user_id not in state.characters:
+        is_kp_assistant = state.kp_assistant_user_id == user_id
+        if is_kp_assistant:
+            display_name = await get_display_name()
+            speaker_role = "kp_assistant"
+            resolved_location = None
+        elif user_id not in state.characters:
             display_name = await get_display_name()
             await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
             return
+        else:
+            display_name = state.characters[user_id].name
+            speaker_role = "player"
+            resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
 
-        display_name = state.characters[user_id].name
-        resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
         async with locks.get_keeper_turn_lock(conversation_id):
             reply_text, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, display_name, text, resolved_location
+                keeper.run_turn, state, user_id, display_name, text, resolved_location, speaker_role
             )
             await _run_post_turn_maintenance_after_output(
                 conversation_id,
@@ -1043,6 +1113,7 @@ async def handle_text_message(
                 send_dm_image,
                 private_messages,
                 image_requests,
+                run_maintenance=not is_kp_assistant,
             )
 
 
@@ -1101,10 +1172,6 @@ def _resolve_map_action_transaction(conversation_id: str, user_id: str, text: st
                 result = _resolve_map_action_core(state, user_id, text, allow_rag=False, rag_target_room=rag_room)
         _save_if_map_position_changed(state, user_id, before)
         return result.context
-
-
-def _resolve_map_action(state: GroupState, user_id: str, text: str) -> dict | None:
-    return _resolve_map_action_core(state, user_id, text).context
 
 
 def _resolve_map_action_core(
@@ -1239,6 +1306,12 @@ def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | Non
     )
 
 
+def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
+    if state.kp_assistant_user_id != user_id:
+        return None
+    return "你目前是這局的 KP 助手，不能同時建立或使用調查員角色。請先使用「/coc kp quit」解除 KP 助手身分。"
+
+
 def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
     with locks.get_state_lock(conversation_id):
         state = load_state(conversation_id)
@@ -1290,7 +1363,13 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
 
 
 async def _handle_coc_command(
-    conversation_id: str, user_id: str, reply: Reply, send_dm: SendDM, send_image: SendImage, text: str
+    conversation_id: str,
+    user_id: str,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    text: str,
 ) -> None:
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
@@ -1300,8 +1379,47 @@ async def _handle_coc_command(
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
         return
 
+    if sub == "kp":
+        action = parts[2] if len(parts) > 2 else None
+        state = load_state(conversation_id)
+
+        if action == "quit":
+            if state.kp_assistant_user_id != user_id:
+                await reply("你目前不是這局的 KP 助手。")
+                return
+            state.kp_assistant_user_id = ""
+            save_state(state)
+            await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
+            return
+
+        if action is not None:
+            await reply("用法：/coc kp 或 /coc kp quit")
+            return
+
+        if state.kp_assistant_user_id == user_id:
+            await reply("你已經是這局的 KP 助手。")
+            return
+        if state.kp_assistant_user_id:
+            await reply("這局已經有一位 KP 助手，不能同時登記第二位。")
+            return
+        if user_id in state.characters:
+            await reply("KP 助手與調查員角色互斥；你已經有調查員角色，不能登記為 KP 助手。")
+            return
+        if user_id in state.creation_sessions:
+            await reply("KP 助手與建角流程互斥；你正在進行互動式建角，請先輸入「/coc create cancel」取消後再登記 KP 助手。")
+            return
+
+        state.kp_assistant_user_id = user_id
+        save_state(state)
+        await reply("已登記你為這局的 KP 助手。")
+        return
+
     if sub == "pc":
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
         # A scenario with its own pregens is meant to be played with exactly
         # that cast — no custom quick-gen once any exist, only /coc pregen.
         if state.pregens:
@@ -1355,8 +1473,9 @@ async def _handle_coc_command(
     if sub == "end":
         state = load_state(conversation_id)
         state.active = False
+        state.kp_assistant_user_id = ""
         save_state(state)
-        await reply("遊戲已結束，遊戲紀錄與角色仍會保留。要開新的一局請用 /coc newgame。")
+        await reply("遊戲已結束，遊戲紀錄與角色仍會保留；KP 助手身分也已解除。要開新的一局請用 /coc newgame。")
         return
 
     if sub == "setskill":
@@ -1419,6 +1538,10 @@ async def _handle_coc_command(
     if sub == "create":
         action = parts[2] if len(parts) > 2 else None
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
 
         if action == "status":
             session = state.creation_sessions.get(user_id)
@@ -1476,6 +1599,10 @@ async def _handle_coc_command(
             return
         pool, skill, points_str = parts[2], parts[3], parts[4]
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
         session = state.creation_sessions.get(user_id)
         if not session:
             await reply("目前沒有進行中的建角流程，先輸入「/coc create 角色名 [職業]」開始。")
@@ -1538,6 +1665,10 @@ async def _handle_coc_command(
             await reply("用法：/coc usepregen 編號 [自訂名稱]")
             return
         state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
         if not state.pregens:
             await reply("還沒有抓取過預製角色，先輸入「/coc pregens」看看有哪些。")
             return
@@ -1570,6 +1701,74 @@ async def _handle_coc_command(
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")
             except Exception:
                 _logger.exception("send_dm (secret_goal on /coc pregen) failed for user_id=%s", user_id)
+        return
+
+    if sub == "start":
+        state = load_state(conversation_id)
+        if not state.active or not state.scenario_text:
+            await reply("目前還沒有載入劇本，請先上傳 PDF 劇本。")
+            return
+        if not state.characters:
+            await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
+            return
+        if state.game_started:
+            await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
+            return
+
+        # Prefer the scenario's own read-aloud opening text (see
+        # app/scenario_intro.py) over having the Keeper improvise one — many
+        # published scenarios already wrote exactly this, tuned for tone and
+        # hook by the scenario's own author.
+        extracted = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
+
+        if extracted["found"]:
+            opening_text = extracted["text"]
+            with locks.get_state_lock(conversation_id):
+                state = load_state(conversation_id)  # reload: the extraction call may have taken a while
+                if state.game_started:
+                    return  # someone else already ran /coc start while this one was in flight
+                # Every other code path that appends to state.log does so in a
+                # user/assistant pair (see keeper.py's _commit_turn_result) —
+                # this has to keep that invariant too, not just append a lone
+                # assistant entry. Anthropic's Messages API requires the
+                # *first* message in a conversation to have role "user"; a
+                # log that starts with (or only contains) an "assistant"
+                # entry makes every subsequent turn raise on the next
+                # run_conversation call, and since that failure happens
+                # before _commit_turn_result ever runs, state.log never
+                # advances past it — the whole game is stuck until /coc newgame.
+                state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
+                state.log.append({"role": "assistant", "content": opening_text})
+                state.game_started = True
+                save_state(state)
+            await reply(opening_text)
+            return
+
+        # No usable read-aloud text in the scenario — fall back to a normal
+        # Keeper turn (same run_turn/_commit_turn_result path as any other
+        # message) with a meta/out-of-character instruction instead of a
+        # player's line, so the Keeper improvises the scene-setting itself.
+        keeper_message = (
+            "（守密人，遊戲即將開始，劇本沒有寫現成的開場白，需要你自己撰寫一段。這份劇本沒有"
+            "明確的「序幕」或「開場」段落可以直接查到，不代表劇本沒有背景資訊——如果目前是檢索模式，"
+            "請呼叫 search_scenario 查詢劇本的背景設定、調查員的委託／緣由、故事開始的地點等關鍵字"
+            "（例如劇本標題、背景、委託人、開場地點），根據查到的背景資訊撰寫開場白，不要因為查不到"
+            "「開場」兩個字面就直接放棄。撰寫一段開場白，把調查員們帶入故事的起點——描述他們此刻"
+            "身處的場景、氛圍，以及是什麼把他們捲進這個劇本裡，控制在三百字以內，用第二人稱「你」"
+            "對調查員說話。這是遊戲的第一段敘述，還沒有任何人採取行動，不要假設玩家已經做了什麼、"
+            "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
+        )
+        async with locks.get_keeper_turn_lock(conversation_id):
+            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_turn, state, user_id, "守密人", keeper_message, None
+            )
+        with locks.get_state_lock(conversation_id):
+            state = load_state(conversation_id)
+            state.game_started = True
+            save_state(state)
+        await _run_post_turn_maintenance_after_output(
+            conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
+        )
         return
 
     if sub == "index":

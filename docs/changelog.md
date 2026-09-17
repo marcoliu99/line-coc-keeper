@@ -330,7 +330,7 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - LINE reply token 60 秒的限制目前只有 PDF 上傳那條路修好了（見上面「LINE reply token 的 60 秒限制」）。守密人回合本身（`keeper.run_turn`）如果剛好遇到很多次工具呼叫串在一起（例如複雜戰鬥一次要判定好幾個人的檢定），理論上一樣有機會撐超過 60 秒，這條路目前還是純用 `reply`，沒有比照 PDF 上傳做 reply+push 分流；還沒有實測案例踩到，但這是已知的同類風險，還沒修。
 - 守密人可以用 `send_private_info` 工具私訊玩家（見 [gameplay.md](gameplay.md)），但目前是**靜默失敗**：如果那位玩家在 LINE 還沒加 Bot 好友、或在 Discord 關閉了「允許伺服器成員私訊」，私訊會送不出去，`app/commands.py` 直接吞掉例外，群組裡不會有任何提示。之所以沒做失敗通知，是因為要在不洩漏私人內容本身的前提下告知「有訊息送不出去」，需要另外一條不佔用 LINE reply token 的訊息管道（跟 PDF 上傳那個 reply+push 分流是同一類問題），目前還沒有為一般對話回合做這層分流，之後如果要補，可以順便補這個。
   - 實測時還抓到一個更隱蔽的洩漏模式：守密人會在公開回覆裡寫類似「（如果骨董商在場，這裡就會認出這是卡西迪——但目前無人認得他）」這種括號旁白。這種寫法就算沒直接爆雷，也已經洩漏了「這裡有東西能被特定人物認出來」這件事本身，等於變相劇透。已經在系統提示詞裡明確禁止這種「條件式旁白／後設說明」，改成規則是：符合條件的角色真的在場就用 `send_private_info` 私訊，不在場就完全不提，不留下任何暗示。
-- 敘事節奏紀律、文風、孤注一擲、NPC 隊友設計指南（見 [gameplay.md](gameplay.md) 第 6 點）目前全都是系統提示詞層面的行為要求，沒有程式碼強制執行——參考了 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 這個純 prompt 型 KP skill 的做法。跟這個專案既有的 DEX 先攻順位、暫離跳過等規則不同的是，這幾項完全靠 LLM 自己遵守提示詞，沒有像 `app/combat.py` 那樣的程式碼守門，理論上模型偶爾還是可能忘記（例如孤注一擲問一半又自己算過、或一次講太多場景），沒有自動化測試能保證每次都遵守。
+- 敘事節奏紀律、文風、孤注一擲、NPC 隊友設計指南（見 [gameplay.md](gameplay.md) 第 7 點）目前全都是系統提示詞層面的行為要求，沒有程式碼強制執行——參考了 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 這個純 prompt 型 KP skill 的做法。跟這個專案既有的 DEX 先攻順位、暫離跳過等規則不同的是，這幾項完全靠 LLM 自己遵守提示詞，沒有像 `app/combat.py` 那樣的程式碼守門，理論上模型偶爾還是可能忘記（例如孤注一擲問一半又自己算過、或一次講太多場景），沒有自動化測試能保證每次都遵守。
 - 「★ 關鍵背景連結」（`/coc setconnection`）目前只是一個自由文字欄位加上提示詞層面「不能沒收搶救機會」的約束，沒有真的擋住守密人的 `adjust_character`／`sanity_check` 工具呼叫；換句話說技術上守密人還是叫得動工具直接刪掉，全靠提示詞自律。`/coc create` 互動建角流程也還沒有讓玩家在建角當下就設定這個欄位，得建完角色後另外呼叫 `/coc setconnection`。
 - NPC 隊友（`/coc combat addally`）只在戰鬥的先攻順位裡多一個「隊友」分類；戰鬥外沒有獨立的「NPC 隊友角色卡」資料結構（不像玩家角色有 `Character`），完全由守密人在敘事裡自己記住並扮演，沒有結構化資料能查詢或跨場景保留 NPC 隊友的技能數值。
 - 使用者提過一張更大的目標架構圖（玩家訊息 → Intent Parser → Keeper Skill → Deterministic Engine → Map/Scene Engine → Scenario RAG → LLM）。五層都做了對應版本：Map/Scene Engine（`app/scene_map.py`）、規則式的 Intent Parser（`app/intent_parser.py`，只做移動意圖偵測，不是那張圖上完整的意圖分類器）、Deterministic Engine 對應既有的 `app/dice.py`／`app/combat.py`、Scenario RAG（`app/scenario_rag.py`，見下方「Scenario RAG 是可選功能」那條）。
@@ -483,9 +483,185 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **回覆順序**：LuckSpendButton 的 split feedback 現在會先送出程式固定的 `🎲 角色｜技能 數值 / 花費 N 點幸運：骰值 → 結果 / 後續結果由守密人處理中……`，之後在 Keeper narration 前重新取得 legacy conversation lock，再取得 Keeper Turn Lock，固定維持 `Legacy -> Keeper Turn -> State` 的 lock order。
 - **保留不變**：Keeper narration 沿用既有 `🎭 角色｜技能結果` deterministic header；同一 conversation 仍只允許一個 Keeper AI turn。`/coc luck` 文字指令、CheckButton、其他 `/coc` 指令與 upload flows 都未修改。
 
-### 44. Discord OOC bypass 支援全形 `＠`
+### 44. KP Assistant 持久化身分欄位第一階段
+
+- **這次實際完成**：只修改 `app/models.py`，在 `GroupState` 新增 `kp_assistant_user_id: str = ""`，用來持久化記錄目前 conversation 的 KP 助手 user_id；沒有 KP 助手時維持空字串。
+- **JSON 相容性**：`GroupState.to_dict()` 現在會寫出 `kp_assistant_user_id`；`GroupState.from_dict()` 讀取舊 JSON 時若沒有此欄位，會以空字串作為預設值，因此既有遊戲 state 可以照常載入。
+- **尚未啟用行為**：這只是 KP Assistant 功能的資料層第一階段；尚未新增 `/coc kp`、`/coc kp quit` 或任何指令，也沒有修改 `Character`、`state.characters`、combat、Keeper prompt、一般訊息處理或角色流程。
+
+### 45. KP Assistant 身分綁定指令第二階段
+
+- **這次實際完成**：只修改 `app/commands.py`，新增 `/coc kp` 與 `/coc kp quit`。`/coc kp` 可在未載入劇本、遊戲尚未 active 前登記目前 user 為本 conversation 唯一 KP 助手；`/coc kp quit` 只允許現任 KP 助手解除自己的身分。
+- **限制條件**：同一 conversation 只能有一位 KP 助手；若已由其他 user 登記，新的 `/coc kp` 會被拒絕且不覆蓋原值。登記時若目前 user 已有 `Character` 或正在 `CreationSession` 建角，也會被拒絕，維持 KP 助手與調查員角色／建角流程互斥。
+- **Help 更新**：`/coc help` 新增 KP 助手區塊，列出 `/coc kp`、`/coc kp quit`、每局唯一 KP 與 KP 助手／調查員互斥的簡短說明。
+- **尚未啟用行為**：本階段沒有實作一般聊天中的 KP Assistant 分流、Keeper prompt、ephemeral history、OpenAI `previous_response_id` 隔離、combat、Map Engine、`/coc end` 清除或反方向阻止 KP 助手建角等後續功能。
+
+### 46. KP Assistant 與角色建立反方向互斥第三階段
+
+- **這次實際完成**：只修改 `app/commands.py`，新增 `_blocked_by_kp_assistant()`，讓現任 KP Assistant 無法使用 `/coc pc`、`/coc create` 或 `/coc usepregen` 建立／選擇調查員角色，必須先用 `/coc kp quit` 解除 KP 助手身分。
+- **Creation 防護**：`/coc create` 在 status/done/cancel/開始建角等建角流程前先檢查 KP Assistant 身分；`/coc alloc` 也套用相同保護，避免防禦性情境下 KP 助手繼續分配技能點或完成角色。
+- **結束本局**：`/coc end` 除了既有的 `state.active = False`，現在只額外清空 `state.kp_assistant_user_id`；角色、建角 session、log、campaign summary、combat、map、pending checks、pending Luck、劇本資料與其他 state 都不會因此清除。
+- **Newgame 行為**：`/coc newgame` 仍維持原本重建 `GroupState(group_id=conversation_id)` 的機制，會自然讓 `kp_assistant_user_id` 回到空字串，沒有新增 KP Assistant 專用特殊處理。
+- **尚未啟用行為**：本階段沒有實作一般聊天 KP 分流、Keeper prompt、ephemeral history、OpenAI `previous_response_id` 隔離、Map Engine bypass 或 KP Assistant 對 AI 的特殊 prompt。
+
+### 47. KP Assistant 一般文字辨識與 speaker_role 第四階段
+
+- **這次實際完成**：修改 `app/commands.py` 與 `app/keeper.py`，一般非 `/coc` 文字在遊戲 active 後會用 `state.kp_assistant_user_id == user_id` 辨識 KP Assistant；KP Assistant 不需要 `Character`，會用平台提供的 display name 作為 `speaker_name` 傳給 Keeper。
+- **Map Engine 邊界**：KP Assistant 的一般文字會直接以 `resolved_location = None` 呼叫 Keeper，不會執行 `_resolve_map_action_transaction()`，因此不會改動 `current_map_page`、`current_room_id` 或 `party_facing`。正常玩家仍維持既有 Character gate、角色名稱、Map Engine 與 movement resolution 流程。
+- **明確身分傳遞**：`keeper.run_turn()` 新增 `speaker_role: str = "player"` 參數；正常玩家傳 `speaker_role="player"`，KP Assistant 傳 `speaker_role="kp_assistant"`。本階段只接收並傳遞身分，不依賴角色名、occupation 或是否存在 Character 來推測。
+- **保留不變**：Discord 端既有 `@` / `<@` bypass 仍在進入 command routing 前生效，沒有修改。遊戲未 active 時一般文字仍照舊忽略。
+- **尚未啟用行為**：本階段沒有實作完整 KP Assistant Prompt、ephemeral history、OpenAI `previous_response_id` 分支隔離、KP Assistant 工具限制，也沒有修改 log、campaign summary、Memory RAG 或 post-turn maintenance。
+
+### 48. KP Assistant OOC 主持 Prompt 第五階段
+
+- **這次實際完成**：修改 `app/keeper.py`，當 `speaker_role="kp_assistant"` 時，Keeper 的 dynamic prompt 會加入完整 KP Assistant OOC 主持規則；正常玩家不會收到這段規則，仍走原本 player prompt / message 格式。
+- **優先級規則**：Prompt 明確要求 AI 將 KP Assistant 視為 OOC 人類共同主持者；KP 明確主持指令高於 AI 自行敘事判斷、NPC 行動選擇與場景安排，但程式提供的 authoritative state（已完成骰果、Map Engine 位置、HP/SAN/MP/Luck、彈藥、戰鬥狀態、工具結果等）仍高於 KP 的自然語言要求。
+- **非玩家處理**：Prompt 明確禁止把 KP Assistant 當成玩家角色、調查員、NPC 或遊戲世界人物，也不得要求 KP Assistant 做技能檢定、SAN 檢定、加入戰鬥順位或追蹤地圖位置；回覆 KP 時可以使用正常、直接的主持討論語氣。
+- **第二層訊息標記**：KP Assistant 的 actual user message 現在會包成 `[KP ASSISTANT / OOC HOST INSTRUCTION]`，並標明「這不是玩家角色行動」與「請依照 KP 助手模式處理」。正常玩家訊息仍維持既有 `角色名：訊息` 格式。
+- **尚未啟用行為**：本階段沒有實作 ephemeral history、OpenAI `previous_response_id` 分支隔離或 KP Assistant 專用工具限制，也沒有修改 `_commit_turn_result`、state.log、campaign summary、Memory RAG 或 post-turn maintenance。
+
+### 49. KP Assistant ephemeral OOC branch 第六階段
+
+- **這次實際完成**：修改 `app/keeper.py` 與 `app/commands.py`，以 `speaker_role == "kp_assistant"` 判斷 ephemeral OOC turn。KP Assistant turn 仍讀取既有正式上下文（static/dynamic prompt、既有 `state.log`、campaign summary、角色、戰鬥、劇本與既有 Memory RAG），但不成為新的正式玩家歷史。
+- **History 隔離**：KP input 與 AI 對 KP 的 response 都不會 append 到 `state.log`；`keeper.run_turn()` 在 ephemeral turn 不呼叫 `_commit_turn_result()`。KP response 仍會正常回覆到 Discord/LINE，只是不持久化為下一個正式玩家回合的 history。
+- **Maintenance / Memory 隔離**：KP turn 的 output 後會跳過 `run_post_turn_maintenance()`，因此不會更新 `campaign_summary`，也不會把本次 KP 對話寫入 Memory RAG 或觸發本次對話相關的 log trimming/indexing。既有 memory 仍可透過原本 prompt/tool 流程被讀取。
+- **OpenAI branch isolation**：KP turn 可以使用目前 canonical `state.openai_previous_response_id` 作為 temporary branch parent；OpenAI provider 既有 tool loop 仍會在當次函式內用 local `active_previous_response_id` 串接 temporary K1/K2/K3。KP turn 回傳的新 response id 不會寫回 `state.openai_previous_response_id`，下一個正式玩家 turn 仍接續 KP 介入前的 canonical 主線。
+- **保留不變**：正常玩家 turn 仍照原本機制 append user/assistant history、執行 post-turn maintenance、更新 campaign summary / Memory RAG，並將新的 OpenAI response id 寫回 canonical state。這次沒有用整份 `GroupState` rollback，也沒有實作 KP Assistant 專用工具權限限制。
+
+### 50. KP Assistant read-only tool allowlist 第七階段
+
+- **這次實際完成**：只修改 `app/keeper.py`，在 provider-independent Keeper 層新增 `_tools_for_speaker_role()`；`speaker_role="kp_assistant"` 時改用明確 read-only allowlist，而不是從完整工具集扣掉危險工具的 denylist。
+- **KP 可用工具**：KP Assistant 目前只取得 `get_character_sheet`、`get_combat_status`、`search_memory`，以及 `SCENARIO_RAG_ENABLED=true` 時才會加入的 `search_scenario`。這些工具只讀取既有角色／戰鬥／劇本檢索／Memory RAG 資訊，不修改 `GroupState`、pending state 或 deterministic game state。
+- **KP 排除工具**：KP Assistant 不再取得會修改 state 或建立玩家流程的工具，包括 `skill_check`、`sanity_check`、`offer_check_choice`、`adjust_character`、`adjust_ammo`、`add_carried_item`、`remove_carried_item`、`set_skill`、所有 combat mutation tools，以及會產生 side effect 的 `send_private_info` / `show_scenario_image`。`roll_dice` 與 `npc_skill_check` 雖不寫 state，但會產生新的隨機判定結果，也未列入 KP read-only allowlist。
+- **防禦性保護**：`_execute_tool()` 也加入 secondary guard；若 KP Assistant turn 因 bug 嘗試執行 allowlist 以外的工具，會直接回傳錯誤，不會執行 deterministic state mutation 或玩家行動流程。
+- **保留不變**：正常玩家仍取得原本完整 tool set；Step 6 的 ephemeral history / OpenAI temporary branch isolation 未修改。本階段沒有改 KP Prompt、commands、Map Engine、combat engine、`GroupState` schema 或 history semantics。
+
+### 51. `/coc start`：開場白（新遊戲開場敘述）
+
+- **這個問題怎麼發現的**：使用者直接點名要做——角色建好之後，守密人完全是被動的，要等玩家自己先開口描述行動，守密人才會有任何敘事回應；沒有一個明確的「遊戲正式開始」時刻，也沒有把調查員帶進場景的開場白。
+- **這個專案現在怎麼做**：
+  - 新增 `/coc start` 指令（手動觸發，不是建角後自動發生——多人團常常不是所有人同時建好角色，交給玩家自己判斷「大家都準備好了」再觸發比較合理）。條件：劇本要先上傳、至少要有一位角色，且同一局只能觸發一次（`GroupState.game_started` 旗標擋重複觸發，想重來要 `/coc newgame`）。
+  - 開場白內容分兩層：**優先**用新增的 `app/scenario_intro.py`（跟 `app/scenario_index.py` 抽 NPC／地點索引同一套「強制 tool call」手法）判斷劇本裡有沒有作者自己寫好、可以直接唸給玩家聽的開場文字——很多正式劇本本來就有這種段落，找到的話改寫成繁體中文直接用（忠於原文內容和語氣，但不逐字照抄），不用另外呼叫 LLM 生成，省一次不必要的花費；**找不到才**讓守密人自己寫，走正常的 `keeper.run_turn` 路徑，用一句 meta 指令（不是玩家台詞）請它根據劇本背景生一段開場白，控制在三百字內、第二人稱、不能假設玩家已經做了什麼、不能在開場白裡問問題。
+  - 找到現成開場文字時，直接把它寫進 `state.log`（一筆 `user` 加一筆 `assistant`，維持跟 `_commit_turn_result` 一樣的交替慣例——原因見下方「code review 抓到的問題」），不額外打一次 LLM；後續對話會自然接續這個開場，不會被 Keeper 誤讀成「還沒發生過的事」。
+- **實測過**（真的 LLM 呼叫）：
+  - `scenario_intro.extract_opening_narration`：一份劇本有明確「唸給玩家聽」的引導段落時正確判斷 found=true 並抽出忠於原文的改寫；另一份劇本只有背景說明／NPC／地點／劇情大綱、沒有真正寫給玩家聽的段落時，正確判斷 found=false，不會把背景說明硬套成開場白。空劇本、沒設定 LLM_PROVIDER 都正確回傳 found=false，不拋例外。
+  - `/coc start` 完整流程：找到現成開場文字時正確寫入 log、標記 `game_started`、不重複觸發第二次（第二次呼叫會被擋下並提示已經開始過，log 也確認沒有被多寫一筆）；找不到時正確落到 LLM 生成路徑，關掉 Scenario RAG 時能正確用到劇本裡的真實地名、人名、情節（不是空泛帶過）。沒有劇本、沒有角色兩種擋下情境也都測過，訊息正確。
+- **過程中發現、順便修正的一個問題**：Scenario RAG 開啟時，`/coc start` 是整場遊戲的第一輪，沒有任何歷史對話可以借力，守密人一開始只會用「背景設定」「開場地點」這種籠統詞查 `search_scenario`，查不到就直接放棄、寫出空泛敘述。把 fallback 用的 meta 指令改得更明確——告訴它「查不到『開場』兩個字不代表沒有背景資料，換用劇本標題／委託人／地點等關鍵字再查」，不要一查不到就放棄。
+- **code review 抓到的問題，已經修正**：
+  1. **🔴 Blocking**：找到現成開場文字那條路，原本只塞一筆 `assistant` 進 `state.log`，沒有前面的 `user` 訊息——Anthropic Messages API 規定第一則訊息角色必須是 `user`，會讓下一輪玩家講話時直接 `BadRequestError`，而且因為這個例外發生在 `_commit_turn_result` 存檔之前，`state.log` 永遠卡住，整局遊戲從此打不動，除非 `/coc newgame` 重來。已補上一筆 `user` 開場指令墊在前面，並在 `LLM_PROVIDER=openai` 端到端測過、也用假的 Anthropic client 攔截驗證過組出來的第一則訊息角色確實是 `user`。
+  2. **狀態鎖一致性**：`/coc start` 兩條路徑原本各自的 `load_state → 改 game_started → save_state` 都沒有包在 `locks.get_state_lock` 裡，是整個 change 裡唯二漏掉的讀改存操作；現在都補上了，跟這個 repo 其他所有讀改存的地方一致。
+  3. **`get_keeper_turn_lock`**：fallback 路徑呼叫 `keeper.run_turn` 原本沒有包這個鎖，這個 repo 其他呼叫 `run_turn` 的地方都有包；現在補上了。
+  4. **上傳新劇本沒有重置 `game_started`**：現在 `handle_pdf_upload` 會跟著 `scenario_text`／`active` 等欄位一起把 `game_started` 重置為 `False`，中途換劇本不用再記得先 `/coc newgame`。
+- **還是有的限制**：
+  1. Scenario RAG 模式下，`search_scenario` 對「劇本語言跟查詢語言不同、劇本內容篇幅較小或用詞不夠具體」這幾種情況查詢效果本來就有限（見上面第 22 項「還是有的限制」）——這次只是把 fallback 的指令改得更會嘗試查詢，沒有解決 RAG 檢索品質本身的問題；劇本語言與查詢用詞落差夠大時，守密人仍然可能查不到東西、只能寫出比較空泛的開場白（但不會編造劇本沒有的具體事實）。
+  2. 這份 changelog 從第 17 項開始有重複編號（前後兩段各自的 merge 歷史各自編了一次 17～25），是先前合併 `main`／`discord-only` 兩條分支遺留下來的既有問題，不在這次修正範圍內。
+
+### 52. 修正：檢定結果敘述被誤判成地圖移動，導致角色「瞬移」到無關房間
+
+- **這個問題怎麼發現的**：review 稍早合併的 state-lock 一致性修正時，多看了一眼 `_finalize_check_result`（`/coc check`／`/coc luck` 結算後接 Keeper 敘事那段）呼叫 `_resolve_map_action(state, user_id, keeper_message)` 這一行——一開始判斷這裡傳進去的 `keeper_message` 是系統自己組的檢定結果敘述，不是玩家打的話，`intent_parser` 應該不會誤判成移動意圖，看起來是個「有理論風險、但實際上踩不到」的死碼。後來使用者指出「瞬移」問題確實發生過，重新查證後發現判斷錯了。
+- **真正的原因**：`intent_parser.has_movement_verb` 判斷「這段文字有沒有移動意圖」用的關鍵字清單很寬（`進入|走進|...|走|去(?!過)`），只要文字裡出現單一個「去」（後面不是接「過」）或「走」就會判定為 True。COC7e 重傷判定失敗的敘述剛好有「請描述角色**失去**意識倒下的過程」——「失去」裡的「去」觸發了這個判斷。一旦判定為有移動意圖，`_resolve_map_action_core` 就會退回「拿整段文字去跟目前地圖上每個房間名稱比對」（`scene_map.find_room_by_text`）——只要劇本裡剛好有一個 2-4 字的常見房間名稱（「臥室」「書房」「地窖」之類）出現在這段檢定敘述的任何地方，就會被誤判成「玩家剛剛移動過去了」，`resolved_location` 會被塞進 Keeper 的 prompt，明確告訴它「地圖引擎已解析出的位置：現在人在『OO房間』」，Keeper 因此會照這個（錯誤的）地點接著敘事——這就是玩家看到的「瞬移」。因為這個誤判的寫入沒有經過任何存檔路徑（`_resolve_map_action` 本身不存檔，接續呼叫的 `keeper.run_turn` 結尾又是重新讀一份乾淨的 state 只複製 log 過去），角色實際存檔的房間位置不會真的被改壞，但**當下那一輪 Keeper 的敘述會憑空講錯地點**，下一輪又會神奇地「跳回」正確房間——玩家看到的就是一次性、自己會恢復、但完全無法理解原因的瞬移。
+- **這個專案現在怎麼做**：`_finalize_check_result` 不再呼叫 `_resolve_map_action`，改直接傳 `resolved_location=None`。Keeper 還是會正確知道角色目前在哪個房間——`_build_dynamic_prompt` 在 `resolved_location` 是 `None` 時，本來就有自己的 fallback 邏輯，會照 `state.current_map_page`／`current_room_id` 顯示「目前所在房間」，只是不會再被貼上「剛剛地圖引擎解析出一次新移動」這個錯誤標籤。`_resolve_map_action` 這個函式已經沒有任何呼叫者，一併刪除，不留下不會被用到、卻看起來還能用的程式碼。
+- **實測過**：
+  - 直接重現整個誤判鏈：`_build_check_narration` 產生的重傷失敗敘述文字，餵給 `intent_parser.has_movement_verb` 確認回傳 `True`（觸發點是「失去」的「去」）；把這段文字餵給 `scene_map.find_room_by_text`，搭配一個名稱剛好是「意識」的房間，確認真的會被錯誤配對。
+  - 端到端重現：建一個角色、一張含「意識」這個房間名稱的地圖、真的觸發一次重傷判定失敗（CON 檢定失敗），**在還沒修的程式碼上**用 spy 攔截確認 `_resolve_map_action` 真的回傳了 `{"room_name": "意識", ...}`——證實這是真的會發生、不是理論風險。
+  - 修完之後同一個情境重新測一次：`resolved_location` 固定是 `None`，Keeper 收到的 dynamic prompt 正確顯示「目前所在房間：門廳」（角色真正所在的房間），完全不會出現「意識」這個誤判房間；角色實際存檔的房間位置全程沒有被動過。
+- **還是有的限制**：`_resolve_map_action_core`（`find_room_by_text` 那條 fallback 路徑）本身的邏輯沒有改——玩家真的打字描述移動時，同樣寬鬆的 `has_movement_verb` 判斷加上房間名稱子字串比對，理論上還是可能對玩家的自由文字產生一些邊緣情況的誤判（例如玩家打的話裡剛好帶到某個房間名稱，但語意上不是真的想移動過去），這次只處理了「系統自己生成的文字被誤判」這一種、已知會發生的情況，玩家自己輸入文字的誤判風險評估不在這次範圍內。
+### 53. BM25 檢索：IDF 每次查詢改成只算一次，不再每個 chunk 重算
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`_bm25_score(index, query_tokens, chunk)`（`app/scenario_rag.py`、`app/memory_rag.py` 各有一份，邏輯相同）把 IDF（`math.log((n_docs - df + 0.5) / (df + 0.5) + 1)`）算在對每個 chunk 都會跑一次的迴圈裡，但 IDF 這個值只跟查詢詞本身、`n_docs`、`doc_freq` 有關，跟正在算的是哪個 chunk完全無關——同一個查詢詞的 IDF，理論上整次搜尋只需要算一次，卻被重複算了「chunk 數 × 查詢詞數」次。
+- **這個專案現在怎麼做**：新增 `_idf_cache(index, query_tokens)`，在 `search()` 進入逐 chunk 迴圈之前，先把這次查詢的每個詞的 IDF 算好存進一個 dict；`_bm25_score` 改成吃這個算好的 cache，不再自己重算。兩個檔案（`scenario_rag.py`／`memory_rag.py`）做了同樣的修改，邏輯完全一致，沒有共用程式碼（跟這兩個模組其他部分的既有慣例一樣，見第 21 項附近的說明）。
+- **實測過**：
+  - 正確性：對同一份合成劇本索引（400 個 chunk）、同一個查詢，逐一比對修改前後每個 chunk 算出來的 BM25 分數，400 個 chunk 全部分數完全一致（浮點數誤差在 1e-12 內），確認這只是省算重複的值，不會改變任何排序或分數結果。
+  - 效能：同樣的索引跑 50 次搜尋，修改前 0.0288 秒、修改後 0.0199 秒，約 1.45 倍。合成測試用的查詢詞數（5 個）跟 chunk 數（400 個）跟實際劇本規模相近，倍數會隨查詢詞越多、chunk 越多而越明顯。
+  - `search()`／`search_memory()` 端到端各自重新測過，確認回傳結果的筆數、排序、分數都正常。
+
+### 54. `find_room_by_text` 模糊比對加剪枝，過濾掉大部分不可能命中的滑動視窗
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`find_room_by_text`（`app/scene_map.py`）為了容忍錯字，對每個房間名稱用 3 種視窗大小在輸入文字上滑動，每個視窗位置都呼叫一次 `difflib.SequenceMatcher(None, name, window).ratio()`——這是純 Python 實作的動態規劃演算法，不便宜。如果劇本用 Scenario RAG 查出幾段幾百字的文字、地圖上有十個房間，實際會呼叫到的 `SequenceMatcher.ratio()` 次數可以輕鬆上看數萬次，累積起來造成看得到的延遲。
+- **這個專案現在怎麼做**：呼叫 `SequenceMatcher.ratio()` 之前，先用 `name_chars.isdisjoint(window)` 檢查這個滑動視窗跟房間名稱有沒有至少一個共同字元。這不是近似、不會改變任何結果——`SequenceMatcher.ratio()` 算的是最長共同子序列，如果兩個字串連一個字元都不重疊，比對結果保證是 0，本來就不可能通過門檻；用這個當前置篩選，只是提早跳過那些「算了也是白算」的視窗，不會漏掉任何原本會命中的案例。實務上，劇本文字（常常是英文原文或跟房間名稱完全無關的敘述）跟房間名稱重疊的機率很低，大部分視窗會直接被濾掉。
+- **這個保證只在房間名稱非空時成立**（兩個都是空字串時 `ratio()` 會回傳 1.0，不是 0），目前程式碼因為前面已經有「空房間名稱直接跳過」的檢查而不會踩到，但這是這段剪枝邏輯本身沒有強制保證的前提，之後如果要把這段邏輯搬到別的地方用，要記得帶著同樣的前提，不能假設它永遠成立。
+- **審查時發現、已經改用更好的寫法**：一開始用的是 `set(name) & set(window)`，review 抓到這樣每個視窗位置都要重新把 `window` 轉成一個新的 set，在「文字幾乎全部都跟房間名稱重疊、剪枝幾乎派不上用場」的最壞情境下，這個開銷會讓整體比修改前還慢（review 實測慢了約 5%）。改成 `isdisjoint()` 之後不用真的建出 `window` 的 set、找到第一個重疊字元就能提早結束，同樣的語意但沒有這個開銷，最壞情境也不會變慢。
+- **實測過**：
+  - 正確性：拿同一組房間清單（10 個常見中文房間名稱）跑 5 種輸入文字（完全沒有中文字重疊的英文劇本片段、包含完整房間名稱的句子、需要模糊比對的近似房間名稱、系統自產的檢定結果敘述、空字串邊界情況），修改前後回傳的房間（或沒有命中）完全一致。
+  - 效能：同一組房間、一段 535 字沒有任何字元重疊的合成文字，跑 30 次，修改前 1.0833 秒、修改後 0.0603 秒，約 **18 倍**。這是本來就會被剪枝濾掉的最有利情境（文字語言/字元集跟房間名稱完全不重疊），實際劇本文字視內容重疊程度效果會有落差，但方向一致：文字裡真正跟任何房間名稱共享字元的視窗越少，省下的計算量越多。
+
+### 55. Post-turn maintenance 改成背景執行，不再卡住下一輪輸入
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`_run_post_turn_maintenance_after_output`（每一輪 Keeper 回覆送出後的收尾）在 `finally` 區塊裡用 `await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)` 等待維護任務跑完，但這個 `await` 是在 `run_keeper_phase` 內部、`locks.get_keeper_turn_lock` 底下執行的，而大部分呼叫路徑（一般自由文字對話）這整段又包在更外層的 `locks.get_conversation_lock` 裡——玩家雖然已經看到 Keeper 的公開回覆了，但只要這輪剛好觸發裁切門檻（大約每 `MAX_LOG_TURNS*2`＝80 輪一次），`run_post_turn_maintenance` 會同步跑一次真的 LLM 摘要請求（2-5 秒）加一次 Embeddings API 呼叫（300-800 毫秒），這段期間**同一個對話**（不管是同一位玩家還是別人）送出的下一句話，會卡在 `get_conversation_lock` 前面幾秒鐘動彈不得——即使那句話跟摘要、記憶索引完全無關。
+- **這個專案現在怎麼做**：`_run_post_turn_maintenance_after_output` 改用 `asyncio.create_task` 把 `run_post_turn_maintenance` 丟到獨立的背景協程執行，不在任何鎖底下等它完成——`finally` 區塊現在只負責「觸發」維護任務，函式本身立刻回傳，鎖也立刻釋放。維護任務本身（`run_post_turn_maintenance`）已經有自己的 `locks.get_state_lock` 保護實際會動到的欄位（`state.log`、`campaign_summary`、記憶索引），所以脫離外層的 turn lock／conversation lock 並不會失去保護，只是不再讓其他無關的下一輪對話跟著等。背景任務失敗時直接記錄例外，不會影響玩家已經拿到的回覆，也不會讓例外憑空消失在背景協程裡（新增 `_pending_maintenance_tasks` 集合持有任務參照，避免 asyncio 把還在跑的 Task 提前回收）。
+- **實測過**：
+  - 直接測 `_run_post_turn_maintenance_after_output`：把 `run_post_turn_maintenance` 換成一個真的會睡 1.5 秒的假函式，確認函式本身幾乎立刻回傳（< 0.5 秒），背景任務之後真的有跑完。
+  - 例外處理：讓維護任務直接拋例外，確認玩家的回覆照常送出、例外被記錄下來，不會往外傳播、也不會卡住任何東西。
+  - **端到端重現整個 bug**：把 `keeper.run_turn` 換成一個不打真實 LLM API、瞬間回傳的假函式（排除網路延遲的干擾），`run_post_turn_maintenance` 換成睡 1.5 秒的假函式，連續送兩輪真實對話——**在還沒修的程式碼上**，第一輪本身就要等滿 1.5 秒才回傳（因為維護任務被 await 在鎖裡）；修完之後兩輪都在幾毫秒內完成，背景維護任務照樣在背景跑完。
+  - `run_maintenance=False`（KP 助手那條路徑）確認還是正確完全不會觸發背景任務。
+- **PR review 後修正（同一個 PR，追加 commit）**：上面「`run_post_turn_maintenance` 已經有自己的 `locks.get_state_lock` 保護，所以脫離 turn lock 不會失去保護」這句話，經獨立 code review 指出是錯的，並且用重現腳本證實是真的會掉資料，不是理論上的風險：
+  - **問題所在**：`_persist_memory_maintenance_state` 雖然真的在 `get_state_lock` 底下重新 `load_state()` 拿到最新狀態，但接下來卻是 `latest_state.log = trimmed_log`——直接整包覆蓋成呼叫前（LLM 摘要 + Embeddings 那幾秒）算好的**舊快照**，不是在最新狀態上做合併。修這個 PR 之前，這個問題被外層整輪都握著的 `get_conversation_lock` 蓋住了——同一個對話不可能有另一輪在這幾秒內把新訊息寫進 log。這個 PR 的目的正是要讓下一輪不用等這幾秒，等於拿掉了那層掩護：只要維護任務還在跑，同一個對話的下一輪話就可能透過 `_commit_turn_result` 把新訊息寫進 log，然後被這裡的覆蓋動作整個蓋掉、憑空消失。
+  - **重現方式**：手動照 `run_post_turn_maintenance` 的順序——先在鎖底下拍一次 log 快照、算出要丟掉的 `dropped_chunk`；接著直接呼叫 `_commit_turn_result` 模擬「維護還沒跑完時，同一對話又送出一輪新對話並已經完成」，確認新訊息當下**確實**已經寫進 log；最後才用一開始那份舊快照呼叫 `_persist_memory_maintenance_state`。結果最終 log 完全不含那兩則新訊息——複現腳本印出「CONFIRMED DATA LOSS: the concurrent turn's messages were silently discarded!」。同一份 review 也指出 `memory_rag.append_memory` 自己的讀-改-寫完全沒有鎖保護，且沒有機制防止 log 一旦超過裁切門檻，接下來每一輪都各自重新觸發一次完整維護（重複的 LLM／Embeddings 花費，還會互相搶資料）；確認 `append_memory` 在全部程式碼裡只有這一個呼叫點（`grep -rn "append_memory(" app/*.py`），所以序列化 `run_post_turn_maintenance` 本身就能一併解決這兩個問題。
+  - **怎麼修的**：新增模組層級 `_maintenance_in_flight: set[str]`，`run_post_turn_maintenance` 一開始檢查同一個 `group_id` 是否已經在跑，是的話直接跳過（`try/finally` 確保正常結束或例外都會釋放）——這保證同一個對話任何時候最多只有一個維護任務在跑，連帶讓 `append_memory` 的無鎖讀-改-寫變得安全。`_persist_memory_maintenance_state` 不再接收也不再覆蓋成 `trimmed_log`，改成接收 `dropped_chunk`（真正被拿去摘要、寫進記憶索引的那一段），在鎖底下重新讀最新的 `state.log` 之後，只有當最新 log 的開頭**內容完全比對得上** `dropped_chunk` 時才裁掉這段前綴（`latest_state.log[:n] == dropped_chunk` 才 `latest_state.log = latest_state.log[n:]`）；比對不上（例如同時有人 `/coc newgame` 重置了對話）就安全跳過，不裁切、不報錯，最多下一輪門檻到了再重新觸發一次，不會腐蝕資料。
+  - **實測過**：
+    - 用上面那支「先拍快照、模擬並發新一輪、再用舊快照呼叫」的重現腳本原封不動跑在修好的程式碼上，確認新訊息這次留住了，且 `dropped_chunk` 那段正確從最新 log 前面裁掉（前後 log 長度、內容逐筆比對正確）。
+    - 額外測「比對不上就跳過」：模擬對話被重置成跟 `dropped_chunk` 完全對不上的新 log，確認裁切被安全跳過，log 內容原封不動、沒有任何損毀。
+    - 額外測 in-flight guard：手動把某個 `group_id` 標成「正在維護中」，直接呼叫 `run_post_turn_maintenance`，確認整個函式立刻回傳、完全沒有呼叫 `load_state`（沒做任何工作），且正常執行完或拋例外都會在 `finally` 正確解除標記（用低於裁切門檻的 log 測試提早 return 的路徑，確認 guard 一樣會釋放）。
+    - 重新確認原本這個 PR 要解的問題沒有回歸：`run_post_turn_maintenance` 本身仍然完全不持有 `get_conversation_lock`／`get_keeper_turn_lock`，`_spawn_post_turn_maintenance` 的行為未變。
+- **第二輪 review 後再修正（同一個 PR，再追加一次 commit）**：上面那次修正被獨立 review 了一次，抓到兩個問題：
+  - **`_maintenance_in_flight` 的 check-then-add 本身不是原子的，而且這次真的會被並發打到**：`run_post_turn_maintenance` 是透過 `asyncio.to_thread` 丟出去執行的（見 `app/commands.py` 的 `_spawn_post_turn_maintenance`），也就是丟到真正的 OS 執行緒（thread pool），不是單純的 asyncio coroutine 交錯排程。`if group_id in _maintenance_in_flight: return` 和 `_maintenance_in_flight.add(group_id)` 雖然各自單獨一行在 GIL 下是原子的，但這兩行合起來並不是——兩個執行緒可能都在對方呼叫 `.add()` 之前，先各自看到「沒人在跑」，然後兩個都往下跑，等於這個 guard 想擋的並發完全沒被擋住。**怎麼修的**：把 check-and-add 這兩行包進 `locks.get_state_lock(group_id)`（本來就是 `threading.RLock`，本來就是設計給多執行緒共用的鎖）底下，讓「檢查有沒有人在跑」跟「標記自己要跑」變成單一原子操作。
+  - **`campaign_summary` 沒有跟著 log 的比對結果一起被保護**：上一版的 `_persist_memory_maintenance_state` 只有 log 的裁切有做「比對不上就跳過」，但 `latest_state.campaign_summary = campaign_summary` 這一行是無條件執行的——如果真的遇到比對不上的狀況（例如同時有人 `/coc newgame` 重置戰役），log 正確地被放過了，但 `campaign_summary` 還是會被蓋成舊戰役算出來的摘要，讓一場全新的戰役開局就帶著上一場戰役的摘要殘留。**怎麼修的**：把 `campaign_summary` 的賦值跟 `save_state` 一起搬進「比對得上」的那個 `if` 分支裡，比對不上就整個跳過，log 跟 campaign_summary 要嘛一起套用最新結果、要嘛都不動，不會再有「log 保護了、summary 卻沒保護」這種不一致狀態。
+  - **實測過**：
+    - 用真正的多執行緒（8 個 `threading.Thread` 同時對同一個 `group_id` 呼叫 `run_post_turn_maintenance`，並在 `summarize_log_chunk` 裡插入計數器 + `time.sleep(0.3)` 拉長視窗）確認同一時間最多只有 1 個維護任務真的在執行本體邏輯，且全部執行緒結束後 guard 有正確清空。
+    - 模擬「log 比對不上」的情境（假造一個跟 `dropped_chunk` 對不上的全新 log），確認 `campaign_summary` 保持原樣沒被蓋掉、log 也完全沒被動到。
+    - 重新跑一次原本那支「並發新一輪訊息 + 舊快照持久化」的資料遺失重現腳本，確認這一輪修改後，原本的 fix 依然有效（新訊息不會消失）。
+
+### 56. Discord 事件迴圈：`load_group_state` 改用 `asyncio.to_thread`，並合併重複讀取
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`discord.py` 整個 bot 是跑在單一 asyncio 事件迴圈上，任何同步阻塞操作都會卡住 Discord 網關的心跳處理；而 `app/discord_bot.py` 的 `on_message`、`CheckButton.callback`、`LuckSpendButton.callback` 這三個地方，每次都直接（沒有包 `asyncio.to_thread`）呼叫同步的 `load_group_state`（SQLite 讀取 + JSON 反序列化整個 `GroupState`），而且同一次訊息／點擊裡呼叫了三次：一次在指令執行前拿「之前」的快照，`_post_check_buttons`／`_post_luck_buttons` 各自又重新讀了一次「之後」的狀態。長期跑團的群組（劇本全文很長、對話紀錄累積很多筆）這個反序列化不是免費的，在高負載或多人同時輸入時，可能導致 Discord 網關的心跳封包延遲，出現 `Heartbeat blocked` 警告甚至斷線重連。
+- **這個專案現在怎麼做**：
+  1. 三個地方原本直接呼叫的 `load_group_state(...)`，全部改成 `await asyncio.to_thread(load_group_state, ...)`，讓這個同步操作丟到背景執行緒跑，不再佔用事件迴圈。
+  2. 新增 `_post_pending_buttons`，把「指令執行後讀一次最新狀態、分別餵給 `_post_check_buttons` 跟 `_post_luck_buttons`」這個固定會一起做的動作合併成一次共用的讀取——`_post_check_buttons`／`_post_luck_buttons` 改成接收已經讀好的 `state` 參數，不再各自重新讀一次同一份資料。三個呼叫點（`on_message`、`CheckButton.callback`、`LuckSpendButton.callback`）原本各自的兩次呼叫都改成一次 `_post_pending_buttons`。這樣每次訊息／點擊從原本最多 3 次同步讀取降到 2 次（指令前 1 次、指令後合併成 1 次），而且兩次都不再阻塞事件迴圈。
+- **實測過**：
+  - 用一個假的 Discord channel（只記錄 `send` 被呼叫了什麼），對 `_post_pending_buttons` 加 spy 監控 `load_group_state` 的呼叫次數，確認整個流程只讀了一次，而且正確依據新的 pending check 貼出對應的按鈕訊息。
+  - 用一個刻意設計成「睡 1 秒」的假 `load_group_state`，搭配一個每 0.05 秒 tick 一次、跑滿 10 次的並行協程，用 `asyncio.gather` 一起跑：確認 tick 協程在那 1 秒的讀取期間完整跑完全部 10 次，證實 `asyncio.to_thread` 真的把這個同步呼叫讓出了事件迴圈，不會卡住其他並行的協程。
+- **PR review 後修正**：review 指出「合併讀取」這個部分本身有問題——`_post_check_buttons` 迴圈裡的每一次 `channel.send()` 都是真的 `await`，是事件迴圈真的可以跑去處理別的事情的地方；如果在這段期間，剛好有別的並行處理（例如另一個並行的 `/coc newgame`，或別的路徑把某個 Luck 決定解決掉）動到了 `pending_luck_decisions`，`_post_luck_buttons` 因為共用同一份「指令執行前」讀到的 `state`，就可能貼出一個其實已經被清掉／處理掉的 Luck 按鈕——這正是原本（這個 PR 之前）的版本能避免的：`_post_luck_buttons` 本來是等所有 check 按鈕都貼完之後才重新讀一次狀態。
+  - **怎麼修的**：`_post_pending_buttons` 改回在 `_post_check_buttons` 執行完之後、呼叫 `_post_luck_buttons` 之前**再讀一次**最新狀態，不再共用同一份快照——等於保留「同步呼叫丟到背景執行緒」這個修正（仍然不阻塞事件迴圈），但撤回「合併成一次讀取」這部分，因為合併的前提（兩次呼叫之間沒有真正的 await yield point）並不成立。
+  - **實測過**：先在**沒修這個問題**的程式碼上重現：用一個假的 channel，`send()` 被呼叫時故意模擬「並行處理清掉了 `pending_luck_decisions`」（直接改資料庫），確認舊版真的會貼出一個對應已被清除決定的 Luck 按鈕（訊息內容含「要花 Luck」）。接著套用修正後重新跑同一支腳本，確認 Luck 按鈕不再被貼出（因為 `_post_luck_buttons` 這次讀到的是已經被清除之後的最新狀態）。
+
+### 57. Cosine similarity 省略範數計算，直接用內積
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`_cosine_similarity(a, b)`（`app/scenario_rag.py`、`app/memory_rag.py` 各有一份，邏輯相同）每次比對都重算 `norm_a`（查詢向量的長度）跟 `norm_b`（chunk 向量的長度）——`norm_a` 對同一次查詢的所有 chunk 都是同一個值，`norm_b` 也沒有跨查詢快取；更關鍵的是，OpenAI 的 embedding 模型（`text-embedding-3-small` 等）回傳的向量本來就是單位向量（長度已經是 1），既然兩邊的長度都約等於 1，`dot / (norm_a * norm_b)` 這個除法根本是白做工。
+- **這個專案現在怎麼做**：`_cosine_similarity` 直接改成只算內積（`sum(x * y for x, y in zip(a, b))`），不再算 `norm_a`／`norm_b`／除法。這個假設**先用真的 OpenAI API 呼叫驗證過**，不是憑印象：對 5 段長度、語言都不同的文字（含中文）各打一次真實 embedding，量出來的向量長度都落在 0.9997～1.0003 之間，跟 1.0 的偏差在 0.03% 以內。這個函式的向量只會來自 `_embed_texts`（同檔案裡唯一的 embedding 來源，全部走 OpenAI API），沒有其他來源會餵進不同尺度的向量。
+- **實測過**：
+  - 正確性：對 5 段真實 embedding 跟一個真實查詢向量，逐一比較「省略範數」版本跟「完整計算」版本算出來的分數，最大絕對誤差 0.000488——換算成排序結果完全一致（`sorted` 出來的順序逐項比對，兩邊分毫不差）。這是拿真實 API 資料驗證過的實際誤差量級，不是理論推算。
+  - 效能：同一組向量重複比對 2000 次，完整計算版本 0.2566 秒、省略範數版本 0.0910 秒，約 **2.82 倍**。
+  - `scenario_rag.search()`／`memory_rag.search_memory()` 端到端各自重新測過，確認回傳結果正常、排序不受影響。
+- **還是有的限制**：這個優化的正確性**依賴「輸入向量已經是單位向量」這個假設**，不是通用的 cosine similarity 實作——如果之後這個函式的輸入來源換成別的 embedding 服務（目前程式碼裡沒有這種路徑，但理論上 `SCENARIO_RAG_EMBEDDING_MODEL` 是可設定的），且那個服務回傳的向量沒有事先正規化，這個假設就會失效，需要把範數計算加回來。已經在函式的 docstring 裡明確寫下這個前提。
+- **PR review 後追加的安全網**：review 指出上面這個假設完全沒有 runtime 檢查——如果哪天 `SCENARIO_RAG_EMBEDDING_MODEL` 換成不是單位向量的模型，這個函式會安靜地算出錯誤尺度的分數，排序品質默默變差，不會有任何錯誤訊息或例外可以發現。新增 `_check_unit_norm(vec, context)`（`scenario_rag.py`、`memory_rag.py` 各一份，邏輯相同）：算出向量長度，跟 1.0 差距超過 `_UNIT_NORM_TOLERANCE`（0.05，遠寬於實測的 0.03% 誤差，避免正常浮點誤差誤報）就用 `logging.warning` 記錄下來，絕不拋例外——這是品質退化的訊號，不是崩潰，跟這個專案一貫「best-effort、degrade gracefully」的風格一致（比照 `_embed_texts` 失敗時回傳 `None` 而不是往外拋）。
+  - 呼叫時機刻意控制在 **O(1) 而非 O(chunks)**，不會抵銷這個優化原本要省下來的成本：`scenario_rag.build_index()`／`memory_rag.append_memory()` 各自只在拿到新 embedding 時檢查一次代表性向量（前者檢查該次索引的第一個 chunk、後者檢查剛嵌入的那個記憶片段），`search()`／`search_memory()` 則各自只檢查一次查詢向量——都不會在per-chunk 比對迴圈裡重複呼叫。
+  - **實測過**：手動餵入單位向量（長度 1.0）確認不觸發警告；手動餵入長度 3.0 跟剛好超過容忍值的 1.06 確認正確觸發警告；手動餵入容忍值以內的 1.04 確認不誤報；最後用真實 OpenAI API（真的 `build_index`／`search`／`append_memory`／`search_memory` 呼叫）跑一次端到端，確認正常操作下完全不會印出任何警告，也沒有改變任何回傳結果。
+- **PR 第二次 review 後整個做法反轉：改成快取範數，恢復精確計算**：review 指出「假設向量已經是單位向量、乾脆跳過除法」這個做法本身就是問題所在，不是加個警告就能解決——量出來的 0.9997～1.0003 這個誤差範圍看起來很小，但 `_cosine_similarity` 的結果同時餵給兩個對誤差敏感的地方：`_MIN_COSINE_RELEVANCE`（一個寫死的門檻值）跟排序用的分數本身。真實正式環境的查詢分數本來就會出現非常貼近 0.32 這個門檔、或者彼此分數非常接近的情況（見 `_MIN_COSINE_RELEVANCE` 旁邊的註解：真實查詢量到 0.31～0.48 都有），這種情況下，兩個向量各自的範數只要因為浮點誤差偏向不同方向，門檻判定或排序順序就可能因此翻轉——這是真的會發生的正確性問題，不是理論上的邊角案例，加警告只是讓你知道它發生了，並不會讓分數變回正確。
+  - **真正的效能問題找對了，但解法找錯了**：原本函式真正浪費的地方，不是「除法」本身，而是「同一個查詢向量的範數（`norm_a`）在整次搜尋的每一個 chunk 比對裡都被重算一次」，以及「每個 chunk 的範數（`norm_b`）明明從 embedding 算出來之後就不會再變，卻每次比對都重新算」——這才是 O(chunks) 次重複做同一件事的地方，除法本身只是 O(1) 的成本。
+  - **怎麼修的**：`_cosine_similarity` 改回真正的 `dot(a,b) / (norm_a * norm_b)`，但 `norm_a`、`norm_b` 都改成外部傳入、**只算一次、快取起來**，不再由這個函式自己重算：`_Chunk` 新增 `norm` 欄位，在 `build_index()`／`memory_rag._build_index()`（chunk 的 embedding 第一次算出來的時候）、以及 `_load_index_from_disk()`（從硬碟讀回來、對每個 chunk 的 embedding 重算一次範數，不需要額外修改儲存格式或做資料遷移）各自算好存起來；查詢向量的範數（`query_norm`）則是在 `search()`／`search_memory()` 裡對同一次搜尋只算一次，迴圈裡直接重複使用。這樣拿掉了原本重複計算的 O(chunks) 次 sqrt，同時完全不再依賴「向量是不是單位向量」這個假設——不管 embedding 來源是不是正規化過，這個函式現在算出來的都是**精確**的 cosine similarity，上面那個安全網（`_check_unit_norm`）因此整個變得不需要，一併移除。
+  - **實測過**：
+    - 正確性：用真實 OpenAI API 打出 5 個真實 embedding，逐一用「教科書版本」（每次都重新算範數）跟「快取範數」版本比對算出來的 cosine 分數，最大絕對誤差 **0.00e+00**（浮點精度內完全相等，不是近似）——這次不再有任何誤差存在，門檻判定與排序不可能因為這個函式本身而翻轉。
+    - 效能：同一組 5 個真實向量重複比對 10 萬次，快取範數版本 4.64 秒，每次都重算範數的版本 11.67 秒，約快 **2.5 倍**——雖然比「完全跳過除法」的 2.82 倍略慢一點點，換來的是完全正確、不再依賴任何假設。
+    - 端到端：`scenario_rag.build_index()` → `search()` → 存到硬碟 → 從硬碟重新讀回來 → 再 `search()` 一次，確認兩次搜尋結果的分數逐項完全相同（`norm` 從硬碟載入後正確重新算出，不是空值或 0）；`memory_rag.append_memory()` → `search_memory()` → 重建索引，確認 `norm` 有正確被填入每個 chunk。
+
+### 58. `save_state` 合併成單一 SQLite 連線／交易，PRAGMA 不再每次連線重跑
+
+- **這個問題怎麼發現的**：使用者做效能審查時指出，`app/db.py` 的 `_connect()` 每次呼叫都開一個新的 SQLite 連線並執行 2 個 PRAGMA（`journal_mode=WAL`、`synchronous=NORMAL`），而 `app/state.py` 的 `save_state` 對一場戲的 group state 存一次、還要對**每個角色**各自呼叫一次 `db.set_json("characters", ...)`——一個 4 人隊伍，光是 `save_state` 一次呼叫就開了 5 個獨立連線，每個都重跑一次 PRAGMA。一輪 Keeper 對話如果串了好幾個會扣血/扣彈藥/給物品的工具呼叫，加上結尾的存檔跟維護任務，連線數確實會疊到十幾二十次。
+- **實測過這個開銷有多大**：直接量測（不是憑印象）——單純 `sqlite3.connect()`＋`close()` 大約 0.03ms，加兩個 PRAGMA 後變成約 0.37ms，PRAGMA 本身佔了每次連線約 0.34ms（其中 `journal_mode=WAL` 跟 `synchronous=NORMAL` 各自約 0.21-0.25ms，量級差不多）。`journal_mode=WAL` 這個設定其實是**寫進資料庫檔案本身、會持久保留**的，不是每個連線各自的狀態，每次重新執行等於白做工；`synchronous` 才是每個連線都要重設才有效的設定。
+- **這個專案現在怎麼做**：
+  1. `journal_mode=WAL` 只在 `_ensure_tables()`（模組載入時）設定一次，之後每次 `_connect()` 只再設定 `synchronous=NORMAL`。
+  2. 新增 `db.transaction()`（公開版的 `_connect()`）跟 `db.set_json_tx(conn, table, key, value)`（吃既有連線、不自己開關），讓需要一次寫多個 key 的呼叫端可以共用同一個連線／交易。`save_state` 改成用這組 API，把「group state 一次寫入 + 每個角色一次寫入」全部包進同一個連線，不再各自開關。
+- **實測過**：
+  - 正確性：存一個含 4 個角色的 `GroupState`，讀回來確認 group state 跟每個角色鏡像（`characters` table）內容都正確，跟修改前行為一致。
+  - 連線數：用 spy 監控 `sqlite3.connect` 的呼叫次數，確認一次 `save_state`（4 個角色）修改前是 5 次連線，修改後正確變成 1 次。
+  - 效能：同樣情境（4 角色）跑 50 次 `save_state`，修改前約 2.25ms／次，修改後約 0.49ms／次，約 **4.6 倍**。
+  - 額外重新跑過 `roll_weapon_damage`、`add_status_tag` 兩個既有工具的端到端測試，確認這個改動沒有連帶影響其他依賴 `save_state` 的功能。
+- **還是有的限制**：這次只處理了 `save_state` 這一個明確有 N+1 連線問題的呼叫點；`scenario_indexes`、`memory_chunks` 這兩個表目前每次寫入都是單一 key，沒有迴圈寫多筆的情況，不在這次範圍內。單次連線層級的絕對耗時（幾毫秒）本來就遠小於一次 LLM API 呼叫（動輒幾秒），這個修正省下來的時間對單一使用者體感上不會太明顯，主要意義是消除純粹浪費的重工，在高併發、多群組同時活躍時比較看得出差異。
+
+### 59. Discord OOC bypass 支援全形 `＠`
 
 - **這次實際完成**：只修改 `app/discord_bot.py` 與 `docs/changelog.md`。`app/discord_bot.py` 新增 `_is_ooc_message(text)` 純函式，只對「判斷用的副本」做 `unicodedata.normalize("NFKC", text or "")`，再 `.lstrip()`，最後沿用原本的 `startswith("@") or startswith("<@")` 判斷；原始 `message.content` 不會被改寫。
 - **修正內容**：Discord OOC bypass 原本只吃 ASCII `@` 與 `<@`，玩家輸入全形 `＠`（U+FF20）開頭時會繼續進入一般訊息流程。NFKC normalization 後，全形 `＠` 與全形空白開頭的 `＠` 訊息都會正確被視為 OOC。
 - **流程位置維持不變**：`on_message()` 仍然是在忽略 bot 訊息之後立刻做 OOC 判斷，命中就直接 `return`；位置仍早於 state 讀取、附件/文字的 `commands.py` 呼叫，以及任何 Keeper/AI 流程。
 - **已驗證**：直接用 Python assertion 確認 ASCII `@`、全形 `＠`、前置半形/全形空白、Discord user/nickname/role mention 都會被視為 OOC；一般文字中途提到 `@`、頻道 mention `<#...>`、普通角色扮演文字都不會被誤判。也跑過 `python -m py_compile app/discord_bot.py`。
+
