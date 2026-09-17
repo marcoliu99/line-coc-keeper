@@ -121,12 +121,19 @@
 
 **PDF 重新上傳的位置保護**：現有 `handle_pdf_upload` 每次上傳新 PDF 都無條件重置 `scene_maps`／`current_map_page`／`current_room_id`／`party_facing`／`pregens`／`openai_previous_response_id`／`game_started`。這對「全新劇本」合理，但如果 GM 是要「重傳修正版的同一份劇本」（確認這個情境有可能發生），就會不小心把玩家的地圖位置、角色卡池全部洗掉。新增流程：偵測到 `state.scenario_text` 已非空（已有劇本在跑）時，先不直接存檔，改成用按鈕讓 GM 選「全新劇本」或「修正目前劇本」——判斷同一份劇本的依據不用猜（檔名／標題都不夠可靠），直接讓 GM 自己選最安全。
 
-- 選「全新劇本」：維持現有全部重置的行為。
+- 選「全新劇本」：更新 `scenario_text`／`scenario_title`／`scenario_npc_index`／`scenario_location_index`／`scene_maps`，重置 `current_map_page`／`current_room_id`／`party_facing`／`openai_previous_response_id`／`game_started`。
 - 選「修正目前劇本」：
   - 更新：`scenario_text`、`scenario_title`、`scenario_npc_index`、`scenario_location_index`、頁面圖片（兩種模式都要更新，跟選擇無關，可以立即套用不用等按鈕）
-  - 保留不動：`scene_maps`、`current_map_page`、`current_room_id`、`party_facing`、`pregens`、`openai_previous_response_id`（保留對話連貫性）
+  - 保留不動：`scene_maps`、`current_map_page`、`current_room_id`、`party_facing`、`openai_previous_response_id`（保留對話連貫性）
   - `game_started`：維持原樣，不重置成 `False`（劇本沒有真的重新開始，不該讓 `/coc start` 又能再跑一次）
 - 抽取結果（`text`／`title`／`extracted_index`／`page_maps`，不含已立即套用的圖片）在等待 GM 按鈕決定期間，持久化在新增的 `GroupState` 欄位（例如 `pending_pdf_upload`），跟現有 `pending_checks`／`pending_luck_decisions` 一樣的持久化 pending-按鈕模式（這個 bot 幾乎每次部署都重啟，按鈕要撐得過重啟）。首次上傳（`state.scenario_text` 本來就是空的）沒有歧義，跳過按鈕直接照「全新劇本」流程走。
+
+⚠️ 實作備註（2026-09-17，追加討論定案）：`pregens`（角色池）**不在**上面兩種模式各自的「更新」或「保留」清單裡——它有自己獨立的規則，因為使用者實際回報並確認了兩個跟上傳順序有關的真實 bug：
+
+1. **先傳 PDF 再傳角色卡**：原本 `/coc pregens` 指令是「`state.pregens` 是空的才呼叫 `extract_pregens`」（懶惰觸發，只有真的有人打 `/coc pregens` 才會問 LLM）。如果角色卡先上傳、角色池已經有一筆手打資料，這個判斷會直接跳過 LLM 抽取——劇本自己內建的角色卡永遠不會被抽出來，也永遠沒有機會跟手打角色卡比對／融合（模組四）。
+2. **先傳角色卡再傳 PDF**：群組第一次上傳 PDF 時（沒有既有劇本，不會走上面「全新／修正」的按鈕分岔）原本會直接無條件執行 `pregens = []`——如果角色卡是在這次上傳之前才傳的，會被整個清空。
+
+**修法**：`handle_pdf_upload` 改成每次上傳都立即（不等 `/coc pregens`）呼叫 `extract_pregens`，抽取結果透過模組四的 `reconcile_pregen_into_pool`（跟手打角色卡上傳走同一套身分比對＋擇優融合邏輯）合併進 `state.pregens`，不管「全新劇本」「修正目前劇本」還是「群組第一次上傳」，一律用合併取代整包覆蓋或整包清空——這樣角色卡跟劇本 PDF不管先傳哪一個，最後都會正確合併成同一份角色池，跟上傳順序無關。角色池真正的「整個清空」只保留在 `/coc newgame`（本來就是重置成全新的 `GroupState()`，所有欄位都會歸零），PDF 上傳的任何分支都不再自己做這件事。
 
 ---
 

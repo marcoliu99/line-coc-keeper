@@ -118,13 +118,42 @@ async def handle_unsupported_message(conversation_id: str, reply: Reply, label: 
         )
 
 
+def _merge_extracted_pregens(state: GroupState, pregens: list[dict]) -> None:
+    """Reconciles freshly LLM-extracted pregens (see handle_pdf_upload, which
+    now always runs extract_pregens at upload time — not lazily behind
+    /coc pregens, which used to mean a manually-uploaded role_ card sitting
+    in state.pregens FIRST would make /coc pregens' own `if not
+    state.pregens:` guard skip extraction entirely, so the scenario's own
+    cast never even got a chance to reconcile against it) into state.pregens
+    via the same identity-matching merge a manual role-sheet upload uses
+    (pregen_extractor.reconcile_pregen_into_pool) — never a blind
+    overwrite, and never simply discarded either. This is what makes upload
+    order irrelevant: a role card uploaded before OR after the scenario PDF
+    ends up correctly merged with (or kept alongside) the scenario's own
+    embedded pregens either way, matching Module 4's design. The only place
+    that still does a full wipe is /coc newgame (a fresh, all-defaults
+    GroupState()) — a PDF upload, new scenario or corrected, never has to
+    guess "is this pregen pool stale" the way an earlier version of this
+    function did (it used to unconditionally reset state.pregens = [] on
+    every new-scenario upload, which — this was reported directly — could
+    also destroy a role card uploaded moments before the group's very first
+    PDF, since that path has no existing scenario to be ambiguous against
+    and so never even offers the new-vs-correction button)."""
+    for pregen in pregens:
+        state.pregens, _ = pregen_extractor.reconcile_pregen_into_pool(state.pregens, pregen)
+
+
 def _apply_new_scenario(
-    state: GroupState, text: str, title: str, extracted_index: dict[str, list], page_maps: dict
+    state: GroupState,
+    text: str,
+    title: str,
+    extracted_index: dict[str, list],
+    page_maps: dict,
+    pregens: list[dict],
 ) -> None:
-    """Full reset — what "全新劇本" means (see handle_pdf_upload/
-    resolve_pdf_upload_choice below), and also unconditionally what a
-    conversation's very first-ever PDF upload does, since there's no existing
-    position/pregens to protect yet in that case."""
+    """"全新劇本" (see handle_pdf_upload/resolve_pdf_upload_choice below),
+    and also what a conversation's very first-ever PDF upload does, since
+    there's no existing position to protect yet in that case either way."""
     state.scenario_text = text
     state.scenario_title = title
     state.active = True
@@ -132,9 +161,6 @@ def _apply_new_scenario(
     state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
     # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
     # first would find /coc start permanently refusing ("already started") for the new scenario.
-    state.pregens = []  # clear the previous scenario's cached pregens — otherwise
-    # a group that switches PDFs without running /coc newgame first would keep
-    # seeing (and could even build a character off) the old scenario's pregens.
     state.scenario_npc_index = extracted_index["npcs"]
     state.scenario_location_index = extracted_index["locations"]
     state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
@@ -142,28 +168,41 @@ def _apply_new_scenario(
     state.current_map_page = {}
     state.current_room_id = {}
     state.party_facing = {}
+    _merge_extracted_pregens(state, pregens)
 
 
 def _apply_scenario_correction(
-    state: GroupState, text: str, title: str, extracted_index: dict[str, list]
+    state: GroupState, text: str, title: str, extracted_index: dict[str, list], pregens: list[dict]
 ) -> None:
     """"修正目前劇本" — updates the scenario's own text/index (the corrected
     content) but deliberately leaves scene_maps/current_map_page/
-    current_room_id/party_facing/pregens/openai_previous_response_id/
-    game_started untouched. That's exactly what "protect the party's existing
-    position and progress" means when the scenario hasn't actually restarted
-    — see docs/character_and_dictionary_system_spec.md's Module 1. Page
-    images are handled by the caller, unconditionally, before this ever runs
-    — see handle_pdf_upload's own comment on why they don't depend on this
-    choice at all."""
+    current_room_id/party_facing/openai_previous_response_id/game_started
+    untouched. That's exactly what "protect the party's existing position
+    and progress" means when the scenario hasn't actually restarted — see
+    docs/character_and_dictionary_system_spec.md's Module 1. pregens is NOT
+    in that protected list — a corrected PDF's own re-extracted cast is
+    reconciled in (see _merge_extracted_pregens), the same as _apply_new_
+    scenario, since fixing e.g. a garbled stat in an embedded pregen is
+    exactly the kind of correction this mode exists for; reconciliation
+    (not a wipe) is what keeps an already-claimed pregen's claimed_by intact
+    through that update. Page images are handled by the caller,
+    unconditionally, before this ever runs — see handle_pdf_upload's own
+    comment on why they don't depend on this choice at all."""
     state.scenario_title = title
     state.scenario_text = text
     state.scenario_npc_index = extracted_index["npcs"]
     state.scenario_location_index = extracted_index["locations"]
+    _merge_extracted_pregens(state, pregens)
 
 
 def _pdf_upload_confirmation_text(
-    title: str, text: str, low_text_pages: list[int], truncated: bool, page_maps: dict, extracted_index: dict
+    title: str,
+    text: str,
+    low_text_pages: list[int],
+    truncated: bool,
+    page_maps: dict,
+    extracted_index: dict,
+    pregen_count: int,
 ) -> str:
     """Shared by the immediate (first-ever upload) and deferred (button-
     resolved) paths through handle_pdf_upload — the message is identical
@@ -203,15 +242,25 @@ def _pdf_upload_confirmation_text(
             "劇本內容之後如果有更新，重新跑一次「/coc index」可以重建。"
         )
 
+    if pregen_count:
+        # Extraction (see handle_pdf_upload) already ran by the time this
+        # message is built, so this can state a fact instead of the old
+        # conditional "先輸入 /coc pregens 看看有沒有" hedge.
+        pregen_note = (
+            f"這份劇本內建了 {pregen_count} 位預製調查員，輸入「/coc pregens」查看、"
+            "「/coc pregen 編號」看某位的完整能力——有內建角色的話，"
+            "「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n"
+        )
+    else:
+        pregen_note = (
+            "這份劇本沒有偵測到內建的預製調查員，直接用「/coc pc 角色名 職業」快速生成即可，"
+            "這時職業可選：\n" + "、".join(OCCUPATIONS.keys()) + "\n"
+        )
+
     return (
         f"已載入劇本《{title}》（{len(text)} 字）。\n"
-        "這份劇本如果有附帶預製調查員，建議先輸入「/coc pregens」看看有哪些角色可選、"
-        "「/coc pregen 編號」看某位的完整能力——"
-        "有內建角色的話，「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n"
-        "如果這份劇本沒有內建角色（或想先跳過這步），可以直接用「/coc pc 角色名 職業」"
-        "快速生成，這時職業可選：\n"
-        + "、".join(OCCUPATIONS.keys())
-        + "\n建好角色後，直接在群組打字描述行動即可開始冒險！"
+        + pregen_note
+        + "建好角色後，直接在群組打字描述行動即可開始冒險！"
         + warning
         + map_note
         + index_note
@@ -269,6 +318,16 @@ async def handle_pdf_upload(
     # same as before this existed — never blocks the upload from succeeding.
     extracted_index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
 
+    # Also extracted eagerly, at upload time, rather than lazily behind the
+    # first /coc pregens call the old code waited for — that lazy trigger
+    # had its own bug: /coc pregens only ever calls extract_pregens when
+    # state.pregens is currently empty, so a role_ card uploaded before
+    # anyone ran /coc pregens would make that guard skip extraction forever,
+    # and the scenario's own embedded cast would never even get a chance to
+    # reconcile against it. See _merge_extracted_pregens for how this result
+    # gets folded into state.pregens without regard to upload order.
+    pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
+
     # Page images update the same way regardless of which mode a GM later
     # picks for an ambiguous re-upload (see below) — applied immediately,
     # unconditionally, so there's nothing image-related left inside the
@@ -289,14 +348,16 @@ async def handle_pdf_upload(
                 "npcs": extracted_index["npcs"],
                 "locations": extracted_index["locations"],
                 "page_maps": {str(k): v for k, v in page_maps.items()},
+                "pregens": pregens,
             }
             save_state(state)
             current_title = state.scenario_title
             confirmation_pending = True
         else:
-            _apply_new_scenario(state, text, title, extracted_index, page_maps)
+            _apply_new_scenario(state, text, title, extracted_index, page_maps, pregens)
             save_state(state)
             confirmation_pending = False
+            final_pregen_count = len(state.pregens)
 
     if confirmation_pending:
         await push(
@@ -306,7 +367,9 @@ async def handle_pdf_upload(
         )
         return
 
-    await push(_pdf_upload_confirmation_text(title, text, low_text_pages, truncated, page_maps, extracted_index))
+    await push(_pdf_upload_confirmation_text(
+        title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
+    ))
 
 
 async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
@@ -321,16 +384,20 @@ async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Rep
             await push("這個上傳選擇已經處理過了，或已經過期失效，請重新上傳 PDF。")
             return
         extracted_index = {"npcs": pending["npcs"], "locations": pending["locations"]}
+        pending_pregens = pending.get("pregens", [])
         if choice == "new":
-            _apply_new_scenario(state, pending["text"], pending["title"], extracted_index, pending["page_maps"])
+            _apply_new_scenario(
+                state, pending["text"], pending["title"], extracted_index, pending["page_maps"], pending_pregens
+            )
         else:
-            _apply_scenario_correction(state, pending["text"], pending["title"], extracted_index)
+            _apply_scenario_correction(state, pending["text"], pending["title"], extracted_index, pending_pregens)
         state.pending_pdf_upload = None
         save_state(state)
+        final_pregen_count = len(state.pregens)
 
     await push(_pdf_upload_confirmation_text(
         pending["title"], pending["text"], pending["low_text_pages"], pending["truncated"],
-        pending["page_maps"], extracted_index,
+        pending["page_maps"], extracted_index, final_pregen_count,
     ))
 
 
