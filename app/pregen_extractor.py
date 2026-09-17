@@ -255,7 +255,7 @@ def _leading_number(value: str) -> int | None:
 # "裝備" list often has a pistol's stats sitting right next to a flashlight),
 # so _classify_item_blocks below classifies per-BLOCK by content, not by
 # which of these headers a block happened to sit under.
-_ITEM_SECTION_NAMES = ("武器", "裝備", "隨身物品", "攜帶物品", "道具")
+_ITEM_SECTION_NAMES = ("武器", "裝備", "隨身物品", "攜帶物品", "個人物品", "道具")
 
 # Broad enough to recognize "this block is a weapon" even with zero
 # structured fields (a bare "左輪手槍" line, nothing else) — kept separate
