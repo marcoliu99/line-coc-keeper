@@ -889,3 +889,52 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **不算落差、記錄一下**：規格書的 `verify_readiness_for_start` 範例代碼裡 `unclaimed_count =
   len(state.pregens)` 沒有過濾 `claimed_by`，等於認領過的角色也會被算進「未認領」——這是範例代碼
   本身的小疏忽，現有實作（`_build_readiness_roster`）已經正確過濾，不需要改動。
+
+### 68. 修掉 PR #15 代碼審查抓到的問題：合併邏輯資料毀損、鎖沒包到、上傳按鈕互踩
+
+- **這個改動怎麼來的**：開 PR #15 後請「代码审查员」子代理審查整個 character-sheet 分支，回報一個
+  會阻擋合併的資料毀損 bug，外加三個建議修的問題。
+- **🔴 阻擋合併：`_merge_pregens` 在池子條目已經被合併過一次後會認錯哪邊是「手動」資料**
+  （`app/pregen_extractor.py`）：原本用 `existing.get("source") == "manual"` 反推「不是 manual
+  就當作 new 是 manual」，但這個函式自己的輸出會標成 `source: "merged"` 寫回池子——GM 用「修正目前
+  劇本」重傳 PDF 時，新抽出的資料是 `llm_extracted`，跟池子裡已經是 `merged` 的舊條目比對時，
+  `existing.source != "manual"` 成立，於是把剛重新抽取（可能有 OCR 雜訊）的 LLM 資料當成「手動」
+  那一方，直接覆蓋掉先前保留下來的人工驗證資料，整個違反模組四「手傳卡優先」的保證。改成用
+  `_SOURCE_PRIORITY = {"manual": 2, "merged": 1, "llm_extracted": 0}` 的優先順位判斷，而不是用
+  「不是這個就當作是那個」反推——`merged` 因為本身已經承接過人工資料，優先度高於新鮮的
+  `llm_extracted`，但低於真正的新 `manual` 上傳。
+- **🟡 `/coc start` 的自動修復步驟沒包 `get_state_lock`**（`app/commands.py`）：同一段落後面兩處
+  save_state 都有包鎖，唯獨最前面的 heal 迴圈是裸的 load→mutate→save。`/coc check` 的自我檢定路徑
+  只檢查 `state.active`、沒檢查 `game_started`，所以 lobby 階段仍可能背景跑出一次 Keeper turn 的
+  maintenance task，跟這裡的裸寫入形成 lost-update。補上跟旁邊一致的 `with
+  locks.get_state_lock(conversation_id):` 包住整段 heal+save。
+- **🟡 池子合併邏輯跟文件宣稱的「只作用於未認領池」不一致**（`app/pregen_extractor.py`）：
+  `reconcile_pregen_into_pool` 原本對已認領的池子條目也會照樣比對合併，跟規格書模組四的說明（選 A：
+  只在未認領池裡去重）不符——雖然不會動到已經 claim 進 `state.characters` 的角色本體，但池子條目
+  本身的屬性/技能會被後續重傳的 PDF 悄悄改掉。改成比對迴圈一開頭就跳過 `claimed_by` 有值的條目；
+  如果新上傳的角色跟某個已認領條目其實是同一人，就直接變成一筆新的未認領池子條目（不會覆蓋、也不會
+  消失）。
+- **🟡 第二次 PDF 上傳會悄悄蓋掉還沒被回覆的 `pending_pdf_upload`**（`app/commands.py`）：
+  `handle_pdf_upload` 原本沒檢查是否已經有一筆待決的選擇，第二份 PDF 一上傳就直接覆蓋
+  `state.pending_pdf_upload`；GM 如果這時候才點第一則訊息的按鈕（按鈕本身不帶上傳識別碼），套用的
+  會是第二份 PDF 的內容，「全新劇本」選錯代價又特別高（清地圖位置、重置 LLM 對話串）。在昂貴的 OCR
+  抽取與 `clear_page_images`（會整批清掉目前劇本的頁面圖）**之前**，先檢查是否已有待決選擇，有的話
+  直接請對方先處理完上一個再上傳新的。
+- **💭 順手處理的兩個 minor**：`pregen_to_character` 的 `hp_max`/`mp_max`/`san_max` 拿掉多餘的
+  `or default`（`_int_or` 本身已經處理好 fallback，多一層 `or` 只會在合法抽到 0 時又誤觸發一次
+  fallback，徒增混淆）；規格書裡四處寫錯的「47 項官方技能」訂正為實際的 46 項。
+  審查員也提到就緒名冊印 `玩家：{owner_id}`（原始平台 ID）不如 Discord 的 `<@id>` mention 好讀、
+  以及 PDF 選擇按鈕沒有限定只有 GM 能按——這兩點沒有動：`app/commands.py` 是刻意保持平台無關的共用
+  邏輯（`Reply` 只是個泛型 callback，沒有 import 任何 adapter），硬塞 Discord 專屬的 mention 語法
+  會破壞這個分層；按鈕權限則是審查員自己也標注為「已記錄的取捨、不是疏漏」，留給之後要不要做角色
+  權限管控時再處理。
+- **實測過**：
+  - `_merge_pregens` 修復：完整重現審查員描述的情境（manual+llm 先合併一次成 `merged`，接著模擬
+    GM 重傳修正版 PDF、帶一份較吵雜的 `llm_extracted` 再合併一次），確認第二次合併後 EDU、
+    notes、技能值全部仍是原本的人工資料，沒有被覆蓋；`secret_goal`（設計上由劇本端提供）確認正常
+    更新成新版本。
+  - `claimed_by` 跳過邏輯：模擬一個已認領的池子條目 + 一份會誤判成同一人的重新抽取結果，確認
+    action 是 `added` 而不是 `merged`／`replaced`，已認領條目的 EDU、`claimed_by` 完全沒被動到；
+    回歸測過未認領對未認領的情況，確認仍然正常合併成 `merged`。
+  - `import app.commands`／`import app.pregen_extractor` 確認語法正確、可正常載入。
+  - 正式環境資料庫全程沒有被動到（純函式層級的重現測試，沒有連任何真實群組的 state）。

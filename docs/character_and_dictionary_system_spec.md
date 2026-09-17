@@ -169,9 +169,9 @@
 * 保證守密人後續執行任何技能檢定時，絕不出現未定義或找不到技能數值的問題。
 
 ⚠️ 實作備註（2026-09-17 討論定案）：`app/models.py` 本來就有完整的官方 `BASE_SKILLS`
-（47 項），`generate_investigator`（`/coc pc`）也正確用了它（`skills = dict(BASE_SKILLS)`）。
+（46 項），`generate_investigator`（`/coc pc`）也正確用了它（`skills = dict(BASE_SKILLS)`）。
 但**角色卡上傳路徑**（`pregen_to_character`，`role_` 上傳跟劇本內建 pregen 都走這條）
-**只補了「閃避」「母語」兩項，其他 47 項官方技能完全沒補**——上傳的角色卡如果沒寫到
+**只補了「閃避」「母語」兩項，其他 46 項官方技能完全沒補**——上傳的角色卡如果沒寫到
 「聆聽」，這個角色的 `skills` 裡就真的沒有這個 key。修法：比照 `generate_investigator`，
 `pregen_to_character` 起手先 `skills = dict(BASE_SKILLS)`，角色卡實際寫的數值疊上去
 覆蓋預設值即可。
@@ -272,7 +272,7 @@
 │     自學習字典（data/dictionary.json 的 skills/occupations 分類）——查表命中就秒速   │
 │     正規化；沒收錄的生字才進 LLM 判斷，判斷成功後自動存回字典，下次直接命中。這樣    │
 │     常見的官方技能／職業英文名稱只要學過一次，之後所有劇本都能免費秒速比對，不用     │
-│     每次抽取角色卡都重新呼叫 LLM 翻譯。技能字典會在專案初期先「種」一批官方 47 項    │
+│     每次抽取角色卡都重新呼叫 LLM 翻譯。技能字典會在專案初期先「種」一批官方 46 項    │
 │     BASE_SKILLS 常見的英文對照（Spot Hidden、Listen、Firearms (Handgun) ...），      │
 │     不從零開始學。詳見模組五。                                                       │
 └──────────────────────────────────────────┬───────────────────────────────────────────┘
@@ -476,7 +476,7 @@
 ```
 
 ⚠️ 實作備註（2026-09-17 討論定案）：`skills` 分類不從空白開始等使用中慢慢學——official
-COC7e 的 `BASE_SKILLS`（app/models.py，共 47 項）常見的英文對照是固定、已知、一次性的翻譯
+COC7e 的 `BASE_SKILLS`（app/models.py，共 46 項）常見的英文對照是固定、已知、一次性的翻譯
 工作，上線前就先「種」一批進 `data/dictionary.json`（Spot Hidden、Listen、Firearms (Handgun)、
 Library Use、Dodge、Occult...），不用等第一次真的遇到英文劇本才觸發 LLM 現學。`occupations`
 跟 `character_aliases` 沒有這種「固定、有限」的特性（職業／姓名是劇本自訂的開放集合），

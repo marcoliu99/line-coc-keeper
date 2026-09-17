@@ -527,9 +527,12 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
     edu = _int_or(pregen.get("edu"), 50)
     luck = _int_or(pregen.get("luck"), 50)
 
-    hp_max = _int_or(pregen.get("hp_max"), (con + siz) // 10) or (con + siz) // 10
-    mp_max = _int_or(pregen.get("mp_max"), pow_ // 5) or pow_ // 5
-    san_max = _int_or(pregen.get("san_max"), 99) or 99
+    # _int_or already falls back to `default` on anything non-numeric — no
+    # need for a trailing `or default` here, which would (confusingly) also
+    # re-trigger the fallback on a legitimately-extracted 0.
+    hp_max = _int_or(pregen.get("hp_max"), (con + siz) // 10)
+    mp_max = _int_or(pregen.get("mp_max"), pow_ // 5)
+    san_max = _int_or(pregen.get("san_max"), 99)
     san = min(pow_, san_max)
     db, build = damage_bonus_and_build(str_, siz)
     move = move_rate(str_, dex, siz)
@@ -578,6 +581,9 @@ _MERGE_ATTR_KEYS = ("str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "
                      "hp_max", "mp_max", "san_max")
 
 
+_SOURCE_PRIORITY = {"manual": 2, "merged": 1, "llm_extracted": 0}
+
+
 def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     """Field-level "best of both" merge (see docs/character_and_dictionary_
     system_spec.md's Module 4 table) for two pregens character_matcher.
@@ -586,8 +592,21 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
     reconcile_pregen_into_pool, which only calls this when sources differ;
     a same-source match is a plain replace instead, since there's no
     manual/llm_extracted priority to apply between two records of the same
-    kind."""
-    manual = existing if existing.get("source") == "manual" else new
+    kind.
+
+    The higher-priority side (_SOURCE_PRIORITY) is treated as "manual" below.
+    This must be a priority rank, not a literal `source == "manual"` check:
+    this function's own output is tagged "merged" (below) and gets written
+    back into the pool, so a SECOND reconciliation against that pool entry
+    can see existing.source == "merged" — a literal check would then treat
+    the freshly re-extracted llm_extracted side as "manual" by exclusion,
+    silently overwriting previously-preserved manual data with re-extracted
+    (and possibly noisier) LLM output. "merged" already carries forward
+    whatever manual data it was built from, so it outranks a fresh
+    llm_extracted but yields to an actual new "manual" upload."""
+    existing_rank = _SOURCE_PRIORITY.get(existing.get("source"), 0)
+    new_rank = _SOURCE_PRIORITY.get(new.get("source"), 0)
+    manual = existing if existing_rank >= new_rank else new
     llm = new if manual is existing else existing
 
     merged: dict[str, Any] = {
@@ -653,9 +672,21 @@ def reconcile_pregen_into_pool(
       claimed_by if the new upload doesn't specify one (a corrected
       re-upload of an already-claimed character shouldn't silently unclaim
       it).
+
+    Matching only considers pool entries that are NOT yet claimed by anyone
+    (see docs/character_and_dictionary_system_spec.md's Module 4 note: this
+    reconciliation exists to de-duplicate the unclaimed pick list, not to
+    hot-patch a character a player has already claimed) — an already-claimed
+    entry is left untouched even if it would otherwise match, so a later
+    scenario-correction re-upload can't silently rewrite attributes/skills a
+    player already picked. If nothing unclaimed matches, the new pregen is
+    simply appended (it'll show up as its own unclaimed pool entry rather
+    than merging into someone's claimed sheet).
     """
     pool = list(pool)
     for i, existing in enumerate(pool):
+        if existing.get("claimed_by"):
+            continue
         if not character_matcher.is_same_character(existing, new_pregen):
             continue
         if existing.get("source") == new_pregen.get("source"):

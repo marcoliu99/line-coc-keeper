@@ -297,6 +297,23 @@ async def handle_pdf_upload(
         await reply("目前只支援上傳 PDF 劇本檔案喔。")
         return
 
+    # Checked before any of the expensive extraction work below (and before
+    # clear_page_images, which unconditionally wipes the current scenario's
+    # page images) — a second PDF landing while an earlier pending_pdf_upload
+    # choice is still unresolved would otherwise silently overwrite it, and
+    # whichever button the GM clicks afterward (still labelled for the FIRST
+    # upload — buttons carry no upload-specific id) would end up applying the
+    # SECOND upload's content instead, which is especially bad for "全新劇本"
+    # (wipes map position, resets the LLM conversation thread).
+    existing_state = load_state(conversation_id)
+    if existing_state.pending_pdf_upload is not None:
+        await reply(
+            f"上一次上傳的《{existing_state.pending_pdf_upload['title']}》還沒選擇「全新劇本」"
+            "還是「修正目前劇本」，請先點上一則訊息的按鈕選完，再上傳這份新的 PDF——不然這份新的"
+            "會蓋掉還沒處理的那份，之後點到舊按鈕會套用到錯的內容。"
+        )
+        return
+
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
 
     try:
@@ -2012,13 +2029,21 @@ async def _handle_coc_command(
         # narration, as its own message — so the GM sees exactly who's
         # playing what and what (if anything) got quietly repaired, rather
         # than that only surfacing later as a confusing mid-game symptom.
-        healed_notes: dict[str, list[str]] = {}
-        for owner_id, char in state.characters.items():
-            notes = _heal_character(char)
-            if notes:
-                healed_notes[owner_id] = notes
-        if healed_notes:
-            save_state(state)
+        # Guarded by get_state_lock like the two save_state calls further
+        # below in this same subcommand — /coc check's self-initiated check
+        # path only gates on state.active (not game_started), so a Keeper
+        # turn's background maintenance task can still be in flight here even
+        # during the lobby phase; an unguarded load-mutate-save would risk a
+        # lost update against that task's own state_lock-guarded save.
+        with locks.get_state_lock(conversation_id):
+            state = load_state(conversation_id)
+            healed_notes: dict[str, list[str]] = {}
+            for owner_id, char in state.characters.items():
+                notes = _heal_character(char)
+                if notes:
+                    healed_notes[owner_id] = notes
+            if healed_notes:
+                save_state(state)
         await reply(_build_readiness_roster(state, healed_notes))
 
         # Prefer the scenario's own read-aloud opening text (see
