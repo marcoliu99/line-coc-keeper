@@ -542,6 +542,32 @@ Library Use、Dodge、Occult...），不用等第一次真的遇到英文劇本�
     * 或 `/coc claim 編號`（例如 `/coc claim 1`）
   * 系統立即將該角色綁定給該玩家，完成出戰交接。
 
+⚠️ **TODO（2026-09-17 討論，暫緩實作）**：核對現有程式碼後確認：
+- 「依角色姓名為唯一 Key，不再被同職業覆蓋」這部分已經在模組四解決（`reconcile_pregen_into_pool`
+  用身分比對取代職業字串去重），不用再做。
+- 「玩家：」欄位現在完全被丟棄——`parse_role_sheet_text` 排除它不進 `notes`，但這個值本身沒存進
+  `pregen` dict 的任何地方，解析出來就直接扔了。
+- 完全沒有 `/coc claim` 指令，只有 `/coc usepregen <編號>`（純數字）。
+
+暫緩的原因：「自動比對群組成員」這個功能的做法，取決於實際用法是「GM 一次幫全團上傳、自動分配」
+還是「玩家自己傳自己的卡」，這兩種做法複雜度差很多（前者需要 `discord_bot.py` 查詢 Discord 頻道
+成員名單，跨平台共用層 `commands.py` 本身不知道群組裡有誰；後者只需要知道上傳者自己是誰，不用碰
+Discord API），使用者尚未決定要選哪一種，先擱置。之後要撿起來做的話，兩個方案已經討論出具體實作
+步驟：
+
+- **共同要做的**：`parse_role_sheet_text` 新增 `pregen["player_tag"]`（角色卡上寫的原始文字提示，
+  跟比對成功後才產生的 `claimed_by` 是兩回事）；新增 `/coc claim <名字或編號>` 指令，純數字複用
+  `/coc usepregen` 既有邏輯，名字則在 `state.pregens` 找完全相符的項目（找不到或有多個同名，請玩家
+  改用 `/coc pregens` 查編號，不做模糊猜測），兩種輸入最後都走同一套認領共用邏輯；`/coc usepregen`
+  保留不動，相容既有用法。
+- **選項 A（GM 一次搞定）**：`commands.py` 新增平台無關的 `try_bind_pregen_by_tag(conversation_id,
+  member_candidates: list[tuple[user_id, display_name]])`，`discord_bot.py` 在角色卡上傳完成後
+  自己查頻道成員名單、把候選名單傳進來，比對策略只做完全相符（不做模糊/子字串比對，避免顯示名稱
+  重複或暱稱不一致綁錯人），比對不到就照常落入待認領池。
+- **選項 B（只比對上傳者自己）**：`handle_role_sheet_upload` 只需要加上傳者自己的
+  user_id／顯示名稱這一個參數，`player_tag` 剛好等於上傳者自己的顯示名稱時直接完成認領，不用碰
+  Discord 成員名單查詢，實作範圍小很多。
+
 ---
 
 ## 9. 模組七：整備階段與 /coc start 全員角色裝備就緒閘門
