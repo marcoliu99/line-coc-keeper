@@ -505,6 +505,26 @@ Library Use、Dodge、Occult...），不用等第一次真的遇到英文劇本�
                                 └─────────────────────────────┘
 ```
 
+⚠️ 實作備註（2026-09-17，追加討論定案）：這個生命週期圖的「自動沉澱入庫」在第一版實作時其實是缺角的——
+`dictionary.py` 的 `learn_skill`／`learn_occupation` 雖然寫好了，但全專案沒有任何地方真的呼叫，等於
+「查詢」有做、「學習」沒做，字典只會停留在上線時種好的那批資料，不會隨著實際跑團越用越聰明；而且技能
+的「智慧推斷通道」原本完全沒接（`extract_pregens` 的 LLM schema 只要求回傳翻譯後的職業，從來沒要求
+回傳原文，系統根本無從得知配對是什麼）。使用者直接審查程式碼抓出這兩個缺口，並且額外指出：就算字典
+真的學會了新詞彙，遊戲進行中實際執行技能檢定用的 `canonical_skill_name`（`app/skill_aliases.py`）
+完全沒有查過這個動態字典——學會了也沒用，玩家在遊戲裡打字還是會查不到。修法：
+
+- `extract_pregens` 的 LLM schema 新增 `occupation_original`（職業原文）與 `skill_translations`
+  （技能中文名稱→原文寫法對照），讓 LLM 抽取角色卡的同一次呼叫，順便回報這次用到的每一組原文／翻譯
+  配對——抽取完成、`_translate_skill_names` 查表**之前**，先呼叫 `dictionary.learn_occupation`／
+  `learn_skill` 把這些配對存進字典，不需要另外多打一次 LLM 去補問「這個字要怎麼翻」。
+- `canonical_skill_name` 補上第三層查詢：`BASE_SKILLS` → 靜態 `SKILL_ALIASES` → 動態字典
+  `dictionary.lookup_skill`——這是遊戲中所有技能檢定（`resolve_skill_value`）唯一會呼叫的正規化
+  函式，接上之後，字典學到的詞彙才會真的在遊戲進行中派上用場。
+
+用真實 LLM 呼叫驗證過：抽取一份英文劇本後，直接查資料庫確認 `learn_occupation`／`learn_skill` 真的
+被呼叫、真的寫進去了；接著直接呼叫 `canonical_skill_name("Spot Hidden")` 確認回傳「偵查」，證實學到
+的詞彙在遊戲檢定的路徑上真的能被找到，不會只停留在抽取角色卡那一步。
+
 ---
 
 ## 8. 模組六：玩家自動綁定與一鍵認領

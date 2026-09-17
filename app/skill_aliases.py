@@ -8,9 +8,21 @@ Nothing forced those two into the same vocabulary, so "手槍" (from one call) a
 "射擊（手槍）" (BASE_SKILLS' own spelling, from another) would silently miss each
 other — see app/keeper.py's resolve_skill_value, which is the only place this
 dict is consulted.
+
+Beyond this file's own static SKILL_ALIASES, canonical_skill_name also falls
+back to app/dictionary.py's self-learning skills table — the dynamic
+counterpart, populated by app/pregen_extractor.py's extract_pregens whenever a
+scenario's own text uses a term neither this file nor BASE_SKILLS already
+knows (e.g. an English scenario's "Spot Hidden"). Without this fallback, a
+term the dictionary had genuinely learned would still only resolve inside
+pregen_extractor.py's own extraction pass — an in-game skill check
+referencing that same term (a player typing it, or the Keeper's own tool call
+echoing it) would have no way to find it, since this function is the only
+place resolve_skill_value's canonicalization happens.
 """
 from __future__ import annotations
 
+from app import dictionary
 from app.models import BASE_SKILLS
 
 # Deliberately only unambiguous variants — a generic term that could plausibly
@@ -95,11 +107,15 @@ SKILL_ALIASES: dict[str, str] = {
 
 
 def canonical_skill_name(name: str) -> str:
-    """Best-effort normalization: trim, then alias-lookup against SKILL_ALIASES.
-    Falls through unchanged (including for attribute names like STR/POW, and
-    for genuinely novel homebrew skill names) — callers needing the fuzzy
+    """Best-effort normalization: trim, check BASE_SKILLS, then this file's
+    static SKILL_ALIASES, then app/dictionary.py's self-learning table (see
+    this module's own docstring for why the third step matters). Falls
+    through unchanged (including for attribute names like STR/POW, and for
+    genuinely novel homebrew skill names) — callers needing the fuzzy
     substring fallback still do that themselves afterward."""
     key = (name or "").strip()
     if key in BASE_SKILLS:
         return key
-    return SKILL_ALIASES.get(key, key)
+    if key in SKILL_ALIASES:
+        return SKILL_ALIASES[key]
+    return dictionary.lookup_skill(key) or key

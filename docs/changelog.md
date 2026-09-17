@@ -714,3 +714,18 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - 用真實 LLM 呼叫（沒有 mock `extract_pregens`）分別測了兩種上傳順序：（a）先傳一份內建「Malcolm Carter」預製角色的英文劇本 PDF，再傳一份寫「卡特」的中文角色卡；（b）反過來，先傳中文角色卡，再傳同一份英文劇本 PDF。兩種順序最後都正確合併成同一筆 `source: "merged"` 的角色池項目，跟上傳順序無關——順序 (b) 特別驗證了角色卡沒有被第一次 PDF 上傳洗掉（這正是原本的 bug 2）。
   - 確認上傳劇本當下的確認訊息會直接報告「這份劇本內建了 1 位預製調查員」，不再是原本的條件式提示文字。
   - 正式環境資料庫全程沒有被動到（本地測試用獨立的 `DB_PATH` 環境變數隔離）。
+
+### 62. 模組五補完：字典真正會「學」，遊戲中的技能檢定也接得到動態學到的詞彙
+
+- **這個改動怎麼來的**：使用者直接審查了模組五現有的實作，指出雖然字典的查詢機制（`lookup_skill`／`lookup_occupation`）跟種子資料都做了，但「自學習」這個核心承諾其實沒有兌現——`dictionary.py` 的 `learn_skill`／`learn_occupation` 全專案沒有任何地方呼叫（dead code）；`extract_pregens` 的 LLM schema 只要求回傳翻譯後的職業，從來沒有要求回傳「原文」，系統根本無從得知配對是什麼，也就沒東西可以學；技能完全沒有翻譯機制；而且就算字典裡真的學到了新詞彙，遊戲中實際執行技能檢定用的 `canonical_skill_name`（`app/skill_aliases.py`）也完全沒有查過這個動態字典，只查寫死的 `SKILL_ALIASES`——就算學會了「Spot Hidden→偵查」，玩家在遊戲裡輸入還是會查不到。使用者提供了具體的實作計畫（改 schema 讓 LLM 同時回報原文與翻譯、抽取完成後呼叫 `learn_*`、把 `canonical_skill_name` 接上動態字典），核對後確認方向正確，照案實作。
+- **這個專案現在怎麼做**：
+  1. `app/pregen_extractor.py` 的 `_REPORT_TOOL` schema：`occupation` 欄位拆成 `occupation_original`（劇本原文，一字不改照抄）與 `occupation_translated`（中文翻譯）；新增 `skill_translations`（技能中文名稱 → 劇本原文寫法的對照，key 要求跟 `skills` 的 key 完全一致），要求 LLM 抽取角色卡時一併回報每個技能的原文寫法。
+  2. 新增 `_learn_translations_from_pregen`：在 `_translate_skill_names` 執行**之前**，先把 LLM 這次回報的原文／翻譯配對呼叫 `dictionary.learn_occupation`／`dictionary.learn_skill` 存進字典——這樣接下來的查表翻譯保證命中（不需要另外再打一次 LLM 補問），字典也真的會隨著每次抽取越學越多。抽取完成後把 `occupation_original`／`occupation_translated` 收斂回單一的 `occupation` 欄位（其餘所有呼叫端——`pregen_to_character`、`character_matcher`、`reconcile_pregen_into_pool`、顯示文字——都只認識這一個欄位，不需要知道背後拆過欄位）。
+  3. `app/skill_aliases.py` 的 `canonical_skill_name`：查完 `BASE_SKILLS` 跟寫死的 `SKILL_ALIASES` 都沒命中，改成再查一次 `dictionary.lookup_skill`——這是唯一一個 `resolve_skill_value`（`app/keeper.py`，遊戲中所有技能檢定都會經過這裡）會呼叫的正規化函式，接上之後，動態學到的詞彙才會真的在遊戲進行中派上用場，不會只停留在抽取角色卡那一步。
+- **實測過**：
+  - 用真實 LLM 呼叫（沒有 mock）餵一份內建「Malcolm Carter / Private Investigator / Spot Hidden 65% / Psychology 50%」的英文劇本，確認：抽取結果 `occupation` 正確收斂成單一中文欄位（不再殘留 `occupation_original`／`occupation_translated`）、`skills` 正確含有「偵查」「心理學」；直接查資料庫確認 `dictionary.lookup_occupation("Private Investigator")`、`dictionary.lookup_skill("Spot Hidden")` 真的查得到剛剛學會的翻譯——證實 `learn_occupation`／`learn_skill` 這次是真的被呼叫、真的寫進資料庫，不是只停留在函式定義。
+  - 模擬遊戲中的檢定情境：直接呼叫 `canonical_skill_name("Spot Hidden")`，確認回傳「偵查」——這正是使用者要求驗證的「`/coc check Spot Hidden` 能不能正確抓到偵查」，`resolve_skill_value` 呼叫的就是這個函式，所以確認這個函式行為正確等同確認整個檢定流程會正確運作。
+  - 額外測了字典完全沒學過的生字（`Some Totally Novel Skill`）仍然原封不動通過、不會出錯或誤判。
+  - 重新跑一次先前的「上傳順序無關」回歸測試（先傳 PDF 再傳角色卡），確認這次的 schema 改動沒有連帶破壞先前第 61 條修好的合併邏輯。
+  - 正式環境資料庫全程沒有被動到。
+- **觀察到但不在這次範圍內的東西**：測試過程中有一次 LLM 抽取結果把 EDU 屬性的 key 回傳成不正確的 `"edu?:"` 而不是 `"edu"`（單次、非每次重現，這個欄位的 schema 沒有被這次改動動到），這種情況下 `pregen_to_character` 會安靜地退回 EDU 預設值 50，而不是用到 LLM 實際抽出來的數字。這是既有 schema 遵循度的既有小缺口，不是這次改動造成的，先記錄下來，之後有需要可以再處理（例如比對 required 屬性完整性、缺漏時提示 GM 人工核對）。

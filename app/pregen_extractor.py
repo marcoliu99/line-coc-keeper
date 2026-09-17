@@ -35,7 +35,12 @@ _REPORT_TOOL = {
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "調查員姓名（維持原文，通常是專有名詞）"},
-                        "occupation": {
+                        "occupation_original": {
+                            "type": "string",
+                            "description": "職業在劇本原文裡的寫法，一字不改照抄（例如劇本是英文就填 'Artist'，"
+                            "已經是中文就跟 occupation_translated 填一樣的值）。",
+                        },
+                        "occupation_translated": {
                             "type": "string",
                             "description": (
                                 "職業，請翻譯成繁體中文（例如英文劇本寫 'Artist' 就回報'藝術家'，"
@@ -49,8 +54,18 @@ _REPORT_TOOL = {
                         "hp_max": {"type": "integer"}, "mp_max": {"type": "integer"}, "san_max": {"type": "integer"},
                         "skills": {
                             "type": "object",
-                            "description": "技能名稱對應百分比數值，只填劇本裡明確寫出的技能",
+                            "description": "技能名稱對應百分比數值，只填劇本裡明確寫出的技能。key 請直接"
+                            "使用 skill_translations 裡對應的『中文翻譯』那一邊（不是原文），"
+                            "跟 skill_translations 的翻譯值要完全一致。",
                             "additionalProperties": {"type": "integer"},
+                        },
+                        "skill_translations": {
+                            "type": "object",
+                            "description": "skills 裡每一個技能名稱，對應它在劇本原文裡的寫法——key 是"
+                            "翻譯後的中文技能名（要跟 skills 的 key 完全一致），value 是劇本原文的寫法"
+                            "（例如劇本是英文就填 'Spot Hidden'；劇本本來就是中文，value 跟 key 填一樣的"
+                            "值）。這是為了讓系統學會這個劇本用的技能譯名，之後遇到同樣的原文能直接辨識。",
+                            "additionalProperties": {"type": "string"},
                         },
                         "notes": {"type": "string", "description": "簡短背景介紹，若劇本有寫的話"},
                         "secret_goal": {
@@ -97,29 +112,59 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         _REPORT_TOOL,
         "以下是一份 COC7e 劇本的文字內容。請找出裡面是否附有『預製調查員角色卡』"
         "（通常會列出角色姓名、職業、一串屬性數字如 STR/CON/SIZ/DEX/APP/INT/POW/EDU、"
-        "以及一份技能列表）。用 report_pregens 工具回報結果。",
+        "以及一份技能列表）。職業請同時回報原文（occupation_original）跟中文翻譯"
+        "（occupation_translated）；每個技能除了 skills 裡的中文名稱＋數值，也請在"
+        "skill_translations 裡附上這個技能在劇本原文裡的寫法，讓系統可以學會這個劇本用的"
+        "譯名。用 report_pregens 工具回報結果。",
     )
     pregens = (result or {}).get("pregens", []) or []
     for pregen in pregens:
         # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above —
         # see that function's own comment for why reconciliation needs this.
         pregen["source"] = "llm_extracted"
+        _learn_translations_from_pregen(pregen)
         pregen["skills"] = _translate_skill_names(pregen.get("skills") or {})
     return pregens
 
 
+def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
+    """Captures the LLM's own original<->translated pairing for THIS
+    extraction (see _REPORT_TOOL's occupation_original/occupation_translated
+    and skill_translations fields) and teaches it to app/dictionary.py
+    *before* _translate_skill_names runs below — so a term this exact
+    scenario just used is already learned by the time the lookup-only
+    translation pass needs it, no second LLM call required. Without this,
+    dictionary.py's learn_skill/learn_occupation were dead code: nothing in
+    the project ever called them, so the dictionary could only ever be as
+    good as its initial seed (see dictionary.py's _SEED_SKILLS) and would
+    never actually grow from real scenario extractions the way its own
+    "self-learning" name promises.
+
+    Collapses occupation_original/occupation_translated back into a single
+    "occupation" key afterward — every other caller (pregen_to_character,
+    character_matcher, reconcile_pregen_into_pool, display text) expects
+    that one field, not the two-field split this schema needs only to
+    capture the pairing."""
+    original = (pregen.pop("occupation_original", "") or "").strip()
+    translated = (pregen.pop("occupation_translated", "") or "").strip()
+    if original and translated and original.lower() != translated.lower():
+        dictionary.learn_occupation(original, translated)
+    pregen["occupation"] = translated or original or pregen.get("occupation", "")
+
+    for translated_skill, original_skill in (pregen.pop("skill_translations", None) or {}).items():
+        translated_skill, original_skill = (translated_skill or "").strip(), (original_skill or "").strip()
+        if original_skill and translated_skill and original_skill.lower() != translated_skill.lower():
+            dictionary.learn_skill(original_skill, translated_skill)
+
+
 def _translate_skill_names(skills: dict[str, Any]) -> dict[str, Any]:
     """Looks each skill name up against app/dictionary.py's seeded/learned
-    skills table before storing. _REPORT_TOOL's schema above only instructs
-    the LLM to translate the occupation field into Chinese — not skills — so
-    an English scenario's raw extraction would otherwise keep skill names
-    like "Spot Hidden" untranslated, unable to line up with a Chinese-
-    authored role sheet's "偵查" for either app/character_matcher.py's
-    occupation+skills gate or a later skill_check. A name with no dictionary
-    entry (yet) is kept as-is rather than dropped — this is deliberately
-    just the free, already-seeded/learned lookup, not a translation call of
-    its own; see dictionary.py's own docstring for the "look up first, only
-    the first-ever miss costs anything" design this is meant to fit into."""
+    skills table before storing — by the time this runs, _learn_translations_
+    from_pregen above has already taught the dictionary this exact
+    extraction's own skill_translations pairs, so a still-English name from
+    THIS scenario is already a guaranteed hit, not a hopeful one. A name
+    with no dictionary entry (e.g. the LLM didn't include it in
+    skill_translations) is kept as-is rather than dropped."""
     return {(dictionary.lookup_skill(name) or name): value for name, value in skills.items()}
 
 
