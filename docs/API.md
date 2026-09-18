@@ -147,6 +147,7 @@ limits, or weaknesses until the scenario reveals them.
 | --- | --- |
 | `start_combat()` | Starts initiative using active, non-away player characters. |
 | `add_npc_to_combat(name, dex, hp, is_ally=false, armor=[], attacks=[], abilities=[])` | Adds an ally or creates an enemy combat card and adds it to initiative. Existing shorthand `name/dex/hp` remains valid but creates an incomplete enemy card. |
+| `get_combat_status()` | Returns the current combat round, initiative order, and whose turn it is. Public view hides enemy HP; KP Assistant private view includes enemy HP and card details. |
 | `plan_enemy_turn(enemy="")` | For the current or named enemy, checks special abilities, triggers, usage, cooldowns, and available attacks; returns a private plan plus safe public hint. |
 | `resolve_enemy_action(plan_id)` | Marks the selected enemy plan as resolved and consumes ability usage/cooldown. Repeated calls for the same plan are idempotent. |
 | `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")` | Applies damage with a raw/armor/final breakdown and updates HP. |

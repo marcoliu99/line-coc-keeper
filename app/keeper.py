@@ -404,7 +404,7 @@ TOOLS = [
     },
     {
         "name": "get_combat_status",
-        "description": "查詢目前戰鬥的回合數、先攻順位與所有戰鬥員的 HP，以及現在輪到誰的行動。",
+        "description": "查詢目前戰鬥的回合數、先攻順位與現在輪到誰的行動。一般公開視圖不顯示敵人 HP；KP Assistant 可看 private 視圖。",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
@@ -1302,7 +1302,7 @@ def _execute_tool(
 
         if name == "get_combat_status":
             _refresh_state_snapshot(state)
-            return {"ok": True, "status": combat.status_text(state)}
+            return {"ok": True, "status": combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
         if name == "advance_combat_turn":
             def _mutate_advance_turn(target_state: GroupState) -> dict:
@@ -1686,7 +1686,7 @@ def _build_dynamic_prompt(
         combat_block = f"""
 
 # 目前戰鬥狀態
-{combat.status_text(state)}
+{combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
 戰鬥規則：目前正在進行正式戰鬥，一次只處理「輪到的角色」的行動，嚴格按照上面列出的先攻順位進行——
 DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情方便就打亂順序或把不同 DEX 的人合併敘述成同時

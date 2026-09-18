@@ -32,6 +32,7 @@
 - `resolve_enemy_action` 會消耗特殊能力 usage/cooldown，且同一個 `plan_id` 重複 resolve 會回 `already_resolved=True`，不會重複扣次數。
 - `apply_combat_damage` 已保存 raw/armor/final/hp breakdown，對 PC 重大傷害會註冊 pending CON check；公開摘要不得洩漏護甲精確數值。
 - `add_combat_effect` 已可建立固定時點 effect；`process_timing` 可在 round/turn timing 套用固定傷害或骰式傷害。
+- public combat status 不顯示敵人目前 HP / 最大 HP；KP Assistant private combat status 可看敵人 HP、護甲與能力摘要。
 - KP Assistant allowlist 開放 `apply_combat_damage` 與 `add_combat_effect`，這兩個成功結果會成為 canonical game event；`damage_combatant` 仍不開放給 KP Assistant。
 
 ## 現況落差
@@ -463,6 +464,13 @@ DamageResolution(
 
 玩家/Keeper 公開工具預設不回傳敵人 private notes。KP Assistant 可以使用查詢與已開放的正式流程工具；目前只開放 `apply_combat_damage` / `add_combat_effect` 這類會走傷害契約的 mutation，不開放 `damage_combatant` 這種泛用 HP delta。
 
+Combat status visibility：
+
+- `status_text(include_private=False)` 是公開視圖：PC/ally 顯示 HP，敵方只顯示 `HP 未公開` 與倒下/暫離等可見狀態。
+- `/coc combat status`、`/coc combat next`、`/coc combat damage` 等公開指令不得回覆敵人的精確目前 HP 或最大 HP。
+- `status_text(include_private=True)` 是 KP/KP Assistant 視圖：可顯示敵人 HP、護甲與能力摘要。
+- `get_combat_status` 在 `speaker_role == "kp_assistant"` 時使用 private 視圖；一般 player/Keeper tool result 使用公開視圖，降低敘事時不小心洩漏敵方血量的風險。
+
 ## Prompt 契約
 
 Keeper prompt 必須改成：
@@ -511,6 +519,7 @@ Keeper prompt 必須改成：
 12. `away` 只跳過 active character，不影響同 user 的 Partner/test 角色。
 13. 舊 `GroupState.characters` 存檔可 migrate 到 `characters_by_id`。
 14. KP Assistant allowlist 包含 `apply_combat_damage` / `add_combat_effect`，但不包含 `damage_combatant`；成功傷害工具會 creates canon。
+15. 公開 combat status 與 combat 指令不洩漏敵人 HP；KP Assistant `get_combat_status` 可看到 private HP。
 
 整合測試：
 

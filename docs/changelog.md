@@ -1764,3 +1764,19 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **實測過**：這次只改文件，沒有動 runtime code，因此沒有重跑測試；補文件前已對照相關
   commit、`app/combat.py`、`app/keeper.py`、`app/models.py` 與既有測試，確認文件描述跟目前
   程式碼一致。
+
+### 101. 戰鬥公開狀態不再洩漏敵人 HP，KP Assistant 保留 private 視圖
+
+- **這個改動怎麼來的**：開 PR 後使用者補充一個本功能範圍內的小修正：戰鬥狀態不應對玩家公布
+  敵人的目前 HP 或剩餘 HP，但 KP Assistant 需要能看到，方便共同主持與檢查戰鬥卡。
+- **這次實際完成**：`combat.status_text(include_private=False)` 現在對敵方戰鬥員顯示 `HP 未公開`，
+  仍顯示 PC/ally 的 HP；`include_private=True` 則保留敵方 HP、護甲與能力摘要。`keeper._execute_tool`
+  的 `get_combat_status` 依 `speaker_role` 切換：KP Assistant 用 private 視圖，一般 player/Keeper
+  tool result 用公開視圖，降低敘事時不小心洩漏敵人血量的風險。
+- **公開指令同步**：新 router handler 與 legacy command 的 `/coc combat next`、`/coc combat damage`
+  都改成敵方目標不回精確 HP；玩家角色與隊友仍會顯示 HP。
+- **相容性修正**：`apply_combat_damage` / `damage_combatant` 的 result 補上 `name` / `side`，讓指令層能
+  穩定判斷目標是不是敵方，也避免受傷路徑轉進 `apply_combat_damage` 時缺少 `name` 的舊相容問題。
+- **文件與測試**：更新 `docs/combat_design_spec.md` 與 `docs/API.md` 的 visibility 契約；新增測試確認
+  public status 隱藏敵人 HP、private status 顯示敵人 HP、KP Assistant `get_combat_status` 取得 private
+  視圖。測試跑過 `py_compile`、`tests.test_combat_cards`、`tests.test_kp_assistant_v2`。

@@ -157,6 +157,26 @@ class CombatCardTests(unittest.TestCase):
         self.assertNotIn("3", result["public_summary"])
         self.assertIn("部分傷害被擋下", result["public_summary"])
 
+    def test_public_combat_status_hides_enemy_hp(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            armor=[{"id": "hide", "label": "Hide", "value": 2, "applies_to": "physical"}],
+        )
+
+        public = combat.status_text(state)
+        private = combat.status_text(state, include_private=True)
+
+        self.assertIn("Mark [我方] DEX 55 HP 12/12", public)
+        self.assertIn("Dream Singer [敵方] DEX 60 HP 未公開", public)
+        self.assertNotIn("Dream Singer [敵方] DEX 60 HP 14/14", public)
+        self.assertIn("Dream Singer [敵方] DEX 60 HP 14/14", private)
+        self.assertIn("護甲:Hide 2", private)
+
     def test_apply_combat_damage_registers_major_wound_con_check_for_pc(self):
         state = self._state_with_pc()
         combat.start_combat(state)
