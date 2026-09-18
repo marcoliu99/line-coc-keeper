@@ -341,6 +341,47 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 commands.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
                 temp_library.cleanup()
 
+    async def test_similar_pdf_upload_reloads_state_before_saving_pending_scenario_upload(self):
+        """Regression test: extract_preview/find_similar run unlocked (via
+        asyncio.to_thread) before the pending_scenario_upload save. A turn
+        landing on this conversation in that window must not be silently
+        reverted by that save — see the review finding this guards against."""
+        with StateStorePatch(commands) as store:
+            state = GroupState(group_id="g")
+            state.log = [{"role": "user", "content": "original"}]
+            store.put(state)
+
+            original_extract_preview = commands.pdf_loader.extract_preview
+            original_find_similar = commands.scenario_library.find_similar
+            original_stage_upload = commands.scenario_library.stage_upload
+
+            def concurrent_extract_preview(pdf_bytes):
+                # Simulate another turn saving fresh state while this
+                # (real, asyncio.to_thread-dispatched) extraction runs.
+                concurrent = store.get("g")
+                concurrent.log = concurrent.log + [{"role": "assistant", "content": "concurrent turn happened"}]
+                store.put(concurrent)
+                return "preview text"
+
+            commands.pdf_loader.extract_preview = concurrent_extract_preview
+            commands.scenario_library.find_similar = lambda title, preview: [
+                {"id": "existing-scenario", "title": "Existing", "score": 0.9}
+            ]
+            commands.scenario_library.stage_upload = lambda pdf_bytes: "staged-key"
+            try:
+                reply = ReplyCollector()
+                push = ReplyCollector()
+                await commands.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf")
+
+                saved = store.get("g")
+                self.assertEqual(len(saved.log), 2, "the concurrent turn's log entry must survive")
+                self.assertIsNotNone(saved.pending_scenario_upload)
+                self.assertEqual(saved.pending_scenario_upload["key"], "staged-key")
+            finally:
+                commands.pdf_loader.extract_preview = original_extract_preview
+                commands.scenario_library.find_similar = original_find_similar
+                commands.scenario_library.stage_upload = original_stage_upload
+
     def test_kp_assistant_tool_allowlist_and_runtime_guard(self):
         original_rag_enabled = keeper.SCENARIO_RAG_ENABLED
         keeper.SCENARIO_RAG_ENABLED = True
