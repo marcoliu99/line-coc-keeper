@@ -188,6 +188,30 @@ EffectState(
 
 火焰、流血、中毒、夢境/精神效果、壓制、抓握都走這個結構。
 
+`damage` 支援兩種 authoritative 表示：
+
+- 固定傷害：`"1"`、`"3"`。用於碎玻璃、臨時火焰、場景壓迫、玩家創意造成的確定傷害。
+- 骰式傷害：`"1d2"`、`"1d6+1"`。沿用既有 dice expression。
+
+非法傷害表示式不得被靜默吞掉。效果引擎必須回傳 private error result，且不得在完全沒有套用成功時消耗 `remaining_rounds`。
+
+### KP Assistant Fixed Damage Authority
+
+KP Assistant 可以把玩家臨場發想或主持層裁定轉成正式的固定傷害，但必須經由 deterministic tool 寫入或結算，不能只靠自然語言改變 HP。
+
+允許的情境：
+
+- 立即固定傷害，例如「Marco 被碎玻璃割到，直接 1 點傷害」。
+- 持續固定傷害，例如「燃燒每個回合開始造成 1 點火焰傷害，持續 3 輪」。
+- 場景或怪物能力造成的特殊固定傷害，例如「夢境壓迫每輪 2 點，但不是普通物理攻擊」。
+
+工具邊界：
+
+- 立即傷害使用 `apply_combat_damage(target, raw_damage, damage_type, tags, source_id)`，`raw_damage` 是整數，仍走護甲、重傷與 HP 同步流程。
+- 持續或固定時點傷害使用 `add_combat_effect(target, label, timing, damage, remaining_rounds, tags, source_id)`，`damage` 可為固定整數字串或骰式。
+- KP Assistant 使用這些工具時，該回合必須成為 canonical game event，而不是單純 OOC 討論。
+- 公開敘事只呈現玩家可感知效果；private result 可以包含 source、tags、raw/final damage、非法表示式錯誤等診斷。
+
 ### Character Identity
 
 為了避免 Mark、測試、Partner 混在一起，角色狀態必須從「每個 user_id 一格」改為「每個角色一格，user_id 只是擁有者」。
