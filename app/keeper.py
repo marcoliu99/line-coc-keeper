@@ -434,14 +434,14 @@ TOOLS = [
     {
         "name": "search_scenario_images",
         "description": (
-            "依目前載入的兩章劇本 Context 搜尋可展示的圖片資產（地圖、人物肖像、插圖或角色卡）。"
+            "依目前載入的兩章劇本 Context 搜尋可展示的圖片資產（地圖、人物肖像、手卡、插圖或角色卡）。"
             "先用這個工具找到正確頁碼，再呼叫 show_scenario_image；不可查詢尚未載入的後續章節。"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "圖片描述或關鍵字；留空可列出目前 Context 的圖片"},
-                "image_type": {"type": "string", "enum": ["map", "portrait", "illustration", "character_sheet"], "description": "可選的圖片類別"},
+                "image_type": {"type": "string", "enum": ["map", "portrait", "handout", "illustration", "character_sheet"], "description": "可選的圖片類別"},
             },
         },
     },

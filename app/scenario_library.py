@@ -307,10 +307,28 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
     map_pages = {str(k) for k in page_maps}
     for page in sorted(page_images):
         page_text = _pages_in_range(text, page, page)
+        is_character_sheet = re.search(
+            r"\bSTR\b|\bDEX\b|\bSAN\b|characteri\w*|investigator\s+skills|"
+            r"weapon\s+regular\s+hard\s+extreme|\boccupation\b.*\b(weapon|damage|dodge|luck)\b",
+            page_text,
+            re.I | re.S,
+        )
+        # Only structural evidence (page_maps, from the vision model actually
+        # detecting a floor plan — see _analyze_graphic_page) may override a
+        # character_sheet classification here. A page mentioning "map" in
+        # passing (a monster/NPC stat block with a "see map, p.X" reference is
+        # a common scenario layout) is a much weaker signal than an actual
+        # stat block, and character_sheet's default "kp_only" visibility (see
+        # below) exists specifically to hide that kind of page from players —
+        # letting the plain-text regex win here would silently defeat that.
         if str(page) in map_pages:
             kind = "map"
-        elif re.search(r"\bSTR\b|\bDEX\b|\bSAN\b", page_text, re.I):
+        elif is_character_sheet:
             kind = "character_sheet"
+        elif re.search(r"\bmap\b|floor\s*plan|地圖|平面圖|房間圖", page_text, re.I):
+            kind = "map"
+        elif re.search(r"handout|手卡|玩家資料|報紙|剪報|信件|書信|日記|照片|文件|線索", page_text, re.I):
+            kind = "handout"
         elif re.search(r"portrait|人物|肖像|character\s+(illustration|portrait)", page_text, re.I):
             kind = "portrait"
         else:
