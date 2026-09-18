@@ -248,11 +248,11 @@ value 內容：
    `/coc scenario use` 的權限模型）。
 2. **自動**：`start_combat`（`app/combat.py`）觸發時，自動建立一個 `reason="auto_combat_start"`
    的節點——開戰是最常見「想回溯」的時機（戰鬥打壞了想重來），不應該要求 KP 每次開戰前都記得
-   手動存一次。自動節點跟手動節點共用同一份列表與清除規則（見下方數量上限），不特別區分。
+   手動存一次。自動節點跟手動節點共用同一份列表，不特別區分。
 
-每個 group 保留的節點數量上限：`MAX_CHECKPOINTS_PER_GROUP`（環境變數，預設 20）——超過時，按
-建立時間淘汰最舊的節點（`auto_combat_start` 跟 `manual` 一起排序，不特別保護自動節點，因為 KP
-永遠可以在重要時機手動建一個具名的來確保不被淘汰）。
+`state_checkpoints` 跟 `scene_digests` 一樣**不做數量上限淘汰**：SQLite 本地檔案的儲存成本
+可忽略，沒有理由自動丟棄任何一筆回溯節點的歷史紀錄——不管是手動建的還是 `auto_combat_start`
+自動建的，永遠留著，除非 KP 自己用 `/coc checkpoint clean <ID>` 手動刪除。
 
 ### 還原流程
 
@@ -276,7 +276,7 @@ value 內容：
 | `/coc checkpoint [名稱]` | 手動建立一個回溯節點，可選具名；預設用建立時間當顯示名稱。僅 KP。 |
 | `/coc checkpoints` | 列出這一團目前所有節點：ID、名稱、建立時間、建立原因（手動/開戰自動/回溯前自動）。 |
 | `/coc rollback <ID 或名稱>` | 還原到指定節點；還原前自動多存一個節點。僅 KP。 |
-| `/coc checkpoint clean <ID>` | 手動刪除一個節點（不等數量上限自然淘汰）。僅 KP。 |
+| `/coc checkpoint clean <ID>` | 手動刪除一個節點——節點不會自動淘汰，這是唯一的刪除方式。僅 KP。 |
 
 `/coc checkpoints` 的輸出必須用 ID 操作（比照劇本庫 `/coc scenario list` 的既有慣例），名稱允許
 重複，不能靠名稱模糊比對刪除或還原——`rollback`／`clean` 接受名稱只在**唯一**符合時才生效，
@@ -438,10 +438,9 @@ key 格式：`{group_id}:{digest_id}`（`digest_id` 產生方式跟 `checkpoint_
 存進新的一列即可，每一列本身自然就是「到這個時間點為止」的完整快照。`/coc digest`／prompt
 組裝只要讀最新一列即可拿到完整最新狀態，`/coc digests <ID>` 則可以單獨看某一場的當時切面。
 
-跟 `state_checkpoints` 不同的是：`scene_digests` **不做數量上限淘汰**——`state_checkpoints`
-存在的目的是「最近可回溯的幾個點」，太舊的意義不大所以會自然淘汰；`scene_digests` 存在的目的
-是「這一團完整的場景歷史記錄」，本來就是 SQLite 本地檔案、儲存成本可忽略，沒有理由主動丟棄。
-真的需要清的話，靠下面的 `/coc digest clean` 手動處理，不自動淘汰。
+跟 `state_checkpoints` 一致：`scene_digests` 也**不做數量上限淘汰**——都是 SQLite 本地檔案，
+儲存成本可忽略，沒有理由主動丟棄任何一筆歷史紀錄。真的需要清的話，靠下面的 `/coc digest clean`
+手動處理，不自動淘汰。
 
 ### 跟 prompt 組裝的整合
 
@@ -505,7 +504,9 @@ Agent 階段各自需要的提示詞片段。
 4. `/coc rollback` 還原後，目前 `GroupState` 的角色卡／戰鬥狀態／待處理檢定等欄位確實變回節點
    當時的值；且還原前有自動多存一個 `pre_rollback` 節點。
 5. `start_combat` 觸發時自動建立節點；`end_combat`／一般回合不會意外多建節點。
-6. 超過 `MAX_CHECKPOINTS_PER_GROUP` 時正確淘汰最舊節點（手動與自動混合排序）。
+6. `state_checkpoints` 不做數量上限淘汰——建立遠超過（例如上百筆）測試量級的節點後，最早的
+   幾筆仍然完整存在、`/coc checkpoints` 讀得到，不會被自動清掉；只有 `/coc checkpoint clean`
+   才會真的刪除。
 7. 同名節點超過一筆時，`/coc rollback <名稱>` 拒絕並要求改用 ID，不猜測選哪一筆。
 8. `_warn_if_path_looks_transient` 對 `/tmp` 底下的路徑會記警告 log，對專案內的相對/絕對路徑
    不會誤報。
@@ -517,8 +518,8 @@ Agent 階段各自需要的提示詞片段。
     不會被兩個觸發條件（章節推進＋回合數）重複觸發兩次（新增兩列）。
 12. `scene_digest` 的 `private` 內容只出現在餵給 Keeper LLM 的 prompt 裡，不會透過
     `/coc digest`／`/coc digests` 或任何玩家可見的回覆外洩。
-13. `scene_digests` 不受 `MAX_CHECKPOINTS_PER_GROUP` 那套數量上限規則影響——即使歷史列數超過
-    `state_checkpoints` 的上限值，也不會被自動清掉；只有 `/coc digest clean <ID>` 才會刪除。
+13. `scene_digests` 同樣不做數量上限淘汰——即使歷史列數遠超過測試量級，也不會被自動清掉；
+    只有 `/coc digest clean <ID>` 才會刪除。
 14. `/coc digests` 依建立時間列出全部歷史列（含 ID／`scene_label`／建立時間），順序穩定可預期。
 15. `record_established_fact`／`record_clue` 呼叫後，`GroupState.established_facts`／
     `known_clues` 立即（不等場景摘要觸發）就能讀到新內容；重複呼叫同樣的字串不會產生重複項。
@@ -533,7 +534,8 @@ Agent 階段各自需要的提示詞片段。
 
 1. `app/db.py`：新增 `_warn_if_path_looks_transient`、`state_checkpoints` 表、`backup_now()`。
 2. `app/config.py`：新增 `BACKUP_DIR`／`BACKUP_INTERVAL_MINUTES`／`BACKUP_KEEP_COUNT`／
-   `MAX_CHECKPOINTS_PER_GROUP`／`SCENE_DIGEST_TURN_INTERVAL` 設定值。
+   `SCENE_DIGEST_TURN_INTERVAL` 設定值（`state_checkpoints`／`scene_digests` 都不設數量上限，
+   不需要對應的環境變數）。
 3. 新模組（`app/checkpoints.py`）：建立/列出/還原/清除節點的邏輯，含 `get_conversation_lock`
    整合與 pre-rollback 自動節點。
 4. `app/commands/handlers/system.py`：`/coc checkpoint*`／`/coc rollback` 指令，權限比照
