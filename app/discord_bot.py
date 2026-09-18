@@ -15,10 +15,17 @@ import unicodedata
 
 import discord
 
-from app import commands, locks
+from app import locks
+from app.commands import router as command_router
+from app.legacy_commands import (
+    Reply, SendImage, SendDMImage, SendDM,
+    handle_check_command, handle_luck_decision, resolve_pdf_upload_choice,
+    handle_pdf_upload, handle_map_upload, handle_role_sheet_upload,
+    handle_scenario_compare_upload, handle_unsupported_message
+)
 from app.config import DISCORD_BOT_TOKEN
 from app.models import GroupState
-from app.state import load_state as load_group_state
+from app.repositories.group_state import load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
 
@@ -165,7 +172,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             before_pending = dict(state_before.pending_checks)
             before_luck_pending = dict(state_before.pending_luck_decisions)
             try:
-                await commands.handle_check_command(
+                await handle_check_command(
                     self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image,
                     command_text, split_roll_feedback=True, acquire_legacy_for_keeper=True
                 )
@@ -259,7 +266,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             before_pending = dict(state_before.pending_checks)
             before_luck_pending = dict(state_before.pending_luck_decisions)
             try:
-                await commands.handle_luck_decision(
+                await handle_luck_decision(
                     self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image,
                     _send_dm_image, split_roll_feedback=True, acquire_legacy_for_keeper=True
                 )
@@ -371,7 +378,7 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
     async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(view=None)
         push = _make_reply(interaction.channel)
-        await commands.resolve_pdf_upload_choice(self.conversation_id, self.choice, push)
+        await resolve_pdf_upload_choice(self.conversation_id, self.choice, push)
 
 
 async def _post_pdf_upload_buttons(channel: discord.abc.Messageable, conversation_id: str) -> None:
@@ -431,7 +438,7 @@ async def on_message(message: discord.Message) -> None:
             content = await attachment.read()
             # No reply-token/time-window constraint here, so the same callback
             # serves as both the immediate ack and the final result.
-            await commands.handle_pdf_upload(conversation_id, reply, reply, content, attachment.filename)
+            await handle_pdf_upload(conversation_id, reply, reply, content, attachment.filename)
             await _post_pdf_upload_buttons(message.channel, conversation_id)
             return
 
@@ -445,7 +452,7 @@ async def on_message(message: discord.Message) -> None:
         if map_attachments:
             attachment = map_attachments[0]
             content = await attachment.read()
-            await commands.handle_map_upload(conversation_id, reply, reply, content, attachment.filename)
+            await handle_map_upload(conversation_id, reply, reply, content, attachment.filename)
             return
 
         # A .yaml/.yml file that's missing the map_ prefix isn't silently
@@ -475,7 +482,7 @@ async def on_message(message: discord.Message) -> None:
             # message with no feedback at all.
             for attachment in role_attachments:
                 content = await attachment.read()
-                await commands.handle_role_sheet_upload(
+                await handle_role_sheet_upload(
                     conversation_id, reply, content.decode("utf-8", errors="replace"), attachment.filename
                 )
             return
@@ -484,7 +491,7 @@ async def on_message(message: discord.Message) -> None:
         if compare_attachments:
             attachment = compare_attachments[0]
             content = await attachment.read()
-            await commands.handle_scenario_compare_upload(
+            await handle_scenario_compare_upload(
                 conversation_id, reply, reply, content.decode("utf-8", errors="replace"), attachment.filename
             )
             return
@@ -492,14 +499,14 @@ async def on_message(message: discord.Message) -> None:
         text = (message.content or "").strip()
         if not text:
             if message.attachments:
-                await commands.handle_unsupported_message(conversation_id, reply, "附件")
+                await handle_unsupported_message(conversation_id, reply, "附件")
             return
 
         state_before = await asyncio.to_thread(load_group_state, conversation_id)
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
         try:
-            await commands.handle_text_message(
+            await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
                 format_mention,
             )
