@@ -119,13 +119,15 @@ def get_keeper_turn_lock(conversation_id: str) -> asyncio.Lock:
 
 @asynccontextmanager
 async def get_keeper_priority_gate(conversation_id: str, *, is_kp: bool) -> AsyncIterator[None]:
-    """Per-conversation async gate for future Keeper turn scheduling.
-
-    This is intentionally separate from the existing conversation/state/turn
-    locks and is not wired into message handling yet. It admits at most one
-    holder per conversation; when the holder releases, queued KP Assistant
-    turns are admitted before queued player turns, with FIFO order preserved
-    inside each priority class. A running holder is never preempted.
+    """Per-conversation async gate for Keeper turn scheduling — wraps ordinary
+    (non-/coc-command) text messages in app/commands.py's handle_text_message,
+    but only when the conversation currently has a KP Assistant; otherwise
+    that call site bypasses this gate entirely and keeps the original
+    conversation-lock-only path. Separate from the conversation/state/turn
+    locks above. It admits at most one holder per conversation; when the
+    holder releases, queued KP Assistant turns are admitted before queued
+    player turns, with FIFO order preserved inside each priority class. A
+    running holder is never preempted.
     """
     gate = _keeper_priority_gates.get(conversation_id)
     if gate is None:

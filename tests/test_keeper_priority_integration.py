@@ -123,7 +123,7 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
         locks._keeper_priority_gates.clear()
 
     def _active_state(self, *, with_kp: bool) -> GroupState:
-        state = GroupState(group_id="g", active=True, kp_assistant_user_id="kp-user" if with_kp else "")
+        state = GroupState(group_id="g", active=True, game_started=True, kp_assistant_user_id="kp-user" if with_kp else "")
         for user_id in ("A", "B", "C", "D"):
             state.characters[user_id] = Character(name=user_id, owner_id=user_id)
         return state
