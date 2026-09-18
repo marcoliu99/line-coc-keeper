@@ -5,7 +5,7 @@ from typing import Any
 
 from app import keeper
 from app.models import GroupState
-from app.agents import context_builder, intent_router, executor, state_reducer, narrator, rule_validator, guard
+from app.agents import context_builder, intent_router, executor, state_reducer, narrator, rule_validator, guard, assistant
 
 
 _logger = logging.getLogger(__name__)
@@ -43,6 +43,15 @@ async def run_turn(
     message.payload["intent"] = intent
     
     _logger.info(f"Intent classified as: {intent}")
+
+    # Phase 10: OOC Assistant Path — KP 助手的場外討論完全繞開「機制判定與故事
+    # 生成」這條主線（Executor／State Reducer／Narrator／Rule Validator／
+    # Guard），直接在這裡回傳。資料隔離見 app/agents/assistant.py 的 docstring：
+    # 這輪對話進 state.kp_ooc_log，不進 state.log，所以下面的
+    # keeper._commit_turn_result 也不能執行到——提早 return。
+    if intent == "OOC_ASSISTANT":
+        _logger.info("Routing to AssistantAgent (OOC Path)")
+        return await assistant.run_assistant(message)
 
     # 3. Route to Executor (Slow Path) or Skip to Narrator (Fast Path)
     if intent == "GAMEPLAY_ACTION":

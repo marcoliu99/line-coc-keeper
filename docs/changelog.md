@@ -1651,3 +1651,53 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   `prompt_config.py` 讀提示詞後行為完全沒變。`mypy app/agents/*.py
   app/services/prompt_config.py` 確認乾淨。測試用的 group_state key 用 `db.delete_json`
   清乾淨，`.env` 測完立刻刪除，正式環境資料庫全程沒被動到。
+
+### 86. Phase 10：新架構補上 OOC Assistant Path，把舊架構已驗證過的 KP Assistant 機制搬過來整合
+
+- **這個改動怎麼來的**：使用者提出 Phase 10 計畫，想在 `app/agents/` 新架構裡幫 KP 助手的場外
+  （OOC）討論開一條獨立快車道，繞開「機制判定與故事生成」那條主線。動手前先確認了一件事：
+  `app/keeper.py`（舊架構）裡已經有一整套經過 PR #17 驗證過的 KP Assistant OOC 機制——獨立的
+  `kp_ooc_log`、`_commit_kp_ooc_turn_result`、`_KP_ASSISTANT_ALLOWED_TOOL_NAMES` 工具白名單、
+  `_KP_ASSISTANT_PROMPT` 主持規則——但**新架構的 `router.py` 已經把所有一般文字訊息導去
+  Supervisor，沒有任何地方檢查過 `speaker_role == "kp_assistant"`**，代表現在 KP 助手的訊息會
+  被當成一般玩家行動，整套跑過 Executor／Narrator，完全繞過舊架構原本的保護。使用者確認：
+  （1）把舊機制搬過來、整合進新架構，以這個專案的實際做法為主，不是照抄計畫原文；
+  （2）RAG 先用現有的純 BM25（`scenario_rag.search`／`memory_rag.search_memory`），不加
+  HyDE／MQE；（3）OOC 這條路徑要跳過 post-turn maintenance（背景記憶壓縮等）。
+- **這個專案現在怎麼做**：
+  1. `app/agents/intent_router.py`：`classify_intent` 最前面新增檢查——只要
+     `message.payload["speaker_role"] == "kp_assistant"`（`router.py` 已經在
+     `_handle_ordinary_text_message_locked` 判斷過的身分），無條件回傳新增的
+     `OOC_ASSISTANT` 意圖，不再往下跑純角色扮演／機制動作的規則判斷。
+  2. `app/agents/supervisor.py`：`run_turn` 分類出 `OOC_ASSISTANT` 時，直接呼叫
+     `assistant.run_assistant(message)` 並提早 return，完全不經過 Executor／State Reducer／
+     Narrator／Rule Validator／Guard，也不會走到最後幫一般回合落庫 `state.log` 的
+     `keeper._commit_turn_result`。
+  3. 新增 `app/agents/assistant.py`：刻意寫得很薄，不重新實作任何東西，全部直接呼叫
+     `app/keeper.py` 已經驗證過的函式——`_build_dynamic_prompt(..., speaker_role=
+     "kp_assistant")` 本身就會組出 KP 助手專屬的主持規則區塊跟最近的 `kp_ooc_log`
+     歷史；`_format_turn_message` 把訊息包成「[KP ASSISTANT / OOC HOST INSTRUCTION]」；
+     `_tools_for_speaker_role("kp_assistant")` 限制工具白名單；`_execute_tool` 本身也有
+     第二層白名單防禦；最後用 `_commit_kp_ooc_turn_result` 存進 `kp_ooc_log`，不動
+     `state.log`、也不動 `state.openai_previous_response_id`（避免污染玩家那條正式對話鏈）。
+     RAG／記憶上下文沿用 `context_builder.build_context` 已經抓好的純 BM25 結果
+     （`prompt_config.build_dynamic_prompt_with_context`），沒有另外加 HyDE／MQE。
+  4. Post-turn maintenance 的跳過不需要另外改：`app/commands/router.py` 呼叫
+     `_run_post_turn_maintenance_after_output` 時本來就有傳
+     `run_maintenance=not is_kp_assistant`，這個參數本來就會跳過
+     `_spawn_post_turn_maintenance`（背景摘要任務），只是不影響正常回覆／私訊/圖片的投遞——
+     確認這個既有邏輯已經滿足需求，沒有重複實作。
+- **實測過（真實 LLM 呼叫，不是 mock）**：
+  - 資料隔離：KP 助手問「這個場景的禁書叫什麼名字」，確認 `state.log` 前後長度完全不變
+    （0→0），`kp_ooc_log` 正確新增剛好 2 筆（KP 問題＋AI 回答）。
+  - 工具白名單──正向：KP 助手說「請阿明做一次偵查檢定」，確認真的呼叫了白名單內的
+    `skill_check`，`pending_checks` 註冊了角色卡上真實的技能值（65），不是編的。
+  - 工具白名單──反向：KP 助手直接要求「呼叫 adjust_character 把阿明的 HP 扣到 5」，確認
+    角色 HP 前後維持 10（沒有被改動），LLM 也正確回覆「目前工具清單沒有可用的
+    adjust_character」，沒有假裝扣血或用敘事文字硬寫一個假的血量下去。
+  - `import app.agents.assistant`／`intent_router`／`supervisor`／`app.commands.router`
+    確認可正常載入；`mypy app/agents/*.py` 確認乾淨。
+  - 測試用的 group_state key 全部用 `db.delete_json` 清乾淨，`.env` 只在測試期間暫時複製
+    進來、測完立刻刪除，正式環境資料庫全程沒有被動到。
+- **這次沒做**：HyDE（生成偽規則文本）與 MQE（查詢擴展）這兩個進階 RAG 技巧——使用者要求先用
+  現有純 BM25 驗證效果，真的不夠準再加，這次沒有加上任何額外的 LLM 呼叫。
