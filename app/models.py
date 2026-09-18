@@ -462,6 +462,7 @@ class EffectState:
     timing: str = "turn_start"
     remaining_rounds: int | None = None
     damage: str = ""
+    damage_type: str = "physical"
     save_or_check: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     public_description: str = ""

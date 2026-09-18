@@ -180,6 +180,7 @@ EffectState(
     timing: "round_start" | "turn_start" | "turn_end" | "round_end",
     remaining_rounds: int | None,
     damage: str = "",
+    damage_type: str = "physical",
     save_or_check: dict = {},
     tags: list[str] = [],
     public_description: str = "",
@@ -208,9 +209,26 @@ KP Assistant 可以把玩家臨場發想或主持層裁定轉成正式的固定�
 工具邊界：
 
 - 立即傷害使用 `apply_combat_damage(target, raw_damage, damage_type, tags, source_id)`，`raw_damage` 是整數，仍走護甲、重傷與 HP 同步流程。
-- 持續或固定時點傷害使用 `add_combat_effect(target, label, timing, damage, remaining_rounds, tags, source_id)`，`damage` 可為固定整數字串或骰式。
+- 持續或固定時點傷害使用 `add_combat_effect(target, label, timing, damage, damage_type, remaining_rounds, tags, source_id)`，`damage` 可為固定整數字串或骰式。
 - KP Assistant 使用這些工具時，該回合必須成為 canonical game event，而不是單純 OOC 討論。
 - 公開敘事只呈現玩家可感知效果；private result 可以包含 source、tags、raw/final damage、非法表示式錯誤等診斷。
+- KP Assistant allowlist 開放 `apply_combat_damage` 與 `add_combat_effect`，但仍不開放泛用 `damage_combatant`，避免用正負 delta 繞過護甲、重傷與傷害來源紀錄。
+
+Effect damage parser：
+
+```python
+resolve_effect_damage("1")      -> 1
+resolve_effect_damage("1d6+1")  -> dice roll total
+resolve_effect_damage("1d1")    -> error, because existing dice rules reject one-sided dice
+```
+
+固定時點處理規則：
+
+1. `process_timing` 找到 timing 與 target 符合的 effect。
+2. 若 `damage` 解析成功，呼叫 `apply_combat_damage`，並把 result 回傳給 caller。
+3. 只有當 effect 成功套用，才扣 `remaining_rounds`。
+4. 若 damage expression 非法或 target 不存在，回傳 `ok=False` 的 private error result，effect 留在 state 中等待 KP 修正。
+5. `remaining_rounds=None` 代表無限期效果；成功套用後不會被自動移除。
 
 ### Character Identity
 
