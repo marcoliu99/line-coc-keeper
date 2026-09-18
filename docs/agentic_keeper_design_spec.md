@@ -328,18 +328,32 @@ Builder／Intent Router／State Reducer／Rule Validator 都刻意維持純 Pyth
    要再讓 Intent Router／Executor 判斷要不要呼叫工具，直接一次 LLM 呼叫敘事即可，等同
    Supervisor 流水線裡「機制已定、只需要 Narrator」的那一半，只是沒有透過 Supervisor 走。
 
-   複查時另外發現 `app/legacy_commands.py` 自己還留著一份完整的
+   複查時另外發現、且已處理的落差：`app/legacy_commands.py` 自己還留著一份完整的
    `handle_text_message`／`_handle_ordinary_text_message_locked`（一樣直接呼叫
    `keeper.run_turn`，邏輯幾乎跟 `router.py` 那份逐行對應），但 `app/main.py`／
    `app/discord_bot.py` 實際呼叫的是 `app/commands/router.py::handle_text_message`，
-   `legacy_commands.py` 這份現在**沒有任何正式進線會呼叫到**——唯一還在呼叫它的是
+   `legacy_commands.py` 這份**沒有任何正式進線會呼叫到**——唯一還在呼叫它的是
    `tests/test_keeper_priority_integration.py` 和 `tests/test_kp_assistant_v2.py`
-   裡驗證 priority gate／KP 助手輪替順序的測試。也就是說，那批測試現在驗證的是一條正式
-   流量根本不會走到的路徑，而 `router.py` 真正在用的那份 Priority Gate／KP 助手輪替邏輯
-   （結構上逐行對應，行為理論上一致）目前完全沒有對應測試——兩份實作萬一之後被改到不一致，
-   不會有任何測試失敗來提醒。這是這次複查發現、還沒處理的落差，留給之後決定：要嘛刪掉
-   `legacy_commands.py` 那份重複實作、把測試改成打 `router.py`，要嘛保留但补一份等價的
-   `router.py` 測試。
+   裡驗證 priority gate／KP 助手輪替順序的測試，等於那批測試驗證的是一條正式流量根本不會
+   走到的路徑，而 `router.py` 真正在用的那份 Priority Gate／KP 助手輪替邏輯完全沒有對應
+   測試。處理方式：刪掉 `legacy_commands.py` 那份重複實作（連帶清掉 `router.py` 原本就沒用
+   到、只是順手一起匯入的 `_handle_coc_command` 死 import），把兩個測試檔案裡呼叫
+   `commands.handle_text_message` 的地方全部改打 `app.commands.router.handle_text_message`，
+   mock 點也從 `commands.keeper.run_turn`（同步、經 `asyncio.to_thread` 分派到背景執行緒）
+   換成 `router.supervisor.run_turn`（本身就是 `async def`，直接 `await`，不經執行緒）——
+   priority-gate 測試原本用真正的 `threading.Event`／`threading.Lock` 跨執行緒同步「卡住
+   一輪、讓其他人排隊」，換成 async fake 後改用單一事件迴圈內的 `asyncio.Event` 就夠了，
+   不再需要跨執行緒同步。修正後用真實 LLM 呼叫再驗證一次 `router.handle_text_message` 本身
+   沒有被這次刪除動到（見 `tests/test_keeper_priority_integration.py`／
+   `tests/test_kp_assistant_v2.py` 裡對應測試）。
+
+   注意：`_handle_coc_command`（`app/legacy_commands.py`，處理 `/coc pc`／`/coc kp`／
+   `/coc newgame` 等指令的另一套舊派發邏輯）本身**還在**，只是失去了唯一的正式呼叫點
+   （原本只被剛刪掉的 `handle_text_message` 呼叫）——`router.py` 自己內聯重新實作了整套
+   `/coc` 指令派發（分派到 `app/commands/handlers/*.py`），不經過它。`_handle_coc_command`
+   現在只被 `tests/test_kp_assistant_v2.py` 裡另外 4 個測試（`/coc kp quit`／`/coc end`／
+   `/coc kp`／`/coc newgame`）直接呼叫，是跟這次處理的問題同類、但沒有一併處理的第二個
+   實例——這次複查沒有動它，留給之後決定。
 
 7. **兩個「線路接對了但沒接上」的缺陷，複查時才發現、已修正。** 一是 `supervisor.py`
    呼叫 Executor 後算出的 `mechanic_result` 從沒寫回 `message.payload`——`narrator.py`

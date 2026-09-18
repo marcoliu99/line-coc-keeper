@@ -16,6 +16,7 @@ sys.modules.setdefault(
 )
 
 from app import legacy_commands as commands, keeper
+from app.commands import router
 from app.models import Character, GroupState
 
 
@@ -381,6 +382,55 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 commands.pdf_loader.extract_preview = original_extract_preview
                 commands.scenario_library.find_similar = original_find_similar
                 commands.scenario_library.stage_upload = original_stage_upload
+
+    def test_show_scenario_image_and_search_reject_kp_only_assets_for_players(self):
+        """Regression test: scenario_library previously hardcoded every image
+        asset's visibility to "public" and keeper._execute_tool never checked
+        the field at all, so a character_sheet page (potentially an NPC/
+        villain stat block or a pregen revealing a spoiler) was exactly as
+        visible to an ordinary player as a map page."""
+        with tempfile.TemporaryDirectory() as temp:
+            original_library_dir = keeper.scenario_library.SCENARIO_LIBRARY_DIR
+            keeper.scenario_library.SCENARIO_LIBRARY_DIR = Path(temp)
+            try:
+                text = (
+                    "--- 第 1 頁 ---\n調查員：陳墨\nSTR 65 DEX 75 SAN 55\n"
+                    "--- 第 2 頁 ---\n[圖片內容描述：一張地圖]\n"
+                )
+                scenario_id = keeper.scenario_library.save_scenario(
+                    b"%PDF-1.4 fake", title="Visibility Test", filename="t.pdf", preview=text[:200],
+                    text=text, indexes={}, pregens=[], page_maps={2: {"id": "map-2"}},
+                    page_images={1: b"page-1", 2: b"page-2"},
+                )
+                state = GroupState(group_id="g")
+                state.scenario_library_id = scenario_id
+                state.context_chapter_ids = ["chapter-01"]
+
+                with StateStorePatch(keeper) as store:
+                    store.put(state)
+
+                    player_search = keeper._execute_tool(state, "search_scenario_images", {}, [], [], speaker_role="player")
+                    self.assertEqual([a["type"] for a in player_search["assets"]], ["map"])
+
+                    kp_search = keeper._execute_tool(state, "search_scenario_images", {}, [], [], speaker_role="kp_assistant")
+                    self.assertEqual(sorted(a["type"] for a in kp_search["assets"]), ["character_sheet", "map"])
+
+                    player_show_sheet = keeper._execute_tool(
+                        state, "show_scenario_image", {"page_number": 1}, [], [], speaker_role="player"
+                    )
+                    self.assertFalse(player_show_sheet["ok"])
+
+                    kp_show_sheet = keeper._execute_tool(
+                        state, "show_scenario_image", {"page_number": 1}, [], [], speaker_role="kp_assistant"
+                    )
+                    self.assertTrue(kp_show_sheet["ok"])
+
+                    player_show_map = keeper._execute_tool(
+                        state, "show_scenario_image", {"page_number": 2}, [], [], speaker_role="player"
+                    )
+                    self.assertTrue(player_show_map["ok"])
+            finally:
+                keeper.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
 
     def test_kp_assistant_tool_allowlist_and_runtime_guard(self):
         original_rag_enabled = keeper.SCENARIO_RAG_ENABLED
@@ -847,36 +897,39 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         state.characters["p1"] = Character(name="Investigator", owner_id="p1")
         calls = []
 
-        def fake_run_turn(state_arg, user_id, display_name, text, resolved_location, speaker_role):
-            calls.append((state_arg, user_id, display_name, text, resolved_location, speaker_role))
+        async def fake_run_turn(**kwargs):
+            calls.append(kwargs)
             return "keeper reply", [], []
 
         def forbidden_gate(*args, **kwargs):
             raise AssertionError("priority gate must be bypassed when no KP Assistant exists")
 
         original_gate = commands.locks.get_keeper_priority_gate
-        original_run_turn = commands.keeper.run_turn
-        original_resolve = commands._resolve_map_action_transaction
+        original_run_turn = router.supervisor.run_turn
+        original_resolve = router._resolve_map_action_transaction
         original_spawn = commands._spawn_post_turn_maintenance
+        original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
+            router.load_state = commands.load_state
             commands.locks.get_keeper_priority_gate = forbidden_gate
-            commands.keeper.run_turn = fake_run_turn
-            commands._resolve_map_action_transaction = lambda *args: None
+            router.supervisor.run_turn = fake_run_turn
+            router._resolve_map_action_transaction = lambda *args: None
             commands._spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
-                await commands.handle_text_message(
+                await router.handle_text_message(
                     "g", "p1", lambda: None, reply, noop_dm, noop_image, noop_image, "look around"
                 )
             finally:
                 commands.locks.get_keeper_priority_gate = original_gate
-                commands.keeper.run_turn = original_run_turn
-                commands._resolve_map_action_transaction = original_resolve
+                router.supervisor.run_turn = original_run_turn
+                router._resolve_map_action_transaction = original_resolve
                 commands._spawn_post_turn_maintenance = original_spawn
+                router.load_state = original_router_load_state
 
         self.assertEqual(reply.messages, ["keeper reply"])
-        self.assertEqual(calls[0][5], "player")
+        self.assertEqual(calls[0]["speaker_role"], "player")
 
     async def test_ordinary_kp_message_uses_kp_priority_when_kp_exists(self):
         async def noop_dm(*args):
@@ -892,30 +945,33 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         async def display_name():
             return "KP Name"
 
-        def fake_run_turn(state_arg, user_id, display_name_arg, text, resolved_location, speaker_role):
-            calls.append((state_arg, user_id, display_name_arg, text, resolved_location, speaker_role))
+        async def fake_run_turn(**kwargs):
+            calls.append(kwargs)
             return "kp reply", [], []
 
         original_gate = commands.locks.get_keeper_priority_gate
-        original_run_turn = commands.keeper.run_turn
+        original_run_turn = router.supervisor.run_turn
         original_spawn = commands._spawn_post_turn_maintenance
+        original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
+            router.load_state = commands.load_state
             commands.locks.get_keeper_priority_gate = gate
-            commands.keeper.run_turn = fake_run_turn
+            router.supervisor.run_turn = fake_run_turn
             commands._spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
-                await commands.handle_text_message(
+                await router.handle_text_message(
                     "g", "kp-user", display_name, reply, noop_dm, noop_image, noop_image, "幕後提醒"
                 )
             finally:
                 commands.locks.get_keeper_priority_gate = original_gate
-                commands.keeper.run_turn = original_run_turn
+                router.supervisor.run_turn = original_run_turn
                 commands._spawn_post_turn_maintenance = original_spawn
+                router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", True)])
-        self.assertEqual(calls[0][5], "kp_assistant")
+        self.assertEqual(calls[0]["speaker_role"], "kp_assistant")
         self.assertEqual(reply.messages, ["kp reply"])
 
     async def test_ordinary_player_message_uses_player_priority_when_kp_exists(self):
@@ -930,33 +986,36 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         gate = GateSpy()
         calls = []
 
-        def fake_run_turn(state_arg, user_id, display_name, text, resolved_location, speaker_role):
-            calls.append((state_arg, user_id, display_name, text, resolved_location, speaker_role))
+        async def fake_run_turn(**kwargs):
+            calls.append(kwargs)
             return "player reply", [], []
 
         original_gate = commands.locks.get_keeper_priority_gate
-        original_run_turn = commands.keeper.run_turn
-        original_resolve = commands._resolve_map_action_transaction
+        original_run_turn = router.supervisor.run_turn
+        original_resolve = router._resolve_map_action_transaction
         original_spawn = commands._spawn_post_turn_maintenance
+        original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
+            router.load_state = commands.load_state
             commands.locks.get_keeper_priority_gate = gate
-            commands.keeper.run_turn = fake_run_turn
-            commands._resolve_map_action_transaction = lambda *args: None
+            router.supervisor.run_turn = fake_run_turn
+            router._resolve_map_action_transaction = lambda *args: None
             commands._spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
-                await commands.handle_text_message(
+                await router.handle_text_message(
                     "g", "p1", lambda: None, reply, noop_dm, noop_image, noop_image, "look around"
                 )
             finally:
                 commands.locks.get_keeper_priority_gate = original_gate
-                commands.keeper.run_turn = original_run_turn
-                commands._resolve_map_action_transaction = original_resolve
+                router.supervisor.run_turn = original_run_turn
+                router._resolve_map_action_transaction = original_resolve
                 commands._spawn_post_turn_maintenance = original_spawn
+                router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", False)])
-        self.assertEqual(calls[0][5], "player")
+        self.assertEqual(calls[0]["speaker_role"], "player")
         self.assertEqual(reply.messages, ["player reply"])
 
     async def test_scheduling_snapshot_does_not_become_authoritative_state(self):
@@ -969,8 +1028,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         state = GroupState(group_id="g", active=True, game_started=True, kp_assistant_user_id="kp-user")
         calls = []
 
-        def fake_run_turn(state_arg, user_id, display_name, text, resolved_location, speaker_role):
-            calls.append((state_arg, user_id, display_name, text, resolved_location, speaker_role))
+        async def fake_run_turn(**kwargs):
+            calls.append(kwargs)
             return "latest-state reply", [], []
 
         class MutatingGateSpy(GateSpy):
@@ -996,31 +1055,34 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 return _GateContext()
 
         original_gate = commands.locks.get_keeper_priority_gate
-        original_run_turn = commands.keeper.run_turn
-        original_resolve = commands._resolve_map_action_transaction
+        original_run_turn = router.supervisor.run_turn
+        original_resolve = router._resolve_map_action_transaction
         original_spawn = commands._spawn_post_turn_maintenance
+        original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
+            router.load_state = commands.load_state
             gate = MutatingGateSpy(store)
             commands.locks.get_keeper_priority_gate = gate
-            commands.keeper.run_turn = fake_run_turn
-            commands._resolve_map_action_transaction = lambda *args: None
+            router.supervisor.run_turn = fake_run_turn
+            router._resolve_map_action_transaction = lambda *args: None
             commands._spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
-                await commands.handle_text_message(
+                await router.handle_text_message(
                     "g", "kp-user", lambda: None, reply, noop_dm, noop_image, noop_image, "now IC"
                 )
             finally:
                 commands.locks.get_keeper_priority_gate = original_gate
-                commands.keeper.run_turn = original_run_turn
-                commands._resolve_map_action_transaction = original_resolve
+                router.supervisor.run_turn = original_run_turn
+                router._resolve_map_action_transaction = original_resolve
                 commands._spawn_post_turn_maintenance = original_spawn
+                router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", True)])
-        self.assertEqual(calls[0][2], "Former KP Now Player")
-        self.assertEqual(calls[0][5], "player")
-        self.assertEqual(calls[0][0].kp_assistant_user_id, "")
+        self.assertEqual(calls[0]["display_name"], "Former KP Now Player")
+        self.assertEqual(calls[0]["speaker_role"], "player")
+        self.assertEqual(calls[0]["state"].kp_assistant_user_id, "")
         self.assertEqual(reply.messages, ["latest-state reply"])
 
 

@@ -15,7 +15,6 @@ from app.legacy_commands import (
     handle_check_command,
     handle_luck_decision,
     handle_unsupported_message,
-    _handle_coc_command,
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
 )
@@ -115,8 +114,7 @@ async def handle_text_message(
     # ordinary Keeper turns go through the priority gate (queued KP messages
     # jump ahead of queued player messages); otherwise this intentionally
     # bypasses the gate and keeps the plain conversation-lock-only path —
-    # see app/legacy_commands.py's handle_text_message, which this mirrors,
-    # and app/locks.py's get_keeper_priority_gate docstring.
+    # see app/locks.py's get_keeper_priority_gate docstring.
     scheduling_state = load_state(conversation_id)
     if not scheduling_state.kp_assistant_user_id:
         async with locks.get_conversation_lock(conversation_id):
@@ -151,9 +149,10 @@ async def _handle_ordinary_text_message_locked(
     """
     state = load_state(conversation_id)
     if not state.active or not state.game_started:
-        # Two separate conditions on purpose (see app/legacy_commands.py's
-        # own copy of this same guard for the full rationale): a scenario
-        # must be loaded AND /coc start must have actually run for it.
+        # Two separate conditions on purpose: a scenario must be loaded
+        # (state.active) AND /coc start must have actually run for it
+        # (state.game_started) before ordinary free text becomes in-character
+        # play.
         return
 
     is_kp_assistant = state.kp_assistant_user_id == user_id
