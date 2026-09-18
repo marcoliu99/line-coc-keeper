@@ -1622,3 +1622,32 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - `mypy app/agents/*.py app/services/prompt_config.py` 確認乾淨。
   - 測試用的 group_state key 全部用 `db.delete_json` 清乾淨，`.env` 只在測試期間暫時複製進來、
     測完立刻刪除，正式環境資料庫全程沒有被動到。
+
+### 85. `prompt_config.py` 全部重寫：改成繁體中文、對應這個專案實際架構，並真的接上三個 agent
+
+- **這個改動怎麼來的**：#84 把 `prompt_config.py` 留成「大部分內容不用、只借兩條守則文字」的狀態，
+  使用者指出這樣不行——這個檔案是照抄一份簡體中文、設計完全不同的舊草稿，應該全部用繁體中文、
+  根據這個專案的實際架構重整過，而不是留著一份用不到的參考文件。
+- **這個專案現在怎麼做**：整個檔案重寫，砍掉原本假設的「LLM 意圖分類／ReAct 回合計畫／Reflection
+  自檢／記憶壓縮」四個不存在的節點跟它們的簡體中文提示詞，改成只保留、也真的對應到
+  `app/agents/` 實際存在、會呼叫 LLM 的三個階段（executor／narrator／guard）：
+  - `build_executor_static_prompt`／`build_narrator_static_prompt`：把原本各自寫在
+    `executor.py`／`narrator.py` 檔案裡的角色設定文字集中到這裡，函式簽名直接吃
+    `keeper._build_static_prompt(state)` 的輸出組出最終 prompt。
+  - `build_dynamic_prompt_with_context`：Executor／Narrator 共用同一個函式，把
+    `keeper._build_dynamic_prompt(...)` 的輸出跟 RAG／記憶上下文組在一起。
+  - `build_mechanic_facts_block`／`PURE_ROLEPLAY_BLOCK`：Narrator 用來組出「系統判定結果」
+    區塊。
+  - `GUARD_SYSTEM_PROMPT`／`build_guard_dynamic_prompt`：Guard 的系統提示詞跟動態內容組法。
+  - 檔案開頭用繁體中文完整記錄了為什麼只留這三個階段、其他四個節點分別對應到專案裡的
+    哪個既有機制（規則式 intent_router／rule_validator、`keeper.summarize_log_chunk`、
+    沒有對應功能的圖片生成），不用再重新調查一次。
+  - `app/agents/executor.py`／`narrator.py`／`guard.py` 三個檔案原本各自內嵌的系統提示詞
+    字串全部移除，改成 `from app.services import prompt_config` 呼叫上面這些函式——這才是
+    真正把「業務代碼只準備變數、提示詞正文集中在 prompt_config.py」這個設計原則落實，
+    不是三個檔案各自維護一份、`prompt_config.py` 放著沒人用。
+- **實測過（真實 LLM 呼叫）**：技能檢定情境（劇本已上傳、角色有偵查 65%）跑一次完整流程，
+  確認 `pending_checks` 正確註冊、Narrator 的敘事風格跟修改前一致，確認改成從
+  `prompt_config.py` 讀提示詞後行為完全沒變。`mypy app/agents/*.py
+  app/services/prompt_config.py` 確認乾淨。測試用的 group_state key 用 `db.delete_json`
+  清乾淨，`.env` 測完立刻刪除，正式環境資料庫全程沒被動到。
