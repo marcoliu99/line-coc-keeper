@@ -1236,3 +1236,261 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   `import app.locks`／`app.commands` 確認可正常載入。這次改動完全沒有動到任何 production code 的
   行為（`_handle_ordinary_text_message_locked`／priority gate 本身一行都沒改，純粹修測試 fixture 跟
   一段過時的文件字串）。
+
+### 83. Natural 1 大成功額外獎勵：先放入 prompt 與判定 helper，尚未接進擲骰流程
+
+- **這次只做的範圍**：在 `app/commands.py` 先新增 `NATURAL_1_BONUS_PROMPT`，保存「大成功額外獎勵」
+  要交給守密人的固定提示詞；另外新增 `_natural_1_bonus_prompt_for_result()`，讓後續接線時有單一入口
+  判斷是否要附加這段提示。
+- **判定原則**：helper 只看原始 `dice.SkillCheckResult.roll == 1`，回傳上述 prompt；其他任何擲骰值都
+  回傳空字串。刻意不看 `tier == "critical"`，避免未來 Luck spend 或其他成功等級改寫流程把「買到／改成
+  大成功」誤判成自然 1。
+- **刻意沒有做的事**：這一步沒有修改 `dice.py`，沒有新增 state，沒有改 `_build_check_narration()` 的既有
+  行為，也還沒有把 prompt 傳進 Keeper；SAN、短暫瘋狂、combat、KP Assistant 與測試也都沒有接觸。實際
+  `/coc check` 流程目前仍維持原狀，這只是之後接入 Natural 1 額外獎勵的最小基礎建設。
+
+### 84. Natural 1 大成功額外獎勵：接進一般檢定的 Keeper message
+
+- **這次接上的位置**：`app/commands.py` 的 `_build_check_narration()` 現在會呼叫
+  `_natural_1_bonus_prompt_for_result(r)`；如果回傳非空字串，就把 `NATURAL_1_BONUS_PROMPT` 以空一行的
+  方式追加到送給 Keeper 的 `keeper_message` 尾端，讓 Keeper 在同一次回覆裡同時處理正常大成功結果與
+  一個合理、有限、立即生效的小 bonus。
+- **玩家顯示不變**：這次只改送給 AI Keeper 的 `keeper_message`，沒有改玩家在聊天室看到的 `roll_line`，
+  也沒有在 Discord 額外顯示 Natural 1 bonus 提示；一般擲骰公開訊息仍維持原本格式。
+- **判定仍然只看原始 roll**：Natural 1 是否觸發仍完全交給 `_natural_1_bonus_prompt_for_result()`，
+  條件只有 `SkillCheckResult.roll == 1`，沒有新增第二套判定，也沒有改 `dice.py`。
+- **Luck 不會誤觸發**：Luck 花費後 `_resolve_luck_decision_deterministically()` 會用原始 `pending["roll"]`
+  重建 `SkillCheckResult`，只是把 `tier` 改成玩家買到的成功等級；helper 不看 `tier == "critical"`，
+  所以把失敗／成功買成更高成功等級不會觸發 Natural 1 bonus，只有原始擲骰本來就是 1 才會觸發。
+- **特殊流程維持原狀**：SAN 檢定與「短暫瘋狂」INT 檢定仍走各自獨立 branch，沒有為 Natural 1 改那些
+  流程；也沒有新增 state、pending effect、未來回合追蹤效果、KP Assistant 改動或測試變更。
+
+### 85. Natural 1 大成功額外獎勵：補上 regression tests
+
+- **新增測試檔案**：新增 `tests/test_natural_1_bonus.py`，直接測
+  `NATURAL_1_BONUS_PROMPT`、`_natural_1_bonus_prompt_for_result()` 與 `_build_check_narration()` 的互動，
+  不需要啟動 Keeper、資料庫或實際骰骰流程。
+- **鎖住的行為**：
+  1. `SkillCheckResult.roll == 1` 且 `tier == "critical"` 時，`keeper_message` 會包含
+     `NATURAL_1_BONUS_PROMPT` 與「【大成功額外獎勵】」，但玩家看到的 `roll_line` 不會包含這段提示。
+  2. 非 1 的高成功等級（例如 `roll == 2`、`tier == "extreme"`）不會觸發 Natural 1 bonus，確認「成功等級高」
+     不等於「自然 1」。
+  3. 模擬 Luck 花費後的結果（原始 `roll` 維持 52、`tier` 被買成成功）不會觸發 Natural 1 bonus，確認
+     Luck 只能改成功等級，不能把原始骰面變成 Natural 1。
+  4. helper 本身明確只看 `roll == 1`：`roll == 1` 回傳 prompt；`roll != 1` 即使 `tier == "critical"` 也
+     回傳空字串，避免未來有人改成只要 critical 就觸發。
+- **範圍確認**：這一步只新增測試與更新這份開發紀錄，production code 沒有修改；`dice.py`、Luck、SAN、
+  短暫瘋狂、KP Assistant 與 Keeper prompt 都沒有碰。
+- **實測過**：`python -m unittest tests.test_natural_1_bonus`，4 個測試全部通過。
+
+### 86. KP Assistant Dice Creates Canon：先建立正式 game-resolution 分類 helper，尚未接線
+
+- **新版定義**：Dice creates canon 不再定義成「只要有骰骰子就進正式歷史」，而是「KP Assistant 成功觸發
+  正式 deterministic game-resolution workflow 時，造成這次 workflow 的 KP 指示 turn 才應升格為 canonical
+  game event」。例如成功建立 SAN workflow 本身就代表事件已正式發生；SAN 最後掉多少則等玩家之後自己擲骰。
+- **新增固定分類集合**：在 `app/keeper.py` 新增 `_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES`，收錄六個無歧義的
+  正式遊戲工具：`skill_check`、`sanity_check`、`offer_check_choice`、`npc_skill_check`、
+  `roll_weapon_damage`、`roll_impaling_damage`。這個集合是 creates-canon 分類，不是 permission allowlist。
+- **`roll_dice` 刻意排除**：`roll_dice` 可能是正式 game resolution（例如環境傷害）也可能只是 OOC randomizer
+  （例如幕後骰 1d6 決定採用哪個主持方案），所以沒有放進固定集合；helper 先預留未來
+  `tool_input["purpose"] == "game_resolution"` 時才 creates canon 的判定。
+- **新增 pure helper**：新增 `_kp_tool_result_creates_canon(tool_name, tool_input, result)`。規則是：tool 本身
+  必須 `result.get("ok") is True`；若工具名在 `_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES` 中則回傳 true；若是
+  `roll_dice` 則只有 `purpose == "game_resolution"` 才回傳 true；其他工具一律 false。這裡的失敗指的是
+  tool 執行失敗，不是遊戲內檢定失敗：例如 `npc_skill_check` 擲出 100、大失敗，但 `ok == True`，仍然是
+  正式世界事件，未來接線後應 creates canon。
+- **尚未改變行為**：這一步尚未把 helper 接進 `run_turn()`，沒有新增 turn-local flag，沒有改 `is_ephemeral`、
+  `_commit_turn_result()`、`_commit_kp_ooc_turn_result()`、OpenAI `previous_response_id`、provider、tool schema、
+  `GroupState`、KP Assistant prompt 或任何 state 寫入；也尚未開放任何新的 KP Assistant tools，所以 production
+  behavior 仍維持原狀。
+
+### 87. KP Assistant Dice Creates Canon：`run_turn()` 加入本回合 canon tracker，尚未改 persistence
+
+- **新增 turn-local tracker**：`app/keeper.py` 的 `run_turn()` 內新增 `kp_turn_creates_canon` 與
+  `kp_canonical_tool_events`，兩者都只是單次 `run_turn()` invocation 的 local state，沒有寫入 `GroupState`、
+  SQLite 或任何 global variable。
+- **統一工具 callback**：provider 原本直接以 lambda 呼叫 `_execute_tool()`，現在改由同一個
+  `execute_turn_tool()` wrapper 執行。wrapper 先照舊呼叫 `_execute_tool()`，拿到原始 `result` 後，只有在
+  `speaker_role == "kp_assistant"` 且 `_kp_tool_result_creates_canon(name, tool_input, result)` 為 true 時，
+  才把 `kp_turn_creates_canon` 設成 true。
+- **記錄 canonical workflow 來源**：同一個 KP turn 可以有多個成功 canonical tools；每次觸發時都 append 一筆
+  event 到 `kp_canonical_tool_events`，包含 `tool_name`、`tool_input`、`result`，且以 `dict(...)` 複製輸入與
+  結果，避免保存 provider 傳入的 mutable object reference。若前面的 canonical tool `ok=False`、或只是 query
+  tool `ok=True`，都不會觸發；後面成功的 `sanity_check`／`npc_skill_check` 等正式 workflow 仍可觸發並追加。
+- **Player turn 不使用這條升格邏輯**：玩家回合照樣透過同一個 wrapper 呼叫 `_execute_tool()`，但 wrapper 只有在
+  `speaker_role == "kp_assistant"` 時才檢查 creates-canon helper，因此 player turn 不會設定
+  `kp_turn_creates_canon`，也不會 append `kp_canonical_tool_events`；玩家回合本來就是正式歷史，不靠這條 OOC
+  升格 tracker。
+- **兩條 provider path 都已接上**：OpenAI provider path 與非 OpenAI provider path 都改用同一個
+  `execute_turn_tool()` callback，避免之後只有某一個供應商會記錄 canonical workflow。
+- **尚未改 persistence**：這一步沒有使用 `kp_turn_creates_canon` 來改最後 commit；即使 tracker 為 true，目前
+  KP Assistant turn 結尾仍照舊走 `_commit_kp_ooc_turn_result()` 寫入 `kp_ooc_log`，不寫入 `state.log`，也沒有改
+  `is_ephemeral`、`_commit_turn_result()`、OpenAI `previous_response_id` 或 response chain 行為。也尚未開放
+  `roll_weapon_damage`、`roll_impaling_damage`、`roll_dice` 給 KP Assistant 使用。
+
+### 88. KP Assistant Dice Creates Canon：成功正式 workflow 的 KP turn 改寫入正式歷史
+
+- **新增 canonical history formatter**：`app/keeper.py` 新增 `_format_kp_canonical_history_message()`，用
+  `[KP ASSISTANT / CANONICAL GAME EVENT]` 建立正式寫入 `state.log` 的 KP 主持事件；不再把給模型辨識
+  speaker role 用的 `[KP ASSISTANT / OOC HOST INSTRUCTION]` wrapper 直接塞進正式歷史。
+- **正式歷史保留整個 KP 指示**：creates-canon 的單位是「造成正式 workflow 的整個 KP turn」，不是單獨的
+  tool result。因此 canonical user entry 會保留原始 KP 主持指示，例如「Marco 把屍體的頭扭斷，血噴了一臉，
+  做 SAN 0/1d4」，避免只留下「做 SAN」而失去正式發生的場景事實。
+- **同時保存 deterministic workflow 結果**：canonical history message 會依發生順序保存每一筆成功 canonical
+  workflow 的 `tool_name`、`tool_input`、`result`，使用 `json.dumps(..., ensure_ascii=False, sort_keys=True)` 產生
+  穩定、可讀、機器也容易解析的 JSON。query tool 與 failed tool 不會進 `kp_canonical_tool_events`，因此也不會
+  被寫進 canonical workflow 區塊。
+- **persistence 分流改成三路**：普通 player turn 維持原本寫入正式 `state.log`；純 OOC KP Assistant turn
+  （沒有成功 formal workflow）仍寫入 `kp_ooc_log`；creates-canon KP Assistant turn 則用 `_commit_turn_result()`
+  寫入正式 `state.log` 的 user/assistant entries。
+- **同一 turn 只落一邊**：KP turn 一旦升格寫入 `state.log`，就不會同時再寫 `kp_ooc_log`，避免同一主持事件在
+  OOC history 與 canonical history 各出現一份。
+- **pending workflow 立即 creates canon**：`sanity_check`／`skill_check`／`offer_check_choice` 這類工具只要成功建立
+  pending workflow（`ok == true`、`pending == true`）就立即讓 KP turn 升格，不等待玩家之後真的 `/coc check`；
+  玩家後續擲骰只決定結果數值，事件本身與「需要檢定」已經成為正式歷史。
+- **OpenAI chain 尚未處理**：這一步刻意沒有改 `remember_openai_response_id()` 或
+  `state.openai_previous_response_id`；creates-canon KP turn 雖然呼叫 `_commit_turn_result()`，但沒有傳入
+  `openai_response_id` 更新 canonical response chain，這會留到下一步獨立處理。
+- **權限仍未擴張**：沒有把 `roll_weapon_damage`、`roll_impaling_damage`、`roll_dice` 加進
+  `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`；目前仍只用既有 `skill_check`／`sanity_check`／`offer_check_choice`／
+  `npc_skill_check` 等已開放工具驗證升格機制。
+- **測試覆蓋**：更新 `tests/test_kp_assistant_v2.py` 的 `FakeProvider`，讓測試可以模擬 provider 在回合中呼叫
+  deterministic tools；既有純 OOC KP turn 測試確認沒有 canonical tool 時仍只寫 `kp_ooc_log` 並保留 OpenAI chain；
+  新增 `test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log`，確認成功 `sanity_check` 會建立
+  `pending_checks`、把整個 KP 指示與 tool name/input/result 寫進 `state.log`，且不把同一 turn 追加進
+  `kp_ooc_log`。
+
+### 89. KP Assistant Dice Creates Canon：升格回合同步推進 OpenAI canonical response chain
+
+- **creates-canon KP turn 更新 canonical chain**：`app/keeper.py` 的 creates-canon KP Assistant branch 現在會把
+  provider 最終透過 `on_response_id` 回傳的 `openai_response_id` 傳給 `_commit_turn_result()`；OpenAI provider
+  時這會把 `state.openai_previous_response_id` 更新成該升格回合的 final response id，非 OpenAI provider 則仍是
+  `None`，不影響既有行為。
+- **pure OOC KP turn 不污染 chain**：純 OOC KP Assistant turn 即使 OpenAI API 產生 response id，也仍只走
+  `_commit_kp_ooc_turn_result()`，不會把 OOC response id 寫進 canonical `openai_previous_response_id`；正式 chain
+  會停在上一個 canonical turn。
+- **player turn 行為不變**：普通 player turn 原本就會用 `_commit_turn_result(..., openai_response_id=...)` 推進
+  canonical chain，這次沒有改該分支。
+- **身份與 persistence 判定仍分離**：`is_ephemeral = speaker_role == "kp_assistant"` 保持不變，provider 執行期間
+  仍使用 KP Assistant OOC prompt / wrapper；只有 turn 完成後才根據 `kp_turn_creates_canon` 決定 persistence
+  destination，以及是否把 local final response id 正式 commit。
+- **provider contract 不變**：沒有修改 `app/providers/openai_provider.py` 或其他 production provider interface；沿用
+  既有 `previous_response_id` / `on_response_id` contract。
+- **權限仍未擴張**：沒有開放 `roll_weapon_damage`、`roll_impaling_damage`、`roll_dice`，也沒有修改 `purpose`、
+  KP Assistant prompt、canonical tool set、`GroupState`、world-history formatter 或 Natural 1 功能。
+- **測試覆蓋**：擴充 `tests/test_kp_assistant_v2.py` 的 `FakeProvider`，可指定 final response id。純 OOC KP 測試
+  使用 `ooc-response` 確認 `openai_previous_response_id` 仍停在 `formal-chain`，且 provider 起始收到
+  `previous_response_id == "formal-chain"`；creates-canon SAN 測試使用 `canonical-response`，確認升格後
+  `openai_previous_response_id == "canonical-response"`，同時也確認該回合 provider 是從舊的 canonical
+  `previous_response_id == "formal-chain"` 接續。
+
+### 90. KP Assistant Dice Creates Canon：開放正式武器傷害工具，`roll_dice` 仍保留
+
+- **新增 KP Assistant 可用工具**：`_KP_ASSISTANT_ALLOWED_TOOL_NAMES` 正式加入 `roll_weapon_damage` 與
+  `roll_impaling_damage`。這兩個工具先前已在 `_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES` 中，因此 KP Assistant
+  成功呼叫它們時會直接套用既有 Dice Creates Canon 流程：造成該傷害 workflow 的 KP 主持指示、tool name、
+  input、result 會一起寫入正式 `state.log`，並推進 OpenAI canonical response chain。
+- **語意限制**：這兩個工具只計算 authoritative 傷害結果，不代表已開放直接修改 HP 的 mutation tool；KP
+  Assistant 仍不能使用 `adjust_character`、`damage_combatant` 等直接改 deterministic state 的工具。
+- **Prompt 更新**：`_KP_ASSISTANT_PROMPT` 補充說明：正式事件已確定需要普通武器傷害時可用
+  `roll_weapon_damage`，工具會依角色 deterministic state 套用 damage bonus；正式規則已確定要計算極限成功／
+  穿刺類傷害時可用 `roll_impaling_damage`。同時補上「成功觸發正式 deterministic check / damage workflow 時，
+  該輪主持指示會成為正式遊戲歷史」的行為契約。
+- **仍未開放 `roll_dice`**：generic `roll_dice` 仍沒有加入 KP Assistant allowlist，schema 也沒有新增 `purpose`；
+  OOC randomizer vs. game resolution 的分流留待下一步單獨處理。
+- **既有傷害規則未改**：沒有修改 `_execute_tool()` 中 `roll_weapon_damage`／`roll_impaling_damage` 的骰法、
+  damage bonus、impaling calculation 或回傳格式；這一步只是開放權限與補 prompt / tests。
+- **失敗不 creates canon**：tool execution failure（例如 `roll_weapon_damage` 指向不存在的角色，回傳
+  `ok == false`）不會升格為正式歷史；該 KP turn 仍照純 OOC 流程寫入 `kp_ooc_log`，OpenAI canonical chain 也不前進。
+- **測試覆蓋**：更新 `test_kp_assistant_tool_allowlist_and_runtime_guard`，確認 KP Assistant tools 包含
+  `roll_weapon_damage`、`roll_impaling_damage`，仍不包含 `roll_dice`，且 `adjust_character`、`adjust_ammo`、
+  `set_skill`、`damage_combatant`、`start_combat` 仍禁用。新增普通武器傷害與穿刺傷害兩個 integration regression
+  tests，確認成功傷害工具會 creates canon 並在 canonical history 保存原始 KP 指示與 tool input/result；另新增
+  失敗傷害工具測試，確認 `ok == false` 不 creates canon。
+
+### 91. KP Assistant Dice Creates Canon：為 `roll_dice` 新增分類欄位 `roll_context`
+
+- **保留既有 `purpose` 語意**：確認 `roll_dice` 的 `purpose` 本來就是人類可讀的自由文字用途說明（例如
+  「碎玻璃割傷 Marco 的傷害」或「幕後隨機決定下一幕使用哪個 NPC」），因此沒有刪除、改名或改成 enum。
+- **新增 `roll_context` schema**：在 `roll_dice` 的 `input_schema.properties` 新增 `roll_context`，合法值為
+  `game_resolution` / `ooc_randomizer`。`game_resolution` 表示骰子直接解析已經發生或正在發生的正式遊戲事件；
+  `ooc_randomizer` 表示只供 KP 幕後隨機決策使用，不直接構成遊戲世界事實。
+- **暫不列為 required**：`roll_context` 目前沒有加入 `required`，因為 `roll_dice` 是所有 Keeper 共用的 production
+  tool，不只 KP Assistant 使用；KP-specific runtime boundary 的必填/驗證會留到後續小步處理。
+- **helper 改用分類欄位**：`_kp_tool_result_creates_canon()` 對 `roll_dice` 的預留判定從看
+  `tool_input["purpose"] == "game_resolution"` 改成看 `tool_input["roll_context"] == "game_resolution"`。因此成功
+  `roll_dice` 只有在 `roll_context == "game_resolution"` 時 creates canon；`ooc_randomizer`、缺少
+  `roll_context`、或 tool execution failure（`ok != true`）都不 creates canon。
+- **行為仍未開放**：`roll_dice` 仍沒有加入 `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`，也沒有修改 `_execute_tool()` 的
+  骰法、`dice.roll_expression()`、result shape、run_turn tracker、canonical persistence、OpenAI chain、damage tools、
+  `GroupState` 或 Natural 1 功能。
+- **測試覆蓋**：新增 helper-level regression test，確認 `roll_dice` + `game_resolution` + `ok == true` 回傳 true；
+  `ooc_randomizer`、缺少 `roll_context`、以及 `ok == false` 都回傳 false。
+
+### 92. KP Assistant Dice Creates Canon：新增 KP 專用 `roll_dice` runtime context validation
+
+- **新增 validation helper**：在 `app/keeper.py` 新增 `_validate_kp_roll_dice_context(tool_input)`。KP Assistant 使用
+  `roll_dice` 時必須明確指定 `roll_context` 為 `game_resolution` 或 `ooc_randomizer`；缺少、空字串、`None` 或
+  其他值都會回傳錯誤訊息，不由系統猜用途。
+- **validation 位置**：`_execute_tool()` 現在會在一般 KP Assistant allowlist guard 之前，先對
+  `speaker_role == "kp_assistant"` 且 `name == "roll_dice"` 的呼叫做 context validation。缺少或非法
+  `roll_context` 會直接回 `{"ok": False, "error": ...}`，錯誤訊息明確提到 `roll_context` 以及合法值
+  `game_resolution` / `ooc_randomizer`。
+- **合法 context 仍未開放**：如果 KP Assistant 傳入合法 `roll_context`，validation 會通過，但因為 `roll_dice`
+  尚未加入 `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`，仍會被既有 permission guard 拒絕。也就是這一步後 KP Assistant
+  仍完全不能真正擲 generic dice。
+- **普通 flow 不受影響**：validation 只作用於 KP Assistant 的 `roll_dice`；一般 player / Keeper path 使用
+  `roll_dice(expression=...)` 不需要 `roll_context`，仍會照舊執行 `dice.roll_expression()` 並回傳既有
+  `expression`、`rolls`、`modifier`、`total` result shape。
+- **範圍保持**：沒有修改 `roll_dice` schema（`roll_context` 仍非 required）、`purpose`、enum、骰子演算法、
+  creates-canon helper、run_turn tracker、canonical persistence、OpenAI chain、damage tools、KP Assistant prompt、
+  `GroupState` 或 Natural 1 功能；也仍未把 `roll_dice` 加進 KP Assistant allowlist。
+- **測試覆蓋**：新增 runtime regression tests，確認 KP Assistant 缺少 `roll_context` 或使用非法值會先收到
+  context validation error；合法 `game_resolution` 目前仍因尚未 allowlisted 被拒絕，且錯誤不是 context error；
+  player path 不帶 `roll_context` 呼叫 `roll_dice` 仍 `ok == true`。
+
+### 93. KP Assistant Dice Creates Canon：隔離 `roll_dice` 的 KP 專用 schema
+
+- **Step 6B runtime validation 保留**：`_validate_kp_roll_dice_context(tool_input)` 與 `_execute_tool()` 中
+  KP Assistant 專用的 `roll_dice` context validation 都保留不變；KP 使用 `roll_dice` 時仍必須明確提供
+  `game_resolution` 或 `ooc_randomizer`。
+- **恢復 global contract**：基於多人協作與向後相容性，將 `roll_context` 從 global `TOOLS` 的
+  `roll_dice.input_schema.properties` 移除。ordinary Keeper / player 使用的 global `roll_dice` contract 恢復為
+  只有 `expression` 與自由文字 `purpose`，`required` 仍是 `["expression"]`。
+- **既有行為未改**：沒有修改 `expression`、`purpose` 的自由文字語意、tool description、required、
+  `dice.roll_expression()`、或 `roll_dice` 的 result shape。
+- **KP 專用 tool definition extension**：新增 `_KP_ROLL_DICE_CONTEXT_PROPERTY` 與
+  `_tool_definition_for_kp_assistant(tool)`。只有 KP Assistant 專用 tool definition copy 會加入
+  `roll_context`，且 nested `input_schema` / `properties` 會獨立複製，不會 mutation global `TOOLS`。
+- **ordinary speaker 不暴露欄位**：`_tools_for_speaker_role("player")` 等非 KP path 仍直接回傳 ordinary tools，
+  完全看不到 `roll_context`；ordinary `roll_dice(expression="1d6")` 也仍不需要 `roll_context`。
+- **權限仍未開放**：`roll_dice` 尚未加入 `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`。合法 KP context 目前仍會通過
+  context validation，但接著被 allowlist guard 拒絕。
+- **測試覆蓋**：新增 regression tests，確認 global `roll_dice` schema 沒有 `roll_context`、ordinary speaker
+  看不到該欄位、KP-specific helper 會在 copy 中加入合法 enum，且 helper 執行後不會污染 global `TOOLS`。
+
+### 94. KP Assistant Dice Creates Canon：正式開放 KP Assistant 使用 `roll_dice`
+
+- **正式開放工具**：`_KP_ASSISTANT_ALLOWED_TOOL_NAMES` 現在加入 `roll_dice`。這一步沒有開放
+  `adjust_character`、`adjust_ammo`、`damage_combatant`、`set_skill`、`start_combat` 等 mutation/admin tools。
+- **KP 專用 schema required**：`_tool_definition_for_kp_assistant(tool)` 產生的 KP-specific `roll_dice` copy
+  現在會把 `roll_context` 加入自己的 `required`，因此 KP Assistant 看到的 `required` 是
+  `["expression", "roll_context"]`；global `TOOLS` 的 `roll_dice.required` 仍維持 `["expression"]`，ordinary
+  speaker 也仍看不到 `roll_context`。
+- **`game_resolution` creates canon**：KP Assistant 使用 `roll_dice` 且 `roll_context == "game_resolution"` 時，
+  成功擲骰會套用 Dice Creates Canon；造成這顆骰子的整個 KP 主持指示、tool input（包含 `expression`、
+  `purpose`、`roll_context`）與 deterministic result 會寫入正式 `state.log`，OpenAI canonical response chain
+  也會前進。
+- **`ooc_randomizer` 保持 OOC**：KP Assistant 使用 `roll_dice` 且 `roll_context == "ooc_randomizer"` 時，即使
+  tool 本身成功擲出 deterministic result，也只代表 KP 幕後隨機決策，不構成遊戲世界事件；該 turn 仍寫入
+  `kp_ooc_log`，不進正式世界歷史，也不推進 OpenAI canonical chain。
+- **`purpose` 與 `roll_context` 分工**：KP Assistant prompt 已補充說明 `purpose` 是人類可讀的用途文字，
+  `roll_context` 只負責機器分類，合法值只有 `game_resolution` / `ooc_randomizer`，不得自創其他值。
+- **第二層防線保留**：Step 6B 的 `_validate_kp_roll_dice_context(tool_input)` 仍保留；即使 provider 或未來 caller
+  繞過 schema 直接呼叫 `_execute_tool()`，KP Assistant 缺少或傳入非法 `roll_context` 仍會得到 `ok == false`。
+- **既有骰法未改**：沒有修改 global / ordinary `roll_dice` contract、`dice.roll_expression()`、或 result shape；
+  ordinary `roll_dice(expression="1d6")` 仍不需要 `roll_context`。
+- **測試覆蓋**：更新 allowlist / schema / validation tests，確認 KP Assistant 現在看得到 `roll_dice`、KP schema
+  要求 `roll_context`、缺少/非法 context 仍被 validation 擋下、合法 context 會真正擲骰；新增兩個完整 KP turn
+  regression tests，分別確認 `game_resolution` 進 `state.log` 並推進 OpenAI chain，`ooc_randomizer` 留在
+  `kp_ooc_log` 且 canonical chain 不前進。
