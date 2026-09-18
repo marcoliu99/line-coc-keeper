@@ -5,7 +5,7 @@ from typing import Any
 
 from app.models import GroupState
 from app.domain.models import AgentMessage
-from app.config import SCENARIO_RAG_TOP_K
+from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app import scenario_rag, memory_rag
 
 
@@ -33,8 +33,15 @@ async def build_context(
     # location-based matching — scenario_rag.search has no location
     # parameter of its own; resolved_location stays available separately in
     # the payload for anything downstream that wants it.
+    #
+    # Gated on SCENARIO_RAG_ENABLED (default off) the same way
+    # keeper._build_static_prompt is: when it's off, the full scenario text
+    # (or the current chapter window's text, via the scenario library) is
+    # already embedded directly in the static prompt, making this proactive
+    # search redundant — and, depending on the configured embeddings
+    # backend, a real per-turn cost for zero benefit.
     rag_task = None
-    if state.scenario_text and state.scenario_title:
+    if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title:
         def _run_scenario_rag() -> str:
             index = scenario_rag.get_index(conversation_id, state.scenario_text)
             results = scenario_rag.search(index, text, top_k=SCENARIO_RAG_TOP_K)

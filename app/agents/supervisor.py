@@ -57,7 +57,13 @@ async def run_turn(
     if intent == "GAMEPLAY_ACTION":
         _logger.info("Routing to ExecutorAgent (Slow Path)")
         mechanic_result = await executor.run_executor(message)
-        
+        # Narrator reads this back out of the payload (see narrator.py) to
+        # decide between build_mechanic_facts_block and PURE_ROLEPLAY_BLOCK —
+        # without this, every GAMEPLAY_ACTION turn silently narrated as if
+        # nothing mechanical had happened, contradicting whatever the
+        # Executor's tool calls actually rolled/changed.
+        message.payload["mechanic_result"] = mechanic_result
+
         # 4. State Reducer (Pure Python)
         state_reducer.apply_mechanic_result(message, mechanic_result)
     else:
