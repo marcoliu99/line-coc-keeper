@@ -40,7 +40,8 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
         if not result["ok"]:
             await reply(result["error"])
             return
-        await reply(f"第 {result['round']} 輪，輪到「{result['current_turn']}」了（HP {result['hp']}/{result['hp_max']}）。")
+        hp_text = f"HP {result['hp']}/{result['hp_max']}" if result.get("side") != "enemy" else "HP 未公開"
+        await reply(f"第 {result['round']} 輪，輪到「{result['current_turn']}」了（{hp_text}）。")
         return
 
     if action == "damage":
@@ -58,7 +59,11 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
         if not result["ok"]:
             await reply(result["error"])
             return
-        await reply(f"已調整 {name} 的 HP (現為 {result['hp']}/{result['hp_max']})。")
+        if result.get("side") == "enemy":
+            tag = "（已倒下）" if result.get("defeated") else ""
+            await reply(f"已調整 {name} 的 HP{tag}。")
+        else:
+            await reply(f"已調整 {name} 的 HP (現為 {result['hp']}/{result['hp_max']})。")
         return
 
     if action == "end":

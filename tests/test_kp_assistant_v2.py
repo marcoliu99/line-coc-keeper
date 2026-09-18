@@ -540,6 +540,40 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(keeper._kp_tool_result_creates_canon("apply_combat_damage", {}, damage_result))
         self.assertEqual(store.get("g").characters_by_id["char-marco"].hp, 11)
 
+    def test_kp_assistant_can_see_private_enemy_hp_in_combat_status(self):
+        state = GroupState(group_id="g")
+        char = Character(name="Marco", owner_id="p1", character_id="char-marco", dex=50, hp=12, hp_max=12)
+        state.characters["p1"] = char
+        state.characters_by_id["char-marco"] = char
+        state.active_character_id_by_user["p1"] = "char-marco"
+        combat.start_combat(state)
+        combat.add_npc(state, "Dream Singer", 60, 14)
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            player_status = keeper._execute_tool(
+                state,
+                "get_combat_status",
+                {},
+                [],
+                [],
+                speaker_role="player",
+            )
+            kp_status = keeper._execute_tool(
+                state,
+                "get_combat_status",
+                {},
+                [],
+                [],
+                speaker_role="kp_assistant",
+            )
+
+        self.assertTrue(player_status["ok"])
+        self.assertTrue(kp_status["ok"])
+        self.assertIn("Dream Singer [敵方] DEX 60 HP 未公開", player_status["status"])
+        self.assertNotIn("Dream Singer [敵方] DEX 60 HP 14/14", player_status["status"])
+        self.assertIn("Dream Singer [敵方] DEX 60 HP 14/14", kp_status["status"])
+
     def test_roll_dice_creates_canon_only_for_game_resolution_context(self):
         self.assertTrue(keeper._kp_tool_result_creates_canon(
             "roll_dice",

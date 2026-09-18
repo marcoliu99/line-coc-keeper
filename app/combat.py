@@ -311,8 +311,10 @@ def apply_combat_damage(
     major_wound = _register_major_wound_check(state, combatant, final, after)
     return {
         "ok": True,
+        "name": combatant.display_name,
         "target": combatant.display_name,
         "target_id": combatant.combatant_id,
+        "side": combatant.side,
         "raw_damage": raw_damage,
         "damage_type": damage_type,
         "armor_reduction": armor,
@@ -349,6 +351,7 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
     return {
         "ok": True,
         "name": combatant.display_name,
+        "side": combatant.side,
         "hp": combatant.hp,
         "hp_max": combatant.hp_max,
         "hp_before": before,
@@ -676,7 +679,8 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
         away = c.is_pc and not c.defeated and skippable
         tag = "（倒下）" if c.defeated else "（暫離）" if away else ""
         side = "我方" if c.side == "pc" else "隊友" if c.side == "ally" else "敵方"
-        line = f"{marker}{c.display_name} [{side}] DEX {c.dex} HP {c.hp}/{c.hp_max}{tag}"
+        hp_text = f"HP {c.hp}/{c.hp_max}" if include_private or c.side != "enemy" else "HP 未公開"
+        line = f"{marker}{c.display_name} [{side}] DEX {c.dex} {hp_text}{tag}"
         if include_private and card:
             if card.armor:
                 line += " 護甲:" + ",".join(f"{a.label} {a.value}" for a in card.armor)
