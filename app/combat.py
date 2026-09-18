@@ -242,6 +242,32 @@ def _sync_pc_hp(state: GroupState, combatant: Combatant) -> None:
             state.characters_by_id[combatant.character_id].hp = combatant.hp
 
 
+def _pc_for_combatant(state: GroupState, combatant: Combatant):
+    if not combatant.is_pc:
+        return None
+    if combatant.character_id and combatant.character_id in state.characters_by_id:
+        return state.characters_by_id[combatant.character_id]
+    return state.get_character_by_name(combatant.name)
+
+
+def _register_major_wound_check(state: GroupState, combatant: Combatant, final_damage: int, hp_after: int) -> bool:
+    pc = _pc_for_combatant(state, combatant)
+    if not pc or hp_after <= 0:
+        return False
+    if final_damage < pc.hp_max / 2:
+        return False
+    state.pending_checks[pc.owner_id] = {
+        "type": "skill",
+        "skill": "CON",
+        "skill_value": pc.con,
+        "bonus_dice": 0,
+        "penalty_dice": 0,
+        "difficulty": "regular",
+        "major_wound_trigger": True,
+    }
+    return True
+
+
 def _armor_reduction(card: EnemyCombatCard | None, damage_type: str, tags: list[str]) -> tuple[int, str]:
     if not card:
         return 0, ""
@@ -282,6 +308,7 @@ def apply_combat_damage(
         card.hp = after
         card.status_tags = [t for t in card.status_tags if t]
     _sync_pc_hp(state, combatant)
+    major_wound = _register_major_wound_check(state, combatant, final, after)
     return {
         "ok": True,
         "target": combatant.display_name,
@@ -296,9 +323,9 @@ def apply_combat_damage(
         "hp_after": after,
         "hp": after,
         "hp_max": combatant.hp_max,
-        "major_wound_triggered": final >= max(1, combatant.hp_max // 2) and combatant.is_pc,
+        "major_wound_triggered": major_wound,
         "defeated": combatant.defeated,
-        "public_summary": f"{combatant.display_name} 受到 {final} 點傷害" + (f"（護甲抵銷 {armor}）" if armor else ""),
+        "public_summary": f"{combatant.display_name} 受到 {final} 點傷害" + ("（部分傷害被擋下）" if armor else ""),
         "private_notes": f"raw={raw_damage}, armor={armor_label or '-'}:{armor}, source={source_id}",
     }
 
@@ -488,6 +515,8 @@ def resolve_enemy_action(state: GroupState, plan_id: str) -> dict[str, Any]:
     plan = state.combat.plans.get(plan_id)
     if not plan:
         return {"ok": False, "error": f"找不到行動計畫 {plan_id}"}
+    if plan.get("resolved"):
+        return {"ok": True, "plan_id": plan_id, "resolved": True, "already_resolved": True}
     card = state.combat.enemy_cards.get(plan["enemy_card_id"])
     if not card:
         return {"ok": False, "error": "行動計畫對應的敵人卡不存在"}
@@ -497,6 +526,7 @@ def resolve_enemy_action(state: GroupState, plan_id: str) -> dict[str, Any]:
             ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
             ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
             ability.current_cooldown = ability.cooldown_rounds
+    plan["resolved"] = True
     return {"ok": True, "plan_id": plan_id, "resolved": True}
 
 
