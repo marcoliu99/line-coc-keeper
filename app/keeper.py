@@ -372,6 +372,7 @@ TOOLS = [
         "name": "add_npc_to_combat",
         "description": (
             "在戰鬥中加入一個 NPC 戰鬥員，會依 DEX 重新排列先攻順位。若戰鬥還沒開始會自動開始。"
+            "敵人會建立內部戰鬥卡；劇本有護甲、攻擊或特殊能力時要一起填入，不能只填 HP。"
             "預設是敵人；如果是站在調查員這邊參戰的 NPC 隊友（例如雇來的嚮導、臨陣倒戈的信徒），"
             "把 is_ally 設成 true，狀態列會顯示成「隊友」而不是「敵方」。"
         ),
@@ -382,6 +383,21 @@ TOOLS = [
                 "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；劇本沒寫明可抓 40-60 的一般值"},
                 "hp": {"type": "integer", "description": "最大生命值"},
                 "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
+                "armor": {
+                    "type": "array",
+                    "description": "敵人護甲規則；玩家未發現前不要公開具體數字",
+                    "items": {"type": "object"},
+                },
+                "attacks": {
+                    "type": "array",
+                    "description": "敵人攻擊表，每筆含 id/label/skill_name/skill_value/damage/range_band 等",
+                    "items": {"type": "object"},
+                },
+                "abilities": {
+                    "type": "array",
+                    "description": "敵人特殊能力，每筆含 id/name/priority/trigger/check/effect/usage/reveal_policy 等",
+                    "items": {"type": "object"},
+                },
             },
             "required": ["name", "dex", "hp"],
         },
@@ -406,6 +422,46 @@ TOOLS = [
                 "delta": {"type": "integer"},
             },
             "required": ["name", "delta"],
+        },
+    },
+    {
+        "name": "plan_enemy_turn",
+        "description": (
+            "輪到敵人時先呼叫這個工具。系統會檢查敵人戰鬥卡的特殊能力、觸發條件、使用次數與可用攻擊，"
+            "回傳本回合應採取的 plan；不要自行假設敵人一定普通攻擊。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enemy": {"type": "string", "description": "可省略；省略時使用目前輪到的敵人"},
+            },
+        },
+    },
+    {
+        "name": "resolve_enemy_action",
+        "description": "敵人 plan 對應的行動已敘事/擲骰處理後呼叫，用來消耗特殊能力次數與冷卻。",
+        "input_schema": {
+            "type": "object",
+            "properties": {"plan_id": {"type": "string"}},
+            "required": ["plan_id"],
+        },
+    },
+    {
+        "name": "apply_combat_damage",
+        "description": (
+            "套用正式戰鬥傷害，會分開計算 raw damage、護甲抵銷、final damage 與 HP。"
+            "玩家未發現前，公開敘事不可洩漏護甲/弱點的精確數值。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "raw_damage": {"type": "integer"},
+                "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "source_id": {"type": "string"},
+            },
+            "required": ["target", "raw_damage"],
         },
     },
     {
@@ -1202,6 +1258,9 @@ def _execute_tool(
                     int(tool_input.get("dex", 50)),
                     hp,
                     is_ally=bool(tool_input.get("is_ally", False)),
+                    armor=tool_input.get("armor"),
+                    attacks=tool_input.get("attacks"),
+                    abilities=tool_input.get("abilities"),
                 )
                 return index_note
             index_note = _mutate_and_save_state(state, _mutate_add_npc)
@@ -1223,6 +1282,28 @@ def _execute_tool(
             def _mutate_damage_combatant(target_state: GroupState) -> dict:
                 return combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
             return _mutate_and_save_state(state, _mutate_damage_combatant)
+
+        if name == "plan_enemy_turn":
+            def _mutate_plan_enemy_turn(target_state: GroupState) -> dict:
+                return combat.plan_enemy_turn(target_state, tool_input.get("enemy", ""))
+            return _mutate_and_save_state(state, _mutate_plan_enemy_turn)
+
+        if name == "resolve_enemy_action":
+            def _mutate_resolve_enemy_action(target_state: GroupState) -> dict:
+                return combat.resolve_enemy_action(target_state, tool_input["plan_id"])
+            return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
+
+        if name == "apply_combat_damage":
+            def _mutate_apply_combat_damage(target_state: GroupState) -> dict:
+                return combat.apply_combat_damage(
+                    target_state,
+                    tool_input["target"],
+                    int(tool_input["raw_damage"]),
+                    damage_type=tool_input.get("damage_type", "physical"),
+                    tags=tool_input.get("tags") or [],
+                    source_id=tool_input.get("source_id", ""),
+                )
+            return _mutate_and_save_state(state, _mutate_apply_combat_damage)
 
         if name == "end_combat":
             def _mutate_end_combat(target_state: GroupState) -> None:
@@ -1439,7 +1520,7 @@ def _build_static_prompt(state: GroupState) -> str:
   **攻擊擲骰**是極限成功（不是反擊），改呼叫 roll_impaling_damage，讓系統照 COC7e 規則正確算出
   「武器＋傷害加值都算最大值，穿刺武器再額外重骰一次武器傷害」的結果。不是武器傷害的一般描述性
   擲骰（道具檢定、環境傷害等）才用 roll_dice。
-- 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
+- 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。加入敵人時，若劇本寫了護甲、攻擊、特殊能力、每輪/每戰使用限制或觸發條件，必須放進 add_npc_to_combat 的 armor/attacks/abilities；不要只填 HP 後靠臨場記憶。
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
@@ -1564,13 +1645,19 @@ def _build_dynamic_prompt(
 DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情方便就打亂順序或把不同 DEX 的人合併敘述成同時
 發生；只有 DEX 剛好相同的戰鬥員才可以敘述成同時行動。某位戰鬥員的行動（含擲骰結果）處理完後，必須呼叫
 advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
-呼叫 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
+呼叫 apply_combat_damage 或 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
 不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色在近戰中被攻擊時，防守方要在
 「閃避」跟「反擊」之間選一個（COC7e 規則），呼叫 offer_check_choice 給這兩個選項讓玩家自己選，不要自己
 幫玩家決定要閃避還是反擊。這是正式的對抗檢定：先呼叫 npc_skill_check 讓攻擊方（通常是 NPC）擲出這次
 攻擊的成功等級，填進 offer_check_choice 的 attacker_tier，玩家真的擲完骰後系統會自動判定攻擊有沒有
-命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。"""
+命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。
+
+敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
+冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理，若是
+special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程；處理完後呼叫 resolve_enemy_action
+消耗該能力次數。plan 裡的 private_reason、敵人能力真名、POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，
+不得寫進公開回覆。公開敘事只使用 public_hint，或用玩家能感受到的現象描述。"""
 
     kp_assistant_block = ""
     if speaker_role == "kp_assistant":

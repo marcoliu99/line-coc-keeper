@@ -136,7 +136,25 @@ all three; image operations are constrained to `context_chapter_ids`.
 | `show_scenario_image(page_number, investigator=None)` | Queues a scoped image for public display or a named investigator. Requests for pages outside the window or KP-only pages from ordinary player turns are rejected. |
 | `advance_scenario_chapter()` | Advances exactly one playable chapter, reloads the next two-chapter text/index/map/image window, and clears the old OpenAI response chain. |
 
-## 7. Configuration
+## 7. Keeper combat tools
+
+These tools mutate `GroupState.combat` and are internal LLM tool calls, not HTTP
+endpoints. Enemy combatants now carry private combat cards; player-facing
+narration must not expose hidden ability names, exact armor, cooldowns, usage
+limits, or weaknesses until the scenario reveals them.
+
+| Tool | Result |
+| --- | --- |
+| `start_combat()` | Starts initiative using active, non-away player characters. |
+| `add_npc_to_combat(name, dex, hp, is_ally=false, armor=[], attacks=[], abilities=[])` | Adds an ally or creates an enemy combat card and adds it to initiative. Existing shorthand `name/dex/hp` remains valid but creates an incomplete enemy card. |
+| `plan_enemy_turn(enemy="")` | For the current or named enemy, checks special abilities, triggers, usage, cooldowns, and available attacks; returns a private plan plus safe public hint. |
+| `resolve_enemy_action(plan_id)` | Marks the selected enemy plan as resolved and consumes ability usage/cooldown. |
+| `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")` | Applies damage with a raw/armor/final breakdown and updates HP. |
+| `damage_combatant(name, delta)` | Legacy HP adjustment wrapper. Negative deltas now flow through armor-aware damage resolution. |
+| `advance_combat_turn()` | Processes turn-end/new-round timing, resets per-round ability usage, ticks cooldowns, and advances initiative. |
+| `end_combat()` | Clears combat state. |
+
+## 8. Configuration
 
 | Environment variable | Used for |
 | --- | --- |
