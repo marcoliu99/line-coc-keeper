@@ -29,7 +29,7 @@ from typing import Awaitable, Callable
 
 import yaml
 
-from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor
+from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor, scenario_library
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
@@ -283,6 +283,7 @@ async def handle_pdf_upload(
     push: Reply,
     pdf_bytes: bytes,
     file_name: str,
+    skip_similarity: bool = False,
 ) -> None:
     """`reply` must land inside whatever immediate response window the platform
     gives an incoming event (LINE's reply token expires after 60s and is
@@ -324,6 +325,26 @@ async def handle_pdf_upload(
         )
         return
 
+    if existing_state.pending_scenario_upload is not None and not skip_similarity:
+        await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
+        return
+
+    if not skip_similarity:
+        try:
+            preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
+        except ValueError as exc:
+            await reply(f"無法讀取 PDF 前幾頁：{exc}")
+            return
+        preview_title = pdf_loader.guess_title(preview, file_name=file_name)
+        matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
+        if matches:
+            key = await asyncio.to_thread(scenario_library.stage_upload, pdf_bytes)
+            existing_state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
+            save_state(existing_state)
+            labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
+            await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
+            return
+
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
 
     try:
@@ -354,6 +375,21 @@ async def handle_pdf_upload(
     # reconcile against it. See _merge_extracted_pregens for how this result
     # gets folded into state.pregens without regard to upload order.
     pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
+
+    try:
+        preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
+    except ValueError:
+        preview = text[:12_000]
+    scenario_id = await asyncio.to_thread(
+        scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
+        preview=preview, text=text, indexes=extracted_index, pregens=pregens,
+        page_maps=page_maps, page_images=page_images,
+    )
+    library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
+    text = library_context["text"]
+    extracted_index = library_context["indexes"]
+    pregens = library_context["pregens"]
+    page_maps = library_context["scene_maps"]
 
     async with locks.get_conversation_lock(conversation_id):
 
@@ -403,6 +439,9 @@ async def handle_pdf_upload(
         else:
             raced = False
             _apply_new_scenario(state, text, title, extracted_index, page_maps, pregens)
+            state.scenario_library_id = scenario_id
+            state.active_chapter_id = library_context["active_chapter_id"]
+            state.context_chapter_ids = library_context["context_chapter_ids"]
             save_state(state)
             confirmation_pending = False
             final_pregen_count = len(state.pregens)

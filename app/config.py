@@ -131,3 +131,7 @@ KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", 0.6))
 # parameter outright, openai_provider.py detects that once per process and
 # stops sending it, the same fallback pattern already used for temperature.
 KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").strip().lower()
+
+# Reusable parsed PDF scenarios (separate from per-conversation state).
+SCENARIO_LIBRARY_DIR = Path(os.environ.get('SCENARIO_LIBRARY_DIR', str(DATA_DIR.parent / 'scenarios')))
+SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)

@@ -320,3 +320,18 @@ def guess_title(text: str, file_name: str = "", fallback: str = "未命名劇本
         if 2 <= len(line) <= 40:
             return line
     return fallback
+
+
+def extract_preview(pdf_bytes: bytes, page_limit: int = 3) -> str:
+    """Fast, no-LLM preview used before a potentially expensive full parse."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    parts: list[str] = []
+    for i, page in enumerate(doc):
+        if i >= page_limit:
+            break
+        text = re.sub(r"[ \t]+", " ", page.get_text("text") or "").strip()
+        if text:
+            parts.append(f"--- 第 {i + 1} 頁 ---\n{text}")
+    if not parts:
+        raise ValueError("這份 PDF 的前幾頁無法抽取文字，無法快速比對")
+    return "\n\n".join(parts)
