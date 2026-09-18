@@ -1780,3 +1780,27 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **文件與測試**：更新 `docs/combat_design_spec.md` 與 `docs/API.md` 的 visibility 契約；新增測試確認
   public status 隱藏敵人 HP、private status 顯示敵人 HP、KP Assistant `get_combat_status` 取得 private
   視圖。測試跑過 `py_compile`、`tests.test_combat_cards`、`tests.test_kp_assistant_v2`。
+
+### 102. 修掉 PR review 指出的戰鬥傷害工具洩漏與 timing 重複結算
+
+- **這個改動怎麼來的**：PR review 指出 `get_combat_status` 雖然已依 `speaker_role` 隱藏敵人 HP，
+  但最常被主 Keeper 呼叫的 `apply_combat_damage` 仍會把 `armor_reduction`、`armor_label`、
+  `hp_before`、`hp_after`、`hp_max`、`private_notes` 全量放進一般 Keeper 的工具結果 context；
+  這等於把敵方護甲與精確血量交給即將產生玩家可見敘事的主 Keeper，只靠 prompt 自律防洩漏。
+- **工具結果遮罩**：新增 `_filter_public_combat_damage_result`。KP Assistant 呼叫
+  `apply_combat_damage` 時保留完整 private breakdown；一般 Keeper/player 路徑若目標是敵方，只保留
+  `public_summary`、`final_damage`、`defeated`、`target` 等可公開欄位，移除 raw/armor/HP/private notes。
+  PC/ally 傷害結果仍保留 HP breakdown，因為玩家角色 HP 本來是公開動態狀態。
+- **固定時點冪等**：`CombatState` 新增 JSON-safe 的 `processed_timings`，`process_timing` 以
+  `round_number/current_index/timing/target` 做 key；同一敵人回合重複呼叫 `plan_enemy_turn` 不會再次
+  套用 `turn_start` damage 或遞減 `remaining_rounds`。
+- **PC turn_start 整合**：`advance_turn` 在移動到下一位 combatant 後會呼叫該 combatant 的
+  `turn_start` timing，因此掛在 PC 身上的燃燒/流血類效果會透過真實回合推進觸發，不再只靠測試手動
+  呼叫底層 `process_timing`。
+- **文件修正**：`docs/combat_design_spec.md` 不再宣稱 `round_start`、`on_damage_taken`、
+  `target_in_range` special ability trigger 已實作；這些 trigger 目前明確回 `False`，列為後續擴充，
+  避免落入「未知 trigger 預設觸發」的錯誤行為。
+- **測試覆蓋**：新增 regression tests，確認 public `apply_combat_damage` 不含敵人 armor/HP/private notes、
+  KP Assistant 仍可取得完整 breakdown、重複 `plan_enemy_turn` 不重複 tick turn_start effect、PC turn_start
+  effect 會在 `advance_turn` 抵達 PC 時觸發。測試跑過 `py_compile`、`tests.test_combat_cards`、
+  `tests.test_kp_assistant_v2` 與完整 `unittest discover`。

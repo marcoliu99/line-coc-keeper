@@ -33,6 +33,8 @@
 - `apply_combat_damage` 已保存 raw/armor/final/hp breakdown，對 PC 重大傷害會註冊 pending CON check；公開摘要不得洩漏護甲精確數值。
 - `add_combat_effect` 已可建立固定時點 effect；`process_timing` 可在 round/turn timing 套用固定傷害或骰式傷害。
 - public combat status 不顯示敵人目前 HP / 最大 HP；KP Assistant private combat status 可看敵人 HP、護甲與能力摘要。
+- public `apply_combat_damage` tool result 對敵方目標會 scrub 護甲與 HP breakdown；KP Assistant 保留完整 private result。
+- turn timing 結算具備冪等保護；同一 round/current combatant/timing/target 重複呼叫不會重複扣血或遞減 duration。
 - KP Assistant allowlist 開放 `apply_combat_damage` 與 `add_combat_effect`，這兩個成功結果會成為 canonical game event；`damage_combatant` 仍不開放給 KP Assistant。
 
 ## 現況落差
@@ -153,15 +155,20 @@ SpecialAbility(
 )
 ```
 
-`trigger` 必須是可檢查條件，例如：
+目前已實作的 `trigger` 條件：
 
 - `first_available`: 戰鬥中第一次符合條件就應考慮。
-- `round_start`: 每輪固定時點。
 - `on_enemy_turn`: 敵人回合開始。
-- `on_damage_taken`: 受到傷害後。
-- `target_in_range`: 有目標在指定 range band。
 - `hp_below`: HP 低於門檻。
 - `state_missing`: 某效果尚未套用。
+
+後續保留但本階段不啟用的 trigger：
+
+- `round_start`: 每輪固定時點的能力觸發。
+- `on_damage_taken`: 受到傷害後觸發。
+- `target_in_range`: 依精確 range band 觸發。
+
+未實作 trigger 必須回 `False`，不得落入「敵人回合一定觸發」的預設路徑。
 
 `usage`：
 
@@ -323,6 +330,8 @@ EnemyTurnPlan(
 
 `resolve_enemy_action(plan_id)` 必須是 idempotent：第一次成功 resolve 才會消耗 usage/cooldown，之後同一個 `plan_id` 重複呼叫只回報 `already_resolved=True`，不得重複扣特殊能力次數。這保護 LLM/tool retry、網路重送與主持誤按造成的重複結算。
 
+`plan_enemy_turn` 也必須避免重複套用 `turn_start` effects：同一個 round/current_index/target 的 `turn_start` timing 最多結算一次，即使 Keeper/LLM 因 retry 或重新規劃重複呼叫 `plan_enemy_turn`。
+
 ## Song of Lost Dreams 類能力
 
 這類能力定義成 `SpecialAbility`，而不是 Keeper prompt 裡的提醒。
@@ -471,6 +480,12 @@ Combat status visibility：
 - `status_text(include_private=True)` 是 KP/KP Assistant 視圖：可顯示敵人 HP、護甲與能力摘要。
 - `get_combat_status` 在 `speaker_role == "kp_assistant"` 時使用 private 視圖；一般 player/Keeper tool result 使用公開視圖，降低敘事時不小心洩漏敵方血量的風險。
 
+Combat damage tool result visibility：
+
+- KP Assistant 呼叫 `apply_combat_damage` 時取得完整 private result，包含 `raw_damage`、`armor_reduction`、`armor_label`、`hp_before`、`hp_after`、`hp_max`、`private_notes`。
+- 一般 Keeper/player 路徑若目標是敵方，`apply_combat_damage` result 必須 scrub private breakdown，只保留 `public_summary`、`final_damage`、`defeated` 等可公開敘事欄位。
+- PC/ally 的傷害結果可保留 HP breakdown，因為玩家角色 HP 本來就是公開動態狀態。
+
 ## Prompt 契約
 
 Keeper prompt 必須改成：
@@ -520,6 +535,8 @@ Keeper prompt 必須改成：
 13. 舊 `GroupState.characters` 存檔可 migrate 到 `characters_by_id`。
 14. KP Assistant allowlist 包含 `apply_combat_damage` / `add_combat_effect`，但不包含 `damage_combatant`；成功傷害工具會 creates canon。
 15. 公開 combat status 與 combat 指令不洩漏敵人 HP；KP Assistant `get_combat_status` 可看到 private HP。
+16. Public `apply_combat_damage` result 對敵方目標不含 armor/HP/private_notes；KP Assistant result 保留完整欄位。
+17. `plan_enemy_turn` 重複呼叫不重複套用 `turn_start` effects；PC `turn_start` effects 會在 `advance_turn` 抵達 PC 回合時觸發。
 
 整合測試：
 

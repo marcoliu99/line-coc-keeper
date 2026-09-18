@@ -574,6 +574,62 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Dream Singer [敵方] DEX 60 HP 14/14", player_status["status"])
         self.assertIn("Dream Singer [敵方] DEX 60 HP 14/14", kp_status["status"])
 
+    def test_enemy_damage_result_is_scrubbed_for_public_keeper_context(self):
+        state = GroupState(group_id="g")
+        char = Character(name="Marco", owner_id="p1", character_id="char-marco", dex=50, hp=12, hp_max=12)
+        state.characters["p1"] = char
+        state.characters_by_id["char-marco"] = char
+        state.active_character_id_by_user["p1"] = "char-marco"
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Armored Thing",
+            40,
+            10,
+            armor=[{"id": "hide", "label": "Hide", "value": 3, "applies_to": "physical"}],
+        )
+
+        private_state = clone_state(state)
+
+        with StateStorePatch(keeper) as public_store:
+            public_store.put(state)
+            public_result = keeper._execute_tool(
+                state,
+                "apply_combat_damage",
+                {"target": "Armored Thing", "raw_damage": 8, "damage_type": "physical"},
+                [],
+                [],
+                speaker_role="player",
+            )
+
+        with StateStorePatch(keeper) as private_store:
+            private_store.put(private_state)
+            private_result = keeper._execute_tool(
+                private_state,
+                "apply_combat_damage",
+                {"target": "Armored Thing", "raw_damage": 8, "damage_type": "physical"},
+                [],
+                [],
+                speaker_role="kp_assistant",
+            )
+
+        self.assertTrue(public_result["ok"])
+        self.assertEqual(public_result["side"], "enemy")
+        self.assertIn("public_summary", public_result)
+        self.assertNotIn("armor_reduction", public_result)
+        self.assertNotIn("armor_label", public_result)
+        self.assertNotIn("hp_before", public_result)
+        self.assertNotIn("hp_after", public_result)
+        self.assertNotIn("hp", public_result)
+        self.assertNotIn("hp_max", public_result)
+        self.assertNotIn("private_notes", public_result)
+
+        self.assertTrue(private_result["ok"])
+        self.assertEqual(private_result["armor_reduction"], 3)
+        self.assertEqual(private_result["armor_label"], "Hide")
+        self.assertEqual(private_result["hp_after"], 5)
+        self.assertIn("private_notes", private_result)
+
     def test_roll_dice_creates_canon_only_for_game_resolution_context(self):
         self.assertTrue(keeper._kp_tool_result_creates_canon(
             "roll_dice",

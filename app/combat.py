@@ -384,6 +384,10 @@ def _tick_effect(effect: EffectState) -> None:
         effect.remaining_rounds -= 1
 
 
+def _timing_key(state: GroupState, timing: str, target_id: str) -> str:
+    return f"{state.combat.round_number}:{state.combat.current_index}:{timing}:{target_id or '*'}"
+
+
 def resolve_effect_damage(expression: str) -> int:
     expr = (expression or "").strip()
     if not expr:
@@ -465,6 +469,11 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
 
     More effect types can be added without changing the turn-order API.
     """
+    key = _timing_key(state, timing, target_id)
+    if key in state.combat.processed_timings:
+        return []
+    state.combat.processed_timings.append(key)
+
     results: list[dict[str, Any]] = []
     remaining: list[EffectState] = []
     for effect in state.combat.effects:
@@ -514,6 +523,8 @@ def _trigger_matches(ability: SpecialAbility, card: EnemyCombatCard) -> bool:
     t = trigger.get("type", "on_enemy_turn")
     if t in ("first_available", "on_enemy_turn"):
         return True
+    if t in ("round_start", "on_damage_taken", "target_in_range"):
+        return False
     if t == "hp_below":
         return card.hp <= int(trigger.get("value", card.hp_max))
     if t == "state_missing":
@@ -649,6 +660,7 @@ def advance_turn(state: GroupState) -> dict:
             break
 
     current = combat.order[combat.current_index]
+    process_timing(state, "turn_start", current.combatant_id)
     return {
         "ok": True,
         "round": combat.round_number,

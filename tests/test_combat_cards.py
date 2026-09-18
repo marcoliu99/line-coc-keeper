@@ -105,6 +105,31 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(card.abilities[0].usage["used_total"], 1)
         self.assertEqual(card.abilities[0].usage["used_this_round"], 1)
 
+    def test_plan_enemy_turn_does_not_reapply_turn_start_effects(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Burning Thing", 60, 10)
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Burning Thing")
+        combat.add_combat_effect(
+            state,
+            "Burning Thing",
+            "Burning",
+            timing="turn_start",
+            damage="1",
+            damage_type="fire",
+            remaining_rounds=2,
+            tags=["fire"],
+        )
+
+        first = combat.plan_enemy_turn(state)
+        second = combat.plan_enemy_turn(state)
+        enemy = next(c for c in state.combat.order if c.name == "Burning Thing")
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(enemy.hp, 9)
+        self.assertEqual(state.combat.effects[0].remaining_rounds, 1)
+
     def test_per_round_usage_resets_and_cooldown_ticks_on_new_round(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -220,6 +245,30 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(results[0]["raw_damage"], 1)
         self.assertEqual(results[0]["damage_type"], "fire")
         self.assertEqual(state.combat.order[0].hp, 11)
+        self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
+        self.assertEqual(state.combat.effects, [])
+
+    def test_pc_turn_start_effect_triggers_when_advance_turn_reaches_pc(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Fast Enemy", 80, 10)
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Fast Enemy")
+        combat.add_combat_effect(
+            state,
+            "Mark",
+            "Burning",
+            timing="turn_start",
+            damage="1",
+            damage_type="fire",
+            remaining_rounds=1,
+            tags=["fire"],
+        )
+
+        result = combat.advance_turn(state)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["current_turn"], "Mark")
+        self.assertEqual(state.combat.order[state.combat.current_index].hp, 11)
         self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
         self.assertEqual(state.combat.effects, [])
 
