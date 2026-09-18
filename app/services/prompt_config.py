@@ -8,6 +8,38 @@ from typing import Any
 # 业务代码只负责准备上下文变量，不直接拼写提示词正文。
 # 初学者可以把 prompt 理解成“给模型的任务说明书”：agent.py 负责决定什么时候调用模型，
 # prompt_config.py 负责告诉模型应该扮演什么角色、输出哪些 JSON 字段、不能泄露哪些信息。
+#
+# 整合現況（找不到任何 app/agents/*.py 匯入這個檔案，就是因為以下原因）：
+# 這個檔案的六個 build_* 函式假設的是一個跟目前 app/agents/ 實際做出來的 7 個階段
+# （context_builder／intent_router／executor／state_reducer／narrator／rule_validator／
+# guard）不同、更精細的流水線——它假設有獨立的「LLM 意圖分類」「ReAct 回合計畫」
+# 「Reflection 自檢」「記憶壓縮」四個 LLM 節點，而目前的 intent_router／rule_validator
+# 是刻意用規則判斷、不呼叫 LLM（省下每回合多打的 LLM 呼叫，正是設計文件本身講的效能目標，
+# 見 docs/agentic_keeper_design_spec.md），記憶壓縮則已經有 app/keeper.py 的
+# summarize_log_chunk／_persist_memory_maintenance_state 在跑（router.py 每輪透過
+# _run_post_turn_maintenance_after_output 呼叫）。逐一核對後的結論：
+#
+# - build_intent_prompt / INTENT_SYSTEM_PROMPT：intent_router.classify_intent 保持
+#   規則判斷，不換成這裡的 LLM 版本——換掉會讓「純角色扮演不需要額外 LLM 呼叫」這個
+#   Fast Path 的設計目標直接失效。未使用。
+# - build_turn_plan_prompt／build_reflection_prompt／TURN_PLAN_*／REFLECTION_*：
+#   對應的 ReAct 回合計畫、Reflection 自檢節點目前沒有被實作成獨立階段
+#   （rule_validator.py 用簡單的正則規則做同樣「檢查敘事有沒有問題」的工作）。未使用。
+# - build_turn_summary_prompt／TURN_SUMMARY_*：跟 app/keeper.py 既有、已經在正式運作的
+#   summarize_log_chunk 功能重複，不重複實作。未使用。
+# - build_image_prompt_optimizer／IMAGE_PROMPT_OPTIMIZER_SYSTEM_PROMPT：這個專案目前
+#   沒有「AI 生成插圖」功能（show_scenario_image 秀的是劇本 PDF 既有的頁面圖片，不是
+#   生成的），沒有對應的呼叫端可以接。未使用，等真的有生成圖片的功能再接上。
+# - build_keeper_response_prompt／KEEPER_RESPONSE_*：內容跟 app/agents/narrator.py／
+#   executor.py 現在直接複用的 app/keeper.py._build_static_prompt／_build_dynamic_prompt
+#   有大量重疊（人設、防雷、角色資料），而且它假設的是「一次 LLM 呼叫同時回傳
+#   narration/options/state_delta/discovered_clues」這種 JSON 結構化輸出、由這個
+#   回傳值本身驅動狀態變更的設計——這跟目前 executor.py 已經改用「真的呼叫
+#   keeper._execute_tool 去修改並落庫狀態，narrator.py 只負責讀事實寫敘事」的分工衝突
+#   （state_reducer.py 已經刻意不再套用任何 delta，兩者同時做只會造成重複套用或用舊
+#   快照蓋掉剛存好的資料，見該檔案 docstring）。沒有整段搬過去，但把兩條真正有價值、
+#   目前現有 prompt 沒覆蓋到的守則文字內容合併進了 narrator.py 的 NARRATOR_SYSTEM_PROMPT
+#   （劇本世界事實來源、過去記憶不能覆蓋本回合機制結果）——這是唯一被實際採用的部分。
 
 # 【提示词 1】玩家意图解析节点：用于把玩家自然语言输入转成结构化行动意图。
 INTENT_SYSTEM_PROMPT = """你是克苏鲁调查游戏的“玩家意图解析节点”。

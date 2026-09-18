@@ -1572,3 +1572,53 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   沒有動它。Narrator／Executor 目前用的 prompt 也比舊版 `keeper.py` 的 `_build_static_prompt`／
   `_build_dynamic_prompt` 陽春（沒有完整角色卡、戰鬥狀態等豐富上下文），先求「正確、不當機」，
   上下文豐富度是合理的後續優化項目。
+
+### 84. 補齊 #83 記錄的兩項後續：Narrator／Executor 補上完整角色卡與戰鬥狀態上下文、`prompt_config.py` 正式整合（或記錄為什麼不整合）
+
+- **這個改動怎麼來的**：#83 修完讓流水線「正確、不當機」後，留了兩項後續：Narrator／Executor 的
+  prompt 比舊版 `keeper.py` 陽春（沒有完整角色卡／戰鬥狀態）；`app/services/prompt_config.py`
+  （574 行）完全沒被任何 agent 使用。這次補齊。
+- **Narrator／Executor 補上完整上下文**：兩個檔案原本各自手工拼一小段 `dynamic_system`（只有
+  「目前發話者」＋ RAG／記憶內容），沒有角色卡、戰鬥狀態、劇本內容、NPC／地點索引，也沒有舊版
+  `keeper.py` 裡大量的工具使用規則（技能檢定難度怎麼判斷、孤注一擲、彈藥／傷害規則、攜帶物合理性
+  審查、NPC 隊友演出規範等）。改成直接複用 `keeper._build_static_prompt(state)`／
+  `keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role)`——這兩個函式
+  就是舊架構單一 LLM 呼叫的完整上下文來源，持續在被維護，直接複用可以避免另外手刻一份、之後兩邊
+  各自演化到不同步。Executor 在複用的靜態 prompt 前面加一段指示，講清楚「這些完整規則你都要讀，
+  但你的工作是呼叫工具、不是寫敘事，敘事風格／防雷部分不用管」；Narrator 反過來，講清楚「工具呼叫
+  規則你不用管，你完全沒有工具，只要根據系統判定結果寫敘事」。
+- **`prompt_config.py` 逐一核對後的整合結論**：這個檔案假設的是一個更精細的流水線（獨立的 LLM
+  意圖分類節點、ReAct 回合計畫節點、Reflection 自檢節點、記憶壓縮節點），跟目前 `app/agents/`
+  實際做出來的 7 個階段不是同一套設計。逐一核對：
+  - 意圖分類、回合計畫、Reflection：目前的 `intent_router`／`rule_validator` 刻意用規則判斷、
+    不呼叫 LLM——這正是設計文件本身講的效能目標（純角色扮演不需要多打一次 LLM），換成
+    `prompt_config` 的 LLM 版本會直接違背這個目標，不採用。
+  - 記憶壓縮（`build_turn_summary_prompt`）：跟 `app/keeper.py` 既有、已經在正式運作的
+    `summarize_log_chunk`／`_persist_memory_maintenance_state` 功能重複（`router.py` 每輪透過
+    `_run_post_turn_maintenance_after_output` 呼叫，這次順手確認過這條路徑在新架構下依然正常
+    運作），不重複實作。
+  - 圖片提示詞優化（`build_image_prompt_optimizer`）：這個專案目前沒有「AI 生成插圖」功能
+    （`show_scenario_image` 秀的是劇本 PDF 既有頁面圖片，不是生成的），沒有對應的呼叫端可以接，
+    留到真的有這個功能再接上。
+  - `build_keeper_response_prompt`：內容跟 Narrator／Executor 現在複用的
+    `_build_static_prompt`／`_build_dynamic_prompt` 大量重疊，而且它假設「一次 LLM 呼叫用 JSON
+    同時回傳 narration/options/state_delta/discovered_clues」、由這個回傳值本身驅動狀態變更——
+    這跟目前「Executor 真的呼叫 `keeper._execute_tool` 修改並落庫狀態，Narrator 只負責讀事實寫
+    敘事，`state_reducer` 刻意不再套用任何 delta」的分工衝突，整段搬過去會重新製造 #83 才修掉的
+    「重複套用狀態變更」問題。沒有整段採用，但把兩條真正有價值、目前 prompt 沒覆蓋到的守則文字
+    內容合併進 `narrator.py` 的 `NARRATOR_SYSTEM_PROMPT`：（1）劇本與角色資料是世界事實來源，
+    不得隨意發明劇本沒寫的關鍵線索／NPC／地點／幕後真相；（2）【過去記憶】只能當參考，不能拿它
+    覆蓋本回合的機制結果。
+  - 這個決策（連同哪些函式對應哪個既有機制、為什麼不整合）完整寫進了 `prompt_config.py` 檔案
+    開頭的註解，讓以後的人一看就知道這個檔案為什麼存在但沒被 import，不用重新調查一次。
+- **實測過（真實 LLM 呼叫）**：
+  - 技能檢定情境（劇本已上傳、角色 HP/SAN 非滿值）：確認 Executor 正確在完整規則脈絡下呼叫
+    `skill_check`，`pending_checks` 的技能值正確對應角色卡數值；Narrator 的敘事風格跟舊版
+    `_build_static_prompt` 的敘事節奏紀律規則一致。
+  - 直接檢查 `keeper._build_dynamic_prompt` 在戰鬥中（`combat.start_combat`／`add_npc_to_combat`
+    之後）正確含有「目前戰鬥狀態」區塊與敵我雙方數值，確認戰鬥上下文真的會流進 Executor／Narrator。
+  - 新增的「不得隨意發明劇本內容」守則實測生效：故意用一個沒上傳過劇本的全新群組跑一輪，Narrator
+    正確回覆「請先上傳 PDF 劇本」而不是自己編一個場景出來。
+  - `mypy app/agents/*.py app/services/prompt_config.py` 確認乾淨。
+  - 測試用的 group_state key 全部用 `db.delete_json` 清乾淨，`.env` 只在測試期間暫時複製進來、
+    測完立刻刪除，正式環境資料庫全程沒有被動到。
