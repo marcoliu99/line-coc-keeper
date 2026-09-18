@@ -150,7 +150,7 @@ limits, or weaknesses until the scenario reveals them.
 | `get_combat_status()` | Returns the current combat round, initiative order, and whose turn it is. Public view hides enemy HP; KP Assistant private view includes enemy HP and card details. |
 | `plan_enemy_turn(enemy="")` | For the current or named enemy, checks special abilities, triggers, usage, cooldowns, and available attacks; returns a private plan plus safe public hint. |
 | `resolve_enemy_action(plan_id)` | Marks the selected enemy plan as resolved and consumes ability usage/cooldown. Repeated calls for the same plan are idempotent. |
-| `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")` | Applies damage with a raw/armor/final breakdown and updates HP. |
+| `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")` | Applies damage with a raw/armor/final breakdown and updates HP. Public enemy results are scrubbed; KP Assistant receives the private breakdown. |
 | `add_combat_effect(target, label, timing, damage="", damage_type="physical", remaining_rounds=null, tags=[], source_id="", public_description="")` | Adds a fixed-timing combat effect. Damage may be a flat integer string or a dice expression; invalid expressions are reported instead of silently consuming duration. |
 | `damage_combatant(name, delta)` | Legacy HP adjustment wrapper. Negative deltas now flow through armor-aware damage resolution. |
 | `advance_combat_turn()` | Processes turn-end/new-round timing, resets per-round ability usage, ticks cooldowns, and advances initiative. |

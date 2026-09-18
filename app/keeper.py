@@ -863,6 +863,25 @@ def _validate_kp_roll_dice_context(tool_input: dict) -> str | None:
     return 'KP Assistant 使用 roll_dice 時必須明確指定 roll_context 為 "game_resolution" 或 "ooc_randomizer"。'
 
 
+def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict:
+    if speaker_role == "kp_assistant" or result.get("side") != "enemy":
+        return result
+    public_keys = {
+        "ok",
+        "name",
+        "target",
+        "target_id",
+        "side",
+        "damage_type",
+        "final_damage",
+        "major_wound_triggered",
+        "defeated",
+        "public_summary",
+        "effect_id",
+    }
+    return {key: result[key] for key in public_keys if key in result}
+
+
 def _persist_memory_maintenance_state(
     group_id: str, campaign_summary: str, dropped_chunk: list[dict[str, str]]
 ) -> None:
@@ -1334,7 +1353,8 @@ def _execute_tool(
                     tags=tool_input.get("tags") or [],
                     source_id=tool_input.get("source_id", ""),
                 )
-            return _mutate_and_save_state(state, _mutate_apply_combat_damage)
+            result = _mutate_and_save_state(state, _mutate_apply_combat_damage)
+            return _filter_public_combat_damage_result(result, speaker_role)
 
         if name == "add_combat_effect":
             def _mutate_add_combat_effect(target_state: GroupState) -> dict:
