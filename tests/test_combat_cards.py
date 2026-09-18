@@ -76,6 +76,35 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(second_plan["selected_action"], "attack")
 
+    def test_resolve_enemy_action_is_idempotent_for_same_plan(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            abilities=[{
+                "id": "song",
+                "name": "Song",
+                "priority": 10,
+                "trigger": {"type": "first_available"},
+                "usage": {"per_combat": 2},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
+        plan = combat.plan_enemy_turn(state)
+        card = state.combat.enemy_cards[plan["enemy_card_id"]]
+
+        first = combat.resolve_enemy_action(state, plan["plan_id"])
+        second = combat.resolve_enemy_action(state, plan["plan_id"])
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertTrue(second["already_resolved"])
+        self.assertEqual(card.abilities[0].usage["used_total"], 1)
+        self.assertEqual(card.abilities[0].usage["used_this_round"], 1)
+
     def test_per_round_usage_resets_and_cooldown_ticks_on_new_round(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -125,6 +154,26 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(result["final_damage"], 5)
         self.assertEqual(result["hp_after"], 5)
         self.assertIn("raw=8", result["private_notes"])
+        self.assertNotIn("3", result["public_summary"])
+        self.assertIn("部分傷害被擋下", result["public_summary"])
+
+    def test_apply_combat_damage_registers_major_wound_con_check_for_pc(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+
+        result = combat.apply_combat_damage(state, "Mark", 6)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["major_wound_triggered"])
+        self.assertEqual(state.pending_checks["u1"], {
+            "type": "skill",
+            "skill": "CON",
+            "skill_value": 50,
+            "bonus_dice": 0,
+            "penalty_dice": 0,
+            "difficulty": "regular",
+            "major_wound_trigger": True,
+        })
 
     def test_enemy_card_survives_group_state_round_trip(self):
         state = self._state_with_pc()
