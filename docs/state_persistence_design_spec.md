@@ -275,33 +275,39 @@ value 內容：
 - 現狀類欄位（`characters.*.location/hp/san/...`、`combat.*`、`recent_checkpoints`）用**取代**
   語意更新：永遠反映摘要當下的最新數值，不保留歷史值。
 
-### 儲存位置
+### 儲存位置：每場歷史各自保留一筆（已確認）
 
-建議**不**另外開一張歷史表，改成 `GroupState` 新增一個欄位：
+跟 `state_checkpoints` 同一種表結構，新增一張表：
 
 ```python
-scene_digest: dict | None = None
+_TABLES = ("group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary",
+           "state_checkpoints", "scene_digests")
 ```
 
-跟 `campaign_summary` 一樣是「單一、持續被更新的最新版本」，透過既有的 `save_state()` 路徑
-自然保存，不需要新表、不需要額外的 checkpoint 數量上限邏輯。
+key 格式：`{group_id}:{digest_id}`（`digest_id` 產生方式跟 `checkpoint_id` 一樣：時間戳 + 4 碼
+隨機字尾）。每次觸發（章節推進或回合數到門檻）都是**新增一列**，不是覆寫舊的——這樣每個場景
+的摘要都各自留存，之後可以用 `/coc digests` 翻查任何一個舊場景當時的狀態。
 
-**這是本節唯一還沒有十足把握的設計決定，需要你確認**：如果你要的其實是「保留每個場景各自
-獨立的一份摘要，之後可以回頭翻某個舊場景當時的摘要」（也就是一份會累積的歷史清單，不是
-只保留最新一份），那會需要另開一張表（形狀比照 `state_checkpoints`），不是上面這個單一欄位
-設計。上面「舊場景封存，不再整段反覆帶入」這句話兩種理解都說得通（只留最新摘要／保留每場
-歷史摘要但不逐份塞進 prompt），先用「單一最新欄位」當預設方案是因為它跟 `campaign_summary`
-的既有模式一致、實作也單純很多；如果你要的是歷史清單，跟我說一聲、我改這一段就好，其他部分
-不受影響。
+累積類欄位（`established_facts`／`known_clues`／`consumed_or_removed_items`／
+`npc_abilities.*.used_this_scene`）在**產生新的一列時**，用「上一筆摘要的累積內容」聯集「這個
+場景新發生的事」算出來，然後整份存進新的一列——所以每一列本身都是「到這個時間點為止」的完整
+快照，不需要在讀取時把多列拼起來，`/coc digest`／prompt 組裝只要讀最新一列即可拿到完整最新
+狀態，`/coc digests <ID>` 則可以單獨看某一場的當時切面。
+
+跟 `state_checkpoints` 不同的是：`scene_digests` **不做數量上限淘汰**——`state_checkpoints`
+存在的目的是「最近可回溯的幾個點」，太舊的意義不大所以會自然淘汰；`scene_digests` 存在的目的
+是「這一團完整的場景歷史記錄」，本來就是 SQLite 本地檔案、儲存成本可忽略，沒有理由主動丟棄。
+真的需要清的話，靠下面的 `/coc digest clean` 手動處理，不自動淘汰。
 
 ### 跟 prompt 組裝的整合
 
 `app/keeper.py` 的 `_build_dynamic_prompt` 在現有 `state.campaign_summary` 那段旁邊，新增
-`scene_digest` 的區塊——`public` 部分正常接在既有動態 prompt 的角色/戰鬥狀態說明附近（很大
-程度上是既有 `_build_dynamic_prompt` 已經在組的那些即時數值的**壓縮版**，主要價值在「舊場景
-的部分不用整段 log 重新帶入，讀這份摘要就夠」），`private` 部分要接在 keeper-only 的機密資訊
-區塊（比照現有 `secret_goal`／KP 助手主持規則的呈現方式），並保留 `private.note` 那句不可公開
-的提示文字，不能因為壓縮格式而弄丟。
+`scene_digest` 的區塊——只讀 `scene_digests` 表裡這個 group **最新一列**（不是整個歷史），
+`public` 部分正常接在既有動態 prompt 的角色/戰鬥狀態說明附近（很大程度上是既有
+`_build_dynamic_prompt` 已經在組的那些即時數值的**壓縮版**，主要價值在「舊場景的部分不用整段
+log 重新帶入，讀這份摘要就夠」），`private` 部分要接在 keeper-only 的機密資訊區塊（比照現有
+`secret_goal`／KP 助手主持規則的呈現方式），並保留 `private.note` 那句不可公開的提示文字，
+不能因為壓縮格式而弄丟。
 
 `app/services/prompt_config.py` 不需要為此新增獨立的 `build_*` 函式——這段組裝邏輯留在
 `keeper._build_dynamic_prompt` 內（跟 `campaign_summary` 現在的處理方式一致），因為它本來就是
@@ -312,7 +318,10 @@ Agent 階段各自需要的提示詞片段。
 
 | 指令 | 行為 |
 | --- | --- |
-| `/coc digest` | KP 專用，顯示目前 `scene_digest` 的內容（`public` 部分；`private` 不透過這個指令外洩）。 |
+| `/coc digest` | KP 專用，顯示**最新一筆**場景摘要的內容（`public` 部分；`private` 不透過這個指令外洩）。 |
+| `/coc digests` | KP 專用，列出這一團所有歷史場景摘要：ID、`scene_label`、建立時間。 |
+| `/coc digest <ID>` | KP 專用，顯示指定那一筆歷史摘要的內容（`public` 部分）——用來回頭翻某個舊場景當時的狀態。 |
+| `/coc digest clean <ID>` | KP 專用，手動刪除一筆歷史摘要（不會自動淘汰，見上）。 |
 
 ## 格式版本
 
@@ -332,13 +341,13 @@ Agent 階段各自需要的提示詞片段。
 
 | 元件 | 負責 | 不負責 |
 | --- | --- | --- |
-| `app/db.py` | SQLite 連線、備份 API、`state_checkpoints` 表的基本 CRUD | 知道 `GroupState` 長什麼樣子——一律當成不透明 JSON blob |
+| `app/db.py` | SQLite 連線、備份 API、`state_checkpoints`／`scene_digests` 兩張表的基本 CRUD | 知道 `GroupState` 長什麼樣子——一律當成不透明 JSON blob |
 | `app/repositories/group_state.py` 或新的 `app/checkpoints.py` | 組裝／還原 `GroupState`、封裝 checkpoint 的建立/列出/還原/清除邏輯、跟 `get_conversation_lock` 的整合 | SQLite 細節（透過 `app/db.py`） |
 | `app/combat.py` | 呼叫 checkpoint 模組的「自動建立」入口（`start_combat` 觸發） | checkpoint 本身怎麼存 |
 | `app/commands/handlers/system.py` | `/coc checkpoint*`／`/coc rollback`／`/coc digest` 指令解析與權限檢查 | checkpoint／場景摘要的實際存取邏輯 |
 | 背景排程（`app/main.py`／`app/discord_bot.py`） | 定期呼叫 `db.backup_now()`、清舊備份 | 不涉及 per-group checkpoint（那是覆寫同一個 `.db` 內的一張表，不是另外的檔案） |
 | `app/keeper.py`（`_run_post_turn_maintenance_after_output` 掛勾／`_build_dynamic_prompt`） | 判斷場景摘要觸發時機、呼叫摘要合併邏輯、把 `scene_digest` 的 `public`／`private` 組進動態 prompt | 摘要本身怎麼從 `GroupState` 抽取／合併（見下一列） |
-| 新模組（`app/scene_digest.py`） | 從 `GroupState` 抽取欄位、跟既有 `scene_digest` 做合併（取代 vs 聯集語意）、回傳給 `keeper.py` 組 prompt 用 | 呼叫時機（由 `keeper.py` 決定）、prompt 組裝格式（由 `keeper.py` 決定） |
+| 新模組（`app/scene_digest.py`） | 從 `GroupState` 抽取欄位、跟 `scene_digests` 表裡該 group **最新一列**做合併（取代 vs 聯集語意）、寫入新的一列、提供讀最新／讀指定 ID／列出歷史的查詢函式 | 呼叫時機（由 `keeper.py` 決定）、prompt 組裝格式（由 `keeper.py` 決定） |
 
 ## 測試驗收
 
@@ -358,19 +367,23 @@ Agent 階段各自需要的提示詞片段。
    不會誤報。
 9. 兩個平台入口（LINE／Discord）各自的背景備份迴圈都能正常啟動與停止，不互相阻塞或重複建立
    排程任務。
-10. `advance_scenario_chapter` 觸發後，`scene_digest` 正確更新；累積類欄位（線索/事實/已用
-    NPC 能力）跟前一份摘要做聯集，不遺失舊場景已知的內容；現狀類欄位（位置/HP/SAN/戰鬥）正確
-    反映最新值，不殘留舊場景數值。
-11. 達到 `SCENE_DIGEST_TURN_INTERVAL` 時即使沒有章節推進也會觸發一次摘要；同一輪不會被兩個
-    觸發條件（章節推進＋回合數）重複觸發兩次。
-12. `scene_digest.private` 內容只出現在餵給 Keeper LLM 的 prompt 裡，不會透過 `/coc digest`
-    或任何玩家可見的回覆外洩。
+10. `advance_scenario_chapter` 觸發後，`scene_digests` 新增一列；累積類欄位（線索/事實/已用
+    NPC 能力）跟前一列做聯集後存進新的一列，不遺失舊場景已知的內容；現狀類欄位（位置/HP/SAN/
+    戰鬥）正確反映最新值，不殘留舊場景數值；**舊的那一列本身不被覆寫或刪除**，`/coc digest
+    <舊 ID>` 仍能讀到當時的切面。
+11. 達到 `SCENE_DIGEST_TURN_INTERVAL` 時即使沒有章節推進也會觸發一次摘要（新增一列）；同一輪
+    不會被兩個觸發條件（章節推進＋回合數）重複觸發兩次（新增兩列）。
+12. `scene_digest` 的 `private` 內容只出現在餵給 Keeper LLM 的 prompt 裡，不會透過
+    `/coc digest`／`/coc digests` 或任何玩家可見的回覆外洩。
+13. `scene_digests` 不受 `MAX_CHECKPOINTS_PER_GROUP` 那套數量上限規則影響——即使歷史列數超過
+    `state_checkpoints` 的上限值，也不會被自動清掉；只有 `/coc digest clean <ID>` 才會刪除。
+14. `/coc digests` 依建立時間列出全部歷史列（含 ID／`scene_label`／建立時間），順序穩定可預期。
 
 ## 實作順序
 
 1. `app/db.py`：新增 `_warn_if_path_looks_transient`、`state_checkpoints` 表、`backup_now()`。
 2. `app/config.py`：新增 `BACKUP_DIR`／`BACKUP_INTERVAL_MINUTES`／`BACKUP_KEEP_COUNT`／
-   `MAX_CHECKPOINTS_PER_GROUP` 設定值。
+   `MAX_CHECKPOINTS_PER_GROUP`／`SCENE_DIGEST_TURN_INTERVAL` 設定值。
 3. 新模組（`app/checkpoints.py`）：建立/列出/還原/清除節點的邏輯，含 `get_conversation_lock`
    整合與 pre-rollback 自動節點。
 4. `app/commands/handlers/system.py`：`/coc checkpoint*`／`/coc rollback` 指令，權限比照
@@ -379,7 +392,11 @@ Agent 階段各自需要的提示詞片段。
 6. `app/main.py`／`app/discord_bot.py`：啟動背景定期備份迴圈。
 7. `GroupState.to_dict()`：加 `schema_version` 欄位。
 8. `docs/setup.md`：補上换正式主機時 `DB_PATH`／`DATA_DIR`／`BACKUP_DIR` 都要指到持久路徑的提醒。
-9. `GroupState`：加 `scene_digest` 欄位；新模組 `app/scene_digest.py`：抽取／合併邏輯。
-10. `app/keeper.py`：`_run_post_turn_maintenance_after_output` 掛勾判斷觸發時機、
-    `_build_dynamic_prompt` 併入 `scene_digest` 的 `public`／`private` 區塊。
-11. `app/commands/handlers/system.py`：`/coc digest` 指令。
+9. `app/db.py`：新增 `scene_digests` 表（跟 `state_checkpoints` 同結構，不設數量上限）；新模組
+   `app/scene_digest.py`：從 `GroupState` 抽取欄位、跟最新一列合併（取代 vs 聯集）、寫入新一列、
+   讀最新／讀指定 ID／列出歷史。
+10. `app/keeper.py`：`_run_post_turn_maintenance_after_output` 掛勾判斷觸發時機（章節推進或
+    `SCENE_DIGEST_TURN_INTERVAL`）、`_build_dynamic_prompt` 讀最新一列併入 `public`／`private`
+    區塊。
+11. `app/commands/handlers/system.py`：`/coc digest`／`/coc digests`／`/coc digest <ID>`／
+    `/coc digest clean <ID>` 指令。
