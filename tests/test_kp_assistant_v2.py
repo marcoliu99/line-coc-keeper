@@ -1,3 +1,5 @@
+import tempfile
+from pathlib import Path
 import sys
 import types
 import unittest
@@ -9,10 +11,11 @@ sys.modules.setdefault(
     types.SimpleNamespace(
         extract_text=lambda pdf_bytes: ("", [], False, {}, {}),
         guess_title=lambda text, file_name="": file_name or "Untitled",
+        extract_preview=lambda pdf_bytes: "",
     ),
 )
 
-from app import commands, keeper
+from app import legacy_commands as commands, keeper
 from app.models import Character, GroupState
 
 
@@ -286,8 +289,12 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(store.get("g").kp_ooc_log, [])
 
     async def test_pdf_success_clears_kp_ooc_log_but_parse_failure_does_not(self):
+        temp_library = tempfile.TemporaryDirectory()
+        original_library_dir = commands.scenario_library.SCENARIO_LIBRARY_DIR
+        commands.scenario_library.SCENARIO_LIBRARY_DIR = Path(temp_library.name)
         original_extract = commands.pdf_loader.extract_text
         original_guess_title = commands.pdf_loader.guess_title
+        original_extract_preview = commands.pdf_loader.extract_preview
         original_extract_index = commands.scenario_index.extract_scenario_index
         original_clear_images = commands.clear_page_images
         original_save_image = commands.save_page_image
@@ -298,13 +305,14 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             store.put(state)
             commands.pdf_loader.extract_text = lambda pdf_bytes: ("new scenario text", [], False, {}, {})
             commands.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
+            commands.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
             commands.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
             commands.clear_page_images = lambda conversation_id: None
             commands.save_page_image = lambda conversation_id, page_number, png_bytes: None
             try:
                 reply = ReplyCollector()
                 push = ReplyCollector()
-                await commands.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf")
+                await commands.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf", skip_similarity=True)
                 saved = store.get("g")
                 self.assertEqual(saved.scenario_text, "new scenario text")
                 self.assertEqual(saved.kp_ooc_log, [])
@@ -318,7 +326,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 commands.pdf_loader.extract_text = fail_extract
                 reply = ReplyCollector()
                 push = ReplyCollector()
-                await commands.handle_pdf_upload("g", reply, push, b"bad", "broken.pdf")
+                await commands.handle_pdf_upload("g", reply, push, b"bad", "broken.pdf", skip_similarity=True)
                 self.assertEqual(
                     store.get("g").kp_ooc_log,
                     [{"role": "kp_assistant", "content": "must survive failed parse"}],
@@ -326,9 +334,12 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             finally:
                 commands.pdf_loader.extract_text = original_extract
                 commands.pdf_loader.guess_title = original_guess_title
+                commands.pdf_loader.extract_preview = original_extract_preview
                 commands.scenario_index.extract_scenario_index = original_extract_index
                 commands.clear_page_images = original_clear_images
                 commands.save_page_image = original_save_image
+                commands.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
+                temp_library.cleanup()
 
     def test_kp_assistant_tool_allowlist_and_runtime_guard(self):
         original_rag_enabled = keeper.SCENARIO_RAG_ENABLED

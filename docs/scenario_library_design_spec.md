@@ -430,3 +430,9 @@ Prompt 必須清楚標記 chunk 的角色：
 每份劇本的 `manifest.json` 必須保存 `image_assets`。每筆資產包含 `id`、`page`、`type`、`chapter_id`、`visibility`、`tags` 與 `description`。`type` 至少區分 `map`、`character_sheet`、`portrait`、`handout`、`illustration`。
 
 KP Assistant 的圖片流程是：先以 `search_scenario_images(query, image_type)` 查找資產，再以既有 `show_scenario_image` 顯示對應頁面。地圖預設公開；角色卡與手卡必須由資產 `visibility` 控制公開、指定玩家或 KP 專用，避免劇透。圖片索引只在完整 PDF 解析時建立；對話回合只查詢索引，不重新讀整份 PDF。
+
+## 實作狀態（2026-09）
+
+已實作：以 bookmark 的頂層 playable 章節切分、目前章加下一章的文字／NPC／地點／地圖／圖片視窗、跨群組使用中的劇本清除保護、待確認 PDF 的 library identity 保留，以及 KP Assistant 的 `search_scenario_images`、受章節範圍驗證的 `show_scenario_image`、`advance_scenario_chapter`。
+
+章節推進目前由 Keeper/KP Assistant 在場景實際轉換時呼叫 `advance_scenario_chapter`，一次只往下一個 playable 章節移動，並重載後續兩章，避免載入未來劇情。圖片分類以 PDF 視覺/OCR 描述與結構訊號產生 `map`、`character_sheet`、`portrait` 或 `illustration`；它不是百分之百的視覺語意模型，KP 應在首次使用時核對分類。

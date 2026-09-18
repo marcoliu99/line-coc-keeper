@@ -12,12 +12,12 @@ import logging
 from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
 
-from app import combat, dice, locks, memory_rag, scenario_index, scenario_rag
+from app import combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
-from app.repositories.group_state import load_state, save_state
+from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state
 
 _logger = logging.getLogger(__name__)
 
@@ -432,6 +432,27 @@ TOOLS = [
         },
     },
     {
+        "name": "search_scenario_images",
+        "description": (
+            "依目前載入的兩章劇本 Context 搜尋可展示的圖片資產（地圖、人物肖像、插圖或角色卡）。"
+            "先用這個工具找到正確頁碼，再呼叫 show_scenario_image；不可查詢尚未載入的後續章節。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "圖片描述或關鍵字；留空可列出目前 Context 的圖片"},
+                "image_type": {"type": "string", "enum": ["map", "portrait", "illustration", "character_sheet"], "description": "可選的圖片類別"},
+            },
+        },
+    },
+    {
+        "name": "advance_scenario_chapter",
+        "description": (
+            "劇情確實完成目前章節、進入下一個主要場景時才呼叫。會把 Context 從目前章節滑動到下一章及其後一章，"
+            "並同步可展示圖片與地圖；不能跳章或用於尚未發生的內容。"
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },    {
         "name": "show_scenario_image",
         "description": (
             "把劇本裡某一頁的實際圖片（例如地圖、平面圖、手卡）秀給玩家看，而不是只用文字描述。"
@@ -504,6 +525,9 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "npc_skill_check",
     "roll_weapon_damage",
     "roll_impaling_damage",
+    "search_scenario_images",
+    "show_scenario_image",
+    "advance_scenario_chapter",
 }
 
 _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
@@ -1213,7 +1237,27 @@ def _execute_tool(
             private_messages.append((char.owner_id, tool_input["message"]))
             return {"ok": True, "delivered_to": char.name}
 
+        if name == "search_scenario_images":
+            if not state.scenario_library_id:
+                return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
+            assets = scenario_library.search_images(
+                state.scenario_library_id,
+                query=tool_input.get("query", ""),
+                image_type=tool_input.get("image_type", ""),
+                allowed_chapter_ids=set(state.context_chapter_ids),
+            )
+            return {"ok": True, "assets": [{key: asset.get(key) for key in ("id", "page", "type", "tags", "description")} for asset in assets]}
+
         if name == "show_scenario_image":
+            if not state.scenario_library_id:
+                return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
+            page = int(tool_input["page_number"])
+            assets = scenario_library.search_images(
+                state.scenario_library_id, allowed_chapter_ids=set(state.context_chapter_ids)
+            )
+            asset = next((item for item in assets if item.get("page") == page), None)
+            if asset is None:
+                return {"ok": False, "error": "該圖片不在目前章節 Context，不能展示"}
             investigator = tool_input.get("investigator")
             owner_id = None
             if investigator:
@@ -1221,9 +1265,31 @@ def _execute_tool(
                 if not char:
                     return {"ok": False, "error": f"找不到角色「{investigator}」"}
                 owner_id = char.owner_id
-            image_requests.append((owner_id, int(tool_input["page_number"])))
-            return {"ok": True, "page": tool_input["page_number"], "target": "private" if owner_id else "public"}
+            image_requests.append((owner_id, page))
+            return {"ok": True, "page": page, "asset_type": asset.get("type"), "target": "private" if owner_id else "public"}
 
+        if name == "advance_scenario_chapter":
+            def _advance(target_state: GroupState) -> dict:
+                if not target_state.scenario_library_id:
+                    return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
+                next_id = scenario_library.next_chapter_id(target_state.scenario_library_id, target_state.active_chapter_id)
+                if next_id is None:
+                    return {"ok": False, "error": "目前已是最後一個章節"}
+                context = scenario_library.load_context(target_state.scenario_library_id, next_id)
+                target_state.scenario_text = context["text"]
+                target_state.active_chapter_id = context["active_chapter_id"]
+                target_state.context_chapter_ids = context["context_chapter_ids"]
+                target_state.scenario_npc_index = context["indexes"].get("npcs", [])
+                target_state.scenario_location_index = context["indexes"].get("locations", [])
+                target_state.scene_maps = context["scene_maps"]
+                target_state.openai_previous_response_id = ""
+                clear_page_images(target_state.group_id)
+                scenario_library.copy_context_images(
+                    target_state.scenario_library_id, context["page_numbers"],
+                    lambda page, image: save_page_image(target_state.group_id, page, image),
+                )
+                return {"ok": True, "active_chapter_id": context["active_chapter_id"], "context_chapter_ids": context["context_chapter_ids"]}
+            return _mutate_and_save_state(state, _advance)
         if name == "search_scenario":
             if not state.scenario_text:
                 return {"ok": False, "error": "目前沒有載入劇本可以搜尋"}

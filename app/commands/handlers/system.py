@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from app import keeper, scenario_index, scenario_intro, scenario_library
+from app import keeper, locks, scenario_index, scenario_intro, scenario_library
 from app.models import GroupState
-from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state
+from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
     Reply, SendDM, SendImage, SendDMImage, FormatMention,
     _resolve_pdf_upload_choice_locked, _set_character_away_state, handle_pdf_upload,
@@ -40,19 +40,23 @@ async def handle_system_command(
             await reply("\n".join(lines))
             return
         if action == "reparse":
-            pending = state.pending_scenario_upload
-            if pending is None:
-                await reply("沒有等待重新解析的 PDF。")
-                return
-            try:
-                pdf_bytes = scenario_library.read_staged_upload(pending["key"])
-            except FileNotFoundError:
+            # Claim and clear the staged item under the conversation lock, then
+            # release it before the intentionally long PDF extraction begins.
+            async with locks.get_conversation_lock(conversation_id):
+                state = load_state(conversation_id)
+                pending = state.pending_scenario_upload
+                if pending is None:
+                    await reply("沒有等待重新解析的 PDF。")
+                    return
+                try:
+                    pdf_bytes = scenario_library.read_staged_upload(pending["key"])
+                except FileNotFoundError:
+                    state.pending_scenario_upload = None
+                    save_state(state)
+                    await reply("暫存 PDF 已不存在，請重新上傳。")
+                    return
                 state.pending_scenario_upload = None
                 save_state(state)
-                await reply("暫存 PDF 已不存在，請重新上傳。")
-                return
-            state.pending_scenario_upload = None
-            save_state(state)
             await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pending["file_name"], skip_similarity=True)
             scenario_library.discard_staged_upload(pending["key"])
             return
@@ -90,11 +94,10 @@ async def handle_system_command(
             state.openai_previous_response_id = ""
             state.active = True
             clear_page_images(conversation_id)
-            for image in context["images_dir"].glob("page_*.png"):
-                try:
-                    save_page_image(conversation_id, int(image.stem.split("_")[1]), image.read_bytes())
-                except (OSError, ValueError):
-                    continue
+            scenario_library.copy_context_images(
+                parts[3], context["page_numbers"],
+                lambda page, image: save_page_image(conversation_id, page, image),
+            )
             save_state(state)
             await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。")
             return
@@ -102,8 +105,9 @@ async def handle_system_command(
             if len(parts) < 4:
                 await reply("用法：/coc scenario clean 劇本ID")
                 return
-            if state.scenario_library_id == parts[3]:
-                await reply("目前正在使用此劇本，請先切換到另一份劇本後再清除。")
+            users = scenario_users(parts[3])
+            if users:
+                await reply("此劇本仍被使用中，請先讓所有使用中的群組切換到其他劇本後再清除。")
                 return
             try:
                 scenario_library.clean_scenario(parts[3])

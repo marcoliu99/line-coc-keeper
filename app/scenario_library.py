@@ -13,7 +13,7 @@ import tempfile
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.config import SCENARIO_LIBRARY_DIR
 
@@ -55,30 +55,46 @@ def _pages_in_range(text: str, start: int, end: int) -> str:
 
 
 def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]:
-    """Use PDF bookmarks when present; fall back to one safe playable chapter."""
+    """Build generic, bookmark-based playable chapters.
+
+    Only top-level non-asset bookmarks become chapters. This avoids treating
+    every reference subsection as a scene, and stops the final playable chapter
+    before a following appendix/handout section.
+    """
     try:
         import pymupdf
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-        toc = [(title.strip(), page) for _level, title, page in doc.get_toc(simple=True) if title.strip() and page > 0]
+        toc = [(int(level), title.strip(), int(page)) for level, title, page in doc.get_toc(simple=True) if title.strip() and page > 0]
         page_count = doc.page_count
     except Exception:
         toc, page_count = [], max((int(p) for p in _PAGE_RE.findall(scenario_text)), default=1)
-    playable = [(title, page) for title, page in toc if not _ASSET_RE.search(title)]
-    if not playable:
+    non_assets = [(level, title, page) for level, title, page in toc if not _ASSET_RE.search(title)]
+    if not non_assets:
         return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": page_count}]
-    # Published one-shots often bookmark every reference section at the same
-    # level. Prefer explicit scene transitions over covers/overview headings;
-    # pre-scene background stays attached to the first playable scene.
-    scene_starts = [(title, page) for title, page in playable if re.search(r"^(start:|dead beacon|amphibious assault|conclusion)", title, re.I)]
-    if scene_starts:
-        scene_starts[0] = (scene_starts[0][0], playable[0][1])
-    else:
-        scene_starts = playable
+
+    top_level = min(level for level, _title, _page in non_assets)
+    starts = [(title, page) for level, title, page in non_assets if level == top_level]
+    # PDFs with a flat TOC still need a usable fallback, but deduplicate entries
+    # sharing a page so metadata/bookmark aliases cannot create empty chapters.
+    if not starts:
+        starts = [(title, page) for _level, title, page in non_assets]
+    deduped: list[tuple[str, int]] = []
+    for title, page in starts:
+        if not deduped or deduped[-1][1] != page:
+            deduped.append((title, page))
+    if not deduped:
+        return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": page_count}]
+
+    # A later asset bookmark (Appendix, Handouts, character sheets, ...) bounds
+    # the final playable chapter instead of leaking reference material into play.
+    first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > deduped[-1][1]), default=page_count + 1)
+    playable_end = min(page_count, first_asset_page - 1)
     chapters = []
-    for index, (title, page) in enumerate(scene_starts):
-        next_page = scene_starts[index + 1][1] - 1 if index + 1 < len(scene_starts) else page_count
-        chapters.append({"id": f"chapter-{index + 1:02d}", "title": title, "kind": "playable", "start_page": page, "end_page": max(page, next_page)})
-    return chapters
+    for index, (title, page) in enumerate(deduped):
+        next_page = deduped[index + 1][1] - 1 if index + 1 < len(deduped) else playable_end
+        if page <= next_page:
+            chapters.append({"id": f"chapter-{len(chapters) + 1:02d}", "title": title, "kind": "playable", "start_page": page, "end_page": next_page})
+    return chapters or [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": page_count}]
 
 
 def list_scenarios() -> list[dict[str, Any]]:
@@ -86,9 +102,9 @@ def list_scenarios() -> list[dict[str, Any]]:
         return []
     entries = []
     for directory in SCENARIO_LIBRARY_DIR.iterdir():
-        if directory.is_dir():
+        if directory.is_dir() and not directory.name.startswith("."):
             manifest = _read_json(directory / "manifest.json", None)
-            if manifest:
+            if isinstance(manifest, dict) and manifest.get("id"):
                 entries.append(manifest)
     return sorted(entries, key=lambda m: m.get("updated_at", ""), reverse=True)
 
@@ -98,16 +114,22 @@ def find_similar(title: str, preview: str, threshold: float = 0.82) -> list[dict
     preview_hash = hashlib.sha256(preview.encode("utf-8")).hexdigest()
     matches = []
     for manifest in list_scenarios():
+        scenario_id = manifest.get("id")
+        if not isinstance(scenario_id, str):
+            continue
         score = 0.0
         if manifest.get("preview_hash") == preview_hash:
             score = 1.0
-        elif _slug(manifest.get("title", "")) == normalized_title:
+        elif _slug(str(manifest.get("title", ""))) == normalized_title:
             score = 0.95
         else:
-            saved_preview = (_path(manifest["id"]) / "preview.txt").read_text(encoding="utf-8", errors="ignore")
+            try:
+                saved_preview = (_path(scenario_id) / "preview.txt").read_text(encoding="utf-8", errors="ignore")
+            except (OSError, ValueError):
+                continue
             score = SequenceMatcher(None, preview[:12000], saved_preview[:12000]).ratio()
         if score >= threshold:
-            matches.append({"id": manifest["id"], "title": manifest.get("title", ""), "score": score})
+            matches.append({"id": scenario_id, "title": manifest.get("title", ""), "score": score})
     return sorted(matches, key=lambda item: item["score"], reverse=True)
 
 
@@ -117,6 +139,8 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
     scenario_id = scenario_id or f"{_slug(title)}-{content_hash[:8]}"
     target = _path(scenario_id)
     temporary = Path(tempfile.mkdtemp(prefix=f".{scenario_id}-", dir=SCENARIO_LIBRARY_DIR))
+    backup = target.with_name(f".{target.name}.backup")
+    moved_previous = False
     try:
         chapters = build_chapters(pdf_bytes, text)
         assets = _build_image_assets(page_images, page_maps, text, chapters)
@@ -131,44 +155,72 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
         (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         for page, image in page_images.items():
             (temporary / "images" / f"page_{page}.png").write_bytes(image)
-        backup = target.with_name(f".{target.name}.backup")
-        if backup.exists(): shutil.rmtree(backup)
-        if target.exists(): target.replace(backup)
+        if backup.exists():
+            shutil.rmtree(backup)
+        if target.exists():
+            target.replace(backup)
+            moved_previous = True
         temporary.replace(target)
-        if backup.exists(): shutil.rmtree(backup)
+        if backup.exists():
+            shutil.rmtree(backup)
         return scenario_id
     except Exception:
+        if moved_previous and not target.exists() and backup.exists():
+            backup.replace(target)
         shutil.rmtree(temporary, ignore_errors=True)
         raise
+
+
+def _filter_index(items: list[dict], pages: set[int]) -> list[dict]:
+    return [item for item in items if isinstance(item, dict) and isinstance(item.get("page"), int) and item["page"] in pages]
 
 
 def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any]:
     root = _path(scenario_id)
     manifest = _read_json(root / "manifest.json", None)
-    if manifest is None: raise FileNotFoundError(scenario_id)
+    if not isinstance(manifest, dict):
+        raise FileNotFoundError(scenario_id)
     chapters = [c for c in manifest.get("chapters", []) if c.get("kind") == "playable"]
-    if not chapters: raise ValueError("劇本沒有可遊玩的章節")
+    if not chapters:
+        raise ValueError("劇本沒有可遊玩的章節")
     current_index = next((i for i, c in enumerate(chapters) if c["id"] == active_chapter_id), 0)
     window = chapters[current_index:current_index + 2]
     text = (root / "scenario.txt").read_text(encoding="utf-8")
     context_text = "\n\n".join(_pages_in_range(text, c["start_page"], c["end_page"]) for c in window)
+    # Old/imported scenarios can predate page markers; preserve their text rather
+    # than silently activating an empty context.
+    if not context_text.strip() and text.strip():
+        context_text = text
     page_set = {p for c in window for p in range(c["start_page"], c["end_page"] + 1)}
-    maps = {str(k): v for k, v in _read_json(root / "scene_maps.json", {}).items() if int(k) in page_set}
-    indexes = _read_json(root / "indexes.json", {"npcs": [], "locations": []})
-    return {"manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images"}
+    maps = {str(k): v for k, v in _read_json(root / "scene_maps.json", {}).items() if str(k).isdigit() and int(k) in page_set}
+    all_indexes = _read_json(root / "indexes.json", {"npcs": [], "locations": []})
+    indexes = {"npcs": _filter_index(all_indexes.get("npcs", []), page_set), "locations": _filter_index(all_indexes.get("locations", []), page_set)}
+    return {"manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}
 
 
-def copy_context_images(scenario_id: str, pages: set[int], save_image) -> None:
+def next_chapter_id(scenario_id: str, active_chapter_id: str) -> str | None:
+    manifest = _read_json(_path(scenario_id) / "manifest.json", {})
+    chapters = [c for c in manifest.get("chapters", []) if c.get("kind") == "playable"]
+    index = next((i for i, c in enumerate(chapters) if c.get("id") == active_chapter_id), -1)
+    if index < 0 or index + 1 >= len(chapters):
+        return None
+    return chapters[index + 1]["id"]
+
+
+def copy_context_images(scenario_id: str, pages: set[int], save_image: Callable[[int, bytes], None]) -> None:
     root = _path(scenario_id) / "images"
     for page in pages:
         image = root / f"page_{page}.png"
-        if image.exists(): save_image(page, image.read_bytes())
+        if image.exists():
+            save_image(page, image.read_bytes())
 
 
 def clean_scenario(scenario_id: str) -> None:
     target = _path(scenario_id)
-    if not target.exists(): raise FileNotFoundError(scenario_id)
+    if not target.exists():
+        raise FileNotFoundError(scenario_id)
     shutil.rmtree(target)
+
 
 def stage_upload(pdf_bytes: bytes) -> str:
     """Persist a candidate PDF while the KP decides whether to reparse it."""
@@ -189,22 +241,33 @@ def discard_staged_upload(key: str) -> None:
     if re.fullmatch(r"[0-9a-f]{64}", key):
         (SCENARIO_LIBRARY_DIR / ".staging" / f"{key}.pdf").unlink(missing_ok=True)
 
+
 def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: str, chapters: list[dict]) -> list[dict[str, Any]]:
     assets = []
+    map_pages = {str(k) for k in page_maps}
     for page in sorted(page_images):
         page_text = _pages_in_range(text, page, page)
-        kind = "map" if str(page) in {str(k) for k in page_maps} else ("character_sheet" if re.search(r"\bSTR\b|\bDEX\b|\bSAN\b", page_text, re.I) else "illustration")
+        if str(page) in map_pages:
+            kind = "map"
+        elif re.search(r"\bSTR\b|\bDEX\b|\bSAN\b", page_text, re.I):
+            kind = "character_sheet"
+        elif re.search(r"portrait|人物|肖像|character\s+(illustration|portrait)", page_text, re.I):
+            kind = "portrait"
+        else:
+            kind = "illustration"
         chapter = next((c["id"] for c in chapters if c["start_page"] <= page <= c["end_page"]), "")
         assets.append({"id": f"page-{page}-{kind}", "page": page, "type": kind, "chapter_id": chapter, "visibility": "public", "tags": [kind], "description": page_text[:500]})
     return assets
 
 
-def search_images(scenario_id: str, query: str = "", image_type: str = "") -> list[dict[str, Any]]:
+def search_images(scenario_id: str, query: str = "", image_type: str = "", allowed_chapter_ids: set[str] | None = None) -> list[dict[str, Any]]:
     manifest = _read_json(_path(scenario_id) / "manifest.json", {})
     terms = query.lower().split()
     matches = []
     for asset in manifest.get("image_assets", []):
         if image_type and asset.get("type") != image_type:
+            continue
+        if allowed_chapter_ids is not None and asset.get("chapter_id") not in allowed_chapter_ids:
             continue
         haystack = " ".join([asset.get("id", ""), asset.get("type", ""), asset.get("description", ""), *asset.get("tags", [])]).lower()
         if not terms or all(term in haystack for term in terms):

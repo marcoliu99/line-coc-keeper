@@ -11,10 +11,11 @@ sys.modules.setdefault(
     types.SimpleNamespace(
         extract_text=lambda pdf_bytes: ("", [], False, {}, {}),
         guess_title=lambda text, file_name="": file_name or "Untitled",
+        extract_preview=lambda pdf_bytes: "",
     ),
 )
 
-from app import commands, locks
+from app import legacy_commands as commands, locks
 from app.models import Character, GroupState
 
 
