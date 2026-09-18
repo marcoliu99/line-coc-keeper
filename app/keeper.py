@@ -465,6 +465,32 @@ TOOLS = [
         },
     },
     {
+        "name": "add_combat_effect",
+        "description": (
+            "替戰鬥中的角色或敵人加入固定時點效果，例如燃燒、流血、場景壓迫。"
+            "damage 可填固定整數字串（例如 '1'）或骰式（例如 '1d6+1'）；"
+            "效果會在 round/turn timing 由系統正式結算。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "label": {"type": "string"},
+                "timing": {
+                    "type": "string",
+                    "enum": ["round_start", "turn_start", "turn_end", "round_end"],
+                },
+                "damage": {"type": "string", "description": "固定整數字串或骰式，例如 '1'、'3'、'1d6+1'"},
+                "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
+                "remaining_rounds": {"type": "integer", "description": "持續幾次成功觸發；省略表示無限期"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "source_id": {"type": "string"},
+                "public_description": {"type": "string"},
+            },
+            "required": ["target", "label", "timing"],
+        },
+    },
+    {
         "name": "end_combat",
         "description": "結束目前的戰鬥，清除戰鬥狀態（先攻順位、回合數）。戰鬥明確分出勝負或雙方脫離後呼叫。",
         "input_schema": {"type": "object", "properties": {}},
@@ -581,6 +607,8 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "npc_skill_check",
     "roll_weapon_damage",
     "roll_impaling_damage",
+    "apply_combat_damage",
+    "add_combat_effect",
     "search_scenario_images",
     "show_scenario_image",
     "advance_scenario_chapter",
@@ -593,6 +621,8 @@ _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
     "npc_skill_check",
     "roll_weapon_damage",
     "roll_impaling_damage",
+    "apply_combat_damage",
+    "add_combat_effect",
 }
 
 _KP_ROLL_DICE_CONTEXT_PROPERTY = {
@@ -644,7 +674,8 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
    如果骰子是在決定傷害、正式隨機效果、已經發生事件的隨機結果，或遊戲世界內需要 authoritative randomness 的結果，使用 roll_context="game_resolution"。例如「碎玻璃割傷 Marco，骰 1d3 傷害」應呼叫 roll_dice，expression="1d3"，purpose="碎玻璃割傷 Marco 的傷害"，roll_context="game_resolution"；成功時會觸發 Dice Creates Canon，整個造成這顆骰子的 KP 主持指示會正式寫入世界歷史。
    如果骰子只是 KP 幕後挑方案、隨機選劇情方向、自己決定要用哪個 NPC 或點子，且不直接構成目前世界事實，使用 roll_context="ooc_randomizer"。例如「我幕後骰 1d6，1–3 用 NPC A，4–6 用 NPC B」應呼叫 roll_dice，expression="1d6"，purpose="幕後決定下一幕使用哪個 NPC"，roll_context="ooc_randomizer"；這顆骰子雖然真的由 deterministic tool 擲出，但不構成遊戲世界事件，不會觸發 Dice Creates Canon，該 KP turn 仍留在 OOC history。
    正式遊戲事件已確定需要擲普通武器傷害時，可以呼叫 roll_weapon_damage，例如「Marco 開槍命中，骰他的 1d8 武器傷害」；這個工具會依角色 deterministic state 套用該角色的 damage bonus。正式規則已確定要計算極限成功／穿刺類傷害時，可以呼叫 roll_impaling_damage，例如「這次攻擊是極限成功，計算穿刺傷害」。
-   這些傷害工具只產生 authoritative 傷害結果，不代表你可以直接修改 HP；目前 KP Assistant 仍不能使用 adjust_character、damage_combatant 等 mutation tools 直接扣血。
+   武器傷害工具只產生 authoritative 傷害結果；若 KP 助手明確裁定已發生固定傷害、環境傷害或持續效果，必須使用 apply_combat_damage 或 add_combat_effect 走正式戰鬥傷害流程，讓系統保存 raw damage、護甲、重傷與 HP 同步結果。
+   KP Assistant 仍不能使用 adjust_character、damage_combatant 等泛用 mutation tools 直接覆寫 HP 或用正負 delta 繞過傷害流程。
    當 KP Assistant 成功觸發正式 deterministic check / damage workflow 時，該輪主持指示會成為正式遊戲歷史，而不再只是 OOC 討論。
    這只允許你建立合法檢定／對抗／傷害流程；不得用自然語言或未開放工具直接覆寫已完成骰點、HP、SAN、Luck、彈藥、物品、地圖位置或戰鬥狀態。
 
@@ -1304,6 +1335,22 @@ def _execute_tool(
                     source_id=tool_input.get("source_id", ""),
                 )
             return _mutate_and_save_state(state, _mutate_apply_combat_damage)
+
+        if name == "add_combat_effect":
+            def _mutate_add_combat_effect(target_state: GroupState) -> dict:
+                return combat.add_combat_effect(
+                    target_state,
+                    tool_input["target"],
+                    tool_input["label"],
+                    timing=tool_input.get("timing", "turn_start"),
+                    damage=tool_input.get("damage", ""),
+                    damage_type=tool_input.get("damage_type", "physical"),
+                    remaining_rounds=tool_input.get("remaining_rounds"),
+                    tags=tool_input.get("tags") or [],
+                    source_id=tool_input.get("source_id", ""),
+                    public_description=tool_input.get("public_description", ""),
+                )
+            return _mutate_and_save_state(state, _mutate_add_combat_effect)
 
         if name == "end_combat":
             def _mutate_end_combat(target_state: GroupState) -> None:

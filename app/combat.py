@@ -381,6 +381,82 @@ def _tick_effect(effect: EffectState) -> None:
         effect.remaining_rounds -= 1
 
 
+def resolve_effect_damage(expression: str) -> int:
+    expr = (expression or "").strip()
+    if not expr:
+        return 0
+    if re.fullmatch(r"\d+", expr):
+        return int(expr)
+    return dice.roll_expression(expr).total
+
+
+def _validate_effect_damage_expression(expression: str) -> str | None:
+    expr = (expression or "").strip()
+    if not expr or re.fullmatch(r"\d+", expr):
+        return None
+    m = re.fullmatch(r"(\d*)d(\d+)\s*([+-]\s*\d+)?", expr, re.IGNORECASE)
+    if not m:
+        return f"無法解析骰子表示式: {expression!r}（範例：1d100、3d6+2）"
+    n = int(m.group(1)) if m.group(1) else 1
+    sides = int(m.group(2))
+    if n < 1 or n > 100:
+        return "骰子數量必須介於 1 到 100 之間"
+    if sides < 2 or sides > 1000:
+        return "骰子面數必須介於 2 到 1000 之間"
+    return None
+
+
+def add_combat_effect(
+    state: GroupState,
+    target_name: str,
+    label: str,
+    *,
+    timing: str = "turn_start",
+    damage: str = "",
+    damage_type: str = "physical",
+    remaining_rounds: int | None = None,
+    tags: list[str] | None = None,
+    source_id: str = "",
+    public_description: str = "",
+) -> dict[str, Any]:
+    combatant = _find_combatant(state, target_name)
+    if not combatant:
+        return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
+    if timing not in {"round_start", "turn_start", "turn_end", "round_end"}:
+        return {"ok": False, "error": f"不支援的效果時點：{timing}"}
+    if remaining_rounds is not None and remaining_rounds < 1:
+        return {"ok": False, "error": "remaining_rounds 必須大於 0，或省略表示無限期"}
+    damage_error = _validate_effect_damage_expression(damage)
+    if damage_error:
+        return {"ok": False, "error": f"無法解析效果傷害：{damage_error}"}
+
+    effect = EffectState(
+        id=f"effect-{uuid.uuid4().hex[:8]}",
+        label=label,
+        source_id=source_id,
+        target_id=combatant.combatant_id,
+        timing=timing,
+        remaining_rounds=remaining_rounds,
+        damage=damage,
+        damage_type=damage_type,
+        tags=tags or [],
+        public_description=public_description,
+    )
+    state.combat.effects.append(effect)
+    return {
+        "ok": True,
+        "effect_id": effect.id,
+        "target": combatant.display_name,
+        "target_id": combatant.combatant_id,
+        "label": effect.label,
+        "timing": effect.timing,
+        "remaining_rounds": effect.remaining_rounds,
+        "damage": effect.damage,
+        "damage_type": effect.damage_type,
+        "tags": effect.tags,
+    }
+
+
 def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[dict[str, Any]]:
     """Apply fixed-timing effects. This first pass supports damage effects.
 
@@ -390,13 +466,32 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
     remaining: list[EffectState] = []
     for effect in state.combat.effects:
         applies = effect.timing == timing and (not target_id or effect.target_id == target_id)
+        applied = False
         if applies and effect.damage:
             try:
-                raw = dice.roll_expression(effect.damage).total
-            except Exception:
-                raw = 0
-            if raw:
-                results.append(apply_combat_damage(state, effect.target_id, raw, tags=effect.tags, source_id=effect.source_id))
+                raw = resolve_effect_damage(effect.damage)
+            except ValueError as exc:
+                results.append({
+                    "ok": False,
+                    "effect_id": effect.id,
+                    "target_id": effect.target_id,
+                    "error": f"無法解析效果傷害：{exc}",
+                })
+            else:
+                result = apply_combat_damage(
+                    state,
+                    effect.target_id,
+                    raw,
+                    damage_type=effect.damage_type,
+                    tags=effect.tags,
+                    source_id=effect.source_id,
+                )
+                result["effect_id"] = effect.id
+                results.append(result)
+                applied = result.get("ok") is True
+        elif applies:
+            applied = True
+        if applied:
             _tick_effect(effect)
         if effect.remaining_rounds is None or effect.remaining_rounds > 0:
             remaining.append(effect)

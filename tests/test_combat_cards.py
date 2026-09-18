@@ -1,7 +1,7 @@
 import unittest
 
 from app import combat
-from app.models import Character, GroupState
+from app.models import Character, EffectState, GroupState
 
 
 class CombatCardTests(unittest.TestCase):
@@ -174,6 +174,55 @@ class CombatCardTests(unittest.TestCase):
             "difficulty": "regular",
             "major_wound_trigger": True,
         })
+
+    def test_add_combat_effect_applies_fixed_damage_at_turn_start(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+
+        added = combat.add_combat_effect(
+            state,
+            "Mark",
+            "Burning Curtains",
+            timing="turn_start",
+            damage="1",
+            damage_type="fire",
+            remaining_rounds=1,
+            tags=["fire"],
+            source_id="scene:curtains",
+        )
+        results = combat.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
+
+        self.assertTrue(added["ok"])
+        self.assertEqual(added["damage"], "1")
+        self.assertEqual(added["damage_type"], "fire")
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0]["ok"])
+        self.assertEqual(results[0]["raw_damage"], 1)
+        self.assertEqual(results[0]["damage_type"], "fire")
+        self.assertEqual(state.combat.order[0].hp, 11)
+        self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
+        self.assertEqual(state.combat.effects, [])
+
+    def test_invalid_effect_damage_reports_error_without_consuming_duration(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        state.combat.effects.append(EffectState(
+            id="effect-bad",
+            label="Bad Fire",
+            target_id=state.combat.order[0].combatant_id,
+            timing="turn_start",
+            remaining_rounds=1,
+            damage="1d1",
+        ))
+
+        results = combat.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
+
+        self.assertEqual(state.combat.order[0].hp, 12)
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0]["ok"])
+        self.assertIn("無法解析效果傷害", results[0]["error"])
+        self.assertEqual(len(state.combat.effects), 1)
+        self.assertEqual(state.combat.effects[0].remaining_rounds, 1)
 
     def test_enemy_card_survives_group_state_round_trip(self):
         state = self._state_with_pc()
