@@ -11,9 +11,10 @@
    已經存在（或即將由 `docs/combat_design_spec.md` 擴充）於 `GroupState`/`Character` 裡的資料，
    都確實可靠地保存在**地端**（Bot 執行機器本機磁碟）或**固定伺服器**（長期執行的正式主機）上，
    不會因為換機器、重開機、容器重建而遺失。
-2. 新增目前完全沒有的兩件事：**定期備份**（防資料庫檔案損毀/磁碟故障/誤刪）與**回溯節點**
+2. 新增目前完全沒有的三件事：**定期備份**（防資料庫檔案損毀/磁碟故障/誤刪）、**回溯節點**
    （KP 可以手動或在特定時機把某一團的遊戲狀態存一個快照，之後可以還原回去，用於「這場戰鬥／
-   這個決定打壞了，想重來」的情境）。
+   這個決定打壞了，想重來」的情境），以及**場景摘要**（每個主要場景或每 10～15 回合，把當下
+   確切的結構化狀態壓縮成一份精簡摘要，讓舊場景不用整段回合記錄反覆帶進 Keeper 的 prompt）。
 3. 讓「這份資料到底安不安全」變成可以在啟動時自我檢查、可以觀察到的事，而不是只能靠人記得。
 
 ## 範圍與非目標
@@ -23,7 +24,10 @@
 - 確認並強化現有 SQLite 保存路徑（`app/db.py`）的持久性（避免存到暫存/非持久目錄）。
 - 新增整個資料庫檔案的定期備份機制（本機或固定伺服器上的另一個路徑）。
 - 新增**每個聊天室（group）**層級的具名回溯節點（checkpoint）：建立、列出、還原、清除。
-- `/coc checkpoint`、`/coc checkpoints`、`/coc rollback` 等 KP 專用指令。
+- 新增**場景摘要**（scene digest）：每個主要場景或每 10～15 回合，結構化壓縮當下權威狀態，
+  取代舊場景整段記錄反覆帶入 prompt 的做法；`public`／`private` 分區，機密資訊明確標示不可
+  公開。
+- `/coc checkpoint`、`/coc checkpoints`、`/coc rollback`、`/coc digest` 等 KP 專用指令。
 
 本期不包含：
 
@@ -45,6 +49,7 @@
 | 固定伺服器保存 | Bot 長期執行在一台不會被重建/銷毀的正式主機上，本機磁碟等同持久儲存。 |
 | 資料庫備份 | 整個 `coc_bot.db` 檔案在某個時間點的完整複本，用於磁碟損毀/誤刪等災難復原。 |
 | 回溯節點（checkpoint） | 某一團在某個時間點的 `GroupState` 完整快照，可具名、可列出、可還原。 |
+| 場景摘要（scene digest） | 某一團目前結構化、權威的狀態精簡摘要（角色數值、戰鬥、已知線索、NPC 能力使用狀態等），取代舊場景反覆整段帶進 prompt。 |
 | 還原（rollback） | 把某一團目前的 `GroupState` 換成某個回溯節點當時的內容。 |
 
 ## 現況與缺口
@@ -197,6 +202,118 @@ value 內容：
 重複，不能靠名稱模糊比對刪除或還原——`rollback`／`clean` 接受名稱只在**唯一**符合時才生效，
 有多筆同名時要求改用 ID，避免誤還原/誤刪。
 
+## 場景摘要（Scene Digest）——結構化版本的 `campaign_summary`
+
+### 目的
+
+`app/keeper.py` 已經有一套處理「對話歷史太長」的機制：`run_post_turn_maintenance` 在
+`state.log` 超過 `MAX_LOG_TURNS*4` 筆時，把要丟掉的那段摺進 `campaign_summary`（一段用 LLM
+生成的**敘事散文摘要**）跟 Memory RAG。這解決的是「劇情講了什麼」，但沒有解決「目前確切的
+數值狀態是什麼」——`campaign_summary` 是給 Narrator 讀的敘事脈絡，不是給 Executor／Narrator
+核對事實用的結構化資料，實際數值仍然只能從當下的 `GroupState` 欄位讀，跟對話歷史長度無關。
+
+本節新增的「場景摘要」要解決的是不同的問題：每個主要場景（或每 10～15 回合）結束時，把當下
+**確切、結構化**的權威狀態壓縮成一份精簡摘要，讓舊場景的完整回合記錄不需要每次都整段重新帶
+進 prompt 就能維持敘事一致——跟 `campaign_summary` 是同一種「不能讓 prompt 無限變長，但又不能
+忘記重要事實」的精神，但一個是敘事散文、一個是結構化事實，兩者並存、互補，不是互相取代。
+
+### 觸發時機
+
+1. **章節推進**：`advance_scenario_chapter` 工具呼叫成功時（見
+   `docs/agentic_keeper_design_spec.md`）——這是唯一目前程式碼裡已經存在、可靠的「主要場景
+   結束」結構化訊號。比場景更細的「一場對話／一個房間」邊界目前沒有機制偵測，不在本期嘗試
+   猜測。
+2. **每 10～15 回合**（`SCENE_DIGEST_TURN_INTERVAL`，環境變數，預設 12）：避免同一章節內長時間
+   停留（一個章節可能橫跨遠超過 15 輪的調查與對話）完全沒有摘要動作。用 `state.log` 自上次摘要
+   以來新增的筆數判斷，掛在既有的 `_run_post_turn_maintenance_after_output` 這個「每輪之後都會
+   跑」的既有掛勾上檢查，不另外新增排程。
+
+兩個觸發互相獨立，任一個成立就建立一次摘要；同一輪不會重複建立。
+
+### 內容欄位
+
+```json
+{
+  "updated_at": "2026-09-19T14:30:00Z",
+  "scene_label": "第二章：燈塔內部",
+  "game_time": "1926年10月，深夜",
+  "public": {
+    "characters": {
+      "陳墨": {
+        "location": "燈塔一樓大廳", "away": false,
+        "hp": 8, "hp_max": 10, "san": 42, "san_max": 99, "luck": 55, "mp": 6, "mp_max": 8,
+        "ammo": {".38 左輪": 4}, "carried_items": ["手電筒", "撬棍"], "status_tags": []
+      }
+    },
+    "combat": {
+      "active": true, "round_number": 3, "current_turn": "陳墨",
+      "pending_checks": {"陳墨": {"type": "san", "loss_success": "1", "loss_failure": "1d6"}}
+    },
+    "established_facts": ["守燈人三週前失蹤", "地下室的門被反鎖"],
+    "known_clues": ["守燈人日記提到「潮水會帶它回來」"],
+    "consumed_or_removed_items": ["用掉的最後一發照明彈"],
+    "npc_abilities": {
+      "深潛者混種": {"used_this_scene": ["撕咬（已用 1 次）"], "not_yet_used": ["魅惑凝視"]}
+    },
+    "recent_checkpoints": [{"id": "20260919-1420-x1", "label": "開戰前", "reason": "auto_combat_start"}]
+  },
+  "private": {
+    "note": "以下內容僅供你（Keeper）判斷因果使用，絕對不可以任何方式透露給玩家，包含暗示。",
+    "secret_goals": {"陳墨": "其實在幫深潛者教會臥底"},
+    "npc_secret_triggers": {"深潛者混種": "SAN 檢定連續兩次大失敗才會現出原形"}
+  }
+}
+```
+
+- `public`／`private` 兩個頂層分組，直接沿用這次工作已經在圖片資產上建立的 `visibility`
+  慣例（`public`／`kp_only` 兩級）——這裡用區塊分組取代逐欄位標記，因為摘要注定是要整塊塞進
+  Keeper 的 prompt 給它讀的，用同一個機制（明確的區塊邊界 + 一句「不可公開」的提示文字）比
+  逐欄位判斷更不容易在組 prompt 時漏標。
+- 累積類欄位（`established_facts`／`known_clues`／`consumed_or_removed_items`／
+  `npc_abilities.*.used_this_scene`）用**合併**語意更新：新摘要跟上一份摘要的同名欄位做集合
+  聯集（去重），不是整份覆蓋——不然每次摘要都會忘記更早之前已知的線索。
+- 現狀類欄位（`characters.*.location/hp/san/...`、`combat.*`、`recent_checkpoints`）用**取代**
+  語意更新：永遠反映摘要當下的最新數值，不保留歷史值。
+
+### 儲存位置
+
+建議**不**另外開一張歷史表，改成 `GroupState` 新增一個欄位：
+
+```python
+scene_digest: dict | None = None
+```
+
+跟 `campaign_summary` 一樣是「單一、持續被更新的最新版本」，透過既有的 `save_state()` 路徑
+自然保存，不需要新表、不需要額外的 checkpoint 數量上限邏輯。
+
+**這是本節唯一還沒有十足把握的設計決定，需要你確認**：如果你要的其實是「保留每個場景各自
+獨立的一份摘要，之後可以回頭翻某個舊場景當時的摘要」（也就是一份會累積的歷史清單，不是
+只保留最新一份），那會需要另開一張表（形狀比照 `state_checkpoints`），不是上面這個單一欄位
+設計。上面「舊場景封存，不再整段反覆帶入」這句話兩種理解都說得通（只留最新摘要／保留每場
+歷史摘要但不逐份塞進 prompt），先用「單一最新欄位」當預設方案是因為它跟 `campaign_summary`
+的既有模式一致、實作也單純很多；如果你要的是歷史清單，跟我說一聲、我改這一段就好，其他部分
+不受影響。
+
+### 跟 prompt 組裝的整合
+
+`app/keeper.py` 的 `_build_dynamic_prompt` 在現有 `state.campaign_summary` 那段旁邊，新增
+`scene_digest` 的區塊——`public` 部分正常接在既有動態 prompt 的角色/戰鬥狀態說明附近（很大
+程度上是既有 `_build_dynamic_prompt` 已經在組的那些即時數值的**壓縮版**，主要價值在「舊場景
+的部分不用整段 log 重新帶入，讀這份摘要就夠」），`private` 部分要接在 keeper-only 的機密資訊
+區塊（比照現有 `secret_goal`／KP 助手主持規則的呈現方式），並保留 `private.note` 那句不可公開
+的提示文字，不能因為壓縮格式而弄丟。
+
+`app/services/prompt_config.py` 不需要為此新增獨立的 `build_*` 函式——這段組裝邏輯留在
+`keeper._build_dynamic_prompt` 內（跟 `campaign_summary` 現在的處理方式一致），因為它本來就是
+`keeper.py` 持續在維護的動態 prompt 組裝內容的一部分，不是 Executor／Narrator／Guard 三個
+Agent 階段各自需要的提示詞片段。
+
+### 指令規格（追加）
+
+| 指令 | 行為 |
+| --- | --- |
+| `/coc digest` | KP 專用，顯示目前 `scene_digest` 的內容（`public` 部分；`private` 不透過這個指令外洩）。 |
+
 ## 格式版本
 
 `GroupState.to_dict()` 目前沒有 schema 版本欄位；`from_dict()` 對缺欄位一律用 `.get(key, 預設值)`
@@ -218,8 +335,10 @@ value 內容：
 | `app/db.py` | SQLite 連線、備份 API、`state_checkpoints` 表的基本 CRUD | 知道 `GroupState` 長什麼樣子——一律當成不透明 JSON blob |
 | `app/repositories/group_state.py` 或新的 `app/checkpoints.py` | 組裝／還原 `GroupState`、封裝 checkpoint 的建立/列出/還原/清除邏輯、跟 `get_conversation_lock` 的整合 | SQLite 細節（透過 `app/db.py`） |
 | `app/combat.py` | 呼叫 checkpoint 模組的「自動建立」入口（`start_combat` 觸發） | checkpoint 本身怎麼存 |
-| `app/commands/handlers/system.py` | `/coc checkpoint*`／`/coc rollback` 指令解析與權限檢查 | checkpoint 的實際存取邏輯 |
+| `app/commands/handlers/system.py` | `/coc checkpoint*`／`/coc rollback`／`/coc digest` 指令解析與權限檢查 | checkpoint／場景摘要的實際存取邏輯 |
 | 背景排程（`app/main.py`／`app/discord_bot.py`） | 定期呼叫 `db.backup_now()`、清舊備份 | 不涉及 per-group checkpoint（那是覆寫同一個 `.db` 內的一張表，不是另外的檔案） |
+| `app/keeper.py`（`_run_post_turn_maintenance_after_output` 掛勾／`_build_dynamic_prompt`） | 判斷場景摘要觸發時機、呼叫摘要合併邏輯、把 `scene_digest` 的 `public`／`private` 組進動態 prompt | 摘要本身怎麼從 `GroupState` 抽取／合併（見下一列） |
+| 新模組（`app/scene_digest.py`） | 從 `GroupState` 抽取欄位、跟既有 `scene_digest` 做合併（取代 vs 聯集語意）、回傳給 `keeper.py` 組 prompt 用 | 呼叫時機（由 `keeper.py` 決定）、prompt 組裝格式（由 `keeper.py` 決定） |
 
 ## 測試驗收
 
@@ -239,6 +358,13 @@ value 內容：
    不會誤報。
 9. 兩個平台入口（LINE／Discord）各自的背景備份迴圈都能正常啟動與停止，不互相阻塞或重複建立
    排程任務。
+10. `advance_scenario_chapter` 觸發後，`scene_digest` 正確更新；累積類欄位（線索/事實/已用
+    NPC 能力）跟前一份摘要做聯集，不遺失舊場景已知的內容；現狀類欄位（位置/HP/SAN/戰鬥）正確
+    反映最新值，不殘留舊場景數值。
+11. 達到 `SCENE_DIGEST_TURN_INTERVAL` 時即使沒有章節推進也會觸發一次摘要；同一輪不會被兩個
+    觸發條件（章節推進＋回合數）重複觸發兩次。
+12. `scene_digest.private` 內容只出現在餵給 Keeper LLM 的 prompt 裡，不會透過 `/coc digest`
+    或任何玩家可見的回覆外洩。
 
 ## 實作順序
 
@@ -253,3 +379,7 @@ value 內容：
 6. `app/main.py`／`app/discord_bot.py`：啟動背景定期備份迴圈。
 7. `GroupState.to_dict()`：加 `schema_version` 欄位。
 8. `docs/setup.md`：補上换正式主機時 `DB_PATH`／`DATA_DIR`／`BACKUP_DIR` 都要指到持久路徑的提醒。
+9. `GroupState`：加 `scene_digest` 欄位；新模組 `app/scene_digest.py`：抽取／合併邏輯。
+10. `app/keeper.py`：`_run_post_turn_maintenance_after_output` 掛勾判斷觸發時機、
+    `_build_dynamic_prompt` 併入 `scene_digest` 的 `public`／`private` 區塊。
+11. `app/commands/handlers/system.py`：`/coc digest` 指令。
