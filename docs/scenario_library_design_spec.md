@@ -424,3 +424,9 @@ Prompt 必須清楚標記 chunk 的角色：
 4. 實作 `scenario list`、KP 專用的 `scenario use`、`scenario clean`、`scenario reparse`、`scenario cancel`。
 5. 補上圖片載入、群組切換、失敗復原與並行測試。
 
+
+## 圖片資產與 KP Assistant
+
+每份劇本的 `manifest.json` 必須保存 `image_assets`。每筆資產包含 `id`、`page`、`type`、`chapter_id`、`visibility`、`tags` 與 `description`。`type` 至少區分 `map`、`character_sheet`、`portrait`、`handout`、`illustration`。
+
+KP Assistant 的圖片流程是：先以 `search_scenario_images(query, image_type)` 查找資產，再以既有 `show_scenario_image` 顯示對應頁面。地圖預設公開；角色卡與手卡必須由資產 `visibility` 控制公開、指定玩家或 KP 專用，避免劇透。圖片索引只在完整 PDF 解析時建立；對話回合只查詢索引，不重新讀整份 PDF。

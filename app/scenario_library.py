@@ -119,7 +119,8 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
     temporary = Path(tempfile.mkdtemp(prefix=f".{scenario_id}-", dir=SCENARIO_LIBRARY_DIR))
     try:
         chapters = build_chapters(pdf_bytes, text)
-        manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": _read_json(target / "manifest.json", {}).get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters}
+        assets = _build_image_assets(page_images, page_maps, text, chapters)
+        manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": _read_json(target / "manifest.json", {}).get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
         (temporary / "images").mkdir()
         (temporary / "source.pdf").write_bytes(pdf_bytes)
         (temporary / "preview.txt").write_text(preview, encoding="utf-8")
@@ -187,3 +188,29 @@ def read_staged_upload(key: str) -> bytes:
 def discard_staged_upload(key: str) -> None:
     if re.fullmatch(r"[0-9a-f]{64}", key):
         (SCENARIO_LIBRARY_DIR / ".staging" / f"{key}.pdf").unlink(missing_ok=True)
+
+def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: str, chapters: list[dict]) -> list[dict[str, Any]]:
+    assets = []
+    for page in sorted(page_images):
+        page_text = _pages_in_range(text, page, page)
+        kind = "map" if str(page) in {str(k) for k in page_maps} else ("character_sheet" if re.search(r"\bSTR\b|\bDEX\b|\bSAN\b", page_text, re.I) else "illustration")
+        chapter = next((c["id"] for c in chapters if c["start_page"] <= page <= c["end_page"]), "")
+        assets.append({"id": f"page-{page}-{kind}", "page": page, "type": kind, "chapter_id": chapter, "visibility": "public", "tags": [kind], "description": page_text[:500]})
+    return assets
+
+
+def search_images(scenario_id: str, query: str = "", image_type: str = "") -> list[dict[str, Any]]:
+    manifest = _read_json(_path(scenario_id) / "manifest.json", {})
+    terms = query.lower().split()
+    matches = []
+    for asset in manifest.get("image_assets", []):
+        if image_type and asset.get("type") != image_type:
+            continue
+        haystack = " ".join([asset.get("id", ""), asset.get("type", ""), asset.get("description", ""), *asset.get("tags", [])]).lower()
+        if not terms or all(term in haystack for term in terms):
+            matches.append(asset)
+    return matches
+
+
+def get_image_asset(scenario_id: str, image_id: str) -> dict[str, Any] | None:
+    return next((a for a in search_images(scenario_id) if a.get("id") == image_id), None)
