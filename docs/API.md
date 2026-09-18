@@ -132,8 +132,8 @@ all three; image operations are constrained to `context_chapter_ids`.
 
 | Tool | Result |
 | --- | --- |
-| `search_scenario_images(query="", image_type="")` | Returns matching map, portrait, illustration, or character-sheet assets only from the active two-chapter window. |
-| `show_scenario_image(page_number, investigator=None)` | Queues a scoped image for public display or a named investigator. Requests for pages outside the window are rejected. |
+| `search_scenario_images(query="", image_type="")` | Returns matching map, portrait, handout, illustration, or character-sheet assets only from the active two-chapter window; ordinary player turns cannot discover `kp_only` assets. |
+| `show_scenario_image(page_number, investigator=None)` | Queues a scoped image for public display or a named investigator. Requests for pages outside the window or KP-only pages from ordinary player turns are rejected. |
 | `advance_scenario_chapter()` | Advances exactly one playable chapter, reloads the next two-chapter text/index/map/image window, and clears the old OpenAI response chain. |
 
 ## 7. Configuration

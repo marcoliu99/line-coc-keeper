@@ -307,10 +307,17 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
     map_pages = {str(k) for k in page_maps}
     for page in sorted(page_images):
         page_text = _pages_in_range(text, page, page)
-        if str(page) in map_pages:
+        if str(page) in map_pages or re.search(r"\bmap\b|floor\s*plan|地圖|平面圖|房間圖", page_text, re.I):
             kind = "map"
-        elif re.search(r"\bSTR\b|\bDEX\b|\bSAN\b", page_text, re.I):
+        elif re.search(
+            r"\bSTR\b|\bDEX\b|\bSAN\b|characteri\w*|investigator\s+skills|"
+            r"weapon\s+regular\s+hard\s+extreme|\boccupation\b.*\b(weapon|damage|dodge|luck)\b",
+            page_text,
+            re.I | re.S,
+        ):
             kind = "character_sheet"
+        elif re.search(r"handout|手卡|玩家資料|報紙|剪報|信件|書信|日記|照片|文件|線索", page_text, re.I):
+            kind = "handout"
         elif re.search(r"portrait|人物|肖像|character\s+(illustration|portrait)", page_text, re.I):
             kind = "portrait"
         else:

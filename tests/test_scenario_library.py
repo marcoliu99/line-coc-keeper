@@ -176,13 +176,16 @@ class ScenarioLibraryImageVisibilityTests(unittest.TestCase):
     had no actual access control."""
 
     def test_character_sheet_pages_default_to_kp_only_others_stay_public(self):
-        chapters = [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": 3}]
+        chapters = [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": 6}]
         text = (
             "--- 第 1 頁 ---\n調查員：陳墨\nSTR 65 DEX 75 SAN 55\n"
             "--- 第 2 頁 ---\n[圖片內容描述：一張地圖]\n"
             "--- 第 3 頁 ---\n[圖片內容描述：一幅插畫]\n"
+            "--- 第 4 頁 ---\nHandout 1：一封泛黃的信件與報紙剪報\n"
+            "--- 第 5 頁 ---\nMap: Gardiner's Room\n"
+            "--- 第 6 頁 ---\nOccupation Beat Cop\nDamage Bonus none\nDodge 40\n"
         )
-        page_images = {1: b"page-1", 2: b"page-2", 3: b"page-3"}
+        page_images = {1: b"page-1", 2: b"page-2", 3: b"page-3", 4: b"page-4", 5: b"page-5", 6: b"page-6"}
         page_maps = {2: {"id": "map-2"}}
 
         assets = scenario_library._build_image_assets(page_images, page_maps, text, chapters)
@@ -194,6 +197,12 @@ class ScenarioLibraryImageVisibilityTests(unittest.TestCase):
         self.assertEqual(by_page[2]["visibility"], "public")
         self.assertEqual(by_page[3]["type"], "illustration")
         self.assertEqual(by_page[3]["visibility"], "public")
+        self.assertEqual(by_page[4]["type"], "handout")
+        self.assertEqual(by_page[4]["visibility"], "public")
+        self.assertEqual(by_page[5]["type"], "map")
+        self.assertEqual(by_page[5]["visibility"], "public")
+        self.assertEqual(by_page[6]["type"], "character_sheet")
+        self.assertEqual(by_page[6]["visibility"], "kp_only")
 
 
 if __name__ == "__main__":

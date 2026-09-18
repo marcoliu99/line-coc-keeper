@@ -35,6 +35,9 @@ from __future__ import annotations
 import concurrent.futures
 import io
 import re
+import shutil
+import subprocess
+import tempfile
 
 import pymupdf
 
@@ -122,16 +125,45 @@ def _ocr_image(png_bytes: bytes) -> str:
     Recovers text-in-image content, but — unlike _analyze_graphic_page — has no
     way to reconstruct the spatial relationships between what it reads.
     """
+    languages = ("chi_tra+eng", "eng")
     try:
         import pytesseract
         from PIL import Image
     except ImportError:
+        pytesseract = None
+        Image = None
+
+    if pytesseract is not None and Image is not None:
+        try:
+            image = Image.open(io.BytesIO(png_bytes))
+            for lang in languages:
+                text = pytesseract.image_to_string(image, lang=lang).strip()
+                if text:
+                    return text
+        except Exception:
+            pass
+
+    tesseract = shutil.which("tesseract")
+    if not tesseract:
         return ""
-    try:
-        image = Image.open(io.BytesIO(png_bytes))
-        return pytesseract.image_to_string(image, lang="chi_tra+eng").strip()
-    except Exception:
-        return ""
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
+        tmp.write(png_bytes)
+        tmp.flush()
+        for lang in languages:
+            try:
+                result = subprocess.run(
+                    [tesseract, tmp.name, "stdout", "-l", lang, "--psm", "6"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            except Exception:
+                continue
+            text = (result.stdout or "").strip()
+            if text:
+                return text
+    return ""
 
 
 def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
