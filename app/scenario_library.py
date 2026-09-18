@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import tempfile
+import threading
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -20,6 +21,7 @@ from app.config import SCENARIO_LIBRARY_DIR
 _ASSET_RE = re.compile(r"front cover|title page|table of contents|credits|handout|character sheet|pre-generated|appendix", re.I)
 _SAFE_RE = re.compile(r"[^a-z0-9]+")
 _PAGE_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.M)
+_LIBRARY_LOCK = threading.RLock()
 
 
 def _now() -> str:
@@ -183,48 +185,49 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
 
 
 def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None) -> str:
-    SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
-    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    # /coc scenario reparse's caller passes the KP-confirmed candidate here
-    # instead of forcing scenario_id directly — content_similar re-verifies
-    # it with the now-available full text (the spec's "完整內容二次比對") so a
-    # reparse that turns out to be a genuinely different scenario still lands
-    # in a new library entry instead of overwriting an unrelated one.
-    if scenario_id is None and reparse_candidate_id and content_similar(reparse_candidate_id, text):
-        scenario_id = reparse_candidate_id
-    scenario_id = scenario_id or f"{_slug(title)}-{content_hash[:8]}"
-    target = _path(scenario_id)
-    temporary = Path(tempfile.mkdtemp(prefix=f".{scenario_id}-", dir=SCENARIO_LIBRARY_DIR))
-    backup = target.with_name(f".{target.name}.backup")
-    moved_previous = False
-    try:
-        chapters = build_chapters(pdf_bytes, text)
-        assets = _build_image_assets(page_images, page_maps, text, chapters)
-        manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": _read_json(target / "manifest.json", {}).get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
-        (temporary / "images").mkdir()
-        (temporary / "source.pdf").write_bytes(pdf_bytes)
-        (temporary / "preview.txt").write_text(preview, encoding="utf-8")
-        (temporary / "scenario.txt").write_text(text, encoding="utf-8")
-        (temporary / "indexes.json").write_text(json.dumps(indexes, ensure_ascii=False), encoding="utf-8")
-        (temporary / "pregens.json").write_text(json.dumps(pregens, ensure_ascii=False), encoding="utf-8")
-        (temporary / "scene_maps.json").write_text(json.dumps(page_maps, ensure_ascii=False), encoding="utf-8")
-        (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        for page, image in page_images.items():
-            (temporary / "images" / f"page_{page}.png").write_bytes(image)
-        if backup.exists():
-            shutil.rmtree(backup)
-        if target.exists():
-            target.replace(backup)
-            moved_previous = True
-        temporary.replace(target)
-        if backup.exists():
-            shutil.rmtree(backup)
-        return scenario_id
-    except Exception:
-        if moved_previous and not target.exists() and backup.exists():
-            backup.replace(target)
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
+    with _LIBRARY_LOCK:
+        SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        # /coc scenario reparse's caller passes the KP-confirmed candidate here
+        # instead of forcing scenario_id directly — content_similar re-verifies
+        # it with the now-available full text (the spec's "完整內容二次比對") so a
+        # reparse that turns out to be a genuinely different scenario still lands
+        # in a new library entry instead of overwriting an unrelated one.
+        if scenario_id is None and reparse_candidate_id and content_similar(reparse_candidate_id, text):
+            scenario_id = reparse_candidate_id
+        scenario_id = scenario_id or f"{_slug(title)}-{content_hash[:8]}"
+        target = _path(scenario_id)
+        temporary = Path(tempfile.mkdtemp(prefix=f".{scenario_id}-", dir=SCENARIO_LIBRARY_DIR))
+        backup = target.with_name(f".{target.name}.backup")
+        moved_previous = False
+        try:
+            chapters = build_chapters(pdf_bytes, text)
+            assets = _build_image_assets(page_images, page_maps, text, chapters)
+            manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": _read_json(target / "manifest.json", {}).get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
+            (temporary / "images").mkdir()
+            (temporary / "source.pdf").write_bytes(pdf_bytes)
+            (temporary / "preview.txt").write_text(preview, encoding="utf-8")
+            (temporary / "scenario.txt").write_text(text, encoding="utf-8")
+            (temporary / "indexes.json").write_text(json.dumps(indexes, ensure_ascii=False), encoding="utf-8")
+            (temporary / "pregens.json").write_text(json.dumps(pregens, ensure_ascii=False), encoding="utf-8")
+            (temporary / "scene_maps.json").write_text(json.dumps(page_maps, ensure_ascii=False), encoding="utf-8")
+            (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            for page, image in page_images.items():
+                (temporary / "images" / f"page_{page}.png").write_bytes(image)
+            if backup.exists():
+                shutil.rmtree(backup)
+            if target.exists():
+                target.replace(backup)
+                moved_previous = True
+            temporary.replace(target)
+            if backup.exists():
+                shutil.rmtree(backup)
+            return scenario_id
+        except Exception:
+            if moved_previous and not target.exists() and backup.exists():
+                backup.replace(target)
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
 
 
 def _filter_index(items: list[dict], pages: set[int]) -> list[dict]:
@@ -272,10 +275,11 @@ def copy_context_images(scenario_id: str, pages: set[int], save_image: Callable[
 
 
 def clean_scenario(scenario_id: str) -> None:
-    target = _path(scenario_id)
-    if not target.exists():
-        raise FileNotFoundError(scenario_id)
-    shutil.rmtree(target)
+    with _LIBRARY_LOCK:
+        target = _path(scenario_id)
+        if not target.exists():
+            raise FileNotFoundError(scenario_id)
+        shutil.rmtree(target)
 
 
 def stage_upload(pdf_bytes: bytes) -> str:
