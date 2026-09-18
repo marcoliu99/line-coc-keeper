@@ -411,10 +411,13 @@ Prompt 必須清楚標記 chunk 的角色：
 3. `/coc scenario reparse` 會執行完整解析並更新既有劇本，不建立副本。
 4. 前頁相似但完整內容不同時，二次比對建立新劇本。
 5. `/coc scenario list` 能列出多個項目、其章節，且標示目前使用項目。
-6. 多章劇本的 `/coc scenario use <ID>` 未指定章節時會要求選擇；指定章節時只載入該範圍。
+6. 多章劇本的 `/coc scenario use <ID>` 不接受、也不要求章節參數——自動選定第一個
+   playable 章節，Context 視窗只涵蓋該章與下一章；同一 PDF 之後的章節推進由
+   `advance_scenario_chapter` 負責（見「章節滑動 Context 視窗」一節，這是實際採用的設計，
+   不是要求 KP 在指令裡指定章節）。
 7. `/coc scenario use` 僅更新選定章節 Context，保留團務進度與角色，並使 Keeper/RAG 無法讀到未選章節。
-9. `/coc scenario clean` 只接受劇本 ID，不刪除目前正在被使用的項目，也不影響其他劇本。
-10. 解析失敗、取消與同時上傳時，不損壞既有劇本庫或群組狀態。
+8. `/coc scenario clean` 只接受劇本 ID，不刪除目前正在被使用的項目，也不影響其他劇本。
+9. 解析失敗、取消與同時上傳時，不損壞既有劇本庫或群組狀態。
 
 ## 實作順序
 
@@ -436,3 +439,9 @@ KP Assistant 的圖片流程是：先以 `search_scenario_images(query, image_ty
 已實作：以 bookmark 的頂層 playable 章節切分、目前章加下一章的文字／NPC／地點／地圖／圖片視窗、跨群組使用中的劇本清除保護、待確認 PDF 的 library identity 保留，以及 KP Assistant 的 `search_scenario_images`、受章節範圍驗證的 `show_scenario_image`、`advance_scenario_chapter`。
 
 章節推進目前由 Keeper/KP Assistant 在場景實際轉換時呼叫 `advance_scenario_chapter`，一次只往下一個 playable 章節移動，並重載後續兩章，避免載入未來劇情。圖片分類以 PDF 視覺/OCR 描述與結構訊號產生 `map`、`character_sheet`、`portrait` 或 `illustration`；它不是百分之百的視覺語意模型，KP 應在首次使用時核對分類。
+
+**圖片 `visibility` 的存取控制（已補上，範圍有意縮小）。** 原本 `scenario_library._build_image_assets` 對每一筆資產一律寫死 `"visibility": "public"`，`keeper.py` 的 `search_scenario_images`／`show_scenario_image` 也完全沒有讀取這個欄位，等於任何看得到目前章節 Context 的人都能叫出理論上該是 KP 專用的頁面。現在的做法：`_build_image_assets` 依 `kind` 給預設值——`character_sheet` 一律 `"kp_only"`，其餘（`map`／`portrait`／`illustration`）維持 `"public"`；`search_scenario_images` 在 `speaker_role != "kp_assistant"` 時直接把 `visibility != "public"` 的資產從搜尋結果濾掉（連存在都不讓一般遊戲流程知道），`show_scenario_image` 則在同樣條件下直接拒絕展示。
+
+刻意縮小範圍、沒有做的部分：分類器只分得出 `character_sheet`／`map`／`portrait`／`illustration` 四種，沒有獨立的 `handout` 分類，也分不出「character_sheet 頁面到底是給玩家選的預製調查員、還是 KP 專用的 NPC／敵人數值」——兩者都會被歸成 `character_sheet` 進而預設 `kp_only`。玩家選預製角色本來就是走 `/coc pregens`／`usepregen`（`app/pregen_extractor.py`），完全不經過 `show_scenario_image` 這個工具，所以這個保守預設不影響玩家選角，只是連帶也把「本來就該給玩家看」的預製角色圖片頁面預設藏起來；KP 仍可用 KP Assistant 身分呼叫 `show_scenario_image` 明確秀出來。也沒有做規格提到的「指定玩家」這一層（只有 public／kp_only 兩級，不是 public／指定玩家／KP 專用三級）——`show_scenario_image` 既有的 `investigator` 參數（私訊給特定角色）仍可用，只是它控制的是「私訊給誰」，不是「誰能觸發這次展示」。
+
+**2026-09 複查追加修正：** 程式碼與這份文件逐條核對時，另外抓到並修正了四個問題——`build_chapters()` 對「所有書籤同一層級」的 PDF（例如上面 The Lightless Beacon 樣本）原本會把每個書籤都拆成獨立 playable 章節，導致兩章滑動視窗涵蓋不到開場（已修正為收斂成一個章節＋`sections`）；`/coc scenario reparse` 原本沒有把 KP 確認過的候選劇本 ID 帶進 `save_scenario`，導致內容有差異的重新解析會另外建立一份而不是更新既有目錄（已修正，新增 `content_similar()` 做完整內容二次比對）；`handle_pdf_upload` 偵測到相似劇本、要寫入 `pending_scenario_upload` 前沒有在鎖底下重新載入狀態，可能蓋掉比對期間發生的其他回合（已修正）；圖片 `visibility` 沒有真正的存取控制（見上一段，已補上 kp_only／public 兩級的實際過濾與拒絕，範圍刻意縮小）。詳見 `docs/changelog.md` 與 `tests/test_scenario_library.py`／`tests/test_kp_assistant_v2.py`。

@@ -169,5 +169,32 @@ class ScenarioLibraryReparseTests(unittest.TestCase):
             self.assertFalse(scenario_library.content_similar(scenario_id, "totally different"))
 
 
+class ScenarioLibraryImageVisibilityTests(unittest.TestCase):
+    """Regression tests for the review finding that image `visibility` was
+    hardcoded to "public" regardless of type, so KP-only assets (see
+    docs/scenario_library_design_spec.md's "圖片資產與 KP Assistant" section)
+    had no actual access control."""
+
+    def test_character_sheet_pages_default_to_kp_only_others_stay_public(self):
+        chapters = [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": 3}]
+        text = (
+            "--- 第 1 頁 ---\n調查員：陳墨\nSTR 65 DEX 75 SAN 55\n"
+            "--- 第 2 頁 ---\n[圖片內容描述：一張地圖]\n"
+            "--- 第 3 頁 ---\n[圖片內容描述：一幅插畫]\n"
+        )
+        page_images = {1: b"page-1", 2: b"page-2", 3: b"page-3"}
+        page_maps = {2: {"id": "map-2"}}
+
+        assets = scenario_library._build_image_assets(page_images, page_maps, text, chapters)
+
+        by_page = {a["page"]: a for a in assets}
+        self.assertEqual(by_page[1]["type"], "character_sheet")
+        self.assertEqual(by_page[1]["visibility"], "kp_only")
+        self.assertEqual(by_page[2]["type"], "map")
+        self.assertEqual(by_page[2]["visibility"], "public")
+        self.assertEqual(by_page[3]["type"], "illustration")
+        self.assertEqual(by_page[3]["visibility"], "public")
+
+
 if __name__ == "__main__":
     unittest.main()

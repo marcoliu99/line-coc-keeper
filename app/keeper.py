@@ -1246,7 +1246,16 @@ def _execute_tool(
                 image_type=tool_input.get("image_type", ""),
                 allowed_chapter_ids=set(state.context_chapter_ids),
             )
-            return {"ok": True, "assets": [{key: asset.get(key) for key in ("id", "page", "type", "tags", "description")} for asset in assets]}
+            # KP-only assets (see scenario_library._build_image_assets — currently
+            # character_sheet pages, which may be NPC/villain stat blocks or a
+            # pregen revealing a "secret" connection) are filtered out of what
+            # ordinary play (speaker_role != "kp_assistant") can even discover,
+            # not just what it can display — a player-facing search shouldn't
+            # surface a KP-only page's existence any more than show_scenario_image
+            # below should let them actually pull it up.
+            if speaker_role != "kp_assistant":
+                assets = [a for a in assets if a.get("visibility", "public") == "public"]
+            return {"ok": True, "assets": [{key: asset.get(key) for key in ("id", "page", "type", "tags", "description", "visibility")} for asset in assets]}
 
         if name == "show_scenario_image":
             if not state.scenario_library_id:
@@ -1258,6 +1267,8 @@ def _execute_tool(
             asset = next((item for item in assets if item.get("page") == page), None)
             if asset is None:
                 return {"ok": False, "error": "該圖片不在目前章節 Context，不能展示"}
+            if asset.get("visibility", "public") != "public" and speaker_role != "kp_assistant":
+                return {"ok": False, "error": "這一頁是 KP 專用資料，不能在一般遊戲流程中展示給玩家"}
             investigator = tool_input.get("investigator")
             owner_id = None
             if investigator:

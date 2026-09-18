@@ -1,6 +1,5 @@
 import asyncio
 import sys
-import threading
 import types
 import unittest
 
@@ -16,6 +15,7 @@ sys.modules.setdefault(
 )
 
 from app import legacy_commands as commands, locks
+from app.commands import router
 from app.models import Character, GroupState
 
 
@@ -68,30 +68,33 @@ class GateCallForbidden:
         raise AssertionError("priority gate should not be used without a KP Assistant")
 
 
-class FakeKeeperRunner:
-    def __init__(self, loop: asyncio.AbstractEventLoop, blocking_user_id: str = "A") -> None:
-        self.loop = loop
+class FakeSupervisorRunner:
+    """Stands in for app.agents.supervisor.run_turn. Runs entirely on this
+    test's own event loop (router.py awaits supervisor.run_turn directly —
+    unlike the old app.legacy_commands.py path this replaces, it is never
+    dispatched via asyncio.to_thread onto a real worker thread), so ordering
+    and blocking are coordinated with a plain asyncio.Event instead of the
+    threading primitives a thread-dispatched fake would need."""
+
+    def __init__(self, blocking_user_id: str = "A") -> None:
         self.blocking_user_id = blocking_user_id
         self.blocking_started = asyncio.Event()
-        self.release_blocking = threading.Event()
-        self.lock = threading.Lock()
+        self.release_blocking = asyncio.Event()
         self.started_order: list[str] = []
         self.current_running = 0
         self.max_concurrent = 0
 
-    def __call__(self, state, user_id, display_name, text, resolved_location, speaker_role):
-        with self.lock:
-            self.started_order.append(user_id)
-            self.current_running += 1
-            self.max_concurrent = max(self.max_concurrent, self.current_running)
+    async def __call__(self, *, state, user_id, display_name, text, resolved_location, speaker_role, conversation_id):
+        self.started_order.append(user_id)
+        self.current_running += 1
+        self.max_concurrent = max(self.max_concurrent, self.current_running)
         if user_id == self.blocking_user_id:
-            self.loop.call_soon_threadsafe(self.blocking_started.set)
-            self.release_blocking.wait(timeout=5)
+            self.blocking_started.set()
+            await self.release_blocking.wait()
         try:
             return f"reply:{user_id}", [], []
         finally:
-            with self.lock:
-                self.current_running -= 1
+            self.current_running -= 1
 
 
 async def async_display_name() -> str:
@@ -117,6 +120,15 @@ async def wait_for_gate_queues(conversation_id: str, *, kp: int = 0, player: int
 
 
 class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    """Exercises the live message-routing path (app/commands/router.py's
+    handle_text_message -> app/agents/supervisor.py), not app/legacy_
+    commands.py's own handle_text_message/_handle_ordinary_text_message_
+    locked -- that pair is unreachable from app/main.py and app/discord_bot.py
+    (both call app/commands/router.py::handle_text_message) and was removed;
+    these tests used to exercise it directly instead of the code real traffic
+    hits, which meant this exact priority-gate/ordering behavior had no
+    coverage on the path that actually runs in production."""
+
     async def asyncSetUp(self) -> None:
         locks._keeper_priority_gates.clear()
 
@@ -131,7 +143,7 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def _send(self, user_id: str) -> ReplyCollector:
         reply = ReplyCollector()
-        await commands.handle_text_message(
+        await router.handle_text_message(
             "g",
             user_id,
             async_display_name,
@@ -143,24 +155,27 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         return reply
 
-    async def _run_with_patched_commands(self, state: GroupState, runner: FakeKeeperRunner, scenario):
-        original_run_turn = commands.keeper.run_turn
-        original_resolve = commands._resolve_map_action_transaction
+    async def _run_with_patched_commands(self, state: GroupState, runner: FakeSupervisorRunner, scenario):
+        original_run_turn = router.supervisor.run_turn
+        original_resolve = router._resolve_map_action_transaction
         original_spawn = commands._spawn_post_turn_maintenance
+        original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
-            commands.keeper.run_turn = runner
-            commands._resolve_map_action_transaction = lambda *args: None
+            router.load_state = commands.load_state
+            router.supervisor.run_turn = runner
+            router._resolve_map_action_transaction = lambda *args: None
             commands._spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 return await scenario()
             finally:
-                commands.keeper.run_turn = original_run_turn
-                commands._resolve_map_action_transaction = original_resolve
+                router.supervisor.run_turn = original_run_turn
+                router._resolve_map_action_transaction = original_resolve
                 commands._spawn_post_turn_maintenance = original_spawn
+                router.load_state = original_router_load_state
 
     async def test_kp_arriving_later_runs_before_waiting_players(self):
-        runner = FakeKeeperRunner(asyncio.get_running_loop())
+        runner = FakeSupervisorRunner()
 
         async def scenario():
             task_a = asyncio.create_task(self._send("A"))
@@ -177,7 +192,7 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.max_concurrent, 1)
 
     async def test_multiple_kp_messages_keep_fifo_before_waiting_players(self):
-        runner = FakeKeeperRunner(asyncio.get_running_loop())
+        runner = FakeSupervisorRunner()
 
         async def scenario():
             task_a = asyncio.create_task(self._send("A"))
@@ -196,7 +211,7 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.max_concurrent, 1)
 
     async def test_running_turn_is_not_preempted_and_concurrency_stays_one(self):
-        runner = FakeKeeperRunner(asyncio.get_running_loop())
+        runner = FakeSupervisorRunner()
 
         async def scenario():
             task_a = asyncio.create_task(self._send("A"))
@@ -213,7 +228,7 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.max_concurrent, 1)
 
     async def test_without_kp_ordinary_concurrency_stays_fifo_and_bypasses_gate(self):
-        runner = FakeKeeperRunner(asyncio.get_running_loop())
+        runner = FakeSupervisorRunner()
         forbidden_gate = GateCallForbidden()
         original_gate = commands.locks.get_keeper_priority_gate
 

@@ -316,7 +316,17 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
         else:
             kind = "illustration"
         chapter = next((c["id"] for c in chapters if c["start_page"] <= page <= c["end_page"]), "")
-        assets.append({"id": f"page-{page}-{kind}", "page": page, "type": kind, "chapter_id": chapter, "visibility": "public", "tags": [kind], "description": page_text[:500]})
+        # character_sheet pages default to KP-only: they're just as likely to be
+        # an NPC/villain stat block or a pregen that reveals a "secret"
+        # investigator connection as they are a player-facing pregen sheet —
+        # the classifier here has no way to tell those apart, and the spoiler
+        # risk of showing the wrong one to players outweighs the convenience
+        # of never having to think about it. A KP can still reveal a specific
+        # one via the KP-only show_scenario_image call (see keeper._execute_tool).
+        # This is deliberately not the same channel as /coc pregens'
+        # player-facing pregen selection, which never goes through this tool.
+        visibility = "kp_only" if kind == "character_sheet" else "public"
+        assets.append({"id": f"page-{page}-{kind}", "page": page, "type": kind, "chapter_id": chapter, "visibility": visibility, "tags": [kind], "description": page_text[:500]})
     return assets
 
 
