@@ -47,7 +47,7 @@ Python 程式碼明確掌握，能重用 `app/keeper.py` 既有、已經驗證�
 | (app/agents/executor.py)            |                         │    │
 +------------------------------------+                         │    │
 | ↳ 呼叫一次 LLM＋工具（直接複用      |                         │    │
-|   app/keeper.py 的 24 個工具與      |                         │    │
+|   app/keeper.py 的 26 個工具與      |                         │    │
 |   keeper._execute_tool，見下方      |                         │    │
 |   「現況與經驗」第 1 點），真的     |                         │    │
 |   擲骰／登記 pending_checks／改     |                         │    │
@@ -115,14 +115,28 @@ Python 程式碼明確掌握，能重用 `app/keeper.py` 既有、已經驗證�
 | Assistant Agent             |
 | (app/agents/assistant.py)   |
 +-----------------------------+
-| 完全繞開上面 1～6 整條「機制判定與故事生成」主線：
-| ↳ 直接複用 keeper._build_dynamic_prompt(..., speaker_role="kp_assistant")
-|   組出的 KP 主持規則區塊＋最近的 kp_ooc_log 歷史
-| ↳ keeper._tools_for_speaker_role("kp_assistant") 限制工具白名單（唯讀查詢
-|   ＋少數「幫指定調查員/NPC 建立正式檢定流程」的工具），keeper._execute_tool
-|   內部還有第二層同樣的白名單防禦
-| ↳ keeper._commit_kp_ooc_turn_result 存進獨立的 kp_ooc_log，
-|   不寫入 state.log、不動 state.openai_previous_response_id
+| 完全繞開上面 1～6 整條「機制判定與故事生成」主線，把整回合直接委派給
+| keeper.run_turn(state, user_id, display_name, text, resolved_location,
+| "kp_assistant") 一行呼叫——不在這裡另外組 prompt、另外過濾工具、另外決定
+| 要落庫到哪裡（原因見「現況與經驗」第 5 點：早期版本自己重組過一次
+| keeper.run_turn 的邏輯，main 後續替 KP Assistant 加的新規則沒有反映過來，
+| 是這次改成整段委派的直接理由）。
+| ↳ keeper.run_turn 內部沿用既有、持續在維護的邏輯：static/dynamic prompt
+|   （含 KP 主持規則區塊＋最近的 kp_ooc_log 歷史）、
+|   keeper._tools_for_speaker_role("kp_assistant") 工具白名單
+|   （keeper._execute_tool 內部還有第二層同樣的白名單防禦）。
+| ↳ 落庫不是無條件走 kp_ooc_log：keeper._kp_tool_result_creates_canon 判斷
+|   這輪 KP 呼叫的工具是不是「正式遊戲事件」（skill_check／sanity_check／
+|   npc_skill_check／offer_check_choice／roll_weapon_damage／
+|   roll_impaling_damage，或 roll_dice 且 roll_context="game_resolution"）：
+|   否 → keeper._commit_kp_ooc_turn_result 存進獨立的 kp_ooc_log，不寫入
+|        state.log、不動 state.openai_previous_response_id；
+|   是 → 升格：keeper._format_kp_canonical_history_message 把這輪 KP 指令
+|        與觸發的工具事件格式化成一則
+|        「[KP ASSISTANT / CANONICAL GAME EVENT]」訊息，透過
+|        keeper._commit_turn_result 寫進正式 state.log，並正常延續
+|        openai_previous_response_id 對話鏈——這輪從「場外討論」變成
+|        「KP 代替玩家觸發了一個真的發生的遊戲事件」。
 +-----------------------------+
            │
            ▼
@@ -158,7 +172,7 @@ Python 程式碼明確掌握，能重用 `app/keeper.py` 既有、已經驗證�
            │                                handler 模組，router.py 直接引用）
            ├─ "/coc combat" ──────────────► app/commands/handlers/combat.py
            ├─ "/coc pc"／"sheet"／…9 個角色相關子指令 ──► handlers/character.py
-           ├─ "/coc newgame"／"pdf"／"kp"／…11 個系統類子指令 ──► handlers/system.py
+           ├─ "/coc newgame"／"pdf"／"kp"／"scenario"／…12 個系統類子指令 ──► handlers/system.py
            ├─ "/coc showpage"／"where"／…4 個地圖類子指令 ──► handlers/map_handler.py
            │
            ▼
@@ -254,8 +268,8 @@ Builder／Intent Router／State Reducer／Rule Validator 都刻意維持純 Pyth
 以下是實作過程中，跟這份文件最早版本的規劃有落差、而且落差本身就值得記錄下來的地方——
 不是失敗，是實測後做出的、有理由的取捨：
 
-1. **「濃縮為 5 個高階工具」最後沒有採用，直接複用 `app/keeper.py` 的 24 個工具。**
-   最早的想法是把 `app/keeper.py` 的 24 個細顆粒度工具（`skill_check`、`adjust_character`、
+1. **「濃縮為 5 個高階工具」最後沒有採用，直接複用 `app/keeper.py` 的工具（目前 26 個，隨劇本庫等後續功能持續增加）。**
+   最早的想法是把 `app/keeper.py` 的細顆粒度工具（`skill_check`、`adjust_character`、
    `add_npc_to_combat`……）濃縮成 5 個帶 `action` 子欄位的高階工具，省 token。實際動手做
    Executor Agent 時發現：要讓濃縮後的工具「真的」擲骰、真的登記 `pending_checks`、真的
    安全地改動狀態，等於要把 `keeper._execute_tool` 裡每一種工具的邏輯（含 `_mutate_and_
@@ -290,3 +304,52 @@ Builder／Intent Router／State Reducer／Rule Validator 都刻意維持純 Pyth
    這份文件已經改成單純描述這個專案自己的設計推論與實測結果，不再引用外部專案名稱——這個
    架構後續每一次修正都是照這個專案自己的程式碼、資料結構、既有機制（`keeper.py` 的鎖
    機制、KP Assistant OOC 隔離等）推導出來的，不是對照外部專案的做法。
+
+5. **`assistant.py` 曾經自己重組過一次 `keeper.run_turn` 的邏輯，結果漏接了後續新增的
+   規則；改成整段委派後這類問題結構性地不會再發生。** OOC Assistant Path 最早的實作是
+   自己呼叫 `keeper._build_dynamic_prompt`／`keeper._tools_for_speaker_role`／
+   `keeper._commit_kp_ooc_turn_result` 等個別函式，手動拼出跟 `keeper.run_turn` 平行的
+   一份流程。main 之後替 KP Assistant 加上「擲骰即正史」（KP 成功觸發正式擲骰／檢定時，
+   這輪對話要從 `kp_ooc_log` 升格寫進正式 `state.log`，見上面 OOC Assistant Path 圖裡的
+   `_kp_tool_result_creates_canon`）時，這份平行複製品完全沒有反映到——因為它本來就不是
+   `keeper.run_turn` 本身，新規則只加在後者身上。修正方式是把 `assistant.py` 簡化成一行
+   `keeper.run_turn(..., "kp_assistant")` 呼叫，讓這條路徑之後不管 `keeper.run_turn`
+   對 `speaker_role="kp_assistant"` 的行為怎麼演進，都自動繼承，不需要每次改 keeper.py
+   都記得回來同步一次 assistant.py。跟本節第 1 點「不重新發明 keeper.py 已經驗證過的
+   邏輯」是同一個教訓的第二次印證。
+
+6. **不是每一輪 Keeper 敘事都走 Supervisor 流水線——`/coc check`／`/coc luck` 的結果敘事
+   刻意繞過，這件事這份文件之前沒寫清楚。** 藍圖一畫的是「玩家／KP 助手輸入訊息」這條
+   自由文字路徑（`app/commands/router.py::handle_text_message` 的非指令分支 →
+   `supervisor.run_turn`），但玩家自己用 `/coc check`／`/coc luck` 在程式碼裡擲骰之後，
+   結果敘事是 `handle_check_command`／`handle_luck_decision` →
+   `_finalize_check_result`（`app/legacy_commands.py`）直接呼叫 `keeper.run_turn`，完全
+   不經過 Supervisor／Executor／Narrator。這是刻意的：擲骰本身已經是確定的既成事實，不需
+   要再讓 Intent Router／Executor 判斷要不要呼叫工具，直接一次 LLM 呼叫敘事即可，等同
+   Supervisor 流水線裡「機制已定、只需要 Narrator」的那一半，只是沒有透過 Supervisor 走。
+
+   複查時另外發現 `app/legacy_commands.py` 自己還留著一份完整的
+   `handle_text_message`／`_handle_ordinary_text_message_locked`（一樣直接呼叫
+   `keeper.run_turn`，邏輯幾乎跟 `router.py` 那份逐行對應），但 `app/main.py`／
+   `app/discord_bot.py` 實際呼叫的是 `app/commands/router.py::handle_text_message`，
+   `legacy_commands.py` 這份現在**沒有任何正式進線會呼叫到**——唯一還在呼叫它的是
+   `tests/test_keeper_priority_integration.py` 和 `tests/test_kp_assistant_v2.py`
+   裡驗證 priority gate／KP 助手輪替順序的測試。也就是說，那批測試現在驗證的是一條正式
+   流量根本不會走到的路徑，而 `router.py` 真正在用的那份 Priority Gate／KP 助手輪替邏輯
+   （結構上逐行對應，行為理論上一致）目前完全沒有對應測試——兩份實作萬一之後被改到不一致，
+   不會有任何測試失敗來提醒。這是這次複查發現、還沒處理的落差，留給之後決定：要嘛刪掉
+   `legacy_commands.py` 那份重複實作、把測試改成打 `router.py`，要嘛保留但补一份等價的
+   `router.py` 測試。
+
+7. **兩個「線路接對了但沒接上」的缺陷，複查時才發現、已修正。** 一是 `supervisor.py`
+   呼叫 Executor 後算出的 `mechanic_result` 從沒寫回 `message.payload`——`narrator.py`
+   讀到的永遠是 `None`，於是「GAMEPLAY_ACTION 應該把 Executor 的機制事實交給 Narrator」
+   這件事其實從沒真的發生過，每一輪機制動作都被當成純角色扮演在敘事，直接牴觸本節第 1、
+   2 點想強調的「Executor 真的落庫、Narrator 真的看得到結果」。二是 `context_builder.py`
+   的 Scenario RAG 沒有依 `SCENARIO_RAG_ENABLED` 開關運作，不管開關與否都會跑
+   `scenario_rag.get_index`／`search`，跟 `keeper._build_static_prompt` 本身有的同一個
+   開關矛盾——關掉 RAG 並沒有真的省下這筆查詢成本與延遲。兩者都是「程式碼看起來合理、
+   單獨測試也不會報錯，但沒有真的用真實 LLM 回合去驗證輸出內容有沒有反映機制事實」才會
+   漏掉的那種缺陷；修正後都補了對應的 regression test（見
+   `tests/test_agentic_pipeline.py`），也是這份文件開頭「跟真實 LLM 呼叫的測試結果修訂
+   過」這句話這次真正兌現的地方。
