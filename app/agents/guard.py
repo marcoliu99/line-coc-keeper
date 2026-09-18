@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+
 from app.domain.models import AgentMessage
 from app.config import LLM_PROVIDER
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -16,20 +18,34 @@ GUARD_SYSTEM_PROMPT = """你是一個 TRPG 守密人的文案修復者 (Guard Ag
 3. 確保 Markdown 格式正確。
 """
 
+
 async def run_repair(message: AgentMessage, original_text: str, error_reason: str) -> str:
     """
     Runs the LLM loop for the Guard Agent to repair invalid narrative text.
+    Falls back to the original text (rather than losing the reply entirely)
+    if the repair call itself fails.
     """
     provider = _PROVIDERS[LLM_PROVIDER]
-    
-    prompt = f"【原始錯誤文案】\n{original_text}\n\n【錯誤原因】\n{error_reason}\n\n請修復並重新輸出這段敘述："
-    messages = [{"role": "user", "content": prompt}]
-    
-    response = await provider.run_conversation(
-        messages=messages,
-        system_prompt=GUARD_SYSTEM_PROMPT,
-        tools=[] 
-    )
-    
-    repaired_text = messages[-1]["content"] if messages else "（修復生成失敗）"
-    return repaired_text
+
+    dynamic_system = f"【原始錯誤文案】\n{original_text}\n\n【錯誤原因】\n{error_reason}"
+    new_message = "請修復並重新輸出這段敘述："
+
+    def _no_tools(_name: str, _tool_input: dict) -> dict:
+        return {"ok": False, "error": "Guard agent has no tools"}
+
+    try:
+        repaired_text = await asyncio.to_thread(
+            provider.run_conversation,
+            GUARD_SYSTEM_PROMPT,
+            dynamic_system,
+            [],
+            [],
+            new_message,
+            _no_tools,
+            1,
+        )
+    except Exception:
+        _logger.exception("Guard LLM call failed — keeping the original (unrepaired) narrative")
+        return original_text
+
+    return repaired_text.strip() or original_text

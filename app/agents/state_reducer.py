@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from app.domain.models import AgentMessage, MechanicResult
-from app.repositories.group_state import save_state
-from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
 
@@ -13,54 +10,31 @@ _logger = logging.getLogger(__name__)
 def apply_mechanic_result(message: AgentMessage, result: MechanicResult) -> None:
     """
     State Reducer (純 Python 節點).
-    Safely applies the StateDelta from the MechanicResult to the actual GroupState.
-    This guarantees that the LLM cannot hallucinate arbitrary state changes outside
-    of the explicit delta structure.
+
+    Historically this function re-applied `result.state_delta` onto
+    `GroupState`/`Character` directly and called save_state() itself. That
+    version had two real bugs — it wrote to `char.inventory` (the actual
+    field is `carried_items`) and `state.flags` (GroupState has no such
+    field) — both unreachable only because the Executor that produced
+    `result` always returned an empty StateDelta.
+
+    As of the Executor rewrite (see app/agents/executor.py), real state
+    mutation already happens for real, synchronously, before this function
+    is ever called: tool calls go through keeper._execute_tool via
+    tool_gateway.make_tool_executor, which uses the same
+    _mutate_and_save_state locking every other Keeper tool call in this
+    project uses (reload-latest-under-lock, mutate, save). Re-applying
+    `state_delta` here on top of that — especially via an unlocked, blind
+    save_state(state) — would either double-apply the same change or, worse,
+    clobber a freshly-saved state with this function's older in-memory
+    snapshot. So StateDelta is intentionally left empty by the Executor and
+    this function does no mutation and no persistence of its own; it exists
+    as an explicit pipeline stage (matching the design spec's architecture
+    diagram) and a place to log what happened, not to act on it.
     """
-    state: GroupState = message.payload["state"]
-    char = message.payload.get("character")
-    delta = result.state_delta
-
-    _logger.info(f"StateReducer processing delta for {message.payload['display_name']}: {delta}")
-
-    # 1. Apply Character-specific deltas (if the user has an active character)
-    if char:
-        if delta.hp_change != 0:
-            char.hp = max(0, min(char.hp_max, char.hp + delta.hp_change))
-            _logger.info(f"[{char.name}] HP adjusted by {delta.hp_change}, now {char.hp}/{char.hp_max}")
-            
-        if delta.sanity_change != 0:
-            char.san = max(0, min(char.san_max, char.san + delta.sanity_change))
-            _logger.info(f"[{char.name}] SAN adjusted by {delta.sanity_change}, now {char.san}/{char.san_max}")
-            
-        if delta.mp_change != 0:
-            char.mp = max(0, min(char.mp_max, char.mp + delta.mp_change))
-            _logger.info(f"[{char.name}] MP adjusted by {delta.mp_change}, now {char.mp}/{char.mp_max}")
-            
-        for item in delta.inventory_add:
-            if item not in char.inventory:
-                char.inventory.append(item)
-                _logger.info(f"[{char.name}] Gained item: {item}")
-                
-        for item in delta.inventory_remove:
-            if item in char.inventory:
-                char.inventory.remove(item)
-                _logger.info(f"[{char.name}] Lost item: {item}")
-
-    # 2. Apply Group-wide deltas
-    for flag_name, flag_val in delta.flags_set.items():
-        state.flags[flag_name] = flag_val
-        _logger.info(f"[Group] Set flag {flag_name}={flag_val}")
-        
-    if delta.time_cost_minutes > 0:
-        # If the game system tracks time, add it here. (Mocked for now)
-        _logger.info(f"[Group] Time advanced by {delta.time_cost_minutes} minutes.")
-
-    # 3. Persistence: Centralized point where DB saves occur for this turn.
-    # By saving state ONLY here in the pipeline, we prevent race conditions
-    # from multiple agents trying to persist partial data.
-    save_state(state)
-    _logger.info("StateReducer: GroupState successfully persisted.")
-    
-    # Store the processed result back in the message for the Narrator to use
-    message.payload["mechanic_result"] = result
+    _logger.info(
+        "StateReducer: mechanic result for %s already applied by the Executor's tool calls (success=%s, facts=%s)",
+        message.payload.get("display_name"),
+        result.success,
+        result.narrative_facts,
+    )

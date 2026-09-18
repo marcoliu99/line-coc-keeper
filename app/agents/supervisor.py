@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app import keeper
 from app.models import GroupState
 from app.agents import context_builder, intent_router, executor, state_reducer, narrator, rule_validator, guard
 
@@ -18,7 +19,7 @@ async def run_turn(
     resolved_location: dict[str, Any] | None,
     speaker_role: str,
     conversation_id: str,
-) -> tuple[str, list[dict], list[dict]]:
+) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
     Orchestrates the synchronous pipeline of Agents to produce a response.
@@ -68,15 +69,23 @@ async def run_turn(
         reply_text = await guard.run_repair(message, reply_text, error_reason)
         attempts += 1
 
-    # Note: Phase 6 Persistence (save_state) is already handled inside the StateReducer 
-    # for GAMEPLAY_ACTION. If we need to save dialogue history for PURE_ROLEPLAY,
-    # it would be handled via a log append here.
-    from app.repositories.group_state import save_state
-    
-    # Append the final turn to the log
+    # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
+    # pending_checks/combat/etc.) already happened inside the Executor's
+    # tool calls, via keeper._execute_tool's own locked
+    # (_mutate_and_save_state) path — see state_reducer.py's docstring.
+    # What's left here is just committing this turn's log entries, the same
+    # way app/keeper.py's own run_turn does for the old single-LLM path:
+    # reload the latest state under the state lock (so this can't clobber
+    # whatever the tool calls above already saved), append, save, then sync
+    # this function's own `state` object so a caller that keeps using it
+    # afterward sees the up-to-date snapshot.
     if state.game_started:
-        state.log.append({"role": "user", "content": f"{speaker_role} {display_name}: {text}"})
-        state.log.append({"role": "assistant", "content": reply_text})
-        save_state(state)
+        keeper._commit_turn_result(
+            state,
+            [
+                {"role": "user", "content": f"{speaker_role} {display_name}: {text}"},
+                {"role": "assistant", "content": reply_text},
+            ],
+        )
 
     return reply_text, private_messages, image_requests

@@ -1494,3 +1494,81 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   要求 `roll_context`、缺少/非法 context 仍被 validation 擋下、合法 context 會真正擲骰；新增兩個完整 KP turn
   regression tests，分別確認 `game_resolution` 進 `state.log` 並推進 OpenAI chain，`ooc_randomizer` 留在
   `kp_ooc_log` 且 canonical chain 不前進。
+### 95. 修掉 Agentic Keeper 重構（`refactor/agentic-keeper`）審查抓到的問題：整條流水線目前完全不能用
+
+- **這個改動怎麼來的**：使用者請我讀過 `docs/agentic_keeper_design_spec.md`（Supervisor／Intent
+  Router／Executor／State Reducer／Narrator／Rule Validator／Guard 多 Agent 流水線設計）後審查
+  `refactor/agentic-keeper` 分支的實際程式碼。實測（不是只看程式碼猜）後發現：**只要不是 `/coc`
+  指令的一般訊息，保證會直接當機或產生假結果**，用真實呼叫重現過每一個問題才動手修。
+- **抓到的問題（依嚴重度）**：
+  1. `app/agents/context_builder.py` 呼叫不存在的 `scenario_rag.query_scenario`／
+     `memory_rag.query_memory`——真正的 API 是兩段式的 `get_index`＋`search`＋`format_results`／
+     `search_memory`＋`format_results`（跟 `app/keeper.py` 的 `search_scenario`／`search_memory`
+     工具用的是同一套）。只要劇本已上傳、角色已綁定，這裡就會先炸。
+  2. `app/agents/narrator.py`／`executor.py`／`guard.py` 呼叫 `provider.run_conversation()` 的方式
+     跟三個 provider（openai/anthropic/gemini）的真實簽名完全對不上：真實簽名是同步函式
+     `(static_system, dynamic_system, tools, history, new_message, execute_tool, max_iterations,
+     ...) -> str`（位置參數、回傳字串），這裡卻用 `await run_conversation(messages=..., 
+     system_prompt=..., tools=...)`——關鍵字參數名稱、參數形狀、`await` 一個同步函式，三個錯全中，
+     保證 `TypeError`。就算修好呼叫方式，原本 `reply_text = messages[-1]["content"]` 這行也永遠拿
+     不到真正的回覆內容。
+  3. `app/agents/executor.py` 的 `run_executor` 是純假的 stub：tool-call 迴圈永遠 `break` 一次就跳出，
+     最後無條件回傳寫死的假成功結果（`state_delta=StateDelta()` 全空），連注解都承認是 mock。
+  4. `app/agents/tool_gateway.py` 的每個「高階工具」也都是假的——`skill_check` 從沒呼叫
+     `dice.skill_check`、沒註冊 `pending_checks`，只回傳描述字串；`combat_action`／
+     `character_action`／`inventory_action` 同樣模式，完全不碰真實遊戲狀態。
+  5. `app/agents/state_reducer.py` 用 `char.inventory`（`Character` 只有 `carried_items`）、
+     `state.flags[...]`（`GroupState` 根本沒有這個欄位）——當時被 #3 的假結果蓋住沒觸發，一旦
+     Executor 真的產生非空 delta 就會 `AttributeError`。而且它直接呼叫裸的 `save_state(state)`，
+     完全繞過這個專案一路建立起來的 `_mutate_and_save_state`／`get_state_lock` 鎖機制。
+  6. `app/commands/router.py` 完全沒有 KP Assistant 優先權機制（`get_keeper_priority_gate`）——
+     分支一開始是從 PR #17 合併前的舊 commit 切出去的，這個功能當時還不存在；重新同步到最新 main
+     後這個缺口依然存在，因為 router.py 本身沒有補回去。
+  7. `router.py` 內部到處用函式內延遲 import（`legacy_commands`／`agents.supervisor`、重複兩次
+     `import asyncio`），是循環 import 用內部 import 硬繞過的訊號。
+- **這個專案現在怎麼做**：
+  1. `context_builder.py` 改用真實的兩段式 RAG／記憶查詢 API。
+  2. `tool_gateway.py` 不再重新發明條件式工具——直接 re-export `keeper.TOOLS`，
+     `make_tool_executor` 回傳的 callback 直接委派給 `keeper._execute_tool`（跟舊架構、
+     `legacy_commands.py` 用的是同一份、已經驗證過鎖機制與各種安全檢查的邏輯），額外收集一份
+     人類可讀的 `facts` 清單供 Narrator 使用。
+  3. `executor.py` 重寫：用 `asyncio.to_thread` 包同步的 `provider.run_conversation`（正確組出
+     `static_system`／`dynamic_system`／`tools`／`history`／`execute_tool`），系統提示明確要求
+     LLM 只呼叫工具、不要自己寫敘事文字；真正的機制結果（HP/SAN 變化、pending_checks 等）透過
+     `keeper._execute_tool` 在這裡就已經真實發生並落庫，`MechanicResult.state_delta` 因此刻意保持
+     空——不需要、也不能在下一階段重複套用。
+  4. `narrator.py`／`guard.py` 同樣改用 `asyncio.to_thread` 包同步呼叫，正確組出 prompt、正確使用
+     回傳值（不再讀取沒被改寫過的 `messages[-1]`），並補上 `rag_context`／`memory_context`（原本
+     `context_builder` 就有收集，但 narrator/executor 都沒真的用到）。
+  5. `state_reducer.py` 改成單純記錄用的階段（不再嘗試套用或落庫任何東西），docstring 完整說明
+     為什麼——真正的狀態變更已經在 Executor 呼叫工具時透過 `_mutate_and_save_state` 安全地完成了，
+     這裡再套用一次只會造成重複套用或用舊快照蓋掉剛存好的資料。
+  6. `supervisor.py` 收尾的 log 提交改呼叫 `keeper._commit_turn_result`（重新載入最新狀態、在
+     `get_state_lock` 底下 append、存檔、同步快照），取代原本裸的
+     `state.log.append(...); save_state(state)`；回傳型別標注也修正為跟 `keeper.run_turn` 一致的
+     `tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]`（原本錯標成
+     `list[dict]`，mypy 在 `router.py` 呼叫端就抓到型別對不上）。
+  7. `router.py` 全部 import 移到檔案最上方（實測確認這幾個模組互相 import 並不會真的循環），並補回
+     KP Assistant 優先權邏輯，跟目前 main 版 `legacy_commands.py` 的 `handle_text_message` 完全對稱
+     （沒有 KP 時走純 `get_conversation_lock`；有 KP 時額外包一層 `get_keeper_priority_gate`）。
+- **實測過（全部用真實 LLM 呼叫，不是 mock）**：
+  - 純角色扮演路徑（Fast Path，只走 Narrator）：完整跑過 `supervisor.run_turn`，產出正常的克蘇魯
+    風格敘事，`state.log` 正確新增 2 筆。
+  - 機制判定路徑（Slow Path）技能檢定：真實訊息「幫我做一次偵查檢定」，確認 LLM 正確呼叫
+    `skill_check`、`pending_checks` 真的被註冊（技能值跟角色卡上的 65 一致，不是隨便編的數字），
+    Narrator 正確在敘事結尾提示「請進行一次偵查檢定」而不是自己判定結果。
+  - 機制判定路徑 HP 調整：真實訊息「踩到碎玻璃，腳被割傷，扣兩點HP」，確認 LLM 呼叫
+    `adjust_character`、角色 HP 真的從 10 掉到 8 並且存檔到磁碟上能重新讀到。
+  - 全流程 smoke test（trivial 確認句「嗯」）端到端跑過一次，確認整條 Supervisor → Narrator →
+    `_commit_turn_result` 的路徑正常運作。
+  - `mypy app/agents/*.py app/commands/router.py` 重新跑過，這次改動觸及的檔案已經沒有任何錯誤
+    （含順手修正的 `supervisor.py`／`narrator.py` 回傳型別標注）。
+  - 過程中用的是這個 worktree 自己的本機 DB，測試用的 group_state key 全部用 `db.delete_json`
+    清乾淨，`.env` 只在測試期間暫時複製進來、測完立刻刪除，正式環境資料庫全程沒有被動到。
+- **還沒做、留給之後**：`app/services/prompt_config.py`（574 行，設計文件藍圖三提到的集中提示詞
+  管理）目前完全沒被任何 agent 檔案使用——它定義的函式回傳 Chat-Completions 風格的
+  `list[dict[str, str]]` 訊息陣列，跟這個專案 provider 層實際採用的
+  `static_system`／`dynamic_system`／`new_message` 三段式合約不吻合，需要额外改造才能接上，這次
+  沒有動它。Narrator／Executor 目前用的 prompt 也比舊版 `keeper.py` 的 `_build_static_prompt`／
+  `_build_dynamic_prompt` 陽春（沒有完整角色卡、戰鬥狀態等豐富上下文），先求「正確、不當機」，
+  上下文豐富度是合理的後續優化項目。
