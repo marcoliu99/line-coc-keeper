@@ -1097,7 +1097,106 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **未修改 runtime**：本次只新增 integration tests，沒有修改 production code，也沒有改 priority gate 演算法、tool permission、`kp_ooc_log`、OpenAI chain、provider 或 `/coc start`。
 - **測試結果**：`python -m unittest tests.test_keeper_priority_gate tests.test_kp_assistant_v2 tests.test_keeper_priority_integration` 通過（22 tests）。
 
-### 80. 修掉 PR #17 測試套件的卡死問題：測試 fixture 漏設 `game_started=True`
+### 80. 修掉靜態分析報告裡真的成立的部分：吞掉例外的 try-except-pass、MD5 缺 usedforsecurity 標記
+
+- **這個改動怎麼來的**：使用者提供一份外部產生的靜態代碼健檢報告（`static_analysis_report.md`）跟對應
+  的實作計畫（`implementation_plan.md`），聲稱用 Mypy/Bandit/Flake8 掃描專案抓到幾個「非常有可能引發
+  AttributeError 或 Crash」的型別混淆問題，外加幾個 Bandit 抓到的壞味道。動手改之前先把這三個工具
+  （系統沒裝在這個專案的 venv，額外裝在系統 Python 底下）實際跑一次驗證，發現：
+  1. 報告引用的行號其實是針對 `character-sheet` 分支跑的（那個分支的 `commands.py` 有 2394 行），不是
+     `main`（1963 行）——但逐一核對後，報告點名的每個具體問題在 `main` 上也都存在，只是行號不同，是
+     很久以前就有的舊程式碼模式，不是哪個分支新引入的。
+  2. **Mypy 那幾項型別混淆，實測後確認都不是真的會在執行期發生的 bug**：`app/commands.py` 的
+     `r = dice.sanity_check(...)` 是在 `if pending.get("type")=="sanity": ... return` 裡面、提前
+     return，跟後面 `r = dice.skill_check(...)` 完全不會同時執行；`app/keeper.py` 的 `_execute_tool`
+     是一個巨大的 if-elif 派發函式，每個工具分支各自定義了同名的區域函式 `mutate`（或用了同名的
+     `result` 變數），互斥、各自提前處理完就結束，Python 執行時完全沒有衝突——Mypy 會抱怨純粹是因為
+     它對整個函式做型別推論，沒辦法理解「這些分支互斥、不會同時發生」，是靜態分析的假警報，不是真的
+     會讓玩家擲骰時直接炸出的 crash。而且範圍比報告/計畫講的大很多：光是 `keeper.py` 這種 `mutate`
+     重複定義的警告，實際數出來有 14 處，不是計畫講的 4 個工具。跟使用者確認過scope 後，決定這次
+     **不處理** mypy 那部分（不是真的執行期風險，硬改的話 diff 會比計畫預期的大很多，风险效益比低）。
+  3. **Bandit 抓到的兩類問題（`try-except-pass` 吞掉例外、`hashlib.md5` 缺 `usedforsecurity=False`）
+     逐一核對後確認全部真實存在，而且修起來零風險**，這次只處理這兩類。
+- **這個專案現在怎麼做**：
+  - `app/discord_bot.py`（`on_message` 的外層例外處理）、`app/main.py`（LINE webhook 的
+    `callback`）：原本 `except Exception: pass`（吞掉「連錯誤訊息都送不出去」這個次要例外）改成
+    `_logger.exception(...)`，把完整 traceback 印進 log；外層原本抓到主例外後只往頻道回一句
+    `f"發生錯誤了：{exc}"`（沒有 traceback、也沒有寫進 server 端的 log），一併補上
+    `_logger.exception(...)`，兩層都不會再無聲無息地把錯誤吃掉。`app/main.py` 原本沒有設定
+    `logging`／`_logger`，這次一起補上（跟其他檔案一致的 `logging.getLogger(__name__)` 慣例）。
+  - `app/memory_rag.py`（`append_memory` 的 embedding best-effort 區塊）、
+    `app/scenario_rag.py`（`_save_index_to_disk` 的 best-effort 寫入區塊）：同樣把 `except
+    Exception: pass` 改成 `_logger.exception(...)`——這兩處本來就是設計成「失敗了就跳過，不影響主
+    流程」（embedding 失敗還是能用 BM25 純文字搜尋；索引寫入失敗下次重啟會重建），這個行為完全不變，
+    只是失敗當下會留下 log 可查，不會變成「肉眼完全看不到任何線索」的除錯地獄。
+  - `app/scenario_rag.py` 兩處 `hashlib.md5(scenario_text.encode("utf-8"))`（`build_index`／
+    `get_index`，純粹拿來偵測劇本文字有沒有變過，不是任何安全用途）都補上 `usedforsecurity=False`，
+    避免在啟用 FIPS 之類嚴格模式的 Python 環境下丟例外。
+- **實測過**：
+  - `import app.discord_bot`／`app.main`／`app.memory_rag`／`app.scenario_rag` 全部確認可正常載入。
+  - 重新對整個 `app/` 跑一次 Bandit，確認 `B110`（try-except-pass）與 `B324`（MD5 缺
+    `usedforsecurity`）兩類問題都變成 0 筆命中，改動前這兩類各有對應筆數命中、位置跟報告描述一致。
+  - 這次刻意沒有處理 Mypy 那部分警告（詳見上方「這個改動怎麼來的」）。
+
+### 81. 修到底：把 mypy「同名變數跨互斥分支衝突」的假警報，改名改成真的乾淨
+
+- **這個改動怎麼來的**：#60 判斷 mypy 那部分是假警報、範圍比報告講的大很多（14 處不只 4 處），先跳過
+  沒修。後續使用者問「mypy 是真的假警報嗎」，用具體行號（`keeper.py` 838/868/877 等）逐一核對控制流
+  證明每個 `if name == "X": ...; return` 分支確實互斥、不會同時發生，確認是 mypy 對「互斥分支裡定義
+  同名區域函式/變數」的已知靜態分析盲點，不是執行期會發生的錯誤。使用者接著問「怎麼修比較漂亮」，
+  討論後選定方案：把每個分支裡的 `mutate`／`r`／`result` 改成該分支專屬、望文生義的名字，而不是加
+  `_1`/`_2` 這種編號或用 `# type: ignore` 壓掉——這樣除了讓 mypy 乾淨，也讓「這段在幹嘛」不用先看懂
+  在哪個分支裡，名字本身就講清楚了。使用者確認後動手，改完發現改名本身就讓 mypy 看得更清楚，多暴露出
+  一個原本被「命名衝突」蓋住的獨立問題（`_mutate_and_save_state` 的泛型簽名沒表達出它真正的執行期
+  行為），使用者說「修到底」，一併修掉。
+- **這個專案現在怎麼做**：
+  1. `app/keeper.py` 的 `_execute_tool`：14 個工具分支各自的 `mutate` 區域函式改成專屬名稱（例如
+     `_register_pending_skill_check`、`_register_pending_choice`、`_register_pending_sanity`、
+     `_apply_attribute_delta`、`_apply_ammo_change`、`_mutate_add_item`／`_mutate_remove_item`、
+     `_mutate_add_tag`／`_mutate_remove_tag`、`_mutate_set_skill`、`_mutate_start_combat`、
+     `_mutate_add_npc`、`_mutate_advance_turn`、`_mutate_damage_combatant`、`_mutate_end_combat`）；
+     `roll_dice`／`roll_impaling_damage`／`roll_weapon_damage`／`npc_skill_check` 四處重複用 `r`／
+     `result` 的擲骰結果變數改成 `roll_result`／`impale_result`／`weapon_result`／`npc_roll`；
+     `adjust_character`／`add_npc_to_combat` 兩處回傳 dict 用的 `result` 改成 `response`；
+     `advance_combat_turn`／`damage_combatant` 乾脆拿掉多餘的中繼變數，直接 `return
+     _mutate_and_save_state(state, ...)`。邏輯完全沒變，純粹改名／消掉不必要的中繼賦值。
+  2. 改名後意外多暴露的問題：`_mutate_and_save_state(state, mutator: Callable[[GroupState], _T]) ->
+     _T` 這個共用 helper，執行期遇到 `mutator` 回傳 `_StateMutation` 時會拆開回傳 `.value`（見函式
+     內的 `isinstance(result, _StateMutation)` 判斷），但型別簽名沒表達這件事，之前被命名衝突蓋住
+     沒被抓到。改成讓 `_StateMutation` 變泛型（`_StateMutation(Generic[_T])`，`value: _T`），
+     `_mutate_and_save_state` 用 `@overload` 拆成兩種呼叫形狀：`mutator` 回傳
+     `_StateMutation[_T]` 時，函式回傳 `_T`；否則回傳 `mutator` 自己的回傳型別。實作本體完全沒變，
+     純粹補齊型別標注。4 個使用 `_StateMutation` 的分支（`add_carried_item`／`remove_carried_item`／
+     `add_status_tag`／`remove_status_tag`）的回傳型別標注同步改成
+     `_StateMutation[tuple[str, list[str]]]`。
+  3. `app/commands.py` 的 `_resolve_check_deterministically`：理智檢定那段的 `r`（`SanityCheckResult`）
+     改名 `sanity_result`；技能檢定那段的 `r`（`SkillCheckResult`）改名 `skill_result`（含後面
+     Bout of Madness INT 檢定、Luck-spend 門檻判斷、`_build_check_narration` 呼叫等所有引用處，共
+     18 處引用）。`_handle_coc_command`（`/coc` 指令總派發函式）裡 5 處重複用 `result` 的地方各自
+     改名：`/coc create` 的 `allocation_result`、`/coc away`／`/coc back` 的 `away_result`／
+     `back_result`、`/coc combat next`／`/coc combat damage` 的 `turn_result`／`damage_result`。
+- **實測過**：
+  - `import app.keeper`／`app.commands` 確認可正常載入。
+  - Mypy 重新對 `app/keeper.py`／`app/commands.py` 跑過：改名前「All conditional function variants
+    must have identical signatures」（14 處）、`SanityCheckResult`／`SkillCheckResult`／
+    `_AwayStateResult` 相關的型別衝突（近 30 處），改名後全部歸零；補上 `@overload` 後，改名當下
+    多暴露出的「`_StateMutation` object is not iterable」（4 處）也歸零。剩下的錯誤（`Character |
+    None`／`Any | None` 的 Optional 窄化噪音）跟改動前後數量一致，確認沒有被這次改動影響，維持先前
+    決定的「先不處理」範圍。
+  - 真實物件呼叫每一個被改名的分支（不是只看型別檢查過關就算數）：`keeper._execute_tool` 直接呼叫
+    `add_carried_item`（含重複加同一物品觸發 `should_save=False` 的分支）、`remove_carried_item`、
+    `add_status_tag`、`remove_status_tag`、`skill_check`、`sanity_check`、`offer_check_choice`、
+    `adjust_character`、`roll_dice`、`roll_impaling_damage`、`npc_skill_check`、
+    `start_combat`／`add_npc_to_combat`／`advance_combat_turn`／`damage_combatant`／`end_combat`
+    全部組合，確認回傳值跟改動前的預期完全一致。
+  - 端到端測試（走 `commands.handle_check_command`／`handle_text_message` 完整路徑，不是只測內部
+    函式）：`/coc check`（觸發理智檢定 `sanity_result`）、`/coc check 偵查`（觸發技能檢定
+    `skill_result`）、`/coc away`／`/coc back`（`away_result`／`back_result`）、`/coc combat
+    next`／`/coc combat damage`（`turn_result`／`damage_result`）全部跑過，回覆內容正確。
+  - 重新跑一次 Bandit 確認 `B110`／`B324` 仍然是 0（這次改動完全沒碰那兩類，純粹確認沒有互相干擾）。
+  - 這個 worktree 用自己獨立的本機 DB，測試用的 key 全部用 `db.delete_json` 清乾淨，過程中正式環境
+    資料庫完全沒被動到。
+### 82. 修掉 PR #17 測試套件的卡死問題：測試 fixture 漏設 `game_started=True`
 
 - **這個改動怎麼來的**：PR #18（靜態分析修復分支）合併 main 後，跑了一次 main 既有的測試套件驗證合併
   沒弄壞東西，發現 `tests.test_kp_assistant_v2` 有 3 個測試失敗（1 個 `assertEqual` 失敗、2 個
