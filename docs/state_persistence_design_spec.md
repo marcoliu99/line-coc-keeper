@@ -3,7 +3,10 @@
 > 本文只處理**保存機制**本身：資料存在哪裡、什麼時機寫入、怎麼備份、怎麼還原、格式怎麼加版號。
 > 「角色卡欄位長什麼樣子」「NPC 能力/冷卻怎麼設計」這類**資料模型**內容不在本文範圍——那是
 > `docs/combat_design_spec.md`（另一支分支）在處理的事，本文假設那份模型無論最後長怎樣，都會
-> 透過現有的 `GroupState.to_dict()`/`from_dict()` 走同一條保存路徑，本文不重複定義任何欄位。
+> 透過現有的 `GroupState.to_dict()`/`from_dict()` 走同一條保存路徑，不重複定義 NPC／戰鬥相關
+> 欄位。唯一例外是「場景摘要」一節新增的 `established_facts`／`known_clues`／
+> `consumed_or_removed_items` 三個 `GroupState` 欄位——這是保存機制本身為了不必呼叫額外 LLM
+> 才需要的資料，見該節「資料來源」小節的說明。
 
 ## 目標
 
@@ -28,10 +31,16 @@
   取代舊場景整段記錄反覆帶入 prompt 的做法；`public`／`private` 分區，機密資訊明確標示不可
   公開。
 - `/coc checkpoint`、`/coc checkpoints`、`/coc rollback`、`/coc digest` 等 KP 專用指令。
+- 為了讓場景摘要不必呼叫額外 LLM，新增 `GroupState.established_facts`／`known_clues`／
+  `consumed_or_removed_items` 三個欄位與對應的 `record_established_fact`／`record_clue` 工具
+  （見「場景摘要」一節「資料來源」小節）——這三個欄位是本文自己的保存機制需要，不是在幫
+  `docs/combat_design_spec.md` 定義 NPC／戰鬥資料模型，兩者範圍仍然分開。
 
 本期不包含：
 
-- 重新定義 `GroupState`/`Character`/`Combatant` 的欄位內容（見上方範圍聲明）。
+- 重新定義 `Character`/`Combatant`（NPC 能力、護甲、攻擊表等）的欄位內容——那是
+  `docs/combat_design_spec.md` 的範圍；本文只在 `GroupState` 上新增跟保存機制直接相關的三個
+  欄位（見上）。
 - 多主機資料庫複寫／高可用叢集（HA）——「固定伺服器」在本文裡指**一台**長期執行的機器，
   不是分散式部署。
 - 雲端物件儲存（S3 等）——本期只處理本機磁碟或同一台固定伺服器上的另一個路徑；之後真的要換
@@ -89,11 +98,13 @@ _run_post_turn_maintenance_after_output   ← 既有掛勾，每輪後都跑一�
  （LLM 生成散文摘要）        │                  db.backup_now("scheduled")
         +                   ▼                         │
  Memory RAG 索引     app/scene_digest.py               ▼
-                     讀 scene_digests 最新列    coc_bot-{時間戳}-scheduled.db
-                     + 這輪新增的事實                   │
-                            │                          ▼
-                     累積欄位聯集／                清掉超過 BACKUP_KEEP_COUNT
-                     現狀欄位取代                   的舊備份檔
+                     原樣讀取 GroupState 當下  coc_bot-{時間戳}-scheduled.db
+                     所有相關欄位（不需要跟                │
+                     前一列比對／不呼叫 LLM——              ▼
+                     累積早在 record_established_   清掉超過 BACKUP_KEEP_COUNT
+                     _fact／record_clue／             的舊備份檔
+                     remove_carried_item 這些
+                     工具呼叫當下就完成了）
                             │
                             ▼
                   scene_digests 新增一列
@@ -286,6 +297,66 @@ value 內容：
 進 prompt 就能維持敘事一致——跟 `campaign_summary` 是同一種「不能讓 prompt 無限變長，但又不能
 忘記重要事實」的精神，但一個是敘事散文、一個是結構化事實，兩者並存、互補，不是互相取代。
 
+### 效能：絕不擋在玩家看到回覆的路徑上
+
+這一節每一步都設計成**不需要額外呼叫 LLM**（見下面「資料來源」），純粹是讀 `GroupState` 既有
+欄位＋一次 SQLite 寫入，成本跟現有每輪都會做一次的 `save_state()` 同等級——即使這樣，建立摘要
+的時機仍然掛在 `_run_post_turn_maintenance_after_output` 這個既有的**背景 fire-and-forget**
+掛勾上（跟現有 `campaign_summary`／Memory RAG 維護完全同一個機制），不是掛在「產生回覆」那條
+路徑上：回覆已經送出去給玩家／KP 之後，這個掛勾才開始跑。也就是說，就算場景摘要的建立邏輯之
+後真的需要變重（例如之後真的要接一次 LLM 摘要），也不會讓使用者多等一秒——這是這個機制的硬性
+設計原則，不是「目前剛好不需要 LLM 所以碰巧不影響速度」，是刻意選在這個掛勾上、刻意不做任何
+同步阻塞式呼叫。
+
+### 資料來源：主動記錄工具，不呼叫額外 LLM
+
+`established_facts`（已確定的劇情事實）與 `known_clues`（已取得的線索）這兩類資料，
+`GroupState` 目前沒有對應欄位——需要先解決「這兩個欄位的內容從哪裡來」，才能真的做出場景摘要。
+
+**不採用**：讓場景摘要建立時額外呼叫一次 LLM，讀最近幾輪 log、摘要出「這場新出現了什麼線索／
+事實」（`campaign_summary` 的 `summarize_log_chunk` 就是這種做法）。會多一次 LLM 呼叫成本，即使
+掛在背景維護任務上不影響玩家體感速度，也是不必要的額外開銷與额外的失敗點。
+
+**採用**：比照 `keeper.TOOLS` 現有每一個工具（`skill_check`／`adjust_character`／
+`add_carried_item`……）的做法，新增兩個一樣走 `_mutate_and_save_state` 鎖機制、純 Python、
+不呼叫 LLM 的工具：
+
+```python
+{
+    "name": "record_established_fact",
+    "description": "劇情裡有件事變成確定的事實時（不是猜測，是已經證實/發生）呼叫這個工具記下來，"
+                    "之後場景摘要與 KP 助手都會參考這份清單，避免同一件事前後矛盾。",
+    "input_schema": {"type": "object", "properties": {"fact": {"type": "string"}}, "required": ["fact"]},
+},
+{
+    "name": "record_clue",
+    "description": "調查員實際取得一條線索時呼叫這個工具記下來（不是每一句對話都要記，只記"
+                    "真正推進案情、之後可能被回頭引用的線索）。",
+    "input_schema": {"type": "object", "properties": {"clue": {"type": "string"}}, "required": ["clue"]},
+},
+```
+
+`_execute_tool` 的實作只是把字串 append 進 `GroupState.established_facts`／`known_clues`
+（完全重複的字串不重複加入），跟其他工具一樣經過 `_mutate_and_save_state`——這代表這兩個欄位
+**從呼叫的那一刻起就已經是持久化的**，不是等到場景摘要建立時才第一次寫進去。`app/services/
+prompt_config.py` 的 `EXECUTOR_INSTRUCTION` 補一句提醒 Executor「劇情揭露確定事實或線索時記得
+呼叫這兩個工具」，比照現有工具使用規則的寫法。
+
+`consumed_or_removed_items` 不需要新工具——現有 `remove_carried_item` 工具的實作額外多一行，
+把移除的物品名稱也 append 進 `GroupState.consumed_or_removed_items`（同一次 `_mutate_and_
+save_state` 呼叫裡順手做，不是另一次寫入），對呼叫端（Executor／KP 助手）完全透明，不需要
+額外決定「這次要不要記錄」。
+
+有了這三個持續累積、由工具直接維護的 `GroupState` 欄位之後，場景摘要建立時**只是原樣讀取**
+這些欄位的當下內容，不需要在建立摘要的當下做任何「跟上一份摘要比對、算聯集」的邏輯——聯集這件
+事已經在每次工具呼叫時，透過「已存在的事實不重複加入」自然達成了。這比原本設計的「建立新列時
+跟前一列做聯集」更簡單，也把「這個欄位到底何時更新」的答案從「不確定，反正建摘要時處理」變成
+「工具被呼叫的當下就更新」，更符合這個專案「工具呼叫是唯一改動狀態的地方」的既有慣例。
+
+`npc_abilities.*.used_this_scene` 不在本文新增欄位範圍內（見文件開頭的範圍聲明）——這個欄位
+最終長怎樣、怎麼追蹤由 `docs/combat_design_spec.md` 決定；場景摘要建立時原樣讀取那份資料當下
+的內容即可，讀不到就留空，不影響本節其他欄位的運作。
+
 ### 觸發時機
 
 1. **章節推進**：`advance_scenario_chapter` 工具呼叫成功時（見
@@ -338,11 +409,16 @@ value 內容：
   慣例（`public`／`kp_only` 兩級）——這裡用區塊分組取代逐欄位標記，因為摘要注定是要整塊塞進
   Keeper 的 prompt 給它讀的，用同一個機制（明確的區塊邊界 + 一句「不可公開」的提示文字）比
   逐欄位判斷更不容易在組 prompt 時漏標。
-- 累積類欄位（`established_facts`／`known_clues`／`consumed_or_removed_items`／
-  `npc_abilities.*.used_this_scene`）用**合併**語意更新：新摘要跟上一份摘要的同名欄位做集合
-  聯集（去重），不是整份覆蓋——不然每次摘要都會忘記更早之前已知的線索。
-- 現狀類欄位（`characters.*.location/hp/san/...`、`combat.*`、`recent_checkpoints`）用**取代**
-  語意更新：永遠反映摘要當下的最新數值，不保留歷史值。
+- `established_facts`／`known_clues`／`consumed_or_removed_items` 不需要在建立摘要時做任何
+  合併運算——這三個欄位本身就是 `GroupState` 上持續累積、由「資料來源」小節那兩個新工具（與
+  `remove_carried_item` 的既有工具擴充）直接維護的欄位，場景摘要只是**原樣讀取當下內容**存
+  進這一列，累積邏輯已經在工具呼叫當下完成了。
+- `npc_abilities.*.used_this_scene` 同樣是原樣讀取（這個欄位本身怎麼追蹤由
+  `docs/combat_design_spec.md` 決定，本文不重複定義）。
+- 現狀類欄位（`characters.*.location/hp/san/...`、`combat.*`、`recent_checkpoints`）也是原樣
+  讀取 `GroupState` 當下的值——摘要裡所有欄位其實都是「讀取，不是計算」，這也是這一節前面
+  「效能：絕不擋在玩家看到回覆的路徑上」能成立的原因：沒有任何欄位需要在建立摘要當下做額外
+  的資料處理或 LLM 呼叫。
 
 ### 儲存位置：每場歷史各自保留一筆（已確認）
 
@@ -357,11 +433,10 @@ key 格式：`{group_id}:{digest_id}`（`digest_id` 產生方式跟 `checkpoint_
 隨機字尾）。每次觸發（章節推進或回合數到門檻）都是**新增一列**，不是覆寫舊的——這樣每個場景
 的摘要都各自留存，之後可以用 `/coc digests` 翻查任何一個舊場景當時的狀態。
 
-累積類欄位（`established_facts`／`known_clues`／`consumed_or_removed_items`／
-`npc_abilities.*.used_this_scene`）在**產生新的一列時**，用「上一筆摘要的累積內容」聯集「這個
-場景新發生的事」算出來，然後整份存進新的一列——所以每一列本身都是「到這個時間點為止」的完整
-快照，不需要在讀取時把多列拼起來，`/coc digest`／prompt 組裝只要讀最新一列即可拿到完整最新
-狀態，`/coc digests <ID>` 則可以單獨看某一場的當時切面。
+因為累積邏輯已經搬到「資料來源」小節那兩個工具（與 `remove_carried_item` 的擴充）身上，建立
+新的一列時不需要再跟前一列做任何聯集運算——直接讀 `GroupState` 當下所有相關欄位的值，整份
+存進新的一列即可，每一列本身自然就是「到這個時間點為止」的完整快照。`/coc digest`／prompt
+組裝只要讀最新一列即可拿到完整最新狀態，`/coc digests <ID>` 則可以單獨看某一場的當時切面。
 
 跟 `state_checkpoints` 不同的是：`scene_digests` **不做數量上限淘汰**——`state_checkpoints`
 存在的目的是「最近可回溯的幾個點」，太舊的意義不大所以會自然淘汰；`scene_digests` 存在的目的
@@ -415,8 +490,8 @@ Agent 階段各自需要的提示詞片段。
 | `app/combat.py` | 呼叫 checkpoint 模組的「自動建立」入口（`start_combat` 觸發） | checkpoint 本身怎麼存 |
 | `app/commands/handlers/system.py` | `/coc checkpoint*`／`/coc rollback`／`/coc digest` 指令解析與權限檢查 | checkpoint／場景摘要的實際存取邏輯 |
 | 背景排程（`app/main.py`／`app/discord_bot.py`） | 定期呼叫 `db.backup_now()`、清舊備份 | 不涉及 per-group checkpoint（那是覆寫同一個 `.db` 內的一張表，不是另外的檔案） |
-| `app/keeper.py`（`_run_post_turn_maintenance_after_output` 掛勾／`_build_dynamic_prompt`） | 判斷場景摘要觸發時機、呼叫摘要合併邏輯、把 `scene_digest` 的 `public`／`private` 組進動態 prompt | 摘要本身怎麼從 `GroupState` 抽取／合併（見下一列） |
-| 新模組（`app/scene_digest.py`） | 從 `GroupState` 抽取欄位、跟 `scene_digests` 表裡該 group **最新一列**做合併（取代 vs 聯集語意）、寫入新的一列、提供讀最新／讀指定 ID／列出歷史的查詢函式 | 呼叫時機（由 `keeper.py` 決定）、prompt 組裝格式（由 `keeper.py` 決定） |
+| `app/keeper.py`（`_run_post_turn_maintenance_after_output` 掛勾／`_build_dynamic_prompt`） | 判斷場景摘要觸發時機、呼叫摘要建立邏輯、把最新一列的 `public`／`private` 組進動態 prompt；`_execute_tool` 新增 `record_established_fact`／`record_clue` 實作，並擴充 `remove_carried_item` 一併記錄 `consumed_or_removed_items` | 摘要本身怎麼從 `GroupState` 抽取、寫進哪張表（見下一列） |
+| 新模組（`app/scene_digest.py`） | 原樣讀取 `GroupState` 相關欄位（含 `established_facts`／`known_clues`／`consumed_or_removed_items`）、寫入 `scene_digests` 新的一列、提供讀最新／讀指定 ID／列出歷史的查詢函式 | 呼叫時機（由 `keeper.py` 決定）、prompt 組裝格式（由 `keeper.py` 決定）、`established_facts` 等欄位的值從何而來（由工具呼叫決定，不是這個模組算的） |
 
 ## 測試驗收
 
@@ -436,10 +511,8 @@ Agent 階段各自需要的提示詞片段。
    不會誤報。
 9. 兩個平台入口（LINE／Discord）各自的背景備份迴圈都能正常啟動與停止，不互相阻塞或重複建立
    排程任務。
-10. `advance_scenario_chapter` 觸發後，`scene_digests` 新增一列；累積類欄位（線索/事實/已用
-    NPC 能力）跟前一列做聯集後存進新的一列，不遺失舊場景已知的內容；現狀類欄位（位置/HP/SAN/
-    戰鬥）正確反映最新值，不殘留舊場景數值；**舊的那一列本身不被覆寫或刪除**，`/coc digest
-    <舊 ID>` 仍能讀到當時的切面。
+10. `advance_scenario_chapter` 觸發後，`scene_digests` 新增一列，內容正確反映 `GroupState`
+    當下的值；**舊的那一列本身不被覆寫或刪除**，`/coc digest <舊 ID>` 仍能讀到當時的切面。
 11. 達到 `SCENE_DIGEST_TURN_INTERVAL` 時即使沒有章節推進也會觸發一次摘要（新增一列）；同一輪
     不會被兩個觸發條件（章節推進＋回合數）重複觸發兩次（新增兩列）。
 12. `scene_digest` 的 `private` 內容只出現在餵給 Keeper LLM 的 prompt 裡，不會透過
@@ -447,6 +520,14 @@ Agent 階段各自需要的提示詞片段。
 13. `scene_digests` 不受 `MAX_CHECKPOINTS_PER_GROUP` 那套數量上限規則影響——即使歷史列數超過
     `state_checkpoints` 的上限值，也不會被自動清掉；只有 `/coc digest clean <ID>` 才會刪除。
 14. `/coc digests` 依建立時間列出全部歷史列（含 ID／`scene_label`／建立時間），順序穩定可預期。
+15. `record_established_fact`／`record_clue` 呼叫後，`GroupState.established_facts`／
+    `known_clues` 立即（不等場景摘要觸發）就能讀到新內容；重複呼叫同樣的字串不會產生重複項。
+16. `remove_carried_item` 呼叫後，除了原有的移除角色物品行為不變，`GroupState.
+    consumed_or_removed_items` 也同時多一筆記錄，兩者在同一次 `_mutate_and_save_state` 呼叫裡
+    一起落地，不會只有其中一個成功。
+17. 建立場景摘要的過程中，全程沒有任何一次 LLM provider 呼叫（用 mock／spy 驗證 `run_
+    conversation` 之類的呼叫次數是 0）——這是「效能：絕不擋在玩家看到回覆的路徑上」小節的
+    直接可驗證版本，不是只在文件裡宣稱。
 
 ## 實作順序
 
@@ -461,11 +542,17 @@ Agent 階段各自需要的提示詞片段。
 6. `app/main.py`／`app/discord_bot.py`：啟動背景定期備份迴圈。
 7. `GroupState.to_dict()`：加 `schema_version` 欄位。
 8. `docs/setup.md`：補上换正式主機時 `DB_PATH`／`DATA_DIR`／`BACKUP_DIR` 都要指到持久路徑的提醒。
-9. `app/db.py`：新增 `scene_digests` 表（跟 `state_checkpoints` 同結構，不設數量上限）；新模組
-   `app/scene_digest.py`：從 `GroupState` 抽取欄位、跟最新一列合併（取代 vs 聯集）、寫入新一列、
-   讀最新／讀指定 ID／列出歷史。
-10. `app/keeper.py`：`_run_post_turn_maintenance_after_output` 掛勾判斷觸發時機（章節推進或
+9. `app/models.py`：`GroupState` 新增 `established_facts`／`known_clues`／
+   `consumed_or_removed_items` 三個欄位（含 `to_dict`/`from_dict`）。
+10. `app/keeper.py`：`TOOLS` 新增 `record_established_fact`／`record_clue`，`_execute_tool`
+    實作（純 append＋去重，經 `_mutate_and_save_state`）；擴充既有 `remove_carried_item` 的
+    實作，同一次呼叫裡一併記錄 `consumed_or_removed_items`；`app/services/prompt_config.py`
+    的 `EXECUTOR_INSTRUCTION` 補上何時該呼叫這兩個新工具的提示。
+11. `app/db.py`：新增 `scene_digests` 表（跟 `state_checkpoints` 同結構，不設數量上限）；新模組
+    `app/scene_digest.py`：原樣讀取 `GroupState` 相關欄位、寫入新一列、提供讀最新／讀指定 ID／
+    列出歷史的查詢函式（此時不需要任何合併邏輯，見上面第 9-10 步已經把累積邏輯做在工具本身）。
+12. `app/keeper.py`：`_run_post_turn_maintenance_after_output` 掛勾判斷觸發時機（章節推進或
     `SCENE_DIGEST_TURN_INTERVAL`）、`_build_dynamic_prompt` 讀最新一列併入 `public`／`private`
     區塊。
-11. `app/commands/handlers/system.py`：`/coc digest`／`/coc digests`／`/coc digest <ID>`／
+13. `app/commands/handlers/system.py`：`/coc digest`／`/coc digests`／`/coc digest <ID>`／
     `/coc digest clean <ID>` 指令。
