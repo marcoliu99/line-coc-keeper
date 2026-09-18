@@ -60,15 +60,26 @@ class StateStorePatch:
 
 
 class FakeProvider:
-    def __init__(self, final_text: str = "AI OOC response") -> None:
+    def __init__(
+        self,
+        final_text: str = "AI OOC response",
+        tool_calls: list[tuple[str, dict]] | None = None,
+        response_id: str = "fake-response-id",
+    ) -> None:
         self.final_text = final_text
+        self.tool_calls = tool_calls or []
+        self.response_id = response_id
         self.calls = []
+        self.tool_results = []
 
     def run_conversation(self, *args, **kwargs):
         self.calls.append((args, kwargs))
+        tool_callback = args[5]
+        for name, tool_input in self.tool_calls:
+            self.tool_results.append(tool_callback(name, tool_input))
         on_response_id = kwargs.get("on_response_id")
         if on_response_id:
-            on_response_id("fake-response-id")
+            on_response_id(self.response_id)
         return self.final_text
 
 
@@ -87,6 +98,10 @@ class GateSpy:
                 return False
 
         return _GateContext()
+
+
+def tool_by_name(tools: list[dict], name: str) -> dict:
+    return next(tool for tool in tools if tool["name"] == name)
 
 
 class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
@@ -129,7 +144,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             {"role": "kp_assistant" if i % 2 == 0 else "assistant", "content": f"old-{i}"}
             for i in range(20)
         ]
-        fake_provider = FakeProvider("這是新的幕後回答")
+        fake_provider = FakeProvider("這是新的幕後回答", response_id="ooc-response")
         original_provider = keeper._PROVIDERS.get("openai")
         original_llm_provider = keeper.LLM_PROVIDER
 
@@ -163,6 +178,67 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": "請記住這個幕後判斷"})
         self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "這是新的幕後回答"})
         self.assertNotIn("old-0", [entry["content"] for entry in saved.kp_ooc_log])
+        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
+
+    def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
+        state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        state.characters["p1"] = Character(name="Marco", owner_id="p1")
+        state.kp_ooc_log = [{"role": "kp_assistant", "content": "old ooc"}]
+        message_text = "Marco 把屍體的頭扭斷，血噴了一臉，做 SAN 0/1d4。"
+        fake_provider = FakeProvider(
+            "Marco 滿臉是血，需要做理智檢定。",
+            tool_calls=[
+                ("sanity_check", {"investigator": "Marco", "loss_success": "0", "loss_failure": "1d4"})
+            ],
+            response_id="canonical-response",
+        )
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                final_text, private_messages, image_requests = keeper.run_turn(
+                    state,
+                    user_id="kp",
+                    speaker_name="KP",
+                    message_text=message_text,
+                    speaker_role="kp_assistant",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+            saved = store.get("g")
+
+        self.assertEqual(final_text, "Marco 滿臉是血，需要做理智檢定。")
+        self.assertEqual(private_messages, [])
+        self.assertEqual(image_requests, [])
+        self.assertEqual(
+            saved.pending_checks["p1"],
+            {"type": "sanity", "loss_success": "0", "loss_failure": "1d4"},
+        )
+        self.assertEqual(len(saved.log), 2)
+        self.assertEqual(saved.log[0]["role"], "user")
+        self.assertEqual(saved.log[1], {"role": "assistant", "content": "Marco 滿臉是血，需要做理智檢定。"})
+        canonical_message = saved.log[0]["content"]
+        self.assertIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
+        self.assertNotIn("[KP ASSISTANT / OOC HOST INSTRUCTION]", canonical_message)
+        self.assertIn(message_text, canonical_message)
+        self.assertIn("sanity_check", canonical_message)
+        self.assertIn('"investigator": "Marco"', canonical_message)
+        self.assertIn('"loss_failure": "1d4"', canonical_message)
+        self.assertIn('"loss_success": "0"', canonical_message)
+        self.assertIn('"ok": true', canonical_message)
+        self.assertIn('"pending": true', canonical_message)
+        self.assertEqual(saved.kp_ooc_log, [{"role": "kp_assistant", "content": "old ooc"}])
+        self.assertEqual(saved.openai_previous_response_id, "canonical-response")
+        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
 
     async def test_kp_ooc_lifecycle_cleanup_commands(self):
         async def noop_dm(*args):
@@ -267,10 +343,13 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             "get_combat_status",
             "search_memory",
             "search_scenario",
+            "roll_dice",
             "skill_check",
             "sanity_check",
             "offer_check_choice",
             "npc_skill_check",
+            "roll_weapon_damage",
+            "roll_impaling_damage",
         }
         self.assertTrue(expected_allowed.issubset(tool_names))
         self.assertFalse({"adjust_character", "adjust_ammo", "set_skill", "damage_combatant", "start_combat"} & tool_names)
@@ -304,6 +383,380 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertFalse(rejected["ok"])
             self.assertIn("已允許的查詢與主持流程工具", rejected["error"])
+
+    def test_roll_dice_creates_canon_only_for_game_resolution_context(self):
+        self.assertTrue(keeper._kp_tool_result_creates_canon(
+            "roll_dice",
+            {
+                "expression": "1d3",
+                "purpose": "碎玻璃傷害",
+                "roll_context": "game_resolution",
+            },
+            {"ok": True},
+        ))
+        self.assertFalse(keeper._kp_tool_result_creates_canon(
+            "roll_dice",
+            {
+                "expression": "1d6",
+                "purpose": "決定下一幕使用方案 A 還是 B",
+                "roll_context": "ooc_randomizer",
+            },
+            {"ok": True},
+        ))
+        self.assertFalse(keeper._kp_tool_result_creates_canon(
+            "roll_dice",
+            {"expression": "1d3", "purpose": "碎玻璃傷害"},
+            {"ok": True},
+        ))
+        self.assertFalse(keeper._kp_tool_result_creates_canon(
+            "roll_dice",
+            {
+                "expression": "1d3",
+                "purpose": "碎玻璃傷害",
+                "roll_context": "game_resolution",
+            },
+            {"ok": False},
+        ))
+
+    def test_global_roll_dice_schema_does_not_expose_roll_context(self):
+        roll_dice_tool = tool_by_name(keeper.TOOLS, "roll_dice")
+        properties = roll_dice_tool["input_schema"]["properties"]
+        self.assertNotIn("roll_context", properties)
+        self.assertIn("purpose", properties)
+        self.assertEqual(roll_dice_tool["input_schema"]["required"], ["expression"])
+
+    def test_ordinary_speaker_roll_dice_schema_does_not_expose_roll_context(self):
+        roll_dice_tool = tool_by_name(keeper._tools_for_speaker_role("player"), "roll_dice")
+        self.assertNotIn("roll_context", roll_dice_tool["input_schema"]["properties"])
+
+    def test_kp_roll_dice_tool_definition_adds_context_without_global_mutation(self):
+        global_roll_dice_tool = tool_by_name(keeper.TOOLS, "roll_dice")
+        kp_roll_dice_tool = keeper._tool_definition_for_kp_assistant(global_roll_dice_tool)
+
+        roll_context = kp_roll_dice_tool["input_schema"]["properties"]["roll_context"]
+        self.assertEqual(roll_context["enum"], ["game_resolution", "ooc_randomizer"])
+        self.assertEqual(kp_roll_dice_tool["input_schema"]["required"], ["expression", "roll_context"])
+        self.assertNotIn("roll_context", global_roll_dice_tool["input_schema"]["properties"])
+        self.assertEqual(global_roll_dice_tool["input_schema"]["required"], ["expression"])
+
+    def test_kp_assistant_roll_dice_schema_requires_context(self):
+        roll_dice_tool = tool_by_name(keeper._tools_for_speaker_role("kp_assistant"), "roll_dice")
+        properties = roll_dice_tool["input_schema"]["properties"]
+        self.assertIn("roll_context", properties)
+        self.assertEqual(properties["roll_context"]["enum"], ["game_resolution", "ooc_randomizer"])
+        self.assertEqual(roll_dice_tool["input_schema"]["required"], ["expression", "roll_context"])
+
+    def test_kp_roll_dice_context_validation(self):
+        state = GroupState(group_id="g")
+        missing_context = keeper._execute_tool(
+            state,
+            "roll_dice",
+            {"expression": "1d6"},
+            [],
+            [],
+            speaker_role="kp_assistant",
+        )
+        self.assertFalse(missing_context["ok"])
+        self.assertIn("roll_context", missing_context["error"])
+        self.assertIn("game_resolution", missing_context["error"])
+        self.assertIn("ooc_randomizer", missing_context["error"])
+
+        invalid_context = keeper._execute_tool(
+            state,
+            "roll_dice",
+            {"expression": "1d6", "roll_context": "damage"},
+            [],
+            [],
+            speaker_role="kp_assistant",
+        )
+        self.assertFalse(invalid_context["ok"])
+        self.assertIn("roll_context", invalid_context["error"])
+        self.assertIn("game_resolution", invalid_context["error"])
+        self.assertIn("ooc_randomizer", invalid_context["error"])
+
+        valid_game_resolution = keeper._execute_tool(
+            state,
+            "roll_dice",
+            {"expression": "1d6", "roll_context": "game_resolution"},
+            [],
+            [],
+            speaker_role="kp_assistant",
+        )
+        self.assertTrue(valid_game_resolution["ok"])
+
+        valid_ooc_randomizer = keeper._execute_tool(
+            state,
+            "roll_dice",
+            {"expression": "1d6", "roll_context": "ooc_randomizer"},
+            [],
+            [],
+            speaker_role="kp_assistant",
+        )
+        self.assertTrue(valid_ooc_randomizer["ok"])
+
+    def test_player_roll_dice_does_not_require_roll_context(self):
+        result = keeper._execute_tool(
+            GroupState(group_id="g"),
+            "roll_dice",
+            {"expression": "1d6"},
+            [],
+            [],
+            speaker_role="player",
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["expression"], "1d6")
+        self.assertIn("rolls", result)
+        self.assertIn("modifier", result)
+        self.assertIn("total", result)
+
+    def test_kp_roll_dice_game_resolution_creates_canonical_log(self):
+        state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        message_text = "碎玻璃割傷 Marco，骰 1d3 傷害。"
+        fake_provider = FakeProvider(
+            "碎玻璃造成的傷害已確定。",
+            tool_calls=[(
+                "roll_dice",
+                {
+                    "expression": "1d3",
+                    "purpose": "碎玻璃割傷 Marco 的傷害",
+                    "roll_context": "game_resolution",
+                },
+            )],
+            response_id="game-resolution-roll-response",
+        )
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(
+                    state,
+                    user_id="kp",
+                    speaker_name="KP",
+                    message_text=message_text,
+                    speaker_role="kp_assistant",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+            saved = store.get("g")
+
+        self.assertTrue(fake_provider.tool_results[0]["ok"])
+        self.assertEqual(fake_provider.tool_results[0]["expression"], "1d3")
+        self.assertIn("rolls", fake_provider.tool_results[0])
+        self.assertIn("modifier", fake_provider.tool_results[0])
+        self.assertIn("total", fake_provider.tool_results[0])
+        self.assertEqual(len(saved.log), 2)
+        self.assertEqual(saved.kp_ooc_log, [])
+        canonical_message = saved.log[0]["content"]
+        self.assertIn(message_text, canonical_message)
+        self.assertIn("roll_dice", canonical_message)
+        self.assertIn('"expression": "1d3"', canonical_message)
+        self.assertIn('"purpose": "碎玻璃割傷 Marco 的傷害"', canonical_message)
+        self.assertIn('"roll_context": "game_resolution"', canonical_message)
+        self.assertIn('"rolls"', canonical_message)
+        self.assertIn('"total"', canonical_message)
+        self.assertEqual(saved.openai_previous_response_id, "game-resolution-roll-response")
+        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
+
+    def test_kp_roll_dice_ooc_randomizer_stays_in_ooc_log(self):
+        state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        message_text = "我幕後骰 1d6，決定下一幕用 NPC A 還是 NPC B。"
+        fake_provider = FakeProvider(
+            "幕後隨機結果已決定。",
+            tool_calls=[(
+                "roll_dice",
+                {
+                    "expression": "1d6",
+                    "purpose": "幕後決定下一幕使用哪個 NPC",
+                    "roll_context": "ooc_randomizer",
+                },
+            )],
+            response_id="ooc-randomizer-roll-response",
+        )
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(
+                    state,
+                    user_id="kp",
+                    speaker_name="KP",
+                    message_text=message_text,
+                    speaker_role="kp_assistant",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+            saved = store.get("g")
+
+        self.assertTrue(fake_provider.tool_results[0]["ok"])
+        self.assertEqual(fake_provider.tool_results[0]["expression"], "1d6")
+        self.assertIn("rolls", fake_provider.tool_results[0])
+        self.assertIn("total", fake_provider.tool_results[0])
+        self.assertEqual(saved.log, [])
+        self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": message_text})
+        self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "幕後隨機結果已決定。"})
+        self.assertEqual(saved.openai_previous_response_id, "formal-chain")
+        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
+
+    def test_kp_roll_weapon_damage_creates_canonical_log(self):
+        state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        state.characters["p1"] = Character(name="Marco", owner_id="p1", damage_bonus="+1d4")
+        message_text = "Marco 的攻擊命中，骰他的 1d8 武器傷害。"
+        fake_provider = FakeProvider(
+            "Marco 的武器傷害已確定。",
+            tool_calls=[("roll_weapon_damage", {"investigator": "Marco", "weapon_damage": "1d8"})],
+            response_id="weapon-damage-response",
+        )
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(
+                    state,
+                    user_id="kp",
+                    speaker_name="KP",
+                    message_text=message_text,
+                    speaker_role="kp_assistant",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+            saved = store.get("g")
+
+        self.assertTrue(fake_provider.tool_results[0]["ok"])
+        self.assertEqual(fake_provider.tool_results[0]["investigator"], "Marco")
+        self.assertEqual(fake_provider.tool_results[0]["damage_bonus"], "+1d4")
+        self.assertIn("weapon_damage_roll", fake_provider.tool_results[0])
+        self.assertIn("damage_bonus_roll", fake_provider.tool_results[0])
+        self.assertIn("total", fake_provider.tool_results[0])
+        self.assertEqual(len(saved.log), 2)
+        self.assertEqual(saved.kp_ooc_log, [])
+        canonical_message = saved.log[0]["content"]
+        self.assertIn(message_text, canonical_message)
+        self.assertIn("roll_weapon_damage", canonical_message)
+        self.assertIn('"investigator": "Marco"', canonical_message)
+        self.assertIn('"weapon_damage": "1d8"', canonical_message)
+        self.assertIn('"weapon_damage_roll"', canonical_message)
+        self.assertIn('"damage_bonus": "+1d4"', canonical_message)
+        self.assertIn('"total"', canonical_message)
+        self.assertEqual(saved.openai_previous_response_id, "weapon-damage-response")
+
+    def test_kp_roll_impaling_damage_creates_canonical_log(self):
+        state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        message_text = "這次攻擊是極限成功，計算 1d8 穿刺傷害，加值 1d4。"
+        fake_provider = FakeProvider(
+            "極限成功傷害已確定。",
+            tool_calls=[(
+                "roll_impaling_damage",
+                {"weapon_damage": "1d8", "damage_bonus": "1d4", "impaling": True},
+            )],
+            response_id="impaling-damage-response",
+        )
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(
+                    state,
+                    user_id="kp",
+                    speaker_name="KP",
+                    message_text=message_text,
+                    speaker_role="kp_assistant",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+            saved = store.get("g")
+
+        self.assertTrue(fake_provider.tool_results[0]["ok"])
+        self.assertTrue(fake_provider.tool_results[0]["impaling"])
+        self.assertIn("max_weapon_damage", fake_provider.tool_results[0])
+        self.assertIn("max_damage_bonus", fake_provider.tool_results[0])
+        self.assertIn("reroll_total", fake_provider.tool_results[0])
+        self.assertIn("total", fake_provider.tool_results[0])
+        self.assertEqual(len(saved.log), 2)
+        self.assertEqual(saved.kp_ooc_log, [])
+        canonical_message = saved.log[0]["content"]
+        self.assertIn(message_text, canonical_message)
+        self.assertIn("roll_impaling_damage", canonical_message)
+        self.assertIn('"weapon_damage": "1d8"', canonical_message)
+        self.assertIn('"damage_bonus": "1d4"', canonical_message)
+        self.assertIn('"impaling": true', canonical_message)
+        self.assertIn('"max_weapon_damage"', canonical_message)
+        self.assertIn('"reroll_total"', canonical_message)
+        self.assertIn('"total"', canonical_message)
+        self.assertEqual(saved.openai_previous_response_id, "impaling-damage-response")
+
+    def test_failed_kp_damage_tool_does_not_create_canon(self):
+        state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        message_text = "不存在的角色攻擊命中，骰 1d8 傷害。"
+        fake_provider = FakeProvider(
+            "找不到角色，無法建立正式傷害結果。",
+            tool_calls=[("roll_weapon_damage", {"investigator": "不存在的角色", "weapon_damage": "1d8"})],
+            response_id="failed-damage-response",
+        )
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(
+                    state,
+                    user_id="kp",
+                    speaker_name="KP",
+                    message_text=message_text,
+                    speaker_role="kp_assistant",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+            saved = store.get("g")
+
+        self.assertFalse(fake_provider.tool_results[0]["ok"])
+        self.assertEqual(saved.log, [])
+        self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": message_text})
+        self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "找不到角色，無法建立正式傷害結果。"})
+        self.assertEqual(saved.openai_previous_response_id, "formal-chain")
 
     def test_san_reproduction_case_uses_kp_context_and_creates_pending_check(self):
         state = GroupState(group_id="g")

@@ -704,6 +704,16 @@ _CHECK_TIER_ZH = {
     "hard": "困難成功", "extreme": "極難成功", "critical": "大成功",
 }
 
+NATURAL_1_BONUS_PROMPT = (
+    "【大成功額外獎勵】\n"
+    "玩家本次 d100 檢定擲出自然 1，取得大成功。除了正常處理這次成功應得到的結果外，"
+    "請根據當前劇本、場景與玩家行動，自行給予一個合理、有限的額外 bonus。\n"
+    "優先考慮：提升資訊品質、提高效率、避免眼前危險、取得位置／情境優勢，"
+    "或其他立即生效且不需要後續追蹤的額外收益。\n"
+    "不要因此跳過核心挑戰、直接揭露尚未應該知道的劇本核心秘密、改寫既有劇本事實，"
+    "或給予需要在未來回合記住與兌現的延後機械效果。"
+)
+
 
 def _tier_zh_for_tier(tier: str, required: str) -> str:
     """Human-readable outcome for one (tier, required_tier) pair, accounting
@@ -724,6 +734,15 @@ def _tier_zh_for_tier(tier: str, required: str) -> str:
 
 def _tier_zh_for_result(r) -> str:
     return _tier_zh_for_tier(r.tier, getattr(r, "required_tier", "regular"))
+
+
+def _natural_1_bonus_prompt_for_result(r: dice.SkillCheckResult) -> str:
+    """Return the Natural 1 bonus prompt only when the original SkillCheckResult.roll is 1.
+
+    This deliberately checks the raw roll instead of tier == "critical", so a
+    later Luck-spend tier upgrade cannot be mistaken for a natural 1.
+    """
+    return NATURAL_1_BONUS_PROMPT if r.roll == 1 else ""
 
 
 @dataclass
@@ -837,6 +856,9 @@ def _build_check_narration(
             f"擲出 {r.roll} → {tier_zh}{luck_note}。這是已經確定的結果，請根據這個結果描述後續發展，"
             f"不要重新判定或改變這個結果。）{opposed_message}{major_wound_message}"
         )
+    natural_1_bonus_prompt = _natural_1_bonus_prompt_for_result(r)
+    if natural_1_bonus_prompt:
+        keeper_message = f"{keeper_message}\n\n{natural_1_bonus_prompt}"
     return roll_line, keeper_message
 
 

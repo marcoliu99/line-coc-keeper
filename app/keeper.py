@@ -7,6 +7,7 @@ which one is active.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
@@ -496,10 +497,32 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "get_combat_status",
     "search_memory",
     "search_scenario",
+    "roll_dice",
     "skill_check",
     "sanity_check",
     "offer_check_choice",
     "npc_skill_check",
+    "roll_weapon_damage",
+    "roll_impaling_damage",
+}
+
+_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
+    "skill_check",
+    "sanity_check",
+    "offer_check_choice",
+    "npc_skill_check",
+    "roll_weapon_damage",
+    "roll_impaling_damage",
+}
+
+_KP_ROLL_DICE_CONTEXT_PROPERTY = {
+    "type": "string",
+    "enum": ["game_resolution", "ooc_randomizer"],
+    "description": (
+        "KP Assistant 使用一般骰子時的主持層用途分類。"
+        "'game_resolution' 表示直接解析正式遊戲事件；"
+        "'ooc_randomizer' 表示只供 KP 幕後隨機決策使用。"
+    ),
 }
 
 _KP_OOC_LOG_MAX_MESSAGES = 20
@@ -537,7 +560,13 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
 7. KP 助手本人不是調查員，所以不要替 KP 助手自己建立角色狀態、要求 KP 助手自己做技能／SAN／Luck／戰鬥檢定、加入戰鬥順位或追蹤地圖位置。
    但是，當 KP 助手明確要求某位調查員、NPC，或符合條件的玩家進行正式遊戲流程時，應對指定對象使用已開放的 deterministic tools 建立流程，不要把主持指令誤解成「KP 本人要擲骰」。
    例如：「請 The Tough Guy 做 SAN 1/1D4」應呼叫 sanity_check；「請 Marco 做偵查」應呼叫 skill_check；「讓他選閃避或反擊」應依正式流程先用 npc_skill_check 取得攻擊方結果，再用 offer_check_choice 讓玩家選擇並擲骰。
-   這只允許你建立合法檢定／對抗流程；不得用自然語言或未開放工具直接覆寫已完成骰點、HP、SAN、Luck、彈藥、物品、地圖位置或戰鬥狀態。
+   一般 deterministic dice resolution 現在可以使用 roll_dice，但每次都必須同時提供 purpose 與 roll_context。purpose 是人類可讀的用途文字，說明這顆骰子實際拿來做什麼；roll_context 只能是機器分類 game_resolution 或 ooc_randomizer，不要自創其他值，也不要把 purpose 當成分類。
+   如果骰子是在決定傷害、正式隨機效果、已經發生事件的隨機結果，或遊戲世界內需要 authoritative randomness 的結果，使用 roll_context="game_resolution"。例如「碎玻璃割傷 Marco，骰 1d3 傷害」應呼叫 roll_dice，expression="1d3"，purpose="碎玻璃割傷 Marco 的傷害"，roll_context="game_resolution"；成功時會觸發 Dice Creates Canon，整個造成這顆骰子的 KP 主持指示會正式寫入世界歷史。
+   如果骰子只是 KP 幕後挑方案、隨機選劇情方向、自己決定要用哪個 NPC 或點子，且不直接構成目前世界事實，使用 roll_context="ooc_randomizer"。例如「我幕後骰 1d6，1–3 用 NPC A，4–6 用 NPC B」應呼叫 roll_dice，expression="1d6"，purpose="幕後決定下一幕使用哪個 NPC"，roll_context="ooc_randomizer"；這顆骰子雖然真的由 deterministic tool 擲出，但不構成遊戲世界事件，不會觸發 Dice Creates Canon，該 KP turn 仍留在 OOC history。
+   正式遊戲事件已確定需要擲普通武器傷害時，可以呼叫 roll_weapon_damage，例如「Marco 開槍命中，骰他的 1d8 武器傷害」；這個工具會依角色 deterministic state 套用該角色的 damage bonus。正式規則已確定要計算極限成功／穿刺類傷害時，可以呼叫 roll_impaling_damage，例如「這次攻擊是極限成功，計算穿刺傷害」。
+   這些傷害工具只產生 authoritative 傷害結果，不代表你可以直接修改 HP；目前 KP Assistant 仍不能使用 adjust_character、damage_combatant 等 mutation tools 直接扣血。
+   當 KP Assistant 成功觸發正式 deterministic check / damage workflow 時，該輪主持指示會成為正式遊戲歷史，而不再只是 OOC 討論。
+   這只允許你建立合法檢定／對抗／傷害流程；不得用自然語言或未開放工具直接覆寫已完成骰點、HP、SAN、Luck、彈藥、物品、地圖位置或戰鬥狀態。
 
 8. 回覆 KP 助手時可以使用正常、直接的主持討論語氣，不需要維持對玩家使用的恐怖小說敘事風格，除非 KP 助手明確要求你產生一段要直接呈現給玩家的敘事。
 
@@ -707,6 +736,22 @@ def _commit_kp_ooc_turn_result(state: GroupState, message_text: str, final_text:
         _sync_state_snapshot(state, latest_state)
 
 
+def _kp_tool_result_creates_canon(tool_name: str, tool_input: dict, result: dict) -> bool:
+    if result.get("ok") is not True:
+        return False
+    if tool_name in _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES:
+        return True
+    if tool_name == "roll_dice":
+        return tool_input.get("roll_context") == "game_resolution"
+    return False
+
+
+def _validate_kp_roll_dice_context(tool_input: dict) -> str | None:
+    if tool_input.get("roll_context") in ("game_resolution", "ooc_randomizer"):
+        return None
+    return 'KP Assistant 使用 roll_dice 時必須明確指定 roll_context 為 "game_resolution" 或 "ooc_randomizer"。'
+
+
 def _persist_memory_maintenance_state(
     group_id: str, campaign_summary: str, dropped_chunk: list[dict[str, str]]
 ) -> None:
@@ -801,6 +846,11 @@ def _execute_tool(
     speaker_role: str = "player",
 ) -> dict:
     try:
+        if speaker_role == "kp_assistant" and name == "roll_dice":
+            error = _validate_kp_roll_dice_context(tool_input)
+            if error:
+                return {"ok": False, "error": error}
+
         if speaker_role == "kp_assistant" and name not in _KP_ASSISTANT_ALLOWED_TOOL_NAMES:
             return {
                 "ok": False,
@@ -1539,11 +1589,56 @@ def _format_turn_message(speaker_name: str, message_text: str, speaker_role: str
     return f"{speaker_name}：{message_text}"
 
 
+def _format_kp_canonical_history_message(
+    speaker_name: str,
+    message_text: str,
+    canonical_tool_events: list[dict],
+) -> str:
+    event_blocks = []
+    for event in canonical_tool_events:
+        tool_name = event.get("tool_name", "")
+        tool_input = json.dumps(event.get("tool_input", {}), ensure_ascii=False, sort_keys=True)
+        result = json.dumps(event.get("result", {}), ensure_ascii=False, sort_keys=True)
+        event_blocks.append(f"tool: {tool_name}\ninput: {tool_input}\nresult: {result}")
+    workflows_text = "\n\n".join(event_blocks) or "（無）"
+    return (
+        "[KP ASSISTANT / CANONICAL GAME EVENT]\n\n"
+        "以下主持指示已因成功觸發正式 deterministic game-resolution workflow，\n"
+        "成為正式遊戲歷史，而不是單純 OOC 討論。\n\n"
+        f"KP助手（{speaker_name}）：\n"
+        f"{message_text}\n\n"
+        "[DETERMINISTIC GAME WORKFLOW]\n\n"
+        f"{workflows_text}"
+    )
+
+
+def _tool_definition_for_kp_assistant(tool: dict) -> dict:
+    if tool["name"] != "roll_dice":
+        return tool
+
+    input_schema = dict(tool["input_schema"])
+    properties = dict(input_schema["properties"])
+    properties["roll_context"] = dict(_KP_ROLL_DICE_CONTEXT_PROPERTY)
+    input_schema["properties"] = properties
+    required = list(input_schema.get("required", []))
+    if "roll_context" not in required:
+        required.append("roll_context")
+    input_schema["required"] = required
+    return {
+        **tool,
+        "input_schema": input_schema,
+    }
+
+
 def _tools_for_speaker_role(speaker_role: str) -> list[dict]:
     base_tools = TOOLS + [_SEARCH_SCENARIO_TOOL] if SCENARIO_RAG_ENABLED else TOOLS
     if speaker_role != "kp_assistant":
         return base_tools
-    return [tool for tool in base_tools if tool["name"] in _KP_ASSISTANT_ALLOWED_TOOL_NAMES]
+    return [
+        _tool_definition_for_kp_assistant(tool)
+        for tool in base_tools
+        if tool["name"] in _KP_ASSISTANT_ALLOWED_TOOL_NAMES
+    ]
 
 
 def run_turn(
@@ -1599,6 +1694,20 @@ def run_turn(
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     tools = _tools_for_speaker_role(speaker_role)
+    kp_turn_creates_canon = False
+    kp_canonical_tool_events: list[dict] = []
+
+    def execute_turn_tool(name: str, tool_input: dict) -> dict:
+        nonlocal kp_turn_creates_canon
+        result = _execute_tool(state, name, tool_input, private_messages, image_requests, speaker_role)
+        if speaker_role == "kp_assistant" and _kp_tool_result_creates_canon(name, tool_input, result):
+            kp_turn_creates_canon = True
+            kp_canonical_tool_events.append({
+                "tool_name": name,
+                "tool_input": dict(tool_input),
+                "result": dict(result),
+            })
+        return result
 
     openai_response_id: str | None = None
     if LLM_PROVIDER == "openai":
@@ -1614,9 +1723,7 @@ def run_turn(
             tools,
             history,
             turn_message,
-            lambda name, tool_input: _execute_tool(
-                state, name, tool_input, private_messages, image_requests, speaker_role
-            ),
+            execute_turn_tool,
             MAX_TOOL_ITERATIONS,
             previous_response_id=state.openai_previous_response_id,
             on_response_id=remember_openai_response_id,
@@ -1628,15 +1735,22 @@ def run_turn(
             tools,
             history,
             turn_message,
-            lambda name, tool_input: _execute_tool(
-                state, name, tool_input, private_messages, image_requests, speaker_role
-            ),
+            execute_turn_tool,
             MAX_TOOL_ITERATIONS,
         )
 
     if not is_ephemeral:
         turn_log_entries = [
             {"role": "user", "content": turn_message},
+            {"role": "assistant", "content": final_text},
+        ]
+        _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
+    elif kp_turn_creates_canon:
+        canonical_turn_message = _format_kp_canonical_history_message(
+            speaker_name, message_text, kp_canonical_tool_events
+        )
+        turn_log_entries = [
+            {"role": "user", "content": canonical_turn_message},
             {"role": "assistant", "content": final_text},
         ]
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
