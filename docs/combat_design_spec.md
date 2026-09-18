@@ -16,6 +16,23 @@
 - 不做戰棋格子、距離精算或完整追逐規則；距離先用抽象 range band。
 - 不讓玩家直接看到敵人戰鬥卡。只有 KP Assistant / Keeper 內部可見。
 - 不把 LLM 自然語言敘事當作 authoritative state；HP、護甲、次數、狀態、環境效果必須由程式狀態保存。
+- 不在本階段從 PDF 劇本自動完整抽取所有怪物 stat block；`add_npc_to_combat` 可先由 Keeper/KP Assistant 提供護甲、攻擊與能力資料，缺漏時建立 minimal card。
+- 不在本階段實作精確距離/接戰狀態，因此 engaged-only 攻擊的完整距離判斷是後續工作；目前回合規劃先在抽象 range band 內選擇可用能力/攻擊。
+
+## 目前實作範圍
+
+截至 `feature/combat-cards-and-character-state` 目前 commit，本規格已有一個可運作的第一階段實作：
+
+- `Combatant` 已有 stable `combatant_id`、`display_name`、`side`、`character_id`、`enemy_card_id`，並保留舊 `name/is_pc/is_ally` 相容欄位。
+- `EnemyCombatCard`、`ArmorRule`、`AttackRule`、`SpecialAbility`、`EffectState` 已加入 state model，並支援 `to_dict()` / `from_dict()` round trip。
+- `GroupState` 已加入 `characters_by_id` 與 `active_character_id_by_user`，舊 `characters` 存檔會 migrate 到新角色索引。
+- `start_combat` 只把目前 active 且未倒下/未暫離的角色放入 initiative，避免 Partner/test 角色與 primary 狀態混在一起。
+- `add_npc_to_combat` 仍是公開 tool 名稱，但會建立 enemy combat card；未提供攻擊/能力時建立 minimal card，並用預設徒手攻擊維持相容。
+- `plan_enemy_turn` 會在敵人回合先處理 `turn_start` effects，再依 priority 檢查可用 special ability；沒有可用能力時才選攻擊或移動。
+- `resolve_enemy_action` 會消耗特殊能力 usage/cooldown，且同一個 `plan_id` 重複 resolve 會回 `already_resolved=True`，不會重複扣次數。
+- `apply_combat_damage` 已保存 raw/armor/final/hp breakdown，對 PC 重大傷害會註冊 pending CON check；公開摘要不得洩漏護甲精確數值。
+- `add_combat_effect` 已可建立固定時點 effect；`process_timing` 可在 round/turn timing 套用固定傷害或骰式傷害。
+- KP Assistant allowlist 開放 `apply_combat_damage` 與 `add_combat_effect`，這兩個成功結果會成為 canonical game event；`damage_combatant` 仍不開放給 KP Assistant。
 
 ## 現況落差
 
@@ -303,6 +320,8 @@ EnemyTurnPlan(
 7. 產生公開敘事提示，但 private_reason 不進玩家回覆。
 8. Keeper 執行 required rolls，完成後呼叫 action resolution tool 寫回 usage/cooldown/effects/damage。
 
+`resolve_enemy_action(plan_id)` 必須是 idempotent：第一次成功 resolve 才會消耗 usage/cooldown，之後同一個 `plan_id` 重複呼叫只回報 `already_resolved=True`，不得重複扣特殊能力次數。這保護 LLM/tool retry、網路重送與主持誤按造成的重複結算。
+
 ## Song of Lost Dreams 類能力
 
 這類能力定義成 `SpecialAbility`，而不是 Keeper prompt 裡的提醒。
@@ -373,6 +392,25 @@ SpecialAbility(
 
 重傷規則必須與現有 PC `adjust_character` 行為一致：單次傷害達門檻時註冊 CON 檢定或套用對應狀態。NPC 是否需要重傷檢定由卡片或全域設定決定，預設普通敵人只用 HP/defeated，不替每個雜兵跑完整重傷流程。
 
+目前 PC 重傷契約：
+
+- `apply_combat_damage` 對 PC 造成單次 final damage 達 `hp_max / 2` 且角色仍存活時，設定 `major_wound_triggered=True`。
+- 同時在 `state.pending_checks[owner_id]` 註冊一次 CON 檢定，格式與 `adjust_character` 的重傷檢定一致：
+
+```python
+{
+    "type": "skill",
+    "skill": "CON",
+    "skill_value": character.con,
+    "bonus_dice": 0,
+    "penalty_dice": 0,
+    "difficulty": "regular",
+    "major_wound_trigger": True,
+}
+```
+
+- NPC/敵人預設不註冊 CON 重傷檢定，只更新 HP/defeated。
+
 ## 傷害結算契約
 
 新增或重構後的傷害結果應保留完整 breakdown：
@@ -396,21 +434,34 @@ DamageResolution(
 
 公開回覆可以描述「刀刃被硬殼擋去一部分」，但不應在未揭露前說「護甲 3」或「弱點火焰 +1D6」。
 
+目前公開摘要契約：
+
+- `public_summary` 可以說「部分傷害被擋下」。
+- `public_summary` 不得包含 `armor_reduction` 的精確數字或 `armor_label`。
+- `private_notes` 可以保存 `raw`、`armor_label`、`armor_reduction`、`source_id`，供 Keeper/KP Assistant 內部追蹤。
+
 ## 工具/API 目標
 
-保留既有工具名稱可相容，但新增更高階工具：
+保留既有工具名稱可相容。第一階段已實作/接線的 tool：
+
+- `start_combat()`
+- `add_npc_to_combat(name, dex, hp, is_ally=False, armor=None, attacks=None, abilities=None)`
+- `get_combat_status()`
+- `plan_enemy_turn(enemy="")`
+- `resolve_enemy_action(plan_id)`
+- `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")`
+- `add_combat_effect(target, label, timing, damage="", damage_type="physical", remaining_rounds=None, tags=[], source_id="", public_description="")`
+- `advance_combat_turn()`
+- `end_combat()`
+
+後續可再拆出更高階 tool：
 
 - `create_enemy_combat_card(source_name, stat_block=None, count=1)`
 - `add_enemy_card_to_combat(enemy_card_id)`
 - `get_combat_status(include_private=False)`
-- `plan_enemy_turn(enemy_card_id=None)`
-- `resolve_enemy_action(plan_id, roll_results=None)`
-- `apply_combat_damage(target_id, damage, damage_type, source_id=None)`
-- `apply_combat_effect(target_id, effect)`
-- `advance_combat_turn()`
-- `end_combat()`
+- `apply_combat_effect(target_id, effect)` 若未來需要非傷害 effect 的泛用 schema
 
-玩家/Keeper 公開工具預設 `include_private=False`。KP Assistant 可以讀 private combat card，但仍不可直接改 HP/狀態，除非未來明確開放 mutation tools。
+玩家/Keeper 公開工具預設不回傳敵人 private notes。KP Assistant 可以使用查詢與已開放的正式流程工具；目前只開放 `apply_combat_damage` / `add_combat_effect` 這類會走傷害契約的 mutation，不開放 `damage_combatant` 這種泛用 HP delta。
 
 ## Prompt 契約
 
@@ -452,10 +503,14 @@ Keeper prompt 必須改成：
 4. Song of Lost Dreams 產生 POW 對抗，但 public summary 不含能力真名、POW 數字、弱點。
 5. 目標不在近戰距離時，敵人不會使用 engaged-only 攻擊，會 move/wait/使用遠程能力。
 6. 傷害結算保存 raw damage、armor reduction、final damage。
-7. 火焰/環境效果在固定 round/turn timing 觸發。
-8. PC 重傷仍走現有 major wound 行為。
-9. `away` 只跳過 active character，不影響同 user 的 Partner/test 角色。
-10. 舊 `GroupState.characters` 存檔可 migrate 到 `characters_by_id`。
+7. 公開傷害摘要不洩漏 armor reduction 精確數字。
+8. 火焰/環境效果在固定 round/turn timing 觸發，且固定傷害字串可用。
+9. 非法 effect damage 回傳錯誤且不消耗 duration。
+10. PC 重傷仍走現有 major wound pending CON 行為。
+11. `resolve_enemy_action` 對同一 plan idempotent，不重複消耗 ability usage。
+12. `away` 只跳過 active character，不影響同 user 的 Partner/test 角色。
+13. 舊 `GroupState.characters` 存檔可 migrate 到 `characters_by_id`。
+14. KP Assistant allowlist 包含 `apply_combat_damage` / `add_combat_effect`，但不包含 `damage_combatant`；成功傷害工具會 creates canon。
 
 整合測試：
 
