@@ -305,6 +305,7 @@ async def handle_pdf_upload(
     pdf_bytes: bytes,
     file_name: str,
     skip_similarity: bool = False,
+    reparse_candidate_id: str | None = None,
 ) -> None:
     """`reply` must land inside whatever immediate response window the platform
     gives an incoming event (LINE's reply token expires after 60s and is
@@ -361,8 +362,15 @@ async def handle_pdf_upload(
         matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
         if matches:
             key = await asyncio.to_thread(scenario_library.stage_upload, pdf_bytes)
-            existing_state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
-            save_state(existing_state)
+            # Reload under the lock right before saving — extract_preview and
+            # find_similar above ran unlocked, so the state this function
+            # loaded at the top can already be stale by now (an ordinary
+            # turn, roll, or combat update landing in between); saving that
+            # stale snapshot back would silently revert whatever changed.
+            async with locks.get_conversation_lock(conversation_id):
+                state = load_state(conversation_id)
+                state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
+                save_state(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
             await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
             return
@@ -406,7 +414,7 @@ async def handle_pdf_upload(
     scenario_id = await asyncio.to_thread(
         scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
         preview=preview, text=text, indexes=extracted_index, pregens=pregens,
-        page_maps=page_maps, page_images=page_images,
+        page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
     )
     library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
     text = library_context["text"]

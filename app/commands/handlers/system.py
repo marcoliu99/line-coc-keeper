@@ -57,7 +57,12 @@ async def handle_system_command(
                     return
                 state.pending_scenario_upload = None
                 save_state(state)
-            await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pending["file_name"], skip_similarity=True)
+            candidate_matches = pending.get("matches") or []
+            reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
+            await handle_pdf_upload(
+                conversation_id, reply, reply, pdf_bytes, pending["file_name"],
+                skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
+            )
             scenario_library.discard_staged_upload(pending["key"])
             return
         if action == "cancel":

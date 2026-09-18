@@ -54,6 +54,14 @@ def _pages_in_range(text: str, start: int, end: int) -> str:
     return "\n\n".join(selected)
 
 
+def _dedupe_by_page(entries: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    deduped: list[tuple[str, int]] = []
+    for title, page in entries:
+        if not deduped or deduped[-1][1] != page:
+            deduped.append((title, page))
+    return deduped
+
+
 def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]:
     """Build generic, bookmark-based playable chapters.
 
@@ -72,7 +80,29 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
     if not non_assets:
         return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": page_count}]
 
-    top_level = min(level for level, _title, _page in non_assets)
+    levels = sorted({level for level, _title, _page in non_assets})
+    if len(levels) == 1:
+        # A flat bookmark list (every non-asset entry at the same level) has
+        # no structural signal separating "chapter" from "scene" — see the
+        # Lightless Beacon sample in docs/scenario_library_design_spec.md,
+        # whose 9 same-level bookmarks (Introduction, Background, Start:
+        # Choppy Waters, Dead Beacon, ...) must stay inside one playable
+        # chapter-01 with those entries as `sections`. Splitting each one
+        # into its own playable chapter would make the two-chapter sliding
+        # window (see GroupState.context_chapter_ids) cover only a page or
+        # two at a time and exclude the actual opening scene until several
+        # "advance_scenario_chapter" calls later.
+        deduped = _dedupe_by_page([(title, page) for _level, title, page in non_assets])
+        first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > deduped[0][1]), default=page_count + 1)
+        end_page = min(page_count, first_asset_page - 1)
+        sections = []
+        for index, (title, page) in enumerate(deduped):
+            next_page = deduped[index + 1][1] - 1 if index + 1 < len(deduped) else end_page
+            if page <= next_page:
+                sections.append({"id": f"section-{index + 1:02d}", "title": title, "start_page": page, "end_page": next_page})
+        return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": deduped[0][1], "end_page": end_page, "sections": sections}]
+
+    top_level = levels[0]
     starts = [(title, page) for level, title, page in non_assets if level == top_level]
     # PDFs with a flat TOC still need a usable fallback, but deduplicate entries
     # sharing a page so metadata/bookmark aliases cannot create empty chapters.
@@ -133,9 +163,35 @@ def find_similar(title: str, preview: str, threshold: float = 0.82) -> list[dict
     return sorted(matches, key=lambda item: item["score"], reverse=True)
 
 
-def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None) -> str:
+def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> bool:
+    """Full-content ("二次比對") check used by reparse: is `text` still close
+    enough to `scenario_id`'s existing scenario.txt to treat this as the same
+    scenario? Exact-hash short-circuits (byte-identical re-upload); otherwise
+    falls back to a capped SequenceMatcher ratio, since full scenario texts
+    can be long enough that comparing them in full would be slow."""
+    manifest = _read_json(_path(scenario_id) / "manifest.json", None)
+    if not isinstance(manifest, dict):
+        return False
+    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if manifest.get("content_hash") == content_hash:
+        return True
+    try:
+        existing_text = (_path(scenario_id) / "scenario.txt").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return SequenceMatcher(None, text[:20000], existing_text[:20000]).ratio() >= threshold
+
+
+def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None) -> str:
     SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
     content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    # /coc scenario reparse's caller passes the KP-confirmed candidate here
+    # instead of forcing scenario_id directly — content_similar re-verifies
+    # it with the now-available full text (the spec's "完整內容二次比對") so a
+    # reparse that turns out to be a genuinely different scenario still lands
+    # in a new library entry instead of overwriting an unrelated one.
+    if scenario_id is None and reparse_candidate_id and content_similar(reparse_candidate_id, text):
+        scenario_id = reparse_candidate_id
     scenario_id = scenario_id or f"{_slug(title)}-{content_hash[:8]}"
     target = _path(scenario_id)
     temporary = Path(tempfile.mkdtemp(prefix=f".{scenario_id}-", dir=SCENARIO_LIBRARY_DIR))
