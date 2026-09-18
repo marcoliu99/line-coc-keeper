@@ -1735,3 +1735,32 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   `state_reducer.py`／`rule_validator.py`／`assistant.py` 的實際程式碼跟這個 session
   之前每一輪真實 LLM 測試的結果，確認文件裡的每一項技術敘述（工具數量、子指令分組、
   函式名稱、觸發條件）都對應到目前真的存在的程式碼。
+
+### 100. 補齊戰鬥卡與 KP Assistant 固定傷害的 design spec / API 文件
+
+- **這個改動怎麼來的**：`feature/combat-cards-and-character-state` 這條分支已經陸續做了
+  敵人戰鬥卡、敵人行動 planning、戰鬥傷害 review 修正，以及 KP Assistant 固定傷害／持續
+  effect 工具；但中間幾個 commit 是先實作再補文件，沒有完全遵守「先 spec、再實作」的
+  工作流程。使用者點名要把這幾個 commit 對應的設計補回來。
+- **這次實際補上的 spec**：更新 `docs/combat_design_spec.md`，新增「目前實作範圍」章節，
+  明確列出第一階段已完成的 runtime 契約：`Combatant` stable id、`EnemyCombatCard` /
+  `ArmorRule` / `AttackRule` / `SpecialAbility` / `EffectState`、`characters_by_id` /
+  `active_character_id_by_user` migration、minimal enemy card、`plan_enemy_turn` 先處理
+  `turn_start` effects 與 special abilities、`resolve_enemy_action` idempotent、
+  `apply_combat_damage` 的 raw/armor/final breakdown、PC major wound pending CON check、
+  `add_combat_effect` 固定時點 effect，以及 KP Assistant 可用的正式傷害工具邊界。
+- **修正文件落差**：原本 API 目標還寫著未實作的 `apply_combat_effect(target_id, effect)`，
+  也還保留「KP Assistant 不能直接改 HP/狀態」這種過時說法。現在改成符合實作的工具清單：
+  `apply_combat_damage(...)` 與 `add_combat_effect(...)` 是 KP Assistant 可用、且成功會 creates
+  canon 的正式傷害流程；`damage_combatant` 仍不開放給 KP Assistant，避免用正負 delta 繞過
+  護甲、重傷與來源紀錄。
+- **補上的 review 契約**：文件現在明確寫出 `resolve_enemy_action(plan_id)` 重複呼叫不得重複
+  消耗 ability usage/cooldown；PC 受到單次 final damage 達 `hp_max / 2` 且仍存活時，會註冊
+  與 `adjust_character` 一致的 pending CON check；公開 `public_summary` 可以說「部分傷害被
+  擋下」，但不得洩漏 `armor_reduction` 或 `armor_label`。
+- **API 文件同步**：更新 `docs/API.md` 的 Keeper combat tools 表，補上
+  `add_combat_effect(...)`，並標明 `resolve_enemy_action(plan_id)` 對同一 plan 重複呼叫是
+  idempotent。
+- **實測過**：這次只改文件，沒有動 runtime code，因此沒有重跑測試；補文件前已對照相關
+  commit、`app/combat.py`、`app/keeper.py`、`app/models.py` 與既有測試，確認文件描述跟目前
+  程式碼一致。
