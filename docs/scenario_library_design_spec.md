@@ -72,6 +72,8 @@ data/scenarios/
 
 ```python
 scenario_library_id: str = ""
+active_chapter_id: str = ""
+context_chapter_ids: list[str] = field(default_factory=list)
 pending_scenario_upload: dict | None = None
 ```
 
@@ -276,7 +278,57 @@ pending_scenario_upload: dict | None = None
 - **保留** `log`、`campaign_summary`、Memory RAG、玩家角色、地圖位置、戰鬥、待處理檢定、`game_started`、`keeper_persona`、`era` 與 `kp_ooc_log`。這些都是同一團的連續遊戲狀態。
 - 不修改劇本庫內容；遊戲進度仍只寫入此團的 `GroupState`／既有資料庫。
 
-每一輪 `ContextBuilder` 以玩家行動與 KP 指示查詢**目前選定 PDF**的索引，只把最相關的章節 chunks 放入 `AgentMessage`。例如 KP 選定《The Lightless Beacon》後，Keeper 不會一次讀完 43 頁；進入燈塔的行動只會取回 `Dead Beacon` 及相鄰必要段落，而不會看到 `Amphibious Assault` 的後續劇情。
+每一輪 `ContextBuilder` 以玩家行動與 KP 指示查詢**目前選定 PDF 的兩章 Context 視窗**，只把最相關 chunks 放入 `AgentMessage`。例如 KP 選定《The Lightless Beacon》後，Keeper 不會一次讀完 43 頁；進入燈塔的行動只會取回 `Dead Beacon` 與下一章的必要銜接段落，而不會看到更後面的結局內容。
+
+## 章節滑動 Context 視窗
+
+章節的目的不是讓 KP 手動挑選，而是讓開團後的 Keeper **不要一次載入整份 PDF**。每個 PDF 的 playable 章節依 `chapters.json` 的頁面順序排列；KP 用 `/coc scenario use <劇本ID>` 選定 PDF 後，系統自動把第一個 playable 章節設為目前章節。
+
+`GroupState` 內部保存：
+
+```python
+scenario_library_id: str             # KP 選定的 PDF
+active_chapter_id: str               # 劇情目前所在的 playable 章節
+context_chapter_ids: list[str]       # Context 視窗，最多兩章：[目前章節, 下一章]
+```
+
+### 兩章視窗規則
+
+```text
+章節序列： [第一章] -> [第二章] -> [第三章] -> [第四章]
+
+開團：       active=第一章，Context=[第一章, 第二章]
+進入第二章： active=第二章，Context=[第二章, 第三章]
+進入第三章： active=第三章，Context=[第三章, 第四章]
+最終章：     active=第四章，Context=[第四章]
+```
+
+每輪 `ContextBuilder` 只可從 `context_chapter_ids` 檢索；因此正常情況下最多載入目前章節與下一章的少量相關 chunks，不會把整份 PDF 或更後面的章節交給 Keeper。下一章作為 lookahead，目的是讓過場、伏筆與角色移動不會因 Context 邊界突然中斷。
+
+Prompt 必須清楚標記 chunk 的角色：
+
+- **目前章節**：可作為當下的敘事事實與機制依據。
+- **下一章預讀**：只可用於銜接、準備過場與避免矛盾；在目前章節的轉場條件尚未成立前，不得直接敘述、揭露或要求玩家面對下一章的秘密／事件。
+
+### 依劇本自動推進章節
+
+完整解析完成後，章節器除了頁面邊界外，必須為每個 playable 章節抽取 `entry_conditions`、`exit_conditions` 與 `transition_summary`。這些是結構化的劇本進度條件，例如「調查員抵達燈塔」、「發現屍體」、「襲擊開始」或「逃離島嶼」，而不是單純依頁數跳轉。
+
+每一輪敘事與工具執行完成後，`ChapterProgressor` 以目前章節、近期 log、已完成的工具事實與該章 `exit_conditions` 判斷：
+
+```text
+[本輪工具事實 + 最新劇情 log]
+                 |
+                 v
+[ChapterProgressor]
+  ├─ continue：維持目前的兩章 Context 視窗
+  ├─ advance：active 指向下一 playable 章，視窗向後滑動一章
+  └─ uncertain：不切換，保守維持目前視窗
+```
+
+`advance` 只在劇本定義的轉場條件已明確滿足時發生；無法確定時一律 `uncertain`，不可因玩家只提到下一地點名稱就跳章。這避免劇情被提早推進或錯過仍未解決的場景。
+
+章節推進只更新 `active_chapter_id`、`context_chapter_ids`、Scenario RAG 的版本鍵，以及 `openai_previous_response_id`；它**不**重設角色、log、地圖位置、戰鬥、檢定、Memory RAG 或 KP OOC 指示。
 ## Agentic Keeper 整合契約
 
 劇本庫不新增一個用來決定「要載入哪個劇本」的 LLM Agent。上傳去重、章節識別與 `/coc scenario` 指令全部維持在確定性的 Python 指令層，避免 AI 對檔案是否重複做不可驗證的判斷，也避免在每次 PDF 上傳時增加 LLM 成本。
@@ -298,7 +350,7 @@ pending_scenario_upload: dict | None = None
                     |
                     v
 [ContextBuilder]
- ├─ Scenario RAG：僅查詢選定 PDF 的相關章節 chunks
+ ├─ Scenario RAG：僅查詢目前章節與下一章的相關 chunks
  ├─ Memory RAG：仍只讀取本團 conversation_id 的遊戲記憶
  └─ 封裝 AgentMessage（含目前角色、位置與少量檢索內容）
                     |
@@ -324,20 +376,20 @@ pending_scenario_upload: dict | None = None
 
 ### 章節切換的快取與狀態規則
 
-1. `scenario_library_id`、`chapter_id`、`content_hash` 是檢索 Context 的版本鍵。
+1. `scenario_library_id`、`active_chapter_id`、`context_chapter_ids`、`content_hash` 是檢索 Context 的版本鍵。
 2. `scenario_rag.get_index()` 的持久化快取 key 必須由上述版本鍵組成；禁止只以 `conversation_id` 或舊文字快取判斷。
 3. `/coc scenario use` 只清除 `openai_previous_response_id` 並切換目前 PDF；`log`、Memory RAG、位置、戰鬥、待處理檢定與 `kp_ooc_log` 都必須保留。
 4. 玩家角色與所有團務進度保持不變；KP 選擇 PDF 是控制資訊來源的動作，不是重置。
-5. 章節載入後的 NPC／地點索引只包含該章及其宣告共用資產的條目；避免 Narrator 在第一章就看見後續章節敵人或結局。
-6. 每次切換都必須由 KP 明確指定 PDF 劇本 ID；不得根據玩家訊息自動切換到另一份 PDF。
+5. 章節載入後的 NPC／地點索引只包含目前章與下一章及其宣告共用資產的條目；避免 Narrator 看見更後面的敵人或結局。
+6. PDF 切換必須由 KP 明確指定劇本 ID；同一 PDF 的章節推進只可由 `ChapterProgressor` 在轉場條件滿足時自動進行。
 
 ### Agent 整合驗收
 
 1. 選定某一 PDF 後，`ContextBuilder` 的 Scenario RAG 無法檢索其他 PDF 的文字。
-2. 切換 PDF 後，RAG 不會回傳先前 PDF 的快取結果。
+2. 視窗從第一章推進到第二章後，RAG 不會回傳第一章以外或第四章以後的快取結果。
 3. Executor 的工具呼叫仍能正確寫回目前 `GroupState`，且不修改劇本庫目錄。
 4. Narrator 收到的 mechanic facts 與既有 Agentic Keeper 流程一致。
-5. KP Assistant 的 OOC 指示在 PDF 切換後仍維持同一團隔離，且不污染其他團。
+5. KP Assistant 的 OOC 指示在 PDF 或章節推進後仍維持同一團隔離，且不污染其他團。
 ## 與現有模組的整合
 
 | 模組 | 調整責任 |
@@ -361,8 +413,8 @@ pending_scenario_upload: dict | None = None
 5. `/coc scenario list` 能列出多個項目、其章節，且標示目前使用項目。
 6. 多章劇本的 `/coc scenario use <ID>` 未指定章節時會要求選擇；指定章節時只載入該範圍。
 7. `/coc scenario use` 僅更新選定章節 Context，保留團務進度與角色，並使 Keeper/RAG 無法讀到未選章節。
-8. `/coc scenario clean` 只接受劇本 ID，不刪除目前正在被使用的項目，也不影響其他劇本。
-9. 解析失敗、取消與同時上傳時，不損壞既有劇本庫或群組狀態。
+9. `/coc scenario clean` 只接受劇本 ID，不刪除目前正在被使用的項目，也不影響其他劇本。
+10. 解析失敗、取消與同時上傳時，不損壞既有劇本庫或群組狀態。
 
 ## 實作順序
 
