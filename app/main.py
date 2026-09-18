@@ -36,9 +36,22 @@ from linebot.v3.webhooks import (
     VideoMessageContent,
 )
 
-from app import commands
+from app import locks
+from app.commands import router as command_router
 from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, PUBLIC_BASE_URL
-from app.state import load_page_image
+from app.legacy_commands import (
+    Reply,
+    SendDM,
+    SendDMImage,
+    SendImage,
+    GetDisplayName,
+    handle_map_upload,
+    handle_pdf_upload,
+    handle_role_sheet_upload,
+    handle_scenario_compare_upload,
+    handle_unsupported_message,
+)
+from app.repositories.group_state import load_page_image
 
 _logger = logging.getLogger(__name__)
 
@@ -72,7 +85,7 @@ def _chunk_text(text: str) -> list[str]:
     return chunks[:MAX_REPLY_MESSAGES]
 
 
-def _make_reply(reply_token: str) -> commands.Reply:
+def _make_reply(reply_token: str) -> Reply:
     async def reply(text: str) -> None:
         messages = [TextMessage(text=c) for c in _chunk_text(text)]
         await line_bot_api.reply_message_with_http_info(
@@ -82,7 +95,7 @@ def _make_reply(reply_token: str) -> commands.Reply:
     return reply
 
 
-def _make_push(to_id: str) -> commands.Reply:
+def _make_push(to_id: str) -> Reply:
     # For results that can't make LINE's 60-second, single-use reply token
     # window — see the docstring on commands.handle_pdf_upload. Push messages
     # count against LINE's paid quota (unlike replies, which are free and
@@ -222,19 +235,19 @@ async def _handle_message_event(event: MessageEvent) -> None:
         file_name = getattr(event.message, "file_name", "") or ""
         content = await line_bot_blob_api.get_message_content(event.message.id)
         push = _make_push(_push_target_id(event.source))
-        await commands.handle_pdf_upload(conversation_id, reply, push, content, file_name)
+        await handle_pdf_upload(conversation_id, reply, push, content, file_name)
         return
 
     if not isinstance(event.message, TextMessageContent):
         for msg_type, label in _UNSUPPORTED_MESSAGE_LABELS:
             if isinstance(event.message, msg_type):
-                await commands.handle_unsupported_message(conversation_id, reply, label)
+                await handle_unsupported_message(conversation_id, reply, label)
                 return
         return  # unrecognized message type (e.g. flex/template echoes): stay silent
 
     async def get_display_name() -> str:
         return await _display_name(event.source, user_id)
 
-    await commands.handle_text_message(
+    await command_router.handle_text_message(
         conversation_id, user_id, get_display_name, reply, _send_dm, _send_image, _send_dm_image, event.message.text
     )

@@ -1,0 +1,255 @@
+from __future__ import annotations
+
+import asyncio
+
+from app import keeper, scenario_index, scenario_intro
+from app.models import GroupState
+from app.repositories.group_state import load_state, save_state
+from app.legacy_commands import (
+    Reply, SendDM, SendImage, SendDMImage, FormatMention,
+    _resolve_pdf_upload_choice_locked, _set_character_away_state,
+    _heal_character, _build_readiness_roster, _run_post_turn_maintenance_after_output
+)
+
+
+async def handle_system_command(
+    conversation_id: str,
+    user_id: str,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    parts: list[str],
+    format_mention: FormatMention = lambda owner_id: owner_id,
+) -> None:
+    sub = parts[1] if len(parts) > 1 else ""
+
+    if sub == "newgame":
+        save_state(GroupState(group_id=conversation_id))
+        await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
+        return
+
+    if sub == "pdf":
+        choice_word = parts[2] if len(parts) > 2 else ""
+        choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
+        if choice is None:
+            await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
+            return
+        await reply(_resolve_pdf_upload_choice_locked(conversation_id, choice))
+        return
+
+    if sub == "kp":
+        action = parts[2] if len(parts) > 2 else None
+        state = load_state(conversation_id)
+
+        if action == "quit":
+            if state.kp_assistant_user_id != user_id:
+                await reply("你目前不是這局的 KP 助手。")
+                return
+            state.kp_assistant_user_id = ""
+            save_state(state)
+            await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
+            return
+
+        if action is not None:
+            await reply("用法：/coc kp 或 /coc kp quit")
+            return
+
+        if state.kp_assistant_user_id == user_id:
+            await reply("你已經是這局的 KP 助手。")
+            return
+        if state.kp_assistant_user_id:
+            await reply("這局已經有一位 KP 助手，不能同時登記第二位。")
+            return
+        if user_id in state.characters:
+            await reply("KP 助手與調查員角色互斥；你已經有調查員角色，不能登記為 KP 助手。")
+            return
+        if user_id in state.creation_sessions:
+            await reply("KP 助手與建角流程互斥；你正在進行互動式建角，請先輸入「/coc create cancel」取消後再登記 KP 助手。")
+            return
+
+        state.kp_assistant_user_id = user_id
+        save_state(state)
+        await reply("已登記你為這局的 KP 助手。")
+        return
+
+    if sub == "status":
+        state = load_state(conversation_id)
+        if not state.scenario_title:
+            await reply("目前還沒有載入任何劇本，上傳 PDF 開始吧。")
+            return
+        lines = [f"劇本：《{state.scenario_title}》", f"狀態：{'進行中' if state.active else '已結束'}", ""]
+        if state.characters:
+            for c in state.characters.values():
+                lines.append(f"・{c.name}（{c.occupation}）HP {c.hp}/{c.hp_max} SAN {c.san}/{c.san_max} MP {c.mp}/{c.mp_max}")
+        else:
+            lines.append("（尚無角色）")
+        await reply("\n".join(lines))
+        return
+
+    if sub == "end":
+        state = load_state(conversation_id)
+        state.active = False
+        state.kp_assistant_user_id = ""
+        save_state(state)
+        await reply("遊戲已結束，遊戲紀錄與角色仍會保留；KP 助手身分也已解除。要開新的一局請用 /coc newgame。")
+        return
+
+    if sub == "setpersona":
+        state = load_state(conversation_id)
+        if len(parts) < 3:
+            current = state.keeper_persona or f"（目前使用預設風格）\n{keeper.DEFAULT_PERSONA}"
+            await reply(
+                "用法：/coc setpersona <描述守密人語氣風格的文字> → 設定這個群組專屬的守密人語氣\n"
+                "/coc setpersona reset → 重設回預設的冷酷旁觀者風格\n\n"
+                f"目前設定：\n{current}"
+            )
+            return
+        if parts[2] == "reset" and len(parts) == 3:
+            state.keeper_persona = ""
+            save_state(state)
+            await reply("已重設回預設的冷酷旁觀者語氣風格。")
+            return
+        persona_text = " ".join(parts[2:])
+        state.keeper_persona = persona_text
+        save_state(state)
+        await reply(f"已設定這個群組的守密人語氣風格：\n{persona_text}\n\n（下一則訊息開始生效；重設回預設風格用 /coc setpersona reset）")
+        return
+
+    if sub == "era":
+        state = load_state(conversation_id)
+        if len(parts) < 3:
+            await reply(
+                "用法：/coc era 1920 → 設定 1920 年代經典設定\n"
+                "/coc era modern → 設定現代／當代設定\n\n"
+                f"目前設定：{'1920 年代' if state.era == '1920s' else '現代／當代'}\n"
+                "（影響角色卡上傳時，武器只寫泛稱、沒寫具體型號的情況下，自動補上的預設彈藥容量）"
+            )
+            return
+        choice = parts[2].strip().lower()
+        era_map = {"1920": "1920s", "1920s": "1920s", "modern": "modern"}
+        if choice not in era_map:
+            await reply("年代設定只接受「1920」或「modern」。")
+            return
+        state.era = era_map[choice]
+        save_state(state)
+        await reply(f"已設定這個群組的年代為：{'1920 年代' if state.era == '1920s' else '現代／當代'}。")
+        return
+
+    if sub == "index":
+        state = load_state(conversation_id)
+        if not state.scenario_text:
+            await reply("目前還沒有載入劇本，上傳 PDF 之後才能抽取 NPC／怪物與地點索引。")
+            return
+        extracted = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+        state.scenario_npc_index = extracted["npcs"]
+        state.scenario_location_index = extracted["locations"]
+        save_state(state)
+        if not extracted["npcs"] and not extracted["locations"]:
+            await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
+            return
+        lines = [f"已重新建立劇本索引：{len(extracted['npcs'])} 個 NPC／怪物、{len(extracted['locations'])} 個地點。"]
+        for n in extracted["npcs"]:
+            hp = n.get("hp")
+            hp_note = f"HP {hp}" if isinstance(hp, (int, float)) else "（無 HP 數值）"
+            lines.append(f"・{n.get('name') or '未命名'}：{hp_note}")
+        await reply("\n".join(lines) + "\n\n之後守密人回覆時會直接參考這份索引，同一隻怪物/NPC 不會再前後數值不一致。這份索引現在上傳劇本 PDF 時就會自動建立，這個指令是手動重建（例如覺得抽取結果不準、或劇本內容之後有更新時再用）。")
+        return
+
+    if sub == "away":
+        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, True)
+        if result.error_text:
+            await reply(result.error_text)
+            return
+        await reply(f"{result.character_name} 已標記為暫離，戰鬥中會自動跳過他的回合，直到輸入「/coc back」回來。")
+        return
+
+    if sub == "back":
+        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, False)
+        if result.error_text:
+            await reply(result.error_text)
+            return
+        await reply(f"{result.character_name} 回來了，恢復正常參與。")
+        return
+
+    from app import locks
+    if sub == "start":
+        state = load_state(conversation_id)
+        if not state.active or not state.scenario_text:
+            await reply("目前還沒有載入劇本，請先上傳 PDF 劇本。")
+            return
+        if not state.characters:
+            await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
+            return
+        if state.game_started:
+            await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
+            return
+
+        with locks.get_state_lock(conversation_id):
+            state = load_state(conversation_id)
+            healed_notes: dict[str, list[str]] = {}
+            for owner_id, char in state.characters.items():
+                notes = _heal_character(char)
+                if notes:
+                    healed_notes[owner_id] = notes
+            if healed_notes:
+                save_state(state)
+        await reply(_build_readiness_roster(state, healed_notes, format_mention))
+
+        extracted = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
+
+        if extracted["found"]:
+            opening_text = extracted["text"]
+            with locks.get_state_lock(conversation_id):
+                state = load_state(conversation_id)
+                if state.game_started:
+                    return
+                state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
+                state.log.append({"role": "assistant", "content": opening_text})
+                state.game_started = True
+                
+                opening_check = extracted.get("opening_check")
+                if opening_check:
+                    for owner_id, char in state.characters.items():
+                        if opening_check["type"] == "skill":
+                            value = keeper.resolve_skill_value(char, opening_check["skill"])
+                            state.pending_checks[owner_id] = {
+                                "type": "skill", "skill": opening_check["skill"], "skill_value": value,
+                                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular", "pushed": False,
+                            }
+                        else:
+                            state.pending_checks[owner_id] = {
+                                "type": "sanity",
+                                "loss_success": opening_check.get("loss_success", "0"),
+                                "loss_failure": opening_check.get("loss_failure", "1d4"),
+                            }
+                save_state(state)
+            await reply(opening_text)
+            if opening_check and opening_check.get("reason"):
+                await reply(f"👉 {opening_check['reason']}——請各自用「/coc check」擲骰。")
+            return
+
+        keeper_message = (
+            "（守密人，遊戲即將開始，劇本沒有寫現成的開場白，需要你自己撰寫一段。這份劇本沒有"
+            "明確的「序幕」或「開場」段落可以直接查到，不代表劇本沒有背景資訊——如果目前是檢索模式，"
+            "請呼叫 search_scenario 查詢劇本的背景設定、調查員的委託／緣由、故事開始的地點等關鍵字"
+            "（例如劇本標題、背景、委託人、開場地點），根據查到的背景資訊撰寫開場白，不要因為查不到"
+            "「開場」兩個字面就直接放棄。撰寫一段開場白，把調查員們帶入故事的起點——描述他們此刻"
+            "身處的場景、氛圍，以及是什麼把他們捲進這個劇本裡，控制在三百字以內，用第二人稱「你」"
+            "對調查員說話。這是遊戲的第一段敘述，還沒有任何人採取行動，不要假設玩家已經做了什麼、"
+            "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
+        )
+        async with locks.get_keeper_turn_lock(conversation_id):
+            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_turn, state, user_id, "守密人", keeper_message, None
+            )
+        with locks.get_state_lock(conversation_id):
+            state = load_state(conversation_id)
+            state.game_started = True
+            save_state(state)
+        await _run_post_turn_maintenance_after_output(
+            conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
+        )
+        return
+
+    await reply(f"未知的系統指令：{sub}")

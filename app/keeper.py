@@ -17,7 +17,7 @@ from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARI
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
-from app.state import load_state, save_state
+from app.repositories.group_state import load_state, save_state
 
 _logger = logging.getLogger(__name__)
 

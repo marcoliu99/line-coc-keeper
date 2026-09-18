@@ -34,7 +34,7 @@ from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import BASE_SKILLS, OCCUPATIONS, Character, GroupState, generate_investigator
-from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
+from app.repositories.group_state import clear_page_images, load_page_image, load_state, save_page_image, save_state
 
 _logger = logging.getLogger(__name__)
 
