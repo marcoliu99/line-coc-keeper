@@ -369,6 +369,10 @@ async def handle_pdf_upload(
             # stale snapshot back would silently revert whatever changed.
             async with locks.get_conversation_lock(conversation_id):
                 state = load_state(conversation_id)
+                if state.pending_scenario_upload is not None:
+                    scenario_library.discard_staged_upload(key)
+                    await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
+                    return
                 state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
                 save_state(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])

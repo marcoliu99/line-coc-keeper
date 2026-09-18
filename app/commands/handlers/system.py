@@ -94,7 +94,8 @@ async def handle_system_command(
             state.context_chapter_ids = context["context_chapter_ids"]
             state.scenario_npc_index = context["indexes"].get("npcs", [])
             state.scenario_location_index = context["indexes"].get("locations", [])
-            state.scene_maps = context["scene_maps"]
+            for key, scene_map in context["scene_maps"].items():
+                state.scene_maps.setdefault(key, scene_map)
             state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
             state.active = True
@@ -146,6 +147,7 @@ async def handle_system_command(
                 await reply("你目前不是這局的 KP 助手。")
                 return
             state.kp_assistant_user_id = ""
+            state.kp_ooc_log = []
             save_state(state)
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             return
@@ -167,6 +169,7 @@ async def handle_system_command(
             await reply("KP 助手與建角流程互斥；你正在進行互動式建角，請先輸入「/coc create cancel」取消後再登記 KP 助手。")
             return
 
+        state.kp_ooc_log = []
         state.kp_assistant_user_id = user_id
         save_state(state)
         await reply("已登記你為這局的 KP 助手。")
@@ -190,6 +193,7 @@ async def handle_system_command(
         state = load_state(conversation_id)
         state.active = False
         state.kp_assistant_user_id = ""
+        state.kp_ooc_log = []
         save_state(state)
         await reply("遊戲已結束，遊戲紀錄與角色仍會保留；KP 助手身分也已解除。要開新的一局請用 /coc newgame。")
         return
