@@ -1573,9 +1573,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   `_build_dynamic_prompt` 陽春（沒有完整角色卡、戰鬥狀態等豐富上下文），先求「正確、不當機」，
   上下文豐富度是合理的後續優化項目。
 
-### 84. 補齊 #83 記錄的兩項後續：Narrator／Executor 補上完整角色卡與戰鬥狀態上下文、`prompt_config.py` 正式整合（或記錄為什麼不整合）
+### 96. 補齊 #95 記錄的兩項後續：Narrator／Executor 補上完整角色卡與戰鬥狀態上下文、`prompt_config.py` 正式整合（或記錄為什麼不整合）
 
-- **這個改動怎麼來的**：#83 修完讓流水線「正確、不當機」後，留了兩項後續：Narrator／Executor 的
+- **這個改動怎麼來的**：#95 修完讓流水線「正確、不當機」後，留了兩項後續：Narrator／Executor 的
   prompt 比舊版 `keeper.py` 陽春（沒有完整角色卡／戰鬥狀態）；`app/services/prompt_config.py`
   （574 行）完全沒被任何 agent 使用。這次補齊。
 - **Narrator／Executor 補上完整上下文**：兩個檔案原本各自手工拼一小段 `dynamic_system`（只有
@@ -1604,7 +1604,7 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
     `_build_static_prompt`／`_build_dynamic_prompt` 大量重疊，而且它假設「一次 LLM 呼叫用 JSON
     同時回傳 narration/options/state_delta/discovered_clues」、由這個回傳值本身驅動狀態變更——
     這跟目前「Executor 真的呼叫 `keeper._execute_tool` 修改並落庫狀態，Narrator 只負責讀事實寫
-    敘事，`state_reducer` 刻意不再套用任何 delta」的分工衝突，整段搬過去會重新製造 #83 才修掉的
+    敘事，`state_reducer` 刻意不再套用任何 delta」的分工衝突，整段搬過去會重新製造 #95 才修掉的
     「重複套用狀態變更」問題。沒有整段採用，但把兩條真正有價值、目前 prompt 沒覆蓋到的守則文字
     內容合併進 `narrator.py` 的 `NARRATOR_SYSTEM_PROMPT`：（1）劇本與角色資料是世界事實來源，
     不得隨意發明劇本沒寫的關鍵線索／NPC／地點／幕後真相；（2）【過去記憶】只能當參考，不能拿它
@@ -1623,9 +1623,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   - 測試用的 group_state key 全部用 `db.delete_json` 清乾淨，`.env` 只在測試期間暫時複製進來、
     測完立刻刪除，正式環境資料庫全程沒有被動到。
 
-### 85. `prompt_config.py` 全部重寫：改成繁體中文、對應這個專案實際架構，並真的接上三個 agent
+### 97. `prompt_config.py` 全部重寫：改成繁體中文、對應這個專案實際架構，並真的接上三個 agent
 
-- **這個改動怎麼來的**：#84 把 `prompt_config.py` 留成「大部分內容不用、只借兩條守則文字」的狀態，
+- **這個改動怎麼來的**：#96 把 `prompt_config.py` 留成「大部分內容不用、只借兩條守則文字」的狀態，
   使用者指出這樣不行——這個檔案是照抄一份簡體中文、設計完全不同的舊草稿，應該全部用繁體中文、
   根據這個專案的實際架構重整過，而不是留著一份用不到的參考文件。
 - **這個專案現在怎麼做**：整個檔案重寫，砍掉原本假設的「LLM 意圖分類／ReAct 回合計畫／Reflection
@@ -1652,7 +1652,7 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   app/services/prompt_config.py` 確認乾淨。測試用的 group_state key 用 `db.delete_json`
   清乾淨，`.env` 測完立刻刪除，正式環境資料庫全程沒被動到。
 
-### 86. Phase 10：新架構補上 OOC Assistant Path，把舊架構已驗證過的 KP Assistant 機制搬過來整合
+### 98. Phase 10：新架構補上 OOC Assistant Path，把舊架構已驗證過的 KP Assistant 機制搬過來整合
 
 - **這個改動怎麼來的**：使用者提出 Phase 10 計畫，想在 `app/agents/` 新架構裡幫 KP 助手的場外
   （OOC）討論開一條獨立快車道，繞開「機制判定與故事生成」那條主線。動手前先確認了一件事：
@@ -1701,3 +1701,37 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
     進來、測完立刻刪除，正式環境資料庫全程沒有被動到。
 - **這次沒做**：HyDE（生成偽規則文本）與 MQE（查詢擴展）這兩個進階 RAG 技巧——使用者要求先用
   現有純 BM25 驗證效果，真的不夠準再加，這次沒有加上任何額外的 LLM 呼叫。
+
+### 99. 重寫 `docs/agentic_keeper_design_spec.md`：拿掉外部專案引用，對照實作跟實測結果整份訂正
+
+- **這個改動怎麼來的**：使用者要求完整重讀設計文件、拿掉裡面對外部專案（`leezehuan/
+  COC-AI-keeper`）的引用，改成完全以這個專案自己的實作與推論為主，並找出可以改進的地方，
+  順便把文件本身修好。
+- **逐段核對後發現文件已經跟實作有明顯落差**（原始草稿是規劃階段寫的，Phase 0-10 一路
+  實作下來，好幾個原始設計被實測結果推翻，但文件從沒更新過）：
+  1. 「濃縮為 5 個高階工具」從沒被採用——實際做的時候發現濃縮工具要嘛重新實作一份
+     `keeper._execute_tool` 已經驗證過的安全機制（鎖、彈藥檢查、重傷規則等），要嘛就是
+     假工具（第一版流水線正是後者，見 #95 的教訓）。`tool_gateway.py` 最後直接
+     `TOOLS = keeper.TOOLS`，文件卻還畫著「濃縮為 5 個高階工具」的舊藍圖。
+  2. `StateDelta`／State Reducer「由程式計算狀態變更」也沒有實際採用——真正的狀態變更
+     在 Executor 呼叫工具時就已經透過 `keeper._execute_tool` 完成並落庫，`state_reducer.
+     apply_mechanic_result` 現在只做記錄。文件原本卻還寫著 State Reducer「攔截 LLM 直接
+     寫庫的風險，由程式計算血量」，跟實作完全不一致。
+  3. Guard Agent「只在 10-20% 時觸發」也沒有做——實際是 `rule_validator` 檢查不過才決定性
+     觸發，不是機率抽樣。
+  4. 指令路由那張圖列了一個不存在的 `check.py`（`/coc check`／`/coc luck` 其實是
+     `router.py` 直接呼叫 `legacy_commands.py`，沒有拆成獨立 handler）。
+  5. 提示詞集中管理那張圖畫的是「Intent Router／Planner Agent／Reflection」三個從沒被
+     實作出來的 LLM 節點，跟真正存在、也真的接上 `prompt_config.py` 的
+     Executor／Narrator／Guard 三個階段（#84、#85 做的）對不上。
+  6. 整份文件完全沒有 Phase 10（OOC Assistant Path，#86 做的）。
+- **這個專案現在怎麼做**：整份文件重寫，逐項訂正上面 6 點，新增一節「現況與經驗」（4 條）
+  把每個落差的原始想法、實測後發現的問題、最後的取捨理由都寫清楚，讓之後的人不用重新
+  調查一次「為什麼實作跟文件不一樣」。開頭移除對外部專案的引用，改成單純描述這個專案自己
+  的架構推論；文件開頭也新增一段聲明：這份文件記錄的是「實際做出來、實測過的架構」，不是
+  規劃草稿，跟實作有落差的地方已經訂正。
+- **實測過**：這次只改文件，沒有動任何程式碼，不需要另外跑測試；有逐一對照 `router.py`／
+  `intent_router.py`／`supervisor.py`／`prompt_config.py`／`tool_gateway.py`／
+  `state_reducer.py`／`rule_validator.py`／`assistant.py` 的實際程式碼跟這個 session
+  之前每一輪真實 LLM 測試的結果，確認文件裡的每一項技術敘述（工具數量、子指令分組、
+  函式名稱、觸發條件）都對應到目前真的存在的程式碼。
