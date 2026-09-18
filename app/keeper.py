@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
 
@@ -732,6 +733,23 @@ def _commit_kp_ooc_turn_result(state: GroupState, message_text: str, final_text:
             ]
         )
         latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
+        save_state(latest_state)
+        _sync_state_snapshot(state, latest_state)
+
+
+def _commit_kp_explicit_canon_turn_result(state: GroupState, message_text: str, final_text: str) -> None:
+    """Persist a KP Assistant explicit-canon assertion plus its OOC exchange."""
+    with locks.get_state_lock(state.group_id):
+        latest_state = load_state(state.group_id)
+        latest_state.log.append({"role": "user", "content": f"[KP Assistant] {message_text}"})
+        latest_state.kp_ooc_log.extend(
+            [
+                {"role": "kp_assistant", "content": message_text},
+                {"role": "assistant", "content": final_text},
+            ]
+        )
+        latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
+        latest_state.openai_previous_response_id = ""
         save_state(latest_state)
         _sync_state_snapshot(state, latest_state)
 
@@ -1589,6 +1607,20 @@ def _format_turn_message(speaker_name: str, message_text: str, speaker_role: str
     return f"{speaker_name}：{message_text}"
 
 
+def _parse_kp_explicit_canon(speaker_role: str, message_text: str) -> tuple[bool, str]:
+    if speaker_role != "kp_assistant" or not message_text:
+        return False, message_text
+
+    first_char = unicodedata.normalize("NFKC", message_text[0])
+    if first_char != "!":
+        return False, message_text
+
+    body = message_text[1:].lstrip()
+    if not body:
+        return False, message_text
+    return True, body
+
+
 def _format_kp_canonical_history_message(
     speaker_name: str,
     message_text: str,
@@ -1674,7 +1706,8 @@ def run_turn(
     is_ephemeral = speaker_role == "kp_assistant"
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
-    turn_message = _format_turn_message(speaker_name, message_text, speaker_role)
+    kp_explicit_canon, effective_message_text = _parse_kp_explicit_canon(speaker_role, message_text)
+    turn_message = _format_turn_message(speaker_name, effective_message_text, speaker_role)
 
     # No extra slicing here — state.log is already bounded to at most
     # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
@@ -1747,13 +1780,15 @@ def run_turn(
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     elif kp_turn_creates_canon:
         canonical_turn_message = _format_kp_canonical_history_message(
-            speaker_name, message_text, kp_canonical_tool_events
+            speaker_name, effective_message_text, kp_canonical_tool_events
         )
         turn_log_entries = [
             {"role": "user", "content": canonical_turn_message},
             {"role": "assistant", "content": final_text},
         ]
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
+    elif kp_explicit_canon:
+        _commit_kp_explicit_canon_turn_result(state, effective_message_text, final_text)
     else:
-        _commit_kp_ooc_turn_result(state, message_text, final_text)
+        _commit_kp_ooc_turn_result(state, effective_message_text, final_text)
     return final_text, private_messages, image_requests
