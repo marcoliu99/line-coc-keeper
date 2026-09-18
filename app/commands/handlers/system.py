@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
-from app import keeper, scenario_index, scenario_intro
+from app import keeper, locks, scenario_index, scenario_intro, scenario_library
 from app.models import GroupState
-from app.repositories.group_state import load_state, save_state
+from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
     Reply, SendDM, SendImage, SendDMImage, FormatMention,
-    _resolve_pdf_upload_choice_locked, _set_character_away_state,
+    _resolve_pdf_upload_choice_locked, _set_character_away_state, handle_pdf_upload,
     _heal_character, _build_readiness_roster, _run_post_turn_maintenance_after_output
 )
 
@@ -24,6 +24,105 @@ async def handle_system_command(
 ) -> None:
     sub = parts[1] if len(parts) > 1 else ""
 
+    if sub == "scenario":
+        action = parts[2] if len(parts) > 2 else "list"
+        state = load_state(conversation_id)
+        if action == "list":
+            entries = scenario_library.list_scenarios()
+            if not entries:
+                await reply("劇本庫目前是空的，請先上傳 PDF。")
+                return
+            lines = ["劇本庫："]
+            for item in entries:
+                marker = "（目前使用）" if item["id"] == state.scenario_library_id else ""
+                chapters = "、".join(c["title"] for c in item.get("chapters", []) if c.get("kind") == "playable")
+                lines.append(f"・{item['id']}《{item.get('title', '')}》{marker}" + (f"\n  章節：{chapters}" if chapters else ""))
+            await reply("\n".join(lines))
+            return
+        if action == "reparse":
+            # Claim and clear the staged item under the conversation lock, then
+            # release it before the intentionally long PDF extraction begins.
+            async with locks.get_conversation_lock(conversation_id):
+                state = load_state(conversation_id)
+                pending = state.pending_scenario_upload
+                if pending is None:
+                    await reply("沒有等待重新解析的 PDF。")
+                    return
+                try:
+                    pdf_bytes = scenario_library.read_staged_upload(pending["key"])
+                except FileNotFoundError:
+                    state.pending_scenario_upload = None
+                    save_state(state)
+                    await reply("暫存 PDF 已不存在，請重新上傳。")
+                    return
+                state.pending_scenario_upload = None
+                save_state(state)
+            candidate_matches = pending.get("matches") or []
+            reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
+            await handle_pdf_upload(
+                conversation_id, reply, reply, pdf_bytes, pending["file_name"],
+                skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
+            )
+            scenario_library.discard_staged_upload(pending["key"])
+            return
+        if action == "cancel":
+            pending = state.pending_scenario_upload
+            if pending is None:
+                await reply("沒有等待處理的 PDF。")
+                return
+            scenario_library.discard_staged_upload(pending.get("key", ""))
+            state.pending_scenario_upload = None
+            save_state(state)
+            await reply("已放棄本次上傳，既有劇本不受影響。")
+            return
+        if action == "use":
+            if state.kp_assistant_user_id != user_id:
+                await reply("只有目前登記的 KP Assistant 可以選擇劇本。")
+                return
+            if len(parts) < 4:
+                await reply("用法：/coc scenario use 劇本ID（先用 /coc scenario list 查看）")
+                return
+            try:
+                context = scenario_library.load_context(parts[3])
+            except (FileNotFoundError, ValueError):
+                await reply("找不到可使用的劇本 ID。請先用 /coc scenario list 查看。")
+                return
+            state.scenario_library_id = parts[3]
+            state.scenario_title = context["manifest"]["title"]
+            state.scenario_text = context["text"]
+            state.active_chapter_id = context["active_chapter_id"]
+            state.context_chapter_ids = context["context_chapter_ids"]
+            state.scenario_npc_index = context["indexes"].get("npcs", [])
+            state.scenario_location_index = context["indexes"].get("locations", [])
+            state.scene_maps = context["scene_maps"]
+            state.pregens = context["pregens"]
+            state.openai_previous_response_id = ""
+            state.active = True
+            clear_page_images(conversation_id)
+            scenario_library.copy_context_images(
+                parts[3], context["page_numbers"],
+                lambda page, image: save_page_image(conversation_id, page, image),
+            )
+            save_state(state)
+            await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。")
+            return
+        if action == "clean":
+            if len(parts) < 4:
+                await reply("用法：/coc scenario clean 劇本ID")
+                return
+            users = scenario_users(parts[3])
+            if users:
+                await reply("此劇本仍被使用中，請先讓所有使用中的群組切換到其他劇本後再清除。")
+                return
+            try:
+                scenario_library.clean_scenario(parts[3])
+            except FileNotFoundError:
+                await reply("找不到該劇本 ID。")
+                return
+            await reply("已清除劇本庫項目。")
+            return
+        await reply("用法：/coc scenario list | use 劇本ID | clean 劇本ID | reparse | cancel")
+        return
     if sub == "newgame":
         save_state(GroupState(group_id=conversation_id))
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")

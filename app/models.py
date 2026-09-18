@@ -442,6 +442,9 @@ class GroupState:
     group_id: str
     scenario_title: str = ""
     scenario_text: str = ""
+    scenario_library_id: str = ""
+    active_chapter_id: str = ""
+    context_chapter_ids: list[str] = field(default_factory=list)
     active: bool = False
     kp_assistant_user_id: str = ""
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
@@ -547,6 +550,7 @@ class GroupState:
     # mode is chosen (see handle_pdf_upload), so there's nothing about them to
     # defer.
     pending_pdf_upload: dict[str, Any] | None = None
+    pending_scenario_upload: dict[str, Any] | None = None
 
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
@@ -559,6 +563,9 @@ class GroupState:
             "group_id": self.group_id,
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
+            "scenario_library_id": self.scenario_library_id,
+            "active_chapter_id": self.active_chapter_id,
+            "context_chapter_ids": self.context_chapter_ids,
             "active": self.active,
             "kp_assistant_user_id": self.kp_assistant_user_id,
             "characters": {k: v.to_dict() for k, v in self.characters.items()},
@@ -581,6 +588,7 @@ class GroupState:
             "game_started": self.game_started,
             "era": self.era,
             "pending_pdf_upload": self.pending_pdf_upload,
+            "pending_scenario_upload": self.pending_scenario_upload,
         }
 
     @staticmethod
@@ -589,6 +597,9 @@ class GroupState:
             group_id=data["group_id"],
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
+            scenario_library_id=data.get("scenario_library_id", ""),
+            active_chapter_id=data.get("active_chapter_id", ""),
+            context_chapter_ids=data.get("context_chapter_ids", []),
             active=data.get("active", False),
             kp_assistant_user_id=data.get("kp_assistant_user_id", ""),
             characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
@@ -618,4 +629,5 @@ class GroupState:
             game_started=data.get("game_started", False),
             era=data.get("era", "1920s"),
             pending_pdf_upload=data.get("pending_pdf_upload"),
+            pending_scenario_upload=data.get("pending_scenario_upload"),
         )

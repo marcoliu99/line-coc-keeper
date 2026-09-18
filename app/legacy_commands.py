@@ -29,7 +29,7 @@ from typing import Awaitable, Callable
 
 import yaml
 
-from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor
+from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor, scenario_library
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
@@ -205,6 +205,27 @@ def _apply_scenario_correction(
     _merge_extracted_pregens(state, pregens)
 
 
+def _install_library_context(state: GroupState, scenario_id: str, context: dict, *, preserve_maps: bool = False) -> None:
+    """Copy the selected chapter window from an immutable library entry into state."""
+    state.scenario_library_id = scenario_id
+    state.scenario_title = context["manifest"]["title"]
+    state.scenario_text = context["text"]
+    state.active_chapter_id = context["active_chapter_id"]
+    state.context_chapter_ids = context["context_chapter_ids"]
+    state.scenario_npc_index = context["indexes"].get("npcs", [])
+    state.scenario_location_index = context["indexes"].get("locations", [])
+    if not preserve_maps:
+        state.scene_maps = context["scene_maps"]
+
+
+def _install_context_images(conversation_id: str, scenario_id: str, context: dict) -> None:
+    clear_page_images(conversation_id)
+    scenario_library.copy_context_images(
+        scenario_id, context["page_numbers"],
+        lambda page, image: save_page_image(conversation_id, page, image),
+    )
+
+
 def _pdf_upload_confirmation_text(
     title: str,
     text: str,
@@ -283,6 +304,8 @@ async def handle_pdf_upload(
     push: Reply,
     pdf_bytes: bytes,
     file_name: str,
+    skip_similarity: bool = False,
+    reparse_candidate_id: str | None = None,
 ) -> None:
     """`reply` must land inside whatever immediate response window the platform
     gives an incoming event (LINE's reply token expires after 60s and is
@@ -324,6 +347,34 @@ async def handle_pdf_upload(
         )
         return
 
+    if existing_state.pending_scenario_upload is not None and not skip_similarity:
+        await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
+        return
+
+    preview = ""
+    if not skip_similarity:
+        try:
+            preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
+        except ValueError as exc:
+            await reply(f"無法讀取 PDF 前幾頁：{exc}")
+            return
+        preview_title = pdf_loader.guess_title(preview, file_name=file_name)
+        matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
+        if matches:
+            key = await asyncio.to_thread(scenario_library.stage_upload, pdf_bytes)
+            # Reload under the lock right before saving — extract_preview and
+            # find_similar above ran unlocked, so the state this function
+            # loaded at the top can already be stale by now (an ordinary
+            # turn, roll, or combat update landing in between); saving that
+            # stale snapshot back would silently revert whatever changed.
+            async with locks.get_conversation_lock(conversation_id):
+                state = load_state(conversation_id)
+                state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
+                save_state(state)
+            labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
+            await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
+            return
+
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
 
     try:
@@ -355,58 +406,55 @@ async def handle_pdf_upload(
     # gets folded into state.pregens without regard to upload order.
     pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
 
+    if not preview:
+        try:
+            preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
+        except ValueError:
+            preview = text[:12_000]
+    scenario_id = await asyncio.to_thread(
+        scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
+        preview=preview, text=text, indexes=extracted_index, pregens=pregens,
+        page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
+    )
+    library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
+    text = library_context["text"]
+    extracted_index = library_context["indexes"]
+    pregens = library_context["pregens"]
+    page_maps = library_context["scene_maps"]
+
     async with locks.get_conversation_lock(conversation_id):
-
-        # Page images update the same way regardless of which mode a GM later
-        # picks for an ambiguous re-upload (see below) — applied immediately,
-        # unconditionally, so there's nothing image-related left inside the
-        # pending choice to defer. Done INSIDE get_conversation_lock (moved
-        # here from before the lock) — two PDFs landing for the same
-        # conversation close together both run their (unlocked, concurrent)
-        # extraction, and without this serialization their image writes can
-        # interleave (A clears, B clears+writes, A writes-after-B) leaving
-        # /coc showpage serving the wrong upload's pages for whichever
-        # scenario the locked state update below actually ends up current.
-        clear_page_images(conversation_id)  # don't let a new scenario's /coc
-        # showpage 5 show the OLD scenario's page 5.
-
-        for page_number, png_bytes in page_images.items():
-            save_page_image(conversation_id, page_number, png_bytes)
-
         state = load_state(conversation_id)
-        # Re-checked here, INSIDE the lock, not just the early check above —
-        # the early check runs before extraction (which can take up to ~a
-        # minute per the ack message below), so two PDFs landing close
-        # together both pass it before either has a pending_pdf_upload saved
-        # yet, then race for this lock. Without re-checking here, whichever
-        # one acquires the lock second would silently overwrite the first
-        # one's still-unresolved pending_pdf_upload — same clobbering bug the
-        # early check exists to prevent, just via the concurrent path instead
-        # of the sequential one.
+        # Do not expose the replacement PDF's images until the GM has chosen
+        # new-versus-correction. The immutable library entry already contains
+        # them; the selected two-chapter window is copied only on activation.
         if state.pending_pdf_upload is not None:
             raced = True
         elif state.scenario_text.strip():
             raced = False
             state.pending_pdf_upload = {
+                "scenario_id": scenario_id,
                 "text": text,
-                "title": title,
+                "title": library_context["manifest"]["title"],
                 "low_text_pages": low_text_pages,
                 "truncated": truncated,
                 "npcs": extracted_index["npcs"],
                 "locations": extracted_index["locations"],
                 "page_maps": {str(k): v for k, v in page_maps.items()},
                 "pregens": pregens,
+                "active_chapter_id": library_context["active_chapter_id"],
+                "context_chapter_ids": library_context["context_chapter_ids"],
             }
             save_state(state)
             current_title = state.scenario_title
             confirmation_pending = True
         else:
             raced = False
-            _apply_new_scenario(state, text, title, extracted_index, page_maps, pregens)
+            _apply_new_scenario(state, text, library_context["manifest"]["title"], extracted_index, page_maps, pregens)
+            _install_library_context(state, scenario_id, library_context)
+            _install_context_images(conversation_id, scenario_id, library_context)
             save_state(state)
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
-
     if raced:
         await push(
             f"這份《{title}》來得比較慢——另一份幾乎同時上傳的 PDF 先卡進待確認狀態了，請先處理完"
@@ -428,33 +476,38 @@ async def handle_pdf_upload(
 
 
 def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
-    """Body of resolve_pdf_upload_choice, factored out so it can be called
-    from a context that already holds get_conversation_lock (see the "/coc
-    pdf new"/"/coc pdf fix" text-command path below, which runs inside
-    _handle_coc_command — itself already called under that same lock by
-    handle_text_message; asyncio.Lock isn't reentrant, so calling the
-    lock-acquiring version from in there would deadlock). Returns the
-    confirmation text to send; the caller does the actual reply/push."""
+    """Resolve a pending upload while the caller holds the conversation lock."""
     state = load_state(conversation_id)
     pending = state.pending_pdf_upload
     if pending is None:
         return "這個上傳選擇已經處理過了，或已經過期失效，請重新上傳 PDF。"
-    extracted_index = {"npcs": pending["npcs"], "locations": pending["locations"]}
-    pending_pregens = pending.get("pregens", [])
+    scenario_id = pending.get("scenario_id")
+    if not scenario_id:
+        return "這個待處理上傳缺少劇本庫資料，請重新上傳 PDF。"
+    try:
+        context = scenario_library.load_context(scenario_id, pending.get("active_chapter_id", ""))
+    except (FileNotFoundError, ValueError):
+        state.pending_pdf_upload = None
+        save_state(state)
+        return "這個待處理劇本庫項目已不存在，請重新上傳 PDF。"
+    extracted_index = context["indexes"]
     if choice == "new":
         _apply_new_scenario(
-            state, pending["text"], pending["title"], extracted_index, pending["page_maps"], pending_pregens
+            state, context["text"], context["manifest"]["title"], extracted_index,
+            context["scene_maps"], context["pregens"],
         )
     else:
-        _apply_scenario_correction(state, pending["text"], pending["title"], extracted_index, pending_pregens)
+        _apply_scenario_correction(
+            state, context["text"], context["manifest"]["title"], extracted_index, context["pregens"]
+        )
+    _install_library_context(state, scenario_id, context, preserve_maps=(choice != "new"))
+    _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
     save_state(state)
-    final_pregen_count = len(state.pregens)
     return _pdf_upload_confirmation_text(
-        pending["title"], pending["text"], pending["low_text_pages"], pending["truncated"],
-        pending["page_maps"], extracted_index, final_pregen_count,
+        context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
+        context["scene_maps"], extracted_index, len(state.pregens),
     )
-
 
 async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
     """Called by an adapter's button callback (see app/discord_bot.py's

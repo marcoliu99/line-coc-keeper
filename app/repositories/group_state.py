@@ -84,3 +84,15 @@ def clear_page_images(group_id: str) -> None:
     """Called whenever a new PDF is uploaded, so a scenario switch doesn't leave
     a previous scenario's page images (and their page numbers) lying around."""
     shutil.rmtree(_images_dir(group_id), ignore_errors=True)
+
+
+def scenario_users(scenario_id: str) -> list[str]:
+    """Return every conversation currently selecting a reusable scenario."""
+    users = []
+    for group_id in db.list_keys("group_states"):
+        try:
+            if load_state(group_id).scenario_library_id == scenario_id:
+                users.append(group_id)
+        except Exception:
+            continue
+    return users

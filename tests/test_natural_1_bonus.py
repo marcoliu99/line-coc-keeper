@@ -12,7 +12,7 @@ sys.modules.setdefault(
     ),
 )
 
-from app import commands, dice
+from app import legacy_commands as commands, dice
 from app.models import Character
 
 

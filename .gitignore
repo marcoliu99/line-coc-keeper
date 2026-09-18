@@ -8,3 +8,6 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 .DS_Store
+
+# Runtime database, uploaded PDFs, and generated scenario assets
+data/
