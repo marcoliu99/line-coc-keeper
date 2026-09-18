@@ -155,7 +155,7 @@ def append_memory(group_id: str, text: str) -> None:
         if embedded is not None:
             embedding = embedded[0]
     except Exception:
-        pass
+        _logger.exception("embedding failed for a memory chunk, storing without one (BM25-only search still works)")
     raw_chunks.append({"label": label, "text": text, "embedding": embedding})
     _save_raw_chunks(group_id, raw_chunks)
 

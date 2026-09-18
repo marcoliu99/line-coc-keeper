@@ -253,7 +253,7 @@ def build_index(scenario_text: str) -> ScenarioIndex:
 
     chunks = [_Chunk(page=page_num, text=text) for page_num, text in sub_chunks]
     doc_freq, avg_length = _compute_bm25_stats(chunks)
-    text_hash = hashlib.md5(scenario_text.encode("utf-8")).hexdigest()
+    text_hash = hashlib.md5(scenario_text.encode("utf-8"), usedforsecurity=False).hexdigest()
 
     # Embeddings call(s) for the whole scenario, done once at index-build
     # time (cached by get_index below, and persisted to disk so a bot
@@ -391,7 +391,7 @@ def _save_index_to_disk(group_id: str, index: ScenarioIndex) -> None:
         }
         db.set_json("scenario_indexes", group_id, payload)
     except Exception:
-        pass
+        _logger.exception("failed to persist scenario index for group_id=%s (next restart will just re-embed)", group_id)
 
 
 def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
@@ -436,7 +436,7 @@ _index_cache: dict[str, ScenarioIndex] = {}
 
 
 def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
-    text_hash = hashlib.md5(scenario_text.encode("utf-8")).hexdigest()
+    text_hash = hashlib.md5(scenario_text.encode("utf-8"), usedforsecurity=False).hexdigest()
     cached = _index_cache.get(group_id)
     if cached is not None and cached.text_hash == text_hash:
         return cached

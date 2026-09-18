@@ -511,10 +511,11 @@ async def on_message(message: discord.Message) -> None:
             # pending check with no button ever posted for it.
             await _post_pending_buttons(message.channel, conversation_id, before_pending, before_luck_pending)
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
+        _logger.exception("on_message failed for conversation_id=%s", conversation_id)
         try:
             await reply(f"發生錯誤了：{exc}")
         except Exception:
-            pass
+            _logger.exception("also failed to report the above error back to conversation_id=%s", conversation_id)
 
 
 def main() -> None:
