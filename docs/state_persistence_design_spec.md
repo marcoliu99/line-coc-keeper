@@ -52,6 +52,75 @@
 | 場景摘要（scene digest） | 某一團目前結構化、權威的狀態精簡摘要（角色數值、戰鬥、已知線索、NPC 能力使用狀態等），取代舊場景反覆整段帶進 prompt。 |
 | 還原（rollback） | 把某一團目前的 `GroupState` 換成某個回溯節點當時的內容。 |
 
+## 整體流程圖
+
+本文三個機制（每輪自動流程、KP 手動回溯、背景定期備份）怎麼跟既有的每輪對話流程接起來：
+
+```text
+[ 玩家／KP 傳一則訊息 ]
+        │
+        ▼
+app/commands/router.py → supervisor.run_turn
+        │
+        ▼
+keeper._build_dynamic_prompt
+        │
+        ├─ 讀 scene_digests 表「最新一列」──► public 區塊接進一般動態 prompt
+        │                                  private 區塊接進 keeper-only 機密區
+        │
+        ▼
+   Keeper LLM 生成敘事、必要時呼叫工具
+   （工具呼叫已經是「真的」在改 GroupState，
+     _mutate_and_save_state 鎖機制不變）
+        │
+        ▼
+save_state()（GroupState 整份覆寫，SQLite atomic transaction）
+        │
+        ▼
+_run_post_turn_maintenance_after_output   ← 既有掛勾，每輪後都跑一次
+        │
+        ├──────────────────┬──────────────────────┐
+        ▼                  ▼                       ▼
+[ log 太長？ ]      [ 場景摘要該觸發了嗎？ ]   [ 背景備份時間到了嗎？ ]
+（既有機制，不動）   章節推進 (advance_          （獨立的 asyncio 背景迴圈，
+        │           scenario_chapter)              不掛在單輪回合上）
+        ▼           或回合數達                       │
+ campaign_summary   SCENE_DIGEST_TURN_INTERVAL        ▼
+ （LLM 生成散文摘要）        │                  db.backup_now("scheduled")
+        +                   ▼                         │
+ Memory RAG 索引     app/scene_digest.py               ▼
+                     讀 scene_digests 最新列    coc_bot-{時間戳}-scheduled.db
+                     + 這輪新增的事實                   │
+                            │                          ▼
+                     累積欄位聯集／                清掉超過 BACKUP_KEEP_COUNT
+                     現狀欄位取代                   的舊備份檔
+                            │
+                            ▼
+                  scene_digests 新增一列
+                  （不覆寫、不刪除舊列）
+
+
+[ KP 手動或事件觸發的回溯節點 ]
+
+/coc checkpoint [名稱] ──┐
+                         │
+start_combat 觸發 ───────┼──► state_checkpoints 新增一列
+（reason=auto_          │    （完整 GroupState.to_dict()，
+  combat_start）         │     不做欄位挑選）
+                         │
+/coc rollback <ID> ──────┘
+        │
+        ▼
+先自動存一筆 reason=pre_rollback 的節點
+（讓「回溯回溯錯了」也能再回溯回去）
+        │
+        ▼
+用該節點的 state 整份覆寫（get_conversation_lock 底下執行）
+        │
+        ▼
+save_state()
+```
+
 ## 現況與缺口
 
 現有保存路徑（`app/db.py` + `app/repositories/group_state.py`，2026-09 的 SQLite 遷移已經做好的部分）：
