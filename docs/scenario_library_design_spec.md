@@ -276,6 +276,68 @@ pending_scenario_upload: dict | None = None
 
 這能讓劇本庫保持唯讀、可重用，而團務進度仍與聊天室綁定。
 
+
+## Agentic Keeper 整合契約
+
+劇本庫不新增一個用來決定「要載入哪個劇本」的 LLM Agent。上傳去重、章節識別與 `/coc scenario` 指令全部維持在確定性的 Python 指令層，避免 AI 對檔案是否重複做不可驗證的判斷，也避免在每次 PDF 上傳時增加 LLM 成本。
+
+載入完成後，劇本庫以既有 `GroupState` 作為 Agentic Keeper 的唯一執行期資料來源；不讓 `ContextBuilder`、`Executor` 或 `Narrator` 直接讀取劇本庫資料夾。這可保留目前的鎖定、SQLite 快照、測試替身與舊資料相容性。
+
+```text
+[/coc scenario use <劇本ID> <章節ID>]
+                    |
+                    v
+[Scenario Library: 唯讀劇本資產]
+ scenario.txt / indexes.json / maps / pregens / images
+                    |
+                    | 複製「指定 playable 章節」的執行快照
+                    v
+[GroupState]
+ scenario_library_id + scenario_title + scenario_text
+ scenario_npc_index + scenario_location_index + scene_maps + pregens
+                    |
+                    v
+[ContextBuilder]
+ ├─ Scenario RAG：僅以該章 scenario_text 建立／取得索引
+ ├─ Memory RAG：仍只讀取本團 conversation_id 的遊戲記憶
+ └─ 封裝 AgentMessage（含目前角色、位置與章節內容）
+                    |
+                    v
+[KeeperSupervisor]
+ ├─ PURE_ROLEPLAY ───────────────────────────> Narrator
+ └─ GAMEPLAY_ACTION -> Executor -> StateReducer -> Narrator
+                    |
+                    v
+[GroupState + 團務存檔]
+ 遊戲進度只寫入此團；絕不回寫 Scenario Library
+```
+
+### 各 Agent 的資料邊界
+
+| 元件 | 可讀資料 | 不可讀／不可寫資料 | 契約 |
+| --- | --- | --- | --- |
+| `scenario_library`／system handler | 劇本目錄、manifest、章節、暫存上傳 | 團務對話、玩家 HP/SAN、記憶 | 負責載入、清除、比對；不呼叫 LLM。 |
+| `ContextBuilder` | `GroupState` 的指定章節文字、目前角色與位置、該團 Memory RAG | 其他章節、其他劇本、原始 PDF | Scenario RAG 的 key 必須包含劇本 ID、章節 ID 與內容 hash，避免章節切換後命中舊索引。 |
+| `Executor` | `AgentMessage`、當前 `GroupState`、Keeper 現有工具 | 劇本庫檔案系統 | 所有 HP/SAN、檢定、戰鬥與物品變動只透過既有 `keeper._execute_tool` 寫回團務狀態。 |
+| `Narrator` | 指定章節 RAG 結果、機制 facts、目前劇情 log | 其他章節原文、完整 PDF | 不得以未載入章節的資訊敘事或劇透；沒有檢索到資料時應表達不確定，不自行補寫劇本事實。 |
+| `KP Assistant` | 同一團的 `kp_ooc_log` 與指定章節 Context | 劇本庫寫入權、其他團 OOC 記錄 | 維持既有 OOC 隔離；切換劇本時清除 OOC 記錄，避免主持指示跨劇本殘留。 |
+
+### 章節切換的快取與狀態規則
+
+1. `scenario_library_id`、`chapter_id`、`content_hash` 是劇本 Context 的版本鍵。
+2. `scenario_rag.get_index()` 的持久化快取 key 必須由上述版本鍵組成；禁止只以 `conversation_id` 或舊文字快取判斷。
+3. `/coc scenario use` 清除 `openai_previous_response_id`、`log`、`campaign_summary`、Memory RAG 索引、地圖座標、待處理檢定、戰鬥與 `kp_ooc_log`，再建立新章節 Context。
+4. 玩家角色保留，但其位置、戰鬥狀態與由舊劇本取得的任務旗標不得帶入新章節。
+5. 章節載入後的 NPC／地點索引只包含該章及其宣告共用資產的條目；避免 Narrator 在第一章就看見後續章節敵人或結局。
+6. 若玩家想從同一劇本的另一 playable 章節開始，也走完整的 `/coc scenario use` 重置語意；它不是無損傳送或續玩。
+
+### Agent 整合驗收
+
+1. 載入 `chapter-01` 後，`ContextBuilder` 的 Scenario RAG 無法檢索 `chapter-02` 專屬文字。
+2. 切換章節後，RAG 不會回傳先前章節快取的結果。
+3. Executor 的工具呼叫仍能正確寫回目前 `GroupState`，且不修改劇本庫目錄。
+4. Narrator 收到的 mechanic facts 與既有 Agentic Keeper 流程一致。
+5. KP Assistant 的 OOC 指示在劇本或章節切換後不會污染新劇情。
 ## 與現有模組的整合
 
 | 模組 | 調整責任 |
