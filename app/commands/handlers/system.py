@@ -19,11 +19,12 @@ async def _handle_local_import(conversation_id: str, user_id: str, reply: Reply,
     if state.kp_assistant_user_id != user_id:
         await reply("只有目前登記的 KP Assistant 可以匯入伺服器上的 PDF。")
         return
-    if len(parts) < 3:
+    filename_index = 3 if len(parts) > 1 and parts[1] == "scenario" else 2
+    if len(parts) <= filename_index:
         await reply("用法：/coc scenario import 檔名.pdf")
         return
     try:
-        pdf_path = scenario_library.safe_import_path(IMPORT_DIR, parts[2])
+        pdf_path = scenario_library.safe_import_path(IMPORT_DIR, parts[filename_index])
         pdf_bytes = pdf_path.read_bytes()
     except (FileNotFoundError, ValueError, OSError):
         await reply("找不到允許匯入的 PDF；只能使用 IMPORT_DIR 內的檔案名稱，不能帶路徑。")
@@ -66,7 +67,9 @@ async def _handle_staged_merge(conversation_id: str, user_id: str, reply: Reply,
     from app.pdf_loader import combine_pdfs
     merged = await asyncio.to_thread(combine_pdfs, payloads)
     merged_name = f"{selected[0]['file_name'].rsplit('.', 1)[0]}_merged.pdf"
-    await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name)
+    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name)
+    if not accepted:
+        return
     for item in selected:
         scenario_library.discard_staged_upload(item["key"])
     async with locks.get_conversation_lock(conversation_id):

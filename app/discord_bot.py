@@ -12,6 +12,7 @@ import asyncio
 import io
 import logging
 from pathlib import Path
+import re
 import unicodedata
 
 import discord
@@ -459,7 +460,10 @@ async def on_message(message: discord.Message) -> None:
         pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
         if pdf_attachments:
             ordered = sorted(pdf_attachments, key=lambda item: item.filename.lower())
-            should_stage = len(ordered) > 1 or any("part" in Path(item.filename).stem.lower() for item in ordered)
+            part_name = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
+            should_stage = len(ordered) > 1 or any(
+                part_name.search(Path(item.filename).stem) for item in ordered
+            )
             if should_stage:
                 staged = []
                 for attachment in ordered:

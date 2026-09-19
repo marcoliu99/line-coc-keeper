@@ -220,7 +220,14 @@ def _apply_scenario_correction(
     _merge_extracted_pregens(state, pregens)
 
 
-def _install_library_context(state: GroupState, scenario_id: str, context: dict, *, preserve_maps: bool = False) -> None:
+def _install_library_context(
+    state: GroupState,
+    scenario_id: str,
+    context: dict,
+    *,
+    preserve_maps: bool = False,
+    preserve_pregens: bool = False,
+) -> None:
     """Copy the selected chapter window from an immutable library entry into state."""
     state.scenario_library_id = scenario_id
     state.scenario_title = context["manifest"]["title"]
@@ -229,7 +236,8 @@ def _install_library_context(state: GroupState, scenario_id: str, context: dict,
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
-    state.pregens = list(context.get("pregens", []))
+    if not preserve_pregens:
+        state.pregens = list(context.get("pregens", []))
     if not preserve_maps:
         state.scene_maps = context["scene_maps"]
 
@@ -322,7 +330,7 @@ async def handle_pdf_upload(
     file_name: str,
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
-) -> None:
+) -> bool:
     """`reply` must land inside whatever immediate response window the platform
     gives an incoming event (LINE's reply token expires after 60s and is
     single-use); `push` is for the actual result, sent once extraction — which
@@ -344,7 +352,7 @@ async def handle_pdf_upload(
     ambiguous against, so it always applies immediately with no button."""
     if not file_name.lower().endswith(".pdf"):
         await reply("目前只支援上傳 PDF 劇本檔案喔。")
-        return
+        return False
 
     # Checked before any of the expensive extraction work below (and before
     # clear_page_images, which unconditionally wipes the current scenario's
@@ -361,11 +369,11 @@ async def handle_pdf_upload(
             "還是「修正目前劇本」，請先點上一則訊息的按鈕選完，再上傳這份新的 PDF——不然這份新的"
             "會蓋掉還沒處理的那份，之後點到舊按鈕會套用到錯的內容。"
         )
-        return
+        return False
 
     if existing_state.pending_scenario_upload is not None and not skip_similarity:
         await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
-        return
+        return False
 
     preview = ""
     if not skip_similarity:
@@ -373,7 +381,7 @@ async def handle_pdf_upload(
             preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
         except ValueError as exc:
             await reply(f"無法讀取 PDF 前幾頁：{exc}")
-            return
+            return False
         preview_title = pdf_loader.guess_title(preview, file_name=file_name)
         matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
         if matches:
@@ -388,12 +396,12 @@ async def handle_pdf_upload(
                 if state.pending_scenario_upload is not None:
                     scenario_library.discard_staged_upload(key)
                     await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
-                    return
+                    return False
                 state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
                 save_state(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
             await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
-            return
+            return False
 
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
 
@@ -403,7 +411,7 @@ async def handle_pdf_upload(
         )
     except ValueError as exc:
         await push(f"讀取 PDF 失敗：{exc}")
-        return
+        return False
 
     title = pdf_loader.guess_title(text, file_name=file_name)
 
@@ -480,7 +488,7 @@ async def handle_pdf_upload(
             f"這份《{title}》來得比較慢——另一份幾乎同時上傳的 PDF 先卡進待確認狀態了，請先處理完"
             "上一則訊息的選擇，再重新上傳這份。"
         )
-        return
+        return False
 
     if confirmation_pending:
         await push(
@@ -488,11 +496,12 @@ async def handle_pdf_upload(
             "是要開始一個全新的劇本，還是修正/補完目前這份劇本？請點下面的按鈕選擇——"
             "選錯的代價不小（位置可能對到新劇本裡不存在的房間），拿不準的話選「修正目前劇本」比較安全。"
         )
-        return
+        return True
 
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
     ))
+    return True
 
 
 def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
@@ -520,7 +529,13 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
         _apply_scenario_correction(
             state, context["text"], context["manifest"]["title"], extracted_index, context["pregens"]
         )
-    _install_library_context(state, scenario_id, context, preserve_maps=(choice != "new"))
+    _install_library_context(
+        state,
+        scenario_id,
+        context,
+        preserve_maps=(choice != "new"),
+        preserve_pregens=(choice != "new"),
+    )
     _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
     save_state(state)

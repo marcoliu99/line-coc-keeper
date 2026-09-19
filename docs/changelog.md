@@ -1,5 +1,11 @@
 # 開發紀錄／已知限制
 
+### PR #31 review fixes
+
+- 修正劇本修正流程不覆蓋已 reconcile 的角色卡，保留 `claimed_by` 與手動補充欄位。
+- 修正 `/coc scenario import` 讀取錯誤參數、PyMuPDF4LLM zero-based page metadata 位移，以及只在檔名確實含有 part 編號時暫存分割檔。
+- 合併 PDF 解析失敗或被拒絕時保留 staged parts，避免使用者被迫重新上傳。
+
 ### 狀態持久化、回溯節點與戰鬥整合
 
 - 新增 `GroupState` schema migration、timeline/revision 保存、KP-only checkpoint/rollback、scene digest 與 SQLite backup；checkpoint、rollback、backup 都記錄 started/success/failure 維運 log。

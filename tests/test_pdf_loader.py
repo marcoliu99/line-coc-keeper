@@ -78,6 +78,26 @@ class PdfLoaderImagePersistenceTests(unittest.TestCase):
         self.assertEqual(low_pages, [1])
         self.assertEqual(page_images, {1: b"png"})
 
+    def test_pymupdf4llm_zero_based_page_metadata_is_shifted(self):
+        fake_pymupdf4llm = types.SimpleNamespace(
+            to_markdown=lambda _doc, **_kwargs: [
+                {"metadata": {"page": 0}, "text": "first"},
+                {"metadata": {"page": 1}, "text": "second"},
+            ]
+        )
+        # Exercise the normalizer with a valid document while keeping the
+        # zero-based metadata shape exposed by some releases.
+        document = pymupdf.open()
+        document.new_page()
+        document.new_page()
+        pdf_bytes = document.tobytes()
+        document.close()
+        with patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}):
+            pages = pdf_loader._pymupdf4llm_page_chunks(pdf_bytes)
+        self.assertEqual(sorted(pages), [1, 2])
+        self.assertEqual(pages[1]["text"], "first")
+        self.assertEqual(pages[2]["text"], "second")
+
     def test_graphic_page_is_saved_even_when_ocr_text_is_long(self):
         document = pymupdf.open()
         page = document.new_page()

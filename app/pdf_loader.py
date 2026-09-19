@@ -269,15 +269,21 @@ def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
             continue
         metadata = chunk.get("metadata")
         metadata = metadata if isinstance(metadata, dict) else {}
-        raw_page = metadata.get("page_number", metadata.get("page"))
+        if "page_number" in metadata:
+            raw_page = metadata["page_number"]
+            zero_based = False
+        elif "page" in metadata:
+            raw_page = metadata["page"]
+            zero_based = True
+        else:
+            raw_page = None
+            zero_based = False
         try:
             page_number = int(raw_page) if raw_page is not None else index + 1
         except (TypeError, ValueError):
             page_number = index + 1
-        # Some releases expose a zero-based ``page`` field while others use
-        # one-based ``page_number``. Zero can only mean the first page here.
-        if page_number == 0:
-            page_number = index + 1
+        if zero_based:
+            page_number += 1
         if page_number >= 1:
             pages[page_number] = chunk
     return pages or None
