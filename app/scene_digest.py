@@ -17,18 +17,30 @@ def _id() -> str:
 
 
 def _public_state(state: GroupState) -> dict:
+    active_characters = state.active_characters()
     locations = {
         owner_id: {
             "map_page": state.current_map_page.get(owner_id, ""),
             "room_id": state.current_room_id.get(owner_id, ""),
             "facing": state.party_facing.get(owner_id, "N"),
         }
-        for owner_id in state.characters
+        for owner_id in {char.owner_id for char in active_characters}
     }
-    npc_abilities = {
-        combatant.name: getattr(combatant, "abilities", {})
-        for combatant in state.combat.order
-        if not combatant.is_pc and getattr(combatant, "abilities", {})
+    combat_public = {
+        "active": state.combat.active,
+        "round_number": state.combat.round_number,
+        "current_index": state.combat.current_index,
+        "order": [
+            {
+                "combatant_id": combatant.combatant_id,
+                "display_name": combatant.display_name,
+                "side": combatant.side,
+                "dex": combatant.dex,
+                "defeated": combatant.defeated,
+                **({"hp": combatant.hp, "hp_max": combatant.hp_max} if combatant.side != "enemy" else {}),
+            }
+            for combatant in state.combat.order
+        ],
     }
     return {
         "characters": {
@@ -40,11 +52,10 @@ def _public_state(state: GroupState) -> dict:
                 "luck": c.luck, "mp": c.mp, "mp_max": c.mp_max,
                 "carried_items": list(c.carried_items), "status_tags": list(c.status_tags),
             }
-            for c in state.characters.values()
+            for c in active_characters
         },
         "locations": locations,
-        "combat": state.combat.to_dict(),
-        "npc_abilities": npc_abilities,
+        "combat": combat_public,
         "established_facts": [x for x in state.established_facts if x.get("visibility", "public") == "public"],
         "known_clues": [x for x in state.known_clues if x.get("visibility", "public") == "public"],
         "consumed_or_removed_items": state.consumed_or_removed_items,
@@ -60,6 +71,17 @@ def create_digest(state: GroupState, *, scene_label: str = "") -> dict:
         {key: item.get(key) for key in ("checkpoint_id", "label", "reason", "created_at")}
         for item in checkpoints.list_checkpoints(state.group_id)[-5:]
     ]
+    private_combat = state.combat.to_dict()
+    private_npc_abilities = {
+        combatant.display_name: {
+            "card_id": combatant.enemy_card_id,
+            "abilities": [ability.to_dict() for ability in card.abilities],
+        }
+        for combatant in state.combat.order
+        if not combatant.is_pc
+        for card in [state.combat.enemy_cards.get(combatant.enemy_card_id)]
+        if card is not None
+    }
     entry = {
         "group_id": state.group_id,
         "digest_id": digest_id,
@@ -73,6 +95,8 @@ def create_digest(state: GroupState, *, scene_label: str = "") -> dict:
         "recent_checkpoints": recent_checkpoints,
         "private": {
             "note": "以下內容僅供 Keeper 使用，不可透露給玩家。",
+            "combat": private_combat,
+            "npc_abilities": private_npc_abilities,
             "facts": [x for x in state.established_facts if x.get("visibility") == "kp_only"],
             "clues": [x for x in state.known_clues if x.get("visibility") == "kp_only"],
         },

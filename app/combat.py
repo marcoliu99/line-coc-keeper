@@ -503,12 +503,16 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
     key = _timing_key(state, timing, target_id)
     if key in state.combat.processed_timings:
         return []
-    state.combat.processed_timings.append(key)
 
     results: list[dict[str, Any]] = []
     remaining: list[EffectState] = []
+    timing_failed = False
     for effect in state.combat.effects:
         applies = effect.timing == timing and (not target_id or effect.target_id == target_id)
+        effect_key = f"{key}:effect:{effect.id}"
+        if applies and effect_key in state.combat.processed_timings:
+            remaining.append(effect)
+            continue
         applied = False
         if applies and effect.damage:
             try:
@@ -520,6 +524,7 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                     "target_id": effect.target_id,
                     "error": f"無法解析效果傷害：{exc}",
                 })
+                timing_failed = True
             else:
                 result = apply_combat_damage(
                     state,
@@ -532,13 +537,18 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                 result["effect_id"] = effect.id
                 results.append(result)
                 applied = result.get("ok") is True
+                if not applied:
+                    timing_failed = True
         elif applies:
             applied = True
         if applied:
+            state.combat.processed_timings.append(effect_key)
             _tick_effect(effect)
         if effect.remaining_rounds is None or effect.remaining_rounds > 0:
             remaining.append(effect)
     state.combat.effects = remaining
+    if not timing_failed:
+        state.combat.processed_timings.append(key)
     return results
 
 
@@ -655,7 +665,64 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
     return plan
 
 
-def resolve_enemy_action(state: GroupState, plan_id: str) -> dict[str, Any]:
+def _apply_ability_effect(
+    state: GroupState,
+    ability: SpecialAbility,
+    target_ids: list[str],
+) -> dict[str, Any]:
+    """Materialize a successful ability's declared persistent effect."""
+    effect_spec = ability.effect or {}
+    if effect_spec.get("on_success") != "apply_effect":
+        return {"ok": True, "applied": False}
+
+    target_id = next(
+        (candidate for candidate in target_ids if any(c.combatant_id == candidate for c in state.combat.order)),
+        "",
+    )
+    if not target_id:
+        return {"ok": False, "error": "特殊能力成功，但找不到效果目標"}
+    timing = effect_spec.get("timing", "turn_start")
+    if timing not in {"round_start", "turn_start", "turn_end", "round_end"}:
+        return {"ok": False, "error": f"特殊能力效果時點不支援：{timing}"}
+    remaining_rounds = effect_spec.get("remaining_rounds")
+    if remaining_rounds is not None and remaining_rounds < 1:
+        return {"ok": False, "error": "特殊能力效果 remaining_rounds 必須大於 0"}
+    damage = str(effect_spec.get("damage", ""))
+    damage_error = _validate_effect_damage_expression(damage)
+    if damage_error:
+        return {"ok": False, "error": f"無法解析特殊能力效果傷害：{damage_error}"}
+
+    effect_id = effect_spec.get("effect_id") or f"ability-effect:{ability.id}"
+    if any(effect.id == effect_id for effect in state.combat.effects):
+        return {"ok": True, "applied": False, "already_applied": True, "effect_id": effect_id}
+    effect = EffectState(
+        id=effect_id,
+        label=effect_spec.get("label") or ability.name,
+        source_id=ability.id,
+        target_id=target_id,
+        timing=timing,
+        remaining_rounds=remaining_rounds,
+        damage=damage,
+        damage_type=effect_spec.get("damage_type", "mental"),
+        save_or_check=effect_spec.get("save_or_check", {}),
+        tags=effect_spec.get("tags", []),
+        public_description=effect_spec.get("public_description", ""),
+    )
+    state.combat.effects.append(effect)
+    return {
+        "ok": True,
+        "applied": True,
+        "effect_id": effect.id,
+        "target_id": target_id,
+        "label": effect.label,
+    }
+
+
+def resolve_enemy_action(
+    state: GroupState,
+    plan_id: str,
+    outcome: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     plan = state.combat.plans.get(plan_id)
     if not plan:
         return {"ok": False, "error": f"找不到行動計畫 {plan_id}"}
@@ -664,9 +731,18 @@ def resolve_enemy_action(state: GroupState, plan_id: str) -> dict[str, Any]:
     card = state.combat.enemy_cards.get(plan["enemy_card_id"])
     if not card:
         return {"ok": False, "error": "行動計畫對應的敵人卡不存在"}
+    effect_result: dict[str, Any] = {"ok": True, "applied": False}
     if plan["selected_action"] == "special_ability":
         ability = next((a for a in card.abilities if a.id == plan["selected_id"]), None)
         if ability:
+            if ability.effect.get("on_success") == "apply_effect":
+                if outcome is None:
+                    return {"ok": False, "error": "此特殊能力需要提供檢定結果 outcome"}
+                success = bool(outcome.get("success", outcome.get("passed", outcome.get("ok", False))))
+                if success:
+                    effect_result = _apply_ability_effect(state, ability, plan.get("target_ids", []))
+                    if not effect_result.get("ok"):
+                        return {"ok": False, "error": effect_result["error"]}
             ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
             ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
             ability.current_cooldown = ability.cooldown_rounds
@@ -676,7 +752,7 @@ def resolve_enemy_action(state: GroupState, plan_id: str) -> dict[str, Any]:
             elif trigger_type == "on_damage_taken":
                 card.status_tags = [tag for tag in card.status_tags if tag != _damage_taken_trigger_tag()]
     plan["resolved"] = True
-    return {"ok": True, "plan_id": plan_id, "resolved": True}
+    return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
 
 
 def advance_turn(state: GroupState) -> dict:
@@ -688,12 +764,14 @@ def advance_turn(state: GroupState) -> dict:
 
     current = combat.order[combat.current_index]
     process_timing(state, "turn_end", current.combatant_id)
-    process_timing(state, "round_end")
 
     n = len(combat.order)
     for _ in range(n):
-        combat.current_index = (combat.current_index + 1) % n
-        if combat.current_index == 0:
+        next_index = (combat.current_index + 1) % n
+        wrapped = next_index == 0
+        combat.current_index = next_index
+        if wrapped:
+            process_timing(state, "round_end")
             combat.round_number += 1
             _reset_round_usage(state)
             process_timing(state, "round_start")

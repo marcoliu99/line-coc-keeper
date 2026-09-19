@@ -176,14 +176,26 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
         db.set_json_tx(conn, "state_checkpoints", _checkpoint_key(group_id, pre["checkpoint_id"]), pre)
         db.set_json_tx(conn, "group_states", group_id, restored_payload)
         restored_owner_ids = set(restored.characters)
+        restored_character_ids = {char.character_id for char in restored.all_characters() if char.character_id}
         stale_rows = conn.execute("SELECT key, data FROM characters").fetchall()
         for owner_id, raw_entry in stale_rows:
             entry = json.loads(raw_entry)
-            if entry.get("conversation_id") == group_id and owner_id not in restored_owner_ids:
+            same_group = entry.get("conversation_id") == group_id
+            character_id = entry.get("character_id") or entry.get("sheet", {}).get("character_id", "")
+            is_stale = (
+                owner_id not in restored_owner_ids
+                if not character_id
+                else character_id not in restored_character_ids
+            )
+            if same_group and is_stale:
                 db.delete_json_tx(conn, "characters", owner_id)
-        for owner_id, char in restored.characters.items():
-            db.set_json_tx(conn, "characters", owner_id, {
+        mirror_entries = {owner_id: char for owner_id, char in restored.characters.items()}
+        mirror_entries.update({f"{group_id}:{char.character_id}": char for char in restored.all_characters() if char.character_id})
+        for mirror_key, char in mirror_entries.items():
+            db.set_json_tx(conn, "characters", mirror_key, {
                 "conversation_id": group_id,
+                "character_id": char.character_id,
+                "owner_id": char.owner_id,
                 "name": char.name,
                 "occupation": char.occupation,
                 "sheet": char.to_dict(),

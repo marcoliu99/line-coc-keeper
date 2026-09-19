@@ -34,6 +34,14 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
         except ValueError:
             await reply("DEX 和 HP 必須是整數。")
             return
+        if not state.combat.active:
+            checkpoints.create_checkpoint(
+                state,
+                label="開戰前",
+                created_by="system",
+                reason="auto_combat_start",
+                event_id=f"combat-start:{conversation_id}:{state.state_revision}",
+            )
         combat.add_npc(state, name, dex, hp, is_ally=(action == "addally"))
         save_state(state, reason="combat")
         await reply(combat.status_text(state))

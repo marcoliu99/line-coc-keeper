@@ -747,6 +747,29 @@ class GroupState:
                 return c
         return None
 
+    def all_characters(self) -> list[Character]:
+        """Return each persisted character once, including partner/test slots."""
+        result: list[Character] = []
+        seen: set[str] = set()
+        for char in list(self.characters.values()) + list(self.characters_by_id.values()):
+            key = char.character_id or f"legacy-user:{char.owner_id}"
+            if key not in seen:
+                seen.add(key)
+                result.append(char)
+        return result
+
+    def active_characters(self) -> list[Character]:
+        """Return the currently selected character for each owner."""
+        if not self.active_character_id_by_user:
+            return list(self.characters.values()) or self.all_characters()
+        by_id = {char.character_id: char for char in self.all_characters()}
+        result = []
+        for character_id in self.active_character_id_by_user.values():
+            char = by_id.get(character_id)
+            if char is not None and char not in result:
+                result.append(char)
+        return result
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "group_id": self.group_id,

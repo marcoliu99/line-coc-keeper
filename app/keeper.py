@@ -465,10 +465,21 @@ TOOLS = [
     },
     {
         "name": "resolve_enemy_action",
-        "description": "敵人 plan 對應的行動已敘事/擲骰處理後呼叫，用來消耗特殊能力次數與冷卻。",
+        "description": (
+            "敵人 plan 對應的行動已敘事/擲骰處理後呼叫，用來消耗特殊能力次數與冷卻。"
+            "若 plan 的特殊能力 effect 宣告 on_success=apply_effect，必須把正式檢定結果放在 outcome.success；"
+            "只有成功時系統才會建立效果。"
+        ),
         "input_schema": {
             "type": "object",
-            "properties": {"plan_id": {"type": "string"}},
+            "properties": {
+                "plan_id": {"type": "string"},
+                "outcome": {
+                    "type": "object",
+                    "description": "特殊能力檢定的正式結果，例如 {success: true} 或 {success: false}",
+                    "properties": {"success": {"type": "boolean"}},
+                },
+            },
             "required": ["plan_id"],
         },
     },
@@ -717,11 +728,12 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
 def find_character(state: GroupState, name: str) -> Character | None:
     if not name:
         return None
-    exact = state.get_character_by_name(name)
+    characters = state.all_characters()
+    exact = next((char for char in characters if char.name == name), None)
     if exact:
         return exact
     norm = name.strip().lower()
-    for c in state.characters.values():
+    for c in characters:
         if norm and (norm in c.name.lower() or c.name.lower() in norm):
             return c
     return None
@@ -1425,7 +1437,8 @@ def _execute_tool(
         if name == "damage_combatant":
             def _mutate_damage_combatant(target_state: GroupState) -> dict:
                 return combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
-            return _mutate_and_save_state(state, _mutate_damage_combatant)
+            result = _mutate_and_save_state(state, _mutate_damage_combatant)
+            return _filter_public_combat_damage_result(result, speaker_role)
 
         if name == "plan_enemy_turn":
             def _mutate_plan_enemy_turn(target_state: GroupState) -> dict:
@@ -1434,7 +1447,11 @@ def _execute_tool(
 
         if name == "resolve_enemy_action":
             def _mutate_resolve_enemy_action(target_state: GroupState) -> dict:
-                return combat.resolve_enemy_action(target_state, tool_input["plan_id"])
+                return combat.resolve_enemy_action(
+                    target_state,
+                    tool_input["plan_id"],
+                    outcome=tool_input.get("outcome"),
+                )
             return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
 
         if name == "apply_combat_damage":
@@ -1587,7 +1604,7 @@ def _build_static_prompt(state: GroupState) -> str:
     else:
         scenario = state.scenario_text
 
-    static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.characters.values()) or "（目前尚無登記角色）"
+    static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.active_characters()) or "（目前尚無登記角色）"
 
     # NPC/monster + location canonical index (see app/scenario_index.py, built
     # on demand via /coc index) — empty until someone runs that command, in
@@ -1764,8 +1781,9 @@ def _build_dynamic_prompt(
     Changes every turn, so this stays OUTSIDE the cached block — it's small
     and cheap to resend, and keeping it separate means those changes don't
     invalidate the much larger cached scenario+roster block above."""
-    chars_text = "\n".join(c.dynamic_state_text() for c in state.characters.values()) or "（目前尚無登記角色）"
-    secret_goals = "\n".join(c.keeper_notes_text() for c in state.characters.values() if c.secret_goal)
+    active_characters = state.active_characters()
+    chars_text = "\n".join(c.dynamic_state_text() for c in active_characters) or "（目前尚無登記角色）"
+    secret_goals = "\n".join(c.keeper_notes_text() for c in active_characters if c.secret_goal)
     secret_block = f"\n\n{secret_goals}" if secret_goals else ""
     digest = scene_digest.latest_digest(state.group_id, state.timeline_id)
     digest_block = ""

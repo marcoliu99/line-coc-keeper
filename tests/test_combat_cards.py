@@ -123,6 +123,67 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(card.abilities[0].usage["used_total"], 1)
         self.assertEqual(card.abilities[0].usage["used_this_round"], 1)
 
+    def test_successful_ability_materializes_declared_effect(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            abilities=[{
+                "id": "song",
+                "name": "Song of Lost Dreams",
+                "priority": 10,
+                "trigger": {"type": "first_available"},
+                "effect": {
+                    "on_success": "apply_effect",
+                    "effect_id": "lost-dreams-trance",
+                    "label": "失夢恍惚",
+                    "timing": "turn_start",
+                    "damage": "1",
+                    "damage_type": "mental",
+                    "remaining_rounds": 2,
+                },
+                "usage": {"per_combat": 1},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
+
+        plan = combat.plan_enemy_turn(state)
+        result = combat.resolve_enemy_action(state, plan["plan_id"], outcome={"success": True})
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["effect"]["applied"])
+        self.assertEqual(state.combat.effects[0].id, "lost-dreams-trance")
+        self.assertEqual(state.combat.effects[0].target_id, "pc:char-mark")
+
+    def test_ability_effect_requires_outcome_before_consuming_usage(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            abilities=[{
+                "id": "song",
+                "name": "Song",
+                "trigger": {"type": "first_available"},
+                "effect": {"on_success": "apply_effect", "effect_id": "trance"},
+                "usage": {"per_combat": 1},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
+        plan = combat.plan_enemy_turn(state)
+
+        result = combat.resolve_enemy_action(state, plan["plan_id"])
+
+        self.assertFalse(result["ok"])
+        card = state.combat.enemy_cards[plan["enemy_card_id"]]
+        self.assertEqual(card.abilities[0].usage.get("used_total", 0), 0)
+        self.assertFalse(plan.get("resolved", False))
+
     def test_plan_enemy_turn_does_not_reapply_turn_start_effects(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -398,6 +459,27 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
         self.assertEqual(state.combat.effects, [])
 
+    def test_round_end_effect_does_not_trigger_before_round_boundary(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Fast Enemy", 80, 10)
+        state.combat.current_index = 0
+        combat.add_combat_effect(
+            state,
+            "Mark",
+            "Round-end fire",
+            timing="round_end",
+            damage="1",
+            remaining_rounds=2,
+        )
+
+        result = combat.advance_turn(state)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(state.combat.round_number, 1)
+        self.assertEqual(state.characters_by_id["char-mark"].hp, 12)
+        self.assertEqual(state.combat.effects[0].remaining_rounds, 2)
+
     def test_invalid_effect_damage_reports_error_without_consuming_duration(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -418,6 +500,28 @@ class CombatCardTests(unittest.TestCase):
         self.assertIn("無法解析效果傷害", results[0]["error"])
         self.assertEqual(len(state.combat.effects), 1)
         self.assertEqual(state.combat.effects[0].remaining_rounds, 1)
+
+    def test_failed_effect_timing_can_retry_after_correction(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        target_id = state.combat.order[0].combatant_id
+        state.combat.effects.append(EffectState(
+            id="effect-retry",
+            label="Retry Fire",
+            target_id=target_id,
+            timing="turn_start",
+            remaining_rounds=1,
+            damage="1d1",
+        ))
+
+        first = combat.process_timing(state, "turn_start", target_id)
+        state.combat.effects[0].damage = "1"
+        second = combat.process_timing(state, "turn_start", target_id)
+
+        self.assertFalse(first[0]["ok"])
+        self.assertTrue(second[0]["ok"])
+        self.assertEqual(state.combat.order[0].hp, 11)
+        self.assertEqual(state.combat.effects, [])
 
     def test_enemy_card_survives_group_state_round_trip(self):
         state = self._state_with_pc()

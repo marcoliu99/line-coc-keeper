@@ -330,6 +330,12 @@ EnemyTurnPlan(
 
 `plan_enemy_turn` 也必須避免重複套用 `turn_start` effects：同一個 round/current_index/target 的 `turn_start` timing 最多結算一次，即使 Keeper/LLM 因 retry 或重新規劃重複呼叫 `plan_enemy_turn`。
 
+`resolve_enemy_action` 是特殊能力效果的唯一落點。當能力的 `effect.on_success` 為
+`apply_effect` 時，呼叫端必須傳入正式檢定結果 `outcome: {"success": true|false}`；只有成功才會依
+能力 effect schema 建立 `EffectState`，失敗則只消耗該能力本次使用，不建立效果。缺少 outcome 或
+效果 schema 不合法時，resolver 回傳錯誤且不消耗使用次數，讓 Keeper 可以補正後重試。相同
+`effect_id` 已存在時不得重複建立效果。
+
 ## Song of Lost Dreams 類能力
 
 這類能力定義成 `SpecialAbility`，而不是 Keeper prompt 裡的提醒。
@@ -396,6 +402,10 @@ SpecialAbility(
    - 本回合結束效果
    - cooldown 減少（若規則指定）
 5. `round_end`
+
+`round_end` 只在 initiative index 從最後一位跨回 index 0 時處理；單純推進到同一輪的下一位不會
+結算 round-end effects。效果結算以 timing key 加上 effect id 做冪等記錄：同一時點內已成功的 effect
+不會因另一個 effect 失敗而在 retry 時重複套用，失敗的 effect 會保留等待修正。
    - 場景火勢擴散、煙霧、坍塌、儀式進度等環境效果
 
 重傷規則必須與現有 PC `adjust_character` 行為一致：單次傷害達門檻時註冊 CON 檢定或套用對應狀態。NPC 是否需要重傷檢定由卡片或全域設定決定，預設普通敵人只用 HP/defeated，不替每個雜兵跑完整重傷流程。
@@ -456,7 +466,7 @@ DamageResolution(
 - `add_npc_to_combat(name, dex, hp, is_ally=False, armor=None, attacks=None, abilities=None)`
 - `get_combat_status()`
 - `plan_enemy_turn(enemy="")`
-- `resolve_enemy_action(plan_id)`
+- `resolve_enemy_action(plan_id, outcome={success})`
 - `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")`
 - `add_combat_effect(target, label, timing, damage="", damage_type="physical", remaining_rounds=None, tags=[], source_id="", public_description="")`
 - `advance_combat_turn()`

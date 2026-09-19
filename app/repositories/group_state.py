@@ -12,6 +12,7 @@ into the database.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import logging
@@ -71,14 +72,34 @@ def save_state(state: GroupState, *, reason: str = "command") -> None:
             # belongs to — separate from the group blob above so looking up one
             # player's sheet doesn't require knowing (or loading) the whole
             # conversation's state.
+            mirror_entries = {}
             for owner_id, char in state.characters.items():
+                mirror_entries[owner_id] = char
+            for char in state.all_characters():
+                if char.character_id:
+                    mirror_entries[f"{state.group_id}:{char.character_id}"] = char
+            expected_keys = set(mirror_entries)
+            stale_rows = conn.execute("SELECT key, data FROM characters").fetchall()
+            for mirror_key, raw_entry in stale_rows:
+                try:
+                    entry = json.loads(raw_entry)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if (
+                    entry.get("conversation_id") == state.group_id
+                    and mirror_key not in expected_keys
+                ):
+                    db.delete_json_tx(conn, "characters", mirror_key)
+            for mirror_key, char in mirror_entries.items():
                 index_entry = {
                     "conversation_id": state.group_id,
+                    "character_id": char.character_id,
+                    "owner_id": char.owner_id,
                     "name": char.name,
                     "occupation": char.occupation,
                     "sheet": char.to_dict(),
                 }
-                db.set_json_tx(conn, "characters", owner_id, index_entry)
+                db.set_json_tx(conn, "characters", mirror_key, index_entry)
     except Exception:
         _logger.exception(
             "state_save_failure group_id=%s attempted_revision=%s timeline_id=%s duration_ms=%s transaction=rolled_back",

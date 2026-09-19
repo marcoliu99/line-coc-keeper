@@ -1839,3 +1839,18 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - legacy owner map 的角色會逐筆補進 `characters_by_id`，不再因 ID index 已非空而漏掉後加入的角色；combat runtime identity guard 也同步支援這個 merge。
 - `advance_turn()` 在跨輪前處理 `round_end` effects，之後才增加 round、重置能力次數並處理 `round_start`。
 - 新增角色索引共享、legacy merge 與 round-end damage regression tests；完整測試 74 項通過。
+
+### 105. 完成 PR #27 戰鬥 review：特殊能力效果、回合時點與公開狀態
+
+- **特殊能力真正落地**：`resolve_enemy_action` 現在接受正式檢定結果 `outcome.success`。能力卡宣告
+  `effect.on_success=apply_effect` 且檢定成功時，系統會建立持續性的 `EffectState`；缺少結果、目標
+  不存在或效果 schema 不合法時不消耗能力次數，方便修正後重試；相同 effect id 不會重複建立。
+- **時點結算修正**：`round_end` 僅在先攻順位跨回第一位時觸發，不會在每次 `advance_turn` 都觸發。
+  `process_timing` 改為以 timing key 加 effect id 保護部分成功重試，避免一個效果失敗時另一個已成功
+  的效果再次扣血；PC 的 `turn_start` 仍由正式 `advance_turn` 流程觸發。
+- **開戰 checkpoint 補齊**：`/coc combat addnpc` 與 `addally` 在尚未開戰時，和 Keeper tool 一樣先建立
+  `auto_combat_start` checkpoint。
+- **角色與 digest 一致性**：保存與 rollback 會同步含 partner/test slot 的角色索引；Keeper prompt 與
+  scene digest 使用目前 active character；公開 digest 的敵人戰鬥狀態不含精確 HP、護甲或能力卡，private
+  digest 才保留完整戰鬥卡供 Keeper/KP Assistant 使用。
+- **測試**：新增特殊能力成功效果、缺少 outcome、round-end 邊界、效果修正重試等 regression tests。
