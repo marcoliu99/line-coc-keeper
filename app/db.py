@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from app.config import BACKUP_DIR, BACKUP_KEEP_COUNT, DB_PATH
+from app.config import BACKUP_DIR, BACKUP_INTERVAL_MINUTES, BACKUP_KEEP_COUNT, DB_PATH
 
 _logger = logging.getLogger(__name__)
 
@@ -199,11 +199,35 @@ def _backup_lock() -> Iterator[bool]:
     lock_path = BACKUP_DIR / "backup.lock"
     fd: int | None = None
     try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            # A process killed during backup cannot run the context manager's
+            # cleanup. Reclaim only a lock whose owner is gone and whose age is
+            # beyond two scheduled intervals; a live worker is never touched.
+            stale_after = max(300, BACKUP_INTERVAL_MINUTES * 120)
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+                raw = lock_path.read_text(encoding="ascii")
+                pid = int(raw.partition("=")[2].strip())
+                os.kill(pid, 0)
+                owner_alive = True
+            except (FileNotFoundError, ValueError, ProcessLookupError):
+                owner_alive = False
+                age = stale_after
+            except PermissionError:
+                # The PID may belong to another service user. Treat that as
+                # live rather than risking deletion of an active lock.
+                owner_alive = True
+                age = 0
+            if not owner_alive and age >= stale_after:
+                lock_path.unlink(missing_ok=True)
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            else:
+                yield False
+                return
         os.write(fd, f"pid={os.getpid()}\n".encode())
         yield True
-    except FileExistsError:
-        yield False
     finally:
         if fd is not None:
             os.close(fd)

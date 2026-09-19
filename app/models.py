@@ -399,6 +399,7 @@ class Combatant:
     # (a hired guide, a friendly cultist defector, ...) — distinct from is_pc since
     # it has no Character to sync HP back to, but shares "our side" in status_text.
     defeated: bool = False
+    abilities: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

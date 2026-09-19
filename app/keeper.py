@@ -14,7 +14,7 @@ from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
 from uuid import uuid4
 
-from app import combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag, scene_digest
+from app import checkpoints, combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag, scene_digest
 from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -408,6 +408,7 @@ TOOLS = [
                 "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；劇本沒寫明可抓 40-60 的一般值"},
                 "hp": {"type": "integer", "description": "最大生命值"},
                 "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
+                "abilities": {"type": "object", "description": "NPC 的特殊能力資料，供 Keeper 內部戰鬥摘要使用"},
             },
             "required": ["name", "dex", "hp"],
         },
@@ -751,7 +752,7 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
             should_save = result.should_save
             result = result.value
         if should_save:
-            save_state(latest_state)
+            save_state(latest_state, reason="tool")
         _sync_state_snapshot(state, latest_state)
     return result
 
@@ -764,7 +765,7 @@ def _commit_turn_result(
         latest_state.log.extend(log_entries)
         if openai_response_id is not None:
             latest_state.openai_previous_response_id = openai_response_id
-        save_state(latest_state)
+        save_state(latest_state, reason="turn")
         _sync_state_snapshot(state, latest_state)
 
 
@@ -784,7 +785,7 @@ def _commit_kp_ooc_turn_result(state: GroupState, message_text: str, final_text:
             ]
         )
         latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
-        save_state(latest_state)
+        save_state(latest_state, reason="kp_ooc")
         _sync_state_snapshot(state, latest_state)
 
 
@@ -802,6 +803,18 @@ def _validate_kp_roll_dice_context(tool_input: dict) -> str | None:
     if tool_input.get("roll_context") in ("game_resolution", "ooc_randomizer"):
         return None
     return 'KP Assistant 使用 roll_dice 時必須明確指定 roll_context 為 "game_resolution" 或 "ooc_randomizer"。'
+
+
+def _ensure_auto_combat_checkpoint(state: GroupState) -> None:
+    if state.combat.active:
+        return
+    checkpoints.create_checkpoint(
+        state,
+        label="開戰前",
+        created_by="system",
+        reason="auto_combat_start",
+        event_id=f"combat-start:{state.group_id}:{state.state_revision}",
+    )
 
 
 def _persist_memory_maintenance_state(
@@ -825,7 +838,7 @@ def _persist_memory_maintenance_state(
         if latest_state.log[:n] == dropped_chunk:
             latest_state.log = latest_state.log[n:]
             latest_state.campaign_summary = campaign_summary
-            save_state(latest_state)
+            save_state(latest_state, reason="maintenance")
 
 
 # Guards against more than one run_post_turn_maintenance pass running
@@ -1240,6 +1253,7 @@ def _execute_tool(
 
         if name == "start_combat":
             def _mutate_start_combat(target_state: GroupState) -> None:
+                _ensure_auto_combat_checkpoint(target_state)
                 combat.start_combat(target_state)
             _mutate_and_save_state(state, _mutate_start_combat)
             return {"ok": True, "status": combat.status_text(state)}
@@ -1248,6 +1262,7 @@ def _execute_tool(
             npc_name = tool_input["name"]
             requested_hp = int(tool_input.get("hp", 10))
             def _mutate_add_npc(target_state: GroupState) -> str:
+                _ensure_auto_combat_checkpoint(target_state)
                 hp = requested_hp
                 index_note = ""
                 # Code-enforced consistency check, not just a prompt-level ask: if
@@ -1272,6 +1287,7 @@ def _execute_tool(
                     int(tool_input.get("dex", 50)),
                     hp,
                     is_ally=bool(tool_input.get("is_ally", False)),
+                    abilities=tool_input.get("abilities"),
                 )
                 return index_note
             index_note = _mutate_and_save_state(state, _mutate_add_npc)

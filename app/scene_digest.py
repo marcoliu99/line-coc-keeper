@@ -17,6 +17,19 @@ def _id() -> str:
 
 
 def _public_state(state: GroupState) -> dict:
+    locations = {
+        owner_id: {
+            "map_page": state.current_map_page.get(owner_id, ""),
+            "room_id": state.current_room_id.get(owner_id, ""),
+            "facing": state.party_facing.get(owner_id, "N"),
+        }
+        for owner_id in state.characters
+    }
+    npc_abilities = {
+        combatant.name: getattr(combatant, "abilities", {})
+        for combatant in state.combat.order
+        if not combatant.is_pc and getattr(combatant, "abilities", {})
+    }
     return {
         "characters": {
             c.name: {
@@ -29,7 +42,9 @@ def _public_state(state: GroupState) -> dict:
             }
             for c in state.characters.values()
         },
+        "locations": locations,
         "combat": state.combat.to_dict(),
+        "npc_abilities": npc_abilities,
         "established_facts": [x for x in state.established_facts if x.get("visibility", "public") == "public"],
         "known_clues": [x for x in state.known_clues if x.get("visibility", "public") == "public"],
         "consumed_or_removed_items": state.consumed_or_removed_items,
@@ -39,6 +54,12 @@ def _public_state(state: GroupState) -> dict:
 def create_digest(state: GroupState, *, scene_label: str = "") -> dict:
     started = time.monotonic()
     digest_id = _id()
+    from app import checkpoints
+
+    recent_checkpoints = [
+        {key: item.get(key) for key in ("checkpoint_id", "label", "reason", "created_at")}
+        for item in checkpoints.list_checkpoints(state.group_id)[-5:]
+    ]
     entry = {
         "group_id": state.group_id,
         "digest_id": digest_id,
@@ -49,6 +70,7 @@ def create_digest(state: GroupState, *, scene_label: str = "") -> dict:
         "log_length": len(state.log),
         "scene_label": scene_label or state.active_chapter_id or state.scenario_title or "目前場景",
         "public": _public_state(state),
+        "recent_checkpoints": recent_checkpoints,
         "private": {
             "note": "以下內容僅供 Keeper 使用，不可透露給玩家。",
             "facts": [x for x in state.established_facts if x.get("visibility") == "kp_only"],

@@ -1,6 +1,7 @@
 """Per-group checkpoints and atomic rollback operations."""
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -81,6 +82,26 @@ def get_checkpoint(group_id: str, identifier: str) -> dict:
     return matches[0]
 
 
+def _get_checkpoint_tx(conn, group_id: str, identifier: str) -> dict:
+    """Resolve a checkpoint while holding the rollback transaction."""
+    direct = conn.execute(
+        "SELECT data FROM state_checkpoints WHERE key = ?",
+        (_checkpoint_key(group_id, identifier),),
+    ).fetchone()
+    if direct is not None:
+        return json.loads(direct[0])
+    rows = conn.execute(
+        "SELECT data FROM state_checkpoints WHERE key LIKE ? ORDER BY updated_at, key",
+        (f"{group_id}:%",),
+    ).fetchall()
+    matches = [json.loads(row[0]) for row in rows if json.loads(row[0]).get("label") == identifier]
+    if not matches:
+        raise KeyError(identifier)
+    if len(matches) != 1:
+        raise ValueError("checkpoint label is ambiguous; use its ID")
+    return matches[0]
+
+
 def clean_checkpoint(group_id: str, checkpoint_id: str) -> None:
     started = time.monotonic()
     if db.get_json("state_checkpoints", _checkpoint_key(group_id, checkpoint_id)) is None:
@@ -96,35 +117,46 @@ def clean_checkpoint(group_id: str, checkpoint_id: str) -> None:
 def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupState, dict, dict]:
     """Atomically create pre-rollback, restore the checkpoint, and return both metadata records."""
     started = time.monotonic()
-    checkpoint = get_checkpoint(group_id, identifier)
-    state_data = checkpoint.get("state") or {}
-    _validate_state_schema(state_data)
-    restored = GroupState.from_dict(state_data)
-    if restored.group_id != group_id:
-        raise ValueError("checkpoint belongs to another group")
-    restored.timeline_id = f"timeline-{uuid4().hex[:8]}"
-
-    current = db.get_json("group_states", group_id)
-    current_state = GroupState.from_dict(current or {"group_id": group_id})
-    pre = {
-        "group_id": group_id,
-        "checkpoint_id": _checkpoint_id(),
-        "label": "pre-rollback",
-        "created_by": actor_id,
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "reason": "pre_rollback",
-        "event_id": "",
-        "timeline_id": current_state.timeline_id or f"legacy-{group_id}",
-        "state_revision": current_state.state_revision,
-        "schema_version": current_state.schema_version,
-        "state": current_state.to_dict(),
-    }
-    restored.state_revision = current_state.state_revision + 1
-    restored_payload = restored.to_dict()
-
     with db.transaction() as conn:
+        checkpoint = _get_checkpoint_tx(conn, group_id, identifier)
+        if checkpoint.get("group_id") != group_id:
+            raise ValueError("checkpoint belongs to another group")
+        state_data = checkpoint.get("state") or {}
+        _validate_state_schema(state_data)
+        restored = GroupState.from_dict(state_data)
+        if restored.group_id != group_id:
+            raise ValueError("checkpoint belongs to another group")
+        restored.timeline_id = f"timeline-{uuid4().hex[:8]}"
+
+        current_row = conn.execute(
+            "SELECT data FROM group_states WHERE key = ?", (group_id,)
+        ).fetchone()
+        current = json.loads(current_row[0]) if current_row is not None else None
+        _validate_state_schema(current or {"schema_version": 1})
+        current_state = GroupState.from_dict(current or {"group_id": group_id})
+        pre = {
+            "group_id": group_id,
+            "checkpoint_id": _checkpoint_id(),
+            "label": "pre-rollback",
+            "created_by": actor_id,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "reason": "pre_rollback",
+            "event_id": "",
+            "timeline_id": current_state.timeline_id or f"legacy-{group_id}",
+            "state_revision": current_state.state_revision,
+            "schema_version": current_state.schema_version,
+            "state": current_state.to_dict(),
+        }
+        restored.state_revision = current_state.state_revision + 1
+        restored_payload = restored.to_dict()
         db.set_json_tx(conn, "state_checkpoints", _checkpoint_key(group_id, pre["checkpoint_id"]), pre)
         db.set_json_tx(conn, "group_states", group_id, restored_payload)
+        restored_owner_ids = set(restored.characters)
+        stale_rows = conn.execute("SELECT key, data FROM characters").fetchall()
+        for owner_id, raw_entry in stale_rows:
+            entry = json.loads(raw_entry)
+            if entry.get("conversation_id") == group_id and owner_id not in restored_owner_ids:
+                db.delete_json_tx(conn, "characters", owner_id)
         for owner_id, char in restored.characters.items():
             db.set_json_tx(conn, "characters", owner_id, {
                 "conversation_id": group_id,
@@ -133,7 +165,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
                 "sheet": char.to_dict(),
             })
     _logger.info(
-        "rollback_success group_id=%s checkpoint_id=%s pre_rollback_id=%s revision=%s timeline_id=%s duration_ms=%s",
+        "rollback_success group_id=%s checkpoint_id=%s pre_rollback_id=%s revision=%s timeline_id=%s reason=rollback duration_ms=%s",
         group_id, checkpoint["checkpoint_id"], pre["checkpoint_id"], restored.state_revision,
         restored.timeline_id, int((time.monotonic() - started) * 1000),
     )

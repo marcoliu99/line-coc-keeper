@@ -42,7 +42,7 @@ class StateStorePatch:
         def load_state(group_id: str) -> GroupState:
             return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
 
-        def save_state(state: GroupState) -> None:
+        def save_state(state: GroupState, *, reason: str = "command") -> None:
             self.store[state.group_id] = clone_state(state)
 
         for module in self.modules:

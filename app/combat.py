@@ -28,11 +28,26 @@ def start_combat(state: GroupState) -> CombatState:
     return state.combat
 
 
-def add_npc(state: GroupState, name: str, dex: int, hp: int, is_ally: bool = False) -> CombatState:
+def add_npc(
+    state: GroupState,
+    name: str,
+    dex: int,
+    hp: int,
+    is_ally: bool = False,
+    abilities: dict | None = None,
+) -> CombatState:
     _ensure_started(state)
     current_name = state.combat.order[state.combat.current_index].name if state.combat.order else None
 
-    state.combat.order.append(Combatant(name=name, dex=dex, hp=hp, hp_max=max(1, hp), is_pc=False, is_ally=is_ally))
+    state.combat.order.append(Combatant(
+        name=name,
+        dex=dex,
+        hp=hp,
+        hp_max=max(1, hp),
+        is_pc=False,
+        is_ally=is_ally,
+        abilities=dict(abilities or {}),
+    ))
     state.combat.order.sort(key=lambda c: -c.dex)
 
     if current_name:

@@ -1,6 +1,8 @@
 import logging
+import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -47,6 +49,7 @@ class StatePersistenceTests(unittest.TestCase):
         state.characters["u1"] = Character("Ada", "u1", hp=10)
         group_state.save_state(state)
         checkpoint = checkpoints.create_checkpoint(state, label="before fight", event_id="combat-1")
+        state.characters["u2"] = Character("Bob", "u2", hp=8)
         state.active = True
         state.characters["u1"].hp = 2
         group_state.save_state(state)
@@ -58,6 +61,7 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertNotEqual(restored.timeline_id, checkpoint["timeline_id"])
         self.assertEqual(pre["reason"], "pre_rollback")
         self.assertEqual(len(checkpoints.list_checkpoints(state.group_id)), 2)
+        self.assertIsNone(db.get_json("characters", "u2"))
 
     def test_auto_checkpoint_event_is_idempotent(self):
         state = GroupState("discord-group-3")
@@ -77,6 +81,24 @@ class StatePersistenceTests(unittest.TestCase):
             result = conn.execute("PRAGMA integrity_check").fetchone()[0]
         self.assertEqual(result, "ok")
 
+    def test_stale_backup_lock_is_reclaimed(self):
+        state = GroupState("discord-group-stale-lock")
+        group_state.save_state(state)
+        self.backup_dir.mkdir()
+        lock = self.backup_dir / "backup.lock"
+        lock.write_text("pid=99999999\n", encoding="ascii")
+        old = time.time() - 3600
+        os.utime(lock, (old, old))
+        self.assertIsNotNone(db.backup_now("manual"))
+
+    def test_keeper_combat_tool_creates_auto_checkpoint(self):
+        state = GroupState("discord-group-combat-tool")
+        group_state.save_state(state)
+        result = keeper._execute_tool(state, "start_combat", {}, [], [])
+        self.assertTrue(result["ok"])
+        entries = checkpoints.list_checkpoints(state.group_id)
+        self.assertEqual([entry["reason"] for entry in entries], ["auto_combat_start"])
+
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")
         state.characters["u1"] = Character("Ada", "u1", carried_items=["鑰匙"])
@@ -90,8 +112,14 @@ class StatePersistenceTests(unittest.TestCase):
 
     def test_latest_digest_filters_timeline(self):
         state = GroupState("discord-group-6")
+        state.characters["u1"] = Character("Ada", "u1")
         group_state.save_state(state)
         first = scene_digest.create_digest(state, scene_label="old")
+        state.current_map_page["u1"] = "12"
+        state.current_room_id["u1"] = "library"
+        digest = scene_digest.create_digest(state, scene_label="with-location")
+        self.assertEqual(digest["public"]["locations"]["u1"]["room_id"], "library")
+        self.assertIn("recent_checkpoints", digest)
         state.timeline_id = "timeline-new"
         state.state_revision += 1
         second = scene_digest.create_digest(state, scene_label="new")

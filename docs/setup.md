@@ -110,6 +110,7 @@ cp .env.example .env
 #   BACKUP_DIR=/持久磁碟/coc-backups
 #   BACKUP_INTERVAL_MINUTES=60
 #   BACKUP_KEEP_COUNT=48
+#   SCENE_DIGEST_TURN_INTERVAL=12
 ```
 
 Discord 執行時，`DB_PATH` 與 `BACKUP_DIR` 請指定到不會隨程序重建而消失的路徑；不要放在 ephemeral

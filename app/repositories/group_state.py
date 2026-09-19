@@ -50,7 +50,7 @@ def load_state(group_id: str) -> GroupState:
     return state
 
 
-def save_state(state: GroupState) -> None:
+def save_state(state: GroupState, *, reason: str = "command") -> None:
     started = time.monotonic()
     if not state.timeline_id:
         state.timeline_id = f"timeline-{uuid4().hex[:8]}"
@@ -87,8 +87,8 @@ def save_state(state: GroupState) -> None:
         raise
     state.state_revision = next_revision
     _logger.info(
-        "state_save_success group_id=%s revision=%s timeline_id=%s reason=state_save duration_ms=%s",
-        state.group_id, state.state_revision, state.timeline_id, int((time.monotonic() - started) * 1000),
+        "state_save_success group_id=%s revision=%s timeline_id=%s reason=%s duration_ms=%s",
+        state.group_id, state.state_revision, state.timeline_id, reason, int((time.monotonic() - started) * 1000),
     )
 
 

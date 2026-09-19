@@ -20,7 +20,7 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
                 event_id=f"combat-start:{conversation_id}:{state.state_revision}",
             )
         combat.start_combat(state)
-        save_state(state)
+        save_state(state, reason="combat")
         await reply(combat.status_text(state))
         return
 
@@ -35,7 +35,7 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
             await reply("DEX 和 HP 必須是整數。")
             return
         combat.add_npc(state, name, dex, hp, is_ally=(action == "addally"))
-        save_state(state)
+        save_state(state, reason="combat")
         await reply(combat.status_text(state))
         return
 
@@ -45,7 +45,7 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
 
     if action == "next":
         result = combat.advance_turn(state)
-        save_state(state)
+        save_state(state, reason="combat")
         if not result["ok"]:
             await reply(result["error"])
             return
@@ -63,7 +63,7 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
             await reply("增減量必須是整數。")
             return
         result = combat.damage_combatant(state, name, delta)
-        save_state(state)
+        save_state(state, reason="combat")
         if not result["ok"]:
             await reply(result["error"])
             return
@@ -72,7 +72,7 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
 
     if action == "end":
         combat.end_combat(state)
-        save_state(state)
+        save_state(state, reason="combat")
         await reply("戰鬥結束，狀態已清除。")
         return
 
