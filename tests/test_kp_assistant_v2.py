@@ -138,33 +138,33 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("開場看到屍體要做 SAN", player_prompt)
         self.assertNotIn("我會安排成屍體首次揭露時觸發", player_prompt)
 
-    def test_player_bang_prefix_is_not_explicit_canon_parser_marker(self):
+    def test_player_bang_prefix_is_not_manual_canon_parser_marker(self):
         self.assertEqual(
-            keeper._parse_kp_explicit_canon("player", "!我要踢開門"),
+            keeper._parse_kp_manual_canon_trigger("player", "!我要踢開門"),
             (False, "!我要踢開門"),
         )
 
-    def test_kp_explicit_canon_parser_accepts_ascii_and_fullwidth_markers(self):
+    def test_kp_manual_canon_parser_accepts_ascii_and_fullwidth_markers(self):
         self.assertEqual(
-            keeper._parse_kp_explicit_canon("kp_assistant", "!門現在是鎖著的"),
+            keeper._parse_kp_manual_canon_trigger("kp_assistant", "!門現在是鎖著的"),
             (True, "門現在是鎖著的"),
         )
         self.assertEqual(
-            keeper._parse_kp_explicit_canon("kp_assistant", "！ 門現在是鎖著的"),
+            keeper._parse_kp_manual_canon_trigger("kp_assistant", "！ 門現在是鎖著的"),
             (True, "門現在是鎖著的"),
         )
         self.assertEqual(
-            keeper._parse_kp_explicit_canon("kp_assistant", "！ Ａ門現在是鎖著的"),
+            keeper._parse_kp_manual_canon_trigger("kp_assistant", "！ Ａ門現在是鎖著的"),
             (True, "Ａ門現在是鎖著的"),
         )
 
-    def test_kp_explicit_canon_parser_rejects_empty_marker_only_messages(self):
+    def test_kp_manual_canon_parser_rejects_empty_marker_only_messages(self):
         self.assertEqual(
-            keeper._parse_kp_explicit_canon("kp_assistant", "!"),
+            keeper._parse_kp_manual_canon_trigger("kp_assistant", "!"),
             (False, "!"),
         )
         self.assertEqual(
-            keeper._parse_kp_explicit_canon("kp_assistant", "！   "),
+            keeper._parse_kp_manual_canon_trigger("kp_assistant", "！   "),
             (False, "！   "),
         )
 
@@ -210,32 +210,6 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("old-0", [entry["content"] for entry in saved.kp_ooc_log])
         self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
 
-    def test_kp_explicit_canon_helper_persists_canonical_command_and_ooc_exchange(self):
-        state = GroupState(group_id="g", openai_previous_response_id="old-response-id")
-        state.log = [{"role": "user", "content": "Marco：我查看門鎖。"}]
-        state.kp_ooc_log = [{"role": "kp_assistant", "content": "old note"}]
-
-        with StateStorePatch(keeper) as store:
-            store.put(state)
-            keeper._commit_kp_explicit_canon_turn_result(
-                state,
-                "門現在是鎖著的",
-                "了解，我會照這個設定處理。",
-            )
-            saved = store.get("g")
-
-        self.assertEqual(
-            saved.log,
-            [
-                {"role": "user", "content": "Marco：我查看門鎖。"},
-                {"role": "user", "content": "[KP Assistant] 門現在是鎖著的"},
-            ],
-        )
-        self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": "門現在是鎖著的"})
-        self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "了解，我會照這個設定處理。"})
-        self.assertEqual(saved.openai_previous_response_id, "")
-        self.assertEqual(state.openai_previous_response_id, "")
-
     def test_player_bang_prefix_runtime_stays_regular_player_turn(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         fake_provider = FakeProvider("門在衝擊下發出沉重的聲響。", response_id="player-response")
@@ -273,9 +247,10 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("[KP Assistant]", saved.log[0]["content"])
         self.assertEqual(saved.openai_previous_response_id, "player-response")
 
-    def test_kp_ascii_explicit_canon_runtime_persists_command_only_and_clears_chain(self):
+    def test_kp_ascii_manual_canon_runtime_persists_user_and_assistant_and_advances_chain(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
-        fake_provider = FakeProvider("了解，我會讓 Gardiner 避免攻擊 Marco。", response_id="explicit-response")
+        final_text = "Knott 推門走進社團，詢問你們目前查到了什麼。"
+        fake_provider = FakeProvider(final_text, response_id="manual-canon-response")
         original_provider = keeper._PROVIDERS.get("openai")
         original_llm_provider = keeper.LLM_PROVIDER
 
@@ -288,7 +263,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                     state,
                     user_id="kp",
                     speaker_name="KP",
-                    message_text="!Gardiner 接下來不要攻擊 Marco",
+                    message_text="!KP，請觸發 Knott 前來「關心」調查進度事件",
                     speaker_role="kp_assistant",
                 )
             finally:
@@ -300,21 +275,28 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
             saved = store.get("g")
 
-        self.assertEqual(final_text, "了解，我會讓 Gardiner 避免攻擊 Marco。")
+        self.assertEqual(final_text, "Knott 推門走進社團，詢問你們目前查到了什麼。")
         self.assertEqual(private_messages, [])
         self.assertEqual(image_requests, [])
         provider_turn_message = fake_provider.calls[0][0][4]
-        self.assertIn("Gardiner 接下來不要攻擊 Marco", provider_turn_message)
-        self.assertNotIn("!Gardiner 接下來不要攻擊 Marco", provider_turn_message)
-        self.assertEqual(saved.log, [{"role": "user", "content": "[KP Assistant] Gardiner 接下來不要攻擊 Marco"}])
-        self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": "Gardiner 接下來不要攻擊 Marco"})
-        self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "了解，我會讓 Gardiner 避免攻擊 Marco。"})
-        self.assertEqual(saved.openai_previous_response_id, "")
+        self.assertEqual(provider_turn_message, "[KP Assistant] KP，請觸發 Knott 前來「關心」調查進度事件")
+        self.assertNotIn("!KP，請觸發 Knott 前來「關心」調查進度事件", provider_turn_message)
+        self.assertNotIn("[KP ASSISTANT / OOC HOST INSTRUCTION]", provider_turn_message)
+        self.assertEqual(
+            saved.log,
+            [
+                {"role": "user", "content": "[KP Assistant] KP，請觸發 Knott 前來「關心」調查進度事件"},
+                {"role": "assistant", "content": "Knott 推門走進社團，詢問你們目前查到了什麼。"},
+            ],
+        )
+        self.assertNotIn("[DETERMINISTIC GAME WORKFLOW]", saved.log[0]["content"])
+        self.assertEqual(saved.kp_ooc_log, [])
+        self.assertEqual(saved.openai_previous_response_id, "manual-canon-response")
         self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
 
-    def test_kp_fullwidth_explicit_canon_runtime_strips_marker(self):
+    def test_kp_fullwidth_manual_canon_runtime_strips_marker_and_advances_chain(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
-        fake_provider = FakeProvider("了解，門後不會有第二隻怪物。", response_id="fullwidth-explicit-response")
+        fake_provider = FakeProvider("Knott 會在今晚出面追問調查進度。", response_id="fullwidth-manual-response")
         original_provider = keeper._PROVIDERS.get("openai")
         original_llm_provider = keeper.LLM_PROVIDER
 
@@ -327,7 +309,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                     state,
                     user_id="kp",
                     speaker_name="KP",
-                    message_text="！門後面沒有第二隻怪物",
+                    message_text="！Knott 今天晚上會來詢問調查進度",
                     speaker_role="kp_assistant",
                 )
             finally:
@@ -340,10 +322,19 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             saved = store.get("g")
 
         provider_turn_message = fake_provider.calls[0][0][4]
-        self.assertIn("門後面沒有第二隻怪物", provider_turn_message)
-        self.assertNotIn("！門後面沒有第二隻怪物", provider_turn_message)
-        self.assertEqual(saved.log, [{"role": "user", "content": "[KP Assistant] 門後面沒有第二隻怪物"}])
+        self.assertEqual(provider_turn_message, "[KP Assistant] Knott 今天晚上會來詢問調查進度")
+        self.assertNotIn("！Knott 今天晚上會來詢問調查進度", provider_turn_message)
+        self.assertEqual(
+            saved.log,
+            [
+                {"role": "user", "content": "[KP Assistant] Knott 今天晚上會來詢問調查進度"},
+                {"role": "assistant", "content": "Knott 會在今晚出面追問調查進度。"},
+            ],
+        )
         self.assertNotIn("！", saved.log[0]["content"])
+        self.assertNotIn("[DETERMINISTIC GAME WORKFLOW]", saved.log[0]["content"])
+        self.assertEqual(saved.kp_ooc_log, [])
+        self.assertEqual(saved.openai_previous_response_id, "fullwidth-manual-response")
 
     def test_kp_plain_ooc_runtime_stays_ooc_and_preserves_chain(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
@@ -360,7 +351,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                     state,
                     user_id="kp",
                     speaker_name="KP",
-                    message_text="我們來討論一下下一幕怎麼處理",
+                    message_text="我們討論一下 Knott 下一次出場放在哪裡比較好",
                     speaker_role="kp_assistant",
                 )
             finally:
@@ -372,8 +363,11 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
             saved = store.get("g")
 
+        provider_turn_message = fake_provider.calls[0][0][4]
+        self.assertEqual(provider_turn_message, "[KP Assistant] 我們討論一下 Knott 下一次出場放在哪裡比較好")
+        self.assertNotIn("[KP ASSISTANT / OOC HOST INSTRUCTION]", provider_turn_message)
         self.assertEqual(saved.log, [])
-        self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": "我們來討論一下下一幕怎麼處理"})
+        self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": "我們討論一下 Knott 下一次出場放在哪裡比較好"})
         self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "我會把下一幕安排成逐步加壓。"})
         self.assertEqual(saved.openai_previous_response_id, "formal-chain")
 
@@ -424,7 +418,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.log[0]["role"], "user")
         self.assertEqual(saved.log[1], {"role": "assistant", "content": "Marco 滿臉是血，需要做理智檢定。"})
         canonical_message = saved.log[0]["content"]
-        self.assertIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
+        self.assertTrue(canonical_message.startswith(f"[KP Assistant] {message_text}"))
+        self.assertIn("[DETERMINISTIC GAME WORKFLOW]", canonical_message)
+        self.assertNotIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
         self.assertNotIn("[KP ASSISTANT / OOC HOST INSTRUCTION]", canonical_message)
         self.assertIn(message_text, canonical_message)
         self.assertIn("sanity_check", canonical_message)
@@ -757,6 +753,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(saved.log), 2)
         self.assertEqual(saved.kp_ooc_log, [])
         canonical_message = saved.log[0]["content"]
+        self.assertTrue(canonical_message.startswith(f"[KP Assistant] {message_text}"))
+        self.assertIn("[DETERMINISTIC GAME WORKFLOW]", canonical_message)
+        self.assertNotIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
         self.assertIn(message_text, canonical_message)
         self.assertIn("roll_dice", canonical_message)
         self.assertIn('"expression": "1d3"', canonical_message)
@@ -767,7 +766,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.openai_previous_response_id, "game-resolution-roll-response")
         self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
 
-    def test_kp_explicit_canon_with_dice_creates_canon_prefers_dcc_branch(self):
+    def test_kp_manual_and_tool_triggers_share_single_canonical_turn(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         fake_provider = FakeProvider(
             "碎玻璃造成的傷害已確定。",
@@ -779,7 +778,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                     "roll_context": "game_resolution",
                 },
             )],
-            response_id="dcc-priority-response",
+            response_id="manual-plus-tool-response",
         )
         original_provider = keeper._PROVIDERS.get("openai")
         original_llm_provider = keeper.LLM_PROVIDER
@@ -810,7 +809,10 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.log[0]["role"], "user")
         self.assertEqual(saved.log[1], {"role": "assistant", "content": "碎玻璃造成的傷害已確定。"})
         canonical_message = saved.log[0]["content"]
-        self.assertIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
+        self.assertTrue(canonical_message.startswith("[KP Assistant] 碎玻璃割傷 Marco，骰 1d3 傷害"))
+        self.assertIn("[DETERMINISTIC GAME WORKFLOW]", canonical_message)
+        self.assertNotIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
+        self.assertNotIn("[KP ASSISTANT / OOC HOST INSTRUCTION]", canonical_message)
         self.assertIn("碎玻璃割傷 Marco，骰 1d3 傷害", canonical_message)
         self.assertNotIn("!碎玻璃割傷 Marco，骰 1d3 傷害", canonical_message)
         self.assertIn("roll_dice", canonical_message)
@@ -819,10 +821,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"roll_context": "game_resolution"', canonical_message)
         self.assertIn('"rolls"', canonical_message)
         self.assertIn('"total"', canonical_message)
-        self.assertNotIn("[KP Assistant] 碎玻璃割傷 Marco，骰 1d3 傷害", canonical_message)
-        self.assertFalse(any(entry["content"] == "[KP Assistant] 碎玻璃割傷 Marco，骰 1d3 傷害" for entry in saved.log))
+        self.assertEqual(sum(1 for entry in saved.log if entry["role"] == "user"), 1)
         self.assertEqual(saved.kp_ooc_log, [])
-        self.assertEqual(saved.openai_previous_response_id, "dcc-priority-response")
+        self.assertEqual(saved.openai_previous_response_id, "manual-plus-tool-response")
 
     def test_kp_roll_dice_ooc_randomizer_stays_in_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
