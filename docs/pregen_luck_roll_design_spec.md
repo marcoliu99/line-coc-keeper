@@ -157,3 +157,25 @@ Keeper 呼叫 `skill_check` 用的是官方全名，`resolve_skill_value` 的精
 遊玩時完全不會生效，只有建角當下的確認訊息看起來像是成功了。修法：`allocate()` 開頭先用
 `canonical_skill_name()` 正規化 `skill` 參數，跟 `pregen_extractor.py` 現有的做法一致；
 未知的自創技能名稱（不在 `BASE_SKILLS`／別名表裡）會維持原樣不變，不影響劇本自訂技能的用法。
+
+**再追出並修正第二個更大範圍的相關 bug**（實測 `/coc pregens` 真實輸出時發現）：劇本 PDF 抽取
+出來的預製角色，`/coc pregens` 預覽文字裡技能清單一大堆看似「都是基礎值」的重複項目，實際上是
+同一個技能被兩個不同拼法各佔一個獨立欄位（例如「鬥毆 70%」跟「格鬥（鬥毆） 70%」同時存在）。
+追出來根因是 `app/pregen_extractor.py` 的 `_translate_skill_names`（劇本上傳、LLM 抽取階段就會
+跑）只查 `app/dictionary.py` 的自學字典，完全沒呼叫 `canonical_skill_name()`——也就是完全跳過
+`app/skill_aliases.py` 裡已經定義好的靜態別名表（「手槍」→「射擊（手槍）」、「話術」→「快速
+交談」等）。改成呼叫 `canonical_skill_name()`；順便發現並補齊靜態別名表裡原本沒有涵蓋到的幾組
+（求生→生存、鎖匠→開鎖、自然世界→自然學、喬裝→偽裝、威嚇→恐嚇、駕駛／飛行→駕駛、步槍／
+霰彈槍→射擊（步槍/霰彈槍））。另外處理了一個合併時的邊界情況：如果兩個別名拼法在同一份抽取
+結果裡剛好帶著**不同**數值（例如「恐嚇 60」跟「威嚇 35」——同一技能在文件裡兩處被抽取成不同
+寫法、數值也不一致），合併時取較高值，不是誰在字典迭代順序裡排在後面就用誰的值（比照
+`app/models.py` `generate_investigator` 疊加職業技能時已經在用的 `max()` 合併原則）。
+
+`藝術/工藝（攝影）`跟「攝影」這類特化技能（COC7e 的 Art/Craft、Science、Language 本來就是依
+劇本內容動態命名，`BASE_SKILLS` 沒有固定的「正確」拼法可以正規化）**沒有**加進別名表——這類
+重複沒辦法用靜態表解決，是抽取當下 LLM 對同一個特化技能翻譯不一致造成的，需要的話是另一個
+獨立的問題，不在這次修正範圍。
+
+新增 `tests/test_pregen_and_creation.py` 的 `TranslateSkillNamesCanonicalizationTests`（5 個
+測試，含用使用者實際回報的技能清單重現整個問題並驗證修正後正確去重）。全套測試最終 62 個
+全過。

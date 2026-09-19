@@ -74,6 +74,60 @@ class PregenPreviewLuckLabelTests(unittest.TestCase):
         self.assertIn("LUCK 將於取用時骰定", text)
 
 
+class TranslateSkillNamesCanonicalizationTests(unittest.TestCase):
+    """Regression tests for _translate_skill_names bypassing the static
+    SKILL_ALIASES table (only consulting the dynamic self-learned
+    dictionary), which let extraction produce two separate entries for
+    what's really the same BASE_SKILLS skill."""
+
+    def test_alias_pairs_already_in_skill_aliases_collapse_to_one_entry(self):
+        raw = {"鬥毆": 70, "格鬥（鬥毆）": 70, "手槍": 40, "話術": 60, "電器維修": 10, "估價": 5}
+        result = pregen_extractor._translate_skill_names(raw)
+        self.assertEqual(result, {
+            "格鬥（鬥毆）": 70, "射擊（手槍）": 40, "快速交談": 60,
+            "電氣維修": 10, "鑑定": 5,
+        })
+
+    def test_newly_added_aliases_collapse_to_one_entry(self):
+        raw = {"求生": 10, "生存": 10, "鎖匠": 1, "開鎖": 1, "自然世界": 10, "自然學": 10, "喬裝": 60}
+        result = pregen_extractor._translate_skill_names(raw)
+        self.assertEqual(result, {"生存": 10, "開鎖": 1, "自然學": 10, "偽裝": 60})
+
+    def test_conflicting_values_for_the_same_aliased_skill_keep_the_higher_one(self):
+        # Same underlying skill (Intimidate), inconsistently transcribed at
+        # two points in the source text with two different values -- must
+        # not silently pick whichever happened to iterate last.
+        raw_high_first = {"恐嚇": 60, "威嚇": 35}
+        raw_low_first = {"威嚇": 35, "恐嚇": 60}
+        self.assertEqual(pregen_extractor._translate_skill_names(raw_high_first), {"恐嚇": 60})
+        self.assertEqual(pregen_extractor._translate_skill_names(raw_low_first), {"恐嚇": 60})
+
+    def test_unresolvable_homebrew_skill_name_passes_through_unchanged(self):
+        raw = {"深潛者辨識": 15}
+        self.assertEqual(pregen_extractor._translate_skill_names(raw), {"深潛者辨識": 15})
+
+    def test_real_scenario_duplicate_pattern_deduplicates_correctly(self):
+        """End-to-end reproduction of the exact reported symptom: a real
+        extracted skill list with ~11 alias pairs collapses to one entry
+        each, and every canonical BASE_SKILLS name ends up present."""
+        raw = {
+            "鬥毆": 70, "格鬥（鬥毆）": 70, "話術": 60, "快速交談": 60, "偽裝": 60,
+            "手槍": 40, "射擊（手槍）": 40, "步槍／霰彈槍": 25, "射擊（步槍/霰彈槍）": 25,
+            "電器維修": 10, "電氣維修": 10, "自然世界": 10, "自然學": 10,
+            "求生": 10, "生存": 10, "鎖匠": 1, "開鎖": 1, "估價": 5, "鑑定": 5,
+            "駕駛／飛行": 1, "駕駛": 1,
+        }
+        result = pregen_extractor._translate_skill_names(raw)
+        for canonical in ("格鬥（鬥毆）", "快速交談", "射擊（手槍）", "射擊（步槍/霰彈槍）",
+                          "電氣維修", "自然學", "生存", "開鎖", "鑑定", "駕駛"):
+            with self.subTest(canonical=canonical):
+                self.assertIn(canonical, result)
+        # No leftover raw/alias spellings sitting alongside their canonical form.
+        for alias in ("鬥毆", "話術", "步槍／霰彈槍", "電器維修", "自然世界", "求生", "鎖匠", "估價", "駕駛／飛行"):
+            with self.subTest(alias=alias):
+                self.assertNotIn(alias, result)
+
+
 class CreationAllocateCanonicalizationTests(unittest.TestCase):
     """Regression tests for /coc alloc silently opening a duplicate,
     unresolvable skill entry when the player types a common shorthand
