@@ -61,11 +61,11 @@ def _entries() -> list[HelpEntry]:
         HelpEntry(("scenario", "away"), "scenario", "暫離遊戲", "標記自己暫時離開；戰鬥中會跳過你的回合。", ("/coc away",), command=("away",)),
         HelpEntry(("scenario", "back"), "scenario", "回到遊戲", "取消暫離狀態並恢復正常參與。", ("/coc back",), command=("back",)),
         HelpEntry(("kp", "kp"), "kp", "登記 KP Assistant", "登記或解除本局的 KP Assistant 身分。", ("/coc kp", "/coc kp quit"), command=("kp",)),
-        HelpEntry(("kp", "checkpoint"), "kp", "建立回溯節點", "保存目前完整遊戲狀態，供 KP 之後回溯。", ("/coc checkpoint [名稱]", "/coc checkpoint clean ID"), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), command=("checkpoint",)),
-        HelpEntry(("kp", "checkpoints"), "kp", "查看回溯節點", "列出目前群組可用的回溯節點。", ("/coc checkpoints",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), command=("checkpoints",)),
-        HelpEntry(("kp", "rollback"), "kp", "回溯遊戲狀態", "將群組狀態恢復到指定回溯節點。", ("/coc rollback 節點ID或唯一名稱",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), command=("rollback",)),
-        HelpEntry(("kp", "digest"), "kp", "查看場景摘要", "查看目前或指定的場景摘要。", ("/coc digest", "/coc digest 摘要ID", "/coc digest clean 摘要ID"), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), command=("digest",)),
-        HelpEntry(("kp", "digests"), "kp", "列出場景摘要", "列出目前群組的場景摘要歷史。", ("/coc digests",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), command=("digests",)),
+        HelpEntry(("kp", "checkpoint"), "kp", "建立回溯節點", "保存目前完整遊戲狀態，供 KP 之後回溯。", ("/coc checkpoint [名稱]", "/coc checkpoint clean ID"), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("checkpoint",)),
+        HelpEntry(("kp", "checkpoints"), "kp", "查看回溯節點", "列出目前群組可用的回溯節點。", ("/coc checkpoints",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("checkpoints",)),
+        HelpEntry(("kp", "rollback"), "kp", "回溯遊戲狀態", "將群組狀態恢復到指定回溯節點。", ("/coc rollback 節點ID或唯一名稱",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("rollback",)),
+        HelpEntry(("kp", "digest"), "kp", "查看場景摘要", "查看目前或指定的場景摘要。", ("/coc digest", "/coc digest 摘要ID", "/coc digest clean 摘要ID"), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digest",)),
+        HelpEntry(("kp", "digests"), "kp", "列出場景摘要", "列出目前群組的場景摘要歷史。", ("/coc digests",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digests",)),
         HelpEntry(("other", "roll"), "other", "單純擲骰", "不經過守密人，直接擲骰。", ("/roll 1d100", "/roll 3d6+2"), ("/roll 1d100",), command=()),
     ]
 

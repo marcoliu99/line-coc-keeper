@@ -1,10 +1,17 @@
+import asyncio
+import importlib.util
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 from app.help_docs import generate_markdown
 from app.help_registry import HelpCategory, HelpContext, HelpEntry, get_help_page, register_help, register_help_category, reset_registry_for_tests
 from app.help_service import bounded_page_text, parse_help_path, resolve_text_path
 from app.models import GroupState
+
+
+DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
 
 class HelpNavigationTests(unittest.TestCase):
@@ -104,6 +111,70 @@ class HelpNavigationTests(unittest.TestCase):
         detail = get_help_page(("scenario", "list"), HelpContext())
         self.assertTrue(any(action.path == ("scenario", "use") for action in page.actions))
         self.assertNotIn("KP-only", detail.text)
+
+    def test_all_host_only_help_entries_are_marked_kp_only(self):
+        expected = {
+            ("scenario", "use"),
+            ("scenario", "import"),
+            ("scenario", "merge"),
+            ("kp", "checkpoint"),
+            ("kp", "checkpoints"),
+            ("kp", "rollback"),
+            ("kp", "digest"),
+            ("kp", "digests"),
+        }
+        page = get_help_page(("kp",), HelpContext())
+        self.assertEqual(
+            {action.path for action in page.actions if len(action.path) == 2 and action.path != ("kp", "kp")},
+            {("kp", "checkpoint"), ("kp", "checkpoints"), ("kp", "rollback"), ("kp", "digest"), ("kp", "digests")},
+        )
+        for path in expected:
+            self.assertIn("KP-only", get_help_page(path, HelpContext()).text)
+
+    @unittest.skipUnless(DISCORD_AVAILABLE, "discord.py is not installed")
+    def test_discord_help_button_path_round_trip_and_scope_guard(self):
+        from app.discord_bot import HelpButton, _help_path_from_token, _help_path_token
+        from app.help_registry import HelpAction
+
+        action = HelpAction("戰鬥傷害", ("combat", "damage"), "entry")
+        button = HelpButton("discord-channel-123", action)
+        self.assertEqual(_help_path_token(action.path), "combat/damage")
+        self.assertEqual(_help_path_from_token("combat/damage"), action.path)
+        self.assertEqual(button.item.custom_id, "coc_help:discord-channel-123:combat/damage")
+
+        interaction = SimpleNamespace(
+            channel=SimpleNamespace(id=456),
+            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()),
+        )
+        asyncio.run(button.callback(interaction))
+        interaction.response.send_message.assert_awaited_once_with(
+            "這個 Help 按鈕不屬於目前頻道。", ephemeral=True
+        )
+        interaction.response.edit_message.assert_not_awaited()
+
+    @unittest.skipUnless(DISCORD_AVAILABLE, "discord.py is not installed")
+    def test_discord_help_button_reloads_page_and_edits_original_message(self):
+        from app.discord_bot import HelpButton
+        from app.help_registry import HelpAction, HelpPage
+
+        action = HelpAction("戰鬥", ("combat",), "category")
+        button = HelpButton("discord-channel-123", action)
+        interaction = SimpleNamespace(
+            channel=SimpleNamespace(id=123),
+            user=SimpleNamespace(id=42),
+            response=SimpleNamespace(edit_message=AsyncMock()),
+        )
+        page = HelpPage(("combat",), "戰鬥", "戰鬥 Help", ())
+        with patch("app.discord_bot.load_group_state", return_value=GroupState(group_id="discord-channel-123")) as load_state, \
+             patch("app.discord_bot.help_service.get_page", return_value=page) as get_page, \
+             patch("app.discord_bot._help_view", return_value="view"):
+            asyncio.run(button.callback(interaction))
+
+        load_state.assert_called_once_with("discord-channel-123")
+        get_page.assert_called_once()
+        interaction.response.edit_message.assert_awaited_once_with(
+            content="戰鬥 Help", view="view"
+        )
 
     def test_player_reference_is_generated_from_registry(self):
         document = generate_markdown()
