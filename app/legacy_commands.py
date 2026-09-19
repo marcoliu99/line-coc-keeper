@@ -48,6 +48,11 @@ SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
 SendImage = Callable[[bytes, str, int], Awaitable[None]]
 SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, png_bytes, conversation_id, page_number)
 
+
+def _is_kp_or_keeper(state: GroupState, user_id: str, is_keeper: bool = False) -> bool:
+    """Return whether a user may perform group-level scenario administration."""
+    return is_keeper or state.kp_assistant_user_id == user_id
+
 async def handle_unsupported_message(conversation_id: str, reply: Reply, label: str) -> None:
     """Called by an adapter when it receives a message type it can't hand text
     or a PDF from (sticker, image, voice, etc.) — only speaks up once a game is
@@ -283,6 +288,9 @@ async def handle_pdf_upload(
     # SECOND upload's content instead, which is especially bad for "全新劇本"
     # (wipes map position, resets the LLM conversation thread).
     existing_state = load_state(conversation_id)
+    if existing_state.pending_pregen_luck:
+        await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再處理新的劇本 PDF。")
+        return False
     if existing_state.pending_pdf_upload is not None:
         await reply(
             f"上一次上傳的《{existing_state.pending_pdf_upload['title']}》還沒選擇「全新劇本」"
@@ -464,11 +472,23 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
         context["scene_maps"], extracted_index, len(state.pregens),
     )
 
-async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
+async def resolve_pdf_upload_choice(
+    conversation_id: str,
+    choice: str,
+    push: Reply,
+    user_id: str = "",
+    is_keeper: bool = False,
+) -> None:
     """Called by Discord's PdfUploadChoiceButton once the GM picks between the
     two options offered by handle_pdf_upload. `choice` must be "new" or "fix";
-    the text command remains available as a manual fallback."""
+    the text command remains available as a manual fallback. The actor is
+    checked again while holding the conversation lock so a button cannot
+    mutate the scenario from an unauthorized account."""
     async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        if not _is_kp_or_keeper(state, user_id, is_keeper):
+            await push("只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。")
+            return
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
     await push(text)
 

@@ -381,7 +381,8 @@ Help metadata 的 `kp_only` 必須反映實際 authorization，不能只因某�
 | 已確認 KP-only | `/coc scenario use <scenario-id>` | `kp_only=True` | 只有目前登記的 KP Assistant 可以執行 |
 | KP 身分管理 | `/coc kp`、`/coc kp quit` | `kp_only=False`，但標記為「KP 身分」 | 一般符合條件的使用者可登記；只有目前 KP 可解除自己的身分 |
 | KP Assistant 專用能力 | 非 slash command 的 KP Assistant 對話與 Keeper tools，例如 private combat status、scenario image private asset、主持用 deterministic tools | 不作為 `/coc help` command entry；在「KP 助手」分類說明 | 由 `speaker_role == "kp_assistant"` 與 tool allowlist 控制 |
-| 目前沒有 KP authorization 的管理指令 | `/coc newgame`、`/coc pdf new|fix`、`/coc scenario reparse|cancel|clean`、`/coc end`、`/coc setpersona`、`/coc era`、`/coc index` | 暫不標 `kp_only` | 目前程式碼沒有一致的 KP 身分檢查；若產品決定它們必須是 KP-only，需另開 authorization scope 或在本 feature 中明確加入權限變更 |
+| 已加入 KP authorization 的劇本 lifecycle | `/coc pdf new|fix`、`/coc scenario reparse|cancel|clean` | `kp_only=True` | 需要目前 KP Assistant 或 Discord Keeper role；Help 顯示 KP-only，但仍保留完整用法 |
+| 目前沒有 KP authorization 的一般管理指令 | `/coc newgame`、`/coc end`、`/coc setpersona`、`/coc era`、`/coc index` | 暫不標 `kp_only` | 這些仍維持現有開放政策；若產品決定限制，需另開 authorization scope |
 
 因此第一版 help UI 會：
 
@@ -391,7 +392,7 @@ Help metadata 的 `kp_only` 必須反映實際 authorization，不能只因某�
 
 ### Remaining review decisions
 
-- **KP-only visibility（已決定）**：對 `/coc scenario use` 所有人都顯示 entry，分類與 detail 頁明確標記「KP-only」；非 KP 仍可閱讀完整用法，但實際執行時由 command handler 的既有 authorization 拒絕。Help visibility 不取代 command authorization。
+- **KP-only visibility（已決定）**：對 scenario use、PDF choice、scenario reparse/cancel/clean 所有人都顯示 entry，分類與 detail 頁明確標記「KP-only」；非 KP 仍可閱讀完整用法，但實際執行時由 command handler 或 button callback authorization 拒絕。Help visibility 不取代 command authorization。
 - **分類粒度**：建議先固定 6–8 個高階分類，避免把 category 本身做成無限可巢狀樹；更細節放在 command detail 文字中。
 - **相容策略**：不保留 legacy `HELP_TEXT` fallback；正式 Help 與未知 `/coc` subcommand 都使用 registry，避免新舊指令清單分叉。
 - **按鈕訊息策略**：建議 Discord 點擊後 edit 同一則 help message，避免每次點擊都洗版；若平台限制 edit，再 fallback 為新訊息。

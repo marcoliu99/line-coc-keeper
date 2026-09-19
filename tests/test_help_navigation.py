@@ -115,6 +115,10 @@ class HelpNavigationTests(unittest.TestCase):
     def test_all_host_only_help_entries_are_marked_kp_only(self):
         expected = {
             ("scenario", "use"),
+            ("scenario", "reparse"),
+            ("scenario", "cancel"),
+            ("scenario", "clean"),
+            ("scenario", "pdf"),
             ("scenario", "import"),
             ("scenario", "merge"),
             ("kp", "checkpoint"),

@@ -128,6 +128,44 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertIn("/coc luck roll", replies[0])
         load_context.assert_not_called()
 
+    def test_scenario_switch_rejects_pending_pdf_flow(self):
+        state = GroupState("discord-group-pending-pdf", kp_assistant_user_id="kp")
+        state.pending_pdf_upload = {"scenario_id": "old-upload"}
+        replies = []
+
+        async def reply(text):
+            replies.append(text)
+
+        with patch.object(system_handler, "load_state", return_value=state), patch.object(
+            system_handler.scenario_library, "load_context"
+        ) as load_context:
+            asyncio.run(system_handler.handle_system_command(
+                state.group_id, "kp", reply, None, None, None,
+                ["/coc", "scenario", "use", "new-scenario"],
+            ))
+
+        self.assertIn("待處理的劇本上傳", replies[0])
+        load_context.assert_not_called()
+
+    def test_pdf_choice_requires_kp_or_keeper(self):
+        state = GroupState("discord-group-pdf-auth", kp_assistant_user_id="kp")
+        state.pending_pdf_upload = {"scenario_id": "upload"}
+        replies = []
+
+        async def reply(text):
+            replies.append(text)
+
+        with patch.object(system_handler, "load_state", return_value=state), patch.object(
+            system_handler, "_resolve_pdf_upload_choice_locked"
+        ) as resolve:
+            asyncio.run(system_handler.handle_system_command(
+                state.group_id, "player", reply, None, None, None,
+                ["/coc", "pdf", "new"],
+            ))
+
+        self.assertIn("KP Assistant", replies[0])
+        resolve.assert_not_called()
+
     def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
         state = GroupState("discord-group-conflict")
         group_state.save_state(state)
