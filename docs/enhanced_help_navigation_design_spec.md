@@ -58,8 +58,23 @@ HelpEntry(
     order: int = 0,
     aliases: tuple[str, ...] = (),
     kp_only: bool = False,
+    visibility: str = "always",
 )
 ```
+
+`visibility` 不只是一個靜態 boolean；help 需要根據目前 Discord conversation 的唯讀狀態動態決定 entry 是否顯示。建議使用有限的 policy key，而不是讓每個 entry 任意執行 callback：
+
+```python
+visibility: Literal[
+    "always",                 # 永遠顯示
+    "when_scenario_loaded",   # 已載入劇本時顯示
+    "when_pregens_exist",     # 劇本有預設角色時顯示
+    "when_no_pregens",        # 劇本沒有預設角色時顯示
+    "when_combat_active",     # 戰鬥進行中時顯示
+]
+```
+
+Help service 接收由 router 先讀取的 immutable `HelpContext`（例如 `scenario_loaded`、`pregens_exist`、`combat_active`、`is_kp`），只做 visibility evaluation；registry 不直接載入 `GroupState`、不取得 conversation lock，也不執行 command。
 
 註冊 API 的方向：
 
@@ -106,8 +121,19 @@ Page lookup 的規則：
 - `()`：root，列出所有 visible categories。
 - `("combat",)`：category page，列出該分類下的 entries。
 - `("combat", "damage")`：detail page，顯示單一 command。
-- 未知 path、alias 或已隱藏／不可見 entry：回傳清楚的「找不到這個 help 頁面」訊息，不 fallback 到整份舊 help。
-- `kp_only` entry 只在 KP 身分或適用 context 顯示；若目前 help API 尚未有可靠身分判斷，第一版先以 public metadata 顯示「KP 專用」標籤，實際過濾列為 implementation decision。
+- 未知 path、alias 或已隱藏／不可見 entry：回傳清楚的「目前情境沒有這個 help 頁面」訊息，不 fallback 到整份舊 help；按鈕只會產生目前可見的 entries。
+- `visibility` 決定 entry 是否出現在目前頁面；`kp_only=True` 本身不隱藏 entry，而是在 category／detail 頁加上「KP-only」標籤。實際能否執行仍由 command handler authorization 決定。
+
+### Context-sensitive help example
+
+角色建立是條件式 entry 的典型案例：
+
+| 狀態 | 顯示 | 隱藏 |
+| --- | --- | --- |
+| 尚未載入劇本／沒有預設角色 | `/coc pc`、`/coc create` | `/coc pregen`、`/coc usepregen` |
+| 目前劇本有預設角色 | `/coc pregens`、`/coc pregen`、`/coc usepregen` | `/coc pc`、`/coc create` |
+
+`/coc pc` 被隱藏只代表目前 help 不提供這個入口；command handler 仍必須保留自己的 guard，因為使用者可以手動輸入被隱藏的 command。Help visibility 永遠不能取代 runtime authorization 或 business rule。
 
 ## 5. Command and platform flow
 
@@ -216,6 +242,28 @@ def register_help() -> None:
 
 Handler 的 command implementation 與 help metadata 保持同一個模組，但兩者不是互相呼叫。註冊內容只描述 usage；真正的 routing 仍由既有 `handle_combat_command()` 負責。
 
+條件式 command 直接在 entry 上指定 policy：
+
+```python
+HelpEntry(
+    path=("character", "pc"),
+    category="character",
+    title="快速建立調查員",
+    summary="建立一位自訂調查員。",
+    usage=("/coc pc 角色名 [職業]",),
+    visibility="when_no_pregens",
+)
+
+HelpEntry(
+    path=("character", "usepregen"),
+    category="character",
+    title="使用預設角色",
+    summary="選擇劇本附帶的預設調查員。",
+    usage=("/coc usepregen 編號 [自訂名稱]",),
+    visibility="when_pregens_exist",
+)
+```
+
 Agent 若有玩家可直接使用的 slash command，也使用同一個 API：
 
 ```python
@@ -296,7 +344,9 @@ Application startup（或 router 第一次處理訊息前的 lazy initialization
 7. Discord help button custom ID 可由 callback 重新解析 page；上一層／首頁按鈕不超出 root。
 8. 錯 channel／conversation 的按鈕點擊被拒絕，且不改變原訊息。
 9. registry import/reload 不會重複註冊 entries。
-10. 現有完整 `unittest discover` 維持通過。
+10. `when_pregens_exist`／`when_no_pregens` 等 visibility policy 會依 `HelpContext` 正確顯示或隱藏 entries。
+11. 被 help 隱藏的 command 仍可手動輸入並由既有 handler guard 正確拒絕或回覆，不把 help filtering 當成 authorization。
+12. 現有完整 `unittest discover` 維持通過。
 
 ## 8. KP-only classification
 
