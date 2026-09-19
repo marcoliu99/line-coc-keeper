@@ -596,6 +596,21 @@ def _target_range(state: GroupState, enemy_id: str, target_id: str) -> str:
     ).lower()
 
 
+def _attack_can_reach_target(state: GroupState, enemy_id: str, target_id: str, attack: AttackRule) -> bool:
+    """Return whether an attack's abstract range can reach the selected target.
+
+    An unset range is legacy state with no explicit distance information, so it
+    remains usable. Explicitly marked ``far`` targets must not be hit by a
+    close-range attack just because an attack exists on the combat card.
+    """
+    if not target_id or attack.range_band.lower() == "any":
+        return True
+    current = _target_range(state, enemy_id, target_id)
+    if not current:
+        return True
+    return _range_rank(current) <= _range_rank(attack.range_band)
+
+
 def _choose_target(state: GroupState, enemy_id: str) -> str:
     valid = [
         c.combatant_id
@@ -663,7 +678,14 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
             combat.plans[plan_id] = plan
             return plan
 
-    attack = next((a for a in card.attacks if a.range_band in ("engaged", "near", "any")), None)
+    attack = next(
+        (
+            candidate for candidate in card.attacks
+            if candidate.range_band.lower() in ("engaged", "near", "any")
+            and _attack_can_reach_target(state, card.id, target_id, candidate)
+        ),
+        None,
+    )
     if attack:
         plan_id = f"plan-{uuid.uuid4().hex[:8]}"
         plan = {

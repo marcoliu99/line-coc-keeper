@@ -1919,3 +1919,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - `/coc checkpoint clean` 與 `/coc digest clean` 缺少目標 ID 時改回覆正確用法，不會誤建立 checkpoint 或顯示最新摘要。
 - checkpoint 建立/清除、rollback 與 database backup 現在都會記錄 `*_started`，並保留既有 success/failure logs。
 - 新增指令參數與 backup logging regression tests。
+
+### 115. 修正敵人距離攻擊判斷與 rollback 圖片快取失敗處理
+
+- 敵人只有在選定目標落在攻擊的抽象距離範圍內才建立 attack plan；明確標記為 `far` 的目標會改走 move。
+- rollback 的 authoritative state commit 不再因衍生 page image cache 失敗而回報整個 rollback 失敗；圖片快取錯誤會獨立記錄並在 rollback success log 標記。
+- 新增 out-of-range enemy action 與 image restore failure regression tests。

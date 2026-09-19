@@ -263,10 +263,21 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
             group_id, identifier, actor_id, int((time.monotonic() - started) * 1000),
         )
         raise
-    _restore_page_images(restored)
+    image_restore_failed = False
+    try:
+        _restore_page_images(restored)
+    except Exception:
+        # The authoritative SQLite rollback has already committed. Keep that
+        # result instead of reporting a failed rollback, but make the derived
+        # image-cache problem explicit for operators to repair.
+        image_restore_failed = True
+        _logger.exception(
+            "rollback_image_restore_failure group_id=%s scenario_id=%s",
+            group_id, restored.scenario_library_id,
+        )
     _logger.info(
-        "rollback_success group_id=%s checkpoint_id=%s pre_rollback_id=%s revision=%s timeline_id=%s reason=rollback duration_ms=%s",
+        "rollback_success group_id=%s checkpoint_id=%s pre_rollback_id=%s revision=%s timeline_id=%s image_restore_failed=%s reason=rollback duration_ms=%s",
         group_id, checkpoint["checkpoint_id"], pre["checkpoint_id"], restored.state_revision,
-        restored.timeline_id, int((time.monotonic() - started) * 1000),
+        restored.timeline_id, image_restore_failed, int((time.monotonic() - started) * 1000),
     )
     return restored, checkpoint, pre

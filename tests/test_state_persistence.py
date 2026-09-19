@@ -319,6 +319,24 @@ class StatePersistenceTests(unittest.TestCase):
             self.assertEqual(group_state.load_page_image(state.group_id, 7), b"old")
             self.assertIsNone(group_state.load_page_image(state.group_id, 9))
 
+    def test_rollback_keeps_committed_state_when_image_restore_fails(self):
+        state = GroupState("discord-group-image-restore-failure")
+        state.scenario_library_id = "scenario"
+        group_state.save_state(state)
+        checkpoint = checkpoints.create_checkpoint(state, label="before")
+        state.scenario_title = "newer"
+        group_state.save_state(state)
+
+        with patch("app.scenario_library.load_context", side_effect=OSError("image cache unavailable")):
+            with self.assertLogs("app.checkpoints", level=logging.ERROR) as captured:
+                restored, _, _ = checkpoints.rollback(
+                    state.group_id, checkpoint["checkpoint_id"], actor_id="kp"
+                )
+
+        self.assertEqual(restored.scenario_title, "")
+        self.assertEqual(group_state.load_state(state.group_id).scenario_title, "")
+        self.assertIn("rollback_image_restore_failure", "\n".join(captured.output))
+
 
 if __name__ == "__main__":
     unittest.main()

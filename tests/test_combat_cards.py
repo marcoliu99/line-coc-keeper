@@ -372,7 +372,7 @@ class CombatCardTests(unittest.TestCase):
         state.combat.range_bands[f"{card.id}:{target_id}"] = "near"
         near_plan = combat.plan_enemy_turn(state)
 
-        self.assertEqual(far_plan["selected_action"], "attack")
+        self.assertEqual(far_plan["selected_action"], "move")
         self.assertEqual(near_plan["selected_action"], "special_ability")
         self.assertEqual(near_plan["selected_id"], "near_song")
 
@@ -395,6 +395,17 @@ class CombatCardTests(unittest.TestCase):
 
         self.assertEqual(plan["target_ids"], ["pc:char-second"])
         choose.assert_called_once_with(["pc:char-first", "pc:char-second"])
+
+    def test_enemy_moves_when_selected_target_is_out_of_attack_range(self):
+        state, enemy_card_id = self._enemy_turn_with_two_pcs()
+        target_id = "pc:char-first"
+        next(c for c in state.combat.order if c.combatant_id == "pc:char-second").defeated = True
+        state.combat.range_bands[f"{enemy_card_id}:{target_id}"] = "far"
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["target_ids"], [target_id])
+        self.assertEqual(plan["selected_action"], "move")
 
     def test_apply_combat_damage_tracks_armor_breakdown(self):
         state = self._state_with_pc()
