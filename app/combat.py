@@ -10,6 +10,7 @@ of defaulting to "the nearest investigator gets punched".
 from __future__ import annotations
 
 import re
+import random
 import uuid
 from typing import Any
 
@@ -59,7 +60,7 @@ def active_characters(state: GroupState):
 
 
 def _seed_from_characters(state: GroupState) -> list[Combatant]:
-    return [
+    combatants = [
         Combatant(
             name=c.name,
             display_name=c.name,
@@ -74,12 +75,15 @@ def _seed_from_characters(state: GroupState) -> list[Combatant]:
         for c in active_characters(state)
         if c.hp > 0 and not c.away
     ]
+    return sorted(combatants, key=lambda combatant: -combatant.dex)
 
 
 def _ensure_started(state: GroupState) -> None:
     _ensure_character_identity(state)
     if not state.combat.active:
         state.combat = CombatState(active=True, round_number=1, order=_seed_from_characters(state), current_index=0)
+        process_timing(state, "round_start")
+        _mark_round_start_abilities(state)
 
 
 def start_combat(state: GroupState) -> CombatState:
@@ -166,6 +170,14 @@ def add_enemy_card_to_combat(state: GroupState, card_id: str) -> CombatState:
         )
     )
     state.combat.order.sort(key=lambda c: -c.dex)
+    # A card entering after the initial round has already passed its
+    # round_start window. It will become eligible at the next round boundary.
+    # Cards added during the initial setup still get the first round marker.
+    if state.combat.round_number == 1 and not any(
+        key.startswith("1:") and ":turn_start:" in key
+        for key in state.combat.processed_timings
+    ):
+        _mark_round_start_abilities(state)
     if current_id:
         for i, c in enumerate(state.combat.order):
             if c.combatant_id == current_id:
@@ -235,11 +247,12 @@ def _sync_combatant_from_card(combatant: Combatant, card: EnemyCombatCard) -> No
 
 def _sync_pc_hp(state: GroupState, combatant: Combatant) -> None:
     if combatant.is_pc:
+        if combatant.character_id and combatant.character_id in state.characters_by_id:
+            state.characters_by_id[combatant.character_id].hp = combatant.hp
+            return
         pc = state.get_character_by_name(combatant.name)
         if pc:
             pc.hp = combatant.hp
-        if combatant.character_id and combatant.character_id in state.characters_by_id:
-            state.characters_by_id[combatant.character_id].hp = combatant.hp
 
 
 def _pc_for_combatant(state: GroupState, combatant: Combatant):
@@ -415,7 +428,12 @@ def _target_in_abstract_range(state: GroupState, card: EnemyCombatCard, target_i
     required = (trigger.get("range_band") or trigger.get("range") or trigger.get("max_range") or "any").lower()
     if required in ("any", "near_or_audible", "audible"):
         return True
-    current = state.combat.range_bands.get(f"{card.id}:{target_id}") or trigger.get("current_range") or "engaged"
+    current = (
+        state.combat.range_bands.get(f"{card.id}:{target_id}")
+        or state.combat.range_bands.get(f"{target_id}:{card.id}")
+        or trigger.get("current_range")
+        or "engaged"
+    )
     return _range_rank(current) <= _range_rank(required)
 
 
@@ -457,8 +475,11 @@ def add_combat_effect(
     source_id: str = "",
     public_description: str = "",
 ) -> dict[str, Any]:
-    combatant = _find_combatant(state, target_name)
-    if not combatant:
+    normalized_target = (target_name or "").strip().lower()
+    is_environment = normalized_target in {"environment", "global", "環境", "場景"}
+    is_all = normalized_target in {"all", "全體", "所有人"}
+    combatant = None if is_environment or is_all else _find_combatant(state, target_name)
+    if not is_environment and not is_all and combatant is None:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
     if timing not in {"round_start", "turn_start", "turn_end", "round_end"}:
         return {"ok": False, "error": f"不支援的效果時點：{timing}"}
@@ -468,11 +489,23 @@ def add_combat_effect(
     if damage_error:
         return {"ok": False, "error": f"無法解析效果傷害：{damage_error}"}
 
+    if is_environment:
+        target_id = "__environment__"
+        target_label = "環境"
+    elif is_all:
+        target_id = "__all__"
+        target_label = "全體"
+    else:
+        # Keep the invariant explicit for callers and static type checkers.
+        if combatant is None:
+            return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
+        target_id = combatant.combatant_id
+        target_label = combatant.display_name
     effect = EffectState(
         id=f"effect-{uuid.uuid4().hex[:8]}",
         label=label,
         source_id=source_id,
-        target_id=combatant.combatant_id,
+        target_id=target_id,
         timing=timing,
         remaining_rounds=remaining_rounds,
         damage=damage,
@@ -484,8 +517,8 @@ def add_combat_effect(
     return {
         "ok": True,
         "effect_id": effect.id,
-        "target": combatant.display_name,
-        "target_id": combatant.combatant_id,
+        "target": target_label,
+        "target_id": target_id,
         "label": effect.label,
         "timing": effect.timing,
         "remaining_rounds": effect.remaining_rounds,
@@ -503,12 +536,18 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
     key = _timing_key(state, timing, target_id)
     if key in state.combat.processed_timings:
         return []
-    state.combat.processed_timings.append(key)
 
     results: list[dict[str, Any]] = []
     remaining: list[EffectState] = []
+    timing_failed = False
     for effect in state.combat.effects:
-        applies = effect.timing == timing and (not target_id or effect.target_id == target_id)
+        applies = effect.timing == timing and (
+            not target_id or effect.target_id == target_id or effect.target_id == "__all__"
+        )
+        effect_key = f"{key}:effect:{effect.id}"
+        if applies and effect_key in state.combat.processed_timings:
+            remaining.append(effect)
+            continue
         applied = False
         if applies and effect.damage:
             try:
@@ -520,25 +559,38 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                     "target_id": effect.target_id,
                     "error": f"無法解析效果傷害：{exc}",
                 })
+                timing_failed = True
             else:
-                result = apply_combat_damage(
-                    state,
-                    effect.target_id,
-                    raw,
-                    damage_type=effect.damage_type,
-                    tags=effect.tags,
-                    source_id=effect.source_id,
+                targets = (
+                    [combatant.combatant_id for combatant in state.combat.order if not combatant.defeated]
+                    if effect.target_id == "__all__"
+                    else [effect.target_id]
                 )
-                result["effect_id"] = effect.id
-                results.append(result)
-                applied = result.get("ok") is True
+                applied = True
+                for target in targets:
+                    result = apply_combat_damage(
+                        state,
+                        target,
+                        raw,
+                        damage_type=effect.damage_type,
+                        tags=effect.tags,
+                        source_id=effect.source_id,
+                    )
+                    result["effect_id"] = effect.id
+                    results.append(result)
+                    if not result.get("ok"):
+                        applied = False
+                        timing_failed = True
         elif applies:
             applied = True
         if applied:
+            state.combat.processed_timings.append(effect_key)
             _tick_effect(effect)
         if effect.remaining_rounds is None or effect.remaining_rounds > 0:
             remaining.append(effect)
     state.combat.effects = remaining
+    if not timing_failed:
+        state.combat.processed_timings.append(key)
     return results
 
 
@@ -576,11 +628,66 @@ def _safe_public_ability_hint(ability: SpecialAbility) -> str:
     return "它展現出某種異常能力，但具體規則仍未明朗。"
 
 
-def _choose_target(state: GroupState) -> str:
-    for c in state.combat.order:
-        if c.side == "pc" and not _is_skippable(state, c):
-            return c.combatant_id
-    return ""
+def _target_range(state: GroupState, enemy_id: str, target_id: str) -> str:
+    return (
+        state.combat.range_bands.get(f"{enemy_id}:{target_id}")
+        or state.combat.range_bands.get(f"{target_id}:{enemy_id}")
+        or ""
+    ).lower()
+
+
+def _attack_can_reach_target(state: GroupState, enemy_id: str, target_id: str, attack: AttackRule) -> bool:
+    """Return whether an attack's abstract range can reach the selected target.
+
+    An unset range is legacy state with no explicit distance information, so it
+    remains usable. Explicitly marked ``far`` targets must not be hit by a
+    close-range attack just because an attack exists on the combat card.
+    """
+    if not target_id:
+        return False
+    if attack.range_band.lower() == "any":
+        return True
+    current = _target_range(state, enemy_id, target_id)
+    if not current:
+        return True
+    return _range_rank(current) <= _range_rank(attack.range_band)
+
+
+def _planning_signature(state: GroupState, card: EnemyCombatCard) -> str:
+    """Capture state that can invalidate an unresolved enemy plan."""
+    combat = state.combat
+    combatants = tuple(
+        (item.combatant_id, item.hp, item.defeated, _is_skippable(state, item))
+        for item in combat.order
+    )
+    abilities = tuple(
+        (ability.id, tuple(sorted(ability.usage.items())), ability.current_cooldown)
+        for ability in card.abilities
+    )
+    return repr((card.hp, tuple(card.status_tags), abilities, tuple(sorted(combat.range_bands.items())), combatants))
+
+
+def _choose_target(state: GroupState, enemy_id: str) -> str:
+    valid = [
+        c.combatant_id
+        for c in state.combat.order
+        if c.side == "pc" and not _is_skippable(state, c)
+    ]
+    if not valid:
+        return ""
+
+    # Distance is a tactical signal, not a hard aggro table. Players can
+    # deliberately protect a fragile investigator by engaging the enemy, while
+    # equal-distance targets remain unpredictable instead of following
+    # initiative order forever.
+    for preferred_band in ("engaged", "near"):
+        candidates = [
+            target_id for target_id in valid
+            if _target_range(state, enemy_id, target_id) == preferred_band
+        ]
+        if candidates:
+            return random.choice(candidates)
+    return random.choice(valid)
 
 
 def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
@@ -595,8 +702,34 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
         return {"ok": False, "error": f"敵人「{combatant.display_name}」沒有戰鬥卡"}
 
     process_timing(state, "turn_start", combatant.combatant_id)
+    if _is_skippable(state, combatant):
+        return {
+            "ok": True,
+            "plan_id": "",
+            "enemy": combatant.display_name,
+            "selected_action": "none",
+            "selected_id": "",
+            "target_ids": [],
+            "required_rolls": [],
+            "private_reason": "turn_start effect defeated this enemy before it could act",
+            "public_hint": f"{combatant.display_name} 已無法行動。",
+        }
 
-    target_id = _choose_target(state)
+    existing_plan = next(
+        (
+            plan for plan in combat.plans.values()
+            if not plan.get("resolved")
+            and plan.get("enemy_card_id") == card.id
+            and plan.get("round_number") == combat.round_number
+            and plan.get("current_index") == combat.current_index
+            and plan.get("planning_signature") == _planning_signature(state, card)
+        ),
+        None,
+    )
+    if existing_plan is not None:
+        return existing_plan
+
+    target_id = _choose_target(state, card.id)
     for ability in sorted(card.abilities, key=lambda a: -a.priority):
         if _trigger_matches(ability, card, state, target_id):
             plan_id = f"plan-{uuid.uuid4().hex[:8]}"
@@ -604,10 +737,14 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
                 "ok": True,
                 "plan_id": plan_id,
                 "enemy_card_id": card.id,
+                "enemy_combatant_id": combatant.combatant_id,
                 "enemy": card.name,
                 "selected_action": "special_ability",
                 "selected_id": ability.id,
                 "target_ids": [target_id] if target_id else [],
+                "round_number": combat.round_number,
+                "current_index": combat.current_index,
+                "planning_signature": _planning_signature(state, card),
                 "required_rolls": [ability.check] if ability.check else [],
                 "private_reason": f"special ability {ability.name} trigger matched; usage={ability.usage}",
                 "public_hint": _safe_public_ability_hint(ability),
@@ -615,17 +752,28 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
             combat.plans[plan_id] = plan
             return plan
 
-    attack = next((a for a in card.attacks if a.range_band in ("engaged", "near", "any")), None)
+    attack = next(
+        (
+            candidate for candidate in card.attacks
+            if candidate.range_band.lower() in ("engaged", "near", "any")
+            and _attack_can_reach_target(state, card.id, target_id, candidate)
+        ),
+        None,
+    )
     if attack:
         plan_id = f"plan-{uuid.uuid4().hex[:8]}"
         plan = {
             "ok": True,
             "plan_id": plan_id,
             "enemy_card_id": card.id,
+            "enemy_combatant_id": combatant.combatant_id,
             "enemy": card.name,
             "selected_action": "attack",
             "selected_id": attack.id,
             "target_ids": [target_id] if target_id else [],
+            "round_number": combat.round_number,
+            "current_index": combat.current_index,
+            "planning_signature": _planning_signature(state, card),
             "required_rolls": [{
                 "type": "skill",
                 "skill_name": attack.skill_name,
@@ -643,10 +791,14 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
         "ok": True,
         "plan_id": plan_id,
         "enemy_card_id": card.id,
+        "enemy_combatant_id": combatant.combatant_id,
         "enemy": card.name,
         "selected_action": "move",
         "selected_id": "",
         "target_ids": [target_id] if target_id else [],
+        "round_number": combat.round_number,
+        "current_index": combat.current_index,
+        "planning_signature": _planning_signature(state, card),
         "required_rolls": [],
         "private_reason": "no usable special ability or attack in current abstract range",
         "public_hint": f"{card.name} 調整位置，尋找下一次出手機會。",
@@ -655,28 +807,169 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
     return plan
 
 
-def resolve_enemy_action(state: GroupState, plan_id: str) -> dict[str, Any]:
+def _apply_ability_effect(
+    state: GroupState,
+    ability: SpecialAbility,
+    target_ids: list[str],
+) -> dict[str, Any]:
+    """Materialize a successful ability's declared persistent effect."""
+    effect_spec = ability.effect or {}
+    if effect_spec.get("on_success") != "apply_effect":
+        return {"ok": True, "applied": False}
+
+    target_id = next(
+        (candidate for candidate in target_ids if any(c.combatant_id == candidate for c in state.combat.order)),
+        "",
+    )
+    if not target_id:
+        return {"ok": False, "error": "特殊能力成功，但找不到效果目標"}
+    timing = effect_spec.get("timing", "turn_start")
+    if timing not in {"round_start", "turn_start", "turn_end", "round_end"}:
+        return {"ok": False, "error": f"特殊能力效果時點不支援：{timing}"}
+    remaining_rounds = effect_spec.get("remaining_rounds")
+    if remaining_rounds is not None and remaining_rounds < 1:
+        return {"ok": False, "error": "特殊能力效果 remaining_rounds 必須大於 0"}
+    damage = str(effect_spec.get("damage", ""))
+    damage_error = _validate_effect_damage_expression(damage)
+    if damage_error:
+        return {"ok": False, "error": f"無法解析特殊能力效果傷害：{damage_error}"}
+
+    effect_id = effect_spec.get("effect_id") or f"ability-effect:{ability.id}"
+    if any(effect.id == effect_id for effect in state.combat.effects):
+        return {"ok": True, "applied": False, "already_applied": True, "effect_id": effect_id}
+    effect = EffectState(
+        id=effect_id,
+        label=effect_spec.get("label") or ability.name,
+        source_id=ability.id,
+        target_id=target_id,
+        timing=timing,
+        remaining_rounds=remaining_rounds,
+        damage=damage,
+        damage_type=effect_spec.get("damage_type", "mental"),
+        save_or_check=effect_spec.get("save_or_check", {}),
+        tags=effect_spec.get("tags", []),
+        public_description=effect_spec.get("public_description", ""),
+    )
+    state.combat.effects.append(effect)
+    return {
+        "ok": True,
+        "applied": True,
+        "effect_id": effect.id,
+        "target_id": target_id,
+        "label": effect.label,
+    }
+
+
+def resolve_enemy_action(
+    state: GroupState,
+    plan_id: str,
+    outcome: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     plan = state.combat.plans.get(plan_id)
     if not plan:
         return {"ok": False, "error": f"找不到行動計畫 {plan_id}"}
     if plan.get("resolved"):
         return {"ok": True, "plan_id": plan_id, "resolved": True, "already_resolved": True}
+    if (
+        plan.get("round_number") is not None
+        and plan.get("round_number") != state.combat.round_number
+    ) or (
+        plan.get("current_index") is not None
+        and plan.get("current_index") != state.combat.current_index
+    ):
+        return {"ok": False, "error": "行動計畫已經過期，請重新規劃敵人回合"}
+    current = (
+        state.combat.order[state.combat.current_index]
+        if 0 <= state.combat.current_index < len(state.combat.order)
+        else None
+    )
+    expected_combatant_id = plan.get("enemy_combatant_id")
+    if current is None or (
+        expected_combatant_id and current.combatant_id != expected_combatant_id
+    ) or (
+        not expected_combatant_id and current.enemy_card_id != plan.get("enemy_card_id")
+    ):
+        return {"ok": False, "error": "目前不是這個敵人的回合，行動計畫不能執行"}
     card = state.combat.enemy_cards.get(plan["enemy_card_id"])
     if not card:
         return {"ok": False, "error": "行動計畫對應的敵人卡不存在"}
+    effect_result: dict[str, Any] = {"ok": True, "applied": False}
     if plan["selected_action"] == "special_ability":
         ability = next((a for a in card.abilities if a.id == plan["selected_id"]), None)
-        if ability:
-            ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
-            ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
-            ability.current_cooldown = ability.cooldown_rounds
-            trigger_type = (ability.trigger or {}).get("type")
-            if trigger_type == "round_start":
-                card.status_tags = [tag for tag in card.status_tags if tag != _round_start_trigger_tag(ability.id)]
-            elif trigger_type == "on_damage_taken":
-                card.status_tags = [tag for tag in card.status_tags if tag != _damage_taken_trigger_tag()]
+        if not ability:
+            return {"ok": False, "error": "行動計畫對應的特殊能力不存在，請重新規劃"}
+        usage = ability.usage
+        if usage.get("per_combat") is not None and usage.get("used_total", 0) >= usage["per_combat"]:
+            return {"ok": False, "error": "特殊能力本場戰鬥的使用次數已耗盡"}
+        if usage.get("per_round") is not None and usage.get("used_this_round", 0) >= usage["per_round"]:
+            return {"ok": False, "error": "特殊能力本輪的使用次數已耗盡"}
+        if ability.current_cooldown > 0:
+            return {"ok": False, "error": "特殊能力仍在冷卻中"}
+        if ability.effect.get("on_success") == "apply_effect":
+            if outcome is None:
+                return {"ok": False, "error": "此特殊能力需要提供檢定結果 outcome"}
+            success = bool(outcome.get("success", outcome.get("passed", outcome.get("ok", False))))
+            if success:
+                effect_result = _apply_ability_effect(state, ability, plan.get("target_ids", []))
+                if not effect_result.get("ok"):
+                    return {"ok": False, "error": effect_result["error"]}
+        ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
+        ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
+        ability.current_cooldown = ability.cooldown_rounds
+        trigger_type = (ability.trigger or {}).get("type")
+        if trigger_type == "round_start":
+            card.status_tags = [tag for tag in card.status_tags if tag != _round_start_trigger_tag(ability.id)]
+        elif trigger_type == "on_damage_taken":
+            card.status_tags = [tag for tag in card.status_tags if tag != _damage_taken_trigger_tag()]
+    elif plan["selected_action"] == "attack":
+        attack = next((item for item in card.attacks if item.id == plan.get("selected_id")), None)
+        if not attack:
+            return {"ok": False, "error": "行動計畫對應的攻擊不存在，請重新規劃"}
+        target_id = next((item for item in plan.get("target_ids", []) if any(
+            combatant.combatant_id == item and not _is_skippable(state, combatant)
+            for combatant in state.combat.order
+        )), "")
+        if not target_id:
+            return {"ok": False, "error": "攻擊目標已無法行動，請重新規劃"}
+        if outcome is None:
+            return {"ok": False, "error": "攻擊需要提供正式檢定結果 outcome"}
+        hit = bool(outcome.get("hit", outcome.get("success", outcome.get("ok", False))))
+        if hit:
+            raw_damage = outcome.get("damage", outcome.get("raw_damage"))
+            if not isinstance(raw_damage, int) or raw_damage < 0:
+                return {"ok": False, "error": "命中攻擊需要非負整數 damage"}
+            effect_result = apply_combat_damage(
+                state,
+                target_id,
+                raw_damage,
+                damage_type=outcome.get("damage_type", "physical"),
+                tags=outcome.get("tags") or [],
+                source_id=attack.id,
+            )
+            if not effect_result.get("ok"):
+                return effect_result
+        else:
+            effect_result = {"ok": True, "applied": False, "hit": False}
     plan["resolved"] = True
-    return {"ok": True, "plan_id": plan_id, "resolved": True}
+    return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
+
+
+def _move_to_next_available(state: GroupState) -> bool:
+    combat = state.combat
+    n = len(combat.order)
+    for _ in range(n):
+        next_index = (combat.current_index + 1) % n
+        wrapped = next_index == 0
+        combat.current_index = next_index
+        if wrapped:
+            process_timing(state, "round_end")
+            combat.round_number += 1
+            _reset_round_usage(state)
+            process_timing(state, "round_start")
+            _mark_round_start_abilities(state)
+        if not _is_skippable(state, combat.order[combat.current_index]):
+            return True
+    return False
 
 
 def advance_turn(state: GroupState) -> dict:
@@ -688,21 +981,17 @@ def advance_turn(state: GroupState) -> dict:
 
     current = combat.order[combat.current_index]
     process_timing(state, "turn_end", current.combatant_id)
-    process_timing(state, "round_end")
 
-    n = len(combat.order)
-    for _ in range(n):
-        combat.current_index = (combat.current_index + 1) % n
-        if combat.current_index == 0:
-            combat.round_number += 1
-            _reset_round_usage(state)
-            process_timing(state, "round_start")
-            _mark_round_start_abilities(state)
-        if not _is_skippable(state, combat.order[combat.current_index]):
-            break
+    if not _move_to_next_available(state):
+        return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
     process_timing(state, "turn_start", current.combatant_id)
+    while _is_skippable(state, current):
+        if not _move_to_next_available(state):
+            return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
+        current = combat.order[combat.current_index]
+        process_timing(state, "turn_start", current.combatant_id)
     return {
         "ok": True,
         "round": combat.round_number,

@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
+from uuid import uuid4
 
-from app import combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag
-from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
+from app import checkpoints, combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag, scene_digest
+from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
@@ -307,6 +309,30 @@ TOOLS = [
         },
     },
     {
+        "name": "record_established_fact",
+        "description": "記錄已被證實、之後必須保持一致的劇情事實；不是猜測或普通對話。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fact": {"type": "string"},
+                "visibility": {"type": "string", "enum": ["public", "kp_only"]},
+            },
+            "required": ["fact"],
+        },
+    },
+    {
+        "name": "record_clue",
+        "description": "記錄調查員實際取得、之後可能回頭引用的線索。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "clue": {"type": "string"},
+                "visibility": {"type": "string", "enum": ["public", "kp_only"]},
+            },
+            "required": ["clue"],
+        },
+    },
+    {
         "name": "add_status_tag",
         "description": (
             "幫角色加上一個持續性的狀態標籤（例如「昏迷」「倒地」「中毒」「著火」），會顯示在角色卡"
@@ -439,10 +465,27 @@ TOOLS = [
     },
     {
         "name": "resolve_enemy_action",
-        "description": "敵人 plan 對應的行動已敘事/擲骰處理後呼叫，用來消耗特殊能力次數與冷卻。",
+        "description": (
+            "敵人 plan 對應的行動已敘事/擲骰處理後呼叫；特殊能力會消耗次數與冷卻，攻擊命中時會在此正式套用傷害。"
+            "若 plan 的特殊能力 effect 宣告 on_success=apply_effect，必須把正式檢定結果放在 outcome.success；"
+            "攻擊則傳 outcome.hit 與 outcome.damage；只有成功的正式結果才會改變戰鬥狀態。"
+        ),
         "input_schema": {
             "type": "object",
-            "properties": {"plan_id": {"type": "string"}},
+            "properties": {
+                "plan_id": {"type": "string"},
+                "outcome": {
+                    "type": "object",
+                    "description": "特殊能力使用 success；攻擊使用 hit 與命中後的非負整數 damage。",
+                    "properties": {
+                        "success": {"type": "boolean"},
+                        "hit": {"type": "boolean"},
+                        "damage": {"type": "integer", "minimum": 0},
+                        "damage_type": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
             "required": ["plan_id"],
         },
     },
@@ -467,7 +510,8 @@ TOOLS = [
     {
         "name": "add_combat_effect",
         "description": (
-            "替戰鬥中的角色或敵人加入固定時點效果，例如燃燒、流血、場景壓迫。"
+            "替戰鬥中的角色、敵人、全體或環境加入固定時點效果，例如燃燒、流血、場景壓迫。"
+            "target 可填角色名稱、all/全體或 environment/環境；環境效果可作為全場狀態，傷害效果請指定角色或全體。"
             "damage 可填固定整數字串（例如 '1'）或骰式（例如 '1d6+1'）；"
             "效果會在 round/turn timing 由系統正式結算。"
         ),
@@ -612,6 +656,8 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "search_scenario_images",
     "show_scenario_image",
     "advance_scenario_chapter",
+    "record_established_fact",
+    "record_clue",
 }
 
 _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
@@ -689,14 +735,22 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
 def find_character(state: GroupState, name: str) -> Character | None:
     if not name:
         return None
-    exact = state.get_character_by_name(name)
+    characters = state.all_characters()
+    exact = next((char for char in characters if char.name == name), None)
     if exact:
         return exact
     norm = name.strip().lower()
-    for c in state.characters.values():
+    for c in characters:
         if norm and (norm in c.name.lower() or c.name.lower() in norm):
             return c
     return None
+
+
+def require_character(state: GroupState, name: str) -> Character:
+    character = find_character(state, name)
+    if character is None:
+        raise ValueError(f"找不到角色「{name}」")
+    return character
 
 
 def resolve_skill_value(char: Character, skill_name: str) -> int:
@@ -810,7 +864,7 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
             should_save = result.should_save
             result = result.value
         if should_save:
-            save_state(latest_state)
+            save_state(latest_state, reason="tool")
         _sync_state_snapshot(state, latest_state)
     return result
 
@@ -823,7 +877,7 @@ def _commit_turn_result(
         latest_state.log.extend(log_entries)
         if openai_response_id is not None:
             latest_state.openai_previous_response_id = openai_response_id
-        save_state(latest_state)
+        save_state(latest_state, reason="turn")
         _sync_state_snapshot(state, latest_state)
 
 
@@ -843,7 +897,7 @@ def _commit_kp_ooc_turn_result(state: GroupState, message_text: str, final_text:
             ]
         )
         latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
-        save_state(latest_state)
+        save_state(latest_state, reason="kp_ooc")
         _sync_state_snapshot(state, latest_state)
 
 
@@ -861,6 +915,18 @@ def _validate_kp_roll_dice_context(tool_input: dict) -> str | None:
     if tool_input.get("roll_context") in ("game_resolution", "ooc_randomizer"):
         return None
     return 'KP Assistant 使用 roll_dice 時必須明確指定 roll_context 為 "game_resolution" 或 "ooc_randomizer"。'
+
+
+def _ensure_auto_combat_checkpoint(state: GroupState) -> None:
+    if state.combat.active:
+        return
+    checkpoints.create_checkpoint(
+        state,
+        label="開戰前",
+        created_by="system",
+        reason="auto_combat_start",
+        event_id=f"combat-start:{state.group_id}:{state.state_revision}",
+    )
 
 
 def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict:
@@ -903,12 +969,33 @@ def _persist_memory_maintenance_state(
         if latest_state.log[:n] == dropped_chunk:
             latest_state.log = latest_state.log[n:]
             latest_state.campaign_summary = campaign_summary
-            save_state(latest_state)
+            save_state(latest_state, reason="maintenance")
 
 
 # Guards against more than one run_post_turn_maintenance pass running
 # concurrently for the same group_id — see that function's own docstring.
 _maintenance_in_flight: set[str] = set()
+
+
+def run_scene_digest_maintenance(group_id: str) -> None:
+    with locks.get_state_lock(group_id):
+        state = load_state(group_id)
+        latest = scene_digest.latest_digest(group_id, state.timeline_id)
+        chapter_changed = latest is None or latest.get("scene_label") != (state.active_chapter_id or state.scenario_title or "目前場景")
+        current_log_length = len(state.log)
+        previous_log_length = latest.get("log_length", 0) if latest else 0
+        # Log maintenance can intentionally shrink the in-memory log. Treat
+        # that as a new baseline; otherwise the old larger watermark would
+        # make this subtraction negative and periodic digests would stop.
+        log_was_trimmed = latest is not None and current_log_length < previous_log_length
+        log_interval_reached = (
+            latest is None
+            or log_was_trimmed
+            or current_log_length - previous_log_length >= SCENE_DIGEST_TURN_INTERVAL
+        )
+        if not (chapter_changed or log_interval_reached):
+            return
+        scene_digest.create_digest(state)
 
 
 def run_post_turn_maintenance(group_id: str) -> None:
@@ -940,6 +1027,7 @@ def run_post_turn_maintenance(group_id: str) -> None:
             return
         _maintenance_in_flight.add(group_id)
     try:
+        run_scene_digest_maintenance(group_id)
         with locks.get_state_lock(group_id):
             latest_state = load_state(group_id)
             if len(latest_state.log) <= MAX_LOG_TURNS * 4:
@@ -964,7 +1052,8 @@ def run_post_turn_maintenance(group_id: str) -> None:
         memory_rag.append_memory(group_id, formatted_chunk)
         _persist_memory_maintenance_state(group_id, campaign_summary, dropped_chunk)
     finally:
-        _maintenance_in_flight.discard(group_id)
+        with locks.get_state_lock(group_id):
+            _maintenance_in_flight.discard(group_id)
 
 
 def _execute_tool(
@@ -1034,7 +1123,7 @@ def _execute_tool(
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             def _register_pending_skill_check(target_state: GroupState) -> tuple[int, int, int, str]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 value = resolve_skill_value(target_char, tool_input["skill"])
                 bonus = int(tool_input.get("bonus_dice") or 0)
                 penalty = int(tool_input.get("penalty_dice") or 0)
@@ -1048,7 +1137,7 @@ def _execute_tool(
                 }
                 return value, bonus, penalty, difficulty
             value, bonus, penalty, difficulty = _mutate_and_save_state(state, _register_pending_skill_check)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "skill": tool_input["skill"],
                 "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
@@ -1064,7 +1153,7 @@ def _execute_tool(
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
             attacker_tier = tool_input.get("attacker_tier")
             def _register_pending_choice(target_state: GroupState) -> list[dict]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 options = []
                 for opt in raw_options:
                     # Full skill value, no artificial difficulty adjustment —
@@ -1083,7 +1172,7 @@ def _execute_tool(
                 target_state.pending_checks[target_char.owner_id] = pending_choice
                 return options
             options = _mutate_and_save_state(state, _register_pending_choice)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
                 "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
@@ -1103,12 +1192,12 @@ def _execute_tool(
             loss_success = tool_input.get("loss_success", "0")
             loss_failure = tool_input.get("loss_failure", "1d4")
             def _register_pending_sanity(target_state: GroupState) -> None:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
                 }
             _mutate_and_save_state(state, _register_pending_sanity)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "current_san": refreshed_char.san,
                 "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
@@ -1125,7 +1214,7 @@ def _execute_tool(
             cur_attr, max_attr = attr_map[field_name]
 
             def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
                 delta = int(tool_input["delta"])
                 new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
@@ -1148,7 +1237,7 @@ def _execute_tool(
                 return new_val, major_wound
 
             new_val, major_wound = _mutate_and_save_state(state, _apply_attribute_delta)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
             if major_wound:
                 response["major_wound"] = True
@@ -1176,15 +1265,19 @@ def _execute_tool(
                 # KeyError instead of giving the Keeper a usable error.
                 return {"ok": False, "error": f"「{weapon}」沒有追蹤彈藥數（近戰武器或未登記彈藥表的槍械），不需要（也無法）裝填。"}
             def _apply_ammo_change(target_state: GroupState) -> None:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_entry = target_char.weapons.get(weapon)
+                if target_entry is None:
+                    raise ValueError(f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料")
                 if tool_input.get("reload_full"):
                     target_entry["ammo"] = target_entry["ammo_max"]
                 else:
                     target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
             _mutate_and_save_state(state, _apply_ammo_change)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             refreshed_entry = refreshed_char.weapons.get(weapon)
+            if refreshed_entry is None:
+                return {"ok": False, "error": f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料"}
             return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
 
         if name == "add_carried_item":
@@ -1195,7 +1288,7 @@ def _execute_tool(
             if not item:
                 return {"ok": False, "error": "item 不能是空字串"}
             def _mutate_add_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = item not in target_char.carried_items
                 if changed:
                     target_char.carried_items.append(item)
@@ -1213,13 +1306,43 @@ def _execute_tool(
             # stripped, stored string never string-equals the unstripped one being removed).
             item = tool_input.get("item", "").strip()
             def _mutate_remove_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = item in target_char.carried_items
                 if changed:
                     target_char.carried_items.remove(item)
+                    target_state.consumed_or_removed_items.append({
+                        "item": item,
+                        "character_id": target_char.owner_id,
+                        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
+                    })
                 return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
             investigator, carried_items = _mutate_and_save_state(state, _mutate_remove_item)
             return {"ok": True, "investigator": investigator, "carried_items": carried_items}
+
+        if name in ("record_established_fact", "record_clue"):
+            field_name = "established_facts" if name == "record_established_fact" else "known_clues"
+            text_value = ((tool_input.get("fact") if name == "record_established_fact" else tool_input.get("clue")) or "").strip()
+            if not text_value:
+                return {"ok": False, "error": "內容不能是空字串"}
+            visibility = tool_input.get("visibility", "public")
+            if visibility not in ("public", "kp_only"):
+                return {"ok": False, "error": "visibility 必須是 public 或 kp_only"}
+            def _mutate_record(target_state: GroupState) -> _StateMutation[dict]:
+                records = getattr(target_state, field_name)
+                if any(record.get("text") == text_value and record.get("visibility", "public") == visibility for record in records):
+                    return _StateMutation({"recorded": False, "records": records}, should_save=False)
+                record = {
+                    "text": text_value,
+                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
+                    "visibility": visibility,
+                    "scene_id": "",
+                }
+                records.append(record)
+                return _StateMutation({"recorded": True, "record": record}, should_save=True)
+            result = _mutate_and_save_state(state, _mutate_record)
+            return {"ok": True, **result}
 
         if name == "add_status_tag":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -1229,7 +1352,7 @@ def _execute_tool(
             if not tag:
                 return {"ok": False, "error": "tag 不能是空字串"}
             def _mutate_add_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = tag not in target_char.status_tags
                 if changed:
                     target_char.status_tags.append(tag)
@@ -1247,7 +1370,7 @@ def _execute_tool(
             # stripped, stored string never string-equals the unstripped one being removed).
             tag = tool_input.get("tag", "").strip()
             def _mutate_remove_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = tag in target_char.status_tags
                 if changed:
                     target_char.status_tags.remove(tag)
@@ -1261,10 +1384,10 @@ def _execute_tool(
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             value = max(0, min(100, int(tool_input["value"])))
             def _mutate_set_skill(target_state: GroupState) -> None:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_char.skills[tool_input["skill"]] = value
             _mutate_and_save_state(state, _mutate_set_skill)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {"ok": True, "investigator": refreshed_char.name, "skill": tool_input["skill"], "value": value}
 
         if name == "get_character_sheet":
@@ -1276,6 +1399,7 @@ def _execute_tool(
 
         if name == "start_combat":
             def _mutate_start_combat(target_state: GroupState) -> None:
+                _ensure_auto_combat_checkpoint(target_state)
                 combat.start_combat(target_state)
             _mutate_and_save_state(state, _mutate_start_combat)
             return {"ok": True, "status": combat.status_text(state)}
@@ -1284,6 +1408,7 @@ def _execute_tool(
             npc_name = tool_input["name"]
             requested_hp = int(tool_input.get("hp", 10))
             def _mutate_add_npc(target_state: GroupState) -> str:
+                _ensure_auto_combat_checkpoint(target_state)
                 hp = requested_hp
                 index_note = ""
                 # Code-enforced consistency check, not just a prompt-level ask: if
@@ -1331,7 +1456,8 @@ def _execute_tool(
         if name == "damage_combatant":
             def _mutate_damage_combatant(target_state: GroupState) -> dict:
                 return combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
-            return _mutate_and_save_state(state, _mutate_damage_combatant)
+            result = _mutate_and_save_state(state, _mutate_damage_combatant)
+            return _filter_public_combat_damage_result(result, speaker_role)
 
         if name == "plan_enemy_turn":
             def _mutate_plan_enemy_turn(target_state: GroupState) -> dict:
@@ -1340,7 +1466,11 @@ def _execute_tool(
 
         if name == "resolve_enemy_action":
             def _mutate_resolve_enemy_action(target_state: GroupState) -> dict:
-                return combat.resolve_enemy_action(target_state, tool_input["plan_id"])
+                return combat.resolve_enemy_action(
+                    target_state,
+                    tool_input["plan_id"],
+                    outcome=tool_input.get("outcome"),
+                )
             return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
 
         if name == "apply_combat_damage":
@@ -1417,12 +1547,12 @@ def _execute_tool(
                 return {"ok": False, "error": "該圖片不在目前章節 Context，不能展示"}
             if asset.get("visibility", "public") != "public" and speaker_role != "kp_assistant":
                 return {"ok": False, "error": "這一頁是 KP 專用資料，不能在一般遊戲流程中展示給玩家"}
-            investigator = tool_input.get("investigator")
+            image_investigator: str = tool_input.get("investigator") or ""
             owner_id = None
-            if investigator:
-                char = find_character(state, investigator)
+            if image_investigator:
+                char = find_character(state, image_investigator)
                 if not char:
-                    return {"ok": False, "error": f"找不到角色「{investigator}」"}
+                    return {"ok": False, "error": f"找不到角色「{image_investigator}」"}
                 owner_id = char.owner_id
             image_requests.append((owner_id, page))
             return {"ok": True, "page": page, "asset_type": asset.get("type"), "target": "private" if owner_id else "public"}
@@ -1493,7 +1623,7 @@ def _build_static_prompt(state: GroupState) -> str:
     else:
         scenario = state.scenario_text
 
-    static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.characters.values()) or "（目前尚無登記角色）"
+    static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.active_characters()) or "（目前尚無登記角色）"
 
     # NPC/monster + location canonical index (see app/scenario_index.py, built
     # on demand via /coc index) — empty until someone runs that command, in
@@ -1670,9 +1800,15 @@ def _build_dynamic_prompt(
     Changes every turn, so this stays OUTSIDE the cached block — it's small
     and cheap to resend, and keeping it separate means those changes don't
     invalidate the much larger cached scenario+roster block above."""
-    chars_text = "\n".join(c.dynamic_state_text() for c in state.characters.values()) or "（目前尚無登記角色）"
-    secret_goals = "\n".join(c.keeper_notes_text() for c in state.characters.values() if c.secret_goal)
+    active_characters = state.active_characters()
+    chars_text = "\n".join(c.dynamic_state_text() for c in active_characters) or "（目前尚無登記角色）"
+    secret_goals = "\n".join(c.keeper_notes_text() for c in active_characters if c.secret_goal)
     secret_block = f"\n\n{secret_goals}" if secret_goals else ""
+    digest = scene_digest.latest_digest(state.group_id, state.timeline_id)
+    digest_block = ""
+    if digest:
+        digest_block = f"\n\n# 目前場景摘要（timeline={state.timeline_id}，只採用目前 timeline 的最新版本）\n{digest.get('public', {})}"
+        digest_block += f"\n\n# Keeper 專用摘要（不可透露給玩家）\n{digest.get('private', {})}"
 
     location_block = ""
     if resolved_location:
@@ -1722,7 +1858,8 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 
 敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
 冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理，若是
-special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程；處理完後呼叫 resolve_enemy_action
+special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程；若是 attack，將正式命中結果與傷害值放入
+outcome，再呼叫 resolve_enemy_action 統一套用護甲與 HP 變更。特殊能力也要在檢定完成後呼叫 resolve_enemy_action
 消耗該能力次數。plan 裡的 private_reason、敵人能力真名、POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，
 不得寫進公開回覆。公開敘事只使用 public_hint，或用玩家能感受到的現象描述。"""
 
@@ -1752,7 +1889,7 @@ special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他�
 {history_text}"""
 
     return f"""# 目前動態數值（HP/SAN/Luck/彈藥/攜帶物品/狀態——這些才是當下最新的，屬性和技能請看上面的角色登記區塊）
-{chars_text}{secret_block}
+{chars_text}{secret_block}{digest_block}
 {combat_block}{location_block}{kp_assistant_block}
 """
 

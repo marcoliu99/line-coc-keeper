@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
-from app import keeper, locks, scenario_index, scenario_intro, scenario_library
+from app import checkpoints, keeper, locks, scenario_index, scenario_intro, scenario_library, scene_digest, scene_map
 from app.models import GroupState
 from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
@@ -10,6 +11,23 @@ from app.legacy_commands import (
     _resolve_pdf_upload_choice_locked, _set_character_away_state, handle_pdf_upload,
     _heal_character, _build_readiness_roster, _run_post_turn_maintenance_after_output
 )
+
+
+def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) -> None:
+    previous_locations = {
+        owner_id: (state.current_map_page.get(owner_id, ""), state.current_room_id.get(owner_id, ""))
+        for owner_id in set(state.current_map_page) | set(state.current_room_id)
+    }
+    state.scene_maps = dict(new_maps)
+    state.current_map_page = {}
+    state.current_room_id = {}
+    for owner_id, (map_key, room_id) in previous_locations.items():
+        new_map = state.scene_maps.get(map_key)
+        if new_map is not None and scene_map.get_room(new_map, room_id) is not None:
+            state.current_map_page[owner_id] = map_key
+            state.current_room_id[owner_id] = room_id
+        else:
+            state.party_facing.pop(owner_id, None)
 
 
 async def handle_system_command(
@@ -21,8 +39,104 @@ async def handle_system_command(
     send_dm_image: SendDMImage,
     parts: list[str],
     format_mention: FormatMention = lambda owner_id: owner_id,
+    is_keeper: bool = False,
 ) -> None:
     sub = parts[1] if len(parts) > 1 else ""
+
+    if sub in ("checkpoint", "checkpoints", "rollback"):
+        state = load_state(conversation_id)
+        if state.kp_assistant_user_id != user_id and not is_keeper:
+            await reply("只有目前登記的 KP Assistant 可以操作回溯節點。")
+            return
+        if sub == "checkpoint":
+            if len(parts) > 2 and parts[2] == "clean":
+                if len(parts) < 4:
+                    await reply("用法：/coc checkpoint clean <ID 或唯一名稱>")
+                    return
+                try:
+                    checkpoints.clean_checkpoint(conversation_id, " ".join(parts[3:]))
+                except KeyError:
+                    await reply("找不到這個回溯節點。")
+                    return
+                except ValueError as exc:
+                    await reply(f"無法清除回溯節點：{exc}")
+                    return
+                await reply("已清除回溯節點。")
+                return
+            label = " ".join(parts[2:]).strip()
+            checkpoint_entry = checkpoints.create_checkpoint(state, label=label, created_by=user_id)
+            await reply(f"已建立回溯節點：{checkpoint_entry['checkpoint_id']}（{checkpoint_entry['label']}）。")
+            return
+        if sub == "checkpoints":
+            entries = checkpoints.list_checkpoints(conversation_id)
+            if not entries:
+                await reply("目前沒有回溯節點。")
+                return
+            lines = ["回溯節點："]
+            for entry in entries:
+                lines.append(
+                    f"・{entry['checkpoint_id']}｜{entry.get('label', '')}｜"
+                    f"{entry.get('reason', 'manual')}｜{entry.get('created_at', '')}"
+                )
+            await reply("\n".join(lines))
+            return
+        if len(parts) < 3:
+            await reply("用法：/coc rollback <節點 ID 或唯一名稱>")
+            return
+        try:
+            restored, checkpoint, pre = checkpoints.rollback(
+                conversation_id, " ".join(parts[2:]), actor_id=user_id
+            )
+        except KeyError:
+            await reply("找不到這個回溯節點。")
+            return
+        except ValueError as exc:
+            await reply(f"無法回溯：{exc}")
+            return
+        await reply(
+            f"已回溯到「{checkpoint.get('label', checkpoint['checkpoint_id'])}」；"
+            f"本次操作前的狀態已保存為 {pre['checkpoint_id']}。"
+        )
+        return
+
+    if sub in ("digest", "digests"):
+        state = load_state(conversation_id)
+        if state.kp_assistant_user_id != user_id and not is_keeper:
+            await reply("只有目前登記的 KP Assistant 可以查看場景摘要。")
+            return
+        if sub == "digests":
+            entries = scene_digest.list_digests(conversation_id)
+            if not entries:
+                await reply("目前沒有場景摘要。")
+                return
+            await reply("\n".join(
+                f"・{entry['digest_id']}｜{entry.get('scene_label', '')}｜{entry.get('updated_at', '')}"
+                for entry in entries
+            ))
+            return
+        identifier = parts[2] if len(parts) > 2 else ""
+        if identifier == "clean":
+            if len(parts) < 4:
+                await reply("用法：/coc digest clean <ID>")
+                return
+            try:
+                scene_digest.clean_digest(conversation_id, parts[3])
+            except KeyError:
+                await reply("找不到這筆場景摘要。")
+                return
+            await reply("已清除場景摘要。")
+            return
+        try:
+            digest_entry: dict[str, Any] | None = scene_digest.latest_digest(conversation_id, state.timeline_id)
+            if identifier:
+                digest_entry = scene_digest.get_digest(conversation_id, identifier)
+            if digest_entry is None:
+                raise KeyError(identifier)
+        except KeyError:
+            await reply("找不到這筆場景摘要。")
+            return
+        await reply(str(digest_entry.get("public", {})))
+        return
 
     if sub == "scenario":
         action = parts[2] if len(parts) > 2 else "list"
@@ -94,8 +208,7 @@ async def handle_system_command(
             state.context_chapter_ids = context["context_chapter_ids"]
             state.scenario_npc_index = context["indexes"].get("npcs", [])
             state.scenario_location_index = context["indexes"].get("locations", [])
-            for key, scene_map in context["scene_maps"].items():
-                state.scene_maps.setdefault(key, scene_map)
+            _replace_scene_maps_preserving_locations(state, context["scene_maps"])
             state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
             state.active = True
@@ -125,7 +238,7 @@ async def handle_system_command(
         await reply("用法：/coc scenario list | use 劇本ID | clean 劇本ID | reparse | cancel")
         return
     if sub == "newgame":
-        save_state(GroupState(group_id=conversation_id))
+        save_state(GroupState(group_id=conversation_id), reason="newgame")
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
         return
 
@@ -139,10 +252,10 @@ async def handle_system_command(
         return
 
     if sub == "kp":
-        action = parts[2] if len(parts) > 2 else None
+        kp_action: str | None = parts[2] if len(parts) > 2 else None
         state = load_state(conversation_id)
 
-        if action == "quit":
+        if kp_action == "quit":
             if state.kp_assistant_user_id != user_id:
                 await reply("你目前不是這局的 KP 助手。")
                 return
@@ -152,7 +265,7 @@ async def handle_system_command(
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             return
 
-        if action is not None:
+        if kp_action is not None:
             await reply("用法：/coc kp 或 /coc kp quit")
             return
 
@@ -162,7 +275,7 @@ async def handle_system_command(
         if state.kp_assistant_user_id:
             await reply("這局已經有一位 KP 助手，不能同時登記第二位。")
             return
-        if user_id in state.characters:
+        if state.get_active_character(user_id) is not None:
             await reply("KP 助手與調查員角色互斥；你已經有調查員角色，不能登記為 KP 助手。")
             return
         if user_id in state.creation_sessions:
@@ -244,15 +357,15 @@ async def handle_system_command(
         if not state.scenario_text:
             await reply("目前還沒有載入劇本，上傳 PDF 之後才能抽取 NPC／怪物與地點索引。")
             return
-        extracted = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
-        state.scenario_npc_index = extracted["npcs"]
-        state.scenario_location_index = extracted["locations"]
+        index_data = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+        state.scenario_npc_index = index_data["npcs"]
+        state.scenario_location_index = index_data["locations"]
         save_state(state)
-        if not extracted["npcs"] and not extracted["locations"]:
+        if not index_data["npcs"] and not index_data["locations"]:
             await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
             return
-        lines = [f"已重新建立劇本索引：{len(extracted['npcs'])} 個 NPC／怪物、{len(extracted['locations'])} 個地點。"]
-        for n in extracted["npcs"]:
+        lines = [f"已重新建立劇本索引：{len(index_data['npcs'])} 個 NPC／怪物、{len(index_data['locations'])} 個地點。"]
+        for n in index_data["npcs"]:
             hp = n.get("hp")
             hp_note = f"HP {hp}" if isinstance(hp, (int, float)) else "（無 HP 數值）"
             lines.append(f"・{n.get('name') or '未命名'}：{hp_note}")
@@ -299,10 +412,10 @@ async def handle_system_command(
                 save_state(state)
         await reply(_build_readiness_roster(state, healed_notes, format_mention))
 
-        extracted = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
+        opening_data: dict[str, Any] = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
 
-        if extracted["found"]:
-            opening_text = extracted["text"]
+        if opening_data["found"]:
+            opening_text = opening_data["text"]
             with locks.get_state_lock(conversation_id):
                 state = load_state(conversation_id)
                 if state.game_started:
@@ -311,7 +424,7 @@ async def handle_system_command(
                 state.log.append({"role": "assistant", "content": opening_text})
                 state.game_started = True
                 
-                opening_check = extracted.get("opening_check")
+                opening_check = opening_data.get("opening_check")
                 if opening_check:
                     for owner_id, char in state.characters.items():
                         if opening_check["type"] == "skill":

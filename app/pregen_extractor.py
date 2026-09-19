@@ -323,7 +323,7 @@ def _looks_like_weapon(name: str, fields: dict[str, str]) -> bool:
     if any(kw in name or kw in lowered_name for kw in _WEAPON_NAME_KEYWORDS):
         return True
     skill_value = next((v for k, v in fields.items() if "技能" in k), None)
-    return bool(skill_value) and any(hint in skill_value for hint in _COMBAT_SKILL_HINTS)
+    return bool(skill_value) and any(hint in (skill_value or "") for hint in _COMBAT_SKILL_HINTS)
 
 
 def _classify_item_blocks(text: str) -> tuple[dict[str, dict[str, Any]], list[str]]:
@@ -604,8 +604,8 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
     (and possibly noisier) LLM output. "merged" already carries forward
     whatever manual data it was built from, so it outranks a fresh
     llm_extracted but yields to an actual new "manual" upload."""
-    existing_rank = _SOURCE_PRIORITY.get(existing.get("source"), 0)
-    new_rank = _SOURCE_PRIORITY.get(new.get("source"), 0)
+    existing_rank = _SOURCE_PRIORITY.get(str(existing.get("source") or ""), 0)
+    new_rank = _SOURCE_PRIORITY.get(str(new.get("source") or ""), 0)
     manual = existing if existing_rank >= new_rank else new
     llm = new if manual is existing else existing
 

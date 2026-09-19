@@ -26,16 +26,21 @@ falls back to pure BM25, exactly like before embeddings existed here.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
+import hashlib
 import math
 import re
 from dataclasses import dataclass, field
+from typing import cast
 
 from app import db
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _logger = logging.getLogger(__name__)
+
+
+def _log_group_id(group_id: str) -> str:
+    return hashlib.sha256(group_id.encode("utf-8")).hexdigest()[:12]
 
 _PAGE_SPLIT_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
@@ -182,7 +187,7 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
                 ordered[start + item.index] = item.embedding
         if any(v is None for v in ordered):
             return None
-        return ordered
+        return cast(list[list[float]], ordered)
     except Exception:
         return None
 
@@ -391,7 +396,10 @@ def _save_index_to_disk(group_id: str, index: ScenarioIndex) -> None:
         }
         db.set_json("scenario_indexes", group_id, payload)
     except Exception:
-        _logger.exception("failed to persist scenario index for group_id=%s (next restart will just re-embed)", group_id)
+        _logger.exception(
+            "failed to persist scenario index for group_id=%s (next restart will just re-embed)",
+            _log_group_id(group_id),
+        )
 
 
 def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:

@@ -106,7 +106,16 @@ cp .env.example .env
 #   LINE_CHANNEL_ACCESS_TOKEN=...
 #   LLM_PROVIDER=anthropic   ← 或 gemini，見下面「切換 LLM 供應商」
 #   ANTHROPIC_API_KEY=...   （去 https://console.anthropic.com 申請，跟你平常用的 Claude Code 登入是分開的）
+#   DB_PATH=/持久磁碟/coc_bot.db
+#   BACKUP_DIR=/持久磁碟/coc-backups
+#   BACKUP_INTERVAL_MINUTES=60
+#   BACKUP_KEEP_COUNT=48
+#   SCENE_DIGEST_TURN_INTERVAL=12
 ```
+
+Discord 執行時，`DB_PATH` 與 `BACKUP_DIR` 請指定到不會隨程序重建而消失的路徑；不要放在 ephemeral
+container layer 或暫存目錄。每次 state save、checkpoint、rollback 與 backup 都會寫入可觀測 log，
+方便確認資料是否真的落地。
 
 ### 切換 LLM 供應商：Claude、Gemini 或 OpenAI
 
