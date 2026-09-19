@@ -1,5 +1,11 @@
 # Enhanced `/coc help` Navigation Design Spec
 
+## Review follow-up (2026-09-19)
+
+- `kp_only=True` 必須與 command handler 的實際 authorization 一致；除 scenario import／merge／use 外，checkpoint、checkpoints、rollback、digest、digests 也必須在分類與 detail 頁顯示 `[KP-only]`。這些 command 仍允許具有 Discord Keeper role 的管理者執行，detail notes 需保留此例外說明。
+- Discord Help navigation 必須有 adapter-level tests，驗證 custom ID path round-trip、錯誤 channel scope 被拒絕、button callback 重新載入 state 後編輯原訊息，以及 root/category/detail 的 View actions。
+- 本次不處理 mypy 對 discord.py `DynamicItem(..., template=...)` 的型別報告；runtime implementation 維持不變，另列為後續技術債。
+
 ## 1. Problem and goal
 
 目前 `/coc help` 使用單一的 `HELP_TEXT`，所有角色建立、檢定、戰鬥、地圖、劇本與 KP 指令一次輸出。內容已經過長，玩家也常因為忘記輸入完整 command 而需要重新閱讀整份說明。
