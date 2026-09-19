@@ -398,6 +398,7 @@ TOOLS = [
         "name": "add_npc_to_combat",
         "description": (
             "在戰鬥中加入一個 NPC 戰鬥員，會依 DEX 重新排列先攻順位。若戰鬥還沒開始會自動開始。"
+            "敵人會建立內部戰鬥卡；劇本有護甲、攻擊或特殊能力時要一起填入，不能只填 HP。"
             "預設是敵人；如果是站在調查員這邊參戰的 NPC 隊友（例如雇來的嚮導、臨陣倒戈的信徒），"
             "把 is_ally 設成 true，狀態列會顯示成「隊友」而不是「敵方」。"
         ),
@@ -408,14 +409,28 @@ TOOLS = [
                 "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；劇本沒寫明可抓 40-60 的一般值"},
                 "hp": {"type": "integer", "description": "最大生命值"},
                 "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
-                "abilities": {"type": "object", "description": "NPC 的特殊能力資料，供 Keeper 內部戰鬥摘要使用"},
+                "armor": {
+                    "type": "array",
+                    "description": "敵人護甲規則；玩家未發現前不要公開具體數字",
+                    "items": {"type": "object"},
+                },
+                "attacks": {
+                    "type": "array",
+                    "description": "敵人攻擊表，每筆含 id/label/skill_name/skill_value/damage/range_band 等",
+                    "items": {"type": "object"},
+                },
+                "abilities": {
+                    "type": "array",
+                    "description": "敵人特殊能力，每筆含 id/name/priority/trigger/check/effect/usage/reveal_policy 等",
+                    "items": {"type": "object"},
+                },
             },
             "required": ["name", "dex", "hp"],
         },
     },
     {
         "name": "get_combat_status",
-        "description": "查詢目前戰鬥的回合數、先攻順位與所有戰鬥員的 HP，以及現在輪到誰的行動。",
+        "description": "查詢目前戰鬥的回合數、先攻順位與現在輪到誰的行動。一般公開視圖不顯示敵人 HP；KP Assistant 可看 private 視圖。",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
@@ -433,6 +448,72 @@ TOOLS = [
                 "delta": {"type": "integer"},
             },
             "required": ["name", "delta"],
+        },
+    },
+    {
+        "name": "plan_enemy_turn",
+        "description": (
+            "輪到敵人時先呼叫這個工具。系統會檢查敵人戰鬥卡的特殊能力、觸發條件、使用次數與可用攻擊，"
+            "回傳本回合應採取的 plan；不要自行假設敵人一定普通攻擊。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enemy": {"type": "string", "description": "可省略；省略時使用目前輪到的敵人"},
+            },
+        },
+    },
+    {
+        "name": "resolve_enemy_action",
+        "description": "敵人 plan 對應的行動已敘事/擲骰處理後呼叫，用來消耗特殊能力次數與冷卻。",
+        "input_schema": {
+            "type": "object",
+            "properties": {"plan_id": {"type": "string"}},
+            "required": ["plan_id"],
+        },
+    },
+    {
+        "name": "apply_combat_damage",
+        "description": (
+            "套用正式戰鬥傷害，會分開計算 raw damage、護甲抵銷、final damage 與 HP。"
+            "玩家未發現前，公開敘事不可洩漏護甲/弱點的精確數值。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "raw_damage": {"type": "integer"},
+                "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "source_id": {"type": "string"},
+            },
+            "required": ["target", "raw_damage"],
+        },
+    },
+    {
+        "name": "add_combat_effect",
+        "description": (
+            "替戰鬥中的角色或敵人加入固定時點效果，例如燃燒、流血、場景壓迫。"
+            "damage 可填固定整數字串（例如 '1'）或骰式（例如 '1d6+1'）；"
+            "效果會在 round/turn timing 由系統正式結算。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "label": {"type": "string"},
+                "timing": {
+                    "type": "string",
+                    "enum": ["round_start", "turn_start", "turn_end", "round_end"],
+                },
+                "damage": {"type": "string", "description": "固定整數字串或骰式，例如 '1'、'3'、'1d6+1'"},
+                "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
+                "remaining_rounds": {"type": "integer", "description": "持續幾次成功觸發；省略表示無限期"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "source_id": {"type": "string"},
+                "public_description": {"type": "string"},
+            },
+            "required": ["target", "label", "timing"],
         },
     },
     {
@@ -552,6 +633,8 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "npc_skill_check",
     "roll_weapon_damage",
     "roll_impaling_damage",
+    "apply_combat_damage",
+    "add_combat_effect",
     "search_scenario_images",
     "show_scenario_image",
     "advance_scenario_chapter",
@@ -566,6 +649,8 @@ _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
     "npc_skill_check",
     "roll_weapon_damage",
     "roll_impaling_damage",
+    "apply_combat_damage",
+    "add_combat_effect",
 }
 
 _KP_ROLL_DICE_CONTEXT_PROPERTY = {
@@ -617,7 +702,8 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
    如果骰子是在決定傷害、正式隨機效果、已經發生事件的隨機結果，或遊戲世界內需要 authoritative randomness 的結果，使用 roll_context="game_resolution"。例如「碎玻璃割傷 Marco，骰 1d3 傷害」應呼叫 roll_dice，expression="1d3"，purpose="碎玻璃割傷 Marco 的傷害"，roll_context="game_resolution"；成功時會觸發 Dice Creates Canon，整個造成這顆骰子的 KP 主持指示會正式寫入世界歷史。
    如果骰子只是 KP 幕後挑方案、隨機選劇情方向、自己決定要用哪個 NPC 或點子，且不直接構成目前世界事實，使用 roll_context="ooc_randomizer"。例如「我幕後骰 1d6，1–3 用 NPC A，4–6 用 NPC B」應呼叫 roll_dice，expression="1d6"，purpose="幕後決定下一幕使用哪個 NPC"，roll_context="ooc_randomizer"；這顆骰子雖然真的由 deterministic tool 擲出，但不構成遊戲世界事件，不會觸發 Dice Creates Canon，該 KP turn 仍留在 OOC history。
    正式遊戲事件已確定需要擲普通武器傷害時，可以呼叫 roll_weapon_damage，例如「Marco 開槍命中，骰他的 1d8 武器傷害」；這個工具會依角色 deterministic state 套用該角色的 damage bonus。正式規則已確定要計算極限成功／穿刺類傷害時，可以呼叫 roll_impaling_damage，例如「這次攻擊是極限成功，計算穿刺傷害」。
-   這些傷害工具只產生 authoritative 傷害結果，不代表你可以直接修改 HP；目前 KP Assistant 仍不能使用 adjust_character、damage_combatant 等 mutation tools 直接扣血。
+   武器傷害工具只產生 authoritative 傷害結果；若 KP 助手明確裁定已發生固定傷害、環境傷害或持續效果，必須使用 apply_combat_damage 或 add_combat_effect 走正式戰鬥傷害流程，讓系統保存 raw damage、護甲、重傷與 HP 同步結果。
+   KP Assistant 仍不能使用 adjust_character、damage_combatant 等泛用 mutation tools 直接覆寫 HP 或用正負 delta 繞過傷害流程。
    當 KP Assistant 成功觸發正式 deterministic check / damage workflow 時，該輪主持指示會成為正式遊戲歷史，而不再只是 OOC 討論。
    這只允許你建立合法檢定／對抗／傷害流程；不得用自然語言或未開放工具直接覆寫已完成骰點、HP、SAN、Luck、彈藥、物品、地圖位置或戰鬥狀態。
 
@@ -815,6 +901,25 @@ def _ensure_auto_combat_checkpoint(state: GroupState) -> None:
         reason="auto_combat_start",
         event_id=f"combat-start:{state.group_id}:{state.state_revision}",
     )
+
+
+def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict:
+    if speaker_role == "kp_assistant" or result.get("side") != "enemy":
+        return result
+    public_keys = {
+        "ok",
+        "name",
+        "target",
+        "target_id",
+        "side",
+        "damage_type",
+        "final_damage",
+        "major_wound_triggered",
+        "defeated",
+        "public_summary",
+        "effect_id",
+    }
+    return {key: result[key] for key in public_keys if key in result}
 
 
 def _persist_memory_maintenance_state(
@@ -1297,6 +1402,8 @@ def _execute_tool(
                     int(tool_input.get("dex", 50)),
                     hp,
                     is_ally=bool(tool_input.get("is_ally", False)),
+                    armor=tool_input.get("armor"),
+                    attacks=tool_input.get("attacks"),
                     abilities=tool_input.get("abilities"),
                 )
                 return index_note
@@ -1308,7 +1415,7 @@ def _execute_tool(
 
         if name == "get_combat_status":
             _refresh_state_snapshot(state)
-            return {"ok": True, "status": combat.status_text(state)}
+            return {"ok": True, "status": combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
         if name == "advance_combat_turn":
             def _mutate_advance_turn(target_state: GroupState) -> dict:
@@ -1319,6 +1426,45 @@ def _execute_tool(
             def _mutate_damage_combatant(target_state: GroupState) -> dict:
                 return combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
             return _mutate_and_save_state(state, _mutate_damage_combatant)
+
+        if name == "plan_enemy_turn":
+            def _mutate_plan_enemy_turn(target_state: GroupState) -> dict:
+                return combat.plan_enemy_turn(target_state, tool_input.get("enemy", ""))
+            return _mutate_and_save_state(state, _mutate_plan_enemy_turn)
+
+        if name == "resolve_enemy_action":
+            def _mutate_resolve_enemy_action(target_state: GroupState) -> dict:
+                return combat.resolve_enemy_action(target_state, tool_input["plan_id"])
+            return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
+
+        if name == "apply_combat_damage":
+            def _mutate_apply_combat_damage(target_state: GroupState) -> dict:
+                return combat.apply_combat_damage(
+                    target_state,
+                    tool_input["target"],
+                    int(tool_input["raw_damage"]),
+                    damage_type=tool_input.get("damage_type", "physical"),
+                    tags=tool_input.get("tags") or [],
+                    source_id=tool_input.get("source_id", ""),
+                )
+            result = _mutate_and_save_state(state, _mutate_apply_combat_damage)
+            return _filter_public_combat_damage_result(result, speaker_role)
+
+        if name == "add_combat_effect":
+            def _mutate_add_combat_effect(target_state: GroupState) -> dict:
+                return combat.add_combat_effect(
+                    target_state,
+                    tool_input["target"],
+                    tool_input["label"],
+                    timing=tool_input.get("timing", "turn_start"),
+                    damage=tool_input.get("damage", ""),
+                    damage_type=tool_input.get("damage_type", "physical"),
+                    remaining_rounds=tool_input.get("remaining_rounds"),
+                    tags=tool_input.get("tags") or [],
+                    source_id=tool_input.get("source_id", ""),
+                    public_description=tool_input.get("public_description", ""),
+                )
+            return _mutate_and_save_state(state, _mutate_add_combat_effect)
 
         if name == "end_combat":
             def _mutate_end_combat(target_state: GroupState) -> None:
@@ -1535,7 +1681,7 @@ def _build_static_prompt(state: GroupState) -> str:
   **攻擊擲骰**是極限成功（不是反擊），改呼叫 roll_impaling_damage，讓系統照 COC7e 規則正確算出
   「武器＋傷害加值都算最大值，穿刺武器再額外重骰一次武器傷害」的結果。不是武器傷害的一般描述性
   擲骰（道具檢定、環境傷害等）才用 roll_dice。
-- 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。
+- 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。加入敵人時，若劇本寫了護甲、攻擊、特殊能力、每輪/每戰使用限制或觸發條件，必須放進 add_npc_to_combat 的 armor/attacks/abilities；不要只填 HP 後靠臨場記憶。
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
@@ -1659,19 +1805,25 @@ def _build_dynamic_prompt(
         combat_block = f"""
 
 # 目前戰鬥狀態
-{combat.status_text(state)}
+{combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
 戰鬥規則：目前正在進行正式戰鬥，一次只處理「輪到的角色」的行動，嚴格按照上面列出的先攻順位進行——
 DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情方便就打亂順序或把不同 DEX 的人合併敘述成同時
 發生；只有 DEX 剛好相同的戰鬥員才可以敘述成同時行動。某位戰鬥員的行動（含擲骰結果）處理完後，必須呼叫
 advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
-呼叫 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
+呼叫 apply_combat_damage 或 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
 不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色在近戰中被攻擊時，防守方要在
 「閃避」跟「反擊」之間選一個（COC7e 規則），呼叫 offer_check_choice 給這兩個選項讓玩家自己選，不要自己
 幫玩家決定要閃避還是反擊。這是正式的對抗檢定：先呼叫 npc_skill_check 讓攻擊方（通常是 NPC）擲出這次
 攻擊的成功等級，填進 offer_check_choice 的 attacker_tier，玩家真的擲完骰後系統會自動判定攻擊有沒有
-命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。"""
+命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。
+
+敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
+冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理，若是
+special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程；處理完後呼叫 resolve_enemy_action
+消耗該能力次數。plan 裡的 private_reason、敵人能力真名、POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，
+不得寫進公開回覆。公開敘事只使用 public_hint，或用玩家能感受到的現象描述。"""
 
     kp_assistant_block = ""
     if speaker_role == "kp_assistant":

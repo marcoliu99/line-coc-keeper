@@ -1744,3 +1744,98 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   `state_reducer.py`／`rule_validator.py`／`assistant.py` 的實際程式碼跟這個 session
   之前每一輪真實 LLM 測試的結果，確認文件裡的每一項技術敘述（工具數量、子指令分組、
   函式名稱、觸發條件）都對應到目前真的存在的程式碼。
+
+### 100. 補齊戰鬥卡與 KP Assistant 固定傷害的 design spec / API 文件
+
+- **這個改動怎麼來的**：`feature/combat-cards-and-character-state` 這條分支已經陸續做了
+  敵人戰鬥卡、敵人行動 planning、戰鬥傷害 review 修正，以及 KP Assistant 固定傷害／持續
+  effect 工具；但中間幾個 commit 是先實作再補文件，沒有完全遵守「先 spec、再實作」的
+  工作流程。使用者點名要把這幾個 commit 對應的設計補回來。
+- **這次實際補上的 spec**：更新 `docs/combat_design_spec.md`，新增「目前實作範圍」章節，
+  明確列出第一階段已完成的 runtime 契約：`Combatant` stable id、`EnemyCombatCard` /
+  `ArmorRule` / `AttackRule` / `SpecialAbility` / `EffectState`、`characters_by_id` /
+  `active_character_id_by_user` migration、minimal enemy card、`plan_enemy_turn` 先處理
+  `turn_start` effects 與 special abilities、`resolve_enemy_action` idempotent、
+  `apply_combat_damage` 的 raw/armor/final breakdown、PC major wound pending CON check、
+  `add_combat_effect` 固定時點 effect，以及 KP Assistant 可用的正式傷害工具邊界。
+- **修正文件落差**：原本 API 目標還寫著未實作的 `apply_combat_effect(target_id, effect)`，
+  也還保留「KP Assistant 不能直接改 HP/狀態」這種過時說法。現在改成符合實作的工具清單：
+  `apply_combat_damage(...)` 與 `add_combat_effect(...)` 是 KP Assistant 可用、且成功會 creates
+  canon 的正式傷害流程；`damage_combatant` 仍不開放給 KP Assistant，避免用正負 delta 繞過
+  護甲、重傷與來源紀錄。
+- **補上的 review 契約**：文件現在明確寫出 `resolve_enemy_action(plan_id)` 重複呼叫不得重複
+  消耗 ability usage/cooldown；PC 受到單次 final damage 達 `hp_max / 2` 且仍存活時，會註冊
+  與 `adjust_character` 一致的 pending CON check；公開 `public_summary` 可以說「部分傷害被
+  擋下」，但不得洩漏 `armor_reduction` 或 `armor_label`。
+- **API 文件同步**：更新 `docs/API.md` 的 Keeper combat tools 表，補上
+  `add_combat_effect(...)`，並標明 `resolve_enemy_action(plan_id)` 對同一 plan 重複呼叫是
+  idempotent。
+- **實測過**：這次只改文件，沒有動 runtime code，因此沒有重跑測試；補文件前已對照相關
+  commit、`app/combat.py`、`app/keeper.py`、`app/models.py` 與既有測試，確認文件描述跟目前
+  程式碼一致。
+
+### 101. 戰鬥公開狀態不再洩漏敵人 HP，KP Assistant 保留 private 視圖
+
+- **這個改動怎麼來的**：開 PR 後使用者補充一個本功能範圍內的小修正：戰鬥狀態不應對玩家公布
+  敵人的目前 HP 或剩餘 HP，但 KP Assistant 需要能看到，方便共同主持與檢查戰鬥卡。
+- **這次實際完成**：`combat.status_text(include_private=False)` 現在對敵方戰鬥員顯示 `HP 未公開`，
+  仍顯示 PC/ally 的 HP；`include_private=True` 則保留敵方 HP、護甲與能力摘要。`keeper._execute_tool`
+  的 `get_combat_status` 依 `speaker_role` 切換：KP Assistant 用 private 視圖，一般 player/Keeper
+  tool result 用公開視圖，降低敘事時不小心洩漏敵人血量的風險。
+- **公開指令同步**：新 router handler 與 legacy command 的 `/coc combat next`、`/coc combat damage`
+  都改成敵方目標不回精確 HP；玩家角色與隊友仍會顯示 HP。
+- **相容性修正**：`apply_combat_damage` / `damage_combatant` 的 result 補上 `name` / `side`，讓指令層能
+  穩定判斷目標是不是敵方，也避免受傷路徑轉進 `apply_combat_damage` 時缺少 `name` 的舊相容問題。
+- **文件與測試**：更新 `docs/combat_design_spec.md` 與 `docs/API.md` 的 visibility 契約；新增測試確認
+  public status 隱藏敵人 HP、private status 顯示敵人 HP、KP Assistant `get_combat_status` 取得 private
+  視圖。測試跑過 `py_compile`、`tests.test_combat_cards`、`tests.test_kp_assistant_v2`。
+
+### 102. 修掉 PR review 指出的戰鬥傷害工具洩漏與 timing 重複結算
+
+- **這個改動怎麼來的**：PR review 指出 `get_combat_status` 雖然已依 `speaker_role` 隱藏敵人 HP，
+  但最常被主 Keeper 呼叫的 `apply_combat_damage` 仍會把 `armor_reduction`、`armor_label`、
+  `hp_before`、`hp_after`、`hp_max`、`private_notes` 全量放進一般 Keeper 的工具結果 context；
+  這等於把敵方護甲與精確血量交給即將產生玩家可見敘事的主 Keeper，只靠 prompt 自律防洩漏。
+- **工具結果遮罩**：新增 `_filter_public_combat_damage_result`。KP Assistant 呼叫
+  `apply_combat_damage` 時保留完整 private breakdown；一般 Keeper/player 路徑若目標是敵方，只保留
+  `public_summary`、`final_damage`、`defeated`、`target` 等可公開欄位，移除 raw/armor/HP/private notes。
+  PC/ally 傷害結果仍保留 HP breakdown，因為玩家角色 HP 本來是公開動態狀態。
+- **固定時點冪等**：`CombatState` 新增 JSON-safe 的 `processed_timings`，`process_timing` 以
+  `round_number/current_index/timing/target` 做 key；同一敵人回合重複呼叫 `plan_enemy_turn` 不會再次
+  套用 `turn_start` damage 或遞減 `remaining_rounds`。
+- **PC turn_start 整合**：`advance_turn` 在移動到下一位 combatant 後會呼叫該 combatant 的
+  `turn_start` timing，因此掛在 PC 身上的燃燒/流血類效果會透過真實回合推進觸發，不再只靠測試手動
+  呼叫底層 `process_timing`。
+- **文件修正**：`docs/combat_design_spec.md` 不再宣稱 `round_start`、`on_damage_taken`、
+  `target_in_range` special ability trigger 已實作；這些 trigger 目前明確回 `False`，列為後續擴充，
+  避免落入「未知 trigger 預設觸發」的錯誤行為。
+- **測試覆蓋**：新增 regression tests，確認 public `apply_combat_damage` 不含敵人 armor/HP/private notes、
+  KP Assistant 仍可取得完整 breakdown、重複 `plan_enemy_turn` 不重複 tick turn_start effect、PC turn_start
+  effect 會在 `advance_turn` 抵達 PC 時觸發。測試跑過 `py_compile`、`tests.test_combat_cards`、
+  `tests.test_kp_assistant_v2` 與完整 `unittest discover`。
+
+### 103. 補完 special ability 的 round_start / on_damage_taken / target_in_range trigger
+
+- **這個改動怎麼來的**：使用者指出既然 PR 已經在做敵人戰鬥卡，就不應該只把
+  `round_start`、`on_damage_taken`、`target_in_range` 從 spec 降級成後續項目；這些 trigger
+  應該在本 PR 內補到第一階段可用。
+- **round_start trigger**：新輪開始時會為擁有 `trigger.type == "round_start"` 的能力加上短期
+  marker；敵人下一次 `plan_enemy_turn` 會選到該能力，`resolve_enemy_action` 後清除該能力 marker。
+- **on_damage_taken trigger**：敵人受到 final damage > 0 時，戰鬥卡加上受傷事件 marker；下一次
+  planning 可觸發對應能力，resolve 後清除 marker。
+- **target_in_range trigger**：`CombatState.range_bands` 新增 JSON-safe 抽象距離表，key 使用
+  `enemy_card_id:target_combatant_id`，值為 `engaged` / `near` / `far` / `any`。`target_in_range`
+  依 trigger 要求的 `range_band` 判斷是否可用；未設定距離時預設 `engaged`，符合目前無戰棋格的簡化模型。
+- **未知 trigger 防呆**：未知 trigger type 現在回 `False`，不再預設觸發，避免打錯或尚未實作的
+  trigger 在敵人回合自動變成可用能力。
+- **文件與測試**：更新 `docs/combat_design_spec.md`，把三個 trigger 改回已實作契約，並標明
+  `target_in_range` 是抽象 range band，不是精確座標距離。新增 regression tests 覆蓋 round-start
+  新輪觸發、受傷後觸發、range band 遠/近切換。測試跑過 `py_compile`、指定測試與完整 72 項
+  `unittest discover`。
+
+### 104. 修正 PR #27 的角色索引一致性與 round_end effect
+
+- `GroupState.from_dict()` 現在會讓 legacy `characters` 與 `characters_by_id` 指向同一個 `Character` 物件，避免 HP、暫離或其他狀態只改到其中一份。
+- legacy owner map 的角色會逐筆補進 `characters_by_id`，不再因 ID index 已非空而漏掉後加入的角色；combat runtime identity guard 也同步支援這個 merge。
+- `advance_turn()` 在跨輪前處理 `round_end` effects，之後才增加 round、重置能力次數並處理 `round_start`。
+- 新增角色索引共享、legacy merge 與 round-end damage regression tests；完整測試 74 項通過。
