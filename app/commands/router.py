@@ -56,7 +56,11 @@ async def handle_text_message(
         await handle_roll_command(reply, text)
         return
 
-    if text.startswith("/coc check"):
+    command_parts = text.split()
+    is_coc_command = bool(command_parts) and command_parts[0].casefold() == "/coc"
+    coc_subcommand = command_parts[1].casefold() if len(command_parts) > 1 and is_coc_command else ""
+
+    if coc_subcommand == "check":
         if not locks.try_acquire_check(conversation_id, user_id):
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
@@ -67,9 +71,8 @@ async def handle_text_message(
             locks.release_check(conversation_id, user_id)
         return
 
-    if text.startswith("/coc luck"):
-        parts = text.split()
-        choice = parts[2] if len(parts) > 2 else "skip"
+    if coc_subcommand == "luck":
+        choice = command_parts[2] if len(command_parts) > 2 else "skip"
         if not locks.try_acquire_check(conversation_id, user_id):
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
@@ -80,9 +83,12 @@ async def handle_text_message(
             locks.release_check(conversation_id, user_id)
         return
 
-    if text.startswith("/coc"):
-        parts = text.split()
-        sub = parts[1].casefold() if len(parts) > 1 else "help"
+    if is_coc_command:
+        parts = command_parts[:]
+        parts[0] = "/coc"
+        if len(parts) > 1:
+            parts[1] = parts[1].casefold()
+        sub = parts[1] if len(parts) > 1 else "help"
 
         if sub == "combat":
             async with locks.get_conversation_lock(conversation_id):
