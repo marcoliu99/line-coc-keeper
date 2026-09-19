@@ -1,8 +1,7 @@
-"""Platform-agnostic command handling and message routing.
+"""Discord command handling and message routing.
 
-Shared by every front-end adapter (app/main.py for LINE, app/discord_bot.py for
-Discord, ...). Nothing in here knows about LINE or Discord — it only deals with
-plain strings (conversation_id, user_id, text) and things the adapter supplies:
+The Discord adapter supplies plain strings (conversation_id, user_id, text) and
+callbacks for sending text, private messages and images:
 a `reply` callback to send text back to the conversation, a `get_display_name`
 callback (async, since some platforms need an API call for it and some don't),
 a `send_dm` callback for whispering a private message to one specific player
@@ -31,6 +30,7 @@ import yaml
 
 from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor, scenario_library
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
+from app import help_service
 from app import scene_map as scene_map_engine
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import BASE_SKILLS, OCCUPATIONS, Character, GroupState, generate_investigator
@@ -40,90 +40,13 @@ _logger = logging.getLogger(__name__)
 
 Reply = Callable[[str], Awaitable[None]]
 GetDisplayName = Callable[[], Awaitable[str]]
-# (owner_id) -> a platform-appropriate way to reference that player in text —
-# Discord supplies "<@{owner_id}>" (a real clickable mention, resolved
-# client-side, no API call needed); an adapter with nothing better (LINE has
-# no equivalent lightweight mention token) can default to the bare owner_id,
-# which is also this type's default via _build_readiness_roster's own
-# parameter default — kept adapter-injected rather than hardcoded here so
-# this module stays platform-agnostic (see app/main.py, the LINE adapter,
-# which shares every function in this file with app/discord_bot.py).
+# owner_id -> a Discord mention rendered by the adapter.
 FormatMention = Callable[[str], str]
 SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
-# (png_bytes, conversation_id, page_number) -> None, posts publicly. conversation_id
-# and page_number are included alongside the raw bytes because LINE can't attach
-# bytes directly to an image message — it needs a real HTTPS URL, which its
-# adapter builds by pointing back at this server's own /images/... route (see
-# app/main.py) rather than using png_bytes at all; Discord's adapter just
-# attaches png_bytes and ignores the other two.
+# (png_bytes, conversation_id, page_number) -> None, posts publicly. The
+# conversation and page metadata are retained for state-aware image sends.
 SendImage = Callable[[bytes, str, int], Awaitable[None]]
 SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, png_bytes, conversation_id, page_number)
-
-HELP_TEXT = """【COC7e 守密人 Bot 指令】
-・上傳一份 PDF 劇本檔案 → 載入劇本並開始遊戲
-
-【建立角色，三選一】
-・/coc pc 角色名 [職業] → 快速隨機生成一位調查員（一鍵完成，每個人在同一局只能建一次，直到 /coc end）
-  可選職業：""" + "、".join(OCCUPATIONS.keys()) + """
-・/coc create 角色名 [職業] → 互動式建角：先擲屬性，再自己分配職業/興趣技能點數
-  接著用 /coc alloc occ|int 技能名 點數 分配，/coc create status 查看進度，
-  /coc create done 完成、/coc create cancel 放棄
-・/coc pregens → 查看這份劇本有沒有附帶的預製調查員
-・/coc pregen 編號 → 選之前先看某位預製角色的完整屬性與技能
-・/coc usepregen 編號 [自訂名稱] → 直接使用某位預製角色（每個人只能用一次，直到 /coc end；每個角色只能被一人選走）
-・/coc characters → 查看自己擁有的角色；/coc switch 角色名 → 切換目前操作的角色
-・/coc start → 角色都建好、準備開始時輸入，守密人會生成開場白帶大家進入劇情（優先用劇本自己寫的開場文字，沒有才自動生成）
-
-【KP 助手】
-・/coc kp → 登記自己為本局唯一的 KP 助手
-・/coc kp quit → 解除自己的 KP 助手身分
-・每局只能有一位 KP 助手；KP 助手與調查員角色互斥
-・/coc scenario list|use 劇本ID|clean 劇本ID → 管理劇本庫
-・/coc scenario import 檔名.pdf → 從伺服器 IMPORT_DIR 匯入大型 PDF
-・/coc scenario merge 暫存ID1 暫存ID2 ... → 依指定順序合併 Discord 暫存 PDF
-・/coc scenario merge list → 查看目前暫存 PDF
-
-【檢定】
-・/coc check → 守密人請你檢定時，自己擲骰（不是守密人幫你骰）；也可以自己主動打 /coc check 技能名 [獎勵骰數] [懲罰骰數]
-・如果守密人給的是「閃避 vs 反擊」這種多選一的檢定，用 /coc check <選項名稱> 指定要選哪個（Discord 會直接看到對應的按鈕）
-・擲骰結果離成功很近時（差 7 點以內），系統會主動問要不要花 Luck 買到更好的結果，點按鈕或用 /coc luck skip|regular|hard|extreme 回應
-
-【角色管理】
-・/coc sheet → 查看自己的角色卡
-・/coc status → 查看目前劇本與所有角色狀態
-・/coc setskill 角色名 技能名 數值 → 手動修正自己角色的技能值
-・/coc setconnection 角色名 敘述 → 設定「★ 關鍵背景連結」（你最重要的人/地/物，守密人不能沒收你搶救的機會）
-・/coc away → 標記自己暫離（戰鬥中會自動跳過你的回合）；/coc back → 回來繼續玩
-・/coc showpage 頁碼 → 直接看劇本某一頁的實際圖片（地圖、手卡等），守密人提到「第 X 頁」時可以用
-・/coc where → 查看地圖引擎追蹤中的目前所在房間與出口
-・/coc enter 頁碼 → 手動進入某一頁的平面圖（通常會自動偵測，這是備用手動指令）
-・/coc leavemap → 離開目前的地圖追蹤，移動改回完全由守密人判斷
-
-【戰鬥】
-・/coc combat start → 開始正式戰鬥（依 DEX 排先攻順位）
-・/coc combat addnpc 名稱 DEX HP → 加入一個敵人
-・/coc combat addally 名稱 DEX HP → 加入一個站在我方的 NPC 隊友
-・/coc combat status → 查看目前回合與先攻順位
-・/coc combat next → 推進到下一位的回合
-・/coc combat damage 名稱 增減量 → 調整某人的 HP（受傷用負數）
-・/coc combat end → 結束戰鬥
-
-【其他】
-・/coc help → 顯示這份完整指令清單
-・/coc index → 手動重建 NPC／怪物與地點索引（上傳劇本 PDF 時已經會自動建立一次，這個指令是需要重建時才用）
-・/coc setpersona <文字> → 自訂這個群組守密人的語氣風格（預設是冷酷旁觀者），/coc setpersona reset 重設回預設
-・/coc newgame → 重置這個群組，開始全新一局
-・/coc end → 結束目前這局遊戲
-・/coc checkpoint [名稱]／/coc checkpoints／/coc rollback <ID> → KP 管理回溯節點
-・/coc digest／/coc digests／/coc digest <ID> → KP 查看場景摘要
-・/coc pdf new|fix → 選擇新劇本或修正目前劇本的 PDF 上傳
-・/coc scenario list → 列出劇本庫；/coc scenario use 劇本ID → KP 切換目前劇本
-・/coc scenario reparse|cancel → KP 重新解析或取消等待中的相似劇本上傳
-・/coc era 1920|modern → 設定劇本年代，影響泛稱武器的預設彈容量
-・/roll 1d100 或 /roll 3d6+2 → 單純擲骰，不經過守密人
-
-角色建立好之後，直接在群組裡輸入你的行動或對話，守密人就會接手描述！"""
-
 
 async def handle_unsupported_message(conversation_id: str, reply: Reply, label: str) -> None:
     """Called by an adapter when it receives a message type it can't hand text
@@ -331,13 +254,10 @@ async def handle_pdf_upload(
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
 ) -> bool:
-    """`reply` must land inside whatever immediate response window the platform
-    gives an incoming event (LINE's reply token expires after 60s and is
-    single-use); `push` is for the actual result, sent once extraction — which
-    can run a vision/OCR pass over every graphic-heavy page and, on a
-    picture-heavy scenario, comfortably exceed that window — finishes. On a
-    platform with no such constraint (Discord), an adapter can just pass the
-    same callback for both.
+    """`reply` acknowledges the upload and `push` delivers the extracted result
+    after the potentially long vision/OCR pass. Discord can pass the same
+    callback for both; the boolean result indicates whether a new scenario was
+    accepted or is waiting for a user choice.
 
     If a scenario is already running (state.scenario_text non-empty), this
     doesn't guess whether the new upload is a genuinely new scenario or a
@@ -545,13 +465,9 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     )
 
 async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
-    """Called by an adapter's button callback (see app/discord_bot.py's
-    PdfUploadChoiceButton) once the GM picks between the two options
-    handle_pdf_upload's pending_pdf_upload flow offers. `choice` must be
-    "new" or "fix". LINE has no button/interaction mechanism, so it has no
-    caller for this — see the "/coc pdf new"/"/coc pdf fix" text-command
-    path in _handle_coc_command, which every platform (including Discord,
-    for parity) can use instead."""
+    """Called by Discord's PdfUploadChoiceButton once the GM picks between the
+    two options offered by handle_pdf_upload. `choice` must be "new" or "fix";
+    the text command remains available as a manual fallback."""
     async with locks.get_conversation_lock(conversation_id):
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
     await push(text)
@@ -692,8 +608,7 @@ async def _deliver_side_effects(
 ) -> None:
     """Shared by handle_text_message and handle_check_command — delivers
     whatever the Keeper queued via send_private_info/show_scenario_image.
-    Best-effort: a DM can fail (LINE requires the player to have friended the
-    bot; Discord requires them to allow DMs from server members) and we
+    Best-effort: a DM can fail if Discord members disallow server-member DMs, and we
     deliberately don't fall back to posting the content publicly, since that
     would defeat the entire point of it being private."""
     for owner_id, message in private_messages:
@@ -1720,8 +1635,7 @@ def _build_readiness_roster(
     who's playing who). `healed_notes` is owner_id -> whatever
     _heal_character found for them (empty list if nothing needed fixing).
     `format_mention` renders each owner_id for display (see FormatMention) —
-    defaults to the bare id, same as before this parameter existed, for any
-    caller that doesn't have a better option (LINE)."""
+    defaults to the bare id when no Discord mention formatter is supplied."""
     lines = ["📋 全團調查員集結就緒名冊", ""]
     for owner_id, char in state.characters.items():
         weapon_parts = []
@@ -1766,14 +1680,8 @@ async def _handle_coc_command(
         return
 
     if sub == "pdf":
-        # Text-command equivalent of Discord's PdfUploadChoiceButton (see
-        # _resolve_pdf_upload_choice_locked) — LINE has no button/interaction
-        # mechanism at all, so without this a pending_pdf_upload on LINE (a
-        # scenario already running, a second PDF lands) had no way to ever
-        # get resolved: handle_pdf_upload would stash it and just sit there
-        # forever, scenario_text never updating, every further PDF upload
-        # refused by the "resolve the pending one first" guard. Works on
-        # Discord too, as a text-based fallback alongside the buttons.
+        # Text-command equivalent of Discord's PdfUploadChoiceButton, retained
+        # as a manual fallback alongside the buttons.
         choice_word = parts[2] if len(parts) > 2 else ""
         choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
         if choice is None:
@@ -2254,13 +2162,8 @@ async def _handle_coc_command(
         if not state.scenario_text:
             await reply("目前還沒有載入劇本，上傳 PDF 之後才能抽取 NPC／怪物與地點索引。")
             return
-        # A single `reply` here, not reply-then-push: unlike handle_pdf_upload
-        # (which gets separate reply/push callbacks specifically because a
-        # LINE reply token is single-use and only lasts 60s), _handle_coc_command
-        # only has one `reply` callback to work with — same constraint the
-        # "pregens" subcommand above lives with, so this follows the same
-        # single-reply-at-the-end shape rather than sending a "please wait"
-        # message first.
+        # A single reply keeps this short index rebuild atomic from the user's
+        # perspective instead of sending a separate progress message.
         extracted = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
         state.scenario_npc_index = extracted["npcs"]
         state.scenario_location_index = extracted["locations"]
@@ -2363,7 +2266,7 @@ async def _handle_coc_command(
         await _handle_combat_subcommand(conversation_id, reply, parts)
         return
 
-    await reply(HELP_TEXT)
+    await reply(help_service.get_page(load_state(conversation_id), user_id).text)
 
 
 async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: list[str]) -> None:

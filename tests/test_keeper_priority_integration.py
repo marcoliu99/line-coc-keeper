@@ -123,7 +123,7 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
     """Exercises the live message-routing path (app/commands/router.py's
     handle_text_message -> app/agents/supervisor.py), not app/legacy_
     commands.py's own handle_text_message/_handle_ordinary_text_message_
-    locked -- that pair is unreachable from app/main.py and app/discord_bot.py
+    locked -- that pair is unreachable from the Discord adapter
     (both call app/commands/router.py::handle_text_message) and was removed;
     these tests used to exercise it directly instead of the code real traffic
     hits, which meant this exact priority-gate/ordering behavior had no

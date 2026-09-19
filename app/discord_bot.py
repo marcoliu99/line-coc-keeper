@@ -2,9 +2,8 @@
 
 Game/command logic lives in app/commands.py; this module only translates
 Discord events into calls against that shared layer. Run it as its own process
-(`python -m app.discord_bot`), separate from the LINE FastAPI server — discord.py
-owns a persistent gateway connection rather than serving HTTP requests, so
-there's no webhook URL or ngrok tunnel needed for this adapter at all.
+(`python -m app.discord_bot`); discord.py owns a persistent gateway connection,
+so there is no webhook URL or ngrok tunnel.
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ import unicodedata
 
 import discord
 
-from app import locks, pdf_loader, scenario_library
+from app import help_service, locks, pdf_loader, scenario_library
 from app.commands import router as command_router
 from app.legacy_commands import (
     Reply, SendImage, SendDMImage, SendDM,
@@ -29,6 +28,7 @@ from app.config import DISCORD_BOT_TOKEN
 from app.config import BACKUP_INTERVAL_MINUTES
 from app import db
 from app.models import GroupState
+from app.help_registry import HelpAction, HelpPage
 from app.repositories.group_state import StateRevisionConflict, load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
@@ -84,9 +84,8 @@ async def _send_dm(owner_id: str, text: str) -> None:
 
 def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
     async def send_image(png_bytes: bytes, conversation_id: str, page_number: int) -> None:
-        # conversation_id/page_number are part of the shared SendImage signature
-        # (LINE's adapter needs them to build a URL) but unused here — Discord
-        # just attaches the bytes directly.
+        # conversation_id/page_number are retained in the shared callback
+        # signature for state-aware image sends; Discord attaches bytes directly.
         await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
 
     return send_image
@@ -412,7 +411,69 @@ async def _post_pdf_upload_buttons(channel: discord.abc.Messageable, conversatio
     await channel.send("👉 請選擇：", view=view)
 
 
-client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton)
+_HELP_BUTTON_ID_TEMPLATE = r"coc_help:(?P<conversation_id>discord-channel-\d+):(?P<path>root|[a-z0-9_-]+(?:/[a-z0-9_-]+)?)"
+
+
+def _help_path_token(path: tuple[str, ...]) -> str:
+    return "/".join(path) if path else "root"
+
+
+def _help_path_from_token(token: str) -> tuple[str, ...]:
+    return () if token == "root" else tuple(token.split("/"))
+
+
+def _help_view(conversation_id: str, page: HelpPage) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for action in page.actions:
+        view.add_item(HelpButton(conversation_id, action))
+    return view
+
+
+class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTON_ID_TEMPLATE):
+    """Persistent navigation button for the three-level player help."""
+
+    def __init__(self, conversation_id: str, action: HelpAction):
+        label = action.label[:80]
+        style = discord.ButtonStyle.primary if action.kind in ("category", "entry") else discord.ButtonStyle.secondary
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                style=style,
+                custom_id=f"coc_help:{conversation_id}:{_help_path_token(action.path)}",
+            )
+        )
+        self.conversation_id = conversation_id
+        self.path = action.path
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        path = _help_path_from_token(match["path"])
+        kind = "home" if not path else "entry" if len(path) == 2 else "category"
+        return cls(match["conversation_id"], HelpAction(item.label or "Help", path, kind))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        channel = interaction.channel
+        if channel is None or _conversation_id(channel.id) != self.conversation_id:
+            await interaction.response.send_message("這個 Help 按鈕不屬於目前頻道。", ephemeral=True)
+            return
+        state = await asyncio.to_thread(load_group_state, self.conversation_id)
+        page = help_service.get_page(state, str(interaction.user.id), self.path)
+        await interaction.response.edit_message(
+            content=help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS),
+            view=_help_view(self.conversation_id, page),
+        )
+
+
+async def _post_help_page(channel: discord.abc.Messageable, conversation_id: str, user_id: str, path: tuple[str, ...]) -> None:
+    state = await asyncio.to_thread(load_group_state, conversation_id)
+    page = help_service.get_page(state, user_id, path)
+    await channel.send(
+        help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS),
+        view=_help_view(conversation_id, page),
+    )
+
+
+client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton, HelpButton)
 
 
 @client.event
@@ -548,6 +609,21 @@ async def on_message(message: discord.Message) -> None:
         if not text:
             if message.attachments:
                 await handle_unsupported_message(conversation_id, reply, "附件")
+            return
+
+        command_parts = text.split()
+        if command_parts[0].casefold() == "/coc" and (
+            len(command_parts) == 1
+            or command_parts[1].casefold() == "help"
+            or not command_router.is_known_coc_command(command_parts[1])
+        ):
+            state = await asyncio.to_thread(load_group_state, conversation_id)
+            path = help_service.resolve_text_path(
+                state,
+                user_id,
+                command_parts[2:] if len(command_parts) > 1 and command_parts[1].casefold() == "help" else [],
+            )
+            await _post_help_page(message.channel, conversation_id, user_id, path)
             return
 
         state_before = await asyncio.to_thread(load_group_state, conversation_id)

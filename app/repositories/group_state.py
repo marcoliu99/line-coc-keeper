@@ -36,8 +36,8 @@ class StateRevisionConflict(RuntimeError):
 
 def _safe_id(group_id: str) -> str:
     """Still used for filesystem paths (page-image directories below) — a
-    group_id is only ever a LINE group id or a "discord-channel-<int>"
-    string in practice, both already filesystem-safe, but this stays as a
+    group_id is a "discord-channel-<int>" string in practice and is already
+    filesystem-safe, but this stays as a
     defensive sanitizer for that path. Not used for the SQLite key itself
     (see load_state/save_state) — a TEXT primary key has no filesystem-style
     character restrictions, so the raw group_id is used there directly."""

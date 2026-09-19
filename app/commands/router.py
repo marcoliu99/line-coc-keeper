@@ -10,7 +10,6 @@ from app.legacy_commands import (
     SendImage,
     SendDMImage,
     FormatMention,
-    HELP_TEXT,
     handle_roll_command,
     handle_check_command,
     handle_luck_decision,
@@ -18,7 +17,7 @@ from app.legacy_commands import (
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
 )
-from app import locks
+from app import help_service, locks
 from app.agents import supervisor
 from app.repositories.group_state import load_state
 from app.commands.handlers import combat as combat_handler
@@ -27,6 +26,16 @@ from app.commands.handlers import system as system_handler
 from app.commands.handlers import map_handler
 
 _logger = logging.getLogger(__name__)
+
+_CHARACTER_COMMANDS = {"pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters"}
+_SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests"}
+_MAP_COMMANDS = {"showpage", "where", "enter", "leavemap"}
+
+
+def is_known_coc_command(subcommand: str) -> bool:
+    """Return whether Discord should route this `/coc` subcommand to a handler."""
+    normalized = subcommand.casefold()
+    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck"}
 
 
 async def handle_text_message(
@@ -47,7 +56,11 @@ async def handle_text_message(
         await handle_roll_command(reply, text)
         return
 
-    if text.startswith("/coc check"):
+    command_parts = text.split()
+    is_coc_command = bool(command_parts) and command_parts[0].casefold() == "/coc"
+    coc_subcommand = command_parts[1].casefold() if len(command_parts) > 1 and is_coc_command else ""
+
+    if coc_subcommand == "check":
         if not locks.try_acquire_check(conversation_id, user_id):
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
@@ -58,9 +71,8 @@ async def handle_text_message(
             locks.release_check(conversation_id, user_id)
         return
 
-    if text.startswith("/coc luck"):
-        parts = text.split()
-        choice = parts[2] if len(parts) > 2 else "skip"
+    if coc_subcommand == "luck":
+        choice = command_parts[2] if len(command_parts) > 2 else "skip"
         if not locks.try_acquire_check(conversation_id, user_id):
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
@@ -71,8 +83,11 @@ async def handle_text_message(
             locks.release_check(conversation_id, user_id)
         return
 
-    if text.startswith("/coc"):
-        parts = text.split()
+    if is_coc_command:
+        parts = command_parts[:]
+        parts[0] = "/coc"
+        if len(parts) > 1:
+            parts[1] = parts[1].casefold()
         sub = parts[1] if len(parts) > 1 else "help"
 
         if sub == "combat":
@@ -80,13 +95,12 @@ async def handle_text_message(
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
-        if sub in ("pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters"):
+        if sub in _CHARACTER_COMMANDS:
             async with locks.get_conversation_lock(conversation_id):
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
 
-        if sub in ("newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start",
-                   "checkpoint", "checkpoints", "rollback", "digest", "digests"):
+        if sub in _SYSTEM_COMMANDS:
             # Reparse performs long extraction and later acquires this lock in
             # handle_pdf_upload; all other scenario operations are short state
             # mutations and must be serialized with ordinary turns.
@@ -104,13 +118,14 @@ async def handle_text_message(
                     )
             return
 
-        if sub in ("showpage", "where", "enter", "leavemap"):
+        if sub in _MAP_COMMANDS:
             async with locks.get_conversation_lock(conversation_id):
                 await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts)
             return
 
         async with locks.get_conversation_lock(conversation_id):
-            await reply(HELP_TEXT)
+            state = load_state(conversation_id)
+            await reply(help_service.get_page(state, user_id).text)
         return
 
     # Non-command text -> goes to the Keeper Supervisor. KP Assistant is

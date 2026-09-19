@@ -50,7 +50,7 @@
                      ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │ 模組一：智慧檔案分流器 (Unified File Router)                                    │
-│   ・LINE / Discord 統一副檔名與內容辨識                                         │
+│   ・Discord 統一副檔名與內容辨識                                               │
 │   ・[.pdf]  ➔ 劇本分析 (⚠️ 不洗掉既有角色)                                     │
 │   ・[.yaml] ➔ 地圖增量合併 (state.scene_maps.update，不重設位置)               │
 │   ・[.txt/.md/角色卡] ➔ 進入「角色卡與裝備智能處理核心」                        │
@@ -93,105 +93,11 @@
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.1 研究後採用的方法：Evidence-first 多階段解析
-
-角色卡不能只靠一次 LLM Vision 摘要。研究目前使用的 PDF 工具後，採用「先取得可追溯證據，再做語意推論，最後由確定性規則驗證」的多階段方法：
-
-| 階段 | 採用方法 | 產出 | 不負責的事 |
-| --- | --- | --- | --- |
-| 1. 結構抽取 | PyMuPDF 文字層、文字 block/座標、頁面圖片、向量 drawing、書籤 | 原始文字與頁面結構 | 不猜測欄位含義，不補數值 |
-| 2. OCR fallback | 只有文字層不足或頁面為掃描頁時才啟用 PyMuPDF OCR／Tesseract；保留 bounding box 與 confidence | 帶頁碼、座標、信心度的 OCR evidence | 不把低信心 OCR 直接當成角色數值 |
-| 3. 視覺結構辨識 | 對角色卡、手卡、地圖等圖形頁使用 Vision，要求輸出固定 schema 與原文 evidence | 欄位候選、區塊類型、頁面資產描述 | 不可自行捏造 PDF 沒有的數值 |
-| 4. 確定性正規化 | 技能／職業字典、數字格式、百分比、骰式、英文大小寫與別名正規化 | canonical name/value、來源頁碼與 confidence | 不依賴 LLM 決定公式或覆蓋規則 |
-| 5. 規則驗證與補齊 | COC7e 公式、數值範圍、必填欄位、武器／彈藥規則 | validated character candidate | 不覆蓋玩家目前 HP、SAN、Luck 與裝備消耗 |
-| 6. 比對與人工閘門 | 9 大屬性數值指紋、姓名／別名、職業與技能相似度；低信心或衝突時要求 GM 確認 | 新角色、融合結果或待確認項目 | 不用模糊比對靜默合併兩個不同角色 |
-
-這個選擇有三個原因：
-
-1. PDF 的文字抽取順序不一定等於視覺閱讀順序；角色卡的欄位與數值必須保留座標或區塊關係，不能只把整頁壓成一段字串。
-2. 掃描頁沒有文字層時，必須進 OCR；但 OCR 只解決「看見字」，不保證能理解欄位對應，因此角色卡仍需要結構化 Vision 或規則解析。
-3. LLM 適合做欄位辨識與中英對齊，不適合直接決定衍生數值、角色身份合併或覆蓋現役狀態；這些決策必須留在 Python 的 schema validation、dictionary 與 reconciliation 層。
-
-外部方法依據：[PyMuPDF 文字與 OCR 文件](https://pymupdf.readthedocs.io/en/latest/recipes-ocr.html)、[PyMuPDF 基礎抽取](https://pymupdf.readthedocs.io/en/latest/the-basics.html)、[MarkItDown OCR plugin](https://github.com/microsoft/markitdown/tree/main/packages/markitdown-ocr)，以及 [Tesseract 的 hOCR/TSV 座標與 confidence 輸出](https://github.com/tesseract-ocr/tesseract/blob/main/doc/tesseract.1.asc)。
-
-本節是解析方法與下一階段 schema 的設計決策；目前既有角色資料格式尚未對每個欄位保存完整的 `page`、`evidence`、`source_hash` 與 `confidence`，因此這些欄位在完成 schema migration 前不可宣稱為已實作能力。
-
-### 2.2 角色卡解析與補齊流程圖
-
-```text
-[收到 role_* 檔案或 PDF 內建角色頁]
-                 |
-                 v
-       [保留原檔、頁碼與來源資訊]
-                 |
-                 v
-       [PyMuPDF 文字/座標/圖片檢查]
-                 |
-          文字層足夠？
-          /          \\
-        是            否
-        |              |
-        v              v
-[區塊與表格解析]  [OCR + bounding boxes]
-        \\              /
-         +------------+
-                 |
-                 v
-       [角色卡/欄位結構辨識]
-                 |
-                 v
- [Vision 只補結構與候選值，附 page/evidence]
-                 |
-                 v
-       [技能與名稱 dictionary 正規化]
-                 |
-                 v
-       [數值範圍與 COC 公式驗證]
-          /                    \\
-       通過                    衝突/低信心
-        |                         |
-        v                         v
- [補齊缺少欄位]            [建立 GM 待確認項]
-        |                         |
-        +------------+------------+
-                     v
-       [9 大屬性指紋 + 別名比對]
-                     |
-          +----------+----------+
-          |                     |
-       新角色                 已存在角色
-          |                     |
-          v                     v
- [建立 candidate]       [擇優融合 + hot patch]
-          \\                     /
-           +---------+---------+
-                     v
-       [綁定/待認領 + 詳細載入報告]
-```
-
-### 2.3 與劇本庫的資料交接
-
-劇本庫只負責保存原始 PDF、頁面 evidence、圖片資產與劇本內建 pregen 候選；角色系統負責把候選轉成可比對的角色資料。兩者交接時至少要帶：`scenario_id`、`page`、`source_hash`、`raw_text/evidence`、`extracted_fields` 與每欄 `confidence`。這能讓同一個角色從 PDF 內建卡、GM 上傳卡或後續修正版進來時，仍能追溯「哪一頁、哪一段證據」產生了哪個數值。
-
-```text
-[Scenario Library]
-原始 PDF / page text / OCR / page image / pregen candidate
-                         |
-                         | scenario_id + page + source_hash + evidence
-                         v
-[Character Pipeline]
-dictionary -> normalize -> validate -> fingerprint -> reconcile
-                         |
-                         v
-[GroupState]
-角色狀態、目前 HP/SAN/Luck、裝備消耗與 owner binding
-```
-
 ---
 
 ## 3. 模組一：智慧檔案分流與增量載入
 
-### 檔案命名規範與型態識別路由（LINE & Discord 統一）
+### 檔案命名規範與型態識別路由（Discord）
 
 系統採用統一前綴規格，確保 GM 批次上傳或單檔上傳時能 100% 精準識別用途：
 
@@ -1192,10 +1098,10 @@ class GamePipeline:
         }
 ```
 
-
-
 ## 12. 多劇本角色隔離與切換 (Scenario Character Isolation)
-為支援同一個 LINE 群組遊玩多個不同的劇本，`GroupState` 必須保證「切換劇本時不串戲」。
+
+為支援同一個 Discord 頻道遊玩多個不同的劇本，`GroupState` 必須保證「切換劇本時不串戲」。
+
 - **角色綁定**：在 `Character` 資料結構中新增 `scenario_id` 欄位。玩家新建或上傳角色卡時，自動寫入當前啟用的 `scenario_library_id`。
-- **列表過濾**：當玩家呼叫 `/coc role list` 或 Keeper 進行戰鬥與檢定時，僅會載入/顯示 `scenario_id` 與當前劇本相符的角色（空白則視為全域繼承）。
-- **狀態重置**：當 KP 執行 `/coc scenario use` 切換至新劇本時，系統會自動清空所有玩家的「活躍角色 (`active_character_id_by_user`)」，強制玩家在新環境中重新指定或創建對應的角色，防止將舊劇本的傷勢與狀態帶入新劇本。
+- **列表過濾**：角色列表、Keeper 戰鬥與檢定只載入／顯示 `scenario_id` 與當前劇本相符的角色；空白值視為全域繼承。
+- **狀態重置**：KP 執行 `/coc scenario use` 切換劇本時，自動清空玩家的 `active_character_id_by_user`，避免把舊劇本傷勢與狀態帶入新劇本。

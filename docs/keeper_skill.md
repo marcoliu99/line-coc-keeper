@@ -2,7 +2,7 @@
 
 這份文件是 `app/keeper.py` 裡 `_build_static_prompt()` 那段系統提示詞的**可讀版本／設計文件**——那邊是塞在 Python f-string 裡的一大段繁體中文，改起來要在程式碼裡找對位置；這份 md 把同樣的規則整理成有標題、可以獨立閱讀討論的格式，之後要調整 Keeper 行為時，先改這裡想清楚，再同步進 `app/keeper.py` 的實際字串。
 
-**跟 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 的 SKILL.md 不一樣的地方**：那是一個純 prompt 型、單人使用的 Claude Code skill，沒有骰子引擎、沒有跨會話持久化、玩家和 KP 都是同一個聊天視窗裡的文字。我們是一個真正的 LINE/Discord 群組 Bot，規則判定（擲骰、技能檢定、SAN、戰鬥）是**程式碼**在做，LLM 只負責敘事和決定「現在該呼叫哪個工具」。所以底下的規則會一直強調「呼叫工具」而不是「自己判斷結果」。
+**跟 [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) 的 SKILL.md 不一樣的地方**：那是一個純 prompt 型、單人使用的 Claude Code skill，沒有骰子引擎、沒有跨會話持久化、玩家和 KP 都是同一個聊天視窗裡的文字。我們是一個真正的 Discord 群組 Bot，規則判定（擲骰、技能檢定、SAN、戰鬥）是**程式碼**在做，LLM 只負責敘事和決定「現在該呼叫哪個工具」。所以底下的規則會一直強調「呼叫工具」而不是「自己判斷結果」。
 
 ## 核心原則
 

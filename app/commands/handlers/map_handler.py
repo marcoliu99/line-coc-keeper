@@ -12,7 +12,7 @@ async def handle_map_command(
     send_image: SendImage,
     parts: list[str],
 ) -> None:
-    sub = parts[1] if len(parts) > 1 else ""
+    sub = parts[1].casefold() if len(parts) > 1 else ""
 
     if sub == "showpage":
         if len(parts) < 3:

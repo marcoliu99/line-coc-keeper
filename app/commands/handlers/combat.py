@@ -7,7 +7,7 @@ from app.legacy_commands import Reply
 
 
 async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[str]) -> None:
-    action = parts[2] if len(parts) > 2 else None
+    action = parts[2].casefold() if len(parts) > 2 else None
     state = load_state(conversation_id)
 
     if action == "start":

@@ -1695,7 +1695,7 @@ def _build_static_prompt(state: GroupState) -> str:
 如果玩家問起一個具體的人名/地名/物品，這份摘要跟最近的對話都找不到（摘要是壓縮過的，可能已經漏掉細節），
 呼叫 search_memory 工具去查更早、還沒被壓縮掉的原始對話內容，不要直接說忘記了或自己編一個答案。"""
     persona_block = state.keeper_persona.strip() or DEFAULT_PERSONA
-    return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在群組聊天室（LINE 或 Discord）中透過文字對話主持一場遊戲。
+    return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在 Discord 頻道中透過文字對話主持一場遊戲。
 
 # 行為準則
 {persona_block}

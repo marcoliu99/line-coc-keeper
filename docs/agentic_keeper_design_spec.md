@@ -103,7 +103,7 @@ Python 程式碼明確掌握，能重用 `app/keeper.py` 既有、已經驗證�
            │   append 這回合的 log、存檔——遊戲機制本身的狀態變更已經在 Executor
            │   階段落庫過了，這裡只補上對話歷史
            ▼
-[ 回傳給呼叫端（app/commands/router.py）發送至 Discord／LINE ]
+[ 回傳給呼叫端（app/commands/router.py）發送至 Discord ]
 
 
 ── OOC Assistant Path（Phase 10，KP 助手場外討論；見 app/agents/assistant.py）──
@@ -330,8 +330,8 @@ Builder／Intent Router／State Reducer／Rule Validator 都刻意維持純 Pyth
 
    複查時另外發現、且已處理的落差：`app/legacy_commands.py` 自己還留著一份完整的
    `handle_text_message`／`_handle_ordinary_text_message_locked`（一樣直接呼叫
-   `keeper.run_turn`，邏輯幾乎跟 `router.py` 那份逐行對應），但 `app/main.py`／
-   `app/discord_bot.py` 實際呼叫的是 `app/commands/router.py::handle_text_message`，
+   `keeper.run_turn`，邏輯幾乎跟 `router.py` 那份逐行對應），但 Discord adapter
+   實際呼叫的是 `app/commands/router.py::handle_text_message`，
    `legacy_commands.py` 這份**沒有任何正式進線會呼叫到**——唯一還在呼叫它的是
    `tests/test_keeper_priority_integration.py` 和 `tests/test_kp_assistant_v2.py`
    裡驗證 priority gate／KP 助手輪替順序的測試，等於那批測試驗證的是一條正式流量根本不會

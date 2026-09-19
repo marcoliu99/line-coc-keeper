@@ -75,8 +75,8 @@ _MIN_VECTOR_DRAWINGS = 8
 
 # How many low-text pages to describe concurrently. A scenario can easily have
 # 15-20+ such pages (character sheets, maps, illustrations); doing them one at
-# a time risked the whole upload taking minutes — long enough that a LINE reply
-# token would expire before the "scenario loaded" confirmation ever went out.
+# a time risked the whole upload taking minutes — long enough to delay the
+# "scenario loaded" confirmation.
 # 6 workers against a real 24-page batch still took ~60s wall time; 12 is the
 # next thing to try if that's still too slow in practice.
 _MAX_CONCURRENT_PAGE_CALLS = 12

@@ -104,7 +104,7 @@ async def handle_system_command(
     format_mention: FormatMention = lambda owner_id: owner_id,
     is_keeper: bool = False,
 ) -> None:
-    sub = parts[1] if len(parts) > 1 else ""
+    sub = parts[1].casefold() if len(parts) > 1 else ""
 
     if sub in ("checkpoint", "checkpoints", "rollback"):
         state = load_state(conversation_id)
@@ -112,7 +112,7 @@ async def handle_system_command(
             await reply("只有目前登記的 KP Assistant 可以操作回溯節點。")
             return
         if sub == "checkpoint":
-            if len(parts) > 2 and parts[2] == "clean":
+            if len(parts) > 2 and parts[2].casefold() == "clean":
                 if len(parts) < 4:
                     await reply("用法：/coc checkpoint clean <ID 或唯一名稱>")
                     return
@@ -178,7 +178,7 @@ async def handle_system_command(
             ))
             return
         identifier = parts[2] if len(parts) > 2 else ""
-        if identifier == "clean":
+        if identifier.casefold() == "clean":
             if len(parts) < 4:
                 await reply("用法：/coc digest clean <ID>")
                 return
@@ -202,7 +202,7 @@ async def handle_system_command(
         return
 
     if sub == "scenario":
-        action = parts[2] if len(parts) > 2 else "list"
+        action = parts[2].casefold() if len(parts) > 2 else "list"
         state = load_state(conversation_id)
         if action == "import":
             await _handle_local_import(conversation_id, user_id, reply, parts)
@@ -318,7 +318,7 @@ async def handle_system_command(
         return
 
     if sub == "pdf":
-        choice_word = parts[2] if len(parts) > 2 else ""
+        choice_word = parts[2].casefold() if len(parts) > 2 else ""
         choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
         if choice is None:
             await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
@@ -327,7 +327,7 @@ async def handle_system_command(
         return
 
     if sub == "kp":
-        kp_action: str | None = parts[2] if len(parts) > 2 else None
+        kp_action: str | None = parts[2].casefold() if len(parts) > 2 else None
         state = load_state(conversation_id)
 
         if kp_action == "quit":
@@ -396,7 +396,7 @@ async def handle_system_command(
                 f"目前設定：\n{current}"
             )
             return
-        if parts[2] == "reset" and len(parts) == 3:
+        if parts[2].casefold() == "reset" and len(parts) == 3:
             state.keeper_persona = ""
             save_state(state)
             await reply("已重設回預設的冷酷旁觀者語氣風格。")
