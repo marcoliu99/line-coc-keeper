@@ -58,7 +58,10 @@ def _rename_skills(skills: dict[str, Any]) -> tuple[bool, int, int]:
             if isinstance(skills[new_name], (int, float)) and isinstance(value, (int, float)):
                 skills[new_name] = max(skills[new_name], value)
             else:
-                skills.setdefault(new_name, value)
+                # Preserve malformed/homebrew data rather than silently
+                # dropping the alias value when the canonical value already
+                # exists but is not numeric.
+                skills[old_name] = value
         else:
             skills[new_name] = value
         changed = True

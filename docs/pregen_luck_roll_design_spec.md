@@ -7,7 +7,7 @@
 ## 行為契約
 
 - `/coc usepregen` claim 時不自動產生 LUCK，先建立持久化的 `pending_pregen_luck`。
-- 玩家輸入 `/coc luck roll` 後，系統才執行該玩家要求的 `3d6 × 5`，並寫入已 claim 的 Character。
+- 玩家輸入 `/coc luck roll` 後，Bot 才執行該玩家主動要求的 `3d6 × 5`，並寫入已 claim 的 Character；目前不接受玩家自行提交未驗證的骰值。
 - 不讀取或改寫共享 `state.pregens[*]["luck"]`；完成 LUCK 後同一角色不可再次 `/coc luck roll`。
 - `/coc start` 在任何角色尚未完成玩家 LUCK roll 時必須被擋下。
 - `/coc pregen` 預覽不把 PDF 的 LUCK 顯示成固定值，而是標註「玩家取用時重新骰定」；缺值時標註玩家取用時骰定。

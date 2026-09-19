@@ -1880,3 +1880,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - `/coc usepregen` 不再由系統自動骰 LUCK；角色先進入 `pending_pregen_luck`。
 - 玩家輸入 `/coc luck roll` 後才擲 `3d6 × 5`，結果寫入角色並清除 pending 狀態；完成後不可重骰。
 - `/coc start` 會阻擋尚未完成 LUCK roll 的角色，並同步更新玩家指令文件與 LUCK 設計規格。
+
+### 109. 完成整體 review 的資料保留修正
+
+- 移除 pregen constructor 中過時的 claim-time LUCK 註解，避免與玩家主動 `/coc luck roll` 流程矛盾。
+- extraction 與 persisted-skill migration 遇到非數字 alias collision 時保留兩組原始資料，不再靜默丟失 homebrew 或 malformed value。
+- 補上非數字 collision regression tests，並在 LUCK spec 明確記錄 `/coc luck roll` 是玩家觸發 Bot RNG，不接受未驗證的外部骰值。

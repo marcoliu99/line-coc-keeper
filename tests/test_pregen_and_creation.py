@@ -103,6 +103,10 @@ class SkillCanonicalizationTests(unittest.TestCase):
             {"深潛者辨識": 15},
         )
 
+    def test_non_numeric_alias_collision_preserves_both_values(self):
+        result = pregen_extractor._translate_skill_names({"手槍": "手寫", "射擊（手槍）": "原文"})
+        self.assertEqual(result, {"射擊（手槍）": "原文", "手槍": "手寫"})
+
 
 class CreationAllocateTests(unittest.TestCase):
     def _session(self):
@@ -177,6 +181,21 @@ class MigrateSkillNamesTests(unittest.TestCase):
         self.assertEqual(report.group_states_changed, 1)
         self.assertEqual(report.entries_changed, 1)
         self.assertEqual(db.get_json("group_states", "g3"), original)
+
+    def test_non_numeric_migration_collision_preserves_alias_value(self):
+        from scripts.migrate_skill_names import migrate
+
+        original = {
+            "group_id": "g4",
+            "characters": {"u1": {"skills": {"手槍": "手寫", "射擊（手槍）": "原文"}}},
+            "pregens": [],
+        }
+        db.set_json("group_states", "g4", original)
+        migrate()
+        self.assertEqual(
+            db.get_json("group_states", "g4")["characters"]["u1"]["skills"],
+            {"手槍": "手寫", "射擊（手槍）": "原文"},
+        )
 
     def test_claim_boundary_does_not_reroll_repeat_owner(self):
         from app.models import GroupState

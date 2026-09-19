@@ -236,12 +236,28 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
 def _translate_skill_names(skills: dict[str, Any]) -> dict[str, Any]:
     """Canonicalize extracted names and merge duplicate aliases safely."""
     merged: dict[str, Any] = {}
+    source_names: dict[str, str] = {}
     for name, value in skills.items():
         canonical = canonical_skill_name(name)
-        if canonical in merged and isinstance(merged[canonical], (int, float)) and isinstance(value, (int, float)):
-            merged[canonical] = max(merged[canonical], value)
-        else:
+        if canonical not in merged:
             merged[canonical] = value
+            source_names[canonical] = name
+            continue
+        if isinstance(merged[canonical], (int, float)) and isinstance(value, (int, float)):
+            merged[canonical] = max(merged[canonical], value)
+            continue
+        # Skill values should normally be numeric. If malformed or homebrew
+        # data contains a non-numeric collision, keep both original key/value
+        # pairs instead of silently discarding one.
+        previous_name = source_names[canonical]
+        if previous_name != canonical:
+            previous_value = merged.pop(canonical)
+            merged[previous_name] = previous_value
+            source_names.pop(canonical)
+            merged[canonical] = value
+            source_names[canonical] = name
+        else:
+            merged[name] = value
     return merged
 
 
@@ -577,8 +593,6 @@ def pregen_to_character(
     int_ = _int_or(pregen.get("int_"), 50)
     pow_ = _int_or(pregen.get("pow_"), 50)
     edu = _int_or(pregen.get("edu"), 50)
-    # Roll at claim time so the shared scenario library is never mutated and
-    # different players claiming the same pregen receive independent values.
     # _int_or already falls back to `default` on anything non-numeric — no
     # need for a trailing `or default` here, which would (confusingly) also
     # re-trigger the fallback on a legitimately-extracted 0.
