@@ -204,7 +204,7 @@ async def _post_check_buttons(
         if before_pending.get(owner_id) == check:
             continue
         try:
-            char = state.characters.get(owner_id)
+            char = state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
             for label, danger, option in _check_button_specs(check):
@@ -291,7 +291,7 @@ async def _post_luck_buttons(
         if before_pending.get(owner_id) == decision:
             continue
         try:
-            char = state.characters.get(owner_id)
+            char = state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
             for option in decision["options"]:

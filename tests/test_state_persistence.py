@@ -10,6 +10,7 @@ from unittest.mock import patch
 from app import db
 from app import checkpoints
 from app import keeper, scene_digest
+from app.commands.handlers.system import _replace_scene_maps_preserving_locations
 from app.models import Character, GroupState
 from app.repositories import group_state
 
@@ -43,6 +44,47 @@ class StatePersistenceTests(unittest.TestCase):
         loaded = group_state.load_state(state.group_id)
         self.assertEqual(loaded.state_revision, 1)
         self.assertIn("state_save_success", "\n".join(captured.output))
+
+    def test_character_mirrors_are_scoped_by_group(self):
+        first = GroupState("group-a")
+        first.characters["same-user"] = Character("Ada A", "same-user")
+        second = GroupState("group-b")
+        second.characters["same-user"] = Character("Ada B", "same-user")
+
+        group_state.save_state(first)
+        group_state.save_state(second)
+
+        self.assertEqual(db.get_json("characters", "group-a:same-user")["name"], "Ada A")
+        self.assertEqual(db.get_json("characters", "group-b:same-user")["name"], "Ada B")
+
+    def test_scene_digest_keeps_same_named_active_characters_separate(self):
+        state = GroupState("group-same-name")
+        first = Character("Alex", "u1", character_id="char-1")
+        second = Character("Alex", "u2", character_id="char-2")
+        state.characters = {"u1": first, "u2": second}
+        state.characters_by_id = {first.character_id: first, second.character_id: second}
+        state.active_character_id_by_user = {"u1": first.character_id, "u2": second.character_id}
+
+        digest = scene_digest.create_digest(state)
+
+        self.assertEqual(set(digest["public"]["characters"]), {"char-1", "char-2"})
+
+    def test_scenario_map_switch_replaces_maps_and_keeps_only_valid_locations(self):
+        state = GroupState("group-map")
+        state.scene_maps = {"old": {"rooms": [{"id": "room-a"}]}}
+        state.current_map_page = {"u1": "old", "u2": "old"}
+        state.current_room_id = {"u1": "room-a", "u2": "missing"}
+        state.party_facing = {"u1": "E", "u2": "W"}
+
+        _replace_scene_maps_preserving_locations(
+            state,
+            {"old": {"rooms": [{"id": "room-a"}]}, "new": {"rooms": [{"id": "room-b"}]}},
+        )
+
+        self.assertEqual(set(state.scene_maps), {"old", "new"})
+        self.assertEqual(state.current_room_id, {"u1": "room-a"})
+        self.assertEqual(state.current_map_page, {"u1": "old"})
+        self.assertNotIn("u2", state.party_facing)
 
     def test_checkpoint_rollback_is_full_snapshot_and_new_timeline(self):
         state = GroupState("discord-group-2", active=False)

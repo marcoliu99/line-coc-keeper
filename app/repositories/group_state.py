@@ -74,7 +74,7 @@ def save_state(state: GroupState, *, reason: str = "command") -> None:
             # conversation's state.
             mirror_entries = {}
             for owner_id, char in state.characters.items():
-                mirror_entries[owner_id] = char
+                mirror_entries[f"{state.group_id}:{owner_id}"] = char
             for char in state.all_characters():
                 if char.character_id:
                     mirror_entries[f"{state.group_id}:{char.character_id}"] = char

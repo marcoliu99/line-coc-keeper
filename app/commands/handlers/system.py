@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from app import checkpoints, keeper, locks, scenario_index, scenario_intro, scenario_library, scene_digest
+from app import checkpoints, keeper, locks, scenario_index, scenario_intro, scenario_library, scene_digest, scene_map
 from app.models import GroupState
 from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
@@ -10,6 +10,23 @@ from app.legacy_commands import (
     _resolve_pdf_upload_choice_locked, _set_character_away_state, handle_pdf_upload,
     _heal_character, _build_readiness_roster, _run_post_turn_maintenance_after_output
 )
+
+
+def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) -> None:
+    previous_locations = {
+        owner_id: (state.current_map_page.get(owner_id, ""), state.current_room_id.get(owner_id, ""))
+        for owner_id in set(state.current_map_page) | set(state.current_room_id)
+    }
+    state.scene_maps = dict(new_maps)
+    state.current_map_page = {}
+    state.current_room_id = {}
+    for owner_id, (map_key, room_id) in previous_locations.items():
+        new_map = state.scene_maps.get(map_key)
+        if new_map is not None and scene_map.get_room(new_map, room_id) is not None:
+            state.current_map_page[owner_id] = map_key
+            state.current_room_id[owner_id] = room_id
+        else:
+            state.party_facing.pop(owner_id, None)
 
 
 async def handle_system_command(
@@ -178,8 +195,7 @@ async def handle_system_command(
             state.context_chapter_ids = context["context_chapter_ids"]
             state.scenario_npc_index = context["indexes"].get("npcs", [])
             state.scenario_location_index = context["indexes"].get("locations", [])
-            for key, scene_map in context["scene_maps"].items():
-                state.scene_maps.setdefault(key, scene_map)
+            _replace_scene_maps_preserving_locations(state, context["scene_maps"])
             state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
             state.active = True
@@ -246,7 +262,7 @@ async def handle_system_command(
         if state.kp_assistant_user_id:
             await reply("這局已經有一位 KP 助手，不能同時登記第二位。")
             return
-        if user_id in state.characters:
+        if state.get_active_character(user_id) is not None:
             await reply("KP 助手與調查員角色互斥；你已經有調查員角色，不能登記為 KP 助手。")
             return
         if user_id in state.creation_sessions:

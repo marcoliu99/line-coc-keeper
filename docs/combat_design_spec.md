@@ -516,13 +516,11 @@ Keeper prompt 必須改成：
 - `/coc combat damage 名稱 增減量`
 - `/coc combat end`
 
-但 `addnpc` 應成為 minimal card shorthand。未來可新增：
+但 `addnpc` 應成為 minimal card shorthand。仍可再新增：
 
 - `/coc combat addenemy 名稱`
 - `/coc combat enemycard 名稱`
 - `/coc combat effect ...`
-- `/coc switch 角色名`
-- `/coc characters`
 
 ## 測試需求
 

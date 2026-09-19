@@ -189,7 +189,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
             )
             if same_group and is_stale:
                 db.delete_json_tx(conn, "characters", owner_id)
-        mirror_entries = {owner_id: char for owner_id, char in restored.characters.items()}
+        mirror_entries = {f"{group_id}:{owner_id}": char for owner_id, char in restored.characters.items()}
         mirror_entries.update({f"{group_id}:{char.character_id}": char for char in restored.all_characters() if char.character_id})
         for mirror_key, char in mirror_entries.items():
             db.set_json_tx(conn, "characters", mirror_key, {

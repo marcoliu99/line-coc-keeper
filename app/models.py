@@ -758,15 +758,50 @@ class GroupState:
                 result.append(char)
         return result
 
+    def characters_for_owner(self, owner_id: str) -> list[Character]:
+        return [char for char in self.all_characters() if char.owner_id == owner_id]
+
+    def get_active_character(self, owner_id: str) -> Character | None:
+        character_id = self.active_character_id_by_user.get(owner_id, "")
+        if character_id:
+            active = next((char for char in self.all_characters() if char.character_id == character_id), None)
+            if active is not None:
+                return active
+        legacy = self.characters.get(owner_id)
+        if legacy is not None:
+            character_id = legacy.character_id or f"legacy-user:{owner_id}"
+            legacy.character_id = character_id
+            self.characters_by_id.setdefault(character_id, legacy)
+            self.active_character_id_by_user[owner_id] = character_id
+        return legacy
+
+    def set_active_character(self, owner_id: str, character_id: str) -> Character:
+        character = next(
+            (char for char in self.characters_for_owner(owner_id) if char.character_id == character_id),
+            None,
+        )
+        if character is None and not character_id:
+            character = self.characters.get(owner_id)
+        if character is None:
+            raise KeyError(character_id)
+        if not character.character_id:
+            character.character_id = f"legacy-user:{owner_id}"
+            character_id = character.character_id
+        for owned in self.characters_for_owner(owner_id):
+            owned.active = owned.character_id == character_id
+        self.active_character_id_by_user[owner_id] = character_id
+        self.characters_by_id[character_id] = character
+        # Keep the legacy owner index useful during the migration.
+        self.characters[owner_id] = character
+        return character
+
     def active_characters(self) -> list[Character]:
         """Return the currently selected character for each owner."""
-        if not self.active_character_id_by_user:
-            return list(self.characters.values()) or self.all_characters()
-        by_id = {char.character_id: char for char in self.all_characters()}
+        owners = {char.owner_id for char in self.all_characters()}
         result = []
-        for character_id in self.active_character_id_by_user.values():
-            char = by_id.get(character_id)
-            if char is not None and char not in result:
+        for owner_id in owners:
+            char = self.get_active_character(owner_id)
+            if char is not None and char.active and char not in result:
                 result.append(char)
         return result
 

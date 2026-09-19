@@ -1854,3 +1854,15 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   scene digest 使用目前 active character；公開 digest 的敵人戰鬥狀態不含精確 HP、護甲或能力卡，private
   digest 才保留完整戰鬥卡供 Keeper/KP Assistant 使用。
 - **測試**：新增特殊能力成功效果、缺少 outcome、round-end 邊界、效果修正重試等 regression tests。
+
+### 106. 補完多角色切換、劇本地圖隔離與 persistence identity
+
+- **多角色切換**：新增 `/coc characters` 與 `/coc switch 角色名`，以 `active_character_id_by_user` 作為
+  目前角色來源；角色卡、檢定、地圖上下文、路由與戰鬥都會讀取同一個 active character，Partner/test
+  角色的 HP、技能與暫離狀態不再混用。
+- **劇本切換地圖**：`/coc scenario use` 會載入新劇本的完整 `scene_maps`，不再用 `setdefault` 留住舊劇本
+  地圖；只有地圖 key 與 room id 都仍存在的位置會保留，失效位置會清除。
+- **摘要 identity**：scene digest 的角色欄位改用 `character_id` 作 key，避免同名角色互相覆蓋。
+- **角色 mirror 隔離**：SQLite `characters` mirror 改用 `{group_id}:{owner_id}` 與 `{group_id}:{character_id}` 作 key，
+  同一使用者在不同群組的角色不會互相覆蓋。
+- **測試**：新增 active switch、地圖替換/位置保留與跨群組 mirror regression tests。

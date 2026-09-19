@@ -44,7 +44,10 @@ def _public_state(state: GroupState) -> dict:
     }
     return {
         "characters": {
-            c.name: {
+            (c.character_id or f"legacy-user:{c.owner_id}"): {
+                "character_id": c.character_id,
+                "owner_id": c.owner_id,
+                "name": c.name,
                 "location": "",
                 "away": c.away,
                 "hp": c.hp, "hp_max": c.hp_max,

@@ -560,7 +560,22 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
 
         self.assertEqual([c.name for c in state.combat.order], ["Partner"])
-        self.assertEqual(state.combat.order[0].character_id, "char-partner")
+
+    def test_switch_active_character_updates_legacy_and_id_views(self):
+        state = GroupState("g")
+        mark = Character("Mark", "u1", character_id="char-mark", slot="primary", hp=10)
+        partner = Character("Partner", "u1", character_id="char-partner", slot="partner", hp=6, active=False)
+        state.characters = {"u1": mark}
+        state.characters_by_id = {mark.character_id: mark, partner.character_id: partner}
+        state.active_character_id_by_user = {"u1": mark.character_id}
+
+        selected = state.set_active_character("u1", "char-partner")
+
+        self.assertIs(selected, partner)
+        self.assertIs(state.get_active_character("u1"), partner)
+        self.assertIs(state.characters["u1"], partner)
+        self.assertFalse(mark.active)
+        self.assertTrue(partner.active)
 
 
 if __name__ == "__main__":

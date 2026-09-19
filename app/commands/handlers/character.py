@@ -24,6 +24,38 @@ async def handle_character_command(
 ) -> None:
     sub = parts[1] if len(parts) > 1 else ""
 
+    if sub == "characters":
+        state = load_state(conversation_id)
+        owned = state.characters_for_owner(user_id)
+        if not owned:
+            await reply("你目前沒有角色。")
+            return
+        active = state.get_active_character(user_id)
+        lines = ["你的角色："]
+        for char in owned:
+            marker = "（目前使用）" if active and char.character_id == active.character_id else ""
+            lines.append(f"・{char.name} [{char.slot}] {marker}".rstrip())
+        await reply("\n".join(lines))
+        return
+
+    if sub == "switch":
+        if len(parts) < 3:
+            await reply("用法：/coc switch 角色名（可先用 /coc characters 查看）")
+            return
+        state = load_state(conversation_id)
+        name = " ".join(parts[2:]).strip()
+        matches = [char for char in state.characters_for_owner(user_id) if char.name == name]
+        if not matches:
+            await reply("找不到你擁有的這個角色，請先用「/coc characters」查看角色名稱。")
+            return
+        if len(matches) > 1:
+            await reply("你有同名角色，請先重新命名，避免切換到錯誤角色。")
+            return
+        state.set_active_character(user_id, matches[0].character_id)
+        save_state(state)
+        await reply(f"目前使用角色已切換為「{matches[0].name}」。")
+        return
+
     if sub == "pc":
         state = load_state(conversation_id)
         blocked = _blocked_by_kp_assistant(state, user_id)
@@ -51,13 +83,14 @@ async def handle_character_command(
 
         char = generate_investigator(name=name, owner_id=user_id, occupation=occupation)
         state.characters[user_id] = char
+        state.set_active_character(user_id, char.character_id)
         save_state(state)
         await reply(f"調查員建立完成！\n\n{char.sheet_text()}")
         return
 
     if sub == "sheet":
         state = load_state(conversation_id)
-        char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char:
             await reply("你還沒有角色，先輸入「/coc pc 角色名 職業」建立一個吧。")
             return
@@ -70,7 +103,7 @@ async def handle_character_command(
             return
         name, skill, value_str = parts[2], parts[3], parts[4]
         state = load_state(conversation_id)
-        char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char or char.name != name:
             await reply("只能修改你自己建立的角色（角色名稱需完全相符）。")
             return
@@ -91,7 +124,7 @@ async def handle_character_command(
         name = parts[2]
         description = " ".join(parts[3:])
         state = load_state(conversation_id)
-        char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char or char.name != name:
             await reply("只能修改你自己建立的角色（角色名稱需完全相符）。")
             return
@@ -258,6 +291,7 @@ async def handle_character_command(
         if len(parts) > 3:
             char.name = parts[3]
         state.characters[user_id] = char
+        state.set_active_character(user_id, char.character_id)
         pregen["claimed_by"] = user_id
         save_state(state)
         await reply(f"已使用預製角色！\n\n{char.sheet_text()}")

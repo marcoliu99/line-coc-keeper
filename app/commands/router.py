@@ -79,7 +79,7 @@ async def handle_text_message(
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
-        if sub in ("pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen"):
+        if sub in ("pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters"):
             async with locks.get_conversation_lock(conversation_id):
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
@@ -161,12 +161,12 @@ async def _handle_ordinary_text_message_locked(
         display_name = await get_display_name()
         speaker_role = "kp_assistant"
         resolved_location = None
-    elif user_id not in state.characters:
+    elif state.get_active_character(user_id) is None:
         display_name = await get_display_name()
         await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
         return
     else:
-        display_name = state.characters[user_id].name
+        display_name = state.get_active_character(user_id).name
         speaker_role = "player"
         resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
 

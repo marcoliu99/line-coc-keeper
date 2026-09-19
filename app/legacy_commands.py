@@ -71,6 +71,7 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc pregens → 查看這份劇本有沒有附帶的預製調查員
 ・/coc pregen 編號 → 選之前先看某位預製角色的完整屬性與技能
 ・/coc usepregen 編號 [自訂名稱] → 直接使用某位預製角色（每個人只能用一次，直到 /coc end；每個角色只能被一人選走）
+・/coc characters → 查看自己擁有的角色；/coc switch 角色名 → 切換目前操作的角色
 ・/coc start → 角色都建好、準備開始時輸入，守密人會生成開場白帶大家進入劇情（優先用劇本自己寫的開場文字，沒有才自動生成）
 
 【KP 助手】
@@ -1021,7 +1022,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         state = load_state(conversation_id)
         if not state.active:
             return _CheckResolution(reply_text="目前沒有進行中的遊戲。")
-        char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char:
             return _CheckResolution(reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
 
@@ -1301,7 +1302,7 @@ def _resolve_luck_decision_deterministically(
         pending = state.pending_luck_decisions.pop(user_id, None)
         if not pending:
             return _CheckResolution(reply_text="目前沒有待決定的 Luck 花費。")
-        char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char:
             return _CheckResolution(reply_text="找不到你的角色。")
 
@@ -1503,7 +1504,7 @@ def _resolve_map_action_core(
 
     if resolved_room is None:
         return _MapActionResolution(needs_rag=needs_rag)
-    char = state.characters.get(user_id)
+    char = state.get_active_character(user_id)
     return _MapActionResolution(
         context={
             "character_name": char.name if char else "",
@@ -1542,7 +1543,7 @@ def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | Non
     rebuild once the game they were in has actually ended."""
     if not state.active:
         return None
-    char = state.characters.get(user_id)
+    char = state.get_active_character(user_id)
     if not char:
         return None
     return (
