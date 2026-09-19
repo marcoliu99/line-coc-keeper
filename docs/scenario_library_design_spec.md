@@ -79,6 +79,8 @@ pending_scenario_upload: dict | None = None
 
 `scenario_library_id` 指向目前 KP 選定的 PDF 劇本。章節不是聊天室命令的選項，而是劇本庫內部的檢索索引；Agent 會從選定 PDF 的相關章節取回少量內容，而不把整份 PDF 放進 `GroupState` 或 prompt。
 
+`scenario_library_id` 只代表目前選中的單一 PDF 資產。若長期團劇本被切成多個 PDF，必須另外以 `campaign_id`／`part_number` 建立系列關係；不能把不同 part 的角色池、圖片或未載入劇情直接混進目前 Context。
+
 
 ## 章節模型
 
@@ -378,6 +380,7 @@ PDF 解析採「成本由低到高、證據由原始到語意」的分層策略�
 - 建立或取得該 PDF 的章節化 Scenario RAG 索引。每個 chunk 都帶有 `chapter_id`、頁碼與 `kind`（`playable`／`asset`）標記。
 - 清除 `openai_previous_response_id`，讓下一輪模型以新選定 PDF 的 system context 建立對話鏈。
 - **保留** `log`、`campaign_summary`、Memory RAG、玩家角色、地圖位置、戰鬥、待處理檢定、`game_started`、`keeper_persona`、`era` 與 `kp_ooc_log`。這些都是同一團的連續遊戲狀態。
+- **替換劇本專屬資料**：`pregens`、`scenario_npc_index`、`scenario_location_index`、目前 Context 的 `scene_maps` 與頁面圖片，必須只來自這次選定的劇本與其目前／下一章視窗；不可保留上一份劇本的預製角色或索引。這裡的「其他角色不出現」指劇本候選角色池不能跨劇本洩漏；`state.characters` 裡已經被玩家認領的現役調查員仍依上一點保留。
 - 不修改劇本庫內容；遊戲進度仍只寫入此團的 `GroupState`／既有資料庫。
 
 每一輪 `ContextBuilder` 以玩家行動與 KP 指示查詢**目前選定 PDF 的兩章 Context 視窗**，只把最相關 chunks 放入 `AgentMessage`。例如 KP 選定《The Lightless Beacon》後，Keeper 不會一次讀完 43 頁；進入燈塔的行動只會取回 `Dead Beacon` 與下一章的必要銜接段落，而不會看到更後面的結局內容。
@@ -563,3 +566,101 @@ KP Assistant 的圖片流程是：先以 `search_scenario_images(query, image_ty
    對於自架伺服器或有權限的團隊，KP 可直接將大型 PDF 放入伺服器的 `imports/` 資料夾，並使用 `/coc scenario import <filename>` 繞過 Discord 網路傳輸，達成 0 延遲無容量限制載入。
 2. **系列作式關聯 (Campaign Box-Set Approach)**：
    保留檔案切割，但不做全檔合併。將 `part1.pdf`, `part2.pdf` 視為同一個大戰役下的獨立「子劇本」，並在系統中引入 `/coc campaign link <id1> <id2>` 的關聯機制。這將大幅降低單次解析的記憶體壓力，但未來須處理跨劇本的目錄參照跳轉。
+
+### 多 PDF 長期團方案（本次新增設計決策）
+
+長期團不應把多個 PDF 直接拼成一個超大 bytes 或一次塞入 `GroupState`。採用「每個 part 獨立解析、用 campaign manifest 串聯」的方案；這保留每份 PDF 的原子更新與失敗復原，也能讓每個 part 的圖片、角色候選與 RAG index 分開管理。
+
+#### 上傳與自動分組
+
+檔名可使用下列格式：
+
+```text
+Masks_of_Nyarlathotep_part1.pdf
+Masks_of_Nyarlathotep_part2.pdf
+Masks_of_Nyarlathotep_part3_of_6.pdf
+```
+
+解析器在副檔名前辨識 `partN`／`partN_of_M`（大小寫不敏感）。正規化後的前綴產生 `campaign_id`，但不能只靠檔名自動合併成已確認的劇情系列：若前綴相同但其實是不同版本，必須在 `/coc campaign link` 時由 KP 確認。
+
+每一份 PDF 仍建立自己的 `scenario_id` 與完整劇本目錄；manifest 追加：
+
+```json
+{
+  "campaign_id": "masks-of-nyarlathotep",
+  "part_number": 1,
+  "part_count": 6,
+  "part_label": "Book 1",
+  "previous_part_id": null,
+  "next_part_id": "masks-of-nyarlathotep-part2"
+}
+```
+
+上傳流程：
+
+```text
+[上傳 part1.pdf]
+        |
+        v
+[單份 PDF preview/hash/完整解析]
+        |
+        v
+[建立 scenario_id + campaign candidate metadata]
+        |
+        +--> [上傳 part2.pdf]
+        |          |
+        |          v
+        |   [相同 campaign 前綴？]
+        |       /          \
+        |     否            是
+        |     |              |
+        |     v              v
+        | [獨立劇本]   [待 KP 確認 link]
+        |                    |
+        +--------------------+
+                             v
+                [/coc campaign link <part IDs>]
+                             |
+                             v
+                 [建立有序 campaign manifest]
+```
+
+#### 執行期隔離與推進
+
+- `GroupState.scenario_library_id` 仍指向**目前正在使用的 part**；另增 `campaign_id`、`campaign_part_ids` 與 `active_part_number` 保存系列進度。
+- `/coc scenario use <part ID>` 只載入該 part 的目前／下一章 Context、圖片、NPC／地點索引與 `pregens`；其他 part 的角色卡不能出現在 `/coc pregens`，也不能被目前的 Scenario RAG 檢索。
+- part 之間的切換必須是明確的 `advance_campaign_part` 或 KP 指令，不因提到下一 part 的標題就自動跳轉；切換前先保存目前 part 的 checkpoint。
+- campaign RAG 的版本鍵必須包含 `campaign_id`、`part_id`、`chapter_id` 與 `content_hash`。預設只查目前 part，跨 part 查詢需由明確的 transition/tool fact 觸發。
+- 每個 part 的 `pregens` 都是該 part 的候選角色池；玩家已認領的 `state.characters` 是團務狀態，除非 KP 明確開新團，不因 part 切換被刪除或自動改卡。
+- `/coc campaign list` 顯示系列與 part 順序；`/coc campaign unlink` 只解除關聯，不刪除任何 PDF 目錄。
+
+#### 伺服器本地匯入
+
+本地匯入是第二個入口，不是另一套解析器：
+
+```text
+imports/
+  Masks_of_Nyarlathotep_part1.pdf
+  Masks_of_Nyarlathotep_part2.pdf
+
+/coc scenario import Masks_of_Nyarlathotep_part1.pdf
+```
+
+`import` 必須限制在設定的 `IMPORT_DIR` 內，拒絕絕對路徑、`..` traversal、symbolic link 跳出根目錄與非 PDF 副檔名；讀到 bytes 後直接重用一般上傳的 preview、去重、完整解析與 library lock 流程。這樣本地匯入只解決 Discord 25MB 傳輸限制，不會複製另一份不一致的解析邏輯。
+
+#### 建議實作順序
+
+1. 先完成 `partN` 檔名解析、manifest 欄位與 `/coc campaign list/link`，但仍維持每個 part 獨立 `scenario_id`。
+2. 將 `/coc scenario use` 的 pregen、索引、圖片替換規則補成測試，確認上一個 part 的角色池不會洩漏。
+3. 實作 `advance_campaign_part` 與切換前 checkpoint；確認跨 part RAG 預設拒絕。
+4. 最後加入受限 `IMPORT_DIR` 與 `/coc scenario import`，並重用既有 PDF upload pipeline。
+
+### 解析現況補充：圖片保存與 Vision 分析必須分離
+
+這個 branch 的實際混合流程是 PyMuPDF 文字/圖形檢查、MarkItDown + `markitdown-ocr` 文字補強，以及低文字量 graphic page 的 `scene_map` Vision；目前沒有接入 `pymupdf4llm`。圖片保存與 Vision 分析不可共用同一個 pending 條件：只要 `has_graphic_content` 為真，就一律 render PNG 寫入 `page_images`；`len(text) < _LOW_TEXT_THRESHOLD` 只決定是否追加整頁 Vision/scene-map 分析。
+
+若 MarkItDown OCR 已經把角色卡或密集地圖補成超過 200 字，正確行為是「保存圖片、跳過重複 Vision」，不是「不保存圖片」。此契約已有高文字量 embedded-image 回歸測試。
+
+### 劇本選擇的角色隔離規則
+
+`/coc scenario use <ID>` 以所選 library item 的 `pregens.json` 取代目前的 `state.pregens`，因此上一份劇本的未認領預製角色不會出現在新的 `/coc pregens` 清單。已被玩家認領的 `state.characters` 是團務狀態，仍依狀態契約保留；這兩者不可混稱為同一個角色池。

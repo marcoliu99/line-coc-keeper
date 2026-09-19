@@ -96,6 +96,9 @@ async def handle_system_command(
             state.scenario_location_index = context["indexes"].get("locations", [])
             for key, scene_map in context["scene_maps"].items():
                 state.scene_maps.setdefault(key, scene_map)
+            # Pregens belong to the selected library item. Keep live
+            # investigators in state.characters, but never leak the previous
+            # scenario's pregen pool into this scenario's /coc pregens list.
             state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
             state.active = True

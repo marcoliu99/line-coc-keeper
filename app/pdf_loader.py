@@ -233,11 +233,11 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
       content may not be fully captured.
     - truncated: True if the scenario exceeded MAX_SCENARIO_CHARS and everything
       past that cut-off point was dropped.
-    - page_images: 1-indexed page number -> rendered PNG bytes, for every page in
-      low_text_pages (the maps/handouts/character-sheet pages already rendered
-      for vision/OCR here). Lets a caller show a player the actual picture
-      instead of just the Keeper's text description of it — see /coc showpage
-      and the show_scenario_image tool in app/keeper.py.
+    - page_images: 1-indexed page number -> rendered PNG bytes, for every page
+      with graphic content (including pages whose OCR/MarkItDown text is long).
+      This is deliberately independent from low_text_pages: callers can show
+      the actual map/handout/character sheet even when OCR already supplied a
+      lot of text — see /coc showpage and show_scenario_image.
     - page_maps: 1-indexed page number -> structured room-graph dict (see
       app/scene_map.py), for whichever low_text_pages turned out to actually be
       a floor plan/map (most won't be — character sheets and illustrations are
@@ -253,7 +253,8 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
 
     page_texts: list[str] = []
     low_text_pages: list[int] = []
-    pending: dict[int, bytes] = {}  # page index -> rendered PNG, needs vision/OCR
+    page_images: dict[int, bytes] = {}
+    vision_pending: dict[int, bytes] = {}  # page index -> low-text PNG for Vision/OCR
 
     for i, page in enumerate(doc):
         page_number = i + 1
@@ -264,31 +265,27 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
             text = re.sub(r"[ \t]+", " ", text)
             text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
-        # has_graphic_content gates the whole-page vision/scene-map fallback
-        # below on PyMuPDF's own page.get_images()/get_drawings() regardless
-        # of which text layer was used above — this is what still catches a
-        # vector-drawn floor plan markitdown-ocr's embedded-raster-image
-        # detection would miss (see this module's docstring and
-        # _page_has_graphic_content's own docstring for the vector-drawings
-        # half specifically). A page markitdown-ocr already enriched via
-        # inline embedded-image OCR will usually already be >= the text
-        # threshold here, so this naturally skips a redundant second vision
-        # call for it.
+        # Image persistence and whole-page Vision are separate decisions.
+        # MarkItDown/OCR can make a character sheet exceed the text threshold;
+        # that must skip the redundant Vision call, not discard the image.
         has_graphic_content = _page_has_graphic_content(page)
-        if len(text) < _LOW_TEXT_THRESHOLD and has_graphic_content:
-            low_text_pages.append(page_number)
-            pending[i] = _render_page_png(page)
+        if has_graphic_content:
+            png_bytes = _render_page_png(page)
+            page_images[page_number] = png_bytes
+            if len(text) < _LOW_TEXT_THRESHOLD:
+                low_text_pages.append(page_number)
+                vision_pending[i] = png_bytes
 
         page_texts.append(text)
 
     page_maps: dict[int, dict] = {}
 
-    if pending:
-        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))
+    if vision_pending:
+        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(vision_pending))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             analyze_futures = {
                 executor.submit(_analyze_graphic_page, png_bytes): idx
-                for idx, png_bytes in pending.items()
+                for idx, png_bytes in vision_pending.items()
             }
             for future in concurrent.futures.as_completed(analyze_futures):
                 idx = analyze_futures[future]
@@ -309,7 +306,6 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
     if truncated:
         full_text = full_text[:MAX_SCENARIO_CHARS] + "\n\n[...劇本內容過長，已截斷...]"
 
-    page_images = {idx + 1: png_bytes for idx, png_bytes in pending.items()}
     return full_text, low_text_pages, truncated, page_images, page_maps
 
 
