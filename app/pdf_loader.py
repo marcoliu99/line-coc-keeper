@@ -38,6 +38,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from typing import Any, Iterable, cast
 
 import pymupdf
 
@@ -131,7 +132,7 @@ def _ocr_image(png_bytes: bytes) -> str:
         from PIL import Image
     except ImportError:
         pytesseract = None
-        Image = None
+        Image = None  # type: ignore[assignment]
 
     if pytesseract is not None and Image is not None:
         try:
@@ -255,7 +256,7 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
     low_text_pages: list[int] = []
     pending: dict[int, bytes] = {}  # page index -> rendered PNG, needs vision/OCR
 
-    for i, page in enumerate(doc):
+    for i, page in enumerate(cast(Iterable[Any], doc)):
         page_number = i + 1
         if markitdown_pages is not None and page_number in markitdown_pages:
             text = markitdown_pages[page_number]
@@ -358,7 +359,7 @@ def extract_preview(pdf_bytes: bytes, page_limit: int = 3) -> str:
     """Fast, no-LLM preview used before a potentially expensive full parse."""
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     parts: list[str] = []
-    for i, page in enumerate(doc):
+    for i, page in enumerate(cast(Iterable[Any], doc)):
         if i >= page_limit:
             break
         text = re.sub(r"[ \t]+", " ", page.get_text("text") or "").strip()

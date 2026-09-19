@@ -746,6 +746,13 @@ def find_character(state: GroupState, name: str) -> Character | None:
     return None
 
 
+def require_character(state: GroupState, name: str) -> Character:
+    character = find_character(state, name)
+    if character is None:
+        raise ValueError(f"找不到角色「{name}」")
+    return character
+
+
 def resolve_skill_value(char: Character, skill_name: str) -> int:
     key = skill_name.strip()
     if key in char.skills:
@@ -1116,7 +1123,7 @@ def _execute_tool(
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             def _register_pending_skill_check(target_state: GroupState) -> tuple[int, int, int, str]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 value = resolve_skill_value(target_char, tool_input["skill"])
                 bonus = int(tool_input.get("bonus_dice") or 0)
                 penalty = int(tool_input.get("penalty_dice") or 0)
@@ -1130,7 +1137,7 @@ def _execute_tool(
                 }
                 return value, bonus, penalty, difficulty
             value, bonus, penalty, difficulty = _mutate_and_save_state(state, _register_pending_skill_check)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "skill": tool_input["skill"],
                 "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
@@ -1146,7 +1153,7 @@ def _execute_tool(
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
             attacker_tier = tool_input.get("attacker_tier")
             def _register_pending_choice(target_state: GroupState) -> list[dict]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 options = []
                 for opt in raw_options:
                     # Full skill value, no artificial difficulty adjustment —
@@ -1165,7 +1172,7 @@ def _execute_tool(
                 target_state.pending_checks[target_char.owner_id] = pending_choice
                 return options
             options = _mutate_and_save_state(state, _register_pending_choice)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
                 "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
@@ -1185,12 +1192,12 @@ def _execute_tool(
             loss_success = tool_input.get("loss_success", "0")
             loss_failure = tool_input.get("loss_failure", "1d4")
             def _register_pending_sanity(target_state: GroupState) -> None:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
                 }
             _mutate_and_save_state(state, _register_pending_sanity)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {
                 "ok": True, "pending": True, "investigator": refreshed_char.name, "current_san": refreshed_char.san,
                 "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
@@ -1207,7 +1214,7 @@ def _execute_tool(
             cur_attr, max_attr = attr_map[field_name]
 
             def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
                 delta = int(tool_input["delta"])
                 new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
@@ -1230,7 +1237,7 @@ def _execute_tool(
                 return new_val, major_wound
 
             new_val, major_wound = _mutate_and_save_state(state, _apply_attribute_delta)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
             if major_wound:
                 response["major_wound"] = True
@@ -1258,15 +1265,19 @@ def _execute_tool(
                 # KeyError instead of giving the Keeper a usable error.
                 return {"ok": False, "error": f"「{weapon}」沒有追蹤彈藥數（近戰武器或未登記彈藥表的槍械），不需要（也無法）裝填。"}
             def _apply_ammo_change(target_state: GroupState) -> None:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_entry = target_char.weapons.get(weapon)
+                if target_entry is None:
+                    raise ValueError(f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料")
                 if tool_input.get("reload_full"):
                     target_entry["ammo"] = target_entry["ammo_max"]
                 else:
                     target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
             _mutate_and_save_state(state, _apply_ammo_change)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             refreshed_entry = refreshed_char.weapons.get(weapon)
+            if refreshed_entry is None:
+                return {"ok": False, "error": f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料"}
             return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
 
         if name == "add_carried_item":
@@ -1277,7 +1288,7 @@ def _execute_tool(
             if not item:
                 return {"ok": False, "error": "item 不能是空字串"}
             def _mutate_add_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = item not in target_char.carried_items
                 if changed:
                     target_char.carried_items.append(item)
@@ -1295,7 +1306,7 @@ def _execute_tool(
             # stripped, stored string never string-equals the unstripped one being removed).
             item = tool_input.get("item", "").strip()
             def _mutate_remove_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = item in target_char.carried_items
                 if changed:
                     target_char.carried_items.remove(item)
@@ -1341,7 +1352,7 @@ def _execute_tool(
             if not tag:
                 return {"ok": False, "error": "tag 不能是空字串"}
             def _mutate_add_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = tag not in target_char.status_tags
                 if changed:
                     target_char.status_tags.append(tag)
@@ -1359,7 +1370,7 @@ def _execute_tool(
             # stripped, stored string never string-equals the unstripped one being removed).
             tag = tool_input.get("tag", "").strip()
             def _mutate_remove_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 changed = tag in target_char.status_tags
                 if changed:
                     target_char.status_tags.remove(tag)
@@ -1373,10 +1384,10 @@ def _execute_tool(
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             value = max(0, min(100, int(tool_input["value"])))
             def _mutate_set_skill(target_state: GroupState) -> None:
-                target_char = find_character(target_state, tool_input.get("investigator", ""))
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_char.skills[tool_input["skill"]] = value
             _mutate_and_save_state(state, _mutate_set_skill)
-            refreshed_char = find_character(state, tool_input.get("investigator", ""))
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
             return {"ok": True, "investigator": refreshed_char.name, "skill": tool_input["skill"], "value": value}
 
         if name == "get_character_sheet":
@@ -1536,12 +1547,12 @@ def _execute_tool(
                 return {"ok": False, "error": "該圖片不在目前章節 Context，不能展示"}
             if asset.get("visibility", "public") != "public" and speaker_role != "kp_assistant":
                 return {"ok": False, "error": "這一頁是 KP 專用資料，不能在一般遊戲流程中展示給玩家"}
-            investigator = tool_input.get("investigator")
+            image_investigator: str = tool_input.get("investigator") or ""
             owner_id = None
-            if investigator:
-                char = find_character(state, investigator)
+            if image_investigator:
+                char = find_character(state, image_investigator)
                 if not char:
-                    return {"ok": False, "error": f"找不到角色「{investigator}」"}
+                    return {"ok": False, "error": f"找不到角色「{image_investigator}」"}
                 owner_id = char.owner_id
             image_requests.append((owner_id, page))
             return {"ok": True, "page": page, "asset_type": asset.get("type"), "target": "private" if owner_id else "public"}

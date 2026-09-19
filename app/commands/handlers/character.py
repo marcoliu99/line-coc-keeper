@@ -22,6 +22,7 @@ async def handle_character_command(
     send_dm: SendDM,
     parts: list[str],
 ) -> None:
+    char = None
     sub = parts[1] if len(parts) > 1 else ""
 
     if sub == "characters":
@@ -156,6 +157,9 @@ async def handle_character_command(
                 return
             leftover = session.occ_points_remaining + session.interest_points_remaining
             char = creation.finalize(state, user_id)
+            if char is None:
+                await reply("建角資料已失效，請重新開始建角流程。")
+                return
             save_state(state)
             note = f"\n（還有 {leftover} 點未分配的技能點數已捨棄）" if leftover else ""
             await reply(f"調查員建立完成！\n\n{char.sheet_text()}{note}")

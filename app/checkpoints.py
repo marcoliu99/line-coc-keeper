@@ -233,7 +233,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
                 }
                 restored.state_revision = current_state.state_revision + 1
                 restored_payload = restored.to_dict()
-                db.set_json_tx(conn, "state_checkpoints", _checkpoint_key(group_id, pre["checkpoint_id"]), pre)
+                db.set_json_tx(conn, "state_checkpoints", _checkpoint_key(group_id, str(pre["checkpoint_id"])), pre)
                 db.set_json_tx(conn, "group_states", group_id, restored_payload)
                 restored_owner_ids = set(restored.characters)
                 restored_character_ids = {char.character_id for char in restored.all_characters() if char.character_id}
