@@ -25,18 +25,28 @@ storage would add complexity for no real benefit at this scale.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
+import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterator
 
-from app.config import DB_PATH
+from app.config import BACKUP_DIR, BACKUP_KEEP_COUNT, DB_PATH
+
+_logger = logging.getLogger(__name__)
 
 # Every table this project uses — deliberately a closed, small set (not
 # arbitrary caller-supplied strings) since table names get interpolated
 # directly into SQL below; sqlite3's parameter binding can't parametrize
 # identifiers, only values, and every call site here is our own code, never
 # user input.
-_TABLES = ("group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary")
+_TABLES = (
+    "group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary",
+    "state_checkpoints", "scene_digests",
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -45,6 +55,17 @@ CREATE TABLE IF NOT EXISTS {table} (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 )
 """
+
+_TRANSIENT_ROOTS = tuple(Path(path) for path in ("/tmp", "/var/tmp", "/private/tmp"))
+
+
+def _warn_if_path_looks_transient(path: Path) -> None:
+    resolved = path.expanduser().resolve()
+    if any(resolved == root or root in resolved.parents for root in _TRANSIENT_ROOTS):
+        _logger.warning(
+            "DB_PATH (%s) looks transient; configure DB_PATH/DATA_DIR/BACKUP_DIR to a persistent path",
+            resolved,
+        )
 
 
 @contextmanager
@@ -77,6 +98,7 @@ def _connect() -> Iterator[sqlite3.Connection]:
 
 
 def _ensure_tables() -> None:
+    _warn_if_path_looks_transient(DB_PATH)
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute("PRAGMA journal_mode=WAL")  # set once here — see _connect's docstring
@@ -150,3 +172,86 @@ def list_keys(table: str) -> list[str]:
     with _connect() as conn:
         rows = conn.execute(f"SELECT key FROM {table}").fetchall()
     return [r[0] for r in rows]
+
+
+def list_json(table: str, *, prefix: str | None = None) -> list[tuple[str, Any]]:
+    assert table in _TABLES, f"unknown table {table!r}"
+    with _connect() as conn:
+        if prefix is None:
+            rows = conn.execute(f"SELECT key, data FROM {table} ORDER BY updated_at, key").fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT key, data FROM {table} WHERE key LIKE ? ORDER BY updated_at, key",
+                (f"{prefix}%",),
+            ).fetchall()
+    return [(key, json.loads(data)) for key, data in rows]
+
+
+def delete_json_tx(conn: sqlite3.Connection, table: str, key: str) -> None:
+    assert table in _TABLES, f"unknown table {table!r}"
+    conn.execute(f"DELETE FROM {table} WHERE key = ?", (key,))
+
+
+@contextmanager
+def _backup_lock() -> Iterator[bool]:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(BACKUP_DIR, 0o700)
+    lock_path = BACKUP_DIR / "backup.lock"
+    fd: int | None = None
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.write(fd, f"pid={os.getpid()}\n".encode())
+        yield True
+    except FileExistsError:
+        yield False
+    finally:
+        if fd is not None:
+            os.close(fd)
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def backup_now(reason: str = "scheduled") -> Path | None:
+    """Create a consistent SQLite backup, or return None if another worker owns the lock."""
+    started = time.monotonic()
+    safe_reason = "".join(c if c.isalnum() or c in "-_" else "_" for c in reason) or "manual"
+    final_path: Path | None = None
+    with _backup_lock() as acquired:
+        if not acquired:
+            _logger.info("backup_skipped reason=lock_busy")
+            return None
+        try:
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            final_path = BACKUP_DIR / f"coc_bot-{stamp}-{safe_reason}.db"
+            temp_path = BACKUP_DIR / f".{final_path.name}.{os.getpid()}.tmp"
+            try:
+                source = sqlite3.connect(DB_PATH)
+                target = sqlite3.connect(temp_path)
+                try:
+                    source.backup(target)
+                    target.commit()
+                finally:
+                    target.close()
+                    source.close()
+                with temp_path.open("rb") as handle:
+                    os.fsync(handle.fileno())
+                os.chmod(temp_path, 0o600)
+                os.replace(temp_path, final_path)
+                if reason == "scheduled":
+                    scheduled = sorted(BACKUP_DIR.glob("coc_bot-*-scheduled.db"))
+                    for old in scheduled[:-BACKUP_KEEP_COUNT]:
+                        old.unlink(missing_ok=True)
+                size = final_path.stat().st_size
+                _logger.info(
+                    "backup_success reason=%s path=%s size_bytes=%s duration_ms=%s",
+                    safe_reason, final_path, size, int((time.monotonic() - started) * 1000),
+                )
+                return final_path
+            finally:
+                temp_path.unlink(missing_ok=True)
+        except Exception:
+            _logger.exception("backup_failure reason=%s duration_ms=%s", safe_reason, int((time.monotonic() - started) * 1000))
+            raise

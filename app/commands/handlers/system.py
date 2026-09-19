@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from app import keeper, locks, scenario_index, scenario_intro, scenario_library
+from app import checkpoints, keeper, locks, scenario_index, scenario_intro, scenario_library, scene_digest
 from app.models import GroupState
 from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
@@ -23,6 +23,90 @@ async def handle_system_command(
     format_mention: FormatMention = lambda owner_id: owner_id,
 ) -> None:
     sub = parts[1] if len(parts) > 1 else ""
+
+    if sub in ("checkpoint", "checkpoints", "rollback"):
+        state = load_state(conversation_id)
+        if state.kp_assistant_user_id != user_id:
+            await reply("只有目前登記的 KP Assistant 可以操作回溯節點。")
+            return
+        if sub == "checkpoint":
+            if len(parts) > 3 and parts[2] == "clean":
+                try:
+                    checkpoints.clean_checkpoint(conversation_id, parts[3])
+                except KeyError:
+                    await reply("找不到這個回溯節點。")
+                    return
+                await reply("已清除回溯節點。")
+                return
+            label = " ".join(parts[2:]).strip()
+            entry = checkpoints.create_checkpoint(state, label=label, created_by=user_id)
+            await reply(f"已建立回溯節點：{entry['checkpoint_id']}（{entry['label']}）。")
+            return
+        if sub == "checkpoints":
+            entries = checkpoints.list_checkpoints(conversation_id)
+            if not entries:
+                await reply("目前沒有回溯節點。")
+                return
+            lines = ["回溯節點："]
+            for entry in entries:
+                lines.append(
+                    f"・{entry['checkpoint_id']}｜{entry.get('label', '')}｜"
+                    f"{entry.get('reason', 'manual')}｜{entry.get('created_at', '')}"
+                )
+            await reply("\n".join(lines))
+            return
+        if len(parts) < 3:
+            await reply("用法：/coc rollback <節點 ID 或唯一名稱>")
+            return
+        try:
+            restored, checkpoint, pre = checkpoints.rollback(
+                conversation_id, " ".join(parts[2:]), actor_id=user_id
+            )
+        except KeyError:
+            await reply("找不到這個回溯節點。")
+            return
+        except ValueError as exc:
+            await reply(f"無法回溯：{exc}")
+            return
+        await reply(
+            f"已回溯到「{checkpoint.get('label', checkpoint['checkpoint_id'])}」；"
+            f"本次操作前的狀態已保存為 {pre['checkpoint_id']}。"
+        )
+        return
+
+    if sub in ("digest", "digests"):
+        state = load_state(conversation_id)
+        if state.kp_assistant_user_id != user_id:
+            await reply("只有目前登記的 KP Assistant 可以查看場景摘要。")
+            return
+        if sub == "digests":
+            entries = scene_digest.list_digests(conversation_id)
+            if not entries:
+                await reply("目前沒有場景摘要。")
+                return
+            await reply("\n".join(
+                f"・{entry['digest_id']}｜{entry.get('scene_label', '')}｜{entry.get('updated_at', '')}"
+                for entry in entries
+            ))
+            return
+        identifier = parts[2] if len(parts) > 2 else ""
+        if identifier == "clean" and len(parts) > 3:
+            from app import db
+            with db.transaction() as conn:
+                db.delete_json_tx(conn, "scene_digests", f"{conversation_id}:{parts[3]}")
+            await reply("已清除場景摘要。")
+            return
+        try:
+            entry = scene_digest.latest_digest(conversation_id, state.timeline_id)
+            if identifier:
+                entry = scene_digest.get_digest(conversation_id, identifier)
+            if entry is None:
+                raise KeyError(identifier)
+        except KeyError:
+            await reply("找不到這筆場景摘要。")
+            return
+        await reply(str(entry.get("public", {})))
+        return
 
     if sub == "scenario":
         action = parts[2] if len(parts) > 2 else "list"

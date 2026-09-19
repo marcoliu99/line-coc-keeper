@@ -108,6 +108,8 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc setpersona <文字> → 自訂這個群組守密人的語氣風格（預設是冷酷旁觀者），/coc setpersona reset 重設回預設
 ・/coc newgame → 重置這個群組，開始全新一局
 ・/coc end → 結束目前這局遊戲
+・/coc checkpoint [名稱]／/coc checkpoints／/coc rollback <ID> → KP 管理回溯節點
+・/coc digest／/coc digests／/coc digest <ID> → KP 查看場景摘要
 ・/roll 1d100 或 /roll 3d6+2 → 單純擲骰，不經過守密人
 
 角色建立好之後，直接在群組裡輸入你的行動或對話，守密人就會接手描述！"""

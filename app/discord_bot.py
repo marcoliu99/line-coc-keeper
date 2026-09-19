@@ -24,10 +24,13 @@ from app.legacy_commands import (
     handle_scenario_compare_upload, handle_unsupported_message
 )
 from app.config import DISCORD_BOT_TOKEN
+from app.config import BACKUP_INTERVAL_MINUTES
+from app import db
 from app.models import GroupState
 from app.repositories.group_state import load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
+_backup_task: asyncio.Task | None = None
 
 MAX_DISCORD_MESSAGE_CHARS = 1900  # Discord's hard limit is 2000; leave a margin
 MAX_REPLY_MESSAGES = 10
@@ -406,7 +409,21 @@ client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton)
 
 @client.event
 async def on_ready() -> None:
+    global _backup_task
+    if _backup_task is None or _backup_task.done():
+        _backup_task = asyncio.create_task(_backup_loop())
     print(f"Discord bot 已上線：{client.user}")
+
+
+async def _backup_loop() -> None:
+    while True:
+        try:
+            await asyncio.sleep(BACKUP_INTERVAL_MINUTES * 60)
+            await asyncio.to_thread(db.backup_now, "scheduled")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _logger.exception("scheduled backup failed; will retry next interval")
 
 
 @client.event

@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
+from uuid import uuid4
 
-from app import combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag
-from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
+from app import combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag, scene_digest
+from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
@@ -307,6 +309,30 @@ TOOLS = [
         },
     },
     {
+        "name": "record_established_fact",
+        "description": "記錄已被證實、之後必須保持一致的劇情事實；不是猜測或普通對話。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fact": {"type": "string"},
+                "visibility": {"type": "string", "enum": ["public", "kp_only"]},
+            },
+            "required": ["fact"],
+        },
+    },
+    {
+        "name": "record_clue",
+        "description": "記錄調查員實際取得、之後可能回頭引用的線索。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "clue": {"type": "string"},
+                "visibility": {"type": "string", "enum": ["public", "kp_only"]},
+            },
+            "required": ["clue"],
+        },
+    },
+    {
         "name": "add_status_tag",
         "description": (
             "幫角色加上一個持續性的狀態標籤（例如「昏迷」「倒地」「中毒」「著火」），會顯示在角色卡"
@@ -528,6 +554,8 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "search_scenario_images",
     "show_scenario_image",
     "advance_scenario_chapter",
+    "record_established_fact",
+    "record_clue",
 }
 
 _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
@@ -805,6 +833,17 @@ def _persist_memory_maintenance_state(
 _maintenance_in_flight: set[str] = set()
 
 
+def run_scene_digest_maintenance(group_id: str) -> None:
+    with locks.get_state_lock(group_id):
+        state = load_state(group_id)
+        latest = scene_digest.latest_digest(group_id, state.timeline_id)
+        chapter_changed = latest is None or latest.get("scene_label") != (state.active_chapter_id or state.scenario_title or "目前場景")
+        log_interval_reached = latest is None or len(state.log) - latest.get("log_length", 0) >= SCENE_DIGEST_TURN_INTERVAL
+        if not (chapter_changed or log_interval_reached):
+            return
+        scene_digest.create_digest(state)
+
+
 def run_post_turn_maintenance(group_id: str) -> None:
     """Called after every turn (see app/commands.py's
     _spawn_post_turn_maintenance, which now fires this as an independent
@@ -829,6 +868,7 @@ def run_post_turn_maintenance(group_id: str) -> None:
     _maintenance_in_flight` before either adds it, both proceed, and run two
     overlapping passes anyway — exactly the failure mode this guard exists
     to prevent."""
+    run_scene_digest_maintenance(group_id)
     with locks.get_state_lock(group_id):
         if group_id in _maintenance_in_flight:
             return
@@ -1111,9 +1151,39 @@ def _execute_tool(
                 changed = item in target_char.carried_items
                 if changed:
                     target_char.carried_items.remove(item)
+                    target_state.consumed_or_removed_items.append({
+                        "item": item,
+                        "character_id": target_char.owner_id,
+                        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
+                    })
                 return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
             investigator, carried_items = _mutate_and_save_state(state, _mutate_remove_item)
             return {"ok": True, "investigator": investigator, "carried_items": carried_items}
+
+        if name in ("record_established_fact", "record_clue"):
+            field_name = "established_facts" if name == "record_established_fact" else "known_clues"
+            text_value = ((tool_input.get("fact") if name == "record_established_fact" else tool_input.get("clue")) or "").strip()
+            if not text_value:
+                return {"ok": False, "error": "內容不能是空字串"}
+            visibility = tool_input.get("visibility", "public")
+            if visibility not in ("public", "kp_only"):
+                return {"ok": False, "error": "visibility 必須是 public 或 kp_only"}
+            def _mutate_record(target_state: GroupState) -> _StateMutation[dict]:
+                records = getattr(target_state, field_name)
+                if any(record.get("text") == text_value and record.get("visibility", "public") == visibility for record in records):
+                    return _StateMutation({"recorded": False, "records": records}, should_save=False)
+                record = {
+                    "text": text_value,
+                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
+                    "visibility": visibility,
+                    "scene_id": "",
+                }
+                records.append(record)
+                return _StateMutation({"recorded": True, "record": record}, should_save=True)
+            result = _mutate_and_save_state(state, _mutate_record)
+            return {"ok": True, **result}
 
         if name == "add_status_tag":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -1525,6 +1595,11 @@ def _build_dynamic_prompt(
     chars_text = "\n".join(c.dynamic_state_text() for c in state.characters.values()) or "（目前尚無登記角色）"
     secret_goals = "\n".join(c.keeper_notes_text() for c in state.characters.values() if c.secret_goal)
     secret_block = f"\n\n{secret_goals}" if secret_goals else ""
+    digest = scene_digest.latest_digest(state.group_id, state.timeline_id)
+    digest_block = ""
+    if digest:
+        digest_block = f"\n\n# 目前場景摘要（timeline={state.timeline_id}，只採用目前 timeline 的最新版本）\n{digest.get('public', {})}"
+        digest_block += f"\n\n# Keeper 專用摘要（不可透露給玩家）\n{digest.get('private', {})}"
 
     location_block = ""
     if resolved_location:
@@ -1598,7 +1673,7 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 {history_text}"""
 
     return f"""# 目前動態數值（HP/SAN/Luck/彈藥/攜帶物品/狀態——這些才是當下最新的，屬性和技能請看上面的角色登記區塊）
-{chars_text}{secret_block}
+{chars_text}{secret_block}{digest_block}
 {combat_block}{location_block}{kp_assistant_block}
 """
 

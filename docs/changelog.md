@@ -4,6 +4,14 @@
 
 這些都是為了先做出一個能玩的 MVP，刻意先砍掉的範圍。想擴充哪一項都可以直接跟我說，下面附上為什麼會有這個限制、目前有什麼權宜作法、以及之後要補的話大概要改什麼地方。
 
+### 狀態持久化、回溯節點與 Discord 備份
+
+- `GroupState` 現在保存 `schema_version`、`timeline_id` 與遞增的 `state_revision`；中央 SQLite 保存路徑會記錄成功/失敗與耗時 log。
+- 新增 KP-only 的 `/coc checkpoint`、`/coc checkpoints`、`/coc rollback`，以及開戰前自動 checkpoint；rollback 會先建立 `pre_rollback`，並切換到新的 timeline。
+- Discord bot 會依 `BACKUP_INTERVAL_MINUTES` 使用 SQLite online backup API 建立一致性備份，透過跨 process lock、暫存檔與 atomic rename 保護備份結果。
+- 新增 deterministic scene digest，依目前 timeline 提供 Keeper prompt 的最新摘要；facts、clues 與成功移除的物品會以 metadata 持久化，沒有額外 LLM 呼叫。
+- 新增 `BACKUP_DIR`、`BACKUP_KEEP_COUNT`、`SCENE_DIGEST_TURN_INTERVAL` 設定；備份與 checkpoint 檔案預設只允許 bot service user 存取。此批實作範圍以 Discord 為主。
+
 ### 1. 角色建立：三種方式，各有取捨
 
 - **正式規則是怎樣**：COC7e 官方建角流程是先擲出 8 項屬性（STR/CON/DEX/APP/POW 用 3d6×5，SIZ/INT/EDU 用 (2d6+6)×5），接著把 `EDU×20` 當作「職業技能點數」，由玩家自己決定要分配到哪些跟職業相關的技能上；再把 `INT×10` 當作「興趣技能點數」，同樣自由分配到任何技能。很多劇本也會附上已經做好的預製調查員（pregens）給團隊直接使用。

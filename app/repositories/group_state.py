@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import re
 import shutil
+import logging
+import time
+from uuid import uuid4
 from pathlib import Path
 
 from app import db
@@ -21,6 +24,7 @@ from app.config import DATA_DIR
 from app.models import GroupState
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
+_logger = logging.getLogger(__name__)
 
 
 def _safe_id(group_id: str) -> str:
@@ -37,30 +41,55 @@ def load_state(group_id: str) -> GroupState:
     data = db.get_json("group_states", group_id)
     if data is None:
         return GroupState(group_id=group_id)
-    return GroupState.from_dict(data)
+    state = GroupState.from_dict(data)
+    if state.schema_version > GroupState.CURRENT_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported GroupState schema_version={state.schema_version}; "
+            f"current={GroupState.CURRENT_SCHEMA_VERSION}"
+        )
+    return state
 
 
 def save_state(state: GroupState) -> None:
+    started = time.monotonic()
+    if not state.timeline_id:
+        state.timeline_id = f"timeline-{uuid4().hex[:8]}"
+    next_revision = state.state_revision + 1
+    payload = state.to_dict()
+    payload["state_revision"] = next_revision
+    payload["timeline_id"] = state.timeline_id
     # Batched into one connection/transaction (db.transaction/set_json_tx)
     # rather than a separate db.set_json call per write — a party of N
     # characters used to mean N+1 independent SQLite connections (the group
     # state, plus one per character mirror below), each paying its own
     # connect+PRAGMA overhead for what is logically one atomic save.
-    with db.transaction() as conn:
-        db.set_json_tx(conn, "group_states", state.group_id, state.to_dict())
+    try:
+        with db.transaction() as conn:
+            db.set_json_tx(conn, "group_states", state.group_id, payload)
 
-        # A per-owner_id mirror, independent of which group this character
-        # belongs to — separate from the group blob above so looking up one
-        # player's sheet doesn't require knowing (or loading) the whole
-        # conversation's state.
-        for owner_id, char in state.characters.items():
-            index_entry = {
-                "conversation_id": state.group_id,
-                "name": char.name,
-                "occupation": char.occupation,
-                "sheet": char.to_dict(),
-            }
-            db.set_json_tx(conn, "characters", owner_id, index_entry)
+            # A per-owner_id mirror, independent of which group this character
+            # belongs to — separate from the group blob above so looking up one
+            # player's sheet doesn't require knowing (or loading) the whole
+            # conversation's state.
+            for owner_id, char in state.characters.items():
+                index_entry = {
+                    "conversation_id": state.group_id,
+                    "name": char.name,
+                    "occupation": char.occupation,
+                    "sheet": char.to_dict(),
+                }
+                db.set_json_tx(conn, "characters", owner_id, index_entry)
+    except Exception:
+        _logger.exception(
+            "state_save_failure group_id=%s attempted_revision=%s timeline_id=%s duration_ms=%s transaction=rolled_back",
+            state.group_id, next_revision, state.timeline_id, int((time.monotonic() - started) * 1000),
+        )
+        raise
+    state.state_revision = next_revision
+    _logger.info(
+        "state_save_success group_id=%s revision=%s timeline_id=%s reason=state_save duration_ms=%s",
+        state.group_id, state.state_revision, state.timeline_id, int((time.monotonic() - started) * 1000),
+    )
 
 
 def _images_dir(group_id: str) -> Path:

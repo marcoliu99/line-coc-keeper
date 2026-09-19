@@ -439,7 +439,12 @@ class CombatState:
 
 @dataclass
 class GroupState:
+    CURRENT_SCHEMA_VERSION = 1
+
     group_id: str
+    schema_version: int = CURRENT_SCHEMA_VERSION
+    timeline_id: str = ""
+    state_revision: int = 0
     scenario_title: str = ""
     scenario_text: str = ""
     scenario_library_id: str = ""
@@ -551,6 +556,9 @@ class GroupState:
     # defer.
     pending_pdf_upload: dict[str, Any] | None = None
     pending_scenario_upload: dict[str, Any] | None = None
+    established_facts: list[dict[str, Any]] = field(default_factory=list)
+    known_clues: list[dict[str, Any]] = field(default_factory=list)
+    consumed_or_removed_items: list[dict[str, Any]] = field(default_factory=list)
 
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
@@ -561,6 +569,9 @@ class GroupState:
     def to_dict(self) -> dict[str, Any]:
         return {
             "group_id": self.group_id,
+            "schema_version": self.schema_version,
+            "timeline_id": self.timeline_id or f"legacy-{self.group_id}",
+            "state_revision": self.state_revision,
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
             "scenario_library_id": self.scenario_library_id,
@@ -589,12 +600,18 @@ class GroupState:
             "era": self.era,
             "pending_pdf_upload": self.pending_pdf_upload,
             "pending_scenario_upload": self.pending_scenario_upload,
+            "established_facts": self.established_facts,
+            "known_clues": self.known_clues,
+            "consumed_or_removed_items": self.consumed_or_removed_items,
         }
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "GroupState":
         return GroupState(
             group_id=data["group_id"],
+            schema_version=int(data.get("schema_version", 1)),
+            timeline_id=data.get("timeline_id") or f"legacy-{data['group_id']}",
+            state_revision=int(data.get("state_revision", 0)),
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
             scenario_library_id=data.get("scenario_library_id", ""),
@@ -630,4 +647,7 @@ class GroupState:
             era=data.get("era", "1920s"),
             pending_pdf_upload=data.get("pending_pdf_upload"),
             pending_scenario_upload=data.get("pending_scenario_upload"),
+            established_facts=data.get("established_facts", []),
+            known_clues=data.get("known_clues", []),
+            consumed_or_removed_items=data.get("consumed_or_removed_items", []),
         )

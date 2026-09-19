@@ -1,6 +1,7 @@
 from typing import Any
 
 from app import combat
+from app import checkpoints
 from app.repositories.group_state import load_state, save_state
 from app.legacy_commands import Reply
 
@@ -10,6 +11,14 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
     state = load_state(conversation_id)
 
     if action == "start":
+        if not state.combat.active:
+            checkpoints.create_checkpoint(
+                state,
+                label="開戰前",
+                created_by="system",
+                reason="auto_combat_start",
+                event_id=f"combat-start:{conversation_id}:{state.state_revision}",
+            )
         combat.start_combat(state)
         save_state(state)
         await reply(combat.status_text(state))
