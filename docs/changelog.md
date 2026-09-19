@@ -1855,3 +1855,15 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - legacy owner map 的角色會逐筆補進 `characters_by_id`，不再因 ID index 已非空而漏掉後加入的角色；combat runtime identity guard 也同步支援這個 merge。
 - `advance_turn()` 在跨輪前處理 `round_end` effects，之後才增加 round、重置能力次數並處理 `round_start`。
 - 新增角色索引共享、legacy merge 與 round-end damage regression tests；完整測試 74 項通過。
+
+### 105. 移植 `main` v1.0 後的預製角色與技能修正
+
+- 預製角色在 `/coc usepregen` claim time 重新擲 LUCK；公開預覽標註卡面值不會直接沿用，並將技能預覽限制為最高 12 項。
+- 預製角色抽取、`/coc alloc` 與既有資料 migration 共用 `SKILL_ALIASES`，數字 alias collision 取較高值，避免技能重複或實際檢定讀不到分配值。
+- 圖片較多的 PDF 不再顯示固定一分鐘處理時間估算。
+
+### 106. KP Assistant manual canon 與 deterministic canon 統一
+
+- KP Assistant 的 `!`／`！` manual canon 與成功的 deterministic game-resolution tool 共用同一 canonical persistence pipeline。
+- canonical history 統一使用 `[KP Assistant]` 前綴；只有有工具事件時才加入 deterministic workflow 區塊，普通 OOC 仍保留在 `kp_ooc_log`。
+- 玩家訊息開頭的 `!` 不具 KP canon 特殊語意；manual canon 會正常推進 OpenAI canonical response chain。
