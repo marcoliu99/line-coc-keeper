@@ -11,7 +11,7 @@
 - 新增 command 或 agent 功能時，只需在自己的模組註冊 help entry，不必修改一個中央超長字串。
 - `/coc help` 顯示分類入口，而不是一次送出完整手冊。
 - 使用者最多經過三層按鈕導覽即可看到某個 command 的用途、格式、範例與權限提示。
-- 直接輸入 `/coc help <path>` 也能取得同一份內容，方便 LINE、測試與不支援按鈕的平台。
+- 直接輸入 `/coc help <path>` 也能取得同一份內容，方便不使用按鈕的 Discord 使用者與測試。
 - 舊有所有 command 的實際 routing 與行為不因 help 重構而改變。
 
 ## 2. Scope
@@ -23,7 +23,7 @@
 - 提供 handler／agent registration API。
 - `/coc help` root、分類頁、command detail 頁的 rendering。
 - Discord persistent/dynamic buttons：上一層、首頁、分類與 command detail。
-- 不支援互動按鈕的平台使用文字 path，例如 `/coc help combat` 或 `/coc help combat damage`。
+- 本功能只支援 Discord；不在 LINE adapter 或其他平台實作 help UI。
 - 對錯誤 path、未知 command、重複註冊與超過三層的 registry 定義清楚的錯誤行為。
 - registry、routing、Discord navigation 與 fallback 的單元測試。
 
@@ -82,7 +82,7 @@ Registry 在 application import 時完成註冊。各 handler 以自己的 regis
 | `app/commands/router.py` | 將 `/coc help...` 交給 help service，不改其他 routing |
 | `app/help_render.py` 或等效 service | 產生 platform-agnostic page text 與 navigation actions |
 | `app/discord_bot.py` | 把 navigation actions 轉成 persistent Discord buttons |
-| `app/main.py`／LINE adapter | 使用 text path fallback；若未來加入 LINE quick reply，再接同一組 actions |
+| Discord text command path | 提供不使用按鈕時的 `/coc help <path>` fallback |
 
 ## 4. Navigation shape and three-level limit
 
@@ -129,9 +129,9 @@ Page lookup 的規則：
 
 按鈕 label 必須是短標題，不直接使用完整 usage；完整 command 放在 detail page，避免 Discord button label 超長與手機版難讀。
 
-### LINE and other fallback flow
+### Non-Discord platforms
 
-現有 LINE adapter 沒有共用的互動按鈕／quick reply abstraction，因此第一版保證文字 path 可用，並在 root/category page 顯示下一步範例。未來若要加入 LINE quick reply，應只新增 adapter renderer，重用同一個 `HelpPage` 與 action path，不在 registry 裡混入 LINE-specific 型別。
+本功能明確排除 LINE 與其他平台。Help registry 與 Discord renderer 不應被 LINE adapter import；未來若要支援其他平台，另開獨立規格與 adapter，不在本 feature 中預留 fallback 行為。
 
 ## 6. Integration with existing code conventions
 
@@ -158,11 +158,26 @@ Page lookup 的規則：
 9. registry import/reload 不會重複註冊 entries。
 10. 現有完整 `unittest discover` 維持通過。
 
-## 8. Open questions and tradeoffs for review
+## 8. KP-only classification
 
-- **平台範圍**：第一版是否接受 Discord 使用按鈕、LINE 使用文字 path fallback？若要求 LINE 也必須有按鈕，需要另納入 LINE Template／Quick Reply adapter 與測試，工作量會增加。
-- **KP-only visibility**：help 是否要依目前使用者／群組角色隱藏 KP-only commands，或所有人都看得到但標記「KP 專用」？前者需要把 caller identity/context 傳到 help page builder。
+Help metadata 的 `kp_only` 必須反映實際 authorization，不能只因某個指令「通常由 KP 使用」就標成 KP-only。依目前程式碼核對結果：
+
+| 分類 | 指令／能力 | 本規格的標記 | 現有行為 |
+| --- | --- | --- | --- |
+| 已確認 KP-only | `/coc scenario use <scenario-id>` | `kp_only=True` | 只有目前登記的 KP Assistant 可以執行 |
+| KP 身分管理 | `/coc kp`、`/coc kp quit` | `kp_only=False`，但標記為「KP 身分」 | 一般符合條件的使用者可登記；只有目前 KP 可解除自己的身分 |
+| KP Assistant 專用能力 | 非 slash command 的 KP Assistant 對話與 Keeper tools，例如 private combat status、scenario image private asset、主持用 deterministic tools | 不作為 `/coc help` command entry；在「KP 助手」分類說明 | 由 `speaker_role == "kp_assistant"` 與 tool allowlist 控制 |
+| 目前沒有 KP authorization 的管理指令 | `/coc newgame`、`/coc pdf new|fix`、`/coc scenario reparse|cancel|clean`、`/coc end`、`/coc setpersona`、`/coc era`、`/coc index` | 暫不標 `kp_only` | 目前程式碼沒有一致的 KP 身分檢查；若產品決定它們必須是 KP-only，需另開 authorization scope 或在本 feature 中明確加入權限變更 |
+
+因此第一版 help UI 會：
+
+- 隱藏或標示 `/coc scenario use` 為 KP-only（採用哪一種顯示方式需以實作決定，但不可讓未授權使用者誤以為可執行）。
+- 顯示 `/coc kp`、`/coc kp quit`，但以「登記／解除 KP Assistant」標籤說明，不把它們誤分類為已經是 KP 才能使用的 command。
+- 不把 KP Assistant 的 internal tools 假裝成可直接輸入的 `/coc xxx`。
+
+### Remaining review decisions
+
+- **KP-only visibility**：目前建議對 `/coc scenario use` 顯示 entry 但標記 KP-only，點入仍可查看用法；也可以改成對非 KP 完全隱藏。這只影響 help 顯示，不應取代 command handler 的 authorization。
 - **分類粒度**：建議先固定 6–8 個高階分類，避免把 category 本身做成無限可巢狀樹；更細節放在 command detail 文字中。
 - **相容策略**：可在一個 release 保留 `HELP_TEXT` 作為 debug／fallback，但正式 `/coc help` 不再輸出它；待新 registry 覆蓋完整後再刪除常數。
 - **按鈕訊息策略**：建議 Discord 點擊後 edit 同一則 help message，避免每次點擊都洗版；若平台限制 edit，再 fallback 為新訊息。
-
