@@ -75,6 +75,22 @@ def _ensure_line_clients() -> None:
         line_bot_blob_api = AsyncMessagingApiBlob(_async_api_client)
 
 
+def _line_messaging_api() -> AsyncMessagingApi:
+    """Return the initialized messaging client or fail explicitly."""
+    _ensure_line_clients()
+    if line_bot_api is None:
+        raise RuntimeError("LINE messaging client 尚未初始化")
+    return line_bot_api
+
+
+def _line_blob_api() -> AsyncMessagingApiBlob:
+    """Return the initialized blob client or fail explicitly."""
+    _ensure_line_clients()
+    if line_bot_blob_api is None:
+        raise RuntimeError("LINE blob client 尚未初始化")
+    return line_bot_blob_api
+
+
 MAX_LINE_MESSAGE_CHARS = 4800
 MAX_REPLY_MESSAGES = 5
 
@@ -88,7 +104,7 @@ def _chunk_text(text: str) -> list[str]:
 def _make_reply(reply_token: str) -> Reply:
     async def reply(text: str) -> None:
         messages = [TextMessage(text=c) for c in _chunk_text(text)]
-        await line_bot_api.reply_message_with_http_info(
+        await _line_messaging_api().reply_message_with_http_info(
             ReplyMessageRequest(reply_token=reply_token, messages=messages)
         )
 
@@ -102,7 +118,7 @@ def _make_push(to_id: str) -> Reply:
     # unlimited), but this only fires once per PDF upload, not per turn.
     async def push(text: str) -> None:
         messages = [TextMessage(text=c) for c in _chunk_text(text)]
-        await line_bot_api.push_message_with_http_info(
+        await _line_messaging_api().push_message_with_http_info(
             PushMessageRequest(to=to_id, messages=messages)
         )
 
@@ -136,7 +152,7 @@ async def _send_image_to(to_id: str, png_bytes: bytes, conversation_id: str, pag
     # needs a URL, which is why the get_page_image route above exists: LINE's own
     # servers fetch that URL when actually rendering the image to the user.
     url = _image_url(conversation_id, page_number)
-    await line_bot_api.push_message_with_http_info(
+    await _line_messaging_api().push_message_with_http_info(
         PushMessageRequest(to=to_id, messages=[ImageMessage(original_content_url=url, preview_image_url=url)])
     )
 
@@ -182,12 +198,13 @@ def _push_target_id(source) -> str:
 
 async def _display_name(source, user_id: str) -> str:
     try:
+        api = _line_messaging_api()
         if isinstance(source, GroupSource):
-            profile = await line_bot_api.get_group_member_profile(source.group_id, user_id)
+            profile = await api.get_group_member_profile(source.group_id, user_id)
         elif isinstance(source, RoomSource):
-            profile = await line_bot_api.get_room_member_profile(source.room_id, user_id)
+            profile = await api.get_room_member_profile(source.room_id, user_id)
         else:
-            profile = await line_bot_api.get_profile(user_id)
+            profile = await api.get_profile(user_id)
         return profile.display_name
     except Exception:
         return user_id[:8] if user_id else "玩家"
@@ -233,7 +250,7 @@ async def _handle_message_event(event: MessageEvent) -> None:
 
     if isinstance(event.message, FileMessageContent):
         file_name = getattr(event.message, "file_name", "") or ""
-        content = await line_bot_blob_api.get_message_content(event.message.id)
+        content = await _line_blob_api().get_message_content(event.message.id)
         push = _make_push(_push_target_id(event.source))
         await handle_pdf_upload(conversation_id, reply, push, content, file_name)
         return

@@ -10,6 +10,7 @@
 - 依靜態檢查再補強：沒有存活目標時不再產生不可執行的攻擊計畫，戰鬥與資料庫核心模組通過 mypy；SQLite table 名稱改為執行期 allowlist 驗證，不依賴可被 `python -O` 移除的 `assert`。
 - 建立 `mypy.ini` 型別檢查基準：核心遊戲、戰鬥、持久化、資料模型與已收窄的 Discord/legacy adapter 維持檢查；只有 LINE 產生 SDK 的 optional-client 邊界保留 adapter scope，避免第三方缺少 stubs 的噪音混入型別 gate。
 - 補齊 Discord、命令 router、legacy command 與 system handler 的型別收窄：動態 JSON payload、可選角色、骰子參數與互動元件 stub 都有明確處理；這四個模組現在納入 mypy gate，僅保留 LINE 產生 SDK 的 optional-client 邊界例外。
+- LINE adapter 也移除整個模組的 mypy 忽略，改由 typed client accessor 在使用前完成初始化與 `None` narrowing；後續 `app.main` 的新型別錯誤不會再被整批隱藏。
 - `GroupState` 現在保存 `schema_version`、`timeline_id` 與遞增的 `state_revision`；中央 SQLite 保存路徑會記錄成功/失敗與耗時 log。
 - 新增 KP-only 的 `/coc checkpoint`、`/coc checkpoints`、`/coc rollback`，以及開戰前自動 checkpoint；rollback 會先建立 `pre_rollback`，並切換到新的 timeline。
 - Discord bot 會依 `BACKUP_INTERVAL_MINUTES` 使用 SQLite online backup API 建立一致性備份，透過跨 process lock、暫存檔與 atomic rename 保護備份結果。
