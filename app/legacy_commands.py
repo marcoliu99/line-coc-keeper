@@ -323,7 +323,7 @@ async def handle_pdf_upload(
             await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
             return False
 
-    await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
+    await reply("收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...")
 
     try:
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
@@ -1528,18 +1528,17 @@ def _set_character_away_state(conversation_id: str, user_id: str, away: bool) ->
 
 
 def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
-    """Full-detail, read-only preview of a scenario pregen for a player deciding
-    whether to claim it — unlike Character.sheet_text() this shows every skill
-    the scenario listed (not just the top 12), since the whole point is letting
-    someone compare candidates before committing via /coc usepregen. Deliberately
-    excludes secret_goal: that's only ever revealed privately after a claim (see
-    /coc pc and /coc usepregen), never in a pre-selection preview anyone can run."""
+    """Read-only pregen preview, capped to the same top 12 skills as Character."""
     lines = [
         f"【預製角色 #{index}】{pregen.get('name') or '未命名'}　職業：{pregen.get('occupation', '未知職業')}",
     ]
-    attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "luck"]
-    labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU", "luck": "LUCK"}
+    attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu"]
+    labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU"}
     attr_line = " ".join(f"{labels[a]} {pregen[a]}" for a in attrs if isinstance(pregen.get(a), (int, float)))
+    if isinstance(pregen.get("luck"), (int, float)):
+        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {pregen['luck']}，取用時將重新骰定）"
+    elif attr_line:
+        attr_line += "（LUCK 將於取用時骰定）"
     if attr_line:
         lines.append(attr_line)
     vitals = []
@@ -1553,8 +1552,8 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
         lines.append("　".join(vitals))
     skills = pregen.get("skills") or {}
     if skills:
-        ranked = sorted(skills.items(), key=lambda kv: -kv[1] if isinstance(kv[1], (int, float)) else 0)
-        lines.append("技能：" + "、".join(f"{k} {v}%" for k, v in ranked))
+        ranked = sorted(skills.items(), key=lambda kv: -kv[1] if isinstance(kv[1], (int, float)) else 0)[:12]
+        lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in ranked))
     if pregen.get("notes"):
         lines.append(f"背景：{pregen['notes']}")
     if pregen.get("key_connection"):

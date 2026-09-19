@@ -13,7 +13,7 @@ from typing import Any
 
 from app import character_matcher, dictionary
 from app.config import LLM_PROVIDER
-from app.models import BASE_SKILLS, Character, damage_bonus_and_build, move_rate
+from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
 
@@ -229,14 +229,15 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
 
 
 def _translate_skill_names(skills: dict[str, Any]) -> dict[str, Any]:
-    """Looks each skill name up against app/dictionary.py's seeded/learned
-    skills table before storing — by the time this runs, _learn_translations_
-    from_pregen above has already taught the dictionary this exact
-    extraction's own skill_translations pairs, so a still-English name from
-    THIS scenario is already a guaranteed hit, not a hopeful one. A name
-    with no dictionary entry (e.g. the LLM didn't include it in
-    skill_translations) is kept as-is rather than dropped."""
-    return {(dictionary.lookup_skill(name) or name): value for name, value in skills.items()}
+    """Canonicalize extracted names and merge duplicate aliases safely."""
+    merged: dict[str, Any] = {}
+    for name, value in skills.items():
+        canonical = canonical_skill_name(name)
+        if canonical in merged and isinstance(merged[canonical], (int, float)) and isinstance(value, (int, float)):
+            merged[canonical] = max(merged[canonical], value)
+        else:
+            merged[canonical] = value
+    return merged
 
 
 _SECTION_RE = re.compile(r"^【(.+?)】\s*$", re.MULTILINE)
@@ -560,7 +561,9 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
     int_ = _int_or(pregen.get("int_"), 50)
     pow_ = _int_or(pregen.get("pow_"), 50)
     edu = _int_or(pregen.get("edu"), 50)
-    luck = _int_or(pregen.get("luck"), 50)
+    # Roll at claim time so the shared scenario library is never mutated and
+    # different players claiming the same pregen receive independent values.
+    luck = _roll(3, 6, 5)
 
     # _int_or already falls back to `default` on anything non-numeric — no
     # need for a trailing `or default` here, which would (confusingly) also
