@@ -1640,9 +1640,18 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     lines = [
         f"【預製角色 #{index}】{pregen.get('name') or '未命名'}　職業：{pregen.get('occupation', '未知職業')}",
     ]
-    attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "luck"]
-    labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU", "luck": "LUCK"}
+    # LUCK deliberately excluded from `attrs` below — /coc usepregen always
+    # rolls a fresh LUCK for whoever claims this slot (see
+    # pregen_extractor.pregen_to_character), so showing the PDF's printed
+    # value here as if it were a fixed stat would mislead a player comparing
+    # candidates into thinking that's what they'll actually get.
+    attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu"]
+    labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU"}
     attr_line = " ".join(f"{labels[a]} {pregen[a]}" for a in attrs if isinstance(pregen.get(a), (int, float)))
+    if isinstance(pregen.get("luck"), (int, float)):
+        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {pregen['luck']}，取用時將重新骰定）"
+    elif attr_line:
+        attr_line += "（LUCK 將於取用時骰定）"
     if attr_line:
         lines.append(attr_line)
     vitals = []

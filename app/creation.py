@@ -17,6 +17,7 @@ from app.models import (
     damage_bonus_and_build,
     move_rate,
 )
+from app.skill_aliases import canonical_skill_name
 
 _SKILL_CAP = 90  # soft cap on any single skill at character creation
 
@@ -68,7 +69,18 @@ def allocate(session: CreationSession, pool: str, skill: str, points: int) -> di
     if points > remaining:
         return {"ok": False, "error": f"點數不夠，這個點數池還剩 {remaining} 點"}
 
-    current_value = session.skills.get(skill, 20)  # unlisted skill: treat as 20% starting point
+    # Canonicalize before touching session.skills (see app/pregen_extractor.py's
+    # pregen_to_character, which does the same) — otherwise a player typing a
+    # common shorthand ("手槍") instead of the official name ("射擊（手槍）")
+    # opens a brand new, separate dict entry instead of adding to the one
+    # start_creation already seeded from BASE_SKILLS. The points would still
+    # look "spent" in this session, but resolve_skill_value's exact-match-first
+    # lookup would find the untouched official-name entry at actual skill-check
+    # time and silently ignore the shorthand one — the player's points would
+    # never actually apply in play.
+    skill = canonical_skill_name(skill.strip())
+
+    current_value = session.skills.get(skill, BASE_SKILLS.get(skill, 20))
     room = max(0, _SKILL_CAP - current_value)
     if points > room:
         return {"ok": False, "error": f"「{skill}」目前 {current_value}%，建角階段最高加到 {_SKILL_CAP}%，還可以加 {room} 點"}

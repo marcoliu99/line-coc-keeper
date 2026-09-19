@@ -84,11 +84,7 @@ def _roll(n: int, sides: int, mult: int = 1) -> int:
 不需要引入 `app/dice.py` 的 `roll_expression()`（那是給 `NdM+K` 加法修正式的一般骰子指令用的，
 不支援「乘以 5」這種屬性生成專用的縮放，這也是為什麼 `models.py`/`creation.py` 沒有直接用它）。
 
-**建議**：`app/pregen_extractor.py` 直接 `from app.models import _roll`（該模組已經
-`from app.models import BASE_SKILLS, Character, damage_bonus_and_build, move_rate`，加一個
-名稱不算新的耦合方向）而不是複製第三份。這是本文唯一不是十拿九穩的小決定：如果你比較希望維持
-每個模組各自獨立、不要互相 import 底線開頭的「私有」函式，跟我說一聲，改成在
-`pregen_extractor.py` 本地再放一份 `_roll` 也完全沒問題，三份重複目前也沒有真的造成過問題。
+**已確認**：`app/pregen_extractor.py` 直接 `from app.models import _roll`，不複製第三份。已實作。
 
 ### LLM 抽取欄位要不要拿掉？——保留，只是不用在 `pregen_to_character`
 
@@ -145,3 +141,19 @@ elif attr_line:
 3. `tests/`：新增／調整涵蓋上面 6 點測試驗收的測試（這個分支的測試目錄與既有測試檔案，比照
    `main` 分支目前的慣例——`tests/test_kp_assistant_v2.py`／`tests/test_natural_1_bonus.py`
    等既有檔案的寫法／`unittest` 慣例）。
+
+## 實作狀態（已完成）
+
+上面 1-3 步都已實作，新增 `tests/test_pregen_and_creation.py` 涵蓋全部 6 點測試驗收，
+`.venv` 共用環境跑 `python -m unittest discover -s tests` 57 個測試全過。
+
+**順帶修正一個相關但獨立的 bug**（審查角色卡技能顯示時發現，不算本文原本規劃的範圍，但影響
+的是同一批技能查詢邏輯，一併記在這裡）：`app/creation.py` 的 `/coc alloc` 指令原本完全沒有
+對玩家輸入的技能名稱做正規化（`canonical_skill_name`）就直接當 dict key 使用——玩家如果打
+「手槍」而不是官方全名「射擊（手槍）」，會在 `session.skills` 開一個全新的「手槍」欄位，而不是
+加到 `start_creation()` 已經用 `dict(BASE_SKILLS)` seed 好的「射擊（手槍）」欄位上。實際遊玩時
+Keeper 呼叫 `skill_check` 用的是官方全名，`resolve_skill_value` 的精確比對優先於別名/模糊比對，
+會直接抓到未被動過的基礎值，完全看不到玩家分配進「手槍」裡的點數——等於這筆點數分配在實際
+遊玩時完全不會生效，只有建角當下的確認訊息看起來像是成功了。修法：`allocate()` 開頭先用
+`canonical_skill_name()` 正規化 `skill` 參數，跟 `pregen_extractor.py` 現有的做法一致；
+未知的自創技能名稱（不在 `BASE_SKILLS`／別名表裡）會維持原樣不變，不影響劇本自訂技能的用法。

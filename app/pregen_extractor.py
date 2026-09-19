@@ -13,7 +13,7 @@ from typing import Any
 
 from app import character_matcher, dictionary
 from app.config import LLM_PROVIDER
-from app.models import BASE_SKILLS, Character, damage_bonus_and_build, move_rate
+from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
 
@@ -525,7 +525,18 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
     int_ = _int_or(pregen.get("int_"), 50)
     pow_ = _int_or(pregen.get("pow_"), 50)
     edu = _int_or(pregen.get("edu"), 50)
-    luck = _int_or(pregen.get("luck"), 50)
+    # LUCK is deliberately NOT read from the scenario PDF's printed pregen
+    # sheet (unlike every other attribute above) — real COC7e pregen packets
+    # commonly instruct the player to roll their own Luck rather than using a
+    # value the pregen's author picked, since it represents personal fortune,
+    # not a trait the character template can fairly predetermine. Rolled here,
+    # at claim time (pregen_to_character runs once per owner_id claiming this
+    # slot — see app/commands.py's /coc usepregen), not when the scenario PDF
+    # is first uploaded/extracted, so two different players who each claim
+    # this same library pregen (in different groups) each get their own
+    # independently-rolled value instead of a value baked into the shared
+    # `state.pregens` entry.
+    luck = _roll(3, 6, 5)
 
     # _int_or already falls back to `default` on anything non-numeric — no
     # need for a trailing `or default` here, which would (confusingly) also
