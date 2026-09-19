@@ -13,7 +13,12 @@ from typing import Any
 
 from app import character_matcher, dictionary
 from app.config import LLM_PROVIDER
-from app.models import BASE_SKILLS, Character, damage_bonus_and_build, move_rate
+from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
+
+
+def roll_player_luck() -> int:
+    """Roll the LUCK result only after the player explicitly requests it."""
+    return _roll(3, 6, 5)
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
 
@@ -229,14 +234,31 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
 
 
 def _translate_skill_names(skills: dict[str, Any]) -> dict[str, Any]:
-    """Looks each skill name up against app/dictionary.py's seeded/learned
-    skills table before storing — by the time this runs, _learn_translations_
-    from_pregen above has already taught the dictionary this exact
-    extraction's own skill_translations pairs, so a still-English name from
-    THIS scenario is already a guaranteed hit, not a hopeful one. A name
-    with no dictionary entry (e.g. the LLM didn't include it in
-    skill_translations) is kept as-is rather than dropped."""
-    return {(dictionary.lookup_skill(name) or name): value for name, value in skills.items()}
+    """Canonicalize extracted names and merge duplicate aliases safely."""
+    merged: dict[str, Any] = {}
+    source_names: dict[str, str] = {}
+    for name, value in skills.items():
+        canonical = canonical_skill_name(name)
+        if canonical not in merged:
+            merged[canonical] = value
+            source_names[canonical] = name
+            continue
+        if isinstance(merged[canonical], (int, float)) and isinstance(value, (int, float)):
+            merged[canonical] = max(merged[canonical], value)
+            continue
+        # Skill values should normally be numeric. If malformed or homebrew
+        # data contains a non-numeric collision, keep both original key/value
+        # pairs instead of silently discarding one.
+        previous_name = source_names[canonical]
+        if previous_name != canonical:
+            previous_value = merged.pop(canonical)
+            merged[previous_name] = previous_value
+            source_names.pop(canonical)
+            merged[canonical] = value
+            source_names[canonical] = name
+        else:
+            merged[name] = value
+    return merged
 
 
 _SECTION_RE = re.compile(r"^【(.+?)】\s*$", re.MULTILINE)
@@ -467,7 +489,10 @@ def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
         number = _leading_number(value)
         if number is not None:
             skills[skill_name] = number
-    pregen["skills"] = skills
+    # Keep persisted/manual preview data identical to LLM extraction data.
+    # Otherwise aliases only get fixed at claim time and /coc pregen can show
+    # duplicate or non-canonical entries.
+    pregen["skills"] = _translate_skill_names(skills)
 
     # Combine every recognized weapon/item section into one blob before
     # classifying — see _ITEM_SECTION_NAMES' own comment for why this can't
@@ -551,7 +576,15 @@ def _resolve_weapon_ammo(weapons: dict[str, dict[str, Any]], era: str) -> dict[s
     return resolved
 
 
-def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s") -> Character:
+def pregen_to_character(
+    pregen: dict[str, Any], owner_id: str, era: str = "1920s", *, luck: int = 0
+) -> Character:
+    """Build one fresh character from a pregen snapshot.
+
+    This pure constructor does not roll or record ownership.  The command
+    flow creates a pending character with ``luck=0`` and lets the player
+    explicitly trigger the LUCK roll afterward.
+    """
     str_ = _int_or(pregen.get("str_"), 50)
     con = _int_or(pregen.get("con"), 50)
     siz = _int_or(pregen.get("siz"), 50)
@@ -560,8 +593,6 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
     int_ = _int_or(pregen.get("int_"), 50)
     pow_ = _int_or(pregen.get("pow_"), 50)
     edu = _int_or(pregen.get("edu"), 50)
-    luck = _int_or(pregen.get("luck"), 50)
-
     # _int_or already falls back to `default` on anything non-numeric — no
     # need for a trailing `or default` here, which would (confusingly) also
     # re-trigger the fallback on a legitimately-extracted 0.

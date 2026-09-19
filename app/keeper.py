@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from datetime import datetime, timezone
 from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
@@ -899,6 +900,19 @@ def _commit_kp_ooc_turn_result(state: GroupState, message_text: str, final_text:
         latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
         save_state(latest_state, reason="kp_ooc")
         _sync_state_snapshot(state, latest_state)
+
+
+def _parse_kp_manual_canon_trigger(speaker_role: str, message_text: str) -> tuple[bool, str]:
+    """Recognize only a leading !/！ on KP Assistant messages."""
+    if speaker_role != "kp_assistant" or not message_text:
+        return False, message_text
+    first_char = unicodedata.normalize("NFKC", message_text[0])
+    if first_char != "!":
+        return False, message_text
+    body = message_text[1:].lstrip()
+    if not body:
+        return False, message_text
+    return True, body
 
 
 def _kp_tool_result_creates_canon(tool_name: str, tool_input: dict, result: dict) -> bool:
@@ -1986,37 +2000,22 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
 
 def _format_turn_message(speaker_name: str, message_text: str, speaker_role: str) -> str:
     if speaker_role == "kp_assistant":
-        return (
-            "[KP ASSISTANT / OOC HOST INSTRUCTION]\n\n"
-            "以下訊息來自本局唯一的 KP 助手。這不是玩家角色行動。\n"
-            "請依照「KP 助手模式」處理，並優先執行其中的明確主持指令。\n\n"
-            f"KP助手（{speaker_name}）：\n"
-            f"{message_text}"
-        )
+        return f"[KP Assistant] {message_text}"
     return f"{speaker_name}：{message_text}"
 
 
-def _format_kp_canonical_history_message(
-    speaker_name: str,
-    message_text: str,
-    canonical_tool_events: list[dict],
-) -> str:
+def _format_kp_canonical_history_message(message_text: str, canonical_tool_events: list[dict]) -> str:
     event_blocks = []
     for event in canonical_tool_events:
         tool_name = event.get("tool_name", "")
         tool_input = json.dumps(event.get("tool_input", {}), ensure_ascii=False, sort_keys=True)
         result = json.dumps(event.get("result", {}), ensure_ascii=False, sort_keys=True)
         event_blocks.append(f"tool: {tool_name}\ninput: {tool_input}\nresult: {result}")
-    workflows_text = "\n\n".join(event_blocks) or "（無）"
-    return (
-        "[KP ASSISTANT / CANONICAL GAME EVENT]\n\n"
-        "以下主持指示已因成功觸發正式 deterministic game-resolution workflow，\n"
-        "成為正式遊戲歷史，而不是單純 OOC 討論。\n\n"
-        f"KP助手（{speaker_name}）：\n"
-        f"{message_text}\n\n"
-        "[DETERMINISTIC GAME WORKFLOW]\n\n"
-        f"{workflows_text}"
-    )
+    base_message = f"[KP Assistant] {message_text}"
+    if not event_blocks:
+        return base_message
+    workflows_text = "\n\n".join(event_blocks)
+    return f"{base_message}\n\n[DETERMINISTIC GAME WORKFLOW]\n\n{workflows_text}"
 
 
 def _tool_definition_for_kp_assistant(tool: dict) -> dict:
@@ -2081,7 +2080,8 @@ def run_turn(
     is_ephemeral = speaker_role == "kp_assistant"
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
-    turn_message = _format_turn_message(speaker_name, message_text, speaker_role)
+    kp_manual_canon_trigger, effective_message_text = _parse_kp_manual_canon_trigger(speaker_role, message_text)
+    turn_message = _format_turn_message(speaker_name, effective_message_text, speaker_role)
 
     # No extra slicing here — state.log is already bounded to at most
     # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
@@ -2101,7 +2101,7 @@ def run_turn(
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     tools = _tools_for_speaker_role(speaker_role)
-    kp_turn_creates_canon = False
+    kp_turn_creates_canon = kp_manual_canon_trigger
     kp_canonical_tool_events: list[dict] = []
 
     def execute_turn_tool(name: str, tool_input: dict) -> dict:
@@ -2153,14 +2153,12 @@ def run_turn(
         ]
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     elif kp_turn_creates_canon:
-        canonical_turn_message = _format_kp_canonical_history_message(
-            speaker_name, message_text, kp_canonical_tool_events
-        )
+        canonical_turn_message = _format_kp_canonical_history_message(effective_message_text, kp_canonical_tool_events)
         turn_log_entries = [
             {"role": "user", "content": canonical_turn_message},
             {"role": "assistant", "content": final_text},
         ]
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     else:
-        _commit_kp_ooc_turn_result(state, message_text, final_text)
+        _commit_kp_ooc_turn_result(state, effective_message_text, final_text)
     return final_text, private_messages, image_requests

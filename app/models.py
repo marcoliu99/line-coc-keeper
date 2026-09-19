@@ -747,6 +747,10 @@ class GroupState:
     # "options": [{"tier": str, "cost": int}, ...]}.
     pending_luck_decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # A pregen has been claimed, but its player has not explicitly rolled
+    # LUCK yet. Keyed by owner_id; value is the claimed character_id.
+    pending_pregen_luck: dict[str, str] = field(default_factory=dict)
+
     # Set once /coc start successfully delivers the opening narration (see
     # app/scenario_intro.py and app/commands.py's "start" subcommand) — guards
     # against a second run silently re-narrating the opening and duplicating
@@ -878,6 +882,7 @@ class GroupState:
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
             "pending_luck_decisions": self.pending_luck_decisions,
+            "pending_pregen_luck": self.pending_pregen_luck,
             "game_started": self.game_started,
             "era": self.era,
             "pending_pdf_upload": self.pending_pdf_upload,
@@ -951,6 +956,7 @@ class GroupState:
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
             pending_luck_decisions=data.get("pending_luck_decisions", {}),
+            pending_pregen_luck=data.get("pending_pregen_luck", {}),
             game_started=data.get("game_started", False),
             era=data.get("era", "1920s"),
             pending_pdf_upload=data.get("pending_pdf_upload"),

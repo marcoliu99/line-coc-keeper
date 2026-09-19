@@ -11,6 +11,7 @@ from app.legacy_commands import (
     SendDM,
     _blocked_by_kp_assistant,
     _blocked_by_existing_character,
+    _claim_pregen,
     _pregen_full_sheet_text,
 )
 
@@ -44,6 +45,9 @@ async def handle_character_command(
             await reply("用法：/coc switch 角色名（可先用 /coc characters 查看）")
             return
         state = load_state(conversation_id)
+        if user_id in state.pending_pregen_luck:
+            await reply("你還有一位預製角色尚未完成 LUCK 擲骰，請先輸入「/coc luck roll」。")
+            return
         name = " ".join(parts[2:]).strip()
         matches = [char for char in state.characters_for_owner(user_id) if char.name == name]
         if not matches:
@@ -286,19 +290,13 @@ async def handle_character_command(
         if blocked:
             await reply(blocked)
             return
-        pregen = state.pregens[idx - 1]
-        claimed_by = pregen.get("claimed_by")
-        if claimed_by and claimed_by != user_id:
-            await reply("這位角色已經被其他玩家選走了，輸入「/coc pregens」看看還有哪些可選。")
+        try:
+            char = _claim_pregen(state, idx - 1, user_id, custom_name=parts[3] if len(parts) > 3 else None)
+        except ValueError as exc:
+            await reply(str(exc) + " 輸入「/coc pregens」看看還有哪些可選。")
             return
-        char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era)
-        if len(parts) > 3:
-            char.name = parts[3]
-        state.characters[user_id] = char
-        state.set_active_character(user_id, char.character_id)
-        pregen["claimed_by"] = user_id
         save_state(state)
-        await reply(f"已使用預製角色！\n\n{char.sheet_text()}")
+        await reply(f"已使用預製角色！\n\n{char.sheet_text()}\n\n請輸入「/coc luck roll」完成玩家 LUCK 擲骰。")
         if char.secret_goal:
             try:
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")

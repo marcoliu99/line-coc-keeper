@@ -472,6 +472,14 @@ async def handle_system_command(
         if not state.characters:
             await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
             return
+        if state.pending_pregen_luck:
+            names = "、".join(
+                state.characters_by_id[character_id].name
+                for character_id in state.pending_pregen_luck.values()
+                if character_id in state.characters_by_id
+            ) or "部分角色"
+            await reply(f"{names} 尚未由玩家擲 LUCK，請相關玩家輸入「/coc luck roll」後才能開始遊戲。")
+            return
         if state.game_started:
             await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
             return
