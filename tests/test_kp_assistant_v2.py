@@ -231,7 +231,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.log[0]["role"], "user")
         self.assertEqual(saved.log[1], {"role": "assistant", "content": "Marco 滿臉是血，需要做理智檢定。"})
         canonical_message = saved.log[0]["content"]
-        self.assertIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
+        self.assertTrue(canonical_message.startswith(f"[KP Assistant] {message_text}"))
+        self.assertIn("[DETERMINISTIC GAME WORKFLOW]", canonical_message)
+        self.assertNotIn("[KP ASSISTANT / CANONICAL GAME EVENT]", canonical_message)
         self.assertNotIn("[KP ASSISTANT / OOC HOST INSTRUCTION]", canonical_message)
         self.assertIn(message_text, canonical_message)
         self.assertIn("sanity_check", canonical_message)
@@ -1228,6 +1230,89 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0]["speaker_role"], "player")
         self.assertEqual(calls[0]["state"].kp_assistant_user_id, "")
         self.assertEqual(reply.messages, ["latest-state reply"])
+
+
+class KPManualCanonTests(unittest.TestCase):
+    def test_parser_only_accepts_marker_for_kp_assistant(self):
+        self.assertEqual(keeper._parse_kp_manual_canon_trigger("player", "!玩家行動"), (False, "!玩家行動"))
+        self.assertEqual(keeper._parse_kp_manual_canon_trigger("kp_assistant", "!門鎖著"), (True, "門鎖著"))
+        self.assertEqual(keeper._parse_kp_manual_canon_trigger("kp_assistant", "！ 門鎖著"), (True, "門鎖著"))
+        self.assertEqual(keeper._parse_kp_manual_canon_trigger("kp_assistant", "！   "), (False, "！   "))
+
+    def test_player_bang_remains_a_normal_player_turn(self):
+        state = GroupState(group_id="g", openai_previous_response_id="chain")
+        fake_provider = FakeProvider("玩家回覆", response_id="player-response")
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(state, "p1", "Marco", "!我要踢門", speaker_role="player")
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+            saved = store.get("g")
+        self.assertEqual(saved.log[0]["content"], "Marco：!我要踢門")
+        self.assertEqual(saved.kp_ooc_log, [])
+
+    def test_pure_manual_canon_persists_user_and_assistant_and_advances_chain(self):
+        state = GroupState(group_id="g", openai_previous_response_id="chain")
+        fake_provider = FakeProvider("Keeper 回覆", response_id="manual-response")
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(state, "kp", "KP", "!門後沒有第二隻怪物", speaker_role="kp_assistant")
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+            saved = store.get("g")
+        self.assertEqual(saved.log, [
+            {"role": "user", "content": "[KP Assistant] 門後沒有第二隻怪物"},
+            {"role": "assistant", "content": "Keeper 回覆"},
+        ])
+        self.assertEqual(saved.kp_ooc_log, [])
+        self.assertEqual(saved.openai_previous_response_id, "manual-response")
+        self.assertEqual(fake_provider.calls[0][0][4], "[KP Assistant] 門後沒有第二隻怪物")
+
+    def test_manual_marker_and_tool_share_one_canonical_turn(self):
+        state = GroupState(group_id="g", openai_previous_response_id="chain")
+        fake_provider = FakeProvider(
+            "傷害已確定",
+            tool_calls=[("roll_dice", {"expression": "1d3", "purpose": "碎玻璃傷害", "roll_context": "game_resolution"})],
+            response_id="tool-response",
+        )
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = fake_provider
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                keeper.run_turn(state, "kp", "KP", "!碎玻璃割傷 Marco", speaker_role="kp_assistant")
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+            saved = store.get("g")
+        self.assertEqual(len(saved.log), 2)
+        self.assertTrue(saved.log[0]["content"].startswith("[KP Assistant] 碎玻璃割傷 Marco"))
+        self.assertIn("[DETERMINISTIC GAME WORKFLOW]", saved.log[0]["content"])
+        self.assertNotIn("!碎玻璃割傷 Marco", saved.log[0]["content"])
+        self.assertEqual(saved.kp_ooc_log, [])
 
 
 if __name__ == "__main__":
