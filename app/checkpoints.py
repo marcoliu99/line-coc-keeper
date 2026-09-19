@@ -114,6 +114,30 @@ def clean_checkpoint(group_id: str, checkpoint_id: str) -> None:
     )
 
 
+def _restore_page_images(state: GroupState) -> None:
+    """Rebuild the on-disk derived image cache for a restored scenario."""
+    from app import scenario_library
+    from app.repositories.group_state import clear_page_images, save_page_image
+
+    clear_page_images(state.group_id)
+    if not state.scenario_library_id:
+        return
+    try:
+        context = scenario_library.load_context(
+            state.scenario_library_id, state.active_chapter_id
+        )
+        scenario_library.copy_context_images(
+            state.scenario_library_id,
+            context["page_numbers"],
+            lambda page, image: save_page_image(state.group_id, page, image),
+        )
+    except FileNotFoundError:
+        _logger.warning(
+            "rollback_image_restore_skipped group_id=%s scenario_id=%s reason=library_missing",
+            state.group_id, state.scenario_library_id,
+        )
+
+
 def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupState, dict, dict]:
     """Atomically create pre-rollback, restore the checkpoint, and return both metadata records."""
     started = time.monotonic()
@@ -164,6 +188,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
                 "occupation": char.occupation,
                 "sheet": char.to_dict(),
             })
+    _restore_page_images(restored)
     _logger.info(
         "rollback_success group_id=%s checkpoint_id=%s pre_rollback_id=%s revision=%s timeline_id=%s reason=rollback duration_ms=%s",
         group_id, checkpoint["checkpoint_id"], pre["checkpoint_id"], restored.state_revision,

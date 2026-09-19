@@ -851,7 +851,17 @@ def run_scene_digest_maintenance(group_id: str) -> None:
         state = load_state(group_id)
         latest = scene_digest.latest_digest(group_id, state.timeline_id)
         chapter_changed = latest is None or latest.get("scene_label") != (state.active_chapter_id or state.scenario_title or "目前場景")
-        log_interval_reached = latest is None or len(state.log) - latest.get("log_length", 0) >= SCENE_DIGEST_TURN_INTERVAL
+        current_log_length = len(state.log)
+        previous_log_length = latest.get("log_length", 0) if latest else 0
+        # Log maintenance can intentionally shrink the in-memory log. Treat
+        # that as a new baseline; otherwise the old larger watermark would
+        # make this subtraction negative and periodic digests would stop.
+        log_was_trimmed = latest is not None and current_log_length < previous_log_length
+        log_interval_reached = (
+            latest is None
+            or log_was_trimmed
+            or current_log_length - previous_log_length >= SCENE_DIGEST_TURN_INTERVAL
+        )
         if not (chapter_changed or log_interval_reached):
             return
         scene_digest.create_digest(state)

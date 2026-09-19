@@ -10,6 +10,7 @@
 - 新增 KP-only 的 `/coc checkpoint`、`/coc checkpoints`、`/coc rollback`，以及開戰前自動 checkpoint；rollback 會先建立 `pre_rollback`，並切換到新的 timeline。
 - Discord bot 會依 `BACKUP_INTERVAL_MINUTES` 使用 SQLite online backup API 建立一致性備份，透過跨 process lock、暫存檔與 atomic rename 保護備份結果。
 - 新增 deterministic scene digest，依目前 timeline 提供 Keeper prompt 的最新摘要；facts、clues 與成功移除的物品會以 metadata 持久化，沒有額外 LLM 呼叫。
+- 修正 scene digest 在 campaign log 被壓縮後的 watermark 重設，避免定期摘要永久停止；checkpoint rollback 也會清除並依還原劇本/章節重建 page-image cache。
 - 新增 `BACKUP_DIR`、`BACKUP_KEEP_COUNT`、`SCENE_DIGEST_TURN_INTERVAL` 設定；資料庫備份、checkpoint 與 scene digest 都以 bot service user 可讀寫為原則。此批實作範圍以 Discord 為主。
 
 ### 1. 角色建立：三種方式，各有取捨

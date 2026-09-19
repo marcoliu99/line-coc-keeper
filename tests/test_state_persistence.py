@@ -126,6 +126,40 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(scene_digest.latest_digest(state.group_id, "timeline-new")["digest_id"], second["digest_id"])
         self.assertEqual(scene_digest.get_digest(state.group_id, first["digest_id"])["scene_label"], "old")
 
+    def test_digest_resets_watermark_after_log_trim(self):
+        state = GroupState("discord-group-digest-trim")
+        state.log = [{"role": "user", "content": str(i)} for i in range(20)]
+        group_state.save_state(state)
+        first = scene_digest.create_digest(state, scene_label="same")
+
+        state.log = state.log[-3:]
+        group_state.save_state(state)
+        keeper.run_scene_digest_maintenance(state.group_id)
+
+        entries = scene_digest.list_digests(state.group_id)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual({entry["log_length"] for entry in entries}, {20, 3})
+
+    def test_rollback_rebuilds_library_page_images(self):
+        state = GroupState("discord-group-image-rollback")
+        state.scenario_library_id = "old-scenario"
+        state.active_chapter_id = "chapter-1"
+        group_state.save_state(state)
+        checkpoint = checkpoints.create_checkpoint(state, label="old scenario")
+
+        with patch.object(group_state, "DATA_DIR", Path(self.temp.name) / "images"):
+            group_state.save_page_image(state.group_id, 9, b"new")
+
+            def copy_images(_scenario_id, _pages, save_image):
+                save_image(7, b"old")
+
+            with patch("app.scenario_library.load_context", return_value={"page_numbers": [7]}), \
+                    patch("app.scenario_library.copy_context_images", side_effect=copy_images):
+                checkpoints.rollback(state.group_id, checkpoint["checkpoint_id"], actor_id="kp")
+
+            self.assertEqual(group_state.load_page_image(state.group_id, 7), b"old")
+            self.assertIsNone(group_state.load_page_image(state.group_id, 9))
+
 
 if __name__ == "__main__":
     unittest.main()
