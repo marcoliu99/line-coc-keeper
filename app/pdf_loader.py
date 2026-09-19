@@ -464,13 +464,20 @@ def combine_pdfs(pdf_parts: list[bytes]) -> bytes:
     if len(pdf_parts) == 1:
         return pdf_parts[0]
     output = pymupdf.open()
+    merged_toc: list[list] = []
+    page_offset = 0
     try:
         for payload in pdf_parts:
             source = pymupdf.open(stream=payload, filetype="pdf")
             try:
                 output.insert_pdf(source)
+                for level, title, page_number in source.get_toc(simple=True):
+                    merged_toc.append([level, title, page_number + page_offset])
+                page_offset += source.page_count
             finally:
                 source.close()
+        if merged_toc:
+            output.set_toc(merged_toc)
         return output.tobytes()
     finally:
         output.close()

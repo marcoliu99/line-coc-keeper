@@ -32,11 +32,20 @@ class PdfLoaderImagePersistenceTests(unittest.TestCase):
             page.insert_text((40, 60), label)
             parts.append(document.tobytes())
             document.close()
+        source = pymupdf.open(stream=parts[0], filetype="pdf")
+        source.set_toc([[1, "Part One", 1]])
+        parts[0] = source.tobytes()
+        source.close()
+        source = pymupdf.open(stream=parts[1], filetype="pdf")
+        source.set_toc([[1, "Part Two", 1]])
+        parts[1] = source.tobytes()
+        source.close()
         merged = pymupdf.open(stream=pdf_loader.combine_pdfs(parts), filetype="pdf")
         try:
             self.assertEqual(merged.page_count, 2)
             self.assertIn("part one", merged[0].get_text())
             self.assertIn("part two", merged[1].get_text())
+            self.assertEqual([(item[1], item[2]) for item in merged.get_toc()], [("Part One", 1), ("Part Two", 2)])
         finally:
             merged.close()
 
