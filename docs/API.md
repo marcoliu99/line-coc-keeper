@@ -53,6 +53,12 @@ are supplied through `/coc`:
 | `/coc scenario merge list` | Lists Discord PDF parts staged for this conversation. |
 | `/coc scenario merge <part-id> <part-id> ...` | KP Assistant only. Merges exactly the selected staged PDF parts in the given order, then sends the result through the normal upload parser. |
 | `/coc scenario import <filename.pdf>` | KP Assistant only. Reads one PDF basename from `IMPORT_DIR` and sends it through the normal upload parser. |
+| `/coc checkpoint [label]` | KP Assistant or Discord `Keeper` role. Stores a complete state snapshot. |
+| `/coc checkpoints` | Lists saved checkpoint IDs, labels, reasons, and timestamps. |
+| `/coc checkpoint clean <ID or unique label>` | Deletes one checkpoint; ambiguous labels are rejected. |
+| `/coc rollback <ID or unique label>` | Saves a pre-rollback checkpoint, then restores the selected snapshot. |
+| `/coc digest` / `/coc digests` | Shows the current public scene digest or lists digest history. |
+| `/coc digest <ID>` / `/coc digest clean <ID>` | Reads or deletes one historical digest. |
 | `/coc kp` / `/coc kp quit` | Register or remove the conversation's KP Assistant. |
 | `/coc pdf new` / `/coc pdf fix` | Resolves a normal PDF replacement as a new scenario or a correction of the active scenario. |
 
@@ -152,7 +158,7 @@ limits, or weaknesses until the scenario reveals them.
 | `add_npc_to_combat(name, dex, hp, is_ally=false, armor=[], attacks=[], abilities=[])` | Adds an ally or creates an enemy combat card and adds it to initiative. Existing shorthand `name/dex/hp` remains valid but creates an incomplete enemy card. |
 | `get_combat_status()` | Returns the current combat round, initiative order, and whose turn it is. Public view hides enemy HP; KP Assistant private view includes enemy HP and card details. |
 | `plan_enemy_turn(enemy="")` | For the current or named enemy, checks special abilities, triggers, usage, cooldowns, and available attacks; returns a private plan plus safe public hint. |
-| `resolve_enemy_action(plan_id)` | Marks the selected enemy plan as resolved and consumes ability usage/cooldown. Repeated calls for the same plan are idempotent. |
+| `resolve_enemy_action(plan_id, outcome={success})` | Marks the selected enemy plan as resolved and consumes ability usage/cooldown. Attack hit/damage and successful ability effects are applied only from the formal outcome; repeated calls are idempotent. |
 | `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")` | Applies damage with a raw/armor/final breakdown and updates HP. Public enemy results are scrubbed; KP Assistant receives the private breakdown. |
 | `add_combat_effect(target, label, timing, damage="", damage_type="physical", remaining_rounds=null, tags=[], source_id="", public_description="")` | Adds a fixed-timing combat effect. Damage may be a flat integer string or a dice expression; invalid expressions are reported instead of silently consuming duration. |
 | `damage_combatant(name, delta)` | Legacy HP adjustment wrapper. Negative deltas now flow through armor-aware damage resolution. |
@@ -168,6 +174,8 @@ limits, or weaknesses until the scenario reveals them.
 | `DISCORD_BOT_TOKEN` | Discord gateway bot. |
 | `LLM_PROVIDER` and provider API key/model variables | Keeper and extraction provider selection. |
 | `DATA_DIR`, `DB_PATH` | Conversation state, page images, and SQLite state. |
+| `BACKUP_DIR`, `BACKUP_INTERVAL_MINUTES`, `BACKUP_KEEP_COUNT` | Scheduled SQLite backup location, interval, and retention. |
+| `SCENE_DIGEST_TURN_INTERVAL` | Number of log entries between periodic scene digest snapshots. |
 | `SCENARIO_LIBRARY_DIR` | Reusable parsed-PDF storage. |
 | `SCENARIO_RAG_*` | Scenario retrieval behavior. |
 

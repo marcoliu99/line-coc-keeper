@@ -106,15 +106,15 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
         # window (see GroupState.context_chapter_ids) cover only a page or
         # two at a time and exclude the actual opening scene until several
         # "advance_scenario_chapter" calls later.
-        deduped = _dedupe_by_page([(title, page) for _level, title, page in non_assets])
-        first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > deduped[0][1]), default=page_count + 1)
+        flat_deduped = _dedupe_by_page([(title, page) for _level, title, page in non_assets])
+        first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > flat_deduped[0][1]), default=page_count + 1)
         end_page = min(page_count, first_asset_page - 1)
         sections = []
-        for index, (title, page) in enumerate(deduped):
-            next_page = deduped[index + 1][1] - 1 if index + 1 < len(deduped) else end_page
+        for index, (title, page) in enumerate(flat_deduped):
+            next_page = flat_deduped[index + 1][1] - 1 if index + 1 < len(flat_deduped) else end_page
             if page <= next_page:
                 sections.append({"id": f"section-{index + 1:02d}", "title": title, "start_page": page, "end_page": next_page})
-        return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": deduped[0][1], "end_page": end_page, "sections": sections}]
+        return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": flat_deduped[0][1], "end_page": end_page, "sections": sections}]
 
     top_level = levels[0]
     starts = [(title, page) for level, title, page in non_assets if level == top_level]
@@ -133,7 +133,7 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
     # the final playable chapter instead of leaking reference material into play.
     first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > deduped[-1][1]), default=page_count + 1)
     playable_end = min(page_count, first_asset_page - 1)
-    chapters = []
+    chapters: list[dict[str, Any]] = []
     for index, (title, page) in enumerate(deduped):
         next_page = deduped[index + 1][1] - 1 if index + 1 < len(deduped) else playable_end
         if page <= next_page:

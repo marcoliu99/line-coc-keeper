@@ -29,6 +29,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
+from typing import cast
 
 from app import db
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
@@ -79,7 +80,7 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
             ordered[item.index] = item.embedding
         if any(v is None for v in ordered):
             return None
-        return ordered
+        return cast(list[list[float]], ordered)
     except Exception:
         return None
 

@@ -1,5 +1,11 @@
 # 開發紀錄／已知限制
 
+### 狀態持久化、回溯節點與戰鬥整合
+
+- 新增 `GroupState` schema migration、timeline/revision 保存、KP-only checkpoint/rollback、scene digest 與 SQLite backup；checkpoint、rollback、backup 都記錄 started/success/failure 維運 log。
+- revision 檢查與 state snapshot 寫入在同一個 SQLite transaction 內完成，避免跨 process 的 stale write 覆蓋；Keeper role 與 KP Assistant 都可使用受保護的回溯與 digest 指令。
+- 戰鬥工具要求 `resolve_enemy_action` 帶正式命中／傷害或特殊能力結果，固定時點效果、公開資訊過濾、敵人選目標與開戰前 checkpoint 都保留在同一條流程。
+
 - 修正混合 PDF 解析的圖片遺失：graphic page 現在不論 OCR 後文字長度都會保存 render PNG，低文字門檻只控制是否追加 Vision/scene-map 分析；補上高文字量角色卡圖片的回歸測試。劇本切換時也明確隔離所選 library item 的 pregen pool，避免上一份劇本的未認領角色洩漏。
 - PDF 解析接入 `pymupdf4llm` 的逐頁 layout evidence：保留 reading order、picture/table/graphic 區塊，並讓它作為 MarkItDown 與 PyMuPDF 原生文字層之間的混合 fallback；圖片保存仍與低文字量 Vision 分離。
 - 修正劇本切換隔離：新劇本會替換 pregen pool 與 scene maps，不再保留上一份 PDF 的候選角色或地圖；新增安全的 `/coc scenario import` 與 Discord PDF 暫存合併流程，合併後共用一般 PDF pipeline。

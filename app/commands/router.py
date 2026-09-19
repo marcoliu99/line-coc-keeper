@@ -39,6 +39,7 @@ async def handle_text_message(
     send_dm_image: SendDMImage,
     text: str,
     format_mention: FormatMention = lambda owner_id: owner_id,
+    is_keeper: bool = False,
 ) -> None:
     text = text.strip()
 
@@ -79,24 +80,27 @@ async def handle_text_message(
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
-        if sub in ("pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen"):
+        if sub in ("pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters"):
             async with locks.get_conversation_lock(conversation_id):
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
 
-        if sub in ("newgame", "pdf", "kp", "scenario", "import", "status", "end", "setpersona", "era", "index", "away", "back", "start"):
+        if sub in ("newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start",
+                   "checkpoint", "checkpoints", "rollback", "digest", "digests"):
             # Reparse performs long extraction and later acquires this lock in
             # handle_pdf_upload; all other scenario operations are short state
             # mutations and must be serialized with ordinary turns.
-            is_long_reparse = (sub == "scenario" and len(parts) > 2 and parts[2] in ("reparse", "import", "merge")) or sub == "import"
+            is_long_reparse = sub == "scenario" and len(parts) > 2 and parts[2] == "reparse"
             if is_long_reparse:
                 await system_handler.handle_system_command(
-                    conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention
+                    conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
+                    is_keeper,
                 )
             else:
                 async with locks.get_conversation_lock(conversation_id):
                     await system_handler.handle_system_command(
-                        conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention
+                        conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
+                        is_keeper,
                     )
             return
 
@@ -160,12 +164,15 @@ async def _handle_ordinary_text_message_locked(
         display_name = await get_display_name()
         speaker_role = "kp_assistant"
         resolved_location = None
-    elif user_id not in state.characters:
+    elif state.get_active_character(user_id) is None:
         display_name = await get_display_name()
         await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
         return
     else:
-        display_name = state.characters[user_id].name
+        active_character = state.get_active_character(user_id)
+        if active_character is None:
+            return
+        display_name = active_character.name
         speaker_role = "player"
         resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
 

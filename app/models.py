@@ -625,7 +625,45 @@ class CombatState:
 
 @dataclass
 class GroupState:
+    CURRENT_SCHEMA_VERSION = 1
+
+    @classmethod
+    def migrate_data(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize persisted snapshots before deserialization.
+
+        Version 1 is the first explicit schema. Snapshots written before the
+        version field existed are treated as v1 because ``from_dict`` already
+        supplies the compatible legacy defaults. Keeping this in one place
+        gives future schema changes a tested, explicit migration registry.
+        """
+        migrated = dict(data)
+        version = int(migrated.get("schema_version", 1))
+        if version > cls.CURRENT_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported GroupState schema_version={version}; "
+                f"current={cls.CURRENT_SCHEMA_VERSION}"
+            )
+        migrations = {
+            # v0 was the short-lived pre-versioned snapshot shape. Its fields
+            # are already covered by from_dict's legacy defaults.
+            0: lambda snapshot: {**snapshot, "schema_version": 1},
+        }
+        while version < cls.CURRENT_SCHEMA_VERSION:
+            migrate = migrations.get(version)
+            if migrate is None:
+                raise ValueError(
+                    f"No migration registered for GroupState schema_version={version}"
+                )
+            migrated = migrate(migrated)
+            version += 1
+            migrated["schema_version"] = version
+        migrated.setdefault("schema_version", cls.CURRENT_SCHEMA_VERSION)
+        return migrated
+
     group_id: str
+    schema_version: int = CURRENT_SCHEMA_VERSION
+    timeline_id: str = ""
+    state_revision: int = 0
     scenario_title: str = ""
     scenario_text: str = ""
     scenario_library_id: str = ""
@@ -740,6 +778,9 @@ class GroupState:
     pending_pdf_upload: dict[str, Any] | None = None
     pending_scenario_upload: dict[str, Any] | None = None
     staged_pdf_parts: list[dict[str, str]] = field(default_factory=list)
+    established_facts: list[dict[str, Any]] = field(default_factory=list)
+    known_clues: list[dict[str, Any]] = field(default_factory=list)
+    consumed_or_removed_items: list[dict[str, Any]] = field(default_factory=list)
 
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
@@ -747,9 +788,70 @@ class GroupState:
                 return c
         return None
 
+    def all_characters(self) -> list[Character]:
+        """Return each persisted character once, including partner/test slots."""
+        result: list[Character] = []
+        seen: set[str] = set()
+        for char in list(self.characters.values()) + list(self.characters_by_id.values()):
+            key = char.character_id or f"legacy-user:{char.owner_id}"
+            if key not in seen:
+                seen.add(key)
+                result.append(char)
+        return result
+
+    def characters_for_owner(self, owner_id: str) -> list[Character]:
+        return [char for char in self.all_characters() if char.owner_id == owner_id]
+
+    def get_active_character(self, owner_id: str) -> Character | None:
+        character_id = self.active_character_id_by_user.get(owner_id, "")
+        if character_id:
+            active = next((char for char in self.all_characters() if char.character_id == character_id), None)
+            if active is not None:
+                return active
+        legacy = self.characters.get(owner_id)
+        if legacy is not None:
+            character_id = legacy.character_id or f"legacy-user:{owner_id}"
+            legacy.character_id = character_id
+            self.characters_by_id.setdefault(character_id, legacy)
+            self.active_character_id_by_user[owner_id] = character_id
+        return legacy
+
+    def set_active_character(self, owner_id: str, character_id: str) -> Character:
+        character = next(
+            (char for char in self.characters_for_owner(owner_id) if char.character_id == character_id),
+            None,
+        )
+        if character is None and not character_id:
+            character = self.characters.get(owner_id)
+        if character is None:
+            raise KeyError(character_id)
+        if not character.character_id:
+            character.character_id = f"legacy-user:{owner_id}"
+            character_id = character.character_id
+        for owned in self.characters_for_owner(owner_id):
+            owned.active = owned.character_id == character_id
+        self.active_character_id_by_user[owner_id] = character_id
+        self.characters_by_id[character_id] = character
+        # Keep the legacy owner index useful during the migration.
+        self.characters[owner_id] = character
+        return character
+
+    def active_characters(self) -> list[Character]:
+        """Return the currently selected character for each owner."""
+        owners = {char.owner_id for char in self.all_characters()}
+        result = []
+        for owner_id in owners:
+            char = self.get_active_character(owner_id)
+            if char is not None and char.active and char not in result:
+                result.append(char)
+        return result
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "group_id": self.group_id,
+            "schema_version": self.schema_version,
+            "timeline_id": self.timeline_id or f"legacy-{self.group_id}",
+            "state_revision": self.state_revision,
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
             "scenario_library_id": self.scenario_library_id,
@@ -781,10 +883,17 @@ class GroupState:
             "pending_pdf_upload": self.pending_pdf_upload,
             "pending_scenario_upload": self.pending_scenario_upload,
             "staged_pdf_parts": self.staged_pdf_parts,
+            "established_facts": self.established_facts,
+            "known_clues": self.known_clues,
+            "consumed_or_removed_items": self.consumed_or_removed_items,
+            "established_facts": self.established_facts,
+            "known_clues": self.known_clues,
+            "consumed_or_removed_items": self.consumed_or_removed_items,
         }
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "GroupState":
+        data = GroupState.migrate_data(data)
         characters = {k: Character.from_dict(v) for k, v in data.get("characters", {}).items()}
         characters_by_id = {}
         for key, char_data in data.get("characters_by_id", {}).items():
@@ -809,6 +918,9 @@ class GroupState:
 
         return GroupState(
             group_id=data["group_id"],
+            schema_version=int(data.get("schema_version", 1)),
+            timeline_id=data.get("timeline_id") or f"legacy-{data['group_id']}",
+            state_revision=int(data.get("state_revision", 0)),
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
             scenario_library_id=data.get("scenario_library_id", ""),
@@ -847,4 +959,7 @@ class GroupState:
             pending_pdf_upload=data.get("pending_pdf_upload"),
             pending_scenario_upload=data.get("pending_scenario_upload"),
             staged_pdf_parts=data.get("staged_pdf_parts", []),
+            established_facts=data.get("established_facts", []),
+            known_clues=data.get("known_clues", []),
+            consumed_or_removed_items=data.get("consumed_or_removed_items", []),
         )

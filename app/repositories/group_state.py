@@ -12,15 +12,26 @@ into the database.
 """
 from __future__ import annotations
 
+import json
+import hashlib
 import re
 import shutil
+import logging
+import time
+from uuid import uuid4
 from pathlib import Path
 
 from app import db
+from app import locks
 from app.config import DATA_DIR
 from app.models import GroupState
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
+_logger = logging.getLogger(__name__)
+
+
+class StateRevisionConflict(RuntimeError):
+    """Raised when a caller tries to save a snapshot older than the database."""
 
 
 def _safe_id(group_id: str) -> str:
@@ -33,34 +44,127 @@ def _safe_id(group_id: str) -> str:
     return _SAFE_ID_RE.sub("_", group_id)
 
 
+def _log_group_id(group_id: str) -> str:
+    """Use a stable, non-reversible identifier in operational logs."""
+    return hashlib.sha256(group_id.encode("utf-8")).hexdigest()[:12]
+
+
 def load_state(group_id: str) -> GroupState:
     data = db.get_json("group_states", group_id)
     if data is None:
         return GroupState(group_id=group_id)
-    return GroupState.from_dict(data)
+    try:
+        return GroupState.from_dict(data)
+    except ValueError:
+        _logger.exception(
+            "state_load_failure group_id=%s reason=unsupported_schema",
+            _log_group_id(group_id),
+        )
+        raise
 
 
-def save_state(state: GroupState) -> None:
+def save_state(state: GroupState, *, reason: str = "command") -> None:
+    """Persist one state snapshot under the authoritative per-group lock.
+
+    The revision check turns a stale read-modify-write into an explicit
+    conflict instead of silently discarding a newer mutation from another
+    worker. Intentional replacement flows such as ``newgame`` opt out via
+    their explicit reason.
+    """
+    started = time.monotonic()
+    try:
+        with locks.get_state_lock(state.group_id):
+            # Keep the optimistic check and the complete snapshot write in one
+            # IMMEDIATE transaction. The Python RLock protects threads in this
+            # process; BEGIN IMMEDIATE also serializes competing processes using
+            # the same SQLite database.
+            with db.transaction() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
+                ).fetchone()
+                current = json.loads(row[0]) if row is not None else None
+                if (
+                    reason != "newgame"
+                    and current is not None
+                    and int(current.get("state_revision", 0)) != state.state_revision
+                ):
+                    raise StateRevisionConflict(
+                        f"state revision conflict for {_log_group_id(state.group_id)}: "
+                        f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
+                    )
+                _save_state_unlocked(state, reason=reason, conn=conn)
+    except StateRevisionConflict:
+        current_revision = current.get("state_revision", 0) if current else None
+        _logger.warning(
+            "state_save_revision_conflict group_id=%s loaded_revision=%s current_revision=%s reason=%s duration_ms=%s",
+            _log_group_id(state.group_id), state.state_revision, current_revision, reason,
+            int((time.monotonic() - started) * 1000),
+        )
+        raise
+
+
+def _save_state_unlocked(
+    state: GroupState, *, reason: str = "command", conn
+) -> None:
+    started = time.monotonic()
+    if not state.timeline_id:
+        state.timeline_id = f"timeline-{uuid4().hex[:8]}"
+    next_revision = state.state_revision + 1
+    payload = state.to_dict()
+    payload["state_revision"] = next_revision
+    payload["timeline_id"] = state.timeline_id
     # Batched into one connection/transaction (db.transaction/set_json_tx)
     # rather than a separate db.set_json call per write — a party of N
     # characters used to mean N+1 independent SQLite connections (the group
     # state, plus one per character mirror below), each paying its own
     # connect+PRAGMA overhead for what is logically one atomic save.
-    with db.transaction() as conn:
-        db.set_json_tx(conn, "group_states", state.group_id, state.to_dict())
+    try:
+        db.set_json_tx(conn, "group_states", state.group_id, payload)
 
         # A per-owner_id mirror, independent of which group this character
         # belongs to — separate from the group blob above so looking up one
         # player's sheet doesn't require knowing (or loading) the whole
         # conversation's state.
+        mirror_entries = {}
         for owner_id, char in state.characters.items():
+            mirror_entries[f"{state.group_id}:{owner_id}"] = char
+        for char in state.all_characters():
+            if char.character_id:
+                mirror_entries[f"{state.group_id}:{char.character_id}"] = char
+        expected_keys = set(mirror_entries)
+        stale_rows = conn.execute("SELECT key, data FROM characters").fetchall()
+        for mirror_key, raw_entry in stale_rows:
+            try:
+                entry = json.loads(raw_entry)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if (
+                entry.get("conversation_id") == state.group_id
+                and mirror_key not in expected_keys
+            ):
+                db.delete_json_tx(conn, "characters", mirror_key)
+        for mirror_key, char in mirror_entries.items():
             index_entry = {
                 "conversation_id": state.group_id,
+                "character_id": char.character_id,
+                "owner_id": char.owner_id,
                 "name": char.name,
                 "occupation": char.occupation,
                 "sheet": char.to_dict(),
             }
-            db.set_json_tx(conn, "characters", owner_id, index_entry)
+            db.set_json_tx(conn, "characters", mirror_key, index_entry)
+    except Exception:
+        _logger.exception(
+            "state_save_failure group_id=%s attempted_revision=%s timeline_id=%s duration_ms=%s transaction=rolled_back",
+            _log_group_id(state.group_id), next_revision, state.timeline_id, int((time.monotonic() - started) * 1000),
+        )
+        raise
+    state.state_revision = next_revision
+    _logger.info(
+        "state_save_success group_id=%s revision=%s timeline_id=%s reason=%s duration_ms=%s",
+        _log_group_id(state.group_id), state.state_revision, state.timeline_id, reason, int((time.monotonic() - started) * 1000),
+    )
 
 
 def _images_dir(group_id: str) -> Path:
