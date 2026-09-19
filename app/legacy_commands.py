@@ -1502,6 +1502,36 @@ def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | Non
     )
 
 
+def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: str | None = None) -> Character:
+    """Claim one pregen exactly once and update all state-owned references.
+
+    ``pregen_to_character`` remains a pure constructor so previews and shared
+    pregens are safe. Both command routers use this boundary; a repeated claim
+    is rejected before a new claim-time LUCK roll can happen.
+    """
+    if not (0 <= index < len(state.pregens)):
+        raise ValueError("預製角色編號超出範圍。")
+    # A finished game may legitimately let the same player claim a new
+    # unclaimed pregen. During an active game the command-level guard already
+    # enforces one active investigator; keep the same defensive check here.
+    if state.active and state.characters_for_owner(user_id):
+        raise ValueError("你目前已經有角色，不能重複認領預製角色。")
+    pregen = state.pregens[index]
+    claimed_by = pregen.get("claimed_by")
+    if claimed_by:
+        if claimed_by == user_id:
+            raise ValueError("你已經認領過這位預製角色，不能重新骰定。")
+        raise ValueError("這位角色已經被其他玩家選走了。")
+
+    char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era)
+    if custom_name:
+        char.name = custom_name
+    state.characters[user_id] = char
+    state.set_active_character(user_id, char.character_id)
+    pregen["claimed_by"] = user_id
+    return char
+
+
 def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
     if state.kp_assistant_user_id != user_id:
         return None
@@ -2020,16 +2050,11 @@ async def _handle_coc_command(
         if blocked:
             await reply(blocked)
             return
-        pregen = state.pregens[idx - 1]
-        claimed_by = pregen.get("claimed_by")
-        if claimed_by and claimed_by != user_id:
-            await reply("這位角色已經被其他玩家選走了，輸入「/coc pregens」看看還有哪些可選。")
+        try:
+            char = _claim_pregen(state, idx - 1, user_id, custom_name=parts[3] if len(parts) > 3 else None)
+        except ValueError as exc:
+            await reply(str(exc) + " 輸入「/coc pregens」看看還有哪些可選。")
             return
-        char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era)
-        if len(parts) > 3:
-            char.name = parts[3]
-        state.characters[user_id] = char
-        pregen["claimed_by"] = user_id
         save_state(state)
         await reply(f"已使用預製角色！\n\n{char.sheet_text()}")
         if char.secret_goal:

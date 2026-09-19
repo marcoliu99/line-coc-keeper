@@ -11,6 +11,7 @@ from app.legacy_commands import (
     SendDM,
     _blocked_by_kp_assistant,
     _blocked_by_existing_character,
+    _claim_pregen,
     _pregen_full_sheet_text,
 )
 
@@ -286,17 +287,11 @@ async def handle_character_command(
         if blocked:
             await reply(blocked)
             return
-        pregen = state.pregens[idx - 1]
-        claimed_by = pregen.get("claimed_by")
-        if claimed_by and claimed_by != user_id:
-            await reply("這位角色已經被其他玩家選走了，輸入「/coc pregens」看看還有哪些可選。")
+        try:
+            char = _claim_pregen(state, idx - 1, user_id, custom_name=parts[3] if len(parts) > 3 else None)
+        except ValueError as exc:
+            await reply(str(exc) + " 輸入「/coc pregens」看看還有哪些可選。")
             return
-        char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era)
-        if len(parts) > 3:
-            char.name = parts[3]
-        state.characters[user_id] = char
-        state.set_active_character(user_id, char.character_id)
-        pregen["claimed_by"] = user_id
         save_state(state)
         await reply(f"已使用預製角色！\n\n{char.sheet_text()}")
         if char.secret_goal:

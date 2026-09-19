@@ -319,6 +319,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 saved = store.get("g")
                 self.assertEqual(saved.scenario_text, "new scenario text")
                 self.assertEqual(saved.kp_ooc_log, [])
+                self.assertTrue(any("圖片較多的劇本需要較長時間" in message for message in reply.messages))
 
                 saved.kp_ooc_log = [{"role": "kp_assistant", "content": "must survive failed parse"}]
                 store.put(saved)

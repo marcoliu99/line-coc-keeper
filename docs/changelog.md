@@ -1867,3 +1867,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - KP Assistant 的 `!`／`！` manual canon 與成功的 deterministic game-resolution tool 共用同一 canonical persistence pipeline。
 - canonical history 統一使用 `[KP Assistant]` 前綴；只有有工具事件時才加入 deterministic workflow 區塊，普通 OOC 仍保留在 `kp_ooc_log`。
 - 玩家訊息開頭的 `!` 不具 KP canon 特殊語意；manual canon 會正常推進 OpenAI canonical response chain。
+
+### 107. Review hardening：pregen claim、技能 migration 與 KP Assistant 文件同步
+
+- 手動角色卡在寫入 `state.pregens` 前即完成技能 canonicalization；預覽、claim 與後續 skill check 使用同一組 canonical keys。
+- legacy 與 router 的 `/coc usepregen` 共用一次性 `_claim_pregen()` boundary；已 claim 的角色不可再次 reroll，LUCK 仍只在成功 claim 時生成。
+- `scripts.migrate_skill_names` 預設 dry-run，`--apply` 才會以單一 SQLite transaction 寫入，並回報掃描、變更與 numeric conflict merge 數量。
+- 更新 agentic Keeper spec，明確記錄 manual `!`／tool canonical event／普通 KP OOC 三條 persistence 路徑與新 marker。

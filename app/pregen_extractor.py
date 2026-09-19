@@ -468,7 +468,10 @@ def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
         number = _leading_number(value)
         if number is not None:
             skills[skill_name] = number
-    pregen["skills"] = skills
+    # Keep persisted/manual preview data identical to LLM extraction data.
+    # Otherwise aliases only get fixed at claim time and /coc pregen can show
+    # duplicate or non-canonical entries.
+    pregen["skills"] = _translate_skill_names(skills)
 
     # Combine every recognized weapon/item section into one blob before
     # classifying — see _ITEM_SECTION_NAMES' own comment for why this can't
@@ -553,6 +556,12 @@ def _resolve_weapon_ammo(weapons: dict[str, dict[str, Any]], era: str) -> dict[s
 
 
 def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s") -> Character:
+    """Build one fresh character from a pregen snapshot.
+
+    This pure constructor does not record ownership.  Command-facing callers
+    must use the shared claim boundary, which prevents a second LUCK roll for
+    an already-claimed owner.
+    """
     str_ = _int_or(pregen.get("str_"), 50)
     con = _int_or(pregen.get("con"), 50)
     siz = _int_or(pregen.get("siz"), 50)

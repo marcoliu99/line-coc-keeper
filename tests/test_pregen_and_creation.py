@@ -68,6 +68,20 @@ class PregenPreviewTests(unittest.TestCase):
         self.assertIn("LUCK 將於取用時骰定", text)
 
 
+class ManualRoleSheetTests(unittest.TestCase):
+    def test_manual_sheet_canonicalizes_aliases_before_preview(self):
+        pregen = pregen_extractor.parse_role_sheet_text(
+            "【角色資料】\n姓名：手寫角色\n職業：偵探\n"
+            "【屬性】\n力量：50\n體質：50\n體型：50\n敏捷：50\n外貌：50\n智力：50\n意志：50\n教育：50\n"
+            "【技能】\n手槍：40\n射擊（手槍）：55\n威嚇：30\n恐嚇：60\n"
+        )
+        self.assertIsNotNone(pregen)
+        self.assertEqual(pregen["skills"], {"射擊（手槍）": 55, "恐嚇": 60})
+        preview = legacy_commands._pregen_full_sheet_text(pregen, 1)
+        self.assertIn("射擊（手槍） 55%", preview)
+        self.assertNotIn("手槍 40%", preview)
+
+
 class SkillCanonicalizationTests(unittest.TestCase):
     def test_extracted_aliases_collapse_and_keep_higher_numeric_value(self):
         result = pregen_extractor._translate_skill_names({
@@ -150,6 +164,31 @@ class MigrateSkillNamesTests(unittest.TestCase):
         db.set_json("group_states", "g2", clean)
         migrate()
         self.assertEqual(db.get_json("group_states", "g2"), clean)
+
+    def test_dry_run_reports_without_writing(self):
+        from scripts.migrate_skill_names import migrate
+
+        original = {"group_id": "g3", "characters": {"u1": {"skills": {"手槍": 40}}}, "pregens": []}
+        db.set_json("group_states", "g3", original)
+        report = migrate(dry_run=True)
+        self.assertTrue(report.dry_run)
+        self.assertEqual(report.group_states_changed, 1)
+        self.assertEqual(report.entries_changed, 1)
+        self.assertEqual(db.get_json("group_states", "g3"), original)
+
+    def test_claim_boundary_does_not_reroll_repeat_owner(self):
+        rolls = iter([1, 1, 1])
+        from app.models import GroupState
+
+        state = GroupState(group_id="g-claim")
+        state.active = True
+        state.pregens = [{"name": "A", "skills": {}}]
+        with patch("app.models.random.randint", side_effect=lambda _a, _b: next(rolls)):
+            first = legacy_commands._claim_pregen(state, 0, "u1")
+        with self.assertRaises(ValueError):
+            legacy_commands._claim_pregen(state, 0, "u1")
+        self.assertEqual(first.luck, 15)
+        self.assertEqual(len(state.characters_for_owner("u1")), 1)
 
 
 if __name__ == "__main__":

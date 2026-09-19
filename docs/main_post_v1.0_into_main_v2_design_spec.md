@@ -79,10 +79,11 @@ Merge commit (`05848e9`、`446964a`、`d7ca3e9`) 的 patch 已檢查；它們沒
 
 ### 4.2 預製角色 LUCK claim-time reroll
 
-- `/coc usepregen` 呼叫 `pregen_to_character()` 時，LUCK 一律以 `3d6 × 5` 新骰。
+- `/coc usepregen` 透過共用 `_claim_pregen()` 呼叫 `pregen_to_character()` 時，LUCK 一律以 `3d6 × 5` 新骰。
 - `/coc pregens` 顯示的 PDF 原始 LUCK 不得被呈現成 claim 後的固定值；若有原始值，標示「卡面 LUCK X，取用時將重新骰定」，沒有原始值則標示將於取用時骰定。
 - 其餘 STR、CON、SIZ、DEX、APP、INT、POW、EDU 維持 extraction/default 行為。
-- shared `state.pregens` 不得因 claim 被寫回新 LUCK；不同 owner claim 同一 pregen 時要各自獨立骰值。
+- shared `state.pregens` 不得因 claim 被寫回新 LUCK；同一 pregen 只能成功 claim 一次，重複 claim（包含原 owner）必須拒絕，不得再次骰定。純 `pregen_to_character()` 是不持有 ownership 的 constructor，不是 command claim API。
+- legacy 與 router command path 必須共用 `_claim_pregen()`，由它同時寫入 character、active character 與 `claimed_by`，command handler 再持久化 GroupState。
 - 使用 target `app.models._roll`，不在 `pregen_extractor.py` 複製第三份骰子實作。
 
 ### 4.3 技能 canonicalization 與 aliases
@@ -105,7 +106,7 @@ Merge commit (`05848e9`、`446964a`、`d7ca3e9`) 的 patch 已檢查；它們沒
 - migration 來源必須直接 import `app.skill_aliases.SKILL_ALIASES`，禁止維護第二份 rename table。
 - 處理 target 實際存在的 `group_states` 中 `characters` 與 `pregens`，以及 `characters` mirror table 的 `sheet.skills`。
 - alias 與 canonical key 同時存在且都是數字時取最大值；migration 必須 idempotent。
-- 不在本次自動執行 production database migration；只提供明確的 `.venv/bin/python -m scripts.migrate_skill_names` 操作與 dry-run／測試保障。實際 production 執行另需明確部署決策。
+- 不在本次自動執行 production database migration；script 預設只 dry-run，需明確使用 `.venv/bin/python -m scripts.migrate_skill_names --apply` 才寫入。apply 以單一 SQLite transaction 批次寫入，並回報掃描／變更／衝突合併數。
 - 必須確認 target mirror key（目前由 repository 以 conversation/owner 或 character id 組成）不被 script 假設成 source branch 的 key。
 
 ### 4.5 預製角色預覽與 PDF 提示
