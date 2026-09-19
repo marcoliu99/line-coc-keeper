@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from app.help_registry import all_entries
+from app.help_registration import entries_for_policy
 
 
 _VISIBILITY_TEXT = {
@@ -26,7 +26,13 @@ _CATEGORY_TITLES = {
 
 
 def generate_markdown() -> str:
-    entries = sorted(all_entries(), key=lambda entry: (_CATEGORY_ORDER.get(entry.category, 999), entry.order, entry.path))
+    # The committed player reference documents the default deployment policy,
+    # not whichever runtime .env happens to be loaded on the machine running
+    # the generator. Runtime Discord Help still uses config-driven metadata.
+    entries = sorted(
+        entries_for_policy(False),
+        key=lambda entry: (_CATEGORY_ORDER.get(entry.category, 999), entry.order, entry.path),
+    )
     lines = [
         "# COC7e 玩家指令參考",
         "",

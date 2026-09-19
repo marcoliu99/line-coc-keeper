@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
+from app import config
 from app.help_docs import generate_markdown
 from app.help_registry import HelpCategory, HelpContext, HelpEntry, get_help_page, register_help, register_help_category, reset_registry_for_tests
 from app.help_service import bounded_page_text, parse_help_path, resolve_text_path
@@ -16,10 +17,13 @@ DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
 class HelpNavigationTests(unittest.TestCase):
     def setUp(self):
+        self.lifecycle_policy = patch.object(config, "SCENARIO_LIFECYCLE_KP_ONLY", False)
+        self.lifecycle_policy.start()
         reset_registry_for_tests()
 
     def tearDown(self):
         reset_registry_for_tests()
+        self.lifecycle_policy.stop()
 
     def test_root_and_category_pages_are_three_level_navigation(self):
         root = get_help_page(context=HelpContext())

@@ -176,7 +176,8 @@ class StatePersistenceTests(unittest.TestCase):
             self.assertFalse(legacy_commands._is_kp_or_keeper(state, "player"))
             self.assertTrue(legacy_commands._is_kp_or_keeper(state, "kp"))
             self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player", True))
-        self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player"))
+        with patch.object(legacy_commands.config, "SCENARIO_LIFECYCLE_KP_ONLY", False):
+            self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player"))
 
     def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
         state = GroupState("discord-group-conflict")
