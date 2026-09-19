@@ -1885,3 +1885,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **名稱清除**：`/coc checkpoint clean` 現在支援唯一的 checkpoint label；重複名稱會要求改用 ID。
 - **Discord conflict UX**：stale `state_revision` 會回覆明確的重試訊息，不再把內部 RuntimeError 直接顯示給使用者。
 - **測試**：新增 checkpoint label clean regression test；完整 `unittest discover` 共 97 項通過。
+
+### 110. 對齊 scene digest 鎖與 persistence 文件
+
+- **digest 寫入鎖**：`scene_digest.create_digest()` 與 digest 清除現在直接使用 per-group State Lock，直接 API 呼叫也和 maintenance 共用同一個同步邊界。
+- **digest clean API**：新增集中式 `clean_digest()`，找不到指定 ID 時會明確回報錯誤並記錄成功清除 log。
+- **文件同步**：補齊 `scene_digests` table、rollback 的雙鎖與 revision 行為、checkpoint 唯一名稱清除、revision conflict UX，以及 API/configuration 指令說明。
+- **測試**：完整 `unittest discover` 共 97 項通過。

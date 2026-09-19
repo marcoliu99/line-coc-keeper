@@ -52,6 +52,13 @@ are supplied through `/coc`:
 | `/coc scenario cancel` | Drops the staged similar upload. |
 | `/coc kp` / `/coc kp quit` | Register or remove the conversation's KP Assistant. |
 | `/coc pdf new` / `/coc pdf fix` | Resolves a normal PDF replacement as a new scenario or a correction of the active scenario. |
+| `/coc checkpoint [label]` | KP Assistant only. Stores a complete state snapshot; the label is optional. |
+| `/coc checkpoints` | KP Assistant only. Lists checkpoint IDs, labels, reasons, and timestamps. |
+| `/coc checkpoint clean <ID or unique label>` | KP Assistant only. Deletes one checkpoint; ambiguous labels are rejected. |
+| `/coc rollback <ID or unique label>` | KP Assistant only. Creates a pre-rollback checkpoint, then restores the selected snapshot. |
+| `/coc digest` / `/coc digests` | KP Assistant only. Shows the current public digest or lists digest history. |
+| `/coc digest <ID>` | KP Assistant only. Shows one historical digest's public section. |
+| `/coc digest clean <ID>` | KP Assistant only. Deletes one historical digest. |
 
 `scenario-id` is the stable library directory ID returned by `list`, not a title
 or chapter ID. The current implementation uses whitespace splitting, so IDs
@@ -165,6 +172,8 @@ limits, or weaknesses until the scenario reveals them.
 | `DISCORD_BOT_TOKEN` | Discord gateway bot. |
 | `LLM_PROVIDER` and provider API key/model variables | Keeper and extraction provider selection. |
 | `DATA_DIR`, `DB_PATH` | Conversation state, page images, and SQLite state. |
+| `BACKUP_DIR`, `BACKUP_INTERVAL_MINUTES`, `BACKUP_KEEP_COUNT` | Scheduled SQLite backup location, interval, and scheduled-backup retention. |
+| `SCENE_DIGEST_TURN_INTERVAL` | Number of log entries between periodic scene digest snapshots. |
 | `SCENARIO_LIBRARY_DIR` | Reusable parsed-PDF storage. |
 | `SCENARIO_RAG_*` | Scenario retrieval behavior. |
 

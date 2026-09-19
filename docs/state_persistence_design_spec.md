@@ -152,7 +152,7 @@ start_combat 觸發 ───────┼──► state_checkpoints 新增�
 （讓「回溯回溯錯了」也能再回溯回去）
         │
         ▼
-用該節點的 state 整份覆寫（get_conversation_lock 底下執行）
+用該節點的 state 整份覆寫（`get_conversation_lock` + per-group State Lock 底下執行）
         │
         ▼
 save_state()
@@ -160,8 +160,8 @@ save_state()
 
 ### 實作時點與一致性流程（authoritative）
 
-下面這張圖覆蓋上圖中容易產生歧義的時點；實作與測試以本圖為準。`state_revision` 由中央保存路徑
-遞增，`timeline_id` 只在 rollback 後切換。
+下面這張圖覆蓋上圖中容易產生歧義的時點；實作與測試以本圖為準。`state_revision` 由 authoritative
+state transaction 遞增，`timeline_id` 只在 rollback 後切換。
 
 ```text
 [ 正常回合 ]
@@ -200,7 +200,7 @@ lock → 建立 auto_combat_start checkpoint（尚未改 CombatState）
      → start_combat mutation → save_state
 
 [ 回溯 ]
-lock + one SQLite transaction
+get_conversation_lock + per-group State Lock + one SQLite transaction
       → 驗證 group_id／schema_version／checkpoint
       → 建立 pre_rollback checkpoint
       → 載入 checkpoint state
@@ -276,6 +276,10 @@ reason=<command|tool|combat|rollback|startup> duration_ms=<n>
   rollback，並保留 traceback 供排查。
 - `state_revision` 只能在 transaction 成功後視為已提交；失敗不能讓記憶體中的 revision 假裝已
   落地。若呼叫端有 retry，log 要能用 `event_id` 辨識同一事件，避免把一次重試誤判成兩次狀態變更。
+- 一般 `save_state()` 會在 per-group State Lock 內比對資料庫目前的 `state_revision`；如果呼叫端拿著
+  stale snapshot，必須拒絕寫入並記錄 revision conflict，不能讓舊 snapshot 覆蓋新狀態。Discord adapter
+  會把這個衝突轉成「狀態剛被另一個操作更新，請重試」的使用者訊息；刻意整體替換遊戲的
+  `/coc newgame` 是明確標記的例外。
 - checkpoint、rollback、backup 也要各自記錄 `started`／`success`／`failure` 與耗時；backup
   另記錄最終檔案路徑、檔案大小與保留清理數量，但不記錄檔案內容。
 - log handler 失敗不能阻塞保存；保存失敗也不能被空泛的「已排程」log 掩蓋。測試要用 caplog／
@@ -334,7 +338,8 @@ checkpoint 清單與 rollback 回覆只顯示 metadata；不得把 checkpoint �
 新增一張表（沿用 `app/db.py` 既有的 key-value schema 慣例，不另外設計 schema）：
 
 ```python
-_TABLES = ("group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary", "state_checkpoints")
+_TABLES = ("group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary",
+           "state_checkpoints", "scene_digests")
 ```
 
 `state_checkpoints` 的 key 格式：`{group_id}:{checkpoint_id}`（`checkpoint_id` 是系統產生的短
@@ -387,7 +392,8 @@ value 內容：
 3. 還原前，**先對目前狀態建立一個 `reason="pre_rollback"` 的節點**——這樣「回溯回溯錯了」本身
    也可以再回溯回來，不會因為一次操作失誤就真的沒有退路。
 4. 用節點裡存的 `state` 做 `GroupState.from_dict()`，整份覆寫目前的 `GroupState`，不做任何欄位
-   層級的合併；restore 後產生新的 `timeline_id`，`state_revision` 由中央 save path 產生新值。
+   層級的合併；restore 後產生新的 `timeline_id`，rollback transaction 以目前 revision + 1 寫入新的
+   `state_revision`。
    回溯的定義就是「回到那個時間點的完整狀態」，合併語意不在本期範圍。
 5. 舊 timeline 的 digest 不刪除，可供 `/coc digest <ID>` 歷史查詢，但 `latest digest` 查詢與 Keeper
    prompt 只能接受目前 timeline_id 的資料。
@@ -401,11 +407,12 @@ value 內容：
 | `/coc checkpoint [名稱]` | 手動建立一個回溯節點，可選具名；預設用建立時間當顯示名稱。僅 KP。 |
 | `/coc checkpoints` | 列出這一團目前所有節點：ID、名稱、建立時間、建立原因（手動/開戰自動/回溯前自動）。 |
 | `/coc rollback <ID 或名稱>` | 還原到指定節點；還原前自動多存一個節點。僅 KP。 |
-| `/coc checkpoint clean <ID>` | 手動刪除一個節點——節點不會自動淘汰，這是唯一的刪除方式。僅 KP。 |
+| `/coc checkpoint clean <ID 或唯一名稱>` | 手動刪除一個節點——節點不會自動淘汰，這是唯一的刪除方式。僅 KP。 |
 
 `/coc checkpoints` 的輸出必須用 ID 操作（比照劇本庫 `/coc scenario list` 的既有慣例），名稱允許
 重複，不能靠名稱模糊比對刪除或還原——`rollback`／`clean` 接受名稱只在**唯一**符合時才生效，
-有多筆同名時要求改用 ID，避免誤還原/誤刪。
+有多筆同名時要求改用 ID，避免誤還原/誤刪。checkpoint 建立、清除、rollback 與 digest 建立/清除
+都必須先取得同一個 per-group State Lock；rollback 另外在 router 的 conversation lock 下執行。
 
 ## 場景摘要（Scene Digest）——結構化版本的 `campaign_summary`
 
@@ -610,7 +617,7 @@ Agent 階段各自需要的提示詞片段。
 | `/coc digest` | KP 專用，顯示**最新一筆**場景摘要的內容（`public` 部分；`private` 不透過這個指令外洩）。 |
 | `/coc digests` | KP 專用，列出這一團所有歷史場景摘要：ID、`scene_label`、建立時間。 |
 | `/coc digest <ID>` | KP 專用，顯示指定那一筆歷史摘要的內容（`public` 部分）——用來回頭翻某個舊場景當時的狀態。 |
-| `/coc digest clean <ID>` | KP 專用，手動刪除一筆歷史摘要（不會自動淘汰，見上）。 |
+| `/coc digest clean <ID>` | KP 專用，手動刪除一筆歷史摘要（不會自動淘汰，見上）；找不到 ID 時回報錯誤。 |
 
 ## 格式版本與 timeline
 
@@ -628,9 +635,9 @@ Agent 階段各自需要的提示詞片段。
 載入／rollback 並記錄可操作的錯誤，不能默默忽略未知欄位。未來 schema migration 必須是可測試、
 可重跑且在 transaction 內完成。
 
-每次中央保存成功才遞增 `state_revision`；rollback 一律產生新的 `timeline_id`，避免舊 timeline
-的摘要在新的遊戲分支裡被誤用。`state_revision` 與 `timeline_id` 也必須寫入成功保存 log，方便
-把 log、checkpoint 與 scene digest 對回同一個狀態版本。
+每次一般 `save_state()` 或 rollback transaction 成功才遞增 `state_revision`；rollback 一律產生新的
+`timeline_id`，避免舊 timeline 的摘要在新的遊戲分支裡被誤用。`state_revision` 與 `timeline_id` 也
+必須寫入成功保存或 rollback log，方便把 log、checkpoint 與 scene digest 對回同一個狀態版本。
 
 ## 各元件的職責邊界
 
@@ -693,6 +700,8 @@ Agent 階段各自需要的提示詞片段。
     相同 canonical text 在同一 visibility 下去重，`remove_carried_item` 只有成功移除才記錄消耗。
 23. auto combat checkpoint 發生在第一個 CombatState mutation 之前，同一 event retry 不會建立重複
     checkpoint；所有保存結果可由 log 對回 group、revision、timeline 與 reason。
+24. checkpoint／rollback／scene digest 的建立與清除都在 per-group State Lock 下執行；stale state save
+    會被拒絕而不覆蓋較新 revision，Discord 會收到可操作的重試訊息。
 
 ## 實作順序
 

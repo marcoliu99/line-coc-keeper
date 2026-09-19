@@ -111,9 +111,11 @@ async def handle_system_command(
             return
         identifier = parts[2] if len(parts) > 2 else ""
         if identifier == "clean" and len(parts) > 3:
-            from app import db
-            with db.transaction() as conn:
-                db.delete_json_tx(conn, "scene_digests", f"{conversation_id}:{parts[3]}")
+            try:
+                scene_digest.clean_digest(conversation_id, parts[3])
+            except KeyError:
+                await reply("找不到這筆場景摘要。")
+                return
             await reply("已清除場景摘要。")
             return
         try:
