@@ -1583,3 +1583,29 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 
 - 圖片較多的劇本處理時間會受頁數、OCR/vision 與供應商限流影響，不再提示「一分鐘左右」這種固定估算。
 - 改為明確告知圖片較多時需要較長時間，避免讓使用者誤以為超過一分鐘就是處理失敗。
+
+### 101. KP Assistant Canon 機制重構：`!` 併入 Dice Creates Canon pipeline
+
+- **取代舊 Explicit Canon 設計**：先前「`!` 使用獨立 Explicit Canon persistence」的設計已被後續實測需求取代；`!` / `！` 現在不是第二套 persistence，而是 KP Assistant 的 manual creates-canon trigger。
+- **單一 creates-canon flag**：manual `!` / `！` trigger 與 deterministic game-resolution tool 的 automatic trigger 現在共用同一個 `kp_turn_creates_canon`。`run_turn()` 會先用 manual trigger 初始化這個 flag，後續成功的 deterministic workflow 仍可把同一個 flag 設為 `True` 並附加 tool event。
+- **單一 canonical persistence**：manual trigger、automatic trigger、以及 `! + deterministic tool` 都走同一條 canonical branch，使用 `_commit_turn_result(...)` 寫入 canonical user + assistant pair；不再存在 Dice Creates Canon 優先於 Explicit Canon 的分支。
+- **AI 回覆成為正式歷史**：pure manual `!` 即使沒有使用任何 deterministic tool，也會把 `[KP Assistant] ...` 的人類主持指示與 AI Keeper 的 final reply 一起寫入 `state.log`。
+- **OOC 與 canonical 互斥**：只要 `kp_turn_creates_canon == True`，該 KP Assistant turn 就只寫入 `state.log`，不再同時追加到 `kp_ooc_log`。
+- **OpenAI chain 統一**：manual `!` 不再清空 `openai_previous_response_id`，而是與 automatic Dice Creates Canon 一樣，若 provider 回傳新的 response id，就由 canonical branch 正常推進 `state.openai_previous_response_id`。
+- **移除舊 helper**：`_commit_kp_explicit_canon_turn_result(...)` 已完全刪除，舊 parser `_parse_kp_explicit_canon(...)` 也改名並重構為 `_parse_kp_manual_canon_trigger(...)`，沒有留下 compatibility wrapper。
+- **KP Assistant 前綴統一**：production runtime 中 KP Assistant 的人類發言現在統一格式為 `[KP Assistant] <message>`；舊的 `[KP ASSISTANT / OOC HOST INSTRUCTION]` 與 `[KP ASSISTANT / CANONICAL GAME EVENT]` runtime marker 已移除。
+- **workflow 區塊只在必要時出現**：`[DETERMINISTIC GAME WORKFLOW]` 只會在真的有 deterministic tool events 時附加；pure manual `!` 不會產生假的 workflow 區塊，也不會輸出「無」。
+- **測試延後處理**：本步只修改 production code 與 changelog，尚未更新 tests；舊測試若因 Explicit Canon 設計被移除而暫時失敗，會在下一步專門整理。
+
+### 102. KP Assistant unified creates-canon 測試更新
+
+- **移除舊 Explicit Canon regression**：刪除／改寫舊的 Explicit Canon parser、helper、command-only persistence、清空 OpenAI chain、DCC 優先於 Explicit Canon 等測試語意；不再測不存在的 `_commit_kp_explicit_canon_turn_result(...)`。
+- **parser 測試改用新名稱**：所有 parser regression 已改為呼叫 `_parse_kp_manual_canon_trigger(...)`，並確認 ASCII `!`、全形 `！`、只 normalize marker 不 normalize 正文、空 marker 不觸發，以及玩家 `!` 不具特殊語意。
+- **manual `!` runtime 契約**：新增／改寫完整 `run_turn()` regression，確認 pure manual `!` 會把 canonical KP user message 與 AI assistant final reply 一起寫入 `state.log`，不寫 `kp_ooc_log`，並正常推進 OpenAI canonical response chain。
+- **automatic DCC 仍正常**：保留並更新 sanity check / `roll_dice(game_resolution)` 等 automatic Dice Creates Canon regression，確認不用 `!` 也仍會 creates canon、寫入 user + assistant pair、保留 tool input/result，並推進 response id。
+- **manual + automatic 合流**：`! + roll_dice(game_resolution)` 測試已改名為「兩種 trigger 共用單一 canonical turn」，確認只產生一組 canonical user + assistant，不重複 persistence，也不寫 `kp_ooc_log`。
+- **workflow 區塊規則鎖定**：pure manual `!` 明確 assert 不含 `[DETERMINISTIC GAME WORKFLOW]`；automatic DCC 與 `! + DCC` 則 assert 必須包含該 workflow 區塊。
+- **前綴與舊 marker 防回歸**：runtime tests 現在鎖定 KP Assistant formatted prefix 為 `[KP Assistant] ...`，並 assert 舊的 `[KP ASSISTANT / OOC HOST INSTRUCTION]` 與 `[KP ASSISTANT / CANONICAL GAME EVENT]` 不再出現。
+- **玩家邊界保留**：玩家輸入 `!我要踢開門` 的 regression 保留，確認仍完整走普通 player routine，不觸發 KP Assistant manual canon，也不污染 `kp_ooc_log`。
+- **production code 未修改**：本步只修改 `tests/test_kp_assistant_v2.py` 與 changelog；沒有修改 `app/keeper.py`、`commands.py`、`discord_bot.py`、`models.py` 或 providers。
+- **測試結果**：`python -m unittest tests.test_kp_assistant_v2` 通過，`Ran 32 tests`，`OK`。

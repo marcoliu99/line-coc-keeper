@@ -737,23 +737,6 @@ def _commit_kp_ooc_turn_result(state: GroupState, message_text: str, final_text:
         _sync_state_snapshot(state, latest_state)
 
 
-def _commit_kp_explicit_canon_turn_result(state: GroupState, message_text: str, final_text: str) -> None:
-    """Persist a KP Assistant explicit-canon assertion plus its OOC exchange."""
-    with locks.get_state_lock(state.group_id):
-        latest_state = load_state(state.group_id)
-        latest_state.log.append({"role": "user", "content": f"[KP Assistant] {message_text}"})
-        latest_state.kp_ooc_log.extend(
-            [
-                {"role": "kp_assistant", "content": message_text},
-                {"role": "assistant", "content": final_text},
-            ]
-        )
-        latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
-        latest_state.openai_previous_response_id = ""
-        save_state(latest_state)
-        _sync_state_snapshot(state, latest_state)
-
-
 def _kp_tool_result_creates_canon(tool_name: str, tool_input: dict, result: dict) -> bool:
     if result.get("ok") is not True:
         return False
@@ -1597,17 +1580,11 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
 
 def _format_turn_message(speaker_name: str, message_text: str, speaker_role: str) -> str:
     if speaker_role == "kp_assistant":
-        return (
-            "[KP ASSISTANT / OOC HOST INSTRUCTION]\n\n"
-            "以下訊息來自本局唯一的 KP 助手。這不是玩家角色行動。\n"
-            "請依照「KP 助手模式」處理，並優先執行其中的明確主持指令。\n\n"
-            f"KP助手（{speaker_name}）：\n"
-            f"{message_text}"
-        )
+        return f"[KP Assistant] {message_text}"
     return f"{speaker_name}：{message_text}"
 
 
-def _parse_kp_explicit_canon(speaker_role: str, message_text: str) -> tuple[bool, str]:
+def _parse_kp_manual_canon_trigger(speaker_role: str, message_text: str) -> tuple[bool, str]:
     if speaker_role != "kp_assistant" or not message_text:
         return False, message_text
 
@@ -1622,7 +1599,6 @@ def _parse_kp_explicit_canon(speaker_role: str, message_text: str) -> tuple[bool
 
 
 def _format_kp_canonical_history_message(
-    speaker_name: str,
     message_text: str,
     canonical_tool_events: list[dict],
 ) -> str:
@@ -1632,16 +1608,11 @@ def _format_kp_canonical_history_message(
         tool_input = json.dumps(event.get("tool_input", {}), ensure_ascii=False, sort_keys=True)
         result = json.dumps(event.get("result", {}), ensure_ascii=False, sort_keys=True)
         event_blocks.append(f"tool: {tool_name}\ninput: {tool_input}\nresult: {result}")
-    workflows_text = "\n\n".join(event_blocks) or "（無）"
-    return (
-        "[KP ASSISTANT / CANONICAL GAME EVENT]\n\n"
-        "以下主持指示已因成功觸發正式 deterministic game-resolution workflow，\n"
-        "成為正式遊戲歷史，而不是單純 OOC 討論。\n\n"
-        f"KP助手（{speaker_name}）：\n"
-        f"{message_text}\n\n"
-        "[DETERMINISTIC GAME WORKFLOW]\n\n"
-        f"{workflows_text}"
-    )
+    base_message = f"[KP Assistant] {message_text}"
+    if not event_blocks:
+        return base_message
+    workflows_text = "\n\n".join(event_blocks)
+    return f"{base_message}\n\n[DETERMINISTIC GAME WORKFLOW]\n\n{workflows_text}"
 
 
 def _tool_definition_for_kp_assistant(tool: dict) -> dict:
@@ -1693,10 +1664,11 @@ def run_turn(
     resolved_location wasn't computed this turn (see GroupState.current_map_page).
     `speaker_role` is an explicit caller-provided identity marker ("player" or
     "kp_assistant"). KP Assistant turns receive the OOC host-instruction prompt
-    and message wrapper below, plus a separate OOC working-memory context that
-    is kept out of the public game log; player turns never receive that OOC
-    context. Formal player/Keeper history persistence and the OpenAI canonical
-    response chain remain gated by `is_ephemeral`.
+    and a separate OOC working-memory context that is kept out of the public
+    game log unless the turn creates canon via manual `!` / `！` trigger or a
+    successful deterministic game-resolution tool; player turns never receive
+    that OOC context. Formal player/Keeper history persistence and the OpenAI
+    canonical response chain remain gated by the final persistence branch.
     The caller is responsible for actually delivering private_messages/image_requests
     via platform-specific channels; nothing here sends anything itself."""
     provider = _PROVIDERS.get(LLM_PROVIDER)
@@ -1706,7 +1678,7 @@ def run_turn(
     is_ephemeral = speaker_role == "kp_assistant"
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
-    kp_explicit_canon, effective_message_text = _parse_kp_explicit_canon(speaker_role, message_text)
+    kp_manual_canon_trigger, effective_message_text = _parse_kp_manual_canon_trigger(speaker_role, message_text)
     turn_message = _format_turn_message(speaker_name, effective_message_text, speaker_role)
 
     # No extra slicing here — state.log is already bounded to at most
@@ -1727,7 +1699,7 @@ def run_turn(
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     tools = _tools_for_speaker_role(speaker_role)
-    kp_turn_creates_canon = False
+    kp_turn_creates_canon = kp_manual_canon_trigger
     kp_canonical_tool_events: list[dict] = []
 
     def execute_turn_tool(name: str, tool_input: dict) -> dict:
@@ -1779,16 +1751,12 @@ def run_turn(
         ]
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     elif kp_turn_creates_canon:
-        canonical_turn_message = _format_kp_canonical_history_message(
-            speaker_name, effective_message_text, kp_canonical_tool_events
-        )
+        canonical_turn_message = _format_kp_canonical_history_message(effective_message_text, kp_canonical_tool_events)
         turn_log_entries = [
             {"role": "user", "content": canonical_turn_message},
             {"role": "assistant", "content": final_text},
         ]
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
-    elif kp_explicit_canon:
-        _commit_kp_explicit_canon_turn_result(state, effective_message_text, final_text)
     else:
         _commit_kp_ooc_turn_result(state, effective_message_text, final_text)
     return final_text, private_messages, image_requests
