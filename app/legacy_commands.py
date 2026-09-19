@@ -1558,10 +1558,18 @@ def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
 def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
     with locks.get_state_lock(conversation_id):
         state = load_state(conversation_id)
-        char = state.characters.get(user_id)
+        active_id = state.active_character_id_by_user.get(user_id, "")
+        char = state.characters_by_id.get(active_id) if active_id else None
+        if char is None:
+            char = state.characters.get(user_id)
         if not char:
             return _AwayStateResult(error_text="你還沒有角色。")
         char.away = away
+        if char.character_id:
+            state.characters_by_id[char.character_id] = char
+            state.active_character_id_by_user[user_id] = char.character_id
+        if state.characters.get(user_id) and state.characters[user_id].character_id == char.character_id:
+            state.characters[user_id].away = away
         save_state(state)
         return _AwayStateResult(character_name=char.name)
 
@@ -2348,9 +2356,10 @@ async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: l
         if not turn_result["ok"]:
             await reply(turn_result["error"])
             return
+        hp_text = "HP 未公開" if turn_result.get("side") == "enemy" else f"HP {turn_result['hp']}/{turn_result['hp_max']}"
         await reply(
             f"第 {turn_result['round']} 輪，輪到「{turn_result['current_turn']}」了"
-            f"（HP {turn_result['hp']}/{turn_result['hp_max']}）。"
+            f"（{hp_text}）。"
         )
         return
 
@@ -2370,7 +2379,10 @@ async def _handle_combat_subcommand(conversation_id: str, reply: Reply, parts: l
             await reply(damage_result["error"])
             return
         tag = "（已倒下）" if damage_result["defeated"] else ""
-        await reply(f"{damage_result['name']} HP 變為 {damage_result['hp']}/{damage_result['hp_max']}{tag}")
+        if damage_result.get("side") == "enemy":
+            await reply(f"{damage_result['name']} HP 已更新{tag}")
+        else:
+            await reply(f"{damage_result['name']} HP 變為 {damage_result['hp']}/{damage_result['hp_max']}{tag}")
         return
 
     if action == "end":

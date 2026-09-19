@@ -166,13 +166,21 @@ class Character:
     secret_goal: str = ""  # personal hook/motivation — Keeper-only, see keeper_notes_text()
     status_tags: list[str] = field(default_factory=list)  # e.g. ["昏迷", "瀕死"]
     away: bool = False  # player stepped out — combat.py auto-skips their turn
+    character_id: str = ""
+    slot: str = "primary"
+    active: bool = True
 
     def to_dict(self) -> dict[str, Any]:
+        if not self.character_id:
+            self.character_id = f"legacy-user:{self.owner_id}"
         return asdict(self)
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "Character":
-        return Character(**data)
+        char = Character(**data)
+        if not char.character_id:
+            char.character_id = f"legacy-user:{char.owner_id}"
+        return char
 
     def sheet_text(self) -> str:
         # Player-facing only — never include secret_goal here. This is what
@@ -387,6 +395,148 @@ class CreationSession:
 
 
 @dataclass
+class ArmorRule:
+    id: str
+    label: str
+    value: int = 0
+    applies_to: str = "all"
+    bypass_tags: list[str] = field(default_factory=list)
+    public_hint: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "ArmorRule":
+        return ArmorRule(**data)
+
+
+@dataclass
+class AttackRule:
+    id: str
+    label: str
+    skill_name: str = "格鬥（鬥毆）"
+    skill_value: int = 25
+    damage: str = "1D3"
+    range_band: str = "engaged"
+    max_targets: int = 1
+    tags: list[str] = field(default_factory=list)
+    ammo_or_uses: int | None = None
+    public_description: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "AttackRule":
+        return AttackRule(**data)
+
+
+@dataclass
+class SpecialAbility:
+    id: str
+    name: str
+    priority: int = 0
+    trigger: dict[str, Any] = field(default_factory=dict)
+    check: dict[str, Any] = field(default_factory=dict)
+    effect: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
+    cooldown_rounds: int = 0
+    current_cooldown: int = 0
+    reveal_policy: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "SpecialAbility":
+        return SpecialAbility(**data)
+
+
+@dataclass
+class EffectState:
+    id: str
+    label: str
+    source_id: str = ""
+    target_id: str = ""
+    timing: str = "turn_start"
+    remaining_rounds: int | None = None
+    damage: str = ""
+    damage_type: str = "physical"
+    save_or_check: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    public_description: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "EffectState":
+        return EffectState(**data)
+
+
+@dataclass
+class EnemyCombatCard:
+    id: str
+    name: str
+    aliases: list[str] = field(default_factory=list)
+    source: dict[str, Any] = field(default_factory=dict)
+    hp: int = 10
+    hp_max: int = 10
+    armor: list[ArmorRule] = field(default_factory=list)
+    attacks: list[AttackRule] = field(default_factory=list)
+    abilities: list[SpecialAbility] = field(default_factory=list)
+    stats: dict[str, int] = field(default_factory=dict)
+    skills: dict[str, int] = field(default_factory=dict)
+    status_tags: list[str] = field(default_factory=list)
+    effect_states: list[EffectState] = field(default_factory=list)
+    hidden_notes: str = ""
+    public_description: str = ""
+    incomplete: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "aliases": self.aliases,
+            "source": self.source,
+            "hp": self.hp,
+            "hp_max": self.hp_max,
+            "armor": [a.to_dict() for a in self.armor],
+            "attacks": [a.to_dict() for a in self.attacks],
+            "abilities": [a.to_dict() for a in self.abilities],
+            "stats": self.stats,
+            "skills": self.skills,
+            "status_tags": self.status_tags,
+            "effect_states": [e.to_dict() for e in self.effect_states],
+            "hidden_notes": self.hidden_notes,
+            "public_description": self.public_description,
+            "incomplete": self.incomplete,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "EnemyCombatCard":
+        return EnemyCombatCard(
+            id=data["id"],
+            name=data.get("name", data["id"]),
+            aliases=data.get("aliases", []),
+            source=data.get("source", {}),
+            hp=data.get("hp", data.get("hp_max", 10)),
+            hp_max=data.get("hp_max", max(1, data.get("hp", 10))),
+            armor=[ArmorRule.from_dict(a) for a in data.get("armor", [])],
+            attacks=[AttackRule.from_dict(a) for a in data.get("attacks", [])],
+            abilities=[SpecialAbility.from_dict(a) for a in data.get("abilities", [])],
+            stats=data.get("stats", {}),
+            skills=data.get("skills", {}),
+            status_tags=data.get("status_tags", []),
+            effect_states=[EffectState.from_dict(e) for e in data.get("effect_states", [])],
+            hidden_notes=data.get("hidden_notes", ""),
+            public_description=data.get("public_description", ""),
+            incomplete=data.get("incomplete", False),
+        )
+
+
+@dataclass
 class Combatant:
     """One participant in an active combat's initiative order."""
 
@@ -399,6 +549,20 @@ class Combatant:
     # (a hired guide, a friendly cultist defector, ...) — distinct from is_pc since
     # it has no Character to sync HP back to, but shares "our side" in status_text.
     defeated: bool = False
+    combatant_id: str = ""
+    display_name: str = ""
+    side: str = ""
+    character_id: str = ""
+    enemy_card_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.display_name:
+            self.display_name = self.name
+        if not self.side:
+            self.side = "pc" if self.is_pc else "ally" if self.is_ally else "enemy"
+        if not self.combatant_id:
+            prefix = "pc" if self.is_pc else "ally" if self.is_ally else "enemy"
+            self.combatant_id = f"{prefix}:{self.character_id or self.enemy_card_id or self.name}"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -418,6 +582,11 @@ class CombatState:
     round_number: int = 0
     order: list[Combatant] = field(default_factory=list)
     current_index: int = 0
+    enemy_cards: dict[str, EnemyCombatCard] = field(default_factory=dict)
+    effects: list[EffectState] = field(default_factory=list)
+    plans: dict[str, dict[str, Any]] = field(default_factory=dict)
+    processed_timings: list[str] = field(default_factory=list)
+    range_bands: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -425,6 +594,11 @@ class CombatState:
             "round_number": self.round_number,
             "order": [c.to_dict() for c in self.order],
             "current_index": self.current_index,
+            "enemy_cards": {k: v.to_dict() for k, v in self.enemy_cards.items()},
+            "effects": [e.to_dict() for e in self.effects],
+            "plans": self.plans,
+            "processed_timings": self.processed_timings,
+            "range_bands": self.range_bands,
         }
 
     @staticmethod
@@ -434,6 +608,11 @@ class CombatState:
             round_number=data.get("round_number", 0),
             order=[Combatant.from_dict(c) for c in data.get("order", [])],
             current_index=data.get("current_index", 0),
+            enemy_cards={k: EnemyCombatCard.from_dict(v) for k, v in data.get("enemy_cards", {}).items()},
+            effects=[EffectState.from_dict(e) for e in data.get("effects", [])],
+            plans=data.get("plans", {}),
+            processed_timings=list(data.get("processed_timings", [])),
+            range_bands=dict(data.get("range_bands", {})),
         )
 
 
@@ -448,6 +627,8 @@ class GroupState:
     active: bool = False
     kp_assistant_user_id: str = ""
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
+    characters_by_id: dict[str, Character] = field(default_factory=dict)
+    active_character_id_by_user: dict[str, str] = field(default_factory=dict)
     # `log` is the canonical in-game history between players and the Keeper:
     # player actions, Keeper narration, rolls, and other public campaign events.
     log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
@@ -569,6 +750,8 @@ class GroupState:
             "active": self.active,
             "kp_assistant_user_id": self.kp_assistant_user_id,
             "characters": {k: v.to_dict() for k, v in self.characters.items()},
+            "characters_by_id": {k: v.to_dict() for k, v in self.characters_by_id.items()},
+            "active_character_id_by_user": self.active_character_id_by_user,
             "log": self.log,
             "kp_ooc_log": self.kp_ooc_log,
             "campaign_summary": self.campaign_summary,
@@ -593,6 +776,28 @@ class GroupState:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "GroupState":
+        characters = {k: Character.from_dict(v) for k, v in data.get("characters", {}).items()}
+        characters_by_id = {}
+        for key, char_data in data.get("characters_by_id", {}).items():
+            char = Character.from_dict(char_data)
+            if not char.character_id:
+                char.character_id = key
+            characters_by_id[char.character_id] = char
+        active_by_user = dict(data.get("active_character_id_by_user", {}))
+
+        # Keep both compatibility indexes pointed at one in-memory object. New
+        # characters can be written to the legacy owner_id map before the next
+        # save, so merge them individually even when the ID index is non-empty.
+        for owner_id, legacy_char in characters.items():
+            character_id = legacy_char.character_id or f"legacy-user:{owner_id}"
+            legacy_char.character_id = character_id
+            canonical = characters_by_id.get(character_id)
+            if canonical is None:
+                canonical = legacy_char
+                characters_by_id[character_id] = canonical
+            characters[owner_id] = canonical
+            active_by_user.setdefault(owner_id, character_id)
+
         return GroupState(
             group_id=data["group_id"],
             scenario_title=data.get("scenario_title", ""),
@@ -602,7 +807,9 @@ class GroupState:
             context_chapter_ids=data.get("context_chapter_ids", []),
             active=data.get("active", False),
             kp_assistant_user_id=data.get("kp_assistant_user_id", ""),
-            characters={k: Character.from_dict(v) for k, v in data.get("characters", {}).items()},
+            characters=characters,
+            characters_by_id=characters_by_id,
+            active_character_id_by_user=active_by_user,
             log=data.get("log", []),
             kp_ooc_log=data.get("kp_ooc_log", []),
             campaign_summary=data.get("campaign_summary", ""),
