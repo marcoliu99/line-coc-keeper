@@ -116,7 +116,7 @@ Page lookup 的規則：
 1. Router 解析 `/coc help` 後面的 optional path token。
 2. Help service 呼叫 `get_help_page(path)`。
 3. 回傳 page text；若 adapter 支援互動元件，同時回傳 navigation actions。
-4. 純文字平台可使用 `/coc help`、`/coc help combat`、`/coc help combat damage` 逐頁瀏覽。
+4. 不使用按鈕時，Discord 使用者仍可用 `/coc help`、`/coc help combat`、`/coc help combat damage` 逐頁瀏覽。
 
 ### Discord button flow
 
@@ -128,6 +128,146 @@ Page lookup 的規則：
 6. 每個頁面固定提供「⬅️ 上一層」與「🏠 Help 首頁」；root 不顯示上一層。
 
 按鈕 label 必須是短標題，不直接使用完整 usage；完整 command 放在 detail page，避免 Discord button label 超長與手機版難讀。
+
+### End-to-end flow
+
+```text
+Discord user
+    │
+    ├─ 輸入 /coc help
+    │       或
+    └─ 點擊 Help button
+              │
+              ▼
+      app/commands/router.py
+              │  parse path: () / ("combat",) / ("combat", "damage")
+              ▼
+      app/help_registry.py
+              │  validate + lookup + deterministic sort
+              ▼
+        HelpPage
+        ├─ title / description / detail text
+        └─ actions: category / command / back / home
+              │
+              ├─ text command path ──► reply(text)
+              │
+              └─ Discord renderer ──► discord.ui.View
+                                      │
+                                      ▼
+                              edit original message
+                                      │
+                                      └─ next click repeats from registry
+```
+
+按鈕不直接攜帶 help 內容，而只攜帶合法 path。每次點擊都重新 lookup registry；因此按鈕即使跨 deploy 保留，也不會使用舊的文字內容或讓使用者注入任意 command。
+
+### Registration and startup flow
+
+```text
+app/commands/handlers/combat.py
+app/commands/handlers/character.py
+app/agents/<agent>.py
+        │
+        └─ export register_help() / register_help_entries()
+                    │
+                    ▼
+          app/help_registration.py
+          register_all_help()
+                    │
+                    ▼
+          app/help_registry.py
+          global process-local registry
+                    │
+                    ├─ router handles /coc help
+                    └─ Discord button callbacks resolve paths
+```
+
+### How another handler or agent registers help
+
+這不是 HTTP API，也不是 LLM tool。建議提供一個 Python API，讓程式碼中的 handler／agent 在啟動時註冊 metadata：
+
+```python
+# app/commands/handlers/combat.py
+from app.help_registry import HelpEntry, register_help_entries
+
+
+def register_help() -> None:
+    register_help_entries([
+        HelpEntry(
+            path=("combat", "start"),
+            category="combat",
+            title="開始戰鬥",
+            summary="依 DEX 建立戰鬥先攻順位。",
+            usage=("/coc combat start",),
+            examples=("/coc combat start",),
+            order=10,
+        ),
+        HelpEntry(
+            path=("combat", "damage"),
+            category="combat",
+            title="調整戰鬥 HP",
+            summary="對戰鬥中的角色或 NPC 套用 HP 增減。",
+            usage=("/coc combat damage 名稱 增減量",),
+            examples=("/coc combat damage 深潛者 -4",),
+            order=40,
+        ),
+    ])
+```
+
+Handler 的 command implementation 與 help metadata 保持同一個模組，但兩者不是互相呼叫。註冊內容只描述 usage；真正的 routing 仍由既有 `handle_combat_command()` 負責。
+
+Agent 若有玩家可直接使用的 slash command，也使用同一個 API：
+
+```python
+# app/agents/scenario_agent.py
+from app.help_registry import HelpEntry, register_help_entries
+
+
+def register_help() -> None:
+    register_help_entries([
+        HelpEntry(
+            path=("scenario", "use"),
+            category="scenario",
+            title="選用劇本",
+            summary="從劇本庫選擇目前要使用的劇本。",
+            usage=("/coc scenario use 劇本ID",),
+            notes=("KP-only：只有目前登記的 KP Assistant 可以執行。",),
+            kp_only=True,
+        ),
+    ])
+```
+
+純內部 agent tool 不註冊成 `/coc` help entry。例如 `search_memory`、`apply_combat_damage` 若沒有玩家可直接輸入的 slash command，就只留在 agent/tool schema 與 KP Assistant 說明，不偽造一個不存在的 `/coc` 指令。
+
+### Central registration point
+
+為避免依賴 import side effect 或 circular import，新增一個明確的 registration point：
+
+```python
+# app/help_registration.py
+from app.commands.handlers import character, combat, map_handler, system
+
+
+def register_all_help() -> None:
+    register_help_categories()
+    character.register_help()
+    combat.register_help()
+    map_handler.register_help()
+    system.register_help()
+    # agents with player-facing slash commands register here too
+```
+
+Application startup（或 router 第一次處理訊息前的 lazy initialization）只呼叫一次 `register_all_help()`。Registry 需要 idempotent：重複初始化不應增加重複 entries；同一路徑由不同模組註冊則直接 raise configuration error，讓測試或啟動時立刻發現。
+
+新增一個 handler／agent 的實際步驟：
+
+1. 在該模組新增 `register_help()`。
+2. 使用自己的 category 與最多兩段的 `path` 註冊 `HelpEntry`。
+3. 將該模組加入 `app/help_registration.py` 的 `register_all_help()`。
+4. 加入 registry page、router、Discord button callback 測試。
+5. 執行完整測試，確認沒有 duplicate path、超過三層或超出 Discord message/button 限制。
+
+這種方式的優點是註冊內容是 typed、可 code review、可在 CI 驗證；代價是每個新模組要在 central registration point 加一行，這是刻意換取 deterministic startup 與避免 import magic。
 
 ### Non-Discord platforms
 
