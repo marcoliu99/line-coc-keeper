@@ -421,7 +421,12 @@ def _target_in_abstract_range(state: GroupState, card: EnemyCombatCard, target_i
     required = (trigger.get("range_band") or trigger.get("range") or trigger.get("max_range") or "any").lower()
     if required in ("any", "near_or_audible", "audible"):
         return True
-    current = state.combat.range_bands.get(f"{card.id}:{target_id}") or trigger.get("current_range") or "engaged"
+    current = (
+        state.combat.range_bands.get(f"{card.id}:{target_id}")
+        or state.combat.range_bands.get(f"{target_id}:{card.id}")
+        or trigger.get("current_range")
+        or "engaged"
+    )
     return _range_rank(current) <= _range_rank(required)
 
 
@@ -699,6 +704,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
                 "ok": True,
                 "plan_id": plan_id,
                 "enemy_card_id": card.id,
+                "enemy_combatant_id": combatant.combatant_id,
                 "enemy": card.name,
                 "selected_action": "special_ability",
                 "selected_id": ability.id,
@@ -727,6 +733,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
             "ok": True,
             "plan_id": plan_id,
             "enemy_card_id": card.id,
+            "enemy_combatant_id": combatant.combatant_id,
             "enemy": card.name,
             "selected_action": "attack",
             "selected_id": attack.id,
@@ -751,6 +758,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
         "ok": True,
         "plan_id": plan_id,
         "enemy_card_id": card.id,
+        "enemy_combatant_id": combatant.combatant_id,
         "enemy": card.name,
         "selected_action": "move",
         "selected_id": "",
@@ -837,6 +845,18 @@ def resolve_enemy_action(
         and plan.get("current_index") != state.combat.current_index
     ):
         return {"ok": False, "error": "行動計畫已經過期，請重新規劃敵人回合"}
+    current = (
+        state.combat.order[state.combat.current_index]
+        if 0 <= state.combat.current_index < len(state.combat.order)
+        else None
+    )
+    expected_combatant_id = plan.get("enemy_combatant_id")
+    if current is None or (
+        expected_combatant_id and current.combatant_id != expected_combatant_id
+    ) or (
+        not expected_combatant_id and current.enemy_card_id != plan.get("enemy_card_id")
+    ):
+        return {"ok": False, "error": "目前不是這個敵人的回合，行動計畫不能執行"}
     card = state.combat.enemy_cards.get(plan["enemy_card_id"])
     if not card:
         return {"ok": False, "error": "行動計畫對應的敵人卡不存在"}

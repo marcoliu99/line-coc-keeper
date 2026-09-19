@@ -1931,3 +1931,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - 戰鬥開始時依角色 DEX 排列先攻，並立即處理第一輪 `round_start` 觸發。
 - 同一敵人回合重複規劃時，在狀態未變更的情況下重用未結算 plan；能力 resolve 會再次驗證使用次數與冷卻，過期 plan 不可套用。
 - 新增初始先攻、第一輪能力觸發與重複 plan regression tests。
+
+### 117. 修正戰鬥距離、plan 回合驗證與備份錯誤記錄
+
+- `target_in_range` 支援正向與反向的抽象距離 key；enemy plan 只能在對應敵人目前回合執行。
+- backup lock 初始化失敗會記錄 `backup_failure`，同秒建立的備份使用唯一檔名避免互相覆蓋。
+- state revision conflict 會寫入結構化 persistence warning log。
+- 新增上述戰鬥與 persistence regression tests。

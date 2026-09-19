@@ -33,6 +33,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
 from app.config import BACKUP_DIR, BACKUP_INTERVAL_MINUTES, BACKUP_KEEP_COUNT, DB_PATH
 
@@ -243,14 +244,14 @@ def backup_now(reason: str = "scheduled") -> Path | None:
     safe_reason = "".join(c if c.isalnum() or c in "-_" else "_" for c in reason) or "manual"
     _logger.info("backup_started reason=%s", safe_reason)
     final_path: Path | None = None
-    with _backup_lock() as acquired:
-        if not acquired:
-            _logger.info("backup_skipped reason=lock_busy")
-            return None
-        try:
+    try:
+        with _backup_lock() as acquired:
+            if not acquired:
+                _logger.info("backup_skipped reason=lock_busy")
+                return None
             BACKUP_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
             stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-            final_path = BACKUP_DIR / f"coc_bot-{stamp}-{safe_reason}.db"
+            final_path = BACKUP_DIR / f"coc_bot-{stamp}-{uuid4().hex[:8]}-{safe_reason}.db"
             temp_path = BACKUP_DIR / f".{final_path.name}.{os.getpid()}.tmp"
             try:
                 source = sqlite3.connect(DB_PATH)
@@ -277,6 +278,9 @@ def backup_now(reason: str = "scheduled") -> Path | None:
                 return final_path
             finally:
                 temp_path.unlink(missing_ok=True)
-        except Exception:
-            _logger.exception("backup_failure reason=%s duration_ms=%s", safe_reason, int((time.monotonic() - started) * 1000))
-            raise
+    except Exception:
+        _logger.exception(
+            "backup_failure reason=%s duration_ms=%s",
+            safe_reason, int((time.monotonic() - started) * 1000),
+        )
+        raise

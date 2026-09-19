@@ -93,8 +93,10 @@ class StatePersistenceTests(unittest.TestCase):
         group_state.save_state(latest)
         stale.scenario_title = "stale"
 
-        with self.assertRaisesRegex(RuntimeError, "state revision conflict"):
-            group_state.save_state(stale)
+        with self.assertLogs("app.repositories.group_state", level=logging.WARNING) as captured:
+            with self.assertRaisesRegex(RuntimeError, "state revision conflict"):
+                group_state.save_state(stale)
+        self.assertIn("state_save_revision_conflict", "\n".join(captured.output))
         self.assertEqual(group_state.load_state(state.group_id).scenario_title, "newer")
 
     def test_checkpoint_reads_authoritative_latest_state(self):
@@ -239,6 +241,26 @@ class StatePersistenceTests(unittest.TestCase):
         with sqlite3.connect(backup) as conn:
             result = conn.execute("PRAGMA integrity_check").fetchone()[0]
         self.assertEqual(result, "ok")
+
+    def test_backups_created_in_same_second_do_not_overwrite(self):
+        state = GroupState("discord-group-backup-unique")
+        group_state.save_state(state)
+
+        first = db.backup_now("manual")
+        second = db.backup_now("manual")
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(list(self.backup_dir.glob("*.db"))), 2)
+
+    def test_backup_lock_initialization_failure_is_logged(self):
+        with patch.object(db, "_backup_lock", side_effect=OSError("lock directory unavailable")):
+            with self.assertLogs("app.db", level=logging.ERROR) as captured:
+                with self.assertRaisesRegex(OSError, "lock directory unavailable"):
+                    db.backup_now("manual")
+
+        self.assertIn("backup_failure", "\n".join(captured.output))
 
     def test_stale_backup_lock_is_reclaimed(self):
         state = GroupState("discord-group-stale-lock")

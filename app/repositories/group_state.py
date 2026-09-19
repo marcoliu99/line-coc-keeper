@@ -64,27 +64,37 @@ def save_state(state: GroupState, *, reason: str = "command") -> None:
     worker. Intentional replacement flows such as ``newgame`` opt out via
     their explicit reason.
     """
-    with locks.get_state_lock(state.group_id):
-        # Keep the optimistic check and the complete snapshot write in one
-        # IMMEDIATE transaction. The Python RLock protects threads in this
-        # process; BEGIN IMMEDIATE also serializes competing processes using
-        # the same SQLite database.
-        with db.transaction() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
-            ).fetchone()
-            current = json.loads(row[0]) if row is not None else None
-            if (
-                reason != "newgame"
-                and current is not None
-                and int(current.get("state_revision", 0)) != state.state_revision
-            ):
-                raise StateRevisionConflict(
-                    f"state revision conflict for {state.group_id}: "
-                    f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
-                )
-            _save_state_unlocked(state, reason=reason, conn=conn)
+    started = time.monotonic()
+    try:
+        with locks.get_state_lock(state.group_id):
+            # Keep the optimistic check and the complete snapshot write in one
+            # IMMEDIATE transaction. The Python RLock protects threads in this
+            # process; BEGIN IMMEDIATE also serializes competing processes using
+            # the same SQLite database.
+            with db.transaction() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
+                ).fetchone()
+                current = json.loads(row[0]) if row is not None else None
+                if (
+                    reason != "newgame"
+                    and current is not None
+                    and int(current.get("state_revision", 0)) != state.state_revision
+                ):
+                    raise StateRevisionConflict(
+                        f"state revision conflict for {state.group_id}: "
+                        f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
+                    )
+                _save_state_unlocked(state, reason=reason, conn=conn)
+    except StateRevisionConflict:
+        current_revision = current.get("state_revision", 0) if current else None
+        _logger.warning(
+            "state_save_revision_conflict group_id=%s loaded_revision=%s current_revision=%s reason=%s duration_ms=%s",
+            state.group_id, state.state_revision, current_revision, reason,
+            int((time.monotonic() - started) * 1000),
+        )
+        raise
 
 
 def _save_state_unlocked(

@@ -201,6 +201,53 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(duplicate_result["already_resolved"])
         self.assertEqual(ability.usage["used_total"], 1)
 
+    def test_enemy_plan_cannot_resolve_outside_enemy_turn(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Enemy",
+            10,
+            10,
+            abilities=[{
+                "id": "once",
+                "name": "Once",
+                "priority": 10,
+                "trigger": {"type": "first_available"},
+                "usage": {"per_combat": 1},
+            }],
+        )
+
+        plan = combat.plan_enemy_turn(state, "Enemy")
+        result = combat.resolve_enemy_action(state, plan["plan_id"])
+
+        self.assertFalse(result["ok"])
+        self.assertIn("目前不是這個敵人的回合", result["error"])
+
+    def test_target_in_range_trigger_accepts_reverse_range_key(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            abilities=[{
+                "id": "near_song",
+                "name": "Near Song",
+                "priority": 10,
+                "trigger": {"type": "target_in_range", "range_band": "near"},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
+        enemy = state.combat.order[state.combat.current_index]
+        target_id = next(c.combatant_id for c in state.combat.order if c.side == "pc")
+        state.combat.range_bands[f"{target_id}:{enemy.enemy_card_id}"] = "far"
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["selected_action"], "move")
+
     def test_round_start_trigger_is_available_when_enemy_is_added_to_first_round(self):
         state = self._state_with_pc()
         combat.start_combat(state)
