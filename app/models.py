@@ -164,6 +164,7 @@ class Character:
     # cannot lose without a saving roll first (see keeper.py's static prompt);
     # player-facing, unlike secret_goal. Set via /coc setconnection.
     secret_goal: str = ""  # personal hook/motivation — Keeper-only, see keeper_notes_text()
+    extra_fields: dict[str, Any] = field(default_factory=dict)
     status_tags: list[str] = field(default_factory=list)  # e.g. ["昏迷", "瀕死"]
     away: bool = False  # player stepped out — combat.py auto-skips their turn
     character_id: str = ""
@@ -208,6 +209,9 @@ class Character:
             lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:
             lines.append(f"★ 關鍵背景連結：{self.key_connection}")
+        for key, value in self.extra_fields.items():
+            if value not in (None, "", [], {}):
+                lines.append(f"{key}：{value}")
         top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
         if top_skills:
             lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
@@ -227,6 +231,9 @@ class Character:
         ]
         if self.key_connection:
             lines.append(f"★ 關鍵背景連結：{self.key_connection}")
+        for key, value in self.extra_fields.items():
+            if value not in (None, "", [], {}):
+                lines.append(f"{key}：{value}")
         top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
         if top_skills:
             lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
@@ -770,6 +777,7 @@ class GroupState:
     # defer.
     pending_pdf_upload: dict[str, Any] | None = None
     pending_scenario_upload: dict[str, Any] | None = None
+    staged_pdf_parts: list[dict[str, str]] = field(default_factory=list)
     established_facts: list[dict[str, Any]] = field(default_factory=list)
     known_clues: list[dict[str, Any]] = field(default_factory=list)
     consumed_or_removed_items: list[dict[str, Any]] = field(default_factory=list)
@@ -874,6 +882,7 @@ class GroupState:
             "era": self.era,
             "pending_pdf_upload": self.pending_pdf_upload,
             "pending_scenario_upload": self.pending_scenario_upload,
+            "staged_pdf_parts": self.staged_pdf_parts,
             "established_facts": self.established_facts,
             "known_clues": self.known_clues,
             "consumed_or_removed_items": self.consumed_or_removed_items,
@@ -946,6 +955,7 @@ class GroupState:
             era=data.get("era", "1920s"),
             pending_pdf_upload=data.get("pending_pdf_upload"),
             pending_scenario_upload=data.get("pending_scenario_upload"),
+            staged_pdf_parts=data.get("staged_pdf_parts", []),
             established_facts=data.get("established_facts", []),
             known_clues=data.get("known_clues", []),
             consumed_or_removed_items=data.get("consumed_or_removed_items", []),

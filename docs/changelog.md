@@ -1,22 +1,33 @@
 # 開發紀錄／已知限制
 
+### PR #31 review fixes
+
+- 修正劇本修正流程不覆蓋已 reconcile 的角色卡，保留 `claimed_by` 與手動補充欄位。
+- 修正 `/coc scenario import` 讀取錯誤參數、PyMuPDF4LLM zero-based page metadata 位移，以及只在檔名確實含有 part 編號時暫存分割檔。
+- 合併 PDF 解析失敗或被拒絕時保留 staged parts，避免使用者被迫重新上傳。
+
+### 狀態持久化、回溯節點與戰鬥整合
+
+- 新增 `GroupState` schema migration、timeline/revision 保存、KP-only checkpoint/rollback、scene digest 與 SQLite backup；checkpoint、rollback、backup 都記錄 started/success/failure 維運 log。
+- revision 檢查與 state snapshot 寫入在同一個 SQLite transaction 內完成，避免跨 process 的 stale write 覆蓋；Keeper role 與 KP Assistant 都可使用受保護的回溯與 digest 指令。
+- 戰鬥工具要求 `resolve_enemy_action` 帶正式命中／傷害或特殊能力結果，固定時點效果、公開資訊過濾、敵人選目標與開戰前 checkpoint 都保留在同一條流程。
+
+- 修正混合 PDF 解析的圖片遺失：graphic page 現在不論 OCR 後文字長度都會保存 render PNG，低文字門檻只控制是否追加 Vision/scene-map 分析；補上高文字量角色卡圖片的回歸測試。劇本切換時也明確隔離所選 library item 的 pregen pool，避免上一份劇本的未認領角色洩漏。
+- PDF 解析接入 `pymupdf4llm` 的逐頁 layout evidence：保留 reading order、picture/table/graphic 區塊，並讓它作為 MarkItDown 與 PyMuPDF 原生文字層之間的混合 fallback；圖片保存仍與低文字量 Vision 分離。
+- 修正劇本切換隔離：新劇本會替換 pregen pool 與 scene maps，不再保留上一份 PDF 的候選角色或地圖；新增安全的 `/coc scenario import` 與 Discord PDF 暫存合併流程，合併後共用一般 PDF pipeline。
+- Discord 分割 PDF 改為先暫存、由 KP 用 `/coc scenario merge <id1> <id2> ...` 明確選檔與排序；角色卡抽取新增 `extra_fields`，保留不同劇本自訂欄位與備註，不再只塞進固定欄位。
+
+### Persistence／戰鬥 review 補充
+
+- 完成特殊能力正式效果、固定時點效果與公開資訊過濾；`resolve_enemy_action` 只接受正式檢定結果，且 plan retry 具冪等性。
+- 補齊多角色切換、角色 identity、劇本地圖隔離、scene digest 與 Keeper role 權限；同名角色／敵人不再互相覆蓋。
+- state save、checkpoint、rollback、digest 與 backup 補上鎖、revision conflict、started/success/failure 維運紀錄及跨 process transaction 保護。
+- 修正敵人目標選擇、距離判斷、round start/end 邊界、初始先攻、過期 plan 與 rollback 圖片快取錯誤處理。
+- `/coc checkpoint clean`、`/coc digest clean` 的缺少 ID 驗證與 Discord Keeper 權限已補齊；相關 regression tests 已納入完整測試套件。
+
 逐項功能的實作紀錄——為什麼會有這個限制、目前的權宜作法、實測過什麼、之後想擴充的話要改哪裡。想知道「現在能不能做 X」或「這個功能是怎麼做的」，先來這裡找對應章節；單純想知道怎麼安裝或怎麼玩，回 [README.md](../README.md)、[setup.md](setup.md)、[gameplay.md](gameplay.md)。
 
 這些都是為了先做出一個能玩的 MVP，刻意先砍掉的範圍。想擴充哪一項都可以直接跟我說，下面附上為什麼會有這個限制、目前有什麼權宜作法、以及之後要補的話大概要改什麼地方。
-
-### 狀態持久化、回溯節點與 Discord 備份
-
-- 嚴格補強戰鬥與持久化：敵人攻擊現在必須由 `resolve_enemy_action` 以正式命中／傷害結果結算，遺失的能力計畫會可重試失敗；補上全體／環境固定時點效果、戰鬥中途加入敵人的 round-start 時序、schema migration、三個持久化路徑的啟動檢查，以及 hash 後的維運 log group ID。
-- 依靜態檢查再補強：沒有存活目標時不再產生不可執行的攻擊計畫，戰鬥與資料庫核心模組通過 mypy；SQLite table 名稱改為執行期 allowlist 驗證，不依賴可被 `python -O` 移除的 `assert`。
-- 建立 `mypy.ini` 型別檢查基準：核心遊戲、戰鬥、持久化、資料模型與已收窄的 Discord/legacy adapter 維持檢查；只有 LINE 產生 SDK 的 optional-client 邊界保留 adapter scope，避免第三方缺少 stubs 的噪音混入型別 gate。
-- 補齊 Discord、命令 router、legacy command 與 system handler 的型別收窄：動態 JSON payload、可選角色、骰子參數與互動元件 stub 都有明確處理；這四個模組現在納入 mypy gate，僅保留 LINE 產生 SDK 的 optional-client 邊界例外。
-- LINE adapter 也移除整個模組的 mypy 忽略，改由 typed client accessor 在使用前完成初始化與 `None` narrowing；後續 `app.main` 的新型別錯誤不會再被整批隱藏。
-- `GroupState` 現在保存 `schema_version`、`timeline_id` 與遞增的 `state_revision`；中央 SQLite 保存路徑會記錄成功/失敗與耗時 log。
-- 新增 KP-only 的 `/coc checkpoint`、`/coc checkpoints`、`/coc rollback`，以及開戰前自動 checkpoint；rollback 會先建立 `pre_rollback`，並切換到新的 timeline。
-- Discord bot 會依 `BACKUP_INTERVAL_MINUTES` 使用 SQLite online backup API 建立一致性備份，透過跨 process lock、暫存檔與 atomic rename 保護備份結果。
-- 新增 deterministic scene digest，依目前 timeline 提供 Keeper prompt 的最新摘要；facts、clues 與成功移除的物品會以 metadata 持久化，沒有額外 LLM 呼叫。
-- 修正 scene digest 在 campaign log 被壓縮後的 watermark 重設，避免定期摘要永久停止；checkpoint rollback 也會清除並依還原劇本/章節重建 page-image cache。
-- 新增 `BACKUP_DIR`、`BACKUP_KEEP_COUNT`、`SCENE_DIGEST_TURN_INTERVAL` 設定；資料庫備份、checkpoint 與 scene digest 都以 bot service user 可讀寫為原則。此批實作範圍以 Discord 為主。
 
 ### 1. 角色建立：三種方式，各有取捨
 
@@ -45,7 +56,7 @@
 
 ### 3. 圖文混排的頁面（手卡／地圖／插圖）可能抽不完整，整份純掃描 PDF 沒裝 OCR 就讀不出來
 
-- **現在怎麼做**：`app/pdf_loader.py` 的文字層改用 [MarkItDown](https://github.com/microsoft/markitdown)（+ `markitdown-ocr` 插件）預處理，取代原本單純的 PyMuPDF 文字抽取——保留文件結構（標題、表格）比純文字讀取器更完整，而且 `markitdown-ocr` 會偵測頁面裡「內嵌的點陣圖片」自動做圖片理解（見下方說明）。`app/markitdown_shim.py` 讓這個 OCR 插件走**我們自己既有的 `ANTHROPIC_API_KEY`**，不需要另外申請 OpenAI 帳號——`markitdown-ocr` 原生設計是接 OpenAI 的 Chat Completions 介面（`client.chat.completions.create(...)`），所以寫了一個薄薄的轉接層把這個介面轉呼叫 Anthropic，讀了 `markitdown` 和 `markitdown-ocr` 的原始碼才確認這樣接得通，不是照抄教學文章的 OpenAI 範例。PyMuPDF 沒有被拿掉，還是負責兩件 MarkItDown 完全不做的事：把頁面轉成圖片（給下面兩個「整頁圖片」備援用）、以及 MarkItDown 不可用或轉換失敗時的備援文字層——任何一步失敗都會自動退回舊行為，不會整份炸掉。
+  - **現在怎麼做**：`app/pdf_loader.py` 先以 `pymupdf4llm.to_markdown(..., page_chunks=True)` 取得逐頁 layout、reading order、圖片／表格／graphic evidence，再用 [MarkItDown](https://github.com/microsoft/markitdown)（+ `markitdown-ocr` 插件）補文件段落與 embedded image OCR；兩者都不可用時才退回 PyMuPDF 原生文字層。`pymupdf4llm` 負責提供版面證據，但地圖、手卡、角色卡的語意分類仍由結構訊號、OCR 與 Vision 綜合判定。`app/markitdown_shim.py` 讓 OCR 插件走專案既有的 provider；PyMuPDF 則繼續負責整頁 PNG render。任何 layout/OCR 層失敗都會自動退回下一層，不會整份炸掉。
   - **平面圖／地圖是特別驗證過的案例**：純文字抽取對平面圖幾乎注定失敗——房間名稱在頁面上是 2D 排列的，文字抽取只能拉成一維序列，「進門右手邊第一個房間」這種相對位置關係在抽取過程就丟失了。這不是理論推測：實測時真的發生過，玩家說進門右手邊該是寢室，守密人（讀到的是打亂順序的房間名稱清單）卻說成廚房。改成請模型直接看圖描述空間佈局後，重新測同一頁面，正確重建出了完整動線（正門進去左手邊臥鋪房、右手邊書房、走廊底端連接燈塔），而且抓出了純文字抽取完全不可能拿到的細節（走廊盡頭有個染血的通道，暗示案發地點）。**這一步刻意保留、沒有改用 MarkItDown 取代**：`markitdown-ocr` 的圖片理解只認得到 PDF 裡「內嵌的點陣圖片物件」，一張用向量線條畫出來的平面圖（矩形、直線畫出來的房間格局，不是一張圖片）在它眼裡根本沒有圖片可以辨識，會直接被跳過；`app/pdf_loader.py` 自己「把整頁渲染成圖片」的備援機制不管頁面是向量畫的還是點陣圖片，一律能抓到，這正是它還留著、而且優先權比較高的原因。
   - **這個「整頁圖片理解」備援現在會跟著 `LLM_PROVIDER` 走，不會寫死用 Anthropic**：`app/scene_map.py` 的 `analyze_page_image` 透過 `app/providers/anthropic_provider.py`／`gemini_provider.py`／`openai_provider.py` 三邊都有的 `analyze_image(png_bytes, tool, prompt)` 函式分派，用哪個供應商就打誰的 API——這是真的踩過的坑才修的：Anthropic 帳號一度真的燒到餘額不足，如果這一步繼續寫死打 Anthropic，就算把 `LLM_PROVIDER` 切到別的供應商，上傳 PDF 時圖片理解那段還是會卡住失敗。三個供應商的 vision + 強制工具呼叫都用同一份 `_ANALYZE_TOOL` schema，Gemini 那條路徑跟其他 Gemini 程式碼一樣**沒有實際打過真的 API 呼叫**（結構上驗證過型別能正確建構），OpenAI 那條路徑已經用真的金鑰測過一次合成的平面圖圖片，正確解析出房間、方位、進出口。
   - **判斷「是不是平面圖」的分析跟原本的頁面描述已經合併成一次呼叫**：以前是兩次獨立的 vision 呼叫（一次問「這頁大概是什麼、幫我描述」，一次另外問「這頁是不是地圖，是的話拆成房間圖」），現在 `analyze_page_image` 用同一個工具 schema 一次問完，圖片偏多的劇本圖片理解成本直接砍半。
@@ -1844,102 +1855,3 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - legacy owner map 的角色會逐筆補進 `characters_by_id`，不再因 ID index 已非空而漏掉後加入的角色；combat runtime identity guard 也同步支援這個 merge。
 - `advance_turn()` 在跨輪前處理 `round_end` effects，之後才增加 round、重置能力次數並處理 `round_start`。
 - 新增角色索引共享、legacy merge 與 round-end damage regression tests；完整測試 74 項通過。
-
-### 105. 完成 PR #27 戰鬥 review：特殊能力效果、回合時點與公開狀態
-
-- **特殊能力真正落地**：`resolve_enemy_action` 現在接受正式檢定結果 `outcome.success`。能力卡宣告
-  `effect.on_success=apply_effect` 且檢定成功時，系統會建立持續性的 `EffectState`；缺少結果、目標
-  不存在或效果 schema 不合法時不消耗能力次數，方便修正後重試；相同 effect id 不會重複建立。
-- **時點結算修正**：`round_end` 僅在先攻順位跨回第一位時觸發，不會在每次 `advance_turn` 都觸發。
-  `process_timing` 改為以 timing key 加 effect id 保護部分成功重試，避免一個效果失敗時另一個已成功
-  的效果再次扣血；PC 的 `turn_start` 仍由正式 `advance_turn` 流程觸發。
-- **開戰 checkpoint 補齊**：`/coc combat addnpc` 與 `addally` 在尚未開戰時，和 Keeper tool 一樣先建立
-  `auto_combat_start` checkpoint。
-- **角色與 digest 一致性**：保存與 rollback 會同步含 partner/test slot 的角色索引；Keeper prompt 與
-  scene digest 使用目前 active character；公開 digest 的敵人戰鬥狀態不含精確 HP、護甲或能力卡，private
-  digest 才保留完整戰鬥卡供 Keeper/KP Assistant 使用。
-- **測試**：新增特殊能力成功效果、缺少 outcome、round-end 邊界、效果修正重試等 regression tests。
-
-### 106. 補完多角色切換、劇本地圖隔離與 persistence identity
-
-- **多角色切換**：新增 `/coc characters` 與 `/coc switch 角色名`，以 `active_character_id_by_user` 作為
-  目前角色來源；角色卡、檢定、地圖上下文、路由與戰鬥都會讀取同一個 active character，Partner/test
-  角色的 HP、技能與暫離狀態不再混用。
-- **劇本切換地圖**：`/coc scenario use` 會載入新劇本的完整 `scene_maps`，不再用 `setdefault` 留住舊劇本
-  地圖；只有地圖 key 與 room id 都仍存在的位置會保留，失效位置會清除。
-- **摘要 identity**：scene digest 的角色欄位改用 `character_id` 作 key，避免同名角色互相覆蓋。
-- **角色 mirror 隔離**：SQLite `characters` mirror 改用 `{group_id}:{owner_id}` 與 `{group_id}:{character_id}` 作 key，
-  同一使用者在不同群組的角色不會互相覆蓋。
-- **測試**：新增 active switch、地圖替換/位置保留與跨群組 mirror regression tests。
-
-### 107. 補齊 `/coc help` 指令清單
-
-- Help text 現在列出 router 已支援但原本遺漏的 `/coc pdf`、`/coc scenario` 與 `/coc era`，並新增回歸測試確認主要指令家族都有出現在 `/coc help`。
-
-### 108. 修正 state save 與 maintenance 的並發競態
-
-- **一致的存檔鎖**：所有 `save_state()` 寫入現在都進入 per-group State Lock，與背景 maintenance 使用同一個鎖邊界。
-- **避免 stale snapshot 覆蓋**：一般存檔會比對 `state_revision`；若讀取的 snapshot 已落後於資料庫，會明確回報 revision conflict，不會靜默覆蓋較新的狀態。`newgame` 的刻意整體替換保留明確例外。
-- **maintenance 冪等**：`run_post_turn_maintenance()` 會在 scene digest 前先取得 in-flight guard，重複進入時不會建立重複 digest。
-- **測試**：新增 stale state write 與 maintenance guard regression tests；完整 `unittest discover` 共 96 項通過。
-
-### 109. 補強 checkpoint 並發與 revision conflict 處理
-
-- **rollback 鎖定**：checkpoint 建立、清除與 rollback 現在都使用 per-group State Lock，和背景 maintenance／Keeper state mutation 共用一致的同步邊界。
-- **event idempotency**：auto checkpoint 的 event-id 查詢與寫入改在 `BEGIN IMMEDIATE` SQLite transaction 內完成，避免並發 retry 建立重複節點。
-- **名稱清除**：`/coc checkpoint clean` 現在支援唯一的 checkpoint label；重複名稱會要求改用 ID。
-- **Discord conflict UX**：stale `state_revision` 會回覆明確的重試訊息，不再把內部 RuntimeError 直接顯示給使用者。
-- **測試**：新增 checkpoint label clean regression test；完整 `unittest discover` 共 97 項通過。
-
-### 110. 對齊 scene digest 鎖與 persistence 文件
-
-- **digest 寫入鎖**：`scene_digest.create_digest()` 與 digest 清除現在直接使用 per-group State Lock，直接 API 呼叫也和 maintenance 共用同一個同步邊界。
-- **digest clean API**：新增集中式 `clean_digest()`，找不到指定 ID 時會明確回報錯誤並記錄成功清除 log。
-- **文件同步**：補齊 `scene_digests` table、rollback 的雙鎖與 revision 行為、checkpoint 唯一名稱清除、revision conflict UX，以及 API/configuration 指令說明。
-- **測試**：完整 `unittest discover` 共 97 項通過。
-
-### 111. 修正 combat turn、跨 process revision 與 Keeper 權限
-
-- **turn-start 致死處理**：turn-start effect 若在角色行動前造成倒下，`plan_enemy_turn()` 不會再建立攻擊計畫；`advance_turn()` 也會繼續跳過被效果擊倒的戰鬥員。
-- **跨 process revision 原子性**：revision check 與完整 state/mirror snapshot write 改在同一個 SQLite `BEGIN IMMEDIATE` transaction 內，避免多 process 同時通過檢查後互相覆蓋。
-- **角色 identity**：PC HP synchronization 優先使用 `character_id`，同名角色不會更新錯誤角色；scene digest 的 NPC ability private map 改用 `combatant_id`，同名敵人不會互相覆蓋。
-- **Keeper 權限**：Discord 具有 `Keeper` role 的成員現在可操作 checkpoint、rollback、digest；KP Assistant 權限維持不變。
-- **測試**：完整 `unittest discover` 共 100 項通過。
-
-### 112. 修正敵人目標選擇，避免固定集火先攻角色
-
-- 敵人選擇目標改為距離優先：先從 `engaged` PC 選，再從 `near` PC 選，最後才從所有未倒下且未暫離的 PC 隨機選擇。
-- 同一距離層級使用隨機選擇，不再固定攻擊 initiative 順序最前面的角色；未設定距離也會走隨機 fallback。
-- 本次選出的目標寫入 `EnemyTurnPlan.target_ids`，同一個 plan retry 不會改變目標。
-- 新增距離優先與同距離隨機的 combat regression tests。
-
-### 113. 修正 checkpoint 過期快照與 persistence failure logging
-
-- checkpoint 建立時在同一個 SQLite transaction 內重新讀取目前 `group_states`，不再把 stale snapshot 保存成可回溯節點。
-- checkpoint 建立/清除、rollback 與 scene digest 清除失敗時記錄 `ERROR`、例外 traceback、群組與耗時，transaction rollback 狀態可供排查。
-- 新增 checkpoint freshness 與 failure log regression tests；完整測試共 104 項通過。
-
-### 114. 補齊清除指令驗證與 persistence started logs
-
-- `/coc checkpoint clean` 與 `/coc digest clean` 缺少目標 ID 時改回覆正確用法，不會誤建立 checkpoint 或顯示最新摘要。
-- checkpoint 建立/清除、rollback 與 database backup 現在都會記錄 `*_started`，並保留既有 success/failure logs。
-- 新增指令參數與 backup logging regression tests。
-
-### 115. 修正敵人距離攻擊判斷與 rollback 圖片快取失敗處理
-
-- 敵人只有在選定目標落在攻擊的抽象距離範圍內才建立 attack plan；明確標記為 `far` 的目標會改走 move。
-- rollback 的 authoritative state commit 不再因衍生 page image cache 失敗而回報整個 rollback 失敗；圖片快取錯誤會獨立記錄並在 rollback success log 標記。
-- 新增 out-of-range enemy action 與 image restore failure regression tests。
-
-### 116. 修正戰鬥初始先攻與敵人 plan 重複結算
-
-- 戰鬥開始時依角色 DEX 排列先攻，並立即處理第一輪 `round_start` 觸發。
-- 同一敵人回合重複規劃時，在狀態未變更的情況下重用未結算 plan；能力 resolve 會再次驗證使用次數與冷卻，過期 plan 不可套用。
-- 新增初始先攻、第一輪能力觸發與重複 plan regression tests。
-
-### 117. 修正戰鬥距離、plan 回合驗證與備份錯誤記錄
-
-- `target_in_range` 支援正向與反向的抽象距離 key；enemy plan 只能在對應敵人目前回合執行。
-- backup lock 初始化失敗會記錄 `backup_failure`，同秒建立的備份使用唯一檔名避免互相覆蓋。
-- state revision conflict 會寫入結構化 persistence warning log。
-- 新增上述戰鬥與 persistence regression tests。

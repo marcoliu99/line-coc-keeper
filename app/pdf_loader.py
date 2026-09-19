@@ -1,15 +1,15 @@
 """Extract plain text from an uploaded scenario PDF.
 
 COC7e scenario PDFs are rarely plain text — they usually mix body copy with maps,
-handouts, and stat-block graphics on the same page ("文圖並茂"). The primary text
-layer now comes from MarkItDown (+ the markitdown-ocr plugin, see
-app/markitdown_shim.py) — see _markitdown_page_texts — which keeps document
-structure (headings, tables) more faithfully than a bare text-layer reader and
-OCRs embedded raster images inline using our own vision prompt. PyMuPDF (fitz)
-stays in the loop regardless, for two things MarkItDown doesn't do at all:
-rendering a page to an image (needed for the two graphic-page fallbacks below,
-which run independently of whichever text layer supplied the page's text), and
-as the fallback text layer itself if MarkItDown is unavailable or fails.
+handouts, and stat-block graphics on the same page ("文圖並茂"). PyMuPDF4LLM is
+the layout-aware page parser when installed: it preserves per-page Markdown,
+picture/table/graphic evidence, and reading order. MarkItDown (+ the
+markitdown-ocr plugin, see app/markitdown_shim.py) remains the embedded-image
+OCR and compatibility fallback. PyMuPDF (fitz) stays in the loop for rendering
+the whole page and as the final text fallback. The semantic labels (map,
+handout, character sheet, illustration) still come from structural evidence,
+OCR text, and Vision; PyMuPDF4LLM supplies the evidence rather than guessing
+those labels by itself.
 
 Floor plans and maps are a specific, real failure mode of plain text extraction:
 room-name labels are positioned in 2D on the page, but a text-layer reader can
@@ -225,6 +225,98 @@ def _markitdown_page_texts(pdf_bytes: bytes) -> dict[int, str] | None:
     return pages
 
 
+def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
+    """Return PyMuPDF4LLM's page-level layout evidence when available.
+
+    PyMuPDF4LLM is intentionally optional at import time. This keeps preview
+    and existing deployments usable while requirements installation is being
+    rolled out, and lets the parser fall back to PyMuPDF + MarkItDown if a
+    particular PDF or package version cannot be processed.
+
+    The package has used both ``page`` and ``page_number`` in its metadata
+    examples across releases, so accept either key and normalize to a 1-based
+    page number here.
+    """
+    try:
+        import pymupdf4llm
+    except Exception:
+        # pymupdf4llm imports pymupdf.layout, which can eagerly load an
+        # optional ONNX model. A broken/missing model is a parser capability
+        # problem, not a reason to reject an otherwise readable PDF.
+        return None
+
+    doc = None
+    try:
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        chunks = pymupdf4llm.to_markdown(
+            doc,
+            page_chunks=True,
+            write_images=False,
+            embed_images=False,
+        )
+    except Exception:
+        return None
+    finally:
+        if doc is not None:
+            doc.close()
+
+    if not isinstance(chunks, list):
+        return None
+
+    pages: dict[int, dict] = {}
+    for index, chunk in enumerate(chunks):
+        if not isinstance(chunk, dict):
+            continue
+        metadata = chunk.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        if "page_number" in metadata:
+            raw_page = metadata["page_number"]
+            zero_based = False
+        elif "page" in metadata:
+            raw_page = metadata["page"]
+            zero_based = True
+        else:
+            raw_page = None
+            zero_based = False
+        try:
+            page_number = int(raw_page) if raw_page is not None else index + 1
+        except (TypeError, ValueError):
+            page_number = index + 1
+        if zero_based:
+            page_number += 1
+        if page_number >= 1:
+            pages[page_number] = chunk
+    return pages or None
+
+
+def _pymupdf4llm_has_graphic_evidence(chunk: dict | None) -> bool:
+    """Whether a PyMuPDF4LLM page chunk contains non-text layout evidence."""
+    if not chunk:
+        return False
+    for key in ("images", "graphics", "tables"):
+        value = chunk.get(key)
+        if isinstance(value, (list, tuple, dict)) and value:
+            return True
+    page_boxes = chunk.get("page_boxes")
+    if isinstance(page_boxes, list):
+        return any(
+            isinstance(box, dict)
+            and str(box.get("class", "")).lower() in {"picture", "image", "figure", "graphic", "table"}
+            for box in page_boxes
+        )
+    return False
+
+
+def _pymupdf4llm_page_text(chunk: dict | None) -> str:
+    if not chunk:
+        return ""
+    text = chunk.get("text")
+    if not isinstance(text, str):
+        return ""
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
     """Extract scenario text.
 
@@ -234,11 +326,11 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
       content may not be fully captured.
     - truncated: True if the scenario exceeded MAX_SCENARIO_CHARS and everything
       past that cut-off point was dropped.
-    - page_images: 1-indexed page number -> rendered PNG bytes, for every page in
-      low_text_pages (the maps/handouts/character-sheet pages already rendered
-      for vision/OCR here). Lets a caller show a player the actual picture
-      instead of just the Keeper's text description of it — see /coc showpage
-      and the show_scenario_image tool in app/keeper.py.
+    - page_images: 1-indexed page number -> rendered PNG bytes, for every page
+      with graphic content (including pages whose OCR/MarkItDown text is long).
+      This is deliberately independent from low_text_pages: callers can show
+      the actual map/handout/character sheet even when OCR already supplied a
+      lot of text — see /coc showpage and show_scenario_image.
     - page_maps: 1-indexed page number -> structured room-graph dict (see
       app/scene_map.py), for whichever low_text_pages turned out to actually be
       a floor plan/map (most won't be — character sheets and illustrations are
@@ -250,46 +342,49 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
     silently goes missing.
     """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    layout_pages = _pymupdf4llm_page_chunks(pdf_bytes)
     markitdown_pages = _markitdown_page_texts(pdf_bytes)  # dict[int, str] or None — see that function's docstring
 
     page_texts: list[str] = []
     low_text_pages: list[int] = []
-    pending: dict[int, bytes] = {}  # page index -> rendered PNG, needs vision/OCR
+    page_images: dict[int, bytes] = {}
+    vision_pending: dict[int, bytes] = {}  # page index -> low-text PNG for Vision/OCR
 
     for i, page in enumerate(cast(Iterable[Any], doc)):
         page_number = i + 1
+        layout_text = _pymupdf4llm_page_text(layout_pages.get(page_number) if layout_pages else None)
         if markitdown_pages is not None and page_number in markitdown_pages:
             text = markitdown_pages[page_number]
+        elif layout_text:
+            text = layout_text
         else:
             text = page.get_text("text") or ""
             text = re.sub(r"[ \t]+", " ", text)
             text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
-        # has_graphic_content gates the whole-page vision/scene-map fallback
-        # below on PyMuPDF's own page.get_images()/get_drawings() regardless
-        # of which text layer was used above — this is what still catches a
-        # vector-drawn floor plan markitdown-ocr's embedded-raster-image
-        # detection would miss (see this module's docstring and
-        # _page_has_graphic_content's own docstring for the vector-drawings
-        # half specifically). A page markitdown-ocr already enriched via
-        # inline embedded-image OCR will usually already be >= the text
-        # threshold here, so this naturally skips a redundant second vision
-        # call for it.
-        has_graphic_content = _page_has_graphic_content(page)
-        if len(text) < _LOW_TEXT_THRESHOLD and has_graphic_content:
-            low_text_pages.append(page_number)
-            pending[i] = _render_page_png(page)
+        # Image persistence and whole-page Vision are separate decisions.
+        # MarkItDown/OCR can make a character sheet exceed the text threshold;
+        # that must skip the redundant Vision call, not discard the image.
+        has_graphic_content = _page_has_graphic_content(page) or _pymupdf4llm_has_graphic_evidence(
+            layout_pages.get(page_number) if layout_pages else None
+        )
+        if has_graphic_content:
+            png_bytes = _render_page_png(page)
+            page_images[page_number] = png_bytes
+            if len(text) < _LOW_TEXT_THRESHOLD:
+                low_text_pages.append(page_number)
+                vision_pending[i] = png_bytes
 
         page_texts.append(text)
 
     page_maps: dict[int, dict] = {}
 
-    if pending:
-        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))
+    if vision_pending:
+        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(vision_pending))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             analyze_futures = {
                 executor.submit(_analyze_graphic_page, png_bytes): idx
-                for idx, png_bytes in pending.items()
+                for idx, png_bytes in vision_pending.items()
             }
             for future in concurrent.futures.as_completed(analyze_futures):
                 idx = analyze_futures[future]
@@ -310,7 +405,6 @@ def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, byte
     if truncated:
         full_text = full_text[:MAX_SCENARIO_CHARS] + "\n\n[...劇本內容過長，已截斷...]"
 
-    page_images = {idx + 1: png_bytes for idx, png_bytes in pending.items()}
     return full_text, low_text_pages, truncated, page_images, page_maps
 
 
@@ -368,3 +462,29 @@ def extract_preview(pdf_bytes: bytes, page_limit: int = 3) -> str:
     if not parts:
         raise ValueError("這份 PDF 的前幾頁無法抽取文字，無法快速比對")
     return "\n\n".join(parts)
+
+
+def combine_pdfs(pdf_parts: list[bytes]) -> bytes:
+    """Combine uploaded parts before sending them through the normal pipeline."""
+    if not pdf_parts:
+        raise ValueError("沒有可合併的 PDF")
+    if len(pdf_parts) == 1:
+        return pdf_parts[0]
+    output = pymupdf.open()
+    merged_toc: list[list] = []
+    page_offset = 0
+    try:
+        for payload in pdf_parts:
+            source = pymupdf.open(stream=payload, filetype="pdf")
+            try:
+                output.insert_pdf(source)
+                for level, title, page_number in source.get_toc(simple=True):
+                    merged_toc.append([level, title, page_number + page_offset])
+                page_offset += source.page_count
+            finally:
+                source.close()
+        if merged_toc:
+            output.set_toc(merged_toc)
+        return output.tobytes()
+    finally:
+        output.close()

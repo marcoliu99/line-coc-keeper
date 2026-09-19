@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from app import checkpoints, keeper, locks, scenario_index, scenario_intro, scenario_library, scene_digest, scene_map
+from app.config import IMPORT_DIR
 from app.models import GroupState
 from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
@@ -13,6 +14,68 @@ from app.legacy_commands import (
 )
 
 
+async def _handle_local_import(conversation_id: str, user_id: str, reply: Reply, parts: list[str]) -> None:
+    state = load_state(conversation_id)
+    if state.kp_assistant_user_id != user_id:
+        await reply("只有目前登記的 KP Assistant 可以匯入伺服器上的 PDF。")
+        return
+    filename_index = 3 if len(parts) > 1 and parts[1] == "scenario" else 2
+    if len(parts) <= filename_index:
+        await reply("用法：/coc scenario import 檔名.pdf")
+        return
+    try:
+        pdf_path = scenario_library.safe_import_path(IMPORT_DIR, parts[filename_index])
+        pdf_bytes = pdf_path.read_bytes()
+    except (FileNotFoundError, ValueError, OSError):
+        await reply("找不到允許匯入的 PDF；只能使用 IMPORT_DIR 內的檔案名稱，不能帶路徑。")
+        return
+    await reply(f"已讀取伺服器檔案《{pdf_path.name}》，開始解析...")
+    await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pdf_path.name)
+
+
+async def _handle_staged_merge(conversation_id: str, user_id: str, reply: Reply, parts: list[str]) -> None:
+    state = load_state(conversation_id)
+    if state.kp_assistant_user_id != user_id:
+        await reply("只有目前登記的 KP Assistant 可以合併 PDF。")
+        return
+    refs = parts[3:]
+    if not refs:
+        await reply("用法：/coc scenario merge 暫存ID1 暫存ID2 ...")
+        return
+    if refs == ["list"]:
+        if not state.staged_pdf_parts:
+            await reply("目前沒有暫存的 PDF part。")
+            return
+        await reply("暫存 PDF：\n" + "\n".join(f"・{p['key'][:12]} {p['file_name']}" for p in state.staged_pdf_parts))
+        return
+    selected: list[dict[str, str]] = []
+    for ref in refs:
+        matches = [p for p in state.staged_pdf_parts if p["key"].startswith(ref) or p["file_name"] == ref]
+        if len(matches) != 1:
+            await reply(f"暫存 ID／檔名無法唯一對應：{ref}。先用 /coc scenario merge list 查看。")
+            return
+        if matches[0] not in selected:
+            selected.append(matches[0])
+    if len(selected) < 2:
+        await reply("至少要指定兩個 PDF part 才能合併。")
+        return
+    try:
+        payloads = [scenario_library.read_staged_upload(item["key"]) for item in selected]
+    except FileNotFoundError:
+        await reply("其中一個暫存 PDF 已不存在，請重新上傳。")
+        return
+    from app.pdf_loader import combine_pdfs
+    merged = await asyncio.to_thread(combine_pdfs, payloads)
+    merged_name = f"{selected[0]['file_name'].rsplit('.', 1)[0]}_merged.pdf"
+    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name)
+    if not accepted:
+        return
+    for item in selected:
+        scenario_library.discard_staged_upload(item["key"])
+    async with locks.get_conversation_lock(conversation_id):
+        latest = load_state(conversation_id)
+        latest.staged_pdf_parts = [p for p in latest.staged_pdf_parts if p not in selected]
+        save_state(latest)
 def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) -> None:
     previous_locations = {
         owner_id: (state.current_map_page.get(owner_id, ""), state.current_room_id.get(owner_id, ""))
@@ -141,6 +204,12 @@ async def handle_system_command(
     if sub == "scenario":
         action = parts[2] if len(parts) > 2 else "list"
         state = load_state(conversation_id)
+        if action == "import":
+            await _handle_local_import(conversation_id, user_id, reply, parts)
+            return
+        if action == "merge":
+            await _handle_staged_merge(conversation_id, user_id, reply, parts)
+            return
         if action == "list":
             entries = scenario_library.list_scenarios()
             if not entries:
@@ -209,6 +278,9 @@ async def handle_system_command(
             state.scenario_npc_index = context["indexes"].get("npcs", [])
             state.scenario_location_index = context["indexes"].get("locations", [])
             _replace_scene_maps_preserving_locations(state, context["scene_maps"])
+            # Pregens belong to the selected library item. Keep live
+            # investigators in state.characters, but never leak the previous
+            # scenario's pregen pool into this scenario's /coc pregens list.
             state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
             state.active = True
@@ -235,7 +307,10 @@ async def handle_system_command(
                 return
             await reply("已清除劇本庫項目。")
             return
-        await reply("用法：/coc scenario list | use 劇本ID | clean 劇本ID | reparse | cancel")
+        await reply("用法：/coc scenario list | use 劇本ID | clean 劇本ID | reparse | cancel | import 檔名.pdf | merge ID...")
+        return
+    if sub == "import":
+        await _handle_local_import(conversation_id, user_id, reply, parts)
         return
     if sub == "newgame":
         save_state(GroupState(group_id=conversation_id), reason="newgame")

@@ -39,6 +39,18 @@ def _path(scenario_id: str) -> Path:
     return SCENARIO_LIBRARY_DIR / scenario_id
 
 
+def safe_import_path(import_dir: Path, filename: str) -> Path:
+    name = Path(filename).name
+    if name != filename or not name.lower().endswith(".pdf") or not name:
+        raise ValueError("invalid import filename")
+    root = import_dir.resolve()
+    raw_candidate = root / name
+    candidate = raw_candidate.resolve()
+    if raw_candidate.is_symlink() or candidate.parent != root or not candidate.is_file():
+        raise FileNotFoundError(name)
+    return candidate
+
+
 def _read_json(path: Path, fallback: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -203,7 +215,8 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
         try:
             chapters = build_chapters(pdf_bytes, text)
             assets = _build_image_assets(page_images, page_maps, text, chapters)
-            manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": _read_json(target / "manifest.json", {}).get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
+            previous_manifest = _read_json(target / "manifest.json", {})
+            manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": previous_manifest.get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
             (temporary / "images").mkdir()
             (temporary / "source.pdf").write_bytes(pdf_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")

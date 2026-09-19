@@ -1502,6 +1502,45 @@ def _execute_tool(
                 )
             return _mutate_and_save_state(state, _mutate_add_combat_effect)
 
+        if name == "plan_enemy_turn":
+            def _mutate_plan_enemy_turn(target_state: GroupState) -> dict:
+                return combat.plan_enemy_turn(target_state, tool_input.get("enemy", ""))
+            return _mutate_and_save_state(state, _mutate_plan_enemy_turn)
+
+        if name == "resolve_enemy_action":
+            def _mutate_resolve_enemy_action(target_state: GroupState) -> dict:
+                return combat.resolve_enemy_action(target_state, tool_input["plan_id"])
+            return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
+
+        if name == "apply_combat_damage":
+            def _mutate_apply_combat_damage(target_state: GroupState) -> dict:
+                return combat.apply_combat_damage(
+                    target_state,
+                    tool_input["target"],
+                    int(tool_input["raw_damage"]),
+                    damage_type=tool_input.get("damage_type", "physical"),
+                    tags=tool_input.get("tags") or [],
+                    source_id=tool_input.get("source_id", ""),
+                )
+            result = _mutate_and_save_state(state, _mutate_apply_combat_damage)
+            return _filter_public_combat_damage_result(result, speaker_role)
+
+        if name == "add_combat_effect":
+            def _mutate_add_combat_effect(target_state: GroupState) -> dict:
+                return combat.add_combat_effect(
+                    target_state,
+                    tool_input["target"],
+                    tool_input["label"],
+                    timing=tool_input.get("timing", "turn_start"),
+                    damage=tool_input.get("damage", ""),
+                    damage_type=tool_input.get("damage_type", "physical"),
+                    remaining_rounds=tool_input.get("remaining_rounds"),
+                    tags=tool_input.get("tags") or [],
+                    source_id=tool_input.get("source_id", ""),
+                    public_description=tool_input.get("public_description", ""),
+                )
+            return _mutate_and_save_state(state, _mutate_add_combat_effect)
+
         if name == "end_combat":
             def _mutate_end_combat(target_state: GroupState) -> None:
                 combat.end_combat(target_state)

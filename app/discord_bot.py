@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from pathlib import Path
+import re
 import unicodedata
 
 import discord
 
-from app import locks
+from app import locks, pdf_loader, scenario_library
 from app.commands import router as command_router
 from app.legacy_commands import (
     Reply, SendImage, SendDMImage, SendDM,
@@ -457,11 +459,34 @@ async def on_message(message: discord.Message) -> None:
     try:
         pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
         if pdf_attachments:
-            attachment = pdf_attachments[0]
+            ordered = sorted(pdf_attachments, key=lambda item: item.filename.lower())
+            part_name = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
+            should_stage = len(ordered) > 1 or any(
+                part_name.search(Path(item.filename).stem) for item in ordered
+            )
+            if should_stage:
+                staged = []
+                for attachment in ordered:
+                    payload = await attachment.read()
+                    key = await asyncio.to_thread(scenario_library.stage_upload, payload)
+                    staged.append({"key": key, "file_name": attachment.filename})
+                async with locks.get_conversation_lock(conversation_id):
+                    state = load_group_state(conversation_id)
+                    state.staged_pdf_parts.extend(staged)
+                    from app.repositories.group_state import save_state as save_group_state
+                    save_group_state(state)
+                await reply(
+                    "已暫存 PDF part，尚未合併或解析：\n"
+                    + "\n".join(f"・{item['key'][:12]} {item['file_name']}" for item in staged)
+                    + "\n請由 KP 輸入 `/coc scenario merge 暫存ID1 暫存ID2 ...`。"
+                )
+                return
+            attachment = ordered[0]
             content = await attachment.read()
+            filename = attachment.filename
             # No reply-token/time-window constraint here, so the same callback
             # serves as both the immediate ack and the final result.
-            await handle_pdf_upload(conversation_id, reply, reply, content, attachment.filename)
+            await handle_pdf_upload(conversation_id, reply, reply, content, filename)
             await _post_pdf_upload_buttons(message.channel, conversation_id)
             return
 
