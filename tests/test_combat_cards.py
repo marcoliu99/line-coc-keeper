@@ -21,6 +21,24 @@ class CombatCardTests(unittest.TestCase):
         state.active_character_id_by_user = {"u1": "char-mark"}
         return state
 
+    def test_group_state_reuses_character_objects_across_legacy_and_id_indexes(self):
+        legacy = Character(name="Mark", owner_id="u1", character_id="char-mark", hp=10).to_dict()
+        indexed = Character(name="Mark", owner_id="u1", character_id="char-mark", hp=8).to_dict()
+        new_legacy = Character(name="Partner", owner_id="u2", hp=9).to_dict()
+
+        state = GroupState.from_dict({
+            "group_id": "g",
+            "characters": {"u1": legacy, "u2": new_legacy},
+            "characters_by_id": {"char-mark": indexed},
+        })
+
+        self.assertIs(state.characters["u1"], state.characters_by_id["char-mark"])
+        self.assertIn("legacy-user:u2", state.characters_by_id)
+        self.assertIs(state.characters["u2"], state.characters_by_id["legacy-user:u2"])
+        state.characters["u1"].hp = 2
+        self.assertEqual(state.characters_by_id["char-mark"].hp, 2)
+        self.assertEqual(state.active_character_id_by_user["u2"], "legacy-user:u2")
+
     def test_enemy_special_ability_is_planned_before_default_attack(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -352,6 +370,31 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["current_turn"], "Mark")
         self.assertEqual(state.combat.order[state.combat.current_index].hp, 11)
+        self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
+        self.assertEqual(state.combat.effects, [])
+
+    def test_round_end_effect_triggers_before_new_round(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Fast Enemy", 80, 10)
+        # Advance from the last initiative slot so this transition crosses
+        # the round boundary and exercises round_end before round_start.
+        state.combat.current_index = len(state.combat.order) - 1
+        combat.add_combat_effect(
+            state,
+            "Mark",
+            "Round-end fire",
+            timing="round_end",
+            damage="1",
+            damage_type="fire",
+            remaining_rounds=1,
+            tags=["fire"],
+        )
+
+        result = combat.advance_turn(state)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(state.combat.round_number, 2)
         self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
         self.assertEqual(state.combat.effects, [])
 

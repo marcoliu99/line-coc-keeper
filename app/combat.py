@@ -38,14 +38,14 @@ def _ensure_character_identity(state: GroupState) -> None:
     partner, and test characters can eventually coexist without overwriting each
     other.
     """
-    if not state.characters_by_id:
-        for owner_id, char in state.characters.items():
-            if not char.character_id:
-                char.character_id = f"legacy-user:{owner_id}"
-            state.characters_by_id[char.character_id] = char
     for owner_id, char in state.characters.items():
         if not char.character_id:
             char.character_id = f"legacy-user:{owner_id}"
+        canonical = state.characters_by_id.get(char.character_id)
+        if canonical is None:
+            state.characters_by_id[char.character_id] = char
+        else:
+            state.characters[owner_id] = canonical
         state.active_character_id_by_user.setdefault(owner_id, char.character_id)
 
 
@@ -688,6 +688,7 @@ def advance_turn(state: GroupState) -> dict:
 
     current = combat.order[combat.current_index]
     process_timing(state, "turn_end", current.combatant_id)
+    process_timing(state, "round_end")
 
     n = len(combat.order)
     for _ in range(n):
