@@ -19,6 +19,9 @@ data/
 *.db-journal
 backups/
 
+# Local bot lifecycle manifests and logs
+.runtime/
+
 # Local process output/state
 *.log
 *.pid
