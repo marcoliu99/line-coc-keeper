@@ -185,3 +185,30 @@ python -m app.discord_bot
 ```
 
 看到終端機印出「Discord bot 已上線：...」就代表連上了，直接去伺服器頻道打字測試即可。這個程式會一直佔用終端機、持續連線，測試完想關掉就 `Ctrl+C`；長期使用一樣建議換成正式主機常駐執行（跟 LINE 那邊一樣，程式碼不用改，只是部署方式換掉，也不需要 webhook URL 那一段）。
+# Local Bot Lifecycle Scripts
+
+The repository includes scripts for running more than one local bot instance
+without stopping unrelated processes:
+
+```bash
+./scripts/start_bot.sh discord
+./scripts/start_bot.sh line --name line-dev
+./scripts/bot_status.sh
+./scripts/stop_bot.sh line-dev
+```
+
+Every start creates a unique manifest and log under `.runtime/bots/`. Stop
+requires that exact instance name and verifies the recorded PID, process group,
+and command before sending a signal; it never uses `pkill`. Logs remain after a
+successful stop for troubleshooting. Use `./scripts/bot_status.sh` to inspect
+stale manifests without stopping anything.
+
+To remove local bot data, review the printed allowlist and confirm explicitly:
+
+```bash
+./scripts/clean_bot_data.sh --yes
+```
+
+This removes configured runtime data (`DATA_DIR`, `DB_PATH`, backups, scenario
+library, and `IMPORT_DIR`) but does not remove `.env`, source code, the virtual
+environment, or lifecycle manifests. It also does not stop running bots.
