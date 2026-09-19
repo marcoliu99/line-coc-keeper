@@ -1,22 +1,34 @@
-"""One-time migration: rename skill keys already persisted under this
-project's OLD Chinese terminology to the official terminology table the
-project owner supplied on 2026-09-17 (see app/models.py's BASE_SKILLS —
-its own comment lists the exact renames this mirrors).
+"""One-time migration: rename/merge skill keys already persisted under any
+alias this project's canonicalization now understands (app/skill_aliases.py's
+SKILL_ALIASES — both the 2026-09-17 terminology-table renames and every
+other alias, e.g. "手槍"->"射擊（手槍）") onto their one canonical BASE_SKILLS
+name.
 
-Renaming BASE_SKILLS itself only changes what NEW characters get; it doesn't
-touch a Character or pregen dict that was already saved under the old
-spelling (e.g. "估價": 45 sitting in some player's already-persisted
-`skills` dict) — that key just silently stops being found once the Keeper
-or a skill_check looks up the new canonical name instead. Run this once,
-after deploying the rename, to bring every already-persisted skills dict up
-to date:
+Fixing app/pregen_extractor.py's _translate_skill_names and app/creation.py's
+allocate() to canonicalize going forward (see docs/pregen_luck_roll_design_
+spec.md) only changes what NEW extractions/allocations produce; it doesn't
+touch a Character or pregen dict that was already saved with both an alias
+and its canonical name sitting side by side as two separate entries (the
+exact real symptom that led to fixing those two call sites: /coc pregens'
+preview showing e.g. both "鬥毆 70%" and "格鬥（鬥毆） 70%"). Run this once,
+after deploying those fixes, to bring every already-persisted skills dict
+up to date:
 
     .venv/bin/python -m scripts.migrate_skill_names
 
-Purely additive/idempotent and safe to re-run: renaming only fires when the
-OLD key is actually present (a value under the NEW key, if one somehow
-already exists, is never overwritten — see _rename_skills), and every write
-here is an upsert of the same row it read, not a new row.
+Imports SKILL_ALIASES directly from app.skill_aliases rather than keeping a
+separate hand-copied table here — the previous version of this script only
+mirrored the terminology-rename subset of that table (added 2026-09-17) and
+missed every general alias (手槍/鬥毆/話術/...), so a real duplicate coming
+from one of those never got migrated even after this script's original run.
+Importing the live table means this script can never drift out of sync with
+it again.
+
+Idempotent and safe to re-run: a name with no alias-pair present in a given
+skills dict is left untouched. When both the alias and its canonical name
+are present with *different* values, keeps the higher one (see
+_rename_skills) instead of unconditionally dropping the alias's value —
+matching the same merge discipline _translate_skill_names now uses.
 
 Touches three places skills dicts can live: each GroupState's
 `characters` (currently-claimed investigators) and `pregens` (the
@@ -26,35 +38,25 @@ mirror in the "characters" table (`sheet.skills`).
 from __future__ import annotations
 
 from app import db
-
-# OLD Chinese skill name -> NEW official terminology-table name. Mirrors
-# app/models.py's BASE_SKILLS comment and app/skill_aliases.py's reverse
-# aliases exactly — this is the one-time data-side counterpart to those
-# code-side changes.
-_RENAMES: dict[str, str] = {
-    "估價": "鑑定",
-    "話術": "快速交談",
-    "領航": "導航",
-    "巧手": "妙手",
-    "駕駛（其他載具）": "駕駛",
-    "電器維修": "電氣維修",
-    "外語（其他）": "其他語言",
-    "重機械操作": "重型機械操作",
-}
+from app.skill_aliases import SKILL_ALIASES as _RENAMES
 
 
 def _rename_skills(skills: dict) -> bool:
-    """Mutates `skills` in place; returns True if anything changed. Never
-    overwrites a value already sitting under the new name — if that
-    somehow happens (the character was already migrated, or independently
-    ended up with both keys), the old key is just dropped rather than
-    clobbering data that's presumably more current."""
+    """Mutates `skills` in place; returns True if anything changed. When the
+    canonical name is already present too, keeps whichever of the two
+    values is higher (see this module's docstring for why: a lower
+    duplicate is more likely leftover extraction noise than a real, lower,
+    intentional value, and picking one over the other silently based on
+    which key the dict happened to already have would be arbitrary)."""
     changed = False
     for old_name, new_name in _RENAMES.items():
         if old_name not in skills:
             continue
         value = skills.pop(old_name)
-        skills.setdefault(new_name, value)
+        if new_name in skills and isinstance(skills[new_name], (int, float)) and isinstance(value, (int, float)):
+            skills[new_name] = max(skills[new_name], value)
+        else:
+            skills.setdefault(new_name, value)
         changed = True
     return changed
 

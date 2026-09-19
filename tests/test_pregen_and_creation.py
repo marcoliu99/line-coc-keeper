@@ -1,4 +1,6 @@
+import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -6,7 +8,7 @@ from unittest.mock import patch
 sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_load=lambda data: {}))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
-from app import creation, pregen_extractor
+from app import creation, db, pregen_extractor
 from app.models import BASE_SKILLS, CreationSession
 
 
@@ -164,6 +166,61 @@ class CreationAllocateCanonicalizationTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["skill"], "深潛者辨識")
         self.assertEqual(session.skills["深潛者辨識"], 20 + 15)
+
+
+class MigrateSkillNamesScriptTests(unittest.TestCase):
+    """Regression tests for scripts/migrate_skill_names.py, the one-time
+    cleanup pass for skills dicts already persisted before the
+    _translate_skill_names/allocate() canonicalization fixes existed."""
+
+    def setUp(self):
+        fd, self._tmp_db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self._tmp_db)  # db._ensure_tables creates it fresh
+        self._original_db_path = db.DB_PATH
+        db.DB_PATH = self._tmp_db
+        db._ensure_tables()
+
+    def tearDown(self):
+        db.DB_PATH = self._original_db_path
+        if os.path.exists(self._tmp_db):
+            os.remove(self._tmp_db)
+
+    def test_migrate_merges_duplicate_alias_pairs_taking_the_higher_value(self):
+        from scripts.migrate_skill_names import migrate
+
+        db.set_json("group_states", "g1", {
+            "group_id": "g1",
+            "characters": {
+                "u1": {"name": "T", "owner_id": "u1", "skills": {"鬥毆": 70, "格鬥（鬥毆）": 70, "恐嚇": 60, "威嚇": 35}},
+            },
+            "pregens": [{"name": "P1", "skills": {"手槍": 40, "求生": 10}}],
+        })
+
+        migrate()
+
+        result = db.get_json("group_states", "g1")
+        self.assertEqual(result["characters"]["u1"]["skills"], {"格鬥（鬥毆）": 70, "恐嚇": 60})
+        self.assertEqual(result["pregens"][0]["skills"], {"射擊（手槍）": 40, "生存": 10})
+
+    def test_migrate_leaves_already_clean_data_untouched(self):
+        from scripts.migrate_skill_names import migrate
+
+        clean = {"group_id": "g2", "characters": {"u1": {"name": "T", "owner_id": "u1", "skills": {"格鬥（鬥毆）": 70}}}, "pregens": []}
+        db.set_json("group_states", "g2", clean)
+
+        migrate()
+
+        self.assertEqual(db.get_json("group_states", "g2"), clean)
+
+    def test_migrate_updates_the_standalone_characters_table_mirror(self):
+        from scripts.migrate_skill_names import migrate
+
+        db.set_json("characters", "u1", {"conversation_id": "g1", "name": "T", "sheet": {"skills": {"手槍": 40}}})
+
+        migrate()
+
+        self.assertEqual(db.get_json("characters", "u1")["sheet"]["skills"], {"射擊（手槍）": 40})
 
 
 if __name__ == "__main__":
