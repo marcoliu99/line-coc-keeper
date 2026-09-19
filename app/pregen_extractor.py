@@ -14,6 +14,11 @@ from typing import Any
 from app import character_matcher, dictionary
 from app.config import LLM_PROVIDER
 from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
+
+
+def roll_player_luck() -> int:
+    """Roll the LUCK result only after the player explicitly requests it."""
+    return _roll(3, 6, 5)
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
 
@@ -555,12 +560,14 @@ def _resolve_weapon_ammo(weapons: dict[str, dict[str, Any]], era: str) -> dict[s
     return resolved
 
 
-def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s") -> Character:
+def pregen_to_character(
+    pregen: dict[str, Any], owner_id: str, era: str = "1920s", *, luck: int = 0
+) -> Character:
     """Build one fresh character from a pregen snapshot.
 
-    This pure constructor does not record ownership.  Command-facing callers
-    must use the shared claim boundary, which prevents a second LUCK roll for
-    an already-claimed owner.
+    This pure constructor does not roll or record ownership.  The command
+    flow creates a pending character with ``luck=0`` and lets the player
+    explicitly trigger the LUCK roll afterward.
     """
     str_ = _int_or(pregen.get("str_"), 50)
     con = _int_or(pregen.get("con"), 50)
@@ -572,8 +579,6 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
     edu = _int_or(pregen.get("edu"), 50)
     # Roll at claim time so the shared scenario library is never mutated and
     # different players claiming the same pregen receive independent values.
-    luck = _roll(3, 6, 5)
-
     # _int_or already falls back to `default` on anything non-numeric — no
     # need for a trailing `or default` here, which would (confusingly) also
     # re-trigger the fallback on a legitimately-extracted 0.

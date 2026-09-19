@@ -77,13 +77,15 @@ Merge commit (`05848e9`、`446964a`、`d7ca3e9`) 的 patch 已檢查；它們沒
 - `app/keeper.py`：將既有 `_parse_kp_explicit_canon` 改為 unified manual trigger parser，調整 `_format_turn_message`、canonical history formatter、`run_turn()` flag 初始化與 persistence branch。
 - `tests/test_kp_assistant_v2.py`：補 parser、ASCII／全形 marker、玩家邊界、pure manual、automatic tool、manual + tool、舊 marker 不存在等 regression tests。
 
-### 4.2 預製角色 LUCK claim-time reroll
+### 4.2 預製角色玩家 LUCK roll
 
-- `/coc usepregen` 透過共用 `_claim_pregen()` 呼叫 `pregen_to_character()` 時，LUCK 一律以 `3d6 × 5` 新骰。
-- `/coc pregens` 顯示的 PDF 原始 LUCK 不得被呈現成 claim 後的固定值；若有原始值，標示「卡面 LUCK X，取用時將重新骰定」，沒有原始值則標示將於取用時骰定。
+- `/coc usepregen` 透過共用 `_claim_pregen()` 建立待擲角色，不能替玩家自動骰 LUCK。
+- 玩家必須輸入 `/coc luck roll`，系統才執行這次玩家要求的 `3d6 × 5` 擲骰並寫入角色。
+- `/coc pregens` 顯示的 PDF 原始 LUCK 不得被呈現成 claim 後的固定值；若有原始值，標示「卡面 LUCK X，玩家取用時重新骰定」，沒有原始值則標示玩家取用時骰定。
 - 其餘 STR、CON、SIZ、DEX、APP、INT、POW、EDU 維持 extraction/default 行為。
-- shared `state.pregens` 不得因 claim 被寫回新 LUCK；同一 pregen 只能成功 claim 一次，重複 claim（包含原 owner）必須拒絕，不得再次骰定。純 `pregen_to_character()` 是不持有 ownership 的 constructor，不是 command claim API。
+- shared `state.pregens` 不得因 claim 或玩家擲骰被寫回新 LUCK；同一 pregen 只能成功 claim 一次，重複 claim（包含原 owner）必須拒絕。LUCK 完成後也不得再次 `/coc luck roll`。純 `pregen_to_character()` 是不持有 ownership、也不自動擲骰的 constructor，不是 command claim API。
 - legacy 與 router command path 必須共用 `_claim_pregen()`，由它同時寫入 character、active character 與 `claimed_by`，command handler 再持久化 GroupState。
+- `state.pending_pregen_luck` 必須持久化；任何角色尚未完成玩家 LUCK roll 時，`/coc start` 必須拒絕開始。
 - 使用 target `app.models._roll`，不在 `pregen_extractor.py` 複製第三份骰子實作。
 
 ### 4.3 技能 canonicalization 與 aliases
@@ -148,7 +150,7 @@ Merge commit (`05848e9`、`446964a`、`d7ca3e9`) 的 patch 已檢查；它們沒
 
 ## 7. 風險與回復
 
-- **資料風險**：LUCK 是 claim-time 行為改變；不改寫 shared pregen，但已 claim 的角色不應被自動重骰。測試與 migration 不得觸碰 live DB。
+- **資料風險**：LUCK 是玩家明確觸發後才寫入的 pending workflow；不改寫 shared pregen，已完成 roll 的角色不應被自動或重複重骰。測試與 migration 不得觸碰 live DB。
 - **canonical history 風險**：KP manual canon 會改變 `state.log` 與 OpenAI response chain 行為，需以完整 regression tests 鎖定舊 marker 移除與 OOC/canon 互斥。
 - **技能資料風險**：max merge 可能捨棄較低 duplicate；規格只對數字 alias collision 使用 max，並保留可識別的 homebrew key。
 - **部署風險**：migration script 與程式部署分開，未經明確決策不自動執行。

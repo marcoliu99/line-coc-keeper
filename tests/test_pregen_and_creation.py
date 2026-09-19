@@ -9,7 +9,7 @@ sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_l
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
 from app import creation, db, legacy_commands, pregen_extractor
-from app.models import BASE_SKILLS, CreationSession
+from app.models import BASE_SKILLS, CreationSession, GroupState
 
 
 class PregenLuckRollTests(unittest.TestCase):
@@ -22,28 +22,29 @@ class PregenLuckRollTests(unittest.TestCase):
         data.update(overrides)
         return data
 
-    def test_luck_is_rolled_instead_of_reading_pdf_value(self):
-        with patch("app.models.random.randint", return_value=4):
-            character = pregen_extractor.pregen_to_character(self._pregen(), owner_id="p1")
-        self.assertEqual(character.luck, 60)
-        self.assertNotEqual(character.luck, 65)
+    def test_constructor_does_not_roll_pdf_luck(self):
+        character = pregen_extractor.pregen_to_character(self._pregen(), owner_id="p1")
+        self.assertEqual(character.luck, 0)
 
-    def test_luck_rolls_when_pdf_has_no_luck_field(self):
+    def test_constructor_accepts_player_luck_result(self):
         pregen = self._pregen()
         del pregen["luck"]
-        character = pregen_extractor.pregen_to_character(pregen, owner_id="p1")
-        self.assertTrue(15 <= character.luck <= 90)
-        self.assertEqual(character.luck % 5, 0)
+        character = pregen_extractor.pregen_to_character(pregen, owner_id="p1", luck=75)
+        self.assertEqual(character.luck, 75)
 
-    def test_claims_are_independent_and_do_not_mutate_shared_pregen(self):
+    def test_player_results_are_independent_and_do_not_mutate_shared_pregen(self):
         pregen = self._pregen()
-        rolls = iter([1, 1, 1, 6, 6, 6])
-        with patch("app.models.random.randint", side_effect=lambda _a, _b: next(rolls)):
-            first = pregen_extractor.pregen_to_character(pregen, owner_id="p1")
-            second = pregen_extractor.pregen_to_character(pregen, owner_id="p2")
+        first = pregen_extractor.pregen_to_character(pregen, owner_id="p1", luck=15)
+        second = pregen_extractor.pregen_to_character(pregen, owner_id="p2", luck=90)
         self.assertEqual(first.luck, 15)
         self.assertEqual(second.luck, 90)
         self.assertEqual(pregen["luck"], 65)
+
+    def test_pending_luck_survives_state_round_trip(self):
+        state = GroupState(group_id="g1")
+        state.pending_pregen_luck = {"p1": "char-1"}
+        restored = GroupState.from_dict(state.to_dict())
+        self.assertEqual(restored.pending_pregen_luck, {"p1": "char-1"})
 
 
 class PregenPreviewTests(unittest.TestCase):
@@ -54,7 +55,7 @@ class PregenPreviewTests(unittest.TestCase):
         }
         text = legacy_commands._pregen_full_sheet_text(pregen, 1)
         self.assertIn("卡面 LUCK 65", text)
-        self.assertIn("將重新骰定", text)
+        self.assertIn("玩家取用時重新骰定", text)
         self.assertNotIn("LUCK 65\n", text)
         skill_line = next(line for line in text.splitlines() if line.startswith("主要技能："))
         shown = skill_line.removeprefix("主要技能：").split("、")
@@ -65,7 +66,7 @@ class PregenPreviewTests(unittest.TestCase):
         text = legacy_commands._pregen_full_sheet_text(
             {"name": "A", "occupation": "醫生", "str_": 50}, 1
         )
-        self.assertIn("LUCK 將於取用時骰定", text)
+        self.assertIn("玩家取用時骰定 LUCK", text)
 
 
 class ManualRoleSheetTests(unittest.TestCase):
@@ -177,17 +178,16 @@ class MigrateSkillNamesTests(unittest.TestCase):
         self.assertEqual(db.get_json("group_states", "g3"), original)
 
     def test_claim_boundary_does_not_reroll_repeat_owner(self):
-        rolls = iter([1, 1, 1])
         from app.models import GroupState
 
         state = GroupState(group_id="g-claim")
         state.active = True
         state.pregens = [{"name": "A", "skills": {}}]
-        with patch("app.models.random.randint", side_effect=lambda _a, _b: next(rolls)):
-            first = legacy_commands._claim_pregen(state, 0, "u1")
+        first = legacy_commands._claim_pregen(state, 0, "u1")
         with self.assertRaises(ValueError):
             legacy_commands._claim_pregen(state, 0, "u1")
-        self.assertEqual(first.luck, 15)
+        self.assertEqual(first.luck, 0)
+        self.assertEqual(state.pending_pregen_luck, {"u1": first.character_id})
         self.assertEqual(len(state.characters_for_owner("u1")), 1)
 
 

@@ -31,7 +31,7 @@ def _entries() -> list[HelpEntry]:
         HelpEntry(("character", "characters"), "character", "列出我的角色", "查看自己擁有的角色與目前正在使用的角色。", ("/coc characters",), command=("characters",)),
         HelpEntry(("character", "switch"), "character", "切換目前角色", "在自己擁有的多個角色之間切換。", ("/coc switch 角色名",), ("/coc switch 小明",), command=("switch",)),
         HelpEntry(("check", "check"), "check", "技能或理智檢定", "自己擲出守密人要求的檢定，也可主動指定技能。", ("/coc check [技能名] [獎勵骰數] [懲罰骰數]",), ("/coc check 偵查",), command=("check",)),
-        HelpEntry(("check", "luck"), "check", "Luck 結果選擇", "選擇是否花費 Luck 改善接近成功的結果。", ("/coc luck skip|regular|hard|extreme",), ("/coc luck regular",), command=("luck",)),
+        HelpEntry(("check", "luck"), "check", "Luck 擲骰與結果選擇", "選角後由玩家擲 LUCK，檢定接近成功時也可選擇是否花費 Luck。", ("/coc luck roll", "/coc luck skip|regular|hard|extreme"), ("/coc luck roll",), command=("luck",)),
         HelpEntry(("combat", "start"), "combat", "開始戰鬥", "依 DEX 建立戰鬥先攻順位。", ("/coc combat start",), command=("combat", "start")),
         HelpEntry(("combat", "addnpc"), "combat", "加入敵人", "將 NPC／敵人加入目前戰鬥。", ("/coc combat addnpc 名稱 DEX HP",), command=("combat", "addnpc")),
         HelpEntry(("combat", "addally"), "combat", "加入友方 NPC", "將站在我方的 NPC 隊友加入戰鬥。", ("/coc combat addally 名稱 DEX HP",), command=("combat", "addally")),

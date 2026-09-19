@@ -13,6 +13,7 @@ from app.legacy_commands import (
     handle_roll_command,
     handle_check_command,
     handle_luck_decision,
+    handle_pregen_luck_roll,
     handle_unsupported_message,
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
@@ -78,7 +79,10 @@ async def handle_text_message(
             return
         try:
             async with locks.get_conversation_lock(conversation_id):
-                await handle_luck_decision(conversation_id, user_id, choice, reply, send_dm, send_image, send_dm_image)
+                if choice.casefold() == "roll":
+                    await handle_pregen_luck_roll(conversation_id, user_id, reply)
+                else:
+                    await handle_luck_decision(conversation_id, user_id, choice, reply, send_dm, send_image, send_dm_image)
         finally:
             locks.release_check(conversation_id, user_id)
         return

@@ -1507,7 +1507,7 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
 
     ``pregen_to_character`` remains a pure constructor so previews and shared
     pregens are safe. Both command routers use this boundary; a repeated claim
-    is rejected before a new claim-time LUCK roll can happen.
+    is rejected before a player LUCK roll can be requested twice.
     """
     if not (0 <= index < len(state.pregens)):
         raise ValueError("預製角色編號超出範圍。")
@@ -1523,13 +1523,33 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
             raise ValueError("你已經認領過這位預製角色，不能重新骰定。")
         raise ValueError("這位角色已經被其他玩家選走了。")
 
-    char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era)
+    char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era, luck=0)
     if custom_name:
         char.name = custom_name
     state.characters[user_id] = char
     state.set_active_character(user_id, char.character_id)
     pregen["claimed_by"] = user_id
+    state.pending_pregen_luck[user_id] = char.character_id
     return char
+
+
+async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Reply) -> None:
+    """Resolve the player's explicit LUCK roll for a newly claimed pregen."""
+    state = load_state(conversation_id)
+    character_id = state.pending_pregen_luck.get(user_id)
+    if not character_id:
+        await reply("目前沒有等待你擲 LUCK 的預製角色；請先用「/coc usepregen 編號」選角。")
+        return
+    char = state.characters_by_id.get(character_id)
+    if char is None:
+        state.pending_pregen_luck.pop(user_id, None)
+        save_state(state)
+        await reply("找不到等待擲 LUCK 的角色，請重新選擇預製角色。")
+        return
+    char.luck = pregen_extractor.roll_player_luck()
+    state.pending_pregen_luck.pop(user_id, None)
+    save_state(state)
+    await reply(f"🎲 {char.name} 的 LUCK 擲骰結果：{char.luck}。現在可以開始遊戲了。")
 
 
 def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
@@ -1566,9 +1586,9 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU"}
     attr_line = " ".join(f"{labels[a]} {pregen[a]}" for a in attrs if isinstance(pregen.get(a), (int, float)))
     if isinstance(pregen.get("luck"), (int, float)):
-        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {pregen['luck']}，取用時將重新骰定）"
+        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {pregen['luck']}，玩家取用時重新骰定）"
     elif attr_line:
-        attr_line += "（LUCK 將於取用時骰定）"
+        attr_line += "（玩家取用時骰定 LUCK）"
     if attr_line:
         lines.append(attr_line)
     vitals = []
@@ -2071,6 +2091,14 @@ async def _handle_coc_command(
             return
         if not state.characters:
             await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
+            return
+        if state.pending_pregen_luck:
+            names = "、".join(
+                state.characters_by_id[character_id].name
+                for character_id in state.pending_pregen_luck.values()
+                if character_id in state.characters_by_id
+            ) or "部分角色"
+            await reply(f"{names} 尚未由玩家擲 LUCK，請相關玩家輸入「/coc luck roll」後才能開始遊戲。")
             return
         if state.game_started:
             await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
