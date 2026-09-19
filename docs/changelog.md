@@ -1,6 +1,7 @@
 # 開發紀錄／已知限制
 
 - 修正混合 PDF 解析的圖片遺失：graphic page 現在不論 OCR 後文字長度都會保存 render PNG，低文字門檻只控制是否追加 Vision/scene-map 分析；補上高文字量角色卡圖片的回歸測試。劇本切換時也明確隔離所選 library item 的 pregen pool，避免上一份劇本的未認領角色洩漏。
+- PDF 解析接入 `pymupdf4llm` 的逐頁 layout evidence：保留 reading order、picture/table/graphic 區塊，並讓它作為 MarkItDown 與 PyMuPDF 原生文字層之間的混合 fallback；圖片保存仍與低文字量 Vision 分離。
 
 逐項功能的實作紀錄——為什麼會有這個限制、目前的權宜作法、實測過什麼、之後想擴充的話要改哪裡。想知道「現在能不能做 X」或「這個功能是怎麼做的」，先來這裡找對應章節；單純想知道怎麼安裝或怎麼玩，回 [README.md](../README.md)、[setup.md](setup.md)、[gameplay.md](gameplay.md)。
 
@@ -33,7 +34,7 @@
 
 ### 3. 圖文混排的頁面（手卡／地圖／插圖）可能抽不完整，整份純掃描 PDF 沒裝 OCR 就讀不出來
 
-- **現在怎麼做**：`app/pdf_loader.py` 的文字層改用 [MarkItDown](https://github.com/microsoft/markitdown)（+ `markitdown-ocr` 插件）預處理，取代原本單純的 PyMuPDF 文字抽取——保留文件結構（標題、表格）比純文字讀取器更完整，而且 `markitdown-ocr` 會偵測頁面裡「內嵌的點陣圖片」自動做圖片理解（見下方說明）。`app/markitdown_shim.py` 讓這個 OCR 插件走**我們自己既有的 `ANTHROPIC_API_KEY`**，不需要另外申請 OpenAI 帳號——`markitdown-ocr` 原生設計是接 OpenAI 的 Chat Completions 介面（`client.chat.completions.create(...)`），所以寫了一個薄薄的轉接層把這個介面轉呼叫 Anthropic，讀了 `markitdown` 和 `markitdown-ocr` 的原始碼才確認這樣接得通，不是照抄教學文章的 OpenAI 範例。PyMuPDF 沒有被拿掉，還是負責兩件 MarkItDown 完全不做的事：把頁面轉成圖片（給下面兩個「整頁圖片」備援用）、以及 MarkItDown 不可用或轉換失敗時的備援文字層——任何一步失敗都會自動退回舊行為，不會整份炸掉。
+  - **現在怎麼做**：`app/pdf_loader.py` 先以 `pymupdf4llm.to_markdown(..., page_chunks=True)` 取得逐頁 layout、reading order、圖片／表格／graphic evidence，再用 [MarkItDown](https://github.com/microsoft/markitdown)（+ `markitdown-ocr` 插件）補文件段落與 embedded image OCR；兩者都不可用時才退回 PyMuPDF 原生文字層。`pymupdf4llm` 負責提供版面證據，但地圖、手卡、角色卡的語意分類仍由結構訊號、OCR 與 Vision 綜合判定。`app/markitdown_shim.py` 讓 OCR 插件走專案既有的 provider；PyMuPDF 則繼續負責整頁 PNG render。任何 layout/OCR 層失敗都會自動退回下一層，不會整份炸掉。
   - **平面圖／地圖是特別驗證過的案例**：純文字抽取對平面圖幾乎注定失敗——房間名稱在頁面上是 2D 排列的，文字抽取只能拉成一維序列，「進門右手邊第一個房間」這種相對位置關係在抽取過程就丟失了。這不是理論推測：實測時真的發生過，玩家說進門右手邊該是寢室，守密人（讀到的是打亂順序的房間名稱清單）卻說成廚房。改成請模型直接看圖描述空間佈局後，重新測同一頁面，正確重建出了完整動線（正門進去左手邊臥鋪房、右手邊書房、走廊底端連接燈塔），而且抓出了純文字抽取完全不可能拿到的細節（走廊盡頭有個染血的通道，暗示案發地點）。**這一步刻意保留、沒有改用 MarkItDown 取代**：`markitdown-ocr` 的圖片理解只認得到 PDF 裡「內嵌的點陣圖片物件」，一張用向量線條畫出來的平面圖（矩形、直線畫出來的房間格局，不是一張圖片）在它眼裡根本沒有圖片可以辨識，會直接被跳過；`app/pdf_loader.py` 自己「把整頁渲染成圖片」的備援機制不管頁面是向量畫的還是點陣圖片，一律能抓到，這正是它還留著、而且優先權比較高的原因。
   - **這個「整頁圖片理解」備援現在會跟著 `LLM_PROVIDER` 走，不會寫死用 Anthropic**：`app/scene_map.py` 的 `analyze_page_image` 透過 `app/providers/anthropic_provider.py`／`gemini_provider.py`／`openai_provider.py` 三邊都有的 `analyze_image(png_bytes, tool, prompt)` 函式分派，用哪個供應商就打誰的 API——這是真的踩過的坑才修的：Anthropic 帳號一度真的燒到餘額不足，如果這一步繼續寫死打 Anthropic，就算把 `LLM_PROVIDER` 切到別的供應商，上傳 PDF 時圖片理解那段還是會卡住失敗。三個供應商的 vision + 強制工具呼叫都用同一份 `_ANALYZE_TOOL` schema，Gemini 那條路徑跟其他 Gemini 程式碼一樣**沒有實際打過真的 API 呼叫**（結構上驗證過型別能正確建構），OpenAI 那條路徑已經用真的金鑰測過一次合成的平面圖圖片，正確解析出房間、方位、進出口。
   - **判斷「是不是平面圖」的分析跟原本的頁面描述已經合併成一次呼叫**：以前是兩次獨立的 vision 呼叫（一次問「這頁大概是什麼、幫我描述」，一次另外問「這頁是不是地圖，是的話拆成房間圖」），現在 `analyze_page_image` 用同一個工具 schema 一次問完，圖片偏多的劇本圖片理解成本直接砍半。

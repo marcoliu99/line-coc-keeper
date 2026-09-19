@@ -1,6 +1,7 @@
 import base64
 import importlib.util
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -23,6 +24,35 @@ _ONE_PIXEL_PNG = base64.b64decode(
 
 
 class PdfLoaderImagePersistenceTests(unittest.TestCase):
+    def test_pymupdf4llm_import_failure_falls_back(self):
+        with patch.dict(sys.modules, {"pymupdf4llm": None}):
+            self.assertIsNone(pdf_loader._pymupdf4llm_page_chunks(b"not a pdf"))
+
+    def test_pymupdf4llm_page_chunks_are_used_for_layout_and_text(self):
+        document = pymupdf.open()
+        page = document.new_page()
+        page.insert_text((40, 60), "fallback text")
+        pdf_bytes = document.tobytes()
+        document.close()
+
+        fake_pymupdf4llm = types.SimpleNamespace(
+            to_markdown=lambda _doc, **_kwargs: [
+                {
+                    "metadata": {"page_number": 1},
+                    "text": "layout-aware handout text",
+                    "page_boxes": [{"class": "picture"}],
+                }
+            ]
+        )
+        with patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}), \
+             patch.object(pdf_loader, "_markitdown_page_texts", return_value=None), \
+             patch.object(pdf_loader, "_render_page_png", return_value=b"png"):
+            text, low_pages, _truncated, page_images, _page_maps = pdf_loader.extract_text(pdf_bytes)
+
+        self.assertIn("layout-aware handout text", text)
+        self.assertEqual(low_pages, [1])
+        self.assertEqual(page_images, {1: b"png"})
+
     def test_graphic_page_is_saved_even_when_ocr_text_is_long(self):
         document = pymupdf.open()
         page = document.new_page()

@@ -655,9 +655,36 @@ imports/
 3. 實作 `advance_campaign_part` 與切換前 checkpoint；確認跨 part RAG 預設拒絕。
 4. 最後加入受限 `IMPORT_DIR` 與 `/coc scenario import`，並重用既有 PDF upload pipeline。
 
-### 解析現況補充：圖片保存與 Vision 分析必須分離
+### 解析現況補充：PyMuPDF4LLM 混合解析與圖片保存／Vision 分離
 
-這個 branch 的實際混合流程是 PyMuPDF 文字/圖形檢查、MarkItDown + `markitdown-ocr` 文字補強，以及低文字量 graphic page 的 `scene_map` Vision；目前沒有接入 `pymupdf4llm`。圖片保存與 Vision 分析不可共用同一個 pending 條件：只要 `has_graphic_content` 為真，就一律 render PNG 寫入 `page_images`；`len(text) < _LOW_TEXT_THRESHOLD` 只決定是否追加整頁 Vision/scene-map 分析。
+這個 branch 的實際混合流程是：
+
+1. `pymupdf4llm.to_markdown(..., page_chunks=True)` 逐頁產生 layout-aware Markdown、圖片／表格／向量 graphic evidence 與 reading order；它是主要的版面 evidence layer。
+2. MarkItDown + `markitdown-ocr` 補強文件段落、表格與 embedded image OCR；若這層不可用，退回 PyMuPDF4LLM 的頁面文字，再退回 PyMuPDF 原生文字層。
+3. 只要 PyMuPDF／PyMuPDF4LLM 任一層證明頁面有圖形，就一律 render PNG 寫入 `page_images`；`len(text) < _LOW_TEXT_THRESHOLD` 只決定是否追加整頁 Vision／scene-map 分析。
+4. 地圖、手卡、角色卡、插圖的語意分類仍由 page text、`page_maps` 結構訊號、OCR 與 Vision 的 evidence 綜合判定。PyMuPDF4LLM 能指出「這頁有 picture/table/graphic、這些區塊如何排列」，但不會單獨保證它是 handout 或 map，因此不能把套件輸出直接當成最終 `kind`。
+
+流程如下：
+
+```text
+[PDF]
+  |
+  +--> [PyMuPDF4LLM page_chunks]
+  |       |-- layout text / reading order
+  |       `-- picture / table / graphic evidence
+  |
+  +--> [MarkItDown + markitdown-ocr]
+  |       `-- paragraph / embedded-image OCR text
+  |
+  `--> [PyMuPDF render]
+          `-- every graphic page -> page_images
+                    |
+          low text only -> [Vision scene/map analysis]
+                    |
+          [text + layout + OCR + Vision evidence]
+                    |
+          [map / handout / character_sheet / illustration]
+```
 
 若 MarkItDown OCR 已經把角色卡或密集地圖補成超過 200 字，正確行為是「保存圖片、跳過重複 Vision」，不是「不保存圖片」。此契約已有高文字量 embedded-image 回歸測試。
 
