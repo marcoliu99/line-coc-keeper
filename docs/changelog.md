@@ -17,6 +17,14 @@
 - 修正劇本切換隔離：新劇本會替換 pregen pool 與 scene maps，不再保留上一份 PDF 的候選角色或地圖；新增安全的 `/coc scenario import` 與 Discord PDF 暫存合併流程，合併後共用一般 PDF pipeline。
 - Discord 分割 PDF 改為先暫存、由 KP 用 `/coc scenario merge <id1> <id2> ...` 明確選檔與排序；角色卡抽取新增 `extra_fields`，保留不同劇本自訂欄位與備註，不再只塞進固定欄位。
 
+### Persistence／戰鬥 review 補充
+
+- 完成特殊能力正式效果、固定時點效果與公開資訊過濾；`resolve_enemy_action` 只接受正式檢定結果，且 plan retry 具冪等性。
+- 補齊多角色切換、角色 identity、劇本地圖隔離、scene digest 與 Keeper role 權限；同名角色／敵人不再互相覆蓋。
+- state save、checkpoint、rollback、digest 與 backup 補上鎖、revision conflict、started/success/failure 維運紀錄及跨 process transaction 保護。
+- 修正敵人目標選擇、距離判斷、round start/end 邊界、初始先攻、過期 plan 與 rollback 圖片快取錯誤處理。
+- `/coc checkpoint clean`、`/coc digest clean` 的缺少 ID 驗證與 Discord Keeper 權限已補齊；相關 regression tests 已納入完整測試套件。
+
 逐項功能的實作紀錄——為什麼會有這個限制、目前的權宜作法、實測過什麼、之後想擴充的話要改哪裡。想知道「現在能不能做 X」或「這個功能是怎麼做的」，先來這裡找對應章節；單純想知道怎麼安裝或怎麼玩，回 [README.md](../README.md)、[setup.md](setup.md)、[gameplay.md](gameplay.md)。
 
 這些都是為了先做出一個能玩的 MVP，刻意先砍掉的範圍。想擴充哪一項都可以直接跟我說，下面附上為什麼會有這個限制、目前有什麼權宜作法、以及之後要補的話大概要改什麼地方。

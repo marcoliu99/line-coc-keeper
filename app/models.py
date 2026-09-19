@@ -886,9 +886,6 @@ class GroupState:
             "established_facts": self.established_facts,
             "known_clues": self.known_clues,
             "consumed_or_removed_items": self.consumed_or_removed_items,
-            "established_facts": self.established_facts,
-            "known_clues": self.known_clues,
-            "consumed_or_removed_items": self.consumed_or_removed_items,
         }
 
     @staticmethod
