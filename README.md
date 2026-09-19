@@ -17,7 +17,7 @@
    ```
    例如 `/coc pc 陳月 記者`。想用更符合規則的建角流程或劇本內建的預製角色，見 **[docs/gameplay.md](docs/gameplay.md)** 的完整說明。
 3. **開始玩**：角色建好之後，直接在群組/頻道裡打字描述你的角色要做什麼（不用加任何指令），守密人就會接手敘事、要求擲骰、更新 HP/SAN。
-4. 隨時可以 `/coc help` 看完整指令列表、`/coc status` 看目前進度、`/coc sheet` 看自己的角色卡。完整指令與玩法細節見 **[docs/gameplay.md](docs/gameplay.md)**。
+4. 隨時可以 `/coc help` 看 Discord 分類式指令列表、`/coc status` 看目前進度、`/coc sheet` 看自己的角色卡。需要手動複製指令時，請看 **[docs/player_command_reference.md](docs/player_command_reference.md)**；完整玩法細節見 **[docs/gameplay.md](docs/gameplay.md)**。
 
 ## 架構
 
