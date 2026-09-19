@@ -370,8 +370,8 @@ value 內容：
 
 ### 建立時機
 
-1. **手動**：`/coc checkpoint [名稱]`，僅限目前登記的 KP Assistant 或有 Keeper 角色的人（比照
-   `/coc scenario use` 的權限模型）。
+1. **手動**：`/coc checkpoint [名稱]`，僅限目前登記的 KP Assistant 或 Discord 上具有名稱為
+   `Keeper` 的角色的人（LINE 沒有這個 role context，因此只使用 KP Assistant 身分）。
 2. **自動**：進入 `start_combat` 的 service/command 邊界時，在任何 `CombatState` mutation 之前，
    自動建立一個 `reason="auto_combat_start"` 的節點。純 `app/combat.py` 不直接操作 SQLite；若
    同一個 combat-start event 重試，必須用 event id 做 idempotency，不能產生重複自動節點。
@@ -385,7 +385,7 @@ value 內容：
 
 `/coc rollback <checkpoint_id 或 label>`：
 
-1. 權限同建立（KP Assistant／Keeper）。
+1. 權限同建立（KP Assistant／Discord `Keeper` role）。
 2. 在 `get_conversation_lock` 底下執行，並把「建立 pre-rollback + 寫入 restored state」放在同一個
    SQLite transaction，避免只完成一半。transaction 內再次驗證 checkpoint 的 `group_id` 與
    `schema_version`，拒絕跨團或未知未來版本的節點。
@@ -404,10 +404,10 @@ value 內容：
 
 | 指令 | 行為 |
 | --- | --- |
-| `/coc checkpoint [名稱]` | 手動建立一個回溯節點，可選具名；預設用建立時間當顯示名稱。僅 KP。 |
-| `/coc checkpoints` | 列出這一團目前所有節點：ID、名稱、建立時間、建立原因（手動/開戰自動/回溯前自動）。 |
-| `/coc rollback <ID 或名稱>` | 還原到指定節點；還原前自動多存一個節點。僅 KP。 |
-| `/coc checkpoint clean <ID 或唯一名稱>` | 手動刪除一個節點——節點不會自動淘汰，這是唯一的刪除方式。僅 KP。 |
+| `/coc checkpoint [名稱]` | 手動建立一個回溯節點，可選具名；預設用建立時間當顯示名稱。僅 KP Assistant／Discord `Keeper` role。 |
+| `/coc checkpoints` | 列出這一團目前所有節點：ID、名稱、建立時間、建立原因（手動/開戰自動/回溯前自動）。僅 KP Assistant／Discord `Keeper` role。 |
+| `/coc rollback <ID 或名稱>` | 還原到指定節點；還原前自動多存一個節點。僅 KP Assistant／Discord `Keeper` role。 |
+| `/coc checkpoint clean <ID 或唯一名稱>` | 手動刪除一個節點——節點不會自動淘汰，這是唯一的刪除方式。僅 KP Assistant／Discord `Keeper` role。 |
 
 `/coc checkpoints` 的輸出必須用 ID 操作（比照劇本庫 `/coc scenario list` 的既有慣例），名稱允許
 重複，不能靠名稱模糊比對刪除或還原——`rollback`／`clean` 接受名稱只在**唯一**符合時才生效，
@@ -614,10 +614,10 @@ Agent 階段各自需要的提示詞片段。
 
 | 指令 | 行為 |
 | --- | --- |
-| `/coc digest` | KP 專用，顯示**最新一筆**場景摘要的內容（`public` 部分；`private` 不透過這個指令外洩）。 |
-| `/coc digests` | KP 專用，列出這一團所有歷史場景摘要：ID、`scene_label`、建立時間。 |
-| `/coc digest <ID>` | KP 專用，顯示指定那一筆歷史摘要的內容（`public` 部分）——用來回頭翻某個舊場景當時的狀態。 |
-| `/coc digest clean <ID>` | KP 專用，手動刪除一筆歷史摘要（不會自動淘汰，見上）；找不到 ID 時回報錯誤。 |
+| `/coc digest` | KP Assistant／Discord `Keeper` role 專用，顯示**最新一筆**場景摘要的內容（`public` 部分；`private` 不透過這個指令外洩）。 |
+| `/coc digests` | KP Assistant／Discord `Keeper` role 專用，列出這一團所有歷史場景摘要：ID、`scene_label`、建立時間。 |
+| `/coc digest <ID>` | KP Assistant／Discord `Keeper` role 專用，顯示指定那一筆歷史摘要的內容（`public` 部分）——用來回頭翻某個舊場景當時的狀態。 |
+| `/coc digest clean <ID>` | KP Assistant／Discord `Keeper` role 專用，手動刪除一筆歷史摘要（不會自動淘汰，見上）；找不到 ID 時回報錯誤。 |
 
 ## 格式版本與 timeline
 

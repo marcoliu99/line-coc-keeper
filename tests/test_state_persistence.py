@@ -11,7 +11,7 @@ from app import db
 from app import checkpoints
 from app import keeper, scene_digest
 from app.commands.handlers.system import _replace_scene_maps_preserving_locations
-from app.models import Character, GroupState
+from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
 from app.repositories import group_state
 
 
@@ -89,6 +89,28 @@ class StatePersistenceTests(unittest.TestCase):
         digest = scene_digest.create_digest(state)
 
         self.assertEqual(set(digest["public"]["characters"]), {"char-1", "char-2"})
+
+    def test_scene_digest_keeps_same_named_enemy_cards_separate(self):
+        state = GroupState("group-same-enemy-name")
+        state.combat.active = True
+        state.combat.order = [
+            Combatant(
+                name="Cultist", display_name="Cultist", dex=40, hp=5, hp_max=5,
+                combatant_id="enemy:one", enemy_card_id="card-one"
+            ),
+            Combatant(
+                name="Cultist", display_name="Cultist", dex=40, hp=5, hp_max=5,
+                combatant_id="enemy:two", enemy_card_id="card-two"
+            ),
+        ]
+        state.combat.enemy_cards = {
+            "card-one": EnemyCombatCard("card-one", "Cultist", abilities=[SpecialAbility("one", "First")]),
+            "card-two": EnemyCombatCard("card-two", "Cultist", abilities=[SpecialAbility("two", "Second")]),
+        }
+
+        digest = scene_digest.create_digest(state)
+
+        self.assertEqual(set(digest["private"]["npc_abilities"]), {"enemy:one", "enemy:two"})
 
     def test_scenario_map_switch_replaces_maps_and_keeps_only_valid_locations(self):
         state = GroupState("group-map")

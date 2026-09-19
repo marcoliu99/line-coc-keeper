@@ -52,13 +52,13 @@ are supplied through `/coc`:
 | `/coc scenario cancel` | Drops the staged similar upload. |
 | `/coc kp` / `/coc kp quit` | Register or remove the conversation's KP Assistant. |
 | `/coc pdf new` / `/coc pdf fix` | Resolves a normal PDF replacement as a new scenario or a correction of the active scenario. |
-| `/coc checkpoint [label]` | KP Assistant only. Stores a complete state snapshot; the label is optional. |
-| `/coc checkpoints` | KP Assistant only. Lists checkpoint IDs, labels, reasons, and timestamps. |
-| `/coc checkpoint clean <ID or unique label>` | KP Assistant only. Deletes one checkpoint; ambiguous labels are rejected. |
-| `/coc rollback <ID or unique label>` | KP Assistant only. Creates a pre-rollback checkpoint, then restores the selected snapshot. |
-| `/coc digest` / `/coc digests` | KP Assistant only. Shows the current public digest or lists digest history. |
-| `/coc digest <ID>` | KP Assistant only. Shows one historical digest's public section. |
-| `/coc digest clean <ID>` | KP Assistant only. Deletes one historical digest. |
+| `/coc checkpoint [label]` | KP Assistant or a Discord member with the `Keeper` role. Stores a complete state snapshot. |
+| `/coc checkpoints` | KP Assistant or Discord `Keeper` role. Lists checkpoint IDs, labels, reasons, and timestamps. |
+| `/coc checkpoint clean <ID or unique label>` | KP Assistant or Discord `Keeper` role. Deletes one checkpoint; ambiguous labels are rejected. |
+| `/coc rollback <ID or unique label>` | KP Assistant or Discord `Keeper` role. Creates a pre-rollback checkpoint, then restores the selected snapshot. |
+| `/coc digest` / `/coc digests` | KP Assistant or Discord `Keeper` role. Shows the current public digest or lists digest history. |
+| `/coc digest <ID>` | KP Assistant or Discord `Keeper` role. Shows one historical digest's public section. |
+| `/coc digest clean <ID>` | KP Assistant or Discord `Keeper` role. Deletes one historical digest. |
 
 `scenario-id` is the stable library directory ID returned by `list`, not a title
 or chapter ID. The current implementation uses whitespace splitting, so IDs

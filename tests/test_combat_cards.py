@@ -209,6 +209,21 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(enemy.hp, 9)
         self.assertEqual(state.combat.effects[0].remaining_rounds, 1)
 
+    def test_turn_start_lethal_effect_prevents_enemy_action(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Burning Thing", 60, 1)
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Burning Thing")
+        combat.add_combat_effect(
+            state, "Burning Thing", "Fatal fire", timing="turn_start", damage="1", remaining_rounds=1
+        )
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertTrue(plan["ok"])
+        self.assertEqual(plan["selected_action"], "none")
+        self.assertTrue(next(c for c in state.combat.order if c.name == "Burning Thing").defeated)
+
     def test_per_round_usage_resets_and_cooldown_ticks_on_new_round(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -560,6 +575,20 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
 
         self.assertEqual([c.name for c in state.combat.order], ["Partner"])
+
+    def test_same_named_characters_sync_hp_by_character_id(self):
+        state = GroupState(group_id="same-name")
+        first = Character("Alex", "u1", character_id="char-1", hp=10, hp_max=10, active=True)
+        second = Character("Alex", "u2", character_id="char-2", hp=10, hp_max=10, active=True)
+        state.characters = {"u1": first, "u2": second}
+        state.characters_by_id = {first.character_id: first, second.character_id: second}
+        state.active_character_id_by_user = {"u1": first.character_id, "u2": second.character_id}
+        combat.start_combat(state)
+
+        combat.apply_combat_damage(state, "pc:char-2", 3)
+
+        self.assertEqual(first.hp, 10)
+        self.assertEqual(second.hp, 7)
 
     def test_switch_active_character_updates_legacy_and_id_views(self):
         state = GroupState("g")

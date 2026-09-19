@@ -38,12 +38,13 @@ async def handle_system_command(
     send_dm_image: SendDMImage,
     parts: list[str],
     format_mention: FormatMention = lambda owner_id: owner_id,
+    is_keeper: bool = False,
 ) -> None:
     sub = parts[1] if len(parts) > 1 else ""
 
     if sub in ("checkpoint", "checkpoints", "rollback"):
         state = load_state(conversation_id)
-        if state.kp_assistant_user_id != user_id:
+        if state.kp_assistant_user_id != user_id and not is_keeper:
             await reply("只有目前登記的 KP Assistant 可以操作回溯節點。")
             return
         if sub == "checkpoint":
@@ -96,7 +97,7 @@ async def handle_system_command(
 
     if sub in ("digest", "digests"):
         state = load_state(conversation_id)
-        if state.kp_assistant_user_id != user_id:
+        if state.kp_assistant_user_id != user_id and not is_keeper:
             await reply("只有目前登記的 KP Assistant 可以查看場景摘要。")
             return
         if sub == "digests":

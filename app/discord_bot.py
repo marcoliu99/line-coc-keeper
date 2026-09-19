@@ -65,6 +65,12 @@ def _conversation_id(channel_id: int) -> str:
     return f"discord-channel-{channel_id}"
 
 
+def _is_keeper_member(member: discord.abc.User) -> bool:
+    """Allow the configured Discord Keeper role to manage host-only state."""
+    roles = getattr(member, "roles", ())
+    return any(getattr(role, "name", "").casefold() == "keeper" for role in roles)
+
+
 async def _send_dm(owner_id: str, text: str) -> None:
     # owner_id is str(discord.Member.id), as stored on Character.owner_id. Raises
     # if the user has DMs from server members disabled; commands.py swallows
@@ -523,9 +529,10 @@ async def on_message(message: discord.Message) -> None:
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
         try:
+            is_keeper = _is_keeper_member(message.author)
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
-                format_mention,
+                format_mention, is_keeper,
             )
         finally:
             # Always attempt this, even if handle_text_message raised partway

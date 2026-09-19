@@ -39,6 +39,7 @@ async def handle_text_message(
     send_dm_image: SendDMImage,
     text: str,
     format_mention: FormatMention = lambda owner_id: owner_id,
+    is_keeper: bool = False,
 ) -> None:
     text = text.strip()
 
@@ -92,12 +93,14 @@ async def handle_text_message(
             is_long_reparse = sub == "scenario" and len(parts) > 2 and parts[2] == "reparse"
             if is_long_reparse:
                 await system_handler.handle_system_command(
-                    conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention
+                    conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
+                    is_keeper,
                 )
             else:
                 async with locks.get_conversation_lock(conversation_id):
                     await system_handler.handle_system_command(
-                        conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention
+                        conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
+                        is_keeper,
                     )
             return
 

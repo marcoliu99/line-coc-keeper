@@ -235,11 +235,12 @@ def _sync_combatant_from_card(combatant: Combatant, card: EnemyCombatCard) -> No
 
 def _sync_pc_hp(state: GroupState, combatant: Combatant) -> None:
     if combatant.is_pc:
+        if combatant.character_id and combatant.character_id in state.characters_by_id:
+            state.characters_by_id[combatant.character_id].hp = combatant.hp
+            return
         pc = state.get_character_by_name(combatant.name)
         if pc:
             pc.hp = combatant.hp
-        if combatant.character_id and combatant.character_id in state.characters_by_id:
-            state.characters_by_id[combatant.character_id].hp = combatant.hp
 
 
 def _pc_for_combatant(state: GroupState, combatant: Combatant):
@@ -605,6 +606,18 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
         return {"ok": False, "error": f"敵人「{combatant.display_name}」沒有戰鬥卡"}
 
     process_timing(state, "turn_start", combatant.combatant_id)
+    if _is_skippable(state, combatant):
+        return {
+            "ok": True,
+            "plan_id": "",
+            "enemy": combatant.display_name,
+            "selected_action": "none",
+            "selected_id": "",
+            "target_ids": [],
+            "required_rolls": [],
+            "private_reason": "turn_start effect defeated this enemy before it could act",
+            "public_hint": f"{combatant.display_name} 已無法行動。",
+        }
 
     target_id = _choose_target(state)
     for ability in sorted(card.abilities, key=lambda a: -a.priority):
@@ -755,16 +768,8 @@ def resolve_enemy_action(
     return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
 
 
-def advance_turn(state: GroupState) -> dict:
+def _move_to_next_available(state: GroupState) -> bool:
     combat = state.combat
-    if not combat.active or not combat.order:
-        return {"ok": False, "error": "目前沒有進行中的戰鬥"}
-    if all(_is_skippable(state, c) for c in combat.order):
-        return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
-
-    current = combat.order[combat.current_index]
-    process_timing(state, "turn_end", current.combatant_id)
-
     n = len(combat.order)
     for _ in range(n):
         next_index = (combat.current_index + 1) % n
@@ -777,10 +782,30 @@ def advance_turn(state: GroupState) -> dict:
             process_timing(state, "round_start")
             _mark_round_start_abilities(state)
         if not _is_skippable(state, combat.order[combat.current_index]):
-            break
+            return True
+    return False
+
+
+def advance_turn(state: GroupState) -> dict:
+    combat = state.combat
+    if not combat.active or not combat.order:
+        return {"ok": False, "error": "目前沒有進行中的戰鬥"}
+    if all(_is_skippable(state, c) for c in combat.order):
+        return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
+
+    current = combat.order[combat.current_index]
+    process_timing(state, "turn_end", current.combatant_id)
+
+    if not _move_to_next_available(state):
+        return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
     process_timing(state, "turn_start", current.combatant_id)
+    while _is_skippable(state, current):
+        if not _move_to_next_available(state):
+            return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
+        current = combat.order[combat.current_index]
+        process_timing(state, "turn_start", current.combatant_id)
     return {
         "ok": True,
         "round": combat.round_number,

@@ -1892,3 +1892,11 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **digest clean API**：新增集中式 `clean_digest()`，找不到指定 ID 時會明確回報錯誤並記錄成功清除 log。
 - **文件同步**：補齊 `scene_digests` table、rollback 的雙鎖與 revision 行為、checkpoint 唯一名稱清除、revision conflict UX，以及 API/configuration 指令說明。
 - **測試**：完整 `unittest discover` 共 97 項通過。
+
+### 111. 修正 combat turn、跨 process revision 與 Keeper 權限
+
+- **turn-start 致死處理**：turn-start effect 若在角色行動前造成倒下，`plan_enemy_turn()` 不會再建立攻擊計畫；`advance_turn()` 也會繼續跳過被效果擊倒的戰鬥員。
+- **跨 process revision 原子性**：revision check 與完整 state/mirror snapshot write 改在同一個 SQLite `BEGIN IMMEDIATE` transaction 內，避免多 process 同時通過檢查後互相覆蓋。
+- **角色 identity**：PC HP synchronization 優先使用 `character_id`，同名角色不會更新錯誤角色；scene digest 的 NPC ability private map 改用 `combatant_id`，同名敵人不會互相覆蓋。
+- **Keeper 權限**：Discord 具有 `Keeper` role 的成員現在可操作 checkpoint、rollback、digest；KP Assistant 權限維持不變。
+- **測試**：完整 `unittest discover` 共 100 項通過。

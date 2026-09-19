@@ -77,7 +77,8 @@ def create_digest(state: GroupState, *, scene_label: str = "") -> dict:
         ]
         private_combat = state.combat.to_dict()
         private_npc_abilities = {
-            combatant.display_name: {
+            combatant.combatant_id: {
+                "display_name": combatant.display_name,
                 "card_id": combatant.enemy_card_id,
                 "abilities": [ability.to_dict() for ability in card.abilities],
             }

@@ -65,20 +65,31 @@ def save_state(state: GroupState, *, reason: str = "command") -> None:
     their explicit reason.
     """
     with locks.get_state_lock(state.group_id):
-        current = db.get_json("group_states", state.group_id)
-        if (
-            reason != "newgame"
-            and current is not None
-            and int(current.get("state_revision", 0)) != state.state_revision
-        ):
-            raise StateRevisionConflict(
-                f"state revision conflict for {state.group_id}: "
-                f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
-            )
-        _save_state_unlocked(state, reason=reason)
+        # Keep the optimistic check and the complete snapshot write in one
+        # IMMEDIATE transaction. The Python RLock protects threads in this
+        # process; BEGIN IMMEDIATE also serializes competing processes using
+        # the same SQLite database.
+        with db.transaction() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
+            ).fetchone()
+            current = json.loads(row[0]) if row is not None else None
+            if (
+                reason != "newgame"
+                and current is not None
+                and int(current.get("state_revision", 0)) != state.state_revision
+            ):
+                raise StateRevisionConflict(
+                    f"state revision conflict for {state.group_id}: "
+                    f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
+                )
+            _save_state_unlocked(state, reason=reason, conn=conn)
 
 
-def _save_state_unlocked(state: GroupState, *, reason: str = "command") -> None:
+def _save_state_unlocked(
+    state: GroupState, *, reason: str = "command", conn
+) -> None:
     started = time.monotonic()
     if not state.timeline_id:
         state.timeline_id = f"timeline-{uuid4().hex[:8]}"
@@ -92,41 +103,40 @@ def _save_state_unlocked(state: GroupState, *, reason: str = "command") -> None:
     # state, plus one per character mirror below), each paying its own
     # connect+PRAGMA overhead for what is logically one atomic save.
     try:
-        with db.transaction() as conn:
-            db.set_json_tx(conn, "group_states", state.group_id, payload)
+        db.set_json_tx(conn, "group_states", state.group_id, payload)
 
-            # A per-owner_id mirror, independent of which group this character
-            # belongs to — separate from the group blob above so looking up one
-            # player's sheet doesn't require knowing (or loading) the whole
-            # conversation's state.
-            mirror_entries = {}
-            for owner_id, char in state.characters.items():
-                mirror_entries[f"{state.group_id}:{owner_id}"] = char
-            for char in state.all_characters():
-                if char.character_id:
-                    mirror_entries[f"{state.group_id}:{char.character_id}"] = char
-            expected_keys = set(mirror_entries)
-            stale_rows = conn.execute("SELECT key, data FROM characters").fetchall()
-            for mirror_key, raw_entry in stale_rows:
-                try:
-                    entry = json.loads(raw_entry)
-                except (TypeError, json.JSONDecodeError):
-                    continue
-                if (
-                    entry.get("conversation_id") == state.group_id
-                    and mirror_key not in expected_keys
-                ):
-                    db.delete_json_tx(conn, "characters", mirror_key)
-            for mirror_key, char in mirror_entries.items():
-                index_entry = {
-                    "conversation_id": state.group_id,
-                    "character_id": char.character_id,
-                    "owner_id": char.owner_id,
-                    "name": char.name,
-                    "occupation": char.occupation,
-                    "sheet": char.to_dict(),
-                }
-                db.set_json_tx(conn, "characters", mirror_key, index_entry)
+        # A per-owner_id mirror, independent of which group this character
+        # belongs to — separate from the group blob above so looking up one
+        # player's sheet doesn't require knowing (or loading) the whole
+        # conversation's state.
+        mirror_entries = {}
+        for owner_id, char in state.characters.items():
+            mirror_entries[f"{state.group_id}:{owner_id}"] = char
+        for char in state.all_characters():
+            if char.character_id:
+                mirror_entries[f"{state.group_id}:{char.character_id}"] = char
+        expected_keys = set(mirror_entries)
+        stale_rows = conn.execute("SELECT key, data FROM characters").fetchall()
+        for mirror_key, raw_entry in stale_rows:
+            try:
+                entry = json.loads(raw_entry)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if (
+                entry.get("conversation_id") == state.group_id
+                and mirror_key not in expected_keys
+            ):
+                db.delete_json_tx(conn, "characters", mirror_key)
+        for mirror_key, char in mirror_entries.items():
+            index_entry = {
+                "conversation_id": state.group_id,
+                "character_id": char.character_id,
+                "owner_id": char.owner_id,
+                "name": char.name,
+                "occupation": char.occupation,
+                "sheet": char.to_dict(),
+            }
+            db.set_json_tx(conn, "characters", mirror_key, index_entry)
     except Exception:
         _logger.exception(
             "state_save_failure group_id=%s attempted_revision=%s timeline_id=%s duration_ms=%s transaction=rolled_back",
