@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import os
 import tempfile
@@ -188,6 +189,27 @@ class MigrateSkillNamesTests(unittest.TestCase):
             legacy_commands._claim_pregen(state, 0, "u1")
         self.assertEqual(first.luck, 0)
         self.assertEqual(state.pending_pregen_luck, {"u1": first.character_id})
+
+    def test_player_luck_roll_completes_pending_claim_and_cannot_repeat(self):
+        state = GroupState(group_id="g-roll", active=True)
+        state.pregens = [{"name": "A", "occupation": "偵探", "skills": {}}]
+        legacy_commands._claim_pregen(state, 0, "u1")
+        db.set_json("group_states", "g-roll", state.to_dict())
+        replies = []
+
+        async def reply(message):
+            replies.append(message)
+
+        with patch("app.models.random.randint", return_value=4):
+            asyncio.run(legacy_commands.handle_pregen_luck_roll("g-roll", "u1", reply))
+        saved = db.get_json("group_states", "g-roll")
+        self.assertEqual(saved["pending_pregen_luck"], {})
+        self.assertEqual(saved["characters"]["u1"]["luck"], 60)
+        self.assertIn("60", replies[0])
+
+        asyncio.run(legacy_commands.handle_pregen_luck_roll("g-roll", "u1", reply))
+        self.assertIn("沒有等待你擲 LUCK", replies[-1])
+        self.assertEqual(db.get_json("group_states", "g-roll")["characters"]["u1"]["luck"], 60)
         self.assertEqual(len(state.characters_for_owner("u1")), 1)
 
 

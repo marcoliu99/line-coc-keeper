@@ -45,6 +45,9 @@ async def handle_character_command(
             await reply("用法：/coc switch 角色名（可先用 /coc characters 查看）")
             return
         state = load_state(conversation_id)
+        if user_id in state.pending_pregen_luck:
+            await reply("你還有一位預製角色尚未完成 LUCK 擲骰，請先輸入「/coc luck roll」。")
+            return
         name = " ".join(parts[2:]).strip()
         matches = [char for char in state.characters_for_owner(user_id) if char.name == name]
         if not matches:
@@ -293,7 +296,7 @@ async def handle_character_command(
             await reply(str(exc) + " 輸入「/coc pregens」看看還有哪些可選。")
             return
         save_state(state)
-        await reply(f"已使用預製角色！\n\n{char.sheet_text()}")
+        await reply(f"已使用預製角色！\n\n{char.sheet_text()}\n\n請輸入「/coc luck roll」完成玩家 LUCK 擲骰。")
         if char.secret_goal:
             try:
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")

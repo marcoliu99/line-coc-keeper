@@ -1516,6 +1516,8 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
     # enforces one active investigator; keep the same defensive check here.
     if state.active and state.characters_for_owner(user_id):
         raise ValueError("你目前已經有角色，不能重複認領預製角色。")
+    if user_id in state.pending_pregen_luck:
+        raise ValueError("你還有一位預製角色尚未完成 LUCK 擲骰，請先輸入「/coc luck roll」。")
     pregen = state.pregens[index]
     claimed_by = pregen.get("claimed_by")
     if claimed_by:
@@ -1722,6 +1724,10 @@ async def _handle_coc_command(
     char: Character | None = None
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
+
+    if sub == "luck" and len(parts) > 2 and parts[2].casefold() == "roll":
+        await handle_pregen_luck_roll(conversation_id, user_id, reply)
+        return
 
     if sub == "newgame":
         save_state(GroupState(group_id=conversation_id))
@@ -2076,7 +2082,7 @@ async def _handle_coc_command(
             await reply(str(exc) + " 輸入「/coc pregens」看看還有哪些可選。")
             return
         save_state(state)
-        await reply(f"已使用預製角色！\n\n{char.sheet_text()}")
+        await reply(f"已使用預製角色！\n\n{char.sheet_text()}\n\n請輸入「/coc luck roll」完成玩家 LUCK 擲骰。")
         if char.secret_goal:
             try:
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")
