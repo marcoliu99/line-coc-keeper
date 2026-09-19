@@ -135,15 +135,22 @@ def get_digest(group_id: str, digest_id: str) -> dict:
 def clean_digest(group_id: str, digest_id: str) -> None:
     """Delete one digest under the same lock used to create state snapshots."""
     started = time.monotonic()
-    with locks.get_state_lock(group_id):
-        with db.transaction() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM scene_digests WHERE key = ?",
-                (f"{group_id}:{digest_id}",),
-            ).fetchone()
-            if row is None:
-                raise KeyError(digest_id)
-            db.delete_json_tx(conn, "scene_digests", f"{group_id}:{digest_id}")
+    try:
+        with locks.get_state_lock(group_id):
+            with db.transaction() as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM scene_digests WHERE key = ?",
+                    (f"{group_id}:{digest_id}",),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(digest_id)
+                db.delete_json_tx(conn, "scene_digests", f"{group_id}:{digest_id}")
+    except Exception:
+        _logger.exception(
+            "scene_digest_clean_failure group_id=%s digest_id=%s duration_ms=%s transaction=rolled_back",
+            group_id, digest_id, int((time.monotonic() - started) * 1000),
+        )
+        raise
     _logger.info(
         "scene_digest_clean_success group_id=%s digest_id=%s duration_ms=%s",
         group_id, digest_id, int((time.monotonic() - started) * 1000),

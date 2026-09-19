@@ -1907,3 +1907,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - 同一距離層級使用隨機選擇，不再固定攻擊 initiative 順序最前面的角色；未設定距離也會走隨機 fallback。
 - 本次選出的目標寫入 `EnemyTurnPlan.target_ids`，同一個 plan retry 不會改變目標。
 - 新增距離優先與同距離隨機的 combat regression tests。
+
+### 113. 修正 checkpoint 過期快照與 persistence failure logging
+
+- checkpoint 建立時在同一個 SQLite transaction 內重新讀取目前 `group_states`，不再把 stale snapshot 保存成可回溯節點。
+- checkpoint 建立/清除、rollback 與 scene digest 清除失敗時記錄 `ERROR`、例外 traceback、群組與耗時，transaction rollback 狀態可供排查。
+- 新增 checkpoint freshness 與 failure log regression tests；完整測試共 104 項通過。

@@ -58,6 +58,29 @@ class StatePersistenceTests(unittest.TestCase):
             group_state.save_state(stale)
         self.assertEqual(group_state.load_state(state.group_id).scenario_title, "newer")
 
+    def test_checkpoint_reads_authoritative_latest_state(self):
+        state = GroupState("discord-group-checkpoint-freshness")
+        group_state.save_state(state)
+        stale = group_state.load_state(state.group_id)
+        latest = group_state.load_state(state.group_id)
+        latest.scenario_title = "newer"
+        group_state.save_state(latest)
+
+        checkpoint = checkpoints.create_checkpoint(stale, label="fresh")
+
+        self.assertEqual(checkpoint["state"]["scenario_title"], "newer")
+        self.assertEqual(checkpoint["state_revision"], latest.state_revision)
+
+    def test_checkpoint_failure_is_logged(self):
+        state = GroupState("discord-group-checkpoint-failure")
+        with patch.object(db, "set_json_tx", side_effect=RuntimeError("write failed")), self.assertLogs(
+            "app.checkpoints", level=logging.ERROR
+        ) as captured:
+            with self.assertRaisesRegex(RuntimeError, "write failed"):
+                checkpoints.create_checkpoint(state)
+
+        self.assertIn("checkpoint_failure", "\n".join(captured.output))
+
     def test_maintenance_guard_runs_before_scene_digest(self):
         group_id = "discord-group-maintenance-guard"
         with patch.object(keeper, "_maintenance_in_flight", {group_id}), patch.object(
