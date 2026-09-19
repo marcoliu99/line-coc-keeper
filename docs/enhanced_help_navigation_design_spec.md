@@ -21,6 +21,7 @@
 - 新增 platform-agnostic help registry 與 immutable／validated help entry model。
 - 將現有 help 內容拆成分類、command entry、可選的 command detail。
 - 提供 handler／agent registration API。
+- 產生玩家可閱讀、可直接照著輸入的 `docs/player_command_reference.md`。
 - `/coc help` root、分類頁、command detail 頁的 rendering。
 - Discord persistent/dynamic buttons：上一層、首頁、分類與 command detail。
 - 本功能只支援 Discord；不在 LINE adapter 或其他平台實作 help UI。
@@ -32,6 +33,7 @@
 - 不在這個功能中改變任何 `/coc xxx` 的 command parsing 或 gameplay behavior。
 - 不讓 LLM runtime 動態產生或修改 help registry；註冊內容來自程式碼。
 - 不把完整 help 內容存進 `GroupState`；help 是程式版本的一部分，不是每個群組的遊戲狀態。
+- 不另外維護一份與 registry 分叉的手寫 command 清單；玩家文件由 registry metadata 產生或由同一份 metadata 驗證。
 - 不在第一版加入搜尋、模糊比對、個人化排序、權限管理後台或多語系翻譯系統。
 - 不讓導覽超過三層；command 的長說明以同一個 detail view 顯示，不再增加第四層。
 
@@ -98,6 +100,7 @@ Registry 在 application import 時完成註冊。各 handler 以自己的 regis
 | `app/help_render.py` 或等效 service | 產生 platform-agnostic page text 與 navigation actions |
 | `app/discord_bot.py` | 把 navigation actions 轉成 persistent Discord buttons |
 | Discord text command path | 提供不使用按鈕時的 `/coc help <path>` fallback |
+| `docs/player_command_reference.md` | 玩家手動輸入用的完整 command reference，由 registry 產生 |
 
 ## 4. Navigation shape and three-level limit
 
@@ -316,6 +319,33 @@ Application startup（或 router 第一次處理訊息前的 lazy initialization
 5. 執行完整測試，確認沒有 duplicate path、超過三層或超出 Discord message/button 限制。
 
 這種方式的優點是註冊內容是 typed、可 code review、可在 CI 驗證；代價是每個新模組要在 central registration point 加一行，這是刻意換取 deterministic startup 與避免 import magic。
+
+## 5.2 Player manual command reference
+
+除了 Discord 導覽按鈕，repository 必須提供一份玩家可以直接閱讀與複製指令的文件：
+
+```text
+docs/player_command_reference.md
+```
+
+文件每個 command entry 至少包含：
+
+- command syntax，例如 `/coc combat damage 名稱 增減量`
+- 一個或多個可直接複製的範例
+- 用途與必要前置條件
+- `visibility` 條件，例如「只有劇本沒有預設角色時顯示」
+- `KP-only` 標籤（若適用）
+- command alias（若存在）
+
+條件式 entry 不會從文件消失，而是明確標註適用條件。例如 `/coc pc` 應寫成「劇本沒有預設角色時使用」；`/coc usepregen` 應寫成「劇本有預設角色時使用」。這讓玩家即使在按鈕入口被隱藏時，仍能知道可以手動輸入什麼。
+
+文件生成建議提供一個 deterministic script／function，例如：
+
+```text
+python -m app.help_docs --output docs/player_command_reference.md
+```
+
+CI 或測試應驗證生成結果與 committed file 一致；若 registry metadata 改了但文件沒更新，應讓檢查失敗。文件是玩家 manual input 的穩定 reference，不依賴某個群組當下的 `HelpContext`，因此會列出所有已註冊 command，再附上 visibility／KP 說明。
 
 ### Non-Discord platforms
 
