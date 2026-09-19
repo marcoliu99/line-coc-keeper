@@ -49,9 +49,12 @@ async def handle_system_command(
         if sub == "checkpoint":
             if len(parts) > 3 and parts[2] == "clean":
                 try:
-                    checkpoints.clean_checkpoint(conversation_id, parts[3])
+                    checkpoints.clean_checkpoint(conversation_id, " ".join(parts[3:]))
                 except KeyError:
                     await reply("找不到這個回溯節點。")
+                    return
+                except ValueError as exc:
+                    await reply(f"無法清除回溯節點：{exc}")
                     return
                 await reply("已清除回溯節點。")
                 return

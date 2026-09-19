@@ -1877,3 +1877,11 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **避免 stale snapshot 覆蓋**：一般存檔會比對 `state_revision`；若讀取的 snapshot 已落後於資料庫，會明確回報 revision conflict，不會靜默覆蓋較新的狀態。`newgame` 的刻意整體替換保留明確例外。
 - **maintenance 冪等**：`run_post_turn_maintenance()` 會在 scene digest 前先取得 in-flight guard，重複進入時不會建立重複 digest。
 - **測試**：新增 stale state write 與 maintenance guard regression tests；完整 `unittest discover` 共 96 項通過。
+
+### 109. 補強 checkpoint 並發與 revision conflict 處理
+
+- **rollback 鎖定**：checkpoint 建立、清除與 rollback 現在都使用 per-group State Lock，和背景 maintenance／Keeper state mutation 共用一致的同步邊界。
+- **event idempotency**：auto checkpoint 的 event-id 查詢與寫入改在 `BEGIN IMMEDIATE` SQLite transaction 內完成，避免並發 retry 建立重複節點。
+- **名稱清除**：`/coc checkpoint clean` 現在支援唯一的 checkpoint label；重複名稱會要求改用 ID。
+- **Discord conflict UX**：stale `state_revision` 會回覆明確的重試訊息，不再把內部 RuntimeError 直接顯示給使用者。
+- **測試**：新增 checkpoint label clean regression test；完整 `unittest discover` 共 97 項通過。

@@ -27,7 +27,7 @@ from app.config import DISCORD_BOT_TOKEN
 from app.config import BACKUP_INTERVAL_MINUTES
 from app import db
 from app.models import GroupState
-from app.repositories.group_state import load_state as load_group_state
+from app.repositories.group_state import StateRevisionConflict, load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
 _backup_task: asyncio.Task | None = None
@@ -534,6 +534,15 @@ async def on_message(message: discord.Message) -> None:
             # same turn blows up, and that would otherwise silently strand a
             # pending check with no button ever posted for it.
             await _post_pending_buttons(message.channel, conversation_id, before_pending, before_luck_pending)
+    except StateRevisionConflict:
+        _logger.warning(
+            "state revision conflict for conversation_id=%s; asking the user to retry",
+            conversation_id,
+        )
+        try:
+            await reply("遊戲狀態剛被另一個操作更新，這次指令沒有套用，請再試一次。")
+        except Exception:
+            _logger.exception("failed to report state revision conflict for conversation_id=%s", conversation_id)
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         _logger.exception("on_message failed for conversation_id=%s", conversation_id)
         try:

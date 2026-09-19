@@ -133,6 +133,14 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(first["checkpoint_id"], second["checkpoint_id"])
         self.assertEqual(len(checkpoints.list_checkpoints(state.group_id)), 1)
 
+    def test_checkpoint_clean_accepts_unique_label(self):
+        state = GroupState("discord-group-clean-label")
+        entry = checkpoints.create_checkpoint(state, label="before fight")
+        checkpoints.clean_checkpoint(state.group_id, "before fight")
+        self.assertEqual(checkpoints.list_checkpoints(state.group_id), [])
+        with self.assertRaises(KeyError):
+            checkpoints.clean_checkpoint(state.group_id, entry["checkpoint_id"])
+
     def test_backup_is_readable_and_uses_final_name(self):
         state = GroupState("discord-group-4")
         group_state.save_state(state)

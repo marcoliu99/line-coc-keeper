@@ -29,6 +29,10 @@ _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 _logger = logging.getLogger(__name__)
 
 
+class StateRevisionConflict(RuntimeError):
+    """Raised when a caller tries to save a snapshot older than the database."""
+
+
 def _safe_id(group_id: str) -> str:
     """Still used for filesystem paths (page-image directories below) — a
     group_id is only ever a LINE group id or a "discord-channel-<int>"
@@ -67,7 +71,7 @@ def save_state(state: GroupState, *, reason: str = "command") -> None:
             and current is not None
             and int(current.get("state_revision", 0)) != state.state_revision
         ):
-            raise RuntimeError(
+            raise StateRevisionConflict(
                 f"state revision conflict for {state.group_id}: "
                 f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
             )
