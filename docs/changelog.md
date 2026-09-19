@@ -1572,3 +1572,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   `openai_previous_response_id` 依 DCC 規則更新成 provider response id，而不是被 Explicit Canon helper 清空。
 - **production code 未改**：本節只補 `tests/test_kp_assistant_v2.py` regression tests 與 changelog，沒有修改
   `app/keeper.py` 或其他 production code。
+
+### 99. Discord 預製角色查詢只顯示最高 12 項技能
+
+- `/coc pregen 編號` 的預製角色預覽現在依技能值由高到低，只顯示最高 12 項技能，避免 Discord 訊息被大量基礎技能值淹沒。
+- `/coc sheet` 與建立角色後的角色卡原本就採用相同的最高 12 項技能限制；本次補齊預製角色查詢的輸出契約。
+- 新增測試確認超過 12 項時只保留最高 12 項，少於 12 項時完整顯示。

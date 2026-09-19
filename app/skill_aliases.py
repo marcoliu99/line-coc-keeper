@@ -103,6 +103,21 @@ SKILL_ALIASES: dict[str, str] = {
     "電器維修": "電氣維修",
     "外語（其他）": "其他語言",
     "重機械操作": "重型機械操作",
+
+    # Additional unambiguous synonyms found in real scenario pregen extractions
+    # (a scenario's own pregen sheet using a common everyday word for a skill
+    # that has one specific, unambiguous BASE_SKILLS entry) — same rationale
+    # as the rest of this table, added when an actual extraction was observed
+    # producing two separate entries for what's clearly the same skill.
+    "求生": "生存",
+    "鎖匠": "開鎖",
+    "自然世界": "自然學",
+    "喬裝": "偽裝",
+    "威嚇": "恐嚇",
+    "駕駛／飛行": "駕駛",
+    "駕駛/飛行": "駕駛",
+    "步槍／霰彈槍": "射擊（步槍/霰彈槍）",
+    "步槍/霰彈槍": "射擊（步槍/霰彈槍）",
 }
 
 

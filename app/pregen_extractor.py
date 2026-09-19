@@ -13,7 +13,7 @@ from typing import Any
 
 from app import character_matcher, dictionary
 from app.config import LLM_PROVIDER
-from app.models import BASE_SKILLS, Character, damage_bonus_and_build, move_rate
+from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
 
@@ -199,14 +199,47 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
 
 
 def _translate_skill_names(skills: dict[str, Any]) -> dict[str, Any]:
-    """Looks each skill name up against app/dictionary.py's seeded/learned
-    skills table before storing — by the time this runs, _learn_translations_
-    from_pregen above has already taught the dictionary this exact
-    extraction's own skill_translations pairs, so a still-English name from
-    THIS scenario is already a guaranteed hit, not a hopeful one. A name
-    with no dictionary entry (e.g. the LLM didn't include it in
-    skill_translations) is kept as-is rather than dropped."""
-    return {(dictionary.lookup_skill(name) or name): value for name, value in skills.items()}
+    """Normalizes each extracted skill name through canonical_skill_name
+    (app/skill_aliases.py) before storing — NOT just app/dictionary.py's
+    lookup_skill directly, even though _learn_translations_from_pregen above
+    has already taught the dictionary this exact extraction's own
+    skill_translations pairs. Calling dictionary.lookup_skill alone used to
+    skip canonical_skill_name's own BASE_SKILLS-membership and static
+    SKILL_ALIASES checks entirely, so a scenario using a plain-Chinese
+    shorthand or this project's old terminology (e.g. "鬥毆", "手槍", "話術",
+    "電器維修", "估價" — all already mapped in SKILL_ALIASES) never got
+    canonicalized at extraction time at all: dictionary.lookup_skill only
+    knows terms _learn_translations_from_pregen explicitly taught it (which
+    only covers this scenario's own English<->Chinese pairing, never static
+    Chinese-to-Chinese aliases), so the lookup missed and the name was kept
+    completely unchanged. The pregen ended up with e.g. both "鬥毆" and
+    "格鬥（鬥毆）" as two separate keys with the same value — one from this
+    unnormalized path, the other from BASE_SKILLS' own seeded entry once the
+    pregen was actually claimed (see pregen_to_character, which DOES call
+    canonical_skill_name and so never had this bug for the *claimed*
+    Character.skills, only for state.pregens' own stored dict, which is what
+    /coc pregens' preview text reads directly). A name canonical_skill_name
+    can't resolve (genuinely novel homebrew) is kept as-is rather than
+    dropped, same as before.
+
+    When two source names canonicalize to the same skill with *different*
+    values (e.g. this exact extraction listing both "恐嚇 60" and "威嚇 35" —
+    the same skill under two names, inconsistently transcribed at two
+    different points in the source text), keeps the higher of the two rather
+    than whichever happened to come later in `skills`' iteration order — a
+    plain last-write-wins merge would silently pick a value based on
+    incidental dict ordering, not any real signal about which figure is
+    correct. Matches the same max()-merge discipline app/models.py's
+    generate_investigator already uses when layering occupation_skills onto
+    the base skill set."""
+    merged: dict[str, Any] = {}
+    for name, value in skills.items():
+        canonical = canonical_skill_name(name)
+        if canonical in merged and isinstance(merged[canonical], (int, float)) and isinstance(value, (int, float)):
+            merged[canonical] = max(merged[canonical], value)
+        else:
+            merged[canonical] = value
+    return merged
 
 
 _SECTION_RE = re.compile(r"^【(.+?)】\s*$", re.MULTILINE)
@@ -525,7 +558,18 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
     int_ = _int_or(pregen.get("int_"), 50)
     pow_ = _int_or(pregen.get("pow_"), 50)
     edu = _int_or(pregen.get("edu"), 50)
-    luck = _int_or(pregen.get("luck"), 50)
+    # LUCK is deliberately NOT read from the scenario PDF's printed pregen
+    # sheet (unlike every other attribute above) — real COC7e pregen packets
+    # commonly instruct the player to roll their own Luck rather than using a
+    # value the pregen's author picked, since it represents personal fortune,
+    # not a trait the character template can fairly predetermine. Rolled here,
+    # at claim time (pregen_to_character runs once per owner_id claiming this
+    # slot — see app/commands.py's /coc usepregen), not when the scenario PDF
+    # is first uploaded/extracted, so two different players who each claim
+    # this same library pregen (in different groups) each get their own
+    # independently-rolled value instead of a value baked into the shared
+    # `state.pregens` entry.
+    luck = _roll(3, 6, 5)
 
     # _int_or already falls back to `default` on anything non-numeric — no
     # need for a trailing `or default` here, which would (confusingly) also
