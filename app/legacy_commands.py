@@ -50,6 +50,26 @@ SendImage = Callable[[bytes, str, int], Awaitable[None]]
 SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, png_bytes, conversation_id, page_number)
 
 
+__all__ = [
+    "Reply",
+    "GetDisplayName",
+    "FormatMention",
+    "SendDM",
+    "SendImage",
+    "SendDMImage",
+    "handle_unsupported_message",
+    "handle_pdf_upload",
+    "resolve_pdf_upload_choice",
+    "handle_map_upload",
+    "handle_scenario_compare_upload",
+    "handle_role_sheet_upload",
+    "handle_roll_command",
+    "handle_check_command",
+    "handle_luck_decision",
+    "handle_pregen_luck_roll",
+]
+
+
 def _is_kp_or_keeper(state: GroupState, user_id: str, is_keeper: bool = False) -> bool:
     """Return whether a user may perform group-level scenario administration."""
     return (
