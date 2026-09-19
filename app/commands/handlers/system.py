@@ -233,6 +233,12 @@ async def handle_system_command(
             # release it before the intentionally long PDF extraction begins.
             async with locks.get_conversation_lock(conversation_id):
                 state = load_state(conversation_id)
+                if not _is_kp_or_keeper(state, user_id, is_keeper):
+                    await reply("只有目前的 KP Assistant 或 Discord Keeper 可以重新解析劇本。")
+                    return
+                if state.pending_pregen_luck:
+                    await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
+                    return
                 pending = state.pending_scenario_upload
                 if pending is None:
                     await reply("沒有等待重新解析的 PDF。")
