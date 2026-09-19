@@ -262,6 +262,9 @@ async def handle_system_command(
             if state.kp_assistant_user_id != user_id:
                 await reply("只有目前登記的 KP Assistant 可以選擇劇本。")
                 return
+            if state.pending_pregen_luck:
+                await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。")
+                return
             if len(parts) < 4:
                 await reply("用法：/coc scenario use 劇本ID（先用 /coc scenario list 查看）")
                 return

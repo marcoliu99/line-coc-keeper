@@ -104,6 +104,30 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(digest_replies, ["用法：/coc digest clean <ID>"])
         latest.assert_not_called()
 
+    def test_scenario_switch_rejects_pending_pregen_luck(self):
+        state = GroupState("discord-group-pending-pregen", kp_assistant_user_id="kp")
+        state.pending_pregen_luck = {"player": "character-1"}
+        replies = []
+
+        async def reply(text):
+            replies.append(text)
+
+        with patch.object(system_handler, "load_state", return_value=state), patch.object(
+            system_handler.scenario_library, "load_context"
+        ) as load_context:
+            asyncio.run(system_handler.handle_system_command(
+                state.group_id,
+                "kp",
+                reply,
+                None,
+                None,
+                None,
+                ["/coc", "scenario", "use", "new-scenario"],
+            ))
+
+        self.assertIn("/coc luck roll", replies[0])
+        load_context.assert_not_called()
+
     def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
         state = GroupState("discord-group-conflict")
         group_state.save_state(state)
@@ -331,7 +355,7 @@ class StatePersistenceTests(unittest.TestCase):
         state = GroupState("discord-group-digest-trim")
         state.log = [{"role": "user", "content": str(i)} for i in range(20)]
         group_state.save_state(state)
-        first = scene_digest.create_digest(state, scene_label="same")
+        scene_digest.create_digest(state, scene_label="same")
 
         state.log = state.log[-3:]
         group_state.save_state(state)

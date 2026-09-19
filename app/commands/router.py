@@ -14,7 +14,6 @@ from app.legacy_commands import (
     handle_check_command,
     handle_luck_decision,
     handle_pregen_luck_roll,
-    handle_unsupported_message,
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
 )

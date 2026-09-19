@@ -1,5 +1,3 @@
-from typing import Any
-
 from app import combat
 from app import checkpoints
 from app.repositories.group_state import load_state, save_state
