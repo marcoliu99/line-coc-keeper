@@ -1097,3 +1097,11 @@ class GamePipeline:
             "unclaimed_count": len(state.pregens),
         }
 ```
+
+## 12. 多劇本角色隔離與切換 (Scenario Character Isolation)
+
+為支援同一個 Discord 頻道遊玩多個不同的劇本，`GroupState` 必須保證「切換劇本時不串戲」。
+
+- **角色綁定**：在 `Character` 資料結構中新增 `scenario_id` 欄位。玩家新建或上傳角色卡時，自動寫入當前啟用的 `scenario_library_id`。
+- **列表過濾**：角色列表、Keeper 戰鬥與檢定只載入／顯示 `scenario_id` 與當前劇本相符的角色；空白值視為全域繼承。
+- **狀態重置**：KP 執行 `/coc scenario use` 切換劇本時，自動清空玩家的 `active_character_id_by_user`，避免把舊劇本傷勢與狀態帶入新劇本。

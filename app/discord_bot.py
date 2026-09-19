@@ -10,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from pathlib import Path
+import re
 import unicodedata
 
 import discord
 
-from app import locks
-from app import help_service
+from app import help_service, locks, pdf_loader, scenario_library
 from app.commands import router as command_router
 from app.legacy_commands import (
     Reply, SendImage, SendDMImage, SendDM,
@@ -24,11 +25,15 @@ from app.legacy_commands import (
     handle_scenario_compare_upload, handle_unsupported_message
 )
 from app.config import DISCORD_BOT_TOKEN
+from app.config import BACKUP_INTERVAL_MINUTES
+from app import db
 from app.models import GroupState
 from app.help_registry import HelpAction, HelpPage
 from app.repositories.group_state import load_state as load_group_state
+from app.repositories.group_state import StateRevisionConflict, load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
+_backup_task: asyncio.Task | None = None
 
 MAX_DISCORD_MESSAGE_CHARS = 1900  # Discord's hard limit is 2000; leave a margin
 MAX_REPLY_MESSAGES = 10
@@ -51,7 +56,7 @@ def _chunk_text(text: str) -> list[str]:
     return chunks[:MAX_REPLY_MESSAGES]
 
 
-def _make_reply(channel: discord.abc.Messageable) -> commands.Reply:
+def _make_reply(channel: discord.abc.Messageable) -> Reply:
     async def reply(text: str) -> None:
         for chunk in _chunk_text(text):
             await channel.send(chunk)
@@ -63,6 +68,12 @@ def _conversation_id(channel_id: int) -> str:
     return f"discord-channel-{channel_id}"
 
 
+def _is_keeper_member(member: discord.abc.User) -> bool:
+    """Allow the configured Discord Keeper role to manage host-only state."""
+    roles = getattr(member, "roles", ())
+    return any(getattr(role, "name", "").casefold() == "keeper" for role in roles)
+
+
 async def _send_dm(owner_id: str, text: str) -> None:
     # owner_id is str(discord.Member.id), as stored on Character.owner_id. Raises
     # if the user has DMs from server members disabled; commands.py swallows
@@ -72,7 +83,7 @@ async def _send_dm(owner_id: str, text: str) -> None:
         await user.send(chunk)
 
 
-def _make_send_image(channel: discord.abc.Messageable) -> commands.SendImage:
+def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
     async def send_image(png_bytes: bytes, conversation_id: str, page_number: int) -> None:
         # conversation_id/page_number are retained in the shared callback
         # signature for state-aware image sends; Discord attaches bytes directly.
@@ -86,7 +97,7 @@ async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, 
     await user.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
 
 
-def _make_interaction_reply(interaction: discord.Interaction) -> commands.Reply:
+def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     # Used only after the initial interaction response has been consumed
     # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:
@@ -118,7 +129,7 @@ def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
 _CHECK_BUTTON_ID_TEMPLATE = r"coc_check:(?P<conversation_id>discord-channel-\d+):(?P<owner_id>\d+):(?P<option>[^:]*)"
 
 
-class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):
+class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """A "🎲 roll" button under the Keeper's message whenever it asks for a
     check — see app/keeper.py's skill_check/sanity_check/offer_check_choice
     tools, which now only *register* a pending check (GroupState.
@@ -201,7 +212,7 @@ async def _post_check_buttons(
         if before_pending.get(owner_id) == check:
             continue
         try:
-            char = state.characters.get(owner_id)
+            char = state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
             for label, danger, option in _check_button_specs(check):
@@ -226,7 +237,7 @@ _LUCK_BUTTON_ID_TEMPLATE = (
 )
 
 
-class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_BUTTON_ID_TEMPLATE):
+class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """A "花 N 點 Luck → 一般成功" (or "維持目前結果") button posted after a
     near-miss roll — see app/commands.py's handle_check_command (which decides
     whether to prompt at all) and handle_luck_decision (what clicking one of
@@ -288,7 +299,7 @@ async def _post_luck_buttons(
         if before_pending.get(owner_id) == decision:
             continue
         try:
-            char = state.characters.get(owner_id)
+            char = state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
             for option in decision["options"]:
@@ -347,7 +358,7 @@ async def _post_pending_buttons(
 _PDF_CHOICE_BUTTON_ID_TEMPLATE = r"coc_pdfchoice:(?P<conversation_id>discord-channel-\d+):(?P<choice>new|fix)"
 
 
-class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=_PDF_CHOICE_BUTTON_ID_TEMPLATE):
+class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=_PDF_CHOICE_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """Posted after a PDF re-upload while a scenario is already running (see
     app/commands.py's handle_pdf_upload, which stashes the extraction into
     state.pending_pdf_upload rather than guessing) — lets the GM pick whether
@@ -468,7 +479,21 @@ client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton, He
 
 @client.event
 async def on_ready() -> None:
+    global _backup_task
+    if _backup_task is None or _backup_task.done():
+        _backup_task = asyncio.create_task(_backup_loop())
     print(f"Discord bot 已上線：{client.user}")
+
+
+async def _backup_loop() -> None:
+    while True:
+        try:
+            await asyncio.sleep(BACKUP_INTERVAL_MINUTES * 60)
+            await asyncio.to_thread(db.backup_now, "scheduled")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _logger.exception("scheduled backup failed; will retry next interval")
 
 
 @client.event
@@ -496,11 +521,34 @@ async def on_message(message: discord.Message) -> None:
     try:
         pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
         if pdf_attachments:
-            attachment = pdf_attachments[0]
+            ordered = sorted(pdf_attachments, key=lambda item: item.filename.lower())
+            part_name = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
+            should_stage = len(ordered) > 1 or any(
+                part_name.search(Path(item.filename).stem) for item in ordered
+            )
+            if should_stage:
+                staged = []
+                for attachment in ordered:
+                    payload = await attachment.read()
+                    key = await asyncio.to_thread(scenario_library.stage_upload, payload)
+                    staged.append({"key": key, "file_name": attachment.filename})
+                async with locks.get_conversation_lock(conversation_id):
+                    state = load_group_state(conversation_id)
+                    state.staged_pdf_parts.extend(staged)
+                    from app.repositories.group_state import save_state as save_group_state
+                    save_group_state(state)
+                await reply(
+                    "已暫存 PDF part，尚未合併或解析：\n"
+                    + "\n".join(f"・{item['key'][:12]} {item['file_name']}" for item in staged)
+                    + "\n請由 KP 輸入 `/coc scenario merge 暫存ID1 暫存ID2 ...`。"
+                )
+                return
+            attachment = ordered[0]
             content = await attachment.read()
+            filename = attachment.filename
             # No reply-token/time-window constraint here, so the same callback
             # serves as both the immediate ack and the final result.
-            await handle_pdf_upload(conversation_id, reply, reply, content, attachment.filename)
+            await handle_pdf_upload(conversation_id, reply, reply, content, filename)
             await _post_pdf_upload_buttons(message.channel, conversation_id)
             return
 
@@ -575,9 +623,10 @@ async def on_message(message: discord.Message) -> None:
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
         try:
+            is_keeper = _is_keeper_member(message.author)
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
-                format_mention,
+                format_mention, is_keeper,
             )
         finally:
             # Always attempt this, even if handle_text_message raised partway
@@ -586,6 +635,15 @@ async def on_message(message: discord.Message) -> None:
             # same turn blows up, and that would otherwise silently strand a
             # pending check with no button ever posted for it.
             await _post_pending_buttons(message.channel, conversation_id, before_pending, before_luck_pending)
+    except StateRevisionConflict:
+        _logger.warning(
+            "state revision conflict for conversation_id=%s; asking the user to retry",
+            conversation_id,
+        )
+        try:
+            await reply("遊戲狀態剛被另一個操作更新，這次指令沒有套用，請再試一次。")
+        except Exception:
+            _logger.exception("failed to report state revision conflict for conversation_id=%s", conversation_id)
     except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         _logger.exception("on_message failed for conversation_id=%s", conversation_id)
         try:

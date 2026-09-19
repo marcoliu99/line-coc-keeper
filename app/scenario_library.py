@@ -39,6 +39,18 @@ def _path(scenario_id: str) -> Path:
     return SCENARIO_LIBRARY_DIR / scenario_id
 
 
+def safe_import_path(import_dir: Path, filename: str) -> Path:
+    name = Path(filename).name
+    if name != filename or not name.lower().endswith(".pdf") or not name:
+        raise ValueError("invalid import filename")
+    root = import_dir.resolve()
+    raw_candidate = root / name
+    candidate = raw_candidate.resolve()
+    if raw_candidate.is_symlink() or candidate.parent != root or not candidate.is_file():
+        raise FileNotFoundError(name)
+    return candidate
+
+
 def _read_json(path: Path, fallback: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -94,15 +106,15 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
         # window (see GroupState.context_chapter_ids) cover only a page or
         # two at a time and exclude the actual opening scene until several
         # "advance_scenario_chapter" calls later.
-        deduped = _dedupe_by_page([(title, page) for _level, title, page in non_assets])
-        first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > deduped[0][1]), default=page_count + 1)
+        flat_deduped = _dedupe_by_page([(title, page) for _level, title, page in non_assets])
+        first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > flat_deduped[0][1]), default=page_count + 1)
         end_page = min(page_count, first_asset_page - 1)
         sections = []
-        for index, (title, page) in enumerate(deduped):
-            next_page = deduped[index + 1][1] - 1 if index + 1 < len(deduped) else end_page
+        for index, (title, page) in enumerate(flat_deduped):
+            next_page = flat_deduped[index + 1][1] - 1 if index + 1 < len(flat_deduped) else end_page
             if page <= next_page:
                 sections.append({"id": f"section-{index + 1:02d}", "title": title, "start_page": page, "end_page": next_page})
-        return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": deduped[0][1], "end_page": end_page, "sections": sections}]
+        return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": flat_deduped[0][1], "end_page": end_page, "sections": sections}]
 
     top_level = levels[0]
     starts = [(title, page) for level, title, page in non_assets if level == top_level]
@@ -121,7 +133,7 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
     # the final playable chapter instead of leaking reference material into play.
     first_asset_page = min((page for _level, title, page in toc if _ASSET_RE.search(title) and page > deduped[-1][1]), default=page_count + 1)
     playable_end = min(page_count, first_asset_page - 1)
-    chapters = []
+    chapters: list[dict[str, Any]] = []
     for index, (title, page) in enumerate(deduped):
         next_page = deduped[index + 1][1] - 1 if index + 1 < len(deduped) else playable_end
         if page <= next_page:
@@ -203,7 +215,8 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
         try:
             chapters = build_chapters(pdf_bytes, text)
             assets = _build_image_assets(page_images, page_maps, text, chapters)
-            manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": _read_json(target / "manifest.json", {}).get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
+            previous_manifest = _read_json(target / "manifest.json", {})
+            manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": previous_manifest.get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
             (temporary / "images").mkdir()
             (temporary / "source.pdf").write_bytes(pdf_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")
@@ -307,10 +320,28 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
     map_pages = {str(k) for k in page_maps}
     for page in sorted(page_images):
         page_text = _pages_in_range(text, page, page)
+        is_character_sheet = re.search(
+            r"\bSTR\b|\bDEX\b|\bSAN\b|characteri\w*|investigator\s+skills|"
+            r"weapon\s+regular\s+hard\s+extreme|\boccupation\b.*\b(weapon|damage|dodge|luck)\b",
+            page_text,
+            re.I | re.S,
+        )
+        # Only structural evidence (page_maps, from the vision model actually
+        # detecting a floor plan — see _analyze_graphic_page) may override a
+        # character_sheet classification here. A page mentioning "map" in
+        # passing (a monster/NPC stat block with a "see map, p.X" reference is
+        # a common scenario layout) is a much weaker signal than an actual
+        # stat block, and character_sheet's default "kp_only" visibility (see
+        # below) exists specifically to hide that kind of page from players —
+        # letting the plain-text regex win here would silently defeat that.
         if str(page) in map_pages:
             kind = "map"
-        elif re.search(r"\bSTR\b|\bDEX\b|\bSAN\b", page_text, re.I):
+        elif is_character_sheet:
             kind = "character_sheet"
+        elif re.search(r"\bmap\b|floor\s*plan|地圖|平面圖|房間圖", page_text, re.I):
+            kind = "map"
+        elif re.search(r"handout|手卡|玩家資料|報紙|剪報|信件|書信|日記|照片|文件|線索", page_text, re.I):
+            kind = "handout"
         elif re.search(r"portrait|人物|肖像|character\s+(illustration|portrait)", page_text, re.I):
             kind = "portrait"
         else:

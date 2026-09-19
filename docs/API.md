@@ -30,6 +30,8 @@ async def handle_text_message(
 
 `/coc help` 由 Discord adapter 交給 `app/help_service.py`，其他 `/coc` command 依序交給 character、combat、map 與 system handlers。
 
+`main_v2` 新增的 checkpoint、digest、scenario import/merge 與角色切換指令仍由同一個 Discord command router 處理；它們的權限由 system／character handler 執行時驗證，不是 HTTP API。
+
 ## Player help registry
 
 玩家 help metadata 位於 `app/help_registry.py`，由 `app/help_registration.py` 以明確且可重複呼叫的中央入口初始化。新增玩家可輸入的 command 時新增 `HelpEntry`，其 entry path 必須正好是 `(category, command)` 兩段，再執行：
@@ -50,5 +52,8 @@ python3 -m app.help_docs --output docs/player_command_reference.md
 | `DATA_DIR` | 群組圖片與資料目錄 |
 | `DB_PATH` | SQLite database 路徑 |
 | `SCENARIO_RAG_ENABLED` | 是否啟用 Scenario RAG |
+| `BACKUP_DIR` / `BACKUP_INTERVAL_MINUTES` / `BACKUP_KEEP_COUNT` | SQLite 備份位置、週期與保留數量 |
+| `SCENE_DIGEST_TURN_INTERVAL` | 場景摘要更新間隔 |
+| `SCENARIO_LIBRARY_DIR` / `IMPORT_DIR` | 劇本庫與 KP 本機 PDF 匯入目錄 |
 
 完整設定範例請看 `.env.example`。

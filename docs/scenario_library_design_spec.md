@@ -79,6 +79,8 @@ pending_scenario_upload: dict | None = None
 
 `scenario_library_id` 指向目前 KP 選定的 PDF 劇本。章節不是聊天室命令的選項，而是劇本庫內部的檢索索引；Agent 會從選定 PDF 的相關章節取回少量內容，而不把整份 PDF 放進 `GroupState` 或 prompt。
 
+`scenario_library_id` 代表目前選中的單一 PDF 資產。Discord 分割檔案只在 server 端依 KP 指令合併後才進入解析流程；不能把尚未合併的不同檔案資料混進目前 Context。
+
 
 ## 章節模型
 
@@ -212,8 +214,110 @@ pending_scenario_upload: dict | None = None
         [/coc scenario use <劇本ID>]
                        |
                        v
- [選定此 PDF，建立章節化 RAG 索引]
+[選定此 PDF，建立章節化 RAG 索引]
 ```
+
+### 研究後採用的 PDF 解析方法
+
+PDF 解析採「成本由低到高、證據由原始到語意」的分層策略。每一層都保留上一層的原始結果，不讓 OCR 或 Vision 取代原始 PDF evidence：
+
+| 層級 | 方法 | 何時使用 | 主要用途 |
+| --- | --- | --- | --- |
+| A. 身份與結構 | PDF bytes SHA-256、檔名/metadata、頁數、書籤、PyMuPDF text layer | 所有上傳 | 去重、章節切分、低成本預覽 |
+| B. 版面證據 | text blocks、圖片物件、`get_drawings()`、頁面 render | 有圖形、低文字量或需要保存圖片時 | 分辨掃描頁、向量地圖、角色卡與手卡資產 |
+| C. 本機 OCR | PyMuPDF OCR 或 Tesseract；保留頁碼、座標、confidence | 沒有可用文字層，或角色卡數值需要讀取時 | 取得可搜尋文字與欄位位置，不直接決定語意 |
+| D. 文件正規化 | MarkItDown + `markitdown-ocr` | 需要保留文件段落、表格與 embedded image 描述時 | 產出較適合 RAG 的 Markdown 輸入；不是唯一真相來源 |
+| E. Vision/LLM | 結構化 tool schema，要求 page/evidence/欄位候選 | 角色卡、地圖、手卡或 OCR 後仍有欄位歧義時 | 說明視覺語意與欄位關係；不得補寫未見於頁面的事實 |
+| F. 確定性驗證 | schema、頁碼範圍、章節 kind、hash、相似度與原子寫入 | 所有完整解析 | 防止錯誤資料污染劇本庫與 RAG |
+
+採用這個方法而不是「整份 PDF 直接送 Vision」的原因：
+
+1. 精確重複檔案可以在任何 OCR/LLM 前由 bytes hash 判定，掃描 PDF 沒有文字層也不會失去去重能力。
+2. PyMuPDF 的文字層便宜且可保留頁面與書籤；掃描 PDF 才進 OCR，避免每次上傳都付出同等成本。
+3. `get_images()` 只看得到 embedded raster image；向量地圖要依 `get_drawings()` 或頁面 render 才能保留，因此圖片保存條件不能只依文字長度或 embedded image 數量。
+4. OCR 適合文字，Vision 適合版面與語意；兩者都必須把結果連回 page/evidence，後續角色數值、地圖節點與 handout 分類才能被檢查。
+5. 完整解析應先在暫存目錄完成 schema validation，再以 atomic replace 更新劇本庫；任何一頁失敗都不能破壞目前可用版本。
+
+官方方法參考：[PyMuPDF OCR recipe](https://pymupdf.readthedocs.io/en/latest/recipes-ocr.html) 說明無文字層頁面需要 OCR；[PyMuPDF drawing API](https://pymupdf.readthedocs.io/en/latest/page.html) 可取得向量 path；[MarkItDown OCR plugin](https://github.com/microsoft/markitdown/tree/main/packages/markitdown-ocr) 適合 embedded image 的 Vision OCR；[Tesseract TSV/hOCR](https://github.com/tesseract-ocr/tesseract/blob/main/doc/tesseract.1.asc) 可保存 bounding boxes 與 confidence。
+
+本節描述建議的解析方法，不把所有方法都視為目前完成的實作。現有流程已具備文字抽取、圖片保存、部分 OCR/Vision 與原子劇本庫更新；逐欄 `evidence/confidence`、完整 drawing metadata 與 parse workspace 的 schema 驗證仍需按實作順序補上後，才能列為完成項目。
+
+### 分層解析與原子提交流程圖
+
+```text
+[收到 PDF]
+    |
+    v
+[保存 bytes hash + 暫存 source.pdf]
+    |
+    +--> [exact hash 命中?] --是--> [回報已存在，不做完整解析]
+    |
+    否
+    v
+[前頁預覽：PyMuPDF text layer + metadata/bookmarks]
+    |
+    +--> [preview 相似?] --是--> [保存 pending，等待 GM reparse/cancel]
+    |
+    否
+    v
+[建立 parse workspace]
+    |
+    +--> [每頁文字/圖片/drawing/書籤 evidence]
+    |              |
+    |              +--> [文字層不足?] --是--> [OCR fallback]
+    |              |
+    |              +--> [graphic content?] --是--> [render page image]
+    |              |
+    |              +--> [角色卡/地圖/手卡歧義?] --是--> [Vision structured analysis]
+    |
+    v
+[合併文字、圖片、章節、索引、pregens]
+    |
+    v
+[schema + page range + source hash + chapter validation]
+    |
+    +--> [失敗] --> [刪除 workspace，保留舊版本與 pending]
+    |
+    通過
+    v
+[原子更新 scenario library 目錄]
+    |
+    v
+[建立/更新 chapter-scoped RAG index]
+    |
+    v
+[回填目前 GroupState，保留角色/位置契約]
+```
+
+### 角色候選與劇本庫交接流程圖
+
+```text
+[完整 PDF parse result]
+        |
+        +--> [章節/資產分類] --> [image_assets + page evidence]
+        |
+        +--> [pregen extraction]
+                         |
+                         v
+             [Character system normalize]
+             dictionary + OCR/Vision evidence
+                         |
+                         v
+             [公式/技能/數值 schema validation]
+                    /              \\
+                 通過              低信心/衝突
+                  |                    |
+                  v                    v
+          [reconcile into pool]   [GM review queue]
+                  |                    |
+                  +---------+----------+
+                            v
+              [scenario library stores source]
+              [GroupState stores live character state]
+```
+
+這個交接規則避免兩種資料混在一起：劇本庫保存「作者在 PDF 寫了什麼」，`GroupState` 保存「這一團玩家目前活成什麼狀態」。因此重新解析可以更新 evidence、pregen candidate 與圖片，但不能悄悄覆蓋玩家當前 HP、SAN、Luck、背包或位置。
+
 ### 相似度規則
 
 比對採可解釋的本地規則，不要求外部 embedding API：
@@ -276,6 +380,7 @@ pending_scenario_upload: dict | None = None
 - 建立或取得該 PDF 的章節化 Scenario RAG 索引。每個 chunk 都帶有 `chapter_id`、頁碼與 `kind`（`playable`／`asset`）標記。
 - 清除 `openai_previous_response_id`，讓下一輪模型以新選定 PDF 的 system context 建立對話鏈。
 - **保留** `log`、`campaign_summary`、Memory RAG、玩家角色、地圖位置、戰鬥、待處理檢定、`game_started`、`keeper_persona`、`era` 與 `kp_ooc_log`。這些都是同一團的連續遊戲狀態。
+- **替換劇本專屬資料**：`pregens`、`scenario_npc_index`、`scenario_location_index`、目前 Context 的 `scene_maps` 與頁面圖片，必須只來自這次選定的劇本與其目前／下一章視窗；不可保留上一份劇本的預製角色或索引。這裡的「其他角色不出現」指劇本候選角色池不能跨劇本洩漏；`state.characters` 裡已經被玩家認領的現役調查員仍依上一點保留。
 - 不修改劇本庫內容；遊戲進度仍只寫入此團的 `GroupState`／既有資料庫。
 
 每一輪 `ContextBuilder` 以玩家行動與 KP 指示查詢**目前選定 PDF 的兩章 Context 視窗**，只把最相關 chunks 放入 `AgentMessage`。例如 KP 選定《The Lightless Beacon》後，Keeper 不會一次讀完 43 頁；進入燈塔的行動只會取回 `Dead Beacon` 與下一章的必要銜接段落，而不會看到更後面的結局內容。
@@ -438,10 +543,131 @@ KP Assistant 的圖片流程是：先以 `search_scenario_images(query, image_ty
 
 已實作：以 bookmark 的頂層 playable 章節切分、目前章加下一章的文字／NPC／地點／地圖／圖片視窗、跨群組使用中的劇本清除保護、待確認 PDF 的 library identity 保留，以及 KP Assistant 的 `search_scenario_images`、受章節範圍驗證的 `show_scenario_image`、`advance_scenario_chapter`。
 
-章節推進目前由 Keeper/KP Assistant 在場景實際轉換時呼叫 `advance_scenario_chapter`，一次只往下一個 playable 章節移動，並重載後續兩章，避免載入未來劇情。圖片分類以 PDF 視覺/OCR 描述與結構訊號產生 `map`、`character_sheet`、`portrait` 或 `illustration`；它不是百分之百的視覺語意模型，KP 應在首次使用時核對分類。
+章節推進目前由 Keeper/KP Assistant 在場景實際轉換時呼叫 `advance_scenario_chapter`，一次只往下一個 playable 章節移動，並重載後續兩章，避免載入未來劇情。圖片分類以 PDF 視覺/OCR 描述與結構訊號產生 `map`、`character_sheet`、`portrait`、`handout` 或 `illustration`；它不是百分之百的視覺語意模型，KP 應在首次使用時核對分類。
 
-**圖片 `visibility` 的存取控制（已補上，範圍有意縮小）。** 原本 `scenario_library._build_image_assets` 對每一筆資產一律寫死 `"visibility": "public"`，`keeper.py` 的 `search_scenario_images`／`show_scenario_image` 也完全沒有讀取這個欄位，等於任何看得到目前章節 Context 的人都能叫出理論上該是 KP 專用的頁面。現在的做法：`_build_image_assets` 依 `kind` 給預設值——`character_sheet` 一律 `"kp_only"`，其餘（`map`／`portrait`／`illustration`）維持 `"public"`；`search_scenario_images` 在 `speaker_role != "kp_assistant"` 時直接把 `visibility != "public"` 的資產從搜尋結果濾掉（連存在都不讓一般遊戲流程知道），`show_scenario_image` 則在同樣條件下直接拒絕展示。
+**圖片 `visibility` 的存取控制（已補上，範圍有意縮小）。** 原本 `scenario_library._build_image_assets` 對每一筆資產一律寫死 `"visibility": "public"`，`keeper.py` 的 `search_scenario_images`／`show_scenario_image` 也完全沒有讀取這個欄位，等於任何看得到目前章節 Context 的人都能叫出理論上該是 KP 專用的頁面。現在的做法：`_build_image_assets` 依 `kind` 給預設值——`character_sheet` 一律 `"kp_only"`，其餘（`map`／`portrait`／`handout`／`illustration`）維持 `"public"`；`search_scenario_images` 在 `speaker_role != "kp_assistant"` 時直接把 `visibility != "public"` 的資產從搜尋結果濾掉（連存在都不讓一般遊戲流程知道），`show_scenario_image` 則在同樣條件下直接拒絕展示。
 
-刻意縮小範圍、沒有做的部分：分類器只分得出 `character_sheet`／`map`／`portrait`／`illustration` 四種，沒有獨立的 `handout` 分類，也分不出「character_sheet 頁面到底是給玩家選的預製調查員、還是 KP 專用的 NPC／敵人數值」——兩者都會被歸成 `character_sheet` 進而預設 `kp_only`。玩家選預製角色本來就是走 `/coc pregens`／`usepregen`（`app/pregen_extractor.py`），完全不經過 `show_scenario_image` 這個工具，所以這個保守預設不影響玩家選角，只是連帶也把「本來就該給玩家看」的預製角色圖片頁面預設藏起來；KP 仍可用 KP Assistant 身分呼叫 `show_scenario_image` 明確秀出來。也沒有做規格提到的「指定玩家」這一層（只有 public／kp_only 兩級，不是 public／指定玩家／KP 專用三級）——`show_scenario_image` 既有的 `investigator` 參數（私訊給特定角色）仍可用，只是它控制的是「私訊給誰」，不是「誰能觸發這次展示」。
+刻意縮小範圍、沒有做的部分：分類器仍分不出「character_sheet 頁面到底是給玩家選的預製調查員、還是 KP 專用的 NPC／敵人數值」——兩者都會被歸成 `character_sheet` 進而預設 `kp_only`。玩家選預製角色本來就是走 `/coc pregens`／`usepregen`（`app/pregen_extractor.py`），完全不經過 `show_scenario_image` 這個工具，所以這個保守預設不影響玩家選角，只是連帶也把「本來就該給玩家看」的預製角色圖片頁面預設藏起來；KP 仍可用 KP Assistant 身分呼叫 `show_scenario_image` 明確秀出來。也沒有做規格提到的「指定玩家」這一層（只有 public／kp_only 兩級，不是 public／指定玩家／KP 專用三級）——`show_scenario_image` 既有的 `investigator` 參數（私訊給特定角色）仍可用，只是它控制的是「私訊給誰」，不是「誰能觸發這次展示」。
 
 **2026-09 複查追加修正：** 程式碼與這份文件逐條核對時，另外抓到並修正了四個問題——`build_chapters()` 對「所有書籤同一層級」的 PDF（例如上面 The Lightless Beacon 樣本）原本會把每個書籤都拆成獨立 playable 章節，導致兩章滑動視窗涵蓋不到開場（已修正為收斂成一個章節＋`sections`）；`/coc scenario reparse` 原本沒有把 KP 確認過的候選劇本 ID 帶進 `save_scenario`，導致內容有差異的重新解析會另外建立一份而不是更新既有目錄（已修正，新增 `content_similar()` 做完整內容二次比對）；`handle_pdf_upload` 偵測到相似劇本、要寫入 `pending_scenario_upload` 前沒有在鎖底下重新載入狀態，可能蓋掉比對期間發生的其他回合（已修正）；圖片 `visibility` 沒有真正的存取控制（見上一段，已補上 kp_only／public 兩級的實際過濾與拒絕，範圍刻意縮小）。詳見 `docs/changelog.md` 與 `tests/test_scenario_library.py`／`tests/test_kp_assistant_v2.py`。
+
+
+**2026-09 PDF 混合解析與圖片提取修正 (Mixed Extraction Fix)：**
+在整合 MarkItDown OCR 的混合解析模式時，因為 OCR 會從圖片中抽出大量文字（超過 `_LOW_TEXT_THRESHOLD` 200 字），導致原本依賴 `len(text) < 200` 來決定是否保留圖片的邏輯失效，進而造成 `page_images` 遺失所有圖片。修正後的設計是：**將「保存圖片資產」與「呼叫 Claude Vision 分析空間佈局」徹底解耦**。只要 `has_graphic_content` 為真，就強制呼叫 `_render_page_png` 保存圖檔供玩家查看；而 `len(text) < 200` 的門檻僅用來決定是否要花費 Token 送交 Claude Vision 抓取 `scene_map`。
+
+
+
+
+
+**2026-09 大型劇本與 Discord 容量限制：**
+大型長期戰役的主要需求是 Discord 單檔附件太大。KP 可以把 PDF 切成多個檔案，在 Discord 上傳；Bot 會先暫存每個 part，KP 再用明確指令指定檔案與順序，server 合併成一份 PDF，最後走同一條 preview、去重、完整解析與 scenario library pipeline。自架 server 也支援把單一大 PDF 放進 `IMPORT_DIR`，用 `/coc scenario import <filename>` 走同一條 pipeline。
+
+1. **伺服器本地端直接載入 (Local File Loading)**：已實作。KP 將大型 PDF 放入 `IMPORT_DIR`，使用 `/coc scenario import <filename>`；檔名只允許單一 PDF basename，拒絕 traversal、絕對路徑與 symlink，讀入後重用一般 upload pipeline。
+2. **Discord server-side merge**：已實作。Discord 上傳的 `part` PDF 先暫存；KP 用 `/coc scenario merge <id1> <id2> ...` 選檔與排序，再由 `combine_pdfs()` 合併，合併結果使用一般 `handle_pdf_upload()`，不產生第二套解析器。
+
+限制：server-side merge 和 local import 仍會把合併後 PDF 以 bytes 交給現有解析器；它們解決 Discord 傳輸限制與入口一致性，不是無限記憶體保證。若合併後仍超出 server 記憶體／模型能力，需縮小分割批次後再上傳。
+
+### 多 PDF 長期團方案（server-side merge）
+
+長期團的 PDF 可以因 Discord 附件限制被切成多個檔案。Bot 先將檔案暫存在 server，KP 用明確指令選定要合併的暫存 ID；server 依指定順序合併成一份 PDF，再走既有 preview、去重、完整解析與 library lock。未被指定的暫存檔不會被讀取或混入。
+
+#### 上傳與自動分組
+
+檔名可使用下列格式：
+
+```text
+Masks_of_Nyarlathotep_part1.pdf
+Masks_of_Nyarlathotep_part2.pdf
+Masks_of_Nyarlathotep_part3_of_6.pdf
+```
+
+檔名可以使用 `part1.pdf`、`part2.pdf` 等提示排序，但檔名不會自動建立 campaign 或自動合併；真正的合併選擇以 KP 指令為準。
+
+每一份合併後的 PDF 建立自己的 `scenario_id` 與完整劇本目錄；不建立 campaign manifest。暫存 part 只保留原始 bytes 與檔名，直到 KP 明確合併。
+
+合併指令：`/coc scenario merge <暫存ID1> <暫存ID2> ...`。參數順序就是 PDF 頁面順序。
+
+上傳流程：
+
+```text
+[Discord 上傳 part1.pdf / part2.pdf]
+        |
+        v
+[各自暫存並回報短 ID]
+        |
+        v
+[/coc scenario merge <id1> <id2>]
+        |
+        v
+[server 依指定順序合併]
+        |
+        v
+[單一 PDF preview/hash/完整解析]
+        |
+        v
+[建立單一 scenario library item]
+```
+
+#### 執行期隔離與推進
+
+- `GroupState.scenario_library_id` 指向合併後的單一 scenario；暫存 part 不會進 Keeper Context。
+- `/coc scenario use <scenario ID>` 只載入該合併後 scenario 的目前／下一章 Context、圖片、NPC／地點索引與 `pregens`。
+- 合併後的 scenario RAG、pregens、圖片與索引都只屬於該合併結果，不會跨暫存 part 查詢。
+- 玩家已認領的 `state.characters` 是團務狀態，切換 scenario 時保留；未認領的舊 pregen pool 必須替換。
+
+#### 伺服器本地匯入
+
+本地匯入是第二個入口，不是另一套解析器：
+
+```text
+imports/
+  Masks_of_Nyarlathotep_part1.pdf
+  Masks_of_Nyarlathotep_part2.pdf
+
+/coc scenario import Masks_of_Nyarlathotep_part1.pdf
+```
+
+`import` 必須限制在設定的 `IMPORT_DIR` 內，拒絕絕對路徑、`..` traversal、symbolic link 跳出根目錄與非 PDF 副檔名；讀到 bytes 後直接重用一般上傳的 preview、去重、完整解析與 library lock 流程。這樣本地匯入只解決 Discord 25MB 傳輸限制，不會複製另一份不一致的解析邏輯。
+
+#### 建議實作順序
+
+1. Discord 多附件 server-side merge 與 `IMPORT_DIR` 已接通一般 PDF upload pipeline。
+2. `/coc scenario use` 會完整替換 pregen、索引、scene maps 與頁面圖片；現役 `state.characters` 仍保留。
+3. 不建立 campaign 關聯，也不把分割檔案當成多個可切換劇本；分割檔案只在 server 端合併後視為同一份 PDF。
+
+### 解析現況補充：PyMuPDF4LLM 混合解析與圖片保存／Vision 分離
+
+這個 branch 的實際混合流程是：
+
+1. `pymupdf4llm.to_markdown(..., page_chunks=True)` 逐頁產生 layout-aware Markdown、圖片／表格／向量 graphic evidence 與 reading order；它是主要的版面 evidence layer。
+2. MarkItDown + `markitdown-ocr` 補強文件段落、表格與 embedded image OCR；若這層不可用，退回 PyMuPDF4LLM 的頁面文字，再退回 PyMuPDF 原生文字層。
+3. 只要 PyMuPDF／PyMuPDF4LLM 任一層證明頁面有圖形，就一律 render PNG 寫入 `page_images`；`len(text) < _LOW_TEXT_THRESHOLD` 只決定是否追加整頁 Vision／scene-map 分析。
+4. 地圖、手卡、角色卡、插圖的語意分類仍由 page text、`page_maps` 結構訊號、OCR 與 Vision 的 evidence 綜合判定。PyMuPDF4LLM 能指出「這頁有 picture/table/graphic、這些區塊如何排列」，但不會單獨保證它是 handout 或 map，因此不能把套件輸出直接當成最終 `kind`。
+
+流程如下：
+
+```text
+[PDF]
+  |
+  +--> [PyMuPDF4LLM page_chunks]
+  |       |-- layout text / reading order
+  |       `-- picture / table / graphic evidence
+  |
+  +--> [MarkItDown + markitdown-ocr]
+  |       `-- paragraph / embedded-image OCR text
+  |
+  `--> [PyMuPDF render]
+          `-- every graphic page -> page_images
+                    |
+          low text only -> [Vision scene/map analysis]
+                    |
+          [text + layout + OCR + Vision evidence]
+                    |
+          [map / handout / character_sheet / illustration]
+```
+
+若 MarkItDown OCR 已經把角色卡或密集地圖補成超過 200 字，正確行為是「保存圖片、跳過重複 Vision」，不是「不保存圖片」。此契約已有高文字量 embedded-image 回歸測試。
+
+### 劇本選擇的角色隔離規則
+
+`/coc scenario use <ID>` 以所選 library item 的 `pregens.json` 取代目前的 `state.pregens`，因此上一份劇本的未認領預製角色不會出現在新的 `/coc pregens` 清單。已被玩家認領的 `state.characters` 是團務狀態，仍依狀態契約保留；這兩者不可混稱為同一個角色池。

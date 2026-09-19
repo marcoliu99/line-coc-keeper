@@ -36,3 +36,21 @@ python3 -m app.discord_bot
 ```
 
 看到 `Discord bot 已上線` 即代表連線成功。Discord 直接附加圖片檔案，不需要 webhook、ngrok 或公開圖片網址。
+
+## 多 instance 與資料清理
+
+若需要同時管理多個本地 Bot instance：
+
+```bash
+./scripts/start_bot.sh discord
+./scripts/bot_status.sh
+./scripts/stop_bot.sh <instance>
+```
+
+每個 instance 都有獨立 manifest 與 log。清理資料前請先確認腳本列出的 allowlist：
+
+```bash
+./scripts/clean_bot_data.sh --yes
+```
+
+此操作會清理 `DATA_DIR`、`DB_PATH`、備份、劇本庫與 `IMPORT_DIR`，不會刪除 `.env`、原始碼、虛擬環境或 lifecycle manifest，也不會自動停止正在執行的 Bot。

@@ -113,7 +113,10 @@ def _apply_new_scenario(
     state.current_map_page = {}
     state.current_room_id = {}
     state.party_facing = {}
-    _merge_extracted_pregens(state, pregens)
+    # New scenario: replace the scenario-owned candidate pool. Live
+    # investigators remain in state.characters, but unclaimed candidates from
+    # the previous PDF must not leak into /coc pregens.
+    state.pregens = list(pregens)
 
 
 def _apply_scenario_correction(
@@ -140,7 +143,14 @@ def _apply_scenario_correction(
     _merge_extracted_pregens(state, pregens)
 
 
-def _install_library_context(state: GroupState, scenario_id: str, context: dict, *, preserve_maps: bool = False) -> None:
+def _install_library_context(
+    state: GroupState,
+    scenario_id: str,
+    context: dict,
+    *,
+    preserve_maps: bool = False,
+    preserve_pregens: bool = False,
+) -> None:
     """Copy the selected chapter window from an immutable library entry into state."""
     state.scenario_library_id = scenario_id
     state.scenario_title = context["manifest"]["title"]
@@ -149,6 +159,8 @@ def _install_library_context(state: GroupState, scenario_id: str, context: dict,
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
+    if not preserve_pregens:
+        state.pregens = list(context.get("pregens", []))
     if not preserve_maps:
         state.scene_maps = context["scene_maps"]
 
@@ -241,10 +253,11 @@ async def handle_pdf_upload(
     file_name: str,
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
-) -> None:
+) -> bool:
     """`reply` acknowledges the upload and `push` delivers the extracted result
     after the potentially long vision/OCR pass. Discord can pass the same
-    callback for both.
+    callback for both; the boolean result indicates whether a new scenario was
+    accepted or is waiting for a user choice.
 
     If a scenario is already running (state.scenario_text non-empty), this
     doesn't guess whether the new upload is a genuinely new scenario or a
@@ -259,7 +272,7 @@ async def handle_pdf_upload(
     ambiguous against, so it always applies immediately with no button."""
     if not file_name.lower().endswith(".pdf"):
         await reply("目前只支援上傳 PDF 劇本檔案喔。")
-        return
+        return False
 
     # Checked before any of the expensive extraction work below (and before
     # clear_page_images, which unconditionally wipes the current scenario's
@@ -276,11 +289,11 @@ async def handle_pdf_upload(
             "還是「修正目前劇本」，請先點上一則訊息的按鈕選完，再上傳這份新的 PDF——不然這份新的"
             "會蓋掉還沒處理的那份，之後點到舊按鈕會套用到錯的內容。"
         )
-        return
+        return False
 
     if existing_state.pending_scenario_upload is not None and not skip_similarity:
         await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
-        return
+        return False
 
     preview = ""
     if not skip_similarity:
@@ -288,7 +301,7 @@ async def handle_pdf_upload(
             preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
         except ValueError as exc:
             await reply(f"無法讀取 PDF 前幾頁：{exc}")
-            return
+            return False
         preview_title = pdf_loader.guess_title(preview, file_name=file_name)
         matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
         if matches:
@@ -303,12 +316,12 @@ async def handle_pdf_upload(
                 if state.pending_scenario_upload is not None:
                     scenario_library.discard_staged_upload(key)
                     await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
-                    return
+                    return False
                 state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
                 save_state(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
             await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
-            return
+            return False
 
     await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
 
@@ -318,7 +331,7 @@ async def handle_pdf_upload(
         )
     except ValueError as exc:
         await push(f"讀取 PDF 失敗：{exc}")
-        return
+        return False
 
     title = pdf_loader.guess_title(text, file_name=file_name)
 
@@ -395,7 +408,7 @@ async def handle_pdf_upload(
             f"這份《{title}》來得比較慢——另一份幾乎同時上傳的 PDF 先卡進待確認狀態了，請先處理完"
             "上一則訊息的選擇，再重新上傳這份。"
         )
-        return
+        return False
 
     if confirmation_pending:
         await push(
@@ -403,11 +416,12 @@ async def handle_pdf_upload(
             "是要開始一個全新的劇本，還是修正/補完目前這份劇本？請點下面的按鈕選擇——"
             "選錯的代價不小（位置可能對到新劇本裡不存在的房間），拿不準的話選「修正目前劇本」比較安全。"
         )
-        return
+        return True
 
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
     ))
+    return True
 
 
 def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
@@ -435,7 +449,13 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
         _apply_scenario_correction(
             state, context["text"], context["manifest"]["title"], extracted_index, context["pregens"]
         )
-    _install_library_context(state, scenario_id, context, preserve_maps=(choice != "new"))
+    _install_library_context(
+        state,
+        scenario_id,
+        context,
+        preserve_maps=(choice != "new"),
+        preserve_pregens=(choice != "new"),
+    )
     _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
     save_state(state)
@@ -597,18 +617,18 @@ async def _deliver_side_effects(
         except Exception:
             _logger.exception("send_dm failed for owner_id=%s in conversation_id=%s", owner_id, conversation_id)
 
-    for owner_id, page_number in image_requests:
+    for image_owner_id, page_number in image_requests:
         png_bytes = load_page_image(conversation_id, page_number)
         if not png_bytes:
             continue  # Keeper referenced a page with no stored image — quietly skip
         try:
-            if owner_id:
-                await send_dm_image(owner_id, png_bytes, conversation_id, page_number)
+            if image_owner_id:
+                await send_dm_image(image_owner_id, png_bytes, conversation_id, page_number)
             else:
                 await send_image(png_bytes, conversation_id, page_number)
         except Exception:
             _logger.exception(
-                "send_dm_image/send_image failed for owner_id=%s in conversation_id=%s", owner_id, conversation_id
+                "send_dm_image/send_image failed for owner_id=%s in conversation_id=%s", image_owner_id, conversation_id
             )
 
 
@@ -792,7 +812,7 @@ def _build_check_narration(
     dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
     luck_note = ""
     if luck_spent:
-        original_zh = _tier_zh_for_tier(original_tier, getattr(r, "required_tier", "regular"))
+        original_zh = _tier_zh_for_tier(original_tier or "regular", getattr(r, "required_tier", "regular"))
         luck_note = f"（花費 {luck_spent} 點 Luck，將結果從「{original_zh}」提升為「{tier_zh}」）"
 
     opposed_line = ""
@@ -945,12 +965,12 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         state = load_state(conversation_id)
         if not state.active:
             return _CheckResolution(reply_text="目前沒有進行中的遊戲。")
-        char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char:
             return _CheckResolution(reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
 
         parts = text.split()
-        skill_arg = parts[2] if len(parts) > 2 else None
+        skill_arg: str | None = parts[2] if len(parts) > 2 else None
         pending = state.pending_checks.pop(user_id, None)
 
         # A pending "choice" check (see keeper.py's offer_check_choice — e.g. 閃避
@@ -960,7 +980,9 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         # the whole choice prompt over a typo would be a worse experience than a
         # skill/sanity mismatch just falling through to a fresh check.
         choice_skill_name = choice_display_label = None
-        choice_value = choice_bonus = choice_penalty = None
+        choice_value: int | None = None
+        choice_bonus: int | None = None
+        choice_penalty: int | None = None
         choice_attacker_tier = None
         if pending and pending.get("type") == "choice":
             if skill_arg is None:
@@ -977,7 +999,9 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 options_text = "、".join(o["label"] for o in pending["options"])
                 return _CheckResolution(reply_text=f"沒有「{skill_arg}」這個選項，可選：{options_text}")
             choice_skill_name, choice_display_label = matched["skill"], matched["label"]
-            choice_value, choice_bonus, choice_penalty = matched["skill_value"], matched["bonus_dice"], matched["penalty_dice"]
+            choice_value = int(matched["skill_value"])
+            choice_bonus = int(matched["bonus_dice"])
+            choice_penalty = int(matched["penalty_dice"])
             choice_attacker_tier = pending.get("attacker_tier")
             pending = None
         elif skill_arg is None:
@@ -1066,12 +1090,15 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 madness_realtime = bool(pending.get("madness_realtime", True))
                 major_wound_trigger = bool(pending.get("major_wound_trigger", False))
             else:
-                skill_name = skill_arg
+                skill_name = skill_arg or ""
                 value = keeper.resolve_skill_value(char, skill_name)
                 bonus = int(parts[3]) if len(parts) > 3 and parts[3].lstrip("-").isdigit() else 0
                 penalty = int(parts[4]) if len(parts) > 4 and parts[4].lstrip("-").isdigit() else 0
                 save_state(state)  # resolve_skill_value may have registered a new default-value skill
             display_label = None
+        value = int(value or 0)
+        bonus = int(bonus or 0)
+        penalty = int(penalty or 0)
         skill_result = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
 
         if madness_trigger:
@@ -1225,7 +1252,7 @@ def _resolve_luck_decision_deterministically(
         pending = state.pending_luck_decisions.pop(user_id, None)
         if not pending:
             return _CheckResolution(reply_text="目前沒有待決定的 Luck 花費。")
-        char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char:
             return _CheckResolution(reply_text="找不到你的角色。")
 
@@ -1427,7 +1454,7 @@ def _resolve_map_action_core(
 
     if resolved_room is None:
         return _MapActionResolution(needs_rag=needs_rag)
-    char = state.characters.get(user_id)
+    char = state.get_active_character(user_id)
     return _MapActionResolution(
         context={
             "character_name": char.name if char else "",
@@ -1466,7 +1493,7 @@ def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | Non
     rebuild once the game they were in has actually ended."""
     if not state.active:
         return None
-    char = state.characters.get(user_id)
+    char = state.get_active_character(user_id)
     if not char:
         return None
     return (
@@ -1532,6 +1559,9 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
         lines.append(f"背景：{pregen['notes']}")
     if pregen.get("key_connection"):
         lines.append(f"★ 關鍵背景連結：{pregen['key_connection']}")
+    for key, value in (pregen.get("extra_fields") or {}).items():
+        if value not in (None, "", [], {}):
+            lines.append(f"{key}：{value}")
     if pregen.get("claimed_by"):
         lines.append("（此角色已被選走）")
     return "\n".join(lines)
@@ -1640,6 +1670,7 @@ async def _handle_coc_command(
     text: str,
     format_mention: FormatMention = lambda owner_id: owner_id,
 ) -> None:
+    char: Character | None = None
     parts = text.split()
     sub = parts[1] if len(parts) > 1 else "help"
 
@@ -1861,6 +1892,9 @@ async def _handle_coc_command(
                 return
             leftover = session.occ_points_remaining + session.interest_points_remaining
             char = creation.finalize(state, user_id)
+            if char is None:
+                await reply("建角資料已失效，請重新開始建角流程。")
+                return
             save_state(state)
             note = f"\n（還有 {leftover} 點未分配的技能點數已捨棄）" if leftover else ""
             await reply(f"調查員建立完成！\n\n{char.sheet_text()}{note}")

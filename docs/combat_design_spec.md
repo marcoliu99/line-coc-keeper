@@ -323,12 +323,27 @@ EnemyTurnPlan(
    - 已接戰且有合適攻擊才近戰。
    - 有遠程/精神/範圍能力則可不接近。
    - 若目標不在 range，產生 `move` 或 `wait`，不是硬揮拳。
+   - 目標選擇採「距離優先、同距離隨機」：先從仍可行動且 `engaged` 的 PC 選，沒有時再從
+     `near` 的 PC 選，兩者都沒有才從所有仍可行動的 PC 選；同一層級使用隨機選擇，不依 initiative
+     順序固定集火第一位角色。
+   - 距離使用 `CombatState.range_bands` 的 `enemy_card_id:target_combatant_id` key；讀取時也接受
+     反向 key，以相容既有狀態。未設定距離不代表 `engaged`，而是進入最後的隨機 fallback。
 7. 產生公開敘事提示，但 private_reason 不進玩家回覆。
 8. Keeper 執行 required rolls，完成後呼叫 action resolution tool 寫回 usage/cooldown/effects/damage。
+   `attack` 的命中結果與傷害骰結果必須放進 `outcome.hit`／`outcome.damage`，由 resolver 統一套用護甲與 HP；
+   不可只把 attack plan 標記完成而另外依賴未受約束的旁路更新。
 
 `resolve_enemy_action(plan_id)` 必須是 idempotent：第一次成功 resolve 才會消耗 usage/cooldown，之後同一個 `plan_id` 重複呼叫只回報 `already_resolved=True`，不得重複扣特殊能力次數。這保護 LLM/tool retry、網路重送與主持誤按造成的重複結算。
 
 `plan_enemy_turn` 也必須避免重複套用 `turn_start` effects：同一個 round/current_index/target 的 `turn_start` timing 最多結算一次，即使 Keeper/LLM 因 retry 或重新規劃重複呼叫 `plan_enemy_turn`。
+
+敵人 plan 會把本次選出的 `target_ids` 寫入 plan。若同一個 plan 因工具 retry 被重新 resolve，仍使用原本目標；重新建立新的 plan 才會依當下距離與隨機規則重新選擇。倒下或暫離的 PC 不列入候選。
+
+`resolve_enemy_action` 是特殊能力效果的唯一落點。當能力的 `effect.on_success` 為
+`apply_effect` 時，呼叫端必須傳入正式檢定結果 `outcome: {"success": true|false}`；只有成功才會依
+能力 effect schema 建立 `EffectState`，失敗則只消耗該能力本次使用，不建立效果。缺少 outcome 或
+效果 schema 不合法時，resolver 回傳錯誤且不消耗使用次數，讓 Keeper 可以補正後重試。相同
+`effect_id` 已存在時不得重複建立效果。
 
 ## Song of Lost Dreams 類能力
 
@@ -396,7 +411,12 @@ SpecialAbility(
    - 本回合結束效果
    - cooldown 減少（若規則指定）
 5. `round_end`
-   - 場景火勢擴散、煙霧、坍塌、儀式進度等環境效果
+
+`round_end` 只在 initiative index 從最後一位跨回 index 0 時處理；單純推進到同一輪的下一位不會
+結算 round-end effects。效果結算以 timing key 加上 effect id 做冪等記錄：同一時點內已成功的 effect
+不會因另一個 effect 失敗而在 retry 時重複套用，失敗的 effect 會保留等待修正。
+   - 場景火勢擴散、煙霧、坍塌、儀式進度等環境效果。環境／全體效果可用保留 target
+     `environment`／`all` 註冊；需要造成傷害時由固定時點展開到當時仍在場的戰鬥員。
 
 重傷規則必須與現有 PC `adjust_character` 行為一致：單次傷害達門檻時註冊 CON 檢定或套用對應狀態。NPC 是否需要重傷檢定由卡片或全域設定決定，預設普通敵人只用 HP/defeated，不替每個雜兵跑完整重傷流程。
 
@@ -456,7 +476,7 @@ DamageResolution(
 - `add_npc_to_combat(name, dex, hp, is_ally=False, armor=None, attacks=None, abilities=None)`
 - `get_combat_status()`
 - `plan_enemy_turn(enemy="")`
-- `resolve_enemy_action(plan_id)`
+- `resolve_enemy_action(plan_id, outcome={success})`
 - `apply_combat_damage(target, raw_damage, damage_type="physical", tags=[], source_id="")`
 - `add_combat_effect(target, label, timing, damage="", damage_type="physical", remaining_rounds=None, tags=[], source_id="", public_description="")`
 - `advance_combat_turn()`
@@ -506,13 +526,11 @@ Keeper prompt 必須改成：
 - `/coc combat damage 名稱 增減量`
 - `/coc combat end`
 
-但 `addnpc` 應成為 minimal card shorthand。未來可新增：
+但 `addnpc` 應成為 minimal card shorthand。仍可再新增：
 
 - `/coc combat addenemy 名稱`
 - `/coc combat enemycard 名稱`
 - `/coc combat effect ...`
-- `/coc switch 角色名`
-- `/coc characters`
 
 ## 測試需求
 

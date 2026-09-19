@@ -69,6 +69,14 @@ class ScenarioLibraryContextTests(unittest.TestCase):
             (broken / "manifest.json").write_text(json.dumps({"id": "broken-scenario", "title": "Other"}), encoding="utf-8")
             self.assertEqual(scenario_library.find_similar("Different", "new preview"), [])
 
+    def test_selected_context_uses_only_its_own_pregens(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", Path(temp)):
+            self._write_scenario(Path(temp))
+            scenario = Path(temp) / "test-scenario"
+            (scenario / "pregens.json").write_text(json.dumps([{"name": "Only This Scenario"}]), encoding="utf-8")
+            context = scenario_library.load_context("test-scenario")
+            self.assertEqual(context["pregens"], [{"name": "Only This Scenario"}])
+
 
 def _pdf_with_toc(toc: list[list], page_count: int) -> bytes:
     pymupdf = __import__("pymupdf")
@@ -169,6 +177,18 @@ class ScenarioLibraryReparseTests(unittest.TestCase):
             self.assertFalse(scenario_library.content_similar(scenario_id, "totally different"))
 
 
+class ScenarioImportTests(unittest.TestCase):
+    def test_import_path_rejects_traversal_and_symlink_escape(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "book.pdf").write_bytes(b"pdf")
+            self.assertEqual(scenario_library.safe_import_path(root, "book.pdf"), (root / "book.pdf").resolve())
+            with self.assertRaises(ValueError):
+                scenario_library.safe_import_path(root, "../book.pdf")
+            with self.assertRaises(ValueError):
+                scenario_library.safe_import_path(root, "/tmp/book.pdf")
+
+
 class ScenarioLibraryImageVisibilityTests(unittest.TestCase):
     """Regression tests for the review finding that image `visibility` was
     hardcoded to "public" regardless of type, so KP-only assets (see
@@ -176,13 +196,16 @@ class ScenarioLibraryImageVisibilityTests(unittest.TestCase):
     had no actual access control."""
 
     def test_character_sheet_pages_default_to_kp_only_others_stay_public(self):
-        chapters = [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": 3}]
+        chapters = [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": 6}]
         text = (
             "--- 第 1 頁 ---\n調查員：陳墨\nSTR 65 DEX 75 SAN 55\n"
             "--- 第 2 頁 ---\n[圖片內容描述：一張地圖]\n"
             "--- 第 3 頁 ---\n[圖片內容描述：一幅插畫]\n"
+            "--- 第 4 頁 ---\nHandout 1：一封泛黃的信件與報紙剪報\n"
+            "--- 第 5 頁 ---\nMap: Gardiner's Room\n"
+            "--- 第 6 頁 ---\nOccupation Beat Cop\nDamage Bonus none\nDodge 40\n"
         )
-        page_images = {1: b"page-1", 2: b"page-2", 3: b"page-3"}
+        page_images = {1: b"page-1", 2: b"page-2", 3: b"page-3", 4: b"page-4", 5: b"page-5", 6: b"page-6"}
         page_maps = {2: {"id": "map-2"}}
 
         assets = scenario_library._build_image_assets(page_images, page_maps, text, chapters)
@@ -194,6 +217,47 @@ class ScenarioLibraryImageVisibilityTests(unittest.TestCase):
         self.assertEqual(by_page[2]["visibility"], "public")
         self.assertEqual(by_page[3]["type"], "illustration")
         self.assertEqual(by_page[3]["visibility"], "public")
+        self.assertEqual(by_page[4]["type"], "handout")
+        self.assertEqual(by_page[4]["visibility"], "public")
+        self.assertEqual(by_page[5]["type"], "map")
+        self.assertEqual(by_page[5]["visibility"], "public")
+        self.assertEqual(by_page[6]["type"], "character_sheet")
+        self.assertEqual(by_page[6]["visibility"], "kp_only")
+
+    def test_stat_block_mentioning_map_in_passing_stays_kp_only(self):
+        """Regression test for a review finding: a plain-text "map" mention
+        (e.g. an NPC/monster stat block that says "see map, p.X", a common
+        COC7e scenario layout) must not outrank an actual stat block and
+        downgrade it to public "map" — only structural page_maps evidence
+        (a real detected floor plan) may classify a page as map ahead of
+        character_sheet."""
+        chapters = [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": 2}]
+        text = (
+            "--- 第 1 頁 ---\n"
+            "The Deep One Hybrid lurks near the shore (see map, p. 12).\n"
+            "STR 80 CON 70 SIZ 75 DEX 60 INT 50 POW 60 HP 15\n"
+            "SAN Loss 1d4/1d10 to encounter this creature.\n"
+            "Weapon: Claw 50%, damage 1D6\n"
+            "--- 第 2 頁 ---\n"
+            "The Deep One Hybrid lurks near the shore (see map, p. 12).\n"
+            "STR 80 CON 70 SIZ 75 DEX 60 INT 50 POW 60 HP 15\n"
+        )
+        page_images = {1: b"page-1", 2: b"page-2"}
+
+        # No page_maps entry for either page: neither has real structural
+        # map evidence, only the same "see map" text mention.
+        no_structural_evidence = scenario_library._build_image_assets(page_images, {}, text, chapters)
+        by_page = {a["page"]: a for a in no_structural_evidence}
+        self.assertEqual(by_page[1]["type"], "character_sheet")
+        self.assertEqual(by_page[1]["visibility"], "kp_only")
+
+        # Same text, but page 2 DOES have real structural map evidence this
+        # time — that must still win over the stat-block text.
+        with_structural_evidence = scenario_library._build_image_assets(page_images, {2: {"id": "m"}}, text, chapters)
+        by_page = {a["page"]: a for a in with_structural_evidence}
+        self.assertEqual(by_page[1]["type"], "character_sheet", "page 1 unaffected by page 2's page_maps entry")
+        self.assertEqual(by_page[2]["type"], "map")
+        self.assertEqual(by_page[2]["visibility"], "public")
 
 
 if __name__ == "__main__":

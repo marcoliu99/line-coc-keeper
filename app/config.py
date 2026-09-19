@@ -28,7 +28,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # caveat as GEMINI_MODEL above.
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", "data/groups"))
+DATA_DIR = Path(os.environ.get("DATA_DIR", "data/groups")).expanduser().resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # SQLite database file — see app/db.py. Replaces the previous "one flat JSON
@@ -37,8 +37,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # page images (PNG) still live as plain files under DATA_DIR, unaffected by
 # this. Defaults to sitting next to DATA_DIR rather than inside it, so it's
 # obviously a different kind of thing than the per-group image folders.
-DB_PATH = Path(os.environ.get("DB_PATH", str(DATA_DIR.parent / "coc_bot.db")))
+DB_PATH = Path(os.environ.get("DB_PATH", str(DATA_DIR.parent / "coc_bot.db"))).expanduser().resolve()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", str(DB_PATH.parent / "backups"))).expanduser().resolve()
+BACKUP_INTERVAL_MINUTES = max(1, int(os.environ.get("BACKUP_INTERVAL_MINUTES", "60")))
+BACKUP_KEEP_COUNT = max(1, int(os.environ.get("BACKUP_KEEP_COUNT", "48")))
+SCENE_DIGEST_TURN_INTERVAL = max(1, int(os.environ.get("SCENE_DIGEST_TURN_INTERVAL", "12")))
 
 # Safety limits. Both are heuristics, not measured against a real token count —
 # tune them down if you're on a model with a smaller context window than Claude
@@ -123,3 +128,5 @@ KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").st
 # Reusable parsed PDF scenarios (separate from per-conversation state).
 SCENARIO_LIBRARY_DIR = Path(os.environ.get('SCENARIO_LIBRARY_DIR', str(DATA_DIR.parent / 'scenarios')))
 SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+IMPORT_DIR = Path(os.environ.get("IMPORT_DIR", "imports")).resolve()
+IMPORT_DIR.mkdir(parents=True, exist_ok=True)
