@@ -502,6 +502,10 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 reply = ReplyCollector()
                 push = ReplyCollector()
                 await commands.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf")
+                self.assertEqual(
+                    reply.messages[0],
+                    "收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...",
+                )
                 saved = store.get("g")
                 self.assertEqual(saved.scenario_text, "new scenario text")
                 self.assertEqual(saved.kp_ooc_log, [])

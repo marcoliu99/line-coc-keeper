@@ -324,7 +324,7 @@ async def handle_pdf_upload(
         )
         return
 
-    await reply("收到了，正在讀取劇本內容（圖片較多的劇本可能要一分鐘左右），請稍候...")
+    await reply("收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...")
 
     try:
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
