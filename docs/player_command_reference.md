@@ -208,6 +208,34 @@
 
 ## 劇本
 
+### 暫離遊戲
+
+標記自己暫時離開；戰鬥中會跳過你的回合。
+
+用法：
+- `/coc away`
+
+### 回到遊戲
+
+取消暫離狀態並恢復正常參與。
+
+用法：
+- `/coc back`
+
+### 取消劇本處理
+
+放棄目前等待處理的相似劇本 PDF。
+
+用法：
+- `/coc scenario cancel`
+
+### 清理劇本庫
+
+刪除沒有被任何群組使用的劇本庫項目。
+
+用法：
+- `/coc scenario clean 劇本ID`
+
 ### 結束遊戲
 
 結束目前這局遊戲。
@@ -231,6 +259,16 @@
 
 顯示條件：只有已載入劇本時顯示
 
+### 列出劇本庫
+
+查看可用劇本與目前使用中的劇本。
+
+用法：
+- `/coc scenario list`
+
+範例：
+- `/coc scenario list`
+
 ### 開始新遊戲
 
 重置群組狀態並開始新的一局。
@@ -245,18 +283,12 @@
 用法：
 - `/coc pdf new|fix`
 
-### 劇本庫 **[KP-only]**
+### 重新解析劇本
 
-列出、選擇、重新解析或清理劇本庫內容。
+重新處理等待中的相似劇本 PDF。
 
 用法：
-- `/coc scenario list`
-- `/coc scenario use 劇本ID`
-- `/coc scenario reparse|cancel`
-- `/coc scenario clean 劇本ID`
-
-範例：
-- `/coc scenario list`
+- `/coc scenario reparse`
 
 ### 設定守密人風格
 

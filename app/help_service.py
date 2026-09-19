@@ -15,9 +15,9 @@ def context_from_state(state: GroupState, user_id: str) -> HelpContext:
 
 
 def parse_help_path(parts: list[str]) -> tuple[str, ...]:
-    """Parse tokens after `/coc help` into a two-level navigation path."""
+    """Normalize help tokens without hiding an over-depth path from the user."""
     tokens = tuple(part.strip().lower() for part in parts if part.strip())
-    return tokens[:2]
+    return tokens
 
 
 def get_page(state: GroupState, user_id: str, path: tuple[str, ...] = ()) -> HelpPage:
@@ -34,3 +34,13 @@ def resolve_text_path(state: GroupState, user_id: str, tokens: list[str]) -> tup
                 if entry.visibility == "always" or lookup_help(entry.path, context):
                     return entry.path
     return path
+
+
+def bounded_page_text(page: HelpPage, max_chars: int) -> str:
+    """Keep an adapter-rendered help page below its platform message limit."""
+    if len(page.text) <= max_chars:
+        return page.text
+    suffix = "\n\n（內容過長，請使用更詳細的 Help 路徑查看。）"
+    if max_chars <= len(suffix):
+        return suffix[:max_chars]
+    return page.text[: max_chars - len(suffix)].rstrip() + suffix

@@ -32,7 +32,7 @@ async def handle_text_message(
 
 ## Player help registry
 
-玩家 help metadata 位於 `app/help_registry.py`，由 `app/help_registration.py` 集中初始化。新增玩家可輸入的 command 時註冊 `HelpEntry`，再執行：
+玩家 help metadata 位於 `app/help_registry.py`，由 `app/help_registration.py` 以明確且可重複呼叫的中央入口初始化。新增玩家可輸入的 command 時新增 `HelpEntry`，其 entry path 必須正好是 `(category, command)` 兩段，再執行：
 
 ```bash
 python3 -m app.help_docs --output docs/player_command_reference.md

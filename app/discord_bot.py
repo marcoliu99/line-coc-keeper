@@ -448,13 +448,19 @@ class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTO
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
         page = help_service.get_page(state, str(interaction.user.id), self.path)
-        await interaction.response.edit_message(content=page.text, view=_help_view(self.conversation_id, page))
+        await interaction.response.edit_message(
+            content=help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS),
+            view=_help_view(self.conversation_id, page),
+        )
 
 
 async def _post_help_page(channel: discord.abc.Messageable, conversation_id: str, user_id: str, path: tuple[str, ...]) -> None:
     state = await asyncio.to_thread(load_group_state, conversation_id)
     page = help_service.get_page(state, user_id, path)
-    await channel.send(page.text, view=_help_view(conversation_id, page))
+    await channel.send(
+        help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS),
+        view=_help_view(conversation_id, page),
+    )
 
 
 client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton, HelpButton)

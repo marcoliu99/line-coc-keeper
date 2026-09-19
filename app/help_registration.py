@@ -42,8 +42,11 @@ def _entries() -> list[HelpEntry]:
         HelpEntry(("map", "enter"), "map", "進入地圖", "手動進入某一頁的平面圖。", ("/coc enter 頁碼",), command=("enter",)),
         HelpEntry(("map", "leavemap"), "map", "離開地圖追蹤", "離開目前地圖，移動改回由守密人判斷。", ("/coc leavemap",), command=("leavemap",)),
         HelpEntry(("scenario", "newgame"), "scenario", "開始新遊戲", "重置群組狀態並開始新的一局。", ("/coc newgame",), command=("newgame",)),
-        HelpEntry(("scenario", "scenario"), "scenario", "劇本庫", "列出、選擇、重新解析或清理劇本庫內容。", ("/coc scenario list", "/coc scenario use 劇本ID", "/coc scenario reparse|cancel", "/coc scenario clean 劇本ID"), ("/coc scenario list",), kp_only=True, command=("scenario",)),
+        HelpEntry(("scenario", "list"), "scenario", "列出劇本庫", "查看可用劇本與目前使用中的劇本。", ("/coc scenario list",), ("/coc scenario list",), command=("scenario", "list")),
         HelpEntry(("scenario", "use"), "scenario", "選用劇本", "從劇本庫選擇目前要使用的劇本。", ("/coc scenario use 劇本ID",), ("/coc scenario use abc123",), notes=("KP-only：只有目前登記的 KP Assistant 可以執行。",), kp_only=True, command=("scenario", "use")),
+        HelpEntry(("scenario", "reparse"), "scenario", "重新解析劇本", "重新處理等待中的相似劇本 PDF。", ("/coc scenario reparse",), command=("scenario", "reparse")),
+        HelpEntry(("scenario", "cancel"), "scenario", "取消劇本處理", "放棄目前等待處理的相似劇本 PDF。", ("/coc scenario cancel",), command=("scenario", "cancel")),
+        HelpEntry(("scenario", "clean"), "scenario", "清理劇本庫", "刪除沒有被任何群組使用的劇本庫項目。", ("/coc scenario clean 劇本ID",), command=("scenario", "clean")),
         HelpEntry(("scenario", "pdf"), "scenario", "處理劇本 PDF", "決定上傳的 PDF 是新劇本或修正目前劇本。", ("/coc pdf new|fix",), command=("pdf",)),
         HelpEntry(("scenario", "status"), "scenario", "查看遊戲狀態", "查看目前劇本與角色狀態。", ("/coc status",), command=("status",)),
         HelpEntry(("scenario", "start"), "scenario", "開始劇情", "角色準備好後，產生劇本開場白。", ("/coc start",), ("/coc start",), visibility="when_scenario_loaded", command=("start",)),
@@ -51,11 +54,17 @@ def _entries() -> list[HelpEntry]:
         HelpEntry(("scenario", "setpersona"), "scenario", "設定守密人風格", "自訂或重設守密人的敘事風格。", ("/coc setpersona 文字", "/coc setpersona reset"), command=("setpersona",)),
         HelpEntry(("scenario", "era"), "scenario", "設定年代", "設定 1920 年代或現代背景。", ("/coc era 1920|modern",), command=("era",)),
         HelpEntry(("scenario", "index"), "scenario", "重建劇本索引", "手動重建 NPC／怪物與地點索引。", ("/coc index",), visibility="when_scenario_loaded", command=("index",)),
+        HelpEntry(("scenario", "away"), "scenario", "暫離遊戲", "標記自己暫時離開；戰鬥中會跳過你的回合。", ("/coc away",), command=("away",)),
+        HelpEntry(("scenario", "back"), "scenario", "回到遊戲", "取消暫離狀態並恢復正常參與。", ("/coc back",), command=("back",)),
         HelpEntry(("kp", "kp"), "kp", "登記 KP Assistant", "登記或解除本局的 KP Assistant 身分。", ("/coc kp", "/coc kp quit"), command=("kp",)),
         HelpEntry(("other", "roll"), "other", "單純擲骰", "不經過守密人，直接擲骰。", ("/roll 1d100", "/roll 3d6+2"), ("/roll 1d100",), command=()),
     ]
 
 
 def register_all_help() -> None:
+    from app.help_registry import registry_is_initialized
+
+    if registry_is_initialized():
+        return
     _register_categories()
     register_help_entries(_entries())

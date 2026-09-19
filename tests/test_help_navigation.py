@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.help_docs import generate_markdown
 from app.help_registry import HelpContext, HelpEntry, get_help_page, register_help, reset_registry_for_tests
-from app.help_service import resolve_text_path
+from app.help_service import bounded_page_text, parse_help_path, resolve_text_path
 from app.models import GroupState
 
 
@@ -54,6 +54,32 @@ class HelpNavigationTests(unittest.TestCase):
             register_help(HelpEntry(("combat", "damage"), "combat", "duplicate", "duplicate", ("/coc combat damage",)))
         with self.assertRaises(ValueError):
             register_help(HelpEntry(("combat", "too", "deep"), "combat", "deep", "deep", ("/coc combat too deep",)))
+        with self.assertRaises(ValueError):
+            register_help(HelpEntry(("combat",), "combat", "short", "short", ("/coc combat",)))
+
+    def test_help_path_parser_rejects_extra_depth_instead_of_truncating(self):
+        self.assertEqual(parse_help_path(["combat", "damage", "extra"]), ("combat", "damage", "extra"))
+        page = get_help_page(("combat", "damage", "extra"), HelpContext())
+        self.assertIn("目前情境沒有這個 help 頁面", page.text)
+
+    def test_direct_registration_is_idempotent(self):
+        get_help_page()
+        from app.help_registration import register_all_help
+
+        register_all_help()
+        self.assertEqual(get_help_page().path, ())
+
+    def test_help_page_text_is_bounded_for_platform_renderers(self):
+        page = get_help_page(("combat", "damage"), HelpContext())
+        bounded = bounded_page_text(page, 40)
+        self.assertLessEqual(len(bounded), 40)
+        self.assertIn("內容過長", bounded)
+
+    def test_scenario_permissions_are_classified_per_command(self):
+        page = get_help_page(("scenario",), HelpContext())
+        detail = get_help_page(("scenario", "list"), HelpContext())
+        self.assertTrue(any(action.path == ("scenario", "use") for action in page.actions))
+        self.assertNotIn("KP-only", detail.text)
 
     def test_player_reference_is_generated_from_registry(self):
         document = generate_markdown()

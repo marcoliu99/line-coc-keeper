@@ -10,7 +10,6 @@ from app.legacy_commands import (
     SendImage,
     SendDMImage,
     FormatMention,
-    HELP_TEXT,
     handle_roll_command,
     handle_check_command,
     handle_luck_decision,
@@ -18,7 +17,7 @@ from app.legacy_commands import (
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
 )
-from app import locks
+from app import help_service, locks
 from app.agents import supervisor
 from app.repositories.group_state import load_state
 from app.commands.handlers import combat as combat_handler
@@ -106,7 +105,8 @@ async def handle_text_message(
             return
 
         async with locks.get_conversation_lock(conversation_id):
-            await reply(HELP_TEXT)
+            state = load_state(conversation_id)
+            await reply(help_service.get_page(state, user_id).text)
         return
 
     # Non-command text -> goes to the Keeper Supervisor. KP Assistant is

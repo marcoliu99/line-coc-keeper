@@ -82,8 +82,8 @@ def register_help_category(category: HelpCategory) -> None:
 
 
 def register_help(entry: HelpEntry) -> None:
-    if len(entry.path) not in (1, 2):
-        raise ValueError("help path must contain one or two tokens")
+    if len(entry.path) != 2:
+        raise ValueError("help entry path must contain exactly two tokens: category and command")
     if entry.category not in _categories:
         raise ValueError(f"unknown help category: {entry.category!r}")
     if entry.path[0] != entry.category:
@@ -106,13 +106,17 @@ def _ensure_initialized() -> None:
         return
     from app.help_registration import register_all_help
 
-    _initialized = True
     try:
         register_all_help()
     except Exception:
-        _initialized = False
         reset_registry_for_tests()
         raise
+    _initialized = True
+
+
+def registry_is_initialized() -> bool:
+    """Return whether the built-in help registration completed successfully."""
+    return _initialized
 
 
 def _visible(entry: HelpEntry, context: HelpContext) -> bool:
@@ -163,14 +167,22 @@ def _page_actions(path: tuple[str, ...], context: HelpContext) -> tuple[HelpActi
         for category in _sorted_categories():
             if _sorted_entries(category.key, context):
                 actions.append(HelpAction(category.title, (category.key,), "category"))
-        return tuple(actions)
+        return _limit_actions(actions, path)
     if len(path) == 1:
         for entry in _sorted_entries(path[0], context):
             actions.append(HelpAction(entry.title, entry.path, "entry"))
         actions.append(HelpAction("🏠 Help 首頁", (), "home"))
-        return tuple(actions)
+        return _limit_actions(actions, path)
     actions.append(HelpAction("⬅️ 上一層", path[:1], "back"))
     actions.append(HelpAction("🏠 Help 首頁", (), "home"))
+    return _limit_actions(actions, path)
+
+
+def _limit_actions(actions: list[HelpAction], path: tuple[str, ...]) -> tuple[HelpAction, ...]:
+    # Discord Views support at most 25 child components. Failing clearly is
+    # safer than silently dropping commands from an extensible help page.
+    if len(actions) > 25:
+        raise ValueError(f"help page {'/'.join(path) or 'root'} has more than 25 buttons")
     return tuple(actions)
 
 
