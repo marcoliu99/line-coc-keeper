@@ -60,7 +60,7 @@ def active_characters(state: GroupState):
 
 
 def _seed_from_characters(state: GroupState) -> list[Combatant]:
-    return [
+    combatants = [
         Combatant(
             name=c.name,
             display_name=c.name,
@@ -75,12 +75,15 @@ def _seed_from_characters(state: GroupState) -> list[Combatant]:
         for c in active_characters(state)
         if c.hp > 0 and not c.away
     ]
+    return sorted(combatants, key=lambda combatant: -combatant.dex)
 
 
 def _ensure_started(state: GroupState) -> None:
     _ensure_character_identity(state)
     if not state.combat.active:
         state.combat = CombatState(active=True, round_number=1, order=_seed_from_characters(state), current_index=0)
+        process_timing(state, "round_start")
+        _mark_round_start_abilities(state)
 
 
 def start_combat(state: GroupState) -> CombatState:
@@ -167,6 +170,7 @@ def add_enemy_card_to_combat(state: GroupState, card_id: str) -> CombatState:
         )
     )
     state.combat.order.sort(key=lambda c: -c.dex)
+    _mark_round_start_abilities(state)
     if current_id:
         for i, c in enumerate(state.combat.order):
             if c.combatant_id == current_id:
@@ -611,6 +615,20 @@ def _attack_can_reach_target(state: GroupState, enemy_id: str, target_id: str, a
     return _range_rank(current) <= _range_rank(attack.range_band)
 
 
+def _planning_signature(state: GroupState, card: EnemyCombatCard) -> str:
+    """Capture state that can invalidate an unresolved enemy plan."""
+    combat = state.combat
+    combatants = tuple(
+        (item.combatant_id, item.hp, item.defeated, _is_skippable(state, item))
+        for item in combat.order
+    )
+    abilities = tuple(
+        (ability.id, tuple(sorted(ability.usage.items())), ability.current_cooldown)
+        for ability in card.abilities
+    )
+    return repr((card.hp, tuple(card.status_tags), abilities, tuple(sorted(combat.range_bands.items())), combatants))
+
+
 def _choose_target(state: GroupState, enemy_id: str) -> str:
     valid = [
         c.combatant_id
@@ -659,6 +677,20 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
             "public_hint": f"{combatant.display_name} 已無法行動。",
         }
 
+    existing_plan = next(
+        (
+            plan for plan in combat.plans.values()
+            if not plan.get("resolved")
+            and plan.get("enemy_card_id") == card.id
+            and plan.get("round_number") == combat.round_number
+            and plan.get("current_index") == combat.current_index
+            and plan.get("planning_signature") == _planning_signature(state, card)
+        ),
+        None,
+    )
+    if existing_plan is not None:
+        return existing_plan
+
     target_id = _choose_target(state, card.id)
     for ability in sorted(card.abilities, key=lambda a: -a.priority):
         if _trigger_matches(ability, card, state, target_id):
@@ -671,6 +703,9 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
                 "selected_action": "special_ability",
                 "selected_id": ability.id,
                 "target_ids": [target_id] if target_id else [],
+                "round_number": combat.round_number,
+                "current_index": combat.current_index,
+                "planning_signature": _planning_signature(state, card),
                 "required_rolls": [ability.check] if ability.check else [],
                 "private_reason": f"special ability {ability.name} trigger matched; usage={ability.usage}",
                 "public_hint": _safe_public_ability_hint(ability),
@@ -696,6 +731,9 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
             "selected_action": "attack",
             "selected_id": attack.id,
             "target_ids": [target_id] if target_id else [],
+            "round_number": combat.round_number,
+            "current_index": combat.current_index,
+            "planning_signature": _planning_signature(state, card),
             "required_rolls": [{
                 "type": "skill",
                 "skill_name": attack.skill_name,
@@ -717,6 +755,9 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
         "selected_action": "move",
         "selected_id": "",
         "target_ids": [target_id] if target_id else [],
+        "round_number": combat.round_number,
+        "current_index": combat.current_index,
+        "planning_signature": _planning_signature(state, card),
         "required_rolls": [],
         "private_reason": "no usable special ability or attack in current abstract range",
         "public_hint": f"{card.name} 調整位置，尋找下一次出手機會。",
@@ -788,6 +829,14 @@ def resolve_enemy_action(
         return {"ok": False, "error": f"找不到行動計畫 {plan_id}"}
     if plan.get("resolved"):
         return {"ok": True, "plan_id": plan_id, "resolved": True, "already_resolved": True}
+    if (
+        plan.get("round_number") is not None
+        and plan.get("round_number") != state.combat.round_number
+    ) or (
+        plan.get("current_index") is not None
+        and plan.get("current_index") != state.combat.current_index
+    ):
+        return {"ok": False, "error": "行動計畫已經過期，請重新規劃敵人回合"}
     card = state.combat.enemy_cards.get(plan["enemy_card_id"])
     if not card:
         return {"ok": False, "error": "行動計畫對應的敵人卡不存在"}
@@ -795,6 +844,13 @@ def resolve_enemy_action(
     if plan["selected_action"] == "special_ability":
         ability = next((a for a in card.abilities if a.id == plan["selected_id"]), None)
         if ability:
+            usage = ability.usage
+            if usage.get("per_combat") is not None and usage.get("used_total", 0) >= usage["per_combat"]:
+                return {"ok": False, "error": "特殊能力本場戰鬥的使用次數已耗盡"}
+            if usage.get("per_round") is not None and usage.get("used_this_round", 0) >= usage["per_round"]:
+                return {"ok": False, "error": "特殊能力本輪的使用次數已耗盡"}
+            if ability.current_cooldown > 0:
+                return {"ok": False, "error": "特殊能力仍在冷卻中"}
             if ability.effect.get("on_success") == "apply_effect":
                 if outcome is None:
                     return {"ok": False, "error": "此特殊能力需要提供檢定結果 outcome"}

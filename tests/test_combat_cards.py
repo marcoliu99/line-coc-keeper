@@ -78,6 +78,16 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(state.characters_by_id["char-mark"].hp, 2)
         self.assertEqual(state.active_character_id_by_user["u2"], "legacy-user:u2")
 
+    def test_start_combat_sorts_initiative_by_dex(self):
+        state = self._state_with_two_pcs()
+        state.characters["u1"].dex = 20
+        state.characters["u2"].dex = 90
+
+        combat.start_combat(state)
+
+        self.assertEqual([c.combatant_id for c in state.combat.order], ["pc:char-second", "pc:char-first"])
+        self.assertEqual(state.combat.order[state.combat.current_index].combatant_id, "pc:char-second")
+
     def test_enemy_special_ability_is_planned_before_default_attack(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -161,6 +171,55 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(second["already_resolved"])
         self.assertEqual(card.abilities[0].usage["used_total"], 1)
         self.assertEqual(card.abilities[0].usage["used_this_round"], 1)
+
+    def test_repeated_enemy_planning_reuses_unresolved_plan(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            abilities=[{
+                "id": "once",
+                "name": "Once",
+                "priority": 10,
+                "trigger": {"type": "first_available"},
+                "usage": {"per_combat": 1},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
+
+        first = combat.plan_enemy_turn(state)
+        second = combat.plan_enemy_turn(state)
+        result = combat.resolve_enemy_action(state, first["plan_id"])
+        duplicate_result = combat.resolve_enemy_action(state, second["plan_id"])
+
+        ability = state.combat.enemy_cards[first["enemy_card_id"]].abilities[0]
+        self.assertEqual(first["plan_id"], second["plan_id"])
+        self.assertTrue(result["ok"])
+        self.assertTrue(duplicate_result["already_resolved"])
+        self.assertEqual(ability.usage["used_total"], 1)
+
+    def test_round_start_trigger_is_available_when_enemy_is_added_to_first_round(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Watcher",
+            60,
+            14,
+            abilities=[{
+                "id": "round-call",
+                "name": "Round Call",
+                "priority": 10,
+                "trigger": {"type": "round_start"},
+                "usage": {"per_round": 1},
+            }],
+        )
+        card = next(card for card in state.combat.enemy_cards.values() if card.name == "Watcher")
+
+        self.assertIn("_trigger:round_start:round-call", card.status_tags)
 
     def test_successful_ability_materializes_declared_effect(self):
         state = self._state_with_pc()
@@ -316,7 +375,8 @@ class CombatCardTests(unittest.TestCase):
         combat.advance_turn(state)
         next_round = combat.plan_enemy_turn(state)
 
-        self.assertEqual(first_round["selected_action"], "attack")
+        self.assertEqual(first_round["selected_action"], "special_ability")
+        self.assertEqual(first_round["selected_id"], "round_song")
         self.assertEqual(next_round["selected_action"], "special_ability")
         self.assertEqual(next_round["selected_id"], "round_song")
 

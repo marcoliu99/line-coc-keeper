@@ -1925,3 +1925,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - 敵人只有在選定目標落在攻擊的抽象距離範圍內才建立 attack plan；明確標記為 `far` 的目標會改走 move。
 - rollback 的 authoritative state commit 不再因衍生 page image cache 失敗而回報整個 rollback 失敗；圖片快取錯誤會獨立記錄並在 rollback success log 標記。
 - 新增 out-of-range enemy action 與 image restore failure regression tests。
+
+### 116. 修正戰鬥初始先攻與敵人 plan 重複結算
+
+- 戰鬥開始時依角色 DEX 排列先攻，並立即處理第一輪 `round_start` 觸發。
+- 同一敵人回合重複規劃時，在狀態未變更的情況下重用未結算 plan；能力 resolve 會再次驗證使用次數與冷卻，過期 plan 不可套用。
+- 新增初始先攻、第一輪能力觸發與重複 plan regression tests。
