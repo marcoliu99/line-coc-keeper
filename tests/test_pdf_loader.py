@@ -24,6 +24,22 @@ _ONE_PIXEL_PNG = base64.b64decode(
 
 
 class PdfLoaderImagePersistenceTests(unittest.TestCase):
+    def test_combine_pdfs_uses_explicit_part_order(self):
+        parts = []
+        for label in ("part one", "part two"):
+            document = pymupdf.open()
+            page = document.new_page()
+            page.insert_text((40, 60), label)
+            parts.append(document.tobytes())
+            document.close()
+        merged = pymupdf.open(stream=pdf_loader.combine_pdfs(parts), filetype="pdf")
+        try:
+            self.assertEqual(merged.page_count, 2)
+            self.assertIn("part one", merged[0].get_text())
+            self.assertIn("part two", merged[1].get_text())
+        finally:
+            merged.close()
+
     def test_pymupdf4llm_import_failure_falls_back(self):
         with patch.dict(sys.modules, {"pymupdf4llm": None}):
             self.assertIsNone(pdf_loader._pymupdf4llm_page_chunks(b"not a pdf"))

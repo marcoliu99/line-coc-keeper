@@ -77,6 +77,10 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc kp → 登記自己為本局唯一的 KP 助手
 ・/coc kp quit → 解除自己的 KP 助手身分
 ・每局只能有一位 KP 助手；KP 助手與調查員角色互斥
+・/coc scenario list|use 劇本ID|clean 劇本ID → 管理劇本庫
+・/coc scenario import 檔名.pdf → 從伺服器 IMPORT_DIR 匯入大型 PDF
+・/coc scenario merge 暫存ID1 暫存ID2 ... → 依指定順序合併 Discord 暫存 PDF
+・/coc scenario merge list → 查看目前暫存 PDF
 
 【檢定】
 ・/coc check → 守密人請你檢定時，自己擲骰（不是守密人幫你骰）；也可以自己主動打 /coc check 技能名 [獎勵骰數] [懲罰骰數]
@@ -178,7 +182,10 @@ def _apply_new_scenario(
     state.current_map_page = {}
     state.current_room_id = {}
     state.party_facing = {}
-    _merge_extracted_pregens(state, pregens)
+    # New scenario: replace the scenario-owned candidate pool. Live
+    # investigators remain in state.characters, but unclaimed candidates from
+    # the previous PDF must not leak into /coc pregens.
+    state.pregens = list(pregens)
 
 
 def _apply_scenario_correction(
@@ -214,6 +221,7 @@ def _install_library_context(state: GroupState, scenario_id: str, context: dict,
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
+    state.pregens = list(context.get("pregens", []))
     if not preserve_maps:
         state.scene_maps = context["scene_maps"]
 
@@ -1606,6 +1614,9 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
         lines.append(f"背景：{pregen['notes']}")
     if pregen.get("key_connection"):
         lines.append(f"★ 關鍵背景連結：{pregen['key_connection']}")
+    for key, value in (pregen.get("extra_fields") or {}).items():
+        if value not in (None, "", [], {}):
+            lines.append(f"{key}：{value}")
     if pregen.get("claimed_by"):
         lines.append("（此角色已被選走）")
     return "\n".join(lines)

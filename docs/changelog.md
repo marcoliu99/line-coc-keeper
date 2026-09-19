@@ -2,6 +2,8 @@
 
 - 修正混合 PDF 解析的圖片遺失：graphic page 現在不論 OCR 後文字長度都會保存 render PNG，低文字門檻只控制是否追加 Vision/scene-map 分析；補上高文字量角色卡圖片的回歸測試。劇本切換時也明確隔離所選 library item 的 pregen pool，避免上一份劇本的未認領角色洩漏。
 - PDF 解析接入 `pymupdf4llm` 的逐頁 layout evidence：保留 reading order、picture/table/graphic 區塊，並讓它作為 MarkItDown 與 PyMuPDF 原生文字層之間的混合 fallback；圖片保存仍與低文字量 Vision 分離。
+- 修正劇本切換隔離：新劇本會替換 pregen pool 與 scene maps，不再保留上一份 PDF 的候選角色或地圖；新增安全的 `/coc scenario import` 與 Discord PDF 暫存合併流程，合併後共用一般 PDF pipeline。
+- Discord 分割 PDF 改為先暫存、由 KP 用 `/coc scenario merge <id1> <id2> ...` 明確選檔與排序；角色卡抽取新增 `extra_fields`，保留不同劇本自訂欄位與備註，不再只塞進固定欄位。
 
 逐項功能的實作紀錄——為什麼會有這個限制、目前的權宜作法、實測過什麼、之後想擴充的話要改哪裡。想知道「現在能不能做 X」或「這個功能是怎麼做的」，先來這裡找對應章節；單純想知道怎麼安裝或怎麼玩，回 [README.md](../README.md)、[setup.md](setup.md)、[gameplay.md](gameplay.md)。
 

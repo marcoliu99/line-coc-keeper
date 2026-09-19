@@ -135,3 +135,5 @@ KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").st
 # Reusable parsed PDF scenarios (separate from per-conversation state).
 SCENARIO_LIBRARY_DIR = Path(os.environ.get('SCENARIO_LIBRARY_DIR', str(DATA_DIR.parent / 'scenarios')))
 SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+IMPORT_DIR = Path(os.environ.get("IMPORT_DIR", "imports")).resolve()
+IMPORT_DIR.mkdir(parents=True, exist_ok=True)

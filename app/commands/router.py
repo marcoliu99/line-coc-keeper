@@ -84,11 +84,11 @@ async def handle_text_message(
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
 
-        if sub in ("newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start"):
+        if sub in ("newgame", "pdf", "kp", "scenario", "import", "status", "end", "setpersona", "era", "index", "away", "back", "start"):
             # Reparse performs long extraction and later acquires this lock in
             # handle_pdf_upload; all other scenario operations are short state
             # mutations and must be serialized with ordinary turns.
-            is_long_reparse = sub == "scenario" and len(parts) > 2 and parts[2] == "reparse"
+            is_long_reparse = (sub == "scenario" and len(parts) > 2 and parts[2] in ("reparse", "import", "merge")) or sub == "import"
             if is_long_reparse:
                 await system_handler.handle_system_command(
                     conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention

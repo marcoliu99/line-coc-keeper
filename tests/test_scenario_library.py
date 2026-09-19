@@ -69,6 +69,14 @@ class ScenarioLibraryContextTests(unittest.TestCase):
             (broken / "manifest.json").write_text(json.dumps({"id": "broken-scenario", "title": "Other"}), encoding="utf-8")
             self.assertEqual(scenario_library.find_similar("Different", "new preview"), [])
 
+    def test_selected_context_uses_only_its_own_pregens(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", Path(temp)):
+            self._write_scenario(Path(temp))
+            scenario = Path(temp) / "test-scenario"
+            (scenario / "pregens.json").write_text(json.dumps([{"name": "Only This Scenario"}]), encoding="utf-8")
+            context = scenario_library.load_context("test-scenario")
+            self.assertEqual(context["pregens"], [{"name": "Only This Scenario"}])
+
 
 def _pdf_with_toc(toc: list[list], page_count: int) -> bytes:
     pymupdf = __import__("pymupdf")
@@ -167,6 +175,18 @@ class ScenarioLibraryReparseTests(unittest.TestCase):
             scenario_id = self._save(title="Short", text="tiny")
             self.assertTrue(scenario_library.content_similar(scenario_id, "tiny"))
             self.assertFalse(scenario_library.content_similar(scenario_id, "totally different"))
+
+
+class ScenarioImportTests(unittest.TestCase):
+    def test_import_path_rejects_traversal_and_symlink_escape(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "book.pdf").write_bytes(b"pdf")
+            self.assertEqual(scenario_library.safe_import_path(root, "book.pdf"), (root / "book.pdf").resolve())
+            with self.assertRaises(ValueError):
+                scenario_library.safe_import_path(root, "../book.pdf")
+            with self.assertRaises(ValueError):
+                scenario_library.safe_import_path(root, "/tmp/book.pdf")
 
 
 class ScenarioLibraryImageVisibilityTests(unittest.TestCase):

@@ -455,3 +455,22 @@ def extract_preview(pdf_bytes: bytes, page_limit: int = 3) -> str:
     if not parts:
         raise ValueError("這份 PDF 的前幾頁無法抽取文字，無法快速比對")
     return "\n\n".join(parts)
+
+
+def combine_pdfs(pdf_parts: list[bytes]) -> bytes:
+    """Combine uploaded parts before sending them through the normal pipeline."""
+    if not pdf_parts:
+        raise ValueError("沒有可合併的 PDF")
+    if len(pdf_parts) == 1:
+        return pdf_parts[0]
+    output = pymupdf.open()
+    try:
+        for payload in pdf_parts:
+            source = pymupdf.open(stream=payload, filetype="pdf")
+            try:
+                output.insert_pdf(source)
+            finally:
+                source.close()
+        return output.tobytes()
+    finally:
+        output.close()

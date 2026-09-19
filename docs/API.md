@@ -50,6 +50,9 @@ are supplied through `/coc`:
 | `/coc scenario clean <scenario-id>` | Deletes a library entry unless this conversation is currently using it. |
 | `/coc scenario reparse` | Parses the staged similar upload after similarity detection. |
 | `/coc scenario cancel` | Drops the staged similar upload. |
+| `/coc scenario merge list` | Lists Discord PDF parts staged for this conversation. |
+| `/coc scenario merge <part-id> <part-id> ...` | KP Assistant only. Merges exactly the selected staged PDF parts in the given order, then sends the result through the normal upload parser. |
+| `/coc scenario import <filename.pdf>` | KP Assistant only. Reads one PDF basename from `IMPORT_DIR` and sends it through the normal upload parser. |
 | `/coc kp` / `/coc kp quit` | Register or remove the conversation's KP Assistant. |
 | `/coc pdf new` / `/coc pdf fix` | Resolves a normal PDF replacement as a new scenario or a correction of the active scenario. |
 

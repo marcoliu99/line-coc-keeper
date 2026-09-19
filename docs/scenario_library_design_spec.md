@@ -79,7 +79,7 @@ pending_scenario_upload: dict | None = None
 
 `scenario_library_id` 指向目前 KP 選定的 PDF 劇本。章節不是聊天室命令的選項，而是劇本庫內部的檢索索引；Agent 會從選定 PDF 的相關章節取回少量內容，而不把整份 PDF 放進 `GroupState` 或 prompt。
 
-`scenario_library_id` 只代表目前選中的單一 PDF 資產。若長期團劇本被切成多個 PDF，必須另外以 `campaign_id`／`part_number` 建立系列關係；不能把不同 part 的角色池、圖片或未載入劇情直接混進目前 Context。
+`scenario_library_id` 代表目前選中的單一 PDF 資產。Discord 分割檔案只在 server 端依 KP 指令合併後才進入解析流程；不能把尚未合併的不同檔案資料混進目前 Context。
 
 
 ## 章節模型
@@ -559,17 +559,17 @@ KP Assistant 的圖片流程是：先以 `search_scenario_images(query, image_ty
 
 
 
-**2026-09 大型劇本與 Discord 容量限制之解法評估 (Future Architectures)：**
-因應 Discord 附件上傳的 25MB 容量限制，大型長期戰役劇本無法透過單一訊息上傳。為了避免實作高複雜度的「多檔暫存與記憶體拼接 (In-memory Stitching)」，同時改善 KP 必須手動切割 PDF 的極差 UX，目前規劃以下兩種未來可能的擴充方向，暫不實作：
+**2026-09 大型劇本與 Discord 容量限制：**
+大型長期戰役的主要需求是 Discord 單檔附件太大。KP 可以把 PDF 切成多個檔案，在 Discord 上傳；Bot 會先暫存每個 part，KP 再用明確指令指定檔案與順序，server 合併成一份 PDF，最後走同一條 preview、去重、完整解析與 scenario library pipeline。自架 server 也支援把單一大 PDF 放進 `IMPORT_DIR`，用 `/coc scenario import <filename>` 走同一條 pipeline。
 
-1. **伺服器本地端直接載入 (Local File Loading)**：
-   對於自架伺服器或有權限的團隊，KP 可直接將大型 PDF 放入伺服器的 `imports/` 資料夾，並使用 `/coc scenario import <filename>` 繞過 Discord 網路傳輸，達成 0 延遲無容量限制載入。
-2. **系列作式關聯 (Campaign Box-Set Approach)**：
-   保留檔案切割，但不做全檔合併。將 `part1.pdf`, `part2.pdf` 視為同一個大戰役下的獨立「子劇本」，並在系統中引入 `/coc campaign link <id1> <id2>` 的關聯機制。這將大幅降低單次解析的記憶體壓力，但未來須處理跨劇本的目錄參照跳轉。
+1. **伺服器本地端直接載入 (Local File Loading)**：已實作。KP 將大型 PDF 放入 `IMPORT_DIR`，使用 `/coc scenario import <filename>`；檔名只允許單一 PDF basename，拒絕 traversal、絕對路徑與 symlink，讀入後重用一般 upload pipeline。
+2. **Discord server-side merge**：已實作。Discord 上傳的 `part` PDF 先暫存；KP 用 `/coc scenario merge <id1> <id2> ...` 選檔與排序，再由 `combine_pdfs()` 合併，合併結果使用一般 `handle_pdf_upload()`，不產生第二套解析器。
 
-### 多 PDF 長期團方案（本次新增設計決策）
+限制：server-side merge 和 local import 仍會把合併後 PDF 以 bytes 交給現有解析器；它們解決 Discord 傳輸限制與入口一致性，不是無限記憶體保證。若合併後仍超出 server 記憶體／模型能力，需縮小分割批次後再上傳。
 
-長期團不應把多個 PDF 直接拼成一個超大 bytes 或一次塞入 `GroupState`。採用「每個 part 獨立解析、用 campaign manifest 串聯」的方案；這保留每份 PDF 的原子更新與失敗復原，也能讓每個 part 的圖片、角色候選與 RAG index 分開管理。
+### 多 PDF 長期團方案（server-side merge）
+
+長期團的 PDF 可以因 Discord 附件限制被切成多個檔案。Bot 先將檔案暫存在 server，KP 用明確指令選定要合併的暫存 ID；server 依指定順序合併成一份 PDF，再走既有 preview、去重、完整解析與 library lock。未被指定的暫存檔不會被讀取或混入。
 
 #### 上傳與自動分組
 
@@ -581,58 +581,39 @@ Masks_of_Nyarlathotep_part2.pdf
 Masks_of_Nyarlathotep_part3_of_6.pdf
 ```
 
-解析器在副檔名前辨識 `partN`／`partN_of_M`（大小寫不敏感）。正規化後的前綴產生 `campaign_id`，但不能只靠檔名自動合併成已確認的劇情系列：若前綴相同但其實是不同版本，必須在 `/coc campaign link` 時由 KP 確認。
+檔名可以使用 `part1.pdf`、`part2.pdf` 等提示排序，但檔名不會自動建立 campaign 或自動合併；真正的合併選擇以 KP 指令為準。
 
-每一份 PDF 仍建立自己的 `scenario_id` 與完整劇本目錄；manifest 追加：
+每一份合併後的 PDF 建立自己的 `scenario_id` 與完整劇本目錄；不建立 campaign manifest。暫存 part 只保留原始 bytes 與檔名，直到 KP 明確合併。
 
-```json
-{
-  "campaign_id": "masks-of-nyarlathotep",
-  "part_number": 1,
-  "part_count": 6,
-  "part_label": "Book 1",
-  "previous_part_id": null,
-  "next_part_id": "masks-of-nyarlathotep-part2"
-}
-```
+合併指令：`/coc scenario merge <暫存ID1> <暫存ID2> ...`。參數順序就是 PDF 頁面順序。
 
 上傳流程：
 
 ```text
-[上傳 part1.pdf]
+[Discord 上傳 part1.pdf / part2.pdf]
         |
         v
-[單份 PDF preview/hash/完整解析]
+[各自暫存並回報短 ID]
         |
         v
-[建立 scenario_id + campaign candidate metadata]
+[/coc scenario merge <id1> <id2>]
         |
-        +--> [上傳 part2.pdf]
-        |          |
-        |          v
-        |   [相同 campaign 前綴？]
-        |       /          \
-        |     否            是
-        |     |              |
-        |     v              v
-        | [獨立劇本]   [待 KP 確認 link]
-        |                    |
-        +--------------------+
-                             v
-                [/coc campaign link <part IDs>]
-                             |
-                             v
-                 [建立有序 campaign manifest]
+        v
+[server 依指定順序合併]
+        |
+        v
+[單一 PDF preview/hash/完整解析]
+        |
+        v
+[建立單一 scenario library item]
 ```
 
 #### 執行期隔離與推進
 
-- `GroupState.scenario_library_id` 仍指向**目前正在使用的 part**；另增 `campaign_id`、`campaign_part_ids` 與 `active_part_number` 保存系列進度。
-- `/coc scenario use <part ID>` 只載入該 part 的目前／下一章 Context、圖片、NPC／地點索引與 `pregens`；其他 part 的角色卡不能出現在 `/coc pregens`，也不能被目前的 Scenario RAG 檢索。
-- part 之間的切換必須是明確的 `advance_campaign_part` 或 KP 指令，不因提到下一 part 的標題就自動跳轉；切換前先保存目前 part 的 checkpoint。
-- campaign RAG 的版本鍵必須包含 `campaign_id`、`part_id`、`chapter_id` 與 `content_hash`。預設只查目前 part，跨 part 查詢需由明確的 transition/tool fact 觸發。
-- 每個 part 的 `pregens` 都是該 part 的候選角色池；玩家已認領的 `state.characters` 是團務狀態，除非 KP 明確開新團，不因 part 切換被刪除或自動改卡。
-- `/coc campaign list` 顯示系列與 part 順序；`/coc campaign unlink` 只解除關聯，不刪除任何 PDF 目錄。
+- `GroupState.scenario_library_id` 指向合併後的單一 scenario；暫存 part 不會進 Keeper Context。
+- `/coc scenario use <scenario ID>` 只載入該合併後 scenario 的目前／下一章 Context、圖片、NPC／地點索引與 `pregens`。
+- 合併後的 scenario RAG、pregens、圖片與索引都只屬於該合併結果，不會跨暫存 part 查詢。
+- 玩家已認領的 `state.characters` 是團務狀態，切換 scenario 時保留；未認領的舊 pregen pool 必須替換。
 
 #### 伺服器本地匯入
 
@@ -650,10 +631,9 @@ imports/
 
 #### 建議實作順序
 
-1. 先完成 `partN` 檔名解析、manifest 欄位與 `/coc campaign list/link`，但仍維持每個 part 獨立 `scenario_id`。
-2. 將 `/coc scenario use` 的 pregen、索引、圖片替換規則補成測試，確認上一個 part 的角色池不會洩漏。
-3. 實作 `advance_campaign_part` 與切換前 checkpoint；確認跨 part RAG 預設拒絕。
-4. 最後加入受限 `IMPORT_DIR` 與 `/coc scenario import`，並重用既有 PDF upload pipeline。
+1. Discord 多附件 server-side merge 與 `IMPORT_DIR` 已接通一般 PDF upload pipeline。
+2. `/coc scenario use` 會完整替換 pregen、索引、scene maps 與頁面圖片；現役 `state.characters` 仍保留。
+3. 不建立 campaign 關聯，也不把分割檔案當成多個可切換劇本；分割檔案只在 server 端合併後視為同一份 PDF。
 
 ### 解析現況補充：PyMuPDF4LLM 混合解析與圖片保存／Vision 分離
 

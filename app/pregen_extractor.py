@@ -86,6 +86,15 @@ _REPORT_TOOL = {
                                 "的話，留空字串，不要自己猜一個出來。"
                             ),
                         },
+                        "extra_fields": {
+                            "type": "object",
+                            "description": (
+                                "角色卡上其他劇本自訂欄位，不能丟棄。例如信念、重要之人、住址、組織、"
+                                "裝備備註、特殊能力、公開秘密、聯絡方式或任何不同劇本新增的欄位。key 使用"
+                                "欄位原名，value 保留完整內容；不要把未看見的內容補出來。"
+                            ),
+                            "additionalProperties": {},
+                        },
                     },
                     "required": ["name"],
                 },
@@ -107,6 +116,26 @@ _EXPECTED_PREGEN_ATTR_KEYS = (
     "str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "luck",
     "hp_max", "mp_max", "san_max",
 )
+
+_KNOWN_PREGEN_KEYS = {
+    "name", "occupation", "occupation_original", "occupation_translated",
+    "str_", "con", "siz", "dex", "app", "int_", "pow_", "edu", "luck",
+    "hp_max", "mp_max", "san_max", "skills", "skill_translations", "notes",
+    "secret_goal", "key_connection", "extra_fields", "source", "claimed_by",
+    "weapons", "carried_items",
+}
+
+
+def _preserve_extra_fields(pregen: dict[str, Any]) -> None:
+    """Move provider-specific top-level fields into a JSON-safe bucket."""
+    extras = dict(pregen.get("extra_fields") or {}) if isinstance(pregen.get("extra_fields"), dict) else {}
+    for key in list(pregen):
+        if key not in _KNOWN_PREGEN_KEYS:
+            value = pregen.pop(key)
+            if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
+                extras[str(key)] = value
+    if extras:
+        pregen["extra_fields"] = extras
 
 
 def _clean_pregen_keys(pregen: dict[str, Any]) -> None:
@@ -160,6 +189,7 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     pregens = (result or {}).get("pregens", []) or []
     for pregen in pregens:
         _clean_pregen_keys(pregen)
+        _preserve_extra_fields(pregen)
         # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above —
         # see that function's own comment for why reconciliation needs this.
         pregen["source"] = "llm_extracted"
@@ -465,6 +495,11 @@ def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
         if section_name not in excluded_sections and body:
             notes_parts.append(f"【{section_name}】\n{body}")
     pregen["notes"] = "\n\n".join(notes_parts)
+    pregen["extra_fields"] = {
+        section_name: body
+        for section_name, body in sections.items()
+        if section_name not in excluded_sections and body
+    }
 
     pregen["secret_goal"] = sections.get("角色扮演動機", "")
     pregen["key_connection"] = ""
@@ -571,6 +606,7 @@ def pregen_to_character(pregen: dict[str, Any], owner_id: str, era: str = "1920s
         notes=pregen.get("notes", "") or "",
         key_connection=pregen.get("key_connection", "") or "",
         secret_goal=pregen.get("secret_goal", "") or "",
+        extra_fields=dict(pregen.get("extra_fields") or {}),
     )
 
 
@@ -643,6 +679,10 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
     # generic notes the LLM extraction produced.
     merged["notes"] = manual.get("notes") or llm.get("notes", "")
     merged["key_connection"] = manual.get("key_connection") or llm.get("key_connection", "")
+    merged_extra = dict(llm.get("extra_fields") or {})
+    merged_extra.update(manual.get("extra_fields") or {})
+    if merged_extra:
+        merged["extra_fields"] = merged_extra
 
     # Preserve an existing claim across the merge rather than silently
     # dropping it — a re-upload that happens to also match an already-
