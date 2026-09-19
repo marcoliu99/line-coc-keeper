@@ -177,7 +177,7 @@ Help metadata 的 `kp_only` 必須反映實際 authorization，不能只因某�
 
 ### Remaining review decisions
 
-- **KP-only visibility**：目前建議對 `/coc scenario use` 顯示 entry 但標記 KP-only，點入仍可查看用法；也可以改成對非 KP 完全隱藏。這只影響 help 顯示，不應取代 command handler 的 authorization。
+- **KP-only visibility（已決定）**：對 `/coc scenario use` 所有人都顯示 entry，分類與 detail 頁明確標記「KP-only」；非 KP 仍可閱讀完整用法，但實際執行時由 command handler 的既有 authorization 拒絕。Help visibility 不取代 command authorization。
 - **分類粒度**：建議先固定 6–8 個高階分類，避免把 category 本身做成無限可巢狀樹；更細節放在 command detail 文字中。
 - **相容策略**：可在一個 release 保留 `HELP_TEXT` 作為 debug／fallback，但正式 `/coc help` 不再輸出它；待新 registry 覆蓋完整後再刪除常數。
 - **按鈕訊息策略**：建議 Discord 點擊後 edit 同一則 help message，避免每次點擊都洗版；若平台限制 edit，再 fallback 為新訊息。
