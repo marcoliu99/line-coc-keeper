@@ -777,16 +777,26 @@ class GroupState:
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "GroupState":
         characters = {k: Character.from_dict(v) for k, v in data.get("characters", {}).items()}
-        characters_by_id = {k: Character.from_dict(v) for k, v in data.get("characters_by_id", {}).items()}
-        if not characters_by_id:
-            for owner_id, char in characters.items():
-                if not char.character_id:
-                    char.character_id = f"legacy-user:{owner_id}"
-                characters_by_id[char.character_id] = char
-        active_by_user = data.get("active_character_id_by_user", {})
-        if not active_by_user:
-            for owner_id, char in characters.items():
-                active_by_user[owner_id] = char.character_id or f"legacy-user:{owner_id}"
+        characters_by_id = {}
+        for key, char_data in data.get("characters_by_id", {}).items():
+            char = Character.from_dict(char_data)
+            if not char.character_id:
+                char.character_id = key
+            characters_by_id[char.character_id] = char
+        active_by_user = dict(data.get("active_character_id_by_user", {}))
+
+        # Keep both compatibility indexes pointed at one in-memory object. New
+        # characters can be written to the legacy owner_id map before the next
+        # save, so merge them individually even when the ID index is non-empty.
+        for owner_id, legacy_char in characters.items():
+            character_id = legacy_char.character_id or f"legacy-user:{owner_id}"
+            legacy_char.character_id = character_id
+            canonical = characters_by_id.get(character_id)
+            if canonical is None:
+                canonical = legacy_char
+                characters_by_id[character_id] = canonical
+            characters[owner_id] = canonical
+            active_by_user.setdefault(owner_id, character_id)
 
         return GroupState(
             group_id=data["group_id"],

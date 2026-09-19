@@ -1823,3 +1823,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   `target_in_range` 是抽象 range band，不是精確座標距離。新增 regression tests 覆蓋 round-start
   新輪觸發、受傷後觸發、range band 遠/近切換。測試跑過 `py_compile`、指定測試與完整 72 項
   `unittest discover`。
+
+### 104. 修正 PR #27 的角色索引一致性與 round_end effect
+
+- `GroupState.from_dict()` 現在會讓 legacy `characters` 與 `characters_by_id` 指向同一個 `Character` 物件，避免 HP、暫離或其他狀態只改到其中一份。
+- legacy owner map 的角色會逐筆補進 `characters_by_id`，不再因 ID index 已非空而漏掉後加入的角色；combat runtime identity guard 也同步支援這個 merge。
+- `advance_turn()` 在跨輪前處理 `round_end` effects，之後才增加 round、重置能力次數並處理 `round_start`。
+- 新增角色索引共享、legacy merge 與 round-end damage regression tests；完整測試 74 項通過。
