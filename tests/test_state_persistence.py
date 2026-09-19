@@ -156,6 +156,8 @@ class StatePersistenceTests(unittest.TestCase):
             replies.append(text)
 
         with patch.object(system_handler, "load_state", return_value=state), patch.object(
+            system_handler, "_is_kp_or_keeper", return_value=False
+        ), patch.object(
             system_handler, "_resolve_pdf_upload_choice_locked"
         ) as resolve:
             asyncio.run(system_handler.handle_system_command(
@@ -165,6 +167,16 @@ class StatePersistenceTests(unittest.TestCase):
 
         self.assertIn("KP Assistant", replies[0])
         resolve.assert_not_called()
+
+    def test_scenario_lifecycle_authorization_can_be_enabled_by_config(self):
+        from app import legacy_commands
+
+        state = GroupState("discord-group-lifecycle-toggle", kp_assistant_user_id="kp")
+        with patch.object(legacy_commands.config, "SCENARIO_LIFECYCLE_KP_ONLY", True):
+            self.assertFalse(legacy_commands._is_kp_or_keeper(state, "player"))
+            self.assertTrue(legacy_commands._is_kp_or_keeper(state, "kp"))
+            self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player", True))
+        self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player"))
 
     def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
         state = GroupState("discord-group-conflict")

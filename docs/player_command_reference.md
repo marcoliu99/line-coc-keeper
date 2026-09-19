@@ -240,25 +240,19 @@
 用法：
 - `/coc back`
 
-### 取消劇本處理 **[KP-only]**
+### 取消劇本處理
 
 放棄目前等待處理的相似劇本 PDF。
 
 用法：
 - `/coc scenario cancel`
 
-注意：
-- KP-only：需要目前 KP Assistant 或 Discord Keeper role。
-
-### 清理劇本庫 **[KP-only]**
+### 清理劇本庫
 
 刪除沒有被任何群組使用的劇本庫項目。
 
 用法：
 - `/coc scenario clean 劇本ID`
-
-注意：
-- KP-only：需要目前 KP Assistant 或 Discord Keeper role。
 
 ### 結束遊戲
 
@@ -315,25 +309,19 @@
 用法：
 - `/coc newgame`
 
-### 處理劇本 PDF **[KP-only]**
+### 處理劇本 PDF
 
 決定上傳的 PDF 是新劇本或修正目前劇本。
 
 用法：
 - `/coc pdf new|fix`
 
-注意：
-- KP-only：需要目前 KP Assistant 或 Discord Keeper role。
-
-### 重新解析劇本 **[KP-only]**
+### 重新解析劇本
 
 重新處理等待中的相似劇本 PDF。
 
 用法：
 - `/coc scenario reparse`
-
-注意：
-- KP-only：需要目前 KP Assistant 或 Discord Keeper role。
 
 ### 設定守密人風格
 

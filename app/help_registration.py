@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from app.help_registry import HelpCategory, HelpEntry, register_help_category, register_help_entries
+from app.config import SCENARIO_LIFECYCLE_KP_ONLY
+
+
+_SCENARIO_LIFECYCLE_NOTE = ("KP-only：需要目前 KP Assistant 或 Discord Keeper role。",) if SCENARIO_LIFECYCLE_KP_ONLY else ()
 
 
 def _register_categories() -> None:
@@ -46,12 +50,12 @@ def _entries() -> list[HelpEntry]:
         HelpEntry(("scenario", "newgame"), "scenario", "開始新遊戲", "重置群組狀態並開始新的一局。", ("/coc newgame",), command=("newgame",)),
         HelpEntry(("scenario", "list"), "scenario", "列出劇本庫", "查看可用劇本與目前使用中的劇本。", ("/coc scenario list",), ("/coc scenario list",), command=("scenario", "list")),
         HelpEntry(("scenario", "use"), "scenario", "選用劇本", "從劇本庫選擇目前要使用的劇本。", ("/coc scenario use 劇本ID",), ("/coc scenario use abc123",), notes=("KP-only：只有目前登記的 KP Assistant 可以執行。",), kp_only=True, command=("scenario", "use")),
-        HelpEntry(("scenario", "reparse"), "scenario", "重新解析劇本", "重新處理等待中的相似劇本 PDF。", ("/coc scenario reparse",), notes=("KP-only：需要目前 KP Assistant 或 Discord Keeper role。",), command=("scenario", "reparse"), kp_only=True),
-        HelpEntry(("scenario", "cancel"), "scenario", "取消劇本處理", "放棄目前等待處理的相似劇本 PDF。", ("/coc scenario cancel",), notes=("KP-only：需要目前 KP Assistant 或 Discord Keeper role。",), command=("scenario", "cancel"), kp_only=True),
-        HelpEntry(("scenario", "clean"), "scenario", "清理劇本庫", "刪除沒有被任何群組使用的劇本庫項目。", ("/coc scenario clean 劇本ID",), notes=("KP-only：需要目前 KP Assistant 或 Discord Keeper role。",), command=("scenario", "clean"), kp_only=True),
+        HelpEntry(("scenario", "reparse"), "scenario", "重新解析劇本", "重新處理等待中的相似劇本 PDF。", ("/coc scenario reparse",), notes=_SCENARIO_LIFECYCLE_NOTE, command=("scenario", "reparse"), kp_only=SCENARIO_LIFECYCLE_KP_ONLY),
+        HelpEntry(("scenario", "cancel"), "scenario", "取消劇本處理", "放棄目前等待處理的相似劇本 PDF。", ("/coc scenario cancel",), notes=_SCENARIO_LIFECYCLE_NOTE, command=("scenario", "cancel"), kp_only=SCENARIO_LIFECYCLE_KP_ONLY),
+        HelpEntry(("scenario", "clean"), "scenario", "清理劇本庫", "刪除沒有被任何群組使用的劇本庫項目。", ("/coc scenario clean 劇本ID",), notes=_SCENARIO_LIFECYCLE_NOTE, command=("scenario", "clean"), kp_only=SCENARIO_LIFECYCLE_KP_ONLY),
         HelpEntry(("scenario", "import"), "scenario", "匯入伺服器 PDF", "從設定的 IMPORT_DIR 匯入大型 PDF；只有目前 KP Assistant 可以使用。", ("/coc scenario import 檔名.pdf",), command=("scenario", "import"), kp_only=True),
         HelpEntry(("scenario", "merge"), "scenario", "合併 PDF parts", "依指定順序合併已暫存的 Discord PDF parts；只有目前 KP Assistant 可以使用。", ("/coc scenario merge 暫存ID1 暫存ID2 ...", "/coc scenario merge list"), command=("scenario", "merge"), kp_only=True),
-        HelpEntry(("scenario", "pdf"), "scenario", "處理劇本 PDF", "決定上傳的 PDF 是新劇本或修正目前劇本。", ("/coc pdf new|fix",), notes=("KP-only：需要目前 KP Assistant 或 Discord Keeper role。",), command=("pdf",), kp_only=True),
+        HelpEntry(("scenario", "pdf"), "scenario", "處理劇本 PDF", "決定上傳的 PDF 是新劇本或修正目前劇本。", ("/coc pdf new|fix",), notes=_SCENARIO_LIFECYCLE_NOTE, command=("pdf",), kp_only=SCENARIO_LIFECYCLE_KP_ONLY),
         HelpEntry(("scenario", "status"), "scenario", "查看遊戲狀態", "查看目前劇本與角色狀態。", ("/coc status",), command=("status",)),
         HelpEntry(("scenario", "start"), "scenario", "開始劇情", "角色準備好後，產生劇本開場白。", ("/coc start",), ("/coc start",), visibility="when_scenario_loaded", command=("start",)),
         HelpEntry(("scenario", "end"), "scenario", "結束遊戲", "結束目前這局遊戲。", ("/coc end",), command=("end",)),

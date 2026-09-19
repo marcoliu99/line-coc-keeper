@@ -115,10 +115,6 @@ class HelpNavigationTests(unittest.TestCase):
     def test_all_host_only_help_entries_are_marked_kp_only(self):
         expected = {
             ("scenario", "use"),
-            ("scenario", "reparse"),
-            ("scenario", "cancel"),
-            ("scenario", "clean"),
-            ("scenario", "pdf"),
             ("scenario", "import"),
             ("scenario", "merge"),
             ("kp", "checkpoint"),
@@ -134,6 +130,9 @@ class HelpNavigationTests(unittest.TestCase):
         )
         for path in expected:
             self.assertIn("KP-only", get_help_page(path, HelpContext()).text)
+
+        for path in (("scenario", "reparse"), ("scenario", "cancel"), ("scenario", "clean"), ("scenario", "pdf")):
+            self.assertNotIn("KP-only", get_help_page(path, HelpContext()).text)
 
     @unittest.skipUnless(DISCORD_AVAILABLE, "discord.py is not installed")
     def test_discord_help_button_path_round_trip_and_scope_guard(self):

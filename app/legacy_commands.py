@@ -32,6 +32,7 @@ from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import help_service
 from app import scene_map as scene_map_engine
+from app import config
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import BASE_SKILLS, OCCUPATIONS, Character, GroupState, generate_investigator
 from app.repositories.group_state import clear_page_images, load_page_image, load_state, save_page_image, save_state
@@ -51,7 +52,11 @@ SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, pn
 
 def _is_kp_or_keeper(state: GroupState, user_id: str, is_keeper: bool = False) -> bool:
     """Return whether a user may perform group-level scenario administration."""
-    return is_keeper or state.kp_assistant_user_id == user_id
+    return (
+        not config.SCENARIO_LIFECYCLE_KP_ONLY
+        or is_keeper
+        or state.kp_assistant_user_id == user_id
+    )
 
 async def handle_unsupported_message(conversation_id: str, reply: Reply, label: str) -> None:
     """Called by an adapter when it receives a message type it can't hand text

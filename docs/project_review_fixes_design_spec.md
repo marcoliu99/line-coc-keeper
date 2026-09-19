@@ -25,7 +25,9 @@
 
 `scenario import`、`scenario merge`、`scenario reparse` 在 router 層不持有 conversation lock；`handle_pdf_upload` 只在短的 state commit 區段取得 lock，避免不可重入的 `asyncio.Lock` 發生 nested-lock deadlock。
 
-`/coc pdf new|fix`、`/coc scenario reparse|cancel|clean` 與 PDF choice button 需要目前 KP Assistant 或 Discord Keeper role。按鈕 callback 會先檢查頻道與角色，實際套用時再於 lock 內重新驗證。
+`SCENARIO_LIFECYCLE_KP_ONLY` 控制 `/coc pdf new|fix`、`/coc scenario reparse|cancel|clean` 與 PDF choice button 的 authorization。預設為 `false`，讓初期同時負責角色與 KP Assistant 的使用者可以完成流程；設定為 `true` 後才要求目前 KP Assistant 或 Discord Keeper role。按鈕 callback 會先檢查頻道與策略，實際套用時再於 lock 內重新驗證。
+
+`SCENARIO_LIFECYCLE_KP_ONLY` 未設定時必須視為 `false`，設定於 `.env` 或環境變數後需重新啟動 Bot 才生效。
 
 ## Runtime safety
 
