@@ -225,7 +225,7 @@ async def handle_system_command(
         await reply("用法：/coc scenario list | use 劇本ID | clean 劇本ID | reparse | cancel")
         return
     if sub == "newgame":
-        save_state(GroupState(group_id=conversation_id))
+        save_state(GroupState(group_id=conversation_id), reason="newgame")
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
         return
 

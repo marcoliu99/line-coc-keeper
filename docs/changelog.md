@@ -1870,3 +1870,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 ### 107. 補齊 `/coc help` 指令清單
 
 - Help text 現在列出 router 已支援但原本遺漏的 `/coc pdf`、`/coc scenario` 與 `/coc era`，並新增回歸測試確認主要指令家族都有出現在 `/coc help`。
+
+### 108. 修正 state save 與 maintenance 的並發競態
+
+- **一致的存檔鎖**：所有 `save_state()` 寫入現在都進入 per-group State Lock，與背景 maintenance 使用同一個鎖邊界。
+- **避免 stale snapshot 覆蓋**：一般存檔會比對 `state_revision`；若讀取的 snapshot 已落後於資料庫，會明確回報 revision conflict，不會靜默覆蓋較新的狀態。`newgame` 的刻意整體替換保留明確例外。
+- **maintenance 冪等**：`run_post_turn_maintenance()` 會在 scene digest 前先取得 in-flight guard，重複進入時不會建立重複 digest。
+- **測試**：新增 stale state write 與 maintenance guard regression tests；完整 `unittest discover` 共 96 項通過。

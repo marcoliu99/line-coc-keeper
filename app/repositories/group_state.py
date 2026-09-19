@@ -21,6 +21,7 @@ from uuid import uuid4
 from pathlib import Path
 
 from app import db
+from app import locks
 from app.config import DATA_DIR
 from app.models import GroupState
 
@@ -52,6 +53,28 @@ def load_state(group_id: str) -> GroupState:
 
 
 def save_state(state: GroupState, *, reason: str = "command") -> None:
+    """Persist one state snapshot under the authoritative per-group lock.
+
+    The revision check turns a stale read-modify-write into an explicit
+    conflict instead of silently discarding a newer mutation from another
+    worker. Intentional replacement flows such as ``newgame`` opt out via
+    their explicit reason.
+    """
+    with locks.get_state_lock(state.group_id):
+        current = db.get_json("group_states", state.group_id)
+        if (
+            reason != "newgame"
+            and current is not None
+            and int(current.get("state_revision", 0)) != state.state_revision
+        ):
+            raise RuntimeError(
+                f"state revision conflict for {state.group_id}: "
+                f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
+            )
+        _save_state_unlocked(state, reason=reason)
+
+
+def _save_state_unlocked(state: GroupState, *, reason: str = "command") -> None:
     started = time.monotonic()
     if not state.timeline_id:
         state.timeline_id = f"timeline-{uuid4().hex[:8]}"

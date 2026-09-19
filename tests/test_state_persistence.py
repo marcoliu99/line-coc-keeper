@@ -45,6 +45,27 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(loaded.state_revision, 1)
         self.assertIn("state_save_success", "\n".join(captured.output))
 
+    def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
+        state = GroupState("discord-group-conflict")
+        group_state.save_state(state)
+        stale = group_state.load_state(state.group_id)
+        latest = group_state.load_state(state.group_id)
+        latest.scenario_title = "newer"
+        group_state.save_state(latest)
+        stale.scenario_title = "stale"
+
+        with self.assertRaisesRegex(RuntimeError, "state revision conflict"):
+            group_state.save_state(stale)
+        self.assertEqual(group_state.load_state(state.group_id).scenario_title, "newer")
+
+    def test_maintenance_guard_runs_before_scene_digest(self):
+        group_id = "discord-group-maintenance-guard"
+        with patch.object(keeper, "_maintenance_in_flight", {group_id}), patch.object(
+            keeper, "run_scene_digest_maintenance"
+        ) as digest:
+            keeper.run_post_turn_maintenance(group_id)
+        digest.assert_not_called()
+
     def test_character_mirrors_are_scoped_by_group(self):
         first = GroupState("group-a")
         first.characters["same-user"] = Character("Ada A", "same-user")

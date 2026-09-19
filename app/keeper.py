@@ -1008,12 +1008,12 @@ def run_post_turn_maintenance(group_id: str) -> None:
     _maintenance_in_flight` before either adds it, both proceed, and run two
     overlapping passes anyway — exactly the failure mode this guard exists
     to prevent."""
-    run_scene_digest_maintenance(group_id)
     with locks.get_state_lock(group_id):
         if group_id in _maintenance_in_flight:
             return
         _maintenance_in_flight.add(group_id)
     try:
+        run_scene_digest_maintenance(group_id)
         with locks.get_state_lock(group_id):
             latest_state = load_state(group_id)
             if len(latest_state.log) <= MAX_LOG_TURNS * 4:
@@ -1038,7 +1038,8 @@ def run_post_turn_maintenance(group_id: str) -> None:
         memory_rag.append_memory(group_id, formatted_chunk)
         _persist_memory_maintenance_state(group_id, campaign_summary, dropped_chunk)
     finally:
-        _maintenance_in_flight.discard(group_id)
+        with locks.get_state_lock(group_id):
+            _maintenance_in_flight.discard(group_id)
 
 
 def _execute_tool(
