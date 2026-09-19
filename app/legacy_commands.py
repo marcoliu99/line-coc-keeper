@@ -105,12 +105,17 @@ HELP_TEXT = """【COC7e 守密人 Bot 指令】
 ・/coc combat end → 結束戰鬥
 
 【其他】
+・/coc help → 顯示這份完整指令清單
 ・/coc index → 手動重建 NPC／怪物與地點索引（上傳劇本 PDF 時已經會自動建立一次，這個指令是需要重建時才用）
 ・/coc setpersona <文字> → 自訂這個群組守密人的語氣風格（預設是冷酷旁觀者），/coc setpersona reset 重設回預設
 ・/coc newgame → 重置這個群組，開始全新一局
 ・/coc end → 結束目前這局遊戲
 ・/coc checkpoint [名稱]／/coc checkpoints／/coc rollback <ID> → KP 管理回溯節點
 ・/coc digest／/coc digests／/coc digest <ID> → KP 查看場景摘要
+・/coc pdf new|fix → 選擇新劇本或修正目前劇本的 PDF 上傳
+・/coc scenario list → 列出劇本庫；/coc scenario use 劇本ID → KP 切換目前劇本
+・/coc scenario reparse|cancel → KP 重新解析或取消等待中的相似劇本上傳
+・/coc era 1920|modern → 設定劇本年代，影響泛稱武器的預設彈容量
 ・/roll 1d100 或 /roll 3d6+2 → 單純擲骰，不經過守密人
 
 角色建立好之後，直接在群組裡輸入你的行動或對話，守密人就會接手描述！"""

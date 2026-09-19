@@ -1866,3 +1866,7 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **角色 mirror 隔離**：SQLite `characters` mirror 改用 `{group_id}:{owner_id}` 與 `{group_id}:{character_id}` 作 key，
   同一使用者在不同群組的角色不會互相覆蓋。
 - **測試**：新增 active switch、地圖替換/位置保留與跨群組 mirror regression tests。
+
+### 107. 補齊 `/coc help` 指令清單
+
+- Help text 現在列出 router 已支援但原本遺漏的 `/coc pdf`、`/coc scenario` 與 `/coc era`，並新增回歸測試確認主要指令家族都有出現在 `/coc help`。
