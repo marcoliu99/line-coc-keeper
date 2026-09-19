@@ -1804,3 +1804,22 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   KP Assistant 仍可取得完整 breakdown、重複 `plan_enemy_turn` 不重複 tick turn_start effect、PC turn_start
   effect 會在 `advance_turn` 抵達 PC 時觸發。測試跑過 `py_compile`、`tests.test_combat_cards`、
   `tests.test_kp_assistant_v2` 與完整 `unittest discover`。
+
+### 103. 補完 special ability 的 round_start / on_damage_taken / target_in_range trigger
+
+- **這個改動怎麼來的**：使用者指出既然 PR 已經在做敵人戰鬥卡，就不應該只把
+  `round_start`、`on_damage_taken`、`target_in_range` 從 spec 降級成後續項目；這些 trigger
+  應該在本 PR 內補到第一階段可用。
+- **round_start trigger**：新輪開始時會為擁有 `trigger.type == "round_start"` 的能力加上短期
+  marker；敵人下一次 `plan_enemy_turn` 會選到該能力，`resolve_enemy_action` 後清除該能力 marker。
+- **on_damage_taken trigger**：敵人受到 final damage > 0 時，戰鬥卡加上受傷事件 marker；下一次
+  planning 可觸發對應能力，resolve 後清除 marker。
+- **target_in_range trigger**：`CombatState.range_bands` 新增 JSON-safe 抽象距離表，key 使用
+  `enemy_card_id:target_combatant_id`，值為 `engaged` / `near` / `far` / `any`。`target_in_range`
+  依 trigger 要求的 `range_band` 判斷是否可用；未設定距離時預設 `engaged`，符合目前無戰棋格的簡化模型。
+- **未知 trigger 防呆**：未知 trigger type 現在回 `False`，不再預設觸發，避免打錯或尚未實作的
+  trigger 在敵人回合自動變成可用能力。
+- **文件與測試**：更新 `docs/combat_design_spec.md`，把三個 trigger 改回已實作契約，並標明
+  `target_in_range` 是抽象 range band，不是精確座標距離。新增 regression tests 覆蓋 round-start
+  新輪觸發、受傷後觸發、range band 遠/近切換。測試跑過 `py_compile`、指定測試與完整 72 項
+  `unittest discover`。

@@ -307,6 +307,8 @@ def apply_combat_damage(
     if card:
         card.hp = after
         card.status_tags = [t for t in card.status_tags if t]
+        if final > 0 and _damage_taken_trigger_tag() not in card.status_tags:
+            card.status_tags.append(_damage_taken_trigger_tag())
     _sync_pc_hp(state, combatant)
     major_wound = _register_major_wound_check(state, combatant, final, after)
     return {
@@ -386,6 +388,35 @@ def _tick_effect(effect: EffectState) -> None:
 
 def _timing_key(state: GroupState, timing: str, target_id: str) -> str:
     return f"{state.combat.round_number}:{state.combat.current_index}:{timing}:{target_id or '*'}"
+
+
+def _round_start_trigger_tag(ability_id: str) -> str:
+    return f"_trigger:round_start:{ability_id}"
+
+
+def _damage_taken_trigger_tag() -> str:
+    return "_trigger:on_damage_taken"
+
+
+def _mark_round_start_abilities(state: GroupState) -> None:
+    for card in state.combat.enemy_cards.values():
+        for ability in card.abilities:
+            if (ability.trigger or {}).get("type") == "round_start":
+                tag = _round_start_trigger_tag(ability.id)
+                if tag not in card.status_tags:
+                    card.status_tags.append(tag)
+
+
+def _range_rank(range_band: str) -> int:
+    return {"engaged": 0, "near": 1, "far": 2, "any": 99}.get((range_band or "engaged").lower(), 0)
+
+
+def _target_in_abstract_range(state: GroupState, card: EnemyCombatCard, target_id: str, trigger: dict[str, Any]) -> bool:
+    required = (trigger.get("range_band") or trigger.get("range") or trigger.get("max_range") or "any").lower()
+    if required in ("any", "near_or_audible", "audible"):
+        return True
+    current = state.combat.range_bands.get(f"{card.id}:{target_id}") or trigger.get("current_range") or "engaged"
+    return _range_rank(current) <= _range_rank(required)
 
 
 def resolve_effect_damage(expression: str) -> int:
@@ -511,7 +542,7 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
     return results
 
 
-def _trigger_matches(ability: SpecialAbility, card: EnemyCombatCard) -> bool:
+def _trigger_matches(ability: SpecialAbility, card: EnemyCombatCard, state: GroupState, target_id: str) -> bool:
     usage = ability.usage
     if usage.get("per_combat") is not None and usage.get("used_total", 0) >= usage["per_combat"]:
         return False
@@ -523,14 +554,18 @@ def _trigger_matches(ability: SpecialAbility, card: EnemyCombatCard) -> bool:
     t = trigger.get("type", "on_enemy_turn")
     if t in ("first_available", "on_enemy_turn"):
         return True
-    if t in ("round_start", "on_damage_taken", "target_in_range"):
-        return False
+    if t == "round_start":
+        return _round_start_trigger_tag(ability.id) in card.status_tags
+    if t == "on_damage_taken":
+        return _damage_taken_trigger_tag() in card.status_tags
+    if t == "target_in_range":
+        return bool(target_id and _target_in_abstract_range(state, card, target_id, trigger))
     if t == "hp_below":
         return card.hp <= int(trigger.get("value", card.hp_max))
     if t == "state_missing":
         missing = trigger.get("tag")
         return bool(missing and missing not in card.status_tags)
-    return True
+    return False
 
 
 def _safe_public_ability_hint(ability: SpecialAbility) -> str:
@@ -563,7 +598,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
 
     target_id = _choose_target(state)
     for ability in sorted(card.abilities, key=lambda a: -a.priority):
-        if _trigger_matches(ability, card):
+        if _trigger_matches(ability, card, state, target_id):
             plan_id = f"plan-{uuid.uuid4().hex[:8]}"
             plan = {
                 "ok": True,
@@ -635,6 +670,11 @@ def resolve_enemy_action(state: GroupState, plan_id: str) -> dict[str, Any]:
             ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
             ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
             ability.current_cooldown = ability.cooldown_rounds
+            trigger_type = (ability.trigger or {}).get("type")
+            if trigger_type == "round_start":
+                card.status_tags = [tag for tag in card.status_tags if tag != _round_start_trigger_tag(ability.id)]
+            elif trigger_type == "on_damage_taken":
+                card.status_tags = [tag for tag in card.status_tags if tag != _damage_taken_trigger_tag()]
     plan["resolved"] = True
     return {"ok": True, "plan_id": plan_id, "resolved": True}
 
@@ -656,6 +696,7 @@ def advance_turn(state: GroupState) -> dict:
             combat.round_number += 1
             _reset_round_usage(state)
             process_timing(state, "round_start")
+            _mark_round_start_abilities(state)
         if not _is_skippable(state, combat.order[combat.current_index]):
             break
 

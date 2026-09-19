@@ -586,6 +586,7 @@ class CombatState:
     effects: list[EffectState] = field(default_factory=list)
     plans: dict[str, dict[str, Any]] = field(default_factory=dict)
     processed_timings: list[str] = field(default_factory=list)
+    range_bands: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -597,6 +598,7 @@ class CombatState:
             "effects": [e.to_dict() for e in self.effects],
             "plans": self.plans,
             "processed_timings": self.processed_timings,
+            "range_bands": self.range_bands,
         }
 
     @staticmethod
@@ -610,6 +612,7 @@ class CombatState:
             effects=[EffectState.from_dict(e) for e in data.get("effects", [])],
             plans=data.get("plans", {}),
             processed_timings=list(data.get("processed_timings", [])),
+            range_bands=dict(data.get("range_bands", {})),
         )
 
 

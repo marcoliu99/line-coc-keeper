@@ -17,7 +17,7 @@
 - 不讓玩家直接看到敵人戰鬥卡。只有 KP Assistant / Keeper 內部可見。
 - 不把 LLM 自然語言敘事當作 authoritative state；HP、護甲、次數、狀態、環境效果必須由程式狀態保存。
 - 不在本階段從 PDF 劇本自動完整抽取所有怪物 stat block；`add_npc_to_combat` 可先由 Keeper/KP Assistant 提供護甲、攻擊與能力資料，缺漏時建立 minimal card。
-- 不在本階段實作精確距離/接戰狀態，因此 engaged-only 攻擊的完整距離判斷是後續工作；目前回合規劃先在抽象 range band 內選擇可用能力/攻擊。
+- 不在本階段實作戰棋格、座標或精確距離量測；`target_in_range` 使用抽象 range band（`engaged` / `near` / `far` / `any`）判斷。
 
 ## 目前實作範圍
 
@@ -35,6 +35,7 @@
 - public combat status 不顯示敵人目前 HP / 最大 HP；KP Assistant private combat status 可看敵人 HP、護甲與能力摘要。
 - public `apply_combat_damage` tool result 對敵方目標會 scrub 護甲與 HP breakdown；KP Assistant 保留完整 private result。
 - turn timing 結算具備冪等保護；同一 round/current combatant/timing/target 重複呼叫不會重複扣血或遞減 duration。
+- `round_start`、`on_damage_taken`、`target_in_range` special ability trigger 已有第一階段邏輯：新輪標記、受傷事件標記、抽象 range band 判斷。
 - KP Assistant allowlist 開放 `apply_combat_damage` 與 `add_combat_effect`，這兩個成功結果會成為 canonical game event；`damage_combatant` 仍不開放給 KP Assistant。
 
 ## 現況落差
@@ -159,16 +160,13 @@ SpecialAbility(
 
 - `first_available`: 戰鬥中第一次符合條件就應考慮。
 - `on_enemy_turn`: 敵人回合開始。
+- `round_start`: 新輪開始時標記，敵人下一次規劃回合可用；resolve 後清除該能力的 round-start marker。
+- `on_damage_taken`: 敵人受到 final damage > 0 後標記，下一次規劃回合可用；resolve 後清除受傷 marker。
+- `target_in_range`: 用抽象 range band 判斷目標是否在能力要求距離內；沒有設定時預設 `engaged`。
 - `hp_below`: HP 低於門檻。
 - `state_missing`: 某效果尚未套用。
 
-後續保留但本階段不啟用的 trigger：
-
-- `round_start`: 每輪固定時點的能力觸發。
-- `on_damage_taken`: 受到傷害後觸發。
-- `target_in_range`: 依精確 range band 觸發。
-
-未實作 trigger 必須回 `False`，不得落入「敵人回合一定觸發」的預設路徑。
+未知 trigger 必須回 `False`，不得落入「敵人回合一定觸發」的預設路徑。
 
 `usage`：
 
@@ -537,6 +535,7 @@ Keeper prompt 必須改成：
 15. 公開 combat status 與 combat 指令不洩漏敵人 HP；KP Assistant `get_combat_status` 可看到 private HP。
 16. Public `apply_combat_damage` result 對敵方目標不含 armor/HP/private_notes；KP Assistant result 保留完整欄位。
 17. `plan_enemy_turn` 重複呼叫不重複套用 `turn_start` effects；PC `turn_start` effects 會在 `advance_turn` 抵達 PC 回合時觸發。
+18. `round_start`、`on_damage_taken`、`target_in_range` trigger 分別有新輪、受傷事件與抽象 range band regression tests。
 
 整合測試：
 
