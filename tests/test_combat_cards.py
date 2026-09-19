@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from app import combat
 from app.models import Character, EffectState, GroupState
@@ -20,6 +21,44 @@ class CombatCardTests(unittest.TestCase):
         state.characters_by_id = {"char-mark": char}
         state.active_character_id_by_user = {"u1": "char-mark"}
         return state
+
+    def _state_with_two_pcs(self) -> GroupState:
+        state = GroupState(group_id="g")
+        first = Character(
+            name="First",
+            owner_id="u1",
+            character_id="char-first",
+            dex=70,
+            hp=12,
+            hp_max=12,
+        )
+        second = Character(
+            name="Second",
+            owner_id="u2",
+            character_id="char-second",
+            dex=60,
+            hp=12,
+            hp_max=12,
+        )
+        state.characters = {"u1": first, "u2": second}
+        state.characters_by_id = {
+            first.character_id: first,
+            second.character_id: second,
+        }
+        state.active_character_id_by_user = {
+            "u1": first.character_id,
+            "u2": second.character_id,
+        }
+        return state
+
+    def _enemy_turn_with_two_pcs(self) -> tuple[GroupState, str]:
+        state = self._state_with_two_pcs()
+        combat.start_combat(state)
+        combat.add_npc(state, "Hunter", 50, 14)
+        enemy = next(c for c in state.combat.order if c.side == "enemy")
+        state.combat.current_index = state.combat.order.index(enemy)
+        card = state.combat.enemy_cards[enemy.enemy_card_id]
+        return state, card.id
 
     def test_group_state_reuses_character_objects_across_legacy_and_id_indexes(self):
         legacy = Character(name="Mark", owner_id="u1", character_id="char-mark", hp=10).to_dict()
@@ -336,6 +375,26 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(far_plan["selected_action"], "attack")
         self.assertEqual(near_plan["selected_action"], "special_ability")
         self.assertEqual(near_plan["selected_id"], "near_song")
+
+    def test_enemy_target_prefers_engaged_pc_over_near_pc(self):
+        state, enemy_card_id = self._enemy_turn_with_two_pcs()
+        state.combat.range_bands[f"{enemy_card_id}:pc:char-first"] = "near"
+        state.combat.range_bands[f"{enemy_card_id}:pc:char-second"] = "engaged"
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["target_ids"], ["pc:char-second"])
+
+    def test_enemy_target_randomizes_valid_pcs_when_no_preferred_distance(self):
+        state, enemy_card_id = self._enemy_turn_with_two_pcs()
+        state.combat.range_bands[f"{enemy_card_id}:pc:char-first"] = "far"
+        state.combat.range_bands[f"{enemy_card_id}:pc:char-second"] = "far"
+
+        with patch("app.combat.random.choice", return_value="pc:char-second") as choose:
+            plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["target_ids"], ["pc:char-second"])
+        choose.assert_called_once_with(["pc:char-first", "pc:char-second"])
 
     def test_apply_combat_damage_tracks_armor_breakdown(self):
         state = self._state_with_pc()

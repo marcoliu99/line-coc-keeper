@@ -1900,3 +1900,10 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - **角色 identity**：PC HP synchronization 優先使用 `character_id`，同名角色不會更新錯誤角色；scene digest 的 NPC ability private map 改用 `combatant_id`，同名敵人不會互相覆蓋。
 - **Keeper 權限**：Discord 具有 `Keeper` role 的成員現在可操作 checkpoint、rollback、digest；KP Assistant 權限維持不變。
 - **測試**：完整 `unittest discover` 共 100 項通過。
+
+### 112. 修正敵人目標選擇，避免固定集火先攻角色
+
+- 敵人選擇目標改為距離優先：先從 `engaged` PC 選，再從 `near` PC 選，最後才從所有未倒下且未暫離的 PC 隨機選擇。
+- 同一距離層級使用隨機選擇，不再固定攻擊 initiative 順序最前面的角色；未設定距離也會走隨機 fallback。
+- 本次選出的目標寫入 `EnemyTurnPlan.target_ids`，同一個 plan retry 不會改變目標。
+- 新增距離優先與同距離隨機的 combat regression tests。

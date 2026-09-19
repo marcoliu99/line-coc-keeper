@@ -323,12 +323,19 @@ EnemyTurnPlan(
    - 已接戰且有合適攻擊才近戰。
    - 有遠程/精神/範圍能力則可不接近。
    - 若目標不在 range，產生 `move` 或 `wait`，不是硬揮拳。
+   - 目標選擇採「距離優先、同距離隨機」：先從仍可行動且 `engaged` 的 PC 選，沒有時再從
+     `near` 的 PC 選，兩者都沒有才從所有仍可行動的 PC 選；同一層級使用隨機選擇，不依 initiative
+     順序固定集火第一位角色。
+   - 距離使用 `CombatState.range_bands` 的 `enemy_card_id:target_combatant_id` key；讀取時也接受
+     反向 key，以相容既有狀態。未設定距離不代表 `engaged`，而是進入最後的隨機 fallback。
 7. 產生公開敘事提示，但 private_reason 不進玩家回覆。
 8. Keeper 執行 required rolls，完成後呼叫 action resolution tool 寫回 usage/cooldown/effects/damage。
 
 `resolve_enemy_action(plan_id)` 必須是 idempotent：第一次成功 resolve 才會消耗 usage/cooldown，之後同一個 `plan_id` 重複呼叫只回報 `already_resolved=True`，不得重複扣特殊能力次數。這保護 LLM/tool retry、網路重送與主持誤按造成的重複結算。
 
 `plan_enemy_turn` 也必須避免重複套用 `turn_start` effects：同一個 round/current_index/target 的 `turn_start` timing 最多結算一次，即使 Keeper/LLM 因 retry 或重新規劃重複呼叫 `plan_enemy_turn`。
+
+敵人 plan 會把本次選出的 `target_ids` 寫入 plan。若同一個 plan 因工具 retry 被重新 resolve，仍使用原本目標；重新建立新的 plan 才會依當下距離與隨機規則重新選擇。倒下或暫離的 PC 不列入候選。
 
 `resolve_enemy_action` 是特殊能力效果的唯一落點。當能力的 `effect.on_success` 為
 `apply_effect` 時，呼叫端必須傳入正式檢定結果 `outcome: {"success": true|false}`；只有成功才會依

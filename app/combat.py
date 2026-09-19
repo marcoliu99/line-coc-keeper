@@ -10,6 +10,7 @@ of defaulting to "the nearest investigator gets punched".
 from __future__ import annotations
 
 import re
+import random
 import uuid
 from typing import Any
 
@@ -587,11 +588,35 @@ def _safe_public_ability_hint(ability: SpecialAbility) -> str:
     return "它展現出某種異常能力，但具體規則仍未明朗。"
 
 
-def _choose_target(state: GroupState) -> str:
-    for c in state.combat.order:
-        if c.side == "pc" and not _is_skippable(state, c):
-            return c.combatant_id
-    return ""
+def _target_range(state: GroupState, enemy_id: str, target_id: str) -> str:
+    return (
+        state.combat.range_bands.get(f"{enemy_id}:{target_id}")
+        or state.combat.range_bands.get(f"{target_id}:{enemy_id}")
+        or ""
+    ).lower()
+
+
+def _choose_target(state: GroupState, enemy_id: str) -> str:
+    valid = [
+        c.combatant_id
+        for c in state.combat.order
+        if c.side == "pc" and not _is_skippable(state, c)
+    ]
+    if not valid:
+        return ""
+
+    # Distance is a tactical signal, not a hard aggro table. Players can
+    # deliberately protect a fragile investigator by engaging the enemy, while
+    # equal-distance targets remain unpredictable instead of following
+    # initiative order forever.
+    for preferred_band in ("engaged", "near"):
+        candidates = [
+            target_id for target_id in valid
+            if _target_range(state, enemy_id, target_id) == preferred_band
+        ]
+        if candidates:
+            return random.choice(candidates)
+    return random.choice(valid)
 
 
 def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
@@ -619,7 +644,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
             "public_hint": f"{combatant.display_name} 已無法行動。",
         }
 
-    target_id = _choose_target(state)
+    target_id = _choose_target(state, card.id)
     for ability in sorted(card.abilities, key=lambda a: -a.priority):
         if _trigger_matches(ability, card, state, target_id):
             plan_id = f"plan-{uuid.uuid4().hex[:8]}"
