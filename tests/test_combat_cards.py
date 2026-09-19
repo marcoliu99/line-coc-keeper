@@ -160,6 +160,89 @@ class CombatCardTests(unittest.TestCase):
 
         self.assertEqual(next_round["selected_action"], "special_ability")
 
+    def test_round_start_trigger_becomes_available_on_new_round(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            abilities=[{
+                "id": "round_song",
+                "name": "Round Song",
+                "priority": 10,
+                "trigger": {"type": "round_start"},
+                "usage": {"per_round": 1},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
+
+        first_round = combat.plan_enemy_turn(state)
+        combat.advance_turn(state)
+        combat.advance_turn(state)
+        next_round = combat.plan_enemy_turn(state)
+
+        self.assertEqual(first_round["selected_action"], "attack")
+        self.assertEqual(next_round["selected_action"], "special_ability")
+        self.assertEqual(next_round["selected_id"], "round_song")
+
+    def test_on_damage_taken_trigger_fires_after_enemy_damage(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Spiteful Thing",
+            60,
+            10,
+            abilities=[{
+                "id": "retaliate",
+                "name": "Retaliate",
+                "priority": 10,
+                "trigger": {"type": "on_damage_taken"},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Spiteful Thing")
+
+        before_damage = combat.plan_enemy_turn(state)
+        combat.apply_combat_damage(state, "Spiteful Thing", 1)
+        after_damage = combat.plan_enemy_turn(state)
+        combat.resolve_enemy_action(state, after_damage["plan_id"])
+        after_resolve = combat.plan_enemy_turn(state)
+
+        self.assertEqual(before_damage["selected_action"], "attack")
+        self.assertEqual(after_damage["selected_action"], "special_ability")
+        self.assertEqual(after_damage["selected_id"], "retaliate")
+        self.assertEqual(after_resolve["selected_action"], "attack")
+
+    def test_target_in_range_trigger_uses_abstract_range_band(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Dream Singer",
+            60,
+            14,
+            abilities=[{
+                "id": "near_song",
+                "name": "Near Song",
+                "priority": 10,
+                "trigger": {"type": "target_in_range", "range_band": "near"},
+            }],
+        )
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
+        card = next(iter(state.combat.enemy_cards.values()))
+        target_id = next(c.combatant_id for c in state.combat.order if c.side == "pc")
+
+        state.combat.range_bands[f"{card.id}:{target_id}"] = "far"
+        far_plan = combat.plan_enemy_turn(state)
+        state.combat.range_bands[f"{card.id}:{target_id}"] = "near"
+        near_plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(far_plan["selected_action"], "attack")
+        self.assertEqual(near_plan["selected_action"], "special_ability")
+        self.assertEqual(near_plan["selected_id"], "near_song")
+
     def test_apply_combat_damage_tracks_armor_breakdown(self):
         state = self._state_with_pc()
         combat.start_combat(state)
