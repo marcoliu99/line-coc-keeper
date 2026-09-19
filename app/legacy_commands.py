@@ -1,8 +1,7 @@
-"""Platform-agnostic command handling and message routing.
+"""Discord command handling and message routing.
 
-Shared by every front-end adapter (app/main.py for LINE, app/discord_bot.py for
-Discord, ...). Nothing in here knows about LINE or Discord — it only deals with
-plain strings (conversation_id, user_id, text) and things the adapter supplies:
+The Discord adapter supplies plain strings (conversation_id, user_id, text) and
+callbacks for sending text, private messages and images:
 a `reply` callback to send text back to the conversation, a `get_display_name`
 callback (async, since some platforms need an API call for it and some don't),
 a `send_dm` callback for whispering a private message to one specific player
@@ -40,22 +39,11 @@ _logger = logging.getLogger(__name__)
 
 Reply = Callable[[str], Awaitable[None]]
 GetDisplayName = Callable[[], Awaitable[str]]
-# (owner_id) -> a platform-appropriate way to reference that player in text —
-# Discord supplies "<@{owner_id}>" (a real clickable mention, resolved
-# client-side, no API call needed); an adapter with nothing better (LINE has
-# no equivalent lightweight mention token) can default to the bare owner_id,
-# which is also this type's default via _build_readiness_roster's own
-# parameter default — kept adapter-injected rather than hardcoded here so
-# this module stays platform-agnostic (see app/main.py, the LINE adapter,
-# which shares every function in this file with app/discord_bot.py).
+# owner_id -> a Discord mention rendered by the adapter.
 FormatMention = Callable[[str], str]
 SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
-# (png_bytes, conversation_id, page_number) -> None, posts publicly. conversation_id
-# and page_number are included alongside the raw bytes because LINE can't attach
-# bytes directly to an image message — it needs a real HTTPS URL, which its
-# adapter builds by pointing back at this server's own /images/... route (see
-# app/main.py) rather than using png_bytes at all; Discord's adapter just
-# attaches png_bytes and ignores the other two.
+# (png_bytes, conversation_id, page_number) -> None, posts publicly. The
+# conversation and page metadata are retained for state-aware image sends.
 SendImage = Callable[[bytes, str, int], Awaitable[None]]
 SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, png_bytes, conversation_id, page_number)
 
@@ -307,13 +295,9 @@ async def handle_pdf_upload(
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
 ) -> None:
-    """`reply` must land inside whatever immediate response window the platform
-    gives an incoming event (LINE's reply token expires after 60s and is
-    single-use); `push` is for the actual result, sent once extraction — which
-    can run a vision/OCR pass over every graphic-heavy page and, on a
-    picture-heavy scenario, comfortably exceed that window — finishes. On a
-    platform with no such constraint (Discord), an adapter can just pass the
-    same callback for both.
+    """`reply` acknowledges the upload and `push` delivers the extracted result
+    after the potentially long vision/OCR pass. Discord can pass the same
+    callback for both.
 
     If a scenario is already running (state.scenario_text non-empty), this
     doesn't guess whether the new upload is a genuinely new scenario or a
@@ -514,13 +498,9 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     )
 
 async def resolve_pdf_upload_choice(conversation_id: str, choice: str, push: Reply) -> None:
-    """Called by an adapter's button callback (see app/discord_bot.py's
-    PdfUploadChoiceButton) once the GM picks between the two options
-    handle_pdf_upload's pending_pdf_upload flow offers. `choice` must be
-    "new" or "fix". LINE has no button/interaction mechanism, so it has no
-    caller for this — see the "/coc pdf new"/"/coc pdf fix" text-command
-    path in _handle_coc_command, which every platform (including Discord,
-    for parity) can use instead."""
+    """Called by Discord's PdfUploadChoiceButton once the GM picks between the
+    two options offered by handle_pdf_upload. `choice` must be "new" or "fix";
+    the text command remains available as a manual fallback."""
     async with locks.get_conversation_lock(conversation_id):
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
     await push(text)
@@ -661,8 +641,7 @@ async def _deliver_side_effects(
 ) -> None:
     """Shared by handle_text_message and handle_check_command — delivers
     whatever the Keeper queued via send_private_info/show_scenario_image.
-    Best-effort: a DM can fail (LINE requires the player to have friended the
-    bot; Discord requires them to allow DMs from server members) and we
+    Best-effort: a DM can fail if Discord members disallow server-member DMs, and we
     deliberately don't fall back to posting the content publicly, since that
     would defeat the entire point of it being private."""
     for owner_id, message in private_messages:
@@ -1679,8 +1658,7 @@ def _build_readiness_roster(
     who's playing who). `healed_notes` is owner_id -> whatever
     _heal_character found for them (empty list if nothing needed fixing).
     `format_mention` renders each owner_id for display (see FormatMention) —
-    defaults to the bare id, same as before this parameter existed, for any
-    caller that doesn't have a better option (LINE)."""
+    defaults to the bare id when no Discord mention formatter is supplied."""
     lines = ["📋 全團調查員集結就緒名冊", ""]
     for owner_id, char in state.characters.items():
         weapon_parts = []
@@ -1724,14 +1702,8 @@ async def _handle_coc_command(
         return
 
     if sub == "pdf":
-        # Text-command equivalent of Discord's PdfUploadChoiceButton (see
-        # _resolve_pdf_upload_choice_locked) — LINE has no button/interaction
-        # mechanism at all, so without this a pending_pdf_upload on LINE (a
-        # scenario already running, a second PDF lands) had no way to ever
-        # get resolved: handle_pdf_upload would stash it and just sit there
-        # forever, scenario_text never updating, every further PDF upload
-        # refused by the "resolve the pending one first" guard. Works on
-        # Discord too, as a text-based fallback alongside the buttons.
+        # Text-command equivalent of Discord's PdfUploadChoiceButton, retained
+        # as a manual fallback alongside the buttons.
         choice_word = parts[2] if len(parts) > 2 else ""
         choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
         if choice is None:
@@ -2209,13 +2181,8 @@ async def _handle_coc_command(
         if not state.scenario_text:
             await reply("目前還沒有載入劇本，上傳 PDF 之後才能抽取 NPC／怪物與地點索引。")
             return
-        # A single `reply` here, not reply-then-push: unlike handle_pdf_upload
-        # (which gets separate reply/push callbacks specifically because a
-        # LINE reply token is single-use and only lasts 60s), _handle_coc_command
-        # only has one `reply` callback to work with — same constraint the
-        # "pregens" subcommand above lives with, so this follows the same
-        # single-reply-at-the-end shape rather than sending a "please wait"
-        # message first.
+        # A single reply keeps this short index rebuild atomic from the user's
+        # perspective instead of sending a separate progress message.
         extracted = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
         state.scenario_npc_index = extracted["npcs"]
         state.scenario_location_index = extracted["locations"]

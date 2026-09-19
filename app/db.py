@@ -54,9 +54,8 @@ def _connect() -> Iterator[sqlite3.Connection]:
     simplicity of never sharing a connection across threads/coroutines is
     worth more than the (negligible here) cost of reopening one each time.
     WAL mode lets a read and a write overlap without blocking each other,
-    which matters once LINE (a threaded ASGI server) and Discord (its own
-    asyncio loop) are both touching the same database file from the same
-    process.
+    which matters while the Discord gateway handles multiple channels in the
+    same process.
 
     Only sets `synchronous` here, not `journal_mode` — WAL is a property
     persisted in the database file's own header (see _ensure_tables, which

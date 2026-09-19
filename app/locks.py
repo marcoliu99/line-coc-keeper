@@ -8,10 +8,8 @@ mutate their own in-memory copy, and save — the second save silently discards
 whatever the first one wrote (e.g. an HP/SAN change from a skill check that
 happened "at the same time" as another player's).
 
-"Conversation" here is a platform-agnostic id — a LINE group/room/user, a
-Discord channel, whatever an adapter in app/main.py or app/discord_bot.py
-addresses one GroupState by (see app/commands.py, which namespaces these as
-"line-group-...", "discord-channel-...", etc. to keep platforms from colliding).
+"Conversation" here is a Discord channel id, namespaced as
+"discord-channel-..." so it cannot collide with unrelated database keys.
 
 The fix here is coarse but correct: one asyncio.Lock per conversation_id, held
 for the entire duration of handling one message (from the initial load_state

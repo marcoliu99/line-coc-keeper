@@ -2,9 +2,8 @@
 
 Game/command logic lives in app/commands.py; this module only translates
 Discord events into calls against that shared layer. Run it as its own process
-(`python -m app.discord_bot`), separate from the LINE FastAPI server — discord.py
-owns a persistent gateway connection rather than serving HTTP requests, so
-there's no webhook URL or ngrok tunnel needed for this adapter at all.
+(`python -m app.discord_bot`); discord.py owns a persistent gateway connection,
+so there is no webhook URL or ngrok tunnel.
 """
 from __future__ import annotations
 
@@ -75,9 +74,8 @@ async def _send_dm(owner_id: str, text: str) -> None:
 
 def _make_send_image(channel: discord.abc.Messageable) -> commands.SendImage:
     async def send_image(png_bytes: bytes, conversation_id: str, page_number: int) -> None:
-        # conversation_id/page_number are part of the shared SendImage signature
-        # (LINE's adapter needs them to build a URL) but unused here — Discord
-        # just attaches the bytes directly.
+        # conversation_id/page_number are retained in the shared callback
+        # signature for state-aware image sends; Discord attaches bytes directly.
         await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
 
     return send_image

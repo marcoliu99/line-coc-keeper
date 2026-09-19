@@ -24,7 +24,7 @@
 - 產生玩家可閱讀、可直接照著輸入的 `docs/player_command_reference.md`。
 - `/coc help` root、分類頁、command detail 頁的 rendering。
 - Discord persistent/dynamic buttons：上一層、首頁、分類與 command detail。
-- 本功能只支援 Discord；不在 LINE adapter 或其他平台實作 help UI。
+- 本功能只支援 Discord；不在其他平台實作 help UI。
 - 對錯誤 path、未知 command、重複註冊與超過三層的 registry 定義清楚的錯誤行為。
 - registry、routing、Discord navigation 與 fallback 的單元測試。
 
@@ -96,7 +96,7 @@ Registry 在 application import 時完成註冊。各 handler 以自己的 regis
 | `app/help_registry.py` | model、註冊、path validation、排序、page lookup |
 | `app/commands/handlers/*.py` | 自己 command 的 help metadata |
 | `app/agents/*.py` | agent 對玩家可見的 command／能力說明；純內部 agent 不註冊 |
-| `app/discord_bot.py` | 將 Discord `/coc help...` 交給 help service，不改 LINE 或其他 routing |
+| `app/discord_bot.py` | 將 Discord `/coc help...` 交給 help service |
 | `app/help_render.py` 或等效 service | 產生 platform-agnostic page text 與 navigation actions |
 | `app/discord_bot.py` | 把 navigation actions 轉成 persistent Discord buttons |
 | Discord text command path | 提供不使用按鈕時的 `/coc help <path>` fallback |
@@ -349,11 +349,11 @@ CI 或測試應驗證生成結果與 committed file 一致；若 registry metada
 
 ### Non-Discord platforms
 
-本功能明確排除 LINE 與其他平台。Help registry 與 Discord renderer 不應被 LINE adapter import；未來若要支援其他平台，另開獨立規格與 adapter，不在本 feature 中預留 fallback 行為。
+本功能明確只支援 Discord。Help registry 與 Discord renderer 不應被其他平台 import；未來若要支援其他平台，另開獨立規格與 adapter，不在本 feature 中預留 fallback 行為。
 
 ## 6. Integration with existing code conventions
 
-- Discord adapter 不再使用 router 的 `HELP_TEXT` help fallback；LINE 共用 router 維持原本 `HELP_TEXT` 行為，不在本 feature 修改。
+- Discord adapter 不再使用 router 的 `HELP_TEXT` help fallback；正式 help 全部由 registry 提供。
 - `/coc help` 預設 path 為 root；未知 `/coc` subcommand 也導向 root help，而不是輸出舊的巨大字串。
 - `/roll` 不屬於 `/coc` 子命令，但可在「其他」分類註冊說明。
 - PDF upload、attachment、按鈕與一般文字 command 的既有流程不變。
@@ -369,7 +369,7 @@ CI 或測試應驗證生成結果與 committed file 一致；若 registry metada
 2. duplicate category、duplicate path、未知 category、超過兩個 path token 會得到明確錯誤。
 3. root、category、detail 三種 page 的內容與 actions 正確。
 4. alias path 與 canonical path 回傳相同 detail。
-5. Discord `/coc help`、`/coc help combat`、`/coc help combat damage` 由 adapter 正確導向；LINE 的 `/coc help` 行為不受影響。
+5. Discord `/coc help`、`/coc help combat`、`/coc help combat damage` 由 adapter 正確導向。
 6. 未知 help path 不會送出整份 legacy `HELP_TEXT`。
 7. Discord help button custom ID 可由 callback 重新解析 page；上一層／首頁按鈕不超出 root。
 8. 錯 channel／conversation 的按鈕點擊被拒絕，且不改變原訊息。

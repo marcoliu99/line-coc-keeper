@@ -1,12 +1,12 @@
-# COC7e 守密人 Bot（LINE / Discord）
+# COC7e 守密人 Bot（Discord）
 
-在 LINE 群組或 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）、Gemini（Google）、OpenAI 之間切換，見 [docs/setup.md](docs/setup.md) 的「切換 LLM 供應商」段落；前端聊天平台可以在 LINE 和 Discord 之間切換（甚至兩個同時開）。
+在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）、Gemini（Google）、OpenAI 之間切換，見 [docs/setup.md](docs/setup.md)。
 
 ## 快速開始
 
 ### 還沒把 Bot 架起來？
 
-完整安裝教學（申請 LINE/Discord 憑證、設定 `.env`、本機啟動）都搬到 **[docs/setup.md](docs/setup.md)**，跟著那份文件從頭做一次即可。
+完整安裝教學（申請 Discord 憑證、設定 `.env`、本機啟動）都搬到 **[docs/setup.md](docs/setup.md)**，跟著那份文件從頭做一次即可。
 
 ### Bot 已經跑起來、已經加進群組/伺服器？
 
@@ -22,9 +22,7 @@
 ## 架構
 
 ```
-LINE 群組 ──(webhook)──▶ app/main.py ────────┐
-                                              │
-Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
+Discord 頻道 ──(gateway)──▶ app/discord_bot.py
                                               ▼
                         app/commands/router.py（指令路由，平台無關，取代舊版單一 app/commands.py）
                                               │
@@ -71,7 +69,6 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
 ```
 
 **指令與訊息路由**
-- `app/main.py`：LINE 專用 webhook 入口，把 LINE 的事件轉譯成呼叫 `app/commands/router.py`
 - `app/discord_bot.py`：Discord 專用的常駐連線入口，把 Discord 的事件轉譯成呼叫 `app/commands/router.py`
 - `app/commands/router.py`：**平台無關**的指令路由入口（取代舊版單一檔案 `app/commands.py`，已重新命名為 `app/legacy_commands.py`）——依關鍵字分派到下面的 handler 模組，自由文字（不是 `/coc` 指令）交給 `app/agents/supervisor.py`
 - `app/commands/handlers/`：依領域拆開的指令處理模組——`character.py`（建角／角色卡等 9 個子指令）、`combat.py`、`system.py`（`newgame`／`pdf`／`kp`／`scenario`／`status`／`era`… 等 12 個子指令，含劇本庫的 `/coc scenario` 系列）、`map_handler.py`（`showpage`／`where`／`enter`／`leavemap`）——這些模組委派回 `app/legacy_commands.py` 裡既有、已驗證過的邏輯，不是重新實作
@@ -112,7 +109,7 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
 - `app/db.py`：SQLite 存取層，把每個聊天室的遊戲狀態、角色索引鏡像、Scenario/Memory RAG 的索引快取都存成資料庫裡的一列（取代原本各自的 `data/groups/*.json` 檔案）
 - `app/repositories/group_state.py`（原 `app/state.py`）：呼叫 `app/db.py` 保存每個聊天室的遊戲狀態與角色索引鏡像；劇本頁面圖片仍另外存成 PNG 檔案（不進資料庫）
 
-想只用 LINE、只用 Discord、還是兩個都開，完全取決於你要不要啟動哪個入口（`app/main.py` 用 `uvicorn` 跑、`app/discord_bot.py` 直接 `python -m` 跑），兩者可以同時執行，互不影響，因為狀態檔案已經照平台分開命名。
+只需要啟動 `app/discord_bot.py`；Discord 直接附加圖片，不需要 webhook、ngrok 或公開圖片網址。
 
 ## 文件導覽
 
@@ -120,7 +117,7 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py ┤
 
 | 想知道... | 看這份 |
 |---|---|
-| 怎麼申請 LINE/Discord 憑證、設定 `.env`、本機啟動 | **[docs/setup.md](docs/setup.md)** |
+| 怎麼申請 Discord 憑證、設定 `.env`、本機啟動 | **[docs/setup.md](docs/setup.md)** |
 | 有哪些指令、怎麼玩、各項機制怎麼操作 | **[docs/gameplay.md](docs/gameplay.md)** |
 | 為什麼有這個限制、目前怎麼做的、實測過什麼、之後想擴充要改哪裡（逐功能的開發紀錄） | **[docs/changelog.md](docs/changelog.md)** |
 | Keeper 的系統提示詞規則（`_build_static_prompt()` 的可讀版本） | [docs/keeper_skill.md](docs/keeper_skill.md) |
