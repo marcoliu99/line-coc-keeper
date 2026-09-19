@@ -63,6 +63,10 @@ class StatePersistenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported GroupState schema_version=999"):
             GroupState.from_dict({"group_id": "future", "schema_version": 999})
 
+    def test_database_table_names_are_runtime_validated(self):
+        with self.assertRaisesRegex(ValueError, "unknown table"):
+            db.get_json("group_states; DROP TABLE characters", "x")
+
     def test_checkpoint_success_logs_started_and_success(self):
         state = GroupState("discord-group-checkpoint-started")
         with self.assertLogs("app.checkpoints", level=logging.INFO) as captured:

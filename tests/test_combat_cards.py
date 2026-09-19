@@ -172,6 +172,17 @@ class CombatCardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertFalse(plan.get("resolved", False))
 
+    def test_enemy_without_live_target_does_not_plan_attack(self):
+        state = GroupState(group_id="no-target")
+        combat.start_combat(state)
+        combat.add_npc(state, "Lonely Enemy", 60, 14)
+        enemy_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Lonely Enemy")
+        state.combat.current_index = enemy_index
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertNotEqual(plan["selected_action"], "attack")
+
     def test_missing_planned_ability_is_a_retryable_error(self):
         state = self._state_with_pc()
         combat.start_combat(state)

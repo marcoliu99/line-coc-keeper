@@ -479,7 +479,7 @@ def add_combat_effect(
     is_environment = normalized_target in {"environment", "global", "環境", "場景"}
     is_all = normalized_target in {"all", "全體", "所有人"}
     combatant = None if is_environment or is_all else _find_combatant(state, target_name)
-    if not combatant and not is_environment and not is_all:
+    if not is_environment and not is_all and combatant is None:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
     if timing not in {"round_start", "turn_start", "turn_end", "round_end"}:
         return {"ok": False, "error": f"不支援的效果時點：{timing}"}
@@ -489,7 +489,18 @@ def add_combat_effect(
     if damage_error:
         return {"ok": False, "error": f"無法解析效果傷害：{damage_error}"}
 
-    target_id = "__environment__" if is_environment else "__all__" if is_all else combatant.combatant_id
+    if is_environment:
+        target_id = "__environment__"
+        target_label = "環境"
+    elif is_all:
+        target_id = "__all__"
+        target_label = "全體"
+    else:
+        # Keep the invariant explicit for callers and static type checkers.
+        if combatant is None:
+            return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
+        target_id = combatant.combatant_id
+        target_label = combatant.display_name
     effect = EffectState(
         id=f"effect-{uuid.uuid4().hex[:8]}",
         label=label,
@@ -506,7 +517,7 @@ def add_combat_effect(
     return {
         "ok": True,
         "effect_id": effect.id,
-        "target": "全體" if is_all else "環境" if is_environment else combatant.display_name,
+        "target": target_label,
         "target_id": target_id,
         "label": effect.label,
         "timing": effect.timing,
@@ -632,7 +643,9 @@ def _attack_can_reach_target(state: GroupState, enemy_id: str, target_id: str, a
     remains usable. Explicitly marked ``far`` targets must not be hit by a
     close-range attack just because an attack exists on the combat card.
     """
-    if not target_id or attack.range_band.lower() == "any":
+    if not target_id:
+        return False
+    if attack.range_band.lower() == "any":
         return True
     current = _target_range(state, enemy_id, target_id)
     if not current:

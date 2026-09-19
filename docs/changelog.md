@@ -7,6 +7,7 @@
 ### 狀態持久化、回溯節點與 Discord 備份
 
 - 嚴格補強戰鬥與持久化：敵人攻擊現在必須由 `resolve_enemy_action` 以正式命中／傷害結果結算，遺失的能力計畫會可重試失敗；補上全體／環境固定時點效果、戰鬥中途加入敵人的 round-start 時序、schema migration、三個持久化路徑的啟動檢查，以及 hash 後的維運 log group ID。
+- 依靜態檢查再補強：沒有存活目標時不再產生不可執行的攻擊計畫，戰鬥與資料庫核心模組通過 mypy；SQLite table 名稱改為執行期 allowlist 驗證，不依賴可被 `python -O` 移除的 `assert`。
 - `GroupState` 現在保存 `schema_version`、`timeline_id` 與遞增的 `state_revision`；中央 SQLite 保存路徑會記錄成功/失敗與耗時 log。
 - 新增 KP-only 的 `/coc checkpoint`、`/coc checkpoints`、`/coc rollback`，以及開戰前自動 checkpoint；rollback 會先建立 `pre_rollback`，並切換到新的 timeline。
 - Discord bot 會依 `BACKUP_INTERVAL_MINUTES` 使用 SQLite online backup API 建立一致性備份，透過跨 process lock、暫存檔與 atomic rename 保護備份結果。

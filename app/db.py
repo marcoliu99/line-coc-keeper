@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS {table} (
 _TRANSIENT_ROOTS = tuple(Path(path) for path in ("/tmp", "/var/tmp", "/private/tmp"))
 
 
+def _validate_table(table: str) -> str:
+    """Validate the only identifier that cannot use SQLite parameters."""
+    if table not in _TABLES:
+        raise ValueError(f"unknown table {table!r}")
+    return table
+
+
 def _warn_if_path_looks_transient(label: str, path: Path) -> None:
     resolved = path.expanduser().resolve()
     if any(resolved == root or root in resolved.parents for root in _TRANSIENT_ROOTS):
@@ -146,10 +153,10 @@ def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> N
     """Same upsert as set_json, but writes through an already-open
     connection (from transaction() above) instead of opening/closing its
     own — for batching several writes into one transaction."""
-    assert table in _TABLES, f"unknown table {table!r}"
+    table = _validate_table(table)
     payload = json.dumps(value, ensure_ascii=False)
     conn.execute(
-        f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "
+        f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "  # nosec B608
         "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
         (key, payload),
     )
@@ -159,53 +166,53 @@ def get_json(table: str, key: str) -> Any | None:
     """Returns the parsed JSON value stored under `key`, or None if there's
     no row for it yet — callers should treat that exactly like "the file
     didn't exist yet" did before this module existed, not as an error."""
-    assert table in _TABLES, f"unknown table {table!r}"
+    table = _validate_table(table)
     with _connect() as conn:
-        row = conn.execute(f"SELECT data FROM {table} WHERE key = ?", (key,)).fetchone()
+        row = conn.execute(f"SELECT data FROM {table} WHERE key = ?", (key,)).fetchone()  # nosec B608
     return json.loads(row[0]) if row is not None else None
 
 
 def set_json(table: str, key: str, value: Any) -> None:
     """Upserts `value` (anything json.dumps can serialize) under `key`."""
-    assert table in _TABLES, f"unknown table {table!r}"
+    table = _validate_table(table)
     payload = json.dumps(value, ensure_ascii=False)
     with _connect() as conn:
         conn.execute(
-            f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "
+            f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "  # nosec B608
             "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
             (key, payload),
         )
 
 
 def delete_json(table: str, key: str) -> None:
-    assert table in _TABLES, f"unknown table {table!r}"
+    table = _validate_table(table)
     with _connect() as conn:
-        conn.execute(f"DELETE FROM {table} WHERE key = ?", (key,))
+        conn.execute(f"DELETE FROM {table} WHERE key = ?", (key,))  # nosec B608
 
 
 def list_keys(table: str) -> list[str]:
-    assert table in _TABLES, f"unknown table {table!r}"
+    table = _validate_table(table)
     with _connect() as conn:
-        rows = conn.execute(f"SELECT key FROM {table}").fetchall()
+        rows = conn.execute(f"SELECT key FROM {table}").fetchall()  # nosec B608
     return [r[0] for r in rows]
 
 
 def list_json(table: str, *, prefix: str | None = None) -> list[tuple[str, Any]]:
-    assert table in _TABLES, f"unknown table {table!r}"
+    table = _validate_table(table)
     with _connect() as conn:
         if prefix is None:
-            rows = conn.execute(f"SELECT key, data FROM {table} ORDER BY updated_at, key").fetchall()
+            rows = conn.execute(f"SELECT key, data FROM {table} ORDER BY updated_at, key").fetchall()  # nosec B608
         else:
             rows = conn.execute(
-                f"SELECT key, data FROM {table} WHERE key LIKE ? ORDER BY updated_at, key",
+                f"SELECT key, data FROM {table} WHERE key LIKE ? ORDER BY updated_at, key",  # nosec B608
                 (f"{prefix}%",),
             ).fetchall()
     return [(key, json.loads(data)) for key, data in rows]
 
 
 def delete_json_tx(conn: sqlite3.Connection, table: str, key: str) -> None:
-    assert table in _TABLES, f"unknown table {table!r}"
-    conn.execute(f"DELETE FROM {table} WHERE key = ?", (key,))
+    table = _validate_table(table)
+    conn.execute(f"DELETE FROM {table} WHERE key = ?", (key,))  # nosec B608
 
 
 @contextmanager
