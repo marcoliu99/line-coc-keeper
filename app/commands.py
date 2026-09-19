@@ -1631,12 +1631,15 @@ def _set_character_away_state(conversation_id: str, user_id: str, away: bool) ->
 
 
 def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
-    """Full-detail, read-only preview of a scenario pregen for a player deciding
-    whether to claim it — unlike Character.sheet_text() this shows every skill
-    the scenario listed (not just the top 12), since the whole point is letting
-    someone compare candidates before committing via /coc usepregen. Deliberately
-    excludes secret_goal: that's only ever revealed privately after a claim (see
-    /coc pc and /coc usepregen), never in a pre-selection preview anyone can run."""
+    """Read-only preview of a scenario pregen for a player deciding whether to
+    claim it. Skills are capped at the top 12 by value, same as Character.
+    sheet_text() — a scenario's own pregen sheet can list 50+ skills (every
+    BASE_SKILLS entry plus whatever it customized), and dumping the whole
+    list here just to compare candidates is exactly the kind of "全倒" wall
+    of mostly-base-value numbers that makes a preview harder to read, not
+    easier. Deliberately excludes secret_goal: that's only ever revealed
+    privately after a claim (see /coc pc and /coc usepregen), never in a
+    pre-selection preview anyone can run."""
     lines = [
         f"【預製角色 #{index}】{pregen.get('name') or '未命名'}　職業：{pregen.get('occupation', '未知職業')}",
     ]
@@ -1665,8 +1668,8 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
         lines.append("　".join(vitals))
     skills = pregen.get("skills") or {}
     if skills:
-        ranked = sorted(skills.items(), key=lambda kv: -kv[1] if isinstance(kv[1], (int, float)) else 0)
-        lines.append("技能：" + "、".join(f"{k} {v}%" for k, v in ranked))
+        top_skills = sorted(skills.items(), key=lambda kv: -kv[1] if isinstance(kv[1], (int, float)) else 0)[:12]
+        lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
     if pregen.get("notes"):
         lines.append(f"背景：{pregen['notes']}")
     if pregen.get("key_connection"):

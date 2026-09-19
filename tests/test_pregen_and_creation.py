@@ -76,6 +76,30 @@ class PregenPreviewLuckLabelTests(unittest.TestCase):
         self.assertIn("LUCK 將於取用時骰定", text)
 
 
+class PregenPreviewSkillCapTests(unittest.TestCase):
+    """The /coc pregens preview must cap skills at the top 12 by value, same
+    as Character.sheet_text() — a scenario pregen can list 50+ skills (every
+    BASE_SKILLS entry plus customizations), and dumping the whole list makes
+    the preview a wall of mostly-base-value numbers rather than something a
+    player can actually use to compare candidates."""
+
+    def test_skill_line_is_capped_at_twelve_highest_values(self):
+        from app import commands
+        skills = {f"技能{i}": 100 - i for i in range(20)}  # 20 skills, descending value
+        pregen = {"name": "A", "occupation": "醫生", "skills": skills}
+        text = commands._pregen_full_sheet_text(pregen, 1)
+        skill_line = next(line for line in text.split("\n") if line.startswith("主要技能："))
+        shown = skill_line.removeprefix("主要技能：").split("、")
+        self.assertEqual(len(shown), 12)
+        self.assertEqual(shown, [f"技能{i} {100 - i}%" for i in range(12)])
+
+    def test_fewer_than_twelve_skills_are_all_shown(self):
+        from app import commands
+        pregen = {"name": "A", "occupation": "醫生", "skills": {"偵查": 50, "聆聽": 40}}
+        text = commands._pregen_full_sheet_text(pregen, 1)
+        self.assertIn("主要技能：偵查 50%、聆聽 40%", text)
+
+
 class TranslateSkillNamesCanonicalizationTests(unittest.TestCase):
     """Regression tests for _translate_skill_names bypassing the static
     SKILL_ALIASES table (only consulting the dynamic self-learned
