@@ -4,12 +4,14 @@ import sqlite3
 import tempfile
 import time
 import unittest
+import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
 from app import db
 from app import checkpoints
 from app import keeper, scene_digest
+from app.commands.handlers import system as system_handler
 from app.commands.handlers.system import _replace_scene_maps_preserving_locations
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
 from app.repositories import group_state
@@ -44,6 +46,43 @@ class StatePersistenceTests(unittest.TestCase):
         loaded = group_state.load_state(state.group_id)
         self.assertEqual(loaded.state_revision, 1)
         self.assertIn("state_save_success", "\n".join(captured.output))
+
+    def test_checkpoint_success_logs_started_and_success(self):
+        state = GroupState("discord-group-checkpoint-started")
+        with self.assertLogs("app.checkpoints", level=logging.INFO) as captured:
+            checkpoints.create_checkpoint(state)
+        output = "\n".join(captured.output)
+        self.assertIn("checkpoint_started", output)
+        self.assertIn("checkpoint_success", output)
+
+    def test_checkpoint_commands_require_clean_identifier(self):
+        async def run_command(parts):
+            replies = []
+
+            async def reply(text):
+                replies.append(text)
+
+            await system_handler.handle_system_command(
+                "discord-group-command-validation", "kp", reply, None, None, None, parts
+            )
+            return replies
+
+        state = GroupState("discord-group-command-validation", kp_assistant_user_id="kp")
+        with patch.object(system_handler, "load_state", return_value=state), \
+                patch.object(system_handler.checkpoints, "create_checkpoint") as create:
+            checkpoint_replies = asyncio.run(
+                run_command(["/coc", "checkpoint", "clean"])
+            )
+        self.assertEqual(checkpoint_replies, ["用法：/coc checkpoint clean <ID 或唯一名稱>"])
+        create.assert_not_called()
+
+        with patch.object(system_handler, "load_state", return_value=state), \
+                patch.object(system_handler.scene_digest, "latest_digest") as latest:
+            digest_replies = asyncio.run(
+                run_command(["/coc", "digest", "clean"])
+            )
+        self.assertEqual(digest_replies, ["用法：/coc digest clean <ID>"])
+        latest.assert_not_called()
 
     def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
         state = GroupState("discord-group-conflict")
@@ -189,10 +228,14 @@ class StatePersistenceTests(unittest.TestCase):
     def test_backup_is_readable_and_uses_final_name(self):
         state = GroupState("discord-group-4")
         group_state.save_state(state)
-        backup = db.backup_now("manual")
+        with self.assertLogs("app.db", level=logging.INFO) as captured:
+            backup = db.backup_now("manual")
         self.assertIsNotNone(backup)
         self.assertTrue(backup.exists())
         self.assertEqual(list(self.backup_dir.glob("*.tmp")), [])
+        output = "\n".join(captured.output)
+        self.assertIn("backup_started", output)
+        self.assertIn("backup_success", output)
         with sqlite3.connect(backup) as conn:
             result = conn.execute("PRAGMA integrity_check").fetchone()[0]
         self.assertEqual(result, "ok")

@@ -37,6 +37,10 @@ def create_checkpoint(
     event_id: str = "",
 ) -> dict:
     started = time.monotonic()
+    _logger.info(
+        "checkpoint_started group_id=%s reason=%s event_id=%s",
+        state.group_id, reason, event_id,
+    )
     try:
         # The in-process lock protects callers sharing this Python process; the
         # immediate SQLite transaction makes event-id deduplication and the
@@ -139,6 +143,7 @@ def _get_checkpoint_tx(conn, group_id: str, identifier: str) -> dict:
 
 def clean_checkpoint(group_id: str, identifier: str) -> None:
     started = time.monotonic()
+    _logger.info("checkpoint_clean_started group_id=%s identifier=%s", group_id, identifier)
     try:
         with locks.get_state_lock(group_id):
             with db.transaction() as conn:
@@ -184,6 +189,10 @@ def _restore_page_images(state: GroupState) -> None:
 def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupState, dict, dict]:
     """Atomically create pre-rollback, restore the checkpoint, and return both metadata records."""
     started = time.monotonic()
+    _logger.info(
+        "rollback_started group_id=%s identifier=%s actor_id=%s",
+        group_id, identifier, actor_id,
+    )
     try:
         # Conversation locks serialize Discord commands, while this synchronous
         # lock also coordinates with background maintenance and Keeper worker

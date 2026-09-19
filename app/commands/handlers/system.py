@@ -48,7 +48,10 @@ async def handle_system_command(
             await reply("只有目前登記的 KP Assistant 可以操作回溯節點。")
             return
         if sub == "checkpoint":
-            if len(parts) > 3 and parts[2] == "clean":
+            if len(parts) > 2 and parts[2] == "clean":
+                if len(parts) < 4:
+                    await reply("用法：/coc checkpoint clean <ID 或唯一名稱>")
+                    return
                 try:
                     checkpoints.clean_checkpoint(conversation_id, " ".join(parts[3:]))
                 except KeyError:
@@ -111,7 +114,10 @@ async def handle_system_command(
             ))
             return
         identifier = parts[2] if len(parts) > 2 else ""
-        if identifier == "clean" and len(parts) > 3:
+        if identifier == "clean":
+            if len(parts) < 4:
+                await reply("用法：/coc digest clean <ID>")
+                return
             try:
                 scene_digest.clean_digest(conversation_id, parts[3])
             except KeyError:

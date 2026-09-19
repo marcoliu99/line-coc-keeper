@@ -241,6 +241,7 @@ def backup_now(reason: str = "scheduled") -> Path | None:
     """Create a consistent SQLite backup, or return None if another worker owns the lock."""
     started = time.monotonic()
     safe_reason = "".join(c if c.isalnum() or c in "-_" else "_" for c in reason) or "manual"
+    _logger.info("backup_started reason=%s", safe_reason)
     final_path: Path | None = None
     with _backup_lock() as acquired:
         if not acquired:

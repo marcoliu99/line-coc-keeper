@@ -1913,3 +1913,9 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - checkpoint 建立時在同一個 SQLite transaction 內重新讀取目前 `group_states`，不再把 stale snapshot 保存成可回溯節點。
 - checkpoint 建立/清除、rollback 與 scene digest 清除失敗時記錄 `ERROR`、例外 traceback、群組與耗時，transaction rollback 狀態可供排查。
 - 新增 checkpoint freshness 與 failure log regression tests；完整測試共 104 項通過。
+
+### 114. 補齊清除指令驗證與 persistence started logs
+
+- `/coc checkpoint clean` 與 `/coc digest clean` 缺少目標 ID 時改回覆正確用法，不會誤建立 checkpoint 或顯示最新摘要。
+- checkpoint 建立/清除、rollback 與 database backup 現在都會記錄 `*_started`，並保留既有 success/failure logs。
+- 新增指令參數與 backup logging regression tests。
