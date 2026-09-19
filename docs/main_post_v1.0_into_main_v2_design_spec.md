@@ -1,12 +1,39 @@
 # `main` `v1.0` 後功能移植至 `main_v2` 規格書
 
+> ## Integration ledger（下次接續前必讀）
+>
+> | 欄位 | Changeset／狀態 |
+> | --- | --- |
+> | Source tree | `main`／`origin/main` |
+> | Source 起點 | tag `v1.0` = `e114583` |
+> | Source 本次終點 | `origin/main` = `d7ca3e9` |
+> | 本次 source range | `e114583..d7ca3e9`；已逐一審閱並選擇性移植此範圍內的 11 個 commit |
+> | Target tree | `main_v2`／`origin/main_v2` |
+> | Target 本次基準 | `5263c37` |
+> | Integration branch | `enhancement/merge-main-post-v1.0` |
+> | Integration branch 最新 changeset | `e3a0db8` |
+> | Pull request | [PR #34](https://github.com/marcoliu99/line-coc-keeper/pull/34)，target=`main_v2` |
+> | PR 狀態 | Open；`characters_by_id` migration review 已修正並標記 resolved |
+>
+> ### 已完成範圍
+>
+> 已將 source `e114583..d7ca3e9` 中確認需要的功能，依 `main_v2` 架構重新實作於 integration branch；沒有把 source `main` 整段 merge 進 target。完整功能、測試、文件與最後 review fix 都包含在 `e3a0db8` 及其 ancestors。
+>
+> ### 下次接續規則
+>
+> 1. PR #34 合入前，target 基準仍是 `main_v2@5263c37`；不要重新從 `v1.0` 開始移植。
+> 2. PR #34 合入後，先把本 ledger 的 Target changeset 更新為實際的 `main_v2` merge result，再決定下一個 source range。
+> 3. 下一次若要繼續移植 `main` 新功能，source 起點從 `d7ca3e9` 之後開始；已涵蓋的 `e114583..d7ca3e9` 不得重複套用。
+> 4. 若 source `main` 與 target `main_v2` 在此期間各自前進，先記錄新的 source endpoint、target baseline、PR／branch，再新增規格與 implementation commit。
+> 5. 任何人接續工作時，先以 `git merge-base`、`git rev-parse v1.0 main main_v2` 與本表核對實際 HEAD；若不一致，先更新 ledger，不直接猜測。
+
 ## 1. 背景與結論
 
 本次目標不是把兩條 branch 做機械式 merge，而是把 `main` 上 `v1.0` tag 後的功能，依照 `main_v2` 的現行架構重新移植。
 
 已讀取並逐一檢查 `v1.0..origin/main` 的 11 個 commit、每個 commit 的 patch、測試與文件變更。檢查結果：
 
-- `v1.0`：`7e78fba`
+- `v1.0`：`e114583`
 - `origin/main` 與 `origin/main_v2` 的 merge-base：`e114583`
 - `origin/main_v2` 相對於 `origin/main` 多 108 個架構／功能 commit。
 - `origin/main` 相對於 `origin/main_v2` 有 11 個 commit，但兩邊已經分叉成不同架構。
