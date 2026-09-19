@@ -151,6 +151,9 @@ class MigrateSkillNamesTests(unittest.TestCase):
         db.set_json("group_states", "g1", {
             "group_id": "g1",
             "characters": {"u1": {"skills": {"鬥毆": 70, "格鬥（鬥毆）": 70, "威嚇": 35, "恐嚇": 60}}},
+            "characters_by_id": {
+                "char-secondary": {"skills": {"手槍": 40, "射擊（手槍）": 55}},
+            },
             "pregens": [{"skills": {"手槍": 40, "求生": 10}}],
         })
         db.set_json("characters", "g1:u1", {"conversation_id": "g1", "sheet": {"skills": {"手槍": 40}}})
@@ -159,6 +162,10 @@ class MigrateSkillNamesTests(unittest.TestCase):
 
         group = db.get_json("group_states", "g1")
         self.assertEqual(group["characters"]["u1"]["skills"], {"格鬥（鬥毆）": 70, "恐嚇": 60})
+        self.assertEqual(
+            group["characters_by_id"]["char-secondary"]["skills"],
+            {"射擊（手槍）": 55},
+        )
         self.assertEqual(group["pregens"][0]["skills"], {"射擊（手槍）": 40, "生存": 10})
         mirror = db.get_json("characters", "g1:u1")
         self.assertEqual(mirror["sheet"]["skills"], {"射擊（手槍）": 40})

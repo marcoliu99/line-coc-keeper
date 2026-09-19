@@ -80,7 +80,13 @@ def migrate(*, dry_run: bool = False) -> MigrationReport:
         if not data:
             continue
         changed = False
-        for char_data in (data.get("characters") or {}).values():
+        # GroupState persists both the legacy owner index and the canonical
+        # character-id index. GroupState.from_dict() prefers characters_by_id
+        # when rebuilding the in-memory objects, so both copies must be
+        # migrated or the untouched copy can resurrect stale skill values.
+        character_records = list((data.get("characters") or {}).values())
+        character_records.extend((data.get("characters_by_id") or {}).values())
+        for char_data in character_records:
             row_changed, count, conflicts = _rename_skills(char_data.get("skills") or {})
             changed |= row_changed
             entries_changed += count
