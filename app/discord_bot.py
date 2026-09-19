@@ -29,7 +29,6 @@ from app.config import BACKUP_INTERVAL_MINUTES
 from app import db
 from app.models import GroupState
 from app.help_registry import HelpAction, HelpPage
-from app.repositories.group_state import load_state as load_group_state
 from app.repositories.group_state import StateRevisionConflict, load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
@@ -613,9 +612,17 @@ async def on_message(message: discord.Message) -> None:
             return
 
         command_parts = text.split()
-        if command_parts[0] == "/coc" and (len(command_parts) == 1 or command_parts[1].lower() == "help"):
+        if command_parts[0].casefold() == "/coc" and (
+            len(command_parts) == 1
+            or command_parts[1].casefold() == "help"
+            or not command_router.is_known_coc_command(command_parts[1])
+        ):
             state = await asyncio.to_thread(load_group_state, conversation_id)
-            path = help_service.resolve_text_path(state, user_id, command_parts[2:])
+            path = help_service.resolve_text_path(
+                state,
+                user_id,
+                command_parts[2:] if len(command_parts) > 1 and command_parts[1].casefold() == "help" else [],
+            )
             await _post_help_page(message.channel, conversation_id, user_id, path)
             return
 

@@ -1,7 +1,8 @@
 """Discord player help registry and context-sensitive page rendering."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from typing import Literal, Sequence
 
 
@@ -66,6 +67,14 @@ class HelpPage:
 _categories: dict[str, HelpCategory] = {}
 _entries: dict[tuple[str, ...], HelpEntry] = {}
 _initialized = False
+_PATH_TOKEN_RE = re.compile(r"^[a-z0-9_-]+$")
+_VALID_VISIBILITIES = {
+    "always",
+    "when_scenario_loaded",
+    "when_pregens_exist",
+    "when_no_pregens",
+    "when_combat_active",
+}
 
 
 def reset_registry_for_tests() -> None:
@@ -76,7 +85,9 @@ def reset_registry_for_tests() -> None:
 
 
 def register_help_category(category: HelpCategory) -> None:
-    if not category.key or category.key in _categories:
+    if not category.key or not _PATH_TOKEN_RE.fullmatch(category.key):
+        raise ValueError(f"invalid help category key: {category.key!r}")
+    if category.key in _categories:
         raise ValueError(f"duplicate or empty help category: {category.key!r}")
     _categories[category.key] = category
 
@@ -84,12 +95,16 @@ def register_help_category(category: HelpCategory) -> None:
 def register_help(entry: HelpEntry) -> None:
     if len(entry.path) != 2:
         raise ValueError("help entry path must contain exactly two tokens: category and command")
+    if any(not _PATH_TOKEN_RE.fullmatch(token) for token in entry.path):
+        raise ValueError(f"help path tokens must match [a-z0-9_-]+: {entry.path!r}")
     if entry.category not in _categories:
         raise ValueError(f"unknown help category: {entry.category!r}")
     if entry.path[0] != entry.category:
         raise ValueError("help path's first token must equal its category")
     if not entry.title or not entry.usage:
         raise ValueError("help entries require title and usage")
+    if entry.visibility not in _VALID_VISIBILITIES:
+        raise ValueError(f"unknown help visibility: {entry.visibility!r}")
     if entry.path in _entries:
         raise ValueError(f"duplicate help path: {'/'.join(entry.path)}")
     _entries[entry.path] = entry
@@ -117,6 +132,17 @@ def _ensure_initialized() -> None:
 def registry_is_initialized() -> bool:
     """Return whether the built-in help registration completed successfully."""
     return _initialized
+
+
+def mark_registry_initialized() -> None:
+    """Mark the central registration hook complete after all entries succeed."""
+    global _initialized
+    _initialized = True
+
+
+def has_help_category(key: str) -> bool:
+    _ensure_initialized()
+    return key in _categories
 
 
 def _visible(entry: HelpEntry, context: HelpContext) -> bool:

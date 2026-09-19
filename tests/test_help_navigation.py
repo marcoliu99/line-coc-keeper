@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from app.help_docs import generate_markdown
-from app.help_registry import HelpContext, HelpEntry, get_help_page, register_help, reset_registry_for_tests
+from app.help_registry import HelpCategory, HelpContext, HelpEntry, get_help_page, register_help, register_help_category, reset_registry_for_tests
 from app.help_service import bounded_page_text, parse_help_path, resolve_text_path
 from app.models import GroupState
 
@@ -46,6 +46,8 @@ class HelpNavigationTests(unittest.TestCase):
         state = GroupState(group_id="g")
         self.assertEqual(resolve_text_path(state, "u1", ["pc"]), ("character", "pc"))
         self.assertEqual(resolve_text_path(state, "u1", ["combat", "damage"]), ("combat", "damage"))
+        self.assertEqual(resolve_text_path(state, "u1", ["check"]), ("check",))
+        self.assertEqual(resolve_text_path(state, "u1", ["kp"]), ("kp",))
 
     def test_duplicate_and_deep_paths_are_rejected(self):
         # Force initialization, then verify the public registration validation.
@@ -63,11 +65,33 @@ class HelpNavigationTests(unittest.TestCase):
         self.assertIn("目前情境沒有這個 help 頁面", page.text)
 
     def test_direct_registration_is_idempotent(self):
-        get_help_page()
         from app.help_registration import register_all_help
 
         register_all_help()
+        register_all_help()
         self.assertEqual(get_help_page().path, ())
+
+    def test_registry_rejects_invalid_path_tokens_and_visibility(self):
+        register_help_category(HelpCategory("custom", "自訂"))
+        with self.assertRaises(ValueError):
+            register_help(HelpEntry(("custom", "含中文"), "custom", "bad", "bad", ("/coc bad",)))
+        with self.assertRaises(ValueError):
+            register_help(HelpEntry(("custom", "bad"), "custom", "bad", "bad", ("/coc bad",), visibility="unknown"))
+
+    def test_main_v2_commands_are_documented(self):
+        document = generate_markdown()
+        for command in (
+            "/coc characters",
+            "/coc switch 角色名",
+            "/coc scenario import 檔名.pdf",
+            "/coc scenario merge 暫存ID1 暫存ID2 ...",
+            "/coc checkpoint [名稱]",
+            "/coc checkpoints",
+            "/coc rollback 節點ID或唯一名稱",
+            "/coc digest",
+            "/coc digests",
+        ):
+            self.assertIn(command, document)
 
     def test_help_page_text_is_bounded_for_platform_renderers(self):
         page = get_help_page(("combat", "damage"), HelpContext())

@@ -27,6 +27,16 @@ from app.commands.handlers import map_handler
 
 _logger = logging.getLogger(__name__)
 
+_CHARACTER_COMMANDS = {"pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters"}
+_SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests"}
+_MAP_COMMANDS = {"showpage", "where", "enter", "leavemap"}
+
+
+def is_known_coc_command(subcommand: str) -> bool:
+    """Return whether Discord should route this `/coc` subcommand to a handler."""
+    normalized = subcommand.casefold()
+    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck"}
+
 
 async def handle_text_message(
     conversation_id: str,
@@ -72,20 +82,19 @@ async def handle_text_message(
 
     if text.startswith("/coc"):
         parts = text.split()
-        sub = parts[1] if len(parts) > 1 else "help"
+        sub = parts[1].casefold() if len(parts) > 1 else "help"
 
         if sub == "combat":
             async with locks.get_conversation_lock(conversation_id):
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
-        if sub in ("pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters"):
+        if sub in _CHARACTER_COMMANDS:
             async with locks.get_conversation_lock(conversation_id):
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
 
-        if sub in ("newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start",
-                   "checkpoint", "checkpoints", "rollback", "digest", "digests"):
+        if sub in _SYSTEM_COMMANDS:
             # Reparse performs long extraction and later acquires this lock in
             # handle_pdf_upload; all other scenario operations are short state
             # mutations and must be serialized with ordinary turns.
@@ -103,7 +112,7 @@ async def handle_text_message(
                     )
             return
 
-        if sub in ("showpage", "where", "enter", "leavemap"):
+        if sub in _MAP_COMMANDS:
             async with locks.get_conversation_lock(conversation_id):
                 await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts)
             return

@@ -117,7 +117,7 @@ Level 3: Command detail
   └─ usage / examples / notes + 回上一層、回首頁
 ```
 
-Registry 的 entry `path` 固定為兩個 token，例如 `("combat", "damage")`。第一個 token 是 category，第二個 token 是 command key；category page 使用單一 category token，但不能註冊成 entry。若既有 command 有更多語法，例如 `/coc scenario use <id>`，仍以一個 detail entry 呈現，不建立第三個 path token。註冊時不是兩個 token 應直接 raise validation error，避免 UI 悄悄產生第四層。
+Registry 的 entry `path` 固定為兩個 token，例如 `("combat", "damage")`。第一個 token 是 category，第二個 token 是 command key；category page 使用單一 category token，但不能註冊成 entry。若既有 command 有更多語法，例如 `/coc scenario use <id>`，仍以一個 detail entry 呈現，不建立第三個 path token。註冊時不是兩個 token、token 不符合 Discord custom ID 的 `[a-z0-9_-]+` 格式，或 visibility policy 不在允許集合內，都應直接 raise validation error，避免 UI 悄悄產生第四層或產生無法持久化的按鈕。
 
 Page lookup 的規則：
 
@@ -342,7 +342,7 @@ CI 或測試應驗證生成結果與 committed file 一致；若 registry metada
 ## 6. Integration with existing code conventions
 
 - Discord adapter 不再使用 router 的 `HELP_TEXT` help fallback；正式 help 全部由 registry 提供。
-- `/coc help` 預設 path 為 root；未知 `/coc` subcommand 也導向 root help，而不是輸出舊的巨大字串。
+- `/coc help` 預設 path 為 root；未知 `/coc` subcommand 也導向 root help renderer，顯示分類按鈕，而不是輸出舊的巨大字串或純文字 root。
 - `/roll` 不屬於 `/coc` 子命令，但可在「其他」分類註冊說明。
 - PDF upload、attachment、按鈕與一般文字 command 的既有流程不變。
 - Registry registration 必須 deterministic：category 與 entry 以 `order`、再以 key 排序，測試與 UI 不依賴 import set iteration order。
@@ -358,7 +358,7 @@ CI 或測試應驗證生成結果與 committed file 一致；若 registry metada
 3. root、category、detail 三種 page 的內容與 actions 正確。
 4. alias path 與 canonical path 回傳相同 detail。
 5. Discord `/coc help`、`/coc help combat`、`/coc help combat damage` 由 adapter 正確導向。
-6. 未知 help path 與未知 `/coc` subcommand 不會送出整份 legacy help，而是回到 registry root／未知頁面。
+6. 未知 help path 與未知 `/coc` subcommand 不會送出整份 legacy help，而是回到 registry root renderer／未知頁面。
 7. Discord help button custom ID 可由 callback 重新解析 page；上一層／首頁按鈕不超出 root。
 8. 錯 channel／conversation 的按鈕點擊被拒絕，且不改變原訊息。
 9. registry import/reload 不會重複註冊 entries。

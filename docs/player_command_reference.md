@@ -11,6 +11,13 @@
 用法：
 - `/coc alloc occ|int 技能名 點數`
 
+### 列出我的角色
+
+查看自己擁有的角色與目前正在使用的角色。
+
+用法：
+- `/coc characters`
+
 ### 互動式建立調查員
 
 先擲屬性，再分配職業與興趣技能點數。
@@ -84,6 +91,16 @@
 
 範例：
 - `/coc sheet`
+
+### 切換目前角色
+
+在自己擁有的多個角色之間切換。
+
+用法：
+- `/coc switch 角色名`
+
+範例：
+- `/coc switch 小明`
 
 ### 使用預設角色
 
@@ -250,6 +267,13 @@
 用法：
 - `/coc era 1920|modern`
 
+### 匯入伺服器 PDF **[KP-only]**
+
+從設定的 IMPORT_DIR 匯入大型 PDF；只有目前 KP Assistant 可以使用。
+
+用法：
+- `/coc scenario import 檔名.pdf`
+
 ### 重建劇本索引
 
 手動重建 NPC／怪物與地點索引。
@@ -268,6 +292,14 @@
 
 範例：
 - `/coc scenario list`
+
+### 合併 PDF parts **[KP-only]**
+
+依指定順序合併已暫存的 Discord PDF parts；只有目前 KP Assistant 可以使用。
+
+用法：
+- `/coc scenario merge 暫存ID1 暫存ID2 ...`
+- `/coc scenario merge list`
 
 ### 開始新遊戲
 
@@ -332,6 +364,49 @@
 
 ## KP 助手
 
+### 建立回溯節點
+
+保存目前完整遊戲狀態，供 KP 之後回溯。
+
+用法：
+- `/coc checkpoint [名稱]`
+- `/coc checkpoint clean ID`
+
+注意：
+- 需要目前 KP Assistant 或 Discord Keeper role。
+
+### 查看回溯節點
+
+列出目前群組可用的回溯節點。
+
+用法：
+- `/coc checkpoints`
+
+注意：
+- 需要目前 KP Assistant 或 Discord Keeper role。
+
+### 查看場景摘要
+
+查看目前或指定的場景摘要。
+
+用法：
+- `/coc digest`
+- `/coc digest 摘要ID`
+- `/coc digest clean 摘要ID`
+
+注意：
+- 需要目前 KP Assistant 或 Discord Keeper role。
+
+### 列出場景摘要
+
+列出目前群組的場景摘要歷史。
+
+用法：
+- `/coc digests`
+
+注意：
+- 需要目前 KP Assistant 或 Discord Keeper role。
+
 ### 登記 KP Assistant
 
 登記或解除本局的 KP Assistant 身分。
@@ -339,6 +414,16 @@
 用法：
 - `/coc kp`
 - `/coc kp quit`
+
+### 回溯遊戲狀態
+
+將群組狀態恢復到指定回溯節點。
+
+用法：
+- `/coc rollback 節點ID或唯一名稱`
+
+注意：
+- 需要目前 KP Assistant 或 Discord Keeper role。
 
 ## 其他
 
