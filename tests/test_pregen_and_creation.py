@@ -1,4 +1,6 @@
 import sys
+import os
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -6,7 +8,7 @@ from unittest.mock import patch
 sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_load=lambda data: {}))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
-from app import creation, legacy_commands, pregen_extractor
+from app import creation, db, legacy_commands, pregen_extractor
 from app.models import BASE_SKILLS, CreationSession
 
 
@@ -107,6 +109,47 @@ class CreationAllocateTests(unittest.TestCase):
         result = creation.allocate(session, "int", "深潛者辨識", 15)
         self.assertTrue(result["ok"])
         self.assertEqual(session.skills["深潛者辨識"], 35)
+
+
+class MigrateSkillNamesTests(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self.original_db_path = db.DB_PATH
+        db.DB_PATH = self.db_path
+        db._ensure_tables()
+
+    def tearDown(self):
+        db.DB_PATH = self.original_db_path
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_migrate_cleans_group_state_and_character_mirror(self):
+        from scripts.migrate_skill_names import migrate
+
+        db.set_json("group_states", "g1", {
+            "group_id": "g1",
+            "characters": {"u1": {"skills": {"鬥毆": 70, "格鬥（鬥毆）": 70, "威嚇": 35, "恐嚇": 60}}},
+            "pregens": [{"skills": {"手槍": 40, "求生": 10}}],
+        })
+        db.set_json("characters", "g1:u1", {"conversation_id": "g1", "sheet": {"skills": {"手槍": 40}}})
+
+        migrate()
+
+        group = db.get_json("group_states", "g1")
+        self.assertEqual(group["characters"]["u1"]["skills"], {"格鬥（鬥毆）": 70, "恐嚇": 60})
+        self.assertEqual(group["pregens"][0]["skills"], {"射擊（手槍）": 40, "生存": 10})
+        mirror = db.get_json("characters", "g1:u1")
+        self.assertEqual(mirror["sheet"]["skills"], {"射擊（手槍）": 40})
+
+    def test_migrate_is_idempotent_for_clean_data(self):
+        from scripts.migrate_skill_names import migrate
+
+        clean = {"group_id": "g2", "characters": {"u1": {"skills": {"偵查": 50}}}, "pregens": []}
+        db.set_json("group_states", "g2", clean)
+        migrate()
+        self.assertEqual(db.get_json("group_states", "g2"), clean)
 
 
 if __name__ == "__main__":
