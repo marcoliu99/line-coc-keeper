@@ -169,7 +169,10 @@ async def _handle_ordinary_text_message_locked(
         await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
         return
     else:
-        display_name = state.get_active_character(user_id).name
+        active_character = state.get_active_character(user_id)
+        if active_character is None:
+            return
+        display_name = active_character.name
         speaker_role = "player"
         resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
 

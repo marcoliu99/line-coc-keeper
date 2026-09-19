@@ -53,7 +53,7 @@ def _chunk_text(text: str) -> list[str]:
     return chunks[:MAX_REPLY_MESSAGES]
 
 
-def _make_reply(channel: discord.abc.Messageable) -> commands.Reply:
+def _make_reply(channel: discord.abc.Messageable) -> Reply:
     async def reply(text: str) -> None:
         for chunk in _chunk_text(text):
             await channel.send(chunk)
@@ -80,7 +80,7 @@ async def _send_dm(owner_id: str, text: str) -> None:
         await user.send(chunk)
 
 
-def _make_send_image(channel: discord.abc.Messageable) -> commands.SendImage:
+def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
     async def send_image(png_bytes: bytes, conversation_id: str, page_number: int) -> None:
         # conversation_id/page_number are part of the shared SendImage signature
         # (LINE's adapter needs them to build a URL) but unused here — Discord
@@ -95,7 +95,7 @@ async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, 
     await user.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
 
 
-def _make_interaction_reply(interaction: discord.Interaction) -> commands.Reply:
+def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     # Used only after the initial interaction response has been consumed
     # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:
@@ -127,7 +127,7 @@ def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
 _CHECK_BUTTON_ID_TEMPLATE = r"coc_check:(?P<conversation_id>discord-channel-\d+):(?P<owner_id>\d+):(?P<option>[^:]*)"
 
 
-class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):
+class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """A "🎲 roll" button under the Keeper's message whenever it asks for a
     check — see app/keeper.py's skill_check/sanity_check/offer_check_choice
     tools, which now only *register* a pending check (GroupState.
@@ -235,7 +235,7 @@ _LUCK_BUTTON_ID_TEMPLATE = (
 )
 
 
-class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_BUTTON_ID_TEMPLATE):
+class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """A "花 N 點 Luck → 一般成功" (or "維持目前結果") button posted after a
     near-miss roll — see app/commands.py's handle_check_command (which decides
     whether to prompt at all) and handle_luck_decision (what clicking one of
@@ -356,7 +356,7 @@ async def _post_pending_buttons(
 _PDF_CHOICE_BUTTON_ID_TEMPLATE = r"coc_pdfchoice:(?P<conversation_id>discord-channel-\d+):(?P<choice>new|fix)"
 
 
-class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=_PDF_CHOICE_BUTTON_ID_TEMPLATE):
+class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=_PDF_CHOICE_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """Posted after a PDF re-upload while a scenario is already running (see
     app/commands.py's handle_pdf_upload, which stashes the extraction into
     state.pending_pdf_upload rather than guessing) — lets the GM pick whether

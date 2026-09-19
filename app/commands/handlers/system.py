@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from app import checkpoints, keeper, locks, scenario_index, scenario_intro, scenario_library, scene_digest, scene_map
 from app.models import GroupState
@@ -63,8 +64,8 @@ async def handle_system_command(
                 await reply("已清除回溯節點。")
                 return
             label = " ".join(parts[2:]).strip()
-            entry = checkpoints.create_checkpoint(state, label=label, created_by=user_id)
-            await reply(f"已建立回溯節點：{entry['checkpoint_id']}（{entry['label']}）。")
+            checkpoint_entry = checkpoints.create_checkpoint(state, label=label, created_by=user_id)
+            await reply(f"已建立回溯節點：{checkpoint_entry['checkpoint_id']}（{checkpoint_entry['label']}）。")
             return
         if sub == "checkpoints":
             entries = checkpoints.list_checkpoints(conversation_id)
@@ -126,15 +127,15 @@ async def handle_system_command(
             await reply("已清除場景摘要。")
             return
         try:
-            entry = scene_digest.latest_digest(conversation_id, state.timeline_id)
+            digest_entry: dict[str, Any] | None = scene_digest.latest_digest(conversation_id, state.timeline_id)
             if identifier:
-                entry = scene_digest.get_digest(conversation_id, identifier)
-            if entry is None:
+                digest_entry = scene_digest.get_digest(conversation_id, identifier)
+            if digest_entry is None:
                 raise KeyError(identifier)
         except KeyError:
             await reply("找不到這筆場景摘要。")
             return
-        await reply(str(entry.get("public", {})))
+        await reply(str(digest_entry.get("public", {})))
         return
 
     if sub == "scenario":
@@ -251,10 +252,10 @@ async def handle_system_command(
         return
 
     if sub == "kp":
-        action = parts[2] if len(parts) > 2 else None
+        kp_action: str | None = parts[2] if len(parts) > 2 else None
         state = load_state(conversation_id)
 
-        if action == "quit":
+        if kp_action == "quit":
             if state.kp_assistant_user_id != user_id:
                 await reply("你目前不是這局的 KP 助手。")
                 return
@@ -264,7 +265,7 @@ async def handle_system_command(
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             return
 
-        if action is not None:
+        if kp_action is not None:
             await reply("用法：/coc kp 或 /coc kp quit")
             return
 
@@ -356,15 +357,15 @@ async def handle_system_command(
         if not state.scenario_text:
             await reply("目前還沒有載入劇本，上傳 PDF 之後才能抽取 NPC／怪物與地點索引。")
             return
-        extracted = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
-        state.scenario_npc_index = extracted["npcs"]
-        state.scenario_location_index = extracted["locations"]
+        index_data = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+        state.scenario_npc_index = index_data["npcs"]
+        state.scenario_location_index = index_data["locations"]
         save_state(state)
-        if not extracted["npcs"] and not extracted["locations"]:
+        if not index_data["npcs"] and not index_data["locations"]:
             await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
             return
-        lines = [f"已重新建立劇本索引：{len(extracted['npcs'])} 個 NPC／怪物、{len(extracted['locations'])} 個地點。"]
-        for n in extracted["npcs"]:
+        lines = [f"已重新建立劇本索引：{len(index_data['npcs'])} 個 NPC／怪物、{len(index_data['locations'])} 個地點。"]
+        for n in index_data["npcs"]:
             hp = n.get("hp")
             hp_note = f"HP {hp}" if isinstance(hp, (int, float)) else "（無 HP 數值）"
             lines.append(f"・{n.get('name') or '未命名'}：{hp_note}")
@@ -411,10 +412,10 @@ async def handle_system_command(
                 save_state(state)
         await reply(_build_readiness_roster(state, healed_notes, format_mention))
 
-        extracted = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
+        opening_data: dict[str, Any] = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
 
-        if extracted["found"]:
-            opening_text = extracted["text"]
+        if opening_data["found"]:
+            opening_text = opening_data["text"]
             with locks.get_state_lock(conversation_id):
                 state = load_state(conversation_id)
                 if state.game_started:
@@ -423,7 +424,7 @@ async def handle_system_command(
                 state.log.append({"role": "assistant", "content": opening_text})
                 state.game_started = True
                 
-                opening_check = extracted.get("opening_check")
+                opening_check = opening_data.get("opening_check")
                 if opening_check:
                     for owner_id, char in state.characters.items():
                         if opening_check["type"] == "skill":
