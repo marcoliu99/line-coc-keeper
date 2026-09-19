@@ -126,15 +126,16 @@
 範例：
 - `/coc check 偵查`
 
-### Luck 結果選擇
+### Luck 擲骰與結果選擇
 
-選擇是否花費 Luck 改善接近成功的結果。
+選角後由玩家擲 LUCK，檢定接近成功時也可選擇是否花費 Luck。
 
 用法：
+- `/coc luck roll`
 - `/coc luck skip|regular|hard|extreme`
 
 範例：
-- `/coc luck regular`
+- `/coc luck roll`
 
 ## 戰鬥
 

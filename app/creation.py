@@ -17,6 +17,7 @@ from app.models import (
     damage_bonus_and_build,
     move_rate,
 )
+from app.skill_aliases import canonical_skill_name
 
 _SKILL_CAP = 90  # soft cap on any single skill at character creation
 
@@ -68,7 +69,8 @@ def allocate(session: CreationSession, pool: str, skill: str, points: int) -> di
     if points > remaining:
         return {"ok": False, "error": f"點數不夠，這個點數池還剩 {remaining} 點"}
 
-    current_value = session.skills.get(skill, 20)  # unlisted skill: treat as 20% starting point
+    skill = canonical_skill_name(skill.strip())
+    current_value = session.skills.get(skill, BASE_SKILLS.get(skill, 20))
     room = max(0, _SKILL_CAP - current_value)
     if points > room:
         return {"ok": False, "error": f"「{skill}」目前 {current_value}%，建角階段最高加到 {_SKILL_CAP}%，還可以加 {room} 點"}

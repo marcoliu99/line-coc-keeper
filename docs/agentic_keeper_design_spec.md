@@ -133,10 +133,16 @@ Python 程式碼明確掌握，能重用 `app/keeper.py` 既有、已經驗證�
 |        state.log、不動 state.openai_previous_response_id；
 |   是 → 升格：keeper._format_kp_canonical_history_message 把這輪 KP 指令
 |        與觸發的工具事件格式化成一則
-|        「[KP ASSISTANT / CANONICAL GAME EVENT]」訊息，透過
+|        以「[KP Assistant]」開頭、並附上「[DETERMINISTIC GAME WORKFLOW]」
+|        區塊的訊息，透過
 |        keeper._commit_turn_result 寫進正式 state.log，並正常延續
 |        openai_previous_response_id 對話鏈——這輪從「場外討論」變成
 |        「KP 代替玩家觸發了一個真的發生的遊戲事件」。
+|   ↳ KP 也可以用訊息開頭的 ASCII 或全形 `!` 明確建立正史：marker 會先
+|        從送給模型與 history 的有效文字移除，並與 deterministic tool
+|        event 共用 `kp_turn_creates_canon`／`_commit_turn_result` pipeline。
+|        純 manual `!` 只使用「[KP Assistant]」前綴，不虛構 workflow 區塊；
+|        沒有 `!` 且沒有正式工具事件的普通 OOC 才寫入獨立 `kp_ooc_log`。
 +-----------------------------+
            │
            ▼

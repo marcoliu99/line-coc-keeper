@@ -1855,3 +1855,34 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
 - legacy owner map 的角色會逐筆補進 `characters_by_id`，不再因 ID index 已非空而漏掉後加入的角色；combat runtime identity guard 也同步支援這個 merge。
 - `advance_turn()` 在跨輪前處理 `round_end` effects，之後才增加 round、重置能力次數並處理 `round_start`。
 - 新增角色索引共享、legacy merge 與 round-end damage regression tests；完整測試 74 項通過。
+
+### 105. 移植 `main` v1.0 後的預製角色與技能修正
+
+- 預製角色在 `/coc usepregen` claim time 重新擲 LUCK；公開預覽標註卡面值不會直接沿用，並將技能預覽限制為最高 12 項。
+- 預製角色抽取、`/coc alloc` 與既有資料 migration 共用 `SKILL_ALIASES`，數字 alias collision 取較高值，避免技能重複或實際檢定讀不到分配值。
+- 圖片較多的 PDF 不再顯示固定一分鐘處理時間估算。
+
+### 106. KP Assistant manual canon 與 deterministic canon 統一
+
+- KP Assistant 的 `!`／`！` manual canon 與成功的 deterministic game-resolution tool 共用同一 canonical persistence pipeline。
+- canonical history 統一使用 `[KP Assistant]` 前綴；只有有工具事件時才加入 deterministic workflow 區塊，普通 OOC 仍保留在 `kp_ooc_log`。
+- 玩家訊息開頭的 `!` 不具 KP canon 特殊語意；manual canon 會正常推進 OpenAI canonical response chain。
+
+### 107. Review hardening：pregen claim、技能 migration 與 KP Assistant 文件同步
+
+- 手動角色卡在寫入 `state.pregens` 前即完成技能 canonicalization；預覽、claim 與後續 skill check 使用同一組 canonical keys。
+- legacy 與 router 的 `/coc usepregen` 共用一次性 `_claim_pregen()` boundary；選角不會自動骰 LUCK，玩家需輸入 `/coc luck roll`，完成後不可再次重骰。
+- `scripts.migrate_skill_names` 預設 dry-run，`--apply` 才會以單一 SQLite transaction 寫入，並回報掃描、變更與 numeric conflict merge 數量。
+- 更新 agentic Keeper spec，明確記錄 manual `!`／tool canonical event／普通 KP OOC 三條 persistence 路徑與新 marker。
+
+### 108. 預製角色改為玩家主動擲 LUCK
+
+- `/coc usepregen` 不再由系統自動骰 LUCK；角色先進入 `pending_pregen_luck`。
+- 玩家輸入 `/coc luck roll` 後才擲 `3d6 × 5`，結果寫入角色並清除 pending 狀態；完成後不可重骰。
+- `/coc start` 會阻擋尚未完成 LUCK roll 的角色，並同步更新玩家指令文件與 LUCK 設計規格。
+
+### 109. 完成整體 review 的資料保留修正
+
+- 移除 pregen constructor 中過時的 claim-time LUCK 註解，避免與玩家主動 `/coc luck roll` 流程矛盾。
+- extraction 與 persisted-skill migration 遇到非數字 alias collision 時保留兩組原始資料，不再靜默丟失 homebrew 或 malformed value。
+- 補上非數字 collision regression tests，並在 LUCK spec 明確記錄 `/coc luck roll` 是玩家觸發 Bot RNG，不接受未驗證的外部骰值。
