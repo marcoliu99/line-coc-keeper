@@ -1494,3 +1494,81 @@ LINE 的 reply token 只能用一次、而且**收到 webhook 後 60 秒內沒�
   要求 `roll_context`、缺少/非法 context 仍被 validation 擋下、合法 context 會真正擲骰；新增兩個完整 KP turn
   regression tests，分別確認 `game_resolution` 進 `state.log` 並推進 OpenAI chain，`ooc_randomizer` 留在
   `kp_ooc_log` 且 canonical chain 不前進。
+
+### 95. KP Assistant Explicit Canon：先建立純 parser/helper，尚未接入 runtime
+
+- **新增純 helper**：在 `app/keeper.py` 新增 `_parse_kp_explicit_canon(speaker_role, message_text)`，回傳
+  `(is_explicit_canon, body)`。只有 `speaker_role == "kp_assistant"` 才有資格觸發。
+- **marker 判斷規則**：只檢查 `message_text` 的第一個字元，並只對這個字元使用
+  `unicodedata.normalize("NFKC", ...)` 做判斷；ASCII `!` 與全形 `！` 視為相同。沒有 normalize 整段訊息，
+  也不改寫使用者原始正文，沿用 Discord `＠` bypass 那種「normalize 只作為判斷用途」的原則。
+- **正文處理規則**：成功辨識時移除最前面的 `!` 或 `！`，再對剩餘正文做 `lstrip()` 後回傳
+  `(True, 正文)`；如果移除 marker 後只剩空白，回傳 `(False, 原始 message_text)`，不視為 Explicit Canon。
+- **尚未改變行為**：這一步沒有修改 `run_turn()`、`state.log`、`kp_ooc_log`、Dice Creates Canon、
+  OpenAI `previous_response_id`、`commands.py`、`discord_bot.py`，也沒有新增任何 runtime 接線；目前 Bot 行為
+  完全不變。
+
+### 96. KP Assistant Explicit Canon：新增 persistence helper，仍未接入 runtime
+
+- **新增 persistence helper**：在 `app/keeper.py` 新增
+  `_commit_kp_explicit_canon_turn_result(state, message_text, final_text)`。`message_text` 預期已經是 Step 1
+  parser 移除 `!` / `！` 後的正文。
+- **沿用 state-lock 設計**：helper 會在 `with locks.get_state_lock(state.group_id):` 裡重新
+  `load_state(state.group_id)`，修改最新 state 後 `save_state(latest_state)`，最後用
+  `_sync_state_snapshot(state, latest_state)` 同步呼叫端的 snapshot。
+- **canonical log 寫入格式**：Explicit Canon 只會往 `state.log` 新增一筆人類 KP Assistant 命令：
+  `{"role": "user", "content": "[KP Assistant] " + message_text}`。不寫入 `!` / `！`、Discord 顯示名稱、
+  OOC host instruction wrapper、canonical game event wrapper、AI Keeper 的 `final_text`，也不寫入 deterministic
+  workflow 資訊；這不是 Dice Creates Canon。
+- **OOC 工作記憶保留**：同一輪仍會追加到 `kp_ooc_log`：
+  `{"role": "kp_assistant", "content": message_text}` 與 `{"role": "assistant", "content": final_text}`，並沿用
+  `_KP_OOC_LOG_MAX_MESSAGES` 裁切。
+- **重置 OpenAI canonical chain**：helper 每次成功寫入 Explicit Canon 時會把
+  `latest_state.openai_previous_response_id = ""`。這是刻意讓下一個正式回合不要只沿用舊 Responses API chain，
+  避免看不到新插入的 `state.log`。
+- **尚未改變行為**：這一步沒有修改 `run_turn()`、`_format_turn_message()`、
+  `_format_kp_canonical_history_message()`、Dice Creates Canon 判斷、`_kp_tool_result_creates_canon()`、
+  `commands.py`、`discord_bot.py`、`models.py` 或 provider code；Step 1 parser 和這個 persistence helper 仍未接入
+  runtime，因此目前 Bot 行為完全不變。
+
+### 97. KP Assistant Explicit Canon：接入 `run_turn()` runtime，保留 DCC 優先
+
+- **parser 接入位置**：`run_turn()` 現在會在建立 `turn_message` 前呼叫
+  `_parse_kp_explicit_canon(speaker_role, message_text)`，取得 `kp_explicit_canon` 與
+  `effective_message_text`。
+- **送給 AI 的正文**：`_format_turn_message(speaker_name, effective_message_text, speaker_role)` 會使用 parser
+  處理後的正文；因此 KP Assistant 使用 `!` 或 `！` 時，marker 不會送進 AI Keeper。普通玩家 path 因 parser
+  對非 `kp_assistant` 回傳 `(False, 原始 message_text)`，所以玩家輸入 `!我要踢開門` 仍是普通玩家訊息且內容不變。
+- **persistence 優先順序**：`run_turn()` 回合結束後仍先處理一般非 ephemeral 玩家回合；KP Assistant path 則依序是
+  Dice Creates Canon、Explicit Canon、普通 KP OOC。也就是 `kp_turn_creates_canon` 優先於
+  `kp_explicit_canon`。
+- **避免重複寫 canon**：如果 KP Assistant 輸入 `!` 同時成功觸發會 creates-canon 的 deterministic workflow，
+  只會走既有 Dice Creates Canon branch，不會再呼叫 Explicit Canon helper，也不會在 `state.log` 寫兩份。
+- **canonical / OOC 保存都用 effective text**：Dice Creates Canon branch 傳給
+  `_format_kp_canonical_history_message(...)` 的文字改用 `effective_message_text`，不會把 `!` / `！` marker 寫入
+  DCC canonical history；普通 KP OOC branch 也用 `effective_message_text`，沒有 marker 的既有 KP 訊息不受影響。
+- **範圍保持**：沒有修改 `_format_turn_message()`、`_format_kp_canonical_history_message()`、
+  `_kp_tool_result_creates_canon()`、tool permissions、OpenAI provider、previous-response provider 邏輯、
+  `commands.py`、`discord_bot.py` 或 `models.py`；`is_ephemeral` 仍然只由
+  `speaker_role == "kp_assistant"` 決定。
+
+### 98. KP Assistant Explicit Canon：補齊 Step 4 regression tests
+
+- **玩家 `!` regression**：先前已新增並通過兩個測試，確認 `speaker_role="player"` 時，`!我要踢開門`
+  在 parser 層回傳 `(False, 原始訊息)`，完整 `run_turn()` 也仍走普通 player routine；provider 收到的玩家訊息保留
+  `!`，不進 Explicit Canon、不寫 `kp_ooc_log`、`state.log` 不出現 `[KP Assistant]`。
+- **parser regression**：新增測試確認 KP Assistant 的 ASCII `!` 與全形 `！` 都能觸發 Explicit Canon，且只對第一個
+  marker 字元做 NFKC 判斷；正文不做整段 normalize。也確認 `!`、`！   ` 這類空 marker 不觸發，會回傳原始訊息。
+- **persistence helper regression**：新增直接測試 `_commit_kp_explicit_canon_turn_result(...)`，確認既有
+  `state.log` 保留、只新增一筆 `{"role": "user", "content": "[KP Assistant] ..."}`，不新增 assistant entry；
+  `kp_ooc_log` 仍保留 KP command + AI final text，且 `openai_previous_response_id` 會清空。
+- **runtime regression**：新增完整 `run_turn()` 測試，確認 ASCII `!` 與全形 `！` 都會在送給 AI Keeper 前移除 marker，
+  Explicit Canon 只把 `[KP Assistant] ...` 寫入 `state.log`，AI final text 只保留在 `kp_ooc_log`；本輪 provider 仍可收到
+  舊 `previous_response_id`，但完成後會清空 chain。另補普通 KP OOC regression，確認沒有 `!` 時仍不寫
+  `state.log`，`kp_ooc_log` 與 canonical chain 行為維持原樣。
+- **DCC priority regression**：新增 `! + roll_dice(game_resolution)` 完整測試，確認 Dice Creates Canon 優先於
+  Explicit Canon：`state.log` 只新增既有 DCC 的 canonical user entry + assistant final text，canonical history 不含
+  `!` marker，包含 deterministic workflow/result，不額外寫 `[KP Assistant] ...`，不寫 `kp_ooc_log`，且
+  `openai_previous_response_id` 依 DCC 規則更新成 provider response id，而不是被 Explicit Canon helper 清空。
+- **production code 未改**：本節只補 `tests/test_kp_assistant_v2.py` regression tests 與 changelog，沒有修改
+  `app/keeper.py` 或其他 production code。
