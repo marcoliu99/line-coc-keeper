@@ -212,8 +212,110 @@ pending_scenario_upload: dict | None = None
         [/coc scenario use <劇本ID>]
                        |
                        v
- [選定此 PDF，建立章節化 RAG 索引]
+[選定此 PDF，建立章節化 RAG 索引]
 ```
+
+### 研究後採用的 PDF 解析方法
+
+PDF 解析採「成本由低到高、證據由原始到語意」的分層策略。每一層都保留上一層的原始結果，不讓 OCR 或 Vision 取代原始 PDF evidence：
+
+| 層級 | 方法 | 何時使用 | 主要用途 |
+| --- | --- | --- | --- |
+| A. 身份與結構 | PDF bytes SHA-256、檔名/metadata、頁數、書籤、PyMuPDF text layer | 所有上傳 | 去重、章節切分、低成本預覽 |
+| B. 版面證據 | text blocks、圖片物件、`get_drawings()`、頁面 render | 有圖形、低文字量或需要保存圖片時 | 分辨掃描頁、向量地圖、角色卡與手卡資產 |
+| C. 本機 OCR | PyMuPDF OCR 或 Tesseract；保留頁碼、座標、confidence | 沒有可用文字層，或角色卡數值需要讀取時 | 取得可搜尋文字與欄位位置，不直接決定語意 |
+| D. 文件正規化 | MarkItDown + `markitdown-ocr` | 需要保留文件段落、表格與 embedded image 描述時 | 產出較適合 RAG 的 Markdown 輸入；不是唯一真相來源 |
+| E. Vision/LLM | 結構化 tool schema，要求 page/evidence/欄位候選 | 角色卡、地圖、手卡或 OCR 後仍有欄位歧義時 | 說明視覺語意與欄位關係；不得補寫未見於頁面的事實 |
+| F. 確定性驗證 | schema、頁碼範圍、章節 kind、hash、相似度與原子寫入 | 所有完整解析 | 防止錯誤資料污染劇本庫與 RAG |
+
+採用這個方法而不是「整份 PDF 直接送 Vision」的原因：
+
+1. 精確重複檔案可以在任何 OCR/LLM 前由 bytes hash 判定，掃描 PDF 沒有文字層也不會失去去重能力。
+2. PyMuPDF 的文字層便宜且可保留頁面與書籤；掃描 PDF 才進 OCR，避免每次上傳都付出同等成本。
+3. `get_images()` 只看得到 embedded raster image；向量地圖要依 `get_drawings()` 或頁面 render 才能保留，因此圖片保存條件不能只依文字長度或 embedded image 數量。
+4. OCR 適合文字，Vision 適合版面與語意；兩者都必須把結果連回 page/evidence，後續角色數值、地圖節點與 handout 分類才能被檢查。
+5. 完整解析應先在暫存目錄完成 schema validation，再以 atomic replace 更新劇本庫；任何一頁失敗都不能破壞目前可用版本。
+
+官方方法參考：[PyMuPDF OCR recipe](https://pymupdf.readthedocs.io/en/latest/recipes-ocr.html) 說明無文字層頁面需要 OCR；[PyMuPDF drawing API](https://pymupdf.readthedocs.io/en/latest/page.html) 可取得向量 path；[MarkItDown OCR plugin](https://github.com/microsoft/markitdown/tree/main/packages/markitdown-ocr) 適合 embedded image 的 Vision OCR；[Tesseract TSV/hOCR](https://github.com/tesseract-ocr/tesseract/blob/main/doc/tesseract.1.asc) 可保存 bounding boxes 與 confidence。
+
+本節描述建議的解析方法，不把所有方法都視為目前完成的實作。現有流程已具備文字抽取、圖片保存、部分 OCR/Vision 與原子劇本庫更新；逐欄 `evidence/confidence`、完整 drawing metadata 與 parse workspace 的 schema 驗證仍需按實作順序補上後，才能列為完成項目。
+
+### 分層解析與原子提交流程圖
+
+```text
+[收到 PDF]
+    |
+    v
+[保存 bytes hash + 暫存 source.pdf]
+    |
+    +--> [exact hash 命中?] --是--> [回報已存在，不做完整解析]
+    |
+    否
+    v
+[前頁預覽：PyMuPDF text layer + metadata/bookmarks]
+    |
+    +--> [preview 相似?] --是--> [保存 pending，等待 GM reparse/cancel]
+    |
+    否
+    v
+[建立 parse workspace]
+    |
+    +--> [每頁文字/圖片/drawing/書籤 evidence]
+    |              |
+    |              +--> [文字層不足?] --是--> [OCR fallback]
+    |              |
+    |              +--> [graphic content?] --是--> [render page image]
+    |              |
+    |              +--> [角色卡/地圖/手卡歧義?] --是--> [Vision structured analysis]
+    |
+    v
+[合併文字、圖片、章節、索引、pregens]
+    |
+    v
+[schema + page range + source hash + chapter validation]
+    |
+    +--> [失敗] --> [刪除 workspace，保留舊版本與 pending]
+    |
+    通過
+    v
+[原子更新 scenario library 目錄]
+    |
+    v
+[建立/更新 chapter-scoped RAG index]
+    |
+    v
+[回填目前 GroupState，保留角色/位置契約]
+```
+
+### 角色候選與劇本庫交接流程圖
+
+```text
+[完整 PDF parse result]
+        |
+        +--> [章節/資產分類] --> [image_assets + page evidence]
+        |
+        +--> [pregen extraction]
+                         |
+                         v
+             [Character system normalize]
+             dictionary + OCR/Vision evidence
+                         |
+                         v
+             [公式/技能/數值 schema validation]
+                    /              \\
+                 通過              低信心/衝突
+                  |                    |
+                  v                    v
+          [reconcile into pool]   [GM review queue]
+                  |                    |
+                  +---------+----------+
+                            v
+              [scenario library stores source]
+              [GroupState stores live character state]
+```
+
+這個交接規則避免兩種資料混在一起：劇本庫保存「作者在 PDF 寫了什麼」，`GroupState` 保存「這一團玩家目前活成什麼狀態」。因此重新解析可以更新 evidence、pregen candidate 與圖片，但不能悄悄覆蓋玩家當前 HP、SAN、Luck、背包或位置。
+
 ### 相似度規則
 
 比對採可解釋的本地規則，不要求外部 embedding API：
@@ -445,3 +547,19 @@ KP Assistant 的圖片流程是：先以 `search_scenario_images(query, image_ty
 刻意縮小範圍、沒有做的部分：分類器仍分不出「character_sheet 頁面到底是給玩家選的預製調查員、還是 KP 專用的 NPC／敵人數值」——兩者都會被歸成 `character_sheet` 進而預設 `kp_only`。玩家選預製角色本來就是走 `/coc pregens`／`usepregen`（`app/pregen_extractor.py`），完全不經過 `show_scenario_image` 這個工具，所以這個保守預設不影響玩家選角，只是連帶也把「本來就該給玩家看」的預製角色圖片頁面預設藏起來；KP 仍可用 KP Assistant 身分呼叫 `show_scenario_image` 明確秀出來。也沒有做規格提到的「指定玩家」這一層（只有 public／kp_only 兩級，不是 public／指定玩家／KP 專用三級）——`show_scenario_image` 既有的 `investigator` 參數（私訊給特定角色）仍可用，只是它控制的是「私訊給誰」，不是「誰能觸發這次展示」。
 
 **2026-09 複查追加修正：** 程式碼與這份文件逐條核對時，另外抓到並修正了四個問題——`build_chapters()` 對「所有書籤同一層級」的 PDF（例如上面 The Lightless Beacon 樣本）原本會把每個書籤都拆成獨立 playable 章節，導致兩章滑動視窗涵蓋不到開場（已修正為收斂成一個章節＋`sections`）；`/coc scenario reparse` 原本沒有把 KP 確認過的候選劇本 ID 帶進 `save_scenario`，導致內容有差異的重新解析會另外建立一份而不是更新既有目錄（已修正，新增 `content_similar()` 做完整內容二次比對）；`handle_pdf_upload` 偵測到相似劇本、要寫入 `pending_scenario_upload` 前沒有在鎖底下重新載入狀態，可能蓋掉比對期間發生的其他回合（已修正）；圖片 `visibility` 沒有真正的存取控制（見上一段，已補上 kp_only／public 兩級的實際過濾與拒絕，範圍刻意縮小）。詳見 `docs/changelog.md` 與 `tests/test_scenario_library.py`／`tests/test_kp_assistant_v2.py`。
+
+
+**2026-09 PDF 混合解析與圖片提取修正 (Mixed Extraction Fix)：**
+在整合 MarkItDown OCR 的混合解析模式時，因為 OCR 會從圖片中抽出大量文字（超過 `_LOW_TEXT_THRESHOLD` 200 字），導致原本依賴 `len(text) < 200` 來決定是否保留圖片的邏輯失效，進而造成 `page_images` 遺失所有圖片。修正後的設計是：**將「保存圖片資產」與「呼叫 Claude Vision 分析空間佈局」徹底解耦**。只要 `has_graphic_content` 為真，就強制呼叫 `_render_page_png` 保存圖檔供玩家查看；而 `len(text) < 200` 的門檻僅用來決定是否要花費 Token 送交 Claude Vision 抓取 `scene_map`。
+
+
+
+
+
+**2026-09 大型劇本與 Discord 容量限制之解法評估 (Future Architectures)：**
+因應 Discord 附件上傳的 25MB 容量限制，大型長期戰役劇本無法透過單一訊息上傳。為了避免實作高複雜度的「多檔暫存與記憶體拼接 (In-memory Stitching)」，同時改善 KP 必須手動切割 PDF 的極差 UX，目前規劃以下兩種未來可能的擴充方向，暫不實作：
+
+1. **伺服器本地端直接載入 (Local File Loading)**：
+   對於自架伺服器或有權限的團隊，KP 可直接將大型 PDF 放入伺服器的 `imports/` 資料夾，並使用 `/coc scenario import <filename>` 繞過 Discord 網路傳輸，達成 0 延遲無容量限制載入。
+2. **系列作式關聯 (Campaign Box-Set Approach)**：
+   保留檔案切割，但不做全檔合併。將 `part1.pdf`, `part2.pdf` 視為同一個大戰役下的獨立「子劇本」，並在系統中引入 `/coc campaign link <id1> <id2>` 的關聯機制。這將大幅降低單次解析的記憶體壓力，但未來須處理跨劇本的目錄參照跳轉。
