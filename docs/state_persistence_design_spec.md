@@ -371,7 +371,7 @@ value 內容：
 ### 建立時機
 
 1. **手動**：`/coc checkpoint [名稱]`，僅限目前登記的 KP Assistant 或 Discord 上具有名稱為
-   `Keeper` 的角色的人（LINE 沒有這個 role context，因此只使用 KP Assistant 身分）。
+   `Keeper` 的角色的人。
 2. **自動**：進入 `start_combat` 的 service/command 邊界時，在任何 `CombatState` mutation 之前，
    自動建立一個 `reason="auto_combat_start"` 的節點。純 `app/combat.py` 不直接操作 SQLite；若
    同一個 combat-start event 重試，必須用 event id 做 idempotency，不能產生重複自動節點。

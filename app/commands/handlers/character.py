@@ -23,7 +23,7 @@ async def handle_character_command(
     parts: list[str],
 ) -> None:
     char = None
-    sub = parts[1] if len(parts) > 1 else ""
+    sub = parts[1].casefold() if len(parts) > 1 else ""
 
     if sub == "characters":
         state = load_state(conversation_id)
