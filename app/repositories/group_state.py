@@ -13,6 +13,7 @@ into the database.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import shutil
 import logging
@@ -43,17 +44,23 @@ def _safe_id(group_id: str) -> str:
     return _SAFE_ID_RE.sub("_", group_id)
 
 
+def _log_group_id(group_id: str) -> str:
+    """Use a stable, non-reversible identifier in operational logs."""
+    return hashlib.sha256(group_id.encode("utf-8")).hexdigest()[:12]
+
+
 def load_state(group_id: str) -> GroupState:
     data = db.get_json("group_states", group_id)
     if data is None:
         return GroupState(group_id=group_id)
-    state = GroupState.from_dict(data)
-    if state.schema_version > GroupState.CURRENT_SCHEMA_VERSION:
-        raise ValueError(
-            f"Unsupported GroupState schema_version={state.schema_version}; "
-            f"current={GroupState.CURRENT_SCHEMA_VERSION}"
+    try:
+        return GroupState.from_dict(data)
+    except ValueError:
+        _logger.exception(
+            "state_load_failure group_id=%s reason=unsupported_schema",
+            _log_group_id(group_id),
         )
-    return state
+        raise
 
 
 def save_state(state: GroupState, *, reason: str = "command") -> None:
@@ -83,7 +90,7 @@ def save_state(state: GroupState, *, reason: str = "command") -> None:
                     and int(current.get("state_revision", 0)) != state.state_revision
                 ):
                     raise StateRevisionConflict(
-                        f"state revision conflict for {state.group_id}: "
+                        f"state revision conflict for {_log_group_id(state.group_id)}: "
                         f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
                     )
                 _save_state_unlocked(state, reason=reason, conn=conn)
@@ -91,7 +98,7 @@ def save_state(state: GroupState, *, reason: str = "command") -> None:
         current_revision = current.get("state_revision", 0) if current else None
         _logger.warning(
             "state_save_revision_conflict group_id=%s loaded_revision=%s current_revision=%s reason=%s duration_ms=%s",
-            state.group_id, state.state_revision, current_revision, reason,
+            _log_group_id(state.group_id), state.state_revision, current_revision, reason,
             int((time.monotonic() - started) * 1000),
         )
         raise
@@ -150,13 +157,13 @@ def _save_state_unlocked(
     except Exception:
         _logger.exception(
             "state_save_failure group_id=%s attempted_revision=%s timeline_id=%s duration_ms=%s transaction=rolled_back",
-            state.group_id, next_revision, state.timeline_id, int((time.monotonic() - started) * 1000),
+            _log_group_id(state.group_id), next_revision, state.timeline_id, int((time.monotonic() - started) * 1000),
         )
         raise
     state.state_revision = next_revision
     _logger.info(
         "state_save_success group_id=%s revision=%s timeline_id=%s reason=%s duration_ms=%s",
-        state.group_id, state.state_revision, state.timeline_id, reason, int((time.monotonic() - started) * 1000),
+        _log_group_id(state.group_id), state.state_revision, state.timeline_id, reason, int((time.monotonic() - started) * 1000),
     )
 
 

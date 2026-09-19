@@ -170,7 +170,14 @@ def add_enemy_card_to_combat(state: GroupState, card_id: str) -> CombatState:
         )
     )
     state.combat.order.sort(key=lambda c: -c.dex)
-    _mark_round_start_abilities(state)
+    # A card entering after the initial round has already passed its
+    # round_start window. It will become eligible at the next round boundary.
+    # Cards added during the initial setup still get the first round marker.
+    if state.combat.round_number == 1 and not any(
+        key.startswith("1:") and ":turn_start:" in key
+        for key in state.combat.processed_timings
+    ):
+        _mark_round_start_abilities(state)
     if current_id:
         for i, c in enumerate(state.combat.order):
             if c.combatant_id == current_id:
@@ -468,8 +475,11 @@ def add_combat_effect(
     source_id: str = "",
     public_description: str = "",
 ) -> dict[str, Any]:
-    combatant = _find_combatant(state, target_name)
-    if not combatant:
+    normalized_target = (target_name or "").strip().lower()
+    is_environment = normalized_target in {"environment", "global", "環境", "場景"}
+    is_all = normalized_target in {"all", "全體", "所有人"}
+    combatant = None if is_environment or is_all else _find_combatant(state, target_name)
+    if not combatant and not is_environment and not is_all:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
     if timing not in {"round_start", "turn_start", "turn_end", "round_end"}:
         return {"ok": False, "error": f"不支援的效果時點：{timing}"}
@@ -479,11 +489,12 @@ def add_combat_effect(
     if damage_error:
         return {"ok": False, "error": f"無法解析效果傷害：{damage_error}"}
 
+    target_id = "__environment__" if is_environment else "__all__" if is_all else combatant.combatant_id
     effect = EffectState(
         id=f"effect-{uuid.uuid4().hex[:8]}",
         label=label,
         source_id=source_id,
-        target_id=combatant.combatant_id,
+        target_id=target_id,
         timing=timing,
         remaining_rounds=remaining_rounds,
         damage=damage,
@@ -495,8 +506,8 @@ def add_combat_effect(
     return {
         "ok": True,
         "effect_id": effect.id,
-        "target": combatant.display_name,
-        "target_id": combatant.combatant_id,
+        "target": "全體" if is_all else "環境" if is_environment else combatant.display_name,
+        "target_id": target_id,
         "label": effect.label,
         "timing": effect.timing,
         "remaining_rounds": effect.remaining_rounds,
@@ -519,7 +530,9 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
     remaining: list[EffectState] = []
     timing_failed = False
     for effect in state.combat.effects:
-        applies = effect.timing == timing and (not target_id or effect.target_id == target_id)
+        applies = effect.timing == timing and (
+            not target_id or effect.target_id == target_id or effect.target_id == "__all__"
+        )
         effect_key = f"{key}:effect:{effect.id}"
         if applies and effect_key in state.combat.processed_timings:
             remaining.append(effect)
@@ -537,19 +550,26 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                 })
                 timing_failed = True
             else:
-                result = apply_combat_damage(
-                    state,
-                    effect.target_id,
-                    raw,
-                    damage_type=effect.damage_type,
-                    tags=effect.tags,
-                    source_id=effect.source_id,
+                targets = (
+                    [combatant.combatant_id for combatant in state.combat.order if not combatant.defeated]
+                    if effect.target_id == "__all__"
+                    else [effect.target_id]
                 )
-                result["effect_id"] = effect.id
-                results.append(result)
-                applied = result.get("ok") is True
-                if not applied:
-                    timing_failed = True
+                applied = True
+                for target in targets:
+                    result = apply_combat_damage(
+                        state,
+                        target,
+                        raw,
+                        damage_type=effect.damage_type,
+                        tags=effect.tags,
+                        source_id=effect.source_id,
+                    )
+                    result["effect_id"] = effect.id
+                    results.append(result)
+                    if not result.get("ok"):
+                        applied = False
+                        timing_failed = True
         elif applies:
             applied = True
         if applied:
@@ -863,30 +883,60 @@ def resolve_enemy_action(
     effect_result: dict[str, Any] = {"ok": True, "applied": False}
     if plan["selected_action"] == "special_ability":
         ability = next((a for a in card.abilities if a.id == plan["selected_id"]), None)
-        if ability:
-            usage = ability.usage
-            if usage.get("per_combat") is not None and usage.get("used_total", 0) >= usage["per_combat"]:
-                return {"ok": False, "error": "特殊能力本場戰鬥的使用次數已耗盡"}
-            if usage.get("per_round") is not None and usage.get("used_this_round", 0) >= usage["per_round"]:
-                return {"ok": False, "error": "特殊能力本輪的使用次數已耗盡"}
-            if ability.current_cooldown > 0:
-                return {"ok": False, "error": "特殊能力仍在冷卻中"}
-            if ability.effect.get("on_success") == "apply_effect":
-                if outcome is None:
-                    return {"ok": False, "error": "此特殊能力需要提供檢定結果 outcome"}
-                success = bool(outcome.get("success", outcome.get("passed", outcome.get("ok", False))))
-                if success:
-                    effect_result = _apply_ability_effect(state, ability, plan.get("target_ids", []))
-                    if not effect_result.get("ok"):
-                        return {"ok": False, "error": effect_result["error"]}
-            ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
-            ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
-            ability.current_cooldown = ability.cooldown_rounds
-            trigger_type = (ability.trigger or {}).get("type")
-            if trigger_type == "round_start":
-                card.status_tags = [tag for tag in card.status_tags if tag != _round_start_trigger_tag(ability.id)]
-            elif trigger_type == "on_damage_taken":
-                card.status_tags = [tag for tag in card.status_tags if tag != _damage_taken_trigger_tag()]
+        if not ability:
+            return {"ok": False, "error": "行動計畫對應的特殊能力不存在，請重新規劃"}
+        usage = ability.usage
+        if usage.get("per_combat") is not None and usage.get("used_total", 0) >= usage["per_combat"]:
+            return {"ok": False, "error": "特殊能力本場戰鬥的使用次數已耗盡"}
+        if usage.get("per_round") is not None and usage.get("used_this_round", 0) >= usage["per_round"]:
+            return {"ok": False, "error": "特殊能力本輪的使用次數已耗盡"}
+        if ability.current_cooldown > 0:
+            return {"ok": False, "error": "特殊能力仍在冷卻中"}
+        if ability.effect.get("on_success") == "apply_effect":
+            if outcome is None:
+                return {"ok": False, "error": "此特殊能力需要提供檢定結果 outcome"}
+            success = bool(outcome.get("success", outcome.get("passed", outcome.get("ok", False))))
+            if success:
+                effect_result = _apply_ability_effect(state, ability, plan.get("target_ids", []))
+                if not effect_result.get("ok"):
+                    return {"ok": False, "error": effect_result["error"]}
+        ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
+        ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
+        ability.current_cooldown = ability.cooldown_rounds
+        trigger_type = (ability.trigger or {}).get("type")
+        if trigger_type == "round_start":
+            card.status_tags = [tag for tag in card.status_tags if tag != _round_start_trigger_tag(ability.id)]
+        elif trigger_type == "on_damage_taken":
+            card.status_tags = [tag for tag in card.status_tags if tag != _damage_taken_trigger_tag()]
+    elif plan["selected_action"] == "attack":
+        attack = next((item for item in card.attacks if item.id == plan.get("selected_id")), None)
+        if not attack:
+            return {"ok": False, "error": "行動計畫對應的攻擊不存在，請重新規劃"}
+        target_id = next((item for item in plan.get("target_ids", []) if any(
+            combatant.combatant_id == item and not _is_skippable(state, combatant)
+            for combatant in state.combat.order
+        )), "")
+        if not target_id:
+            return {"ok": False, "error": "攻擊目標已無法行動，請重新規劃"}
+        if outcome is None:
+            return {"ok": False, "error": "攻擊需要提供正式檢定結果 outcome"}
+        hit = bool(outcome.get("hit", outcome.get("success", outcome.get("ok", False))))
+        if hit:
+            raw_damage = outcome.get("damage", outcome.get("raw_damage"))
+            if not isinstance(raw_damage, int) or raw_damage < 0:
+                return {"ok": False, "error": "命中攻擊需要非負整數 damage"}
+            effect_result = apply_combat_damage(
+                state,
+                target_id,
+                raw_damage,
+                damage_type=outcome.get("damage_type", "physical"),
+                tags=outcome.get("tags") or [],
+                source_id=attack.id,
+            )
+            if not effect_result.get("ok"):
+                return effect_result
+        else:
+            effect_result = {"ok": True, "applied": False, "hit": False}
     plan["resolved"] = True
     return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
 

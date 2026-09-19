@@ -47,6 +47,22 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(loaded.state_revision, 1)
         self.assertIn("state_save_success", "\n".join(captured.output))
 
+    def test_state_save_logs_hash_instead_of_raw_group_id(self):
+        group_id = "discord-sensitive-group-id"
+        with self.assertLogs("app.repositories.group_state", level=logging.INFO) as captured:
+            group_state.save_state(GroupState(group_id))
+        output = "\n".join(captured.output)
+        self.assertIn("state_save_success", output)
+        self.assertNotIn(group_id, output)
+
+    def test_legacy_schema_data_uses_explicit_v0_migration(self):
+        state = GroupState.from_dict({"group_id": "legacy", "schema_version": 0})
+        self.assertEqual(state.schema_version, GroupState.CURRENT_SCHEMA_VERSION)
+
+    def test_future_schema_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported GroupState schema_version=999"):
+            GroupState.from_dict({"group_id": "future", "schema_version": 999})
+
     def test_checkpoint_success_logs_started_and_success(self):
         state = GroupState("discord-group-checkpoint-started")
         with self.assertLogs("app.checkpoints", level=logging.INFO) as captured:

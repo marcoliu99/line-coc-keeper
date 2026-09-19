@@ -466,9 +466,9 @@ TOOLS = [
     {
         "name": "resolve_enemy_action",
         "description": (
-            "敵人 plan 對應的行動已敘事/擲骰處理後呼叫，用來消耗特殊能力次數與冷卻。"
+            "敵人 plan 對應的行動已敘事/擲骰處理後呼叫；特殊能力會消耗次數與冷卻，攻擊命中時會在此正式套用傷害。"
             "若 plan 的特殊能力 effect 宣告 on_success=apply_effect，必須把正式檢定結果放在 outcome.success；"
-            "只有成功時系統才會建立效果。"
+            "攻擊則傳 outcome.hit 與 outcome.damage；只有成功的正式結果才會改變戰鬥狀態。"
         ),
         "input_schema": {
             "type": "object",
@@ -476,8 +476,14 @@ TOOLS = [
                 "plan_id": {"type": "string"},
                 "outcome": {
                     "type": "object",
-                    "description": "特殊能力檢定的正式結果，例如 {success: true} 或 {success: false}",
-                    "properties": {"success": {"type": "boolean"}},
+                    "description": "特殊能力使用 success；攻擊使用 hit 與命中後的非負整數 damage。",
+                    "properties": {
+                        "success": {"type": "boolean"},
+                        "hit": {"type": "boolean"},
+                        "damage": {"type": "integer", "minimum": 0},
+                        "damage_type": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                    },
                 },
             },
             "required": ["plan_id"],
@@ -504,7 +510,8 @@ TOOLS = [
     {
         "name": "add_combat_effect",
         "description": (
-            "替戰鬥中的角色或敵人加入固定時點效果，例如燃燒、流血、場景壓迫。"
+            "替戰鬥中的角色、敵人、全體或環境加入固定時點效果，例如燃燒、流血、場景壓迫。"
+            "target 可填角色名稱、all/全體或 environment/環境；環境效果可作為全場狀態，傷害效果請指定角色或全體。"
             "damage 可填固定整數字串（例如 '1'）或骰式（例如 '1d6+1'）；"
             "效果會在 round/turn timing 由系統正式結算。"
         ),
@@ -1840,7 +1847,8 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 
 敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
 冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理，若是
-special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程；處理完後呼叫 resolve_enemy_action
+special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程；若是 attack，將正式命中結果與傷害值放入
+outcome，再呼叫 resolve_enemy_action 統一套用護甲與 HP 變更。特殊能力也要在檢定完成後呼叫 resolve_enemy_action
 消耗該能力次數。plan 裡的 private_reason、敵人能力真名、POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，
 不得寫進公開回覆。公開敘事只使用 public_hint，或用玩家能感受到的現象描述。"""
 

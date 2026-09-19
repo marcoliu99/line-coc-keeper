@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -10,6 +11,10 @@ from app import db, locks
 from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
+
+
+def _log_group_id(group_id: str) -> str:
+    return hashlib.sha256(group_id.encode("utf-8")).hexdigest()[:12]
 
 
 def _id() -> str:
@@ -110,7 +115,7 @@ def create_digest(state: GroupState, *, scene_label: str = "") -> dict:
             db.set_json_tx(conn, "scene_digests", f"{state.group_id}:{digest_id}", entry)
     _logger.info(
         "scene_digest_success group_id=%s digest_id=%s revision=%s timeline_id=%s duration_ms=%s",
-        state.group_id, digest_id, state.state_revision, entry["timeline_id"],
+        _log_group_id(state.group_id), digest_id, state.state_revision, entry["timeline_id"],
         int((time.monotonic() - started) * 1000),
     )
     return entry
@@ -148,10 +153,10 @@ def clean_digest(group_id: str, digest_id: str) -> None:
     except Exception:
         _logger.exception(
             "scene_digest_clean_failure group_id=%s digest_id=%s duration_ms=%s transaction=rolled_back",
-            group_id, digest_id, int((time.monotonic() - started) * 1000),
+            _log_group_id(group_id), digest_id, int((time.monotonic() - started) * 1000),
         )
         raise
     _logger.info(
         "scene_digest_clean_success group_id=%s digest_id=%s duration_ms=%s",
-        group_id, digest_id, int((time.monotonic() - started) * 1000),
+        _log_group_id(group_id), digest_id, int((time.monotonic() - started) * 1000),
     )

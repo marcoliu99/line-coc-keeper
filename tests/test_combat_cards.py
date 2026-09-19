@@ -143,6 +143,50 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(second_plan["selected_action"], "attack")
 
+    def test_resolve_enemy_attack_applies_authoritative_damage(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Attacker", 60, 14, attacks=[
+            {"id": "bite", "label": "Bite", "skill_value": 50, "damage": "1D4"},
+        ])
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Attacker")
+        plan = combat.plan_enemy_turn(state)
+
+        result = combat.resolve_enemy_action(
+            state, plan["plan_id"], outcome={"hit": True, "damage": 4, "damage_type": "physical"}
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["effect"]["hp_after"], 8)
+        self.assertEqual(next(c for c in state.combat.order if c.is_pc).hp, 8)
+
+    def test_resolve_enemy_attack_requires_formal_outcome(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Attacker", 60, 14)
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Attacker")
+        plan = combat.plan_enemy_turn(state)
+
+        result = combat.resolve_enemy_action(state, plan["plan_id"])
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(plan.get("resolved", False))
+
+    def test_missing_planned_ability_is_a_retryable_error(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Ability Enemy", 60, 14, abilities=[
+            {"id": "special", "name": "Special", "trigger": {"type": "first_available"}},
+        ])
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Ability Enemy")
+        plan = combat.plan_enemy_turn(state)
+        state.combat.enemy_cards[plan["enemy_card_id"]].abilities.clear()
+
+        result = combat.resolve_enemy_action(state, plan["plan_id"])
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(plan.get("resolved", False))
+
     def test_resolve_enemy_action_is_idempotent_for_same_plan(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -427,6 +471,26 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(next_round["selected_action"], "special_ability")
         self.assertEqual(next_round["selected_id"], "round_song")
 
+    def test_round_start_ability_added_mid_round_waits_for_next_round(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.advance_turn(state)
+        combat.add_npc(
+            state,
+            "Late Watcher",
+            60,
+            14,
+            abilities=[{
+                "id": "late-round-call",
+                "name": "Late Round Call",
+                "priority": 10,
+                "trigger": {"type": "round_start"},
+            }],
+        )
+        card = next(card for card in state.combat.enemy_cards.values() if card.name == "Late Watcher")
+
+        self.assertNotIn("_trigger:round_start:late-round-call", card.status_tags)
+
     def test_on_damage_taken_trigger_fires_after_enemy_damage(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -601,6 +665,22 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(state.combat.order[0].hp, 11)
         self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
         self.assertEqual(state.combat.effects, [])
+
+    def test_environment_and_all_combat_effects_are_supported(self):
+        state = self._state_with_two_pcs()
+        combat.start_combat(state)
+        environment = combat.add_combat_effect(
+            state, "environment", "Smoke", timing="round_start", tags=["smoke"]
+        )
+        all_damage = combat.add_combat_effect(
+            state, "all", "Fire", timing="round_start", damage="1", damage_type="fire"
+        )
+
+        self.assertTrue(environment["ok"])
+        self.assertTrue(all_damage["ok"])
+        state.combat.processed_timings.clear()
+        combat.process_timing(state, "round_start")
+        self.assertEqual(sorted(c.hp for c in state.combat.order), [11, 11])
 
     def test_pc_turn_start_effect_triggers_when_advance_turn_reaches_pc(self):
         state = self._state_with_pc()

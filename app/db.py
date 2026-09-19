@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
-from app.config import BACKUP_DIR, BACKUP_INTERVAL_MINUTES, BACKUP_KEEP_COUNT, DB_PATH
+from app.config import BACKUP_DIR, BACKUP_INTERVAL_MINUTES, BACKUP_KEEP_COUNT, DATA_DIR, DB_PATH
 
 _logger = logging.getLogger(__name__)
 
@@ -60,13 +60,28 @@ CREATE TABLE IF NOT EXISTS {table} (
 _TRANSIENT_ROOTS = tuple(Path(path) for path in ("/tmp", "/var/tmp", "/private/tmp"))
 
 
-def _warn_if_path_looks_transient(path: Path) -> None:
+def _warn_if_path_looks_transient(label: str, path: Path) -> None:
     resolved = path.expanduser().resolve()
     if any(resolved == root or root in resolved.parents for root in _TRANSIENT_ROOTS):
         _logger.warning(
-            "DB_PATH (%s) looks transient; configure DB_PATH/DATA_DIR/BACKUP_DIR to a persistent path",
-            resolved,
+            "%s (%s) looks transient; configure DB_PATH/DATA_DIR/BACKUP_DIR to a persistent path",
+            label, resolved,
         )
+
+
+def _validate_storage_paths() -> None:
+    paths = {"DB_PATH": DB_PATH, "DATA_DIR": DATA_DIR, "BACKUP_DIR": BACKUP_DIR}
+    for label, configured_path in paths.items():
+        path = Path(configured_path).expanduser().resolve()
+        directory = path.parent if label == "DB_PATH" else path
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _warn_if_path_looks_transient(label, path)
+        if not os.access(directory, os.W_OK):
+            raise RuntimeError(f"{label} is not writable: {path}")
+    _logger.info(
+        "storage_paths_ready DB_PATH=%s DATA_DIR=%s BACKUP_DIR=%s",
+        DB_PATH, DATA_DIR, BACKUP_DIR,
+    )
 
 
 @contextmanager
@@ -99,7 +114,7 @@ def _connect() -> Iterator[sqlite3.Connection]:
 
 
 def _ensure_tables() -> None:
-    _warn_if_path_looks_transient(DB_PATH)
+    _validate_storage_paths()
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute("PRAGMA journal_mode=WAL")  # set once here — see _connect's docstring

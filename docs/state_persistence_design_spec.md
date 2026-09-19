@@ -307,8 +307,8 @@ def backup_now(reason: str = "scheduled") -> Path:
 `backup()` API 會在來源連線仍在使用中的情況下產生一份一致的複本，這是 SQLite 官方就是為了這個
 情境設計的介面。
 
-檔名格式：`coc_bot-{YYYYMMDD-HHMMSS}-{reason}.db`（`reason` 例如 `scheduled`／`manual`／
-`pre-rollback`，方便之後人工排查是哪一種情境觸發的備份）。
+檔名格式：`coc_bot-{YYYYMMDD-HHMMSS}-{unique}-{reason}.db`（`unique` 是短 UUID，避免同一秒內
+多個 process 或手動備份互相覆蓋；`reason` 例如 `scheduled`／`manual`／`pre-rollback`，方便之後人工排查是哪一種情境觸發的備份）。
 
 排程：沿用專案既有的背景任務模式（`app/legacy_commands.py`
 的`_spawn_post_turn_maintenance`那種「fire-and-forget asyncio task」寫法，不新增排程框架依賴）

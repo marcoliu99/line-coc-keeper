@@ -330,6 +330,8 @@ EnemyTurnPlan(
      反向 key，以相容既有狀態。未設定距離不代表 `engaged`，而是進入最後的隨機 fallback。
 7. 產生公開敘事提示，但 private_reason 不進玩家回覆。
 8. Keeper 執行 required rolls，完成後呼叫 action resolution tool 寫回 usage/cooldown/effects/damage。
+   `attack` 的命中結果與傷害骰結果必須放進 `outcome.hit`／`outcome.damage`，由 resolver 統一套用護甲與 HP；
+   不可只把 attack plan 標記完成而另外依賴未受約束的旁路更新。
 
 `resolve_enemy_action(plan_id)` 必須是 idempotent：第一次成功 resolve 才會消耗 usage/cooldown，之後同一個 `plan_id` 重複呼叫只回報 `already_resolved=True`，不得重複扣特殊能力次數。這保護 LLM/tool retry、網路重送與主持誤按造成的重複結算。
 
@@ -413,7 +415,8 @@ SpecialAbility(
 `round_end` 只在 initiative index 從最後一位跨回 index 0 時處理；單純推進到同一輪的下一位不會
 結算 round-end effects。效果結算以 timing key 加上 effect id 做冪等記錄：同一時點內已成功的 effect
 不會因另一個 effect 失敗而在 retry 時重複套用，失敗的 effect 會保留等待修正。
-   - 場景火勢擴散、煙霧、坍塌、儀式進度等環境效果
+   - 場景火勢擴散、煙霧、坍塌、儀式進度等環境效果。環境／全體效果可用保留 target
+     `environment`／`all` 註冊；需要造成傷害時由固定時點展開到當時仍在場的戰鬥員。
 
 重傷規則必須與現有 PC `adjust_character` 行為一致：單次傷害達門檻時註冊 CON 檢定或套用對應狀態。NPC 是否需要重傷檢定由卡片或全域設定決定，預設普通敵人只用 HP/defeated，不替每個雜兵跑完整重傷流程。
 

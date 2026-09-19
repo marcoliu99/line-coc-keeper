@@ -620,6 +620,39 @@ class CombatState:
 class GroupState:
     CURRENT_SCHEMA_VERSION = 1
 
+    @classmethod
+    def migrate_data(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize persisted snapshots before deserialization.
+
+        Version 1 is the first explicit schema. Snapshots written before the
+        version field existed are treated as v1 because ``from_dict`` already
+        supplies the compatible legacy defaults. Keeping this in one place
+        gives future schema changes a tested, explicit migration registry.
+        """
+        migrated = dict(data)
+        version = int(migrated.get("schema_version", 1))
+        if version > cls.CURRENT_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported GroupState schema_version={version}; "
+                f"current={cls.CURRENT_SCHEMA_VERSION}"
+            )
+        migrations = {
+            # v0 was the short-lived pre-versioned snapshot shape. Its fields
+            # are already covered by from_dict's legacy defaults.
+            0: lambda snapshot: {**snapshot, "schema_version": 1},
+        }
+        while version < cls.CURRENT_SCHEMA_VERSION:
+            migrate = migrations.get(version)
+            if migrate is None:
+                raise ValueError(
+                    f"No migration registered for GroupState schema_version={version}"
+                )
+            migrated = migrate(migrated)
+            version += 1
+            migrated["schema_version"] = version
+        migrated.setdefault("schema_version", cls.CURRENT_SCHEMA_VERSION)
+        return migrated
+
     group_id: str
     schema_version: int = CURRENT_SCHEMA_VERSION
     timeline_id: str = ""
@@ -848,6 +881,7 @@ class GroupState:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "GroupState":
+        data = GroupState.migrate_data(data)
         characters = {k: Character.from_dict(v) for k, v in data.get("characters", {}).items()}
         characters_by_id = {}
         for key, char_data in data.get("characters_by_id", {}).items():

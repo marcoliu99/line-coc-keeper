@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import time
 from datetime import datetime, timezone
@@ -14,6 +15,10 @@ from app.models import GroupState
 _logger = logging.getLogger(__name__)
 
 
+def _log_group_id(group_id: str) -> str:
+    return hashlib.sha256(group_id.encode("utf-8")).hexdigest()[:12]
+
+
 def _checkpoint_key(group_id: str, checkpoint_id: str) -> str:
     return f"{group_id}:{checkpoint_id}"
 
@@ -23,9 +28,7 @@ def _checkpoint_id() -> str:
 
 
 def _validate_state_schema(data: dict) -> None:
-    version = int(data.get("schema_version", 1))
-    if version > GroupState.CURRENT_SCHEMA_VERSION:
-        raise ValueError(f"Unsupported checkpoint schema_version={version}")
+    GroupState.migrate_data(data)
 
 
 def create_checkpoint(
@@ -39,7 +42,7 @@ def create_checkpoint(
     started = time.monotonic()
     _logger.info(
         "checkpoint_started group_id=%s reason=%s event_id=%s",
-        state.group_id, reason, event_id,
+        _log_group_id(state.group_id), reason, event_id,
     )
     try:
         # The in-process lock protects callers sharing this Python process; the
@@ -60,7 +63,7 @@ def create_checkpoint(
                     if existing is not None:
                         _logger.info(
                             "checkpoint_skipped_duplicate group_id=%s checkpoint_id=%s event_id=%s",
-                            state.group_id, existing["checkpoint_id"], event_id,
+                            _log_group_id(state.group_id), existing["checkpoint_id"], event_id,
                         )
                         return existing
 
@@ -93,13 +96,13 @@ def create_checkpoint(
     except Exception:
         _logger.exception(
             "checkpoint_failure group_id=%s reason=%s event_id=%s duration_ms=%s transaction=rolled_back",
-            state.group_id, reason, event_id,
+            _log_group_id(state.group_id), reason, event_id,
             int((time.monotonic() - started) * 1000),
         )
         raise
     _logger.info(
         "checkpoint_success group_id=%s checkpoint_id=%s reason=%s revision=%s timeline_id=%s duration_ms=%s",
-        state.group_id, checkpoint_id, reason, entry["state_revision"], entry["timeline_id"],
+        _log_group_id(state.group_id), checkpoint_id, reason, entry["state_revision"], entry["timeline_id"],
         int((time.monotonic() - started) * 1000),
     )
     return entry
@@ -143,7 +146,7 @@ def _get_checkpoint_tx(conn, group_id: str, identifier: str) -> dict:
 
 def clean_checkpoint(group_id: str, identifier: str) -> None:
     started = time.monotonic()
-    _logger.info("checkpoint_clean_started group_id=%s identifier=%s", group_id, identifier)
+    _logger.info("checkpoint_clean_started group_id=%s identifier=%s", _log_group_id(group_id), identifier)
     try:
         with locks.get_state_lock(group_id):
             with db.transaction() as conn:
@@ -153,12 +156,12 @@ def clean_checkpoint(group_id: str, identifier: str) -> None:
     except Exception:
         _logger.exception(
             "checkpoint_clean_failure group_id=%s identifier=%s duration_ms=%s transaction=rolled_back",
-            group_id, identifier, int((time.monotonic() - started) * 1000),
+            _log_group_id(group_id), identifier, int((time.monotonic() - started) * 1000),
         )
         raise
     _logger.info(
         "checkpoint_clean_success group_id=%s checkpoint_id=%s duration_ms=%s",
-        group_id, checkpoint_id, int((time.monotonic() - started) * 1000),
+        _log_group_id(group_id), checkpoint_id, int((time.monotonic() - started) * 1000),
     )
 
 
@@ -182,7 +185,7 @@ def _restore_page_images(state: GroupState) -> None:
     except FileNotFoundError:
         _logger.warning(
             "rollback_image_restore_skipped group_id=%s scenario_id=%s reason=library_missing",
-            state.group_id, state.scenario_library_id,
+            _log_group_id(state.group_id), state.scenario_library_id,
         )
 
 
@@ -191,7 +194,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
     started = time.monotonic()
     _logger.info(
         "rollback_started group_id=%s identifier=%s actor_id=%s",
-        group_id, identifier, actor_id,
+        _log_group_id(group_id), identifier, actor_id,
     )
     try:
         # Conversation locks serialize Discord commands, while this synchronous
@@ -260,7 +263,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
     except Exception:
         _logger.exception(
             "rollback_failure group_id=%s identifier=%s actor_id=%s duration_ms=%s transaction=rolled_back",
-            group_id, identifier, actor_id, int((time.monotonic() - started) * 1000),
+            _log_group_id(group_id), identifier, actor_id, int((time.monotonic() - started) * 1000),
         )
         raise
     image_restore_failed = False
@@ -273,11 +276,11 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
         image_restore_failed = True
         _logger.exception(
             "rollback_image_restore_failure group_id=%s scenario_id=%s",
-            group_id, restored.scenario_library_id,
+            _log_group_id(group_id), restored.scenario_library_id,
         )
     _logger.info(
         "rollback_success group_id=%s checkpoint_id=%s pre_rollback_id=%s revision=%s timeline_id=%s image_restore_failed=%s reason=rollback duration_ms=%s",
-        group_id, checkpoint["checkpoint_id"], pre["checkpoint_id"], restored.state_revision,
+        _log_group_id(group_id), checkpoint["checkpoint_id"], pre["checkpoint_id"], restored.state_revision,
         restored.timeline_id, image_restore_failed, int((time.monotonic() - started) * 1000),
     )
     return restored, checkpoint, pre
