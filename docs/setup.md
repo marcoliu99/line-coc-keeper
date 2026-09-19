@@ -192,9 +192,8 @@ without stopping unrelated processes:
 
 ```bash
 ./scripts/start_bot.sh discord
-./scripts/start_bot.sh line --name line-dev
 ./scripts/bot_status.sh
-./scripts/stop_bot.sh line-dev
+./scripts/stop_bot.sh <instance>
 ```
 
 Every start creates a unique manifest and log under `.runtime/bots/`. Stop

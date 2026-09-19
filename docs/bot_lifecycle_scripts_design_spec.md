@@ -2,7 +2,7 @@
 
 ## Problem and goals
 
-本機開發與測試時，可能同時啟動多個 LINE／Discord bot process。需要一組可重複使用的 script，能夠：
+本機開發與測試時，可能同時啟動多個 Discord bot process。需要一組可重複使用的 script，能夠：
 
 1. 啟動指定 bot，記錄這次啟動的 instance identity、PID、log 與實際 command。
 2. 只停止指定 script 啟動的那一個 instance，不使用 `pkill`、模糊的 process name 或停止其他 bot。
@@ -13,14 +13,14 @@
 
 新增 `scripts/` 下的 lifecycle scripts：
 
-- `start_bot.sh [line|discord] [--name INSTANCE]`
+- `start_bot.sh discord [--name INSTANCE]`
 - `stop_bot.sh INSTANCE`
 - `clean_bot_data.sh [--yes]`
 - `bot_status.sh [INSTANCE]`
 
-`line` 對應 `uvicorn app.main:app`，`discord` 對應 `python -m app.discord_bot`。未指定 bot type 時，script 回覆用法，不自行猜測要啟動哪個入口。
+`discord` 對應 `python -m app.discord_bot`。script 只接受明確的 `discord` 入口，不自行猜測或啟動其他平台入口。
 
-`start_bot.sh` 預設在專案 root 執行，尋找 `.venv/bin/python` 與 `.venv/bin/uvicorn`；若不存在才使用 PATH 中的 `python3`／`uvicorn`。啟動前檢查 `.env` 是否存在及必要入口是否可 import，但不把 secrets 印到 terminal 或 log。
+`start_bot.sh` 預設在專案 root 執行，尋找 `.venv/bin/python`；若不存在才使用 PATH 中的 `python3`。啟動前檢查 `.env` 是否存在及必要入口是否可 import，但不把 secrets 印到 terminal 或 log。
 
 ## Explicit non-goals
 
@@ -39,8 +39,6 @@ Runtime files集中在被 `.gitignore` 忽略的 `.runtime/bots/`：
   bots/
     discord-20260919-153000-a1b2c3.json
     discord-20260919-153000-a1b2c3.log
-    line-20260919-153010-d4e5f6.json
-    line-20260919-153010-d4e5f6.log
 ```
 
 每個 instance manifest 至少保存：
@@ -123,6 +121,5 @@ print instance name, PID, log path
 
 ## Open decisions
 
-- 預設啟動入口是否需要同時支援 `line` 與 `discord`，或新增 `both` 便利命令；第一版先要求明確指定 type，避免意外啟動兩個外部 gateway。
 - stop timeout 暫定 10 秒；若 Discord graceful shutdown 需要更久，再以環境變數提供可調整值。
 - log rotation 不在第一版處理；script 只建立每 instance log，長期保留策略交給使用者的 process manager。

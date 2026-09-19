@@ -94,7 +94,7 @@ def _verified_process(manifest: dict) -> tuple[int, int, str]:
     except (KeyError, TypeError, ValueError) as exc:
         raise SystemExit(f"invalid process identity in manifest: {exc}")
     actual = _process_command(pid)
-    expected_tokens = [token for token in command if token.startswith("app.") or token == "uvicorn"]
+    expected_tokens = [token for token in command if token.startswith("app.")]
     if not _alive(pid):
         raise SystemExit(f"instance is not running (stale manifest, pid={pid})")
     if not actual or any(token not in actual for token in expected_tokens):
@@ -117,13 +117,7 @@ def _command(bot: str, settings: dict[str, str]) -> list[str]:
     python = settings.get("BOT_PYTHON", _python_executable())
     if bot == "discord":
         return [python, "-m", "app.discord_bot"]
-    if bot == "line":
-        uvicorn = settings.get("BOT_UVICORN", "")
-        if not uvicorn:
-            candidate = ROOT / ".venv" / "bin" / "uvicorn"
-            uvicorn = str(candidate) if candidate.is_file() else "uvicorn"
-        return [uvicorn, "app.main:app", "--host", settings.get("BOT_HOST", "127.0.0.1"), "--port", settings.get("BOT_PORT", "8000")]
-    raise SystemExit("usage: start_bot.sh line|discord [--name INSTANCE]")
+    raise SystemExit("usage: start_bot.sh discord [--name INSTANCE]")
 
 
 def start(bot: str, name: str | None) -> int:
@@ -259,7 +253,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="action", required=True)
     start_parser = subparsers.add_parser("start")
-    start_parser.add_argument("bot", choices=("line", "discord"))
+    start_parser.add_argument("bot", choices=("discord",))
     start_parser.add_argument("--name")
     stop_parser = subparsers.add_parser("stop")
     stop_parser.add_argument("instance")
