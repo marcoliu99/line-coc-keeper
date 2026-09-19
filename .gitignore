@@ -11,3 +11,14 @@ data/*.db-shm
 
 # Runtime database, uploaded PDFs, and generated scenario assets
 data/
+
+# Runtime persistence artifacts when DB_PATH/BACKUP_DIR point outside data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+backups/
+
+# Local process output/state
+*.log
+*.pid

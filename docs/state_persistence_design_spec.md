@@ -50,6 +50,32 @@
   無法重建的遊戲狀態；先不放進本期範圍，之後有餘力再一起納入同一套備份機制。
 - 跨團（跨 group_id）的回溯——回溯節點永遠只還原「這一團」的狀態，不影響其他聊天室。
 
+### 建議分階段交付
+
+為了讓每一階段都能獨立驗證，實作依下列順序切分；後一階段不得繞過前一階段的保存契約：
+
+1. **持久性基礎**：路徑解析與自我檢查、schema/timeline/revision metadata、中央保存 log、SQLite
+   transaction、定期備份與跨 process backup lock。
+2. **回溯**：manual／auto checkpoint、pre-rollback、rollback transaction、權限與指令，先驗證
+   snapshot-before-mutation 和 timeline isolation。
+3. **場景摘要**：structured facts、scene digest 歷史、目前 timeline 過濾、Keeper prompt 整合與
+   digest 指令。這一階段不可用「取最後一列」取代 timeline 過濾。
+
+## 本期固定的保存不變量
+
+以下規則是本功能的必要契約，實作與測試都必須遵守：
+
+- **單一 authoritative object**：`GroupState` 內所有索引若指向同一角色，記憶體中必須共享同一個
+  `Character` instance；不能讓 `characters` 與 `characters_by_id` 各自 deserialize 出兩份可分歧的物件。
+- **單一 authoritative write**：checkpoint、rollback、scene digest 與一般 state save 都必須使用同一個
+  per-group state lock；跨 process 的資料庫 transaction 仍是最後一道 atomic 邊界。
+- **timeline isolation**：rollback 會建立新的 `timeline_id`。舊 timeline 的 scene digest 可以保留供歷史
+  查詢，但不得再被目前 Keeper prompt 當成最新狀態使用。
+- **snapshot-before-mutation**：`auto_combat_start` 必須保存戰鬥開始前的 state，而不是已經建立第一輪
+  combat state 之後才拍快照。
+- **private-by-default for backups**：database backup、checkpoint 與 digest 都可能含 secret goal、KP
+  notes、玩家 ID 與完整對話；檔案與目錄預設只允許 bot service user 讀寫。
+
 ## 名詞
 
 | 名詞 | 定義 |
@@ -61,7 +87,7 @@
 | 場景摘要（scene digest） | 某一團目前結構化、權威的狀態精簡摘要（角色數值、戰鬥、已知線索、NPC 能力使用狀態等），取代舊場景反覆整段帶進 prompt。 |
 | 還原（rollback） | 把某一團目前的 `GroupState` 換成某個回溯節點當時的內容。 |
 
-## 整體流程圖
+## 整體流程圖（概念總覽）
 
 本文三個機制（每輪自動流程、KP 手動回溯、背景定期備份）怎麼跟既有的每輪對話流程接起來：
 
@@ -132,6 +158,57 @@ start_combat 觸發 ───────┼──► state_checkpoints 新增�
 save_state()
 ```
 
+### 實作時點與一致性流程（authoritative）
+
+下面這張圖覆蓋上圖中容易產生歧義的時點；實作與測試以本圖為準。`state_revision` 由中央保存路徑
+遞增，`timeline_id` 只在 rollback 後切換。
+
+```text
+[ 正常回合 ]
+player/KP message
+      │
+      ▼
+router → supervisor → Keeper prompt
+      │                  ▲
+      │                  │ 只讀目前 timeline_id 的最新 scene_digest
+      ▼                  │
+deterministic tools ─────┘
+      │
+      ▼
+per-group state lock
+      │
+      ▼
+save_state: state_revision + 1 → SQLite transaction
+      │
+      ▼
+save result log: success/failure + group/revision/timeline/duration
+      │
+      ▼
+reply 已送出後的 maintenance
+      ├─ log trimming / Memory RAG
+      └─ digest trigger → 新增同 timeline_id 的 scene_digest
+
+[ 備份 ]
+backup timer → BACKUP_DIR/backup.lock
+      ├─ lock 失敗：跳過本輪
+      └─ lock 成功：SQLite Connection.backup()
+                    → .tmp + fsync + atomic rename
+                    → 只清理超過保留數量的 scheduled backup
+
+[ 開戰 ]
+lock → 建立 auto_combat_start checkpoint（尚未改 CombatState）
+     → start_combat mutation → save_state
+
+[ 回溯 ]
+lock + one SQLite transaction
+      → 驗證 group_id／schema_version／checkpoint
+      → 建立 pre_rollback checkpoint
+      → 載入 checkpoint state
+      → 產生新的 timeline_id 與 state_revision
+      → 覆寫 GroupState
+      → 舊 timeline digest 保留供歷史查詢，但不再進目前 prompt
+```
+
 ## 現況與缺口
 
 現有保存路徑（`app/db.py` + `app/repositories/group_state.py`，2026-09 的 SQLite 遷移已經做好的部分）：
@@ -178,6 +255,32 @@ def _warn_if_path_looks_transient(path: Path) -> None:
 if_path_looks_transient` 只能抓「看起來像暫存目錄」這種明顯情況，抓不到「這個路徑其實在一個之
 後會被整個銷毀重建的容器裡」這種更根本的部署選擇問題。
 
+實作時必須先把 `DB_PATH`／`DATA_DIR`／`BACKUP_DIR` 解析成絕對路徑並記錄在啟動摘要中；相對路徑
+以明確的 `APP_DATA_ROOT`（若未設定則使用啟動時的 working directory）解析一次，之後不可因為
+working directory 改變而換到另一份資料庫。暫存路徑判斷要用 `Path.is_relative_to()` 或等價的
+`os.path.commonpath()`，不能用單純的字串 `startswith`（例如 `/tmp2` 不應被當成 `/tmp`）。
+正式部署若路徑不可寫或仍指向明顯的 ephemeral 位置，應提供設定選項讓啟動失敗，而不是靜默建立
+另一份空資料庫。
+
+### 保存結果 log
+
+所有改動 `GroupState` 的中央保存路徑都必須產生結構化 log，讓維運可以確認「有沒有存成功、存到
+哪個版本」，但不得把完整角色卡、checkpoint state、token 或玩家私密內容寫進 log。至少包含：
+
+```text
+state_save_success group_id=<redacted-or-hash> revision=<n> timeline_id=<id>
+reason=<command|tool|combat|rollback|startup> duration_ms=<n>
+```
+
+- 成功使用 `INFO`；失敗使用 `ERROR`，包含例外類型、group 的不可逆識別值與 transaction 是否已
+  rollback，並保留 traceback 供排查。
+- `state_revision` 只能在 transaction 成功後視為已提交；失敗不能讓記憶體中的 revision 假裝已
+  落地。若呼叫端有 retry，log 要能用 `event_id` 辨識同一事件，避免把一次重試誤判成兩次狀態變更。
+- checkpoint、rollback、backup 也要各自記錄 `started`／`success`／`failure` 與耗時；backup
+  另記錄最終檔案路徑、檔案大小與保留清理數量，但不記錄檔案內容。
+- log handler 失敗不能阻塞保存；保存失敗也不能被空泛的「已排程」log 掩蓋。測試要用 caplog／
+  等價機制驗證成功與失敗事件都有出現。
+
 ## 資料庫備份
 
 新增環境變數（`app/config.py`）：
@@ -205,11 +308,26 @@ def backup_now(reason: str = "scheduled") -> Path:
 
 排程：沿用專案既有的背景任務模式（`app/legacy_commands.py`
 的`_spawn_post_turn_maintenance`那種「fire-and-forget asyncio task」寫法，不新增排程框架依賴）
-——在 `app/main.py`／`app/discord_bot.py` 的啟動流程各自加一個背景迴圈，每
+——在 `app/discord_bot.py` 的啟動流程加一個背景迴圈，每
 `BACKUP_INTERVAL_MINUTES`分鐘呼叫一次`backup_now("scheduled")`，並在每次備份後清掉超過
-`BACKUP_KEEP_COUNT`份的舊備份（依檔名時間戳排序，留最新的N份）。兩個入口各自起一份背景任務、
-各自互相獨立即可——不需要跨行程協調，因為它們本來就共用同一個資料庫檔案，兩邊各自備份只是
-「多一次一致的複本」，不會互相干擾或重複扣打。
+`BACKUP_KEEP_COUNT`份的舊備份（依檔名時間戳排序，留最新的N份）。Discord bot 只起一份背景任務，
+但若部署意外啟動兩個 process，仍必須靠跨 process lock 防止同時備份。
+
+上段的「各自獨立」只適用於啟動與停止，不代表兩個 process 可以同時執行備份。實作必須使用
+`BACKUP_DIR/backup.lock` 或等價的跨 process lease：同一時間只有一個 worker 可以進入
+`backup_now()`，另一個 worker 本輪直接跳過。背景 loop 必須保存 task handle，在正常 shutdown 時
+cancel 並等待結束；單次備份失敗只記錄 error、保留下一輪重試，不得讓 bot process 退出。
+
+`backup_now()` 的檔案流程固定為：先用 SQLite `Connection.backup()` 寫入同一 backup directory
+下的暫存檔，完成後 flush/fsync，再用 atomic rename 換成最終檔名。不能直接 `shutil.copy` 活躍的
+`.db`，也不能讓半成品使用正式的 `.db` 檔名。`BACKUP_KEEP_COUNT` 只套用 `scheduled` 備份；
+`manual` 與 `pre-rollback` 備份不得被排程自動刪除，若未來要清理由獨立的明確清理指令處理。
+
+`BACKUP_DIR` 及產生的檔案預設使用 service user 專用權限（目錄 `0700`、檔案 `0600`）。備份檔包含
+完整遊戲狀態與機密資料，不提供靜態 HTTP/Discord 附件路徑，也不在一般玩家回覆中顯示檔案內容。
+
+checkpoint 清單與 rollback 回覆只顯示 metadata；不得把 checkpoint 內的完整 `state` 或備份內容
+直接回傳給玩家。建立、還原與清除節點的結果要寫入上述結構化 log。
 
 ## 回溯節點（Checkpoint / Rollback）
 
@@ -225,12 +343,15 @@ value 內容：
 
 ```json
 {
-  "group_id": "line-group-...",
+  "group_id": "discord-group-...",
   "checkpoint_id": "20260919-1430-a1b2",
   "label": "第二章開戰前",
   "created_by": "kp-user-id",
   "created_at": "2026-09-19T14:30:00Z",
   "reason": "manual",
+  "timeline_id": "timeline-7f2a",
+  "state_revision": 184,
+  "schema_version": 1,
   "state": { /* 完整 GroupState.to_dict() 當下內容 */ }
 }
 ```
@@ -246,9 +367,10 @@ value 內容：
 
 1. **手動**：`/coc checkpoint [名稱]`，僅限目前登記的 KP Assistant 或有 Keeper 角色的人（比照
    `/coc scenario use` 的權限模型）。
-2. **自動**：`start_combat`（`app/combat.py`）觸發時，自動建立一個 `reason="auto_combat_start"`
-   的節點——開戰是最常見「想回溯」的時機（戰鬥打壞了想重來），不應該要求 KP 每次開戰前都記得
-   手動存一次。自動節點跟手動節點共用同一份列表，不特別區分。
+2. **自動**：進入 `start_combat` 的 service/command 邊界時，在任何 `CombatState` mutation 之前，
+   自動建立一個 `reason="auto_combat_start"` 的節點。純 `app/combat.py` 不直接操作 SQLite；若
+   同一個 combat-start event 重試，必須用 event id 做 idempotency，不能產生重複自動節點。
+   開戰是最常見「想回溯」的時機（戰鬥打壞了想重來），不應該要求 KP 每次開戰前都記得手動存一次。
 
 `state_checkpoints` 跟 `scene_digests` 一樣**不做數量上限淘汰**：SQLite 本地檔案的儲存成本
 可忽略，沒有理由自動丟棄任何一筆回溯節點的歷史紀錄——不管是手動建的還是 `auto_combat_start`
@@ -259,14 +381,17 @@ value 內容：
 `/coc rollback <checkpoint_id 或 label>`：
 
 1. 權限同建立（KP Assistant／Keeper）。
-2. 在 `get_conversation_lock` 底下執行（比照其他會整份覆寫 `GroupState` 的操作，例如
-   `/coc scenario use`），避免還原過程中跟正在進行的一般回合互相覆蓋。
+2. 在 `get_conversation_lock` 底下執行，並把「建立 pre-rollback + 寫入 restored state」放在同一個
+   SQLite transaction，避免只完成一半。transaction 內再次驗證 checkpoint 的 `group_id` 與
+   `schema_version`，拒絕跨團或未知未來版本的節點。
 3. 還原前，**先對目前狀態建立一個 `reason="pre_rollback"` 的節點**——這樣「回溯回溯錯了」本身
    也可以再回溯回來，不會因為一次操作失誤就真的沒有退路。
-4. 用節點裡存的 `state` 做 `GroupState.from_dict()`，整份覆寫目前的 `GroupState`（等同
-   `save_state(restored_state)`），不做任何欄位層級的合併——回溯的定義就是「回到那個時間點的
-   完整狀態」，合併語意（保留現在但拿回某些舊欄位）不在本期範圍，需要的話那是完全不同的功能。
-5. 回覆訊息明確列出：還原到哪個節點（label/時間）、還原前自動建立的 pre_rollback 節點 ID（讓
+4. 用節點裡存的 `state` 做 `GroupState.from_dict()`，整份覆寫目前的 `GroupState`，不做任何欄位
+   層級的合併；restore 後產生新的 `timeline_id`，`state_revision` 由中央 save path 產生新值。
+   回溯的定義就是「回到那個時間點的完整狀態」，合併語意不在本期範圍。
+5. 舊 timeline 的 digest 不刪除，可供 `/coc digest <ID>` 歷史查詢，但 `latest digest` 查詢與 Keeper
+   prompt 只能接受目前 timeline_id 的資料。
+6. 回覆訊息明確列出：還原到哪個節點（label/時間）、還原前自動建立的 pre_rollback 節點 ID（讓
    KP 知道怎麼「回溯這次回溯」）。
 
 ### 指令規格
@@ -336,16 +461,30 @@ value 內容：
 },
 ```
 
-`_execute_tool` 的實作只是把字串 append 進 `GroupState.established_facts`／`known_clues`
-（完全重複的字串不重複加入），跟其他工具一樣經過 `_mutate_and_save_state`——這代表這兩個欄位
-**從呼叫的那一刻起就已經是持久化的**，不是等到場景摘要建立時才第一次寫進去。`app/services/
-prompt_config.py` 的 `EXECUTOR_INSTRUCTION` 補一句提醒 Executor「劇情揭露確定事實或線索時記得
-呼叫這兩個工具」，比照現有工具使用規則的寫法。
+`_execute_tool` 的輸入仍可維持簡單的 `fact`／`clue` 字串，但持久化時改成結構化記錄，至少保留
+下列 metadata：
 
-`consumed_or_removed_items` 不需要新工具——現有 `remove_carried_item` 工具的實作額外多一行，
-把移除的物品名稱也 append 進 `GroupState.consumed_or_removed_items`（同一次 `_mutate_and_
-save_state` 呼叫裡順手做，不是另一次寫入），對呼叫端（Executor／KP 助手）完全透明，不需要
-額外決定「這次要不要記錄」。
+```json
+{
+  "text": "地下室的門被反鎖",
+  "created_at": "2026-09-19T14:30:00Z",
+  "source_event_id": "evt-...",
+  "visibility": "public",
+  "scene_id": "digest-..."
+}
+```
+
+`visibility` 預設 `public`，需要 Keeper 才能知道的事實必須能標成 `kp_only`；`source_event_id`
+讓重試與去重可追蹤，`scene_id` 沒有摘要時可為空。完全相同的 canonical `(visibility, text)`
+不重複加入，但同一句話在不同 visibility 下是兩筆不同資料。這代表兩個欄位**從呼叫的那一刻
+起就已經是持久化的**，不是等到場景摘要建立時才第一次寫進去。`app/services/prompt_config.py`
+的 `EXECUTOR_INSTRUCTION` 補一句提醒 Executor「劇情揭露確定事實或線索時記得呼叫這兩個工具」，
+比照現有工具使用規則的寫法。
+
+`consumed_or_removed_items` 不需要新工具——現有 `remove_carried_item` 工具只有在**成功找到並
+移除**物品後，才追加一筆結構化記錄（至少物品 canonical name、角色 ID、時間與 source event）。
+找不到物品、數量不足或 transaction 失敗時不得留下「已消耗」紀錄；角色 ID 不能只靠顯示名稱推斷。
+同一次 `_mutate_and_save_state` 呼叫裡順手做，不是另一次寫入，對呼叫端完全透明。
 
 有了這三個持續累積、由工具直接維護的 `GroupState` 欄位之後，場景摘要建立時**只是原樣讀取**
 這些欄位的當下內容，不需要在建立摘要的當下做任何「跟上一份摘要比對、算聯集」的邏輯——聯集這件
@@ -375,6 +514,9 @@ save_state` 呼叫裡順手做，不是另一次寫入），對呼叫端（Execu
 ```json
 {
   "updated_at": "2026-09-19T14:30:00Z",
+  "timeline_id": "timeline-7f2a",
+  "state_revision": 184,
+  "schema_version": 1,
   "scene_label": "第二章：燈塔內部",
   "game_time": "1926年10月，深夜",
   "public": {
@@ -433,6 +575,10 @@ key 格式：`{group_id}:{digest_id}`（`digest_id` 產生方式跟 `checkpoint_
 隨機字尾）。每次觸發（章節推進或回合數到門檻）都是**新增一列**，不是覆寫舊的——這樣每個場景
 的摘要都各自留存，之後可以用 `/coc digests` 翻查任何一個舊場景當時的狀態。
 
+每列必須保存建立當下的 `timeline_id`、`state_revision` 與 `schema_version`。最新摘要查詢不是
+單純取 group 的最後一列，而是先以目前 `timeline_id` 過濾，再依 `state_revision`／建立時間取最新；
+舊 timeline 仍可用 digest ID 查詢歷史，但不能重新餵進目前 Keeper prompt。
+
 因為累積邏輯已經搬到「資料來源」小節那兩個工具（與 `remove_carried_item` 的擴充）身上，建立
 新的一列時不需要再跟前一列做任何聯集運算——直接讀 `GroupState` 當下所有相關欄位的值，整份
 存進新的一列即可，每一列本身自然就是「到這個時間點為止」的完整快照。`/coc digest`／prompt
@@ -445,7 +591,7 @@ key 格式：`{group_id}:{digest_id}`（`digest_id` 產生方式跟 `checkpoint_
 ### 跟 prompt 組裝的整合
 
 `app/keeper.py` 的 `_build_dynamic_prompt` 在現有 `state.campaign_summary` 那段旁邊，新增
-`scene_digest` 的區塊——只讀 `scene_digests` 表裡這個 group **最新一列**（不是整個歷史），
+`scene_digest` 的區塊——只讀 `scene_digests` 表裡這個 group **目前 timeline 的最新一列**（不是整個歷史），
 `public` 部分正常接在既有動態 prompt 的角色/戰鬥狀態說明附近（很大程度上是既有
 `_build_dynamic_prompt` 已經在組的那些即時數值的**壓縮版**，主要價值在「舊場景的部分不用整段
 log 重新帶入，讀這份摘要就夠」），`private` 部分要接在 keeper-only 的機密資訊區塊（比照現有
@@ -466,19 +612,25 @@ Agent 階段各自需要的提示詞片段。
 | `/coc digest <ID>` | KP 專用，顯示指定那一筆歷史摘要的內容（`public` 部分）——用來回頭翻某個舊場景當時的狀態。 |
 | `/coc digest clean <ID>` | KP 專用，手動刪除一筆歷史摘要（不會自動淘汰，見上）。 |
 
-## 格式版本
+## 格式版本與 timeline
 
-`GroupState.to_dict()` 目前沒有 schema 版本欄位；`from_dict()` 對缺欄位一律用 `.get(key, 預設值)`
-容錯，這個「新欄位自動有預設值」的慣例本身已經是這個專案既有、行之有年的相容性策略（見
-`app/models.py` 各處 `from_dict`）。本期新增一個不影響現有行為、純粹供未來參考的欄位：
+`GroupState.to_dict()` 新增下列保存 metadata；這些欄位跟遊戲狀態一起由中央保存路徑維護：
 
 ```python
 "schema_version": 1,
+"timeline_id": "timeline-7f2a",
+"state_revision": 184,
 ```
 
-寫入 `to_dict()` 輸出裡；`from_dict()` 讀到不存在就當 `1`。用途：如果之後真的需要一次不相容的
-資料搬遷（目前沒有這種已知需求），至少有欄位可以判斷「這份存檔是哪個版本存的」，而不是回頭猜
-測。這不是本期要解決的問題，只是替之後鋪路，不需要额外的遷移邏輯。
+舊資料沒有欄位時，`schema_version` 以 `1` 相容讀取，`state_revision` 以 `0` 讀取，
+`timeline_id` 由 `group_id` 加固定 legacy suffix 產生，避免舊資料每次載入都被視為不同 timeline。
+程式碼要集中定義 `CURRENT_SCHEMA_VERSION` 與明確 migration steps；遇到大於目前版本的資料必須拒絕
+載入／rollback 並記錄可操作的錯誤，不能默默忽略未知欄位。未來 schema migration 必須是可測試、
+可重跑且在 transaction 內完成。
+
+每次中央保存成功才遞增 `state_revision`；rollback 一律產生新的 `timeline_id`，避免舊 timeline
+的摘要在新的遊戲分支裡被誤用。`state_revision` 與 `timeline_id` 也必須寫入成功保存 log，方便
+把 log、checkpoint 與 scene digest 對回同一個狀態版本。
 
 ## 各元件的職責邊界
 
@@ -488,7 +640,7 @@ Agent 階段各自需要的提示詞片段。
 | `app/repositories/group_state.py` 或新的 `app/checkpoints.py` | 組裝／還原 `GroupState`、封裝 checkpoint 的建立/列出/還原/清除邏輯、跟 `get_conversation_lock` 的整合 | SQLite 細節（透過 `app/db.py`） |
 | `app/combat.py` | 呼叫 checkpoint 模組的「自動建立」入口（`start_combat` 觸發） | checkpoint 本身怎麼存 |
 | `app/commands/handlers/system.py` | `/coc checkpoint*`／`/coc rollback`／`/coc digest` 指令解析與權限檢查 | checkpoint／場景摘要的實際存取邏輯 |
-| 背景排程（`app/main.py`／`app/discord_bot.py`） | 定期呼叫 `db.backup_now()`、清舊備份 | 不涉及 per-group checkpoint（那是覆寫同一個 `.db` 內的一張表，不是另外的檔案） |
+| 背景排程（`app/discord_bot.py`） | 定期呼叫 `db.backup_now()`、清舊備份 | 不涉及 per-group checkpoint（那是覆寫同一個 `.db` 內的一張表，不是另外的檔案） |
 | `app/keeper.py`（`_run_post_turn_maintenance_after_output` 掛勾／`_build_dynamic_prompt`） | 判斷場景摘要觸發時機、呼叫摘要建立邏輯、把最新一列的 `public`／`private` 組進動態 prompt；`_execute_tool` 新增 `record_established_fact`／`record_clue` 實作，並擴充 `remove_carried_item` 一併記錄 `consumed_or_removed_items` | 摘要本身怎麼從 `GroupState` 抽取、寫進哪張表（見下一列） |
 | 新模組（`app/scene_digest.py`） | 原樣讀取 `GroupState` 相關欄位（含 `established_facts`／`known_clues`／`consumed_or_removed_items`）、寫入 `scene_digests` 新的一列、提供讀最新／讀指定 ID／列出歷史的查詢函式 | 呼叫時機（由 `keeper.py` 決定）、prompt 組裝格式（由 `keeper.py` 決定）、`established_facts` 等欄位的值從何而來（由工具呼叫決定，不是這個模組算的） |
 
@@ -510,8 +662,8 @@ Agent 階段各自需要的提示詞片段。
 7. 同名節點超過一筆時，`/coc rollback <名稱>` 拒絕並要求改用 ID，不猜測選哪一筆。
 8. `_warn_if_path_looks_transient` 對 `/tmp` 底下的路徑會記警告 log，對專案內的相對/絕對路徑
    不會誤報。
-9. 兩個平台入口（LINE／Discord）各自的背景備份迴圈都能正常啟動與停止，不互相阻塞或重複建立
-   排程任務。
+9. Discord 背景備份迴圈能正常啟動與停止；同一時間只有一個 process 透過 backup lock 實際備份，
+   另一個 process 本輪跳過，失敗會記 error 並在下一輪重試。
 10. `advance_scenario_chapter` 觸發後，`scene_digests` 新增一列，內容正確反映 `GroupState`
     當下的值；**舊的那一列本身不被覆寫或刪除**，`/coc digest <舊 ID>` 仍能讀到當時的切面。
 11. 達到 `SCENE_DIGEST_TURN_INTERVAL` 時即使沒有章節推進也會觸發一次摘要（新增一列）；同一輪
@@ -529,20 +681,35 @@ Agent 階段各自需要的提示詞片段。
 17. 建立場景摘要的過程中，全程沒有任何一次 LLM provider 呼叫（用 mock／spy 驗證 `run_
     conversation` 之類的呼叫次數是 0）——這是「效能：絕不擋在玩家看到回覆的路徑上」小節的
     直接可驗證版本，不是只在文件裡宣稱。
+18. `GroupState` 的 `characters` 與 `characters_by_id` 對同一角色共享同一個 instance；legacy
+    字串角色資料與非空 ID index 合併後不會遺失或產生兩份 authoritative object。
+19. rollback 產生新的 `timeline_id` 與 revision；舊 timeline digest 仍可用 ID 查詢，但不會出現在
+    目前 Keeper prompt；未知未來 `schema_version` 會拒絕載入並產生可定位的 error log。
+20. checkpoint／rollback transaction 注入失敗時，既不留下半個 pre-rollback 節點，也不覆寫目前
+    state；成功與失敗各自有包含耗時、revision/timeline 的結構化 log，log 不含完整 state。
+21. backup lock 競爭時只有一個實際 backup；暫存檔未完成前不會出現正式檔名，atomic rename 後
+    才可讀；scheduled retention 不會刪掉 manual 或 pre-rollback 備份，檔案權限符合 `0600`。
+22. 成功的 `record_established_fact`／`record_clue` 會保留 source event、visibility 與時間 metadata；
+    相同 canonical text 在同一 visibility 下去重，`remove_carried_item` 只有成功移除才記錄消耗。
+23. auto combat checkpoint 發生在第一個 CombatState mutation 之前，同一 event retry 不會建立重複
+    checkpoint；所有保存結果可由 log 對回 group、revision、timeline 與 reason。
 
 ## 實作順序
 
-1. `app/db.py`：新增 `_warn_if_path_looks_transient`、`state_checkpoints` 表、`backup_now()`。
+1. `app/db.py`：新增絕對路徑解析與 `_warn_if_path_looks_transient`、中央 state save log、
+   `state_checkpoints` 表、`backup_now()` 與跨 process backup lock。
 2. `app/config.py`：新增 `BACKUP_DIR`／`BACKUP_INTERVAL_MINUTES`／`BACKUP_KEEP_COUNT`／
    `SCENE_DIGEST_TURN_INTERVAL` 設定值（`state_checkpoints`／`scene_digests` 都不設數量上限，
    不需要對應的環境變數）。
 3. 新模組（`app/checkpoints.py`）：建立/列出/還原/清除節點的邏輯，含 `get_conversation_lock`
-   整合與 pre-rollback 自動節點。
+   整合、pre-rollback 自動節點、schema 驗證與同一 transaction 的 rollback。
 4. `app/commands/handlers/system.py`：`/coc checkpoint*`／`/coc rollback` 指令，權限比照
    `/coc scenario use`。
-5. `app/combat.py`：`start_combat` 觸發自動節點。
-6. `app/main.py`／`app/discord_bot.py`：啟動背景定期備份迴圈。
-7. `GroupState.to_dict()`：加 `schema_version` 欄位。
+5. `start_combat` 所在的 service/command boundary：在任何 CombatState mutation 前觸發自動節點；
+   `app/combat.py` 保持戰鬥規則純粹，不直接操作 SQLite。
+6. `app/discord_bot.py`：啟動背景定期備份迴圈。
+7. `GroupState.to_dict()`／`from_dict()`：加入 `schema_version`／`timeline_id`／`state_revision`、
+   legacy defaults、CURRENT_SCHEMA_VERSION 與明確 migration/reject 行為。
 8. `docs/setup.md`：補上换正式主機時 `DB_PATH`／`DATA_DIR`／`BACKUP_DIR` 都要指到持久路徑的提醒。
 9. `app/models.py`：`GroupState` 新增 `established_facts`／`known_clues`／
    `consumed_or_removed_items` 三個欄位（含 `to_dict`/`from_dict`）。
@@ -551,8 +718,9 @@ Agent 階段各自需要的提示詞片段。
     實作，同一次呼叫裡一併記錄 `consumed_or_removed_items`；`app/services/prompt_config.py`
     的 `EXECUTOR_INSTRUCTION` 補上何時該呼叫這兩個新工具的提示。
 11. `app/db.py`：新增 `scene_digests` 表（跟 `state_checkpoints` 同結構，不設數量上限）；新模組
-    `app/scene_digest.py`：原樣讀取 `GroupState` 相關欄位、寫入新一列、提供讀最新／讀指定 ID／
-    列出歷史的查詢函式（此時不需要任何合併邏輯，見上面第 9-10 步已經把累積邏輯做在工具本身）。
+   `app/scene_digest.py`：原樣讀取 `GroupState` 相關欄位、寫入新一列、提供讀最新／讀指定 ID／
+   列出歷史的查詢函式；讀最新必須過濾目前 `timeline_id`（此時不需要任何合併邏輯，見上面第
+   9-10 步已經把累積邏輯做在工具本身）。
 12. `app/keeper.py`：`_run_post_turn_maintenance_after_output` 掛勾判斷觸發時機（章節推進或
     `SCENE_DIGEST_TURN_INTERVAL`）、`_build_dynamic_prompt` 讀最新一列併入 `public`／`private`
     區塊。
