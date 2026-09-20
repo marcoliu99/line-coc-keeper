@@ -12,6 +12,7 @@ from app.config import (
     LOG_INCLUDE_USAGE,
     LOG_SLOW_OPERATION_MS,
 )
+from app.providers import retry
 
 
 def run_conversation(
@@ -69,13 +70,17 @@ def run_conversation(
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
             metrics=request_metrics,
         ):
-            response = client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=1024,
-                temperature=KEEPER_TEMPERATURE,
-                system=system_blocks,
-                tools=anthropic_tools,
-                messages=messages,
+            response = retry.call_with_retry(
+                lambda: client.messages.create(
+                    model=ANTHROPIC_MODEL,
+                    max_tokens=1024,
+                    temperature=KEEPER_TEMPERATURE,
+                    system=system_blocks,
+                    tools=anthropic_tools,
+                    messages=messages,
+                ),
+                provider="anthropic",
+                operation="messages.create",
             )
             usage = getattr(response, "usage", None)
             if LOG_INCLUDE_USAGE:

@@ -28,6 +28,14 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
         INVALID_LOG_SETTINGS.append((name, "integer", str(default)))
         return default
 
+
+def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
+    try:
+        return max(minimum, float(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        INVALID_LOG_SETTINGS.append((name, "float", str(default)))
+        return default
+
 # Discord bot token (discord.com/developers/applications > your app > Bot > Reset
 # Token). Required by the Discord runtime.
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
@@ -155,6 +163,22 @@ KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", 0.6))
 # parameter outright, openai_provider.py detects that once per process and
 # stops sending it, the same fallback pattern already used for temperature.
 KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").strip().lower()
+
+# Retry/backoff for transient LLM API failures (connection drops, timeouts,
+# 5xx) — see app/providers/retry.py. None of the three provider adapters
+# retried these at all before this: a single network blip during
+# client.messages.create/generate_content/responses.create raised straight
+# out of run_conversation, through keeper.run_turn, and surfaced to the
+# player as a bare "發生錯誤了：..." with their whole turn lost, even though
+# the failure had nothing to do with their input and a retry a second later
+# would very likely have succeeded. LLM_MAX_RETRIES=0 disables retrying
+# entirely (first failure always raises immediately, same as before this
+# setting existed). Exponential backoff: attempt N waits
+# LLM_RETRY_BASE_DELAY_SECONDS * 2**(N-1) — with the defaults below, 1s,
+# 2s, 4s (worst case ~7s added latency before giving up), which is small
+# next to how slow a normal Keeper turn already is.
+LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 3)
+LLM_RETRY_BASE_DELAY_SECONDS = _env_float("LLM_RETRY_BASE_DELAY_SECONDS", 1.0)
 
 # Observability. Structured performance events and ordinary developer text
 # logs have separate toggles so a developer can enable textual diagnostics

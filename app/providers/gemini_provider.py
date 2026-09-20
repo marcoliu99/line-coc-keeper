@@ -13,6 +13,7 @@ from typing import Callable
 
 from app import observability
 from app.config import GEMINI_API_KEY, GEMINI_MODEL, KEEPER_TEMPERATURE, LOG_INCLUDE_USAGE, LOG_SLOW_OPERATION_MS
+from app.providers import retry
 
 
 def run_conversation(
@@ -66,7 +67,11 @@ def run_conversation(
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
             metrics=request_metrics,
         ):
-            response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
+            response = retry.call_with_retry(
+                lambda: client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config),
+                provider="gemini",
+                operation="generate_content",
+            )
             usage = getattr(response, "usage_metadata", None)
             if LOG_INCLUDE_USAGE:
                 request_metrics.update(
