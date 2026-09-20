@@ -160,15 +160,13 @@ TOOLS = [
     {
         "name": "offer_check_choice",
         "description": (
-            "『請求』一次有多個互斥選項的檢定——用在玩家要在幾個技能之間選一個的情境"
-            "（COC7e 規則書的典型例子：近戰中被攻擊時，防守方要選擇『閃避』還是『反擊』，"
-            "兩者只能選一個，不能都做）。跟 skill_check 一樣不會幫玩家骰骰子，只記錄下"
+            "『請求』一次有多個互斥選項的檢定——用在玩家要在幾個技能之間選一個的一般情境"
+            "（不涉及被 NPC 攻擊）。跟 skill_check 一樣不會幫玩家骰骰子，只記錄下"
             "選項清單，讓玩家自己選一個、用 /coc check <選項名稱> 擲骰。呼叫完之後只能"
             "敘述『需要在這幾個選項裡選一個』的當下場景，不能自己選、不能自己編結果。"
-            "如果這是被攻擊時的防守選擇（閃避／反擊），這是正式的 COC7e 對抗檢定：務必先"
-            "呼叫 npc_skill_check 幫攻擊方擲出這次攻擊的結果，把回傳的 tier 填進 attacker_tier，"
-            "玩家真的擲完骰後，系統會自動比較雙方成功等級判定攻擊有沒有命中、反擊有沒有生效，"
-            "不用你自己比較或判定輸贏。"
+            "如果這是被 NPC 攻擊時的防守選擇（COC7e 的『閃避』還是『反擊』），改用"
+            "offer_npc_attack_defense_choice——那個工具會直接處理攻擊方的檢定，不用"
+            "你自己先呼叫 npc_skill_check 再把結果填回這裡。"
         ),
         "input_schema": {
             "type": "object",
@@ -207,8 +205,9 @@ TOOLS = [
         "description": (
             "立刻擲一次『沒有玩家可以自己擲骰』那一方（NPC、怪物、敵人）的技能百分比檢定，直接由"
             "程式碼擲骰算出真正的擲骰值和成功等級，回傳給你——不要自己編一個 NPC 的檢定結果。"
-            "最常見的用途：offer_check_choice 的對抗檢定情境裡，攻擊方（通常是 NPC）這次攻擊的"
-            "結果；也可以用在任何劇本需要 NPC 自己做一次檢定的場合。"
+            "如果是『NPC 攻擊玩家、玩家要在閃避／反擊之間選一個』的對抗檢定情境，改用"
+            "offer_npc_attack_defense_choice（一次呼叫就包含這一步，不用先呼叫這個工具）；"
+            "這個工具留給其他劇本需要 NPC 自己做一次檢定、但不是那個特定防守選擇流程的場合。"
         ),
         "input_schema": {
             "type": "object",
@@ -218,6 +217,43 @@ TOOLS = [
                 "penalty_dice": {"type": "integer", "description": "懲罰骰數量，預設 0"},
             },
             "required": ["skill_value"],
+        },
+    },
+    {
+        "name": "offer_npc_attack_defense_choice",
+        "description": (
+            "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 近戰對抗檢定的完整標準流程：閃避跟"
+            "反擊只能選一個。這個工具會直接由程式碼擲出攻擊方（NPC/怪物）這次攻擊的成功等級，"
+            "不用你自己先呼叫 npc_skill_check、也不用自己編。跟 offer_check_choice 一樣不會幫"
+            "玩家骰防守方的骰子，只記錄下選項清單，讓玩家自己選一個、用 /coc check <選項名稱> "
+            "擲骰。呼叫完之後只能敘述『被攻擊、需要在這幾個選項裡選一個』的當下場景，不能自己"
+            "選、不能自己編結果、不能自己講攻擊有沒有命中——玩家真的擲完骰後系統會自動判定。"
+            "如果只是一般多選一（不是被攻擊的防守情境），改用 offer_check_choice。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string", "description": "調查員角色名稱"},
+                "options": {
+                    "type": "array",
+                    "minItems": 2,
+                    "description": "至少兩個互斥選項",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "description": "選項顯示名稱，例如「閃避」「反擊」"},
+                            "skill": {"type": "string", "description": "這個選項要用的技能或屬性名稱"},
+                            "bonus_dice": {"type": "integer", "description": "獎勵骰數量，預設 0"},
+                            "penalty_dice": {"type": "integer", "description": "懲罰骰數量，預設 0"},
+                        },
+                        "required": ["label", "skill"],
+                    },
+                },
+                "attacker_skill_value": {"type": "integer", "description": "攻擊方（NPC）這次攻擊技能的百分比值"},
+                "attacker_bonus_dice": {"type": "integer", "description": "攻擊方獎勵骰數量，預設 0"},
+                "attacker_penalty_dice": {"type": "integer", "description": "攻擊方懲罰骰數量，預設 0"},
+            },
+            "required": ["investigator", "options", "attacker_skill_value"],
         },
     },
     {
@@ -650,6 +686,7 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "sanity_check",
     "offer_check_choice",
     "npc_skill_check",
+    "offer_npc_attack_defense_choice",
     "roll_weapon_damage",
     "roll_impaling_damage",
     "apply_combat_damage",
@@ -666,6 +703,7 @@ _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
     "sanity_check",
     "offer_check_choice",
     "npc_skill_check",
+    "offer_npc_attack_defense_choice",
     "roll_weapon_damage",
     "roll_impaling_damage",
     "apply_combat_damage",
@@ -1203,6 +1241,53 @@ def _execute_tool(
             penalty = int(tool_input.get("penalty_dice") or 0)
             npc_roll = dice.skill_check(skill_value, bonus_dice=bonus, penalty_dice=penalty)
             return {"ok": True, "roll": npc_roll.roll, "tier": npc_roll.tier, "skill_value": skill_value}
+
+        if name == "offer_npc_attack_defense_choice":
+            # Merges what used to be two sequential tool calls (npc_skill_check
+            # then offer_check_choice with attacker_tier filled in from its
+            # result) into one — see docs/npc_attack_latency_design_spec.md.
+            # offer_check_choice's attacker_tier field structurally depended on
+            # npc_skill_check's return value, forcing the model to make two
+            # separate round-trips (see the result, then decide the next call)
+            # for the single most common combat exchange (NPC attacks, player
+            # picks dodge/counter). Built entirely from the same primitives
+            # both original handlers already used below — not new logic, just
+            # one fewer LLM round-trip to reach it.
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            raw_options = tool_input.get("options") or []
+            if len(raw_options) < 2:
+                return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
+            attacker_skill_value = max(0, min(100, int(tool_input["attacker_skill_value"])))
+            attacker_bonus = int(tool_input.get("attacker_bonus_dice") or 0)
+            attacker_penalty = int(tool_input.get("attacker_penalty_dice") or 0)
+            npc_roll = dice.skill_check(attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty)
+
+            def _register_pending_defense_choice(target_state: GroupState) -> list[dict]:
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
+                options = []
+                for opt in raw_options:
+                    # Full skill value, no artificial difficulty adjustment —
+                    # see offer_check_choice's identical comment.
+                    value = resolve_skill_value(target_char, opt["skill"])
+                    options.append({
+                        "label": opt["label"], "skill": opt["skill"], "skill_value": value,
+                        "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
+                    })
+                pending_choice = {"type": "choice", "options": options, "attacker_tier": npc_roll.tier}
+                target_state.pending_checks[target_char.owner_id] = pending_choice
+                return options
+
+            options = _mutate_and_save_state(state, _register_pending_defense_choice)
+            refreshed_char = require_character(state, tool_input.get("investigator", ""))
+            return {
+                "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
+                "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
+                "note": "攻擊方檢定已經由系統擲好（tier 見上面），還沒有防守方的骰出結果——等玩家自己選"
+                        "一個選項、用 /coc check <選項名稱> 擲骰後才會有結果，不要自己選、不要自己編一個、"
+                        "也不要自己判定命中與否。",
+            }
 
         if name == "sanity_check":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -1935,9 +2020,9 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 呼叫 apply_combat_damage 或 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
 不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色在近戰中被攻擊時，防守方要在
-「閃避」跟「反擊」之間選一個（COC7e 規則），呼叫 offer_check_choice 給這兩個選項讓玩家自己選，不要自己
-幫玩家決定要閃避還是反擊。這是正式的對抗檢定：先呼叫 npc_skill_check 讓攻擊方（通常是 NPC）擲出這次
-攻擊的成功等級，填進 offer_check_choice 的 attacker_tier，玩家真的擲完骰後系統會自動判定攻擊有沒有
+「閃避」跟「反擊」之間選一個（COC7e 規則），呼叫 offer_npc_attack_defense_choice 給這兩個選項讓玩家
+自己選，不要自己幫玩家決定要閃避還是反擊。這個工具會直接由程式碼擲出攻擊方（通常是 NPC）這次攻擊的
+成功等級，不用你自己先呼叫 npc_skill_check 再把結果填回去，玩家真的擲完骰後系統會自動判定攻擊有沒有
 命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。
 
 敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、

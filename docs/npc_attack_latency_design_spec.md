@@ -134,3 +134,136 @@ embeddings API（cache 沒命中時），大約再疊加 2-5 秒。
 **5-13 秒**左右（B 省 2-5 秒，A 省一次 round-trip 約 2-5 秒）。
 
 你想先做哪個、還是兩個一起做？
+
+## 定案設計（Marco 已選：A + B 一起做，C 另開規格書單獨處理）
+
+### A 的具體設計：新增 `offer_npc_attack_defense_choice` 工具
+
+不改動既有的 `offer_check_choice`／`npc_skill_check`（兩者在非「NPC 攻擊、玩家選防守
+方式」的其他場合還是要獨立能用——`npc_skill_check` 的 description 本來就寫明「也可以
+用在任何劇本需要 NPC 自己做一次檢定的場合」），而是新增一個專用工具，把這兩者在「防守
+選擇」這個特定情境下的組合行為直接融合成一次呼叫：
+
+```python
+{
+    "name": "offer_npc_attack_defense_choice",
+    "description": (
+        "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 近戰對抗檢定的完整標準流程：閃避跟"
+        "反擊只能選一個。這個工具會直接由程式碼擲出攻擊方（NPC/怪物）這次攻擊的成功等級，"
+        "不用你自己先呼叫 npc_skill_check、也不用自己編。跟 offer_check_choice 一樣不會幫"
+        "玩家骰防守方的骰子，只記錄下選項清單，讓玩家自己選一個、用 /coc check <選項名稱> "
+        "擲骰。呼叫完之後只能敘述『被攻擊、需要在這幾個選項裡選一個』的當下場景，不能自己"
+        "選、不能自己編結果、不能自己講攻擊有沒有命中——玩家真的擲完骰後系統會自動判定。"
+        "如果只是一般多選一（不是被攻擊的防守情境），改用 offer_check_choice。"
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "investigator": {"type": "string", "description": "調查員角色名稱"},
+            "options": {
+                "type": "array", "minItems": 2, "description": "至少兩個互斥選項",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"}, "skill": {"type": "string"},
+                        "bonus_dice": {"type": "integer"}, "penalty_dice": {"type": "integer"},
+                    },
+                    "required": ["label", "skill"],
+                },
+            },
+            "attacker_skill_value": {"type": "integer", "description": "攻擊方（NPC）這次攻擊技能的百分比值"},
+            "attacker_bonus_dice": {"type": "integer", "description": "攻擊方獎勵骰數量，預設 0"},
+            "attacker_penalty_dice": {"type": "integer", "description": "攻擊方懲罰骰數量，預設 0"},
+        },
+        "required": ["investigator", "options", "attacker_skill_value"],
+    },
+}
+```
+
+`_execute_tool` 的 handler 直接組合既有兩個 handler 已經在用的既有函式（`dice.skill_check`、
+`resolve_skill_value`、`find_character`／`require_character`、`_mutate_and_save_state`）——
+不是重新發明邏輯，只是把「擲攻擊方檢定」跟「登記防守方 pending choice」這兩步在同一次
+`_execute_tool` 呼叫裡做完：
+
+```python
+if name == "offer_npc_attack_defense_choice":
+    char = find_character(state, tool_input.get("investigator", ""))
+    if not char:
+        return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+    raw_options = tool_input.get("options") or []
+    if len(raw_options) < 2:
+        return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
+    attacker_skill_value = max(0, min(100, int(tool_input["attacker_skill_value"])))
+    attacker_bonus = int(tool_input.get("attacker_bonus_dice") or 0)
+    attacker_penalty = int(tool_input.get("attacker_penalty_dice") or 0)
+    npc_roll = dice.skill_check(attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty)
+
+    def _register_pending_choice(target_state: GroupState) -> list[dict]:
+        target_char = require_character(target_state, tool_input.get("investigator", ""))
+        options = []
+        for opt in raw_options:
+            value = resolve_skill_value(target_char, opt["skill"])
+            options.append({
+                "label": opt["label"], "skill": opt["skill"], "skill_value": value,
+                "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
+            })
+        pending_choice = {"type": "choice", "options": options, "attacker_tier": npc_roll.tier}
+        target_state.pending_checks[target_char.owner_id] = pending_choice
+        return options
+
+    options = _mutate_and_save_state(state, _register_pending_choice)
+    refreshed_char = require_character(state, tool_input.get("investigator", ""))
+    return {
+        "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
+        "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
+        "note": "攻擊方檢定已經由系統擲好（tier 見上面），還沒有防守方的骰出結果——等玩家自己選"
+                "一個選項、用 /coc check <選項名稱> 擲骰後才會有結果，不要自己選、不要自己編一個、"
+                "也不要自己判定命中與否。",
+    }
+```
+
+`combat_block` 的敘事規則同步改寫，指示 AI 改呼叫這個新工具、不用再分兩步：把原本
+「先呼叫 npc_skill_check...填進 offer_check_choice 的 attacker_tier」那段改成
+「呼叫 offer_npc_attack_defense_choice，工具會直接擲好攻擊方結果，不用你自己先呼叫
+npc_skill_check」。
+
+新工具要加進 `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`（`offer_check_choice`／
+`npc_skill_check` 都已經在裡面，比照辦理）。
+
+**這個改動不影響「NPC 自己做檢定但不是防守情境」的其他場合**——那些場合繼續用既有的
+`npc_skill_check`，這個工具完全沒被動到。
+
+### B 的具體設計：戰鬥中跳過 context_builder 的主動 RAG
+
+`app/agents/context_builder.py` 的 `_run_scenario_rag`／`_run_memory_rag` 觸發條件
+各自加上 `not state.combat.active`：
+
+```python
+rag_task = None
+if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title and not state.combat.active:
+    ...
+
+memory_task = None
+if char and not state.combat.active:
+    ...
+```
+
+`rag_context`／`memory_context` 本來就有 `""` 的預設初始值（沒有 task 時维持空字串），
+下游 `narrator.py`／`executor.py` 不需要改動——這兩個 consumer 已經是「拿到什麼就用什麼，
+空字串就是沒有 RAG context」的既有邏輯。
+
+## 測試計畫
+
+- `offer_npc_attack_defense_choice`：
+  - 正常情境：mock `dice.skill_check` 回傳固定 `roll`/`tier`，驗證 `pending_checks`
+    正確登記（含 `attacker_tier`），回傳值包含 `attacker_roll`/`attacker_tier`。
+  - 角色不存在、`options` 少於兩個 → 回傳既有的錯誤訊息格式，跟 `offer_check_choice`
+    的既有行為一致（regression 對照）。
+  - `offer_check_choice`／`npc_skill_check` 原本的行為逐字元不變（regression）。
+- `context_builder.build_context`：
+  - `state.combat.active = True` 時，`scenario_rag.search`／`memory_rag.search_memory`
+    都不會被呼叫（不論 `SCENARIO_RAG_ENABLED` 開關）。
+  - `state.combat.active = False` 時，行為與現行完全一致（regression，沿用
+    `tests/test_agentic_pipeline.py` 既有的 `ContextBuilderScenarioRagGatingTests`
+    測試慣例）。
+
