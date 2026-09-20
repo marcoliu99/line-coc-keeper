@@ -256,7 +256,25 @@ LOG_HASH_IDENTIFIERS=true
 LOG_INCLUDE_USAGE=true
 ```
 
-設定解析必須有安全預設值；不合法的 level、duration 或 boolean 不得讓 bot 啟動失敗。
+`LOG_LEVEL` 是控制 log 資料量的主要開關，必須由環境變數讀取，並套用到所有 app logger：
+
+| Level | 保留內容 | 適用情境 |
+|---|---|---|
+| `DEBUG` | 所有 request、lock、cache、tool、chunk 細節 | 短時間深度排查 |
+| `INFO` | 完整 request／AI／RAG／DB／Discord timing 摘要 | 效能觀測建議值 |
+| `WARNING` | slow request、fallback、retry、cache 異常與錯誤 | 正式環境低噪音模式 |
+| `ERROR` | 失敗與 exception | 只關注錯誤 |
+
+效能 log 的事件 level 必須固定，不可因為資料量需求而由呼叫端隨意改變：
+
+- 正常 lifecycle 的 started／completed timing 使用 `INFO`。
+- 超過 `LOG_SLOW_REQUEST_MS` 或 `LOG_SLOW_OPERATION_MS` 的事件額外標記 `slow=true`，但仍保留原本的事件資料。
+- fallback、provider retry、cache 異常使用 `WARNING`。
+- 未處理失敗使用 `ERROR`。
+
+因此 `LOG_LEVEL=WARNING` 會隱藏正常成功請求的 timing；若要觀察完整 latency，必須使用 `LOG_LEVEL=INFO`。若只想降低資料量但仍保留慢請求，使用 `WARNING` 搭配合理的 slow threshold。
+
+設定解析必須有安全預設值；不合法的 level、duration 或 boolean 不得讓 bot 啟動失敗，應 fallback 到 `INFO` 或對應的安全預設值。
 
 ### 8.3 Log level policy
 
@@ -386,7 +404,7 @@ Discord 發送耗時
 3. 是否要記錄 estimated cost？（建議：第一版只記 token，避免價格硬編碼；後續再加報表。）
 4. 是否保留檔案 log？（建議：預設 stderr，只有設定 `LOG_FILE` 才寫 rotating file。）
 5. 是否要加入 request sampling？（建議：第一版不 sampling，先完整記錄；流量增大後再加。）
-6. `LOG_LEVEL=INFO` 是否保留每次 `llm.request.started/completed`？（建議：保留，這是本功能核心資料。）
+6. `LOG_LEVEL` 的預設值與 production policy。（建議：預設 `INFO`；穩定運行後可改 `WARNING`，需要完整效能分析時再切回 `INFO`。）
 7. 是否允許管理者以 debug 設定短暫記錄 hash 後的 user／conversation ID？（建議：預設關閉。）
 
 ## 15. 實作後的流程限制
