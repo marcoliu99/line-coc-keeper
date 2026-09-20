@@ -565,6 +565,24 @@ Discord button、Help、pending-choice 等不經共用 `Reply` callback 的文�
 `request.completed` 的回覆統計涵蓋實際公開與 ephemeral 文字輸出；公開的
 圖片 attachment 也計入 `reply_message_count` 與 `reply_bytes`。
 
+所有仍走 legacy `keeper.run_turn()` 的流程（檢定後 Keeper narration、
+`/coc start` 開場白，以及 system handler 的相同 fallback）也必須經過同一個
+observed turn boundary；不得只讓 Supervisor Agent pipeline 有
+`llm.turn`。這個 boundary 必須負責建立／沿用 `turn_id`，包住整個同步
+`keeper.run_turn()`，並聚合 provider request、tool call、iteration、retry
+metrics，避免同一種 AI turn 因入口不同而產生不同 log schema。
+
+`llm.turn.completed` 的 `reasoning_effort` 由目前設定傳入；OpenAI 使用
+`KEEPER_REASONING_EFFORT`，其他 provider 沒有等價設定時填 `null`。這個欄位
+只記設定值，不記 prompt 或模型輸出。
+
+Discord reply metrics 的語意分為「新訊息」與「編輯既有訊息」：
+`reply_message_count`／`reply_chunk_count` 只計算實際新增 message，Help
+button 的 `edit_message` 改計入 `reply_edit_count` 與 `reply_bytes`。所有
+direct output（button、Help、PDF choice、圖片 attachment）都必須包在
+`discord.reply` span，讓 request aggregate 與單次 Discord API latency 同時
+可觀測；send 失敗時不得先增加成功 output metrics。
+
 目前的 `request.completed` 會依照 request context 的 handled-error 標記輸出
 `status=error`；只有未發生錯誤的 request 才輸出 `status=success`。Background
 maintenance 使用 detached context 產生獨立 `maintenance_id`，不會沿用外層
@@ -585,6 +603,16 @@ Discord request 的 ID。
 - slow threshold 正確標記。
 - usage 缺欄位時仍可正常輸出 completion event。
 - 不合法 logging config 使用 fallback，不阻止啟動。
+- legacy `keeper.run_turn()` entry points 會產生完整 `llm.turn` lifecycle，
+  並沿用 request 的 `turn_id`。
+- `llm.turn.completed` 在 OpenAI 帶出 `reasoning_effort`，其他 provider
+  使用 `null`，且不包含 prompt／response content。
+- Help edit 不增加 `reply_message_count`，只增加 `reply_edit_count`；direct
+  text／image output 都有 `discord.reply` latency span。
+- Memory RAG empty／rebuilt／cached index metrics 正確。
+- Scenario／Memory embedding response 不完整時會記錄 fallback 並回退 BM25。
+- KP Assistant、Guard、Executor、Narrator 的 turn lifecycle 與 nested
+  iteration／tool／retry metrics 正確聚合。
 
 ### 12.2 Integration tests
 
