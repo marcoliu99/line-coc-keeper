@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from app import keeper
+from app import observability
 from app.domain.models import AgentMessage, MechanicResult
 from app.config import LLM_PROVIDER
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -58,16 +59,17 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         # run_conversation is synchronous (see every app/providers/*.py) —
         # dispatched via asyncio.to_thread like every other call site in
         # this codebase, not awaited directly.
-        reply_text = await asyncio.to_thread(
-            provider.run_conversation,
-            static_system,
-            dynamic_system,
-            [],
-            history,
-            new_message,
-            _no_tools,
-            1,
-        )
+        with observability.span("llm.turn", provider=LLM_PROVIDER, agent="narrator"):
+            reply_text = await asyncio.to_thread(
+                provider.run_conversation,
+                static_system,
+                dynamic_system,
+                [],
+                history,
+                new_message,
+                _no_tools,
+                1,
+            )
     except Exception:
         _logger.exception("Narrator LLM call failed")
         reply_text = "（守密人一時語塞，請再說一次剛才的行動）"

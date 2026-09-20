@@ -12,11 +12,12 @@ import io
 import logging
 from pathlib import Path
 import re
+import time
 import unicodedata
 
 import discord
 
-from app import help_service, locks, scenario_library
+from app import config, help_service, locks, logging_config, observability, scenario_library
 from app.commands import router as command_router
 from app.legacy_commands import (
     Reply, SendImage,
@@ -25,8 +26,7 @@ from app.legacy_commands import (
     handle_pdf_upload, handle_map_upload, handle_role_sheet_upload,
     handle_scenario_compare_upload, handle_unsupported_message
 )
-from app.config import DISCORD_BOT_TOKEN
-from app.config import BACKUP_INTERVAL_MINUTES
+from app.config import BACKUP_INTERVAL_MINUTES, DISCORD_BOT_TOKEN, LOG_SLOW_OPERATION_MS, LOG_SLOW_REQUEST_MS
 from app import db
 from app.models import GroupState
 from app.help_registry import HelpAction, HelpPage
@@ -58,8 +58,20 @@ def _chunk_text(text: str) -> list[str]:
 
 def _make_reply(channel: discord.abc.Messageable) -> Reply:
     async def reply(text: str) -> None:
-        for chunk in _chunk_text(text):
-            await channel.send(chunk)
+        chunks = _chunk_text(text)
+        if not config.LOG_ENABLED:
+            for chunk in chunks:
+                await channel.send(chunk)
+            return
+        with observability.span(
+            "discord.reply",
+            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+            reply_message_count=len(chunks),
+            reply_bytes=len(text.encode("utf-8")),
+            reply_chunk_count=len(chunks),
+        ):
+            for chunk in chunks:
+                await channel.send(chunk)
 
     return reply
 
@@ -101,8 +113,20 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     # Used only after the initial interaction response has been consumed
     # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:
-        for chunk in _chunk_text(text):
-            await interaction.followup.send(chunk)
+        chunks = _chunk_text(text)
+        if not config.LOG_ENABLED:
+            for chunk in chunks:
+                await interaction.followup.send(chunk)
+            return
+        with observability.span(
+            "discord.reply",
+            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+            reply_message_count=len(chunks),
+            reply_bytes=len(text.encode("utf-8")),
+            reply_chunk_count=len(chunks),
+        ):
+            for chunk in chunks:
+                await interaction.followup.send(chunk)
 
     return reply
 
@@ -512,12 +536,45 @@ async def _backup_loop() -> None:
 
 @client.event
 async def on_message(message: discord.Message) -> None:
-    if message.author.bot:
-        return  # ignore other bots (and echoes of our own messages)
-
-    if _is_ooc_message(message.content):
+    if message.author.bot or _is_ooc_message(message.content):
         return
 
+    conversation_id = _conversation_id(message.channel.id)
+    with observability.request_context(conversation_id=conversation_id):
+        observed = config.LOG_ENABLED
+        if observed:
+            observability.event(
+                "request.started",
+                platform="discord",
+                message_kind="message",
+                attachment_count=len(message.attachments),
+            )
+        started = time.perf_counter() if observed else 0.0
+        try:
+            await _handle_message(message)
+        except Exception as exc:
+            if observed:
+                observability.event(
+                    "request.failed",
+                    level=logging.ERROR,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    error_type=type(exc).__name__,
+                )
+            raise
+        else:
+            if observed:
+                duration_ms = (time.perf_counter() - started) * 1000
+                level = logging.WARNING if duration_ms >= LOG_SLOW_REQUEST_MS else logging.INFO
+                observability.event(
+                    "request.completed",
+                    level=level,
+                    duration_ms=duration_ms,
+                    slow_threshold_ms=LOG_SLOW_REQUEST_MS,
+                    status="success",
+                )
+
+
+async def _handle_message(message: discord.Message) -> None:
     conversation_id = _conversation_id(message.channel.id)
     user_id = str(message.author.id)
     reply = _make_reply(message.channel)
@@ -677,6 +734,7 @@ async def on_message(message: discord.Message) -> None:
 def main() -> None:
     if not DISCORD_BOT_TOKEN:
         raise SystemExit("尚未設定 DISCORD_BOT_TOKEN，請檢查 .env")
+    logging_config.configure_logging()
     client.run(DISCORD_BOT_TOKEN)
 
 

@@ -28,6 +28,22 @@ ANTHROPIC_API_KEY=...
 
 也可以選擇 `gemini` 或 `openai`，並設定對應的 API key。資料庫、模型、Scenario RAG 與 Keeper sampling 設定都在 `.env.example` 中有說明。
 
+### 效能與開發 Log
+
+專案提供兩個獨立的 log channel：
+
+```env
+# 結構化效能 log：request／AI／RAG／DB／Discord timing 與 token usage
+LOG_ENABLED=false
+
+# 其他 developer 的一般文字 debug／info／warning／error
+LOG_TEXT_ENABLED=true
+LOG_LEVEL=INFO
+LOG_FORMAT=json
+```
+
+需要分析效能時開啟 `LOG_ENABLED=true`；只想暫時看文字 debug 時可以保持效能 log 關閉，改用 `LOG_TEXT_ENABLED=true` 與 `LOG_LEVEL=DEBUG`。正式環境若只想保留慢請求、fallback、retry 與錯誤，可使用 `LOG_LEVEL=WARNING`。完整欄位與流程見 [結構化效能與請求 Log 設計規格](structured_performance_logging_design_spec.md)。
+
 ## 啟動
 
 ```bash

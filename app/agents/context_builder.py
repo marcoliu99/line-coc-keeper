@@ -6,7 +6,7 @@ from typing import Any
 from app.models import GroupState
 from app.domain.models import AgentMessage
 from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
-from app import scenario_rag, memory_rag
+from app import memory_rag, observability, scenario_rag
 
 
 async def build_context(
@@ -43,9 +43,14 @@ async def build_context(
     rag_task = None
     if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title:
         def _run_scenario_rag() -> str:
-            index = scenario_rag.get_index(conversation_id, state.scenario_text)
-            results = scenario_rag.search(index, text, top_k=SCENARIO_RAG_TOP_K)
-            return scenario_rag.format_results(results)
+            with observability.span(
+                "rag.search",
+                rag_kind="scenario",
+                top_k=SCENARIO_RAG_TOP_K,
+            ):
+                index = scenario_rag.get_index(conversation_id, state.scenario_text)
+                results = scenario_rag.search(index, text, top_k=SCENARIO_RAG_TOP_K)
+                return scenario_rag.format_results(results)
 
         rag_task = asyncio.create_task(asyncio.to_thread(_run_scenario_rag))
 
@@ -54,8 +59,9 @@ async def build_context(
     memory_task = None
     if char:
         def _run_memory_rag() -> str:
-            results = memory_rag.search_memory(conversation_id, text)
-            return memory_rag.format_results(results)
+            with observability.span("rag.search", rag_kind="memory"):
+                results = memory_rag.search_memory(conversation_id, text)
+                return memory_rag.format_results(results)
 
         memory_task = asyncio.create_task(asyncio.to_thread(_run_memory_rag))
 

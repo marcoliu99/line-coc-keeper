@@ -23,6 +23,7 @@ from pathlib import Path
 
 from app import db
 from app import locks
+from app import observability
 from app.config import DATA_DIR
 from app.models import GroupState
 
@@ -50,20 +51,26 @@ def _log_group_id(group_id: str) -> str:
 
 
 def load_state(group_id: str) -> GroupState:
-    data = db.get_json("group_states", group_id)
-    if data is None:
-        return GroupState(group_id=group_id)
-    try:
-        return GroupState.from_dict(data)
-    except ValueError:
-        _logger.exception(
-            "state_load_failure group_id=%s reason=unsupported_schema",
-            _log_group_id(group_id),
-        )
-        raise
+    with observability.span("state.load", operation="load"):
+        data = db.get_json("group_states", group_id)
+        if data is None:
+            return GroupState(group_id=group_id)
+        try:
+            return GroupState.from_dict(data)
+        except ValueError:
+            _logger.exception(
+                "state_load_failure group_id=%s reason=unsupported_schema",
+                _log_group_id(group_id),
+            )
+            raise
 
 
 def save_state(state: GroupState, *, reason: str = "command") -> None:
+    with observability.span("state.save", operation=reason):
+        _save_state_impl(state, reason=reason)
+
+
+def _save_state_impl(state: GroupState, *, reason: str = "command") -> None:
     """Persist one state snapshot under the authoritative per-group lock.
 
     The revision check turns a stale read-modify-write into an explicit

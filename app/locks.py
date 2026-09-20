@@ -26,6 +26,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
+from app import config, observability
+
 # Legacy conversation lock: used by the current coarse-grained flow and kept
 # unchanged while callers are migrated incrementally.
 _locks: dict[str, asyncio.Lock] = {}
@@ -91,10 +93,22 @@ class _KeeperPriorityGate:
 _keeper_priority_gates: dict[str, _KeeperPriorityGate] = {}
 
 
+class _ObservableConversationLock(asyncio.Lock):
+    """Conversation lock that measures queue wait without changing semantics."""
+
+    async def acquire(self) -> bool:
+        with observability.span(
+            "lock.wait",
+            lock_name="conversation",
+            slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
+        ):
+            return await super().acquire()
+
+
 def get_conversation_lock(conversation_id: str) -> asyncio.Lock:
     lock = _locks.get(conversation_id)
     if lock is None:
-        lock = asyncio.Lock()
+        lock = _ObservableConversationLock()
         _locks[conversation_id] = lock
     return lock
 

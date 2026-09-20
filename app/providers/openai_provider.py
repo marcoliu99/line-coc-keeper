@@ -17,8 +17,11 @@ docs page alone.
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Callable
 
+from app import config, observability
 from app.config import KEEPER_REASONING_EFFORT, KEEPER_TEMPERATURE, OPENAI_API_KEY, OPENAI_MODEL
 
 # Populated per-process the first time the API rejects one of these — see
@@ -42,15 +45,56 @@ def _create_response(client, **kwargs):
     for param in _unsupported_params:
         kwargs.pop(param, None)
     while True:
+        observed = config.LOG_ENABLED
+        started = time.perf_counter() if observed else 0.0
+        reasoning = kwargs.get("reasoning") or {}
+        observability.event(
+            "llm.request.started",
+            provider="openai",
+            model=kwargs.get("model"),
+            reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
+            tool_count=len(kwargs.get("tools") or []),
+        )
         try:
-            return client.responses.create(**kwargs)
+            response = client.responses.create(**kwargs)
         except Exception as exc:
             exc_text = str(exc).lower()
             offending = next((p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text), None)
+            if observed:
+                duration_ms = (time.perf_counter() - started) * 1000
+                if offending is not None:
+                    observability.event(
+                        "llm.retry",
+                        level=logging.WARNING,
+                        provider="openai",
+                        model=kwargs.get("model"),
+                        duration_ms=duration_ms,
+                        removed_parameter=offending,
+                        error_type=type(exc).__name__,
+                    )
+                else:
+                    observability.event(
+                        "llm.request.failed",
+                        level=logging.ERROR,
+                        provider="openai",
+                        model=kwargs.get("model"),
+                        duration_ms=duration_ms,
+                        error_type=type(exc).__name__,
+                    )
             if offending is None:
                 raise
             _unsupported_params.add(offending)
             kwargs.pop(offending, None)
+        else:
+            if observed:
+                observability.event(
+                    "llm.request.completed",
+                    provider="openai",
+                    model=kwargs.get("model"),
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    **observability.usage_fields(response),
+                )
+            return response
 
 
 def _is_invalid_previous_response_id_error(

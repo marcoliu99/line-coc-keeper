@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, KEEPER_TEMPERATURE
+from app import observability
+from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, KEEPER_TEMPERATURE, LOG_SLOW_OPERATION_MS
 
 
 def run_conversation(
@@ -50,14 +51,31 @@ def run_conversation(
     messages.append({"role": "user", "content": new_message})
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
-    for _ in range(max_iterations):
-        response = client.messages.create(
+    for iteration in range(max_iterations):
+        with observability.span(
+            "llm.request",
+            provider="anthropic",
             model=ANTHROPIC_MODEL,
-            max_tokens=1024,
-            temperature=KEEPER_TEMPERATURE,
-            system=system_blocks,
-            tools=anthropic_tools,
-            messages=messages,
+            iteration=iteration,
+            tool_count=len(anthropic_tools),
+            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        ):
+            response = client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=1024,
+                temperature=KEEPER_TEMPERATURE,
+                system=system_blocks,
+                tools=anthropic_tools,
+                messages=messages,
+            )
+        usage = getattr(response, "usage", None)
+        observability.event(
+            "llm.usage",
+            provider="anthropic",
+            model=ANTHROPIC_MODEL,
+            input_tokens=getattr(usage, "input_tokens", None),
+            cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None),
         )
         messages.append({"role": "assistant", "content": response.content})
 
