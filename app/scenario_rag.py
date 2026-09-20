@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass, field
 from typing import cast
 
-from app import db, observability
+from app import db, embedding_cache, observability
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _logger = logging.getLogger(__name__)
@@ -358,14 +358,17 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
 
-    query_embedding = _embed_texts([query], rag_kind="scenario")
-    if query_embedding is None:
+    def _embed_query_once() -> list[float] | None:
+        result = _embed_texts([query], rag_kind="scenario")
+        return result[0] if result is not None else None
+
+    query_vec = embedding_cache.get_query_embedding(SCENARIO_RAG_EMBEDDING_MODEL, query, _embed_query_once)
+    if query_vec is None:
         # Embeddings worked at index time but the query-time call just failed
         # (transient error, key revoked mid-session, ...) — degrade to BM25
         # for this one search rather than returning nothing.
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
-    query_vec = query_embedding[0]
     query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
