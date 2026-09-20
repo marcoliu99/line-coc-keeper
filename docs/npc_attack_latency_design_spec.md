@@ -321,31 +321,57 @@ Marco 要求再仔細看一次有沒有遞迴性/重複性的呼叫問題。系�
 **——玩家永遠不會看到那個被丟掉的攻擊方骰出結果，如果 KP 或玩家事後回頭核對
 擲骰紀錄會對不上。
 
-**不在這次範圍內修**（不是延遲問題，屬於正確性/健壯性議題，建議另外決定要不要
-處理），但記錄設計方向供之後參考：在四個 handler 的 `_mutate_and_save_state`
-mutator 裡，登記前先檢查 `target_char.owner_id in target_state.pending_checks`，
-如果已存在就回傳 `{"ok": False, "error": "...已經有一筆待處理的檢定，請等玩家
-先處理完..."}`，不覆蓋、不重新擲骰。四個工具可以共用同一段檢查邏輯。
+**已修正並實作**：新增共用檢查函式 `_reject_if_check_already_pending(state, char)`
+（`app/keeper.py`，緊接在 `require_character` 後面），四個 handler 在做任何
+擲骰／登記之前都先呼叫這個檢查，`char.owner_id` 已經有 pending check 就直接
+回傳錯誤、不覆蓋、不重新擲骰。因為 `_execute_tool` 在同一個 Keeper 回合內是
+單執行緒依序執行（不會有兩個工具呼叫同時跑），檢查直接對呼叫方傳進來的
+`state.pending_checks` 做，不需要另外在 `_mutate_and_save_state` 的鎖裡面做
+——`state` 本來就會在每次 `_mutate_and_save_state` 呼叫後同步成最新版本，同一輪
+內的重複呼叫一定看得到前一次寫入的結果。跨 conversation 的並發已經由
+`app/locks.py` 的 per-conversation 鎖在更早的地方序列化掉了，不會有兩個
+conversation 同時跑到這裡的情況。
 
-### 風險 2：`plan_enemy_turn` 沒有程式碼層級保護，防止同一敵人在同一輪被重複規劃
+測試見 `tests/test_npc_attack_latency.py` 的 `AlreadyPendingCheckGuardTests`
+——四個工具各自的「重複呼叫被拒絕」情境，加上 `offer_npc_attack_defense_choice`
+專屬的「第二次呼叫不會真的擲骰」驗證（用 mock 計算 `dice.skill_check` 實際被
+呼叫幾次、帶了什麼參數），還有一個「不同角色互不影響」的情境確認這個保護是
+以 `owner_id` 為單位、不是全域擋住。
 
-`combat.plan_enemy_turn`（`app/combat.py:693`）的 `existing_plan` 查詢
-（`:718-728`）用 `not plan.get("resolved")` 過濾——只有「還沒解決」的 plan
-才會被視為「已經規劃過，直接回傳同一份」。一旦某個 plan 被 `resolve_enemy_action`
-標記 `resolved=True`，**同一個敵人、同一輪、同一個 `current_index`** 再呼叫
-一次 `plan_enemy_turn`，因為找不到符合條件的既有 plan，會產生一個**全新的**
-plan（新的 `plan_id`，重新選目標、選行動）。
+### 風險 2：`plan_enemy_turn` 重複規劃——**深入查證後發現原本的假設是錯的，沒有修**
 
-如果 AI 在還沒呼叫 `advance_combat_turn` 推進到下一位之前，誤觸發第二次
-`plan_enemy_turn`（例如敘事上的困惑、或工具呼叫順序亂掉），這個敵人就有機會
-在同一輪內攻擊（或使用特殊能力）兩次——保護完全依賴 prompt 紀律（combat_block
-裡「某位戰鬥員的行動...處理完後，必須呼叫 advance_combat_turn 工具推進到下一位，
-不可以自己在心裡默默跳過或一次處理多人」），沒有程式碼擋著。
+原本以為「同一敵人、同一輪、同一個 `current_index` 的 plan 一旦被
+`resolve_enemy_action` 標記 `resolved=True`，再呼叫一次 `plan_enemy_turn`
+就是不該發生的重複規劃」，打算比照風險 1 加一個「已解決就拒絕」的守衛。實作後
+拿既有測試套件跑一次，`tests/test_combat_cards.py` 的
+`test_on_damage_taken_trigger_fires_after_enemy_damage` 直接失敗，回頭看這個
+既有測試才發現原本的假設是錯的：
 
-**不在這次範圍內修**，記錄設計方向：`plan_enemy_turn` 可以在建立新 plan 前，
-額外檢查「這個 `combatant_id` 在同一個 `round_number`／`current_index` 是否
-已經有一筆 `resolved=True` 的 plan」，如果有就回傳錯誤（提示先呼叫
-`advance_combat_turn`），而不是靜默生出第二個 plan。
+```python
+before_damage = combat.plan_enemy_turn(state)                       # → attack
+combat.apply_combat_damage(state, "Spiteful Thing", 1)
+after_damage = combat.plan_enemy_turn(state)                        # → special_ability（觸發 on_damage_taken）
+combat.resolve_enemy_action(state, after_damage["plan_id"])
+after_resolve = combat.plan_enemy_turn(state)                       # → attack（！）
+```
+
+這個既有測試證實：**同一個敵人在同一輪、同一個 `current_index` 裡，本來就可以
+合法地被規劃並解決「多個」動作**——受傷觸發的特殊能力先解決一次，接著同一個
+敵人還能再規劃一次「攻擊」動作，兩個都算在同一個 `advance_combat_turn` 之前。
+`resolve_enemy_action` 的 `resolved=True` 代表的是「這一個 plan 處理完了」，
+不是「這個敵人這一輪的行動額度用完了」——`advance_combat_turn` 才是真正決定
+「輪到下一位」的唯一機制，這是刻意的設計（觸發性特殊能力可以跟主要行動疊加），
+不是漏洞。
+
+已經把原本加的守衛程式碼**完全撤掉**（`app/combat.py` 的 `plan_enemy_turn`
+還原成跟這個 spec 一開始讀到的版本一樣），改記錄這個修正過的理解，避免以後
+又基於同樣的錯誤假設重新加一次這個守衛。`already_resolved_plan` 這種「同一
+`combatant_id`／`round_number`／`current_index` 是否已有 resolved plan」的
+查詢，本身不是一個能區分「合法的第二個動作」跟「AI 誤觸發重複規劃」的可靠訊號，
+沒有找到其他更精確的區分方式，這次先不處理——如果之後真的觀察到 AI 誤用
+`plan_enemy_turn` 造成不合理的重複攻擊，需要重新想一個更精確的判斷條件（例如
+看 `selected_action`／`selected_id` 是否重複、或限制「同一個 `plan_id` 觸發鏈」
+之類），不是這次能直接套用的簡單版本。
 
 ### 已排除、不是問題的情況
 
@@ -363,8 +389,10 @@ plan（新的 `plan_id`，重新選目標、選行動）。
   工具的實際執行（`execute_turn_tool`）在這之前就已經完成、結果已經寫進
   對話歷史，重試不會回頭重新觸發已經執行過的工具。
 
-### 建議
+### 結論
 
-風險 1、2 都是「需要決定要不要修」的正確性議題，不是這次延遲優化的必要條件。
-兩個都可以獨立於 A／B／C 之外處理，要不要現在一起做、或另開票，等你決定。
+風險 1 已修正並測試（`_reject_if_check_already_pending`，四個工具共用）。
+風險 2 深入查證後發現原本的假設不成立，既有測試證實同一敵人同一輪合法地可以
+被規劃／解決多個動作，已撤掉原本打算加的守衛，只留下修正後的理解記錄，沒有
+程式碼改動。全套測試 249/251 過（2 個既有無關失敗）。
 

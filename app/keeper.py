@@ -792,6 +792,33 @@ def require_character(state: GroupState, name: str) -> Character:
     return character
 
 
+def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict | None:
+    """Returns an error dict if `char` already has an unresolved pending
+    check registered, else None. Shared by every tool that's about to
+    register a new pending_checks entry (skill_check/sanity_check/
+    offer_check_choice/offer_npc_attack_defense_choice) — see
+    docs/npc_attack_latency_design_spec.md's "風險 1": none of them
+    previously guarded against a repeat call for the same investigator,
+    which silently overwrote (and, for offer_npc_attack_defense_choice,
+    silently discarded an already-rolled attacker check) whatever was
+    already pending. Checked against `state` directly rather than inside
+    a freshly-reloaded/locked mutator: tool calls within one Keeper turn
+    execute sequentially on one thread (never concurrently with each
+    other), and `state` is kept in sync with the latest save after every
+    _mutate_and_save_state call in this same turn, so this is exactly the
+    data a repeat call within that sequence would see — the actual
+    cross-conversation concurrency this repo cares about is already
+    serialized per-conversation by app/locks.py well before _execute_tool
+    is ever reached."""
+    if char.owner_id in state.pending_checks:
+        return {
+            "ok": False,
+            "error": f"{char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
+                     "才能再要求新的檢定，不要重複呼叫。",
+        }
+    return None
+
+
 def resolve_skill_value(char: Character, skill_name: str) -> int:
     key = skill_name.strip()
     if key in char.skills:
@@ -1179,6 +1206,9 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            blocked = _reject_if_check_already_pending(state, char)
+            if blocked is not None:
+                return blocked
             def _register_pending_skill_check(target_state: GroupState) -> tuple[int, int, int, str]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 value = resolve_skill_value(target_char, tool_input["skill"])
@@ -1205,6 +1235,9 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            blocked = _reject_if_check_already_pending(state, char)
+            if blocked is not None:
+                return blocked
             raw_options = tool_input.get("options") or []
             if len(raw_options) < 2:
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
@@ -1256,9 +1289,16 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            blocked = _reject_if_check_already_pending(state, char)
+            if blocked is not None:
+                return blocked
             raw_options = tool_input.get("options") or []
             if len(raw_options) < 2:
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
+            # Guard checked above, before rolling — this tool rolls the
+            # attacker's check as a side effect, so without the guard a
+            # repeat call would waste a real roll on a result nobody ever
+            # sees (silently overwritten by the second call's own roll).
             attacker_skill_value = max(0, min(100, int(tool_input["attacker_skill_value"])))
             attacker_bonus = int(tool_input.get("attacker_bonus_dice") or 0)
             attacker_penalty = int(tool_input.get("attacker_penalty_dice") or 0)
@@ -1293,6 +1333,9 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            blocked = _reject_if_check_already_pending(state, char)
+            if blocked is not None:
+                return blocked
             loss_success = tool_input.get("loss_success", "0")
             loss_failure = tool_input.get("loss_failure", "1d4")
             def _register_pending_sanity(target_state: GroupState) -> None:

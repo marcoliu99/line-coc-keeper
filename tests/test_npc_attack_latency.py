@@ -169,6 +169,112 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertNotIn("attacker_tier", choice_result)  # not requested this time
 
 
+class AlreadyPendingCheckGuardTests(unittest.TestCase):
+    """Regression tests for 風險 1 in docs/npc_attack_latency_design_spec.md:
+    skill_check/sanity_check/offer_check_choice/
+    offer_npc_attack_defense_choice must all reject a second call for an
+    investigator who already has an unresolved pending check, instead of
+    silently overwriting it (and, for offer_npc_attack_defense_choice,
+    silently discarding an already-rolled attacker check)."""
+
+    def _options(self):
+        return [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}]
+
+    def test_skill_check_rejects_when_one_already_pending(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            first = keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
+            )
+            second = keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "格鬥"}, [], [], speaker_role="player"
+            )
+            saved_state = store.store["g"]
+        self.assertTrue(first["ok"])
+        self.assertFalse(second["ok"])
+        # The first pending check must survive untouched — still "閃避", not
+        # overwritten by the rejected second call's "格鬥".
+        self.assertEqual(saved_state.pending_checks["u1"]["skill"], "閃避")
+
+    def test_sanity_check_rejects_when_one_already_pending(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            first = keeper._execute_tool(
+                state, "sanity_check", {"investigator": "小明", "loss_success": "0", "loss_failure": "1d4"},
+                [], [], speaker_role="player",
+            )
+            second = keeper._execute_tool(
+                state, "sanity_check", {"investigator": "小明", "loss_success": "1", "loss_failure": "1d6"},
+                [], [], speaker_role="player",
+            )
+            saved_state = store.store["g"]
+        self.assertTrue(first["ok"])
+        self.assertFalse(second["ok"])
+        self.assertEqual(saved_state.pending_checks["u1"]["loss_failure"], "1d4")
+
+    def test_offer_check_choice_rejects_when_one_already_pending(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            first = keeper._execute_tool(
+                state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
+                [], [], speaker_role="player",
+            )
+            second = keeper._execute_tool(
+                state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
+                [], [], speaker_role="player",
+            )
+        self.assertTrue(first["ok"])
+        self.assertFalse(second["ok"])
+
+    def test_offer_npc_attack_defense_choice_rejects_and_does_not_reroll(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            roll_calls = []
+
+            def fake_skill_check(skill_value, *, bonus_dice=0, penalty_dice=0):
+                roll_calls.append(skill_value)
+                return MagicMock(roll=1, tier="critical")
+
+            with patch("app.keeper.dice.skill_check", side_effect=fake_skill_check):
+                first = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {"investigator": "小明", "options": self._options(), "attacker_skill_value": 50},
+                    [], [], speaker_role="player",
+                )
+                second = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {"investigator": "小明", "options": self._options(), "attacker_skill_value": 99},
+                    [], [], speaker_role="player",
+                )
+            saved_state = store.store["g"]
+        self.assertTrue(first["ok"])
+        self.assertFalse(second["ok"])
+        # The second call must be rejected before rolling — only the first
+        # call's attacker_skill_value (50) should have reached dice.skill_check.
+        self.assertEqual(roll_calls, [50])
+        self.assertEqual(saved_state.pending_checks["u1"]["attacker_tier"], "critical")
+
+    def test_different_investigators_are_independent(self):
+        """The guard is scoped per investigator (per owner_id) — one
+        player's pending check must not block a different player's."""
+        state = _state_with_investigator()
+        state.characters["u2"] = Character(name="小華", owner_id="u2", skills={"閃避": 40, "格鬥": 50})
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            first = keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
+            )
+            second = keeper._execute_tool(
+                state, "skill_check", {"investigator": "小華", "skill": "格鬥"}, [], [], speaker_role="player"
+            )
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+
+
 class ContextBuilderCombatRagSkipTests(unittest.IsolatedAsyncioTestCase):
     def _state(self, *, combat_active: bool) -> GroupState:
         state = GroupState(group_id="g")
