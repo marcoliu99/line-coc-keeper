@@ -87,6 +87,62 @@ Discord gateway event
 
 `request.completed.duration_ms` 是使用者可感知的完整處理時間；background maintenance 必須用自己的 `maintenance_id` 記錄，不能把它誤加到玩家回覆 latency。
 
+### 4.1 觀測 channel 與 fast path
+
+```text
+任何 app event／developer logger call
+  │
+  ├─ Structured performance event？
+  │    │
+  │    ├─ LOG_ENABLED=false
+  │    │    └─ no-op fast path
+  │    │         ├─ 不建立 event payload
+  │    │         ├─ 不啟動 timer
+  │    │         ├─ 不計算 token／bytes／hash
+  │    │         └─ 不寫入任何 performance output
+  │    │
+  │    └─ LOG_ENABLED=true
+  │         ├─ 取得 request／turn／maintenance context
+  │         ├─ 建立固定 schema event
+  │         ├─ 計算 duration／usage／統計欄位
+  │         └─ 交給 LOG_LEVEL filter 與 formatter
+  │
+  └─ Developer text log？
+       │
+       ├─ LOG_TEXT_ENABLED=false
+       │    └─ no-op fast path，不格式化 message
+       │
+       └─ LOG_TEXT_ENABLED=true
+            ├─ 保留 developer 提供的文字 message
+            ├─ 加入共用 timestamp／context
+            └─ 交給 LOG_LEVEL filter 與 formatter
+```
+
+兩個 channel 在 filter／formatter 前可以共用同一個 handler，但 payload 建立前必須先檢查各自的 toggle。這是為了確保關閉 structured performance logging 時，不會仍然付出 timer、metrics、hash 與 JSON 欄位建立成本。
+
+### 4.2 Request、AI 與背景任務的關係
+
+```text
+Discord request_id
+  │
+  ├─ turn_id
+  │    ├─ RAG／embedding events
+  │    ├─ llm.request events
+  │    └─ llm.tool events
+  │
+  ├─ state／reply events
+  │
+  └─ request.completed
+       │
+       └─ detached maintenance_id
+            ├─ summary events
+            ├─ embedding events
+            ├─ state.save event
+            └─ maintenance.completed
+```
+
+`request_id` 是 Discord ingress 的生命週期；`turn_id` 是 AI／agent turn 的生命週期；`maintenance_id` 是回覆送出後背景工作的生命週期。三者不可共用同一個 ID，也不可把 background maintenance 的耗時加到 request latency。
+
 ## 5. Correlation ID
 
 ### 5.1 必要識別碼
