@@ -582,7 +582,8 @@ Discord reply metrics 的語意分為「新訊息」與「編輯既有訊息」�
 button 的 `edit_message` 改計入 `reply_edit_count` 與 `reply_bytes`。所有
 direct output（button、Help、PDF choice、圖片 attachment）都必須包在
 `discord.reply` span，讓 request aggregate 與單次 Discord API latency 同時
-可觀測；send 失敗時不得先增加成功 output metrics。
+可觀測；每個文字 chunk 必須在 Discord send 成功後才增加成功 output
+metrics，因此 partial send failure 只會保留已成功送出的 message／chunk／bytes。
 
 目前的 `request.completed` 會依照 request context 的 handled-error 標記輸出
 `status=error`；只有未發生錯誤的 request 才輸出 `status=success`。Background

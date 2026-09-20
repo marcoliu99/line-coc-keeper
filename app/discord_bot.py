@@ -93,6 +93,17 @@ def _request_metrics() -> dict[str, int]:
     return metrics
 
 
+def _record_sent_chunk(metrics: dict[str, int], chunk: str) -> None:
+    """Add one chunk only after its Discord send has succeeded."""
+    byte_count = len(chunk.encode("utf-8"))
+    metrics["reply_message_count"] += 1
+    metrics["reply_chunk_count"] += 1
+    metrics["reply_bytes"] += byte_count
+    observability.increment_metric("reply_message_count")
+    observability.increment_metric("reply_chunk_count")
+    observability.increment_metric("reply_bytes", byte_count)
+
+
 async def _send_direct_message(
     channel: discord.abc.Messageable, text: str, *, view: discord.ui.View | None = None
 ) -> None:
@@ -201,19 +212,20 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
             for chunk in chunks:
                 await channel.send(chunk)
             return
-        observability.increment_metric("reply_message_count", len(chunks))
-        observability.increment_metric("reply_chunk_count", len(chunks))
-        observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+        reply_metrics = {
+            "reply_message_count": 0,
+            "reply_chunk_count": 0,
+            "reply_bytes": 0,
+        }
         with observability.span(
             "discord.reply",
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
-            reply_message_count=len(chunks),
-            reply_bytes=len(text.encode("utf-8")),
-            reply_chunk_count=len(chunks),
             reply_edit_count=0,
+            metrics=reply_metrics,
         ):
             for chunk in chunks:
                 await channel.send(chunk)
+                _record_sent_chunk(reply_metrics, chunk)
 
     return reply
 
@@ -298,19 +310,20 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
             for chunk in chunks:
                 await interaction.followup.send(chunk)
             return
-        observability.increment_metric("reply_message_count", len(chunks))
-        observability.increment_metric("reply_chunk_count", len(chunks))
-        observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+        reply_metrics = {
+            "reply_message_count": 0,
+            "reply_chunk_count": 0,
+            "reply_bytes": 0,
+        }
         with observability.span(
             "discord.reply",
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
-            reply_message_count=len(chunks),
-            reply_bytes=len(text.encode("utf-8")),
-            reply_chunk_count=len(chunks),
             reply_edit_count=0,
+            metrics=reply_metrics,
         ):
             for chunk in chunks:
                 await interaction.followup.send(chunk)
+                _record_sent_chunk(reply_metrics, chunk)
 
     return reply
 
