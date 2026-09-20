@@ -181,6 +181,32 @@ class BatchRoundUnitTests(unittest.IsolatedAsyncioTestCase):
         finally:
             locks.MAX_BATCH_SIZE = original_size
 
+    async def test_next_round_caps_a_burst_at_max_batch_size_and_keeps_the_remainder(self):
+        # Regression test for a real PR review finding: join()'s len(pending)
+        # >= MAX_BATCH_SIZE check only *requests* an early wake — it can't
+        # stop more join() calls from appending before the leader reacquires
+        # _lock to actually drain. A fast burst could otherwise hand one
+        # round an unbounded number of messages.
+        round_ = locks.BatchRound()
+        original_size = locks.MAX_BATCH_SIZE
+        locks.MAX_BATCH_SIZE = 3
+        try:
+            await round_.join(user_id="A", speaker_name="A", text="hi", resolved_location=None)  # leader
+            for uid in ("B", "C", "D", "E", "F"):
+                await round_.join(user_id=uid, speaker_name=uid, text="x", resolved_location=None)
+
+            first_batch = await asyncio.wait_for(round_.next_round(5), timeout=1.0)
+            self.assertEqual([p.user_id for p in first_batch], ["B", "C", "D"])
+            self.assertTrue(round_.active)  # remainder (E, F) still queued
+
+            # The remainder was already overflowing the cap, so the next
+            # round must not sit through another grace wait — the 5s budget
+            # here would time the test out if it did.
+            second_batch = await asyncio.wait_for(round_.next_round(5), timeout=1.0)
+            self.assertEqual([p.user_id for p in second_batch], ["E", "F"])
+        finally:
+            locks.MAX_BATCH_SIZE = original_size
+
 
 # ---------------------------------------------------------------------------
 # Layer 2: keeper.py formatting/delegation
@@ -266,6 +292,23 @@ class FakeBatchRunner:
         if should_block:
             self.loop.call_soon_threadsafe(self.blocking_started.set)
             self.release_blocking.wait(timeout=5)
+        return f"reply:{','.join(user_ids)}", [], []
+
+
+class FailOnceBatchRunner:
+    """Raises on its first call, then behaves like FakeBatchRunner — used to
+    verify a failed round doesn't strand BatchRound.active=True forever."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self._failed_once = False
+
+    def __call__(self, state, packets, resolved_location):
+        user_ids = [p.user_id for p in packets]
+        self.calls.append(user_ids)
+        if not self._failed_once:
+            self._failed_once = True
+            raise RuntimeError("boom")
         return f"reply:{','.join(user_ids)}", [], []
 
 
@@ -434,6 +477,28 @@ class MessageBatchingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         # the queue.
         self.assertEqual(batch_runner.calls, [["A"], ["B"]])
         self.assertEqual(kp_runner.started_order, ["kp-user"])
+
+    async def test_leader_failure_does_not_strand_the_batch_round(self):
+        # Regression test for a real PR review finding: BatchRound.active is
+        # only ever cleared by a successful next_round() call. If a round's
+        # own work raised straight out of the leader loop instead of being
+        # caught there, every later player message for this conversation
+        # would join() as a follower into a `pending` queue nobody is left
+        # to drain — silently swallowing all further player turns.
+        runner = FailOnceBatchRunner()
+
+        async def scenario():
+            reply_a = await self._send(self.CONVERSATION_ID, "A")  # round fails
+            reply_b = await self._send(self.CONVERSATION_ID, "B")  # must still work
+            return reply_a, reply_b
+
+        reply_a, reply_b = await self._run(
+            _active_state(self.CONVERSATION_ID), batch_runner=runner, scenario=scenario
+        )
+        self.assertEqual(runner.calls, [["A"], ["B"]])
+        self.assertTrue(any("發生錯誤了" in m for m in reply_a.messages))
+        self.assertEqual(reply_b.messages, ["reply:B"])
+        self.assertFalse(locks._batch_rounds[self.CONVERSATION_ID].active)
 
     async def test_non_discord_conversation_bypasses_batching_entirely(self):
         conversation_id = "line-group-g"

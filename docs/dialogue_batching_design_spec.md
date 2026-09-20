@@ -388,6 +388,30 @@ Marco 提出的疑慮——一堆訊息裡有人打了一句沒有 `@` 的閒聊
   單則訊息的舊流程（`_handle_ordinary_text_message_locked`）本來就有這個檢查，批次流程補上
   是為了維持同等的新鮮度保證，不是新增行為。
 
+### PR review（Codex）抓到的兩個問題，已修正
+
+1. **P1／leader 失敗會卡死整個 conversation 的批次**：`_run_batch_leader_loop` 原本沒有
+   try/except，若某一輪的 `_run_one_batch_round`（AI 呼叫、`reply()`、圖片發送等）拋例外，
+   例外會直接往外傳，迴圈永遠不會呼叫 `next_round()`——而 `BatchRound.active` **只有**
+   `next_round()` 會清掉。結果是這個 conversation 的 `active` 永遠卡在 `True`，之後每一則
+   玩家訊息都會被 `join()` 判定成 follower、塞進 `pending`，但已經沒有任何 leader 會去
+   drain 它——等於這個頻道的批次功能整組壞掉，玩家發言全部被靜默吞掉，只有重啟 process 才會
+   恢復（記憶體內的 `_batch_rounds` 才會被清空重來）。修法：`_run_batch_leader_loop` 用
+   try/except 包住每一輪的執行，失敗時記錄 log、盡量回報錯誤訊息給頻道（跟
+   `discord_bot.py` 的 `on_message` 現有的錯誤回報方式一致），**不論成功或失敗都照樣呼叫
+   `next_round()`**，確保這個 conversation 的批次生命週期永遠有辦法往下走，不會卡死。
+2. **P2／`MAX_BATCH_SIZE` 沒有真的把單輪批次上限鎖在 5 則**：`join()` 裡「`len(pending) >=
+   MAX_BATCH_SIZE` 就 `grace_wake.set()`」只是**請求**提前喚醒，不是真的鎖住——`set()` 之後，
+   在 leader 真正搶到 `_lock` 把 `pending` 整批取走之前，還是可能有更多 `join()` 呼叫接連
+   append 進去（尤其一次湧入的訊息量遠大於 5 則時）。結果單輪批次實際可能遠超過 5 則，直接
+   違背「限制單次 prompt 大小」的初衷。修法：`next_round()` 改成只從 `pending` 取前
+   `MAX_BATCH_SIZE` 筆（`self.pending[:MAX_BATCH_SIZE]`），剩下的留在 `pending` 給下一輪；
+   若還有剩，順便把 `grace_wake` 直接設成已觸發，讓下一輪不用再乾等一次寬限期（這些訊息本來
+   就已經排隊排到超過上限了，沒理由再讓它們多等）。
+
+`tests/test_message_batching.py` 新增對應的兩則回歸測試（leader 失敗後不卡死、burst 超過
+`MAX_BATCH_SIZE` 時分批取用）。
+
 設計已無待決策事項，等 Marco 確認整份 spec 後即可開始實作。
 
 ## 測試計畫（`tests/test_message_batching.py`）

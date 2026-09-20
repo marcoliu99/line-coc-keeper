@@ -1523,14 +1523,33 @@ async def _run_batch_leader_loop(
     the pre-batching single-message flow (see keeper.run_batched_turn). Each
     subsequent round is whatever queued up during the previous round's
     Keeper call plus its grace period, taken via batch_round.next_round().
-    Loops until a round finds nothing left queued."""
+    Loops until a round finds nothing left queued.
+
+    A round's own work is wrapped in try/except here specifically so that
+    batch_round.next_round() always still gets called afterward, success or
+    failure: next_round() is the only thing that ever clears
+    BatchRound.active. If a round raised straight out of this loop instead,
+    `active` would stay True forever with no one left to drive it — every
+    later player message for this conversation would then join() as a
+    follower into a `pending` queue nobody is ever going to drain again,
+    silently swallowing all further player turns until process restart."""
     packets: list[locks.QueuedMessage] | None = [first_packet]
     while packets is not None:
-        if has_kp_assistant:
-            async with locks.get_keeper_priority_gate(conversation_id, is_kp=False):
+        try:
+            if has_kp_assistant:
+                async with locks.get_keeper_priority_gate(conversation_id, is_kp=False):
+                    await _run_one_batch_round(conversation_id, packets, reply, send_dm, send_image, send_dm_image)
+            else:
                 await _run_one_batch_round(conversation_id, packets, reply, send_dm, send_image, send_dm_image)
-        else:
-            await _run_one_batch_round(conversation_id, packets, reply, send_dm, send_image, send_dm_image)
+        except Exception as exc:  # noqa: BLE001 - must not strand BatchRound.active; see docstring above
+            _logger.exception(
+                "batch round failed for conversation_id=%s (user_ids=%s)",
+                conversation_id, [p.user_id for p in packets],
+            )
+            try:
+                await reply(f"發生錯誤了：{exc}")
+            except Exception:
+                _logger.exception("also failed to report batch round error back to conversation_id=%s", conversation_id)
         packets = await batch_round.next_round(MAX_BATCH_WAIT_SECONDS)
 
 

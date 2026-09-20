@@ -255,9 +255,22 @@ class BatchRound:
             pass
 
         async with self._lock:
-            batch = self.pending
-            self.pending = []
+            # Cap what one round actually takes at MAX_BATCH_SIZE: join()'s
+            # own len(pending) >= MAX_BATCH_SIZE check only *requests* an
+            # early wake (sets grace_wake) — it doesn't stop more callers
+            # from acquiring this same lock and appending before the leader
+            # gets back here to drain. Without this slice, a fast-arriving
+            # burst could hand one Keeper call an unbounded number of
+            # messages, defeating the whole point of the cap.
+            batch = self.pending[:MAX_BATCH_SIZE]
+            self.pending = self.pending[MAX_BATCH_SIZE:]
             self.grace_wake = asyncio.Event()
+            if self.pending:
+                # Already at/over the cap before this round even started —
+                # the next round should pick it up immediately, not sit
+                # through another grace wait on top of however long this
+                # remainder already queued.
+                self.grace_wake.set()
             if not batch:
                 self.active = False
                 return None
