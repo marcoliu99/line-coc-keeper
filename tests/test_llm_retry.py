@@ -38,6 +38,32 @@ class FakeStatusError(Exception):
         self.status_code = status_code
 
 
+# httpx's real transport exception names (httpx._exceptions) — PR review
+# caught that google-genai (and potentially other SDKs) can raise these
+# directly, unwrapped, and none of them contained the original marker
+# strings (e.g. "ConnectError" has no "connectionerror" substring).
+class ConnectError(Exception):
+    pass
+
+
+class ReadError(Exception):
+    pass
+
+
+class RemoteProtocolError(Exception):
+    pass
+
+
+class PoolTimeout(Exception):
+    pass
+
+
+class WrapsHttpxError(Exception):
+    """Stand-in for an SDK exception that wraps the real transport failure
+    as its __cause__ (`raise SomeSDKError(...) from httpx_error`) without
+    the outer class's own name matching anything retryable."""
+
+
 class IsRetryableTests(unittest.TestCase):
     def test_connection_and_timeout_errors_are_retryable_by_name(self):
         self.assertTrue(retry.is_retryable(RetryableConnectionError()))
@@ -53,6 +79,30 @@ class IsRetryableTests(unittest.TestCase):
     def test_4xx_status_code_is_not_retryable(self):
         self.assertFalse(retry.is_retryable(FakeStatusError(400)))
         self.assertFalse(retry.is_retryable(FakeStatusError(429)))
+
+    def test_httpx_transport_exceptions_are_retryable_by_name(self):
+        self.assertTrue(retry.is_retryable(ConnectError()))
+        self.assertTrue(retry.is_retryable(ReadError()))
+        self.assertTrue(retry.is_retryable(RemoteProtocolError()))
+        self.assertTrue(retry.is_retryable(PoolTimeout()))
+
+    def test_wrapped_transport_exception_is_retryable_via_cause_chain(self):
+        try:
+            try:
+                raise ConnectError("connection refused")
+            except ConnectError as cause:
+                raise WrapsHttpxError("wrapped") from cause
+        except WrapsHttpxError as exc:
+            self.assertTrue(retry.is_retryable(exc))
+
+    def test_wrapped_unrelated_exception_stays_non_retryable(self):
+        try:
+            try:
+                raise UnrelatedValueError("bad input")
+            except UnrelatedValueError as cause:
+                raise WrapsHttpxError("wrapped") from cause
+        except WrapsHttpxError as exc:
+            self.assertFalse(retry.is_retryable(exc))
 
 
 class CallWithRetryTests(unittest.TestCase):
@@ -162,6 +212,29 @@ class OpenAICreateResponseRetryTests(unittest.TestCase):
         sleep_mock.assert_not_called()
 
 
+class OpenAIClientConstructionTests(unittest.TestCase):
+    def test_run_conversation_disables_sdk_default_retries(self):
+        from app.providers import openai_provider
+
+        fake_response = MagicMock(output=[], output_text="回覆", id="resp_1")
+        fake_client = MagicMock()
+        fake_client.responses.create = MagicMock(return_value=fake_response)
+
+        fake_openai_module = MagicMock()
+        fake_openai_module.OpenAI = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"openai": fake_openai_module}), \
+             patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
+            result = openai_provider.run_conversation("static", "dynamic", [], [], "hello", lambda n, a: {}, 1)
+
+        self.assertEqual(result, "回覆")
+        # See app/providers/anthropic_provider.py's identical fix — the
+        # SDK's own default retrying (max_retries=2) must be disabled so
+        # retry.call_with_retry's LLM_MAX_RETRIES budget is the only one in
+        # effect.
+        fake_openai_module.OpenAI.assert_called_once_with(api_key="test-key", max_retries=0)
+
+
 class AnthropicProviderRetryWiringTests(unittest.TestCase):
     def test_run_conversation_retries_transient_failure_then_succeeds(self):
         from app.providers import anthropic_provider
@@ -184,6 +257,10 @@ class AnthropicProviderRetryWiringTests(unittest.TestCase):
         self.assertEqual(result, "回覆")
         self.assertEqual(fake_client.messages.create.call_count, 2)
         sleep_mock.assert_called_once()
+        # PR review finding: the SDK's own default retrying (max_retries=2)
+        # must be disabled so our retry.call_with_retry budget is the only
+        # one in effect, instead of stacking on top of the SDK's.
+        fake_anthropic_module.Anthropic.assert_called_once_with(api_key="test-key", max_retries=0)
 
 
 class GeminiProviderRetryWiringTests(unittest.TestCase):

@@ -224,7 +224,11 @@ def run_conversation(
 
     import openai
 
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    # max_retries=0: see app/providers/anthropic_provider.py's identical
+    # comment — the SDK defaults to retrying twice on its own, which would
+    # stack with _create_response's connection-retry loop below and blow
+    # past the documented LLM_MAX_RETRIES-bounded attempt/latency budget.
+    client = openai.OpenAI(api_key=OPENAI_API_KEY, max_retries=0)
 
     # Responses API tools are flat (no nested "function" wrapper, unlike Chat
     # Completions) — see FunctionToolParam in the SDK's type stubs.

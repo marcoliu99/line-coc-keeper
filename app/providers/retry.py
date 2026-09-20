@@ -28,24 +28,55 @@ T = TypeVar("T")
 # project stays SDK-version-agnostic on purpose, the same style already used
 # by openai_provider.py's _create_response for its unsupported-parameter
 # detection (matching on the stringified error, not an imported type).
+#
+# Also includes httpx's own transport-level exception names (ConnectError,
+# ReadError, WriteError, RemoteProtocolError, PoolTimeout, ...) — PR review
+# caught that Gemini's google-genai SDK (and potentially openai/anthropic
+# depending on where a connection actually drops) can raise the underlying
+# httpx transport exception directly rather than always wrapping it in the
+# SDK's own APIConnectionError-style class, and none of those httpx class
+# names matched the original marker list (e.g. "ConnectError" doesn't
+# contain "connectionerror").
 _RETRYABLE_NAME_MARKERS = (
     "connectionerror", "connectionreset", "connectionaborted", "remotedisconnected",
     "timeouterror", "readtimeout", "writetimeout", "connecttimeout",
     "internalservererror", "serviceunavailable", "overloadederror",
     "temporarilyunavailable", "servererror",
+    # httpx transport exceptions (httpx._exceptions), seen unwrapped from
+    # some SDK paths:
+    "connecterror", "readerror", "writeerror", "closederror",
+    "remoteprotocolerror", "protocolerror", "pooltimeout", "networkerror",
 )
 
 
-def is_retryable(exc: Exception) -> bool:
-    """True for a failure worth retrying: a connection/timeout error by
-    class name, or an HTTP 5xx status (openai/anthropic's APIStatusError
-    family exposes this as `.status_code`; a 5xx is a transient server-side
-    problem regardless of what the exception class itself is named)."""
+def _is_retryable_one(exc: BaseException) -> bool:
     name = type(exc).__name__.lower()
     if any(marker in name for marker in _RETRYABLE_NAME_MARKERS):
         return True
     status_code = getattr(exc, "status_code", None)
     return isinstance(status_code, int) and status_code >= 500
+
+
+def is_retryable(exc: Exception) -> bool:
+    """True for a failure worth retrying: a connection/timeout error by
+    class name (including httpx's own transport exceptions, see above), or
+    an HTTP 5xx status (openai/anthropic's APIStatusError family exposes
+    this as `.status_code`; a 5xx is a transient server-side problem
+    regardless of what the exception class itself is named).
+
+    Also walks `__cause__`/`__context__`: some SDKs wrap the actual
+    transport failure inside their own exception type (e.g. `raise
+    SomeSDKError(...) from httpx_error`) without the outer class's own name
+    matching anything above — checking the chain catches that without
+    needing to know every SDK's exact wrapping behavior."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if _is_retryable_one(current):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:

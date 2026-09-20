@@ -29,7 +29,14 @@ def run_conversation(
 
     import anthropic
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    # max_retries=0: the SDK itself defaults to retrying twice on connection
+    # errors/retryable status codes — stacked on top of retry.call_with_retry
+    # below, a persistent outage would make up to 3x the intended number of
+    # HTTP attempts (each with its own SDK-internal backoff) instead of the
+    # single LLM_MAX_RETRIES-bounded budget documented in app/config.py. Our
+    # retry layer is the single source of truth for this client; the SDK's
+    # own retry logic is disabled, not layered.
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0)
 
     # Cache the large/stable static system block and the (fully static) tool
     # definitions; the small per-turn dynamic block is left uncached on purpose —
