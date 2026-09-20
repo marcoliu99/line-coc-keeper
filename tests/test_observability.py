@@ -91,6 +91,15 @@ class ObservabilityTests(unittest.TestCase):
         self.assertIn('"duration_ms":12.5', rendered)
         self.assertNotIn("prompt", rendered)
 
+    def test_context_filter_captures_context_before_queue_listener_formatting(self):
+        formatter_module = __import__("app.logging_config", fromlist=["_ContextFilter", "TextFormatter"])
+        record = logging.LogRecord("app.test", logging.INFO, __file__, 1, "hello", (), None)
+        with observability.request_context(conversation_id="channel") as bound:
+            self.assertTrue(formatter_module._ContextFilter().filter(record))
+            rendered = formatter_module.TextFormatter().format(record)
+        self.assertIn(bound["request_id"], rendered)
+        self.assertIn("conversation_id=", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

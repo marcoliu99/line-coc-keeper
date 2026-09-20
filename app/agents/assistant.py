@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
-from app import keeper
+from app import config, keeper, observability
+from app.providers import anthropic_provider, gemini_provider, openai_provider
+
+_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 from app.domain.models import AgentMessage
 
 
@@ -41,7 +44,13 @@ async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str
     # keeper.run_turn is synchronous — dispatched via asyncio.to_thread like
     # every other call site in this codebase (see app/legacy_commands.py's
     # own handle_text_message), not awaited directly.
-    final_text, private_messages, image_requests = await asyncio.to_thread(
-        keeper.run_turn, state, user_id, display_name, text, resolved_location, "kp_assistant"
-    )
+    provider = _PROVIDERS[config.LLM_PROVIDER]
+    model = getattr(provider, {"anthropic": "ANTHROPIC_MODEL", "gemini": "GEMINI_MODEL", "openai": "OPENAI_MODEL"}[config.LLM_PROVIDER])
+    metrics: dict[str, int] = {}
+    with observability.metrics_context(metrics):
+        with observability.span("llm.turn", provider=config.LLM_PROVIDER, model=model,
+                                agent="kp_assistant", metrics=metrics):
+            final_text, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_turn, state, user_id, display_name, text, resolved_location, "kp_assistant"
+            )
     return final_text, private_messages, image_requests

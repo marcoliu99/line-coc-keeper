@@ -198,6 +198,9 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[f
             for item in response.data:
                 ordered[start + item.index] = item.embedding
         if any(v is None for v in ordered):
+            observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
+                                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25",
+                                error_type="incomplete_embedding_response")
             return None
         return cast(list[list[float]], ordered)
     except Exception:

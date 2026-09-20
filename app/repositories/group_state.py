@@ -23,7 +23,7 @@ from pathlib import Path
 
 from app import db
 from app import locks
-from app import observability
+from app import config, observability
 from app.config import DATA_DIR
 from app.models import GroupState
 
@@ -51,13 +51,15 @@ def _log_group_id(group_id: str) -> str:
 
 
 def load_state(group_id: str) -> GroupState:
-    metrics: dict[str, int | bool] = {"cache_hit": False}
+    metrics: dict[str, int | bool] = {"cache_hit": False} if config.LOG_ENABLED else {}
     with observability.span("state.load", operation="load", metrics=metrics):
         data = db.get_json("group_states", group_id)
         if data is None:
-            metrics["state_size_bytes"] = 0
+            if config.LOG_ENABLED:
+                metrics["state_size_bytes"] = 0
             return GroupState(group_id=group_id)
-        metrics["state_size_bytes"] = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        if config.LOG_ENABLED:
+            metrics["state_size_bytes"] = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
         try:
             return GroupState.from_dict(data)
         except ValueError:
@@ -69,9 +71,9 @@ def load_state(group_id: str) -> GroupState:
 
 
 def save_state(state: GroupState, *, reason: str = "command") -> None:
-    metrics: dict[str, int | bool] = {
-        "state_size_bytes": len(json.dumps(state.to_dict(), ensure_ascii=False).encode("utf-8")),
-    }
+    metrics: dict[str, int | bool] = {}
+    if config.LOG_ENABLED:
+        metrics["state_size_bytes"] = len(json.dumps(state.to_dict(), ensure_ascii=False).encode("utf-8"))
     with observability.span("state.save", operation=reason, metrics=metrics):
         _save_state_impl(state, reason=reason)
 

@@ -548,6 +548,23 @@ Logging output 使用 `QueueHandler` 搭配 daemon `QueueListener`；listener �
 process exit 或 `force=True` reconfigure 時停止並 flush，stream／rotating file
 handler 不直接在 Discord event loop 執行格式化與寫入。
 
+QueueHandler 送出前會把當下的 ContextVar snapshot 寫入 LogRecord，listener
+thread formatter 一律使用這份 snapshot；因此非結構化的 developer text log
+也會保留 `request_id`、`conversation_id`、`turn_id` 等 correlation context，
+不會因跨 thread 而遺失。`LOG_ENABLED=false` 時 state save/load 不會先序列化
+state 來計算觀測欄位，避免 logging fast path 反而增加遊戲流程成本。
+
+所有完整 LLM agent turn（Executor、Narrator、KP Assistant、Guard）都以
+`llm.turn` 包住 provider 呼叫，並由 nested provider／tool events 聚合
+`iteration_count`、`tool_call_count`、token usage 等 metrics。Scenario 與
+Memory RAG 的 search completion 會帶 `index_cache`；embedding response
+缺少任一筆向量時會明確記錄 `rag.embedding_fallback` 並回退 BM25。
+
+Discord button、Help、pending-choice 等不經共用 `Reply` callback 的文字
+輸出，也必須更新 request metrics（message/chunk/bytes），讓
+`request.completed` 的回覆統計涵蓋實際公開與 ephemeral 文字輸出；公開的
+圖片 attachment 也計入 `reply_message_count` 與 `reply_bytes`。
+
 目前的 `request.completed` 會依照 request context 的 handled-error 標記輸出
 `status=error`；只有未發生錯誤的 request 才輸出 `status=success`。Background
 maintenance 使用 detached context 產生獨立 `maintenance_id`，不會沿用外層

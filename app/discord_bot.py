@@ -57,6 +57,23 @@ def _chunk_text(text: str) -> list[str]:
     return chunks[:MAX_REPLY_MESSAGES]
 
 
+def _record_reply_output(text: str) -> None:
+    """Account for text sent outside the shared Reply callback."""
+    if not config.LOG_ENABLED:
+        return
+    observability.increment_metric("reply_message_count")
+    observability.increment_metric("reply_chunk_count")
+    observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+
+
+def _record_reply_binary(size: int) -> None:
+    """Account for a Discord message that contains an attachment."""
+    if not config.LOG_ENABLED:
+        return
+    observability.increment_metric("reply_message_count")
+    observability.increment_metric("reply_bytes", size)
+
+
 def _make_reply(channel: discord.abc.Messageable) -> Reply:
     async def reply(text: str) -> None:
         chunks = _chunk_text(text)
@@ -141,6 +158,7 @@ def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
         # conversation_id/page_number are retained in the shared callback
         # signature for state-aware image sends; Discord attaches bytes directly.
         await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
+        _record_reply_binary(len(png_bytes))
 
     return send_image
 
@@ -234,14 +252,18 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
     @_observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != self.owner_id:
-            await interaction.response.send_message("這不是你的檢定，換你自己的角色來按。", ephemeral=True)
+            text = "這不是你的檢定，換你自己的角色來按。"
+            await interaction.response.send_message(text, ephemeral=True)
+            _record_reply_output(text)
             return
         if not locks.try_acquire_check(self.conversation_id, self.owner_id):
             # A slow Keeper call from a first click (or an earlier /coc check)
             # is still in flight — reject outright rather than letting a
             # second click queue behind get_conversation_lock and run as a
             # genuinely separate, duplicate roll once its turn comes.
-            await interaction.response.send_message("上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。", ephemeral=True)
+            text = "上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。"
+            await interaction.response.send_message(text, ephemeral=True)
+            _record_reply_output(text)
             return
         try:
             await interaction.response.edit_message(view=None)
@@ -286,7 +308,9 @@ async def _post_check_buttons(
             view = discord.ui.View(timeout=None)
             for label, danger, option in _check_button_specs(check):
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option))
-            await channel.send(f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）：", view=view)
+            text = f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）："
+            await channel.send(text, view=view)
+            _record_reply_output(text)
         except Exception:
             # Never let one broken/unpostable entry (a malformed check dict,
             # a transient Discord API error, ...) silently swallow every
@@ -334,10 +358,14 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
     @_observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != self.owner_id:
-            await interaction.response.send_message("這不是你的 Luck 花費決定，換你自己的角色來按。", ephemeral=True)
+            text = "這不是你的 Luck 花費決定，換你自己的角色來按。"
+            await interaction.response.send_message(text, ephemeral=True)
+            _record_reply_output(text)
             return
         if not locks.try_acquire_check(self.conversation_id, self.owner_id):
-            await interaction.response.send_message("上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。", ephemeral=True)
+            text = "上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。"
+            await interaction.response.send_message(text, ephemeral=True)
+            _record_reply_output(text)
             return
         try:
             await interaction.response.edit_message(view=None)
@@ -376,7 +404,9 @@ async def _post_luck_buttons(
                 label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
                 view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
             view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True))
-            await channel.send(f"🍀 {name}，要花 Luck 買到更好的結果嗎？", view=view)
+            text = f"🍀 {name}，要花 Luck 買到更好的結果嗎？"
+            await channel.send(text, view=view)
+            _record_reply_output(text)
         except Exception:
             _logger.exception(
                 "failed to post luck button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
@@ -460,11 +490,15 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
     async def callback(self, interaction: discord.Interaction) -> None:
         channel = interaction.channel
         if channel is None or _conversation_id(channel.id) != self.conversation_id:
-            await interaction.response.send_message("這個 PDF 按鈕不屬於目前頻道。", ephemeral=True)
+            text = "這個 PDF 按鈕不屬於目前頻道。"
+            await interaction.response.send_message(text, ephemeral=True)
+            _record_reply_output(text)
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
         if not _is_kp_or_keeper(state, str(interaction.user.id), _is_keeper_member(interaction.user)):
-            await interaction.response.send_message("只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。", ephemeral=True)
+            text = "只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。"
+            await interaction.response.send_message(text, ephemeral=True)
+            _record_reply_output(text)
             return
         await interaction.response.edit_message(view=None)
         push = _make_reply(interaction.channel)
@@ -494,7 +528,9 @@ async def _post_pdf_upload_buttons(channel: discord.abc.Messageable, conversatio
     view = discord.ui.View(timeout=None)
     view.add_item(PdfUploadChoiceButton(conversation_id, "new", "🆕 全新劇本"))
     view.add_item(PdfUploadChoiceButton(conversation_id, "fix", "🩹 修正目前劇本"))
-    await channel.send("👉 請選擇：", view=view)
+    text = "👉 請選擇："
+    await channel.send(text, view=view)
+    _record_reply_output(text)
 
 
 _HELP_BUTTON_ID_TEMPLATE = r"coc_help:(?P<conversation_id>discord-channel-\d+):(?P<path>root|[a-z0-9_-]+(?:/[a-z0-9_-]+)?)"
@@ -541,23 +577,29 @@ class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTO
     async def callback(self, interaction: discord.Interaction) -> None:
         channel = interaction.channel
         if channel is None or _conversation_id(channel.id) != self.conversation_id:
-            await interaction.response.send_message("這個 Help 按鈕不屬於目前頻道。", ephemeral=True)
+            text = "這個 Help 按鈕不屬於目前頻道。"
+            await interaction.response.send_message(text, ephemeral=True)
+            _record_reply_output(text)
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
         page = help_service.get_page(state, str(interaction.user.id), self.path)
+        content = help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS)
         await interaction.response.edit_message(
-            content=help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS),
+            content=content,
             view=_help_view(self.conversation_id, page),
         )
+        _record_reply_output(content)
 
 
 async def _post_help_page(channel: discord.abc.Messageable, conversation_id: str, user_id: str, path: tuple[str, ...]) -> None:
     state = await asyncio.to_thread(load_group_state, conversation_id)
     page = help_service.get_page(state, user_id, path)
+    content = help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS)
     await channel.send(
-        help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS),
+        content,
         view=_help_view(conversation_id, page),
     )
+    _record_reply_output(content)
 
 
 client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton, HelpButton)

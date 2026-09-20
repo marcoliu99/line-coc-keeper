@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from app import observability
+from app import config
 from app.domain.models import AgentMessage
 from app.config import LLM_PROVIDER
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -27,17 +28,16 @@ async def run_repair(message: AgentMessage, original_text: str, error_reason: st
     def _no_tools(_name: str, _tool_input: dict) -> dict:
         return {"ok": False, "error": "Guard agent has no tools"}
 
+    metrics: dict[str, int] = {}
+    model = getattr(provider, {"anthropic": "ANTHROPIC_MODEL", "gemini": "GEMINI_MODEL", "openai": "OPENAI_MODEL"}[config.LLM_PROVIDER])
     try:
-        repaired_text = await asyncio.to_thread(
-            provider.run_conversation,
-            prompt_config.GUARD_SYSTEM_PROMPT,
-            dynamic_system,
-            [],
-            [],
-            new_message,
-            _no_tools,
-            1,
-        )
+        with observability.metrics_context(metrics):
+            with observability.span("llm.turn", provider=config.LLM_PROVIDER, model=model,
+                                    agent="guard", metrics=metrics):
+                repaired_text = await asyncio.to_thread(
+                    provider.run_conversation, prompt_config.GUARD_SYSTEM_PROMPT,
+                    dynamic_system, [], [], new_message, _no_tools, 1,
+                )
     except Exception:
         observability.event("llm.failed", level=logging.ERROR, agent="guard", status="error")
         _logger.exception("Guard LLM call failed — keeping the original (unrepaired) narrative")

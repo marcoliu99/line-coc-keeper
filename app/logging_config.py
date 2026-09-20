@@ -41,13 +41,22 @@ class _ChannelFilter(logging.Filter):
         return config.LOG_TEXT_ENABLED
 
 
+class _ContextFilter(logging.Filter):
+    """Capture ContextVar values before QueueHandler crosses threads."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.coc_log_context = current_context()
+        return True
+
+
 def _base_record(record: logging.LogRecord) -> dict[str, Any]:
     result: dict[str, Any] = {
         "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "level": record.levelname,
         "logger": record.name,
     }
-    result.update(current_context())
+    record_context = getattr(record, "coc_log_context", None)
+    result.update(record_context if record_context is not None else current_context())
     return result
 
 
@@ -106,6 +115,7 @@ def configure_logging(*, force: bool = False) -> None:
         StructuredFormatter() if config.LOG_FORMAT == "json" else TextFormatter()
     )
     channel_filter = _ChannelFilter()
+    context_filter = _ContextFilter()
 
     if root.handlers and not force:
         # A host application may have configured logging before the bot. Reuse
@@ -113,6 +123,7 @@ def configure_logging(*, force: bool = False) -> None:
         for handler in root.handlers:
             handler.setFormatter(formatter)
             handler.addFilter(channel_filter)
+            handler.addFilter(context_filter)
         for setting, received_kind, fallback_value in config.INVALID_LOG_SETTINGS:
             observability.event(
                 "config.invalid", level=logging.WARNING, setting=setting,
@@ -124,6 +135,7 @@ def configure_logging(*, force: bool = False) -> None:
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(formatter)
     stream.addFilter(channel_filter)
+    stream.addFilter(context_filter)
     targets: list[logging.Handler] = [stream]
 
     if config.LOG_FILE:
@@ -135,6 +147,7 @@ def configure_logging(*, force: bool = False) -> None:
             )
             file_handler.setFormatter(formatter)
             file_handler.addFilter(channel_filter)
+            file_handler.addFilter(context_filter)
             targets.append(file_handler)
         except OSError:
             # Keep stderr alive; logging must not prevent the bot from starting.
@@ -143,7 +156,9 @@ def configure_logging(*, force: bool = False) -> None:
     global _listener, _listener_targets
     _listener_targets = targets
     log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
-    root.addHandler(QueueHandler(log_queue))
+    queue_handler = QueueHandler(log_queue)
+    queue_handler.addFilter(context_filter)
+    root.addHandler(queue_handler)
     _listener = _DaemonQueueListener(log_queue, *targets, respect_handler_level=False)
     _listener.start()
 

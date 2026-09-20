@@ -1658,8 +1658,7 @@ def _execute_tool(
             memory_metrics: dict[str, Any] = {}
             with observability.span("memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                                     embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=memory_metrics):
-                results = memory_rag.search_memory(state.group_id, tool_input.get("query", ""))
-                memory_metrics["result_count"] = len(results)
+                results = memory_rag.search_memory(state.group_id, tool_input.get("query", ""), metrics=memory_metrics)
             return {"ok": True, "results": memory_rag.format_results(results)}
 
         return {"ok": False, "error": f"未知工具 {name}"}

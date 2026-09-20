@@ -74,8 +74,7 @@ async def build_context(
                 "memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                 embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=metrics,
             ):
-                results = memory_rag.search_memory(conversation_id, text)
-                metrics["result_count"] = len(results)
+                results = memory_rag.search_memory(conversation_id, text, metrics=metrics)
                 return memory_rag.format_results(results)
 
         memory_task = asyncio.create_task(asyncio.to_thread(_run_memory_rag))
