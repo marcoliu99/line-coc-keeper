@@ -283,6 +283,58 @@ LOG_INCLUDE_USAGE=true
 - `WARNING`：slow、fallback、cache miss 異常、provider unsupported parameter。
 - `ERROR`：請求失敗、回覆失敗、不可恢復 persistence error。
 
+### 8.4 INFO／WARNING 事件與資料量定義
+
+`INFO` 的目標是保留一份足以計算正常 latency baseline 的摘要，不記錄每個 token、每個 chunk 或完整 payload。`WARNING` 的目標是讓低噪音 production log 仍能找出需要處理的異常，因此必須攜帶定位問題所需的數值。
+
+#### INFO：正常效能摘要
+
+| Event | 必要欄位 | 說明 |
+|---|---|---|
+| `request.started` | `request_id`, `conversation_id`, `message_kind`, `command_name`, `attachment_count` | 收到請求；不含訊息原文 |
+| `request.completed` | `request_id`, `duration_ms`, `status`, `reply_message_count`, `reply_bytes` | 玩家可感知的總耗時 |
+| `lock.wait.completed` | `request_id`, `duration_ms`, `lock_name`, `acquired` | 正常等待時間；長等待另升級為 WARNING |
+| `state.load.completed` | `request_id`, `duration_ms`, `operation`, `state_size_bytes`, `cache_hit` | state 載入耗時與大小 |
+| `state.save.completed` | `request_id`, `duration_ms`, `operation`, `state_size_bytes` | state 儲存耗時與大小 |
+| `rag.search.completed` | `turn_id`, `duration_ms`, `rag_kind`, `top_k`, `candidate_count`, `result_count`, `index_cache`, `has_embeddings` | Scenario／Memory RAG 摘要 |
+| `embedding.batch.completed` | `turn_id` 或 `maintenance_id`, `duration_ms`, `embedding_model`, `batch_size`, `batch_index`, `batch_count` | embedding API 批次耗時；不含文字內容 |
+| `llm.turn.completed` | `turn_id`, `duration_ms`, `provider`, `model`, `reasoning_effort`, `iteration_count`, `tool_call_count`, `retry_count` | 一次完整 AI turn 摘要 |
+| `llm.request.completed` | `turn_id`, `duration_ms`, `provider`, `model`, `iteration`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_tokens` | 單次 provider request；usage 不可取得時填 null |
+| `llm.tool.completed` | `turn_id`, `duration_ms`, `tool_name`, `status` | 只記 tool name 與耗時，不記 arguments／result 原文 |
+| `discord.reply.completed` | `request_id`, `duration_ms`, `reply_message_count`, `reply_bytes`, `reply_chunk_count` | Discord 發送回覆耗時 |
+| `maintenance.completed` | `maintenance_id`, `duration_ms`, `trigger`, `summary_updated`, `embedding_updated`, `state_saved` | 背景 maintenance 總結 |
+
+`INFO` 不應每次輸出以下高頻細節：
+
+- 每一個 BM25 token 或候選 chunk 的分數。
+- 完整 prompt、response、tool arguments、tool result。
+- 每個 Discord message chunk 的完整內容。
+- 每個 DB row／SQLite JSON blob 的內容。
+
+#### WARNING：需要注意的異常或退化
+
+| Condition／Event | 必要欄位 | 觸發規則 |
+|---|---|---|
+| `request.completed` with `slow=true` | 共用 request 欄位、`duration_ms`, `slow_threshold_ms`, `slow_stage` | 總耗時 >= `LOG_SLOW_REQUEST_MS`；同一筆完成事件 level 改為 WARNING |
+| `lock.wait.completed` with `slow=true` | `request_id`, `duration_ms`, `lock_name`, `lock_threshold_ms` | lock 等待 >= `LOG_SLOW_OPERATION_MS` |
+| `llm.request.completed` with `slow=true` | `turn_id`, `provider`, `model`, `duration_ms`, `iteration`, `tool_call_count` | 單次 provider request >= operation threshold |
+| `llm.retry` | `turn_id`, `provider`, `model`, `retry_count`, `removed_parameter`, `error_type` | provider 拒絕 optional parameter 或發生可重試錯誤 |
+| `llm.fallback` | `turn_id`, `provider`, `fallback_kind`, `reason` | previous response、usage 或 provider capability fallback；不得含完整錯誤 payload |
+| `rag.embedding_fallback` | `turn_id`, `rag_kind`, `embedding_model`, `fallback="bm25"`, `error_type` | embedding API 失敗，改用 BM25 |
+| `rag.index_rebuilt` | `conversation_id`, `rag_kind`, `duration_ms`, `chunk_count`, `reason` | cache miss、內容 hash 改變或磁碟 index 無法使用而重建 |
+| `maintenance.slow` | `maintenance_id`, `trigger`, `duration_ms`, `slow_threshold_ms`, `stage` | background maintenance 超過 operation threshold |
+| `config.invalid` | `setting`, `received_kind`, `fallback_value` | `LOG_LEVEL`、threshold 或 boolean 設定不合法並採 fallback |
+| `request.completed` with controlled timeout | 共用 request 欄位、`timeout_ms`, `stage` | 有明確 timeout 且系統仍能安全回覆 |
+
+以下情況不只記 WARNING，應記 `ERROR` 並保留 exception stack trace：
+
+- Discord 回覆失敗。
+- state／DB 儲存失敗且沒有安全 fallback。
+- 請求處理未捕捉例外。
+- logging handler 自身無法寫入時，應至少 fallback 到 stderr。
+
+同一個事件不可同時輸出一筆 `INFO` 與一筆內容相同的 `WARNING`。正常完成是 `INFO`；若符合 slow 條件，該完成事件直接使用 `WARNING`，並保留 `slow=true` 與 threshold 欄位。這樣 `LOG_LEVEL=WARNING` 仍能看到慢請求，而 `LOG_LEVEL=INFO` 會看到全部正常與異常完成事件。
+
 ## 9. 成本與效能觀測
 
 每次 OpenAI request 若 usage 可取得，應記錄：
