@@ -69,9 +69,9 @@ ActingContext(
 )
 ```
 
-正常 command 也使用 `mode="self"`，讓 handler 不需要依賴隱含的 global state。
-此 context 不直接存入 `GroupState`；audit 只透過 structured log 與必要的公開
-操作標記保存。
+第一版只有 sudo request 建立 `mode="kp_sudo"` 的 context；既有 normal command
+仍沿用原本的 actor==subject 呼叫介面，不額外引入 context 參數。此 context 不直接
+存入 `GroupState`；audit 只透過 structured log 與必要的公開操作標記保存。
 
 ## 3. 使用者介面
 
@@ -114,7 +114,7 @@ sudo 不應任意轉送所有 `/coc` command，而應有明確 allowlist：
 |---|---|---|
 | Gameplay | `act`、`check`、`luck decision` | 以 target 的 active character 執行正式遊戲流程；`luck` 只允許既有 pending Luck 的 `skip`／`regular`／`hard`／`extreme` 選擇 |
 | 角色查詢 | `sheet`、`characters`、`pregen`、`pregens` | 查詢或預覽內容，subject 只影響角色／訊息歸屬 |
-| 角色切換／資料 | `switch`、`setskill`、`setconnection` | 只可操作 target 擁有的角色 |
+| 角色切換／資料 | `switch`、`setskill`、`setconnection` | 只可操作 target 擁有的角色；target 沒有目前角色時仍可 switch 回保留的歷史角色 |
 | 地圖／位置 | `where`、`enter`、`leavemap`、`showpage` | 位置與頁面套用 target；公開圖片仍遵守既有 visibility 規則 |
 | 角色生命週期 | `away`、`back`、`retire` | KP Assistant 可代 target 暫離、回來或退出目前角色；`retire` 不刪除歷史資料 |
 
@@ -145,12 +145,14 @@ command，必須先加入 registry／allowlist 與測試，不能因為 parser �
 4. `SCENARIO_LIFECYCLE_KP_ONLY` 不控制 sudo；sudo 本身永遠是 KP／Keeper-only。
 5. target 不可是目前的 KP Assistant。KP 的 OOC 身分與玩家角色身分仍互斥；
    sudo 第一版不提供角色建立／認領，因此 target 必須已經有 active character
-   才能執行需要角色的操作。
+   才能執行需要目前角色的操作；`characters`、`pregens`、`pregen` 與 `switch`
+   是例外，前者是查詢，`switch` 可從 target 保留的角色歷史重新建立 active binding。
 6. target 的角色 ownership 不變。所有角色修改都必須維持
    `Character.owner_id == subject_user_id`，不能讓 actor 變成 owner。
 7. 不合法 target、未知 command、禁止 command、巢狀 sudo、缺少 target active
    character 或既有 command guard 失敗時，回傳固定、可理解的錯誤，不執行部分
-   mutation。
+   mutation。retire 也必須同步把 target 的 PC 從進行中的 combat initiative order
+   移除，不能讓已退出角色取得後續回合或成為敵方有效目標。
 8. sudo 不能繞過既有安全 guard，例如：
    - `game_started` 對 `/coc usepregen` 的限制；
    - pending pregen LUCK 必須完成後才能切換劇本／角色；
@@ -208,7 +210,8 @@ Discord on_message
     ▼
   state mutation / reply / target DM / image output
     │
-    ├─ public result includes mandatory 「KP Assistant 代操作」 marker
+    ├─ public result and any newly posted pending-check/Luck button include mandatory
+    │  「KP Assistant 代操作」 marker
     ├─ private information is sent to subject, never actor-only
     └─ sudo.completed or sudo.failed audit event
 ```
@@ -233,8 +236,8 @@ Discord on_message
 | 3. 解析 command | command 在 subject-scoped allowlist | 建立 `ActingContext` | `sudo.denied(reason=forbidden_command)` |
 | 4. actor authorization | actor 是目前 KP Assistant 或 Discord Keeper | 進入 KP priority gate + conversation lock | `sudo.denied(reason=not_authorized)` |
 | 5. role separation | actor 已脫離 player character／建角流程 | 繼續 target guard | `sudo.denied(reason=actor_role_conflict)`，要求先脫離 |
-| 6. target guard | target 不是 KP、已有必要 active character、pending state 合法 | 呼叫既有 handler，effective user 使用 subject | 固定錯誤訊息；不得部分 mutation |
-| 7. 執行 | `act` 使用 player role；其他 command 使用既有 handler | state／pending／output 套用 subject | `sudo.failed`，保留 exception 到 log，不把 exception 原文送到 channel |
+| 6. target guard | target 不是 KP、已有必要 active character、pending state 合法；`switch` 可使用 target owned history | 呼叫既有 handler，effective user 使用 subject | 固定錯誤訊息；不得部分 mutation |
+| 7. 執行 | `act` 使用 player role；其他 command 使用既有 handler | state／pending／output 套用 subject | 受控 command rejection 記為 `sudo.completed(status=rejected)`；未捕捉例外才是 `sudo.failed` |
 | 8. 輸出 | public reply、target DM、圖片與按鈕依既有 scope | public reply 加「KP Assistant 代操作」標記；秘密只送 subject | output failure 依既有 reply error flow 處理 |
 | 9. 完成 | 操作成功或受控拒絕 | `sudo.completed` 或 `sudo.denied` audit event | 未捕捉例外時 `sudo.failed` audit event |
 
@@ -271,7 +274,7 @@ Discord on_message
 | Event | level | 必要欄位 |
 |---|---|---|
 | `sudo.started` | INFO | `command`, `actor_user_id_hash`, `subject_user_id_hash` |
-| `sudo.completed` | INFO | `command`, `status`, `duration_ms`, `actor_user_id_hash`, `subject_user_id_hash` |
+| `sudo.completed` | INFO | `command`, `status`（`success` 或 `rejected`）, `duration_ms`, `actor_user_id_hash`, `subject_user_id_hash` |
 | `sudo.denied` | WARNING | `command`, `deny_reason`, `actor_user_id_hash`, `subject_user_id_hash`（若可解析） |
 | `sudo.failed` | ERROR | `command`, `error_type`, `actor_user_id_hash`, `subject_user_id_hash` |
 
@@ -348,6 +351,10 @@ no-op fast path，但實際拒絕仍要回覆使用者。
   後不會覆蓋較新的 state revision。
 - `sudo.started`／`completed`／`denied`／`failed` event 欄位完整且 identifier
   遵守 hash 設定；`LOG_ENABLED=false` 不建立 structured payload。
+- `sudo.completed.status` 必須區分 handler 成功與受控拒絕；例如沒有 pending check
+  或地圖參數錯誤不能被記成無狀態的成功。
+- retire 進行中的角色後，combat initiative order、current turn 與已針對該角色的
+  pending combat plan／effect 不得再讓該角色行動或成為有效目標。
 
 ## 10. Explicit non-goals
 
