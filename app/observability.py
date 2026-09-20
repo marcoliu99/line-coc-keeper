@@ -48,6 +48,11 @@ def _safe_identifier(value: str | None) -> str | None:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
 
 
+def safe_identifier(value: str | None) -> str | None:
+    """Return the configured redacted form for an identifier-bearing field."""
+    return _safe_identifier(value)
+
+
 def current_context() -> dict[str, str]:
     """Return a copy so callers cannot mutate the context shared by a task."""
     return dict(_CONTEXT.get())

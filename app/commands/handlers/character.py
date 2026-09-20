@@ -60,6 +60,28 @@ async def handle_character_command(
         await reply(f"目前使用角色已切換為「{matches[0].name}」。")
         return
 
+    if sub == "retire":
+        state = load_state(conversation_id)
+        blocked = _blocked_by_kp_assistant(state, user_id)
+        if blocked:
+            await reply(blocked)
+            return
+        requested_name = " ".join(parts[2:]).strip() or None
+        try:
+            character = state.retire_active_character(user_id, requested_name)
+        except KeyError:
+            await reply("你目前沒有正在使用的角色。")
+            return
+        except ValueError as exc:
+            await reply(str(exc))
+            return
+        save_state(state)
+        await reply(
+            f"已退出角色「{character.name}」。角色資料仍保留，之後可用「/coc switch {character.name}」重新加入；"
+            "目前不再參與遊戲。"
+        )
+        return
+
     if sub == "pc":
         state = load_state(conversation_id)
         blocked = _blocked_by_kp_assistant(state, user_id)

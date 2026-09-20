@@ -22,7 +22,7 @@ class HelpTextTests(unittest.TestCase):
             self.assertTrue(any(command in text for text in details))
 
     def test_router_command_families_have_known_command_gate(self):
-        for command in ("characters", "switch", "scenario", "checkpoint", "checkpoints", "rollback", "digest", "digests"):
+        for command in ("characters", "switch", "scenario", "checkpoint", "checkpoints", "rollback", "digest", "digests", "sudo"):
             self.assertTrue(is_known_coc_command(command))
         self.assertTrue(is_known_coc_command("CHECKPOINT"))
         self.assertFalse(is_known_coc_command("typo"))

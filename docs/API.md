@@ -25,10 +25,12 @@ async def handle_text_message(
     send_dm_image,
     text: str,
     format_mention=lambda owner_id: owner_id,
+    is_keeper=False,
+    allow_opaque_sudo_target=False,
 ) -> None
 ```
 
-`/coc help` 由 Discord adapter 交給 `app/help_service.py`，其他 `/coc` command 依序交給 character、combat、map 與 system handlers。
+`/coc help` 由 Discord adapter 交給 `app/help_service.py`，其他 `/coc` command 依序交給 character、combat、map 與 system handlers。`/coc sudo` 由 router 以 actor／subject 分離後，重用既有 player handlers；Discord adapter 預設只接受 mention target，非 Discord adapter 測試時可明確傳入 `allow_opaque_sudo_target=True`。
 
 `main_v2` 新增的 checkpoint、digest、scenario import/merge 與角色切換指令仍由同一個 Discord command router 處理；它們的權限由 system／character handler 執行時驗證，不是 HTTP API。
 

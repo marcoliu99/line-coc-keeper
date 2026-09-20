@@ -840,6 +840,36 @@ class GroupState:
         self.characters[owner_id] = character
         return character
 
+    def retire_active_character(self, owner_id: str, name: str | None = None) -> Character:
+        """解除一名玩家目前的角色 binding，但保留角色歷史資料。
+
+        ``characters_by_id`` is the durable character history.  The legacy
+        ``characters[owner_id]`` map and ``active_character_id_by_user`` are
+        only the current-player indexes, so removing those two bindings lets
+        ``get_active_character`` return ``None`` without deleting the sheet.
+        """
+        character = self.get_active_character(owner_id)
+        if character is None:
+            raise KeyError(owner_id)
+        if name is not None and character.name != name:
+            raise ValueError(f"目前使用的角色不是「{name}」。")
+
+        character.active = False
+        character.away = False
+        self.active_character_id_by_user.pop(owner_id, None)
+        # The legacy owner index is a compatibility active-character index;
+        # remove it unconditionally so a stale legacy entry cannot resurrect a
+        # different character through get_active_character's fallback path.
+        self.characters.pop(owner_id, None)
+        # A retired character must not leave a stale player decision that can
+        # later be consumed after the binding is restored.
+        self.pending_checks.pop(owner_id, None)
+        self.pending_luck_decisions.pop(owner_id, None)
+        # Keep a pending pregen Luck roll: only the player may roll it, and
+        # clearing it here would let a later reactivation bypass that rule.
+        self.characters_by_id[character.character_id] = character
+        return character
+
     def active_characters(self) -> list[Character]:
         """Return the currently selected character for each owner."""
         owners = {char.owner_id for char in self.all_characters()}

@@ -4,6 +4,7 @@
 
 - 基準分支：`main_v2`
 - 本次起始 changeset：`d0e4a6a`（建立 branch 時的 `origin/main_v2`）
+- 實作前重新對齊的 `main_v2` changeset：`f6a5a1f`
 - 本次結束 changeset：實作完成後填入
 - 工作 branch：`feature/kp-assistant-sudo-control`
 - 目標整合分支：`main_v2`
@@ -98,6 +99,10 @@ ActingContext(
 `<@!123>`；測試與非 Discord adapter 可接受已驗證的 opaque user ID。不可用
 顯示名稱模糊搜尋，避免同名玩家被代錯角色。
 
+玩家本人也可以直接輸入 `/coc retire [角色名]` 退出自己的目前角色；KP
+Assistant 的代操作只額外提供 `/coc sudo <target> retire [角色名]`，兩者共用同一個
+active binding 解除流程。
+
 `act` 是唯一的自由文字入口。它會把其後完整文字當作 target player 的一般
 遊戲訊息，不把其中的 `/coc sudo` 再次解析成巢狀 sudo。
 
@@ -165,7 +170,8 @@ command，必須先加入 registry／allowlist 與測試，不能因為 parser �
 「退角」是解除 target 目前的 player binding，不是刪除角色資料；角色仍保留在
 `characters_by_id`，供歷史、查詢或日後重新加入使用。`/coc away` 是可恢復的
 暫離狀態，`/coc retire` 是明確退出目前角色的持久狀態。兩者都只能作用於
-target，不得偷偷替 actor 完成 detach。
+target，不得偷偷替 actor 完成 detach。若 target 尚有待玩家本人擲的 pregen
+LUCK，retire 不得清除該 pending；否則 target 日後回來會繞過玩家擲骰規則。
 
 ## 5. Runtime flow
 
@@ -286,7 +292,7 @@ no-op fast path，但實際拒絕仍要回覆使用者。
 |---|---|
 | `app/commands/router.py` | 識別 sudo syntax、解析 target、建立 ActingContext、做 top-level authorization、維持 lock／priority flow |
 | `app/commands/sudo.py`（新增） | target token parser、player command allowlist、禁止 command 與固定拒絕原因 |
-| `app/commands/handlers/*.py` | 接收 effective subject；不自行猜測 actor；保留既有角色／gameplay guard；新增 `retire` 的 target binding 解除流程 |
+| `app/commands/handlers/*.py` | 接收 effective subject；不自行猜測 actor；保留既有角色／gameplay guard；提供玩家與 sudo 共用的 `retire` target binding 解除流程 |
 | `app/agents/supervisor.py`／`app/keeper.py` | `act` 以 player role 執行，保存 canonical history，不進 KP OOC path |
 | `app/observability.py` | user ID redaction／audit event 欄位 helper；不記錄 command body 原文 |
 | `app/help_registration.py`／player docs | 登記 `/coc sudo` 使用方式與 KP-only 標記；禁止清單也要可查 |
@@ -321,7 +327,8 @@ no-op fast path，但實際拒絕仍要回覆使用者。
 - `/coc sudo <target> away` 必須只標記 target 的 active character；`/coc sudo <target>
   back` 只能解除 target 的暫離狀態。
 - `/coc sudo <target> retire [角色名]` 必須解除 target 的 active player binding，
-  保留 `characters_by_id` 的角色資料，且不得清除 actor 的 KP Assistant 身分。
+  保留 `characters_by_id` 的角色資料；若有 pending pregen LUCK 必須保留，且不得
+  清除 actor 的 KP Assistant 身分。
 - target 突然離線時，KP Assistant 可用 sudo `away` 暫停其回合；需要退出目前角色
   時可用 sudo `retire`，且 retire 不刪除角色歷史，只解除 active player binding。
 - sudo `away`／`back`／`retire` 的 target 必須是 subject；不能因為 actor 是 KP 就
