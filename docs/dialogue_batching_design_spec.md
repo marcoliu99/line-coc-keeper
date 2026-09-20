@@ -141,6 +141,71 @@ prompt／工具白名單（`_KP_ASSISTANT_ALLOWED_TOOL_NAMES`、`_tools_for_spea
   進入任何批次）。這維持「KP 永遠優先、永遠不與玩家訊息混在同一次呼叫」的既有不變式
   （見現況第 5、6 點），只是新增「玩家批次不能無限期擋在 KP 前面」這條規則。
 
+### 忙碌狀態怎麼判斷：新增一個 per-conversation「批次輪次」旗標，不是輪詢既有的鎖
+
+不能用 `get_conversation_lock(...).locked()` 或 `get_keeper_turn_lock(...).locked()` 這種方式
+在外面輪詢——那兩個鎖是「訊息抵達後才去 `await acquire()`」的東西，外面先 `.locked()` 檢查一次
+再決定要不要排隊，中間有競態窗口（檢查完到真的排隊之間，持有者可能已經換手），而且「已經拿到鎖」
+代表的是「排到我了」，不是「現在正在忙」這個時間點本身的訊號。
+
+改成在 `app/locks.py` 新增一個小型 per-conversation 結構，維護的是**這一輪批次本身**的狀態，
+跟既有的鎖是分開的兩件事：
+
+```python
+@dataclass
+class _BatchRound:
+    pending: list[QueuedMessage] = field(default_factory=list)
+    active: bool = False                      # True = 這輪批次正在跑或正在寬限期收單
+    grace_wake: asyncio.Event = field(default_factory=asyncio.Event)  # 提前結束寬限期
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # 只保護這個物件自己的欄位
+
+    async def join(self, packet: QueuedMessage) -> bool:
+        """True＝呼叫方是這一輪的 leader（負責觸發／收尾這一批）；
+        False＝只是把訊息掛進去，會被目前這輪的 leader 一起帶走。"""
+        async with self._lock:
+            self.pending.append(packet)
+            if self.active:
+                return False
+            self.active = True
+            return True
+```
+
+**「忙碌」直接定義成 `active == True`**：從第一則觸發某一輪的訊息開始（不論這一輪是立即送出的
+單則，還是還在寬限期收單），一路涵蓋到這一輪的 AI 呼叫真正回覆完成為止，才會回到 `active =
+False`（閒置）。中間不管是「AI 正在跑」還是「AI 剛跑完、正在等 grace 收尾」，對外表現都是同一
+件事——忙碌，新訊息一律進 `pending`，不會再各自觸發一輪。這是刻意簡化過的「一輪批次的生命週期」
+概念，跟 Keeper 是否正巧在呼叫 LLM 的那一瞬間沒有直接綁定，比綁在既有兩個鎖的 `.locked()` 狀態
+上更不容易踩到邊界競態。
+
+`join()` 回傳 `True` 的呼叫方（leader）接下來的流程：
+
+1. 若這是「閒置轉忙碌」的第一則——不進 grace，直接照現有流程走：拿
+   `get_keeper_priority_gate` → 跑 `run_batched_turn([這一則])` → 回覆。這就是「Keeper 閒置時
+   立即送出」，批次大小固定是 1，跟現行行為逐字元相同（見上一節）。
+2. leader 的這次 AI 呼叫結束、回覆完成後，重新檢查 `pending`：
+   - 空的 → `active = False`，這一輪結束，整個 conversation 回到閒置。
+   - 非空 → leader 身份不放手，進入寬限期：
+     `await asyncio.wait_for(self.grace_wake.wait(), timeout=MAX_BATCH_WAIT_SECONDS)`。
+     寬限期間任何新訊息呼叫 `join()`，因為 `active` 已經是 `True`，一律回傳 `False`、只是被
+     append 進 `pending`；若 `len(pending) >= MAX_BATCH_SIZE` 或 KP 訊息抵達（見下方「KP
+     插隊」），就呼叫 `grace_wake.set()` 提前結束寬限期。寬限期結束（逾時或被提前喚醒）後，把
+     `pending` 整批取走、清空、換一個新的 `grace_wake`，重複第 1 步同一套流程再跑一次
+     `run_batched_turn(這一批)`；回覆完再檢查一次 `pending`，如此反覆，直到某次收尾時
+     `pending` 剛好是空的，才真的 `active = False`。
+
+`_BatchRound` 只在自己的 `_lock` 底下做「append／翻旗標／清空快照」這幾個極短操作，**從不在持有
+`_lock` 期間 await LLM 呼叫，也從不在裡面碰既有的 `get_keeper_turn_lock`／
+`get_keeper_priority_gate`**——那兩個鎖仍然只由 leader 在真正要跑 `run_batched_turn` 前才去
+acquire，語意跟現在完全一樣，差別只在於「誰去 acquire、acquire 幾次」從「每則訊息一次」變成
+「每一輪批次一次」。
+
+**KP 插隊的具體機制**：KP 訊息抵達時，若該 conversation 目前有一輪 `active` 的玩家批次正卡在
+grace（`grace_wake` 存在且尚未 `set()`）——呼叫 `grace_wake.set()`，讓 leader 立刻把目前
+`pending` 送出，接著 KP 自己照現有路徑走 `get_keeper_priority_gate(is_kp=True)`（既有機制已
+保證 KP 排在其後任何新排隊的玩家前面）。若玩家批次當下正在跑 AI（leader 卡在 LLM 呼叫本身，
+不是 grace）——沒辦法中斷一個已經送出去的 LLM 呼叫，KP 只能照現有 gate 規則排隊等它結束，這跟
+現行「KP 永遠優先、但不會搶斷正在跑的那一次呼叫」的行為一致，批次化沒有讓這件事變得更糟。
+
 ### 訊息封裝：比照 TCP/IP 封包的想法，逐則加上序號與發言者標頭
 
 批次送給 AI 時，每則排隊中的訊息都帶著 `(seq, user_id, display_name, text, received_at,
@@ -200,13 +265,12 @@ Marco 提出的疑慮——一堆訊息裡有人打了一句沒有 `@` 的閒聊
    撰寫、並用測試腳本驗證批次 prompt 的實際內容包含這段指示。
 3. `_is_ooc_message` 的 `@` 前綴過濾維持不變，仍然是唯一的硬性排除機制。
 
-### 歷史紀錄（`_commit_turn_result`）
+### 歷史紀錄（`_commit_turn_result`）——已定案：記為一筆
 
-批次呼叫產生的一組「使用者輸入（多行）＋ AI 回覆（一則）」，建議記為**一筆**歷史紀錄（`user`
-side 是上述多行合併文字，`assistant` side 是 AI 的回覆），而不是拆成 N 筆各自獨立的
-user/assistant 配對——這樣歷史紀錄重播時，看到的內容會跟 AI 當初實際看到的輸入一致。这點會影響
-未來任何讀取歷史紀錄的功能（目前查了一輪沒有發現讀取歷史紀錄做逐則玩家歸因的既有功能），列在
-下方待確認事項。
+批次呼叫產生的一組「使用者輸入（多行）＋ AI 回覆（一則）」，記為**一筆**歷史紀錄（`user` side
+是上述多行合併文字，`assistant` side 是 AI 的回覆），不拆成 N 筆各自獨立的 user/assistant
+配對——這樣歷史紀錄重播時，看到的內容會跟 AI 當初實際看到的輸入一致，且不需要為 `_commit_turn_result`
+的資料結構新增「一筆 assistant 回覆對應多筆 user 輸入」這種一對多關聯。
 
 ## 已定案事項
 
@@ -214,16 +278,20 @@ user/assistant 配對——這樣歷史紀錄重播時，看到的內容會跟 A
   送出，零額外延遲，只有 Keeper 忙碌期間排隊的訊息才會進入批次。
 - `MAX_BATCH_WAIT_SECONDS` 預設 **3 秒**（合理範圍 2–5 秒），`app/config.py` 環境變數可調。
 - `MAX_BATCH_SIZE` 固定 **5 則**，本期不做成可調參數，達到上限立即強制送出。
+- 「忙碌」用新的 per-conversation `_BatchRound.active` 旗標判斷，不輪詢既有的
+  `get_conversation_lock`／`get_keeper_turn_lock`——見「忙碌狀態怎麼判斷」一節。
+- 批次的歷史紀錄記為一筆合併紀錄，不拆成多筆——見「歷史紀錄」一節。
 
-## 待決策事項（需要 Marco 在 review 時定案）
-
-1. 歷史紀錄要記成一筆合併紀錄，還是拆成多筆——見上方「歷史紀錄」一節。
+設計已無待決策事項，等 Marco 確認整份 spec 後即可開始實作。
 
 ## 測試計畫（`tests/test_message_batching.py`）
 
 沿用 `test_keeper_priority_integration.py` 的慣例（stdlib `unittest`、`StateStorePatch`、
 `ReplyCollector`、`FakeKeeperRunner`、`asyncio.run`）：
 
+- `_BatchRound.join()`：第一次呼叫回傳 `True`（成為 leader）且 `active` 翻為 `True`；`active`
+  為 `True` 期間再呼叫一律回傳 `False`，訊息確實進入 `pending`；leader 收尾且 `pending` 清空後
+  `active` 翻回 `False`。
 - Keeper 閒置時單一訊息立即送出，prompt 內容與現行 `_format_turn_message` 逐字元相同、不含
   多人批次宣告文字——回歸測試。
 - Keeper 忙碌期間陸續進來兩則以上玩家訊息，會在目前這次呼叫結束後合併成一次呼叫送出，且送出的
