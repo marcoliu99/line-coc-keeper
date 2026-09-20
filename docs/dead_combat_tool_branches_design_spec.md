@@ -22,6 +22,15 @@
 中間沒有夾雜其他分支）——不是巧合的個別重複，看起來像是某次 merge/rebase
 衝突處理時，兩邊的版本都被保留下來，沒有清乾淨。
 
+**系統性檢查過，確認沒有漏掉別的重複分支**：用
+`grep -n 'if name == "' app/keeper.py | sed ... | sort | uniq -c` 掃過整個
+`_execute_tool` 的每一個 `if name == "..."` 字串，確實只有這 4 個工具名稱各
+出現兩次。掃描結果裡還有 `record_established_fact` 也顯示出現兩次，但那是
+誤報——`app/keeper.py:1427` 是 `if name in ("record_established_fact",
+"record_clue"):` 這一個分支同時處理兩個工具名稱，分支內部合法地比較了兩次
+`name == "record_established_fact"`（用來決定要讀 `fact` 還是 `clue`、寫進
+哪個欄位），不是兩個獨立的 `if` 分支，不需要處理。
+
 ### 為什麼是死碼，不只是重複
 
 `_execute_tool` 是一連串 `if name == "X": ... return ...`的線性檢查，每個
