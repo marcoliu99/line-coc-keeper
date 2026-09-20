@@ -297,3 +297,74 @@ if char and not state.combat.active:
 規則之間缺的一句連接文字補齊，讓 AI 更可靠地在該用新工具的情境下真的用上，
 不會因為看不懂該走哪條規則而退回舊的、多一輪的判斷方式。
 
+## 追加 review：有沒有「重複呼叫」風險（不是延遲問題，是正確性問題）
+
+Marco 要求再仔細看一次有沒有遞迴性/重複性的呼叫問題。系統性檢查了戰鬥／檢定
+相關的每個工具，結論：沒有找到真正的 Python 遞迴（函式呼叫自己導致的無限迴圈
+或 stack overflow），但找到兩個**程式碼層級沒有保護、完全依賴 prompt 紀律**
+的重複呼叫風險——都是既有架構的既有模式，不是這次改動造成的，但這次新增的
+`offer_npc_attack_defense_choice` 也繼承了同樣的模式，一併記錄。
+
+### 風險 1：建立 pending check 的工具都沒有防止重複覆蓋的保護
+
+`skill_check`（`app/keeper.py:1178`）、`sanity_check`（`:1292`）、
+`offer_check_choice`（`:161`）、新的 `offer_npc_attack_defense_choice`
+——這四個工具的 handler 全部都是直接
+`target_state.pending_checks[target_char.owner_id] = ...`，**沒有先檢查
+這個 owner_id 是不是已經有一筆待處理的檢定**。如果 AI 對同一個角色重複呼叫
+（同一輪內搞混、或因為某種原因分兩次呼叫），第二次會靜默覆蓋第一次，玩家只會
+看到最後一次登記的版本，前一次的參數（`skill`／`difficulty`／`options` 等）
+直接消失，沒有任何錯誤或警告。
+
+對 `offer_npc_attack_defense_choice` 來說風險更具體：這個工具會**先擲一次
+攻擊方的骰子**才登記 pending check，重複呼叫代表**白擲一次骰、結果被覆蓋丟棄
+**——玩家永遠不會看到那個被丟掉的攻擊方骰出結果，如果 KP 或玩家事後回頭核對
+擲骰紀錄會對不上。
+
+**不在這次範圍內修**（不是延遲問題，屬於正確性/健壯性議題，建議另外決定要不要
+處理），但記錄設計方向供之後參考：在四個 handler 的 `_mutate_and_save_state`
+mutator 裡，登記前先檢查 `target_char.owner_id in target_state.pending_checks`，
+如果已存在就回傳 `{"ok": False, "error": "...已經有一筆待處理的檢定，請等玩家
+先處理完..."}`，不覆蓋、不重新擲骰。四個工具可以共用同一段檢查邏輯。
+
+### 風險 2：`plan_enemy_turn` 沒有程式碼層級保護，防止同一敵人在同一輪被重複規劃
+
+`combat.plan_enemy_turn`（`app/combat.py:693`）的 `existing_plan` 查詢
+（`:718-728`）用 `not plan.get("resolved")` 過濾——只有「還沒解決」的 plan
+才會被視為「已經規劃過，直接回傳同一份」。一旦某個 plan 被 `resolve_enemy_action`
+標記 `resolved=True`，**同一個敵人、同一輪、同一個 `current_index`** 再呼叫
+一次 `plan_enemy_turn`，因為找不到符合條件的既有 plan，會產生一個**全新的**
+plan（新的 `plan_id`，重新選目標、選行動）。
+
+如果 AI 在還沒呼叫 `advance_combat_turn` 推進到下一位之前，誤觸發第二次
+`plan_enemy_turn`（例如敘事上的困惑、或工具呼叫順序亂掉），這個敵人就有機會
+在同一輪內攻擊（或使用特殊能力）兩次——保護完全依賴 prompt 紀律（combat_block
+裡「某位戰鬥員的行動...處理完後，必須呼叫 advance_combat_turn 工具推進到下一位，
+不可以自己在心裡默默跳過或一次處理多人」），沒有程式碼擋著。
+
+**不在這次範圍內修**，記錄設計方向：`plan_enemy_turn` 可以在建立新 plan 前，
+額外檢查「這個 `combatant_id` 在同一個 `round_number`／`current_index` 是否
+已經有一筆 `resolved=True` 的 plan」，如果有就回傳錯誤（提示先呼叫
+`advance_combat_turn`），而不是靜默生出第二個 plan。
+
+### 已排除、不是問題的情況
+
+- `combat.process_timing`（`:531`）本身有 `processed_timings` 集合去重
+  （`key in state.combat.processed_timings: return []`），重複呼叫是安全的
+  no-op，不會重複套用同一個 timing 效果。
+- 整個 `app/keeper.py`／`app/combat.py` 的戰鬥與檢定相關程式碼裡，沒有找到
+  函式呼叫自己（直接或間接）導致的真正遞迴。
+- `MAX_TOOL_ITERATIONS = 8`（`app/config.py:107`）限制了單一 Keeper 回合內
+  工具呼叫鏈的最大長度，就算 AI 真的陷入某種重複呼叫的困惑，最多執行 8 輪就會
+  停止、回傳當下的敘事文字——這只是縮小炸裂半徑（AI 不會無限迴圈下去），不是
+  解決上面兩個風險本身，兩個風險造成的資料覆蓋／重複規劃在 8 輪內一樣可能發生。
+- 本次新增的 retry 機制（`app/providers/retry.py`，PR #38）不會造成工具被
+  重複執行：重試只發生在「跟模型要下一步回應」這個 HTTP 呼叫本身失敗的時候，
+  工具的實際執行（`execute_turn_tool`）在這之前就已經完成、結果已經寫進
+  對話歷史，重試不會回頭重新觸發已經執行過的工具。
+
+### 建議
+
+風險 1、2 都是「需要決定要不要修」的正確性議題，不是這次延遲優化的必要條件。
+兩個都可以獨立於 A／B／C 之外處理，要不要現在一起做、或另開票，等你決定。
+
