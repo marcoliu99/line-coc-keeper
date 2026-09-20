@@ -267,3 +267,33 @@ if char and not state.combat.active:
     `tests/test_agentic_pipeline.py` 既有的 `ContextBuilderScenarioRagGatingTests`
     測試慣例）。
 
+## 實作後自我 review 的追加發現：`plan_enemy_turn`／`resolve_enemy_action` 跟
+防守選擇規則之間，prompt 原本沒有接起來
+
+寫完 A 的實作後，通讀整條戰鬥流程的程式碼（`app/combat.py` 的
+`plan_enemy_turn`／`resolve_enemy_action`）才發現：`combat_block` 裡「玩家角色
+在近戰中被攻擊時」（用 `offer_npc_attack_defense_choice`）跟「敵人回合規則」
+（`plan_enemy_turn` → `resolve_enemy_action`）這兩段規則，原本的 prompt**沒有
+講清楚什麼情況該用哪一段**：
+
+- `resolve_enemy_action` 的 `attack` 分支（`app/combat.py:924-951`）會直接呼叫
+  `apply_combat_damage` 套用傷害，前提是**AI 自己**判定 `outcome` 裡的「正式命中
+  結果」——但如果攻擊目標是玩家角色，COC7e 規則要求玩家自己選閃避或反擊，不能讓
+  AI 自己判定命中，這正是 `offer_npc_attack_defense_choice`／舊版
+  `offer_check_choice` 存在的理由。
+- 換句話說，`plan_enemy_turn` 選出 `attack` 之後，實際上要看**目標是不是玩家角色**
+  分岔：目標是玩家 → 改用防守選擇規則（`offer_npc_attack_defense_choice`），
+  不能走 `resolve_enemy_action`；目標不是玩家（例如敵方陣營內鬥）→ 才由 AI 自己
+  判定命中、走 `resolve_enemy_action`。這個分岔邏輯原本完全沒寫進 prompt——不是
+  這次改動造成的（舊版 `npc_skill_check`／`offer_check_choice` 兩段規則一樣
+  各自獨立寫，沒接起來），但既然這次正好在改同一段文字，一併補上。
+- 順便發現 `plan_enemy_turn` 的 `attack` plan 已經在 `required_rolls[0]
+  .skill_value` 裡回傳攻擊方的技能值（`app/combat.py:777-782`）——AI 呼叫
+  `offer_npc_attack_defense_choice` 的 `attacker_skill_value` 時可以直接拿這個
+  值用，不用另外想辦法取得，這點原本 prompt 也沒講。
+
+已經在同一個 commit 裡把 `combat_block` 的「敵人回合規則」段落補上這段分岔說明
+（見 `app/keeper.py` 的 combat_block），不算額外的程式碼改動、只是把既有兩段
+規則之間缺的一句連接文字補齊，讓 AI 更可靠地在該用新工具的情境下真的用上，
+不會因為看不懂該走哪條規則而退回舊的、多一輪的判斷方式。
+
