@@ -1584,6 +1584,33 @@ def _format_turn_message(speaker_name: str, message_text: str, speaker_role: str
     return f"{speaker_name}：{message_text}"
 
 
+_BATCH_PREAMBLE_TEMPLATE = (
+    "（以下是同一輪合併送達、來自不同玩家的 {n} 則發言，以 JSON 陣列表示，每個元素是一則獨立"
+    "輸入，請逐一判斷；某個元素若與當前情境無關（例如純聊天、離題），不要讓它的內容影響到其他"
+    "元素的動作判定或檢定）"
+)
+
+
+def _format_batch_messages(packets: list[locks.QueuedMessage]) -> str:
+    """Player-only, called from run_batched_turn. Batch size 1 delegates to
+    run_turn/_format_turn_message directly and never reaches this function —
+    see run_batched_turn. Only ever called with len(packets) > 1, in which
+    case the output is a short instruction preamble followed by a JSON array
+    (one object per packet: seq/speaker/message) rather than plain text —
+    see docs/dialogue_batching_design_spec.md's "訊息封裝" section for why
+    this is a deliberate one-off exception to this codebase's usual
+    human-readable prompt formatting. `user_id` is intentionally left out of
+    the JSON: the AI only needs `speaker` to name a character in a
+    skill_check tool call (see _execute_tool's owner_id lookup by character
+    name), never the raw platform user id."""
+    payload = [
+        {"seq": p.seq, "speaker": p.speaker_name, "message": p.text}
+        for p in packets
+    ]
+    preamble = _BATCH_PREAMBLE_TEMPLATE.format(n=len(packets))
+    return f"{preamble}\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+
+
 def _parse_kp_manual_canon_trigger(speaker_role: str, message_text: str) -> tuple[bool, str]:
     if speaker_role != "kp_assistant" or not message_text:
         return False, message_text
@@ -1759,4 +1786,90 @@ def run_turn(
         _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     else:
         _commit_kp_ooc_turn_result(state, effective_message_text, final_text)
+    return final_text, private_messages, image_requests
+
+
+def run_batched_turn(
+    state: GroupState,
+    packets: list[locks.QueuedMessage],
+    resolved_location: dict | None = None,
+) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
+    """Discord-only, player-only multi-speaker variant of run_turn — see
+    docs/dialogue_batching_design_spec.md. `packets` (app/locks.py's
+    BatchRound) are always speaker_role == "player"; KP Assistant turns
+    never reach this function, they always go through run_turn's solo path
+    unchanged. When len(packets) == 1 this delegates straight to run_turn
+    for a byte-identical result to the pre-batching single-message flow —
+    the common case (no queuing contention) pays zero overhead from this
+    function existing. `resolved_location` should be the batch's primary
+    (here: most-recently-queued) mover's resolved_location among `packets`,
+    same contract as run_turn's own parameter; this function does not try
+    to reconcile multiple different resolved_locations within one batch.
+
+    Deliberately NOT implemented by sharing run_turn's body (extracting a
+    common helper) — run_turn's ephemeral/KP-canon branching adds real
+    complexity that batched turns (always speaker_role="player", never
+    ephemeral) don't need, and duplicating the much simpler non-ephemeral
+    provider-call/commit shape here keeps that complexity from leaking into
+    this function or risking a regression on run_turn's already-solid
+    single-speaker path."""
+    if not packets:
+        raise ValueError("run_batched_turn requires at least one packet")
+    if len(packets) == 1:
+        p = packets[0]
+        return run_turn(state, p.user_id, p.speaker_name, p.text, resolved_location, "player")
+
+    provider = _PROVIDERS.get(LLM_PROVIDER)
+    if provider is None:
+        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic、gemini 或 openai）", [], []
+
+    speaker_role = "player"
+    static_prompt = _build_static_prompt(state)
+    dynamic_prompt = _build_dynamic_prompt(state, packets[-1].user_id, resolved_location, speaker_role)
+    turn_message = _format_batch_messages(packets)
+
+    # See run_turn's comment on why `history` is sent unsliced between trims —
+    # same prompt-caching rationale applies here unchanged.
+    history = state.log
+    private_messages: list[tuple[str, str]] = []
+    image_requests: list[tuple[str | None, int]] = []
+    tools = _tools_for_speaker_role(speaker_role)
+
+    def execute_turn_tool(name: str, tool_input: dict) -> dict:
+        return _execute_tool(state, name, tool_input, private_messages, image_requests, speaker_role)
+
+    openai_response_id: str | None = None
+    if LLM_PROVIDER == "openai":
+        def remember_openai_response_id(response_id: str) -> None:
+            nonlocal openai_response_id
+            openai_response_id = response_id
+            state.openai_previous_response_id = response_id
+
+        final_text = provider.run_conversation(
+            static_prompt,
+            dynamic_prompt,
+            tools,
+            history,
+            turn_message,
+            execute_turn_tool,
+            MAX_TOOL_ITERATIONS,
+            previous_response_id=state.openai_previous_response_id,
+            on_response_id=remember_openai_response_id,
+        )
+    else:
+        final_text = provider.run_conversation(
+            static_prompt,
+            dynamic_prompt,
+            tools,
+            history,
+            turn_message,
+            execute_turn_tool,
+            MAX_TOOL_ITERATIONS,
+        )
+
+    turn_log_entries = [
+        {"role": "user", "content": turn_message},
+        {"role": "assistant", "content": final_text},
+    ]
+    _commit_turn_result(state, turn_log_entries, openai_response_id=openai_response_id)
     return final_text, private_messages, image_requests

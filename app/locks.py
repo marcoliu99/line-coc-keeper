@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -150,6 +151,128 @@ async def get_keeper_priority_gate(conversation_id: str, *, is_kp: bool) -> Asyn
 # app/discord_bot.py's CheckButton/LuckSpendButton callbacks, which all
 # acquire this around themselves and release it in a finally block.
 _in_flight_checks: set[tuple[str, str]] = set()
+
+
+# Dialogue batching (Discord only — see docs/dialogue_batching_design_spec.md).
+# One BatchRound per conversation, tracking a batch's lifecycle independently
+# of the locks above: `active` means "a round is currently being collected
+# or run", covering both the actual Keeper call and the short post-call
+# grace period, not just the moments the LLM call itself is in flight.
+# Deliberately not implemented by polling get_conversation_lock/
+# get_keeper_turn_lock's .locked() — those are awaited *after* a caller has
+# already decided to proceed, so checking .locked() from outside first would
+# race against whoever is about to acquire or release them. KP Assistant
+# messages never join a BatchRound; they always use the pre-existing solo
+# path (app/commands.py's _handle_ordinary_text_message_locked), and only
+# ever touch a BatchRound to wake a player round that's mid-grace so it
+# flushes before the KP turn proceeds through get_keeper_priority_gate.
+MAX_BATCH_SIZE = 5  # fixed per docs/dialogue_batching_design_spec.md, not env-configurable this round
+
+
+@dataclass
+class QueuedMessage:
+    """One player message waiting for (or included in) a batched Keeper
+    turn. `resolved_location` is app/commands.py's Map/Scene Engine result
+    for this specific message (see _resolve_map_action_transaction there),
+    resolved at enqueue time — same contract as run_turn's own
+    resolved_location parameter, just computed earlier and carried along."""
+    seq: int
+    user_id: str
+    speaker_name: str
+    text: str
+    received_at: float
+    resolved_location: dict | None = None
+
+
+@dataclass
+class BatchRound:
+    pending: list[QueuedMessage] = field(default_factory=list)
+    active: bool = False
+    grace_wake: asyncio.Event = field(default_factory=asyncio.Event)
+    _next_seq: int = 0
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def join(
+        self, *, user_id: str, speaker_name: str, text: str, resolved_location: dict | None
+    ) -> tuple[bool, QueuedMessage]:
+        """Returns (True, packet) if the caller is now the leader for this
+        round — responsible for actually running it (see app/commands.py's
+        _run_batch_leader_loop), in which case the packet is handed directly
+        to the leader and deliberately NOT added to `pending` (the leader
+        already has it; leaving it there too would make it reappear in the
+        very next next_round() batch as well). Otherwise (False, packet):
+        the message is appended to `pending` for the current leader to pick
+        up via next_round()."""
+        async with self._lock:
+            self._next_seq += 1
+            packet = QueuedMessage(
+                seq=self._next_seq,
+                user_id=user_id,
+                speaker_name=speaker_name,
+                text=text,
+                received_at=time.monotonic(),
+                resolved_location=resolved_location,
+            )
+            if not self.active:
+                self.active = True
+                return True, packet
+            self.pending.append(packet)
+            if len(self.pending) >= MAX_BATCH_SIZE:
+                self.grace_wake.set()
+            return False, packet
+
+    async def wake_for_kp(self) -> None:
+        """Called whenever a KP Assistant message arrives for this
+        conversation. If a player round is currently open and has something
+        queued (mid-grace, not yet handed off to the leader's next Keeper
+        call), wake it immediately so that batch flushes before the KP turn
+        proceeds — a player round must never keep KP waiting indefinitely.
+        A no-op if nothing is queued (including conversations that never use
+        batching at all, e.g. LINE, whose BatchRound simply stays empty
+        forever)."""
+        async with self._lock:
+            if self.pending:
+                self.grace_wake.set()
+
+    async def next_round(self, max_wait_seconds: float) -> list[QueuedMessage] | None:
+        """Leader-only: call after finishing a round's Keeper turn. Returns
+        the next batch to run, or None if the round is over (`active`
+        becomes False as soon as this returns None). If something is already
+        queued, waits up to `max_wait_seconds` — woken early by MAX_BATCH_SIZE
+        or wake_for_kp() — before taking a fresh snapshot of `pending`, so a
+        message that arrives exactly as the wait ends still has a chance to
+        be captured before the snapshot; anything after that snapshot starts
+        an entirely new next_round() wait rather than being lost."""
+        async with self._lock:
+            if not self.pending:
+                self.active = False
+                return None
+            wake_event = self.grace_wake
+
+        try:
+            await asyncio.wait_for(wake_event.wait(), timeout=max_wait_seconds)
+        except asyncio.TimeoutError:
+            pass
+
+        async with self._lock:
+            batch = self.pending
+            self.pending = []
+            self.grace_wake = asyncio.Event()
+            if not batch:
+                self.active = False
+                return None
+            return batch
+
+
+_batch_rounds: dict[str, BatchRound] = {}
+
+
+def get_batch_round(conversation_id: str) -> BatchRound:
+    round_ = _batch_rounds.get(conversation_id)
+    if round_ is None:
+        round_ = BatchRound()
+        _batch_rounds[conversation_id] = round_
+    return round_
 
 
 def try_acquire_check(conversation_id: str, user_id: str) -> bool:

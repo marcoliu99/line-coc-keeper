@@ -80,6 +80,20 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", 240_000))
 # campaign_summary pass.
 MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 40))
 
+# Dialogue batching (Discord only — see docs/dialogue_batching_design_spec.md):
+# when a player message arrives while the Keeper is already busy with another
+# turn for the same conversation, it's queued instead of triggering its own
+# separate Keeper call. Once the in-flight turn finishes, MAX_BATCH_WAIT_SECONDS
+# is how long app/locks.py's BatchRound waits (woken early if the queue hits
+# MAX_BATCH_SIZE, or a KP Assistant message arrives) to catch a few more
+# near-simultaneous messages before merging everything queued so far into one
+# Keeper call. A conversation with nobody else typing never pays this wait —
+# the first message of an idle round always runs immediately. Recommended
+# range 2-5 seconds; MAX_BATCH_SIZE is a fixed cap (not configurable this
+# round) to bound how many independent player inputs one Keeper call has to
+# reconcile at once.
+MAX_BATCH_WAIT_SECONDS = int(os.environ.get("MAX_BATCH_WAIT_SECONDS", 3))
+
 MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 
 # Scenario RAG (app/scenario_rag.py) — opt-in, defaults off. Off: the full
