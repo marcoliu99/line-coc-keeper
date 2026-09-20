@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app import observability
 from app.domain.models import AgentMessage
 from app.config import LLM_PROVIDER
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -38,6 +39,7 @@ async def run_repair(message: AgentMessage, original_text: str, error_reason: st
             1,
         )
     except Exception:
+        observability.event("llm.failed", level=logging.ERROR, agent="guard", status="error")
         _logger.exception("Guard LLM call failed — keeping the original (unrepaired) narrative")
         return original_text
 

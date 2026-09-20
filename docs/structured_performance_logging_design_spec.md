@@ -53,7 +53,7 @@
 1. **先能定位，再追求統計**：每個慢請求必須可以由一個 `request_id` 找回完整事件序列。
 2. **wall-clock 與 elapsed 分離**：timestamp 用 UTC wall-clock；耗時用 `time.perf_counter()`，避免系統時間調整影響 duration。
 3. **不洩漏內容**：只記錄 metadata、長度、token usage 與錯誤類型，不記錄遊戲秘密或 prompt 內容。
-4. **不阻塞主流程**：logging handler 不應因為寫檔或格式化而長時間阻塞 Discord event loop。
+4. **不阻塞主流程**：runtime 使用 daemon queue listener 將 formatter／檔案 rotation 移出 Discord event loop。
 5. **失敗可降級**：usage metadata 取不到時仍記錄 request completion；觀測失敗不可讓遊戲請求失敗。
 6. **低 cardinality event names**：事件名稱固定，細節放在欄位，不把 user text 或動態內容拼進 event name。
 7. **相容既有 logging**：保留既有 logger 名稱與 exception stack trace；新增欄位不可破壞 `assertLogs` 測試。
@@ -543,6 +543,10 @@ Redaction 必須在 formatter／observability boundary 進行一次；呼叫端�
 - `app/providers/*.py`：provider request、retry、usage、vision／text extraction timing。
 - `app/scenario_rag.py`、`app/memory_rag.py`：search／embedding batch timing。
 - `app/repositories/group_state.py`、`app/db.py`：state／DB operation timing。
+
+Logging output 使用 `QueueHandler` 搭配 daemon `QueueListener`；listener 在
+process exit 或 `force=True` reconfigure 時停止並 flush，stream／rotating file
+handler 不直接在 Discord event loop 執行格式化與寫入。
 
 目前的 `request.completed` 會依照 request context 的 handled-error 標記輸出
 `status=error`；只有未發生錯誤的 request 才輸出 `status=success`。Background

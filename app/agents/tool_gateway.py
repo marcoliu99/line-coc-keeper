@@ -54,6 +54,7 @@ def make_tool_executor(
     """
 
     def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        observability.increment_metric("tool_call_count")
         with observability.span(
             "llm.tool",
             tool_name=observability.tool_name(tool_name),

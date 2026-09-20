@@ -24,7 +24,7 @@ import threading
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
 from app import config, observability
 
@@ -96,13 +96,15 @@ _keeper_priority_gates: dict[str, _KeeperPriorityGate] = {}
 class _ObservableConversationLock(asyncio.Lock):
     """Conversation lock that measures queue wait without changing semantics."""
 
-    async def acquire(self) -> bool:
+    async def acquire(self) -> Literal[True]:
         with observability.span(
             "lock.wait",
             lock_name="conversation",
+            lock_threshold_ms=config.LOG_SLOW_OPERATION_MS,
             slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
         ):
-            return await super().acquire()
+            await super().acquire()
+            return True
 
 
 def get_conversation_lock(conversation_id: str) -> asyncio.Lock:

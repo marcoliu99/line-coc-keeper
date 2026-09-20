@@ -5,7 +5,7 @@ from typing import Any
 
 from app.models import GroupState
 from app.domain.models import AgentMessage
-from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL
+from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 from app import memory_rag, observability, scenario_rag
 
 
@@ -49,6 +49,7 @@ async def build_context(
                 rag_kind="scenario",
                 top_k=SCENARIO_RAG_TOP_K,
                 embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+                embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT,
                 metrics=metrics,
             ):
                 index = scenario_rag.get_index(conversation_id, state.scenario_text)
@@ -57,6 +58,7 @@ async def build_context(
                     candidate_count=len(getattr(index, "chunks", ())),
                     result_count=len(results),
                     has_embeddings=getattr(index, "has_embeddings", None),
+                    index_cache=getattr(index, "index_cache", "unknown"),
                 )
                 return scenario_rag.format_results(results)
 
@@ -68,7 +70,10 @@ async def build_context(
     if char:
         def _run_memory_rag() -> str:
             metrics: dict[str, Any] = {}
-            with observability.span("rag.search", rag_kind="memory", metrics=metrics):
+            with observability.span(
+                "memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+                embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=metrics,
+            ):
                 results = memory_rag.search_memory(conversation_id, text)
                 metrics["result_count"] = len(results)
                 return memory_rag.format_results(results)

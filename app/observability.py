@@ -22,6 +22,9 @@ _logger = logging.getLogger(__name__)
 _CONTEXT: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
     "coc_log_context", default={}
 )
+_METRICS: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
+    "coc_log_metrics", default={}
+)
 
 
 def _new_id(prefix: str) -> str:
@@ -44,6 +47,28 @@ def _safe_identifier(value: str | None) -> str | None:
 def current_context() -> dict[str, str]:
     """Return a copy so callers cannot mutate the context shared by a task."""
     return dict(_CONTEXT.get())
+
+
+def current_metrics() -> dict[str, int]:
+    return dict(_METRICS.get())
+
+
+@contextlib.contextmanager
+def metrics_context(metrics: dict[str, int]) -> Iterator[dict[str, int]]:
+    inherited = dict(_METRICS.get())
+    inherited.update(metrics)
+    token = _METRICS.set(inherited)
+    try:
+        yield inherited
+    finally:
+        metrics.update(inherited)
+        _METRICS.reset(token)
+
+
+def increment_metric(name: str, amount: int = 1) -> None:
+    if config.LOG_ENABLED:
+        values = _METRICS.get()
+        values[name] = values.get(name, 0) + amount
 
 
 def mark_request_error() -> None:
@@ -72,11 +97,13 @@ def context(**values: str | None) -> Iterator[dict[str, str]]:
 def detached_context(**values: str | None) -> Iterator[dict[str, str]]:
     """Start a context without inheriting the parent request context."""
     token = _CONTEXT.set({})
+    metrics_token = _METRICS.set({})
     try:
         with context(**values) as bound:
             yield bound
     finally:
         _CONTEXT.reset(token)
+        _METRICS.reset(metrics_token)
 
 
 @contextlib.contextmanager
@@ -96,13 +123,17 @@ def request_context(
     if not config.LOG_ENABLED and not config.LOG_TEXT_ENABLED:
         yield {}
         return
+    metrics_token = _METRICS.set({})
     with context(
         request_id=request_id or _new_id("req"),
         turn_id=turn_id,
         maintenance_id=maintenance_id,
         conversation_id=_safe_identifier(conversation_id),
     ) as bound:
-        yield bound
+        try:
+            yield bound
+        finally:
+            _METRICS.reset(metrics_token)
 
 
 def _record_context() -> dict[str, str]:
@@ -134,6 +165,7 @@ def span(
     level: int = logging.INFO,
     slow_threshold_ms: int | None = None,
     metrics: dict[str, Any] | None = None,
+    slow_event: str | None = None,
     **fields: Any,
 ) -> Iterator[None]:
     """Measure one synchronous or async-compatible operation."""
@@ -161,7 +193,7 @@ def span(
             status="error",
             error_type=type(exc).__name__,
             slow_threshold_ms=slow_threshold_ms,
-            **(metrics or {}),
+            **({**_METRICS.get(), **(metrics or {})}),
             **fields,
         )
         raise
@@ -170,18 +202,23 @@ def span(
         output_level = level
         if slow_threshold_ms is not None and duration_ms >= slow_threshold_ms:
             output_level = logging.WARNING
+            if slow_event:
+                event(
+                    slow_event, level=logging.WARNING, duration_ms=duration_ms,
+                    slow_threshold_ms=slow_threshold_ms, **fields,
+                )
         event(
             name + ".completed",
             level=output_level,
             duration_ms=duration_ms,
             status="success",
             slow_threshold_ms=slow_threshold_ms,
-            **(metrics or {}),
+            **({**_METRICS.get(), **(metrics or {})}),
             **fields,
         )
 
 
-def usage_fields(response: Any) -> dict[str, int | None]:
+def usage_fields(response: Any) -> dict[str, Any]:
     """Normalize common OpenAI-style usage objects without requiring an SDK."""
     if not config.LOG_INCLUDE_USAGE:
         return {}

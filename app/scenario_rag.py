@@ -30,6 +30,7 @@ import logging
 import hashlib
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -81,6 +82,7 @@ class ScenarioIndex:
     avg_length: float
     text_hash: str
     has_embeddings: bool = False
+    index_cache: str = "rebuilt"
 
 
 def _tokenize(text: str) -> list[str]:
@@ -164,7 +166,7 @@ _EMBEDDING_BATCH_SIZE = 100  # conservative — well under OpenAI's per-request
 # instead of risking one oversized request failing outright.
 
 
-def _embed_texts(texts: list[str]) -> list[list[float]] | None:
+def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[float]] | None:
     """Best-effort: embed texts via OpenAI, batching requests so a large
     input list (a long scenario, or many fine-grained chunks) can't exceed
     a single request's limits. Returns None if unavailable (no
@@ -173,7 +175,11 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
     Order matches the input list regardless of what order each batch's
     response returns embeddings in (each Embedding carries its own .index,
     relative to its own batch)."""
-    if not OPENAI_API_KEY or not texts:
+    if not texts:
+        return None
+    if not OPENAI_API_KEY:
+        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
+                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
         return None
     try:
         import openai
@@ -195,6 +201,8 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
             return None
         return cast(list[list[float]], ordered)
     except Exception:
+        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
+                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
 
 
@@ -271,7 +279,7 @@ def build_index(scenario_text: str) -> ScenarioIndex:
     # restart doesn't pay for this again) rather than per search — batched
     # internally by _embed_texts now that a scenario can produce many more
     # (smaller) chunks than one-per-page did.
-    embeddings = _embed_texts([c.text for c in chunks])
+    embeddings = _embed_texts([c.text for c in chunks], rag_kind="scenario")
     has_embeddings = embeddings is not None
     if embeddings is not None:
         for chunk, emb in zip(chunks, embeddings):
@@ -347,7 +355,7 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
 
-    query_embedding = _embed_texts([query])
+    query_embedding = _embed_texts([query], rag_kind="scenario")
     if query_embedding is None:
         # Embeddings worked at index time but the query-time call just failed
         # (transient error, key revoked mid-session, ...) — degrade to BM25
@@ -453,14 +461,23 @@ def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
     text_hash = hashlib.md5(scenario_text.encode("utf-8"), usedforsecurity=False).hexdigest()
     cached = _index_cache.get(group_id)
     if cached is not None and cached.text_hash == text_hash:
+        cached.index_cache = "memory"
         return cached
 
     disk_index = _load_index_from_disk(group_id)
     if disk_index is not None and disk_index.text_hash == text_hash:
+        disk_index.index_cache = "disk"
         _index_cache[group_id] = disk_index
         return disk_index
 
-    index = build_index(scenario_text)
+    index_metrics = {"index_cache": "rebuilt"}
+    started = time.perf_counter()
+    with observability.span("rag.index", rag_kind="scenario", metrics=index_metrics):
+        index = build_index(scenario_text)
+    index.index_cache = "rebuilt"
+    observability.event("rag.index_rebuilt", level=logging.WARNING, rag_kind="scenario",
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        chunk_count=len(index.chunks), reason="cache_miss")
     _index_cache[group_id] = index
     _save_index_to_disk(group_id, index)
     return index

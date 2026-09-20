@@ -722,8 +722,14 @@ async def _run_post_turn_maintenance_safely(conversation_id: str) -> None:
         conversation_id=conversation_id,
     ):
         try:
-            with observability.span("maintenance", trigger="post_turn"):
-                await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+            metrics: dict[str, object] = {}
+            with observability.span(
+                "maintenance", trigger="post_turn", metrics=metrics,
+                slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
+                slow_event="maintenance.slow",
+            ):
+                result = await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+                metrics.update(result or {})
         except Exception:
             _logger.exception("post-turn maintenance failed (background) for conversation_id=%s", conversation_id)
 

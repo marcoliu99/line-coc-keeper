@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import functools
 import hashlib
 import logging
 import time
@@ -9,10 +10,20 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app import db
-from app import locks
+from app import locks, observability
 from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
+
+
+def _observed_checkpoint(operation):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapped(*args, **kwargs):
+            with observability.span("checkpoint", operation=operation):
+                return func(*args, **kwargs)
+        return wrapped
+    return decorator
 
 
 def _log_group_id(group_id: str) -> str:
@@ -31,6 +42,7 @@ def _validate_state_schema(data: dict) -> None:
     GroupState.migrate_data(data)
 
 
+@_observed_checkpoint("create")
 def create_checkpoint(
     state: GroupState,
     *,
@@ -144,6 +156,7 @@ def _get_checkpoint_tx(conn, group_id: str, identifier: str) -> dict:
     return matches[0]
 
 
+@_observed_checkpoint("clean")
 def clean_checkpoint(group_id: str, identifier: str) -> None:
     started = time.monotonic()
     _logger.info("checkpoint_clean_started group_id=%s identifier=%s", _log_group_id(group_id), identifier)
@@ -189,6 +202,7 @@ def _restore_page_images(state: GroupState) -> None:
         )
 
 
+@_observed_checkpoint("rollback")
 def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupState, dict, dict]:
     """Atomically create pre-rollback, restore the checkpoint, and return both metadata records."""
     started = time.monotonic()

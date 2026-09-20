@@ -1,17 +1,38 @@
 """Process-level logging configuration for Discord and local runs."""
 from __future__ import annotations
 
+import atexit
 import json
 import logging
+import queue
 import sys
+import threading
 from datetime import datetime, timezone
-from logging.handlers import RotatingFileHandler
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-from app import config
+from app import config, observability
 from app.observability import current_context
 
+_listener: QueueListener | None = None
+_listener_targets: list[logging.Handler] = []
+
+
+class _DaemonQueueListener(QueueListener):
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._monitor, daemon=True)  # type: ignore[attr-defined]
+        self._thread.start()
+
+
+def _stop_listener() -> None:
+    global _listener, _listener_targets
+    if _listener is not None:
+        _listener.stop()
+        _listener = None
+    for handler in _listener_targets:
+        handler.close()
+    _listener_targets = []
 
 class _ChannelFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -71,9 +92,8 @@ def configure_logging(*, force: bool = False) -> None:
     normal startup should call this once before connecting to Discord.
     """
     root = logging.getLogger()
-    if root.handlers and not force:
-        return
     if force:
+        _stop_listener()
         for handler in root.handlers[:]:
             root.removeHandler(handler)
             handler.close()
@@ -87,10 +107,24 @@ def configure_logging(*, force: bool = False) -> None:
     )
     channel_filter = _ChannelFilter()
 
+    if root.handlers and not force:
+        # A host application may have configured logging before the bot. Reuse
+        # those handlers instead of silently skipping the channel toggles.
+        for handler in root.handlers:
+            handler.setFormatter(formatter)
+            handler.addFilter(channel_filter)
+        for setting, received_kind, fallback_value in config.INVALID_LOG_SETTINGS:
+            observability.event(
+                "config.invalid", level=logging.WARNING, setting=setting,
+                received_kind=received_kind, fallback_value=fallback_value,
+            )
+        config.INVALID_LOG_SETTINGS.clear()
+        return
+
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(formatter)
     stream.addFilter(channel_filter)
-    root.addHandler(stream)
+    targets: list[logging.Handler] = [stream]
 
     if config.LOG_FILE:
         try:
@@ -101,7 +135,24 @@ def configure_logging(*, force: bool = False) -> None:
             )
             file_handler.setFormatter(formatter)
             file_handler.addFilter(channel_filter)
-            root.addHandler(file_handler)
+            targets.append(file_handler)
         except OSError:
             # Keep stderr alive; logging must not prevent the bot from starting.
             root.warning("log_file_setup_failed path=%s", config.LOG_FILE)
+
+    global _listener, _listener_targets
+    _listener_targets = targets
+    log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
+    root.addHandler(QueueHandler(log_queue))
+    _listener = _DaemonQueueListener(log_queue, *targets, respect_handler_level=False)
+    _listener.start()
+
+    for setting, received_kind, fallback_value in config.INVALID_LOG_SETTINGS:
+        observability.event(
+            "config.invalid", level=logging.WARNING, setting=setting,
+            received_kind=received_kind, fallback_value=fallback_value,
+        )
+    config.INVALID_LOG_SETTINGS.clear()
+
+
+atexit.register(_stop_listener)

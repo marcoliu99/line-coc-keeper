@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+INVALID_LOG_SETTINGS: list[tuple[str, str, str]] = []
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -15,6 +17,7 @@ def _env_bool(name: str, default: bool) -> bool:
         return True
     if normalized in {"0", "false", "no", "off"}:
         return False
+    INVALID_LOG_SETTINGS.append((name, "boolean", str(default).lower()))
     return default
 
 
@@ -22,6 +25,7 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
     try:
         return max(minimum, int(os.environ.get(name, str(default))))
     except (TypeError, ValueError):
+        INVALID_LOG_SETTINGS.append((name, "integer", str(default)))
         return default
 
 # Discord bot token (discord.com/developers/applications > your app > Bot > Reset
@@ -159,9 +163,11 @@ LOG_ENABLED = _env_bool("LOG_ENABLED", False)
 LOG_TEXT_ENABLED = _env_bool("LOG_TEXT_ENABLED", True)
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    INVALID_LOG_SETTINGS.append(("LOG_LEVEL", "string", "INFO"))
     LOG_LEVEL = "INFO"
 LOG_FORMAT = os.environ.get("LOG_FORMAT", "json").strip().lower()
 if LOG_FORMAT not in {"json", "text"}:
+    INVALID_LOG_SETTINGS.append(("LOG_FORMAT", "string", "json"))
     LOG_FORMAT = "json"
 LOG_FILE = os.environ.get("LOG_FILE", "").strip()
 LOG_SLOW_REQUEST_MS = _env_int("LOG_SLOW_REQUEST_MS", 3000)

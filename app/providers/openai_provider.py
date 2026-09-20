@@ -29,7 +29,7 @@ from app.config import KEEPER_REASONING_EFFORT, KEEPER_TEMPERATURE, OPENAI_API_K
 _unsupported_params: set[str] = set()
 
 
-def _create_response(client, **kwargs):
+def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
     """Some model tiers (reasoning-focused releases in particular) reject
     certain optional parameters outright with a 400 instead of silently
     ignoring them — confirmed for `temperature`; `reasoning` is the same
@@ -45,6 +45,7 @@ def _create_response(client, **kwargs):
     for param in _unsupported_params:
         kwargs.pop(param, None)
     while True:
+        observability.increment_metric("iteration_count")
         observed = config.LOG_ENABLED
         started = time.perf_counter() if observed else 0.0
         reasoning = kwargs.get("reasoning") or {}
@@ -53,6 +54,7 @@ def _create_response(client, **kwargs):
             provider="openai",
             model=kwargs.get("model"),
             api_operation="responses.create",
+            iteration=_log_iteration,
             reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
             tool_count=len(kwargs.get("tools") or []),
         )
@@ -64,6 +66,7 @@ def _create_response(client, **kwargs):
             if observed:
                 duration_ms = (time.perf_counter() - started) * 1000
                 if offending is not None:
+                    observability.increment_metric("retry_count")
                     observability.event(
                         "llm.retry",
                         level=logging.WARNING,
@@ -95,6 +98,7 @@ def _create_response(client, **kwargs):
                     provider="openai",
                     model=kwargs.get("model"),
                     api_operation="responses.create",
+                    iteration=_log_iteration,
                     duration_ms=(time.perf_counter() - started) * 1000,
                     status="success",
                     **observability.usage_fields(response),
@@ -224,7 +228,7 @@ def run_conversation(
         if active_previous_response_id:
             request_kwargs["previous_response_id"] = active_previous_response_id
         try:
-            response = _create_response(client, **request_kwargs)
+            response = _create_response(client, _log_iteration=iteration, **request_kwargs)
         except Exception as exc:
             if (
                 iteration == 0
@@ -232,12 +236,16 @@ def run_conversation(
                 and active_previous_response_id == previous_response_id
                 and _is_invalid_previous_response_id_error(exc, openai, previous_response_id)
             ):
+                observability.event(
+                    "llm.fallback", level=logging.WARNING, provider="openai",
+                    fallback_kind="previous_response_id", reason="invalid_previous_response_id",
+                )
                 input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
                 input_items.append({"role": "user", "content": new_message})
                 active_previous_response_id = None
                 request_kwargs["input"] = input_items
                 request_kwargs.pop("previous_response_id", None)
-                response = _create_response(client, **request_kwargs)
+                response = _create_response(client, _log_iteration=iteration, **request_kwargs)
             else:
                 raise
 

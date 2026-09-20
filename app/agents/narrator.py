@@ -59,18 +59,19 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         # run_conversation is synchronous (see every app/providers/*.py) —
         # dispatched via asyncio.to_thread like every other call site in
         # this codebase, not awaited directly.
-        with observability.span("llm.turn", provider=LLM_PROVIDER, agent="narrator"):
-            reply_text = await asyncio.to_thread(
-                provider.run_conversation,
-                static_system,
-                dynamic_system,
-                [],
-                history,
-                new_message,
-                _no_tools,
-                1,
-            )
+        turn_metrics: dict[str, int] = {}
+        with observability.metrics_context(turn_metrics):
+            with observability.span(
+                "llm.turn", provider=LLM_PROVIDER,
+                model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
+                agent="narrator", metrics=turn_metrics,
+            ):
+                reply_text = await asyncio.to_thread(
+                    provider.run_conversation, static_system, dynamic_system, [],
+                    history, new_message, _no_tools, 1,
+                )
     except Exception:
+        observability.event("llm.failed", level=logging.ERROR, agent="narrator", status="error")
         _logger.exception("Narrator LLM call failed")
         reply_text = "（守密人一時語塞，請再說一次剛才的行動）"
 

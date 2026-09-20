@@ -64,6 +64,9 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
             for chunk in chunks:
                 await channel.send(chunk)
             return
+        observability.increment_metric("reply_message_count", len(chunks))
+        observability.increment_metric("reply_chunk_count", len(chunks))
+        observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
         with observability.span(
             "discord.reply",
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
@@ -113,6 +116,7 @@ def _observed_interaction(callback):
                         duration_ms=duration_ms,
                         slow_threshold_ms=LOG_SLOW_REQUEST_MS,
                         status="success",
+                        **observability.current_metrics(),
                     )
     return wrapped
 
@@ -155,6 +159,9 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
             for chunk in chunks:
                 await interaction.followup.send(chunk)
             return
+        observability.increment_metric("reply_message_count", len(chunks))
+        observability.increment_metric("reply_chunk_count", len(chunks))
+        observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
         with observability.span(
             "discord.reply",
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
@@ -508,7 +515,7 @@ def _help_view(conversation_id: str, page: HelpPage) -> discord.ui.View:
     return view
 
 
-class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTON_ID_TEMPLATE):
+class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """Persistent navigation button for the three-level player help."""
 
     def __init__(self, conversation_id: str, action: HelpAction):
@@ -584,10 +591,14 @@ async def on_message(message: discord.Message) -> None:
     with observability.request_context(conversation_id=conversation_id):
         observed = config.LOG_ENABLED
         if observed:
+            parts = (message.content or "").strip().split()
+            command_name = parts[1].casefold() if len(parts) > 1 and parts[0].casefold() == "/coc" else None
+            message_kind = "attachment" if message.attachments else "plain_text"
             observability.event(
                 "request.started",
                 platform="discord",
-                message_kind="message",
+                message_kind=message_kind,
+                command_name=command_name,
                 attachment_count=len(message.attachments),
             )
         started = time.perf_counter() if observed else 0.0
@@ -600,6 +611,7 @@ async def on_message(message: discord.Message) -> None:
                     level=logging.ERROR,
                     duration_ms=(time.perf_counter() - started) * 1000,
                     error_type=type(exc).__name__,
+                    status="error",
                 )
             raise
         else:
@@ -612,6 +624,7 @@ async def on_message(message: discord.Message) -> None:
                     duration_ms=duration_ms,
                     slow_threshold_ms=LOG_SLOW_REQUEST_MS,
                     status=observability.current_context().get("request_status", "success"),
+                    **observability.current_metrics(),
                 )
 
 

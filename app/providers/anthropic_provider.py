@@ -52,6 +52,7 @@ def run_conversation(
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     for iteration in range(max_iterations):
+        observability.increment_metric("iteration_count")
         request_metrics: dict[str, int | None] = {}
         with observability.span(
             "llm.request",

@@ -16,7 +16,7 @@ from typing import Any, Callable, Generic, TypeVar, overload
 from uuid import uuid4
 
 from app import checkpoints, combat, dice, locks, memory_rag, observability, scenario_index, scenario_library, scenario_rag, scene_digest
-from app.config import LLM_PROVIDER, LOG_SLOW_OPERATION_MS, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
+from app.config import LLM_PROVIDER, LOG_SLOW_OPERATION_MS, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
@@ -1012,7 +1012,7 @@ def run_scene_digest_maintenance(group_id: str) -> None:
         scene_digest.create_digest(state)
 
 
-def run_post_turn_maintenance(group_id: str) -> None:
+def run_post_turn_maintenance(group_id: str) -> dict[str, bool]:
     """Called after every turn (see app/commands.py's
     _spawn_post_turn_maintenance, which now fires this as an independent
     background task rather than awaiting it inline). Only does real work
@@ -1038,14 +1038,15 @@ def run_post_turn_maintenance(group_id: str) -> None:
     to prevent."""
     with locks.get_state_lock(group_id):
         if group_id in _maintenance_in_flight:
-            return
+            return {"skipped": True}
         _maintenance_in_flight.add(group_id)
+    result = {"summary_updated": False, "embedding_updated": False, "state_saved": False}
     try:
         run_scene_digest_maintenance(group_id)
         with locks.get_state_lock(group_id):
             latest_state = load_state(group_id)
             if len(latest_state.log) <= MAX_LOG_TURNS * 4:
-                return
+                return result
             keep_from = -MAX_LOG_TURNS * 2
             base_summary = latest_state.campaign_summary
             log_snapshot = [dict(message) for message in latest_state.log]
@@ -1057,6 +1058,7 @@ def run_post_turn_maintenance(group_id: str) -> None:
         # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
         # early plot points survive past what the verbatim log can hold.
         campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
+        result["summary_updated"] = campaign_summary != base_summary
         # Also persist the chunk's *original* wording into the searchable
         # memory index (app/memory_rag.py) — campaign_summary alone would
         # keep recompressing an already-compressed summary on every future
@@ -1064,7 +1066,10 @@ def run_post_turn_maintenance(group_id: str) -> None:
         # verbatim text retrievable via search_memory even after that.
         formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
         memory_rag.append_memory(group_id, formatted_chunk)
+        result["embedding_updated"] = True
         _persist_memory_maintenance_state(group_id, campaign_summary, dropped_chunk)
+        result["state_saved"] = True
+        return result
     finally:
         with locks.get_state_lock(group_id):
             _maintenance_in_flight.discard(group_id)
@@ -1635,22 +1640,26 @@ def _execute_tool(
         if name == "search_scenario":
             if not state.scenario_text:
                 return {"ok": False, "error": "目前沒有載入劇本可以搜尋"}
-            metrics: dict[str, Any] = {}
-            with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K, metrics=metrics):
+            scenario_metrics: dict[str, Any] = {}
+            with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K,
+                                    embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+                                    embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
                 index = scenario_rag.get_index(state.group_id, state.scenario_text)
                 results = scenario_rag.search(index, tool_input.get("query", ""), top_k=SCENARIO_RAG_TOP_K)
-                metrics.update(
+                scenario_metrics.update(
                     candidate_count=len(getattr(index, "chunks", ())),
                     result_count=len(results),
                     has_embeddings=getattr(index, "has_embeddings", None),
+                    index_cache=getattr(index, "index_cache", "unknown"),
                 )
             return {"ok": True, "results": scenario_rag.format_results(results)}
 
         if name == "search_memory":
-            metrics: dict[str, Any] = {}
-            with observability.span("rag.search", rag_kind="memory", metrics=metrics):
+            memory_metrics: dict[str, Any] = {}
+            with observability.span("memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+                                    embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=memory_metrics):
                 results = memory_rag.search_memory(state.group_id, tool_input.get("query", ""))
-                metrics["result_count"] = len(results)
+                memory_metrics["result_count"] = len(results)
             return {"ok": True, "results": memory_rag.format_results(results)}
 
         return {"ok": False, "error": f"未知工具 {name}"}
@@ -2116,6 +2125,7 @@ def run_turn(
 
     def execute_turn_tool(name: str, tool_input: dict) -> dict:
         nonlocal kp_turn_creates_canon
+        observability.increment_metric("tool_call_count")
         with observability.span(
             "llm.tool",
             tool_name=observability.tool_name(name),
