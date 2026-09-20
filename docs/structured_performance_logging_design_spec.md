@@ -290,7 +290,6 @@ index rebuild 與 query-time search 必須分開，避免把第一次建立劇�
 ### 7.5 Discord output
 
 - `discord.reply.started`
-- `discord.reply.chunk.completed`
 - `discord.reply.completed`
 - `discord.reply.failed`
 

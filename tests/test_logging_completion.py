@@ -161,6 +161,25 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_chunk_count"], 1)
         self.assertEqual(metrics["reply_bytes"], 1900)
 
+    async def test_interaction_followup_partial_failure_counts_only_successful_chunks(self):
+        from app.discord_bot import _make_interaction_reply
+
+        interaction = SimpleNamespace(
+            followup=SimpleNamespace(
+                send=AsyncMock(side_effect=[None, RuntimeError("discord unavailable")])
+            )
+        )
+        metrics = {}
+        text = "a" * 1900 + "b"
+        with patch.object(config, "LOG_ENABLED", True):
+            with observability.metrics_context(metrics):
+                with self.assertRaises(RuntimeError):
+                    await _make_interaction_reply(interaction)(text)
+
+        self.assertEqual(metrics["reply_message_count"], 1)
+        self.assertEqual(metrics["reply_chunk_count"], 1)
+        self.assertEqual(metrics["reply_bytes"], 1900)
+
     async def test_request_metrics_have_stable_zero_defaults(self):
         from app.discord_bot import _request_metrics
 
