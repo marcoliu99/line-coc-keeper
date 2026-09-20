@@ -201,19 +201,20 @@ class BatchRound:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # 只保護這個物件自己的欄位
 
     async def join(self, *, user_id, speaker_name, text, resolved_location) -> tuple[bool, QueuedMessage]:
-        """True＝呼叫方是這一輪的 leader（負責觸發／收尾這一批）；
-        False＝只是把訊息掛進去，會被目前這輪的 leader 一起帶走。"""
+        """True＝呼叫方是這一輪的 leader（負責觸發／收尾這一批），packet 直接交給
+        leader、**刻意不放進 `pending`**；False＝把訊息掛進 `pending`，會被目前這輪
+        的 leader 一起帶走。"""
         async with self._lock:
             self._next_seq += 1
             packet = QueuedMessage(seq=self._next_seq, user_id=user_id, speaker_name=speaker_name,
                                     text=text, received_at=time.monotonic(), resolved_location=resolved_location)
+            if not self.active:
+                self.active = True
+                return True, packet
             self.pending.append(packet)
             if len(self.pending) >= MAX_BATCH_SIZE:
                 self.grace_wake.set()
-            if self.active:
-                return False, packet
-            self.active = True
-            return True, packet
+            return False, packet
 
     async def wake_for_kp(self) -> None:
         """KP 訊息抵達時呼叫：若目前有排隊中的玩家批次，提前結束它的寬限期。"""
@@ -240,6 +241,13 @@ class BatchRound:
                 return None
             return batch
 ```
+
+**實作階段發現並修正的 bug**：第一版 `join()` 是先 `self.pending.append(packet)` 才判斷
+`active`，導致 leader 自己那則訊息「回傳給 leader」的同時**也**留在 `pending` 裡，下一次
+`next_round()` 會把它重複帶進下一批（`[["A"], ["A","B","C"]]` 而不是 `[["A"], ["B","C"]]`）
+——寫 `tests/test_message_batching.py` 時被測試直接抓到。上面貼的已經是修正後的版本：只有
+`active` 已是 `True`（follower）才會 append，leader 的 packet 只透過回傳值交給呼叫方，
+不進 `pending`。
 
 **「忙碌」直接定義成 `active == True`**：從第一則觸發某一輪的訊息開始（不論這一輪是立即送出的
 單則，還是還在寬限期收單），一路涵蓋到這一輪的 AI 呼叫真正回覆完成為止，才會回到 `active =
@@ -365,12 +373,18 @@ Marco 提出的疑慮——一堆訊息裡有人打了一句沒有 `@` 的閒聊
   送出，零額外延遲，只有 Keeper 忙碌期間排隊的訊息才會進入批次。
 - `MAX_BATCH_WAIT_SECONDS` 預設 **3 秒**（合理範圍 2–5 秒），`app/config.py` 環境變數可調。
 - `MAX_BATCH_SIZE` 固定 **5 則**，本期不做成可調參數，達到上限立即強制送出。
-- 「忙碌」用新的 per-conversation `_BatchRound.active` 旗標判斷，不輪詢既有的
+- 「忙碌」用新的 per-conversation `BatchRound.active` 旗標判斷，不輪詢既有的
   `get_conversation_lock`／`get_keeper_turn_lock`——見「忙碌狀態怎麼判斷」一節。
 - 批次的歷史紀錄記為一筆合併紀錄，不拆成多筆——見「歷史紀錄」一節。
 - 批次大小 > 1 時的訊息封裝改用 JSON 陣列（`{"seq", "speaker", "message"}`），不用純文字逐行——
   Marco 在 review 時明確要求；批次大小 = 1 時不受影響，仍是純文字，見「訊息封裝」一節。**這個
   改動不影響 KP**——KP 訊息從不進入 `BatchRound`，也不會被 `_format_batch_messages` 處理到。
+- `app/commands.py` 的 `_run_one_batch_round` 在每一輪批次真正執行前（拿到
+  `get_conversation_lock` 之後），會重新讀一次 `state.active`／`game_started` 並在不成立時
+  直接放棄這輪——這是實作階段才發現、補上的正確性修正：批次可能卡在寬限期一小段時間，若 KP
+  剛好在這段時間下了 `/coc end`，沒有這個重新檢查的話，排隊中的那批訊息還是會被送去問 AI。
+  單則訊息的舊流程（`_handle_ordinary_text_message_locked`）本來就有這個檢查，批次流程補上
+  是為了維持同等的新鮮度保證，不是新增行為。
 
 設計已無待決策事項，等 Marco 確認整份 spec 後即可開始實作。
 
@@ -379,9 +393,9 @@ Marco 提出的疑慮——一堆訊息裡有人打了一句沒有 `@` 的閒聊
 沿用 `test_keeper_priority_integration.py` 的慣例（stdlib `unittest`、`StateStorePatch`、
 `ReplyCollector`、`FakeKeeperRunner`、`asyncio.run`）：
 
-- `_BatchRound.join()`：第一次呼叫回傳 `True`（成為 leader）且 `active` 翻為 `True`；`active`
-  為 `True` 期間再呼叫一律回傳 `False`，訊息確實進入 `pending`；leader 收尾且 `pending` 清空後
-  `active` 翻回 `False`。
+- `BatchRound.join()`：第一次呼叫回傳 `True`（成為 leader）且 `active` 翻為 `True`，這個 packet
+  不進 `pending`；`active` 為 `True` 期間再呼叫一律回傳 `False`，訊息才會進入 `pending`；leader
+  收尾且 `pending` 清空後 `active` 翻回 `False`。
 - Keeper 閒置時單一訊息立即送出，prompt 內容與現行 `_format_turn_message` 逐字元相同、不含
   多人批次宣告文字——回歸測試。
 - Keeper 忙碌期間陸續進來兩則以上玩家訊息，會在目前這次呼叫結束後合併成一次呼叫送出，且送出的
@@ -392,8 +406,11 @@ Marco 提出的疑慮——一堆訊息裡有人打了一句沒有 `@` 的閒聊
   JSON 化完全不影響 KP 路徑。
 - 寬限期內的 `MAX_BATCH_WAIT_SECONDS` 到期時，立即送出目前累積的批次。
 - 佇列累積滿 `MAX_BATCH_SIZE`（5 則）時，不等寬限期到期就立刻強制送出。
-- KP 訊息在玩家批次寬限期內進來：先強制送出玩家批次（單獨一次呼叫），再處理 KP 訊息（單獨一次
-  呼叫），兩者不會合併，且順序正確。
+- KP 訊息在玩家批次寬限期內進來：`wake_for_kp()` 提前結束寬限期，該批訊息被完整送出（單獨一次
+  呼叫）、沒有遺失或跟 KP 的訊息混在一起，KP 自己的訊息也確實被處理到。**不斷言**兩次呼叫的
+  嚴格先後順序——`next_round()` 之後 leader 重新搶 `get_keeper_priority_gate` 跟 KP 自己搶
+  gate 之間存在合理的 race（誰先呼叫 `acquire()` 誰先跑），設計本身也只承諾 KP 排在「之後任何
+  新排隊的玩家」前面，沒有承諾贏過 leader 已經取走、即將送出的那一批（見「KP 插隊的具體機制」）。
 - 一次批次呼叫中，AI 對多位不同角色分別呼叫 `skill_check`，各自產生正確歸屬 owner_id 的擲骰
   按鈕（延伸既有 `_post_check_buttons` 的測試覆蓋）。
 - `@` 開頭的 OOC 訊息不進入批次、也不送給 AI，行為與現行一致。
