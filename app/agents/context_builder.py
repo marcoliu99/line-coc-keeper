@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from app.models import GroupState
 from app.domain.models import AgentMessage
 from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 from app import memory_rag, observability, scenario_rag
+
+_logger = logging.getLogger(__name__)
 
 
 async def build_context(
@@ -43,6 +46,13 @@ async def build_context(
     rag_task = None
     if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title:
         def _run_scenario_rag() -> str:
+            # See app/keeper.py's search_scenario tool for why this is a
+            # plain _logger call, not a structured event field. This site
+            # runs proactively once per turn (whenever SCENARIO_RAG_ENABLED)
+            # — distinct from the Keeper explicitly choosing to call the
+            # search_scenario tool — so the log line is tagged accordingly
+            # to keep the two apart when reading a turn's log.
+            _logger.info("context_builder.scenario_rag query=%r", text)
             metrics: dict[str, Any] = {}
             with observability.span(
                 "rag.search",
@@ -69,6 +79,13 @@ async def build_context(
     memory_task = None
     if char:
         def _run_memory_rag() -> str:
+            # See _run_scenario_rag's comment above — this one runs on
+            # essentially every player turn with a bound character
+            # (unconditional on SCENARIO_RAG_ENABLED), so it's very likely
+            # to be *the* proactive contributor when a turn's log shows an
+            # embeddings call the Keeper never explicitly asked for via the
+            # search_memory tool.
+            _logger.info("context_builder.memory_rag query=%r", text)
             metrics: dict[str, Any] = {}
             with observability.span(
                 "memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
