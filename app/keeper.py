@@ -1640,12 +1640,23 @@ def _execute_tool(
         if name == "search_scenario":
             if not state.scenario_text:
                 return {"ok": False, "error": "目前沒有載入劇本可以搜尋"}
+            scenario_query = tool_input.get("query", "")
+            # Plain text log, not a structured event field — the query is
+            # free-form player-adjacent content (see observability.py's own
+            # docstring on why those two channels are kept separate),
+            # gated by LOG_TEXT_ENABLED like any other _logger call. Added
+            # specifically because "did the Keeper just search the same
+            # keyword twice in one turn" was previously impossible to
+            # answer from the logs at all: rag.search's structured metrics
+            # below only ever captured counts (candidate_count,
+            # result_count, ...), never the query text itself.
+            _logger.info("search_scenario query=%r", scenario_query)
             scenario_metrics: dict[str, Any] = {}
             with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K,
                                     embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                                     embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
                 index = scenario_rag.get_index(state.group_id, state.scenario_text)
-                results = scenario_rag.search(index, tool_input.get("query", ""), top_k=SCENARIO_RAG_TOP_K)
+                results = scenario_rag.search(index, scenario_query, top_k=SCENARIO_RAG_TOP_K)
                 scenario_metrics.update(
                     candidate_count=len(getattr(index, "chunks", ())),
                     result_count=len(results),
@@ -1655,10 +1666,12 @@ def _execute_tool(
             return {"ok": True, "results": scenario_rag.format_results(results)}
 
         if name == "search_memory":
+            memory_query = tool_input.get("query", "")
+            _logger.info("search_memory query=%r", memory_query)  # see search_scenario's comment above
             memory_metrics: dict[str, Any] = {}
             with observability.span("memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                                     embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=memory_metrics):
-                results = memory_rag.search_memory(state.group_id, tool_input.get("query", ""), metrics=memory_metrics)
+                results = memory_rag.search_memory(state.group_id, memory_query, metrics=memory_metrics)
             return {"ok": True, "results": memory_rag.format_results(results)}
 
         return {"ok": False, "error": f"未知工具 {name}"}
