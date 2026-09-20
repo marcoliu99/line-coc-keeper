@@ -248,6 +248,7 @@ Maintenance log 必須含 `trigger`（例如 `post_turn`、`manual`）與 `detac
 
 ```env
 LOG_ENABLED=true
+LOG_TEXT_ENABLED=true
 LOG_LEVEL=INFO
 LOG_FORMAT=json
 LOG_FILE=logs/coc-bot.jsonl
@@ -257,16 +258,53 @@ LOG_HASH_IDENTIFIERS=true
 LOG_INCLUDE_USAGE=true
 ```
 
-`LOG_ENABLED` 是效能觀測總開關，`LOG_LEVEL` 是啟用後控制資料量的細分開關。兩者必須分開，因為降低 level 仍可能有 context 建立、timer、欄位計算與 formatter overhead。
+本系統提供兩種可以同時使用的 log channel：
+
+1. **Structured performance channel**：由 `observe.event()`／`observe.span()` 產生，記錄固定 schema、duration、token、cache 與效能欄位。
+2. **Developer text channel**：由標準 Python logger 的 `logger.debug()`／`logger.info()`／`logger.warning()`／`logger.error()` 產生，讓其他 developer 記錄一般文字診斷訊息。
+
+兩個 channel 共用 timestamp、logger name、request context、handler 與 `LOG_LEVEL`，但由不同 toggle 控制。這樣 `LOG_ENABLED=false` 不會阻止 developer 暫時開啟文字 debug。
+
+`LOG_ENABLED` 是 structured performance channel 的總開關，`LOG_TEXT_ENABLED` 是 developer text channel 的總開關，`LOG_LEVEL` 是兩者啟用後的共同 level filter。這三者必須分開，因為降低 level 仍可能有 context 建立、timer、欄位計算與 formatter overhead。
 
 #### `LOG_ENABLED` 行為
 
 | 設定 | 行為 |
 |---|---|
 | `true` | 建立 correlation context、計時、輸出符合 `LOG_LEVEL` 的 structured events |
-| `false` | 觀測 API 走 fast path：不建立 event dict、不計算 token／bytes／chunk 統計、不執行 hash／redaction、不建立 file output handler |
+| `false` | structured 觀測 API 走 fast path：不建立 event dict、不計算 token／bytes／chunk 統計、不執行 hash／redaction；不影響 developer text channel |
 
-`LOG_ENABLED=false` 時，不能因為 logging 而改變遊戲流程或增加額外 async task。必要的 exception logging 是否保留由既有錯誤處理負責，但不得為了效能觀測再次建立完整的觀測 payload。
+`LOG_TEXT_ENABLED` 行為：
+
+| 設定 | 行為 |
+|---|---|
+| `true` | 保留標準 logger 的文字 debug／info／warning／error，並套用 `LOG_LEVEL` |
+| `false` | developer text channel 走 no-op fast path；不格式化訊息、不建立 file output handler |
+
+`LOG_ENABLED=false` 時，不能因為 structured logging 而改變遊戲流程或增加額外 async task。`LOG_TEXT_ENABLED=false` 時，developer 的 debug 文字也不得被格式化或寫出。必要的 exception logging 是否保留由既有錯誤處理負責，但不得為了效能觀測再次建立完整的觀測 payload。
+
+若要完全關閉兩種 log channel：
+
+```env
+LOG_ENABLED=false
+LOG_TEXT_ENABLED=false
+```
+
+若 developer 只需要文字 debug，不需要效能 timing：
+
+```env
+LOG_ENABLED=false
+LOG_TEXT_ENABLED=true
+LOG_LEVEL=DEBUG
+```
+
+若需要完整效能觀測，也需要保留文字 debug：
+
+```env
+LOG_ENABLED=true
+LOG_TEXT_ENABLED=true
+LOG_LEVEL=INFO
+```
 
 `LOG_LEVEL` 是控制 log 資料量的主要開關，必須由環境變數讀取，並套用到所有 app logger：
 
@@ -288,10 +326,13 @@ LOG_INCLUDE_USAGE=true
 
 設定解析必須有安全預設值；不合法的 level、duration 或 boolean 不得讓 bot 啟動失敗，應 fallback 到 `INFO` 或對應的安全預設值。
 
-`LOG_ENABLED` 的預設值建議為 `false`，以確保沒有明確開啟觀測時不增加 production latency；需要效能分析時明確設定：
+`LOG_ENABLED` 的預設值建議為 `false`，以確保沒有明確開啟觀測時不增加 production latency。`LOG_TEXT_ENABLED` 的預設值建議為 `true`，保留既有 Python logger 的錯誤與基本診斷能力；若正式環境要求完全靜默，再明確設為 `false`。
+
+需要效能分析時明確設定：
 
 ```env
 LOG_ENABLED=true
+LOG_TEXT_ENABLED=true
 LOG_LEVEL=INFO
 ```
 
@@ -301,6 +342,21 @@ LOG_LEVEL=INFO
 - `INFO`：request、AI、RAG、maintenance 的開始／完成摘要。
 - `WARNING`：slow、fallback、cache miss 異常、provider unsupported parameter。
 - `ERROR`：請求失敗、回覆失敗、不可恢復 persistence error。
+
+Developer 文字 log 與 structured performance event 都必須通過同一個 `LOG_LEVEL` filter，但內容格式不同：
+
+```python
+logger.debug("scenario cache key=%s", cache_key)
+```
+
+只產生一般文字診斷訊息；
+
+```python
+with observe.span("rag.search", rag_kind="scenario"):
+    ...
+```
+
+產生固定欄位的 structured timing event。兩者可以在同一個 request 中同時出現，並使用相同的 `request_id`／`turn_id`。
 
 ### 8.4 INFO／WARNING 事件與資料量定義
 
@@ -476,8 +532,9 @@ Discord 發送耗時
 4. 是否保留檔案 log？（建議：預設 stderr，只有設定 `LOG_FILE` 才寫 rotating file。）
 5. 是否要加入 request sampling？（建議：第一版不 sampling，先完整記錄；流量增大後再加。）
 6. `LOG_ENABLED` 的預設值與 production policy。（建議：預設 `false`；效能分析期間才開啟。）
-7. `LOG_LEVEL` 的預設值與 production policy。（建議：啟用時預設 `INFO`；穩定運行後可改 `WARNING`，需要完整效能分析時再切回 `INFO`。）
-8. 是否允許管理者以 debug 設定短暫記錄 hash 後的 user／conversation ID？（建議：預設關閉。）
+7. `LOG_TEXT_ENABLED` 的預設值與 production policy。（建議：預設 `true`，保留既有 error／diagnostic log；需要完全靜默時才關閉。）
+8. `LOG_LEVEL` 的預設值與 production policy。（建議：啟用時預設 `INFO`；穩定運行後可改 `WARNING`，需要完整效能分析時再切回 `INFO`。）
+9. 是否允許管理者以 debug 設定短暫記錄 hash 後的 user／conversation ID？（建議：預設關閉。）
 
 ## 15. 實作後的流程限制
 
