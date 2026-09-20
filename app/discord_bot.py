@@ -38,6 +38,9 @@ _backup_task: asyncio.Task | None = None
 
 MAX_DISCORD_MESSAGE_CHARS = 1900  # Discord's hard limit is 2000; leave a margin
 MAX_REPLY_MESSAGES = 10
+_REPLY_METRIC_KEYS = (
+    "reply_message_count", "reply_edit_count", "reply_chunk_count", "reply_bytes",
+)
 
 intents = discord.Intents.default()
 intents.message_content = True  # privileged intent — must also be switched on
@@ -74,6 +77,123 @@ def _record_reply_binary(size: int) -> None:
     observability.increment_metric("reply_bytes", size)
 
 
+def _record_reply_edit(text: str) -> None:
+    """Account for a text update to an existing Discord message."""
+    if not config.LOG_ENABLED:
+        return
+    observability.increment_metric("reply_edit_count")
+    observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+
+
+def _request_metrics() -> dict[str, int]:
+    """Return stable reply metric keys for request lifecycle events."""
+    metrics = observability.current_metrics()
+    for key in _REPLY_METRIC_KEYS:
+        metrics.setdefault(key, 0)
+    return metrics
+
+
+async def _send_direct_message(
+    channel: discord.abc.Messageable, text: str, *, view: discord.ui.View | None = None
+) -> None:
+    """Send a non-chunked public message with the same reply span as Reply."""
+    if not config.LOG_ENABLED:
+        await channel.send(text, view=view)
+        return
+    byte_count = len(text.encode("utf-8"))
+    with observability.span(
+        "discord.reply",
+        slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        reply_message_count=1,
+        reply_bytes=byte_count,
+        reply_chunk_count=1,
+        reply_edit_count=0,
+    ):
+        await channel.send(text, view=view)
+    _record_reply_output(text)
+
+
+async def _send_interaction_message(
+    interaction: discord.Interaction, text: str, *, ephemeral: bool = False
+) -> None:
+    """Send an interaction response and include it in request metrics."""
+    if not config.LOG_ENABLED:
+        await interaction.response.send_message(text, ephemeral=ephemeral)
+        return
+    byte_count = len(text.encode("utf-8"))
+    with observability.span(
+        "discord.reply",
+        slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        reply_message_count=1,
+        reply_bytes=byte_count,
+        reply_chunk_count=1,
+        reply_edit_count=0,
+        ephemeral=ephemeral,
+    ):
+        await interaction.response.send_message(text, ephemeral=ephemeral)
+    _record_reply_output(text)
+
+
+async def _edit_interaction_message(
+    interaction: discord.Interaction, text: str, *, view: discord.ui.View | None = None
+) -> None:
+    """Edit an existing interaction message without inflating message count."""
+    if not config.LOG_ENABLED:
+        await interaction.response.edit_message(content=text, view=view)
+        return
+    byte_count = len(text.encode("utf-8"))
+    with observability.span(
+        "discord.reply",
+        slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        reply_message_count=0,
+        reply_bytes=byte_count,
+        reply_chunk_count=0,
+        reply_edit_count=1,
+    ):
+        await interaction.response.edit_message(content=text, view=view)
+    _record_reply_edit(text)
+
+
+async def _edit_interaction_view(
+    interaction: discord.Interaction, *, view: discord.ui.View | None = None
+) -> None:
+    """Measure an interaction edit that changes only the component view."""
+    if not config.LOG_ENABLED:
+        await interaction.response.edit_message(view=view)
+        return
+    with observability.span(
+        "discord.reply",
+        slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        reply_message_count=0,
+        reply_bytes=0,
+        reply_chunk_count=0,
+        reply_edit_count=1,
+    ):
+        await interaction.response.edit_message(view=view)
+    _record_reply_edit("")
+
+
+async def _send_direct_image(
+    channel: discord.abc.Messageable, png_bytes: bytes, page_number: int
+) -> None:
+    """Send a public attachment with Discord reply timing and byte metrics."""
+    filename = f"page_{page_number}.png"
+    if not config.LOG_ENABLED:
+        await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=filename))
+        return
+    with observability.span(
+        "discord.reply",
+        slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        reply_message_count=1,
+        reply_bytes=len(png_bytes),
+        reply_chunk_count=0,
+        reply_edit_count=0,
+        reply_kind="image",
+    ):
+        await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=filename))
+    _record_reply_binary(len(png_bytes))
+
+
 def _make_reply(channel: discord.abc.Messageable) -> Reply:
     async def reply(text: str) -> None:
         chunks = _chunk_text(text)
@@ -90,6 +210,7 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
             reply_message_count=len(chunks),
             reply_bytes=len(text.encode("utf-8")),
             reply_chunk_count=len(chunks),
+            reply_edit_count=0,
         ):
             for chunk in chunks:
                 await channel.send(chunk)
@@ -122,6 +243,7 @@ def _observed_interaction(callback):
                         "request.failed", level=logging.ERROR,
                         duration_ms=(time.perf_counter() - started) * 1000,
                         error_type=type(exc).__name__, status="error",
+                        **_request_metrics(),
                     )
                 raise
             else:
@@ -133,7 +255,7 @@ def _observed_interaction(callback):
                         duration_ms=duration_ms,
                         slow_threshold_ms=LOG_SLOW_REQUEST_MS,
                         status="success",
-                        **observability.current_metrics(),
+                        **_request_metrics(),
                     )
     return wrapped
 
@@ -157,8 +279,7 @@ def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
     async def send_image(png_bytes: bytes, conversation_id: str, page_number: int) -> None:
         # conversation_id/page_number are retained in the shared callback
         # signature for state-aware image sends; Discord attaches bytes directly.
-        await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
-        _record_reply_binary(len(png_bytes))
+        await _send_direct_image(channel, png_bytes, page_number)
 
     return send_image
 
@@ -186,6 +307,7 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
             reply_message_count=len(chunks),
             reply_bytes=len(text.encode("utf-8")),
             reply_chunk_count=len(chunks),
+            reply_edit_count=0,
         ):
             for chunk in chunks:
                 await interaction.followup.send(chunk)
@@ -253,8 +375,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
     async def callback(self, interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != self.owner_id:
             text = "這不是你的檢定，換你自己的角色來按。"
-            await interaction.response.send_message(text, ephemeral=True)
-            _record_reply_output(text)
+            await _send_interaction_message(interaction, text, ephemeral=True)
             return
         if not locks.try_acquire_check(self.conversation_id, self.owner_id):
             # A slow Keeper call from a first click (or an earlier /coc check)
@@ -262,11 +383,10 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             # second click queue behind get_conversation_lock and run as a
             # genuinely separate, duplicate roll once its turn comes.
             text = "上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。"
-            await interaction.response.send_message(text, ephemeral=True)
-            _record_reply_output(text)
+            await _send_interaction_message(interaction, text, ephemeral=True)
             return
         try:
-            await interaction.response.edit_message(view=None)
+            await _edit_interaction_view(interaction, view=None)
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
             command_text = f"/coc check {self.option}" if self.option else "/coc check"
@@ -309,8 +429,7 @@ async def _post_check_buttons(
             for label, danger, option in _check_button_specs(check):
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option))
             text = f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）："
-            await channel.send(text, view=view)
-            _record_reply_output(text)
+            await _send_direct_message(channel, text, view=view)
         except Exception:
             # Never let one broken/unpostable entry (a malformed check dict,
             # a transient Discord API error, ...) silently swallow every
@@ -359,16 +478,14 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
     async def callback(self, interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != self.owner_id:
             text = "這不是你的 Luck 花費決定，換你自己的角色來按。"
-            await interaction.response.send_message(text, ephemeral=True)
-            _record_reply_output(text)
+            await _send_interaction_message(interaction, text, ephemeral=True)
             return
         if not locks.try_acquire_check(self.conversation_id, self.owner_id):
             text = "上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。"
-            await interaction.response.send_message(text, ephemeral=True)
-            _record_reply_output(text)
+            await _send_interaction_message(interaction, text, ephemeral=True)
             return
         try:
-            await interaction.response.edit_message(view=None)
+            await _edit_interaction_view(interaction, view=None)
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(interaction.channel)
             state_before = await asyncio.to_thread(load_group_state, self.conversation_id)
@@ -402,11 +519,10 @@ async def _post_luck_buttons(
             view = discord.ui.View(timeout=None)
             for option in decision["options"]:
                 label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
-                view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
+            view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
             view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True))
             text = f"🍀 {name}，要花 Luck 買到更好的結果嗎？"
-            await channel.send(text, view=view)
-            _record_reply_output(text)
+            await _send_direct_message(channel, text, view=view)
         except Exception:
             _logger.exception(
                 "failed to post luck button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
@@ -491,16 +607,14 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
         channel = interaction.channel
         if channel is None or _conversation_id(channel.id) != self.conversation_id:
             text = "這個 PDF 按鈕不屬於目前頻道。"
-            await interaction.response.send_message(text, ephemeral=True)
-            _record_reply_output(text)
+            await _send_interaction_message(interaction, text, ephemeral=True)
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
         if not _is_kp_or_keeper(state, str(interaction.user.id), _is_keeper_member(interaction.user)):
             text = "只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。"
-            await interaction.response.send_message(text, ephemeral=True)
-            _record_reply_output(text)
+            await _send_interaction_message(interaction, text, ephemeral=True)
             return
-        await interaction.response.edit_message(view=None)
+        await _edit_interaction_view(interaction, view=None)
         push = _make_reply(interaction.channel)
         await resolve_pdf_upload_choice(
             self.conversation_id,
@@ -529,8 +643,7 @@ async def _post_pdf_upload_buttons(channel: discord.abc.Messageable, conversatio
     view.add_item(PdfUploadChoiceButton(conversation_id, "new", "🆕 全新劇本"))
     view.add_item(PdfUploadChoiceButton(conversation_id, "fix", "🩹 修正目前劇本"))
     text = "👉 請選擇："
-    await channel.send(text, view=view)
-    _record_reply_output(text)
+    await _send_direct_message(channel, text, view=view)
 
 
 _HELP_BUTTON_ID_TEMPLATE = r"coc_help:(?P<conversation_id>discord-channel-\d+):(?P<path>root|[a-z0-9_-]+(?:/[a-z0-9_-]+)?)"
@@ -578,28 +691,21 @@ class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTO
         channel = interaction.channel
         if channel is None or _conversation_id(channel.id) != self.conversation_id:
             text = "這個 Help 按鈕不屬於目前頻道。"
-            await interaction.response.send_message(text, ephemeral=True)
-            _record_reply_output(text)
+            await _send_interaction_message(interaction, text, ephemeral=True)
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
         page = help_service.get_page(state, str(interaction.user.id), self.path)
         content = help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS)
-        await interaction.response.edit_message(
-            content=content,
-            view=_help_view(self.conversation_id, page),
+        await _edit_interaction_message(
+            interaction, content, view=_help_view(self.conversation_id, page)
         )
-        _record_reply_output(content)
 
 
 async def _post_help_page(channel: discord.abc.Messageable, conversation_id: str, user_id: str, path: tuple[str, ...]) -> None:
     state = await asyncio.to_thread(load_group_state, conversation_id)
     page = help_service.get_page(state, user_id, path)
     content = help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS)
-    await channel.send(
-        content,
-        view=_help_view(conversation_id, page),
-    )
-    _record_reply_output(content)
+    await _send_direct_message(channel, content, view=_help_view(conversation_id, page))
 
 
 client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton, HelpButton)
@@ -654,6 +760,7 @@ async def on_message(message: discord.Message) -> None:
                     duration_ms=(time.perf_counter() - started) * 1000,
                     error_type=type(exc).__name__,
                     status="error",
+                    **_request_metrics(),
                 )
             raise
         else:
@@ -666,7 +773,7 @@ async def on_message(message: discord.Message) -> None:
                     duration_ms=duration_ms,
                     slow_threshold_ms=LOG_SLOW_REQUEST_MS,
                     status=observability.current_context().get("request_status", "success"),
-                    **observability.current_metrics(),
+                    **_request_metrics(),
                 )
 
 

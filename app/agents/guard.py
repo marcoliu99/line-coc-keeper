@@ -4,7 +4,6 @@ import asyncio
 import logging
 
 from app import observability
-from app import config
 from app.domain.models import AgentMessage
 from app.config import LLM_PROVIDER
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -29,11 +28,14 @@ async def run_repair(message: AgentMessage, original_text: str, error_reason: st
         return {"ok": False, "error": "Guard agent has no tools"}
 
     metrics: dict[str, int] = {}
-    model = getattr(provider, {"anthropic": "ANTHROPIC_MODEL", "gemini": "GEMINI_MODEL", "openai": "OPENAI_MODEL"}[config.LLM_PROVIDER])
+    model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None)
     try:
         with observability.metrics_context(metrics):
-            with observability.span("llm.turn", provider=config.LLM_PROVIDER, model=model,
-                                    agent="guard", metrics=metrics):
+            with observability.span(
+                "llm.turn", provider=LLM_PROVIDER, model=model, agent="guard",
+                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+                metrics=metrics,
+            ):
                 repaired_text = await asyncio.to_thread(
                     provider.run_conversation, prompt_config.GUARD_SYSTEM_PROMPT,
                     dynamic_system, [], [], new_message, _no_tools, 1,

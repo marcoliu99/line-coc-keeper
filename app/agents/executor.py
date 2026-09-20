@@ -65,7 +65,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             with observability.span(
                 "llm.turn", provider=LLM_PROVIDER,
                 model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
-                agent="executor", metrics=turn_metrics,
+                agent="executor",
+                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+                metrics=turn_metrics,
             ):
                 await asyncio.to_thread(
                     provider.run_conversation, static_system, dynamic_system, TOOLS,

@@ -222,16 +222,16 @@ llm.request.completed
 - `message_kind`: `command`／`attachment`／`plain_text`／`button`／`unknown`。
 - `command_name`: 只記 `/coc` 的 command 名稱，不記 arguments 原文。
 - `attachment_count`、`attachment_bytes`。
-- `reply_message_count`、`reply_bytes`、`reply_chunk_count`。
+- `reply_message_count`、`reply_edit_count`、`reply_bytes`、`reply_chunk_count`。
 
 ### 6.3 AI 欄位
 
 - `provider`: `openai`／`anthropic`／`gemini`。
 - `model`。
-- `reasoning_effort`：若 provider 支援且有設定才輸出。
+- `reasoning_effort`：OpenAI 有設定時輸出實際值；其他 provider 或未設定時填 `null`。
 - `api_operation`: `responses.create`／其他 provider operation。
 - `iteration`、`tool_call_count`、`retry_count`。
-- `input_tokens`、`cached_input_tokens`、`output_tokens`、`reasoning_tokens`：API 有回傳才填入。
+- `input_tokens`、`cached_input_tokens`、`output_tokens`、`reasoning_tokens`：API 無法提供時填 `null`。
 - `cache_hit_rate`：只在 input token 與 cached token 都可取得時計算，不自行猜測。
 - `previous_response_id_used`：只記 boolean，不記完整 ID。
 
@@ -440,7 +440,7 @@ with observe.span("rag.search", rag_kind="scenario"):
 | Event | 必要欄位 | 說明 |
 |---|---|---|
 | `request.started` | `request_id`, `conversation_id`, `message_kind`, `command_name`, `attachment_count` | 收到請求；不含訊息原文 |
-| `request.completed` | `request_id`, `duration_ms`, `status`, `reply_message_count`, `reply_bytes` | 玩家可感知的總耗時 |
+| `request.completed` | `request_id`, `duration_ms`, `status`, `reply_message_count`, `reply_edit_count`, `reply_bytes` | 玩家可感知的總耗時 |
 | `lock.wait.completed` | `request_id`, `duration_ms`, `lock_name`, `acquired` | 正常等待時間；長等待另升級為 WARNING |
 | `state.load.completed` | `request_id`, `duration_ms`, `operation`, `state_size_bytes`, `cache_hit` | state 載入耗時與大小 |
 | `state.save.completed` | `request_id`, `duration_ms`, `operation`, `state_size_bytes` | state 儲存耗時與大小 |
@@ -449,7 +449,7 @@ with observe.span("rag.search", rag_kind="scenario"):
 | `llm.turn.completed` | `turn_id`, `duration_ms`, `provider`, `model`, `reasoning_effort`, `iteration_count`, `tool_call_count`, `retry_count` | 一次完整 AI turn 摘要 |
 | `llm.request.completed` | `turn_id`, `duration_ms`, `provider`, `model`, `iteration`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_tokens` | 單次 provider request；usage 不可取得時填 null |
 | `llm.tool.completed` | `turn_id`, `duration_ms`, `tool_name`, `status` | 只記 tool name 與耗時，不記 arguments／result 原文 |
-| `discord.reply.completed` | `request_id`, `duration_ms`, `reply_message_count`, `reply_bytes`, `reply_chunk_count` | Discord 發送回覆耗時 |
+| `discord.reply.completed` | `request_id`, `duration_ms`, `reply_message_count`, `reply_edit_count`, `reply_bytes`, `reply_chunk_count` | Discord 發送或編輯回覆耗時 |
 | `maintenance.completed` | `maintenance_id`, `duration_ms`, `trigger`, `summary_updated`, `embedding_updated`, `state_saved` | 背景 maintenance 總結 |
 
 `INFO` 不應每次輸出以下高頻細節：
@@ -563,7 +563,8 @@ Memory RAG 的 search completion 會帶 `index_cache`；embedding response
 Discord button、Help、pending-choice 等不經共用 `Reply` callback 的文字
 輸出，也必須更新 request metrics（message/chunk/bytes），讓
 `request.completed` 的回覆統計涵蓋實際公開與 ephemeral 文字輸出；公開的
-圖片 attachment 也計入 `reply_message_count` 與 `reply_bytes`。
+圖片 attachment 也計入 `reply_message_count` 與 `reply_bytes`。編輯既有訊息
+則不增加 message count，改記入 `reply_edit_count`。
 
 所有仍走 legacy `keeper.run_turn()` 的流程（檢定後 Keeper narration、
 `/coc start` 開場白，以及 system handler 的相同 fallback）也必須經過同一個

@@ -25,6 +25,10 @@ _CONTEXT: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
 _METRICS: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
     "coc_log_metrics", default={}
 )
+_NULLABLE_EVENT_FIELDS = frozenset({
+    "reasoning_effort", "input_tokens", "cached_input_tokens",
+    "output_tokens", "reasoning_tokens",
+})
 
 
 def _new_id(prefix: str) -> str:
@@ -151,7 +155,10 @@ def event(
     if not config.LOG_ENABLED or not _logger.isEnabledFor(level):
         return
     payload: dict[str, Any] = {"event": name, **_record_context()}
-    payload.update({key: value for key, value in fields.items() if value is not None})
+    payload.update({
+        key: value for key, value in fields.items()
+        if value is not None or key in _NULLABLE_EVENT_FIELDS
+    })
     if slow_threshold_ms is not None and "duration_ms" in payload:
         payload["slow_threshold_ms"] = slow_threshold_ms
         payload["slow"] = payload["duration_ms"] >= slow_threshold_ms
@@ -246,3 +253,10 @@ def usage_fields(response: Any) -> dict[str, Any]:
 def tool_name(name: str) -> str:
     """Keep dynamic tool identifiers bounded and safe for log aggregation."""
     return name[:100]
+
+
+def llm_reasoning_effort(provider: str) -> str | None:
+    """Return the configured reasoning effort only for providers that use it."""
+    if provider != "openai":
+        return None
+    return config.KEEPER_REASONING_EFFORT or None

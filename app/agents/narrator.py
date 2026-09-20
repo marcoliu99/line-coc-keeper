@@ -64,7 +64,9 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             with observability.span(
                 "llm.turn", provider=LLM_PROVIDER,
                 model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
-                agent="narrator", metrics=turn_metrics,
+                agent="narrator",
+                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+                metrics=turn_metrics,
             ):
                 reply_text = await asyncio.to_thread(
                     provider.run_conversation, static_system, dynamic_system, [],

@@ -2073,6 +2073,41 @@ def run_turn(
     resolved_location: dict | None = None,
     speaker_role: str = "player",
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
+    """Observed boundary for every direct Keeper turn entry point.
+
+    The Supervisor agents have their own turn spans, but legacy command paths
+    still call ``keeper.run_turn`` directly. Keeping the lifecycle here makes
+    both entry styles produce the same ``llm.turn`` schema without forcing
+    every Discord/command adapter to remember a second instrumentation rule.
+    """
+    provider = _PROVIDERS.get(LLM_PROVIDER)
+    model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None) if provider else None
+    turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
+    agent = "kp_assistant" if speaker_role == "kp_assistant" else "keeper"
+    turn_metrics: dict[str, int] = {}
+    with observability.context(turn_id=turn_id):
+        with observability.metrics_context(turn_metrics):
+            with observability.span(
+                "llm.turn",
+                provider=LLM_PROVIDER,
+                model=model,
+                agent=agent,
+                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+                metrics=turn_metrics,
+            ):
+                return _run_turn_impl(
+                    state, user_id, speaker_name, message_text, resolved_location, speaker_role
+                )
+
+
+def _run_turn_impl(
+    state: GroupState,
+    user_id: str,
+    speaker_name: str,
+    message_text: str,
+    resolved_location: dict | None = None,
+    speaker_role: str = "player",
+) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """Returns (public_reply_text, private_messages, image_requests):
     - private_messages: (owner_id, message) pairs queued via send_private_info.
     - image_requests: (owner_id_or_None, page_number) pairs queued via
