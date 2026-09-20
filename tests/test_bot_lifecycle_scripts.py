@@ -6,7 +6,6 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
-import time
 import unittest
 
 
@@ -26,10 +25,25 @@ class BotLifecycleScriptTests(unittest.TestCase):
         return env
 
     def test_start_status_and_stop_only_selected_instance(self):
+        try:
+            probe = subprocess.run(
+                ["ps", "-p", str(os.getpid()), "-o", "command="],
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            self.skipTest("ps process inspection is unavailable in this environment")
+        if probe.returncode != 0 or not probe.stdout.strip():
+            self.skipTest("ps process inspection is unavailable in this environment")
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
             fake = temporary / "fake-bot"
-            fake.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+            fake.write_text(
+                "#!/usr/bin/env python3\n"
+                "import time\n"
+                "time.sleep(30)\n",
+                encoding="utf-8",
+            )
             fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
             env = self._env(temporary)
             env["BOT_PYTHON"] = str(fake)

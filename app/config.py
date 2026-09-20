@@ -87,6 +87,14 @@ MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", 5))
 
+# Scenario lifecycle authorization. Keep this off during the initial lobby so
+# a player who is also helping as KP can upload/reparse/cancel a scenario while
+# roles are still being arranged. Set SCENARIO_LIFECYCLE_KP_ONLY=true later to
+# require the current KP Assistant or Discord Keeper role for those commands.
+SCENARIO_LIFECYCLE_KP_ONLY = os.environ.get("SCENARIO_LIFECYCLE_KP_ONLY", "false").strip().lower() in (
+    "1", "true", "yes",
+)
+
 # Hybrid search: BM25 (always on, zero cost) blended with OpenAI embeddings
 # (skipped automatically if OPENAI_API_KEY isn't set — falls back to pure
 # BM25, no error). SCENARIO_RAG_EMBEDDING_WEIGHT is how much weight the

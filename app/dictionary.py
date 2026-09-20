@@ -23,8 +23,6 @@ from __future__ import annotations
 import threading
 
 from app import db
-from app.models import BASE_SKILLS
-
 _TABLE = "dictionary"
 _KEY = "global"
 

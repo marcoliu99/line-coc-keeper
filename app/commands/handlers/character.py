@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from app import creation, pregen_extractor
 from app.models import OCCUPATIONS, generate_investigator

@@ -14,7 +14,6 @@ from app.legacy_commands import (
     handle_check_command,
     handle_luck_decision,
     handle_pregen_luck_roll,
-    handle_unsupported_message,
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
 )
@@ -105,11 +104,16 @@ async def handle_text_message(
             return
 
         if sub in _SYSTEM_COMMANDS:
-            # Reparse performs long extraction and later acquires this lock in
-            # handle_pdf_upload; all other scenario operations are short state
-            # mutations and must be serialized with ordinary turns.
-            is_long_reparse = sub == "scenario" and len(parts) > 2 and parts[2] == "reparse"
-            if is_long_reparse:
+            # PDF import/merge/reparse perform long extraction and
+            # handle_pdf_upload acquires the conversation lock around each
+            # state commit. Keep these top-level operations outside the lock;
+            # their helpers lock only around the short read-modify-write
+            # sections. asyncio.Lock is not re-entrant.
+            scenario_action = parts[2].casefold() if sub == "scenario" and len(parts) > 2 else ""
+            is_long_scenario_operation = sub == "scenario" and scenario_action in {
+                "import", "merge", "reparse",
+            }
+            if is_long_scenario_operation:
                 await system_handler.handle_system_command(
                     conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
                     is_keeper,

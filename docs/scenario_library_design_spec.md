@@ -372,11 +372,11 @@ PDF 解析採「成本由低到高、證據由原始到語意」的分層策略�
 
 ## `/coc scenario use` 的狀態契約
 
-`/coc scenario use <劇本ID>` 是 KP 的 **PDF 劇本選擇器**。它用於從許多已解析的 PDF 中，選出目前 Keeper 可以參考的那一份；它不是章節選擇器、不是開新團，也不是重置遊戲。它只在目前有登記 KP Assistant 且呼叫者為該 KP 時可執行。
+`/coc scenario use <劇本ID>` 是 KP 的 **PDF 劇本選擇器**。它用於從許多已解析的 PDF 中，選出目前 Keeper 可以參考的那一份；它不是章節選擇器、不是開新團，也不是重置遊戲。它只在目前有登記 KP Assistant 且呼叫者為該 KP 時可執行。若仍有預製角色等待玩家完成 LUCK，必須先完成該流程，避免切換劇本後留下與新角色池不一致的 pending state。
 
 它必須：
 
-- 從劇本庫驗證劇本 ID，設定 `scenario_library_id` 與顯示用 title；不將完整 `scenario.txt` 複製到 `GroupState`。
+- 從劇本庫驗證劇本 ID，設定 `scenario_library_id` 與顯示用 title；目前也同步保存完整文字到 `GroupState.scenario_text` 作為相容快照。啟用 Scenario RAG 時，Keeper 仍依 RAG flow 取用章節內容，不代表整份文字必須放入 prompt。
 - 建立或取得該 PDF 的章節化 Scenario RAG 索引。每個 chunk 都帶有 `chapter_id`、頁碼與 `kind`（`playable`／`asset`）標記。
 - 清除 `openai_previous_response_id`，讓下一輪模型以新選定 PDF 的 system context 建立對話鏈。
 - **保留** `log`、`campaign_summary`、Memory RAG、玩家角色、地圖位置、戰鬥、待處理檢定、`game_started`、`keeper_persona`、`era` 與 `kp_ooc_log`。這些都是同一團的連續遊戲狀態。

@@ -16,10 +16,11 @@ import unicodedata
 
 import discord
 
-from app import help_service, locks, pdf_loader, scenario_library
+from app import help_service, locks, scenario_library
 from app.commands import router as command_router
 from app.legacy_commands import (
-    Reply, SendImage, SendDMImage, SendDM,
+    Reply, SendImage,
+    _is_kp_or_keeper,
     handle_check_command, handle_luck_decision, resolve_pdf_upload_choice,
     handle_pdf_upload, handle_map_upload, handle_role_sheet_upload,
     handle_scenario_compare_upload, handle_unsupported_message
@@ -386,9 +387,23 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
         return cls(match["conversation_id"], match["choice"], item.label or "")
 
     async def callback(self, interaction: discord.Interaction) -> None:
+        channel = interaction.channel
+        if channel is None or _conversation_id(channel.id) != self.conversation_id:
+            await interaction.response.send_message("這個 PDF 按鈕不屬於目前頻道。", ephemeral=True)
+            return
+        state = await asyncio.to_thread(load_group_state, self.conversation_id)
+        if not _is_kp_or_keeper(state, str(interaction.user.id), _is_keeper_member(interaction.user)):
+            await interaction.response.send_message("只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。", ephemeral=True)
+            return
         await interaction.response.edit_message(view=None)
         push = _make_reply(interaction.channel)
-        await resolve_pdf_upload_choice(self.conversation_id, self.choice, push)
+        await resolve_pdf_upload_choice(
+            self.conversation_id,
+            self.choice,
+            push,
+            user_id=str(interaction.user.id),
+            is_keeper=_is_keeper_member(interaction.user),
+        )
 
 
 async def _post_pdf_upload_buttons(channel: discord.abc.Messageable, conversation_id: str) -> None:
@@ -532,7 +547,7 @@ async def on_message(message: discord.Message) -> None:
                     key = await asyncio.to_thread(scenario_library.stage_upload, payload)
                     staged.append({"key": key, "file_name": attachment.filename})
                 async with locks.get_conversation_lock(conversation_id):
-                    state = load_group_state(conversation_id)
+                    state = await asyncio.to_thread(load_group_state, conversation_id)
                     state.staged_pdf_parts.extend(staged)
                     from app.repositories.group_state import save_state as save_group_state
                     save_group_state(state)
@@ -651,10 +666,10 @@ async def on_message(message: discord.Message) -> None:
             await reply("遊戲狀態剛被另一個操作更新，這次指令沒有套用，請再試一次。")
         except Exception:
             _logger.exception("failed to report state revision conflict for conversation_id=%s", conversation_id)
-    except Exception as exc:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
+    except Exception:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
         _logger.exception("on_message failed for conversation_id=%s", conversation_id)
         try:
-            await reply(f"發生錯誤了：{exc}")
+            await reply("發生內部錯誤了，請稍後再試；詳細資訊已記錄到 Bot log。")
         except Exception:
             _logger.exception("also failed to report the above error back to conversation_id=%s", conversation_id)
 

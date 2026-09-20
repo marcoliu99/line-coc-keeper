@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 _DICE_RE = re.compile(r"^\s*(\d*)d(\d+)\s*([+-]\s*\d+)?\s*$", re.IGNORECASE)
 

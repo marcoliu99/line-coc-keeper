@@ -9,7 +9,7 @@ from app.models import GroupState
 from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
     Reply, SendDM, SendImage, SendDMImage, FormatMention,
-    _resolve_pdf_upload_choice_locked, _set_character_away_state, handle_pdf_upload,
+    _resolve_pdf_upload_choice_locked, _is_kp_or_keeper, _set_character_away_state, handle_pdf_upload,
     _heal_character, _build_readiness_roster, _run_post_turn_maintenance_after_output
 )
 
@@ -223,10 +223,22 @@ async def handle_system_command(
             await reply("\n".join(lines))
             return
         if action == "reparse":
+            if not _is_kp_or_keeper(state, user_id, is_keeper):
+                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以重新解析劇本。")
+                return
+            if state.pending_pregen_luck:
+                await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
+                return
             # Claim and clear the staged item under the conversation lock, then
             # release it before the intentionally long PDF extraction begins.
             async with locks.get_conversation_lock(conversation_id):
                 state = load_state(conversation_id)
+                if not _is_kp_or_keeper(state, user_id, is_keeper):
+                    await reply("只有目前的 KP Assistant 或 Discord Keeper 可以重新解析劇本。")
+                    return
+                if state.pending_pregen_luck:
+                    await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
+                    return
                 pending = state.pending_scenario_upload
                 if pending is None:
                     await reply("沒有等待重新解析的 PDF。")
@@ -249,6 +261,9 @@ async def handle_system_command(
             scenario_library.discard_staged_upload(pending["key"])
             return
         if action == "cancel":
+            if not _is_kp_or_keeper(state, user_id, is_keeper):
+                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以取消劇本處理。")
+                return
             pending = state.pending_scenario_upload
             if pending is None:
                 await reply("沒有等待處理的 PDF。")
@@ -261,6 +276,12 @@ async def handle_system_command(
         if action == "use":
             if state.kp_assistant_user_id != user_id:
                 await reply("只有目前登記的 KP Assistant 可以選擇劇本。")
+                return
+            if state.pending_pregen_luck:
+                await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。")
+                return
+            if state.pending_pdf_upload is not None or state.pending_scenario_upload is not None:
+                await reply("目前仍有待處理的劇本上傳，請先完成或取消該流程後再切換劇本。")
                 return
             if len(parts) < 4:
                 await reply("用法：/coc scenario use 劇本ID（先用 /coc scenario list 查看）")
@@ -293,6 +314,9 @@ async def handle_system_command(
             await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。")
             return
         if action == "clean":
+            if not _is_kp_or_keeper(state, user_id, is_keeper):
+                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以清理劇本庫。")
+                return
             if len(parts) < 4:
                 await reply("用法：/coc scenario clean 劇本ID")
                 return
@@ -318,6 +342,10 @@ async def handle_system_command(
         return
 
     if sub == "pdf":
+        state = load_state(conversation_id)
+        if not _is_kp_or_keeper(state, user_id, is_keeper):
+            await reply("只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。")
+            return
         choice_word = parts[2].casefold() if len(parts) > 2 else ""
         choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
         if choice is None:
