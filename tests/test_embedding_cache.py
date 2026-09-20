@@ -8,6 +8,8 @@ a turn — a guaranteed duplicate embeddings API call, not an occasional one.
 Because both modules embed via the same SCENARIO_RAG_EMBEDDING_MODEL, the
 cache is shared across them (see embedding_cache.py's module docstring for
 why a per-file cache wouldn't catch this)."""
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -80,6 +82,98 @@ class GetQueryEmbeddingTests(unittest.TestCase):
             b_embed = MagicMock(return_value=[20.0])
             self.assertEqual(embedding_cache.get_query_embedding("m", "b", b_embed), [20.0])
             b_embed.assert_called_once()
+
+
+class ConcurrencyTests(unittest.TestCase):
+    """Regression tests for a real PR review finding: the original
+    unsynchronized OrderedDict could raise KeyError under concurrent
+    get()+move_to_end() vs. insert-triggered eviction, and two threads
+    racing on the same uncached key could both pay for a duplicate embed
+    call. This codebase genuinely runs different conversations' Keeper
+    turns on separate OS threads (app/commands.py's asyncio.to_thread
+    call sites), so this isn't a hypothetical."""
+
+    def setUp(self):
+        embedding_cache.clear()
+
+    def tearDown(self):
+        embedding_cache.clear()
+
+    def test_concurrent_calls_for_the_same_key_coalesce_into_one_embed_call(self):
+        call_count = 0
+        lock = threading.Lock()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_embed():
+            nonlocal call_count
+            with lock:
+                call_count += 1
+            started.set()
+            release.wait(timeout=5)
+            return [1.0, 2.0]
+
+        leader_result = []
+        leader = threading.Thread(
+            target=lambda: leader_result.append(embedding_cache.get_query_embedding("m", "shared", slow_embed))
+        )
+        leader.start()
+        self.assertTrue(started.wait(timeout=5), "leader never started embed_one")
+
+        # A follower arriving while the leader is mid-embed must wait for
+        # the leader's result, not call embed_one itself — this embed_one
+        # would fail the test outright if called.
+        follower_result = []
+
+        def forbidden_embed():
+            raise AssertionError("follower must not call embed_one for a key already in flight")
+
+        follower = threading.Thread(
+            target=lambda: follower_result.append(
+                embedding_cache.get_query_embedding("m", "shared", forbidden_embed)
+            )
+        )
+        # Give the follower a moment to actually reach event.wait() before
+        # releasing the leader — otherwise it might not even start until
+        # after the cache is already populated, and would (correctly, but
+        # uselessly for this test) take the plain cache-hit path instead of
+        # actually exercising the in-flight-coalescing path.
+        time.sleep(0.05)
+        follower.start()
+        time.sleep(0.05)
+        release.set()
+
+        leader.join(timeout=5)
+        follower.join(timeout=5)
+        self.assertEqual(call_count, 1)
+        self.assertEqual(leader_result, [[1.0, 2.0]])
+        self.assertEqual(follower_result, [[1.0, 2.0]])
+
+    def test_many_concurrent_threads_never_raise_under_eviction_pressure(self):
+        """Stress test: many threads hammering a cache with a tiny capacity
+        (heavy eviction churn) must never raise — this is the shape of bug
+        the missing lock originally allowed (a KeyError from move_to_end()
+        racing an insert-triggered eviction)."""
+        errors: list[BaseException] = []
+        errors_lock = threading.Lock()
+
+        def worker(worker_id: int) -> None:
+            try:
+                for i in range(200):
+                    key_text = f"text-{(worker_id + i) % 5}"  # small key space -> lots of contention
+                    embedding_cache.get_query_embedding("m", key_text, lambda: [1.0, 2.0])
+            except BaseException as exc:  # noqa: BLE001 - want to see any failure, not just some
+                with errors_lock:
+                    errors.append(exc)
+
+        with patch.object(embedding_cache, "_MAX_ENTRIES", 2):
+            threads = [threading.Thread(target=worker, args=(i,)) for i in range(16)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=10)
+
+        self.assertEqual(errors, [])
 
 
 class ScenarioMemoryRagCrossFileCacheTests(unittest.TestCase):
