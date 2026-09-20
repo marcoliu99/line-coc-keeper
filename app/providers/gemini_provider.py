@@ -55,6 +55,7 @@ def run_conversation(
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     for iteration in range(max_iterations):
+        request_metrics: dict[str, int | None] = {}
         with observability.span(
             "llm.request",
             provider="gemini",
@@ -62,9 +63,16 @@ def run_conversation(
             iteration=iteration,
             tool_count=len(function_declarations),
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+            metrics=request_metrics,
         ):
             response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
-        usage = getattr(response, "usage_metadata", None)
+            usage = getattr(response, "usage_metadata", None)
+            request_metrics.update(
+                input_tokens=getattr(usage, "prompt_token_count", None),
+                cached_input_tokens=getattr(usage, "cached_content_token_count", None),
+                output_tokens=getattr(usage, "candidates_token_count", None),
+                reasoning_tokens=getattr(usage, "thoughts_token_count", None),
+            )
         observability.event(
             "llm.usage",
             provider="gemini",
@@ -119,7 +127,8 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
             types.Part.from_bytes(data=png_bytes, mime_type="image/png"),
             types.Part(text=prompt_text),
         ])]
-        response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
+        with observability.span("llm.request", provider="gemini", model=GEMINI_MODEL, api_operation="generate_content"):
+            response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
         for fc in response.function_calls or []:
             if fc.name == tool["name"]:
                 return dict(fc.args or {})
@@ -150,7 +159,8 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
             ),
         )
         contents = [types.Content(role="user", parts=[types.Part(text=f"{prompt_text}\n\n{text}")])]
-        response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
+        with observability.span("llm.request", provider="gemini", model=GEMINI_MODEL, api_operation="generate_content"):
+            response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
         for fc in response.function_calls or []:
             if fc.name == tool["name"]:
                 return dict(fc.args or {})

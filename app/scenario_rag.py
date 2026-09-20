@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass, field
 from typing import cast
 
-from app import db
+from app import db, observability
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _logger = logging.getLogger(__name__)
@@ -180,9 +180,15 @@ def _embed_texts(texts: list[str]) -> list[list[float]] | None:
 
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
         ordered: list[list[float] | None] = [None] * len(texts)
-        for start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
+        batch_count = (len(texts) + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
+        for batch_index, start in enumerate(range(0, len(texts), _EMBEDDING_BATCH_SIZE)):
             batch = texts[start : start + _EMBEDDING_BATCH_SIZE]
-            response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=batch)
+            with observability.span(
+                "embedding.batch",
+                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+                batch_size=len(batch), batch_index=batch_index, batch_count=batch_count,
+            ):
+                response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=batch)
             for item in response.data:
                 ordered[start + item.index] = item.embedding
         if any(v is None for v in ordered):

@@ -5,7 +5,7 @@ from typing import Any
 
 from app.models import GroupState
 from app.domain.models import AgentMessage
-from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
+from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL
 from app import memory_rag, observability, scenario_rag
 
 
@@ -43,13 +43,21 @@ async def build_context(
     rag_task = None
     if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title:
         def _run_scenario_rag() -> str:
+            metrics: dict[str, Any] = {}
             with observability.span(
                 "rag.search",
                 rag_kind="scenario",
                 top_k=SCENARIO_RAG_TOP_K,
+                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+                metrics=metrics,
             ):
                 index = scenario_rag.get_index(conversation_id, state.scenario_text)
                 results = scenario_rag.search(index, text, top_k=SCENARIO_RAG_TOP_K)
+                metrics.update(
+                    candidate_count=len(getattr(index, "chunks", ())),
+                    result_count=len(results),
+                    has_embeddings=getattr(index, "has_embeddings", None),
+                )
                 return scenario_rag.format_results(results)
 
         rag_task = asyncio.create_task(asyncio.to_thread(_run_scenario_rag))
@@ -59,8 +67,10 @@ async def build_context(
     memory_task = None
     if char:
         def _run_memory_rag() -> str:
-            with observability.span("rag.search", rag_kind="memory"):
+            metrics: dict[str, Any] = {}
+            with observability.span("rag.search", rag_kind="memory", metrics=metrics):
                 results = memory_rag.search_memory(conversation_id, text)
+                metrics["result_count"] = len(results)
                 return memory_rag.format_results(results)
 
         memory_task = asyncio.create_task(asyncio.to_thread(_run_memory_rag))

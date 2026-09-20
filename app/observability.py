@@ -28,6 +28,11 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
 
 
+def new_id(prefix: str) -> str:
+    """Create a correlation id for an outer lifecycle owner."""
+    return _new_id(prefix)
+
+
 def _safe_identifier(value: str | None) -> str | None:
     if value is None:
         return None
@@ -41,6 +46,13 @@ def current_context() -> dict[str, str]:
     return dict(_CONTEXT.get())
 
 
+def mark_request_error() -> None:
+    """Mark a request as handled-error while preserving its outer lifecycle."""
+    bound = dict(_CONTEXT.get())
+    bound["request_status"] = "error"
+    _CONTEXT.set(bound)
+
+
 @contextlib.contextmanager
 def context(**values: str | None) -> Iterator[dict[str, str]]:
     """Temporarily add correlation values to the current async/thread context."""
@@ -52,6 +64,17 @@ def context(**values: str | None) -> Iterator[dict[str, str]]:
     token = _CONTEXT.set(merged)
     try:
         yield merged
+    finally:
+        _CONTEXT.reset(token)
+
+
+@contextlib.contextmanager
+def detached_context(**values: str | None) -> Iterator[dict[str, str]]:
+    """Start a context without inheriting the parent request context."""
+    token = _CONTEXT.set({})
+    try:
+        with context(**values) as bound:
+            yield bound
     finally:
         _CONTEXT.reset(token)
 
@@ -110,6 +133,7 @@ def span(
     *,
     level: int = logging.INFO,
     slow_threshold_ms: int | None = None,
+    metrics: dict[str, Any] | None = None,
     **fields: Any,
 ) -> Iterator[None]:
     """Measure one synchronous or async-compatible operation."""
@@ -134,8 +158,10 @@ def span(
             name + ".failed",
             level=logging.ERROR,
             duration_ms=duration_ms,
+            status="error",
             error_type=type(exc).__name__,
             slow_threshold_ms=slow_threshold_ms,
+            **(metrics or {}),
             **fields,
         )
         raise
@@ -148,7 +174,9 @@ def span(
             name + ".completed",
             level=output_level,
             duration_ms=duration_ms,
+            status="success",
             slow_threshold_ms=slow_threshold_ms,
+            **(metrics or {}),
             **fields,
         )
 

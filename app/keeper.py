@@ -15,8 +15,8 @@ from dataclasses import dataclass, fields
 from typing import Any, Callable, Generic, TypeVar, overload
 from uuid import uuid4
 
-from app import checkpoints, combat, dice, locks, memory_rag, scenario_index, scenario_library, scenario_rag, scene_digest
-from app.config import LLM_PROVIDER, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
+from app import checkpoints, combat, dice, locks, memory_rag, observability, scenario_index, scenario_library, scenario_rag, scene_digest
+from app.config import LLM_PROVIDER, LOG_SLOW_OPERATION_MS, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.skill_aliases import canonical_skill_name
@@ -1635,12 +1635,22 @@ def _execute_tool(
         if name == "search_scenario":
             if not state.scenario_text:
                 return {"ok": False, "error": "目前沒有載入劇本可以搜尋"}
-            index = scenario_rag.get_index(state.group_id, state.scenario_text)
-            results = scenario_rag.search(index, tool_input.get("query", ""), top_k=SCENARIO_RAG_TOP_K)
+            metrics: dict[str, Any] = {}
+            with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K, metrics=metrics):
+                index = scenario_rag.get_index(state.group_id, state.scenario_text)
+                results = scenario_rag.search(index, tool_input.get("query", ""), top_k=SCENARIO_RAG_TOP_K)
+                metrics.update(
+                    candidate_count=len(getattr(index, "chunks", ())),
+                    result_count=len(results),
+                    has_embeddings=getattr(index, "has_embeddings", None),
+                )
             return {"ok": True, "results": scenario_rag.format_results(results)}
 
         if name == "search_memory":
-            results = memory_rag.search_memory(state.group_id, tool_input.get("query", ""))
+            metrics: dict[str, Any] = {}
+            with observability.span("rag.search", rag_kind="memory", metrics=metrics):
+                results = memory_rag.search_memory(state.group_id, tool_input.get("query", ""))
+                metrics["result_count"] = len(results)
             return {"ok": True, "results": memory_rag.format_results(results)}
 
         return {"ok": False, "error": f"未知工具 {name}"}
@@ -2106,7 +2116,12 @@ def run_turn(
 
     def execute_turn_tool(name: str, tool_input: dict) -> dict:
         nonlocal kp_turn_creates_canon
-        result = _execute_tool(state, name, tool_input, private_messages, image_requests, speaker_role)
+        with observability.span(
+            "llm.tool",
+            tool_name=observability.tool_name(name),
+            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        ):
+            result = _execute_tool(state, name, tool_input, private_messages, image_requests, speaker_role)
         if speaker_role == "kp_assistant" and _kp_tool_result_creates_canon(name, tool_input, result):
             kp_turn_creates_canon = True
             kp_canonical_tool_events.append({

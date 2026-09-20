@@ -52,6 +52,7 @@ def _create_response(client, **kwargs):
             "llm.request.started",
             provider="openai",
             model=kwargs.get("model"),
+            api_operation="responses.create",
             reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
             tool_count=len(kwargs.get("tools") or []),
         )
@@ -71,6 +72,7 @@ def _create_response(client, **kwargs):
                         duration_ms=duration_ms,
                         removed_parameter=offending,
                         error_type=type(exc).__name__,
+                        status="error",
                     )
                 else:
                     observability.event(
@@ -80,6 +82,7 @@ def _create_response(client, **kwargs):
                         model=kwargs.get("model"),
                         duration_ms=duration_ms,
                         error_type=type(exc).__name__,
+                        status="error",
                     )
             if offending is None:
                 raise
@@ -91,7 +94,9 @@ def _create_response(client, **kwargs):
                     "llm.request.completed",
                     provider="openai",
                     model=kwargs.get("model"),
+                    api_operation="responses.create",
                     duration_ms=(time.perf_counter() - started) * 1000,
+                    status="success",
                     **observability.usage_fields(response),
                 )
             return response
@@ -277,7 +282,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
 
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
-        response = client.responses.create(
+        response = _create_response(client,
             model=OPENAI_MODEL,
             input=[{
                 "role": "user",
@@ -313,7 +318,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         import openai
 
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = client.responses.create(
+        response = _create_response(client,
             model=OPENAI_MODEL,
             input=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
             tools=[{

@@ -17,7 +17,7 @@ from app.legacy_commands import (
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
 )
-from app import help_service, locks
+from app import help_service, locks, observability
 from app.agents import supervisor
 from app.repositories.group_state import load_state
 from app.commands.handlers import combat as combat_handler
@@ -39,6 +39,25 @@ def is_known_coc_command(subcommand: str) -> bool:
 
 
 async def handle_text_message(
+    conversation_id: str,
+    user_id: str,
+    get_display_name: GetDisplayName,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    text: str,
+    format_mention: FormatMention = lambda owner_id: owner_id,
+    is_keeper: bool = False,
+) -> None:
+    with observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
+        await _handle_text_message_impl(
+            conversation_id, user_id, get_display_name, reply, send_dm, send_image,
+            send_dm_image, text, format_mention, is_keeper,
+        )
+
+
+async def _handle_text_message_impl(
     conversation_id: str,
     user_id: str,
     get_display_name: GetDisplayName,
@@ -200,15 +219,16 @@ async def _handle_ordinary_text_message_locked(
         resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
 
     async with locks.get_keeper_turn_lock(conversation_id):
-        reply_text, private_messages, image_requests = await supervisor.run_turn(
-            state=state,
-            user_id=user_id,
-            display_name=display_name,
-            text=text,
-            resolved_location=resolved_location,
-            speaker_role=speaker_role,
-            conversation_id=conversation_id,
-        )
+        with observability.context(turn_id=observability.new_id("turn")):
+            reply_text, private_messages, image_requests = await supervisor.run_turn(
+                state=state,
+                user_id=user_id,
+                display_name=display_name,
+                text=text,
+                resolved_location=resolved_location,
+                speaker_role=speaker_role,
+                conversation_id=conversation_id,
+            )
         await _run_post_turn_maintenance_after_output(
             conversation_id,
             reply,

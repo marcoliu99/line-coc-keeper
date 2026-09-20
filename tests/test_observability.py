@@ -42,6 +42,21 @@ class ObservabilityTests(unittest.TestCase):
         self.assertTrue(any("state.load.completed" in line for line in captured.output))
         self.assertTrue(any("WARNING" in line for line in captured.output))
 
+    def test_detached_context_does_not_inherit_request(self):
+        with observability.request_context(conversation_id="channel") as bound:
+            request_id = bound["request_id"]
+            with observability.detached_context(maintenance_id="maintenance_test") as detached:
+                self.assertNotEqual(detached.get("request_id"), request_id)
+                self.assertEqual(detached["maintenance_id"], "maintenance_test")
+
+    def test_span_includes_status_and_mutable_metrics(self):
+        with patch("app.config.LOG_ENABLED", True):
+            with self.assertLogs("app.observability", level="INFO") as captured:
+                metrics = {}
+                with observability.span("rag.search", metrics=metrics):
+                    metrics["result_count"] = 2
+        self.assertTrue(any("rag.search.completed" in line for line in captured.output))
+
     def test_usage_fields_normalize_openai_usage_shapes(self):
         response = SimpleNamespace(
             usage=SimpleNamespace(

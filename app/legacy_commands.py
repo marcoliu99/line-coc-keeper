@@ -717,7 +717,10 @@ def _spawn_post_turn_maintenance(conversation_id: str) -> None:
 
 
 async def _run_post_turn_maintenance_safely(conversation_id: str) -> None:
-    with observability.request_context(conversation_id=conversation_id):
+    with observability.detached_context(
+        maintenance_id=observability.new_id("maintenance"),
+        conversation_id=conversation_id,
+    ):
         try:
             with observability.span("maintenance", trigger="post_turn"):
                 await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)

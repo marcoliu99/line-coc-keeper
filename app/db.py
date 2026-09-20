@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
+from app import observability
 from app.config import BACKUP_DIR, BACKUP_INTERVAL_MINUTES, BACKUP_KEEP_COUNT, DATA_DIR, DB_PATH
 
 _logger = logging.getLogger(__name__)
@@ -144,8 +145,9 @@ def transaction() -> Iterator[sqlite3.Connection]:
     set_json once per character on top of once for the group state itself —
     N+1 separate connections (each paying its own PRAGMA overhead) for what
     is logically one atomic save."""
-    with _connect() as conn:
-        yield conn
+    with observability.span("db.transaction", operation="transaction"):
+        with _connect() as conn:
+            yield conn
 
 
 def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> None:
@@ -165,22 +167,24 @@ def get_json(table: str, key: str) -> Any | None:
     """Returns the parsed JSON value stored under `key`, or None if there's
     no row for it yet — callers should treat that exactly like "the file
     didn't exist yet" did before this module existed, not as an error."""
-    table = _validate_table(table)
-    with _connect() as conn:
-        row = conn.execute(f"SELECT data FROM {table} WHERE key = ?", (key,)).fetchone()  # nosec B608
-    return json.loads(row[0]) if row is not None else None
+    with observability.span("db.read", operation="get_json", table=table):
+        table = _validate_table(table)
+        with _connect() as conn:
+            row = conn.execute(f"SELECT data FROM {table} WHERE key = ?", (key,)).fetchone()  # nosec B608
+        return json.loads(row[0]) if row is not None else None
 
 
 def set_json(table: str, key: str, value: Any) -> None:
     """Upserts `value` (anything json.dumps can serialize) under `key`."""
-    table = _validate_table(table)
-    payload = json.dumps(value, ensure_ascii=False)
-    with _connect() as conn:
-        conn.execute(
-            f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "  # nosec B608
-            "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
-            (key, payload),
-        )
+    with observability.span("db.write", operation="set_json", table=table):
+        table = _validate_table(table)
+        payload = json.dumps(value, ensure_ascii=False)
+        with _connect() as conn:
+            conn.execute(
+                f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "  # nosec B608
+                "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+                (key, payload),
+            )
 
 
 def delete_json(table: str, key: str) -> None:

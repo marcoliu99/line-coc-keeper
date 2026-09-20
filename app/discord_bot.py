@@ -8,6 +8,7 @@ so there is no webhook URL or ngrok tunnel.
 from __future__ import annotations
 
 import asyncio
+import functools
 import io
 import logging
 from pathlib import Path
@@ -78,6 +79,42 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
 
 def _conversation_id(channel_id: int) -> str:
     return f"discord-channel-{channel_id}"
+
+
+def _observed_interaction(callback):
+    """Give persistent Discord buttons the same request lifecycle as messages."""
+    @functools.wraps(callback)
+    async def wrapped(self, interaction: discord.Interaction):
+        channel_id = getattr(interaction.channel, "id", None)
+        conversation_id = _conversation_id(channel_id) if channel_id is not None else None
+        with observability.request_context(
+            conversation_id=conversation_id,
+        ):
+            observed = config.LOG_ENABLED
+            started = time.perf_counter() if observed else 0.0
+            if observed:
+                observability.event("request.started", platform="discord", message_kind="button")
+            try:
+                await callback(self, interaction)
+            except Exception as exc:
+                if observed:
+                    observability.event(
+                        "request.failed", level=logging.ERROR,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        error_type=type(exc).__name__, status="error",
+                    )
+                raise
+            else:
+                if observed:
+                    duration_ms = (time.perf_counter() - started) * 1000
+                    observability.event(
+                        "request.completed",
+                        level=logging.WARNING if duration_ms >= LOG_SLOW_REQUEST_MS else logging.INFO,
+                        duration_ms=duration_ms,
+                        slow_threshold_ms=LOG_SLOW_REQUEST_MS,
+                        status="success",
+                    )
+    return wrapped
 
 
 def _is_keeper_member(member: discord.abc.User) -> bool:
@@ -187,6 +224,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
         danger = item.style == discord.ButtonStyle.danger
         return cls(match["conversation_id"], match["owner_id"], item.label or "🎲 擲骰", danger, match["option"])
 
+    @_observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != self.owner_id:
             await interaction.response.send_message("這不是你的檢定，換你自己的角色來按。", ephemeral=True)
@@ -286,6 +324,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
         danger = item.style == discord.ButtonStyle.secondary
         return cls(match["conversation_id"], match["owner_id"], item.label or "維持目前結果", match["choice"], danger)
 
+    @_observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != self.owner_id:
             await interaction.response.send_message("這不是你的 Luck 花費決定，換你自己的角色來按。", ephemeral=True)
@@ -410,6 +449,7 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
     async def from_custom_id(cls, interaction, item, match):
         return cls(match["conversation_id"], match["choice"], item.label or "")
 
+    @_observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         channel = interaction.channel
         if channel is None or _conversation_id(channel.id) != self.conversation_id:
@@ -490,6 +530,7 @@ class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTO
         kind = "home" if not path else "entry" if len(path) == 2 else "category"
         return cls(match["conversation_id"], HelpAction(item.label or "Help", path, kind))
 
+    @_observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         channel = interaction.channel
         if channel is None or _conversation_id(channel.id) != self.conversation_id:
@@ -570,7 +611,7 @@ async def on_message(message: discord.Message) -> None:
                     level=level,
                     duration_ms=duration_ms,
                     slow_threshold_ms=LOG_SLOW_REQUEST_MS,
-                    status="success",
+                    status=observability.current_context().get("request_status", "success"),
                 )
 
 
@@ -715,6 +756,7 @@ async def _handle_message(message: discord.Message) -> None:
             # pending check with no button ever posted for it.
             await _post_pending_buttons(message.channel, conversation_id, before_pending, before_luck_pending)
     except StateRevisionConflict:
+        observability.mark_request_error()
         _logger.warning(
             "state revision conflict for conversation_id=%s; asking the user to retry",
             conversation_id,
@@ -724,6 +766,7 @@ async def _handle_message(message: discord.Message) -> None:
         except Exception:
             _logger.exception("failed to report state revision conflict for conversation_id=%s", conversation_id)
     except Exception:  # noqa: BLE001 - keep the bot alive, surface the error to the channel
+        observability.mark_request_error()
         _logger.exception("on_message failed for conversation_id=%s", conversation_id)
         try:
             await reply("發生內部錯誤了，請稍後再試；詳細資訊已記錄到 Bot log。")

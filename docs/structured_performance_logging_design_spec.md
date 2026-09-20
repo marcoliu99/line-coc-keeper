@@ -2,12 +2,12 @@
 
 ## 0. 文件狀態與工作基線
 
-- 狀態：Draft，等待規格審查。
+- 狀態：Implemented，已依照本文件完成第一版 runtime logging。
 - 工作 branch：`feature/structured-performance-logging`
 - 整合 branch：`main_v2`
 - 本功能 branch 建立時的 `origin/main_v2`：`4e9532f`
-- 本文件階段不實作 runtime code；只有規格書會被提交。
-- 之後若 `main_v2` 有新 commit，開始實作前必須重新 fetch 並對齊。
+- 規格審查完成後已實作 runtime；本文件保留實作與驗收基準。
+- 後續若 `main_v2` 有新 commit，開始下一輪修改前必須重新 fetch 並對齊。
 
 ## 1. 問題與目標
 
@@ -134,7 +134,7 @@ Discord request_id
   │
   └─ request.completed
        │
-       └─ detached maintenance_id
+       └─ detached maintenance_id（不繼承 request_id／turn_id）
             ├─ summary events
             ├─ embedding events
             ├─ state.save event
@@ -142,6 +142,23 @@ Discord request_id
 ```
 
 `request_id` 是 Discord ingress 的生命週期；`turn_id` 是 AI／agent turn 的生命週期；`maintenance_id` 是回覆送出後背景工作的生命週期。三者不可共用同一個 ID，也不可把 background maintenance 的耗時加到 request latency。
+
+Button interaction 也視為獨立 Discord request：
+
+```text
+Discord button interaction
+  └─ request.started(message_kind=button)
+       ├─ lock／state／handler／Discord response events
+       └─ request.completed 或 request.failed
+```
+
+AI tool execution 位於 provider request 之間，使用同一個 `turn_id`：
+
+```text
+llm.request.completed
+  └─ llm.tool.started(tool_name)
+       └─ llm.tool.completed(status, duration_ms)
+```
 
 ## 5. Correlation ID
 
@@ -511,21 +528,26 @@ cached_input_tokens / input_tokens
 
 Redaction 必須在 formatter／observability boundary 進行一次；呼叫端不能假設所有傳入欄位都已安全。
 
-## 11. 實作分層（規格，不在本階段修改）
+## 11. 實作分層
 
-預計新增：
+核心 runtime module：
 
 - `app/observability.py`：context、event API、timer、ID、redaction、usage normalization。
 - `app/logging_config.py`：formatter、handler、rotation、環境設定。
 
-預計接入：
+已接入：
 
-- `app/discord_bot.py`：Discord ingress、reply、attachment 與 background task boundary。
-- `app/commands/router.py`：route／command lifecycle。
-- `app/agents/*.py`：agent turn、executor／narrator timing。
-- `app/providers/*.py`：provider request、retry、usage、tool round timing。
-- `app/scenario_rag.py`、`app/memory_rag.py`：index／search／embedding timing。
+- `app/discord_bot.py`：Discord ingress、button interaction、reply、attachment 與錯誤狀態。
+- `app/commands/router.py`：route／turn correlation lifecycle。
+- `app/agents/*.py`：agent turn、executor／narrator timing 與 tool timing。
+- `app/providers/*.py`：provider request、retry、usage、vision／text extraction timing。
+- `app/scenario_rag.py`、`app/memory_rag.py`：search／embedding batch timing。
 - `app/repositories/group_state.py`、`app/db.py`：state／DB operation timing。
+
+目前的 `request.completed` 會依照 request context 的 handled-error 標記輸出
+`status=error`；只有未發生錯誤的 request 才輸出 `status=success`。Background
+maintenance 使用 detached context 產生獨立 `maintenance_id`，不會沿用外層
+Discord request 的 ID。
 
 不應把所有 timing 都塞進 `discord_bot.py`；AI、RAG、DB 的 native boundary 必須由各自模組記錄，才能分辨實際耗時。
 
@@ -592,9 +614,8 @@ Discord 發送耗時
 8. `LOG_LEVEL` 的預設值與 production policy。（建議：啟用時預設 `INFO`；穩定運行後可改 `WARNING`，需要完整效能分析時再切回 `INFO`。）
 9. 是否允許管理者以 debug 設定短暫記錄 hash 後的 user／conversation ID？（建議：預設關閉。）
 
-## 15. 實作後的流程限制
+## 15. 實作與整合流程限制
 
-- 本文件通過審查前不得修改 runtime code。
-- 使用者明確確認規格後才能開始實作。
-- 開始實作前重新 `git fetch origin main_v2`，並完成 `origin/main_v2` ancestor gate。
+- runtime implementation 必須以本文件的事件目錄與 correlation 規則為準。
+- 開始每一輪修改前重新 `git fetch origin main_v2`，並完成 `origin/main_v2` ancestor gate。
 - 開 PR 前再次對齊 `main_v2`、執行完整測試、`git diff --check` 與 conflict index 檢查。
