@@ -1530,6 +1530,7 @@ def _find_room_via_rag(group_id: str, scenario_text: str, scene_map: dict, text:
     real API call on top of the Keeper's own turn when embeddings are
     configured (see scenario_rag.py), so it's only reached after the free
     local name match in _resolve_map_action has already failed."""
+    _logger.info("_find_room_via_rag query=%r", text)  # see app/keeper.py's search_scenario for why
     index = scenario_rag.get_index(group_id, scenario_text)
     results = scenario_rag.search(index, text, top_k=3)
     for result in results:
