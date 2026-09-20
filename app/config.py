@@ -80,6 +80,25 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", 240_000))
 # campaign_summary pass.
 MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 40))
 
+# Dialogue batching (Discord only — see docs/dialogue_batching_design_spec.md):
+# when a player message arrives while the Keeper is already busy with another
+# turn for the same conversation, it's queued instead of triggering its own
+# separate Keeper call. Once the in-flight turn finishes, if anything queued
+# up, app/locks.py's BatchRound merges it all into one Keeper call right
+# away — it does NOT wait around collecting more first. MAX_BATCH_WAIT_SECONDS
+# is only a short grace beat *at that flush moment*, to catch a message that
+# arrives within a fraction of a second of the flush decision (so it isn't
+# needlessly stranded for its own separate next round) — woken immediately,
+# not counted against this timeout, if the queue instead hits MAX_BATCH_SIZE
+# or a KP Assistant message arrives. Deliberately short (recommended well
+# under a second — default 0.7s) precisely so it's rarely actually waited out
+# in full: it's a worst-case bound on this one beat, not a multi-second
+# collection window. A conversation with nobody else typing never pays this
+# wait at all — the first message of an idle round always runs immediately.
+# MAX_BATCH_SIZE is a fixed cap (not configurable this round) to bound how
+# many independent player inputs one Keeper call has to reconcile at once.
+MAX_BATCH_WAIT_SECONDS = float(os.environ.get("MAX_BATCH_WAIT_SECONDS", 0.7))
+
 MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 
 # Scenario RAG (app/scenario_rag.py) — opt-in, defaults off. Off: the full

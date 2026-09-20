@@ -17,7 +17,14 @@ since it protects GroupState file I/O — a game-state concern, not a platform
 one. Each top-level entry point below acquires its conversation's lock exactly
 once for its full duration (including the blocking Keeper LLM call, offloaded
 via asyncio.to_thread); the private helpers they call never lock again
-themselves, since asyncio.Lock isn't reentrant.
+themselves, since asyncio.Lock isn't reentrant. The one exception is ordinary
+player text messages on Discord (_handle_ordinary_player_message_batched):
+several messages can be merged into one Keeper turn (see docs/dialogue_
+batching_design_spec.md), so the lock is acquired once per *batch round*
+(_run_one_batch_round) rather than once per incoming message — a message
+that only joins a round someone else is driving never touches the lock at
+all. LINE and KP Assistant turns are unaffected and keep the one-lock-per-
+message shape described above.
 """
 from __future__ import annotations
 
@@ -32,7 +39,7 @@ import yaml
 from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import scene_map as scene_map_engine
-from app.config import SCENARIO_RAG_ENABLED
+from app.config import MAX_BATCH_WAIT_SECONDS, SCENARIO_RAG_ENABLED
 from app.models import BASE_SKILLS, OCCUPATIONS, Character, GroupState, generate_investigator
 from app.state import clear_page_images, load_page_image, load_state, save_page_image, save_state
 
@@ -1355,6 +1362,37 @@ async def handle_text_message(
     # Assistant do ordinary Keeper turns use the priority gate; otherwise we
     # intentionally bypass it and preserve the original conversation-lock path.
     scheduling_state = load_state(conversation_id)
+    is_kp_assistant = scheduling_state.kp_assistant_user_id == user_id
+
+    if is_kp_assistant:
+        # A KP Assistant turn must never sit behind an open player batch
+        # window (see docs/dialogue_batching_design_spec.md) — flush one
+        # immediately if it exists; a no-op otherwise (LINE, or a Discord
+        # conversation with no player batch currently collecting), so this
+        # is safe to call unconditionally before the existing KP path below,
+        # which is completely unchanged.
+        await locks.get_batch_round(conversation_id).wake_for_kp()
+        async with locks.get_keeper_priority_gate(conversation_id, is_kp=True):
+            async with locks.get_conversation_lock(conversation_id):
+                await _handle_ordinary_text_message_locked(
+                    conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
+                )
+        return
+
+    # Ordinary player text message. Discord conversations use the batching
+    # path below — a message that arrives while the Keeper is busy gets
+    # merged into one Keeper call with whatever else queued up, instead of
+    # each triggering its own separate call (see docs/dialogue_batching_
+    # design_spec.md). LINE (and anything else) keeps the exact original
+    # single-message-per-turn flow below, per this repo's standing policy of
+    # leaving LINE (app/main.py) frozen unless explicitly asked otherwise.
+    if conversation_id.startswith("discord-channel-"):
+        await _handle_ordinary_player_message_batched(
+            conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text,
+            scheduling_state,
+        )
+        return
+
     if not scheduling_state.kp_assistant_user_id:
         async with locks.get_conversation_lock(conversation_id):
             await _handle_ordinary_text_message_locked(
@@ -1362,8 +1400,7 @@ async def handle_text_message(
             )
         return
 
-    is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
-    async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp_priority):
+    async with locks.get_keeper_priority_gate(conversation_id, is_kp=False):
         async with locks.get_conversation_lock(conversation_id):
             await _handle_ordinary_text_message_locked(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
@@ -1421,6 +1458,135 @@ async def _handle_ordinary_text_message_locked(
             private_messages,
             image_requests,
             run_maintenance=not is_kp_assistant,
+        )
+
+
+async def _handle_ordinary_player_message_batched(
+    conversation_id: str,
+    user_id: str,
+    get_display_name: GetDisplayName,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+    text: str,
+    scheduling_state: GroupState,
+) -> None:
+    """Discord-only ordinary player text message path — see
+    docs/dialogue_batching_design_spec.md. Unlike
+    _handle_ordinary_text_message_locked, this does NOT hold
+    get_conversation_lock while deciding whether to join a batch:
+    `scheduling_state` is a snapshot read without that lock, the same
+    staleness tradeoff _resolve_map_action_transaction below already accepts
+    for per-user map-position state (it has its own get_state_lock
+    protection) — holding the coarse conversation lock here would defeat
+    batching's entire purpose, since a second message could never even
+    reach the join() decision while the first is still being handled.
+    """
+    if not scheduling_state.active or not scheduling_state.game_started:
+        return
+    if user_id not in scheduling_state.characters:
+        display_name = await get_display_name()
+        await reply(f"{display_name}，你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+        return
+
+    display_name = scheduling_state.characters[user_id].name
+    resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
+
+    batch_round = locks.get_batch_round(conversation_id)
+    is_leader, packet = await batch_round.join(
+        user_id=user_id, speaker_name=display_name, text=text, resolved_location=resolved_location,
+    )
+    if not is_leader:
+        # Folded into a round someone else is already driving — nothing more
+        # to do here; that round's reply covers this message too.
+        return
+
+    has_kp_assistant = bool(scheduling_state.kp_assistant_user_id)
+    await _run_batch_leader_loop(
+        conversation_id, batch_round, packet, has_kp_assistant, reply, send_dm, send_image, send_dm_image,
+    )
+
+
+async def _run_batch_leader_loop(
+    conversation_id: str,
+    batch_round: locks.BatchRound,
+    first_packet: locks.QueuedMessage,
+    has_kp_assistant: bool,
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+) -> None:
+    """Drives one BatchRound (app/locks.py) to completion. `first_packet`'s
+    round always runs alone immediately — batch size 1, byte-identical to
+    the pre-batching single-message flow (see keeper.run_batched_turn). Each
+    subsequent round is whatever queued up during the previous round's
+    Keeper call plus its grace period, taken via batch_round.next_round().
+    Loops until a round finds nothing left queued.
+
+    A round's own work is wrapped in try/except here specifically so that
+    batch_round.next_round() always still gets called afterward, success or
+    failure: next_round() is the only thing that ever clears
+    BatchRound.active. If a round raised straight out of this loop instead,
+    `active` would stay True forever with no one left to drive it — every
+    later player message for this conversation would then join() as a
+    follower into a `pending` queue nobody is ever going to drain again,
+    silently swallowing all further player turns until process restart."""
+    packets: list[locks.QueuedMessage] | None = [first_packet]
+    while packets is not None:
+        try:
+            if has_kp_assistant:
+                async with locks.get_keeper_priority_gate(conversation_id, is_kp=False):
+                    await _run_one_batch_round(conversation_id, packets, reply, send_dm, send_image, send_dm_image)
+            else:
+                await _run_one_batch_round(conversation_id, packets, reply, send_dm, send_image, send_dm_image)
+        except Exception as exc:  # noqa: BLE001 - must not strand BatchRound.active; see docstring above
+            _logger.exception(
+                "batch round failed for conversation_id=%s (user_ids=%s)",
+                conversation_id, [p.user_id for p in packets],
+            )
+            try:
+                await reply(f"發生錯誤了：{exc}")
+            except Exception:
+                _logger.exception("also failed to report batch round error back to conversation_id=%s", conversation_id)
+        packets = await batch_round.next_round(MAX_BATCH_WAIT_SECONDS)
+
+
+async def _run_one_batch_round(
+    conversation_id: str,
+    packets: list[locks.QueuedMessage],
+    reply: Reply,
+    send_dm: SendDM,
+    send_image: SendImage,
+    send_dm_image: SendDMImage,
+) -> None:
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        if not state.active or not state.game_started:
+            # Re-checked here (unlike the entry check in
+            # _handle_ordinary_player_message_batched, which reads a snapshot
+            # taken without the lock) because a batch round can be sitting in
+            # its grace period for a little while — e.g. a KP ran /coc end
+            # in between — and this is the first point that actually holds
+            # get_conversation_lock, same as _handle_ordinary_text_message_
+            # locked's single-message recheck it's replacing here.
+            return
+        async with locks.get_keeper_turn_lock(conversation_id):
+            resolved_location = packets[-1].resolved_location
+            reply_text, private_messages, image_requests = await asyncio.to_thread(
+                keeper.run_batched_turn, state, packets, resolved_location
+            )
+        await _run_post_turn_maintenance_after_output(
+            conversation_id,
+            reply,
+            reply_text,
+            send_dm,
+            send_image,
+            send_dm_image,
+            private_messages,
+            image_requests,
+            run_maintenance=True,
         )
 
 
