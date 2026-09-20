@@ -31,6 +31,8 @@ subject 紀錄。
 - 權限判定永遠區分「誰發送」（actor）與「替誰操作」（subject）。
 - 代操作不會把 KP 變成 player，也不會進入 KP Assistant 的 OOC prompt／tool
   allowlist；代操作的遊戲回合仍是 target player 的正式遊戲回合。
+- `act` 的公開回覆必須明確標示「KP Assistant 代操作」。
+- KP 不可透過 sudo 執行 target 的 `luck roll`，也不可代替 target 建立或認領角色。
 - 每次成功、拒絕或失敗的 sudo 都有 structured audit event；log 中不直接暴露
   raw Discord user ID。
 - 原本玩家自己輸入的所有 command 行為維持不變。
@@ -85,9 +87,11 @@ ActingContext(
 ```text
 /coc sudo <@123456789> sheet
 /coc sudo <@123456789> check
-/coc sudo <@123456789> luck roll
+/coc sudo <@123456789> luck hard
 /coc sudo <@123456789> switch 小明
 /coc sudo <@123456789> act 調查房間裡的書桌
+/coc sudo <@123456789> away
+/coc sudo <@123456789> retire 小明
 ```
 
 `<target>` 第一版只接受可無歧義解析的 Discord mention：`<@123>` 或
@@ -103,16 +107,17 @@ sudo 不應任意轉送所有 `/coc` command，而應有明確 allowlist：
 
 | 類別 | 第一版允許 | 說明 |
 |---|---|---|
-| Gameplay | `act`、`check`、`luck` | 以 target 的 active character 執行正式遊戲流程；`luck roll` 也以 target 的 pending 狀態結算 |
+| Gameplay | `act`、`check`、`luck decision` | 以 target 的 active character 執行正式遊戲流程；`luck` 只允許既有 pending Luck 的 `skip`／`regular`／`hard`／`extreme` 選擇 |
 | 角色查詢 | `sheet`、`characters`、`pregen`、`pregens` | 查詢或預覽內容，subject 只影響角色／訊息歸屬 |
 | 角色切換／資料 | `switch`、`setskill`、`setconnection` | 只可操作 target 擁有的角色 |
-| 角色建立 | `pc`、`create`、`alloc`、`usepregen` | 以 target 為 owner 建立或認領角色；仍遵守既有互斥、`game_started`、pending LUCK 等 guard |
 | 地圖／位置 | `where`、`enter`、`leavemap`、`showpage` | 位置與頁面套用 target；公開圖片仍遵守既有 visibility 規則 |
-| 出席狀態 | `away`、`back` | 只標記 target 的 active character |
+| 角色生命週期 | `away`、`back`、`retire` | KP Assistant 可代 target 暫離、回來或退出目前角色；`retire` 不刪除歷史資料 |
 
 以下 command 第一版明確禁止透過 sudo 執行：
 
 - `sudo`（禁止巢狀代操作）
+- `luck roll`（LUCK 骰必須由玩家本人執行）
+- `pc`、`create`、`alloc`、`usepregen`（角色建立／認領必須由玩家本人執行）
 - `newgame`、`start`、`end`、`status`、`setpersona`、`era`、`index`
 - `pdf`、`scenario`、`checkpoint`、`checkpoints`、`rollback`、`digest`、`digests`
 - `combat` 與其他群組級／劇本級 administrative command
@@ -127,22 +132,40 @@ command，必須先加入 registry／allowlist 與測試，不能因為 parser �
 1. actor 必須符合以下任一條件：
    - `state.kp_assistant_user_id == actor_user_id`；或
    - Discord adapter 傳入的 `is_keeper=True`。
-2. 每次執行前都要在 conversation lock 內重新載入 state 並重新驗證 actor，不能
+2. actor 必須先脫離自己的 player character／建角流程，才能登記或執行 KP
+   Assistant。這是 actor 自己的角色身分轉換，不可由這次 sudo 操作自動完成；
+   對 target 執行 `/coc away` 或 `/coc retire` 不會改變 actor 的脫離要求。
+3. 每次執行前都要在 conversation lock 內重新載入 state 並重新驗證 actor，不能
      只使用 router 進入前的 snapshot。
-3. `SCENARIO_LIFECYCLE_KP_ONLY` 不控制 sudo；sudo 本身永遠是 KP／Keeper-only。
-4. target 不可是目前的 KP Assistant。KP 的 OOC 身分與玩家角色身分仍互斥；若
-   target 沒有角色，只有 `pc`／`create`／`usepregen` 等建立流程可繼續，其餘
-   需要 active character 的 command 必須拒絕。
-5. target 的角色 ownership 不變。所有角色修改都必須維持
+4. `SCENARIO_LIFECYCLE_KP_ONLY` 不控制 sudo；sudo 本身永遠是 KP／Keeper-only。
+5. target 不可是目前的 KP Assistant。KP 的 OOC 身分與玩家角色身分仍互斥；
+   sudo 第一版不提供角色建立／認領，因此 target 必須已經有 active character
+   才能執行需要角色的操作。
+6. target 的角色 ownership 不變。所有角色修改都必須維持
    `Character.owner_id == subject_user_id`，不能讓 actor 變成 owner。
-6. 不合法 target、未知 command、禁止 command、巢狀 sudo、缺少 target active
+7. 不合法 target、未知 command、禁止 command、巢狀 sudo、缺少 target active
    character 或既有 command guard 失敗時，回傳固定、可理解的錯誤，不執行部分
    mutation。
-7. sudo 不能繞過既有安全 guard，例如：
+8. sudo 不能繞過既有安全 guard，例如：
    - `game_started` 對 `/coc usepregen` 的限制；
    - pending pregen LUCK 必須完成後才能切換劇本／角色；
    - 已有角色不可再次建立或認領不相容的角色；
    - pending check／Luck 必須屬於同一個 subject。
+
+### 4.1 KP Assistant role transition
+
+| 轉換 | 前置條件 | 行為 |
+|---|---|---|
+| player → KP Assistant | actor 已真正脫離 player character 與建角流程 | `/coc kp` 才能登記；不得由 sudo 自動完成 |
+| player → KP Assistant（仍有角色） | 仍有 active character、角色綁定或 `creation_sessions` | 拒絕登記，要求先執行明確的角色脫離流程 |
+| KP Assistant → player | 先執行 `/coc kp quit` | 清除 KP Assistant 身分後，才可依既有角色流程恢復 player 身分 |
+| KP Assistant → target away | target 有 active character | `/coc sudo <target> away`，只標記 target 暫離，不改變 actor 身分 |
+| KP Assistant → target retired | target 有 active character | `/coc sudo <target> retire`，解除 target 的 active player binding，但保留角色歷史 |
+
+「退角」是解除 target 目前的 player binding，不是刪除角色資料；角色仍保留在
+`characters_by_id`，供歷史、查詢或日後重新加入使用。`/coc away` 是可恢復的
+暫離狀態，`/coc retire` 是明確退出目前角色的持久狀態。兩者都只能作用於
+target，不得偷偷替 actor 完成 detach。
 
 ## 5. Runtime flow
 
@@ -166,7 +189,7 @@ Discord on_message
     ├─ actor is current KP Assistant or Discord Keeper?
     │       no ─────────────► fixed error + sudo.denied
     │
-    ├─ target valid / not current KP / target guard valid?
+    ├─ actor detached from player role / target valid / target guard valid?
     │       no ─────────────► fixed error + sudo.denied
     │
     ▼
@@ -179,7 +202,7 @@ Discord on_message
     ▼
   state mutation / reply / target DM / image output
     │
-    ├─ public result includes a visible sudo marker
+    ├─ public result includes mandatory 「KP Assistant 代操作」 marker
     ├─ private information is sent to subject, never actor-only
     └─ sudo.completed or sudo.failed audit event
 ```
@@ -195,11 +218,40 @@ Discord on_message
 - direct command 的 handler 不應再取得同一把不可重入的 conversation lock；應由
   router 以既有分派層級持有一次 lock，沿用目前 command handler 的 convention。
 
+### 5.2 流程表
+
+| 階段 | 判定／動作 | 通過結果 | 拒絕結果 |
+|---|---|---|---|
+| 1. 識別 | 第一個 token 是 `/coc sudo` | 進入 sudo parser | 交給既有 normal router |
+| 2. 解析 target | target 是 mention 或已驗證 opaque user ID | 建立 `subject_user_id` | `sudo.denied(reason=invalid_target)`，不讀寫 game state |
+| 3. 解析 command | command 在 subject-scoped allowlist | 建立 `ActingContext` | `sudo.denied(reason=forbidden_command)` |
+| 4. actor authorization | actor 是目前 KP Assistant 或 Discord Keeper | 進入 KP priority gate + conversation lock | `sudo.denied(reason=not_authorized)` |
+| 5. role separation | actor 已脫離 player character／建角流程 | 繼續 target guard | `sudo.denied(reason=actor_role_conflict)`，要求先脫離 |
+| 6. target guard | target 不是 KP、已有必要 active character、pending state 合法 | 呼叫既有 handler，effective user 使用 subject | 固定錯誤訊息；不得部分 mutation |
+| 7. 執行 | `act` 使用 player role；其他 command 使用既有 handler | state／pending／output 套用 subject | `sudo.failed`，保留 exception 到 log，不把 exception 原文送到 channel |
+| 8. 輸出 | public reply、target DM、圖片與按鈕依既有 scope | public reply 加「KP Assistant 代操作」標記；秘密只送 subject | output failure 依既有 reply error flow 處理 |
+| 9. 完成 | 操作成功或受控拒絕 | `sudo.completed` 或 `sudo.denied` audit event | 未捕捉例外時 `sudo.failed` audit event |
+
+### 5.3 Command decision table
+
+| Input | 是否允許 | 行為 |
+|---|---:|---|
+| `/coc sudo <target> act ...` | 是 | 以 target player turn 執行；公開結果必須加代操作標記 |
+| `/coc sudo <target> check` | 是 | 只消費 target 的 pending check |
+| `/coc sudo <target> luck skip\|regular\|hard\|extreme` | 是 | 只處理 target 已存在的 pending Luck decision |
+| `/coc sudo <target> away` | 是 | 代 target 將目前 active character 標記為暫離；不改變 actor 的 KP 身分 |
+| `/coc sudo <target> back` | 是 | 代 target 解除暫離；仍須通過既有 active character 與 game guard |
+| `/coc sudo <target> retire [角色名]` | 是 | 代 target 退出目前角色並解除 active player binding；保留角色歷史，不刪除角色資料 |
+| `/coc sudo <target> luck roll` | 否 | 回覆「LUCK 必須由玩家本人擲骰」，不改動 Luck |
+| `/coc sudo <target> pc\|create\|alloc\|usepregen ...` | 否 | 回覆角色建立／認領必須由玩家本人執行，不改動角色或 pregen claim |
+| `/coc sudo <target> group-admin-command` | 否 | 回覆 command 不屬於 player-scoped sudo allowlist |
+| `/coc sudo <target> sudo ...` | 否 | 禁止巢狀代操作 |
+
 ## 6. Output、privacy 與 audit
 
 ### 6.1 公開與私訊
 
-- 預設仍回覆目前 channel，但公開結果前加上明確標記，例如：
+- 預設仍回覆目前 channel；所有成功的 sudo public result 前都必須加上明確標記：
   `【KP Assistant 代操作：角色名】`，讓其他玩家知道這不是角色本人輸入。
 - 原本 command 會傳送秘密／角色私訊時，`send_dm`／`send_dm_image` 的 recipient
   必須是 subject；不可因 actor 是 KP 就把秘密只傳給 actor。
@@ -222,7 +274,7 @@ user ID hash 必須沿用既有 `LOG_HASH_IDENTIFIERS` policy；若系統設定�
 才允許輸出明文 identifier。`LOG_ENABLED=false` 時 structured audit 走既有
 no-op fast path，但實際拒絕仍要回覆使用者。
 
-`act` 的 canonical game history 必須讓 AI 與玩家知道這是代操作，建議使用
+`act` 的 canonical game history 必須讓 AI 與玩家知道這是代操作，使用
 `[KP Assistant 代操作 <角色名>]` 的受控前綴；不可把 actor 的完整 Discord ID
 或 OOC prompt 寫入公開 `state.log`。
 
@@ -234,7 +286,7 @@ no-op fast path，但實際拒絕仍要回覆使用者。
 |---|---|
 | `app/commands/router.py` | 識別 sudo syntax、解析 target、建立 ActingContext、做 top-level authorization、維持 lock／priority flow |
 | `app/commands/sudo.py`（新增） | target token parser、player command allowlist、禁止 command 與固定拒絕原因 |
-| `app/commands/handlers/*.py` | 接收 effective subject；不自行猜測 actor；保留既有角色／gameplay guard |
+| `app/commands/handlers/*.py` | 接收 effective subject；不自行猜測 actor；保留既有角色／gameplay guard；新增 `retire` 的 target binding 解除流程 |
 | `app/agents/supervisor.py`／`app/keeper.py` | `act` 以 player role 執行，保存 canonical history，不進 KP OOC path |
 | `app/observability.py` | user ID redaction／audit event 欄位 helper；不記錄 command body 原文 |
 | `app/help_registration.py`／player docs | 登記 `/coc sudo` 使用方式與 KP-only 標記；禁止清單也要可查 |
@@ -260,12 +312,21 @@ no-op fast path，但實際拒絕仍要回覆使用者。
   必須拒絕。
 - 非 KP／非 Keeper 執行 `/coc sudo` 必須拒絕且沒有 state mutation。
 - current KP Assistant 與 Discord Keeper 都可通過 actor authorization。
+- actor 未脫離 player character／建角流程時必須拒絕；`/coc away` 不得被誤認為
+  已脫離 KP／player 身分。
 - current KP 不可作為 subject；無 active character 時需要角色的 command 被拒絕。
 - 禁止 group-level command、未知 command、巢狀 sudo 都拒絕。
 - `sheet`／`switch`／`setskill` 等操作修改或查詢 target，而不是 actor。
 - `check`／`luck` 的 pending state 只讀寫 target key；不可消費其他玩家的 pending。
-- `pc`／`create`／`usepregen` 仍遵守既有 `game_started`、角色 ownership 與
-  pending LUCK guard。
+- `/coc sudo <target> away` 必須只標記 target 的 active character；`/coc sudo <target>
+  back` 只能解除 target 的暫離狀態。
+- `/coc sudo <target> retire [角色名]` 必須解除 target 的 active player binding，
+  保留 `characters_by_id` 的角色資料，且不得清除 actor 的 KP Assistant 身分。
+- target 突然離線時，KP Assistant 可用 sudo `away` 暫停其回合；需要退出目前角色
+  時可用 sudo `retire`，且 retire 不刪除角色歷史，只解除 active player binding。
+- sudo `away`／`back`／`retire` 的 target 必須是 subject；不能因為 actor 是 KP 就
+  把 actor 自己的角色索引誤改掉。
+- `luck roll`、`pc`／`create`／`alloc`／`usepregen` 必須拒絕且不改動 state。
 
 ### Integration tests
 
@@ -273,7 +334,9 @@ no-op fast path，但實際拒絕仍要回覆使用者。
   target map location 與 canonical player history。
 - sudo `act` 不會增加 `kp_ooc_log`，且會照一般玩家 turn 執行 maintenance。
 - target 的 private DM／image recipient 正確；actor 不會意外收到 target secret。
-- public output 有 sudo marker，且 ordinary player output 不受影響。
+- sudo `away` 只更新 target active character 的暫離狀態；sudo `retire` 解除 target
+  的 active binding、保留角色資料，且不會解除 actor 的 KP Assistant 身分。
+- public output 必須有 sudo marker，且 ordinary player output 不受影響。
 - concurrent player message 與 sudo message 經過 priority gate／conversation lock
   後不會覆蓋較新的 state revision。
 - `sudo.started`／`completed`／`denied`／`failed` event 欄位完整且 identifier
@@ -285,20 +348,22 @@ no-op fast path，但實際拒絕仍要回覆使用者。
 - 不把 sudo 變成任意 Python／資料庫／LLM tool 執行入口。
 - 不讓 sudo 繞過 `game_started`、LUCK、角色 ownership、scenario visibility 或
   combat canonical mutation guard。
+- 不允許 KP 透過 sudo 執行 `luck roll`、建立角色或認領預製角色。
 - 不在第一版新增永久 sudo delegation、多人 KP、角色 ownership transfer 或
   Discord permission UI。
-- 不修改既有 AI KP Assistant 的 OOC memory 與 KP-only tool allowlist。
+- 不修改既有 AI KP Assistant 的 OOC memory、KP-only tool allowlist，或新增
+  `sudo_player_action` tool。
 
-## 11. 待確認決策
+## 11. 已確認決策
 
-1. `act` 的公開回覆是否一定要顯示 `【KP Assistant 代操作】` 標記？本規格建議
-   顯示，避免玩家誤以為是角色本人發言。
-2. `luck roll` 是否允許 KP 代替玩家擲？本規格暫列入 allowlist，若要維持「LUCK
-   必須由玩家本人擲」的規則，應把它移到禁止清單，但仍可保留 KP 代替執行其他
-   `luck` decision 的能力。
-3. 第一版是否要允許 `pc`／`create`／`usepregen` 這類角色建立操作？本規格先
-   保留，因為它們是 subject-scoped；若只需要 gameplay 代打，可在實作前縮小
-   allowlist。
-4. 是否需要讓 AI KP Assistant 自己呼叫一個 `sudo_player_action` tool？本規格
-   第一版只處理人類 KP 透過 `/coc sudo` 的手動操作，避免 AI 自動代操造成未經
-   明確確認的 state mutation。
+1. `act` 的公開回覆必須顯示 `【KP Assistant 代操作：角色名】` 標記。
+2. KP 不可透過 sudo 執行 `luck roll`；LUCK 骰必須由玩家本人執行。
+3. KP 不可透過 sudo 建立或認領角色：`pc`、`create`、`alloc`、`usepregen`
+   都不在 allowlist。
+4. AI KP Assistant 不新增 `sudo_player_action` tool；第一版只支援人類 KP 透過
+   `/coc sudo` 手動代操作。
+5. 使用者必須先脫離 player character／建角流程，才能登記或執行 KP Assistant。
+   `/coc away` 只代表暫離，不代表完成角色身分脫離。
+6. 已脫離且正在執行 KP Assistant 的 KP，可以在玩家突然消失時，透過
+   `/coc sudo <target> away` 暫離 target，或 `/coc sudo <target> retire [角色名]`
+   讓 target 退出目前角色；`retire` 保留角色歷史，不刪除資料。
