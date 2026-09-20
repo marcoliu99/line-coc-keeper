@@ -1,4 +1,5 @@
 import importlib.util
+import contextlib
 import sys
 import types
 import unittest
@@ -93,6 +94,84 @@ class LoggingCompletionTests(unittest.TestCase):
         self.assertEqual(
             {call.kwargs["rag_kind"] for call in event.call_args_list}, {"memory", "scenario"}
         )
+
+    def test_anthropic_usage_can_be_disabled(self):
+        from app.providers import anthropic_provider
+
+        response = SimpleNamespace(
+            usage=SimpleNamespace(input_tokens=10, cache_read_input_tokens=4, output_tokens=6),
+            content=[SimpleNamespace(type="text", text="done")],
+        )
+        client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: response))
+        fake_anthropic = types.SimpleNamespace(Anthropic=lambda **kwargs: client)
+        captured_metrics: list[dict] = []
+
+        @contextlib.contextmanager
+        def fake_span(name, **kwargs):
+            captured_metrics.append(kwargs.get("metrics", {}))
+            yield
+
+        with patch.dict(sys.modules, {"anthropic": fake_anthropic}), \
+                patch.object(anthropic_provider, "ANTHROPIC_API_KEY", "test-key"), \
+                patch.object(anthropic_provider, "LOG_INCLUDE_USAGE", False), \
+                patch.object(anthropic_provider.observability, "span", fake_span), \
+                patch.object(anthropic_provider.observability, "event") as event:
+            result = anthropic_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", lambda name, args: {}, 1
+            )
+
+        self.assertEqual(result, "done")
+        self.assertEqual(captured_metrics, [{}])
+        self.assertFalse(any(call.args[0] == "llm.usage" for call in event.call_args_list))
+
+    def test_gemini_usage_can_be_disabled(self):
+        from app.providers import gemini_provider
+
+        response = SimpleNamespace(
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=10,
+                cached_content_token_count=4,
+                candidates_token_count=6,
+                thoughts_token_count=2,
+            ),
+            candidates=[SimpleNamespace(content=SimpleNamespace())],
+            function_calls=[],
+            text="done",
+        )
+        client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=lambda **kwargs: response)
+        )
+        fake_genai = types.SimpleNamespace(Client=lambda **kwargs: client)
+        fake_types = types.SimpleNamespace(
+            FunctionDeclaration=lambda **kwargs: SimpleNamespace(**kwargs),
+            Tool=lambda **kwargs: SimpleNamespace(**kwargs),
+            GenerateContentConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+            Content=lambda **kwargs: SimpleNamespace(**kwargs),
+            Part=lambda **kwargs: SimpleNamespace(**kwargs),
+        )
+        fake_google = types.ModuleType("google")
+        fake_google.genai = fake_genai
+        fake_google_genai = types.ModuleType("google.genai")
+        fake_google_genai.types = fake_types
+        captured_metrics: list[dict] = []
+
+        @contextlib.contextmanager
+        def fake_span(name, **kwargs):
+            captured_metrics.append(kwargs.get("metrics", {}))
+            yield
+
+        with patch.dict(sys.modules, {"google": fake_google, "google.genai": fake_google_genai}), \
+                patch.object(gemini_provider, "GEMINI_API_KEY", "test-key"), \
+                patch.object(gemini_provider, "LOG_INCLUDE_USAGE", False), \
+                patch.object(gemini_provider.observability, "span", fake_span), \
+                patch.object(gemini_provider.observability, "event") as event:
+            result = gemini_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", lambda name, args: {}, 1
+            )
+
+        self.assertEqual(result, "done")
+        self.assertEqual(captured_metrics, [{}])
+        self.assertFalse(any(call.args[0] == "llm.usage" for call in event.call_args_list))
 
 
 @unittest.skipUnless(DISCORD_AVAILABLE, "discord.py is not installed")
@@ -190,6 +269,41 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
                 "reply_chunk_count": 0,
                 "reply_bytes": 0,
             })
+
+    async def test_luck_buttons_include_every_affordable_option(self):
+        from app import discord_bot
+
+        class FakeView:
+            def __init__(self, timeout=None):
+                self.items = []
+
+            def add_item(self, item):
+                self.items.append(item)
+
+        class FakeButton:
+            def __init__(self, conversation_id, owner_id, label, choice, danger=False):
+                self.args = (conversation_id, owner_id, label, choice, danger)
+
+        state = GroupState(group_id="g")
+        state.pending_luck_decisions["123"] = {
+            "options": [
+                {"cost": 1, "tier": "regular"},
+                {"cost": 2, "tier": "hard"},
+                {"cost": 3, "tier": "extreme"},
+            ]
+        }
+        channel = SimpleNamespace()
+        before_pending = {}
+        send = AsyncMock()
+
+        with patch.object(discord_bot.discord.ui, "View", FakeView), \
+                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
+                patch.object(discord_bot, "_send_direct_message", send):
+            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, before_pending)
+
+        send.assert_awaited_once()
+        view = send.await_args.kwargs["view"]
+        self.assertEqual([item.args[3] for item in view.items], ["regular", "hard", "extreme", "skip"])
 
 
 class AgentLifecycleLoggingTests(unittest.IsolatedAsyncioTestCase):

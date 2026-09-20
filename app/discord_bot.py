@@ -532,7 +532,7 @@ async def _post_luck_buttons(
             view = discord.ui.View(timeout=None)
             for option in decision["options"]:
                 label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
-            view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
+                view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
             view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True))
             text = f"🍀 {name}，要花 Luck 買到更好的結果嗎？"
             await _send_direct_message(channel, text, view=view)

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Callable
 
 from app import observability
-from app.config import GEMINI_API_KEY, GEMINI_MODEL, KEEPER_TEMPERATURE, LOG_SLOW_OPERATION_MS
+from app.config import GEMINI_API_KEY, GEMINI_MODEL, KEEPER_TEMPERATURE, LOG_INCLUDE_USAGE, LOG_SLOW_OPERATION_MS
 
 
 def run_conversation(
@@ -68,21 +68,23 @@ def run_conversation(
         ):
             response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
             usage = getattr(response, "usage_metadata", None)
-            request_metrics.update(
+            if LOG_INCLUDE_USAGE:
+                request_metrics.update(
+                    input_tokens=getattr(usage, "prompt_token_count", None),
+                    cached_input_tokens=getattr(usage, "cached_content_token_count", None),
+                    output_tokens=getattr(usage, "candidates_token_count", None),
+                    reasoning_tokens=getattr(usage, "thoughts_token_count", None),
+                )
+        if LOG_INCLUDE_USAGE:
+            observability.event(
+                "llm.usage",
+                provider="gemini",
+                model=GEMINI_MODEL,
                 input_tokens=getattr(usage, "prompt_token_count", None),
                 cached_input_tokens=getattr(usage, "cached_content_token_count", None),
                 output_tokens=getattr(usage, "candidates_token_count", None),
                 reasoning_tokens=getattr(usage, "thoughts_token_count", None),
             )
-        observability.event(
-            "llm.usage",
-            provider="gemini",
-            model=GEMINI_MODEL,
-            input_tokens=getattr(usage, "prompt_token_count", None),
-            cached_input_tokens=getattr(usage, "cached_content_token_count", None),
-            output_tokens=getattr(usage, "candidates_token_count", None),
-            reasoning_tokens=getattr(usage, "thoughts_token_count", None),
-        )
         candidate = response.candidates[0]
         contents.append(candidate.content)
 

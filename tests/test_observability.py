@@ -1,9 +1,10 @@
+import io
 import logging
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app import observability
+from app import config, logging_config, observability
 
 
 class ObservabilityTests(unittest.TestCase):
@@ -48,6 +49,41 @@ class ObservabilityTests(unittest.TestCase):
             with observability.detached_context(maintenance_id="maintenance_test") as detached:
                 self.assertNotEqual(detached.get("request_id"), request_id)
                 self.assertEqual(detached["maintenance_id"], "maintenance_test")
+
+    def test_detached_context_redacts_conversation_identifier(self):
+        with patch.object(config, "LOG_HASH_IDENTIFIERS", True):
+            with observability.detached_context(conversation_id="discord-channel-123") as detached:
+                self.assertEqual(len(detached["conversation_id"]), 12)
+                self.assertNotIn("discord-channel-123", detached["conversation_id"])
+
+    def test_queue_listener_preserves_context_captured_before_queueing(self):
+        root = logging.getLogger()
+        saved_handlers = root.handlers[:]
+        saved_level = root.level
+        output = io.StringIO()
+        for handler in saved_handlers:
+            root.removeHandler(handler)
+
+        try:
+            with patch.object(config, "LOG_ENABLED", False), patch.object(config, "LOG_TEXT_ENABLED", True), \
+                    patch.object(config, "LOG_FORMAT", "json"), patch.object(config, "LOG_FILE", ""), \
+                    patch.object(config, "LOG_LEVEL", "INFO"), patch.object(logging_config.sys, "stderr", output):
+                logging_config.configure_logging()
+                with observability.request_context(conversation_id="discord-channel-123") as bound:
+                    logging.getLogger("app.queue-context-test").info("diagnostic")
+                logging_config._stop_listener()
+
+            rendered = output.getvalue()
+            self.assertIn(bound["request_id"], rendered)
+            self.assertIn(bound["conversation_id"], rendered)
+        finally:
+            logging_config._stop_listener()
+            for handler in root.handlers[:]:
+                root.removeHandler(handler)
+                handler.close()
+            for handler in saved_handlers:
+                root.addHandler(handler)
+            root.setLevel(saved_level)
 
     def test_span_includes_status_and_mutable_metrics(self):
         with patch("app.config.LOG_ENABLED", True):

@@ -103,6 +103,11 @@ def detached_context(**values: str | None) -> Iterator[dict[str, str]]:
     token = _CONTEXT.set({})
     metrics_token = _METRICS.set({})
     try:
+        if "conversation_id" in values:
+            values = {
+                **values,
+                "conversation_id": _safe_identifier(values["conversation_id"]),
+            }
         with context(**values) as bound:
             yield bound
     finally:

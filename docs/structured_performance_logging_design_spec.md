@@ -353,6 +353,11 @@ LOG_INCLUDE_USAGE=true
 | `true` | 保留標準 logger 的文字 debug／info／warning／error，並套用 `LOG_LEVEL` |
 | `false` | developer text channel 走 no-op fast path；不格式化訊息、不建立 file output handler |
 
+`LOG_INCLUDE_USAGE` 控制所有 provider 的 token usage 觀測，而不是只控制
+OpenAI。設為 `false` 時，OpenAI、Anthropic、Gemini 都不得把 input／cached／output／
+reasoning token 寫入 request completion metrics，也不得發出 `llm.usage` event；
+provider request 的 duration、status 與其他非 usage 欄位仍照常記錄。
+
 `LOG_ENABLED=false` 時，不能因為 structured logging 而改變遊戲流程或增加額外 async task。`LOG_TEXT_ENABLED=false` 時，developer 的 debug 文字也不得被格式化或寫出。必要的 exception logging 是否保留由既有錯誤處理負責，但不得為了效能觀測再次建立完整的觀測 payload。
 
 若要完全關閉兩種 log channel：
@@ -603,6 +608,11 @@ Discord request 的 ID。
 - secret、prompt、message content 不會出現在輸出。
 - slow threshold 正確標記。
 - usage 缺欄位時仍可正常輸出 completion event。
+- `LOG_INCLUDE_USAGE=false` 對 OpenAI、Anthropic、Gemini 都不輸出 token 欄位或
+  `llm.usage` event；設為 `true` 時才輸出可取得的 usage。
+- QueueHandler 捕捉的 context 在 QueueListener target handler 格式化後仍保留，
+  不會被 listener thread 的空 ContextVar 覆蓋。
+- detached maintenance 的 `conversation_id` 遵守 `LOG_HASH_IDENTIFIERS`。
 - 不合法 logging config 使用 fallback，不阻止啟動。
 - legacy `keeper.run_turn()` entry points 會產生完整 `llm.turn` lifecycle，
   並沿用 request 的 `turn_id`。

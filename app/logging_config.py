@@ -135,7 +135,6 @@ def configure_logging(*, force: bool = False) -> None:
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(formatter)
     stream.addFilter(channel_filter)
-    stream.addFilter(context_filter)
     targets: list[logging.Handler] = [stream]
 
     if config.LOG_FILE:
@@ -147,7 +146,6 @@ def configure_logging(*, force: bool = False) -> None:
             )
             file_handler.setFormatter(formatter)
             file_handler.addFilter(channel_filter)
-            file_handler.addFilter(context_filter)
             targets.append(file_handler)
         except OSError:
             # Keep stderr alive; logging must not prevent the bot from starting.

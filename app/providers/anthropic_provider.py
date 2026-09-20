@@ -5,7 +5,13 @@ import json
 from typing import Callable
 
 from app import observability
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, KEEPER_TEMPERATURE, LOG_SLOW_OPERATION_MS
+from app.config import (
+    ANTHROPIC_API_KEY,
+    ANTHROPIC_MODEL,
+    KEEPER_TEMPERATURE,
+    LOG_INCLUDE_USAGE,
+    LOG_SLOW_OPERATION_MS,
+)
 
 
 def run_conversation(
@@ -72,19 +78,21 @@ def run_conversation(
                 messages=messages,
             )
             usage = getattr(response, "usage", None)
-            request_metrics.update(
+            if LOG_INCLUDE_USAGE:
+                request_metrics.update(
+                    input_tokens=getattr(usage, "input_tokens", None),
+                    cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
+                    output_tokens=getattr(usage, "output_tokens", None),
+                )
+        if LOG_INCLUDE_USAGE:
+            observability.event(
+                "llm.usage",
+                provider="anthropic",
+                model=ANTHROPIC_MODEL,
                 input_tokens=getattr(usage, "input_tokens", None),
                 cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
                 output_tokens=getattr(usage, "output_tokens", None),
             )
-        observability.event(
-            "llm.usage",
-            provider="anthropic",
-            model=ANTHROPIC_MODEL,
-            input_tokens=getattr(usage, "input_tokens", None),
-            cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
-            output_tokens=getattr(usage, "output_tokens", None),
-        )
         messages.append({"role": "assistant", "content": response.content})
 
         tool_uses = [b for b in response.content if b.type == "tool_use"]
