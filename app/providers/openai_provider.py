@@ -22,7 +22,15 @@ import time
 from typing import Callable
 
 from app import config, observability
-from app.config import KEEPER_REASONING_EFFORT, KEEPER_TEMPERATURE, OPENAI_API_KEY, OPENAI_MODEL
+from app.config import (
+    KEEPER_REASONING_EFFORT,
+    KEEPER_TEMPERATURE,
+    LLM_MAX_RETRIES,
+    LLM_RETRY_BASE_DELAY_SECONDS,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+)
+from app.providers import retry
 
 # Populated per-process the first time the API rejects one of these — see
 # _create_response.
@@ -39,11 +47,22 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
     models support what, detect a rejection once per process and stop
     sending that specific parameter for the rest of this run. `while True`
     terminates naturally: each pass either returns, raises (the failure
-    wasn't one of the two tracked params), or removes one of at most two
-    trackable params from kwargs — so within 3 attempts it's either
-    succeeded or is raising for an unrelated reason."""
+    wasn't one of the two tracked params and wasn't a retryable transient
+    failure either), removes one of at most two trackable params from
+    kwargs, or backs off and retries a transient connection/server error
+    (bounded by LLM_MAX_RETRIES via `connection_attempt` below) — so it's
+    always either succeeded or raising within a bounded number of passes.
+
+    Connection-retry logic lives inline here rather than going through
+    app/providers/retry.py's call_with_retry — this function already runs
+    its own custom while-loop for the unsupported-parameter case, and
+    nesting a second independent retry loop inside it would just be two
+    overlapping retry mechanisms fighting over the same exception. Reuses
+    retry.is_retryable() for the classification so all three providers
+    agree on what counts as transient."""
     for param in _unsupported_params:
         kwargs.pop(param, None)
+    connection_attempt = 0
     while True:
         observability.increment_metric("iteration_count")
         observed = config.LOG_ENABLED
@@ -63,6 +82,9 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
         except Exception as exc:
             exc_text = str(exc).lower()
             offending = next((p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text), None)
+            is_connection_retry = (
+                offending is None and connection_attempt < LLM_MAX_RETRIES and retry.is_retryable(exc)
+            )
             if observed:
                 duration_ms = (time.perf_counter() - started) * 1000
                 if offending is not None:
@@ -77,6 +99,20 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
                         error_type=type(exc).__name__,
                         status="error",
                     )
+                elif is_connection_retry:
+                    observability.increment_metric("llm_retry_count")
+                    observability.event(
+                        "llm.request.retry",
+                        level=logging.WARNING,
+                        provider="openai",
+                        model=kwargs.get("model"),
+                        api_operation="responses.create",
+                        duration_ms=duration_ms,
+                        attempt=connection_attempt + 1,
+                        max_attempts=LLM_MAX_RETRIES,
+                        error_type=type(exc).__name__,
+                        status="error",
+                    )
                 else:
                     observability.event(
                         "llm.request.failed",
@@ -87,10 +123,15 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
                         error_type=type(exc).__name__,
                         status="error",
                     )
-            if offending is None:
-                raise
-            _unsupported_params.add(offending)
-            kwargs.pop(offending, None)
+            if offending is not None:
+                _unsupported_params.add(offending)
+                kwargs.pop(offending, None)
+                continue
+            if is_connection_retry:
+                connection_attempt += 1
+                time.sleep(LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (connection_attempt - 1)))
+                continue
+            raise
         else:
             if observed:
                 observability.event(
@@ -183,7 +224,11 @@ def run_conversation(
 
     import openai
 
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    # max_retries=0: see app/providers/anthropic_provider.py's identical
+    # comment — the SDK defaults to retrying twice on its own, which would
+    # stack with _create_response's connection-retry loop below and blow
+    # past the documented LLM_MAX_RETRIES-bounded attempt/latency budget.
+    client = openai.OpenAI(api_key=OPENAI_API_KEY, max_retries=0)
 
     # Responses API tools are flat (no nested "function" wrapper, unlike Chat
     # Completions) — see FunctionToolParam in the SDK's type stubs.
