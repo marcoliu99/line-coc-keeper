@@ -30,7 +30,7 @@ import math
 import re
 from dataclasses import dataclass, field
 
-from app import db
+from app import db, embedding_cache
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _logger = logging.getLogger(__name__)
@@ -260,11 +260,14 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
 
-    query_embedding = _embed_texts([query])
-    if query_embedding is None:
+    def _embed_query_once() -> list[float] | None:
+        result = _embed_texts([query])
+        return result[0] if result is not None else None
+
+    query_vec = embedding_cache.get_query_embedding(SCENARIO_RAG_EMBEDDING_MODEL, query, _embed_query_once)
+    if query_vec is None:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         return [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
-    query_vec = query_embedding[0]
     query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
