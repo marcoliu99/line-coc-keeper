@@ -23,6 +23,7 @@ from pathlib import Path
 
 from app import db
 from app import locks
+from app import config, observability
 from app.config import DATA_DIR
 from app.models import GroupState
 
@@ -50,20 +51,34 @@ def _log_group_id(group_id: str) -> str:
 
 
 def load_state(group_id: str) -> GroupState:
-    data = db.get_json("group_states", group_id)
-    if data is None:
-        return GroupState(group_id=group_id)
-    try:
-        return GroupState.from_dict(data)
-    except ValueError:
-        _logger.exception(
-            "state_load_failure group_id=%s reason=unsupported_schema",
-            _log_group_id(group_id),
-        )
-        raise
+    metrics: dict[str, int | bool] = {"cache_hit": False} if config.LOG_ENABLED else {}
+    with observability.span("state.load", operation="load", metrics=metrics):
+        data = db.get_json("group_states", group_id)
+        if data is None:
+            if config.LOG_ENABLED:
+                metrics["state_size_bytes"] = 0
+            return GroupState(group_id=group_id)
+        if config.LOG_ENABLED:
+            metrics["state_size_bytes"] = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        try:
+            return GroupState.from_dict(data)
+        except ValueError:
+            _logger.exception(
+                "state_load_failure group_id=%s reason=unsupported_schema",
+                _log_group_id(group_id),
+            )
+            raise
 
 
 def save_state(state: GroupState, *, reason: str = "command") -> None:
+    metrics: dict[str, int | bool] = {}
+    if config.LOG_ENABLED:
+        metrics["state_size_bytes"] = len(json.dumps(state.to_dict(), ensure_ascii=False).encode("utf-8"))
+    with observability.span("state.save", operation=reason, metrics=metrics):
+        _save_state_impl(state, reason=reason)
+
+
+def _save_state_impl(state: GroupState, *, reason: str = "command") -> None:
     """Persist one state snapshot under the authoritative per-group lock.
 
     The revision check turns a stale read-modify-write into an explicit

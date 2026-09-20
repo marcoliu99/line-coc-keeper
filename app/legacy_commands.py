@@ -28,7 +28,7 @@ from typing import Awaitable, Callable
 
 import yaml
 
-from app import combat, creation, dice, intent_parser, keeper, locks, luck, pdf_loader, pregen_extractor, scenario_library
+from app import combat, creation, dice, intent_parser, keeper, locks, luck, observability, pdf_loader, pregen_extractor, scenario_library
 from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
 from app import help_service
 from app import scene_map as scene_map_engine
@@ -717,10 +717,21 @@ def _spawn_post_turn_maintenance(conversation_id: str) -> None:
 
 
 async def _run_post_turn_maintenance_safely(conversation_id: str) -> None:
-    try:
-        await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
-    except Exception:
-        _logger.exception("post-turn maintenance failed (background) for conversation_id=%s", conversation_id)
+    with observability.detached_context(
+        maintenance_id=observability.new_id("maintenance"),
+        conversation_id=conversation_id,
+    ):
+        try:
+            metrics: dict[str, object] = {}
+            with observability.span(
+                "maintenance", trigger="post_turn", metrics=metrics,
+                slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
+                slow_event="maintenance.slow",
+            ):
+                result = await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+                metrics.update(result or {})
+        except Exception:
+            _logger.exception("post-turn maintenance failed (background) for conversation_id=%s", conversation_id)
 
 
 async def _run_post_turn_maintenance_after_output(

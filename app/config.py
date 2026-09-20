@@ -5,6 +5,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+INVALID_LOG_SETTINGS: list[tuple[str, str, str]] = []
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    INVALID_LOG_SETTINGS.append((name, "boolean", str(default).lower()))
+    return default
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        INVALID_LOG_SETTINGS.append((name, "integer", str(default)))
+        return default
+
 # Discord bot token (discord.com/developers/applications > your app > Bot > Reset
 # Token). Required by the Discord runtime.
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
@@ -132,6 +155,25 @@ KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", 0.6))
 # parameter outright, openai_provider.py detects that once per process and
 # stops sending it, the same fallback pattern already used for temperature.
 KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").strip().lower()
+
+# Observability. Structured performance events and ordinary developer text
+# logs have separate toggles so a developer can enable textual diagnostics
+# without paying for timers, token/byte counters, or JSON event construction.
+LOG_ENABLED = _env_bool("LOG_ENABLED", False)
+LOG_TEXT_ENABLED = _env_bool("LOG_TEXT_ENABLED", True)
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    INVALID_LOG_SETTINGS.append(("LOG_LEVEL", "string", "INFO"))
+    LOG_LEVEL = "INFO"
+LOG_FORMAT = os.environ.get("LOG_FORMAT", "json").strip().lower()
+if LOG_FORMAT not in {"json", "text"}:
+    INVALID_LOG_SETTINGS.append(("LOG_FORMAT", "string", "json"))
+    LOG_FORMAT = "json"
+LOG_FILE = os.environ.get("LOG_FILE", "").strip()
+LOG_SLOW_REQUEST_MS = _env_int("LOG_SLOW_REQUEST_MS", 3000)
+LOG_SLOW_OPERATION_MS = _env_int("LOG_SLOW_OPERATION_MS", 1000)
+LOG_HASH_IDENTIFIERS = _env_bool("LOG_HASH_IDENTIFIERS", True)
+LOG_INCLUDE_USAGE = _env_bool("LOG_INCLUDE_USAGE", True)
 
 # Reusable parsed PDF scenarios (separate from per-conversation state).
 SCENARIO_LIBRARY_DIR = Path(os.environ.get('SCENARIO_LIBRARY_DIR', str(DATA_DIR.parent / 'scenarios')))

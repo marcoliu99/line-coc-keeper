@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from app import keeper
+from app import keeper, observability
+from app.config import LOG_SLOW_OPERATION_MS
 from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
@@ -53,7 +54,13 @@ def make_tool_executor(
     """
 
     def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        result = keeper._execute_tool(state, tool_name, tool_input, private_messages, image_requests, speaker_role)
+        observability.increment_metric("tool_call_count")
+        with observability.span(
+            "llm.tool",
+            tool_name=observability.tool_name(tool_name),
+            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        ):
+            result = keeper._execute_tool(state, tool_name, tool_input, private_messages, image_requests, speaker_role)
         facts.append(_describe_tool_call(tool_name, result))
         return result
 

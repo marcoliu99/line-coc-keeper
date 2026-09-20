@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from app import keeper
+from app import observability
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -59,17 +60,21 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # from async call sites (see app/legacy_commands.py's handle_text_
         # message). Calling it with `await` directly, as the previous
         # version of this file did, raises before the call even completes.
-        await asyncio.to_thread(
-            provider.run_conversation,
-            static_system,
-            dynamic_system,
-            TOOLS,
-            state.log,
-            new_message,
-            execute_tool,
-            MAX_TOOL_ITERATIONS,
-        )
+        turn_metrics: dict[str, int] = {}
+        with observability.metrics_context(turn_metrics):
+            with observability.span(
+                "llm.turn", provider=LLM_PROVIDER,
+                model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
+                agent="executor",
+                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+                metrics=turn_metrics,
+            ):
+                await asyncio.to_thread(
+                    provider.run_conversation, static_system, dynamic_system, TOOLS,
+                    state.log, new_message, execute_tool, MAX_TOOL_ITERATIONS,
+                )
     except Exception:
+        observability.event("llm.failed", level=logging.ERROR, agent="executor", status="error")
         _logger.exception("Executor LLM call failed")
         return MechanicResult(
             success=False,

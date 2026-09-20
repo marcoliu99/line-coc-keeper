@@ -4,7 +4,14 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, KEEPER_TEMPERATURE
+from app import observability
+from app.config import (
+    ANTHROPIC_API_KEY,
+    ANTHROPIC_MODEL,
+    KEEPER_TEMPERATURE,
+    LOG_INCLUDE_USAGE,
+    LOG_SLOW_OPERATION_MS,
+)
 
 
 def run_conversation(
@@ -50,15 +57,42 @@ def run_conversation(
     messages.append({"role": "user", "content": new_message})
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
-    for _ in range(max_iterations):
-        response = client.messages.create(
+    for iteration in range(max_iterations):
+        observability.increment_metric("iteration_count")
+        request_metrics: dict[str, int | None] = {}
+        with observability.span(
+            "llm.request",
+            provider="anthropic",
             model=ANTHROPIC_MODEL,
-            max_tokens=1024,
-            temperature=KEEPER_TEMPERATURE,
-            system=system_blocks,
-            tools=anthropic_tools,
-            messages=messages,
-        )
+            iteration=iteration,
+            tool_count=len(anthropic_tools),
+            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+            metrics=request_metrics,
+        ):
+            response = client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=1024,
+                temperature=KEEPER_TEMPERATURE,
+                system=system_blocks,
+                tools=anthropic_tools,
+                messages=messages,
+            )
+            usage = getattr(response, "usage", None)
+            if LOG_INCLUDE_USAGE:
+                request_metrics.update(
+                    input_tokens=getattr(usage, "input_tokens", None),
+                    cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
+                    output_tokens=getattr(usage, "output_tokens", None),
+                )
+        if LOG_INCLUDE_USAGE:
+            observability.event(
+                "llm.usage",
+                provider="anthropic",
+                model=ANTHROPIC_MODEL,
+                input_tokens=getattr(usage, "input_tokens", None),
+                cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
+                output_tokens=getattr(usage, "output_tokens", None),
+            )
         messages.append({"role": "assistant", "content": response.content})
 
         tool_uses = [b for b in response.content if b.type == "tool_use"]
@@ -93,19 +127,15 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
-        response = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=4096,
-            tools=[tool],
-            tool_choice={"type": "tool", "name": tool["name"]},
-            messages=[{
-                "role": "user",
-                "content": [
+        with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
+            response = client.messages.create(
+                model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
+                tool_choice={"type": "tool", "name": tool["name"]},
+                messages=[{"role": "user", "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
                     {"type": "text", "text": prompt_text},
-                ],
-            }],
-        )
+                ]}],
+            )
         for block in response.content:
             if block.type == "tool_use" and block.name == tool["name"]:
                 return block.input
@@ -125,13 +155,12 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         import anthropic
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=4096,
-            tools=[tool],
-            tool_choice={"type": "tool", "name": tool["name"]},
-            messages=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
-        )
+        with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
+            response = client.messages.create(
+                model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
+                tool_choice={"type": "tool", "name": tool["name"]},
+                messages=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
+            )
         for block in response.content:
             if block.type == "tool_use" and block.name == tool["name"]:
                 return block.input

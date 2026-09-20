@@ -29,9 +29,9 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
-from app import db
+from app import db, observability
 from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 
 _logger = logging.getLogger(__name__)
@@ -65,23 +65,37 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-def _embed_texts(texts: list[str]) -> list[list[float]] | None:
+def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[float]] | None:
     """Best-effort: None if no OPENAI_API_KEY or the call fails — callers
     fall back to pure BM25 in that case, same contract as scenario_rag.py."""
-    if not OPENAI_API_KEY or not texts:
+    if not texts:
+        return None
+    if not OPENAI_API_KEY:
+        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
+                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
         return None
     try:
         import openai
 
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=texts)
+        with observability.span(
+            "embedding.batch",
+            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+            batch_size=len(texts), batch_index=0, batch_count=1,
+        ):
+            response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=texts)
         ordered = [None] * len(texts)
         for item in response.data:
             ordered[item.index] = item.embedding
         if any(v is None for v in ordered):
+            observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
+                                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25",
+                                error_type="incomplete_embedding_response")
             return None
         return cast(list[list[float]], ordered)
     except Exception:
+        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
+                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
 
 
@@ -124,6 +138,7 @@ class MemoryIndex:
     doc_freq: dict[str, int]
     avg_length: float
     has_embeddings: bool = False
+    index_cache: str = "rebuilt"
 
 
 def _load_raw_chunks(group_id: str) -> list[dict]:
@@ -152,7 +167,7 @@ def append_memory(group_id: str, text: str) -> None:
     label = f"記憶片段 #{len(raw_chunks) + 1}"
     embedding = None
     try:
-        embedded = _embed_texts([text])
+        embedded = _embed_texts([text], rag_kind="memory")
         if embedded is not None:
             embedding = embedded[0]
     except Exception:
@@ -231,13 +246,15 @@ def _get_index(group_id: str, raw_chunks: list[dict]) -> MemoryIndex:
     append_memory itself."""
     cached = _index_cache.get(group_id)
     if cached is not None and len(cached.chunks) == len(raw_chunks):
+        cached.index_cache = "memory"
         return cached
     index = _build_index(raw_chunks)
+    index.index_cache = "rebuilt"
     _index_cache[group_id] = index
     return index
 
 
-def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
+def search_memory(group_id: str, query: str, top_k: int = 3, *, metrics: dict[str, Any] | None = None) -> list[dict]:
     """Returns up to top_k {"label": str, "text": str, "score": float},
     highest first. Empty list if there's no memory yet or nothing matches —
     callers should treat that as "nothing found", not an error. Same hybrid
@@ -246,11 +263,19 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
     gate on purely-semantic (no literal BM25 hit) candidates."""
     raw_chunks = _load_raw_chunks(group_id)
     if not raw_chunks:
+        if metrics is not None:
+            metrics.update(index_cache="empty", candidate_count=0,
+                           has_embeddings=False, result_count=0)
         return []
     index = _get_index(group_id, raw_chunks)
+    if metrics is not None:
+        metrics.update(index_cache=index.index_cache, candidate_count=len(index.chunks),
+                       has_embeddings=index.has_embeddings)
 
     query_tokens = _tokenize(query)
     if not query_tokens:
+        if metrics is not None:
+            metrics["result_count"] = 0
         return []
 
     idf_cache = _idf_cache(index, query_tokens)
@@ -259,12 +284,18 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
 
     if not index.has_embeddings:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        return [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        if metrics is not None:
+            metrics["result_count"] = len(results)
+        return results
 
-    query_embedding = _embed_texts([query])
+    query_embedding = _embed_texts([query], rag_kind="memory")
     if query_embedding is None:
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        return [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        if metrics is not None:
+            metrics["result_count"] = len(results)
+        return results
     query_vec = query_embedding[0]
     query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
@@ -290,7 +321,10 @@ def search_memory(group_id: str, query: str, top_k: int = 3) -> list[dict]:
         score = weight * cos + (1 - weight) * bm25_norm
         combined.append((score, c))
     combined.sort(key=lambda sc: -sc[0])
-    return [{"label": c.label, "text": c.text, "score": s} for s, c in combined[:top_k]]
+    results = [{"label": c.label, "text": c.text, "score": s} for s, c in combined[:top_k]]
+    if metrics is not None:
+        metrics["result_count"] = len(results)
+    return results
 
 
 def format_results(results: list[dict]) -> str:
