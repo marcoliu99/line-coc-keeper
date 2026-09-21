@@ -178,6 +178,22 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(plan["selected_action"], "attack")
         self.assertEqual(plan["required_rolls"][0]["range_band"], "near")
 
+    def test_attack_without_explicit_range_band_defaults_to_melee(self):
+        """The AI authors an NPC's attacks via add_npc_to_combat; if it omits
+        range_band (e.g. forgets to mark a gun as ranged), this is the
+        default that gets applied — must stay "engaged" since that's what
+        the tool schema's description promises."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Bruiser", 60, 14, attacks=[
+            {"id": "punch", "label": "Punch", "skill_value": 50, "damage": "1D3"},
+        ])
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Bruiser")
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["required_rolls"][0]["range_band"], "engaged")
+
     def test_resolve_enemy_attack_requires_formal_outcome(self):
         state = self._state_with_pc()
         combat.start_combat(state)

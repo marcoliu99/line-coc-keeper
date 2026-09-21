@@ -430,6 +430,52 @@ combat.py:755-760` 本來就接受這三種 range_band），combat_block prompt 
   test_planned_attack_exposes_range_band_for_defense_gating`（確認
   `range_band` 真的被帶出來）。
 
+#### `range_band` 到底怎麼判斷近戰還是遠程？
+
+不是即時算出來的，是「攻擊這個動作本身的靜態屬性」，在敵人被建立的當下就決定
+好了，跟戰鬥當時雙方實際距離無關（雙方實際距離另外用
+`state.combat.range_bands` 追蹤，只用來決定這個攻擊選項「打不打得到這次的
+目標」，不影響防守要不要給反擊——這是兩件事）：
+
+1. **設定時機**：Keeper 呼叫 `add_npc_to_combat` 建立敵人戰鬥卡時，
+   `attacks` 陣列每一筆可以帶一個 `range_band` 欄位（`app/models.py:428`
+   的 `AttackRule.range_band`）。這個值從此就固定在這個攻擊定義上，直到
+   戰鬥結束都不會變。
+2. **沒填的話**：預設是 `"engaged"`（近戰）——`AttackRule` dataclass 的
+   欄位預設值就是這樣。
+3. **`plan_enemy_turn` 只是照抄**：輪到這個敵人時，`plan_enemy_turn`
+   （`app/combat.py:755-782`）從敵人卡的 `attacks` 裡選一個「打得到目標」
+   的攻擊（用 `_attack_can_reach_target` 比對這個攻擊的 `range_band` 跟
+   `state.combat.range_bands` 記錄的實際距離），選到後把這個攻擊已經定死
+   的 `range_band` 原封不動放進 `required_rolls[0].range_band`，回傳給
+   模型。**沒有任何地方在這個時間點「判斷」這次攻擊是不是近戰**——判斷早在
+   步驟 1 敵人被建立時就做完了，`plan_enemy_turn` 純粹是把那個決定傳下去。
+4. **combat_block prompt 純粹讀值**：模型看到 `required_rolls[0]
+   .range_band == "engaged"` 才給反擊選項，`near`/`any` 只給閃避——它不
+   需要（也不應該）自己重新判斷攻擊距離，那個判斷已經在步驟 1 做完了。
+
+**這個鏈條上原本有一個沒堵住的洞**：`add_npc_to_combat` 工具 schema 對
+`attacks.range_band` 完全沒有任何說明（只列了欄位名字），模型在建立一個
+拿槍的 NPC 時完全沒有被提醒要填 `range_band: "near"`——如果漏填，就會照
+預設值變成 `"engaged"`，等於這次遠程攻擊的修正在源頭就被繞過了，即使
+`plan_enemy_turn`／`offer_npc_attack_defense_choice` 的邏輯完全正確也沒用。
+這個洞已經補上：`app/keeper.py` 的 `add_npc_to_combat` schema 裡
+`attacks` 欄位的 description 現在明確列出三個值該怎麼用——`engaged`
+（近戰，可以不寫，預設值）、`near`（有距離的攻擊：槍械／弓箭／投擲武器，
+**務必明確填**，漏填會被當成近戰）、`any`（不受距離限制：法術／詛咒／
+心靈攻擊）。
+
+補充：目前 `plan_enemy_turn` 選攻擊的篩選條件（`app/combat.py:757-759`）
+只接受 `range_band` 是 `engaged`/`near`/`any` 的攻擊，`far` 雖然是合法
+的資料值（`AttackRule`／`_range_rank` 都認得），但永遠不會被選中當作這次
+要用的攻擊——這是既有行為，這次沒有改動，只是記錄下來：建立遠程攻擊時應該
+用 `near`，不要用 `far`。
+
+新增測試鎖定這個預設行為：`tests/test_combat_cards.py::
+test_attack_without_explicit_range_band_defaults_to_melee`（沒填
+`range_band` 時 `plan_enemy_turn` 回傳的還是 `"engaged"`，符合 schema
+description 現在承諾的行為）。
+
 ### 記錄但暫不處理：獨立 review agent 的其他發現
 
 - **`ally:`/`enemy:` 分支目前不可達**：`plan_enemy_turn` 唯一決定目標的

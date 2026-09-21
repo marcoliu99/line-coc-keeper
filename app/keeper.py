@@ -456,7 +456,14 @@ TOOLS = [
                 },
                 "attacks": {
                     "type": "array",
-                    "description": "敵人攻擊表，每筆含 id/label/skill_name/skill_value/damage/range_band 等",
+                    "description": (
+                        "敵人攻擊表，每筆含 id/label/skill_name/skill_value/damage/range_band 等。"
+                        "range_band 決定這招是不是近戰——沒寫預設是 engaged（近戰），拳頭、小刀、"
+                        "長矛這類真的要貼身的攻擊可以不寫；只要是有距離的攻擊（手槍、步槍、弓箭、"
+                        "投擲武器等）務必明確填 near，不然會被系統當成近戰，玩家被打時會多出一個"
+                        "COC7e 規則不允許的『反擊』選項。不受距離限制的攻擊（法術、詛咒、心靈攻擊等）"
+                        "填 any。"
+                    ),
                     "items": {"type": "object"},
                 },
                 "abilities": {
