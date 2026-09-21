@@ -97,3 +97,17 @@ if name == "resolve_enemy_action":
 `if name == "..."` 分支（例如掃描這個函式的原始碼、斷言同一個工具名稱只出現
 一次）？這個小工具本身不難寫，但屬於「順便做」，不是這次清理的必要部分，先問過
 你再決定要不要放進這次範圍。
+
+## 結論
+
+已實作：刪除第二份死碼（原 1524-1561 行），第一份（含 `resolve_enemy_action`
+的 `outcome` 參數）逐字元不變。刪除後 `plan_enemy_turn`／
+`resolve_enemy_action`／`apply_combat_damage`／`add_combat_effect` 各只剩
+一份，`end_combat` 緊接在後，跟預期一致。`py_compile` 通過，全套測試
+240 題跑過（本 worktree 沒有 `investigate/npc-attack-latency` 分支才有的
+`test_npc_attack_latency.py`），只有 `test_logging_completion.py` 既有、
+與此改動無關的 2 個失敗（`reply_message_count`／`reply_edit_count`
+KeyError），跟改動前的基準線一致，沒有新增回歸。
+
+「待確認」的防重複 static check 這次沒有加——維持問過你再決定的狀態，先不
+放進這次範圍。
