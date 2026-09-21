@@ -60,29 +60,40 @@ def _chunk_text(text: str) -> list[str]:
     return chunks[:MAX_REPLY_MESSAGES]
 
 
+def _mark_reply_metrics(**touched: int) -> None:
+    """Record one reply operation's metrics, zero-filling every
+    _REPLY_METRIC_KEYS entry this call didn't touch.
+
+    A caller reading metrics right after a single send/edit call — not just
+    at the final per-request completion event, which backfills missing keys
+    via _request_metrics()'s setdefault — needs the full key set present.
+    Centralized here (instead of each call site separately listing "the
+    other keys") so a future reply-metric source only has to say what it
+    touched, not enumerate what it didn't.
+    """
+    for key in _REPLY_METRIC_KEYS:
+        observability.increment_metric(key, touched.get(key, 0))
+
+
 def _record_reply_output(text: str) -> None:
     """Account for text sent outside the shared Reply callback."""
     if not config.LOG_ENABLED:
         return
-    observability.increment_metric("reply_message_count")
-    observability.increment_metric("reply_chunk_count")
-    observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+    _mark_reply_metrics(reply_message_count=1, reply_chunk_count=1, reply_bytes=len(text.encode("utf-8")))
 
 
 def _record_reply_binary(size: int) -> None:
     """Account for a Discord message that contains an attachment."""
     if not config.LOG_ENABLED:
         return
-    observability.increment_metric("reply_message_count")
-    observability.increment_metric("reply_bytes", size)
+    _mark_reply_metrics(reply_message_count=1, reply_bytes=size)
 
 
 def _record_reply_edit(text: str) -> None:
     """Account for a text update to an existing Discord message."""
     if not config.LOG_ENABLED:
         return
-    observability.increment_metric("reply_edit_count")
-    observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+    _mark_reply_metrics(reply_edit_count=1, reply_bytes=len(text.encode("utf-8")))
 
 
 def _request_metrics() -> dict[str, int]:
@@ -220,9 +231,13 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
         with observability.span(
             "discord.reply",
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
-            reply_edit_count=0,
             metrics=reply_metrics,
         ):
+            # Written to the shared _METRICS context, not passed as a literal
+            # span() field — span() merges **_METRICS.get() into the log
+            # event too, and a key present in both would collide (see
+            # app/observability.py:span's **fields unpacking).
+            observability.increment_metric("reply_edit_count", 0)
             for chunk in chunks:
                 await channel.send(chunk)
                 _record_sent_chunk(reply_metrics, chunk)
@@ -318,9 +333,11 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
         with observability.span(
             "discord.reply",
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
-            reply_edit_count=0,
             metrics=reply_metrics,
         ):
+            # See _make_reply's comment on why this isn't also a literal
+            # span() field.
+            observability.increment_metric("reply_edit_count", 0)
             for chunk in chunks:
                 await interaction.followup.send(chunk)
                 _record_sent_chunk(reply_metrics, chunk)
