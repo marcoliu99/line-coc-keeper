@@ -11,8 +11,8 @@
 - 目標整合分支：`main_v2`
 - 本輪 review fixes implementation changeset：`e7a998d`
 - `main_v2` 對齊後的型別修正 changeset：`abdba38`
-- PR #46 review follow-up：在實作完成後補入 implementation changeset；本輪需修正
-  sudo check pending validation 與 retire all-skippable phantom round。
+- PR #46 review follow-up implementation changeset：`8d94fa4`（修正 sudo check
+  pending validation 與 retire all-skippable phantom round）。
 
 本文件先於 runtime implementation 建立。實作前必須先確認本文件的權限邊界、
 指令格式與允許操作清單；未確認前不修改程式碼。
