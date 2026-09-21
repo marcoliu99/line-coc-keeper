@@ -1285,11 +1285,11 @@ def _execute_tool(
                     "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                     "pushed": bool(tool_input.get("pushed", False)),
                 }
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
                     "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                     "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _register_pending_skill_check)
 
         if name == "offer_check_choice":
@@ -1310,10 +1310,10 @@ def _execute_tool(
                 if attacker_tier:
                     pending_choice["attacker_tier"] = attacker_tier
                 target_state.pending_checks[target_char.owner_id] = pending_choice
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                     "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _register_pending_choice)
 
         if name == "npc_skill_check":
@@ -1362,13 +1362,13 @@ def _execute_tool(
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "choice", "options": options, "attacker_tier": npc_roll.tier,
                 }
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                     "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
                     "note": "攻擊方檢定已經由系統擲好（tier 見上面），還沒有防守方的骰出結果——等玩家自己選"
                             "一個選項、用 /coc check <選項名稱> 擲骰後才會有結果，不要自己選、不要自己編一個、"
                             "也不要自己判定命中與否。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _roll_and_register_defense_choice)
 
         if name == "clear_pending_check":
@@ -1384,10 +1384,10 @@ def _execute_tool(
                          "note": f"{target_char.name} 本來就沒有待處理的檢定，沒有動作。"},
                         should_save=False,
                     )
-                return {
+                return _StateMutation({
                     "ok": True, "cleared": True, "investigator": target_char.name,
                     "cleared_check_type": cleared.get("type", ""),
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _clear_pending_check)
 
         if name == "sanity_check":
@@ -1404,10 +1404,10 @@ def _execute_tool(
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
                 }
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "current_san": target_char.san,
                     "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _register_pending_sanity)
 
         if name == "adjust_character":
