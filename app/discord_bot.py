@@ -67,6 +67,11 @@ def _record_reply_output(text: str) -> None:
     observability.increment_metric("reply_message_count")
     observability.increment_metric("reply_chunk_count")
     observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+    # Zero (not omit) the counter this call didn't touch, so a caller reading
+    # metrics right after this one send/edit call — not just at the final
+    # per-request completion event, which backfills via _request_metrics() —
+    # sees a complete, stable set of reply-metric keys.
+    observability.increment_metric("reply_edit_count", 0)
 
 
 def _record_reply_binary(size: int) -> None:
@@ -83,6 +88,9 @@ def _record_reply_edit(text: str) -> None:
         return
     observability.increment_metric("reply_edit_count")
     observability.increment_metric("reply_bytes", len(text.encode("utf-8")))
+    # See _record_reply_output's comment — keep the same key set complete.
+    observability.increment_metric("reply_message_count", 0)
+    observability.increment_metric("reply_chunk_count", 0)
 
 
 def _request_metrics() -> dict[str, int]:
