@@ -135,12 +135,9 @@ context_builder.build_context 目前先建立 scenario task 與 memory task；�
 
 ### 5.1 Provider async contract
 
-app/providers/__init__.py 更新為 async interface：
+app/providers/__init__.py 更新為純 async interface：
 
-    ToolExecutor = Callable[
-        [str, dict],
-        dict | Awaitable[dict],
-    ]
+    ToolExecutor = Callable[[str, dict], Awaitable[dict]]
 
     async def run_conversation(
         static_system: str,
@@ -160,12 +157,23 @@ app/providers/__init__.py 更新為 async interface：
 - 每一次 model request 維持 iteration、usage、retry、error observability。
 - 沒有 function call 時回傳文字；有 function call 時依原順序執行 tool，
   再送下一輪。
-- tool callback 同時支援目前的同步 callback 與未來 async callback：
-  - synchronous callback 以 asyncio.to_thread 執行，避免同步 DB/embedding
-    阻塞 event loop。
-  - awaitable callback 直接 await。
-  - asyncio.CancelledError 不得被一般 exception fallback 吞掉。
+- tool callback 統一是 awaitable callback，不在 provider adapter 內判斷
+  sync/async，也不讓 provider 自己建立 worker thread。
+- 同一個 provider iteration 收到多個 function/tool call 時，必須依 SDK 回傳
+  順序逐一執行：
+
+      for tool_name, tool_input in tool_uses:
+          result = await execute_tool(tool_name, tool_input)
+          messages.append(result)
+
+  不得把有 state side effect 的 tool 交給 gather 或平行 task。
+- `asyncio.CancelledError` 不得被一般 exception fallback 吞掉。
 - provider 不自行建立新的 event loop。
+
+目前的同步 game/tool implementation 由呼叫端改成 async adapter；需要執行同步
+DB 或 CPU work 時，adapter 在邊界處使用 `asyncio.to_thread()`，而 provider
+只看見 awaitable contract。這使 tool 的執行順序與 cancellation policy 集中
+在 tool gateway，而不是散落在三個 SDK adapter。
 
 ### 5.2 各 SDK 的 async adapter
 
@@ -178,6 +186,29 @@ app/providers/__init__.py 更新為 async interface：
 目前環境已確認 OpenAI 3.16.2、Anthropic 1.7.0、google-genai 2.24.0
 均提供對應 async surface。實作不可只把 def 改成 async def，必須使用各
 SDK 的 async client。
+
+#### Client lifecycle
+
+每個 provider 採「目前 event loop scoped 的 lazy singleton」，不是每次
+`run_conversation()` 新建 client，也不是跨 event loop 共用 client：
+
+- 第一次使用時由 `get_async_client()` 建立。
+- 同一個 Discord event loop 復用 connection pool。
+- client initialization 以 loop-local lock 保護，避免同時第一個 request
+  建立兩個 client。
+- test fixture 可以明確 reset/close，不把上一個 test loop 的 client 帶進下一個。
+- bot 啟動時可在 `on_ready` 做一次 client warm-up；`on_ready` 可能因 reconnect
+  重複觸發，因此 warm-up 必須是 idempotent。
+- 不使用 `on_closed` 作為唯一 hook；discord.py 的 reconnect/disconnect event
+  不等於 process shutdown。`discord_bot` 改用 async bot runner，在
+  `try/finally` 中呼叫所有 provider 的 `shutdown_async_clients()`，確保
+  graceful stop、exception stop 都會 cleanup。
+- shutdown 必須等待 in-flight provider request 的有限 grace period；超過
+  grace 才 close transport，並留下 structured shutdown log。
+
+這個 singleton 只在單一 asyncio event loop 內使用，因此不需要 thread lock；
+但 initialization 與 shutdown 仍要由同一個 loop 執行。若未來支援多 bot
+process，每個 process 各自擁有一組 client。
 
 OpenAI unsupported parameter fallback（例如 temperature）仍要保留，但
 conversation 版本的 _create_response 必須以 await 呼叫 API 及
@@ -205,6 +236,72 @@ asyncio.sleep。同步 vision/text extraction 路徑必須與 async helper 分�
   status=timeout 完成 observability。
 - 保留 unsupported parameter 不消耗 connection retry budget 的行為。
 
+#### Cancellation hierarchy
+
+timeout 的單位必須清楚區分，不能把 Discord API send timeout 當成整個 turn
+timeout：
+
+    request/turn cancellation
+    +-- provider API attempt: LLM_REQUEST_TIMEOUT_SECONDS
+    +-- embedding API attempt: EMBEDDING_REQUEST_TIMEOUT_SECONDS
+    +-- tool execution: TOOL_EXECUTION_TIMEOUT_SECONDS
+    +-- each Discord send/edit: DISCORD_REQUEST_TIMEOUT_SECONDS
+
+採兩種 cancellation policy：
+
+- `IMMEDIATE`：只適用於純 read-only、沒有外部 side effect 的工作；取消後
+  立即傳播，不發送回應。
+- `GRACEFUL`：適用於會修改 GroupState、pending check、combat 或 SQLite 的
+  tool。取消 provider request 後，已開始的 mutation 必須先完成或進入明確的
+  recovery path，再釋放 conversation lock；不能用 `asyncio.wait_for()` 直接
+  切斷 `to_thread()`，因為它只停止等待 coroutine，底層 thread 仍可能繼續
+  修改 state。
+
+因此 tool adapter 必須回報 `completed`、`timeout`、`cancelled` 或
+`partial` 狀態。read-only tool timeout 可以回傳：
+
+    {"ok": False, "error": "timeout", "partial": True}
+
+state-mutating tool 不在 mutation 尚未結束時回傳 partial 成功；若 graceful
+shutdown grace period（建議 5 秒）內仍無法完成，記錄 error、保留 recovery
+marker，並不送出誤導玩家的正常結果。LLM 被 cancellation 時不發送正常回應；
+Discord 層只在確定可以安全說明狀態時送出 timeout/cancelled 提示。
+
+#### Timeout fallback
+
+各層 fallback 採固定規則，不以模糊的全域 quality 分數判斷：
+
+| Operation | timeout action | retry policy |
+|---|---|---|
+| embedding query/index batch | 使用 BM25 或既有 index；標記 source fallback | timeout 不 retry |
+| LLM request | 只對尚未收到 response 的 transient timeout 依 budget retry | 最多一次 timeout retry，仍受總 retry budget 限制 |
+| Discord send/edit/followup | 保留 state 結果，標記 delivery failure | 預設不 retry，避免重複訊息 |
+| read-only tool | 回傳 partial timeout error 給模型 | 不重試 tool 本身 |
+| state-mutating tool | graceful 完成或 recovery | 不做盲目重試，必須依 event/idempotency 判斷 |
+
+#### Provider exception classification
+
+在 retry layer 統一成 provider-neutral 分類，SDK 只負責把原始 exception
+交給 classifier：
+
+    ProviderError = RATE_LIMITED | TIMEOUT | TRANSIENT_SERVER |
+                    | AUTH_FAILED | MODEL_NOT_FOUND | INVALID_REQUEST
+                    | UNKNOWN
+
+`RATE_LIMITED`、`TIMEOUT`、`TRANSIENT_SERVER` 才可依 retry budget 重試；
+`AUTH_FAILED`、`MODEL_NOT_FOUND`、`INVALID_REQUEST` 立即終止。classifier 可
+同時使用 SDK exception type、status code、Retry-After 與 exception name，
+但不得把一般 4xx 或 unsupported parameter 誤判為 transient。
+
+#### Request identity across retries
+
+retry 不建立新的 logical request id。優先沿用
+`observability.current_context().get("request_id")`；若沒有 request context，
+由 provider boundary 建立一次 id，並把它傳給所有 attempts。每個 attempt
+只增加 `attempt` 欄位；`llm.turn`、外層 request_id 與 logical provider
+request id 維持不變。這樣 log 可以把 retry 視為同一個 logical operation，
+又能區分每次實際 HTTP attempt。
+
 建議新增或整理的環境變數：
 
 | 變數 | 建議預設 | 用途 |
@@ -212,6 +309,7 @@ asyncio.sleep。同步 vision/text extraction 路徑必須與 async helper 分�
 | LLM_REQUEST_TIMEOUT_SECONDS | 60 | 單次 provider request，非整個 turn |
 | EMBEDDING_REQUEST_TIMEOUT_SECONDS | 20 | 單次 embedding request |
 | DISCORD_REQUEST_TIMEOUT_SECONDS | 10 | 單次 Discord send/edit/followup |
+| TOOL_EXECUTION_TIMEOUT_SECONDS | 30 | read-only tool 的單次執行上限；mutation 另走 graceful policy |
 | MAX_TOOL_ITERATIONS | 現有 8 | 將目前 hard-coded guard 變成可調設定 |
 
 第一次 implementation 不直接降低 KEEPER_REASONING_EFFORT 或 MAX_LOG_TURNS
@@ -220,9 +318,9 @@ asyncio.sleep。同步 vision/text extraction 路徑必須與 async helper 分�
 
 ### 5.4 Keeper 與 Agent async 邊界
 
-新增 async 版本的 legacy Keeper boundary：
+legacy Keeper boundary 直接改成 async public API：
 
-    async def run_turn_async(...) -> tuple[str, list[...], list[...]]:
+    async def run_turn(...) -> tuple[str, list[...], list[...]]:
         ...
 
 並將 _run_turn_impl 及其 provider call 改為 async。production call sites
@@ -236,10 +334,11 @@ asyncio.sleep。同步 vision/text extraction 路徑必須與 async helper 分�
 - app/commands/handlers/system.py
 - 其他直接呼叫 keeper.run_turn 的 async command path
 
-keeper.run_turn 是否保留為同步 compatibility wrapper，取決於測試與外部
-import contract。若保留，wrapper 只能在沒有 running event loop 的同步 caller
-使用 asyncio.run(run_turn_async(...))；async caller 不得透過它重新建立 loop。
-這個 wrapper 不得被 production Discord path 使用。
+不保留同步 `keeper.run_turn()` wrapper。這是明確的 breaking internal API
+migration：所有 production caller、測試 fake/provider 與直接 import 都改成
+await keeper.run_turn(...)。不在 async function 內用 asyncio.run()，也不保留
+一條會重新把 provider 包回 worker thread 的診斷路徑；需要診斷時使用 async
+test runner 或 standalone async benchmark。
 
 Keeper state/tool 語意必須維持：
 
@@ -265,6 +364,23 @@ Keeper state/tool 語意必須維持：
 5. KEEPER_REASONING_EFFORT 只做 A/B benchmark，不在 migration commit
    中偷偷變更。若之後選 low 或 minimal，另有設定變更與劇情品質測試。
 
+#### Context budget priority matrix
+
+Token 緊張時不直接對完整 prompt 做任意字串切片，而是依可恢復性與遊戲
+正確性採固定優先順序：
+
+| 優先級 | Context source | 建議 budget 參考 | 超量處理 |
+|---|---|---:|---|
+| 0 | system rules、active state、mechanic facts | 保留 | 不截斷；這些是正確性硬需求 |
+| 1 | RAG results | 30% | 先移除低分/較舊結果；需要時可重新查詢 |
+| 2 | history / campaign context | 50% | 先保留最近 turn，再依既有 summary/memory RAG 收縮 |
+| 3 | scenario text | 20% | 最後才依頁面/章節邊界截斷，不能切半個結構化區塊 |
+
+這些百分比是 context budget 的調整基準，不是把 30/50/20 直接乘在每個
+字串上。每次截斷要記錄 source、原始/保留 token 或字元數、原因；若 RAG
+結果已不存在，Keeper 仍可透過既有 search tool refetch。scenario 的重要
+規則與目前 state 不受這個 optional budget 影響。
+
 ### 5.6 RAG、embedding cache 與預熱
 
 #### 保留的現有能力
@@ -282,18 +398,37 @@ context_builder.build_context 改為明確的 gather 流程：
                        +-- asyncio.gather(..., return_exceptions=True)
     memory task -------+
                        |
-                       +-- 成功：組出兩份 context
-                       +-- 單側失敗：記錄 fallback，另一側照常使用
+                       +-- 以每個 source 的 status 組出 context
+                       +-- 單側失敗：保留另一側結果
+                       +-- 雙側失敗/timeout：空 RAG context，LLM 照常執行
                        +-- cancellation：取消尚未完成的 peer task
 
 這不是宣稱現況完全串行；現況已用 create_task 做部分重疊。本次補的是可
 測試且明確的同步點、timeout、取消和 exception isolation。
+
+不採用任意的 `quality < 0.5` threshold：BM25、cosine、empty result 與
+fallback result 沒有可跨 source 比較的共同品質尺度。每個 source 回報
+`success`、`empty`、`fallback`、`timeout`、`error` 或 `cancelled`；只有
+`success` 且有結果時才注入該 source，其他 status 只進 observability。
+雙側都不可用時不向玩家假稱有檢索結果，也不因 RAG optional failure 直接
+丟棄整個 LLM turn。
 
 Embedding API 若在 async context 使用，提供 async embedding boundary；BM25
 與 JSON/index 操作仍可留在 asyncio.to_thread，避免同步 CPU/DB 阻塞 Discord
 event loop。Scenario import/reparse 完成後可建立 background prewarm task，
 讓第一個玩家 turn 不必承擔 scenario index embedding cold start；prewarm
 失敗不得阻擋 scenario usable 狀態，下一次 query 仍可 lazy fallback。
+
+Prewarm policy：
+
+- `SCENARIO_RAG_PREWARM_ENABLED=true` 時才啟用，預設沿用目前 lazy behavior，
+  以避免部署升級時突然增加 embedding API 費用。
+- `SCENARIO_RAG_PREWARM_MAX_CONCURRENT=1`，以 semaphore 限制同時 index build。
+- priority 為 low：玩家 request 優先；同一 conversation 正在處理 request 時，
+  prewarm 可以延後或取消，不能搶占 conversation lock。
+- bot shutdown 取消尚未開始的 prewarm，等待已開始的 embedding batch 進入
+  timeout/recovery；不新增 psutil 依賴，也不以不可靠的固定 OOM MB threshold
+  作為 correctness gate。
 
 ### 5.7 Discord output 與使用者體感
 
@@ -309,6 +444,9 @@ event loop。Scenario import/reparse 完成後可建立 background prewarm task�
 - 所有 Discord send/edit/followup 以 DISCORD_REQUEST_TIMEOUT_SECONDS 包住；
   timeout 記錄 status=timeout 或 discord.reply.failed，不讓一個 background
   button posting 失敗中斷其他 pending button。
+- 這個 timeout 只限制單次 Discord API operation，不取消正在進行的 LLM turn；
+  若 LLM 已完成但 Discord 發送 timeout，state result 仍保留，delivery failure
+  必須可由 log/metrics 辨識，不能重新執行整個遊戲 turn。
 - 保留 reply_message_count 與 reply_edit_count 分離，避免 duplicate keyword
   error 再發生。
 
@@ -326,17 +464,18 @@ async 化不得將 coroutine、SDK response object 或 traceback 寫入 state.lo
 每次外部操作至少要能辨識：
 
 - request_id、conversation_id、turn_id
-- provider、model、agent、iteration
+- provider、model、agent、iteration、logical provider request id、attempt
 - duration_ms、status、timeout_ms
 - retry attempt、backoff、error type
 - input/output/cached/reasoning token（provider 能提供時）
 - RAG rag_kind、cache state、candidate/result count
 - Discord reply/edit/chunk/bytes
 
-新增 async boundary 不得重複產生 turn span：
+新增 async boundary 不得重複產生 turn span；retry attempt 要沿用外層
+request_id/turn_id，只增加 attempt，不建立新的 logical request：
 
 - Agentic pipeline 一個 agent 一個 llm.turn。
-- legacy run_turn_async 一個 Keeper turn 一個 llm.turn。
+- legacy run_turn 一個 Keeper turn 一個 llm.turn。
 - provider 每一個 API iteration 一個 llm.request。
 - retry 不把同一個 logical request 誤記成新 turn。
 
@@ -346,11 +485,15 @@ async 化不得將 coroutine、SDK response object 或 traceback 寫入 state.lo
 
 - 三個 run_conversation 都是 coroutine function。
 - fake async client 的文字、一次/多次 tool call 結果與 iteration 順序和舊版一致。
-- sync execute_tool 會被安全 offload；async execute_tool 會被 await。
+- provider 只接受 awaitable execute_tool；tool gateway 對同步 DB/CPU adapter
+  的 offload 與 state-mutating 順序有獨立測試。
 - unsupported parameter fallback 維持原行為。
 - async transient retry 使用 asyncio.sleep，不呼叫 time.sleep。
 - timeout 產生正確 structured event；cancellation 不 retry、不吞例外。
-- client cleanup 在成功、API error、timeout、cancelled 四條路徑都執行。
+- client singleton 在同一 event loop 復用；不同 loop/test 不共用；cleanup 在
+  成功、API error、timeout、cancelled 四條路徑都執行。
+- ProviderError classification 對 rate limit、timeout、5xx、auth、model
+  missing、一般 4xx 具有明確 retry/non-retry 結果。
 
 ### 8.2 Agent/legacy flow
 
@@ -359,8 +502,8 @@ async 化不得將 coroutine、SDK response object 或 traceback 寫入 state.lo
 - llm.turn / llm.request lifecycle 完整且不重複。
 - OpenAI previous response id、KP canonical/OOC persistence regression tests。
 - 既有 state mutation、tool order、Luck、combat、sudo 測試全部通過。
-- 若保留 sync keeper.run_turn wrapper，補 no-running-loop compatibility test，
-  並確保 running-loop caller 不會錯誤重入。
+- keeper.run_turn 只提供 async API；所有既有 sync test 改為 async test runner，
+  不新增 asyncio.run compatibility wrapper。
 
 ### 8.3 RAG/embedding
 
@@ -370,6 +513,10 @@ async 化不得將 coroutine、SDK response object 或 traceback 寫入 state.lo
 - query embedding cache 命中時不再呼叫 API。
 - scenario index memory/disk cache、prewarm 成功/失敗、lazy rebuild 有測試。
 - active combat 仍不啟動 proactive RAG。
+- source status 為 empty/fallback/timeout/error/cancelled 時，不注入虛假的
+  RAG context；雙側失敗仍能繼續正常 LLM turn。
+- context budget overflow 依 rules/state、RAG、history、scenario 的矩陣測試，
+  不在任意字元位置切斷 JSON 或結構化 state。
 
 ### 8.4 Discord
 
@@ -402,16 +549,46 @@ commit 才調整 prompt/RAG/timeout 等效能設定，避免一次變更無法�
 compatibility wrapper 診斷；production async path 不得永久退回
 asyncio.to_thread(provider.run_conversation) 而不記錄原因。
 
-## 10. 待審閱決策
+## 10. 審閱決策與目前採用方案
 
-1. 是否同意 provider、legacy Keeper boundary、retry、RAG gather、Discord
-   timeout 一次納入同一個 feature，或先拆成兩個 PR？
-2. LLM 60 秒、embedding 20 秒、Discord 10 秒的 timeout 是否符合部署環境？
-3. 是否只把 MAX_TOOL_ITERATIONS 變成 env knob、維持 default 8，還是經
-   benchmark 後另調低 default？
-4. 是否允許 scenario import/reparse 建立 background embedding prewarm？這會
-   把部分成本從第一個玩家 turn 移到上傳/背景 maintenance，但會增加
-   background task 與 shutdown cleanup 複雜度。
-5. KEEPER_REASONING_EFFORT 是否只做報告，還是本次另提供 A/B 設定範例？
-   本 spec 預設不改 production default。
+以下是依本次 review 補齊的提案；其中前三項是 implementation gate，必須在
+開始寫 runtime code 前確認：
 
+### 高優先級 gate
+
+1. Tool contract：採「方案 A」，provider 只接受 awaitable ToolExecutor，
+   同一 iteration 的多個 tool call 嚴格依 SDK 回傳順序逐一 await；不平行執行
+   state-mutating tools。
+2. Client lifecycle：採 event-loop scoped lazy singleton + loop-local init lock，
+   `on_ready` warm-up 必須 idempotent；用 bot runner 的 `try/finally` 做 shutdown，
+   不把 reconnect 的 `on_disconnect` 或不存在/不適合的 `on_closed` 當 shutdown hook。
+3. Cancellation：provider HTTP、retry sleep、read-only tool 可 immediate cancel；
+   state-mutating tool 採 graceful policy，先完成 mutation 或 recovery，再釋放
+   lock。`wait_for(to_thread(...))` 不可直接切斷 mutation。
+
+### 中優先級決策
+
+4. Timeout fallback：embedding timeout 立即 BM25-only、不 retry；LLM timeout
+   最多一次 transient retry；Discord operation timeout 預設不 retry，避免重複訊息。
+5. RAG failure isolation：不採任意 quality score threshold，改用每個 source 的
+   deterministic status；一側成功就使用，一側失敗不丟另一側，雙側失敗則空
+   RAG context 但照常執行 LLM，並記錄 degraded event。
+6. Request identity：retry 使用同一個外層 request_id/turn_id/logical provider
+   request id，只增加 attempt 欄位，不為每次 retry 建立新 logical id。
+7. Provider error classification：rate limit、timeout、5xx 才依 bounded budget
+   retry；auth/model-not-found/一般 4xx 立即終止。
+
+### 低優先級決策
+
+8. Context budget：以 system rules/active state 為硬保留；optional budget 參考
+   為 RAG 30%、history 50%、scenario 20%，超量時依可恢復性處理，不任意切字串。
+9. Sync wrapper：採完全移除方案；keeper.run_turn 直接成為 async API，production
+   與測試不保留同步 wrapper。
+10. Prewarm：可選開關，預設維持 lazy；啟用後 concurrency=1、低優先級、可取消，
+    不新增 psutil/OOM threshold correctness dependency。
+
+仍維持兩項不在本次預設變更的調參決策：
+
+- KEEPER_REASONING_EFFORT 仍為 medium，先做 A/B benchmark。
+- MAX_TOOL_ITERATIONS 變成 env knob，但 default 仍為 8；是否調低另以流程測試
+  與 benchmark 決定。
