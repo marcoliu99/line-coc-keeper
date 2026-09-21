@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -114,6 +116,95 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.payload["rag_status"], "fallback")
         self.assertEqual(message.payload["memory_context"], "")
         self.assertEqual(message.payload["memory_status"], "fallback")
+
+    async def test_proactive_rag_does_not_inject_query_embedding_fallback_context(self):
+        from app import memory_rag, scenario_rag
+        from app.agents import context_builder
+
+        index = type("Index", (), {"chunks": [1], "has_embeddings": True, "index_cache": "memory"})()
+
+        def scenario_search(_index, _query, *, top_k, metrics):
+            del top_k
+            metrics["query_embedding_status"] = "fallback"
+            return [{"page": 1, "text": "BM25 fallback"}]
+
+        def memory_search(_group_id, _query, *, metrics):
+            metrics["has_embeddings"] = True
+            metrics["query_embedding_status"] = "fallback"
+            return [{"label": "old", "text": "BM25 fallback"}]
+
+        with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(scenario_rag, "get_index", return_value=index), \
+                patch.object(scenario_rag, "search", side_effect=scenario_search), \
+                patch.object(scenario_rag, "format_results", return_value="scenario fallback"), \
+                patch.object(memory_rag, "search_memory", side_effect=memory_search), \
+                patch.object(memory_rag, "format_results", return_value="memory fallback"):
+            state = self._state()
+            state.characters["u1"] = Character(name="P1", owner_id="u1")
+            message = await context_builder.build_context(
+                state=state, user_id="u1", display_name="P1", text="hi",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertEqual(message.payload["rag_context"], "")
+        self.assertEqual(message.payload["rag_status"], "fallback")
+        self.assertEqual(message.payload["memory_context"], "")
+        self.assertEqual(message.payload["memory_status"], "fallback")
+
+    async def test_rag_timeout_observes_shielded_worker_until_it_finishes(self):
+        from app import memory_rag, scenario_rag
+        from app.agents import context_builder
+
+        started = threading.Event()
+        released = threading.Event()
+
+        def slow_search(*_args, **_kwargs):
+            started.set()
+            released.wait(timeout=1)
+            return []
+
+        with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(context_builder, "EMBEDDING_REQUEST_TIMEOUT_SECONDS", 0.001), \
+                patch.object(scenario_rag, "get_index", return_value="fake-index"), \
+                patch.object(scenario_rag, "search", side_effect=slow_search), \
+                patch.object(memory_rag, "search_memory", return_value=[]):
+            message = await context_builder.build_context(
+                state=self._state(), user_id="u1", display_name="P1", text="hi",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertTrue(await asyncio.to_thread(started.wait, 1))
+        self.assertEqual(message.payload["rag_status"], "timeout")
+        released.set()
+        await asyncio.sleep(0.02)
+
+    async def test_build_context_cancellation_propagates_and_observes_worker(self):
+        from app import memory_rag, scenario_rag
+        from app.agents import context_builder
+
+        started = threading.Event()
+        released = threading.Event()
+
+        def blocking_search(*_args, **_kwargs):
+            started.set()
+            released.wait(timeout=1)
+            return []
+
+        with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(scenario_rag, "get_index", return_value="fake-index"), \
+                patch.object(scenario_rag, "search", side_effect=blocking_search), \
+                patch.object(memory_rag, "search_memory", return_value=[]):
+            task = asyncio.create_task(context_builder.build_context(
+                state=self._state(), user_id="u1", display_name="P1", text="hi",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            ))
+            self.assertTrue(await asyncio.to_thread(started.wait, 1))
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        released.set()
+        await asyncio.sleep(0.02)
 
     async def test_proactive_rag_empty_results_are_not_formatted_into_prompt(self):
         from app import memory_rag, scenario_rag

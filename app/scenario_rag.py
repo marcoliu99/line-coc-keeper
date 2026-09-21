@@ -404,7 +404,13 @@ def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, id
     return score
 
 
-def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
+def search(
+    index: ScenarioIndex,
+    query: str,
+    top_k: int = 5,
+    *,
+    metrics: dict[str, object] | None = None,
+) -> list[dict]:
     """Returns up to top_k {"page": int, "text": str, "score": float} results,
     highest-scoring first. An empty/no-match query returns an empty list
     rather than an arbitrary top_k — callers should treat that as "nothing
@@ -433,6 +439,9 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     keyword match is trusted regardless of what the embedding model thinks."""
     query_tokens = _tokenize(query)
     if not query_tokens:
+        if metrics is not None:
+            metrics["query_embedding_status"] = "empty"
+            metrics["result_count"] = 0
         return []
 
     idf_cache = _idf_cache(index, query_tokens)
@@ -440,8 +449,13 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     matched = [c for c in index.chunks if bm25_raw[id(c)] > 0]
 
     if not index.has_embeddings:
+        if metrics is not None:
+            metrics["query_embedding_status"] = "not_used"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        if metrics is not None:
+            metrics["result_count"] = len(results)
+        return results
 
     def _embed_query_once() -> list[float] | None:
         result = _embed_texts([query], rag_kind="scenario")
@@ -452,8 +466,15 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         # Embeddings worked at index time but the query-time call just failed
         # (transient error, key revoked mid-session, ...) — degrade to BM25
         # for this one search rather than returning nothing.
+        if metrics is not None:
+            metrics["query_embedding_status"] = "fallback"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        if metrics is not None:
+            metrics["result_count"] = len(results)
+        return results
+    if metrics is not None:
+        metrics["query_embedding_status"] = "success"
     query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
@@ -478,7 +499,10 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         score = weight * cos + (1 - weight) * bm25_norm
         combined.append((score, c))
     combined.sort(key=lambda sc: -sc[0])
-    return [{"page": c.page, "text": c.text, "score": s} for s, c in combined[:top_k]]
+    results = [{"page": c.page, "text": c.text, "score": s} for s, c in combined[:top_k]]
+    if metrics is not None:
+        metrics["result_count"] = len(results)
+    return results
 
 
 def format_results(results: list[dict]) -> str:

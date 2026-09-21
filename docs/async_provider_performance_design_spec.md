@@ -6,12 +6,13 @@
 - 工作分支：feature/async-provider-performance
 - 分支基準：origin/main_v2
 - 目前基準 commit：fe02e69b9e534b6939c27f7f3e05e05e153807a4
-- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..d1d909b`
-- implementation checkpoint：`d1d909b`（`fix: close async provider performance review gaps`）
+- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..working-tree`
+- 前一個 implementation checkpoint：`d1d909b`（`fix: close async provider performance review gaps`）
+- 本輪 review-fix checkpoint：待 commit；完成後必須把本行改成實際 commit hash。
 - 遠端分支已建立並推送：origin/feature/async-provider-performance
 - 本次 changeset 範圍是從 main tree 的 `fe02e69` 接續到 `d1d909b`；下次若 `main_v2` 有新 commit，先記錄新的起點，再繼續讀 patch/更新本段範圍。
 - 若 main_v2 在 PR 前有新 commit，必須重新 fetch、對齊並記錄新的 changeset 範圍。
-- 實作狀態：已完成 provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle、取消 recovery marker、request identity 與回歸測試。ruff、mypy、compileall、pytest 與 pytest-cov 已通過；benchmark 仍屬部署前的效能驗證工作，PR 前仍須重新對齊 `main_v2`。
+- 實作狀態：已完成 provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle、取消 recovery marker、request identity 與本輪 provider lifecycle/RAG fallback/cancellation/shutdown review fixes。ruff、mypy、compileall、pytest 與 pytest-cov 必須在本輪 commit 後重新執行；benchmark 仍屬部署前的效能驗證工作，PR 前仍須重新對齊 `main_v2`。
 
 ## 1. 背景與問題
 
@@ -160,10 +161,11 @@ context_builder.build_context 目前先建立 scenario task 與 memory task；�
           +-- mutation cancellation -- graceful wait
                                       +-- timeout -> durable GroupState marker
 
-每個 provider client 是目前 event loop 的 lazy singleton；Discord bot runner 的
-`try/finally` 會先取消 prewarm、再等待 provider in-flight request 的 grace period
-並關閉三個 async client。同步 vision/text extraction API 仍維持既有 compatibility
-contract，沒有混入 conversation coroutine。
+每個 provider client 是目前 event loop 的 lazy singleton；client 與自己的 in-flight
+counter 綁在同一個 lifecycle state。Discord bot runner 的巢狀 `try/finally` 會
+保證即使 Discord `close()` 失敗，仍先取消/等待 prewarm，再等待 provider in-flight
+request 的 grace period 並關閉三個 async client。同步 vision/text extraction API
+仍維持既有 compatibility contract，沒有混入 conversation coroutine。
 
 ## 5. 設計
 
@@ -228,8 +230,8 @@ SDK 的 async client。
 
 - 第一次使用時由 `get_async_client()` 建立。
 - 同一個 Discord event loop 復用 connection pool。
-- client initialization 以 loop-local lock 保護，避免同時第一個 request
-  建立兩個 client。
+- client initialization 以 lifecycle state 保護，避免同一個 request scope 看到
+  已被 shutdown/reset 的 client。
 - test fixture 可以明確 reset/close，不把上一個 test loop 的 client 帶進下一個。
 - bot 啟動時可在 `on_ready` 做一次 client warm-up；`on_ready` 可能因 reconnect
   重複觸發，因此 warm-up 必須是 idempotent。
@@ -237,11 +239,21 @@ SDK 的 async client。
   不等於 process shutdown。`discord_bot` 改用 async bot runner，在
   `try/finally` 中呼叫所有 provider 的 `shutdown_async_clients()`，確保
   graceful stop、exception stop 都會 cleanup。
-- shutdown 必須等待 in-flight provider request 的有限 grace period；超過
-  grace 才 close transport，並留下 structured shutdown log。
+- `app/providers/client_lifecycle.py` 將 client、owner、loop、in-flight counter
+  與 closing state 綁在一起；request scope 以一次不可分割的 acquire 登記
+  in-flight，避免 get client 與 shutdown 之間出現未登記 request。
+- shutdown 會建立 barrier，阻擋新的 acquire；先等待 state 的 in-flight counter
+  降為 0，超過 grace 才 close transport，並留下 structured shutdown log。關閉
+  過程本身使用 shielded cleanup，呼叫端 cancellation 不會遺漏 transport。
+- event loop 切換時先 retire 舊 state、等待其 request grace period，再建立新 loop
+  的 client；不跨 loop 共用 `asyncio.Lock`/`asyncio.Condition`。舊 state 的
+  counter 不會被新 loop 重置。
+- Gemini 若 `genai.Client().aio` 是獨立 facade，會同時關閉 aio facade 與 owner；
+  facade 與 owner 是同一物件時只關閉一次。
 
-這個 singleton 只在單一 asyncio event loop 內使用，因此不需要 thread lock；
-但 initialization 與 shutdown 仍要由同一個 loop 執行。若未來支援多 bot
+正常 production 仍只有一個 Discord asyncio event loop；lifecycle 另外以短暫的
+thread condition 保護跨 loop 的 state transition，因此測試與 loop replacement
+不會把一個 loop 的 asyncio primitive 拿到另一個 loop 使用。若未來支援多 bot
 process，每個 process 各自擁有一組 client。
 
 OpenAI unsupported parameter fallback（例如 temperature）仍要保留，但
@@ -301,7 +313,8 @@ state-mutating tool 不在 mutation 尚未結束時回傳 partial 成功；若 g
 shutdown grace period（建議 5 秒）內仍無法完成，記錄 error、保留 recovery
 marker，並不送出誤導玩家的正常結果。marker 只保存 tool name、輸入摘要 hash、
 marker id、UTC timestamp 與 `recovery_required` 狀態，不保存任意 tool input。
-LLM 被 cancellation 時不發送正常回應；
+`observability.span()` 對 `asyncio.CancelledError` 另記錄 `<operation>.cancelled`
+與 `status=cancelled`，再原樣 re-raise；LLM 被 cancellation 時不發送正常回應；
 Discord 層只在確定可以安全說明狀態時送出 timeout/cancelled 提示。
 
 read-only tool 若已進入同步 worker，timeout/cancel 不會假裝停止底層 thread；
@@ -447,7 +460,17 @@ context_builder.build_context 改為明確的 gather 流程：
                        +-- cancellation：取消尚未完成的 peer task
 
 這不是宣稱現況完全串行；現況已用 create_task 做部分重疊。本次補的是可
-測試且明確的同步點、timeout、取消和 exception isolation。
+測試且明確的同步點、timeout、取消和 exception isolation。每個 RAG search
+另外回報 `query_embedding_status`：`success`、`fallback`、`not_used` 或
+`empty`。BM25 query fallback 仍保留給明確 search tool，但 proactive
+context_builder 只接受 semantic query 成功的結果；query embedding failure
+不會把 BM25 結果誤注入 LLM context。
+
+RAG 的 `asyncio.to_thread()` worker 在 timeout/cancellation 時以
+`asyncio.shield()` 保護，不假裝停止底層同步工作；呼叫端立即得到 timeout 或
+取消，但 worker 由 background-task observer 消費最終結果/例外，避免 late
+exception 或 unobserved task warning。parent cancellation 從 gather 結果重新
+傳播，不會被 `return_exceptions=True` 轉成普通的 optional source error。
 
 不採用任意的 `quality < 0.5` threshold：BM25、cosine、empty result 與
 fallback result 沒有可跨 source 比較的共同品質尺度。每個 source 回報
@@ -541,7 +564,8 @@ request_id/turn_id，只增加 attempt，不建立新的 logical request：
 - async transient retry 使用 asyncio.sleep，不呼叫 time.sleep。
 - timeout 產生正確 structured event；cancellation 不 retry、不吞例外。
 - client singleton 在同一 event loop 復用；不同 loop/test 不共用；cleanup 在
-  成功、API error、timeout、cancelled 四條路徑都執行。
+  成功、API error、timeout、cancelled 四條路徑都執行；shutdown barrier 會等待
+  active request，loop switch 會 close 舊 client，Gemini 會 close aio/owner。
 - ProviderError classification 對 rate limit、timeout、5xx、auth、model
   missing、一般 4xx 具有明確 retry/non-retry 結果。
 
@@ -567,6 +591,10 @@ request_id/turn_id，只增加 attempt，不建立新的 logical request：
 - active combat 仍不啟動 proactive RAG。
 - source status 為 empty/fallback/timeout/error/cancelled 時，不注入虛假的
   RAG context；雙側失敗仍能繼續正常 LLM turn。
+- query embedding failure 產生 `query_embedding_status=fallback` 且 proactive
+  scenario/memory context 保持空白；BM25 仍可供明確 search tool 使用。
+- RAG timeout 後底層 worker 可完成且被 observer 消費；parent build cancellation
+  會 re-raise，不會被 gather 的 `return_exceptions=True` 吞掉。
 - context budget overflow 依 rules/state、RAG、history、scenario 的矩陣測試，
   不在任意字元位置切斷 JSON 或結構化 state。
 
@@ -617,9 +645,12 @@ asyncio.to_thread(provider.run_conversation) 而不記錄原因。
 1. Tool contract：採「方案 A」，provider 只接受 awaitable ToolExecutor，
    同一 iteration 的多個 tool call 嚴格依 SDK 回傳順序逐一 await；不平行執行
    state-mutating tools。
-2. Client lifecycle：採 event-loop scoped lazy singleton + loop-local init lock，
-   `on_ready` warm-up 必須 idempotent；用 bot runner 的 `try/finally` 做 shutdown，
-   不把 reconnect 的 `on_disconnect` 或不存在/不適合的 `on_closed` 當 shutdown hook。
+2. Client lifecycle：採 event-loop scoped lazy singleton + lifecycle state/短暫
+   thread condition；request acquire 與 in-flight counter 原子化，shutdown barrier
+   阻擋新 request 並 bounded drain；`on_ready` warm-up 必須 idempotent；用 bot
+   runner 的巢狀 `try/finally` 做 shutdown，即使 Discord close 失敗也會清理
+   prewarm/provider，不把 reconnect 的 `on_disconnect` 或不存在/不適合的
+   `on_closed` 當 shutdown hook。
 3. Cancellation：provider HTTP、retry sleep、read-only tool 可 immediate cancel；
    state-mutating tool 採 graceful policy，先完成 mutation 或 recovery，再釋放
    lock。`wait_for(to_thread(...))` 不可直接切斷 mutation。
@@ -629,8 +660,9 @@ asyncio.to_thread(provider.run_conversation) 而不記錄原因。
 4. Timeout fallback：embedding timeout 立即 BM25-only、不 retry；LLM timeout
    最多一次 transient retry；Discord operation timeout 預設不 retry，避免重複訊息。
 5. RAG failure isolation：不採任意 quality score threshold，改用每個 source 的
-   deterministic status；一側成功就使用，一側失敗不丟另一側，雙側失敗則空
-   RAG context 但照常執行 LLM，並記錄 degraded event。
+   deterministic status 與 query embedding status；一側成功就使用，一側失敗不
+   丟另一側，BM25 query fallback 不進 proactive context，雙側失敗則空 RAG
+   context 但照常執行 LLM，並記錄 degraded event。
 6. Request identity：retry 使用同一個外層 request_id/turn_id/logical provider
    request id，只增加 attempt 欄位，不為每次 retry 建立新 logical id。
 7. Provider error classification：rate limit、timeout、5xx 才依 bounded budget
@@ -644,6 +676,16 @@ asyncio.to_thread(provider.run_conversation) 而不記錄原因。
    與測試不保留同步 wrapper。
 10. Prewarm：可選開關，預設維持 lazy；啟用後 concurrency=1、低優先級、可取消，
     不新增 psutil/OOM threshold correctness dependency。
+
+### 本輪 review-fix 落地項目
+
+11. Provider lifecycle：補上跨 loop state isolation、shutdown barrier、active
+    request drain、shielded cleanup、Gemini owner/facade 雙重 close。
+12. RAG：補上 query embedding status contract；proactive context 不接受 query
+    embedding failure 的 BM25 結果；timeout/cancel 的 to_thread worker 交由
+    observer 管理，parent cancellation 重新傳播。
+13. Observability/shutdown：`CancelledError` 產生明確 cancelled span；bot
+    runner 使用 nested finally 保證 cleanup chain。
 
 仍維持兩項不在本次預設變更的調參決策：
 

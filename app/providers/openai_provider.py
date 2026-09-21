@@ -36,15 +36,12 @@ from app.config import (
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
 from app.providers import retry
+from app.providers.client_lifecycle import AsyncClientLifecycle
 
 # Populated per-process the first time the API rejects one of these — see
 # _create_response.
 _unsupported_params: set[str] = set()
-_async_client = None
-_async_client_loop = None
-_async_client_lock = None
-_async_inflight = 0
-_async_condition = None
+_client_lifecycle = AsyncClientLifecycle("openai", PROVIDER_SHUTDOWN_GRACE_SECONDS)
 
 
 async def _close_client(client) -> None:
@@ -56,67 +53,32 @@ async def _close_client(client) -> None:
         await result
 
 
+def _create_client():
+    import openai
+
+    return openai.AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=0)
+
+
+async def _close_lifecycle_client(client, _owner) -> None:
+    await _close_client(client)
+
+
 async def get_async_client():
     """Return an event-loop-scoped, lazily initialized OpenAI client."""
-    global _async_client, _async_client_loop, _async_client_lock, _async_condition
-    loop = asyncio.get_running_loop()
-    if _async_client is not None and _async_client_loop is loop:
-        return _async_client
-    if _async_client_lock is None or _async_client_loop is not loop:
-        _async_client_lock = asyncio.Lock()
-    async with _async_client_lock:
-        if _async_client is not None and _async_client_loop is loop:
-            return _async_client
-        if _async_client is not None:
-            await _close_client(_async_client)
-        _async_condition = None
-        import openai
-
-        _async_client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=0)
-        _async_client_loop = loop
-        return _async_client
+    return await _client_lifecycle.get_or_create(_create_client, _close_lifecycle_client)
 
 
 async def shutdown_async_client() -> None:
-    global _async_client, _async_client_loop, _async_client_lock, _async_condition
-    condition = _async_condition
-    if condition is not None:
-        try:
-            async def wait_for_requests() -> None:
-                async with condition:
-                    await condition.wait_for(lambda: _async_inflight == 0)
-
-            await asyncio.wait_for(wait_for_requests(), PROVIDER_SHUTDOWN_GRACE_SECONDS)
-        except asyncio.TimeoutError:
-            observability.event(
-                "provider.shutdown.degraded", level=logging.ERROR,
-                provider="openai", status="timeout",
-                timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
-            )
-    client = _async_client
-    _async_client = None
-    _async_client_loop = None
-    _async_client_lock = None
-    _async_condition = None
-    if client is not None:
-        await _close_client(client)
+    await _client_lifecycle.shutdown(_close_lifecycle_client)
 
 
 @contextlib.asynccontextmanager
 async def _request_scope():
-    global _async_inflight, _async_condition
-    loop = asyncio.get_running_loop()
-    if _async_condition is None or _async_client_loop is not loop:
-        _async_condition = asyncio.Condition()
-    condition = _async_condition
-    async with condition:
-        _async_inflight += 1
+    client, state = await _client_lifecycle.acquire(_create_client, _close_lifecycle_client)
     try:
-        yield
+        yield client
     finally:
-        async with condition:
-            _async_inflight -= 1
-            condition.notify_all()
+        _client_lifecycle.release(state)
 
 
 def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
@@ -291,7 +253,7 @@ def _is_invalid_previous_response_id_error(
     return any(marker in message for marker in response_missing_markers)
 
 
-async def _create_response_async(client, *, _log_iteration: int | None = None, **kwargs):
+async def _create_response_async(_client=None, *, _log_iteration: int | None = None, **kwargs):
     """Async Responses API helper preserving unsupported-parameter fallback."""
     for param in _unsupported_params:
         kwargs.pop(param, None)
@@ -312,11 +274,11 @@ async def _create_response_async(client, *, _log_iteration: int | None = None, *
             metrics=request_metrics,
         ):
                 try:
-                    async def request_once():
-                        async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
-                            return await client.responses.create(**kwargs)
+                    async with _request_scope() as client:
+                        async def request_once():
+                            async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                                return await client.responses.create(**kwargs)
 
-                    async with _request_scope():
                         response = await retry.async_call_with_retry(
                             request_once, provider="openai", operation="responses.create",
                             request_id=logical_request_id,
@@ -359,8 +321,6 @@ async def run_conversation(
         return "（尚未設定 OPENAI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
 
     import openai
-
-    client = await get_async_client()
 
     # Responses API tools are flat (no nested "function" wrapper, unlike Chat
     # Completions) — see FunctionToolParam in the SDK's type stubs.
@@ -405,7 +365,7 @@ async def run_conversation(
         if active_previous_response_id:
             request_kwargs["previous_response_id"] = active_previous_response_id
         try:
-            response = await _create_response_async(client, _log_iteration=iteration, **request_kwargs)
+            response = await _create_response_async(_log_iteration=iteration, **request_kwargs)
         except Exception as exc:
             if (
                 iteration == 0
@@ -422,7 +382,7 @@ async def run_conversation(
                 active_previous_response_id = None
                 request_kwargs["input"] = input_items
                 request_kwargs.pop("previous_response_id", None)
-                response = await _create_response_async(client, _log_iteration=iteration, **request_kwargs)
+                response = await _create_response_async(_log_iteration=iteration, **request_kwargs)
             else:
                 raise
 

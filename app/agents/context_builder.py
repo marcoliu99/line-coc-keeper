@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from app import memory_rag, observability, scenario_rag
+from app import async_utils, memory_rag, observability, scenario_rag
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
@@ -81,7 +81,7 @@ async def build_context(
                 metrics=metrics,
             ):
                 index = scenario_rag.get_index(conversation_id, state.scenario_text)
-                results = scenario_rag.search(index, text, top_k=SCENARIO_RAG_TOP_K)
+                results = scenario_rag.search(index, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics)
                 metrics.update(
                     candidate_count=len(getattr(index, "chunks", ())),
                     result_count=len(results),
@@ -90,7 +90,10 @@ async def build_context(
                 )
                 if not results:
                     return "", "empty"
-                if metrics.get("has_embeddings") is False:
+                if (
+                    metrics.get("has_embeddings") is False
+                    or metrics.get("query_embedding_status") == "fallback"
+                ):
                     # BM25 remains available to the explicit search tool, but
                     # proactive prompt context only accepts a successful
                     # semantic source.
@@ -123,7 +126,10 @@ async def build_context(
                 results = memory_rag.search_memory(conversation_id, text, metrics=metrics)
                 if not results:
                     return "", "empty"
-                if metrics.get("has_embeddings") is False:
+                if (
+                    metrics.get("has_embeddings") is False
+                    or metrics.get("query_embedding_status") == "fallback"
+                ):
                     return "", "fallback"
                 return memory_rag.format_results(results), "success"
 
@@ -133,13 +139,15 @@ async def build_context(
         if task is None:
             return "", "disabled"
         try:
-            result = await asyncio.wait_for(task, EMBEDDING_REQUEST_TIMEOUT_SECONDS)
+            result = await asyncio.wait_for(
+                asyncio.shield(task), EMBEDDING_REQUEST_TIMEOUT_SECONDS
+            )
         except asyncio.CancelledError:
-            if not task.done():
-                task.cancel()
+            async_utils.observe_background_task(task, operation=f"rag.{rag_kind}")
             observability.event("rag.source.cancelled", level=logging.WARNING, rag_kind=rag_kind)
             raise
         except asyncio.TimeoutError:
+            async_utils.observe_background_task(task, operation=f"rag.{rag_kind}")
             observability.event(
                 "rag.source.degraded", level=logging.WARNING,
                 rag_kind=rag_kind, status="timeout",
@@ -191,6 +199,9 @@ async def build_context(
             )
             if not isinstance(result, BaseException)
         }
+        for result in collected:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
         rag_context, rag_status = result_by_kind.get("scenario", ("", "error"))
         memory_context, memory_status = result_by_kind.get("memory", ("", "error"))
 

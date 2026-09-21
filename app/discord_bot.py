@@ -1105,10 +1105,14 @@ async def _run_bot() -> None:
     try:
         await client.start(DISCORD_BOT_TOKEN)
     finally:
-        if not client.is_closed():
-            await client.close()
-        await scenario_rag.shutdown_prewarm()
-        await providers.shutdown_async_clients()
+        try:
+            if not client.is_closed():
+                await client.close()
+        finally:
+            try:
+                await scenario_rag.shutdown_prewarm()
+            finally:
+                await providers.shutdown_async_clients()
 
 
 def main() -> None:

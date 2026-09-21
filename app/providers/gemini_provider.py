@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -27,13 +26,9 @@ from app.config import (
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
 from app.providers import retry
+from app.providers.client_lifecycle import AsyncClientLifecycle
 
-_async_client = None
-_async_client_owner = None
-_async_client_loop = None
-_async_client_lock = None
-_async_inflight = 0
-_async_condition = None
+_client_lifecycle = AsyncClientLifecycle("gemini", PROVIDER_SHUTDOWN_GRACE_SECONDS)
 
 
 async def _close_client(client) -> None:
@@ -45,73 +40,36 @@ async def _close_client(client) -> None:
         await result
 
 
+def _create_client():
+    from google import genai
+
+    owner = genai.Client(api_key=GEMINI_API_KEY)
+    return getattr(owner, "aio", owner), owner
+
+
+async def _close_lifecycle_client(client, owner) -> None:
+    if client is not None:
+        await _close_client(client)
+    if owner is not None and owner is not client:
+        await _close_client(owner)
+
+
 async def get_async_client():
     """Return the Google GenAI async surface scoped to the current loop."""
-    global _async_client, _async_client_owner, _async_client_loop, _async_client_lock, _async_condition
-    loop = asyncio.get_running_loop()
-    if _async_client is not None and _async_client_loop is loop:
-        return _async_client
-    if _async_client_lock is None or _async_client_loop is not loop:
-        _async_client_lock = asyncio.Lock()
-    async with _async_client_lock:
-        if _async_client is not None and _async_client_loop is loop:
-            return _async_client
-        if _async_client is not None:
-            await _close_client(_async_client)
-        _async_condition = None
-        from google import genai
-
-        owner = genai.Client(api_key=GEMINI_API_KEY)
-        _async_client_owner = owner
-        _async_client = getattr(owner, "aio", owner)
-        _async_client_loop = loop
-        return _async_client
+    return await _client_lifecycle.get_or_create(_create_client, _close_lifecycle_client)
 
 
 async def shutdown_async_client() -> None:
-    global _async_client, _async_client_owner, _async_client_loop, _async_client_lock, _async_condition
-    condition = _async_condition
-    if condition is not None:
-        try:
-            async def wait_for_requests() -> None:
-                async with condition:
-                    await condition.wait_for(lambda: _async_inflight == 0)
-
-            await asyncio.wait_for(wait_for_requests(), PROVIDER_SHUTDOWN_GRACE_SECONDS)
-        except asyncio.TimeoutError:
-            observability.event(
-                "provider.shutdown.degraded", level=logging.ERROR,
-                provider="gemini", status="timeout",
-                timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
-            )
-    client = _async_client
-    owner = _async_client_owner
-    _async_client = None
-    _async_client_owner = None
-    _async_client_loop = None
-    _async_client_lock = None
-    _async_condition = None
-    if client is not None:
-        await _close_client(client)
-    elif owner is not None:
-        await _close_client(owner)
+    await _client_lifecycle.shutdown(_close_lifecycle_client)
 
 
 @contextlib.asynccontextmanager
 async def _request_scope():
-    global _async_inflight, _async_condition
-    loop = asyncio.get_running_loop()
-    if _async_condition is None or _async_client_loop is not loop:
-        _async_condition = asyncio.Condition()
-    condition = _async_condition
-    async with condition:
-        _async_inflight += 1
+    client, state = await _client_lifecycle.acquire(_create_client, _close_lifecycle_client)
     try:
-        yield
+        yield client
     finally:
-        async with condition:
-            _async_inflight -= 1
-            condition.notify_all()
+        _client_lifecycle.release(state)
 
 
 async def run_conversation(
@@ -127,8 +85,6 @@ async def run_conversation(
         return "（尚未設定 GEMINI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
 
     from google.genai import types
-
-    client = await get_async_client()
 
     function_declarations = [
         types.FunctionDeclaration(
@@ -167,13 +123,13 @@ async def run_conversation(
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
             metrics=request_metrics,
         ):
-            async def request_once():
-                async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
-                    return await client.models.generate_content(
-                        model=GEMINI_MODEL, contents=contents, config=config
-                    )
+            async with _request_scope() as client:
+                async def request_once():
+                    async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                        return await client.models.generate_content(
+                            model=GEMINI_MODEL, contents=contents, config=config
+                        )
 
-            async with _request_scope():
                 response = await retry.async_call_with_retry(
                     request_once, provider="gemini", operation="generate_content",
                     request_id=logical_request_id,

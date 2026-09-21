@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import importlib.util
+import logging
 import sys
 import types
 import unittest
@@ -45,6 +46,17 @@ class LoggingCompletionTests(unittest.TestCase):
             self.assertIsNone(observability.llm_reasoning_effort("anthropic"))
             self.assertIsNone(observability.llm_reasoning_effort("gemini"))
 
+    def test_cancelled_span_is_recorded_as_cancelled_not_failed(self):
+        with patch.object(config, "LOG_ENABLED", True), \
+                self.assertLogs("app.observability", level="WARNING") as captured, \
+                self.assertRaises(asyncio.CancelledError), \
+                observability.span("test.operation", level=logging.WARNING):
+            raise asyncio.CancelledError
+
+        cancelled = [record for record in captured.records if record.getMessage() == "test.operation.cancelled"]
+        self.assertEqual(len(cancelled), 1)
+        self.assertEqual(cancelled[0].structured_event["status"], "cancelled")
+
     def test_memory_index_metrics_report_empty_rebuilt_and_cached(self):
         raw_chunks = [{"label": "記憶片段 #1", "text": "秘密房間有一把鑰匙"}]
         memory_rag._index_cache.clear()
@@ -67,6 +79,7 @@ class LoggingCompletionTests(unittest.TestCase):
         self.assertEqual(empty_metrics, {
             "index_cache": "empty", "candidate_count": 0,
             "has_embeddings": False, "result_count": 0,
+            "query_embedding_status": "not_used",
         })
 
     def test_incomplete_embedding_response_emits_fallback_for_memory_and_scenario(self):
@@ -350,6 +363,23 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
         self.assertEqual(metrics["reply_edit_count"], 0)
+
+    async def test_bot_shutdown_runs_all_cleanup_when_discord_close_fails(self):
+        from app import discord_bot
+
+        fake_client = SimpleNamespace(
+            start=AsyncMock(side_effect=RuntimeError("gateway failed")),
+            is_closed=lambda: False,
+            close=AsyncMock(side_effect=RuntimeError("close failed")),
+        )
+        with patch.object(discord_bot, "client", fake_client), \
+                patch.object(discord_bot.scenario_rag, "shutdown_prewarm", new_callable=AsyncMock) as shutdown_prewarm, \
+                patch.object(discord_bot.providers, "shutdown_async_clients", new_callable=AsyncMock) as shutdown_providers, \
+                self.assertRaises(RuntimeError):
+            await discord_bot._run_bot()
+
+        shutdown_prewarm.assert_awaited_once()
+        shutdown_providers.assert_awaited_once()
 
     async def test_request_metrics_have_stable_zero_defaults(self):
         from app.discord_bot import _request_metrics

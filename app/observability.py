@@ -7,6 +7,7 @@ event payloads or starting timers; developers can still use normal
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import hashlib
@@ -217,6 +218,18 @@ def span(
     started = time.perf_counter()
     try:
         yield
+    except asyncio.CancelledError:
+        duration_ms = (time.perf_counter() - started) * 1000
+        event(
+            name + ".cancelled",
+            level=logging.WARNING,
+            duration_ms=duration_ms,
+            status="cancelled",
+            error_type="CancelledError",
+            slow_threshold_ms=slow_threshold_ms,
+            **merged_fields(),
+        )
+        raise
     except Exception as exc:
         duration_ms = (time.perf_counter() - started) * 1000
         event(

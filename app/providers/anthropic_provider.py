@@ -5,7 +5,6 @@ import asyncio
 import contextlib
 import inspect
 import json
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -20,12 +19,9 @@ from app.config import (
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
 from app.providers import retry
+from app.providers.client_lifecycle import AsyncClientLifecycle
 
-_async_client = None
-_async_client_loop = None
-_async_client_lock = None
-_async_inflight = 0
-_async_condition = None
+_client_lifecycle = AsyncClientLifecycle("anthropic", PROVIDER_SHUTDOWN_GRACE_SECONDS)
 
 
 async def _close_client(client) -> None:
@@ -37,67 +33,32 @@ async def _close_client(client) -> None:
         await result
 
 
+def _create_client():
+    import anthropic
+
+    return anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, max_retries=0)
+
+
+async def _close_lifecycle_client(client, _owner) -> None:
+    await _close_client(client)
+
+
 async def get_async_client():
     """Return an event-loop-scoped, lazily initialized Anthropic client."""
-    global _async_client, _async_client_loop, _async_client_lock, _async_condition
-    loop = asyncio.get_running_loop()
-    if _async_client is not None and _async_client_loop is loop:
-        return _async_client
-    if _async_client_lock is None or _async_client_loop is not loop:
-        _async_client_lock = asyncio.Lock()
-    async with _async_client_lock:
-        if _async_client is not None and _async_client_loop is loop:
-            return _async_client
-        if _async_client is not None:
-            await _close_client(_async_client)
-        _async_condition = None
-        import anthropic
-
-        _async_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, max_retries=0)
-        _async_client_loop = loop
-        return _async_client
+    return await _client_lifecycle.get_or_create(_create_client, _close_lifecycle_client)
 
 
 async def shutdown_async_client() -> None:
-    global _async_client, _async_client_loop, _async_client_lock, _async_condition
-    condition = _async_condition
-    if condition is not None:
-        try:
-            async def wait_for_requests() -> None:
-                async with condition:
-                    await condition.wait_for(lambda: _async_inflight == 0)
-
-            await asyncio.wait_for(wait_for_requests(), PROVIDER_SHUTDOWN_GRACE_SECONDS)
-        except asyncio.TimeoutError:
-            observability.event(
-                "provider.shutdown.degraded", level=logging.ERROR,
-                provider="anthropic", status="timeout",
-                timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
-            )
-    client = _async_client
-    _async_client = None
-    _async_client_loop = None
-    _async_client_lock = None
-    _async_condition = None
-    if client is not None:
-        await _close_client(client)
+    await _client_lifecycle.shutdown(_close_lifecycle_client)
 
 
 @contextlib.asynccontextmanager
 async def _request_scope():
-    global _async_inflight, _async_condition
-    loop = asyncio.get_running_loop()
-    if _async_condition is None or _async_client_loop is not loop:
-        _async_condition = asyncio.Condition()
-    condition = _async_condition
-    async with condition:
-        _async_inflight += 1
+    client, state = await _client_lifecycle.acquire(_create_client, _close_lifecycle_client)
     try:
-        yield
+        yield client
     finally:
-        async with condition:
-            _async_inflight -= 1
-            condition.notify_all()
+        _client_lifecycle.release(state)
 
 
 async def run_conversation(
@@ -111,8 +72,6 @@ async def run_conversation(
 ) -> str:
     if not ANTHROPIC_API_KEY:
         return "（尚未設定 ANTHROPIC_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
-
-    client = await get_async_client()
 
     # Cache the large/stable static system block and the (fully static) tool
     # definitions; the small per-turn dynamic block is left uncached on purpose —
@@ -156,18 +115,18 @@ async def run_conversation(
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
             metrics=request_metrics,
         ):
-            async def request_once():
-                async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
-                    return await client.messages.create(
-                        model=ANTHROPIC_MODEL,
-                        max_tokens=1024,
-                        temperature=KEEPER_TEMPERATURE,
-                        system=system_blocks,
-                        tools=anthropic_tools,
-                        messages=messages,
-                    )
+            async with _request_scope() as client:
+                async def request_once():
+                    async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                        return await client.messages.create(
+                            model=ANTHROPIC_MODEL,
+                            max_tokens=1024,
+                            temperature=KEEPER_TEMPERATURE,
+                            system=system_blocks,
+                            tools=anthropic_tools,
+                            messages=messages,
+                        )
 
-            async with _request_scope():
                 response = await retry.async_call_with_retry(
                     request_once, provider="anthropic", operation="messages.create",
                     request_id=logical_request_id,
