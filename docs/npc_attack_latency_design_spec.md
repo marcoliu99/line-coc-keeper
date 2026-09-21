@@ -476,6 +476,43 @@ test_attack_without_explicit_range_band_defaults_to_melee`（沒填
 `range_band` 時 `plan_enemy_turn` 回傳的還是 `"engaged"`，符合 schema
 description 現在承諾的行為）。
 
+#### 已修正：玩家打 NPC 這條路徑上的重複呼叫／pending check 覆蓋檢查
+
+Marco 追問「玩家打 NPC、Keeper 自己敘事判斷」這條路徑有沒有查過重複呼叫／
+lock 問題——這條路徑（`skill_check` 玩家自己的攻擊擲骰、`roll_weapon_damage`／
+`roll_impaling_damage` 算傷害、`apply_combat_damage`／`damage_combatant`
+套用傷害）之前沒有被系統性檢查過，補查了一次：
+
+- `roll_weapon_damage`／`roll_impaling_damage`：純函式，不寫 state、不用鎖，
+  重複呼叫最多是白算一次數字，沒有正確性風險。
+- `skill_check`（玩家自己出手的攻擊擲骰請求）：已經在風險 1 的
+  `_reject_if_check_already_pending` 保護範圍內，跟 NPC 打玩家共用同一套
+  守衛。
+- `apply_combat_damage`／`damage_combatant`：跟風險 2 同一類，本來就該被
+  呼叫很多次（一場戰鬥每次命中各呼叫一次），沒辦法用「擋重複呼叫」的方式
+  保護，也不需要——鎖沒有巢狀問題，各自獨立走 `_mutate_and_save_state`
+  （單一 `get_state_lock`），`_execute_tool` 同一回合內單執行緒依序執行。
+
+**查的過程中發現一個真實的漏洞，已修正**：`apply_combat_damage`
+（`app/combat.py`）內部呼叫的 `_register_major_wound_check`（COC7e 重傷
+規則，傷害達最大 HP 一半時觸發 CON 檢定）直接
+`state.pending_checks[pc.owner_id] = {...}`，完全繞過風險 1 加在
+`skill_check`／`sanity_check`／`offer_check_choice`／
+`offer_npc_attack_defense_choice` 這四個「正門」工具上的
+`_reject_if_check_already_pending` 保護。如果玩家當下剛好已經有一筆待處理
+的檢定（例如另一次 NPC 攻擊的防守選擇還沒解決），這次重傷觸發會把它靜默
+覆蓋掉——玩家原本要處理的那筆檢定連同上下文一起消失，沒有任何錯誤或警告。
+範圍很窄（要同時撞上「已有 pending check」+「這次傷害達重傷門檻」），但
+確實是個沒被防到的洞，不是這次新增的邏輯，是既有 `apply_combat_damage`
+的既有行為，只是剛好跟這次加的 pending check 保護機制打架。
+
+修正：`_register_major_wound_check` 寫入前先檢查 `pc.owner_id` 是否已經有
+pending check，有的話直接跳過（回傳 `False`，不觸發、不覆蓋），等玩家先
+處理完手上那筆再說；傷害本身照常套用，只跳過「順便登記重傷檢定」這個
+次要的 side effect。新增測試
+`tests/test_combat_cards.py::
+test_apply_combat_damage_does_not_clobber_an_existing_pending_check`。
+
 ### 記錄但暫不處理：獨立 review agent 的其他發現
 
 - **`ally:`/`enemy:` 分支目前不可達**：`plan_enemy_turn` 唯一決定目標的

@@ -683,6 +683,23 @@ class CombatCardTests(unittest.TestCase):
             "major_wound_trigger": True,
         })
 
+    def test_apply_combat_damage_does_not_clobber_an_existing_pending_check(self):
+        """A major wound's CON check is a side effect registered directly by
+        apply_combat_damage (app/combat.py), bypassing keeper.py's
+        _reject_if_check_already_pending guard on the "front door" tools —
+        without this, damage from an unrelated event landing while the
+        player still has some other check outstanding (e.g. an unresolved
+        NPC-attack defense choice) would silently overwrite it."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        state.pending_checks["u1"] = {"type": "sanity", "skill_value": 40}
+
+        result = combat.apply_combat_damage(state, "Mark", 6)
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["major_wound_triggered"])
+        self.assertEqual(state.pending_checks["u1"], {"type": "sanity", "skill_value": 40})
+
     def test_add_combat_effect_applies_fixed_damage_at_turn_start(self):
         state = self._state_with_pc()
         combat.start_combat(state)

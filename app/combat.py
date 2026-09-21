@@ -269,6 +269,16 @@ def _register_major_wound_check(state: GroupState, combatant: Combatant, final_d
         return False
     if final_damage < pc.hp_max / 2:
         return False
+    if pc.owner_id in state.pending_checks:
+        # Don't silently clobber whatever this player is already mid-way
+        # through resolving (e.g. an unresolved NPC-attack defense choice
+        # from a different event) — apply_combat_damage's own keeper.py
+        # front-door tools already refuse to overwrite a pending check
+        # (_reject_if_check_already_pending); this is the same rule applied
+        # to this side-effect write, which bypassed that guard entirely
+        # before this fix. Damage itself still lands (see the caller) —
+        # only the extra CON-check registration is skipped this time.
+        return False
     state.pending_checks[pc.owner_id] = {
         "type": "skill",
         "skill": "CON",
