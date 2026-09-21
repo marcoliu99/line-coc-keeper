@@ -103,7 +103,8 @@ def make_tool_executor(
                         asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS
                     )
                 except asyncio.TimeoutError:
-                    await keeper.record_tool_recovery_marker(state, tool_name, tool_input)
+                    async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
+                    await keeper.record_tool_recovery_marker_bounded(state, tool_name, tool_input)
                     observability.event(
                         "llm.tool.recovery_required",
                         level=logging.ERROR,

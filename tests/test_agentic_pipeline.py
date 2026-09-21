@@ -199,6 +199,26 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         await waiter
         self.assertTrue(task.done())
 
+    async def test_recovery_marker_persistence_is_bounded_and_observed(self):
+        from app import async_utils, keeper
+
+        release = asyncio.Event()
+
+        async def blocked_marker(*_args):
+            await release.wait()
+
+        with patch.object(keeper, "record_tool_recovery_marker", side_effect=blocked_marker), \
+                patch.object(keeper, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
+            started_at = time.perf_counter()
+            await keeper.record_tool_recovery_marker_bounded(
+                GroupState(group_id="marker-test"), "apply_combat_damage", {"damage": 1}
+            )
+            elapsed = time.perf_counter() - started_at
+
+        self.assertLess(elapsed, 0.5)
+        release.set()
+        await async_utils.wait_for_background_tasks(0.5)
+
     async def test_build_context_cancellation_propagates_and_observes_worker(self):
         from app import memory_rag, scenario_rag
         from app.agents import context_builder

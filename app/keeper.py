@@ -1126,6 +1126,34 @@ async def record_tool_recovery_marker(
         _logger.exception("Could not persist recovery marker for %s", tool_name)
 
 
+async def record_tool_recovery_marker_bounded(
+    state: GroupState, tool_name: str, tool_input: dict[str, Any]
+) -> None:
+    """Start marker persistence without letting it retain cancellation forever.
+
+    A timed-out mutation may still own the synchronous state lock. The marker
+    therefore runs in its own observed task: the caller waits only one grace
+    period, while the task can safely acquire the lock after the original
+    worker finishes. This keeps cancellation bounded without losing the best-
+    effort durable marker.
+    """
+    task = asyncio.create_task(record_tool_recovery_marker(state, tool_name, tool_input))
+    try:
+        await asyncio.wait_for(asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS)
+    except asyncio.TimeoutError:
+        async_utils.observe_background_task(task, operation="llm.tool.recovery_marker")
+        observability.event(
+            "llm.tool.recovery_marker_deferred",
+            level=logging.ERROR,
+            tool_name=observability.tool_name(tool_name),
+            status="timeout",
+            timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
+        )
+    except asyncio.CancelledError:
+        async_utils.observe_background_task(task, operation="llm.tool.recovery_marker")
+        raise
+
+
 def _commit_turn_result(
     state: GroupState, log_entries: list[dict[str, str]], openai_response_id: str | None = None
 ) -> None:
@@ -2588,7 +2616,8 @@ async def _run_turn_impl(
                         asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS
                     )
                 except asyncio.TimeoutError:
-                    await record_tool_recovery_marker(state, name, tool_input)
+                    async_utils.observe_background_task(task, operation=f"llm.tool:{name}")
+                    await record_tool_recovery_marker_bounded(state, name, tool_input)
                     observability.event(
                         "llm.tool.recovery_required",
                         level=logging.ERROR,

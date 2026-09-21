@@ -30,10 +30,12 @@ import asyncio
 import hashlib
 import logging
 import math
+import multiprocessing
 import re
 import time
+from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
 from app import async_utils, db, embedding_cache, observability
 from app.config import (
@@ -50,11 +52,35 @@ from app.config import (
 _logger = logging.getLogger(__name__)
 
 
+def _create_prewarm_executor() -> Executor:
+    """Create an isolated worker process that can be terminated on shutdown.
+
+    ``asyncio.to_thread`` uses the event loop's default executor. Cancelling
+    its awaiter does not stop the thread, and ``asyncio.run`` waits for that
+    executor during loop teardown. A dedicated process gives prewarm work an
+    explicit termination boundary instead.
+    """
+    return ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+    )
+
+
+def _stop_prewarm_executor(executor: Executor, *, terminate: bool) -> None:
+    if terminate and isinstance(executor, ProcessPoolExecutor):
+        terminate_workers = getattr(executor, "terminate_workers", None)
+        if callable(terminate_workers):
+            terminate_workers()
+            return
+    executor.shutdown(wait=not terminate, cancel_futures=True)
+
+
 @dataclass
 class _PrewarmLoopState:
     semaphore: asyncio.Semaphore
     tasks: set[asyncio.Task]
-    worker_tasks: set[asyncio.Task]
+    worker_tasks: set[asyncio.Future[Any]]
+    executor: Executor | None = None
 
 
 _prewarm_states: dict[asyncio.AbstractEventLoop, _PrewarmLoopState] = {}
@@ -75,33 +101,25 @@ def _prewarm_state(loop: asyncio.AbstractEventLoop) -> _PrewarmLoopState:
 async def _prewarm_index(group_id: str, scenario_text: str) -> None:
     loop = asyncio.get_running_loop()
     state = _prewarm_state(loop)
+    worker: asyncio.Future[Any] | None = None
     async with state.semaphore:
         # Yield once so a just-finished upload can send its confirmation before
         # the optional, low-priority embedding work begins.
         await asyncio.sleep(0)
         try:
             # Keep the worker shielded from cancellation of the low-priority
-            # wrapper. asyncio.to_thread cannot interrupt a synchronous HTTP
-            # call, so shutdown tracks the worker explicitly and gives it the
-            # same bounded grace period as provider requests.
-            worker = asyncio.create_task(asyncio.to_thread(get_index, group_id, scenario_text))
+            # wrapper. The dedicated process can be terminated if the index
+            # build outlives the configured shutdown grace period.
+            if state.executor is None:
+                state.executor = _create_prewarm_executor()
+            worker = loop.run_in_executor(state.executor, get_index, group_id, scenario_text)
             state.worker_tasks.add(worker)
-
-            def _consume_worker(done: asyncio.Task) -> None:
-                state.worker_tasks.discard(done)
-                if done.cancelled():
-                    return
-                # The wrapper normally awaits this task. If the wrapper is
-                # cancelled while the thread continues, consume the late
-                # exception here so loop shutdown cannot report an orphaned
-                # task. The wrapper remains responsible for the structured
-                # prewarm failure event on its normal path.
-                done.exception()
-
-            worker.add_done_callback(_consume_worker)
+            worker.add_done_callback(state.worker_tasks.discard)
             await asyncio.shield(worker)
             observability.event("rag.prewarm.completed", rag_kind="scenario", status="success")
         except asyncio.CancelledError:
+            if worker is not None:
+                async_utils.observe_background_task(worker, operation="rag.prewarm")
             observability.event("rag.prewarm.cancelled", level=logging.INFO, rag_kind="scenario")
             raise
         except Exception as exc:  # noqa: BLE001 - prewarm must never block scenario activation.
@@ -123,37 +141,55 @@ def schedule_index_prewarm(group_id: str, scenario_text: str) -> asyncio.Task | 
 
 
 async def shutdown_prewarm() -> None:
-    """Cancel wrappers and wait a bounded time for their thread workers."""
+    """Cancel wrappers and terminate a process worker beyond the grace period."""
     loop = asyncio.get_running_loop()
     state = _prewarm_states.get(loop)
     if state is None:
         return
+    executor = state.executor
+    pending: set[asyncio.Future[Any]] = set()
     try:
         tasks = tuple(state.tasks)
-        for task in tasks:
-            if not task.done():
-                task.cancel()
+        for wrapper in tasks:
+            if not wrapper.done():
+                wrapper.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         workers = tuple(state.worker_tasks)
-        if not workers:
-            return
-        done, pending = await asyncio.wait(workers, timeout=PROVIDER_SHUTDOWN_GRACE_SECONDS)
-        for task in done:
-            # Consume a late worker exception even if the wrapper was cancelled.
-            async_utils.observe_background_task(task, operation="rag.prewarm")
-        if pending:
-            observability.event(
-                "rag.prewarm.shutdown_degraded",
-                level=logging.ERROR,
-                rag_kind="scenario",
-                status="timeout",
-                timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
-            )
-            for task in pending:
-                async_utils.observe_background_task(task, operation="rag.prewarm")
+        if workers:
+            try:
+                done_workers, pending_workers = await asyncio.wait(
+                    workers, timeout=PROVIDER_SHUTDOWN_GRACE_SECONDS
+                )
+            except asyncio.CancelledError:
+                pending = {worker for worker in workers if not worker.done()}
+                for worker in pending:
+                    async_utils.observe_background_task(worker, operation="rag.prewarm")
+                raise
+            pending = pending_workers
+            for worker in done_workers:
+                async_utils.observe_background_task(worker, operation="rag.prewarm")
+            if pending:
+                observability.event(
+                    "rag.prewarm.shutdown_degraded",
+                    level=logging.ERROR,
+                    rag_kind="scenario",
+                    status="timeout",
+                    timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
+                )
+                for worker in pending:
+                    async_utils.observe_background_task(worker, operation="rag.prewarm")
+    except asyncio.CancelledError:
+        pending = {worker for worker in state.worker_tasks if not worker.done()}
+        for worker in pending:
+            async_utils.observe_background_task(worker, operation="rag.prewarm")
+        raise
     finally:
-        _prewarm_states.pop(loop, None)
+        try:
+            if executor is not None:
+                _stop_prewarm_executor(executor, terminate=bool(pending))
+        finally:
+            _prewarm_states.pop(loop, None)
 
 
 def _log_group_id(group_id: str) -> str:

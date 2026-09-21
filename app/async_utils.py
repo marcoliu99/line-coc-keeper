@@ -8,10 +8,11 @@ from typing import Any
 from app import observability
 
 _logger = logging.getLogger(__name__)
-_background_tasks: dict[asyncio.AbstractEventLoop, set[asyncio.Task[Any]]] = {}
+_background_tasks: dict[asyncio.AbstractEventLoop, set[asyncio.Future[Any]]] = {}
+_observed_tasks: set[asyncio.Future[Any]] = set()
 
 
-def observe_background_task(task: asyncio.Task[Any], *, operation: str) -> None:
+def observe_background_task(task: asyncio.Future[Any], *, operation: str) -> None:
     """Consume a deliberately abandoned task's eventual result.
 
     ``asyncio.wait_for(asyncio.shield(...))`` lets a synchronous worker finish
@@ -20,11 +21,15 @@ def observe_background_task(task: asyncio.Task[Any], *, operation: str) -> None:
     warning.
     """
 
+    if task in _observed_tasks:
+        return
+    _observed_tasks.add(task)
     loop = task.get_loop()
     registry = _background_tasks.setdefault(loop, set())
     registry.add(task)
 
-    def _consume(done: asyncio.Task[Any]) -> None:
+    def _consume(done: asyncio.Future[Any]) -> None:
+        _observed_tasks.discard(done)
         registry.discard(done)
         if not registry:
             _background_tasks.pop(loop, None)

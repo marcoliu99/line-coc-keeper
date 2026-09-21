@@ -4,10 +4,15 @@ import threading
 import time
 import types
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app import memory_rag, scenario_rag
+
+
+def _sleep_in_worker(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 class EmbeddingClientTimeoutTests(unittest.TestCase):
@@ -51,6 +56,20 @@ class EmbeddingClientTimeoutTests(unittest.TestCase):
 
 
 class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_default_prewarm_executor_can_terminate_a_stuck_worker(self):
+        executor = scenario_rag._create_prewarm_executor()
+        try:
+            loop = asyncio.get_running_loop()
+            worker = loop.run_in_executor(executor, _sleep_in_worker, 10.0)
+            _, pending = await asyncio.wait({worker}, timeout=0.05)
+            self.assertIn(worker, pending)
+            scenario_rag._stop_prewarm_executor(executor, terminate=True)
+            await asyncio.wait({worker}, timeout=0.5)
+            self.assertTrue(worker.done())
+            self.assertTrue(worker.cancelled() or worker.exception() is not None)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     async def test_shutdown_waits_boundedly_for_previously_started_worker(self):
         started = threading.Event()
         release = threading.Event()
@@ -59,7 +78,9 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
             started.set()
             release.wait(timeout=2)
 
-        with patch.object(scenario_rag, "SCENARIO_RAG_ENABLED", True), \
+        with ThreadPoolExecutor(max_workers=1) as executor, \
+                patch.object(scenario_rag, "_create_prewarm_executor", return_value=executor), \
+                patch.object(scenario_rag, "SCENARIO_RAG_ENABLED", True), \
                 patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", True), \
                 patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_MAX_CONCURRENT", 1), \
                 patch.object(scenario_rag, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001), \
