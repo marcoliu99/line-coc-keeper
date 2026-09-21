@@ -40,8 +40,27 @@ class _SudoDenied(Exception):
         self.reason = reason
 
 
-def _sudo_marker(state, subject_user_id: str) -> str:
-    character = state.get_active_character(subject_user_id)
+def sudo_public_marker(state, parsed: sudo_policy.ParsedSudoCommand) -> str:
+    """Return the public marker for one sudo command.
+
+    ``switch`` may start with no active character, or may switch away from
+    the currently active one. Resolve its destination first so the marker
+    names the character that the command actually operates on; all other
+    commands use the current active character and fall back to ``玩家`` for
+    read-only commands without a character.
+    """
+    character = None
+    if parsed.command == "switch":
+        requested_name = " ".join(parsed.args).strip()
+        matches = [
+            candidate
+            for candidate in state.characters_for_owner(parsed.subject_user_id)
+            if candidate.name == requested_name
+        ]
+        if len(matches) == 1:
+            character = matches[0]
+    if character is None:
+        character = state.get_active_character(parsed.subject_user_id)
     character_name = character.name if character is not None else "玩家"
     return f"【KP Assistant 代操作：{character_name}】"
 
@@ -168,7 +187,7 @@ async def _dispatch_sudo_locked(
         mode="kp_sudo",
         command=parsed.command,
     )
-    marker = _sudo_marker(state, parsed.subject_user_id)
+    marker = sudo_public_marker(state, parsed)
     marker_reply = _sudo_reply(reply, marker)
     marker_image = _sudo_image(reply, marker, send_image)
 

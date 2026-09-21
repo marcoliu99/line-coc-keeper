@@ -595,13 +595,17 @@ class CombatState:
     processed_timings: list[str] = field(default_factory=list)
     range_bands: dict[str, str] = field(default_factory=dict)
 
-    def retire_character(self, character_id: str) -> None:
+    def retire_character(self, character_id: str, character_name: str | None = None) -> None:
         """Remove a retired investigator from the live initiative state.
 
         Retiring a character removes its player binding, but the durable
         character history is intentionally kept in ``characters_by_id``.  A
         combat order is live state rather than history, so it must not retain
         a PC that can no longer take a turn or be selected as an enemy target.
+        Older snapshots may have PC combatants without ``character_id``; when
+        that happens the exact name is the only available identity, so all
+        matching legacy PC entries are removed conservatively rather than
+        allowing a possibly retired character to remain actionable.
         The next surviving combatant becomes current when the retired PC was
         the current turn; this avoids advancing a second time when the next
         player action is submitted.
@@ -614,6 +618,14 @@ class CombatState:
             for combatant in self.order
             if combatant.is_pc and combatant.character_id == character_id
         ]
+        if not removed and character_name:
+            removed = [
+                combatant
+                for combatant in self.order
+                if combatant.is_pc
+                and not combatant.character_id
+                and combatant.name == character_name
+            ]
         if not removed:
             return
 
@@ -940,7 +952,7 @@ class GroupState:
         # Keep a pending pregen Luck roll: only the player may roll it, and
         # clearing it here would let a later reactivation bypass that rule.
         self.characters_by_id[character.character_id] = character
-        self.combat.retire_character(character.character_id)
+        self.combat.retire_character(character.character_id, character.name)
         return character
 
     def active_characters(self) -> list[Character]:

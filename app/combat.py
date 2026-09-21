@@ -18,6 +18,7 @@ from app import dice
 from app.models import (
     ArmorRule,
     AttackRule,
+    Character,
     Combatant,
     CombatState,
     EffectState,
@@ -374,16 +375,24 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
     }
 
 
+def _character_for_combatant(state: GroupState, combatant: Combatant) -> Character | None:
+    if combatant.character_id and combatant.character_id in state.characters_by_id:
+        return state.characters_by_id[combatant.character_id]
+    # Legacy combat snapshots did not persist character_id. Only use a name
+    # fallback when it is unambiguous across current and historical sheets;
+    # retire_character() handles the mutation side conservatively when names
+    # collide, so an ambiguous stale entry is never silently rebound here.
+    matches = [character for character in state.all_characters() if character.name == combatant.name]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _is_skippable(state: GroupState, combatant: Combatant) -> bool:
     if combatant.defeated:
         return True
     if combatant.is_pc:
-        if combatant.character_id and combatant.character_id in state.characters_by_id:
-            character = state.characters_by_id[combatant.character_id]
+        character = _character_for_combatant(state, combatant)
+        if character is not None:
             return not character.active or character.away
-        pc = state.get_character_by_name(combatant.name)
-        if pc and (not pc.active or pc.away):
-            return True
     return False
 
 
@@ -1020,11 +1029,8 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
             _sync_combatant_from_card(c, card)
         skippable = _is_skippable(state, c)
         marker = "=> " if i == combat.current_index and not skippable else "   "
-        retired = c.is_pc and bool(
-            c.character_id
-            and c.character_id in state.characters_by_id
-            and not state.characters_by_id[c.character_id].active
-        )
+        character = _character_for_combatant(state, c) if c.is_pc else None
+        retired = character is not None and not character.active
         away = c.is_pc and not c.defeated and not retired and skippable
         tag = "（倒下）" if c.defeated else "（已退出）" if retired else "（暫離）" if away else ""
         side = "我方" if c.side == "pc" else "隊友" if c.side == "ally" else "敵方"

@@ -170,6 +170,23 @@ class SudoStateTests(unittest.TestCase):
         self.assertEqual([effect.id for effect in state.combat.effects], ["keep-effect"])
         self.assertEqual(state.combat.range_bands, {f"enemy:2:{survivor_id}": "near"})
 
+    def test_retire_cleans_legacy_combat_entry_without_character_id(self):
+        state = GroupState(group_id="g")
+        character = Character(name="小明", owner_id="p1")
+        state.characters["p1"] = character
+        state.set_active_character("p1", character.character_id)
+        state.combat = CombatState(
+            active=True,
+            round_number=1,
+            order=[Combatant(name="小明", dex=50, hp=10, hp_max=10, is_pc=True, side="pc")],
+            current_index=0,
+        )
+
+        state.retire_active_character("p1", "小明")
+
+        self.assertEqual(state.combat.order, [])
+        self.assertFalse(state.combat.active)
+
 
 class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
     def _state(self, *, actor_has_character: bool = False) -> GroupState:
@@ -352,6 +369,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(saved.get_active_character("p1").name, "小華")
         self.assertIn("目前使用角色已切換", reply.messages[0])
+        self.assertIn("【KP Assistant 代操作：小華】", reply.messages[0])
 
     async def test_sudo_audit_events_use_redacted_actor_and_subject_ids(self):
         state = self._state()

@@ -933,9 +933,7 @@ async def _handle_message(message: discord.Message) -> None:
         if command_parts[0].casefold() == "/coc" and len(command_parts) > 1 and command_parts[1].casefold() == "sudo":
             parsed_sudo, _ = sudo_policy.parse_sudo_command(command_parts, allow_opaque_target=False)
             if parsed_sudo is not None:
-                target = state_before.get_active_character(parsed_sudo.subject_user_id)
-                if target is not None:
-                    sudo_marker = f"【KP Assistant 代操作：{target.name}】"
+                sudo_marker = command_router.sudo_public_marker(state_before, parsed_sudo)
         try:
             is_keeper = _is_keeper_member(message.author)
             await command_router.handle_text_message(
