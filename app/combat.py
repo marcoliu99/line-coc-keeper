@@ -779,6 +779,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
                 "skill_name": attack.skill_name,
                 "skill_value": attack.skill_value,
                 "damage": attack.damage,
+                "range_band": attack.range_band,
             }],
             "private_reason": "no usable special ability; selected available attack",
             "public_hint": attack.public_description or f"{card.name} 準備攻擊。",

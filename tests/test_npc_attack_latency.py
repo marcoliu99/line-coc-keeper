@@ -129,7 +129,7 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         skill_check_mock.assert_not_called()
 
-    def test_fewer_than_two_options_returns_error_without_rolling(self):
+    def test_zero_options_returns_error_without_rolling(self):
         state = _state_with_investigator()
         with StateStorePatch(keeper) as store:
             store.put(state)
@@ -137,13 +137,41 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
                 result = keeper._execute_tool(
                     state,
                     "offer_npc_attack_defense_choice",
-                    {"investigator": "小明", "options": [{"label": "閃避", "skill": "閃避"}], "attacker_skill_value": 50},
+                    {"investigator": "小明", "options": [], "attacker_skill_value": 50},
                     [],
                     [],
                     speaker_role="player",
                 )
         self.assertFalse(result["ok"])
         skill_check_mock.assert_not_called()
+
+    def test_single_option_is_accepted_for_ranged_attacks(self):
+        """COC7e: Fight Back isn't valid against a ranged attack, so a ranged
+        attack's defense choice legitimately only has "Dodge" — one option,
+        not two. Regression guard for the P2 Codex finding on PR #43."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            fake_roll = MagicMock(roll=10, tier="regular")
+            with patch("app.keeper.dice.skill_check", return_value=fake_roll) as skill_check_mock:
+                result = keeper._execute_tool(
+                    state,
+                    "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}],
+                        "attacker_skill_value": 50,
+                    },
+                    [],
+                    [],
+                    speaker_role="player",
+                )
+            saved_state = store.store["g"]
+
+        skill_check_mock.assert_called_once()
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["options"]), 1)
+        self.assertEqual(saved_state.pending_checks["u1"]["options"], result["options"])
 
     def test_npc_skill_check_and_offer_check_choice_are_unaffected(self):
         """Regression: both original tools must keep behaving exactly as

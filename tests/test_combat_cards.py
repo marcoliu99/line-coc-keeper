@@ -160,6 +160,24 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(result["effect"]["hp_after"], 8)
         self.assertEqual(next(c for c in state.combat.order if c.is_pc).hp, 8)
 
+    def test_planned_attack_exposes_range_band_for_defense_gating(self):
+        """combat_block's prompt decides melee (Dodge+Fight Back) vs. ranged
+        (Dodge only) purely from required_rolls[0].range_band — regression
+        guard for the P2 Codex finding on PR #43 that this field was
+        missing, so every player-targeted attack silently got treated as
+        melee regardless of the attack's actual range_band."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Sniper", 60, 14, attacks=[
+            {"id": "shot", "label": "Rifle Shot", "skill_value": 50, "damage": "1D8", "range_band": "near"},
+        ])
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Sniper")
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["selected_action"], "attack")
+        self.assertEqual(plan["required_rolls"][0]["range_band"], "near")
+
     def test_resolve_enemy_attack_requires_formal_outcome(self):
         state = self._state_with_pc()
         combat.start_combat(state)

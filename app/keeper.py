@@ -222,13 +222,16 @@ TOOLS = [
     {
         "name": "offer_npc_attack_defense_choice",
         "description": (
-            "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 近戰對抗檢定的完整標準流程：閃避跟"
-            "反擊只能選一個。這個工具會直接由程式碼擲出攻擊方（NPC/怪物）這次攻擊的成功等級，"
-            "不用你自己先呼叫 npc_skill_check、也不用自己編。跟 offer_check_choice 一樣不會幫"
-            "玩家骰防守方的骰子，只記錄下選項清單，讓玩家自己選一個、用 /coc check <選項名稱> "
-            "擲骰。呼叫完之後只能敘述『被攻擊、需要在這幾個選項裡選一個』的當下場景，不能自己"
-            "選、不能自己編結果、不能自己講攻擊有沒有命中——玩家真的擲完骰後系統會自動判定。"
-            "如果只是一般多選一（不是被攻擊的防守情境），改用 offer_check_choice。"
+            "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 對抗檢定的完整標準流程。這個工具會"
+            "直接由程式碼擲出攻擊方（NPC/怪物）這次攻擊的成功等級，不用你自己先呼叫 npc_skill_check、"
+            "也不用自己編。跟 offer_check_choice 一樣不會幫玩家骰防守方的骰子，只記錄下選項清單，"
+            "讓玩家自己選一個、用 /coc check <選項名稱> 擲骰。呼叫完之後只能敘述『被攻擊、需要在這"
+            "幾個選項裡選一個』的當下場景，不能自己選、不能自己編結果、不能自己講攻擊有沒有命中——"
+            "玩家真的擲完骰後系統會自動判定。"
+            "options 要不要給『反擊』選項看攻擊距離：近戰（engaged）才能反擊，給「閃避」「反擊」"
+            "兩個選項；遠程攻擊（near/any，例如槍械、投擲武器）COC7e 規則不允許反擊，只能給"
+            "「閃避」一個選項——這種情況 options 只給一個是合法的，不要為了湊兩個選項硬塞一個假的"
+            "反擊選項。如果只是一般多選一（不是被攻擊的防守情境），改用 offer_check_choice。"
         ),
         "input_schema": {
             "type": "object",
@@ -236,8 +239,8 @@ TOOLS = [
                 "investigator": {"type": "string", "description": "調查員角色名稱"},
                 "options": {
                     "type": "array",
-                    "minItems": 2,
-                    "description": "至少兩個互斥選項",
+                    "minItems": 1,
+                    "description": "互斥選項；近戰通常是閃避+反擊兩個，遠程攻擊沒有反擊，只給閃避一個",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -754,7 +757,7 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
 
 7. KP 助手本人不是調查員，所以不要替 KP 助手自己建立角色狀態、要求 KP 助手自己做技能／SAN／Luck／戰鬥檢定、加入戰鬥順位或追蹤地圖位置。
    但是，當 KP 助手明確要求某位調查員、NPC，或符合條件的玩家進行正式遊戲流程時，應對指定對象使用已開放的 deterministic tools 建立流程，不要把主持指令誤解成「KP 本人要擲骰」。
-   例如：「請 The Tough Guy 做 SAN 1/1D4」應呼叫 sanity_check；「請 Marco 做偵查」應呼叫 skill_check；「讓他選閃避或反擊」應依正式流程先用 npc_skill_check 取得攻擊方結果，再用 offer_check_choice 讓玩家選擇並擲骰。
+   例如：「請 The Tough Guy 做 SAN 1/1D4」應呼叫 sanity_check；「請 Marco 做偵查」應呼叫 skill_check；「讓他選閃避或反擊」應呼叫 offer_npc_attack_defense_choice（近戰給閃避+反擊兩個選項，遠程攻擊只給閃避一個），不要用舊的 npc_skill_check+offer_check_choice 兩步流程。
    一般 deterministic dice resolution 現在可以使用 roll_dice，但每次都必須同時提供 purpose 與 roll_context。purpose 是人類可讀的用途文字，說明這顆骰子實際拿來做什麼；roll_context 只能是機器分類 game_resolution 或 ooc_randomizer，不要自創其他值，也不要把 purpose 當成分類。
    如果骰子是在決定傷害、正式隨機效果、已經發生事件的隨機結果，或遊戲世界內需要 authoritative randomness 的結果，使用 roll_context="game_resolution"。例如「碎玻璃割傷 Marco，骰 1d3 傷害」應呼叫 roll_dice，expression="1d3"，purpose="碎玻璃割傷 Marco 的傷害"，roll_context="game_resolution"；成功時會觸發 Dice Creates Canon，整個造成這顆骰子的 KP 主持指示會正式寫入世界歷史。
    如果骰子只是 KP 幕後挑方案、隨機選劇情方向、自己決定要用哪個 NPC 或點子，且不直接構成目前世界事實，使用 roll_context="ooc_randomizer"。例如「我幕後骰 1d6，1–3 用 NPC A，4–6 用 NPC B」應呼叫 roll_dice，expression="1d6"，purpose="幕後決定下一幕使用哪個 NPC"，roll_context="ooc_randomizer"；這顆骰子雖然真的由 deterministic tool 擲出，但不構成遊戲世界事件，不會觸發 Dice Creates Canon，該 KP turn 仍留在 OOC history。
@@ -1293,8 +1296,8 @@ def _execute_tool(
             if blocked is not None:
                 return blocked
             raw_options = tool_input.get("options") or []
-            if len(raw_options) < 2:
-                return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
+            if len(raw_options) < 1:
+                return {"ok": False, "error": "options 至少要給一個選項"}
             # Guard checked above, before rolling — this tool rolls the
             # attacker's check as a side effect, so without the guard a
             # repeat call would waste a real roll on a result nobody ever
@@ -2062,21 +2065,24 @@ DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情�
 advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
 呼叫 apply_combat_damage 或 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
-不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色在近戰中被攻擊時，防守方要在
-「閃避」跟「反擊」之間選一個（COC7e 規則），呼叫 offer_npc_attack_defense_choice 給這兩個選項讓玩家
-自己選，不要自己幫玩家決定要閃避還是反擊。這個工具會直接由程式碼擲出攻擊方（通常是 NPC）這次攻擊的
-成功等級，不用你自己先呼叫 npc_skill_check 再把結果填回去，玩家真的擲完骰後系統會自動判定攻擊有沒有
-命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出的等級誰贏。
+不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色被 NPC 攻擊時，呼叫
+offer_npc_attack_defense_choice 讓玩家自己選防守方式，不要自己幫玩家決定。options 要不要給「反擊」
+看攻擊距離（COC7e 規則，反擊只在近戰才合法）：近戰攻擊給「閃避」「反擊」兩個選項；遠程攻擊（槍械、
+投擲武器等）不能反擊，只給「閃避」一個選項，不要為了湊兩個硬塞假的反擊選項。這個工具會直接由程式碼
+擲出攻擊方（通常是 NPC）這次攻擊的成功等級，不用你自己先呼叫 npc_skill_check 再把結果填回去，玩家
+真的擲完骰後系統會自動判定攻擊有沒有命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用
+自己比較雙方骰出的等級誰贏。
 
 敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
 冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理：若是
 special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程，完成後呼叫 resolve_enemy_action
 消耗該能力次數；若是 attack，看 target_ids 裡的 ID 開頭判斷目標類型——「pc:」開頭是玩家角色，「ally:」
 開頭是沒有玩家操控的隊友 NPC，「enemy:」開頭是敵方。目標是玩家角色（pc: 開頭）時，改走上一段「玩家角色
-在近戰中被攻擊時」的規則——直接呼叫 offer_npc_attack_defense_choice，攻擊方的 attacker_skill_value
-就用這次 plan 的 required_rolls[0].skill_value，不用另外想辦法取得，也不要對這個目標呼叫
-resolve_enemy_action（玩家的防守結果出來後，命中與傷害由你在下一輪自然的 apply_combat_damage／
-damage_combatant 呼叫處理，不是由 resolve_enemy_action 處理）；目標不是玩家角色（ally: 或 enemy: 開頭
+被 NPC 攻擊時」的規則——直接呼叫 offer_npc_attack_defense_choice，攻擊方的 attacker_skill_value 就用
+這次 plan 的 required_rolls[0].skill_value，options 要不要給「反擊」看 required_rolls[0].range_band：
+engaged 給「閃避」「反擊」兩個選項，near/any 只給「閃避」一個選項；不用另外想辦法取得這些值，也不要
+對這個目標呼叫 resolve_enemy_action（玩家的防守結果出來後，命中與傷害由你在下一輪自然的
+apply_combat_damage／damage_combatant 呼叫處理，不是由 resolve_enemy_action 處理）；目標不是玩家角色（ally: 或 enemy: 開頭
 ——沒有玩家可以做防守選擇，例如隊友 NPC 或敵方陣營內鬥），才由你自己判定正式命中結果與傷害值放入
 outcome，呼叫 resolve_enemy_action 統一套用護甲與 HP 變更。plan 裡的 private_reason、敵人能力真名、
 POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，不得寫進公開回覆。公開敘事只使用 public_hint，

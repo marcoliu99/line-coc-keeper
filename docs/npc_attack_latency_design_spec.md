@@ -396,3 +396,58 @@ after_resolve = combat.plan_enemy_turn(state)                       # → attack
 被規劃／解決多個動作，已撤掉原本打算加的守衛，只留下修正後的理解記錄，沒有
 程式碼改動。全套測試 249/251 過（2 個既有無關失敗）。
 
+## 開 PR 後的審查與修正
+
+開 PR #43 後，GitHub Codex review 跟另外派的一個獨立 code review agent 都審查
+過這份改動，以下記錄發現跟處理結果：
+
+### 已修正：`offer_npc_attack_defense_choice` 沒有依攻擊距離判斷能不能「反擊」
+
+Codex（P2）指出：`plan_enemy_turn` 選到 `near`／`any`（遠程）攻擊時（`app/
+combat.py:755-760` 本來就接受這三種 range_band），combat_block prompt 卻只
+看 `target_ids` 的 `pc:` 前綴就無條件呼叫 `offer_npc_attack_defense_choice`
+給「閃避」「反擊」兩個選項——COC7e 規則反擊只在近戰才合法，遠程攻擊被誤套用
+近戰對抗語意。
+
+根因是 `plan_enemy_turn` 的 attack plan 的 `required_rolls[0]` 本來就沒有帶
+`range_band`，模型完全看不到這次攻擊是近戰還是遠程，加上工具 schema
+`options` 原本 `minItems: 2` 強制至少兩個選項，結構上就不可能只給「閃避」。
+
+修正：
+- `app/combat.py` 的 attack plan `required_rolls[0]` 加上 `range_band`
+  欄位（直接讀 `attack.range_band`，不是新邏輯）。
+- `offer_npc_attack_defense_choice` 的 `options` schema `minItems` 從 2 改
+  成 1，並在 description／combat_block prompt 明確說明：`engaged` 給
+  「閃避」「反擊」兩個選項；`near`/`any` 只給「閃避」一個選項，不要湊。
+- `_execute_tool` 的選項數檢查同步從 `< 2` 改成 `< 1`（只擋真的完全沒給
+  選項的情況）。
+- `_KP_ASSISTANT_PROMPT` 裡一段還在教模型用舊的 `npc_skill_check`+
+  `offer_check_choice` 兩步流程的範例句子（Codex 另一個 P2 發現），也一併
+  改成教模型用新的合併工具。
+- 新增測試：`tests/test_npc_attack_latency.py::
+  test_single_option_is_accepted_for_ranged_attacks`（單選項合法）、
+  `tests/test_combat_cards.py::
+  test_planned_attack_exposes_range_band_for_defense_gating`（確認
+  `range_band` 真的被帶出來）。
+
+### 記錄但暫不處理：獨立 review agent 的其他發現
+
+- **`ally:`/`enemy:` 分支目前不可達**：`plan_enemy_turn` 唯一決定目標的
+  `_choose_target`（`app/combat.py:670-690`）只會挑 `side == "pc"` 的戰鬥
+  員，所以 combat_block prompt 裡「目標不是玩家角色時自己判定命中傷害」那段
+  目前永遠不會被踩到——是 fail-safe（不會造成錯誤行為），但目前是為未來（隊
+  友 NPC 互打、敵方內鬥）預留的前瞻設計，還是應該先拿掉等真的支援了再補，
+  留給 Marco 決定，這次沒有動。
+- **pending check 沒有清除機制**：`_reject_if_check_already_pending` 把
+  「重複呼叫覆蓋」風險換成「一個被遺忘的 pending check 永久卡住該角色」的
+  新風險（沒有 KP 端的強制清除指令）。記錄成已知限制，沒有實作新指令，留待
+  之後需要時再處理。
+- **`_reject_if_check_already_pending` 跟 `/coc check` 解析用不同的鎖**：
+  守衛檢查的 `state` 快照跟玩家解 `/coc check` 走的鎖不是同一把
+  （`get_keeper_turn_lock` vs `get_state_lock`），理論上有一個很窄的競態
+  窗口會讓 Keeper 誤判「還有待處理的檢定」而拒絕新呼叫；不會造成資料損毀
+  （失敗是拒絕，不是覆蓋），窗口窄，記錄下來但沒有修。
+- 两個 DRY／端到端測試的加分項建議（`offer_check_choice` 跟
+  `offer_npc_attack_defense_choice` 的選項轉換邏輯重複、缺一個真正串 `/coc
+  check` 的端到端測試）——留待後續，不影響這次合併。
+
