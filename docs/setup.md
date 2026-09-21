@@ -18,6 +18,12 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+若要使用 pytest、coverage 或效能 profiler，另外安裝開發工具：
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 至少設定：
 
 ```dotenv
@@ -61,6 +67,25 @@ python3 -m app.discord_bot
 ./scripts/start_bot.sh discord
 ./scripts/bot_status.sh
 ./scripts/stop_bot.sh <instance>
+```
+
+一般啟動不會啟用 profiler。需要分析時，在 `.env` 或啟動 command 的環境變數中明確
+指定唯一的 `BOT_PROFILER` 值：
+
+```bash
+BOT_PROFILER=pyinstrument ./scripts/start_bot.sh discord --name profile-async
+BOT_PROFILER=py-spy ./scripts/start_bot.sh discord --name profile-live
+```
+
+可用值為 `off`、`pyinstrument`、`py-spy`。profile artifact 會放在該 instance 的
+`.runtime/bots/` 下，`bot_status.sh` 也會顯示路徑；工具未安裝或 profiler 無法 attach
+時，script 會失敗並清理剛啟動的 bot，不會默默降級成未 profiling 啟動。
+
+pytest 與 coverage：
+
+```bash
+python -m pytest
+python -m pytest --cov=app --cov-report=term-missing
 ```
 
 每個 instance 都有獨立 manifest 與 log。清理資料前請先確認腳本列出的 allowlist：

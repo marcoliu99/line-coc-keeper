@@ -19,11 +19,11 @@ from uuid import uuid4
 from app import config
 
 _logger = logging.getLogger(__name__)
-_CONTEXT: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
-    "coc_log_context", default={}
+_CONTEXT: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "coc_log_context", default=None
 )
-_METRICS: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
-    "coc_log_metrics", default={}
+_METRICS: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
+    "coc_log_metrics", default=None
 )
 _NULLABLE_EVENT_FIELDS = frozenset({
     "reasoning_effort", "input_tokens", "cached_input_tokens",
@@ -48,18 +48,23 @@ def _safe_identifier(value: str | None) -> str | None:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
 
 
+def safe_identifier(value: str | None) -> str | None:
+    """Return the configured redacted form for an identifier-bearing field."""
+    return _safe_identifier(value)
+
+
 def current_context() -> dict[str, str]:
     """Return a copy so callers cannot mutate the context shared by a task."""
-    return dict(_CONTEXT.get())
+    return dict(_CONTEXT.get() or {})
 
 
 def current_metrics() -> dict[str, int]:
-    return dict(_METRICS.get())
+    return dict(_METRICS.get() or {})
 
 
 @contextlib.contextmanager
 def metrics_context(metrics: dict[str, int]) -> Iterator[dict[str, int]]:
-    inherited = dict(_METRICS.get())
+    inherited = dict(_METRICS.get() or {})
     inherited.update(metrics)
     token = _METRICS.set(inherited)
     try:
@@ -72,12 +77,15 @@ def metrics_context(metrics: dict[str, int]) -> Iterator[dict[str, int]]:
 def increment_metric(name: str, amount: int = 1) -> None:
     if config.LOG_ENABLED:
         values = _METRICS.get()
+        if values is None:
+            values = {}
+            _METRICS.set(values)
         values[name] = values.get(name, 0) + amount
 
 
 def mark_request_error() -> None:
     """Mark a request as handled-error while preserving its outer lifecycle."""
-    bound = dict(_CONTEXT.get())
+    bound = dict(_CONTEXT.get() or {})
     bound["request_status"] = "error"
     _CONTEXT.set(bound)
 
@@ -85,7 +93,7 @@ def mark_request_error() -> None:
 @contextlib.contextmanager
 def context(**values: str | None) -> Iterator[dict[str, str]]:
     """Temporarily add correlation values to the current async/thread context."""
-    previous = _CONTEXT.get()
+    previous = _CONTEXT.get() or {}
     merged = dict(previous)
     for key, value in values.items():
         if value is not None:
@@ -205,7 +213,7 @@ def span(
             status="error",
             error_type=type(exc).__name__,
             slow_threshold_ms=slow_threshold_ms,
-            **({**_METRICS.get(), **(metrics or {})}),
+            **({**(_METRICS.get() or {}), **(metrics or {})}),
             **fields,
         )
         raise
@@ -225,7 +233,7 @@ def span(
             duration_ms=duration_ms,
             status="success",
             slow_threshold_ms=slow_threshold_ms,
-            **({**_METRICS.get(), **(metrics or {})}),
+            **({**(_METRICS.get() or {}), **(metrics or {})}),
             **fields,
         )
 

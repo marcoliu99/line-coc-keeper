@@ -14,7 +14,8 @@ sys.modules.setdefault(
     ),
 )
 
-from app import legacy_commands as commands, locks
+from app import legacy_commands as commands
+from app import locks
 from app.commands import router
 from app.models import Character, GroupState
 

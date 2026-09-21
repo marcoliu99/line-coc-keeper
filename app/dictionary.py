@@ -23,6 +23,7 @@ from __future__ import annotations
 import threading
 
 from app import db
+
 _TABLE = "dictionary"
 _KEY = "global"
 

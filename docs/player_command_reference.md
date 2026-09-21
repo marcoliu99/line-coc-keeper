@@ -68,6 +68,16 @@
 
 顯示條件：只有已載入劇本時顯示
 
+### 退出目前角色
+
+解除目前角色的 active binding，但保留角色歷史資料。
+
+用法：
+- `/coc retire [角色名]`
+
+範例：
+- `/coc retire 小明`
+
 ### 設定關鍵背景連結
 
 設定角色最重要的人、地或物。
@@ -425,6 +435,19 @@
 
 注意：
 - 需要目前 KP Assistant 或 Discord Keeper role。
+
+### 代玩家操作 **[KP-only]**
+
+玩家突然離線時，由已脫離自己角色的 KP Assistant 代替指定玩家執行允許的 player command。
+
+用法：
+- `/coc sudo <@玩家> <command> [參數...]`
+- `/coc sudo <@玩家> away`
+- `/coc sudo <@玩家> retire [角色名]`
+
+注意：
+- KP-only：需要目前 KP Assistant 或 Discord Keeper role；不能代替玩家擲 LUCK、建立或認領角色。
+- actor 必須先脫離自己的玩家角色／建角流程。
 
 ## 其他
 

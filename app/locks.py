@@ -22,9 +22,10 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import deque
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Literal
+from typing import Literal
 
 from app import config, observability
 

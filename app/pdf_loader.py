@@ -34,17 +34,21 @@ from __future__ import annotations
 
 import concurrent.futures
 import io
+import logging
 import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Iterable, cast
+from collections.abc import Iterable
+from typing import Any, cast
 
 import pymupdf
 
 from app.config import MAX_SCENARIO_CHARS
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
+
+_logger = logging.getLogger(__name__)
 
 # Below this many extracted characters, a page that also contains an image is
 # treated as "probably graphic content" (handout/map/cover) and gets a
@@ -104,7 +108,7 @@ _VISION_PROMPT = (
 )
 
 
-def _page_has_graphic_content(page: "pymupdf.Page") -> bool:
+def _page_has_graphic_content(page: pymupdf.Page) -> bool:
     """True if this page has an embedded raster image OR at least
     _MIN_VECTOR_DRAWINGS vector drawing primitives (lines/rectangles/curves).
     The raster check alone (page.get_images()) misses a floor plan drawn
@@ -116,7 +120,7 @@ def _page_has_graphic_content(page: "pymupdf.Page") -> bool:
     return len(page.get_drawings()) >= _MIN_VECTOR_DRAWINGS
 
 
-def _render_page_png(page: "pymupdf.Page", dpi: int = 200) -> bytes:
+def _render_page_png(page: pymupdf.Page, dpi: int = 200) -> bytes:
     return page.get_pixmap(dpi=dpi).tobytes("png")
 
 
@@ -141,8 +145,8 @@ def _ocr_image(png_bytes: bytes) -> str:
                 text = pytesseract.image_to_string(image, lang=lang).strip()
                 if text:
                     return text
-        except Exception:
-            pass
+        except Exception:  # OCR libraries have version-specific failures; fallback below is intentional.
+            _logger.debug("pytesseract image OCR failed", exc_info=True)
 
     tesseract = shutil.which("tesseract")
     if not tesseract:
@@ -159,7 +163,8 @@ def _ocr_image(png_bytes: bytes) -> str:
                     text=True,
                     timeout=30,
                 )
-            except Exception:
+            except (OSError, subprocess.SubprocessError):
+                _logger.debug("tesseract subprocess failed for language %s", lang, exc_info=True)
                 continue
             text = (result.stdout or "").strip()
             if text:
@@ -205,7 +210,8 @@ def _markitdown_page_texts(pdf_bytes: bytes) -> dict[int, str] | None:
 
         result = md.convert(io.BytesIO(pdf_bytes), stream_info=StreamInfo(extension=".pdf"))
         text = result.text_content
-    except Exception:
+    except Exception:  # optional MarkItDown plugins expose heterogeneous conversion errors.
+        _logger.debug("MarkItDown page conversion failed", exc_info=True)
         return None
     if not text or not text.strip():
         return None
@@ -239,10 +245,11 @@ def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
     """
     try:
         import pymupdf4llm
-    except Exception:
+    except Exception:  # optional parser import can fail during model/plugin initialization.
         # pymupdf4llm imports pymupdf.layout, which can eagerly load an
         # optional ONNX model. A broken/missing model is a parser capability
         # problem, not a reason to reject an otherwise readable PDF.
+        _logger.debug("pymupdf4llm is unavailable", exc_info=True)
         return None
 
     doc = None
@@ -254,7 +261,8 @@ def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
             write_images=False,
             embed_images=False,
         )
-    except Exception:
+    except Exception:  # a parser failure must fall back to PyMuPDF text extraction.
+        _logger.debug("pymupdf4llm page parsing failed", exc_info=True)
         return None
     finally:
         if doc is not None:

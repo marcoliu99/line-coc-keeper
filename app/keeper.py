@@ -10,17 +10,44 @@ from __future__ import annotations
 import json
 import logging
 import unicodedata
-from datetime import datetime, timezone
+from collections.abc import Callable
 from dataclasses import dataclass, fields
-from typing import Any, Callable, Generic, TypeVar, overload
+from datetime import datetime, timezone
+from typing import Any, Generic, TypeVar, overload
 from uuid import uuid4
 
-from app import checkpoints, combat, dice, locks, memory_rag, observability, scenario_index, scenario_library, scenario_rag, scene_digest
-from app.config import LLM_PROVIDER, LOG_SLOW_OPERATION_MS, MAX_LOG_TURNS, MAX_TOOL_ITERATIONS, SCENE_DIGEST_TURN_INTERVAL, SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+from app import (
+    checkpoints,
+    combat,
+    dice,
+    locks,
+    memory_rag,
+    observability,
+    scenario_index,
+    scenario_library,
+    scenario_rag,
+    scene_digest,
+)
+from app.config import (
+    LLM_PROVIDER,
+    LOG_SLOW_OPERATION_MS,
+    MAX_LOG_TURNS,
+    MAX_TOOL_ITERATIONS,
+    SCENARIO_RAG_EMBEDDING_MODEL,
+    SCENARIO_RAG_EMBEDDING_WEIGHT,
+    SCENARIO_RAG_ENABLED,
+    SCENARIO_RAG_TOP_K,
+    SCENE_DIGEST_TURN_INTERVAL,
+)
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.repositories.group_state import (
+    clear_page_images,
+    load_state,
+    save_page_image,
+    save_state,
+)
 from app.skill_aliases import canonical_skill_name
-from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state
 
 _logger = logging.getLogger(__name__)
 
@@ -1335,11 +1362,11 @@ def _execute_tool(
                     }, should_save=False)
                 # 沒有待處理檢定，註冊新的
                 target_state.pending_checks[target_char.owner_id] = new_check
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
                     "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                     "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _register_pending_skill_check)
 
         if name == "offer_check_choice":
@@ -1372,10 +1399,10 @@ def _execute_tool(
                     }, should_save=False)
                 # 沒有待處理檢定，註冊新的
                 target_state.pending_checks[target_char.owner_id] = new_choice
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                     "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _register_pending_choice)
 
         if name == "npc_skill_check":
@@ -1442,13 +1469,13 @@ def _execute_tool(
                 new_choice["attacker_tier"] = npc_roll.tier
                 new_choice["attacker_roll"] = npc_roll.roll  # 保存掷骰結果供後續防重複檢查
                 target_state.pending_checks[target_char.owner_id] = new_choice
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                     "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
                     "note": "攻擊方檢定已經由系統擲好（tier 見上面），還沒有防守方的骰出結果——等玩家自己選"
                             "一個選項、用 /coc check <選項名稱> 擲骰後才會有結果，不要自己選、不要自己編一個、"
                             "也不要自己判定命中與否。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _roll_and_register_defense_choice)
 
         if name == "clear_pending_check":
@@ -1464,10 +1491,10 @@ def _execute_tool(
                          "note": f"{target_char.name} 本來就沒有待處理的檢定，沒有動作。"},
                         should_save=False,
                     )
-                return {
+                return _StateMutation({
                     "ok": True, "cleared": True, "investigator": target_char.name,
                     "cleared_check_type": cleared.get("type", ""),
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _clear_pending_check)
 
         if name == "sanity_check":
@@ -1484,10 +1511,10 @@ def _execute_tool(
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
                 }
-                return {
+                return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "current_san": target_char.san,
                     "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
-                }
+                }, should_save=True)
             return _mutate_and_save_state(state, _register_pending_sanity)
 
         if name == "adjust_character":
@@ -2342,19 +2369,21 @@ def run_turn(
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
     agent = "kp_assistant" if speaker_role == "kp_assistant" else "keeper"
     turn_metrics: dict[str, int] = {}
-    with observability.context(turn_id=turn_id):
-        with observability.metrics_context(turn_metrics):
-            with observability.span(
-                "llm.turn",
-                provider=LLM_PROVIDER,
-                model=model,
-                agent=agent,
-                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
-                metrics=turn_metrics,
-            ):
-                return _run_turn_impl(
-                    state, user_id, speaker_name, message_text, resolved_location, speaker_role
-                )
+    with (
+        observability.context(turn_id=turn_id),
+        observability.metrics_context(turn_metrics),
+        observability.span(
+            "llm.turn",
+            provider=LLM_PROVIDER,
+            model=model,
+            agent=agent,
+            reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+            metrics=turn_metrics,
+        ),
+    ):
+        return _run_turn_impl(
+            state, user_id, speaker_name, message_text, resolved_location, speaker_role
+        )
 
 
 def _run_turn_impl(

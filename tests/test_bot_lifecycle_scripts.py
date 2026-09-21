@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
+from scripts import bot_lifecycle
 
 ROOT = Path(__file__).parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -24,10 +25,56 @@ class BotLifecycleScriptTests(unittest.TestCase):
         env["IMPORT_DIR"] = str(temporary / "imports")
         return env
 
+    def test_profiler_is_opt_in_and_selects_a_known_tool(self):
+        self.assertIsNone(bot_lifecycle._profiler_mode({}))
+        self.assertIsNone(bot_lifecycle._profiler_mode({"BOT_PROFILER": "off"}))
+        self.assertEqual(
+            bot_lifecycle._profiler_mode({"BOT_PROFILER": "py-spy"}),
+            "py-spy",
+        )
+        self.assertEqual(
+            bot_lifecycle._profiler_mode({"BOT_PROFILER": "pyinstrument"}),
+            "pyinstrument",
+        )
+        with self.assertRaises(SystemExit):
+            bot_lifecycle._profiler_mode({"BOT_PROFILER": "unexpected"})
+
+    def test_profiler_commands_write_distinct_artifacts(self):
+        output = ROOT / ".runtime" / "bots" / "profile.pyinstrument.html"
+        command = bot_lifecycle._command(
+            "discord",
+            {"BOT_PYTHON": "python3"},
+            profiler="pyinstrument",
+            profile_output=output,
+        )
+        self.assertEqual(command[:3], ["python3", "-m", "pyinstrument"])
+        self.assertIn(str(output), command)
+        svg = output.with_suffix(".svg")
+        self.assertEqual(
+            bot_lifecycle._py_spy_command("py-spy", 123, svg),
+            ["py-spy", "record", "--pid", "123", "--output", str(svg)],
+        )
+
+    def test_start_help_documents_profiler_usage(self):
+        result = subprocess.run(
+            [str(SCRIPTS / "start_bot.sh"), "--help"],
+            cwd=ROOT,
+            env=self._env(ROOT / ".runtime" / "test-help"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("BOT_PROFILER", result.stdout)
+        self.assertIn("pyinstrument", result.stdout)
+        self.assertIn("py-spy", result.stdout)
+        self.assertIn(".runtime/bots/", result.stdout)
+
     def test_start_status_and_stop_only_selected_instance(self):
         try:
             probe = subprocess.run(
                 ["ps", "-p", str(os.getpid()), "-o", "command="],
+                check=False,
                 capture_output=True,
                 text=True,
             )
@@ -90,6 +137,7 @@ class BotLifecycleScriptTests(unittest.TestCase):
             try:
                 rejected = subprocess.run(
                     [str(SCRIPTS / "clean_bot_data.sh")], cwd=ROOT, env=env,
+                    check=False,
                     capture_output=True, text=True,
                 )
                 self.assertNotEqual(rejected.returncode, 0)

@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app import keeper
-from app import observability
-from app.domain.models import AgentMessage, MechanicResult
+from app import keeper, observability
 from app.config import LLM_PROVIDER
+from app.domain.models import AgentMessage, MechanicResult
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.services import prompt_config
 
@@ -60,18 +59,17 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         # dispatched via asyncio.to_thread like every other call site in
         # this codebase, not awaited directly.
         turn_metrics: dict[str, int] = {}
-        with observability.metrics_context(turn_metrics):
-            with observability.span(
-                "llm.turn", provider=LLM_PROVIDER,
-                model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
-                agent="narrator",
-                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
-                metrics=turn_metrics,
-            ):
-                reply_text = await asyncio.to_thread(
-                    provider.run_conversation, static_system, dynamic_system, [],
-                    history, new_message, _no_tools, 1,
-                )
+        with observability.metrics_context(turn_metrics), observability.span(
+            "llm.turn", provider=LLM_PROVIDER,
+            model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
+            agent="narrator",
+            reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+            metrics=turn_metrics,
+        ):
+            reply_text = await asyncio.to_thread(
+                provider.run_conversation, static_system, dynamic_system, [],
+                history, new_message, _no_tools, 1,
+            )
     except Exception:
         observability.event("llm.failed", level=logging.ERROR, agent="narrator", status="error")
         _logger.exception("Narrator LLM call failed")

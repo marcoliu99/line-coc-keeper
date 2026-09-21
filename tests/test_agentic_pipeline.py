@@ -19,8 +19,8 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         return state
 
     async def test_scenario_rag_skipped_when_disabled(self):
+        from app import memory_rag, scenario_rag
         from app.agents import context_builder
-        from app import scenario_rag, memory_rag
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", False), \
                 patch.object(scenario_rag, "get_index") as mock_get_index, \
@@ -34,8 +34,8 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.payload["rag_context"], "")
 
     async def test_scenario_rag_runs_when_enabled(self):
+        from app import memory_rag, scenario_rag
         from app.agents import context_builder
-        from app import scenario_rag, memory_rag
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
                 patch.object(scenario_rag, "get_index", return_value="fake-index") as mock_get_index, \

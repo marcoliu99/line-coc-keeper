@@ -29,14 +29,21 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from uuid import uuid4
 
 from app import observability
-from app.config import BACKUP_DIR, BACKUP_INTERVAL_MINUTES, BACKUP_KEEP_COUNT, DATA_DIR, DB_PATH
+from app.config import (
+    BACKUP_DIR,
+    BACKUP_INTERVAL_MINUTES,
+    BACKUP_KEEP_COUNT,
+    DATA_DIR,
+    DB_PATH,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -145,9 +152,8 @@ def transaction() -> Iterator[sqlite3.Connection]:
     set_json once per character on top of once for the group state itself —
     N+1 separate connections (each paying its own PRAGMA overhead) for what
     is logically one atomic save."""
-    with observability.span("db.transaction", operation="transaction"):
-        with _connect() as conn:
-            yield conn
+    with observability.span("db.transaction", operation="transaction"), _connect() as conn:
+        yield conn
 
 
 def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> None:

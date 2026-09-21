@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from app import config, observability
 from app.config import (
@@ -356,7 +356,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
             if item.type == "function_call" and item.name == tool["name"]:
                 return json.loads(item.arguments or "{}")
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
 
 
@@ -386,5 +386,5 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
             if item.type == "function_call" and item.name == tool["name"]:
                 return json.loads(item.arguments or "{}")
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None

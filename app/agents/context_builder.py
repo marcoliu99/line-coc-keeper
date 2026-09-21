@@ -4,10 +4,15 @@ import asyncio
 import logging
 from typing import Any
 
-from app.models import GroupState
-from app.domain.models import AgentMessage
-from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 from app import memory_rag, observability, scenario_rag
+from app.config import (
+    SCENARIO_RAG_EMBEDDING_MODEL,
+    SCENARIO_RAG_EMBEDDING_WEIGHT,
+    SCENARIO_RAG_ENABLED,
+    SCENARIO_RAG_TOP_K,
+)
+from app.domain.models import AgentMessage
+from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
 
@@ -25,7 +30,9 @@ async def build_context(
     Gathers all necessary state, history, RAG, and Memory context for the
     current turn, packaging it into an AgentMessage envelope.
     """
-    char = state.characters.get(user_id)
+    # Resolve through the active binding instead of the legacy owner index so
+    # a stale persisted mapping cannot make a sudo turn use the wrong sheet.
+    char = state.get_active_character(user_id)
 
     # 1. RAG Context (Scenario Text)
     # scenario_rag has no single query_scenario() entry point — it's a

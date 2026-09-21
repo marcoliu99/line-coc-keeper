@@ -9,7 +9,6 @@ failure), so a single network blip raised straight out of run_conversation
 and lost the player's whole turn. These tests cover the classifier, the
 shared retry helper, and each provider's actual wiring.
 """
-import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -127,27 +126,33 @@ class CallWithRetryTests(unittest.TestCase):
 
     def test_exhausts_retries_and_reraises(self):
         fn = MagicMock(side_effect=RetryableConnectionError("still broken"))
-        with patch("app.providers.retry.time.sleep"), \
-             patch("app.providers.retry.LLM_MAX_RETRIES", 2):
-            with self.assertRaises(RetryableConnectionError):
-                retry.call_with_retry(fn, provider="test", operation="op")
+        with (
+            patch("app.providers.retry.time.sleep"),
+            patch("app.providers.retry.LLM_MAX_RETRIES", 2),
+            self.assertRaises(RetryableConnectionError),
+        ):
+            retry.call_with_retry(fn, provider="test", operation="op")
         self.assertEqual(fn.call_count, 3)  # initial attempt + 2 retries
 
     def test_non_retryable_failure_raises_immediately_without_sleeping(self):
         fn = MagicMock(side_effect=UnrelatedValueError("not our problem"))
-        with patch("app.providers.retry.time.sleep") as sleep_mock, \
-             patch("app.providers.retry.LLM_MAX_RETRIES", 3):
-            with self.assertRaises(UnrelatedValueError):
-                retry.call_with_retry(fn, provider="test", operation="op")
+        with (
+            patch("app.providers.retry.time.sleep") as sleep_mock,
+            patch("app.providers.retry.LLM_MAX_RETRIES", 3),
+            self.assertRaises(UnrelatedValueError),
+        ):
+            retry.call_with_retry(fn, provider="test", operation="op")
         fn.assert_called_once()
         sleep_mock.assert_not_called()
 
     def test_zero_max_retries_disables_retrying_entirely(self):
         fn = MagicMock(side_effect=RetryableConnectionError())
-        with patch("app.providers.retry.time.sleep") as sleep_mock, \
-             patch("app.providers.retry.LLM_MAX_RETRIES", 0):
-            with self.assertRaises(RetryableConnectionError):
-                retry.call_with_retry(fn, provider="test", operation="op")
+        with (
+            patch("app.providers.retry.time.sleep") as sleep_mock,
+            patch("app.providers.retry.LLM_MAX_RETRIES", 0),
+            self.assertRaises(RetryableConnectionError),
+        ):
+            retry.call_with_retry(fn, provider="test", operation="op")
         fn.assert_called_once()
         sleep_mock.assert_not_called()
 
@@ -179,10 +184,12 @@ class OpenAICreateResponseRetryTests(unittest.TestCase):
         from app.providers import openai_provider
 
         client = self._fake_client(RetryableConnectionError("down"))
-        with patch("app.providers.openai_provider.time.sleep"), \
-             patch("app.providers.openai_provider.LLM_MAX_RETRIES", 2):
-            with self.assertRaises(RetryableConnectionError):
-                openai_provider._create_response(client, model="gpt-test", input=[])
+        with (
+            patch("app.providers.openai_provider.time.sleep"),
+            patch("app.providers.openai_provider.LLM_MAX_RETRIES", 2),
+            self.assertRaises(RetryableConnectionError),
+        ):
+            openai_provider._create_response(client, model="gpt-test", input=[])
         self.assertEqual(client.responses.create.call_count, 3)
 
     def test_unsupported_parameter_path_is_unaffected_by_connection_retry(self):
@@ -205,9 +212,10 @@ class OpenAICreateResponseRetryTests(unittest.TestCase):
         from app.providers import openai_provider
 
         client = self._fake_client(UnrelatedValueError("bad request"))
-        with patch("app.providers.openai_provider.time.sleep") as sleep_mock:
-            with self.assertRaises(UnrelatedValueError):
-                openai_provider._create_response(client, model="gpt-test", input=[])
+        with patch("app.providers.openai_provider.time.sleep") as sleep_mock, self.assertRaises(
+            UnrelatedValueError
+        ):
+            openai_provider._create_response(client, model="gpt-test", input=[])
         client.responses.create.assert_called_once()
         sleep_mock.assert_not_called()
 

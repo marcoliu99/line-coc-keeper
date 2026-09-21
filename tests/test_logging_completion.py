@@ -1,5 +1,5 @@
-import importlib.util
 import contextlib
+import importlib.util
 import sys
 import types
 import unittest
@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 from app import config, keeper, memory_rag, observability, scenario_rag
 from app.domain.models import AgentMessage
 from app.models import GroupState
-
 
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
@@ -189,10 +188,13 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         channel = SimpleNamespace(send=AsyncMock())
         metrics = {}
-        with patch.object(config, "LOG_ENABLED", True), patch.object(config, "LOG_SLOW_OPERATION_MS", 10), \
-                self.assertLogs("app.observability", level="INFO") as captured:
-            with observability.metrics_context(metrics):
-                await _send_direct_message(channel, "按鈕提示", view="view")
+        with (
+            patch.object(config, "LOG_ENABLED", True),
+            patch.object(config, "LOG_SLOW_OPERATION_MS", 10),
+            self.assertLogs("app.observability", level="INFO") as captured,
+            observability.metrics_context(metrics),
+        ):
+            await _send_direct_message(channel, "按鈕提示", view="view")
 
         channel.send.assert_awaited_once_with("按鈕提示", view="view")
         self.assertEqual(metrics["reply_message_count"], 1)
@@ -209,9 +211,8 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         channel = SimpleNamespace(send=AsyncMock())
         metrics = {}
-        with patch.object(config, "LOG_ENABLED", True):
-            with observability.metrics_context(metrics):
-                await _send_direct_image(channel, b"\x89PNG", 1)
+        with patch.object(config, "LOG_ENABLED", True), observability.metrics_context(metrics):
+            await _send_direct_image(channel, b"\x89PNG", 1)
 
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_bytes"], 4)
@@ -223,9 +224,8 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         interaction = SimpleNamespace(response=SimpleNamespace(edit_message=AsyncMock()))
         metrics = {}
-        with patch.object(config, "LOG_ENABLED", True):
-            with observability.metrics_context(metrics):
-                await _edit_interaction_message(interaction, "Help 內容", view="view")
+        with patch.object(config, "LOG_ENABLED", True), observability.metrics_context(metrics):
+            await _edit_interaction_message(interaction, "Help 內容", view="view")
 
         interaction.response.edit_message.assert_awaited_once_with(content="Help 內容", view="view")
         self.assertEqual(metrics["reply_edit_count"], 1)
@@ -237,10 +237,12 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         channel = SimpleNamespace(send=AsyncMock(side_effect=RuntimeError("discord unavailable")))
         metrics = {}
-        with patch.object(config, "LOG_ENABLED", True):
-            with observability.metrics_context(metrics):
-                with self.assertRaises(RuntimeError):
-                    await _send_direct_message(channel, "not sent")
+        with (
+            patch.object(config, "LOG_ENABLED", True),
+            observability.metrics_context(metrics),
+            self.assertRaises(RuntimeError),
+        ):
+            await _send_direct_message(channel, "not sent")
         self.assertEqual(metrics, {})
 
     async def test_partial_chunk_failure_counts_only_successful_chunks(self):
@@ -249,10 +251,12 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         channel = SimpleNamespace(send=AsyncMock(side_effect=[None, RuntimeError("discord unavailable")]))
         metrics = {}
         text = "a" * 1900 + "b"
-        with patch.object(config, "LOG_ENABLED", True):
-            with observability.metrics_context(metrics):
-                with self.assertRaises(RuntimeError):
-                    await _make_reply(channel)(text)
+        with (
+            patch.object(config, "LOG_ENABLED", True),
+            observability.metrics_context(metrics),
+            self.assertRaises(RuntimeError),
+        ):
+            await _make_reply(channel)(text)
 
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
@@ -269,10 +273,12 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         )
         metrics = {}
         text = "a" * 1900 + "b"
-        with patch.object(config, "LOG_ENABLED", True):
-            with observability.metrics_context(metrics):
-                with self.assertRaises(RuntimeError):
-                    await _make_interaction_reply(interaction)(text)
+        with (
+            patch.object(config, "LOG_ENABLED", True),
+            observability.metrics_context(metrics),
+            self.assertRaises(RuntimeError),
+        ):
+            await _make_interaction_reply(interaction)(text)
 
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
@@ -319,9 +325,16 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send):
-            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, before_pending)
+            await discord_bot._post_luck_buttons(
+                channel,
+                "discord-channel-1",
+                state,
+                before_pending,
+                "【KP Assistant 代操作：小明】",
+            )
 
         send.assert_awaited_once()
+        self.assertTrue(send.await_args.args[1].startswith("【KP Assistant 代操作：小明】\n"))
         view = send.await_args.kwargs["view"]
         self.assertEqual([item.args[3] for item in view.items], ["regular", "hard", "extreme", "skip"])
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Callable
+from collections.abc import Callable
 
 from app import observability
 from app.config import (
@@ -152,7 +152,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
             if block.type == "tool_use" and block.name == tool["name"]:
                 return block.input
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
 
 
@@ -177,5 +177,5 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
             if block.type == "tool_use" and block.name == tool["name"]:
                 return block.input
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from app import observability
 from app.config import LLM_MAX_RETRIES, LLM_RETRY_BASE_DELAY_SECONDS

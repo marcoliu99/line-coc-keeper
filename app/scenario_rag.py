@@ -26,8 +26,8 @@ falls back to pure BM25, exactly like before embeddings existed here.
 """
 from __future__ import annotations
 
-import logging
 import hashlib
+import logging
 import math
 import re
 import time
@@ -35,7 +35,11 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from app import db, embedding_cache, observability
-from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+from app.config import (
+    OPENAI_API_KEY,
+    SCENARIO_RAG_EMBEDDING_MODEL,
+    SCENARIO_RAG_EMBEDDING_WEIGHT,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -203,7 +207,7 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[f
                                 error_type="incomplete_embedding_response")
             return None
         return cast(list[list[float]], ordered)
-    except Exception:
+    except Exception:  # noqa: BLE001 - embedding is best-effort; BM25 remains the safe fallback.
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
@@ -447,7 +451,7 @@ def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
             text_hash=data["text_hash"],
             has_embeddings=data.get("has_embeddings", False),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - corrupt optional index cache triggers a rebuild.
         return None
 
 

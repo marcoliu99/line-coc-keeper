@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 # Standard COC7e base skill percentages (subset covering the common cases).
@@ -177,7 +177,7 @@ class Character:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Character":
+    def from_dict(data: dict[str, Any]) -> Character:
         char = Character(**data)
         if not char.character_id:
             char.character_id = f"legacy-user:{char.owner_id}"
@@ -190,10 +190,8 @@ class Character:
         # for the Keeper-only counterpart.
         lines = [
             f"【{self.name}】職業：{self.occupation}（玩家：{self.owner_id}）",
-            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} "
-            f"APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu} LUCK {self.luck}",
-            f"HP {self.hp}/{self.hp_max}　MP {self.mp}/{self.mp_max}　SAN {self.san}/{self.san_max}　"
-            f"MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
+            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu} LUCK {self.luck}",
+            f"HP {self.hp}/{self.hp_max}　MP {self.mp}/{self.mp_max}　SAN {self.san}/{self.san_max}　MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
         ]
         tags = list(self.status_tags)
         if self.away:
@@ -225,8 +223,7 @@ class Character:
         handful of numbers that actually change, resent fresh every turn."""
         lines = [
             f"【{self.name}】職業：{self.occupation}（玩家：{self.owner_id}）",
-            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} "
-            f"APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu}",
+            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu}",
             f"MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
         ]
         if self.key_connection:
@@ -397,7 +394,7 @@ class CreationSession:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "CreationSession":
+    def from_dict(data: dict[str, Any]) -> CreationSession:
         return CreationSession(**data)
 
 
@@ -414,7 +411,7 @@ class ArmorRule:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "ArmorRule":
+    def from_dict(data: dict[str, Any]) -> ArmorRule:
         return ArmorRule(**data)
 
 
@@ -435,7 +432,7 @@ class AttackRule:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "AttackRule":
+    def from_dict(data: dict[str, Any]) -> AttackRule:
         return AttackRule(**data)
 
 
@@ -456,7 +453,7 @@ class SpecialAbility:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "SpecialAbility":
+    def from_dict(data: dict[str, Any]) -> SpecialAbility:
         return SpecialAbility(**data)
 
 
@@ -478,7 +475,7 @@ class EffectState:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "EffectState":
+    def from_dict(data: dict[str, Any]) -> EffectState:
         return EffectState(**data)
 
 
@@ -522,7 +519,7 @@ class EnemyCombatCard:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "EnemyCombatCard":
+    def from_dict(data: dict[str, Any]) -> EnemyCombatCard:
         return EnemyCombatCard(
             id=data["id"],
             name=data.get("name", data["id"]),
@@ -575,7 +572,7 @@ class Combatant:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Combatant":
+    def from_dict(data: dict[str, Any]) -> Combatant:
         return Combatant(**data)
 
 
@@ -595,6 +592,110 @@ class CombatState:
     processed_timings: list[str] = field(default_factory=list)
     range_bands: dict[str, str] = field(default_factory=dict)
 
+    def retire_character(
+        self,
+        character_id: str,
+        character_name: str | None = None,
+        *,
+        state: Any | None = None,
+    ) -> None:
+        """Remove a retired investigator from the live initiative state.
+
+        Retiring a character removes its player binding, but the durable
+        character history is intentionally kept in ``characters_by_id``.  A
+        combat order is live state rather than history, so it must not retain
+        a PC that can no longer take a turn or be selected as an enemy target.
+        Older snapshots may have PC combatants without ``character_id``; when
+        that happens the exact name is the only available identity, so all
+        matching legacy PC entries are removed conservatively rather than
+        allowing a possibly retired character to remain actionable.
+        The next eligible combatant becomes current when the retired PC was
+        the current turn; the state-aware caller also applies the new turn's
+        timing effects and skips away/defeated combatants.  The optional state
+        argument keeps this model-level cleanup usable for legacy callers that
+        only have a CombatState snapshot.
+        """
+        if not self.order:
+            return
+
+        removed = [
+            combatant
+            for combatant in self.order
+            if combatant.is_pc and combatant.character_id == character_id
+        ]
+        if not removed and character_name:
+            removed = [
+                combatant
+                for combatant in self.order
+                if combatant.is_pc
+                and not combatant.character_id
+                and combatant.name == character_name
+            ]
+        if not removed:
+            return
+
+        removed_ids = {combatant.combatant_id for combatant in removed}
+        current_index = self.current_index
+        current = self.order[current_index] if 0 <= current_index < len(self.order) else None
+        current_was_removed = current is not None and current.combatant_id in removed_ids
+        current_id = current.combatant_id if current is not None else ""
+        old_order = list(self.order)
+        self.order = [combatant for combatant in old_order if combatant.combatant_id not in removed_ids]
+
+        # An unresolved enemy plan/effect must not retain a retired PC as a
+        # target.  Other combatants' plans remain valid.
+        self.plans = {
+            plan_id: plan
+            for plan_id, plan in self.plans.items()
+            if plan.get("enemy_combatant_id") not in removed_ids
+            and not any(target_id in removed_ids for target_id in (plan.get("target_ids") or []))
+        }
+        self.effects = [effect for effect in self.effects if effect.target_id not in removed_ids]
+        self.range_bands = {
+            key: value
+            for key, value in self.range_bands.items()
+            if not any(
+                key == target_id
+                or key.startswith(f"{target_id}:")
+                or key.endswith(f":{target_id}")
+                for target_id in removed_ids
+            )
+        }
+
+        if not self.order:
+            self.active = False
+            self.current_index = 0
+            return
+
+        if current_was_removed:
+            # A GroupState-aware caller lets the combat module apply timing and
+            # skip away/defeated candidates.  Keep the old pure-CombatState
+            # behavior as a compatibility fallback for callers that do not
+            # have the owning GroupState available.
+            assert current is not None
+            old_index = current_index
+            if state is not None:
+                from app import combat as combat_engine
+
+                combat_engine.finish_retired_current_turn(
+                    state,
+                    old_order=old_order,
+                    old_index=old_index,
+                    removed_ids=removed_ids,
+                )
+                return
+            for offset in range(1, len(old_order) + 1):
+                candidate = old_order[(old_index + offset) % len(old_order)]
+                if candidate.combatant_id not in removed_ids:
+                    self.current_index = self.order.index(candidate)
+                    break
+        else:
+            surviving_current = next(
+                (combatant for combatant in self.order if combatant.combatant_id == current_id),
+                self.order[0],
+            )
+            self.current_index = self.order.index(surviving_current)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "active": self.active,
@@ -609,7 +710,7 @@ class CombatState:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "CombatState":
+    def from_dict(data: dict[str, Any]) -> CombatState:
         return CombatState(
             active=data.get("active", False),
             round_number=data.get("round_number", 0),
@@ -811,9 +912,28 @@ class GroupState:
         if character_id:
             active = next((char for char in self.all_characters() if char.character_id == character_id), None)
             if active is not None:
-                return active
+                if active.active and active.owner_id == owner_id:
+                    return active
+                # A stale persisted binding must not resurrect a retired
+                # character or cross an ownership boundary. Clear only the
+                # matching legacy index; a valid different active character
+                # for this owner may still exist.
+                self.active_character_id_by_user.pop(owner_id, None)
+                legacy = self.characters.get(owner_id)
+                if legacy is not None and legacy.character_id == character_id:
+                    self.characters.pop(owner_id, None)
         legacy = self.characters.get(owner_id)
         if legacy is not None:
+            if legacy.owner_id != owner_id:
+                # A legacy owner-index entry can be stale or corrupted after
+                # the character-id migration. Never let it expose or activate
+                # another player's character through the owner lookup.
+                self.characters.pop(owner_id, None)
+                self.active_character_id_by_user.pop(owner_id, None)
+                return None
+            if not legacy.active:
+                self.characters.pop(owner_id, None)
+                return None
             character_id = legacy.character_id or f"legacy-user:{owner_id}"
             legacy.character_id = character_id
             self.characters_by_id.setdefault(character_id, legacy)
@@ -838,6 +958,37 @@ class GroupState:
         self.characters_by_id[character_id] = character
         # Keep the legacy owner index useful during the migration.
         self.characters[owner_id] = character
+        return character
+
+    def retire_active_character(self, owner_id: str, name: str | None = None) -> Character:
+        """解除一名玩家目前的角色 binding，但保留角色歷史資料。
+
+        ``characters_by_id`` is the durable character history.  The legacy
+        ``characters[owner_id]`` map and ``active_character_id_by_user`` are
+        only the current-player indexes, so removing those two bindings lets
+        ``get_active_character`` return ``None`` without deleting the sheet.
+        """
+        character = self.get_active_character(owner_id)
+        if character is None:
+            raise KeyError(owner_id)
+        if name is not None and character.name != name:
+            raise ValueError(f"目前使用的角色不是「{name}」。")
+
+        character.active = False
+        character.away = False
+        self.active_character_id_by_user.pop(owner_id, None)
+        # The legacy owner index is a compatibility active-character index;
+        # remove it unconditionally so a stale legacy entry cannot resurrect a
+        # different character through get_active_character's fallback path.
+        self.characters.pop(owner_id, None)
+        # A retired character must not leave a stale player decision that can
+        # later be consumed after the binding is restored.
+        self.pending_checks.pop(owner_id, None)
+        self.pending_luck_decisions.pop(owner_id, None)
+        # Keep a pending pregen Luck roll: only the player may roll it, and
+        # clearing it here would let a later reactivation bypass that rule.
+        self.characters_by_id[character.character_id] = character
+        self.combat.retire_character(character.character_id, character.name, state=self)
         return character
 
     def active_characters(self) -> list[Character]:
@@ -894,7 +1045,7 @@ class GroupState:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "GroupState":
+    def from_dict(data: dict[str, Any]) -> GroupState:
         data = GroupState.migrate_data(data)
         characters = {k: Character.from_dict(v) for k, v in data.get("characters", {}).items()}
         characters_by_id = {}

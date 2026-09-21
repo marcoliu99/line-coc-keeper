@@ -42,6 +42,10 @@
 2. **offer_check_choice** - 防守選項
 3. **offer_npc_attack_defense_choice** - NPC 攻擊防守
 
+`skill_check` 與 `offer_check_choice` 對完全相同的重播採 idempotent reuse；不同
+request 會拒絕。`sanity_check` 與 `offer_npc_attack_defense_choice` 則維持既有
+pending 時直接拒絕，尤其 NPC 攻擊流程不能重新使用或丟棄攻擊方骰子。
+
 ## 實現細節
 
 ### 新增函數

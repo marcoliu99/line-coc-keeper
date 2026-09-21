@@ -87,7 +87,7 @@ SCENE_DIGEST_TURN_INTERVAL = max(1, int(os.environ.get("SCENE_DIGEST_TURN_INTERV
 # (Chinese runs closer to 2 chars/token), which still leaves headroom under a
 # 200K-token context once the system prompt, character sheets, tool definitions,
 # conversation history, and the response itself are all accounted for.
-MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", 240_000))
+MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", "240000"))
 
 # MAX_LOG_TURNS: how many recent chat turns stay verbatim in the Keeper's
 # context (trim triggers at 4x this many log entries — see app/keeper.py's
@@ -102,7 +102,7 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", 240_000))
 # keep 80) — lowered from 80 to summarize more often, trading a bit more
 # per-summarization LLM cost for less compression buildup in any one
 # campaign_summary pass.
-MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", 40))
+MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", "40"))
 
 MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 
@@ -116,7 +116,7 @@ MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
 # Keeper freely connect clues across pages, in exchange for scenarios that
 # would blow past MAX_SCENARIO_CHARS entirely. See README's 限制 section.
 SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
-SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", 5))
+SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", "5"))
 
 # Scenario lifecycle authorization. Keep this off during the initial lobby so
 # a player who is also helping as KP can upload/reparse/cancel a scenario while
@@ -134,7 +134,7 @@ SCENARIO_LIFECYCLE_KP_ONLY = os.environ.get("SCENARIO_LIFECYCLE_KP_ONLY", "false
 # embedding model name at platform.openai.com/docs/models before relying on
 # this default — same caveat as OPENAI_MODEL.
 SCENARIO_RAG_EMBEDDING_MODEL = os.environ.get("SCENARIO_RAG_EMBEDDING_MODEL", "text-embedding-3-small")
-SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEIGHT", 0.5))
+SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEIGHT", "0.5"))
 
 # Sampling temperature for the Keeper's own narration (app/keeper.py's
 # run_conversation call only — not analyze_image/analyze_text, which are
@@ -145,7 +145,7 @@ SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEI
 # drift off it turn to turn, and dice/rule outcomes it restates (rolls,
 # tiers, damage) shouldn't get creative embellishment. 0.5-0.7 is the
 # requested range; 0.6 sits in the middle.
-KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", 0.6))
+KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", "0.6"))
 
 # Reasoning effort for the Keeper's own narration on OpenAI's Responses API
 # (app/providers/openai_provider.py's run_conversation only — see

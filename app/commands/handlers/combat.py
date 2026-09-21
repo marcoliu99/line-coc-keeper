@@ -1,7 +1,6 @@
-from app import combat
-from app import checkpoints
-from app.repositories.group_state import load_state, save_state
+from app import checkpoints, combat
 from app.legacy_commands import Reply
+from app.repositories.group_state import load_state, save_state
 
 
 async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[str]) -> None:

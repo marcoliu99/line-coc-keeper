@@ -31,7 +31,7 @@ def _iter_group_state_files():
         # alongside plain group-state files — a group_id never legitimately
         # ends in these suffixes (see app/scenario_rag.py / app/memory_rag.py's
         # old _index_path/_memory_path), so this is an unambiguous filter.
-        if stem.endswith("_scenario_index") or stem.endswith("_memory"):
+        if stem.endswith(("_scenario_index", "_memory")):
             continue
         yield stem, path
 

@@ -6,7 +6,6 @@ from pathlib import Path
 
 from app.help_registration import entries_for_policy
 
-
 _VISIBILITY_TEXT = {
     "when_scenario_loaded": "只有已載入劇本時顯示",
     "when_pregens_exist": "只有劇本有預設角色時顯示",

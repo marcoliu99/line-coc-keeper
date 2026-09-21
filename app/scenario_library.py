@@ -11,16 +11,17 @@ import re
 import shutil
 import tempfile
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from app.config import SCENARIO_LIBRARY_DIR
 
-_ASSET_RE = re.compile(r"front cover|title page|table of contents|credits|handout|character sheet|pre-generated|appendix", re.I)
+_ASSET_RE = re.compile(r"front cover|title page|table of contents|credits|handout|character sheet|pre-generated|appendix", re.IGNORECASE)
 _SAFE_RE = re.compile(r"[^a-z0-9]+")
-_PAGE_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.M)
+_PAGE_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _LIBRARY_LOCK = threading.RLock()
 
 
@@ -88,7 +89,7 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
         toc = [(int(level), title.strip(), int(page)) for level, title, page in doc.get_toc(simple=True) if title.strip() and page > 0]
         page_count = doc.page_count
-    except Exception:
+    except Exception:  # noqa: BLE001 - malformed optional PDF outline falls back to page markers.
         toc, page_count = [], max((int(p) for p in _PAGE_RE.findall(scenario_text)), default=1)
     non_assets = [(level, title, page) for level, title, page in toc if not _ASSET_RE.search(title)]
     if not non_assets:
@@ -324,7 +325,7 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
             r"\bSTR\b|\bDEX\b|\bSAN\b|characteri\w*|investigator\s+skills|"
             r"weapon\s+regular\s+hard\s+extreme|\boccupation\b.*\b(weapon|damage|dodge|luck)\b",
             page_text,
-            re.I | re.S,
+            re.IGNORECASE | re.DOTALL,
         )
         # Only structural evidence (page_maps, from the vision model actually
         # detecting a floor plan — see _analyze_graphic_page) may override a
@@ -338,11 +339,11 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
             kind = "map"
         elif is_character_sheet:
             kind = "character_sheet"
-        elif re.search(r"\bmap\b|floor\s*plan|地圖|平面圖|房間圖", page_text, re.I):
+        elif re.search(r"\bmap\b|floor\s*plan|地圖|平面圖|房間圖", page_text, re.IGNORECASE):
             kind = "map"
-        elif re.search(r"handout|手卡|玩家資料|報紙|剪報|信件|書信|日記|照片|文件|線索", page_text, re.I):
+        elif re.search(r"handout|手卡|玩家資料|報紙|剪報|信件|書信|日記|照片|文件|線索", page_text, re.IGNORECASE):
             kind = "handout"
-        elif re.search(r"portrait|人物|肖像|character\s+(illustration|portrait)", page_text, re.I):
+        elif re.search(r"portrait|人物|肖像|character\s+(illustration|portrait)", page_text, re.IGNORECASE):
             kind = "portrait"
         else:
             kind = "illustration"

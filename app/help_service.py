@@ -1,7 +1,14 @@
 """Conversation-aware help service used by the Discord router and buttons."""
 from __future__ import annotations
 
-from app.help_registry import HelpContext, HelpPage, all_entries, get_help_page, has_help_category, lookup_help
+from app.help_registry import (
+    HelpContext,
+    HelpPage,
+    all_entries,
+    get_help_page,
+    has_help_category,
+    lookup_help,
+)
 from app.models import GroupState
 
 
@@ -32,9 +39,13 @@ def resolve_text_path(state: GroupState, user_id: str, tokens: list[str]) -> tup
         if has_help_category(path[0]):
             return path
         for entry in all_entries():
-            if entry.path[1] == path[0] and entry.command and entry.command[0] == path[0]:
-                if entry.visibility == "always" or lookup_help(entry.path, context):
-                    return entry.path
+            if (
+                entry.path[1] == path[0]
+                and entry.command
+                and entry.command[0] == path[0]
+                and (entry.visibility == "always" or lookup_help(entry.path, context))
+            ):
+                return entry.path
     return path
 
 

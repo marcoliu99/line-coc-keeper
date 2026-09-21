@@ -22,20 +22,47 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
 
 import yaml
 
-from app import combat, creation, dice, intent_parser, keeper, locks, luck, observability, pdf_loader, pregen_extractor, scenario_library
-from app import scenario_compare, scenario_index, scenario_intro, scenario_rag
-from app import help_service
+from app import (
+    combat,
+    config,
+    creation,
+    dice,
+    help_service,
+    intent_parser,
+    keeper,
+    locks,
+    luck,
+    observability,
+    pdf_loader,
+    pregen_extractor,
+    scenario_compare,
+    scenario_index,
+    scenario_intro,
+    scenario_library,
+    scenario_rag,
+)
 from app import scene_map as scene_map_engine
-from app import config
 from app.config import SCENARIO_RAG_ENABLED
-from app.models import BASE_SKILLS, OCCUPATIONS, Character, GroupState, generate_investigator
-from app.repositories.group_state import clear_page_images, load_page_image, load_state, save_page_image, save_state
+from app.models import (
+    BASE_SKILLS,
+    OCCUPATIONS,
+    Character,
+    GroupState,
+    generate_investigator,
+)
+from app.repositories.group_state import (
+    clear_page_images,
+    load_page_image,
+    load_state,
+    save_page_image,
+    save_state,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -51,22 +78,22 @@ SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, pn
 
 
 __all__ = [
-    "Reply",
-    "GetDisplayName",
     "FormatMention",
+    "GetDisplayName",
+    "Reply",
     "SendDM",
-    "SendImage",
     "SendDMImage",
-    "handle_unsupported_message",
-    "handle_pdf_upload",
-    "resolve_pdf_upload_choice",
-    "handle_map_upload",
-    "handle_scenario_compare_upload",
-    "handle_role_sheet_upload",
-    "handle_roll_command",
+    "SendImage",
     "handle_check_command",
     "handle_luck_decision",
+    "handle_map_upload",
+    "handle_pdf_upload",
     "handle_pregen_luck_roll",
+    "handle_role_sheet_upload",
+    "handle_roll_command",
+    "handle_scenario_compare_upload",
+    "handle_unsupported_message",
+    "resolve_pdf_upload_choice",
 ]
 
 
@@ -1248,7 +1275,7 @@ async def handle_check_command(
     text: str,
     split_roll_feedback: bool = False,
     acquire_legacy_for_keeper: bool = False,
-) -> None:
+) -> bool:
     """/coc check [技能名] [獎勵骰數] [懲罰骰數] — the player's own roll, in
     code, visible to the group immediately, instead of the Keeper (LLM)
     quietly deciding a result. Pairs with keeper.py's skill_check/sanity_check
@@ -1259,15 +1286,16 @@ async def handle_check_command(
     resolution = await asyncio.to_thread(_resolve_check_deterministically, conversation_id, user_id, text)
     if resolution.reply_text:
         await reply(resolution.reply_text)
-        return
+        return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
-        return
+        return False
     await _finalize_check_result(
         conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
         reply, send_dm, send_image, send_dm_image, split_roll_feedback,
         acquire_legacy_for_keeper=acquire_legacy_for_keeper,
         roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
     )
+    return True
 
 
 async def handle_luck_decision(
@@ -1280,7 +1308,7 @@ async def handle_luck_decision(
     send_dm_image: SendDMImage,
     split_roll_feedback: bool = False,
     acquire_legacy_for_keeper: bool = False,
-) -> None:
+) -> bool:
     """Resolves a pending Luck-spend decision (see handle_check_command above
     and app/luck.py) — either "skip" (keep the natural roll) or a tier name
     ("regular"/"hard"/"extreme") to buy up to, deducting the cost from the
@@ -1289,15 +1317,16 @@ async def handle_luck_decision(
     resolution = await asyncio.to_thread(_resolve_luck_decision_deterministically, conversation_id, user_id, choice)
     if resolution.reply_text:
         await reply(resolution.reply_text)
-        return
+        return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
-        return
+        return False
     await _finalize_check_result(
         conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
         reply, send_dm, send_image, send_dm_image, split_roll_feedback,
         acquire_legacy_for_keeper=acquire_legacy_for_keeper,
         roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
     )
+    return True
 
 
 def _resolve_luck_decision_deterministically(
@@ -1620,10 +1649,7 @@ def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
 def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
     with locks.get_state_lock(conversation_id):
         state = load_state(conversation_id)
-        active_id = state.active_character_id_by_user.get(user_id, "")
-        char = state.characters_by_id.get(active_id) if active_id else None
-        if char is None:
-            char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char:
             return _AwayStateResult(error_text="你還沒有角色。")
         char.away = away

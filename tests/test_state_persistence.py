@@ -1,16 +1,14 @@
+import asyncio
 import logging
 import os
 import sqlite3
 import tempfile
 import time
 import unittest
-import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
-from app import db
-from app import checkpoints
-from app import keeper, scene_digest
+from app import checkpoints, db, keeper, scene_digest
 from app.commands.handlers import system as system_handler
 from app.commands.handlers.system import _replace_scene_maps_preserving_locations
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
@@ -188,9 +186,11 @@ class StatePersistenceTests(unittest.TestCase):
         group_state.save_state(latest)
         stale.scenario_title = "stale"
 
-        with self.assertLogs("app.repositories.group_state", level=logging.WARNING) as captured:
-            with self.assertRaisesRegex(RuntimeError, "state revision conflict"):
-                group_state.save_state(stale)
+        with (
+            self.assertLogs("app.repositories.group_state", level=logging.WARNING) as captured,
+            self.assertRaisesRegex(RuntimeError, "state revision conflict"),
+        ):
+            group_state.save_state(stale)
         self.assertIn("state_save_revision_conflict", "\n".join(captured.output))
         self.assertEqual(group_state.load_state(state.group_id).scenario_title, "newer")
 
@@ -209,11 +209,12 @@ class StatePersistenceTests(unittest.TestCase):
 
     def test_checkpoint_failure_is_logged(self):
         state = GroupState("discord-group-checkpoint-failure")
-        with patch.object(db, "set_json_tx", side_effect=RuntimeError("write failed")), self.assertLogs(
-            "app.checkpoints", level=logging.ERROR
-        ) as captured:
-            with self.assertRaisesRegex(RuntimeError, "write failed"):
-                checkpoints.create_checkpoint(state)
+        with (
+            patch.object(db, "set_json_tx", side_effect=RuntimeError("write failed")),
+            self.assertLogs("app.checkpoints", level=logging.ERROR) as captured,
+            self.assertRaisesRegex(RuntimeError, "write failed"),
+        ):
+            checkpoints.create_checkpoint(state)
 
         self.assertIn("checkpoint_failure", "\n".join(captured.output))
 
@@ -298,7 +299,7 @@ class StatePersistenceTests(unittest.TestCase):
         state.characters["u1"].hp = 2
         group_state.save_state(state)
 
-        restored, selected, pre = checkpoints.rollback(state.group_id, checkpoint["checkpoint_id"], actor_id="kp")
+        restored, _selected, pre = checkpoints.rollback(state.group_id, checkpoint["checkpoint_id"], actor_id="kp")
 
         self.assertFalse(restored.active)
         self.assertEqual(restored.characters["u1"].hp, 10)
@@ -350,10 +351,12 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(len(list(self.backup_dir.glob("*.db"))), 2)
 
     def test_backup_lock_initialization_failure_is_logged(self):
-        with patch.object(db, "_backup_lock", side_effect=OSError("lock directory unavailable")):
-            with self.assertLogs("app.db", level=logging.ERROR) as captured:
-                with self.assertRaisesRegex(OSError, "lock directory unavailable"):
-                    db.backup_now("manual")
+        with (
+            patch.object(db, "_backup_lock", side_effect=OSError("lock directory unavailable")),
+            self.assertLogs("app.db", level=logging.ERROR) as captured,
+            self.assertRaisesRegex(OSError, "lock directory unavailable"),
+        ):
+            db.backup_now("manual")
 
         self.assertIn("backup_failure", "\n".join(captured.output))
 
@@ -444,11 +447,13 @@ class StatePersistenceTests(unittest.TestCase):
         state.scenario_title = "newer"
         group_state.save_state(state)
 
-        with patch("app.scenario_library.load_context", side_effect=OSError("image cache unavailable")):
-            with self.assertLogs("app.checkpoints", level=logging.ERROR) as captured:
-                restored, _, _ = checkpoints.rollback(
-                    state.group_id, checkpoint["checkpoint_id"], actor_id="kp"
-                )
+        with (
+            patch("app.scenario_library.load_context", side_effect=OSError("image cache unavailable")),
+            self.assertLogs("app.checkpoints", level=logging.ERROR) as captured,
+        ):
+            restored, _, _ = checkpoints.rollback(
+                state.group_id, checkpoint["checkpoint_id"], actor_id="kp"
+            )
 
         self.assertEqual(restored.scenario_title, "")
         self.assertEqual(group_state.load_state(state.group_id).scenario_title, "")

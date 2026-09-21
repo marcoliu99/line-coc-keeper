@@ -89,12 +89,11 @@ def allocate(session: CreationSession, pool: str, skill: str, points: int) -> di
 def status_text(session: CreationSession) -> str:
     lines = [
         f"【建角中】{session.name}　職業：{session.occupation}",
-        f"STR {session.str_} CON {session.con} SIZ {session.siz} DEX {session.dex} "
-        f"APP {session.app} INT {session.int_} POW {session.pow_} EDU {session.edu} LUCK {session.luck}",
-        f"職業技能點數剩餘：{session.occ_points_remaining} / {session.occ_points_total}"
-        "（輸入「/coc alloc occ 技能名 點數」分配）",
-        f"興趣技能點數剩餘：{session.interest_points_remaining} / {session.interest_points_total}"
-        "（輸入「/coc alloc int 技能名 點數」分配）",
+        f"STR {session.str_} CON {session.con} SIZ {session.siz} DEX {session.dex} APP {session.app} INT {session.int_} POW {session.pow_} EDU {session.edu} LUCK {session.luck}",
+        (f"職業技能點數剩餘：{session.occ_points_remaining} / {session.occ_points_total}"
+        "（輸入「/coc alloc occ 技能名 點數」分配）"),
+        (f"興趣技能點數剩餘：{session.interest_points_remaining} / {session.interest_points_total}"
+        "（輸入「/coc alloc int 技能名 點數」分配）"),
     ]
     top_skills = sorted(session.skills.items(), key=lambda kv: -kv[1])[:12]
     if top_skills:

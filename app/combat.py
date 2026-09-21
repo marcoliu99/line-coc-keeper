@@ -9,8 +9,8 @@ of defaulting to "the nearest investigator gets punched".
 """
 from __future__ import annotations
 
-import re
 import random
+import re
 import uuid
 from typing import Any
 
@@ -18,6 +18,7 @@ from app import dice
 from app.models import (
     ArmorRule,
     AttackRule,
+    Character,
     Combatant,
     CombatState,
     EffectState,
@@ -384,16 +385,88 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
     }
 
 
+def _character_for_combatant(state: GroupState, combatant: Combatant) -> Character | None:
+    if combatant.character_id and combatant.character_id in state.characters_by_id:
+        return state.characters_by_id[combatant.character_id]
+    # Legacy combat snapshots did not persist character_id. Only use a name
+    # fallback when it is unambiguous across current and historical sheets;
+    # retire_character() handles the mutation side conservatively when names
+    # collide, so an ambiguous stale entry is never silently rebound here.
+    matches = [character for character in state.all_characters() if character.name == combatant.name]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _is_skippable(state: GroupState, combatant: Combatant) -> bool:
     if combatant.defeated:
         return True
     if combatant.is_pc:
-        if combatant.character_id and combatant.character_id in state.characters_by_id:
-            return bool(state.characters_by_id[combatant.character_id].away)
-        pc = state.get_character_by_name(combatant.name)
-        if pc and pc.away:
-            return True
+        character = _character_for_combatant(state, combatant)
+        if character is not None:
+            return not character.active or character.away
     return False
+
+
+def finish_retired_current_turn(
+    state: GroupState,
+    *,
+    old_order: list[Combatant],
+    old_index: int,
+    removed_ids: set[str],
+) -> None:
+    """Initialize the next usable turn after the current PC is retired.
+
+    ``CombatState.retire_character`` owns order/effect cleanup because it is
+    part of the persisted model. Turn timing, however, needs the complete
+    ``GroupState`` to determine whether a PC is away or defeated and to apply
+    effects. This helper bridges those responsibilities without calling
+    ``advance_turn``: the retired PC never gets a turn-end phase, while the
+    next eligible combatant receives its turn-start phase exactly once.
+    """
+    combat = state.combat
+    if not combat.active or not combat.order:
+        return
+
+    # If retiring the current combatant leaves only away/defeated entries,
+    # preserve the all-skippable state for the existing explicit end-combat
+    # guard. Do this before looking for a wrapped candidate: otherwise a
+    # candidate at the start of the old order would apply round_end and
+    # round_start timing for a round in which nobody can act.
+    if all(_is_skippable(state, combatant) for combatant in combat.order):
+        combat.current_index = 0
+        return
+
+    wrapped = False
+    for offset in range(1, len(old_order) + 1):
+        candidate = old_order[(old_index + offset) % len(old_order)]
+        if candidate.combatant_id in removed_ids:
+            continue
+
+        current = next(
+            (item for item in combat.order if item.combatant_id == candidate.combatant_id),
+            None,
+        )
+        if current is None:
+            continue
+        combat.current_index = combat.order.index(current)
+
+        candidate_wrapped = old_index + offset >= len(old_order)
+        if candidate_wrapped and not wrapped:
+            wrapped = True
+            process_timing(state, "round_end")
+            combat.round_number += 1
+            _reset_round_usage(state)
+            process_timing(state, "round_start")
+            _mark_round_start_abilities(state)
+
+        if _is_skippable(state, current):
+            continue
+
+        process_timing(state, "turn_start", current.combatant_id)
+        if not _is_skippable(state, current):
+            return
+
+    # There is no eligible participant. Keep combat intact so the existing
+    # all-skippable guard can tell the KP to end combat explicitly.
 
 
 def _reset_round_usage(state: GroupState) -> None:
@@ -1030,8 +1103,10 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
             _sync_combatant_from_card(c, card)
         skippable = _is_skippable(state, c)
         marker = "=> " if i == combat.current_index and not skippable else "   "
-        away = c.is_pc and not c.defeated and skippable
-        tag = "（倒下）" if c.defeated else "（暫離）" if away else ""
+        character = _character_for_combatant(state, c) if c.is_pc else None
+        retired = character is not None and not character.active
+        away = c.is_pc and not c.defeated and not retired and skippable
+        tag = "（倒下）" if c.defeated else "（已退出）" if retired else "（暫離）" if away else ""
         side = "我方" if c.side == "pc" else "隊友" if c.side == "ally" else "敵方"
         hp_text = f"HP {c.hp}/{c.hp_max}" if include_private or c.side != "enemy" else "HP 未公開"
         line = f"{marker}{c.display_name} [{side}] DEX {c.dex} {hp_text}{tag}"

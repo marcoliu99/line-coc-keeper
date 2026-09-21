@@ -289,7 +289,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertFalse(second["ok"])
         self.assertEqual(saved_state.pending_checks["u1"]["loss_failure"], "1d4")
 
-    def test_offer_check_choice_rejects_when_one_already_pending(self):
+    def test_offer_check_choice_reuses_identical_pending_request(self):
         state = _state_with_investigator()
         with StateStorePatch(keeper) as store:
             store.put(state)
@@ -299,6 +299,24 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             )
             second = keeper._execute_tool(
                 state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
+                [], [], speaker_role="player",
+            )
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertIn("防重複", second["note"])
+
+    def test_offer_check_choice_rejects_different_pending_request(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            first = keeper._execute_tool(
+                state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
+                [], [], speaker_role="player",
+            )
+            second = keeper._execute_tool(
+                state,
+                "offer_check_choice",
+                {"investigator": "小明", "options": [{"label": "閃避", "skill": "閃避"}, {"label": "射擊", "skill": "射擊"}]},
                 [], [], speaker_role="player",
             )
         self.assertTrue(first["ok"])
@@ -427,8 +445,8 @@ class ContextBuilderCombatRagSkipTests(unittest.IsolatedAsyncioTestCase):
         return state
 
     async def test_skips_both_proactive_rag_calls_during_active_combat(self):
-        from app.agents import context_builder
         from app import memory_rag, scenario_rag
+        from app.agents import context_builder
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
              patch.object(scenario_rag, "get_index") as mock_get_index, \
@@ -448,8 +466,8 @@ class ContextBuilderCombatRagSkipTests(unittest.IsolatedAsyncioTestCase):
     async def test_runs_both_proactive_rag_calls_when_combat_not_active(self):
         """Regression: outside combat, behavior is unchanged from before —
         matches tests/test_agentic_pipeline.py's existing gating tests."""
-        from app.agents import context_builder
         from app import memory_rag, scenario_rag
+        from app.agents import context_builder
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
              patch.object(scenario_rag, "get_index", return_value="fake-index") as mock_get_index, \
