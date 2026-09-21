@@ -109,5 +109,8 @@ if name == "resolve_enemy_action":
 與此改動無關的 2 個失敗（`reply_message_count`／`reply_edit_count`
 KeyError），跟改動前的基準線一致，沒有新增回歸。
 
-「待確認」的防重複 static check 這次沒有加——維持問過你再決定的狀態，先不
-放進這次範圍。
+「待確認」的防重複 static check 後續確認要加，已補上
+`tests/test_execute_tool_no_duplicate_branches.py`：用 `ast` 掃
+`_execute_tool` 的原始碼，統計每個 `if name == "...":` 分支的工具名稱，斷言
+沒有任何名稱出現超過一次（`if name in (...)` 這種合法共用分支的形式不算）。
+有用一段合成的重複程式碼手動驗證過這個檢查真的抓得到這次清掉的那種重複模式。
