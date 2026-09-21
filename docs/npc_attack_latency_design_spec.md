@@ -305,38 +305,33 @@ Marco 要求再仔細看一次有沒有遞迴性/重複性的呼叫問題。系�
 的重複呼叫風險——都是既有架構的既有模式，不是這次改動造成的，但這次新增的
 `offer_npc_attack_defense_choice` 也繼承了同樣的模式，一併記錄。
 
-### 風險 1：建立 pending check 的工具都沒有防止重複覆蓋的保護
+### 風險 1：建立 pending check 的工具沒有一致的重複請求處理
 
 `skill_check`（`app/keeper.py:1178`）、`sanity_check`（`:1292`）、
 `offer_check_choice`（`:161`）、新的 `offer_npc_attack_defense_choice`
-——這四個工具的 handler 全部都是直接
-`target_state.pending_checks[target_char.owner_id] = ...`，**沒有先檢查
-這個 owner_id 是不是已經有一筆待處理的檢定**。如果 AI 對同一個角色重複呼叫
-（同一輪內搞混、或因為某種原因分兩次呼叫），第二次會靜默覆蓋第一次，玩家只會
-看到最後一次登記的版本，前一次的參數（`skill`／`difficulty`／`options` 等）
-直接消失，沒有任何錯誤或警告。
+——這四個工具都必須在寫入前檢查這個 owner_id 是否已經有一筆待處理的檢定。
+如果 AI 對同一個角色重複呼叫，不能靜默覆蓋第一次，避免玩家原本要處理的
+`skill`／`difficulty`／`options` 等上下文消失。
 
 對 `offer_npc_attack_defense_choice` 來說風險更具體：這個工具會**先擲一次
 攻擊方的骰子**才登記 pending check，重複呼叫代表**白擲一次骰、結果被覆蓋丟棄
 **——玩家永遠不會看到那個被丟掉的攻擊方骰出結果，如果 KP 或玩家事後回頭核對
 擲骰紀錄會對不上。
 
-**已修正並實作**：新增共用檢查函式 `_reject_if_check_already_pending(state, char)`
-（`app/keeper.py`，緊接在 `require_character` 後面），四個 handler 在做任何
-擲骰／登記之前都先呼叫這個檢查，`char.owner_id` 已經有 pending check 就直接
-回傳錯誤、不覆蓋、不重新擲骰。因為 `_execute_tool` 在同一個 Keeper 回合內是
-單執行緒依序執行（不會有兩個工具呼叫同時跑），檢查直接對呼叫方傳進來的
-`state.pending_checks` 做，不需要另外在 `_mutate_and_save_state` 的鎖裡面做
-——`state` 本來就會在每次 `_mutate_and_save_state` 呼叫後同步成最新版本，同一輪
-內的重複呼叫一定看得到前一次寫入的結果。跨 conversation 的並發已經由
-`app/locks.py` 的 per-conversation 鎖在更早的地方序列化掉了，不會有兩個
-conversation 同時跑到這裡的情況。
+**已修正並實作**：`skill_check` 與 `offer_check_choice` 會先建立 canonical
+pending request；若現有 entry 完全相同，回傳既有結果並以 `should_save=False`
+保持 idempotent；若不同則拒絕。`sanity_check` 與
+`offer_npc_attack_defense_choice` 則在任何 state mutation／攻擊方擲骰前，對
+fresh `target_state` 使用 `_reject_if_check_already_pending`，已有 pending 就拒絕。
+這兩種策略都保證不覆蓋原 entry；其中 NPC 攻擊防守流程不能把第二次呼叫當作
+相同請求重用，因為它涉及攻擊方骰子的生命週期，必須先明確清除舊 pending 才能
+重新開始。
 
-測試見 `tests/test_npc_attack_latency.py` 的 `AlreadyPendingCheckGuardTests`
-——四個工具各自的「重複呼叫被拒絕」情境，加上 `offer_npc_attack_defense_choice`
-專屬的「第二次呼叫不會真的擲骰」驗證（用 mock 計算 `dice.skill_check` 實際被
-呼叫幾次、帶了什麼參數），還有一個「不同角色互不影響」的情境確認這個保護是
-以 `owner_id` 為單位、不是全域擋住。
+測試見 `tests/test_npc_attack_latency.py` 的 `AlreadyPendingCheckTests`：涵蓋
+`skill_check`／`offer_check_choice` 的相同請求 idempotency、不同請求拒絕，以及
+`sanity_check`／`offer_npc_attack_defense_choice` 的重複拒絕與「第二次呼叫不會
+真的擲骰」驗證（用 mock 計算 `dice.skill_check` 實際被呼叫幾次、帶了什麼參數）。
+另有「不同角色互不影響」的情境確認這個保護是以 `owner_id` 為單位、不是全域擋住。
 
 ### 風險 2：`plan_enemy_turn` 重複規劃——**深入查證後發現原本的假設是錯的，沒有修**
 
@@ -562,4 +557,3 @@ test_apply_combat_damage_does_not_clobber_an_existing_pending_check`。
 兩個之前沒被明確斷言在內的工具名稱。全套測試 260 題（原 255 + 5 個新測試），
 只剩跨分支未合併造成的 2 個預期性失敗（PR #44 修的 reply metrics，跟這個
 分支無關）。
-

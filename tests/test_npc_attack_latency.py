@@ -289,7 +289,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertFalse(second["ok"])
         self.assertEqual(saved_state.pending_checks["u1"]["loss_failure"], "1d4")
 
-    def test_offer_check_choice_rejects_when_one_already_pending(self):
+    def test_offer_check_choice_reuses_identical_pending_request(self):
         state = _state_with_investigator()
         with StateStorePatch(keeper) as store:
             store.put(state)
@@ -299,6 +299,24 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             )
             second = keeper._execute_tool(
                 state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
+                [], [], speaker_role="player",
+            )
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertIn("防重複", second["note"])
+
+    def test_offer_check_choice_rejects_different_pending_request(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            first = keeper._execute_tool(
+                state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
+                [], [], speaker_role="player",
+            )
+            second = keeper._execute_tool(
+                state,
+                "offer_check_choice",
+                {"investigator": "小明", "options": [{"label": "閃避", "skill": "閃避"}, {"label": "射擊", "skill": "射擊"}]},
                 [], [], speaker_role="player",
             )
         self.assertTrue(first["ok"])
