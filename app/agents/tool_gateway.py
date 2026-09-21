@@ -5,7 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app import keeper, observability
+from app import async_utils, keeper, observability
 from app.config import (
     LOG_SLOW_OPERATION_MS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
@@ -92,16 +92,18 @@ def make_tool_executor(
                     tool_name=observability.tool_name(tool_name), status="timeout",
                     timeout_ms=TOOL_EXECUTION_TIMEOUT_SECONDS * 1000,
                 )
+                async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
                 result = {"ok": False, "error": "timeout", "partial": True}
             except asyncio.CancelledError:
                 if tool_name in keeper.READ_ONLY_TOOL_NAMES:
-                    task.cancel()
+                    async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
                     raise
                 try:
                     result = await asyncio.wait_for(
                         asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS
                     )
                 except asyncio.TimeoutError:
+                    await keeper.record_tool_recovery_marker(state, tool_name, tool_input)
                     observability.event(
                         "llm.tool.recovery_required",
                         level=logging.ERROR,

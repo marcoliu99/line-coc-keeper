@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from app import observability
 from app.config import (
@@ -38,7 +39,7 @@ async def _close_client(client) -> None:
 
 async def get_async_client():
     """Return an event-loop-scoped, lazily initialized Anthropic client."""
-    global _async_client, _async_client_loop, _async_client_lock
+    global _async_client, _async_client_loop, _async_client_lock, _async_condition
     loop = asyncio.get_running_loop()
     if _async_client is not None and _async_client_loop is loop:
         return _async_client
@@ -49,6 +50,7 @@ async def get_async_client():
             return _async_client
         if _async_client is not None:
             await _close_client(_async_client)
+        _async_condition = None
         import anthropic
 
         _async_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, max_retries=0)
@@ -142,10 +144,12 @@ async def run_conversation(
     for iteration in range(max_iterations):
         observability.increment_metric("iteration_count")
         request_metrics: dict[str, int | None] = {}
-        with observability.span(
+        logical_request_id = observability.new_id("llm")
+        with observability.context(provider_request_id=logical_request_id), observability.span(
             "llm.request",
             provider="anthropic",
             model=ANTHROPIC_MODEL,
+            logical_request_id=logical_request_id,
             iteration=iteration,
             timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
             tool_count=len(anthropic_tools),
@@ -165,7 +169,8 @@ async def run_conversation(
 
             async with _request_scope():
                 response = await retry.async_call_with_retry(
-                    request_once, provider="anthropic", operation="messages.create"
+                    request_once, provider="anthropic", operation="messages.create",
+                    request_id=logical_request_id,
                 )
             usage = getattr(response, "usage", None)
             if LOG_INCLUDE_USAGE:
@@ -218,7 +223,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
-            response = client.messages.create(
+            response = cast(Any, client.messages).create(
                 model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
                 tool_choice={"type": "tool", "name": tool["name"]},
                 messages=[{"role": "user", "content": [
@@ -246,7 +251,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
-            response = client.messages.create(
+            response = cast(Any, client.messages).create(
                 model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
                 tool_choice={"type": "tool", "name": tool["name"]},
                 messages=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],

@@ -10,6 +10,7 @@ and lost the player's whole turn. These tests cover the classifier, the
 shared retry helper, and each provider's actual wiring.
 """
 import asyncio
+import contextlib
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -113,6 +114,36 @@ class IsRetryableTests(unittest.TestCase):
 
 
 class CallWithRetryTests(unittest.TestCase):
+    def test_async_retry_keeps_one_logical_request_id_across_attempts(self):
+        calls = 0
+        spans: list[dict] = []
+
+        async def fn():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RetryableConnectionError()
+            return "ok"
+
+        @contextlib.contextmanager
+        def capture_span(_name, **fields):
+            spans.append(fields)
+            yield
+
+        async def run():
+            with patch.object(retry.observability, "span", capture_span), \
+                    patch.object(retry.observability, "event"), \
+                    patch.object(retry.observability, "increment_metric"), \
+                    patch.object(retry.asyncio, "sleep", new_callable=AsyncMock):
+                return await retry.async_call_with_retry(
+                    fn, provider="test", operation="op", request_id="llm_fixed"
+                )
+
+        self.assertEqual(asyncio.run(run()), "ok")
+        attempt_spans = [span for span in spans if span.get("logical_request_id")]
+        self.assertEqual([span["attempt"] for span in attempt_spans], [1, 2])
+        self.assertEqual({span["logical_request_id"] for span in attempt_spans}, {"llm_fixed"})
+
     def test_succeeds_on_first_try_without_sleeping(self):
         fn = MagicMock(return_value="ok")
         with patch("app.providers.retry.time.sleep") as sleep_mock:

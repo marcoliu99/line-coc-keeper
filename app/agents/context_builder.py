@@ -88,8 +88,14 @@ async def build_context(
                     has_embeddings=getattr(index, "has_embeddings", None),
                     index_cache=getattr(index, "index_cache", "unknown"),
                 )
-                status = "fallback" if metrics.get("has_embeddings") is False else "success"
-                return scenario_rag.format_results(results), status
+                if not results:
+                    return "", "empty"
+                if metrics.get("has_embeddings") is False:
+                    # BM25 remains available to the explicit search tool, but
+                    # proactive prompt context only accepts a successful
+                    # semantic source.
+                    return "", "fallback"
+                return scenario_rag.format_results(results), "success"
 
         rag_task = asyncio.create_task(asyncio.to_thread(_run_scenario_rag))
 
@@ -115,8 +121,11 @@ async def build_context(
                 embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=metrics,
             ):
                 results = memory_rag.search_memory(conversation_id, text, metrics=metrics)
-                status = "fallback" if metrics.get("has_embeddings") is False else "success"
-                return memory_rag.format_results(results), status
+                if not results:
+                    return "", "empty"
+                if metrics.get("has_embeddings") is False:
+                    return "", "fallback"
+                return memory_rag.format_results(results), "success"
 
         memory_task = asyncio.create_task(asyncio.to_thread(_run_memory_rag))
 
@@ -150,6 +159,9 @@ async def build_context(
             status = "success" if result else "empty"
         if status != "success":
             observability.event("rag.source.degraded", level=logging.INFO, rag_kind=rag_kind, status=status)
+            return "", status
+        if not result:
+            return "", "empty"
         return result, status
 
     # Await both sources at one explicit synchronization point.  The tasks

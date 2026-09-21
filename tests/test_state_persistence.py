@@ -57,6 +57,28 @@ class StatePersistenceTests(unittest.TestCase):
         state = GroupState.from_dict({"group_id": "legacy", "schema_version": 0})
         self.assertEqual(state.schema_version, GroupState.CURRENT_SCHEMA_VERSION)
 
+    def test_tool_recovery_markers_round_trip_and_old_snapshots_default_empty(self):
+        legacy = GroupState.from_dict({"group_id": "legacy"})
+        self.assertEqual(legacy.tool_recovery_markers, [])
+        state = GroupState("recovery")
+        state.tool_recovery_markers.append({"tool_name": "apply_combat_damage", "status": "recovery_required"})
+        restored = GroupState.from_dict(state.to_dict())
+        self.assertEqual(restored.tool_recovery_markers, state.tool_recovery_markers)
+
+    def test_cancelled_mutation_recovery_marker_is_durable(self):
+        state = GroupState("recovery-persist")
+        group_state.save_state(state)
+        asyncio.run(keeper.record_tool_recovery_marker(
+            state, "apply_combat_damage", {"investigator": "Ada", "damage": 4}
+        ))
+
+        loaded = group_state.load_state(state.group_id)
+        self.assertEqual(len(loaded.tool_recovery_markers), 1)
+        marker = loaded.tool_recovery_markers[0]
+        self.assertEqual(marker["tool_name"], "apply_combat_damage")
+        self.assertEqual(marker["status"], "recovery_required")
+        self.assertEqual(len(marker["input_digest"]), 16)
+
     def test_future_schema_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unsupported GroupState schema_version=999"):
             GroupState.from_dict({"group_id": "future", "schema_version": 999})
@@ -334,8 +356,11 @@ class StatePersistenceTests(unittest.TestCase):
         output = "\n".join(captured.output)
         self.assertIn("backup_started", output)
         self.assertIn("backup_success", output)
-        with sqlite3.connect(backup) as conn:
+        conn = sqlite3.connect(backup)
+        try:
             result = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            conn.close()
         self.assertEqual(result, "ok")
 
     def test_backups_created_in_same_second_do_not_overwrite(self):

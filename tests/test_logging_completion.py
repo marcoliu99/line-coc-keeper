@@ -126,7 +126,8 @@ class LoggingCompletionTests(unittest.TestCase):
             asyncio.run(anthropic_provider.shutdown_async_client())
 
         self.assertEqual(result, "done")
-        self.assertEqual(captured_metrics, [{}])
+        # One aggregate request span plus its per-attempt span.
+        self.assertEqual(captured_metrics, [{}, {}])
         self.assertFalse(any(call.args[0] == "llm.usage" for call in event.call_args_list))
 
     def test_gemini_usage_can_be_disabled(self):
@@ -180,7 +181,7 @@ class LoggingCompletionTests(unittest.TestCase):
             asyncio.run(gemini_provider.shutdown_async_client())
 
         self.assertEqual(result, "done")
-        self.assertEqual(captured_metrics, [{}])
+        self.assertEqual(captured_metrics, [{}, {}])
         self.assertFalse(any(call.args[0] == "llm.usage" for call in event.call_args_list))
 
 
@@ -330,6 +331,24 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(any("discord.reply.completed" in line for line in captured.output))
         self.assertEqual(metrics["reply_message_count"], 1)
+        self.assertEqual(metrics["reply_edit_count"], 0)
+
+    async def test_direct_dm_output_has_a_latency_span_and_metrics(self):
+        from app import discord_bot
+
+        user = SimpleNamespace(send=AsyncMock())
+        metrics = {}
+        with (
+            patch.object(config, "LOG_ENABLED", True),
+            patch.object(discord_bot.client, "get_user", return_value=user),
+            observability.metrics_context(metrics),
+            self.assertLogs("app.observability", level="INFO") as captured,
+        ):
+            await discord_bot._send_dm("123", "private reply")
+
+        self.assertTrue(any("discord.reply.completed" in line for line in captured.output))
+        self.assertEqual(metrics["reply_message_count"], 1)
+        self.assertEqual(metrics["reply_chunk_count"], 1)
         self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_request_metrics_have_stable_zero_defaults(self):

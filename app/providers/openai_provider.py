@@ -58,7 +58,7 @@ async def _close_client(client) -> None:
 
 async def get_async_client():
     """Return an event-loop-scoped, lazily initialized OpenAI client."""
-    global _async_client, _async_client_loop, _async_client_lock
+    global _async_client, _async_client_loop, _async_client_lock, _async_condition
     loop = asyncio.get_running_loop()
     if _async_client is not None and _async_client_loop is loop:
         return _async_client
@@ -69,6 +69,7 @@ async def get_async_client():
             return _async_client
         if _async_client is not None:
             await _close_client(_async_client)
+        _async_condition = None
         import openai
 
         _async_client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=0)
@@ -294,49 +295,52 @@ async def _create_response_async(client, *, _log_iteration: int | None = None, *
     """Async Responses API helper preserving unsupported-parameter fallback."""
     for param in _unsupported_params:
         kwargs.pop(param, None)
+    logical_request_id = observability.new_id("llm")
     while True:
         request_metrics: dict[str, int | None] = {}
         reasoning = kwargs.get("reasoning") or {}
-        with observability.span(
+        with observability.context(provider_request_id=logical_request_id), observability.span(
             "llm.request",
             provider="openai",
             model=kwargs.get("model"),
             api_operation="responses.create",
+            logical_request_id=logical_request_id,
             iteration=_log_iteration,
             timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
             reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
             tool_count=len(kwargs.get("tools") or []),
             metrics=request_metrics,
         ):
-            try:
-                async def request_once():
-                    async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
-                        return await client.responses.create(**kwargs)
+                try:
+                    async def request_once():
+                        async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                            return await client.responses.create(**kwargs)
 
-                async with _request_scope():
-                    response = await retry.async_call_with_retry(
-                        request_once, provider="openai", operation="responses.create"
+                    async with _request_scope():
+                        response = await retry.async_call_with_retry(
+                            request_once, provider="openai", operation="responses.create",
+                            request_id=logical_request_id,
+                        )
+                except Exception as exc:
+                    exc_text = str(exc).lower()
+                    offending = next(
+                        (p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text),
+                        None,
                     )
-            except Exception as exc:
-                exc_text = str(exc).lower()
-                offending = next(
-                    (p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text),
-                    None,
-                )
-                if offending is None:
-                    raise
-                _unsupported_params.add(offending)
-                kwargs.pop(offending, None)
-                observability.event(
-                    "llm.retry",
-                    level=logging.WARNING,
-                    provider="openai",
-                    model=kwargs.get("model"),
-                    removed_parameter=offending,
-                    error_type=type(exc).__name__,
-                    status="error",
-                )
-                continue
+                    if offending is None:
+                        raise
+                    _unsupported_params.add(offending)
+                    kwargs.pop(offending, None)
+                    observability.event(
+                        "llm.retry",
+                        level=logging.WARNING,
+                        provider="openai",
+                        model=kwargs.get("model"),
+                        removed_parameter=offending,
+                        error_type=type(exc).__name__,
+                        status="error",
+                    )
+                    continue
         return response
 
 

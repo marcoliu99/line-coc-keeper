@@ -87,6 +87,56 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.payload["memory_context"], "memory context")
         self.assertEqual(message.payload["memory_status"], "success")
 
+    async def test_proactive_rag_does_not_inject_bm25_fallback_context(self):
+        from app import memory_rag, scenario_rag
+        from app.agents import context_builder
+
+        index = type("Index", (), {"chunks": [1], "has_embeddings": False, "index_cache": "memory"})()
+
+        def memory_search(_group_id, _query, *, metrics):
+            metrics["has_embeddings"] = False
+            return [{"label": "old", "text": "fallback memory"}]
+
+        with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(scenario_rag, "get_index", return_value=index), \
+                patch.object(scenario_rag, "search", return_value=[{"page": 1, "text": "fallback scenario"}]), \
+                patch.object(scenario_rag, "format_results", return_value="fallback scenario context"), \
+                patch.object(memory_rag, "search_memory", side_effect=memory_search), \
+                patch.object(memory_rag, "format_results", return_value="fallback memory context"):
+            state = self._state()
+            state.characters["u1"] = Character(name="P1", owner_id="u1")
+            message = await context_builder.build_context(
+                state=state, user_id="u1", display_name="P1", text="hi",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertEqual(message.payload["rag_context"], "")
+        self.assertEqual(message.payload["rag_status"], "fallback")
+        self.assertEqual(message.payload["memory_context"], "")
+        self.assertEqual(message.payload["memory_status"], "fallback")
+
+    async def test_proactive_rag_empty_results_are_not_formatted_into_prompt(self):
+        from app import memory_rag, scenario_rag
+        from app.agents import context_builder
+
+        with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(scenario_rag, "get_index", return_value="fake-index"), \
+                patch.object(scenario_rag, "search", return_value=[]), \
+                patch.object(scenario_rag, "format_results", return_value="should not be used"), \
+                patch.object(memory_rag, "search_memory", return_value=[]), \
+                patch.object(memory_rag, "format_results", return_value="should not be used"):
+            state = self._state()
+            state.characters["u1"] = Character(name="P1", owner_id="u1")
+            message = await context_builder.build_context(
+                state=state, user_id="u1", display_name="P1", text="hi",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertEqual(message.payload["rag_context"], "")
+        self.assertEqual(message.payload["rag_status"], "empty")
+        self.assertEqual(message.payload["memory_context"], "")
+        self.assertEqual(message.payload["memory_status"], "empty")
+
     def test_scenario_context_budget_keeps_structural_boundaries(self):
         from app import keeper
 

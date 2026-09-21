@@ -177,6 +177,7 @@ async def async_call_with_retry(
     *,
     provider: str,
     operation: str,
+    request_id: str | None = None,
 ) -> T:
     """Async counterpart of :func:`call_with_retry`.
 
@@ -185,17 +186,23 @@ async def async_call_with_retry(
     Timeout retries are capped independently so a slow upstream cannot consume
     the full transient retry budget indefinitely.
     """
-    logical_request_id = observability.current_context().get("provider_request_id")
-    if logical_request_id is None:
-        logical_request_id = observability.new_id("llm")
+    current = observability.current_context()
+    logical_request_id = request_id or current.get("provider_request_id") or observability.new_id("llm")
     attempt = 0
     timeout_attempts = 0
     while True:
         try:
-            result = fn()
-            if not inspect.isawaitable(result):
-                raise TypeError("async_call_with_retry callback must return an awaitable")
-            return await result
+            with observability.context(provider_request_id=logical_request_id), observability.span(
+                "llm.request.attempt",
+                provider=provider,
+                api_operation=operation,
+                logical_request_id=logical_request_id,
+                attempt=attempt + 1,
+            ):
+                result = fn()
+                if not inspect.isawaitable(result):
+                    raise TypeError("async_call_with_retry callback must return an awaitable")
+                return await result
         except asyncio.CancelledError:
             raise
         except Exception as exc:

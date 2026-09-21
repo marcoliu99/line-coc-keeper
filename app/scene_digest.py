@@ -18,7 +18,11 @@ def _log_group_id(group_id: str) -> str:
 
 
 def _id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + f"-{uuid4().hex[:4]}"
+    # Digests can be created more than once in a single second (for example
+    # when a turn and its retry both checkpoint). Four random hex digits made
+    # that a realistic 1/65,536 collision, which could overwrite a different
+    # snapshot in SQLite. Keep the readable timestamp and use the full UUID.
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + f"-{uuid4().hex}"
 
 
 def _public_state(state: GroupState) -> dict:

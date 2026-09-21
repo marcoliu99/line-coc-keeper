@@ -14,6 +14,7 @@ import contextlib
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from app import observability
 from app.config import (
@@ -46,7 +47,7 @@ async def _close_client(client) -> None:
 
 async def get_async_client():
     """Return the Google GenAI async surface scoped to the current loop."""
-    global _async_client, _async_client_owner, _async_client_loop, _async_client_lock
+    global _async_client, _async_client_owner, _async_client_loop, _async_client_lock, _async_condition
     loop = asyncio.get_running_loop()
     if _async_client is not None and _async_client_loop is loop:
         return _async_client
@@ -57,6 +58,7 @@ async def get_async_client():
             return _async_client
         if _async_client is not None:
             await _close_client(_async_client)
+        _async_condition = None
         from google import genai
 
         owner = genai.Client(api_key=GEMINI_API_KEY)
@@ -136,14 +138,14 @@ async def run_conversation(
         )
         for t in tools
     ]
-    gemini_tools = [types.Tool(function_declarations=function_declarations)]
+    gemini_tools: list[Any] = [types.Tool(function_declarations=function_declarations)]
     config = types.GenerateContentConfig(
         system_instruction=f"{static_system}\n\n{dynamic_system}",
         tools=gemini_tools,
         temperature=KEEPER_TEMPERATURE,
     )
 
-    contents: list = []
+    contents: Any = []
     for entry in history:
         role = "model" if entry["role"] == "assistant" else "user"
         contents.append(types.Content(role=role, parts=[types.Part(text=entry["content"])]))
@@ -153,10 +155,12 @@ async def run_conversation(
     for iteration in range(max_iterations):
         observability.increment_metric("iteration_count")
         request_metrics: dict[str, int | None] = {}
-        with observability.span(
+        logical_request_id = observability.new_id("llm")
+        with observability.context(provider_request_id=logical_request_id), observability.span(
             "llm.request",
             provider="gemini",
             model=GEMINI_MODEL,
+            logical_request_id=logical_request_id,
             iteration=iteration,
             timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
             tool_count=len(function_declarations),
@@ -171,7 +175,8 @@ async def run_conversation(
 
             async with _request_scope():
                 response = await retry.async_call_with_retry(
-                    request_once, provider="gemini", operation="generate_content"
+                    request_once, provider="gemini", operation="generate_content",
+                    request_id=logical_request_id,
                 )
             usage = getattr(response, "usage_metadata", None)
             if LOG_INCLUDE_USAGE:
@@ -229,10 +234,12 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         config = types.GenerateContentConfig(
             tools=[types.Tool(function_declarations=[function_declaration])],
             tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[tool["name"]])
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=cast(Any, "ANY"), allowed_function_names=[tool["name"]]
+                )
             ),
         )
-        contents = [types.Content(role="user", parts=[
+        contents: Any = [types.Content(role="user", parts=[
             types.Part.from_bytes(data=png_bytes, mime_type="image/png"),
             types.Part(text=prompt_text),
         ])]
@@ -264,10 +271,12 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         config = types.GenerateContentConfig(
             tools=[types.Tool(function_declarations=[function_declaration])],
             tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[tool["name"]])
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=cast(Any, "ANY"), allowed_function_names=[tool["name"]]
+                )
             ),
         )
-        contents = [types.Content(role="user", parts=[types.Part(text=f"{prompt_text}\n\n{text}")])]
+        contents: Any = [types.Content(role="user", parts=[types.Part(text=f"{prompt_text}\n\n{text}")])]
         with observability.span("llm.request", provider="gemini", model=GEMINI_MODEL, api_operation="generate_content"):
             response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
         for fc in response.function_calls or []:

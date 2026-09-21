@@ -35,9 +35,11 @@ import time
 from dataclasses import dataclass, field
 from typing import cast
 
-from app import db, embedding_cache, observability
+from app import async_utils, db, embedding_cache, observability
 from app.config import (
+    EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
@@ -49,6 +51,7 @@ _logger = logging.getLogger(__name__)
 _prewarm_semaphore: asyncio.Semaphore | None = None
 _prewarm_loop = None
 _prewarm_tasks: set[asyncio.Task] = set()
+_prewarm_worker_tasks: set[asyncio.Task] = set()
 
 
 async def _prewarm_index(group_id: str, scenario_text: str) -> None:
@@ -62,7 +65,14 @@ async def _prewarm_index(group_id: str, scenario_text: str) -> None:
         # the optional, low-priority embedding work begins.
         await asyncio.sleep(0)
         try:
-            await asyncio.to_thread(get_index, group_id, scenario_text)
+            # Keep the worker shielded from cancellation of the low-priority
+            # wrapper. asyncio.to_thread cannot interrupt a synchronous HTTP
+            # call, so shutdown tracks the worker explicitly and gives it the
+            # same bounded grace period as provider requests.
+            worker = asyncio.create_task(asyncio.to_thread(get_index, group_id, scenario_text))
+            _prewarm_worker_tasks.add(worker)
+            worker.add_done_callback(_prewarm_worker_tasks.discard)
+            await asyncio.shield(worker)
             observability.event("rag.prewarm.completed", rag_kind="scenario", status="success")
         except asyncio.CancelledError:
             observability.event("rag.prewarm.cancelled", level=logging.INFO, rag_kind="scenario")
@@ -85,13 +95,30 @@ def schedule_index_prewarm(group_id: str, scenario_text: str) -> asyncio.Task | 
 
 
 async def shutdown_prewarm() -> None:
-    """Cancel pending prewarm tasks during bot shutdown."""
+    """Cancel wrappers and wait a bounded time for their thread workers."""
     tasks = tuple(_prewarm_tasks)
     for task in tasks:
         if not task.done():
             task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+    workers = tuple(_prewarm_worker_tasks)
+    if not workers:
+        return
+    done, pending = await asyncio.wait(workers, timeout=PROVIDER_SHUTDOWN_GRACE_SECONDS)
+    for task in done:
+        # Consume a late worker exception even if the wrapper was cancelled.
+        async_utils.observe_background_task(task, operation="rag.prewarm")
+    if pending:
+        observability.event(
+            "rag.prewarm.shutdown_degraded",
+            level=logging.ERROR,
+            rag_kind="scenario",
+            status="timeout",
+            timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
+        )
+        for task in pending:
+            async_utils.observe_background_task(task, operation="rag.prewarm")
 
 
 def _log_group_id(group_id: str) -> str:
@@ -238,7 +265,11 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[f
     try:
         import openai
 
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client = openai.OpenAI(
+            api_key=OPENAI_API_KEY,
+            timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         ordered: list[list[float] | None] = [None] * len(texts)
         batch_count = (len(texts) + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
         for batch_index, start in enumerate(range(0, len(texts), _EMBEDDING_BATCH_SIZE)):

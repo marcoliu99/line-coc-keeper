@@ -16,7 +16,7 @@ import time
 import unicodedata
 from collections.abc import Awaitable
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import discord
 
@@ -161,7 +161,10 @@ async def _send_direct_message(
 ) -> None:
     """Send a non-chunked public message with the same reply span as Reply."""
     if not config.LOG_ENABLED:
-        await _discord_operation(channel.send(text, view=view))
+        if view is None:
+            await _discord_operation(channel.send(text))
+        else:
+            await _discord_operation(channel.send(text, view=view))
         return
     byte_count = len(text.encode("utf-8"))
     with observability.span(
@@ -172,7 +175,10 @@ async def _send_direct_message(
         reply_chunk_count=1,
         reply_edit_count=0,
     ):
-        await _discord_operation(channel.send(text, view=view))
+        if view is None:
+            await _discord_operation(channel.send(text))
+        else:
+            await _discord_operation(channel.send(text, view=view))
     _record_reply_output(text)
 
 
@@ -339,8 +345,23 @@ async def _send_dm(owner_id: str, text: str) -> None:
     # if the user has DMs from server members disabled; commands.py swallows
     # that (see its docstring on why it doesn't fall back to posting publicly).
     user = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
+    if user is None:
+        raise RuntimeError(f"Discord user {owner_id} could not be resolved")
     for chunk in _chunk_text(text):
-        await _discord_operation(user.send(chunk))
+        if not config.LOG_ENABLED:
+            await _discord_operation(user.send(chunk))
+            continue
+        with observability.span(
+            "discord.reply",
+            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+            reply_kind="dm",
+            reply_message_count=1,
+            reply_chunk_count=1,
+            reply_bytes=len(chunk.encode("utf-8")),
+            reply_edit_count=0,
+        ):
+            await _discord_operation(user.send(chunk))
+        _record_reply_output(chunk)
 
 
 def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
@@ -354,7 +375,23 @@ def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
 
 async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, page_number: int) -> None:
     user = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
-    await _discord_operation(user.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png")))
+    if user is None:
+        raise RuntimeError(f"Discord user {owner_id} could not be resolved")
+    filename = f"page_{page_number}.png"
+    if not config.LOG_ENABLED:
+        await _discord_operation(user.send(file=discord.File(io.BytesIO(png_bytes), filename=filename)))
+        return
+    with observability.span(
+        "discord.reply",
+        slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+        reply_kind="dm_image",
+        reply_message_count=1,
+        reply_chunk_count=0,
+        reply_bytes=len(png_bytes),
+        reply_edit_count=0,
+    ):
+        await _discord_operation(user.send(file=discord.File(io.BytesIO(png_bytes), filename=filename)))
+    _record_reply_binary(len(png_bytes))
 
 
 def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
@@ -457,9 +494,13 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
         try:
+            channel = interaction.channel
+            if channel is None:
+                raise RuntimeError("check interaction has no messageable channel")
+            messageable = cast(discord.abc.Messageable, channel)
             await _edit_interaction_view(interaction, view=None)
             reply = _make_interaction_reply(interaction)
-            send_image = _make_send_image(interaction.channel)
+            send_image = _make_send_image(messageable)
             command_text = f"/coc check {self.option}" if self.option else "/coc check"
             state_before = await asyncio.to_thread(load_group_state, self.conversation_id)
             before_pending = dict(state_before.pending_checks)
@@ -474,7 +515,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
                 # partway through — see app/discord_bot.py's on_message for
                 # why (a check can already be registered/saved before a later
                 # failure in the same turn).
-                await _post_pending_buttons(interaction.channel, self.conversation_id, before_pending, before_luck_pending)
+                await _post_pending_buttons(messageable, self.conversation_id, before_pending, before_luck_pending)
         finally:
             locks.release_check(self.conversation_id, self.owner_id)
 
@@ -561,9 +602,13 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
         try:
+            channel = interaction.channel
+            if channel is None:
+                raise RuntimeError("luck interaction has no messageable channel")
+            messageable = cast(discord.abc.Messageable, channel)
             await _edit_interaction_view(interaction, view=None)
             reply = _make_interaction_reply(interaction)
-            send_image = _make_send_image(interaction.channel)
+            send_image = _make_send_image(messageable)
             state_before = await asyncio.to_thread(load_group_state, self.conversation_id)
             before_pending = dict(state_before.pending_checks)
             before_luck_pending = dict(state_before.pending_luck_decisions)
@@ -575,7 +620,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             finally:
                 # See on_message's own comment: always attempt this, even if
                 # handle_luck_decision raised partway through.
-                await _post_pending_buttons(interaction.channel, self.conversation_id, before_pending, before_luck_pending)
+                await _post_pending_buttons(messageable, self.conversation_id, before_pending, before_luck_pending)
         finally:
             locks.release_check(self.conversation_id, self.owner_id)
 
@@ -709,7 +754,7 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
         await _edit_interaction_view(interaction, view=None)
-        push = _make_reply(interaction.channel)
+        push = _make_reply(cast(discord.abc.Messageable, channel))
         await resolve_pdf_upload_choice(
             self.conversation_id,
             self.choice,

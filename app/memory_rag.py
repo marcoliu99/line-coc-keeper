@@ -33,6 +33,7 @@ from typing import Any, cast
 
 from app import db, embedding_cache, observability
 from app.config import (
+    EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
@@ -81,14 +82,18 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[flo
     try:
         import openai
 
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client = openai.OpenAI(
+            api_key=OPENAI_API_KEY,
+            timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         with observability.span(
             "embedding.batch",
             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
             batch_size=len(texts), batch_index=0, batch_count=1,
         ):
             response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=texts)
-        ordered = [None] * len(texts)
+        ordered: list[list[float] | None] = [None] * len(texts)
         for item in response.data:
             ordered[item.index] = item.embedding
         if any(v is None for v in ordered):
