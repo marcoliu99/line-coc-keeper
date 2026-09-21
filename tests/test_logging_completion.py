@@ -200,6 +200,24 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_edit_count"], 0)
         self.assertTrue(any("discord.reply.completed" in line for line in captured.output))
 
+    async def test_direct_image_has_complete_reply_metrics(self):
+        """Regression guard: _record_reply_binary only ever incremented
+        reply_message_count/reply_bytes — same gap as the two tests above
+        had for _record_reply_output/_record_reply_edit, just not covered
+        by any test until now."""
+        from app.discord_bot import _send_direct_image
+
+        channel = SimpleNamespace(send=AsyncMock())
+        metrics = {}
+        with patch.object(config, "LOG_ENABLED", True):
+            with observability.metrics_context(metrics):
+                await _send_direct_image(channel, b"\x89PNG", 1)
+
+        self.assertEqual(metrics["reply_message_count"], 1)
+        self.assertEqual(metrics["reply_bytes"], 4)
+        self.assertEqual(metrics["reply_chunk_count"], 0)
+        self.assertEqual(metrics["reply_edit_count"], 0)
+
     async def test_help_edit_counts_edit_not_new_message(self):
         from app.discord_bot import _edit_interaction_message
 
@@ -239,6 +257,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
         self.assertEqual(metrics["reply_bytes"], 1900)
+        self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_interaction_followup_partial_failure_counts_only_successful_chunks(self):
         from app.discord_bot import _make_interaction_reply
@@ -258,6 +277,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
         self.assertEqual(metrics["reply_bytes"], 1900)
+        self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_request_metrics_have_stable_zero_defaults(self):
         from app.discord_bot import _request_metrics
