@@ -9,6 +9,8 @@
 - review follow-up implementation changeset：`39c4b89`（補強舊 combat snapshot 相容性與 `sudo switch` 目標角色標記）
 - 工作 branch：`feature/kp-assistant-sudo-control`
 - 目標整合分支：`main_v2`
+- 本輪 review fixes implementation changeset：`e7a998d`
+- `main_v2` 對齊後的型別修正 changeset：`abdba38`
 
 本文件先於 runtime implementation 建立。實作前必須先確認本文件的權限邊界、
 指令格式與允許操作清單；未確認前不修改程式碼。
