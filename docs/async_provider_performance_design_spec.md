@@ -6,13 +6,13 @@
 - 工作分支：feature/async-provider-performance
 - 分支基準：origin/main_v2
 - 目前基準 commit：fe02e69b9e534b6939c27f7f3e05e05e153807a4
-- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..working-tree`
+- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..7155fc6`
 - 前一個 implementation checkpoint：`d1d909b`（`fix: close async provider performance review gaps`）
-- 本輪 review-fix checkpoint：待 commit；完成後必須把本行改成實際 commit hash。
+- 本輪 review-fix checkpoint：`7155fc6`（`fix: close async provider review gaps`）。
 - 遠端分支已建立並推送：origin/feature/async-provider-performance
 - 本次 changeset 範圍是從 main tree 的 `fe02e69` 接續到 `d1d909b`；下次若 `main_v2` 有新 commit，先記錄新的起點，再繼續讀 patch/更新本段範圍。
 - 若 main_v2 在 PR 前有新 commit，必須重新 fetch、對齊並記錄新的 changeset 範圍。
-- 實作狀態：已完成 provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle、取消 recovery marker、request identity 與本輪 provider lifecycle/RAG fallback/cancellation/shutdown review fixes。ruff、mypy、compileall、pytest 與 pytest-cov 必須在本輪 commit 後重新執行；benchmark 仍屬部署前的效能驗證工作，PR 前仍須重新對齊 `main_v2`。
+- 實作狀態：已完成 provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle、取消 recovery marker、request identity 與本輪 provider lifecycle/RAG fallback/cancellation/shutdown review fixes。`ruff check .`、`mypy app`、`python3 -m compileall -q app tests`、`pytest -q`（318 passed、1 skipped）與 `pytest --cov=app --cov-report=term-missing -q`（58%）已通過；benchmark 仍屬部署前的效能驗證工作，PR 前仍須重新對齊 `main_v2`。
 
 ## 1. 背景與問題
 
