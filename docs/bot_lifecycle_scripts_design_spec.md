@@ -7,6 +7,7 @@
 - 本輪對齊的 `main_v2` changeset：`3d5c39f`
 - 本 branch 與 `main_v2` 的對齊 merge changeset：`caca558`
 - 本輪 Ruff／pytest／profiler implementation changeset：`0c96ff1`
+- 後續 script review fixes changeset：待提交
 - 後續若 `main_v2` 有新 commit，下一輪修改或更新 PR 前必須重新 fetch 並對齊。
 
 ## Problem and goals
@@ -29,7 +30,7 @@
 
 `discord` 對應 `python -m app.discord_bot`。script 只接受明確的 `discord` 入口，不自行猜測或啟動其他平台入口。
 
-`start_bot.sh` 預設在專案 root 執行，尋找 `.venv/bin/python`；若不存在才使用 PATH 中的 `python3`。啟動前檢查 `.env` 是否存在及必要入口是否可 import，但不把 secrets 印到 terminal 或 log。
+`start_bot.sh` 預設在專案 root 執行，尋找 `.venv/bin/python`；若不存在才使用 PATH 中的 `python3`。Bot 本身依既有設定載入 `.env` 與檢查必要設定；lifecycle script 不把 secrets 印到 terminal 或 log。
 
 ### Optional profiler
 
@@ -142,7 +143,7 @@ print instance name, PID, log path
 ## Integration and conventions
 
 - Scripts 使用 `set -euo pipefail`、`dirname` 找 repository root，所有路徑加引號。
-- 共同邏輯放在一個不執行 network/API 的 `scripts/bot_lifecycle_common.sh`，start/stop/status/clean 共用 instance 與 path validation。
+- 共同邏輯放在一個不執行 network/API 的 `scripts/bot_lifecycle.py`，start/stop/status/clean 共用 instance 與 path validation。
 - 不改變 `app/config.py` 的 runtime defaults；script 只透過既有 `.env`／environment 啟動 bot。
 - `.runtime/` 加入 `.gitignore`，不要讓 PID、manifest、log 或測試資料進 Git。
 - README 或 `docs/setup.md` 補上實際指令、exit code、multiple instance 範例與 clean 的警告。

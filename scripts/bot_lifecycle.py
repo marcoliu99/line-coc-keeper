@@ -233,6 +233,7 @@ def _profiler_manifest(
     output: Path | None,
     bot_process: subprocess.Popen,
     bot_command: list[str],
+    bot_pgid: int,
     attached_process: subprocess.Popen | None = None,
     attached_command: list[str] | None = None,
 ) -> dict | None:
@@ -240,7 +241,7 @@ def _profiler_manifest(
         return None
     if attached_process is None or attached_command is None:
         pid = bot_process.pid
-        pgid = os.getpgid(pid)
+        pgid = bot_pgid
         command = bot_command
     else:
         pid = attached_process.pid
@@ -325,6 +326,7 @@ def start(bot: str, name: str | None) -> int:
         profile_output,
         process,
         command,
+        bot_pgid,
         profiler_process,
         profiler_command,
     )
@@ -417,6 +419,7 @@ def status(instance: str | None) -> int:
             data = json.loads(path.read_text(encoding="utf-8"))
             pid = int(data["pid"])
             state = "running" if _alive(pid) else "stale"
+            started_at = data.get("started_at", "")
             profiler = data.get("profiler")
             profile_note = (
                 f" profiler={profiler.get('tool')} profile={profiler.get('output_path')}"
@@ -425,7 +428,7 @@ def status(instance: str | None) -> int:
             )
             print(
                 f"{data.get('instance', path.stem)} bot={data.get('bot', '?')} pid={pid} "
-                f"{state} log={data.get('log_path', '')}{profile_note}"
+                f"{state} started={started_at} log={data.get('log_path', '')}{profile_note}"
             )
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             print(f"{path.name}: invalid ({exc})")
