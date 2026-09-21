@@ -5,7 +5,7 @@
 - 基準分支：`main_v2`
 - 本次起始 changeset：`d0e4a6a`（建立 branch 時的 `origin/main_v2`）
 - 實作前重新對齊的 `main_v2` changeset：`f6a5a1f`
-- 本次結束 changeset：`f26c16a`（runtime implementation；後續文件修訂若有則以最新 HEAD 為準）
+- 本次實作結束 changeset：`e930ef4`（包含本輪 review 修正與測試；後續文件修訂為 doc-only）
 - 工作 branch：`feature/kp-assistant-sudo-control`
 - 目標整合分支：`main_v2`
 
