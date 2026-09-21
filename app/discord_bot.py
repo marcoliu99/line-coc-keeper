@@ -20,6 +20,7 @@ import discord
 
 from app import config, help_service, locks, logging_config, observability, scenario_library
 from app.commands import router as command_router
+from app.commands import sudo as sudo_policy
 from app.legacy_commands import (
     Reply, SendImage,
     _is_kp_or_keeper,
@@ -422,7 +423,11 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
 
 
 async def _post_check_buttons(
-    channel: discord.abc.Messageable, conversation_id: str, state: GroupState, before_pending: dict
+    channel: discord.abc.Messageable,
+    conversation_id: str,
+    state: GroupState,
+    before_pending: dict,
+    public_marker: str | None = None,
 ) -> None:
     """Posts a roll button (or, for a "choice" check, one button per option —
     e.g. 閃避／反擊ーー in the same message) for every pending check that's
@@ -441,7 +446,8 @@ async def _post_check_buttons(
             view = discord.ui.View(timeout=None)
             for label, danger, option in _check_button_specs(check):
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option))
-            text = f"👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）："
+            marker = f"{public_marker}\n" if public_marker else ""
+            text = f"{marker}👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）："
             await _send_direct_message(channel, text, view=view)
         except Exception:
             # Never let one broken/unpostable entry (a malformed check dict,
@@ -518,7 +524,11 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
 
 
 async def _post_luck_buttons(
-    channel: discord.abc.Messageable, conversation_id: str, state: GroupState, before_pending: dict
+    channel: discord.abc.Messageable,
+    conversation_id: str,
+    state: GroupState,
+    before_pending: dict,
+    public_marker: str | None = None,
 ) -> None:
     """Same content-diff pattern as _post_check_buttons, for pending Luck-spend
     decisions (see app/commands.py's handle_check_command). Takes an already-
@@ -534,7 +544,8 @@ async def _post_luck_buttons(
                 label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
                 view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"]))
             view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True))
-            text = f"🍀 {name}，要花 Luck 買到更好的結果嗎？"
+            marker = f"{public_marker}\n" if public_marker else ""
+            text = f"{marker}🍀 {name}，要花 Luck 買到更好的結果嗎？"
             await _send_direct_message(channel, text, view=view)
         except Exception:
             _logger.exception(
@@ -547,6 +558,7 @@ async def _post_pending_buttons(
     conversation_id: str,
     before_pending: dict,
     before_luck_pending: dict,
+    public_marker: str | None = None,
 ) -> None:
     """Shared tail for every place that posts fresh check/Luck-spend buttons
     after a command or turn finishes (CheckButton/LuckSpendButton callbacks,
@@ -576,9 +588,9 @@ async def _post_pending_buttons(
     even a gateway reconnect. Every direct load_group_state call in this
     module goes through to_thread for the same reason."""
     state = await asyncio.to_thread(load_group_state, conversation_id)
-    await _post_check_buttons(channel, conversation_id, state, before_pending)
+    await _post_check_buttons(channel, conversation_id, state, before_pending, public_marker)
     state = await asyncio.to_thread(load_group_state, conversation_id)
-    await _post_luck_buttons(channel, conversation_id, state, before_luck_pending)
+    await _post_luck_buttons(channel, conversation_id, state, before_luck_pending, public_marker)
 
 
 # choice is restricted to these two literal tokens (see app/commands.py's
@@ -917,6 +929,13 @@ async def _handle_message(message: discord.Message) -> None:
         state_before = await asyncio.to_thread(load_group_state, conversation_id)
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
+        sudo_marker: str | None = None
+        if command_parts[0].casefold() == "/coc" and len(command_parts) > 1 and command_parts[1].casefold() == "sudo":
+            parsed_sudo, _ = sudo_policy.parse_sudo_command(command_parts, allow_opaque_target=False)
+            if parsed_sudo is not None:
+                target = state_before.get_active_character(parsed_sudo.subject_user_id)
+                if target is not None:
+                    sudo_marker = f"【KP Assistant 代操作：{target.name}】"
         try:
             is_keeper = _is_keeper_member(message.author)
             await command_router.handle_text_message(
@@ -929,7 +948,13 @@ async def _handle_message(message: discord.Message) -> None:
             # (e.g. skill_check's tool call) before a *later* tool call in the
             # same turn blows up, and that would otherwise silently strand a
             # pending check with no button ever posted for it.
-            await _post_pending_buttons(message.channel, conversation_id, before_pending, before_luck_pending)
+            await _post_pending_buttons(
+                message.channel,
+                conversation_id,
+                before_pending,
+                before_luck_pending,
+                sudo_marker,
+            )
     except StateRevisionConflict:
         observability.mark_request_error()
         _logger.warning(

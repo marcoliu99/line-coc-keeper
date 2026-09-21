@@ -595,6 +595,78 @@ class CombatState:
     processed_timings: list[str] = field(default_factory=list)
     range_bands: dict[str, str] = field(default_factory=dict)
 
+    def retire_character(self, character_id: str) -> None:
+        """Remove a retired investigator from the live initiative state.
+
+        Retiring a character removes its player binding, but the durable
+        character history is intentionally kept in ``characters_by_id``.  A
+        combat order is live state rather than history, so it must not retain
+        a PC that can no longer take a turn or be selected as an enemy target.
+        The next surviving combatant becomes current when the retired PC was
+        the current turn; this avoids advancing a second time when the next
+        player action is submitted.
+        """
+        if not self.order:
+            return
+
+        removed = [
+            combatant
+            for combatant in self.order
+            if combatant.is_pc and combatant.character_id == character_id
+        ]
+        if not removed:
+            return
+
+        removed_ids = {combatant.combatant_id for combatant in removed}
+        current = self.order[self.current_index] if 0 <= self.current_index < len(self.order) else None
+        current_was_removed = current is not None and current.combatant_id in removed_ids
+        current_id = current.combatant_id if current is not None else ""
+        old_order = list(self.order)
+        self.order = [combatant for combatant in old_order if combatant.combatant_id not in removed_ids]
+
+        # An unresolved enemy plan/effect must not retain a retired PC as a
+        # target.  Other combatants' plans remain valid.
+        self.plans = {
+            plan_id: plan
+            for plan_id, plan in self.plans.items()
+            if plan.get("enemy_combatant_id") not in removed_ids
+            and not any(target_id in removed_ids for target_id in (plan.get("target_ids") or []))
+        }
+        self.effects = [effect for effect in self.effects if effect.target_id not in removed_ids]
+        self.range_bands = {
+            key: value
+            for key, value in self.range_bands.items()
+            if not any(
+                key == target_id
+                or key.startswith(f"{target_id}:")
+                or key.endswith(f":{target_id}")
+                for target_id in removed_ids
+            )
+        }
+
+        if not self.order:
+            self.active = False
+            self.current_index = 0
+            return
+
+        if current_was_removed:
+            # Select the first surviving combatant after the retired current
+            # turn, wrapping around.  Do not call advance_turn here: the next
+            # surviving combatant must be allowed to act now.
+            assert current is not None
+            old_index = old_order.index(current)
+            for offset in range(1, len(old_order) + 1):
+                candidate = old_order[(old_index + offset) % len(old_order)]
+                if candidate.combatant_id not in removed_ids:
+                    self.current_index = self.order.index(candidate)
+                    break
+        else:
+            surviving_current = next(
+                (combatant for combatant in self.order if combatant.combatant_id == current_id),
+                self.order[0],
+            )
+            self.current_index = self.order.index(surviving_current)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "active": self.active,
@@ -868,6 +940,7 @@ class GroupState:
         # Keep a pending pregen Luck roll: only the player may roll it, and
         # clearing it here would let a later reactivation bypass that rule.
         self.characters_by_id[character.character_id] = character
+        self.combat.retire_character(character.character_id)
         return character
 
     def active_characters(self) -> list[Character]:

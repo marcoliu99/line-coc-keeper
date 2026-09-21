@@ -17,7 +17,7 @@ sys.modules.setdefault(
 from app import legacy_commands as commands
 from app.commands import router
 from app.commands.sudo import parse_sudo_command
-from app.models import Character, GroupState
+from app.models import Character, CombatState, Combatant, EffectState, GroupState
 
 
 def clone_state(state: GroupState) -> GroupState:
@@ -76,18 +76,24 @@ class SudoParserTests(unittest.TestCase):
         self.assertEqual(parsed.subject_user_id, "123")
         self.assertEqual(parsed.player_parts, ["/coc", "away"])
 
-        parsed, error = parse_sudo_command(["/coc", "sudo", "player-1", "retire", "小明"])
+        parsed, error = parse_sudo_command(
+            ["/coc", "sudo", "player-1", "retire", "小明"], allow_opaque_target=True
+        )
         self.assertIsNone(error)
         self.assertEqual(parsed.subject_user_id, "player-1")
         self.assertEqual(parsed.player_parts, ["/coc", "retire", "小明"])
+        self.assertEqual(
+            parse_sudo_command(["/coc", "sudo", "player-1", "retire", "小明"])[1],
+            "invalid_target",
+        )
 
     def test_parser_rejects_player_only_luck_roll_and_character_creation(self):
         self.assertEqual(
-            parse_sudo_command(["/coc", "sudo", "p1", "luck", "roll"])[1],
+            parse_sudo_command(["/coc", "sudo", "p1", "luck", "roll"], allow_opaque_target=True)[1],
             "player_only_luck_roll",
         )
         self.assertEqual(
-            parse_sudo_command(["/coc", "sudo", "p1", "usepregen", "1"])[1],
+            parse_sudo_command(["/coc", "sudo", "p1", "usepregen", "1"], allow_opaque_target=True)[1],
             "player_only_character_creation",
         )
         self.assertEqual(
@@ -120,6 +126,50 @@ class SudoStateTests(unittest.TestCase):
         self.assertNotIn("p1", state.pending_luck_decisions)
         self.assertEqual(state.pending_pregen_luck["p1"], retired.character_id)
 
+    def test_retire_removes_character_from_live_combat_and_selects_next_turn(self):
+        state = GroupState(group_id="g")
+        first = Character(name="小明", owner_id="p1", dex=70)
+        second = Character(name="小華", owner_id="p2", dex=60)
+        state.characters.update({"p1": first, "p2": second})
+        state.set_active_character("p1", first.character_id)
+        state.set_active_character("p2", second.character_id)
+        state.combat = CombatState(
+            active=True,
+            round_number=1,
+            order=[
+                Combatant(name=first.name, dex=first.dex, hp=first.hp, hp_max=first.hp_max,
+                          is_pc=True, side="pc", character_id=first.character_id,
+                          combatant_id=f"pc:{first.character_id}"),
+                Combatant(name=second.name, dex=second.dex, hp=second.hp, hp_max=second.hp_max,
+                          is_pc=True, side="pc", character_id=second.character_id,
+                          combatant_id=f"pc:{second.character_id}"),
+            ],
+            current_index=0,
+        )
+        retired_id = f"pc:{first.character_id}"
+        survivor_id = f"pc:{second.character_id}"
+        state.combat.plans = {
+            "remove": {"enemy_combatant_id": "enemy:1", "target_ids": [retired_id]},
+            "keep": {"enemy_combatant_id": "enemy:2", "target_ids": [survivor_id]},
+        }
+        state.combat.effects = [
+            EffectState(id="remove-effect", label="stun", target_id=retired_id),
+            EffectState(id="keep-effect", label="shield", target_id=survivor_id),
+        ]
+        state.combat.range_bands = {
+            f"enemy:1:{retired_id}": "engaged",
+            f"enemy:2:{survivor_id}": "near",
+        }
+
+        state.retire_active_character("p1", "小明")
+
+        self.assertEqual([item.character_id for item in state.combat.order], [second.character_id])
+        self.assertEqual(state.combat.current_index, 0)
+        self.assertTrue(state.combat.active)
+        self.assertEqual(set(state.combat.plans), {"keep"})
+        self.assertEqual([effect.id for effect in state.combat.effects], ["keep-effect"])
+        self.assertEqual(state.combat.range_bands, {f"enemy:2:{survivor_id}": "near"})
+
 
 class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
     def _state(self, *, actor_has_character: bool = False) -> GroupState:
@@ -132,6 +182,40 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
             state.characters["kp"] = actor
             state.set_active_character("kp", actor.character_id)
         return state
+
+    async def test_non_kp_actor_cannot_sudo_or_mutate_target(self):
+        state = self._state()
+        with StateStorePatch(router, commands) as store:
+            store.put(state)
+            reply = ReplyCollector()
+            await router.handle_text_message(
+                "g", "intruder", _noop, reply, _noop, _noop, _noop,
+                "/coc sudo p1 away",
+                allow_opaque_sudo_target=True,
+            )
+            saved = store.get("g")
+
+        self.assertFalse(saved.get_active_character("p1").away)
+        self.assertIn("只有目前的 KP Assistant", reply.messages[0])
+
+    async def test_sudo_act_requires_started_game(self):
+        state = self._state()
+        state.game_started = False
+        run_turn = router.supervisor.run_turn
+        router.supervisor.run_turn = lambda **kwargs: self.fail("run_turn must not be called")
+        try:
+            with StateStorePatch(router, commands) as store:
+                store.put(state)
+                reply = ReplyCollector()
+                await router.handle_text_message(
+                    "g", "kp", _noop, reply, _noop, _noop, _noop,
+                    "/coc sudo p1 act 調查房間",
+                    allow_opaque_sudo_target=True,
+                )
+        finally:
+            router.supervisor.run_turn = run_turn
+
+        self.assertIn("已開始的遊戲", reply.messages[0])
 
     async def test_kp_can_mark_missing_player_away(self):
         state = self._state()
@@ -249,6 +333,26 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已退出角色", retire_reply.messages[0])
         self.assertIn("已登記", kp_reply.messages[0])
 
+    async def test_kp_can_switch_retired_target_back_to_owned_history(self):
+        state = self._state()
+        current = state.get_active_character("p1")
+        historical = Character(name="小華", owner_id="p1")
+        state.characters_by_id[historical.character_id] = historical
+        state.retire_active_character("p1", current.name)
+
+        with StateStorePatch(router, commands, router.character_handler) as store:
+            store.put(state)
+            reply = ReplyCollector()
+            await router.handle_text_message(
+                "g", "kp", _noop, reply, _noop, _noop, _noop,
+                "/coc sudo p1 switch 小華",
+                allow_opaque_sudo_target=True,
+            )
+            saved = store.get("g")
+
+        self.assertEqual(saved.get_active_character("p1").name, "小華")
+        self.assertIn("目前使用角色已切換", reply.messages[0])
+
     async def test_sudo_audit_events_use_redacted_actor_and_subject_ids(self):
         state = self._state()
         with StateStorePatch(router, commands, router.system_handler) as store, patch.object(
@@ -267,3 +371,18 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         completed = next(call.kwargs for call in event.call_args_list if call.args[0] == "sudo.completed")
         self.assertNotEqual(completed["actor_user_id_hash"], "kp")
         self.assertNotEqual(completed["subject_user_id_hash"], "p1")
+        self.assertEqual(completed["status"], "success")
+
+    async def test_sudo_completed_status_is_rejected_for_handler_guard(self):
+        state = self._state()
+        with StateStorePatch(router, commands) as store, patch.object(router.observability, "event") as event:
+            store.put(state)
+            reply = ReplyCollector()
+            await router.handle_text_message(
+                "g", "kp", _noop, reply, _noop, _noop, _noop,
+                "/coc sudo p1 check",
+                allow_opaque_sudo_target=True,
+            )
+
+        completed = next(call.kwargs for call in event.call_args_list if call.args[0] == "sudo.completed")
+        self.assertEqual(completed["status"], "rejected")

@@ -379,9 +379,10 @@ def _is_skippable(state: GroupState, combatant: Combatant) -> bool:
         return True
     if combatant.is_pc:
         if combatant.character_id and combatant.character_id in state.characters_by_id:
-            return bool(state.characters_by_id[combatant.character_id].away)
+            character = state.characters_by_id[combatant.character_id]
+            return not character.active or character.away
         pc = state.get_character_by_name(combatant.name)
-        if pc and pc.away:
+        if pc and (not pc.active or pc.away):
             return True
     return False
 
@@ -1019,8 +1020,13 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
             _sync_combatant_from_card(c, card)
         skippable = _is_skippable(state, c)
         marker = "=> " if i == combat.current_index and not skippable else "   "
-        away = c.is_pc and not c.defeated and skippable
-        tag = "（倒下）" if c.defeated else "（暫離）" if away else ""
+        retired = c.is_pc and bool(
+            c.character_id
+            and c.character_id in state.characters_by_id
+            and not state.characters_by_id[c.character_id].active
+        )
+        away = c.is_pc and not c.defeated and not retired and skippable
+        tag = "（倒下）" if c.defeated else "（已退出）" if retired else "（暫離）" if away else ""
         side = "我方" if c.side == "pc" else "隊友" if c.side == "ally" else "敵方"
         hp_text = f"HP {c.hp}/{c.hp_max}" if include_private or c.side != "enemy" else "HP 未公開"
         line = f"{marker}{c.display_name} [{side}] DEX {c.dex} {hp_text}{tag}"

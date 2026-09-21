@@ -16,6 +16,7 @@ from app.legacy_commands import (
     handle_pregen_luck_roll,
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
+    _set_character_away_state,
 )
 from app import help_service, locks, observability
 from app.agents import supervisor
@@ -67,6 +68,7 @@ def _record_sudo_event(
     *,
     level: int = logging.INFO,
     duration_ms: float | None = None,
+    status: str | None = None,
     deny_reason: str | None = None,
     error_type: str | None = None,
 ) -> None:
@@ -79,6 +81,7 @@ def _record_sudo_event(
             observability.safe_identifier(parsed.subject_user_id) if parsed is not None else None
         ),
         duration_ms=duration_ms,
+        status=status,
         deny_reason=deny_reason,
         error_type=error_type,
     )
@@ -93,15 +96,13 @@ async def _run_sudo_act_locked(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
-) -> None:
+) -> str:
     subject_user_id = acting_context.subject_user_id
     character = state.get_active_character(subject_user_id)
     if character is None:
-        await reply("target 目前沒有 active character，無法代為執行遊戲行動。")
-        return
+        raise _SudoDenied("target_requires_character")
     if not state.active or not state.game_started:
-        await reply("目前沒有已開始的遊戲，無法代為執行遊戲行動。")
-        return
+        raise _SudoDenied("game_not_started")
 
     action_text = " ".join(parsed.args).strip()
     resolved_location = await asyncio.to_thread(
@@ -130,6 +131,7 @@ async def _run_sudo_act_locked(
             image_requests,
             run_maintenance=True,
         )
+    return "success"
 
 
 async def _dispatch_sudo_locked(
@@ -142,7 +144,7 @@ async def _dispatch_sudo_locked(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     format_mention: FormatMention,
-) -> None:
+) -> str:
     state = load_state(conversation_id)
     if state.kp_assistant_user_id != actor_user_id and not is_keeper:
         raise _SudoDenied("not_authorized")
@@ -152,9 +154,11 @@ async def _dispatch_sudo_locked(
         raise _SudoDenied("kp_target")
     if state.get_active_character(actor_user_id) is not None or actor_user_id in state.creation_sessions:
         raise _SudoDenied("actor_role_conflict")
+    if parsed.command == "act" and (not state.active or not state.game_started):
+        raise _SudoDenied("game_not_started")
     if parsed.command in {
         "act", "away", "back", "check", "enter", "leavemap", "luck", "retire",
-        "setconnection", "setskill", "sheet", "showpage", "switch", "where",
+        "setconnection", "setskill", "sheet", "showpage", "where",
     } and state.get_active_character(parsed.subject_user_id) is None:
         raise _SudoDenied("target_requires_character")
 
@@ -170,18 +174,17 @@ async def _dispatch_sudo_locked(
 
     with observability.context(acting_mode=acting_context.mode, acting_command=acting_context.command):
         if parsed.command == "act":
-            await _run_sudo_act_locked(
+            return await _run_sudo_act_locked(
                 conversation_id, acting_context, parsed, state,
                 marker_reply, send_dm, marker_image, send_dm_image,
             )
-            return
 
         if parsed.command == "check":
             if not locks.try_acquire_check(conversation_id, acting_context.subject_user_id):
                 await marker_reply("target 上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
-                return
+                return "rejected"
             try:
-                await handle_check_command(
+                result = await handle_check_command(
                     conversation_id,
                     acting_context.subject_user_id,
                     marker_reply,
@@ -192,14 +195,14 @@ async def _dispatch_sudo_locked(
                 )
             finally:
                 locks.release_check(conversation_id, acting_context.subject_user_id)
-            return
+            return "success" if result else "rejected"
 
         if parsed.command == "luck":
             if not locks.try_acquire_check(conversation_id, acting_context.subject_user_id):
                 await marker_reply("target 上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
-                return
+                return "rejected"
             try:
-                await handle_luck_decision(
+                result = await handle_luck_decision(
                     conversation_id,
                     acting_context.subject_user_id,
                     parsed.args[0],
@@ -210,32 +213,36 @@ async def _dispatch_sudo_locked(
                 )
             finally:
                 locks.release_check(conversation_id, acting_context.subject_user_id)
-            return
+            return "success" if result else "rejected"
 
         player_parts = parsed.player_parts
         if parsed.command in {"away", "back"}:
-            await system_handler.handle_system_command(
+            away_result = await asyncio.to_thread(
+                _set_character_away_state,
                 conversation_id,
                 acting_context.subject_user_id,
-                marker_reply,
-                send_dm,
-                marker_image,
-                send_dm_image,
-                player_parts,
-                format_mention,
-                False,
+                parsed.command == "away",
             )
-            return
+            if away_result.error_text:
+                await marker_reply(away_result.error_text)
+                return "rejected"
+            message = (
+                f"{away_result.character_name} 已標記為暫離，戰鬥中會自動跳過他的回合，直到輸入「/coc back」回來。"
+                if parsed.command == "away"
+                else f"{away_result.character_name} 回來了，恢復正常參與。"
+            )
+            await marker_reply(message)
+            return "success"
         if parsed.command in {"sheet", "characters", "pregen", "pregens", "retire", "setskill", "setconnection", "switch"}:
-            await character_handler.handle_character_command(
+            result = await character_handler.handle_character_command(
                 conversation_id, acting_context.subject_user_id, marker_reply, send_dm, player_parts
             )
-            return
+            return "success" if result else "rejected"
         if parsed.command in {"showpage", "where", "enter", "leavemap"}:
-            await map_handler.handle_map_command(
+            result = await map_handler.handle_map_command(
                 conversation_id, acting_context.subject_user_id, marker_reply, marker_image, player_parts
             )
-            return
+            return "success" if result else "rejected"
         raise _SudoDenied("forbidden_command")
 
 
@@ -262,9 +269,10 @@ async def _handle_sudo_command(
     started = asyncio.get_running_loop().time()
     _record_sudo_event("sudo.started", parsed, actor_user_id)
     try:
+        dispatch_status = "rejected"
         async with locks.get_keeper_priority_gate(conversation_id, is_kp=True):
             async with locks.get_conversation_lock(conversation_id):
-                await _dispatch_sudo_locked(
+                dispatch_status = await _dispatch_sudo_locked(
                     conversation_id,
                     actor_user_id,
                     is_keeper,
@@ -302,6 +310,7 @@ async def _handle_sudo_command(
             parsed,
             actor_user_id,
             duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+            status=dispatch_status,
         )
 
 

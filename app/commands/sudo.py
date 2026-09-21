@@ -98,7 +98,7 @@ def _parse_target(token: str, *, allow_opaque_id: bool) -> str | None:
 
 
 def parse_sudo_command(
-    parts: list[str], *, allow_opaque_target: bool = True
+    parts: list[str], *, allow_opaque_target: bool = False
 ) -> tuple[ParsedSudoCommand | None, str | None]:
     """Parse ``/coc sudo <target> <player-command> ...``.
 
@@ -111,30 +111,30 @@ def parse_sudo_command(
     if subject_user_id is None:
         return None, "invalid_target"
     if len(parts) < 4:
-        return None, "forbidden_command"
+        return ParsedSudoCommand(subject_user_id, "parse", ()), "forbidden_command"
 
     command = parts[3].casefold()
     args = tuple(parts[4:])
     if command == "luck":
         if not args or args[0].casefold() == "roll":
-            return None, "player_only_luck_roll"
+            return ParsedSudoCommand(subject_user_id, command, args), "player_only_luck_roll"
         decision = args[0].casefold()
         if decision not in _LUCK_DECISIONS or len(args) != 1:
-            return None, "forbidden_command"
+            return ParsedSudoCommand(subject_user_id, command, args), "forbidden_command"
         return ParsedSudoCommand(subject_user_id, command, (decision,)), None
 
     if command in {"pc", "create", "alloc", "usepregen"}:
-        return None, "player_only_character_creation"
+        return ParsedSudoCommand(subject_user_id, command, args), "player_only_character_creation"
     if command in _FORBIDDEN_COMMANDS:
-        return None, "forbidden_command"
+        return ParsedSudoCommand(subject_user_id, command, args), "forbidden_command"
     if command not in _ALLOWED_COMMANDS:
-        return None, "forbidden_command"
+        return ParsedSudoCommand(subject_user_id, command, args), "forbidden_command"
     if command in _PLAYER_COMMANDS_WITHOUT_ARGUMENTS and args:
-        return None, "forbidden_command"
+        return ParsedSudoCommand(subject_user_id, command, args), "forbidden_command"
     if command == "act" and not args:
-        return None, "missing_arguments"
+        return ParsedSudoCommand(subject_user_id, command, args), "missing_arguments"
     if command in {"showpage", "enter", "setskill", "setconnection", "switch"} and not args:
-        return None, "missing_arguments"
+        return ParsedSudoCommand(subject_user_id, command, args), "missing_arguments"
 
     return ParsedSudoCommand(subject_user_id, command, args), None
 
@@ -152,6 +152,7 @@ def denial_message(reason: str) -> str:
         "self_target": "KP Assistant 只能代替其他玩家操作，不能把自己當成 target。",
         "kp_target": "不能代操作目前的 KP Assistant。",
         "target_requires_character": "target 目前沒有 active character，無法執行這個需要角色的操作。",
+        "game_not_started": "目前沒有已開始的遊戲，無法代為執行遊戲行動。",
     }.get(reason, "無法執行這個 sudo 操作。")
 
 

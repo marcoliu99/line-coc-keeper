@@ -17,7 +17,6 @@ observability spans — so there was no way to tell, e.g., whether a Keeper
 turn that appeared to call search_scenario multiple times was searching
 distinct keywords, repeating one, or partly attributable to the proactive
 per-turn context_builder search instead of any explicit tool call at all."""
-import logging
 import unittest
 from unittest.mock import patch
 

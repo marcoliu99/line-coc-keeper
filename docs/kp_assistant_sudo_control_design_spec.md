@@ -97,7 +97,8 @@ ActingContext(
 
 `<target>` 第一版只接受可無歧義解析的 Discord mention：`<@123>` 或
 `<@!123>`；測試與非 Discord adapter 可接受已驗證的 opaque user ID。不可用
-顯示名稱模糊搜尋，避免同名玩家被代錯角色。
+顯示名稱模糊搜尋，避免同名玩家被代錯角色。parser 預設拒絕 opaque ID；只有
+明確受信任的測試／非 Discord adapter 才能傳入 `allow_opaque_target=True`。
 
 玩家本人也可以直接輸入 `/coc retire [角色名]` 退出自己的目前角色；KP
 Assistant 的代操作只額外提供 `/coc sudo <target> retire [角色名]`，兩者共用同一個

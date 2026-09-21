@@ -81,11 +81,14 @@ def get_query_embedding(
         if cached is not None:
             _cache.move_to_end(key)
             return cached
-        event = _in_flight.get(key)
-        is_leader = event is None
-        if is_leader:
+        in_flight = _in_flight.get(key)
+        if in_flight is None:
             event = threading.Event()
             _in_flight[key] = event
+            is_leader = True
+        else:
+            event = in_flight
+            is_leader = False
 
     if not is_leader:
         event.wait()

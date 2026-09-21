@@ -299,9 +299,16 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send):
-            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, before_pending)
+            await discord_bot._post_luck_buttons(
+                channel,
+                "discord-channel-1",
+                state,
+                before_pending,
+                "【KP Assistant 代操作：小明】",
+            )
 
         send.assert_awaited_once()
+        self.assertTrue(send.await_args.args[1].startswith("【KP Assistant 代操作：小明】\n"))
         view = send.await_args.kwargs["view"]
         self.assertEqual([item.args[3] for item in view.items], ["regular", "hard", "extreme", "skip"])
 

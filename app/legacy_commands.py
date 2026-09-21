@@ -1248,7 +1248,7 @@ async def handle_check_command(
     text: str,
     split_roll_feedback: bool = False,
     acquire_legacy_for_keeper: bool = False,
-) -> None:
+) -> bool:
     """/coc check [技能名] [獎勵骰數] [懲罰骰數] — the player's own roll, in
     code, visible to the group immediately, instead of the Keeper (LLM)
     quietly deciding a result. Pairs with keeper.py's skill_check/sanity_check
@@ -1259,15 +1259,16 @@ async def handle_check_command(
     resolution = await asyncio.to_thread(_resolve_check_deterministically, conversation_id, user_id, text)
     if resolution.reply_text:
         await reply(resolution.reply_text)
-        return
+        return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
-        return
+        return False
     await _finalize_check_result(
         conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
         reply, send_dm, send_image, send_dm_image, split_roll_feedback,
         acquire_legacy_for_keeper=acquire_legacy_for_keeper,
         roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
     )
+    return True
 
 
 async def handle_luck_decision(
@@ -1280,7 +1281,7 @@ async def handle_luck_decision(
     send_dm_image: SendDMImage,
     split_roll_feedback: bool = False,
     acquire_legacy_for_keeper: bool = False,
-) -> None:
+) -> bool:
     """Resolves a pending Luck-spend decision (see handle_check_command above
     and app/luck.py) — either "skip" (keep the natural roll) or a tier name
     ("regular"/"hard"/"extreme") to buy up to, deducting the cost from the
@@ -1289,15 +1290,16 @@ async def handle_luck_decision(
     resolution = await asyncio.to_thread(_resolve_luck_decision_deterministically, conversation_id, user_id, choice)
     if resolution.reply_text:
         await reply(resolution.reply_text)
-        return
+        return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
-        return
+        return False
     await _finalize_check_result(
         conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
         reply, send_dm, send_image, send_dm_image, split_roll_feedback,
         acquire_legacy_for_keeper=acquire_legacy_for_keeper,
         roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
     )
+    return True
 
 
 def _resolve_luck_decision_deterministically(
