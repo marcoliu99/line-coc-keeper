@@ -1307,9 +1307,6 @@ def _execute_tool(
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             def _register_pending_skill_check(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
-                blocked = _reject_if_check_already_pending(target_state, target_char)
-                if blocked is not None:
-                    return _StateMutation(blocked, should_save=False)
                 value = resolve_skill_value(target_char, tool_input["skill"])
                 bonus = int(tool_input.get("bonus_dice") or 0)
                 penalty = int(tool_input.get("penalty_dice") or 0)
@@ -1321,14 +1318,22 @@ def _execute_tool(
                     "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                     "pushed": bool(tool_input.get("pushed", False)),
                 }
-                # 防重複：如果已經有完全相同的待處理檢定，直接返回結果而不重新保存
+                # 先檢查是否已有待處理檢定
                 existing = target_state.pending_checks.get(target_char.owner_id)
-                if existing and _is_identical_pending_check(existing, new_check):
+                if existing:
+                    # 如果完全相同，直接返回結果而不重新保存（防重複）
+                    if _is_identical_pending_check(existing, new_check):
+                        return _StateMutation({
+                            "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
+                            "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
+                            "note": "已經有相同的待處理檢定（防重複）。",
+                        }, should_save=False)
+                    # 否則拒絕（已有不同的待處理檢定）
                     return _StateMutation({
-                        "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
-                        "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
-                        "note": "已經有相同的待處理檢定（防重複）。",
+                        "ok": False,
+                        "error": f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）才能再要求新的檢定，不要重複呼叫。",
                     }, should_save=False)
+                # 沒有待處理檢定，註冊新的
                 target_state.pending_checks[target_char.owner_id] = new_check
                 return {
                     "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
@@ -1347,20 +1352,25 @@ def _execute_tool(
             attacker_tier = tool_input.get("attacker_tier")
             def _register_pending_choice(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
-                blocked = _reject_if_check_already_pending(target_state, target_char)
-                if blocked is not None:
-                    return _StateMutation(blocked, should_save=False)
                 options = _resolve_defense_options(target_char, raw_options)
                 new_choice = {"type": "choice", "options": options}
                 if attacker_tier:
                     new_choice["attacker_tier"] = attacker_tier
-                # 防重複：如果已經有完全相同的待處理檢定，直接返回結果而不重新保存
+                # 先檢查是否已有待處理檢定
                 existing = target_state.pending_checks.get(target_char.owner_id)
-                if existing and _is_identical_pending_check(existing, new_choice):
+                if existing:
+                    # 如果完全相同，直接返回結果而不重新保存（防重複）
+                    if _is_identical_pending_check(existing, new_choice):
+                        return _StateMutation({
+                            "ok": True, "pending": True, "investigator": target_char.name, "options": options,
+                            "note": "已經有相同的防守選項等待（防重複）。",
+                        }, should_save=False)
+                    # 否則拒絕（已有不同的待處理檢定）
                     return _StateMutation({
-                        "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                        "note": "已經有相同的防守選項等待（防重複）。",
+                        "ok": False,
+                        "error": f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）才能再要求新的檢定，不要重複呼叫。",
                     }, should_save=False)
+                # 沒有待處理檢定，註冊新的
                 target_state.pending_checks[target_char.owner_id] = new_choice
                 return {
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
