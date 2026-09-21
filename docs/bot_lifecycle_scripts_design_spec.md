@@ -8,6 +8,7 @@
 - 本 branch 與 `main_v2` 的對齊 merge changeset：`caca558`
 - 本輪 Ruff／pytest／profiler implementation changeset：`0c96ff1`
 - 後續 script review fixes changeset：`3364736`
+- profiler README／CLI help 與回歸測試 changeset：`19070a8`
 - 後續若 `main_v2` 有新 commit，下一輪修改或更新 PR 前必須重新 fetch 並對齊。
 
 ## Problem and goals
