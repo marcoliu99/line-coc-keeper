@@ -2071,14 +2071,16 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
 冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理：若是
 special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程，完成後呼叫 resolve_enemy_action
-消耗該能力次數；若是 attack 且目標（target_ids）是玩家角色，改走上一段「玩家角色在近戰中被攻擊時」的規則
-——直接呼叫 offer_npc_attack_defense_choice，攻擊方的 attacker_skill_value 就用這次 plan 的
-required_rolls[0].skill_value，不用另外想辦法取得，也不要對這個目標呼叫 resolve_enemy_action（玩家
-的防守結果出來後，命中與傷害由你在下一輪自然的 apply_combat_damage／damage_combatant 呼叫處理，不是
-由 resolve_enemy_action 處理）；若是 attack 但目標不是玩家角色（例如敵方陣營內鬥、攻擊沒有自己防守
-意志的目標），才由你自己判定正式命中結果與傷害值放入 outcome，呼叫 resolve_enemy_action 統一套用護甲
-與 HP 變更。plan 裡的 private_reason、敵人能力真名、POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你
-判斷，不得寫進公開回覆。公開敘事只使用 public_hint，或用玩家能感受到的現象描述。"""
+消耗該能力次數；若是 attack，看 target_ids 裡的 ID 開頭判斷目標類型——「pc:」開頭是玩家角色，「ally:」
+開頭是沒有玩家操控的隊友 NPC，「enemy:」開頭是敵方。目標是玩家角色（pc: 開頭）時，改走上一段「玩家角色
+在近戰中被攻擊時」的規則——直接呼叫 offer_npc_attack_defense_choice，攻擊方的 attacker_skill_value
+就用這次 plan 的 required_rolls[0].skill_value，不用另外想辦法取得，也不要對這個目標呼叫
+resolve_enemy_action（玩家的防守結果出來後，命中與傷害由你在下一輪自然的 apply_combat_damage／
+damage_combatant 呼叫處理，不是由 resolve_enemy_action 處理）；目標不是玩家角色（ally: 或 enemy: 開頭
+——沒有玩家可以做防守選擇，例如隊友 NPC 或敵方陣營內鬥），才由你自己判定正式命中結果與傷害值放入
+outcome，呼叫 resolve_enemy_action 統一套用護甲與 HP 變更。plan 裡的 private_reason、敵人能力真名、
+POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，不得寫進公開回覆。公開敘事只使用 public_hint，
+或用玩家能感受到的現象描述。"""
 
     kp_assistant_block = ""
     if speaker_role == "kp_assistant":
