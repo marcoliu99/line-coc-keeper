@@ -6,10 +6,10 @@
 - 工作分支：feature/async-provider-performance
 - 分支基準：origin/main_v2
 - 目前基準 commit：fe02e69b9e534b6939c27f7f3e05e05e153807a4
-- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..9023551`
-- implementation checkpoint：`9023551`（`feat: migrate keeper provider flow to async I/O`）
+- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..d1d909b`
+- implementation checkpoint：`d1d909b`（`fix: close async provider performance review gaps`）
 - 遠端分支已建立並推送：origin/feature/async-provider-performance
-- 本次 changeset 範圍是從 main tree 的 `fe02e69` 接續到 `9023551`；下次若 `main_v2` 有新 commit，先記錄新的起點，再繼續讀 patch/更新本段範圍。
+- 本次 changeset 範圍是從 main tree 的 `fe02e69` 接續到 `d1d909b`；下次若 `main_v2` 有新 commit，先記錄新的起點，再繼續讀 patch/更新本段範圍。
 - 若 main_v2 在 PR 前有新 commit，必須重新 fetch、對齊並記錄新的 changeset 範圍。
 - 實作狀態：已完成 provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle、取消 recovery marker、request identity 與回歸測試。ruff、mypy、compileall、pytest 與 pytest-cov 已通過；benchmark 仍屬部署前的效能驗證工作，PR 前仍須重新對齊 `main_v2`。
 
