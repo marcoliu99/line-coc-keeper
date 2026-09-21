@@ -886,8 +886,14 @@ def _is_identical_pending_check(existing: dict, new_check_dict: dict) -> bool:
             existing.get("loss_failure") == new_check_dict.get("loss_failure")
         )
     elif existing.get("type") == "choice":
-        # 比較防守選項
-        return existing.get("options") == new_check_dict.get("options")
+        # 比較防守選項（排序後比較，避免順序差異導致誤判）
+        try:
+            existing_opts = sorted(str(o) for o in existing.get("options", []))
+            new_opts = sorted(str(o) for o in new_check_dict.get("options", []))
+            return existing_opts == new_opts
+        except (TypeError, ValueError):
+            # 如果無法排序，直接比較
+            return existing.get("options") == new_check_dict.get("options")
 
     return False
 
@@ -1403,16 +1409,23 @@ def _execute_tool(
                 # land in (see _reject_if_check_already_pending's docstring).
                 options = _resolve_defense_options(target_char, raw_options)
                 new_choice = {"type": "choice", "options": options}
-                # 防重複：如果已經有完全相同的防守選項，重用現有的掷骰結果而不重新掷
+                # 防重複：如果已經有完全相同的防守選項且有真實掷骰結果，重用現有結果而不重新掷
                 existing = target_state.pending_checks.get(target_char.owner_id)
-                if existing and existing.get("type") == "choice" and existing.get("options") == options:
-                    # 防守選項相同，重用現有結果
-                    return _StateMutation({
-                        "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                        "attacker_roll": existing.get("attacker_roll", "（之前已掷）"),
-                        "attacker_tier": existing.get("attacker_tier", "unknown"),
-                        "note": "防守選項相同，重用之前的掷骰結果（防重複）。",
-                    }, should_save=False)
+                if existing and existing.get("type") == "choice" and existing.get("attacker_roll") is not None:
+                    # 比較防守選項是否相同（排序後比較）
+                    try:
+                        existing_opts = sorted(str(o) for o in existing.get("options", []))
+                        new_opts = sorted(str(o) for o in options)
+                        if existing_opts == new_opts:
+                            # 防守選項相同且有真實掷骰結果，重用現有結果
+                            return _StateMutation({
+                                "ok": True, "pending": True, "investigator": target_char.name, "options": options,
+                                "attacker_roll": existing.get("attacker_roll"),
+                                "attacker_tier": existing.get("attacker_tier"),
+                                "note": "防守選項相同，重用之前的掷骰結果（防重複）。",
+                            }, should_save=False)
+                    except (TypeError, ValueError):
+                        pass  # 無法排序時，繼續執行新的掷骰
                 npc_roll = dice.skill_check(
                     attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty
                 )
