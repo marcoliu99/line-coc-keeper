@@ -11,6 +11,8 @@
 - 目標整合分支：`main_v2`
 - 本輪 review fixes implementation changeset：`e7a998d`
 - `main_v2` 對齊後的型別修正 changeset：`abdba38`
+- PR #46 review follow-up：在實作完成後補入 implementation changeset；本輪需修正
+  sudo check pending validation 與 retire all-skippable phantom round。
 
 本文件先於 runtime implementation 建立。實作前必須先確認本文件的權限邊界、
 指令格式與允許操作清單；未確認前不修改程式碼。
@@ -248,7 +250,7 @@ Discord on_message
 | 3. 解析 command | command 在 subject-scoped allowlist | 建立 `ActingContext` | `sudo.denied(reason=forbidden_command)` |
 | 4. actor authorization | actor 是目前 KP Assistant 或 Discord Keeper | 進入 KP priority gate + conversation lock | `sudo.denied(reason=not_authorized)` |
 | 5. role separation | actor 已脫離 player character／建角流程 | 繼續 target guard | `sudo.denied(reason=actor_role_conflict)`，要求先脫離 |
-| 6. target guard | target 不是 KP、已有必要 active character、pending state 合法；`switch` 可使用 target owned history | 呼叫既有 handler，effective user 使用 subject | 固定錯誤訊息；不得部分 mutation |
+| 6. target guard | target 不是 KP、已有必要 active character；`check` 必須先驗證 subject 的 pending check 存在且 command argument 與該 pending entry 相符；`switch` 可使用 target owned history | 呼叫既有 handler，effective user 使用 subject | 固定錯誤訊息；不得部分 mutation、不得把 check 降級成新的 self-initiated roll |
 | 7. 執行 | `act` 使用 player role；其他 command 使用既有 handler | state／pending／output 套用 subject | 受控 command rejection 記為 `sudo.completed(status=rejected)`；未捕捉例外才是 `sudo.failed` |
 | 8. 輸出 | public reply、target DM、圖片與按鈕依既有 scope | public reply 加「KP Assistant 代操作」標記；秘密只送 subject | output failure 依既有 reply error flow 處理 |
 | 9. 完成 | 操作成功或受控拒絕 | `sudo.completed` 或 `sudo.denied` audit event | 未捕捉例外時 `sudo.failed` audit event |
@@ -258,7 +260,7 @@ Discord on_message
 | Input | 是否允許 | 行為 |
 |---|---:|---|
 | `/coc sudo <target> act ...` | 是 | 以 target player turn 執行；公開結果必須加代操作標記 |
-| `/coc sudo <target> check` | 是 | 只消費 target 的 pending check |
+| `/coc sudo <target> check` | 是 | 只在 target 有 pending check，且省略或指定的技能／選項符合該 pending entry 時消費；沒有 pending 或 mismatch 必須拒絕，不得建立新的 self-initiated roll |
 | `/coc sudo <target> luck skip\|regular\|hard\|extreme` | 是 | 只處理 target 已存在的 pending Luck decision |
 | `/coc sudo <target> away` | 是 | 代 target 將目前 active character 標記為暫離；不改變 actor 的 KP 身分 |
 | `/coc sudo <target> back` | 是 | 代 target 解除暫離；須有 active character，沿用既有 `/coc back` 行為，不額外要求 `game_started` |
@@ -342,6 +344,7 @@ no-op fast path，但實際拒絕仍要回覆使用者。
 - 禁止 group-level command、未知 command、巢狀 sudo 都拒絕。
 - `sheet`／`switch`／`setskill` 等操作修改或查詢 target，而不是 actor。
 - `check`／`luck` 的 pending state 只讀寫 target key；不可消費其他玩家的 pending。
+- sudo `check` dispatch 前必須以 target 的 pending entry 做 read-only validation：沒有 pending、技能／選項 mismatch、或把 sanity pending 當成任意技能檢定時都拒絕，且不得消費 pending、擲新骰或改變 Luck。
 - `/coc sudo <target> away` 必須只標記 target 的 active character；`/coc sudo <target>
   back` 只能解除 target 的暫離狀態。
 - `/coc sudo <target> retire [角色名]` 必須解除 target 的 active player binding，
@@ -380,6 +383,9 @@ no-op fast path，但實際拒絕仍要回覆使用者。
   清理；名稱衝突時採保守清理，不能保留可能屬於已退角角色的有效回合／目標。
 - retire current combatant 的 turn-start effect、跨 round、away／defeated skip
   必須有 regression test。
+- retire current combatant 後若所有 surviving combatants 都是 away／defeated，必須在
+  round boundary timing 前停止；不可增加 round、執行 `round_end`／`round_start`、重置
+  enemy ability usage 或遞減 cooldown，並保留 all-skippable 狀態供 KP 明確結束 combat。
 - `sudo switch` 在 target 沒有 active character、或從一個角色切到另一個角色時，
   public marker 必須顯示切換後的角色名稱；Discord adapter 與 router 使用同一套
   marker resolver。

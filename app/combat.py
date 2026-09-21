@@ -426,6 +426,15 @@ def finish_retired_current_turn(
     if not combat.active or not combat.order:
         return
 
+    # If retiring the current combatant leaves only away/defeated entries,
+    # preserve the all-skippable state for the existing explicit end-combat
+    # guard. Do this before looking for a wrapped candidate: otherwise a
+    # candidate at the start of the old order would apply round_end and
+    # round_start timing for a round in which nobody can act.
+    if all(_is_skippable(state, combatant) for combatant in combat.order):
+        combat.current_index = 0
+        return
+
     wrapped = False
     for offset in range(1, len(old_order) + 1):
         candidate = old_order[(old_index + offset) % len(old_order)]

@@ -21,6 +21,7 @@ from app.legacy_commands import (
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
     _set_character_away_state,
+    _skill_names_match,
     handle_check_command,
     handle_luck_decision,
     handle_pregen_luck_roll,
@@ -39,6 +40,37 @@ class _SudoDenied(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+def _sudo_check_matches_pending(pending: dict | None, args: tuple[str, ...]) -> bool:
+    """Return whether a sudo check can resolve the subject's pending request.
+
+    ``handle_check_command`` intentionally supports a player-initiated check
+    when the supplied skill does not match the pending request. That behavior
+    is correct for normal players, but unsafe for sudo: KP delegation must
+    only consume the check the Keeper registered for this subject.
+    """
+    if not isinstance(pending, dict) or len(args) > 1:
+        return False
+    skill_arg = args[0] if args else None
+    pending_type = pending.get("type")
+    if pending_type == "sanity":
+        return skill_arg is None
+    if pending_type == "skill":
+        return skill_arg is None or _skill_names_match(str(pending.get("skill", "")), skill_arg)
+    if pending_type == "choice":
+        if skill_arg is None:
+            return True
+        options = pending.get("options")
+        if not isinstance(options, list):
+            return False
+        return any(
+            _skill_names_match(str(option.get("label", "")), skill_arg)
+            or _skill_names_match(str(option.get("skill", "")), skill_arg)
+            for option in options
+            if isinstance(option, dict)
+        )
+    return False
 
 
 def sudo_public_marker(state, parsed: sudo_policy.ParsedSudoCommand) -> str:
@@ -208,6 +240,10 @@ async def _dispatch_sudo_locked(
             )
 
         if parsed.command == "check":
+            pending_check = state.pending_checks.get(acting_context.subject_user_id)
+            if not _sudo_check_matches_pending(pending_check, parsed.args):
+                await marker_reply(sudo_policy.denial_message("pending_check_mismatch"))
+                return "rejected"
             if not locks.try_acquire_check(conversation_id, acting_context.subject_user_id):
                 await marker_reply("target 上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
                 return "rejected"

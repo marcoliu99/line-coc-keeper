@@ -152,6 +152,7 @@ def denial_message(reason: str) -> str:
         "kp_target": "不能代操作目前的 KP Assistant。",
         "target_requires_character": "target 目前沒有 active character，無法執行這個需要角色的操作。",
         "game_not_started": "目前沒有已開始的遊戲，無法代為執行遊戲行動。",
+        "pending_check_mismatch": "只能代替玩家完成目前等待中的檢定，技能名稱必須符合該檢定。",
     }.get(reason, "無法執行這個 sudo 操作。")
 
 

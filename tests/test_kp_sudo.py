@@ -256,6 +256,39 @@ class SudoStateTests(unittest.TestCase):
         self.assertIn("round_end", " ".join(state.combat.processed_timings))
         self.assertIn("round_start", " ".join(state.combat.processed_timings))
 
+    def test_retire_current_turn_keeps_all_skippable_combat_without_phantom_round(self):
+        state = GroupState(group_id="g")
+        away = Character(name="暫離", owner_id="p1", dex=70, away=True)
+        current = Character(name="離場", owner_id="p2", dex=60)
+        state.characters.update({"p1": away, "p2": current})
+        state.set_active_character("p1", away.character_id)
+        state.set_active_character("p2", current.character_id)
+
+        away_id = f"pc:{away.character_id}"
+        current_id = f"pc:{current.character_id}"
+        state.combat = CombatState(
+            active=True,
+            round_number=3,
+            order=[
+                Combatant(name=away.name, dex=away.dex, hp=away.hp, hp_max=away.hp_max,
+                          is_pc=True, side="pc", character_id=away.character_id,
+                          combatant_id=away_id),
+                Combatant(name=current.name, dex=current.dex, hp=current.hp, hp_max=current.hp_max,
+                          is_pc=True, side="pc", character_id=current.character_id,
+                          combatant_id=current_id),
+            ],
+            current_index=1,
+            effects=[EffectState(id="round-end", label="毒", timing="round_end", remaining_rounds=2)],
+        )
+
+        state.retire_active_character("p2", current.name)
+
+        self.assertEqual(state.combat.round_number, 3)
+        self.assertEqual(state.combat.current_index, 0)
+        self.assertEqual(state.combat.processed_timings, [])
+        self.assertEqual(state.combat.effects[0].remaining_rounds, 2)
+        self.assertEqual(state.combat.order[0].combatant_id, away_id)
+
     def test_stale_inactive_active_binding_is_not_returned(self):
         state = GroupState(group_id="g")
         character = Character(name="已退出", owner_id="p1")
@@ -523,3 +556,58 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
         completed = next(call.kwargs for call in event.call_args_list if call.args[0] == "sudo.completed")
         self.assertEqual(completed["status"], "rejected")
+
+    async def test_sudo_check_rejects_mismatched_pending_skill_without_dispatch(self):
+        state = self._state()
+        state.pending_checks["p1"] = {
+            "type": "skill",
+            "skill": "SpotHidden",
+            "skill_value": 50,
+            "bonus_dice": 0,
+            "penalty_dice": 0,
+        }
+
+        async def unexpected_check(*args, **kwargs):
+            self.fail("mismatched sudo check must not reach the roll handler")
+
+        with StateStorePatch(router, commands) as store, patch.object(
+            router, "handle_check_command", unexpected_check
+        ):
+            store.put(state)
+            reply = ReplyCollector()
+            await router.handle_text_message(
+                "g", "kp", _noop, reply, _noop, _noop, _noop,
+                "/coc sudo p1 check Fighting",
+                allow_opaque_sudo_target=True,
+            )
+            saved = store.get("g")
+
+        self.assertIn("目前等待中的檢定", reply.messages[0])
+        self.assertEqual(saved.pending_checks["p1"]["skill"], "SpotHidden")
+
+    async def test_sudo_check_dispatches_only_matching_pending_skill(self):
+        state = self._state()
+        state.pending_checks["p1"] = {
+            "type": "skill",
+            "skill": "SpotHidden",
+            "skill_value": 50,
+            "bonus_dice": 0,
+            "penalty_dice": 0,
+        }
+        calls = []
+
+        async def fake_check(*args, **kwargs):
+            calls.append((args, kwargs))
+            return True
+
+        with StateStorePatch(router, commands) as store, patch.object(router, "handle_check_command", fake_check):
+            store.put(state)
+            reply = ReplyCollector()
+            await router.handle_text_message(
+                "g", "kp", _noop, reply, _noop, _noop, _noop,
+                "/coc sudo p1 check SpotHidden",
+                allow_opaque_sudo_target=True,
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0][-1], "/coc check SpotHidden")
