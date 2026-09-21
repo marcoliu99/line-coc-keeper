@@ -6,7 +6,7 @@
 - 本次起始 changeset：`d0e4a6a`（建立 branch 時的 `origin/main_v2`）
 - 實作前重新對齊的 `main_v2` changeset：`f6a5a1f`
 - 本次實作結束 changeset：`e930ef4`（包含本輪 review 修正與測試；後續文件修訂為 doc-only）
-- review follow-up：補強舊 combat snapshot 相容性與 `sudo switch` 目標角色標記；實作 changeset 待本輪完成後填入
+- review follow-up implementation changeset：`39c4b89`（補強舊 combat snapshot 相容性與 `sudo switch` 目標角色標記）
 - 工作 branch：`feature/kp-assistant-sudo-control`
 - 目標整合分支：`main_v2`
 
