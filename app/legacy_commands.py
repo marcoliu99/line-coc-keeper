@@ -1622,10 +1622,7 @@ def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
 def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
     with locks.get_state_lock(conversation_id):
         state = load_state(conversation_id)
-        active_id = state.active_character_id_by_user.get(user_id, "")
-        char = state.characters_by_id.get(active_id) if active_id else None
-        if char is None:
-            char = state.characters.get(user_id)
+        char = state.get_active_character(user_id)
         if not char:
             return _AwayStateResult(error_text="你還沒有角色。")
         char.away = away

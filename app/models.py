@@ -595,7 +595,13 @@ class CombatState:
     processed_timings: list[str] = field(default_factory=list)
     range_bands: dict[str, str] = field(default_factory=dict)
 
-    def retire_character(self, character_id: str, character_name: str | None = None) -> None:
+    def retire_character(
+        self,
+        character_id: str,
+        character_name: str | None = None,
+        *,
+        state: Any | None = None,
+    ) -> None:
         """Remove a retired investigator from the live initiative state.
 
         Retiring a character removes its player binding, but the durable
@@ -606,9 +612,11 @@ class CombatState:
         that happens the exact name is the only available identity, so all
         matching legacy PC entries are removed conservatively rather than
         allowing a possibly retired character to remain actionable.
-        The next surviving combatant becomes current when the retired PC was
-        the current turn; this avoids advancing a second time when the next
-        player action is submitted.
+        The next eligible combatant becomes current when the retired PC was
+        the current turn; the state-aware caller also applies the new turn's
+        timing effects and skips away/defeated combatants.  The optional state
+        argument keeps this model-level cleanup usable for legacy callers that
+        only have a CombatState snapshot.
         """
         if not self.order:
             return
@@ -630,7 +638,8 @@ class CombatState:
             return
 
         removed_ids = {combatant.combatant_id for combatant in removed}
-        current = self.order[self.current_index] if 0 <= self.current_index < len(self.order) else None
+        current_index = self.current_index
+        current = self.order[current_index] if 0 <= current_index < len(self.order) else None
         current_was_removed = current is not None and current.combatant_id in removed_ids
         current_id = current.combatant_id if current is not None else ""
         old_order = list(self.order)
@@ -662,11 +671,22 @@ class CombatState:
             return
 
         if current_was_removed:
-            # Select the first surviving combatant after the retired current
-            # turn, wrapping around.  Do not call advance_turn here: the next
-            # surviving combatant must be allowed to act now.
+            # A GroupState-aware caller lets the combat module apply timing and
+            # skip away/defeated candidates.  Keep the old pure-CombatState
+            # behavior as a compatibility fallback for callers that do not
+            # have the owning GroupState available.
             assert current is not None
-            old_index = old_order.index(current)
+            old_index = current_index
+            if state is not None:
+                from app import combat as combat_engine
+
+                combat_engine.finish_retired_current_turn(
+                    state,
+                    old_order=old_order,
+                    old_index=old_index,
+                    removed_ids=removed_ids,
+                )
+                return
             for offset in range(1, len(old_order) + 1):
                 candidate = old_order[(old_index + offset) % len(old_order)]
                 if candidate.combatant_id not in removed_ids:
@@ -895,9 +915,21 @@ class GroupState:
         if character_id:
             active = next((char for char in self.all_characters() if char.character_id == character_id), None)
             if active is not None:
-                return active
+                if active.active and active.owner_id == owner_id:
+                    return active
+                # A stale persisted binding must not resurrect a retired
+                # character or cross an ownership boundary. Clear only the
+                # matching legacy index; a valid different active character
+                # for this owner may still exist.
+                self.active_character_id_by_user.pop(owner_id, None)
+                legacy = self.characters.get(owner_id)
+                if legacy is not None and legacy.character_id == character_id:
+                    self.characters.pop(owner_id, None)
         legacy = self.characters.get(owner_id)
         if legacy is not None:
+            if not legacy.active:
+                self.characters.pop(owner_id, None)
+                return None
             character_id = legacy.character_id or f"legacy-user:{owner_id}"
             legacy.character_id = character_id
             self.characters_by_id.setdefault(character_id, legacy)
@@ -952,7 +984,7 @@ class GroupState:
         # Keep a pending pregen Luck roll: only the player may roll it, and
         # clearing it here would let a later reactivation bypass that rule.
         self.characters_by_id[character.character_id] = character
-        self.combat.retire_character(character.character_id, character.name)
+        self.combat.retire_character(character.character_id, character.name, state=self)
         return character
 
     def active_characters(self) -> list[Character]:

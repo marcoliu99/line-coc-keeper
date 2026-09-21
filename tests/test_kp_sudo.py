@@ -187,6 +187,99 @@ class SudoStateTests(unittest.TestCase):
         self.assertEqual(state.combat.order, [])
         self.assertFalse(state.combat.active)
 
+    def test_retire_current_turn_skips_away_and_processes_next_turn_start(self):
+        state = GroupState(group_id="g")
+        first = Character(name="小明", owner_id="p1", dex=70)
+        away = Character(name="小華", owner_id="p2", dex=60, away=True)
+        next_player = Character(name="小安", owner_id="p3", dex=50)
+        state.characters.update({"p1": first, "p2": away, "p3": next_player})
+        for owner_id, character in state.characters.items():
+            state.set_active_character(owner_id, character.character_id)
+
+        first_id = f"pc:{first.character_id}"
+        away_id = f"pc:{away.character_id}"
+        next_id = f"pc:{next_player.character_id}"
+        state.combat = CombatState(
+            active=True,
+            round_number=1,
+            order=[
+                Combatant(name=first.name, dex=first.dex, hp=first.hp, hp_max=first.hp_max,
+                          is_pc=True, side="pc", character_id=first.character_id,
+                          combatant_id=first_id),
+                Combatant(name=away.name, dex=away.dex, hp=away.hp, hp_max=away.hp_max,
+                          is_pc=True, side="pc", character_id=away.character_id,
+                          combatant_id=away_id),
+                Combatant(name=next_player.name, dex=next_player.dex, hp=next_player.hp,
+                          hp_max=next_player.hp_max, is_pc=True, side="pc",
+                          character_id=next_player.character_id, combatant_id=next_id),
+            ],
+            current_index=0,
+            effects=[EffectState(id="next-turn", label="毒", target_id=next_id, timing="turn_start", damage="3")],
+        )
+
+        state.retire_active_character("p1", first.name)
+
+        self.assertEqual(state.combat.order[state.combat.current_index].combatant_id, next_id)
+        self.assertEqual(state.combat.order[state.combat.current_index].hp, 7)
+        self.assertEqual(state.characters_by_id[next_player.character_id].hp, 7)
+        self.assertTrue(any("turn_start" in key for key in state.combat.processed_timings))
+
+    def test_retire_current_turn_wraps_round_before_next_turn_start(self):
+        state = GroupState(group_id="g")
+        first = Character(name="小明", owner_id="p1", dex=70)
+        next_player = Character(name="小華", owner_id="p2", dex=60)
+        state.characters.update({"p1": first, "p2": next_player})
+        state.set_active_character("p1", first.character_id)
+        state.set_active_character("p2", next_player.character_id)
+
+        first_id = f"pc:{first.character_id}"
+        next_id = f"pc:{next_player.character_id}"
+        state.combat = CombatState(
+            active=True,
+            round_number=1,
+            order=[
+                Combatant(name=next_player.name, dex=next_player.dex, hp=next_player.hp,
+                          hp_max=next_player.hp_max, is_pc=True, side="pc",
+                          character_id=next_player.character_id, combatant_id=next_id),
+                Combatant(name=first.name, dex=first.dex, hp=first.hp, hp_max=first.hp_max,
+                          is_pc=True, side="pc", character_id=first.character_id,
+                          combatant_id=first_id),
+            ],
+            current_index=1,
+        )
+
+        state.retire_active_character("p1", first.name)
+
+        self.assertEqual(state.combat.round_number, 2)
+        self.assertEqual(state.combat.current_index, 0)
+        self.assertEqual(state.combat.order[0].combatant_id, next_id)
+        self.assertIn("round_end", " ".join(state.combat.processed_timings))
+        self.assertIn("round_start", " ".join(state.combat.processed_timings))
+
+    def test_stale_inactive_active_binding_is_not_returned(self):
+        state = GroupState(group_id="g")
+        character = Character(name="已退出", owner_id="p1")
+        state.characters["p1"] = character
+        state.set_active_character("p1", character.character_id)
+        character.active = False
+
+        self.assertIsNone(state.get_active_character("p1"))
+        self.assertNotIn("p1", state.active_character_id_by_user)
+        self.assertNotIn("p1", state.characters)
+
+    def test_stale_active_binding_cannot_cross_character_owner(self):
+        state = GroupState(group_id="g")
+        owner_character = Character(name="小明", owner_id="p1")
+        foreign_character = Character(name="小華", owner_id="p2")
+        state.characters.update({"p1": owner_character, "p2": foreign_character})
+        state.set_active_character("p1", owner_character.character_id)
+        state.set_active_character("p2", foreign_character.character_id)
+        state.active_character_id_by_user["p1"] = foreign_character.character_id
+
+        self.assertIs(state.get_active_character("p1"), owner_character)
+        self.assertEqual(state.active_character_id_by_user["p1"], owner_character.character_id)
+        self.assertIs(state.get_active_character("p2"), foreign_character)
+
 
 class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
     def _state(self, *, actor_has_character: bool = False) -> GroupState:

@@ -396,6 +396,60 @@ def _is_skippable(state: GroupState, combatant: Combatant) -> bool:
     return False
 
 
+def finish_retired_current_turn(
+    state: GroupState,
+    *,
+    old_order: list[Combatant],
+    old_index: int,
+    removed_ids: set[str],
+) -> None:
+    """Initialize the next usable turn after the current PC is retired.
+
+    ``CombatState.retire_character`` owns order/effect cleanup because it is
+    part of the persisted model. Turn timing, however, needs the complete
+    ``GroupState`` to determine whether a PC is away or defeated and to apply
+    effects. This helper bridges those responsibilities without calling
+    ``advance_turn``: the retired PC never gets a turn-end phase, while the
+    next eligible combatant receives its turn-start phase exactly once.
+    """
+    combat = state.combat
+    if not combat.active or not combat.order:
+        return
+
+    wrapped = False
+    for offset in range(1, len(old_order) + 1):
+        candidate = old_order[(old_index + offset) % len(old_order)]
+        if candidate.combatant_id in removed_ids:
+            continue
+
+        current = next(
+            (item for item in combat.order if item.combatant_id == candidate.combatant_id),
+            None,
+        )
+        if current is None:
+            continue
+        combat.current_index = combat.order.index(current)
+
+        candidate_wrapped = old_index + offset >= len(old_order)
+        if candidate_wrapped and not wrapped:
+            wrapped = True
+            process_timing(state, "round_end")
+            combat.round_number += 1
+            _reset_round_usage(state)
+            process_timing(state, "round_start")
+            _mark_round_start_abilities(state)
+
+        if _is_skippable(state, current):
+            continue
+
+        process_timing(state, "turn_start", current.combatant_id)
+        if not _is_skippable(state, current):
+            return
+
+    # There is no eligible participant. Keep combat intact so the existing
+    # all-skippable guard can tell the KP to end combat explicitly.
+
+
 def _reset_round_usage(state: GroupState) -> None:
     for card in state.combat.enemy_cards.values():
         for ability in card.abilities:

@@ -156,12 +156,18 @@ command，必須先加入 registry／allowlist 與測試，不能因為 parser �
    mutation。retire 也必須同步把 target 的 PC 從進行中的 combat initiative order
    移除，不能讓已退出角色取得後續回合或成為敵方有效目標。退角必須相容於
    沒有 `character_id` 的舊 combat snapshot；舊 entry 若只能用角色名識別，
-   必須採保守清理，不能讓已退角角色繼續取得回合或成為目標。
+   必須採保守清理，不能讓已退角角色繼續取得回合或成為目標。若退掉的是
+   current combatant，下一個可行動角色必須跳過 away／defeated entry，並完成
+   必要的 round／turn-start timing；若沒有可行動角色，保留 all-skippable 狀態，
+   交由既有 end-combat guard 處理。
 8. sudo 不能繞過既有安全 guard，例如：
    - `game_started` 對 `/coc usepregen` 的限制；
    - pending pregen LUCK 必須完成後才能切換劇本／角色；
    - 已有角色不可再次建立或認領不相容的角色；
-   - pending check／Luck 必須屬於同一個 subject。
+   - pending check／Luck 必須屬於同一個 subject；
+   - active-character binding 若指向 `active=False` 或 owner 不符的 stale
+     persisted character，必須視為沒有 active character，不能因舊索引而重新
+     啟用退角角色或跨 owner 操作角色。
 
 ### 4.1 KP Assistant role transition
 
@@ -215,7 +221,7 @@ Discord on_message
   state mutation / reply / target DM / image output
     │
     ├─ public result and any newly posted pending-check/Luck button include mandatory
-    │  「KP Assistant 代操作」 marker
+    │  「KP Assistant 代操作」 marker；按鈕 marker 以 dispatch 後最新 state 解析
     ├─ private information is sent to subject, never actor-only
     └─ sudo.completed or sudo.failed audit event
 ```
@@ -253,7 +259,7 @@ Discord on_message
 | `/coc sudo <target> check` | 是 | 只消費 target 的 pending check |
 | `/coc sudo <target> luck skip\|regular\|hard\|extreme` | 是 | 只處理 target 已存在的 pending Luck decision |
 | `/coc sudo <target> away` | 是 | 代 target 將目前 active character 標記為暫離；不改變 actor 的 KP 身分 |
-| `/coc sudo <target> back` | 是 | 代 target 解除暫離；仍須通過既有 active character 與 game guard |
+| `/coc sudo <target> back` | 是 | 代 target 解除暫離；須有 active character，沿用既有 `/coc back` 行為，不額外要求 `game_started` |
 | `/coc sudo <target> retire [角色名]` | 是 | 代 target 退出目前角色並解除 active player binding；保留角色歷史，不刪除角色資料 |
 | `/coc sudo <target> luck roll` | 否 | 回覆「LUCK 必須由玩家本人擲骰」，不改動 Luck |
 | `/coc sudo <target> pc\|create\|alloc\|usepregen ...` | 否 | 回覆角色建立／認領必須由玩家本人執行，不改動角色或 pregen claim |
@@ -339,6 +345,12 @@ no-op fast path，但實際拒絕仍要回覆使用者。
 - `/coc sudo <target> retire [角色名]` 必須解除 target 的 active player binding，
   保留 `characters_by_id` 的角色資料；若有 pending pregen LUCK 必須保留，且不得
   清除 actor 的 KP Assistant 身分。
+- retire current combatant 時，下一個 current 必須是第一個可行動 combatant；
+  away／defeated entry 不得停在 current，且新回合的 `turn_start`／跨 round timing
+  只能執行一次。
+- `get_active_character()` 遇到指向 inactive character 的 stale binding 時，必須
+  回傳沒有 active character；owner 不符的 binding 也必須拒絕，不能讓 sudo 或
+  一般 player command 重新操作退角角色或其他玩家角色。
 - target 突然離線時，KP Assistant 可用 sudo `away` 暫停其回合；需要退出目前角色
   時可用 sudo `retire`，且 retire 不刪除角色歷史，只解除 active player binding。
 - sudo `away`／`back`／`retire` 的 target 必須是 subject；不能因為 actor 是 KP 就
@@ -364,6 +376,8 @@ no-op fast path，但實際拒絕仍要回覆使用者。
   pending combat plan／effect 不得再讓該角色行動或成為有效目標。
 - 沒有 `character_id` 的 legacy combat entry 退角測試：可唯一以角色名識別時必須
   清理；名稱衝突時採保守清理，不能保留可能屬於已退角角色的有效回合／目標。
+- retire current combatant 的 turn-start effect、跨 round、away／defeated skip
+  必須有 regression test。
 - `sudo switch` 在 target 沒有 active character、或從一個角色切到另一個角色時，
   public marker 必須顯示切換後的角色名稱；Discord adapter 與 router 使用同一套
   marker resolver。

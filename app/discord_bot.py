@@ -559,6 +559,8 @@ async def _post_pending_buttons(
     before_pending: dict,
     before_luck_pending: dict,
     public_marker: str | None = None,
+    *,
+    sudo_command: sudo_policy.ParsedSudoCommand | None = None,
 ) -> None:
     """Shared tail for every place that posts fresh check/Luck-spend buttons
     after a command or turn finishes (CheckButton/LuckSpendButton callbacks,
@@ -588,9 +590,19 @@ async def _post_pending_buttons(
     even a gateway reconnect. Every direct load_group_state call in this
     module goes through to_thread for the same reason."""
     state = await asyncio.to_thread(load_group_state, conversation_id)
-    await _post_check_buttons(channel, conversation_id, state, before_pending, public_marker)
+    check_marker = public_marker
+    if sudo_command is not None:
+        # Resolve the marker from the same post-dispatch snapshot used to find
+        # new pending checks. Computing it before the router lock could name a
+        # character that a concurrent switch/retire operation had already
+        # replaced by the time this sudo command actually ran.
+        check_marker = command_router.sudo_public_marker(state, sudo_command)
+    await _post_check_buttons(channel, conversation_id, state, before_pending, check_marker)
     state = await asyncio.to_thread(load_group_state, conversation_id)
-    await _post_luck_buttons(channel, conversation_id, state, before_luck_pending, public_marker)
+    luck_marker = public_marker
+    if sudo_command is not None:
+        luck_marker = command_router.sudo_public_marker(state, sudo_command)
+    await _post_luck_buttons(channel, conversation_id, state, before_luck_pending, luck_marker)
 
 
 # choice is restricted to these two literal tokens (see app/commands.py's
@@ -929,11 +941,9 @@ async def _handle_message(message: discord.Message) -> None:
         state_before = await asyncio.to_thread(load_group_state, conversation_id)
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
-        sudo_marker: str | None = None
+        sudo_command: sudo_policy.ParsedSudoCommand | None = None
         if command_parts[0].casefold() == "/coc" and len(command_parts) > 1 and command_parts[1].casefold() == "sudo":
-            parsed_sudo, _ = sudo_policy.parse_sudo_command(command_parts, allow_opaque_target=False)
-            if parsed_sudo is not None:
-                sudo_marker = command_router.sudo_public_marker(state_before, parsed_sudo)
+            sudo_command, _ = sudo_policy.parse_sudo_command(command_parts, allow_opaque_target=False)
         try:
             is_keeper = _is_keeper_member(message.author)
             await command_router.handle_text_message(
@@ -951,7 +961,7 @@ async def _handle_message(message: discord.Message) -> None:
                 conversation_id,
                 before_pending,
                 before_luck_pending,
-                sudo_marker,
+                sudo_command=sudo_command,
             )
     except StateRevisionConflict:
         observability.mark_request_error()

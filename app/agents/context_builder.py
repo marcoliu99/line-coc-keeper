@@ -25,7 +25,9 @@ async def build_context(
     Gathers all necessary state, history, RAG, and Memory context for the
     current turn, packaging it into an AgentMessage envelope.
     """
-    char = state.characters.get(user_id)
+    # Resolve through the active binding instead of the legacy owner index so
+    # a stale persisted mapping cannot make a sudo turn use the wrong sheet.
+    char = state.get_active_character(user_id)
 
     # 1. RAG Context (Scenario Text)
     # scenario_rag has no single query_scenario() entry point — it's a
