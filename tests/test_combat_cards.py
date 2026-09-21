@@ -160,6 +160,40 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(result["effect"]["hp_after"], 8)
         self.assertEqual(next(c for c in state.combat.order if c.is_pc).hp, 8)
 
+    def test_planned_attack_exposes_range_band_for_defense_gating(self):
+        """combat_block's prompt decides melee (Dodge+Fight Back) vs. ranged
+        (Dodge only) purely from required_rolls[0].range_band — regression
+        guard for the P2 Codex finding on PR #43 that this field was
+        missing, so every player-targeted attack silently got treated as
+        melee regardless of the attack's actual range_band."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Sniper", 60, 14, attacks=[
+            {"id": "shot", "label": "Rifle Shot", "skill_value": 50, "damage": "1D8", "range_band": "near"},
+        ])
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Sniper")
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["selected_action"], "attack")
+        self.assertEqual(plan["required_rolls"][0]["range_band"], "near")
+
+    def test_attack_without_explicit_range_band_defaults_to_melee(self):
+        """The AI authors an NPC's attacks via add_npc_to_combat; if it omits
+        range_band (e.g. forgets to mark a gun as ranged), this is the
+        default that gets applied — must stay "engaged" since that's what
+        the tool schema's description promises."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Bruiser", 60, 14, attacks=[
+            {"id": "punch", "label": "Punch", "skill_value": 50, "damage": "1D3"},
+        ])
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Bruiser")
+
+        plan = combat.plan_enemy_turn(state)
+
+        self.assertEqual(plan["required_rolls"][0]["range_band"], "engaged")
+
     def test_resolve_enemy_attack_requires_formal_outcome(self):
         state = self._state_with_pc()
         combat.start_combat(state)
@@ -648,6 +682,23 @@ class CombatCardTests(unittest.TestCase):
             "difficulty": "regular",
             "major_wound_trigger": True,
         })
+
+    def test_apply_combat_damage_does_not_clobber_an_existing_pending_check(self):
+        """A major wound's CON check is a side effect registered directly by
+        apply_combat_damage (app/combat.py), bypassing keeper.py's
+        _reject_if_check_already_pending guard on the "front door" tools —
+        without this, damage from an unrelated event landing while the
+        player still has some other check outstanding (e.g. an unresolved
+        NPC-attack defense choice) would silently overwrite it."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        state.pending_checks["u1"] = {"type": "sanity", "skill_value": 40}
+
+        result = combat.apply_combat_damage(state, "Mark", 6)
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["major_wound_triggered"])
+        self.assertEqual(state.pending_checks["u1"], {"type": "sanity", "skill_value": 40})
 
     def test_add_combat_effect_applies_fixed_damage_at_turn_start(self):
         state = self._state_with_pc()

@@ -45,8 +45,18 @@ async def build_context(
     # already embedded directly in the static prompt, making this proactive
     # search redundant — and, depending on the configured embeddings
     # backend, a real per-turn cost for zero benefit.
+    # Skipped entirely during active combat: combat_block (app/keeper.py's
+    # dynamic prompt) already carries the full mechanical state — initiative
+    # order, combatant HP, enemy abilities — that combat narration actually
+    # needs, so proactive scenario/memory RAG's marginal narrative value is
+    # low there, while its embeddings-API round trip (2-5s, see
+    # docs/npc_attack_latency_design_spec.md) is a real, unconditional cost
+    # on every combat turn regardless of whether anyone asked a
+    # scenario/memory-dependent question. Not a correctness change outside
+    # combat: state.combat.active is False for every turn this behaved
+    # identically before.
     rag_task = None
-    if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title:
+    if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title and not state.combat.active:
         def _run_scenario_rag() -> str:
             # See app/keeper.py's search_scenario tool for why this is a
             # plain _logger call, not a structured event field. This site
@@ -78,8 +88,12 @@ async def build_context(
 
     # 2. Memory Context (Past events) — same two-call shape as
     # app/keeper.py's search_memory tool: search_memory -> format_results.
+    # See the scenario RAG block above for why this also skips during active
+    # combat — this one is the more significant saving in practice, since it
+    # runs on essentially every player turn with a bound character
+    # (unconditional on SCENARIO_RAG_ENABLED), not just when that flag is on.
     memory_task = None
-    if char:
+    if char and not state.combat.active:
         def _run_memory_rag() -> str:
             # See _run_scenario_rag's comment above — this one runs on
             # essentially every player turn with a bound character

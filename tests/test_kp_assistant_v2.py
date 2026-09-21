@@ -453,6 +453,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             "sanity_check",
             "offer_check_choice",
             "npc_skill_check",
+            "offer_npc_attack_defense_choice",
+            "clear_pending_check",
             "roll_weapon_damage",
             "roll_impaling_damage",
             "apply_combat_damage",
