@@ -2,30 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 
+from app import help_service, locks, observability
+from app.agents import supervisor
+from app.commands import sudo as sudo_policy
+from app.commands.handlers import character as character_handler
+from app.commands.handlers import combat as combat_handler
+from app.commands.handlers import map_handler
+from app.commands.handlers import system as system_handler
 from app.legacy_commands import (
-    Reply,
-    GetDisplayName,
-    SendDM,
-    SendImage,
-    SendDMImage,
     FormatMention,
-    handle_roll_command,
-    handle_check_command,
-    handle_luck_decision,
-    handle_pregen_luck_roll,
+    GetDisplayName,
+    Reply,
+    SendDM,
+    SendDMImage,
+    SendImage,
     _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
     _set_character_away_state,
+    handle_check_command,
+    handle_luck_decision,
+    handle_pregen_luck_roll,
+    handle_roll_command,
 )
-from app import help_service, locks, observability
-from app.agents import supervisor
 from app.repositories.group_state import load_state
-from app.commands.handlers import combat as combat_handler
-from app.commands.handlers import character as character_handler
-from app.commands.handlers import system as system_handler
-from app.commands.handlers import map_handler
-from app.commands import sudo as sudo_policy
 
 _logger = logging.getLogger(__name__)
 
@@ -43,11 +44,10 @@ class _SudoDenied(Exception):
 def sudo_public_marker(state, parsed: sudo_policy.ParsedSudoCommand) -> str:
     """Return the public marker for one sudo command.
 
-    ``switch`` may start with no active character, or may switch away from
-    the currently active one. Resolve its destination first so the marker
-    names the character that the command actually operates on; all other
-    commands use the current active character and fall back to ``玩家`` for
-    read-only commands without a character.
+    ``switch`` uses its destination only after that character is active in the
+    supplied state. This keeps a rejected switch from claiming it operated on
+    a character it never reached; callers that reply after mutation pass the
+    latest state so a successful switch still gets the destination marker.
     """
     character = None
     if parsed.command == "switch":
@@ -58,16 +58,19 @@ def sudo_public_marker(state, parsed: sudo_policy.ParsedSudoCommand) -> str:
             if candidate.name == requested_name
         ]
         if len(matches) == 1:
-            character = matches[0]
+            active = state.get_active_character(parsed.subject_user_id)
+            if active is not None and active.character_id == matches[0].character_id:
+                character = active
     if character is None:
         character = state.get_active_character(parsed.subject_user_id)
     character_name = character.name if character is not None else "玩家"
     return f"【KP Assistant 代操作：{character_name}】"
 
 
-def _sudo_reply(reply: Reply, marker: str) -> Reply:
+def _sudo_reply(reply: Reply, marker: str | Callable[[], str]) -> Reply:
     async def wrapped(message: str) -> None:
-        await reply(f"{marker}\n{message}")
+        resolved_marker = marker() if callable(marker) else marker
+        await reply(f"{resolved_marker}\n{message}")
 
     return wrapped
 
@@ -188,7 +191,13 @@ async def _dispatch_sudo_locked(
         command=parsed.command,
     )
     marker = sudo_public_marker(state, parsed)
-    marker_reply = _sudo_reply(reply, marker)
+    if parsed.command == "switch":
+        marker_reply = _sudo_reply(
+            reply,
+            lambda: sudo_public_marker(load_state(conversation_id), parsed),
+        )
+    else:
+        marker_reply = _sudo_reply(reply, marker)
     marker_image = _sudo_image(reply, marker, send_image)
 
     with observability.context(acting_mode=acting_context.mode, acting_command=acting_context.command):
@@ -289,19 +298,18 @@ async def _handle_sudo_command(
     _record_sudo_event("sudo.started", parsed, actor_user_id)
     try:
         dispatch_status = "rejected"
-        async with locks.get_keeper_priority_gate(conversation_id, is_kp=True):
-            async with locks.get_conversation_lock(conversation_id):
-                dispatch_status = await _dispatch_sudo_locked(
-                    conversation_id,
-                    actor_user_id,
-                    is_keeper,
-                    parsed,
-                    reply,
-                    send_dm,
-                    send_image,
-                    send_dm_image,
-                    format_mention,
-                )
+        async with locks.get_keeper_priority_gate(conversation_id, is_kp=True), locks.get_conversation_lock(conversation_id):
+            dispatch_status = await _dispatch_sudo_locked(
+                conversation_id,
+                actor_user_id,
+                is_keeper,
+                parsed,
+                reply,
+                send_dm,
+                send_image,
+                send_dm_image,
+                format_mention,
+            )
     except _SudoDenied as exc:
         _record_sudo_event(
             "sudo.denied",
@@ -488,11 +496,10 @@ async def _handle_text_message_impl(
         return
 
     is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
-    async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp_priority):
-        async with locks.get_conversation_lock(conversation_id):
-            await _handle_ordinary_text_message_locked(
-                conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
-            )
+    async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp_priority), locks.get_conversation_lock(conversation_id):
+        await _handle_ordinary_text_message_locked(
+            conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
+        )
 
 
 async def _handle_ordinary_text_message_locked(

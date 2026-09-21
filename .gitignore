@@ -8,6 +8,10 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 .DS_Store
+.coverage
+.pytest_cache/
+htmlcov/
+*.ses
 
 # Runtime database, uploaded PDFs, and generated scenario assets
 data/

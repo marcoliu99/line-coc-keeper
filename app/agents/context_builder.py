@@ -4,10 +4,15 @@ import asyncio
 import logging
 from typing import Any
 
-from app.models import GroupState
-from app.domain.models import AgentMessage
-from app.config import SCENARIO_RAG_ENABLED, SCENARIO_RAG_TOP_K, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
 from app import memory_rag, observability, scenario_rag
+from app.config import (
+    SCENARIO_RAG_EMBEDDING_MODEL,
+    SCENARIO_RAG_EMBEDDING_WEIGHT,
+    SCENARIO_RAG_ENABLED,
+    SCENARIO_RAG_TOP_K,
+)
+from app.domain.models import AgentMessage
+from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
 

@@ -427,8 +427,8 @@ class ContextBuilderCombatRagSkipTests(unittest.IsolatedAsyncioTestCase):
         return state
 
     async def test_skips_both_proactive_rag_calls_during_active_combat(self):
-        from app.agents import context_builder
         from app import memory_rag, scenario_rag
+        from app.agents import context_builder
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
              patch.object(scenario_rag, "get_index") as mock_get_index, \
@@ -448,8 +448,8 @@ class ContextBuilderCombatRagSkipTests(unittest.IsolatedAsyncioTestCase):
     async def test_runs_both_proactive_rag_calls_when_combat_not_active(self):
         """Regression: outside combat, behavior is unchanged from before —
         matches tests/test_agentic_pipeline.py's existing gating tests."""
-        from app.agents import context_builder
         from app import memory_rag, scenario_rag
+        from app.agents import context_builder
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
              patch.object(scenario_rag, "get_index", return_value="fake-index") as mock_get_index, \

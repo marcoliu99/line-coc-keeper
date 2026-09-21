@@ -1,16 +1,23 @@
 import asyncio
 import importlib.util
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from pathlib import Path
 
 from app import config
 from app.help_docs import generate_markdown
-from app.help_registry import HelpCategory, HelpContext, HelpEntry, get_help_page, register_help, register_help_category, reset_registry_for_tests
+from app.help_registry import (
+    HelpCategory,
+    HelpContext,
+    HelpEntry,
+    get_help_page,
+    register_help,
+    register_help_category,
+    reset_registry_for_tests,
+)
 from app.help_service import bounded_page_text, parse_help_path, resolve_text_path
 from app.models import GroupState
-
 
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 

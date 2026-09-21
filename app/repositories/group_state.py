@@ -12,18 +12,16 @@ into the database.
 """
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import logging
 import re
 import shutil
-import logging
 import time
-from uuid import uuid4
 from pathlib import Path
+from uuid import uuid4
 
-from app import db
-from app import locks
-from app import config, observability
+from app import config, db, locks, observability
 from app.config import DATA_DIR
 from app.models import GroupState
 
@@ -88,27 +86,26 @@ def _save_state_impl(state: GroupState, *, reason: str = "command") -> None:
     """
     started = time.monotonic()
     try:
-        with locks.get_state_lock(state.group_id):
+        with locks.get_state_lock(state.group_id), db.transaction() as conn:
             # Keep the optimistic check and the complete snapshot write in one
             # IMMEDIATE transaction. The Python RLock protects threads in this
             # process; BEGIN IMMEDIATE also serializes competing processes using
             # the same SQLite database.
-            with db.transaction() as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                row = conn.execute(
-                    "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
-                ).fetchone()
-                current = json.loads(row[0]) if row is not None else None
-                if (
-                    reason != "newgame"
-                    and current is not None
-                    and int(current.get("state_revision", 0)) != state.state_revision
-                ):
-                    raise StateRevisionConflict(
-                        f"state revision conflict for {_log_group_id(state.group_id)}: "
-                        f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
-                    )
-                _save_state_unlocked(state, reason=reason, conn=conn)
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
+            ).fetchone()
+            current = json.loads(row[0]) if row is not None else None
+            if (
+                reason != "newgame"
+                and current is not None
+                and int(current.get("state_revision", 0)) != state.state_revision
+            ):
+                raise StateRevisionConflict(
+                    f"state revision conflict for {_log_group_id(state.group_id)}: "
+                    f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
+                )
+            _save_state_unlocked(state, reason=reason, conn=conn)
     except StateRevisionConflict:
         current_revision = current.get("state_revision", 0) if current else None
         _logger.warning(
@@ -212,6 +209,7 @@ def scenario_users(scenario_id: str) -> list[str]:
         try:
             if load_state(group_id).scenario_library_id == scenario_id:
                 users.append(group_id)
-        except Exception:
+        except Exception:  # one corrupt group must not hide other scenario users.
+            _logger.debug("could not inspect group state for scenario %s", scenario_id, exc_info=True)
             continue
     return users

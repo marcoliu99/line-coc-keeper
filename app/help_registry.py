@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Sequence
-
+from typing import Literal
 
 Visibility = Literal[
     "always",

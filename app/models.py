@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 # Standard COC7e base skill percentages (subset covering the common cases).
@@ -177,7 +177,7 @@ class Character:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Character":
+    def from_dict(data: dict[str, Any]) -> Character:
         char = Character(**data)
         if not char.character_id:
             char.character_id = f"legacy-user:{char.owner_id}"
@@ -190,10 +190,8 @@ class Character:
         # for the Keeper-only counterpart.
         lines = [
             f"【{self.name}】職業：{self.occupation}（玩家：{self.owner_id}）",
-            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} "
-            f"APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu} LUCK {self.luck}",
-            f"HP {self.hp}/{self.hp_max}　MP {self.mp}/{self.mp_max}　SAN {self.san}/{self.san_max}　"
-            f"MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
+            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu} LUCK {self.luck}",
+            f"HP {self.hp}/{self.hp_max}　MP {self.mp}/{self.mp_max}　SAN {self.san}/{self.san_max}　MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
         ]
         tags = list(self.status_tags)
         if self.away:
@@ -225,8 +223,7 @@ class Character:
         handful of numbers that actually change, resent fresh every turn."""
         lines = [
             f"【{self.name}】職業：{self.occupation}（玩家：{self.owner_id}）",
-            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} "
-            f"APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu}",
+            f"STR {self.str_} CON {self.con} SIZ {self.siz} DEX {self.dex} APP {self.app} INT {self.int_} POW {self.pow_} EDU {self.edu}",
             f"MOV {self.move}　DB {self.damage_bonus}　Build {self.build}",
         ]
         if self.key_connection:
@@ -397,7 +394,7 @@ class CreationSession:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "CreationSession":
+    def from_dict(data: dict[str, Any]) -> CreationSession:
         return CreationSession(**data)
 
 
@@ -414,7 +411,7 @@ class ArmorRule:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "ArmorRule":
+    def from_dict(data: dict[str, Any]) -> ArmorRule:
         return ArmorRule(**data)
 
 
@@ -435,7 +432,7 @@ class AttackRule:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "AttackRule":
+    def from_dict(data: dict[str, Any]) -> AttackRule:
         return AttackRule(**data)
 
 
@@ -456,7 +453,7 @@ class SpecialAbility:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "SpecialAbility":
+    def from_dict(data: dict[str, Any]) -> SpecialAbility:
         return SpecialAbility(**data)
 
 
@@ -478,7 +475,7 @@ class EffectState:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "EffectState":
+    def from_dict(data: dict[str, Any]) -> EffectState:
         return EffectState(**data)
 
 
@@ -522,7 +519,7 @@ class EnemyCombatCard:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "EnemyCombatCard":
+    def from_dict(data: dict[str, Any]) -> EnemyCombatCard:
         return EnemyCombatCard(
             id=data["id"],
             name=data.get("name", data["id"]),
@@ -575,7 +572,7 @@ class Combatant:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Combatant":
+    def from_dict(data: dict[str, Any]) -> Combatant:
         return Combatant(**data)
 
 
@@ -713,7 +710,7 @@ class CombatState:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "CombatState":
+    def from_dict(data: dict[str, Any]) -> CombatState:
         return CombatState(
             active=data.get("active", False),
             round_number=data.get("round_number", 0),
@@ -927,6 +924,13 @@ class GroupState:
                     self.characters.pop(owner_id, None)
         legacy = self.characters.get(owner_id)
         if legacy is not None:
+            if legacy.owner_id != owner_id:
+                # A legacy owner-index entry can be stale or corrupted after
+                # the character-id migration. Never let it expose or activate
+                # another player's character through the owner lookup.
+                self.characters.pop(owner_id, None)
+                self.active_character_id_by_user.pop(owner_id, None)
+                return None
             if not legacy.active:
                 self.characters.pop(owner_id, None)
                 return None
@@ -1041,7 +1045,7 @@ class GroupState:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "GroupState":
+    def from_dict(data: dict[str, Any]) -> GroupState:
         data = GroupState.migrate_data(data)
         characters = {k: Character.from_dict(v) for k, v in data.get("characters", {}).items()}
         characters_by_id = {}

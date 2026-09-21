@@ -1,8 +1,8 @@
 """Deterministic, no-LLM scene digest snapshots."""
 from __future__ import annotations
 
-import logging
 import hashlib
+import logging
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -141,15 +141,14 @@ def clean_digest(group_id: str, digest_id: str) -> None:
     """Delete one digest under the same lock used to create state snapshots."""
     started = time.monotonic()
     try:
-        with locks.get_state_lock(group_id):
-            with db.transaction() as conn:
-                row = conn.execute(
-                    "SELECT 1 FROM scene_digests WHERE key = ?",
-                    (f"{group_id}:{digest_id}",),
-                ).fetchone()
-                if row is None:
-                    raise KeyError(digest_id)
-                db.delete_json_tx(conn, "scene_digests", f"{group_id}:{digest_id}")
+        with locks.get_state_lock(group_id), db.transaction() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM scene_digests WHERE key = ?",
+                (f"{group_id}:{digest_id}",),
+            ).fetchone()
+            if row is None:
+                raise KeyError(digest_id)
+            db.delete_json_tx(conn, "scene_digests", f"{group_id}:{digest_id}")
     except Exception:
         _logger.exception(
             "scene_digest_clean_failure group_id=%s digest_id=%s duration_ms=%s transaction=rolled_back",

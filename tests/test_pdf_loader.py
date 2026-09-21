@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pymupdf
 
-
 _MODULE_SPEC = importlib.util.spec_from_file_location(
     "app._pdf_loader_test_impl", Path(__file__).parents[1] / "app" / "pdf_loader.py"
 )

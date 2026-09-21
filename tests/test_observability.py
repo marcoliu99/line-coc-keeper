@@ -31,15 +31,20 @@ class ObservabilityTests(unittest.TestCase):
             observability.event("request.completed", duration_ms=123)
 
     def test_text_logging_can_remain_enabled_when_performance_logging_disabled(self):
-        with patch("app.config.LOG_ENABLED", False), patch("app.config.LOG_TEXT_ENABLED", True):
-            with observability.request_context(conversation_id="channel") as bound:
-                self.assertTrue(bound["request_id"].startswith("req_"))
+        with (
+            patch("app.config.LOG_ENABLED", False),
+            patch("app.config.LOG_TEXT_ENABLED", True),
+            observability.request_context(conversation_id="channel") as bound,
+        ):
+            self.assertTrue(bound["request_id"].startswith("req_"))
 
     def test_slow_span_is_promoted_to_warning(self):
-        with patch("app.config.LOG_ENABLED", True):
-            with self.assertLogs("app.observability", level="INFO") as captured:
-                with observability.span("state.load", slow_threshold_ms=0, operation="load"):
-                    pass
+        with (
+            patch("app.config.LOG_ENABLED", True),
+            self.assertLogs("app.observability", level="INFO") as captured,
+            observability.span("state.load", slow_threshold_ms=0, operation="load"),
+        ):
+            pass
         self.assertTrue(any("state.load.completed" in line for line in captured.output))
         self.assertTrue(any("WARNING" in line for line in captured.output))
 
@@ -51,10 +56,11 @@ class ObservabilityTests(unittest.TestCase):
                 self.assertEqual(detached["maintenance_id"], "maintenance_test")
 
     def test_detached_context_redacts_conversation_identifier(self):
-        with patch.object(config, "LOG_HASH_IDENTIFIERS", True):
-            with observability.detached_context(conversation_id="discord-channel-123") as detached:
-                self.assertEqual(len(detached["conversation_id"]), 12)
-                self.assertNotIn("discord-channel-123", detached["conversation_id"])
+        with patch.object(config, "LOG_HASH_IDENTIFIERS", True), observability.detached_context(
+            conversation_id="discord-channel-123"
+        ) as detached:
+            self.assertEqual(len(detached["conversation_id"]), 12)
+            self.assertNotIn("discord-channel-123", detached["conversation_id"])
 
     def test_queue_listener_preserves_context_captured_before_queueing(self):
         root = logging.getLogger()
@@ -86,11 +92,13 @@ class ObservabilityTests(unittest.TestCase):
             root.setLevel(saved_level)
 
     def test_span_includes_status_and_mutable_metrics(self):
-        with patch("app.config.LOG_ENABLED", True):
-            with self.assertLogs("app.observability", level="INFO") as captured:
-                metrics = {}
-                with observability.span("rag.search", metrics=metrics):
-                    metrics["result_count"] = 2
+        with (
+            patch("app.config.LOG_ENABLED", True),
+            self.assertLogs("app.observability", level="INFO") as captured,
+        ):
+            metrics = {}
+            with observability.span("rag.search", metrics=metrics):
+                metrics["result_count"] = 2
         self.assertTrue(any("rag.search.completed" in line for line in captured.output))
 
     def test_usage_fields_normalize_openai_usage_shapes(self):

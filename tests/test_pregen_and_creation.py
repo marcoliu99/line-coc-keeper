@@ -1,6 +1,6 @@
 import asyncio
-import sys
 import os
+import sys
 import tempfile
 import types
 import unittest

@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from app import config
-from app.help_registry import HelpCategory, HelpEntry, register_help_category, register_help_entries
+from app.help_registry import (
+    HelpCategory,
+    HelpEntry,
+    register_help_category,
+    register_help_entries,
+)
 
 
 def _register_categories() -> None:
@@ -82,7 +87,11 @@ def entries_for_policy(lifecycle_kp_only: bool = False) -> tuple[HelpEntry, ...]
 
 
 def register_all_help() -> None:
-    from app.help_registry import mark_registry_initialized, registry_is_initialized, reset_registry_for_tests
+    from app.help_registry import (
+        mark_registry_initialized,
+        registry_is_initialized,
+        reset_registry_for_tests,
+    )
 
     if registry_is_initialized():
         return

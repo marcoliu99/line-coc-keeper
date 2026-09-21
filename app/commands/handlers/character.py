@@ -3,16 +3,16 @@ from __future__ import annotations
 import asyncio
 
 from app import creation, pregen_extractor
-from app.models import OCCUPATIONS, generate_investigator
-from app.repositories.group_state import load_state, save_state
 from app.legacy_commands import (
     Reply,
     SendDM,
-    _blocked_by_kp_assistant,
     _blocked_by_existing_character,
+    _blocked_by_kp_assistant,
     _claim_pregen,
     _pregen_full_sheet_text,
 )
+from app.models import OCCUPATIONS, generate_investigator
+from app.repositories.group_state import load_state, save_state
 
 
 async def handle_character_command(

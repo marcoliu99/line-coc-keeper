@@ -9,8 +9,8 @@ of defaulting to "the nearest investigator gets punched".
 """
 from __future__ import annotations
 
-import re
 import random
+import re
 import uuid
 from typing import Any
 

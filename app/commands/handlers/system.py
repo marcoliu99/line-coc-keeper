@@ -3,14 +3,38 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app import checkpoints, keeper, locks, scenario_index, scenario_intro, scenario_library, scene_digest, scene_map
+from app import (
+    checkpoints,
+    keeper,
+    locks,
+    scenario_index,
+    scenario_intro,
+    scenario_library,
+    scene_digest,
+    scene_map,
+)
 from app.config import IMPORT_DIR
-from app.models import GroupState
-from app.repositories.group_state import clear_page_images, load_state, save_page_image, save_state, scenario_users
 from app.legacy_commands import (
-    Reply, SendDM, SendImage, SendDMImage, FormatMention,
-    _resolve_pdf_upload_choice_locked, _is_kp_or_keeper, _set_character_away_state, handle_pdf_upload,
-    _heal_character, _build_readiness_roster, _run_post_turn_maintenance_after_output
+    FormatMention,
+    Reply,
+    SendDM,
+    SendDMImage,
+    SendImage,
+    _build_readiness_roster,
+    _heal_character,
+    _is_kp_or_keeper,
+    _resolve_pdf_upload_choice_locked,
+    _run_post_turn_maintenance_after_output,
+    _set_character_away_state,
+    handle_pdf_upload,
+)
+from app.models import GroupState
+from app.repositories.group_state import (
+    clear_page_images,
+    load_state,
+    save_page_image,
+    save_state,
+    scenario_users,
 )
 
 
@@ -147,7 +171,7 @@ async def handle_system_command(
             await reply("用法：/coc rollback <節點 ID 或唯一名稱>")
             return
         try:
-            restored, checkpoint, pre = checkpoints.rollback(
+            _restored, checkpoint, pre = checkpoints.rollback(
                 conversation_id, " ".join(parts[2:]), actor_id=user_id
             )
         except KeyError:
@@ -491,7 +515,6 @@ async def handle_system_command(
         await reply(f"{result.character_name} 回來了，恢復正常參與。")
         return
 
-    from app import locks
     if sub == "start":
         state = load_state(conversation_id)
         if not state.active or not state.scenario_text:

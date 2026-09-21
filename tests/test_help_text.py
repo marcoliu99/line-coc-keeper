@@ -1,10 +1,10 @@
-import unittest
 import asyncio
+import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.help_registry import HelpContext, get_help_page, reset_registry_for_tests
 from app.commands import router
 from app.commands.router import is_known_coc_command
+from app.help_registry import HelpContext, get_help_page, reset_registry_for_tests
 
 
 class HelpTextTests(unittest.TestCase):

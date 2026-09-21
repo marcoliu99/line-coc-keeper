@@ -9,10 +9,16 @@ first debugging step.
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from app import observability
-from app.config import GEMINI_API_KEY, GEMINI_MODEL, KEEPER_TEMPERATURE, LOG_INCLUDE_USAGE, LOG_SLOW_OPERATION_MS
+from app.config import (
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    KEEPER_TEMPERATURE,
+    LOG_INCLUDE_USAGE,
+    LOG_SLOW_OPERATION_MS,
+)
 from app.providers import retry
 
 
@@ -141,7 +147,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
             if fc.name == tool["name"]:
                 return dict(fc.args or {})
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
 
 
@@ -173,5 +179,5 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
             if fc.name == tool["name"]:
                 return dict(fc.args or {})
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None

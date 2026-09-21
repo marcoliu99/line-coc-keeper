@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from typing import Callable
+from collections.abc import Callable
 
 # Small and bounded on purpose: entries are short player-message-shaped
 # query strings, not scenario content, so even a modest cap comfortably
@@ -55,12 +55,12 @@ from typing import Callable
 _MAX_ENTRIES = 512
 
 _lock = threading.Lock()
-_cache: "OrderedDict[tuple[str, str], list[float]]" = OrderedDict()
+_cache: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
 # One Event per (model, text) currently being embedded — lets a second
 # caller for the same key wait for the first (the "leader") instead of
 # issuing its own redundant embed_one() call. Only ever touched while
 # holding _lock.
-_in_flight: "dict[tuple[str, str], threading.Event]" = {}
+_in_flight: dict[tuple[str, str], threading.Event] = {}
 
 
 def get_query_embedding(

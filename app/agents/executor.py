@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app import keeper
-from app import observability
+from app import keeper, observability
+from app.agents.tool_gateway import TOOLS, make_tool_executor
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.providers import anthropic_provider, gemini_provider, openai_provider
-from app.agents.tool_gateway import TOOLS, make_tool_executor
 from app.services import prompt_config
 
 _logger = logging.getLogger(__name__)
@@ -61,18 +60,17 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # message). Calling it with `await` directly, as the previous
         # version of this file did, raises before the call even completes.
         turn_metrics: dict[str, int] = {}
-        with observability.metrics_context(turn_metrics):
-            with observability.span(
-                "llm.turn", provider=LLM_PROVIDER,
-                model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
-                agent="executor",
-                reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
-                metrics=turn_metrics,
-            ):
-                await asyncio.to_thread(
-                    provider.run_conversation, static_system, dynamic_system, TOOLS,
-                    state.log, new_message, execute_tool, MAX_TOOL_ITERATIONS,
-                )
+        with observability.metrics_context(turn_metrics), observability.span(
+            "llm.turn", provider=LLM_PROVIDER,
+            model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
+            agent="executor",
+            reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+            metrics=turn_metrics,
+        ):
+            await asyncio.to_thread(
+                provider.run_conversation, static_system, dynamic_system, TOOLS,
+                state.log, new_message, execute_tool, MAX_TOOL_ITERATIONS,
+            )
     except Exception:
         observability.event("llm.failed", level=logging.ERROR, agent="executor", status="error")
         _logger.exception("Executor LLM call failed")

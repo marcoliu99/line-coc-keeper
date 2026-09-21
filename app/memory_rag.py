@@ -32,7 +32,11 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from app import db, embedding_cache, observability
-from app.config import OPENAI_API_KEY, SCENARIO_RAG_EMBEDDING_MODEL, SCENARIO_RAG_EMBEDDING_WEIGHT
+from app.config import (
+    OPENAI_API_KEY,
+    SCENARIO_RAG_EMBEDDING_MODEL,
+    SCENARIO_RAG_EMBEDDING_WEIGHT,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -93,7 +97,7 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[flo
                                 error_type="incomplete_embedding_response")
             return None
         return cast(list[list[float]], ordered)
-    except Exception:
+    except Exception:  # noqa: BLE001 - embedding is best-effort; BM25 remains the safe fallback.
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
@@ -148,7 +152,7 @@ def _load_raw_chunks(group_id: str) -> list[dict]:
     unexpected content both degrade to "no memory yet", not a crash."""
     try:
         return db.get_json("memory_chunks", group_id) or []
-    except Exception:
+    except Exception:  # noqa: BLE001 - corrupt optional memory cache degrades to no memory.
         return []
 
 

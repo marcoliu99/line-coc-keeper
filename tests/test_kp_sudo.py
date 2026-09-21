@@ -17,7 +17,7 @@ sys.modules.setdefault(
 from app import legacy_commands as commands
 from app.commands import router
 from app.commands.sudo import parse_sudo_command
-from app.models import Character, CombatState, Combatant, EffectState, GroupState
+from app.models import Character, Combatant, CombatState, EffectState, GroupState
 
 
 def clone_state(state: GroupState) -> GroupState:
@@ -280,6 +280,13 @@ class SudoStateTests(unittest.TestCase):
         self.assertEqual(state.active_character_id_by_user["p1"], owner_character.character_id)
         self.assertIs(state.get_active_character("p2"), foreign_character)
 
+    def test_legacy_owner_index_cannot_return_foreign_character(self):
+        state = GroupState(group_id="g")
+        state.characters["p1"] = Character(name="小華", owner_id="p2")
+
+        self.assertIsNone(state.get_active_character("p1"))
+        self.assertNotIn("p1", state.characters)
+
 
 class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
     def _state(self, *, actor_has_character: bool = False) -> GroupState:
@@ -463,6 +470,25 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.get_active_character("p1").name, "小華")
         self.assertIn("目前使用角色已切換", reply.messages[0])
         self.assertIn("【KP Assistant 代操作：小華】", reply.messages[0])
+
+    async def test_rejected_switch_marker_keeps_current_character(self):
+        state = self._state()
+        historical = Character(name="小華", owner_id="p1", character_id="p1:historical")
+        state.characters_by_id[historical.character_id] = historical
+        state.pending_pregen_luck["p1"] = historical.character_id
+
+        with StateStorePatch(router, commands, router.character_handler) as store:
+            store.put(state)
+            reply = ReplyCollector()
+            await router.handle_text_message(
+                "g", "kp", _noop, reply, _noop, _noop, _noop,
+                "/coc sudo p1 switch 小華",
+                allow_opaque_sudo_target=True,
+            )
+
+        self.assertIn("【KP Assistant 代操作：小明】", reply.messages[0])
+        self.assertNotIn("【KP Assistant 代操作：小華】", reply.messages[0])
+        self.assertIn("尚未完成 LUCK", reply.messages[0])
 
     async def test_sudo_audit_events_use_redacted_actor_and_subject_ids(self):
         state = self._state()

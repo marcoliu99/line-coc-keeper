@@ -1,8 +1,8 @@
-import tempfile
-from pathlib import Path
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 
 sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_load=lambda data: {}))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
@@ -15,7 +15,8 @@ sys.modules.setdefault(
     ),
 )
 
-from app import combat, legacy_commands as commands, keeper
+from app import combat, keeper
+from app import legacy_commands as commands
 from app.commands import router
 from app.models import Character, GroupState
 
@@ -1196,7 +1197,6 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                         latest.kp_assistant_user_id = ""
                         latest.characters["kp-user"] = Character(name="Former KP Now Player", owner_id="kp-user")
                         store.put(latest)
-                        return None
 
                     async def __aexit__(self_inner, exc_type, exc, tb):
                         return False

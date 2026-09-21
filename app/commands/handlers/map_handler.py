@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from app import scene_map as scene_map_engine
-from app.repositories.group_state import load_state, save_state, load_page_image
 from app.legacy_commands import Reply, SendImage
+from app.repositories.group_state import load_page_image, load_state, save_state
 
 
 async def handle_map_command(

@@ -1,5 +1,14 @@
 # Bot Lifecycle Scripts Design Spec
 
+## 文件狀態與 changeset
+
+- 工作 branch：`feature/kp-assistant-sudo-control`
+- 整合 branch：`main_v2`
+- 本輪對齊的 `main_v2` changeset：`3d5c39f`
+- 本 branch 與 `main_v2` 的對齊 merge changeset：`caca558`
+- 本輪 Ruff／pytest／profiler implementation changeset：待提交
+- 後續若 `main_v2` 有新 commit，下一輪修改或更新 PR 前必須重新 fetch 並對齊。
+
 ## Problem and goals
 
 本機開發與測試時，可能同時啟動多個 Discord bot process。需要一組可重複使用的 script，能夠：
@@ -21,6 +30,20 @@
 `discord` 對應 `python -m app.discord_bot`。script 只接受明確的 `discord` 入口，不自行猜測或啟動其他平台入口。
 
 `start_bot.sh` 預設在專案 root 執行，尋找 `.venv/bin/python`；若不存在才使用 PATH 中的 `python3`。啟動前檢查 `.env` 是否存在及必要入口是否可 import，但不把 secrets 印到 terminal 或 log。
+
+### Optional profiler
+
+啟動 script 透過單一環境變數 `BOT_PROFILER` 明確控制 profiler；預設值為
+`off`，因此一般啟動完全不載入 profiler。可用值只有：
+
+- `off`／`none`：不啟動 profiler。
+- `pyinstrument`：用同一個 Python interpreter 執行 `pyinstrument -m app.discord_bot`，
+  啟用 async-aware profiling，並在 `.runtime/bots/` 寫出 HTML 報告。
+- `py-spy`：先照正常方式啟動 bot，再以獨立 process attach bot，寫出 SVG flame graph。
+
+`BOT_PROFILER` 為未知值，或指定工具尚未安裝時，`start_bot.sh` 必須明確失敗，不能
+悄悄以未 profiling 的方式啟動。兩個 profiler 都是開發／staging 工具，正式環境預設
+保持 `BOT_PROFILER=off`；`py-spy` 另外可能受 macOS／container process attach 權限限制。
 
 ## Explicit non-goals
 
@@ -57,6 +80,10 @@ Runtime files集中在被 `.gitignore` 忽略的 `.runtime/bots/`：
 
 Instance name 使用 timestamp 加 random suffix，不能由 PID 單獨作為公開 identifier，避免 PID reuse 讓 stop 誤殺新 process。manifest 以暫存檔寫入後 atomic rename，避免 status 讀到半份 JSON。
 
+啟用 profiler 時，manifest 另外保存 profiler tool、PID／process group、實際 command 與
+output path。`pyinstrument` 的 profiler 是 bot 的 wrapper process；`py-spy` 則是另外
+的 process group，兩者都必須能由同一份 manifest 安全清理。
+
 ## Key flows
 
 ### Start
@@ -64,9 +91,15 @@ Instance name 使用 timestamp 加 random suffix，不能由 PID 單獨作為公
 ```text
 validate root/env/entrypoint
         |
+read BOT_PROFILER (default off)
+        |
+validate selected profiler executable/module
+        |
 create unique instance + manifest path
         |
-launch child with redirected stdout/stderr
+launch child (optionally wrapped by pyinstrument)
+        |
+if py-spy: attach a dedicated profiler process
         |
 record PID and command atomically
         |
@@ -85,6 +118,10 @@ print instance name, PID, log path
 4. PID 未被 reuse 成另一個 process。
 
 驗證失敗時不送 signal，保留 manifest 供排查並回傳非零 exit code。驗證成功後送 `TERM`，等待有限 timeout，仍未退出才送 `KILL`。只刪除這個 instance 的 manifest；log 預設保留，方便確認關閉結果。若啟動器建立了獨立 process group，signal 送給該 group，但仍要以 manifest 的 group identity 做驗證。
+
+若 manifest 有 profiler：`pyinstrument` wrapper 先使用 `SIGINT` 讓 HTML 報告有機會
+完成；`py-spy` 隨 bot 結束，若仍存活則驗證自己的 command／process group 後停止。
+兩者的 profile output 都保留，status 會顯示 output path。
 
 ### Status
 
@@ -118,8 +155,14 @@ print instance name, PID, log path
 - 測試 clean 只刪 allowlist runtime paths，`.env` 與 `.env.example` 保留。
 - 測試未加 `--yes` 不刪資料，path validation 拒絕 root/home/empty path。
 - 跑既有完整 Python test suite，確認 scripts 不影響 bot runtime。
+- 預設 `BOT_PROFILER=off` 不改變原本 command 或 manifest。
+- `BOT_PROFILER=pyinstrument` 驗證同一 interpreter 可 import pyinstrument，並產生 HTML
+  output argument；`BOT_PROFILER=py-spy` 驗證 executable、attach command 與 manifest
+  identity。
+- `pytest`／`pytest-cov` 作為開發測試工具，可用 `python -m pytest --cov=app` 執行。
 
 ## Open decisions
 
 - stop timeout 暫定 10 秒；若 Discord graceful shutdown 需要更久，再以環境變數提供可調整值。
 - log rotation 不在第一版處理；script 只建立每 instance log，長期保留策略交給使用者的 process manager。
+- profiler output 不做自動 rotation；每個 instance 一份 artifact，由使用者清理 `.runtime/bots/`。

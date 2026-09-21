@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.domain.models import MechanicResult
 
-
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
 # 方便之後要調整語氣、規則或輸出格式時只改這一個地方；app/agents/*.py 只負責準備

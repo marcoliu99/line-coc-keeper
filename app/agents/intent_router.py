@@ -5,7 +5,6 @@ from typing import Literal
 
 from app.domain.models import AgentMessage
 
-
 IntentType = Literal["PURE_ROLEPLAY", "GAMEPLAY_ACTION", "OOC_ASSISTANT"]
 
 _PURE_ROLEPLAY_EXACT = {"好", "ok", "嗯", "知道", "了解", "收到", "沒問題", "是的", "對"}

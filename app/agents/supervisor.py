@@ -4,9 +4,17 @@ import logging
 from typing import Any
 
 from app import keeper
+from app.agents import (
+    assistant,
+    context_builder,
+    executor,
+    guard,
+    intent_router,
+    narrator,
+    rule_validator,
+    state_reducer,
+)
 from app.models import GroupState
-from app.agents import context_builder, intent_router, executor, state_reducer, narrator, rule_validator, guard, assistant
-
 
 _logger = logging.getLogger(__name__)
 
