@@ -513,24 +513,53 @@ pending check，有的話直接跳過（回傳 `False`，不觸發、不覆蓋�
 `tests/test_combat_cards.py::
 test_apply_combat_damage_does_not_clobber_an_existing_pending_check`。
 
-### 記錄但暫不處理：獨立 review agent 的其他發現
+### 後續全部補上：獨立 review agent 的其他發現（Marco 要求「之前有查到的都幫我修掉」）
 
-- **`ally:`/`enemy:` 分支目前不可達**：`plan_enemy_turn` 唯一決定目標的
-  `_choose_target`（`app/combat.py:670-690`）只會挑 `side == "pc"` 的戰鬥
-  員，所以 combat_block prompt 裡「目標不是玩家角色時自己判定命中傷害」那段
-  目前永遠不會被踩到——是 fail-safe（不會造成錯誤行為），但目前是為未來（隊
-  友 NPC 互打、敵方內鬥）預留的前瞻設計，還是應該先拿掉等真的支援了再補，
-  留給 Marco 決定，這次沒有動。
-- **pending check 沒有清除機制**：`_reject_if_check_already_pending` 把
-  「重複呼叫覆蓋」風險換成「一個被遺忘的 pending check 永久卡住該角色」的
-  新風險（沒有 KP 端的強制清除指令）。記錄成已知限制，沒有實作新指令，留待
-  之後需要時再處理。
-- **`_reject_if_check_already_pending` 跟 `/coc check` 解析用不同的鎖**：
-  守衛檢查的 `state` 快照跟玩家解 `/coc check` 走的鎖不是同一把
-  （`get_keeper_turn_lock` vs `get_state_lock`），理論上有一個很窄的競態
-  窗口會讓 Keeper 誤判「還有待處理的檢定」而拒絕新呼叫；不會造成資料損毀
-  （失敗是拒絕，不是覆蓋），窗口窄，記錄下來但沒有修。
-- 两個 DRY／端到端測試的加分項建議（`offer_check_choice` 跟
-  `offer_npc_attack_defense_choice` 的選項轉換邏輯重複、缺一個真正串 `/coc
-  check` 的端到端測試）——留待後續，不影響這次合併。
+上面幾個原本記錄「暫不處理」的項目，除了 ally/enemy 分支那個需要 Marco 判斷
+未來設計意圖的問題，其餘全部補上了：
+
+- **`_reject_if_check_already_pending` 跟 `/coc check` 解析用不同的鎖，已
+  修正**：原本的守衛檢查對呼叫方傳入的外層 `state`（可能是這個 Keeper 回合
+  開始時的舊快照）直接判斷，跟玩家解 `/coc check` 用的鎖（`get_state_lock`）
+  不是同一個保護範圍，理論上有個很窄的競態窗口會誤判「還有待處理的檢定」而
+  拒絕新呼叫。修法：把檢查搬進 `_mutate_and_save_state` 的 mutator 內部，
+  對著剛從 `load_state` 重新讀出來、鎖保護下的 `target_state` 判斷，跟實際
+  寫入用同一次鎖——`skill_check`／`sanity_check`／`offer_check_choice`／
+  `offer_npc_attack_defense_choice` 四個工具都改成這個寫法（後者連攻擊方
+  擲骰也一起搬進鎖裡，擋下的呼叫一樣不會浪費一次骰子）。四個 handler 也因此
+  變乾淨：不再需要 mutate 完之後另外 `require_character` 拿一次最新角色物件
+  才能組回應——mutator 內部直接把完整的成功／被擋回應建好回傳。
+- **pending check 沒有清除機制，已補上**：新增工具 `clear_pending_check`
+  （`investigator` 參數），讓 Keeper 在判斷某筆待處理檢定已經過時（劇情跳過、
+  角色離場/倒下等，不會再有人回覆）時主動清掉它，不用擲骰也不用判定成敗，
+  單純把 `pending_checks[owner_id]` pop 掉；沒有待處理檢定時呼叫是安全的
+  no-op。已加進 `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`（KP 助手也能用）跟
+  `_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES`（清除也是真實的遊戲狀態變更，算
+  canon），系統提示也補了一段：先確認那筆檢定真的過時、玩家還沒回覆的不要
+  清，避免被拿來取巧繞過守衛。
+- **DRY 重複，已修正**：`offer_check_choice`／`offer_npc_attack_defense_choice`
+  裡幾乎一模一樣的「把 raw options 轉成帶 skill_value 的選項清單」邏輯抽成
+  共用函式 `_resolve_defense_options`。
+- **端到端測試，已補上**：新增
+  `tests/test_npc_attack_latency.py::
+  OfferNpcAttackDefenseChoiceEndToEndTests::
+  test_choosing_fight_back_resolves_with_the_system_rolled_attacker_tier`
+  ——真的把 `offer_npc_attack_defense_choice` 寫入的 `pending_checks` 一路
+  串到 `legacy_commands._resolve_check_deterministically`（`/coc check` 的
+  實際解析），驗證系統擲的 `attacker_tier`（critical）確實贏過玩家後來擲的
+  防守方骰（regular），敘事文字正確講「反擊沒有生效」，而且檢定解決後
+  `pending_checks` 真的被清空，不會卡住。這之前完全沒有測試覆蓋過。
+
+**仍然沒動、留給 Marco 決定**：`ally:`/`enemy:` 分支目前不可達（見上面
+「已修正」小節），是要保留當未來隊友互打/敵方內鬥功能的前瞻設計，還是先
+拿掉等真的支援了再補，這是設計意圖問題，不是可以直接判斷對錯的 bug，這次
+沒有動。
+
+新增測試：`tests/test_npc_attack_latency.py` 的 `ClearPendingCheckTests`
+（4 個：清除既有 pending check、沒有 pending check 時安全 no-op、找不到
+角色的錯誤處理、清除後可以重新註冊新的檢定）、`test_kp_assistant_v2.py`
+的白名單測試補上 `offer_npc_attack_defense_choice`／`clear_pending_check`
+兩個之前沒被明確斷言在內的工具名稱。全套測試 260 題（原 255 + 5 個新測試），
+只剩跨分支未合併造成的 2 個預期性失敗（PR #44 修的 reply metrics，跟這個
+分支無關）。
 

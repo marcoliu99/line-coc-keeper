@@ -260,6 +260,26 @@ TOOLS = [
         },
     },
     {
+        "name": "clear_pending_check",
+        "description": (
+            "取消某位角色目前『待處理』的檢定（skill_check／sanity_check／offer_check_choice／"
+            "offer_npc_attack_defense_choice 任何一種、還沒被玩家用 /coc check 或按鈕解決的那筆），"
+            "不會擲骰、不會判定成敗，純粹把它從等待清單移除。用在原本要求的檢定已經因為劇情推進、"
+            "戰鬥結束、角色離場等原因不再需要玩家回應的情況——例如威脅已經解除、角色已經倒下、"
+            "或你判斷這筆檢定不用再等玩家回覆了。呼叫 skill_check 等工具卻被『已經有一筆待處理的"
+            "檢定』擋下來、且確認那筆是真的過時、不會再有人處理時，才用這個工具清掉它、再重新發起"
+            "新的檢定；如果那筆待處理的檢定其實還有效、只是玩家還沒回覆，不要用這個工具去清掉它。"
+            "角色目前沒有待處理的檢定時呼叫這個工具是安全的 no-op，不會出錯。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string", "description": "調查員角色名稱"},
+            },
+            "required": ["investigator"],
+        },
+    },
+    {
         "name": "sanity_check",
         "description": (
             "『請求』一次理智檢定（SAN check）——用於角色目擊恐怖事物、遭遇超自然現象等場合，"
@@ -697,6 +717,7 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "offer_check_choice",
     "npc_skill_check",
     "offer_npc_attack_defense_choice",
+    "clear_pending_check",
     "roll_weapon_damage",
     "roll_impaling_damage",
     "apply_combat_damage",
@@ -714,6 +735,7 @@ _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
     "offer_check_choice",
     "npc_skill_check",
     "offer_npc_attack_defense_choice",
+    "clear_pending_check",
     "roll_weapon_damage",
     "roll_impaling_damage",
     "apply_combat_damage",
@@ -811,15 +833,26 @@ def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict
     previously guarded against a repeat call for the same investigator,
     which silently overwrote (and, for offer_npc_attack_defense_choice,
     silently discarded an already-rolled attacker check) whatever was
-    already pending. Checked against `state` directly rather than inside
-    a freshly-reloaded/locked mutator: tool calls within one Keeper turn
-    execute sequentially on one thread (never concurrently with each
-    other), and `state` is kept in sync with the latest save after every
-    _mutate_and_save_state call in this same turn, so this is exactly the
-    data a repeat call within that sequence would see — the actual
-    cross-conversation concurrency this repo cares about is already
-    serialized per-conversation by app/locks.py well before _execute_tool
-    is ever reached."""
+    already pending.
+
+    Always called from inside that tool's _mutate_and_save_state mutator,
+    against the freshly-reloaded `target_state` — not the outer, possibly
+    stale `state` a caller was handed before this turn's lock was ever
+    taken. An earlier revision checked the outer `state` directly (cheaper:
+    no lock needed just to reject), reasoning that tool calls within one
+    Keeper turn run sequentially and `state` stays synced after every
+    _mutate_and_save_state call *within that same turn*. That left a real
+    gap, though: it never accounted for a /coc check resolution racing in
+    from a *different* code path — legacy_commands.py's pending-check
+    resolver only takes app/locks.py's per-conversation state lock, not
+    the Keeper-turn-scoped one this function's caller is running under, so
+    a player could resolve (and pop) their pending check mid-turn while
+    this function was still looking at a stale snapshot that still showed
+    it pending, wrongly rejecting a call that should have succeeded.
+    Checking against `target_state` inside the same lock-protected reload
+    the actual write goes through closes that gap: the roll (if any) and
+    the pending_checks write only happen if this check, right before them,
+    still sees nothing pending under that fresh read."""
     if char.owner_id in state.pending_checks:
         return {
             "ok": False,
@@ -827,6 +860,26 @@ def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict
                      "才能再要求新的檢定，不要重複呼叫。",
         }
     return None
+
+
+def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[dict]:
+    """Expand offer_check_choice/offer_npc_attack_defense_choice's raw
+    {label, skill, bonus_dice, penalty_dice} option list into one with
+    each option's actual resolved skill_value baked in.
+
+    Full skill value, no artificial difficulty adjustment — confirmed
+    against the official COC7e Fight Back text: it's a normal opposed
+    roll at the defender's own combat skill, not a harder version of
+    Dodge. (A prior revision here halved it as a house-rule
+    approximation; reverted.)"""
+    options = []
+    for opt in raw_options:
+        value = resolve_skill_value(char, opt["skill"])
+        options.append({
+            "label": opt["label"], "skill": opt["skill"], "skill_value": value,
+            "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
+        })
+    return options
 
 
 def resolve_skill_value(char: Character, skill_name: str) -> int:
@@ -1216,11 +1269,11 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            blocked = _reject_if_check_already_pending(state, char)
-            if blocked is not None:
-                return blocked
-            def _register_pending_skill_check(target_state: GroupState) -> tuple[int, int, int, str]:
+            def _register_pending_skill_check(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
+                blocked = _reject_if_check_already_pending(target_state, target_char)
+                if blocked is not None:
+                    return _StateMutation(blocked, should_save=False)
                 value = resolve_skill_value(target_char, tool_input["skill"])
                 bonus = int(tool_input.get("bonus_dice") or 0)
                 penalty = int(tool_input.get("penalty_dice") or 0)
@@ -1232,51 +1285,36 @@ def _execute_tool(
                     "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
                     "pushed": bool(tool_input.get("pushed", False)),
                 }
-                return value, bonus, penalty, difficulty
-            value, bonus, penalty, difficulty = _mutate_and_save_state(state, _register_pending_skill_check)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            return {
-                "ok": True, "pending": True, "investigator": refreshed_char.name, "skill": tool_input["skill"],
-                "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
-                "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
-            }
+                return {
+                    "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
+                    "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
+                    "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
+                }
+            return _mutate_and_save_state(state, _register_pending_skill_check)
 
         if name == "offer_check_choice":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            blocked = _reject_if_check_already_pending(state, char)
-            if blocked is not None:
-                return blocked
             raw_options = tool_input.get("options") or []
             if len(raw_options) < 2:
                 return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
             attacker_tier = tool_input.get("attacker_tier")
-            def _register_pending_choice(target_state: GroupState) -> list[dict]:
+            def _register_pending_choice(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
-                options = []
-                for opt in raw_options:
-                    # Full skill value, no artificial difficulty adjustment —
-                    # confirmed against the official COC7e Fight Back text:
-                    # it's a normal opposed roll at the defender's own combat
-                    # skill, not a harder version of Dodge. (A prior revision
-                    # here halved it as a house-rule approximation; reverted.)
-                    value = resolve_skill_value(target_char, opt["skill"])
-                    options.append({
-                        "label": opt["label"], "skill": opt["skill"], "skill_value": value,
-                        "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
-                    })
+                blocked = _reject_if_check_already_pending(target_state, target_char)
+                if blocked is not None:
+                    return _StateMutation(blocked, should_save=False)
+                options = _resolve_defense_options(target_char, raw_options)
                 pending_choice = {"type": "choice", "options": options}
                 if attacker_tier:
                     pending_choice["attacker_tier"] = attacker_tier
                 target_state.pending_checks[target_char.owner_id] = pending_choice
-                return options
-            options = _mutate_and_save_state(state, _register_pending_choice)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            return {
-                "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
-                "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
-            }
+                return {
+                    "ok": True, "pending": True, "investigator": target_char.name, "options": options,
+                    "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
+                }
+            return _mutate_and_save_state(state, _register_pending_choice)
 
         if name == "npc_skill_check":
             skill_value = max(0, min(100, int(tool_input["skill_value"])))
@@ -1299,66 +1337,78 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            blocked = _reject_if_check_already_pending(state, char)
-            if blocked is not None:
-                return blocked
             raw_options = tool_input.get("options") or []
             if len(raw_options) < 1:
                 return {"ok": False, "error": "options 至少要給一個選項"}
-            # Guard checked above, before rolling — this tool rolls the
-            # attacker's check as a side effect, so without the guard a
-            # repeat call would waste a real roll on a result nobody ever
-            # sees (silently overwritten by the second call's own roll).
             attacker_skill_value = max(0, min(100, int(tool_input["attacker_skill_value"])))
             attacker_bonus = int(tool_input.get("attacker_bonus_dice") or 0)
             attacker_penalty = int(tool_input.get("attacker_penalty_dice") or 0)
-            npc_roll = dice.skill_check(attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty)
 
-            def _register_pending_defense_choice(target_state: GroupState) -> list[dict]:
+            def _roll_and_register_defense_choice(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
-                options = []
-                for opt in raw_options:
-                    # Full skill value, no artificial difficulty adjustment —
-                    # see offer_check_choice's identical comment.
-                    value = resolve_skill_value(target_char, opt["skill"])
-                    options.append({
-                        "label": opt["label"], "skill": opt["skill"], "skill_value": value,
-                        "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
-                    })
-                pending_choice = {"type": "choice", "options": options, "attacker_tier": npc_roll.tier}
-                target_state.pending_checks[target_char.owner_id] = pending_choice
-                return options
+                blocked = _reject_if_check_already_pending(target_state, target_char)
+                if blocked is not None:
+                    return _StateMutation(blocked, should_save=False)
+                # Rolled inside the mutator, after the guard above and under
+                # the same lock as the pending_checks write below — a
+                # rejected call still never rolls (no wasted attacker roll),
+                # and there's no gap between "confirmed nothing pending" and
+                # "rolled + wrote" for a concurrent /coc check resolution to
+                # land in (see _reject_if_check_already_pending's docstring).
+                npc_roll = dice.skill_check(
+                    attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty
+                )
+                options = _resolve_defense_options(target_char, raw_options)
+                target_state.pending_checks[target_char.owner_id] = {
+                    "type": "choice", "options": options, "attacker_tier": npc_roll.tier,
+                }
+                return {
+                    "ok": True, "pending": True, "investigator": target_char.name, "options": options,
+                    "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
+                    "note": "攻擊方檢定已經由系統擲好（tier 見上面），還沒有防守方的骰出結果——等玩家自己選"
+                            "一個選項、用 /coc check <選項名稱> 擲骰後才會有結果，不要自己選、不要自己編一個、"
+                            "也不要自己判定命中與否。",
+                }
+            return _mutate_and_save_state(state, _roll_and_register_defense_choice)
 
-            options = _mutate_and_save_state(state, _register_pending_defense_choice)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            return {
-                "ok": True, "pending": True, "investigator": refreshed_char.name, "options": options,
-                "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
-                "note": "攻擊方檢定已經由系統擲好（tier 見上面），還沒有防守方的骰出結果——等玩家自己選"
-                        "一個選項、用 /coc check <選項名稱> 擲骰後才會有結果，不要自己選、不要自己編一個、"
-                        "也不要自己判定命中與否。",
-            }
+        if name == "clear_pending_check":
+            char = find_character(state, tool_input.get("investigator", ""))
+            if not char:
+                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
+            def _clear_pending_check(target_state: GroupState) -> _StateMutation[dict]:
+                target_char = require_character(target_state, tool_input.get("investigator", ""))
+                cleared = target_state.pending_checks.pop(target_char.owner_id, None)
+                if cleared is None:
+                    return _StateMutation(
+                        {"ok": True, "cleared": False, "investigator": target_char.name,
+                         "note": f"{target_char.name} 本來就沒有待處理的檢定，沒有動作。"},
+                        should_save=False,
+                    )
+                return {
+                    "ok": True, "cleared": True, "investigator": target_char.name,
+                    "cleared_check_type": cleared.get("type", ""),
+                }
+            return _mutate_and_save_state(state, _clear_pending_check)
 
         if name == "sanity_check":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            blocked = _reject_if_check_already_pending(state, char)
-            if blocked is not None:
-                return blocked
             loss_success = tool_input.get("loss_success", "0")
             loss_failure = tool_input.get("loss_failure", "1d4")
-            def _register_pending_sanity(target_state: GroupState) -> None:
+            def _register_pending_sanity(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
+                blocked = _reject_if_check_already_pending(target_state, target_char)
+                if blocked is not None:
+                    return _StateMutation(blocked, should_save=False)
                 target_state.pending_checks[target_char.owner_id] = {
                     "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
                 }
-            _mutate_and_save_state(state, _register_pending_sanity)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            return {
-                "ok": True, "pending": True, "investigator": refreshed_char.name, "current_san": refreshed_char.san,
-                "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
-            }
+                return {
+                    "ok": True, "pending": True, "investigator": target_char.name, "current_san": target_char.san,
+                    "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
+                }
+            return _mutate_and_save_state(state, _register_pending_sanity)
 
         if name == "adjust_character":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -1930,6 +1980,11 @@ def _build_static_prompt(state: GroupState) -> str:
   日常、瑣碎、明顯不會失敗或失敗也不影響劇情的小動作（閒聊、簡單移動、清楚會成功的小事）直接用
   敘事帶過即可，不要為了小事也要求檢定；拿不準的話，優先往上面三類去想，而不是每個行動都檢定。
   不管是否呼叫這個工具，都不可以自己憑空決定成敗，也不可以自己骰。
+- skill_check／sanity_check／offer_check_choice／offer_npc_attack_defense_choice 這幾個要求檢定的
+  工具，如果角色已經有一筆待處理的檢定，會直接被拒絕（防止重複要求把前一筆的內容悄悄覆蓋掉）。
+  遇到這種拒絕，先想這筆待處理的檢定是不是還有效——通常是玩家還沒來得及回覆，這種情況不要硬清掉，
+  等他們處理完；只有在確認那筆檢定已經過時（劇情已經跳過、角色已經離場或倒下等，不會再有人去處理）
+  時，才呼叫 clear_pending_check 清掉它，再重新發起新的檢定。
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。

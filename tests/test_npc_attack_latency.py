@@ -25,7 +25,7 @@ sys.modules.setdefault(
     ),
 )
 
-from app import keeper
+from app import dice, keeper, legacy_commands
 from app.models import Character, GroupState
 
 
@@ -197,6 +197,53 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertNotIn("attacker_tier", choice_result)  # not requested this time
 
 
+class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
+    """Connects offer_npc_attack_defense_choice's pending_checks write all
+    the way through to /coc check's actual resolution
+    (legacy_commands._resolve_check_deterministically) — the two were only
+    ever covered by separate, unconnected tests before (this tool's own
+    pending_checks shape vs. the pre-existing choice+attacker_tier
+    resolution logic), so nothing verified end-to-end that the "merge two
+    tool calls into one" change didn't also change what the player
+    actually experiences when they resolve it."""
+
+    def test_choosing_fight_back_resolves_with_the_system_rolled_attacker_tier(self):
+        state = _state_with_investigator()
+        state.active = True
+        with StateStorePatch(keeper, legacy_commands) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+                tool_result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
+                        "attacker_skill_value": 70,
+                    },
+                    [], [], speaker_role="player",
+                )
+            self.assertTrue(tool_result["ok"])
+            self.assertEqual(tool_result["attacker_tier"], "critical")
+
+            defender_roll = dice.SkillCheckResult(
+                skill_value=60, roll=50, bonus_dice=0, penalty_dice=0,
+                tier="regular", success=True, required_tier="regular",
+            )
+            with patch("app.legacy_commands.dice.skill_check", return_value=defender_roll):
+                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 反擊")
+            saved_state = store.store["g"]
+
+        # The choice check is fully consumed — not left dangling for a
+        # future call to trip over (this is also what makes clear_pending_check
+        # normally unnecessary here: resolving it the normal way already pops it).
+        self.assertNotIn("u1", saved_state.pending_checks)
+        # attacker_tier="critical" beats the defender's "regular" Fight Back
+        # roll — COC7e opposed roll, higher tier wins — so the narration must
+        # say the counter-attack failed to land, not that it succeeded.
+        combined_text = resolution.roll_line + resolution.keeper_message
+        self.assertIn("反擊沒有生效", combined_text)
+
+
 class AlreadyPendingCheckGuardTests(unittest.TestCase):
     """Regression tests for 風險 1 in docs/npc_attack_latency_design_spec.md:
     skill_check/sanity_check/offer_check_choice/
@@ -301,6 +348,73 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             )
         self.assertTrue(first["ok"])
         self.assertTrue(second["ok"])
+
+
+class ClearPendingCheckTests(unittest.TestCase):
+    """clear_pending_check — the escape hatch for a pending check that's
+    gone stale (combat moved on, character left, etc.) and would otherwise
+    permanently block that investigator from skill_check/sanity_check/
+    offer_check_choice/offer_npc_attack_defense_choice forever, since
+    nothing else in the codebase ever pops pending_checks except the
+    player's own /coc check resolution."""
+
+    def test_clears_an_existing_pending_check(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
+            )
+            result = keeper._execute_tool(
+                state, "clear_pending_check", {"investigator": "小明"}, [], [], speaker_role="player"
+            )
+            saved_state = store.store["g"]
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["cleared"])
+        self.assertEqual(result["cleared_check_type"], "skill")
+        self.assertNotIn("u1", saved_state.pending_checks)
+
+    def test_no_pending_check_is_a_safe_noop(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state, "clear_pending_check", {"investigator": "小明"}, [], [], speaker_role="player"
+            )
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["cleared"])
+
+    def test_unknown_investigator_returns_error(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state, "clear_pending_check", {"investigator": "不存在的人"}, [], [], speaker_role="player"
+            )
+        self.assertFalse(result["ok"])
+
+    def test_clearing_unblocks_a_new_check(self):
+        """The actual point of this tool: without it, a stale pending check
+        would permanently reject every future check request for that
+        investigator (see AlreadyPendingCheckGuardTests)."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
+            )
+            blocked = keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "格鬥"}, [], [], speaker_role="player"
+            )
+            keeper._execute_tool(
+                state, "clear_pending_check", {"investigator": "小明"}, [], [], speaker_role="player"
+            )
+            after_clear = keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "格鬥"}, [], [], speaker_role="player"
+            )
+        self.assertFalse(blocked["ok"])
+        self.assertTrue(after_clear["ok"])
+        self.assertEqual(after_clear["skill"], "格鬥")
 
 
 class ContextBuilderCombatRagSkipTests(unittest.IsolatedAsyncioTestCase):
