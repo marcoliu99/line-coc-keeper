@@ -55,6 +55,21 @@ class BotLifecycleScriptTests(unittest.TestCase):
             ["py-spy", "record", "--pid", "123", "--output", str(svg)],
         )
 
+    def test_start_help_documents_profiler_usage(self):
+        result = subprocess.run(
+            [str(SCRIPTS / "start_bot.sh"), "--help"],
+            cwd=ROOT,
+            env=self._env(ROOT / ".runtime" / "test-help"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("BOT_PROFILER", result.stdout)
+        self.assertIn("pyinstrument", result.stdout)
+        self.assertIn("py-spy", result.stdout)
+        self.assertIn(".runtime/bots/", result.stdout)
+
     def test_start_status_and_stop_only_selected_instance(self):
         try:
             probe = subprocess.run(

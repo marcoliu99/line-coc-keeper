@@ -479,7 +479,18 @@ def clean(confirmed: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="action", required=True)
-    start_parser = subparsers.add_parser("start")
+    start_parser = subparsers.add_parser(
+        "start",
+        description="Start one bot instance and record its runtime manifest.",
+        epilog=(
+            "Profiler is opt-in (default: off):\n"
+            "  BOT_PROFILER=pyinstrument ./scripts/start_bot.sh discord --name profile-async\n"
+            "  BOT_PROFILER=py-spy ./scripts/start_bot.sh discord --name profile-live\n"
+            "Allowed values: off, pyinstrument, py-spy. Artifacts are written under "
+            ".runtime/bots/. py-spy may require root or process-attach permission on macOS."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     start_parser.add_argument("bot", choices=("discord",))
     start_parser.add_argument("--name")
     stop_parser = subparsers.add_parser("stop")

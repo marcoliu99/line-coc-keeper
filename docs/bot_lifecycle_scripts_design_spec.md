@@ -147,6 +147,8 @@ print instance name, PID, log path
 - 不改變 `app/config.py` 的 runtime defaults；script 只透過既有 `.env`／environment 啟動 bot。
 - `.runtime/` 加入 `.gitignore`，不要讓 PID、manifest、log 或測試資料進 Git。
 - README 或 `docs/setup.md` 補上實際指令、exit code、multiple instance 範例與 clean 的警告。
+- README 與 `./scripts/start_bot.sh --help` 都要直接列出 `BOT_PROFILER` 的可用值、
+  output artifact 與 macOS attach 權限注意事項，避免使用者只能翻 spec 才知道怎麼開。
 
 ## Testing plan
 
@@ -161,6 +163,7 @@ print instance name, PID, log path
   output argument；`BOT_PROFILER=py-spy` 驗證 executable、attach command 與 manifest
   identity。
 - `pytest`／`pytest-cov` 作為開發測試工具，可用 `python -m pytest --cov=app` 執行。
+- `./scripts/start_bot.sh --help` 必須能看見 profiler 開關與兩個啟動範例。
 
 ## Open decisions
 

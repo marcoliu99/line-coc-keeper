@@ -111,6 +111,27 @@ Discord 頻道 ──(gateway)──▶ app/discord_bot.py
 
 只需要啟動 `app/discord_bot.py`；Discord 直接附加圖片，不需要 webhook、ngrok 或公開圖片網址。
 
+### 效能分析 profiler
+
+先安裝開發工具：
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+一般啟動不會啟用 profiler；需要分析時，用 `BOT_PROFILER` 明確選擇工具：
+
+```bash
+BOT_PROFILER=pyinstrument ./scripts/start_bot.sh discord --name profile-async
+BOT_PROFILER=py-spy ./scripts/start_bot.sh discord --name profile-live
+```
+
+`pyinstrument` 會產生 async-aware HTML call stack，`py-spy` 會 attach 到已啟動的
+Bot 並產生 SVG flame graph；兩者的 artifact 都會放在 `.runtime/bots/`，可用
+`./scripts/bot_status.sh` 查路徑。可用值為 `off`、`pyinstrument`、`py-spy`，也可以
+用 `./scripts/start_bot.sh --help` 直接查看範例。macOS 使用 `py-spy` attach process
+時可能需要 root 或額外的 process attach 權限；權限不足時 script 會明確失敗。
+
 ## 文件導覽
 
 這份 README 只放「第一次認識這個專案」需要的東西；其他內容都分別搬到獨立文件，讓每份文件保持專注、方便找：
