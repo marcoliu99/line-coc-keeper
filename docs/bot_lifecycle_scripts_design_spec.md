@@ -6,7 +6,7 @@
 - 整合 branch：`main_v2`
 - 本輪對齊的 `main_v2` changeset：`3d5c39f`
 - 本 branch 與 `main_v2` 的對齊 merge changeset：`caca558`
-- 本輪 Ruff／pytest／profiler implementation changeset：待提交
+- 本輪 Ruff／pytest／profiler implementation changeset：`0c96ff1`
 - 後續若 `main_v2` 有新 commit，下一輪修改或更新 PR 前必須重新 fetch 並對齊。
 
 ## Problem and goals
