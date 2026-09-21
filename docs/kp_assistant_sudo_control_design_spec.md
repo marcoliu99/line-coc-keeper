@@ -13,6 +13,8 @@
 - `main_v2` 對齊後的型別修正 changeset：`abdba38`
 - PR #46 review follow-up implementation changeset：`8d94fa4`（修正 sudo check
   pending validation 與 retire all-skippable phantom round）。
+- PR #46 review 期間重新對齊的 `main_v2` changeset：`52aee3b`
+- PR #46 review 重新對齊 merge changeset：`2146030`
 
 本文件先於 runtime implementation 建立。實作前必須先確認本文件的權限邊界、
 指令格式與允許操作清單；未確認前不修改程式碼。
