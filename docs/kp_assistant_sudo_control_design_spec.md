@@ -6,6 +6,7 @@
 - 本次起始 changeset：`d0e4a6a`（建立 branch 時的 `origin/main_v2`）
 - 實作前重新對齊的 `main_v2` changeset：`f6a5a1f`
 - 本次實作結束 changeset：`e930ef4`（包含本輪 review 修正與測試；後續文件修訂為 doc-only）
+- review follow-up：補強舊 combat snapshot 相容性與 `sudo switch` 目標角色標記；實作 changeset 待本輪完成後填入
 - 工作 branch：`feature/kp-assistant-sudo-control`
 - 目標整合分支：`main_v2`
 
@@ -153,7 +154,9 @@ command，必須先加入 registry／allowlist 與測試，不能因為 parser �
 7. 不合法 target、未知 command、禁止 command、巢狀 sudo、缺少 target active
    character 或既有 command guard 失敗時，回傳固定、可理解的錯誤，不執行部分
    mutation。retire 也必須同步把 target 的 PC 從進行中的 combat initiative order
-   移除，不能讓已退出角色取得後續回合或成為敵方有效目標。
+   移除，不能讓已退出角色取得後續回合或成為敵方有效目標。退角必須相容於
+   沒有 `character_id` 的舊 combat snapshot；舊 entry 若只能用角色名識別，
+   必須採保守清理，不能讓已退角角色繼續取得回合或成為目標。
 8. sudo 不能繞過既有安全 guard，例如：
    - `game_started` 對 `/coc usepregen` 的限制；
    - pending pregen LUCK 必須完成後才能切換劇本／角色；
@@ -257,6 +260,9 @@ Discord on_message
 | `/coc sudo <target> group-admin-command` | 否 | 回覆 command 不屬於 player-scoped sudo allowlist |
 | `/coc sudo <target> sudo ...` | 否 | 禁止巢狀代操作 |
 
+`sudo switch` 的公開標記必須使用切換後的目標角色名稱；若 command 只能查詢
+或沒有可解析的角色名稱，才使用一般的「玩家」fallback 標記。
+
 ## 6. Output、privacy 與 audit
 
 ### 6.1 公開與私訊
@@ -356,6 +362,11 @@ no-op fast path，但實際拒絕仍要回覆使用者。
   或地圖參數錯誤不能被記成無狀態的成功。
 - retire 進行中的角色後，combat initiative order、current turn 與已針對該角色的
   pending combat plan／effect 不得再讓該角色行動或成為有效目標。
+- 沒有 `character_id` 的 legacy combat entry 退角測試：可唯一以角色名識別時必須
+  清理；名稱衝突時採保守清理，不能保留可能屬於已退角角色的有效回合／目標。
+- `sudo switch` 在 target 沒有 active character、或從一個角色切到另一個角色時，
+  public marker 必須顯示切換後的角色名稱；Discord adapter 與 router 使用同一套
+  marker resolver。
 
 ## 10. Explicit non-goals
 
