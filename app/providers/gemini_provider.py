@@ -9,35 +9,82 @@ first debugging step.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import contextlib
+import inspect
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from app import observability
 from app.config import (
     GEMINI_API_KEY,
     GEMINI_MODEL,
     KEEPER_TEMPERATURE,
+    LLM_REQUEST_TIMEOUT_SECONDS,
     LOG_INCLUDE_USAGE,
     LOG_SLOW_OPERATION_MS,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
 from app.providers import retry
+from app.providers.client_lifecycle import AsyncClientLifecycle
+
+_client_lifecycle = AsyncClientLifecycle("gemini", PROVIDER_SHUTDOWN_GRACE_SECONDS)
 
 
-def run_conversation(
+async def _close_client(client) -> None:
+    close = getattr(client, "aclose", None) or getattr(client, "close", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+def _create_client():
+    from google import genai
+
+    owner = genai.Client(api_key=GEMINI_API_KEY)
+    return getattr(owner, "aio", owner), owner
+
+
+async def _close_lifecycle_client(client, owner) -> None:
+    if client is not None:
+        await _close_client(client)
+    if owner is not None and owner is not client:
+        await _close_client(owner)
+
+
+async def get_async_client():
+    """Return the Google GenAI async surface scoped to the current loop."""
+    return await _client_lifecycle.get_or_create(_create_client, _close_lifecycle_client)
+
+
+async def shutdown_async_client() -> None:
+    await _client_lifecycle.shutdown(_close_lifecycle_client)
+
+
+@contextlib.asynccontextmanager
+async def _request_scope():
+    client, state = await _client_lifecycle.acquire(_create_client, _close_lifecycle_client)
+    try:
+        yield client
+    finally:
+        _client_lifecycle.release(state)
+
+
+async def run_conversation(
     static_system: str,
     dynamic_system: str,
     tools: list[dict],
     history: list[dict],
     new_message: str,
-    execute_tool: Callable[[str, dict], dict],
+    execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int,
 ) -> str:
     if not GEMINI_API_KEY:
         return "（尚未設定 GEMINI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
 
-    from google import genai
     from google.genai import types
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
 
     function_declarations = [
         types.FunctionDeclaration(
@@ -47,14 +94,14 @@ def run_conversation(
         )
         for t in tools
     ]
-    gemini_tools = [types.Tool(function_declarations=function_declarations)]
+    gemini_tools: list[Any] = [types.Tool(function_declarations=function_declarations)]
     config = types.GenerateContentConfig(
         system_instruction=f"{static_system}\n\n{dynamic_system}",
         tools=gemini_tools,
         temperature=KEEPER_TEMPERATURE,
     )
 
-    contents: list = []
+    contents: Any = []
     for entry in history:
         role = "model" if entry["role"] == "assistant" else "user"
         contents.append(types.Content(role=role, parts=[types.Part(text=entry["content"])]))
@@ -64,20 +111,29 @@ def run_conversation(
     for iteration in range(max_iterations):
         observability.increment_metric("iteration_count")
         request_metrics: dict[str, int | None] = {}
-        with observability.span(
+        logical_request_id = observability.new_id("llm")
+        with observability.context(provider_request_id=logical_request_id), observability.span(
             "llm.request",
             provider="gemini",
             model=GEMINI_MODEL,
+            logical_request_id=logical_request_id,
             iteration=iteration,
+            timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
             tool_count=len(function_declarations),
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
             metrics=request_metrics,
         ):
-            response = retry.call_with_retry(
-                lambda: client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config),
-                provider="gemini",
-                operation="generate_content",
-            )
+            async with _request_scope() as client:
+                async def request_once():
+                    async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                        return await client.models.generate_content(
+                            model=GEMINI_MODEL, contents=contents, config=config
+                        )
+
+                response = await retry.async_call_with_retry(
+                    request_once, provider="gemini", operation="generate_content",
+                    request_id=logical_request_id,
+                )
             usage = getattr(response, "usage_metadata", None)
             if LOG_INCLUDE_USAGE:
                 request_metrics.update(
@@ -106,7 +162,7 @@ def run_conversation(
 
         response_parts = []
         for fc in function_calls:
-            result = execute_tool(fc.name, dict(fc.args or {}))
+            result = await execute_tool(fc.name, dict(fc.args or {}))
             response_parts.append(types.Part.from_function_response(name=fc.name, response=result))
         contents.append(types.Content(role="user", parts=response_parts))
 
@@ -134,10 +190,12 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         config = types.GenerateContentConfig(
             tools=[types.Tool(function_declarations=[function_declaration])],
             tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[tool["name"]])
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=cast(Any, "ANY"), allowed_function_names=[tool["name"]]
+                )
             ),
         )
-        contents = [types.Content(role="user", parts=[
+        contents: Any = [types.Content(role="user", parts=[
             types.Part.from_bytes(data=png_bytes, mime_type="image/png"),
             types.Part(text=prompt_text),
         ])]
@@ -169,10 +227,12 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         config = types.GenerateContentConfig(
             tools=[types.Tool(function_declarations=[function_declaration])],
             tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[tool["name"]])
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=cast(Any, "ANY"), allowed_function_names=[tool["name"]]
+                )
             ),
         )
-        contents = [types.Content(role="user", parts=[types.Part(text=f"{prompt_text}\n\n{text}")])]
+        contents: Any = [types.Content(role="user", parts=[types.Part(text=f"{prompt_text}\n\n{text}")])]
         with observability.span("llm.request", provider="gemini", model=GEMINI_MODEL, api_operation="generate_content"):
             response = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=config)
         for fc in response.function_calls or []:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from app import keeper, observability
@@ -48,16 +47,13 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     new_message = f"{display_name}：{text}"
     history = state.log
 
-    def _no_tools(_name: str, _tool_input: dict) -> dict:
+    async def _no_tools(_name: str, _tool_input: dict) -> dict:
         # Narrator has no tools per the design spec — this is never actually
         # invoked (tools=[] below means the model has nothing to call), it's
         # only here because run_conversation's signature requires a callback.
         return {"ok": False, "error": "Narrator agent has no tools"}
 
     try:
-        # run_conversation is synchronous (see every app/providers/*.py) —
-        # dispatched via asyncio.to_thread like every other call site in
-        # this codebase, not awaited directly.
         turn_metrics: dict[str, int] = {}
         with observability.metrics_context(turn_metrics), observability.span(
             "llm.turn", provider=LLM_PROVIDER,
@@ -66,9 +62,8 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
             metrics=turn_metrics,
         ):
-            reply_text = await asyncio.to_thread(
-                provider.run_conversation, static_system, dynamic_system, [],
-                history, new_message, _no_tools, 1,
+            reply_text = await provider.run_conversation(
+                static_system, dynamic_system, [], history, new_message, _no_tools, 1,
             )
     except Exception:
         observability.event("llm.failed", level=logging.ERROR, agent="narrator", status="error")

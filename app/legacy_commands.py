@@ -14,9 +14,9 @@ instead of just the Keeper's text description of it.
 Per-conversation locking (app/locks.py) is handled here, not by each adapter,
 since it protects GroupState file I/O — a game-state concern, not a platform
 one. Each top-level entry point below acquires its conversation's lock exactly
-once for its full duration (including the blocking Keeper LLM call, offloaded
-via asyncio.to_thread); the private helpers they call never lock again
-themselves, since asyncio.Lock isn't reentrant.
+once for its full duration (including the awaitable Keeper LLM call); the
+private helpers they call never lock again themselves, since asyncio.Lock
+isn't reentrant.
 """
 from __future__ import annotations
 
@@ -542,6 +542,9 @@ async def resolve_pdf_upload_choice(
             await push("只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。")
             return
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
+        state = load_state(conversation_id)
+        scenario_text = state.scenario_text
+    scenario_rag.schedule_index_prewarm(conversation_id, scenario_text)
     await push(text)
 
 
@@ -1012,8 +1015,8 @@ async def _finalize_check_result(
         # mislabeled as a fresh Map Engine move this check never made.
         resolved_location = None
         async with locks.get_keeper_turn_lock(conversation_id):
-            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, char.name, keeper_message, resolved_location, "player"
+            keeper_reply, private_messages, image_requests = await keeper.run_turn(
+                state, user_id, char.name, keeper_message, resolved_location, "player"
             )
             if split_roll_feedback:
                 public_message = f"{keeper_header}\n\n{keeper_reply}" if keeper_header else keeper_reply
@@ -2286,8 +2289,8 @@ async def _handle_coc_command(
             "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
         )
         async with locks.get_keeper_turn_lock(conversation_id):
-            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, "守密人", keeper_message, None
+            keeper_reply, private_messages, image_requests = await keeper.run_turn(
+                state, user_id, "守密人", keeper_message, None
             )
         with locks.get_state_lock(conversation_id):
             state = load_state(conversation_id)

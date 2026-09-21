@@ -77,11 +77,11 @@ class FakeProvider:
         self.calls = []
         self.tool_results = []
 
-    def run_conversation(self, *args, **kwargs):
+    async def run_conversation(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         tool_callback = args[5]
         for name, tool_input in self.tool_calls:
-            self.tool_results.append(tool_callback(name, tool_input))
+            self.tool_results.append(await tool_callback(name, tool_input))
         on_response_id = kwargs.get("on_response_id")
         if on_response_id:
             on_response_id(self.response_id)
@@ -143,7 +143,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("開場看到屍體要做 SAN", player_prompt)
         self.assertNotIn("我會安排成屍體首次揭露時觸發", player_prompt)
 
-    def test_kp_ooc_turn_persists_ooc_only_caps_and_preserves_openai_chain(self):
+    async def test_kp_ooc_turn_persists_ooc_only_caps_and_preserves_openai_chain(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         state.kp_ooc_log = [
             {"role": "kp_assistant" if i % 2 == 0 else "assistant", "content": f"old-{i}"}
@@ -158,7 +158,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                final_text, private_messages, image_requests = keeper.run_turn(
+                final_text, private_messages, image_requests = await keeper.run_turn(
                     state,
                     user_id="kp",
                     speaker_name="KP",
@@ -185,7 +185,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("old-0", [entry["content"] for entry in saved.kp_ooc_log])
         self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
 
-    def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
+    async def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         state.characters["p1"] = Character(name="Marco", owner_id="p1")
         state.kp_ooc_log = [{"role": "kp_assistant", "content": "old ooc"}]
@@ -205,7 +205,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                final_text, private_messages, image_requests = keeper.run_turn(
+                final_text, private_messages, image_requests = await keeper.run_turn(
                     state,
                     user_id="kp",
                     speaker_name="KP",
@@ -761,7 +761,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("modifier", result)
         self.assertIn("total", result)
 
-    def test_kp_roll_dice_game_resolution_creates_canonical_log(self):
+    async def test_kp_roll_dice_game_resolution_creates_canonical_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         message_text = "碎玻璃割傷 Marco，骰 1d3 傷害。"
         fake_provider = FakeProvider(
@@ -784,7 +784,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(
+                await keeper.run_turn(
                     state,
                     user_id="kp",
                     speaker_name="KP",
@@ -818,7 +818,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.openai_previous_response_id, "game-resolution-roll-response")
         self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
 
-    def test_kp_roll_dice_ooc_randomizer_stays_in_ooc_log(self):
+    async def test_kp_roll_dice_ooc_randomizer_stays_in_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         message_text = "我幕後骰 1d6，決定下一幕用 NPC A 還是 NPC B。"
         fake_provider = FakeProvider(
@@ -841,7 +841,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(
+                await keeper.run_turn(
                     state,
                     user_id="kp",
                     speaker_name="KP",
@@ -867,7 +867,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.openai_previous_response_id, "formal-chain")
         self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
 
-    def test_kp_roll_weapon_damage_creates_canonical_log(self):
+    async def test_kp_roll_weapon_damage_creates_canonical_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         state.characters["p1"] = Character(name="Marco", owner_id="p1", damage_bonus="+1d4")
         message_text = "Marco 的攻擊命中，骰他的 1d8 武器傷害。"
@@ -884,7 +884,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(
+                await keeper.run_turn(
                     state,
                     user_id="kp",
                     speaker_name="KP",
@@ -918,7 +918,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"total"', canonical_message)
         self.assertEqual(saved.openai_previous_response_id, "weapon-damage-response")
 
-    def test_kp_roll_impaling_damage_creates_canonical_log(self):
+    async def test_kp_roll_impaling_damage_creates_canonical_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         message_text = "這次攻擊是極限成功，計算 1d8 穿刺傷害，加值 1d4。"
         fake_provider = FakeProvider(
@@ -937,7 +937,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(
+                await keeper.run_turn(
                     state,
                     user_id="kp",
                     speaker_name="KP",
@@ -972,7 +972,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"total"', canonical_message)
         self.assertEqual(saved.openai_previous_response_id, "impaling-damage-response")
 
-    def test_failed_kp_damage_tool_does_not_create_canon(self):
+    async def test_failed_kp_damage_tool_does_not_create_canon(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         message_text = "不存在的角色攻擊命中，骰 1d8 傷害。"
         fake_provider = FakeProvider(
@@ -988,7 +988,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(
+                await keeper.run_turn(
                     state,
                     user_id="kp",
                     speaker_name="KP",
@@ -1235,14 +1235,14 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.messages, ["latest-state reply"])
 
 
-class KPManualCanonTests(unittest.TestCase):
+class KPManualCanonTests(unittest.IsolatedAsyncioTestCase):
     def test_parser_only_accepts_marker_for_kp_assistant(self):
         self.assertEqual(keeper._parse_kp_manual_canon_trigger("player", "!玩家行動"), (False, "!玩家行動"))
         self.assertEqual(keeper._parse_kp_manual_canon_trigger("kp_assistant", "!門鎖著"), (True, "門鎖著"))
         self.assertEqual(keeper._parse_kp_manual_canon_trigger("kp_assistant", "！ 門鎖著"), (True, "門鎖著"))
         self.assertEqual(keeper._parse_kp_manual_canon_trigger("kp_assistant", "！   "), (False, "！   "))
 
-    def test_player_bang_remains_a_normal_player_turn(self):
+    async def test_player_bang_remains_a_normal_player_turn(self):
         state = GroupState(group_id="g", openai_previous_response_id="chain")
         fake_provider = FakeProvider("玩家回覆", response_id="player-response")
         original_provider = keeper._PROVIDERS.get("openai")
@@ -1252,7 +1252,7 @@ class KPManualCanonTests(unittest.TestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(state, "p1", "Marco", "!我要踢門", speaker_role="player")
+                await keeper.run_turn(state, "p1", "Marco", "!我要踢門", speaker_role="player")
             finally:
                 keeper.LLM_PROVIDER = original_llm_provider
                 if original_provider is None:
@@ -1263,7 +1263,7 @@ class KPManualCanonTests(unittest.TestCase):
         self.assertEqual(saved.log[0]["content"], "Marco：!我要踢門")
         self.assertEqual(saved.kp_ooc_log, [])
 
-    def test_pure_manual_canon_persists_user_and_assistant_and_advances_chain(self):
+    async def test_pure_manual_canon_persists_user_and_assistant_and_advances_chain(self):
         state = GroupState(group_id="g", openai_previous_response_id="chain")
         fake_provider = FakeProvider("Keeper 回覆", response_id="manual-response")
         original_provider = keeper._PROVIDERS.get("openai")
@@ -1273,7 +1273,7 @@ class KPManualCanonTests(unittest.TestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(state, "kp", "KP", "!門後沒有第二隻怪物", speaker_role="kp_assistant")
+                await keeper.run_turn(state, "kp", "KP", "!門後沒有第二隻怪物", speaker_role="kp_assistant")
             finally:
                 keeper.LLM_PROVIDER = original_llm_provider
                 if original_provider is None:
@@ -1289,7 +1289,7 @@ class KPManualCanonTests(unittest.TestCase):
         self.assertEqual(saved.openai_previous_response_id, "manual-response")
         self.assertEqual(fake_provider.calls[0][0][4], "[KP Assistant] 門後沒有第二隻怪物")
 
-    def test_manual_marker_and_tool_share_one_canonical_turn(self):
+    async def test_manual_marker_and_tool_share_one_canonical_turn(self):
         state = GroupState(group_id="g", openai_previous_response_id="chain")
         fake_provider = FakeProvider(
             "傷害已確定",
@@ -1303,7 +1303,7 @@ class KPManualCanonTests(unittest.TestCase):
             keeper._PROVIDERS["openai"] = fake_provider
             keeper.LLM_PROVIDER = "openai"
             try:
-                keeper.run_turn(state, "kp", "KP", "!碎玻璃割傷 Marco", speaker_role="kp_assistant")
+                await keeper.run_turn(state, "kp", "KP", "!碎玻璃割傷 Marco", speaker_role="kp_assistant")
             finally:
                 keeper.LLM_PROVIDER = original_llm_provider
                 if original_provider is None:

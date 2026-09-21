@@ -10,6 +10,7 @@ from app import (
     scenario_index,
     scenario_intro,
     scenario_library,
+    scenario_rag,
     scene_digest,
     scene_map,
 )
@@ -335,6 +336,7 @@ async def handle_system_command(
                 lambda page, image: save_page_image(conversation_id, page, image),
             )
             save_state(state)
+            scenario_rag.schedule_index_prewarm(conversation_id, state.scenario_text)
             await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。")
             return
         if action == "clean":
@@ -590,8 +592,8 @@ async def handle_system_command(
             "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
         )
         async with locks.get_keeper_turn_lock(conversation_id):
-            keeper_reply, private_messages, image_requests = await asyncio.to_thread(
-                keeper.run_turn, state, user_id, "守密人", keeper_message, None
+            keeper_reply, private_messages, image_requests = await keeper.run_turn(
+                state, user_id, "守密人", keeper_message, None
             )
         with locks.get_state_lock(conversation_id):
             state = load_state(conversation_id)

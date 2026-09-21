@@ -54,6 +54,14 @@ python3 -m app.help_docs --output docs/player_command_reference.md
 | `DATA_DIR` | 群組圖片與資料目錄 |
 | `DB_PATH` | SQLite database 路徑 |
 | `SCENARIO_RAG_ENABLED` | 是否啟用 Scenario RAG |
+| `SCENARIO_RAG_TOP_K` | Scenario RAG 每次最多回傳的結果數 |
+| `SCENARIO_RAG_EMBEDDING_MODEL` / `SCENARIO_RAG_EMBEDDING_WEIGHT` | embedding 模型與混合 BM25 的權重 |
+| `SCENARIO_RAG_PREWARM_ENABLED` / `SCENARIO_RAG_PREWARM_MAX_CONCURRENT` | 劇本啟用後是否背景預熱索引，以及預熱併發上限 |
+| `MAX_TOOL_ITERATIONS` | 單次 provider conversation 的 tool loop 上限 |
+| `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` / `LLM_TIMEOUT_RETRIES` | LLM 單次 request timeout 與 retry budget |
+| `EMBEDDING_REQUEST_TIMEOUT_SECONDS` | RAG/embedding source 的等待上限；超時回退 BM25 |
+| `DISCORD_REQUEST_TIMEOUT_SECONDS` | 單次 Discord send/edit/followup 的等待上限，不重送訊息 |
+| `TOOL_EXECUTION_TIMEOUT_SECONDS` / `PROVIDER_SHUTDOWN_GRACE_SECONDS` | tool/ provider shutdown 的取消與收尾邊界 |
 | `BACKUP_DIR` / `BACKUP_INTERVAL_MINUTES` / `BACKUP_KEEP_COUNT` | SQLite 備份位置、週期與保留數量 |
 | `SCENE_DIGEST_TURN_INTERVAL` | 場景摘要更新間隔 |
 | `SCENARIO_LIBRARY_DIR` / `IMPORT_DIR` | 劇本庫與 KP 本機 PDF 匯入目錄 |

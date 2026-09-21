@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from app import observability
@@ -24,7 +23,7 @@ async def run_repair(message: AgentMessage, original_text: str, error_reason: st
     dynamic_system = prompt_config.build_guard_dynamic_prompt(original_text, error_reason)
     new_message = "請修復並重新輸出這段敘述："
 
-    def _no_tools(_name: str, _tool_input: dict) -> dict:
+    async def _no_tools(_name: str, _tool_input: dict) -> dict:
         return {"ok": False, "error": "Guard agent has no tools"}
 
     metrics: dict[str, int] = {}
@@ -35,9 +34,9 @@ async def run_repair(message: AgentMessage, original_text: str, error_reason: st
             reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
             metrics=metrics,
         ):
-            repaired_text = await asyncio.to_thread(
-                provider.run_conversation, prompt_config.GUARD_SYSTEM_PROMPT,
-                dynamic_system, [], [], new_message, _no_tools, 1,
+            repaired_text = await provider.run_conversation(
+                prompt_config.GUARD_SYSTEM_PROMPT, dynamic_system, [], [],
+                new_message, _no_tools, 1,
             )
     except Exception:
         observability.event("llm.failed", level=logging.ERROR, agent="guard", status="error")

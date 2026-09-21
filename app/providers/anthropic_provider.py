@@ -1,42 +1,77 @@
 """Claude (Anthropic Messages API) provider adapter."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from app import observability
 from app.config import (
     ANTHROPIC_API_KEY,
     ANTHROPIC_MODEL,
     KEEPER_TEMPERATURE,
+    LLM_REQUEST_TIMEOUT_SECONDS,
     LOG_INCLUDE_USAGE,
     LOG_SLOW_OPERATION_MS,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
 from app.providers import retry
+from app.providers.client_lifecycle import AsyncClientLifecycle
+
+_client_lifecycle = AsyncClientLifecycle("anthropic", PROVIDER_SHUTDOWN_GRACE_SECONDS)
 
 
-def run_conversation(
+async def _close_client(client) -> None:
+    close = getattr(client, "aclose", None) or getattr(client, "close", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+def _create_client():
+    import anthropic
+
+    return anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, max_retries=0)
+
+
+async def _close_lifecycle_client(client, _owner) -> None:
+    await _close_client(client)
+
+
+async def get_async_client():
+    """Return an event-loop-scoped, lazily initialized Anthropic client."""
+    return await _client_lifecycle.get_or_create(_create_client, _close_lifecycle_client)
+
+
+async def shutdown_async_client() -> None:
+    await _client_lifecycle.shutdown(_close_lifecycle_client)
+
+
+@contextlib.asynccontextmanager
+async def _request_scope():
+    client, state = await _client_lifecycle.acquire(_create_client, _close_lifecycle_client)
+    try:
+        yield client
+    finally:
+        _client_lifecycle.release(state)
+
+
+async def run_conversation(
     static_system: str,
     dynamic_system: str,
     tools: list[dict],
     history: list[dict],
     new_message: str,
-    execute_tool: Callable[[str, dict], dict],
+    execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int,
 ) -> str:
     if not ANTHROPIC_API_KEY:
         return "（尚未設定 ANTHROPIC_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
-
-    import anthropic
-
-    # max_retries=0: the SDK itself defaults to retrying twice on connection
-    # errors/retryable status codes — stacked on top of retry.call_with_retry
-    # below, a persistent outage would make up to 3x the intended number of
-    # HTTP attempts (each with its own SDK-internal backoff) instead of the
-    # single LLM_MAX_RETRIES-bounded budget documented in app/config.py. Our
-    # retry layer is the single source of truth for this client; the SDK's
-    # own retry logic is disabled, not layered.
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0)
 
     # Cache the large/stable static system block and the (fully static) tool
     # definitions; the small per-turn dynamic block is left uncached on purpose —
@@ -68,27 +103,34 @@ def run_conversation(
     for iteration in range(max_iterations):
         observability.increment_metric("iteration_count")
         request_metrics: dict[str, int | None] = {}
-        with observability.span(
+        logical_request_id = observability.new_id("llm")
+        with observability.context(provider_request_id=logical_request_id), observability.span(
             "llm.request",
             provider="anthropic",
             model=ANTHROPIC_MODEL,
+            logical_request_id=logical_request_id,
             iteration=iteration,
+            timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
             tool_count=len(anthropic_tools),
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
             metrics=request_metrics,
         ):
-            response = retry.call_with_retry(
-                lambda: client.messages.create(
-                    model=ANTHROPIC_MODEL,
-                    max_tokens=1024,
-                    temperature=KEEPER_TEMPERATURE,
-                    system=system_blocks,
-                    tools=anthropic_tools,
-                    messages=messages,
-                ),
-                provider="anthropic",
-                operation="messages.create",
-            )
+            async with _request_scope() as client:
+                async def request_once():
+                    async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                        return await client.messages.create(
+                            model=ANTHROPIC_MODEL,
+                            max_tokens=1024,
+                            temperature=KEEPER_TEMPERATURE,
+                            system=system_blocks,
+                            tools=anthropic_tools,
+                            messages=messages,
+                        )
+
+                response = await retry.async_call_with_retry(
+                    request_once, provider="anthropic", operation="messages.create",
+                    request_id=logical_request_id,
+                )
             usage = getattr(response, "usage", None)
             if LOG_INCLUDE_USAGE:
                 request_metrics.update(
@@ -114,7 +156,7 @@ def run_conversation(
 
         tool_results = []
         for tu in tool_uses:
-            result = execute_tool(tu.name, tu.input)
+            result = await execute_tool(tu.name, tu.input)
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tu.id,
@@ -140,7 +182,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
-            response = client.messages.create(
+            response = cast(Any, client.messages).create(
                 model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
                 tool_choice={"type": "tool", "name": tool["name"]},
                 messages=[{"role": "user", "content": [
@@ -168,7 +210,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
-            response = client.messages.create(
+            response = cast(Any, client.messages).create(
                 model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
                 tool_choice={"type": "tool", "name": tool["name"]},
                 messages=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],

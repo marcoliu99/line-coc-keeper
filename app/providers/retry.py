@@ -11,15 +11,32 @@ later.
 """
 from __future__ import annotations
 
+import asyncio
+import enum
+import inspect
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from app import observability
-from app.config import LLM_MAX_RETRIES, LLM_RETRY_BASE_DELAY_SECONDS
+from app.config import (
+    LLM_MAX_RETRIES,
+    LLM_RETRY_BASE_DELAY_SECONDS,
+    LLM_TIMEOUT_RETRIES,
+)
 
 T = TypeVar("T")
+
+
+class ProviderError(str, enum.Enum):
+    RATE_LIMITED = "rate_limited"
+    TIMEOUT = "timeout"
+    TRANSIENT_SERVER = "transient_server"
+    AUTH_FAILED = "auth_failed"
+    MODEL_NOT_FOUND = "model_not_found"
+    INVALID_REQUEST = "invalid_request"
+    UNKNOWN = "unknown"
 
 # Matched against type(exc).__name__.lower() to classify an exception as a
 # transient, worth-retrying failure. Deliberately duck-typed by class name
@@ -55,7 +72,47 @@ def _is_retryable_one(exc: BaseException) -> bool:
     if any(marker in name for marker in _RETRYABLE_NAME_MARKERS):
         return True
     status_code = getattr(exc, "status_code", None)
-    return isinstance(status_code, int) and status_code >= 500
+    return isinstance(status_code, int) and (status_code == 429 or status_code >= 500)
+
+
+def classify_exception(exc: Exception) -> ProviderError:
+    """Map SDK- and transport-specific failures to one retry policy.
+
+    The adapter intentionally remains duck-typed: installed SDK versions use
+    different exception classes, while status codes and class names are stable
+    enough for this boundary.  A cause/context chain is inspected so a wrapped
+    httpx timeout is not misclassified as an unknown application error.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        name = type(current).__name__.lower()
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int):
+            if status_code == 429:
+                return ProviderError.RATE_LIMITED
+            if status_code >= 500:
+                return ProviderError.TRANSIENT_SERVER
+            if status_code in {401, 403}:
+                return ProviderError.AUTH_FAILED
+            if status_code == 404:
+                return ProviderError.MODEL_NOT_FOUND
+            if 400 <= status_code < 500:
+                return ProviderError.INVALID_REQUEST
+        if "timeout" in name or name in {"timeouterror", "asyncio.timeouterror"}:
+            return ProviderError.TIMEOUT
+        if any(marker in name for marker in ("authentication", "unauthorized", "permission")):
+            return ProviderError.AUTH_FAILED
+        if "modelnotfound" in name or ("notfound" in name and "model" in str(current).lower()):
+            return ProviderError.MODEL_NOT_FOUND
+        if any(marker in name for marker in ("invalidrequest", "badrequest", "unprocessable")):
+            return ProviderError.INVALID_REQUEST
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+
+    if is_retryable(exc):
+        return ProviderError.TRANSIENT_SERVER
+    return ProviderError.UNKNOWN
 
 
 def is_retryable(exc: Exception) -> bool:
@@ -65,7 +122,9 @@ def is_retryable(exc: Exception) -> bool:
     this as `.status_code`; a 5xx is a transient server-side problem
     regardless of what the exception class itself is named).
 
-    Also walks `__cause__`/`__context__`: some SDKs wrap the actual
+    Rate limits (HTTP 429) are included because the provider APIs explicitly
+    signal that the same request may succeed after backoff.  Also walks
+    `__cause__`/`__context__`: some SDKs wrap the actual
     transport failure inside their own exception type (e.g. `raise
     SomeSDKError(...) from httpx_error`) without the outer class's own name
     matching anything above — checking the chain catches that without
@@ -87,10 +146,9 @@ def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:
     regardless — is re-raised immediately, unchanged, so callers don't need
     their own except clause for this.
 
-    Always runs synchronously in the caller's thread. Every provider's
-    run_conversation is invoked via asyncio.to_thread (see app/commands.py),
-    so a plain time.sleep() here blocks only that worker thread, never the
-    event loop."""
+    This compatibility helper remains synchronous for the synchronous vision
+    and text-extraction adapters. Conversation requests use
+    :func:`async_call_with_retry`, which uses cancellable asyncio.sleep."""
     attempt = 0
     while True:
         try:
@@ -112,3 +170,68 @@ def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:
                 error_type=type(exc).__name__,
             )
             time.sleep(delay)
+
+
+async def async_call_with_retry(
+    fn: Callable[[], Awaitable[T]],
+    *,
+    provider: str,
+    operation: str,
+    request_id: str | None = None,
+) -> T:
+    """Async counterpart of :func:`call_with_retry`.
+
+    The callback owns one provider attempt (including its per-attempt timeout).
+    Backoff is cancellable, and ``CancelledError`` is deliberately not caught.
+    Timeout retries are capped independently so a slow upstream cannot consume
+    the full transient retry budget indefinitely.
+    """
+    current = observability.current_context()
+    logical_request_id = request_id or current.get("provider_request_id") or observability.new_id("llm")
+    attempt = 0
+    timeout_attempts = 0
+    while True:
+        try:
+            with observability.context(provider_request_id=logical_request_id), observability.span(
+                "llm.request.attempt",
+                provider=provider,
+                api_operation=operation,
+                logical_request_id=logical_request_id,
+                attempt=attempt + 1,
+            ):
+                result = fn()
+                if not inspect.isawaitable(result):
+                    raise TypeError("async_call_with_retry callback must return an awaitable")
+                return await result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            error_kind = classify_exception(exc)
+            if error_kind == ProviderError.TIMEOUT:
+                if timeout_attempts >= LLM_TIMEOUT_RETRIES:
+                    raise
+                timeout_attempts += 1
+            elif error_kind not in {
+                ProviderError.RATE_LIMITED,
+                ProviderError.TRANSIENT_SERVER,
+            }:
+                raise
+
+            if attempt >= LLM_MAX_RETRIES:
+                raise
+            attempt += 1
+            delay = LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+            observability.increment_metric("llm_retry_count")
+            observability.event(
+                "llm.request.retry",
+                level=logging.WARNING,
+                provider=provider,
+                api_operation=operation,
+                logical_request_id=logical_request_id,
+                attempt=attempt,
+                max_attempts=LLM_MAX_RETRIES,
+                delay_s=delay,
+                error_type=type(exc).__name__,
+                error_kind=error_kind.value,
+            )
+            await asyncio.sleep(delay)

@@ -16,25 +16,69 @@ docs page alone.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import inspect
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from app import config, observability
 from app.config import (
     KEEPER_REASONING_EFFORT,
     KEEPER_TEMPERATURE,
     LLM_MAX_RETRIES,
+    LLM_REQUEST_TIMEOUT_SECONDS,
     LLM_RETRY_BASE_DELAY_SECONDS,
     OPENAI_API_KEY,
     OPENAI_MODEL,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
 from app.providers import retry
+from app.providers.client_lifecycle import AsyncClientLifecycle
 
 # Populated per-process the first time the API rejects one of these — see
 # _create_response.
 _unsupported_params: set[str] = set()
+_client_lifecycle = AsyncClientLifecycle("openai", PROVIDER_SHUTDOWN_GRACE_SECONDS)
+
+
+async def _close_client(client) -> None:
+    close = getattr(client, "aclose", None) or getattr(client, "close", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+def _create_client():
+    import openai
+
+    return openai.AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=0)
+
+
+async def _close_lifecycle_client(client, _owner) -> None:
+    await _close_client(client)
+
+
+async def get_async_client():
+    """Return an event-loop-scoped, lazily initialized OpenAI client."""
+    return await _client_lifecycle.get_or_create(_create_client, _close_lifecycle_client)
+
+
+async def shutdown_async_client() -> None:
+    await _client_lifecycle.shutdown(_close_lifecycle_client)
+
+
+@contextlib.asynccontextmanager
+async def _request_scope():
+    client, state = await _client_lifecycle.acquire(_create_client, _close_lifecycle_client)
+    try:
+        yield client
+    finally:
+        _client_lifecycle.release(state)
 
 
 def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
@@ -74,6 +118,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
             model=kwargs.get("model"),
             api_operation="responses.create",
             iteration=_log_iteration,
+            timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
             reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
             tool_count=len(kwargs.get("tools") or []),
         )
@@ -208,13 +253,66 @@ def _is_invalid_previous_response_id_error(
     return any(marker in message for marker in response_missing_markers)
 
 
-def run_conversation(
+async def _create_response_async(_client=None, *, _log_iteration: int | None = None, **kwargs):
+    """Async Responses API helper preserving unsupported-parameter fallback."""
+    for param in _unsupported_params:
+        kwargs.pop(param, None)
+    logical_request_id = observability.new_id("llm")
+    while True:
+        request_metrics: dict[str, int | None] = {}
+        reasoning = kwargs.get("reasoning") or {}
+        with observability.context(provider_request_id=logical_request_id), observability.span(
+            "llm.request",
+            provider="openai",
+            model=kwargs.get("model"),
+            api_operation="responses.create",
+            logical_request_id=logical_request_id,
+            iteration=_log_iteration,
+            timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
+            reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
+            tool_count=len(kwargs.get("tools") or []),
+            metrics=request_metrics,
+        ):
+                try:
+                    async with _request_scope() as client:
+                        async def request_once():
+                            async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                                return await client.responses.create(**kwargs)
+
+                        response = await retry.async_call_with_retry(
+                            request_once, provider="openai", operation="responses.create",
+                            request_id=logical_request_id,
+                        )
+                except Exception as exc:
+                    exc_text = str(exc).lower()
+                    offending = next(
+                        (p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text),
+                        None,
+                    )
+                    if offending is None:
+                        raise
+                    _unsupported_params.add(offending)
+                    kwargs.pop(offending, None)
+                    observability.event(
+                        "llm.retry",
+                        level=logging.WARNING,
+                        provider="openai",
+                        model=kwargs.get("model"),
+                        removed_parameter=offending,
+                        error_type=type(exc).__name__,
+                        status="error",
+                    )
+                    continue
+        return response
+
+
+async def run_conversation(
     static_system: str,
     dynamic_system: str,
     tools: list[dict],
     history: list[dict],
     new_message: str,
-    execute_tool: Callable[[str, dict], dict],
+    execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int,
     previous_response_id: str = "",
     on_response_id: Callable[[str], None] | None = None,
@@ -223,12 +321,6 @@ def run_conversation(
         return "（尚未設定 OPENAI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
 
     import openai
-
-    # max_retries=0: see app/providers/anthropic_provider.py's identical
-    # comment — the SDK defaults to retrying twice on its own, which would
-    # stack with _create_response's connection-retry loop below and blow
-    # past the documented LLM_MAX_RETRIES-bounded attempt/latency budget.
-    client = openai.OpenAI(api_key=OPENAI_API_KEY, max_retries=0)
 
     # Responses API tools are flat (no nested "function" wrapper, unlike Chat
     # Completions) — see FunctionToolParam in the SDK's type stubs.
@@ -273,7 +365,7 @@ def run_conversation(
         if active_previous_response_id:
             request_kwargs["previous_response_id"] = active_previous_response_id
         try:
-            response = _create_response(client, _log_iteration=iteration, **request_kwargs)
+            response = await _create_response_async(_log_iteration=iteration, **request_kwargs)
         except Exception as exc:
             if (
                 iteration == 0
@@ -290,7 +382,7 @@ def run_conversation(
                 active_previous_response_id = None
                 request_kwargs["input"] = input_items
                 request_kwargs.pop("previous_response_id", None)
-                response = _create_response(client, _log_iteration=iteration, **request_kwargs)
+                response = await _create_response_async(_log_iteration=iteration, **request_kwargs)
             else:
                 raise
 
@@ -305,7 +397,7 @@ def run_conversation(
         next_input_items: list[dict] = []
         for fc in function_calls:
             args = json.loads(fc.arguments or "{}")
-            result = execute_tool(fc.name, args)
+            result = await execute_tool(fc.name, args)
             next_input_items.append({
                 "type": "function_call_output",
                 "call_id": fc.call_id,

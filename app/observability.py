@@ -7,6 +7,7 @@ event payloads or starting timers; developers can still use normal
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import hashlib
@@ -200,21 +201,45 @@ def span(
         yield
         return
 
+    def merged_fields() -> dict[str, Any]:
+        """Merge inherited, operation, and explicit fields without collisions.
+
+        Explicit span fields are the most specific values.  In particular,
+        this prevents a metric inherited from a parent span from being passed
+        twice as the same keyword argument when a child operation reports its
+        own value.
+        """
+        merged: dict[str, Any] = dict(_METRICS.get() or {})
+        merged.update(metrics or {})
+        merged.update(fields)
+        return merged
+
     event(name + ".started", level=level, **fields)
     started = time.perf_counter()
     try:
         yield
+    except asyncio.CancelledError:
+        duration_ms = (time.perf_counter() - started) * 1000
+        event(
+            name + ".cancelled",
+            level=logging.WARNING,
+            duration_ms=duration_ms,
+            status="cancelled",
+            error_type="CancelledError",
+            slow_threshold_ms=slow_threshold_ms,
+            **merged_fields(),
+        )
+        raise
     except Exception as exc:
         duration_ms = (time.perf_counter() - started) * 1000
         event(
             name + ".failed",
             level=logging.ERROR,
             duration_ms=duration_ms,
-            status="error",
+            status="timeout" if isinstance(exc, TimeoutError) else "error",
             error_type=type(exc).__name__,
             slow_threshold_ms=slow_threshold_ms,
-            **({**(_METRICS.get() or {}), **(metrics or {})}),
-            **fields,
+            **merged_fields(),
         )
         raise
     else:
@@ -233,8 +258,7 @@ def span(
             duration_ms=duration_ms,
             status="success",
             slow_threshold_ms=slow_threshold_ms,
-            **({**(_METRICS.get() or {}), **(metrics or {})}),
-            **fields,
+            **merged_fields(),
         )
 
 

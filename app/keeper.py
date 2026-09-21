@@ -7,8 +7,11 @@ which one is active.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
+import re
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, fields
@@ -17,6 +20,7 @@ from typing import Any, Generic, TypeVar, overload
 from uuid import uuid4
 
 from app import (
+    async_utils,
     checkpoints,
     combat,
     dice,
@@ -32,12 +36,15 @@ from app.config import (
     LLM_PROVIDER,
     LOG_SLOW_OPERATION_MS,
     MAX_LOG_TURNS,
+    MAX_SCENARIO_CHARS,
     MAX_TOOL_ITERATIONS,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
     SCENARIO_RAG_TOP_K,
     SCENE_DIGEST_TURN_INTERVAL,
+    TOOL_EXECUTION_TIMEOUT_SECONDS,
 )
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -708,6 +715,22 @@ TOOLS = [
         },
     },
 ]
+
+# These tools do not mutate persisted GroupState. They may still perform
+# read-side indexing or randomness, but a partial timeout result is safe;
+# state-changing tools use the graceful cancellation path below.
+READ_ONLY_TOOL_NAMES = frozenset({
+    "roll_dice",
+    "roll_impaling_damage",
+    "roll_weapon_damage",
+    "get_character_sheet",
+    "get_combat_status",
+    "search_scenario_images",
+    "search_memory",
+    "search_scenario",
+    "report_summary",
+})
+
 # Common {name, description, input_schema} shape works unmodified for both Claude
 # and Gemini; any provider-specific extras (e.g. Anthropic's cache_control) are
 # added by the adapter in app/providers/, not here.
@@ -1061,6 +1084,76 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
     return result
 
 
+def _record_tool_recovery_marker_sync(
+    state: GroupState, tool_name: str, tool_input: dict[str, Any]
+) -> None:
+    """Persist a cancellation marker without storing arbitrary tool input."""
+    input_digest = hashlib.sha256(
+        json.dumps(tool_input, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    marker = {
+        "marker_id": uuid4().hex,
+        "tool_name": tool_name,
+        "input_digest": input_digest,
+        "status": "recovery_required",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    def mutator(latest: GroupState) -> None:
+        latest.tool_recovery_markers.append(marker)
+        del latest.tool_recovery_markers[:-100]
+
+    _mutate_and_save_state(state, mutator)
+
+
+async def record_tool_recovery_marker(
+    state: GroupState, tool_name: str, tool_input: dict[str, Any]
+) -> None:
+    """Best-effort durable marker for an abandoned mutation."""
+    try:
+        await asyncio.shield(asyncio.to_thread(
+            _record_tool_recovery_marker_sync, state, tool_name, tool_input
+        ))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        observability.event(
+            "llm.tool.recovery_marker_failed",
+            level=logging.ERROR,
+            tool_name=observability.tool_name(tool_name),
+            error_type=type(exc).__name__,
+        )
+        _logger.exception("Could not persist recovery marker for %s", tool_name)
+
+
+async def record_tool_recovery_marker_bounded(
+    state: GroupState, tool_name: str, tool_input: dict[str, Any]
+) -> None:
+    """Start marker persistence without letting it retain cancellation forever.
+
+    A timed-out mutation may still own the synchronous state lock. The marker
+    therefore runs in its own observed task: the caller waits only one grace
+    period, while the task can safely acquire the lock after the original
+    worker finishes. This keeps cancellation bounded without losing the best-
+    effort durable marker.
+    """
+    task = asyncio.create_task(record_tool_recovery_marker(state, tool_name, tool_input))
+    try:
+        await asyncio.wait_for(asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS)
+    except asyncio.TimeoutError:
+        async_utils.observe_background_task(task, operation="llm.tool.recovery_marker")
+        observability.event(
+            "llm.tool.recovery_marker_deferred",
+            level=logging.ERROR,
+            tool_name=observability.tool_name(tool_name),
+            status="timeout",
+            timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
+        )
+    except asyncio.CancelledError:
+        async_utils.observe_background_task(task, operation="llm.tool.recovery_marker")
+        raise
+
+
 def _commit_turn_result(
     state: GroupState, log_entries: list[dict[str, str]], openai_response_id: str | None = None
 ) -> None:
@@ -1380,7 +1473,7 @@ def _execute_tool(
             def _register_pending_choice(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 options = _resolve_defense_options(target_char, raw_options)
-                new_choice = {"type": "choice", "options": options}
+                new_choice: dict[str, Any] = {"type": "choice", "options": options}
                 if attacker_tier:
                     new_choice["attacker_tier"] = attacker_tier
                 # 先檢查是否已有待處理檢定
@@ -1445,7 +1538,7 @@ def _execute_tool(
                 # "rolled + wrote" for a concurrent /coc check resolution to
                 # land in (see _reject_if_check_already_pending's docstring).
                 options = _resolve_defense_options(target_char, raw_options)
-                new_choice = {"type": "choice", "options": options}
+                new_choice: dict[str, Any] = {"type": "choice", "options": options}
                 # 防重複：如果已經有完全相同的防守選項且有真實掷骰結果，重用現有結果而不重新掷
                 existing = target_state.pending_checks.get(target_char.owner_id)
                 if existing and existing.get("type") == "choice" and existing.get("attacker_roll") is not None:
@@ -1935,6 +2028,45 @@ def _execute_tool(
         return {"ok": False, "error": str(exc)}
 
 
+def _bounded_scenario_context(scenario_text: str) -> str:
+    """Keep scenario truncation at page/paragraph boundaries.
+
+    The scenario is optional context; cutting in the middle of a page or JSON
+    index can remove the only usable rule.  Prefer complete page blocks, then
+    complete paragraphs for text without page markers, and report the exact
+    retained size for performance diagnosis.
+    """
+    if len(scenario_text) <= MAX_SCENARIO_CHARS:
+        return scenario_text
+
+    page_blocks = re.split(r"(?=--- 第 \d+ 頁 ---)", scenario_text)
+    if len(page_blocks) <= 1:
+        page_blocks = re.split(r"(?=\n\s*\n)", scenario_text)
+    retained: list[str] = []
+    retained_chars = 0
+    for block in page_blocks:
+        if not block:
+            continue
+        if retained_chars + len(block) > MAX_SCENARIO_CHARS:
+            break
+        retained.append(block)
+        retained_chars += len(block)
+    bounded = "".join(retained).rstrip()
+    if not bounded:
+        # A single oversized page has no safe smaller structural unit. Keep a
+        # bounded prefix only as a last resort, and make the loss explicit.
+        bounded = scenario_text[:MAX_SCENARIO_CHARS].rstrip()
+    observability.event(
+        "prompt.context_truncated",
+        level=logging.WARNING,
+        source="scenario",
+        original_chars=len(scenario_text),
+        retained_chars=len(bounded),
+        reason="scenario_budget",
+    )
+    return bounded
+
+
 def _build_static_prompt(state: GroupState) -> str:
     """Role/rules + scenario text + each character's *static* sheet (attributes,
     occupation, skills — see Character.static_sheet_text). This is the block the
@@ -1961,7 +2093,7 @@ def _build_static_prompt(state: GroupState) -> str:
             "不要憑空想像或用你自己對「典型 COC 劇本」的印象腦補劇本沒查到的內容。）"
         )
     else:
-        scenario = state.scenario_text
+        scenario = _bounded_scenario_context(state.scenario_text)
 
     static_chars_text = "\n\n".join(c.static_sheet_text() for c in state.active_characters()) or "（目前尚無登記角色）"
 
@@ -2349,7 +2481,7 @@ def _tools_for_speaker_role(speaker_role: str) -> list[dict]:
     ]
 
 
-def run_turn(
+async def run_turn(
     state: GroupState,
     user_id: str,
     speaker_name: str,
@@ -2381,12 +2513,12 @@ def run_turn(
             metrics=turn_metrics,
         ),
     ):
-        return _run_turn_impl(
+        return await _run_turn_impl(
             state, user_id, speaker_name, message_text, resolved_location, speaker_role
         )
 
 
-def _run_turn_impl(
+async def _run_turn_impl(
     state: GroupState,
     user_id: str,
     speaker_name: str,
@@ -2443,7 +2575,7 @@ def _run_turn_impl(
     kp_turn_creates_canon = kp_manual_canon_trigger
     kp_canonical_tool_events: list[dict] = []
 
-    def execute_turn_tool(name: str, tool_input: dict) -> dict:
+    async def execute_turn_tool(name: str, tool_input: dict) -> dict:
         nonlocal kp_turn_creates_canon
         observability.increment_metric("tool_call_count")
         with observability.span(
@@ -2451,7 +2583,48 @@ def _run_turn_impl(
             tool_name=observability.tool_name(name),
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
         ):
-            result = _execute_tool(state, name, tool_input, private_messages, image_requests, speaker_role)
+            task = asyncio.create_task(asyncio.to_thread(
+                _execute_tool,
+                state,
+                name,
+                tool_input,
+                private_messages,
+                image_requests,
+                speaker_role,
+            ))
+            try:
+                if name in READ_ONLY_TOOL_NAMES:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
+                    )
+                else:
+                    result = await asyncio.shield(task)
+            except asyncio.TimeoutError:
+                observability.event(
+                    "llm.tool.timeout", level=logging.WARNING,
+                    tool_name=observability.tool_name(name), status="timeout",
+                    timeout_ms=TOOL_EXECUTION_TIMEOUT_SECONDS * 1000,
+                )
+                async_utils.observe_background_task(task, operation=f"llm.tool:{name}")
+                result = {"ok": False, "error": "timeout", "partial": True}
+            except asyncio.CancelledError:
+                if name in READ_ONLY_TOOL_NAMES:
+                    async_utils.observe_background_task(task, operation=f"llm.tool:{name}")
+                    raise
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    async_utils.observe_background_task(task, operation=f"llm.tool:{name}")
+                    await record_tool_recovery_marker_bounded(state, name, tool_input)
+                    observability.event(
+                        "llm.tool.recovery_required",
+                        level=logging.ERROR,
+                        tool_name=observability.tool_name(name),
+                        status="partial",
+                    )
+                raise
         if speaker_role == "kp_assistant" and _kp_tool_result_creates_canon(name, tool_input, result):
             kp_turn_creates_canon = True
             kp_canonical_tool_events.append({
@@ -2469,7 +2642,7 @@ def _run_turn_impl(
             if not is_ephemeral:
                 state.openai_previous_response_id = response_id
 
-        final_text = provider.run_conversation(
+        final_text = await provider.run_conversation(
             static_prompt,
             dynamic_prompt,
             tools,
@@ -2481,7 +2654,7 @@ def _run_turn_impl(
             on_response_id=remember_openai_response_id,
         )
     else:
-        final_text = provider.run_conversation(
+        final_text = await provider.run_conversation(
             static_prompt,
             dynamic_prompt,
             tools,

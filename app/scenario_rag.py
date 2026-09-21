@@ -26,22 +26,170 @@ falls back to pure BM25, exactly like before embeddings existed here.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
+import multiprocessing
 import re
 import time
+from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
-from app import db, embedding_cache, observability
+from app import async_utils, db, embedding_cache, observability
 from app.config import (
+    EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
+    SCENARIO_RAG_ENABLED,
+    SCENARIO_RAG_PREWARM_ENABLED,
+    SCENARIO_RAG_PREWARM_MAX_CONCURRENT,
 )
 
 _logger = logging.getLogger(__name__)
+
+
+def _create_prewarm_executor() -> Executor:
+    """Create an isolated worker process that can be terminated on shutdown.
+
+    ``asyncio.to_thread`` uses the event loop's default executor. Cancelling
+    its awaiter does not stop the thread, and ``asyncio.run`` waits for that
+    executor during loop teardown. A dedicated process gives prewarm work an
+    explicit termination boundary instead.
+    """
+    return ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+    )
+
+
+def _stop_prewarm_executor(executor: Executor, *, terminate: bool) -> None:
+    if terminate and isinstance(executor, ProcessPoolExecutor):
+        terminate_workers = getattr(executor, "terminate_workers", None)
+        if callable(terminate_workers):
+            terminate_workers()
+            return
+    executor.shutdown(wait=not terminate, cancel_futures=True)
+
+
+@dataclass
+class _PrewarmLoopState:
+    semaphore: asyncio.Semaphore
+    tasks: set[asyncio.Task]
+    worker_tasks: set[asyncio.Future[Any]]
+    executor: Executor | None = None
+
+
+_prewarm_states: dict[asyncio.AbstractEventLoop, _PrewarmLoopState] = {}
+
+
+def _prewarm_state(loop: asyncio.AbstractEventLoop) -> _PrewarmLoopState:
+    state = _prewarm_states.get(loop)
+    if state is None:
+        state = _PrewarmLoopState(
+            semaphore=asyncio.Semaphore(SCENARIO_RAG_PREWARM_MAX_CONCURRENT),
+            tasks=set(),
+            worker_tasks=set(),
+        )
+        _prewarm_states[loop] = state
+    return state
+
+
+async def _prewarm_index(group_id: str, scenario_text: str) -> None:
+    loop = asyncio.get_running_loop()
+    state = _prewarm_state(loop)
+    worker: asyncio.Future[Any] | None = None
+    async with state.semaphore:
+        # Yield once so a just-finished upload can send its confirmation before
+        # the optional, low-priority embedding work begins.
+        await asyncio.sleep(0)
+        try:
+            # Keep the worker shielded from cancellation of the low-priority
+            # wrapper. The dedicated process can be terminated if the index
+            # build outlives the configured shutdown grace period.
+            if state.executor is None:
+                state.executor = _create_prewarm_executor()
+            worker = loop.run_in_executor(state.executor, get_index, group_id, scenario_text)
+            state.worker_tasks.add(worker)
+            worker.add_done_callback(state.worker_tasks.discard)
+            await asyncio.shield(worker)
+            observability.event("rag.prewarm.completed", rag_kind="scenario", status="success")
+        except asyncio.CancelledError:
+            if worker is not None:
+                async_utils.observe_background_task(worker, operation="rag.prewarm")
+            observability.event("rag.prewarm.cancelled", level=logging.INFO, rag_kind="scenario")
+            raise
+        except Exception as exc:  # noqa: BLE001 - prewarm must never block scenario activation.
+            observability.event(
+                "rag.prewarm.failed", level=logging.WARNING, rag_kind="scenario",
+                status="error", error_type=type(exc).__name__,
+            )
+
+
+def schedule_index_prewarm(group_id: str, scenario_text: str) -> asyncio.Task | None:
+    """Schedule optional scenario index/embedding work after activation."""
+    if not SCENARIO_RAG_ENABLED or not SCENARIO_RAG_PREWARM_ENABLED or not scenario_text.strip():
+        return None
+    state = _prewarm_state(asyncio.get_running_loop())
+    task = asyncio.create_task(_prewarm_index(group_id, scenario_text))
+    state.tasks.add(task)
+    task.add_done_callback(state.tasks.discard)
+    return task
+
+
+async def shutdown_prewarm() -> None:
+    """Cancel wrappers and terminate a process worker beyond the grace period."""
+    loop = asyncio.get_running_loop()
+    state = _prewarm_states.get(loop)
+    if state is None:
+        return
+    executor = state.executor
+    pending: set[asyncio.Future[Any]] = set()
+    try:
+        tasks = tuple(state.tasks)
+        for wrapper in tasks:
+            if not wrapper.done():
+                wrapper.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        workers = tuple(state.worker_tasks)
+        if workers:
+            try:
+                done_workers, pending_workers = await asyncio.wait(
+                    workers, timeout=PROVIDER_SHUTDOWN_GRACE_SECONDS
+                )
+            except asyncio.CancelledError:
+                pending = {worker for worker in workers if not worker.done()}
+                for worker in pending:
+                    async_utils.observe_background_task(worker, operation="rag.prewarm")
+                raise
+            pending = pending_workers
+            for worker in done_workers:
+                async_utils.observe_background_task(worker, operation="rag.prewarm")
+            if pending:
+                observability.event(
+                    "rag.prewarm.shutdown_degraded",
+                    level=logging.ERROR,
+                    rag_kind="scenario",
+                    status="timeout",
+                    timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
+                )
+                for worker in pending:
+                    async_utils.observe_background_task(worker, operation="rag.prewarm")
+    except asyncio.CancelledError:
+        pending = {worker for worker in state.worker_tasks if not worker.done()}
+        for worker in pending:
+            async_utils.observe_background_task(worker, operation="rag.prewarm")
+        raise
+    finally:
+        try:
+            if executor is not None:
+                _stop_prewarm_executor(executor, terminate=bool(pending))
+        finally:
+            _prewarm_states.pop(loop, None)
 
 
 def _log_group_id(group_id: str) -> str:
@@ -170,6 +318,22 @@ _EMBEDDING_BATCH_SIZE = 100  # conservative — well under OpenAI's per-request
 # instead of risking one oversized request failing outright.
 
 
+def _close_embedding_client(client: object, *, rag_kind: str) -> None:
+    """Close a synchronous embedding client without masking the RAG result."""
+    close = getattr(client, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as exc:  # noqa: BLE001 - cleanup must not break BM25 fallback.
+        observability.event(
+            "rag.embedding_client_close_failed",
+            level=logging.WARNING,
+            rag_kind=rag_kind,
+            error_type=type(exc).__name__,
+        )
+
+
 def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[float]] | None:
     """Best-effort: embed texts via OpenAI, batching requests so a large
     input list (a long scenario, or many fine-grained chunks) can't exceed
@@ -185,10 +349,15 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[f
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
         return None
+    client = None
     try:
         import openai
 
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client = openai.OpenAI(
+            api_key=OPENAI_API_KEY,
+            timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         ordered: list[list[float] | None] = [None] * len(texts)
         batch_count = (len(texts) + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
         for batch_index, start in enumerate(range(0, len(texts), _EMBEDDING_BATCH_SIZE)):
@@ -211,6 +380,9 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[f
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
+    finally:
+        if client is not None:
+            _close_embedding_client(client, rag_kind=rag_kind)
 
 
 def _vector_norm(vec: list[float]) -> float:
@@ -323,7 +495,13 @@ def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, id
     return score
 
 
-def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
+def search(
+    index: ScenarioIndex,
+    query: str,
+    top_k: int = 5,
+    *,
+    metrics: dict[str, object] | None = None,
+) -> list[dict]:
     """Returns up to top_k {"page": int, "text": str, "score": float} results,
     highest-scoring first. An empty/no-match query returns an empty list
     rather than an arbitrary top_k — callers should treat that as "nothing
@@ -352,6 +530,9 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     keyword match is trusted regardless of what the embedding model thinks."""
     query_tokens = _tokenize(query)
     if not query_tokens:
+        if metrics is not None:
+            metrics["query_embedding_status"] = "empty"
+            metrics["result_count"] = 0
         return []
 
     idf_cache = _idf_cache(index, query_tokens)
@@ -359,8 +540,13 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
     matched = [c for c in index.chunks if bm25_raw[id(c)] > 0]
 
     if not index.has_embeddings:
+        if metrics is not None:
+            metrics["query_embedding_status"] = "not_used"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        if metrics is not None:
+            metrics["result_count"] = len(results)
+        return results
 
     def _embed_query_once() -> list[float] | None:
         result = _embed_texts([query], rag_kind="scenario")
@@ -371,8 +557,15 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         # Embeddings worked at index time but the query-time call just failed
         # (transient error, key revoked mid-session, ...) — degrade to BM25
         # for this one search rather than returning nothing.
+        if metrics is not None:
+            metrics["query_embedding_status"] = "fallback"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        return [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        if metrics is not None:
+            metrics["result_count"] = len(results)
+        return results
+    if metrics is not None:
+        metrics["query_embedding_status"] = "success"
     query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
@@ -397,7 +590,10 @@ def search(index: ScenarioIndex, query: str, top_k: int = 5) -> list[dict]:
         score = weight * cos + (1 - weight) * bm25_norm
         combined.append((score, c))
     combined.sort(key=lambda sc: -sc[0])
-    return [{"page": c.page, "text": c.text, "score": s} for s, c in combined[:top_k]]
+    results = [{"page": c.page, "text": c.text, "score": s} for s, c in combined[:top_k]]
+    if metrics is not None:
+        metrics["result_count"] = len(results)
+    return results
 
 
 def format_results(results: list[dict]) -> str:

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app import keeper, observability
-from app.config import LOG_SLOW_OPERATION_MS
+from app import async_utils, keeper, observability
+from app.config import (
+    LOG_SLOW_OPERATION_MS,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
+    TOOL_EXECUTION_TIMEOUT_SECONDS,
+)
 from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
@@ -41,8 +46,8 @@ def make_tool_executor(
     image_requests: list[tuple[str | None, int]],
     speaker_role: str,
     facts: list[str],
-) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
-    """Returns the (tool_name, tool_input) -> dict callback that
+) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
+    """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
 
     Delegates every call straight to keeper._execute_tool — the same
@@ -54,14 +59,59 @@ def make_tool_executor(
     narrate from without re-deriving what happened itself.
     """
 
-    def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         observability.increment_metric("tool_call_count")
         with observability.span(
             "llm.tool",
             tool_name=observability.tool_name(tool_name),
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
         ):
-            result = keeper._execute_tool(state, tool_name, tool_input, private_messages, image_requests, speaker_role)
+            # _execute_tool contains synchronous SQLite/state-lock mutation.
+            # Keep it off the event loop, but do not abandon the worker thread
+            # if the awaiting provider request is cancelled: a mutation must
+            # finish before the caller releases the conversation lifecycle.
+            task = asyncio.create_task(asyncio.to_thread(
+                keeper._execute_tool,
+                state,
+                tool_name,
+                tool_input,
+                private_messages,
+                image_requests,
+                speaker_role,
+            ))
+            try:
+                if tool_name in keeper.READ_ONLY_TOOL_NAMES:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
+                    )
+                else:
+                    result = await asyncio.shield(task)
+            except asyncio.TimeoutError:
+                observability.event(
+                    "llm.tool.timeout", level=logging.WARNING,
+                    tool_name=observability.tool_name(tool_name), status="timeout",
+                    timeout_ms=TOOL_EXECUTION_TIMEOUT_SECONDS * 1000,
+                )
+                async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
+                result = {"ok": False, "error": "timeout", "partial": True}
+            except asyncio.CancelledError:
+                if tool_name in keeper.READ_ONLY_TOOL_NAMES:
+                    async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
+                    raise
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
+                    await keeper.record_tool_recovery_marker_bounded(state, tool_name, tool_input)
+                    observability.event(
+                        "llm.tool.recovery_required",
+                        level=logging.ERROR,
+                        tool_name=observability.tool_name(tool_name),
+                        status="partial",
+                    )
+                raise
         facts.append(_describe_tool_call(tool_name, result))
         return result
 

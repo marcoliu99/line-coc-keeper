@@ -886,6 +886,11 @@ class GroupState:
     established_facts: list[dict[str, Any]] = field(default_factory=list)
     known_clues: list[dict[str, Any]] = field(default_factory=list)
     consumed_or_removed_items: list[dict[str, Any]] = field(default_factory=list)
+    # Durable audit markers for a state-changing tool whose caller was
+    # cancelled after the grace period expired. The mutation may have
+    # committed in its worker thread, so these markers say recovery_required
+    # rather than claiming the outcome was rolled back.
+    tool_recovery_markers: list[dict[str, Any]] = field(default_factory=list)
 
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
@@ -1042,6 +1047,7 @@ class GroupState:
             "established_facts": self.established_facts,
             "known_clues": self.known_clues,
             "consumed_or_removed_items": self.consumed_or_removed_items,
+            "tool_recovery_markers": self.tool_recovery_markers,
         }
 
     @staticmethod
@@ -1116,4 +1122,5 @@ class GroupState:
             established_facts=data.get("established_facts", []),
             known_clues=data.get("known_clues", []),
             consumed_or_removed_items=data.get("consumed_or_removed_items", []),
+            tool_recovery_markers=data.get("tool_recovery_markers", []),
         )

@@ -33,6 +33,7 @@ from typing import Any, cast
 
 from app import db, embedding_cache, observability
 from app.config import (
+    EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
@@ -57,6 +58,22 @@ _B = 0.75  # BM25 length-normalization strength
 _MIN_COSINE_RELEVANCE = 0.32
 
 
+def _close_embedding_client(client: object, *, rag_kind: str) -> None:
+    """Close a synchronous embedding client without masking the RAG result."""
+    close = getattr(client, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as exc:  # noqa: BLE001 - cleanup must not break BM25 fallback.
+        observability.event(
+            "rag.embedding_client_close_failed",
+            level=logging.WARNING,
+            rag_kind=rag_kind,
+            error_type=type(exc).__name__,
+        )
+
+
 def _tokenize(text: str) -> list[str]:
     """Same scheme as app/scenario_rag.py's _tokenize — CJK runs become
     overlapping bigrams, ASCII words lowercase whole."""
@@ -78,17 +95,22 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[flo
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
         return None
+    client = None
     try:
         import openai
 
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client = openai.OpenAI(
+            api_key=OPENAI_API_KEY,
+            timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         with observability.span(
             "embedding.batch",
             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
             batch_size=len(texts), batch_index=0, batch_count=1,
         ):
             response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=texts)
-        ordered = [None] * len(texts)
+        ordered: list[list[float] | None] = [None] * len(texts)
         for item in response.data:
             ordered[item.index] = item.embedding
         if any(v is None for v in ordered):
@@ -101,6 +123,9 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[flo
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
+    finally:
+        if client is not None:
+            _close_embedding_client(client, rag_kind=rag_kind)
 
 
 def _vector_norm(vec: list[float]) -> float:
@@ -269,7 +294,8 @@ def search_memory(group_id: str, query: str, top_k: int = 3, *, metrics: dict[st
     if not raw_chunks:
         if metrics is not None:
             metrics.update(index_cache="empty", candidate_count=0,
-                           has_embeddings=False, result_count=0)
+                           has_embeddings=False, result_count=0,
+                           query_embedding_status="not_used")
         return []
     index = _get_index(group_id, raw_chunks)
     if metrics is not None:
@@ -279,7 +305,7 @@ def search_memory(group_id: str, query: str, top_k: int = 3, *, metrics: dict[st
     query_tokens = _tokenize(query)
     if not query_tokens:
         if metrics is not None:
-            metrics["result_count"] = 0
+            metrics.update(result_count=0, query_embedding_status="empty")
         return []
 
     idf_cache = _idf_cache(index, query_tokens)
@@ -287,6 +313,8 @@ def search_memory(group_id: str, query: str, top_k: int = 3, *, metrics: dict[st
     matched = [c for c in index.chunks if bm25_raw[id(c)] > 0]
 
     if not index.has_embeddings:
+        if metrics is not None:
+            metrics["query_embedding_status"] = "not_used"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         results = [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
         if metrics is not None:
@@ -299,11 +327,15 @@ def search_memory(group_id: str, query: str, top_k: int = 3, *, metrics: dict[st
 
     query_vec = embedding_cache.get_query_embedding(SCENARIO_RAG_EMBEDDING_MODEL, query, _embed_query_once)
     if query_vec is None:
+        if metrics is not None:
+            metrics["query_embedding_status"] = "fallback"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         results = [{"label": c.label, "text": c.text, "score": s} for s, c in scored[:top_k]]
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
+    if metrics is not None:
+        metrics["query_embedding_status"] = "success"
     query_norm = _vector_norm(query_vec)  # computed once, not once per chunk below
 
     max_bm25 = max(bm25_raw.values(), default=0.0) or 1.0
