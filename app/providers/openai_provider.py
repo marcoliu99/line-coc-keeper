@@ -16,25 +16,106 @@ docs page alone.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import inspect
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from app import config, observability
 from app.config import (
     KEEPER_REASONING_EFFORT,
     KEEPER_TEMPERATURE,
     LLM_MAX_RETRIES,
+    LLM_REQUEST_TIMEOUT_SECONDS,
     LLM_RETRY_BASE_DELAY_SECONDS,
     OPENAI_API_KEY,
     OPENAI_MODEL,
+    PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
 from app.providers import retry
 
 # Populated per-process the first time the API rejects one of these — see
 # _create_response.
 _unsupported_params: set[str] = set()
+_async_client = None
+_async_client_loop = None
+_async_client_lock = None
+_async_inflight = 0
+_async_condition = None
+
+
+async def _close_client(client) -> None:
+    close = getattr(client, "aclose", None) or getattr(client, "close", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+async def get_async_client():
+    """Return an event-loop-scoped, lazily initialized OpenAI client."""
+    global _async_client, _async_client_loop, _async_client_lock
+    loop = asyncio.get_running_loop()
+    if _async_client is not None and _async_client_loop is loop:
+        return _async_client
+    if _async_client_lock is None or _async_client_loop is not loop:
+        _async_client_lock = asyncio.Lock()
+    async with _async_client_lock:
+        if _async_client is not None and _async_client_loop is loop:
+            return _async_client
+        if _async_client is not None:
+            await _close_client(_async_client)
+        import openai
+
+        _async_client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=0)
+        _async_client_loop = loop
+        return _async_client
+
+
+async def shutdown_async_client() -> None:
+    global _async_client, _async_client_loop, _async_client_lock, _async_condition
+    condition = _async_condition
+    if condition is not None:
+        try:
+            async def wait_for_requests() -> None:
+                async with condition:
+                    await condition.wait_for(lambda: _async_inflight == 0)
+
+            await asyncio.wait_for(wait_for_requests(), PROVIDER_SHUTDOWN_GRACE_SECONDS)
+        except asyncio.TimeoutError:
+            observability.event(
+                "provider.shutdown.degraded", level=logging.ERROR,
+                provider="openai", status="timeout",
+                timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
+            )
+    client = _async_client
+    _async_client = None
+    _async_client_loop = None
+    _async_client_lock = None
+    _async_condition = None
+    if client is not None:
+        await _close_client(client)
+
+
+@contextlib.asynccontextmanager
+async def _request_scope():
+    global _async_inflight, _async_condition
+    loop = asyncio.get_running_loop()
+    if _async_condition is None or _async_client_loop is not loop:
+        _async_condition = asyncio.Condition()
+    condition = _async_condition
+    async with condition:
+        _async_inflight += 1
+    try:
+        yield
+    finally:
+        async with condition:
+            _async_inflight -= 1
+            condition.notify_all()
 
 
 def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
@@ -74,6 +155,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
             model=kwargs.get("model"),
             api_operation="responses.create",
             iteration=_log_iteration,
+            timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
             reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
             tool_count=len(kwargs.get("tools") or []),
         )
@@ -208,13 +290,63 @@ def _is_invalid_previous_response_id_error(
     return any(marker in message for marker in response_missing_markers)
 
 
-def run_conversation(
+async def _create_response_async(client, *, _log_iteration: int | None = None, **kwargs):
+    """Async Responses API helper preserving unsupported-parameter fallback."""
+    for param in _unsupported_params:
+        kwargs.pop(param, None)
+    while True:
+        request_metrics: dict[str, int | None] = {}
+        reasoning = kwargs.get("reasoning") or {}
+        with observability.span(
+            "llm.request",
+            provider="openai",
+            model=kwargs.get("model"),
+            api_operation="responses.create",
+            iteration=_log_iteration,
+            timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
+            reasoning_effort=reasoning.get("effort") if isinstance(reasoning, dict) else None,
+            tool_count=len(kwargs.get("tools") or []),
+            metrics=request_metrics,
+        ):
+            try:
+                async def request_once():
+                    async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                        return await client.responses.create(**kwargs)
+
+                async with _request_scope():
+                    response = await retry.async_call_with_retry(
+                        request_once, provider="openai", operation="responses.create"
+                    )
+            except Exception as exc:
+                exc_text = str(exc).lower()
+                offending = next(
+                    (p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text),
+                    None,
+                )
+                if offending is None:
+                    raise
+                _unsupported_params.add(offending)
+                kwargs.pop(offending, None)
+                observability.event(
+                    "llm.retry",
+                    level=logging.WARNING,
+                    provider="openai",
+                    model=kwargs.get("model"),
+                    removed_parameter=offending,
+                    error_type=type(exc).__name__,
+                    status="error",
+                )
+                continue
+        return response
+
+
+async def run_conversation(
     static_system: str,
     dynamic_system: str,
     tools: list[dict],
     history: list[dict],
     new_message: str,
-    execute_tool: Callable[[str, dict], dict],
+    execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int,
     previous_response_id: str = "",
     on_response_id: Callable[[str], None] | None = None,
@@ -224,11 +356,7 @@ def run_conversation(
 
     import openai
 
-    # max_retries=0: see app/providers/anthropic_provider.py's identical
-    # comment — the SDK defaults to retrying twice on its own, which would
-    # stack with _create_response's connection-retry loop below and blow
-    # past the documented LLM_MAX_RETRIES-bounded attempt/latency budget.
-    client = openai.OpenAI(api_key=OPENAI_API_KEY, max_retries=0)
+    client = await get_async_client()
 
     # Responses API tools are flat (no nested "function" wrapper, unlike Chat
     # Completions) — see FunctionToolParam in the SDK's type stubs.
@@ -273,7 +401,7 @@ def run_conversation(
         if active_previous_response_id:
             request_kwargs["previous_response_id"] = active_previous_response_id
         try:
-            response = _create_response(client, _log_iteration=iteration, **request_kwargs)
+            response = await _create_response_async(client, _log_iteration=iteration, **request_kwargs)
         except Exception as exc:
             if (
                 iteration == 0
@@ -290,7 +418,7 @@ def run_conversation(
                 active_previous_response_id = None
                 request_kwargs["input"] = input_items
                 request_kwargs.pop("previous_response_id", None)
-                response = _create_response(client, _log_iteration=iteration, **request_kwargs)
+                response = await _create_response_async(client, _log_iteration=iteration, **request_kwargs)
             else:
                 raise
 
@@ -305,7 +433,7 @@ def run_conversation(
         next_input_items: list[dict] = []
         for fc in function_calls:
             args = json.loads(fc.arguments or "{}")
-            result = execute_tool(fc.name, args)
+            result = await execute_tool(fc.name, args)
             next_input_items.append({
                 "type": "function_call_output",
                 "call_id": fc.call_id,

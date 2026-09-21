@@ -9,8 +9,9 @@ failure), so a single network blip raised straight out of run_conversation
 and lost the player's whole turn. These tests cover the classifier, the
 shared retry helper, and each provider's actual wiring.
 """
+import asyncio
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.providers import retry
 
@@ -77,7 +78,14 @@ class IsRetryableTests(unittest.TestCase):
 
     def test_4xx_status_code_is_not_retryable(self):
         self.assertFalse(retry.is_retryable(FakeStatusError(400)))
-        self.assertFalse(retry.is_retryable(FakeStatusError(429)))
+        self.assertTrue(retry.is_retryable(FakeStatusError(429)))
+
+    def test_provider_error_classification_distinguishes_retry_classes(self):
+        self.assertEqual(retry.classify_exception(FakeStatusError(429)), retry.ProviderError.RATE_LIMITED)
+        self.assertEqual(retry.classify_exception(FakeStatusError(500)), retry.ProviderError.TRANSIENT_SERVER)
+        self.assertEqual(retry.classify_exception(FakeStatusError(401)), retry.ProviderError.AUTH_FAILED)
+        self.assertEqual(retry.classify_exception(FakeStatusError(404)), retry.ProviderError.MODEL_NOT_FOUND)
+        self.assertEqual(retry.classify_exception(FakeStatusError(400)), retry.ProviderError.INVALID_REQUEST)
 
     def test_httpx_transport_exceptions_are_retryable_by_name(self):
         self.assertTrue(retry.is_retryable(ConnectError()))
@@ -112,6 +120,32 @@ class CallWithRetryTests(unittest.TestCase):
         self.assertEqual(result, "ok")
         fn.assert_called_once()
         sleep_mock.assert_not_called()
+
+    def test_async_retry_uses_async_sleep_and_preserves_cancellation(self):
+        calls = 0
+
+        async def fn():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RetryableConnectionError()
+            return "ok"
+
+        async def run():
+            with patch("app.providers.retry.asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
+                result = await retry.async_call_with_retry(fn, provider="test", operation="op")
+            return result, sleep_mock
+
+        result, sleep_mock = asyncio.run(run())
+        self.assertEqual(result, "ok")
+        sleep_mock.assert_awaited_once()
+
+    def test_async_retry_does_not_swallow_cancellation(self):
+        async def fn():
+            raise asyncio.CancelledError
+
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(retry.async_call_with_retry(fn, provider="test", operation="op"))
 
     def test_retries_transient_failure_then_succeeds(self):
         fn = MagicMock(side_effect=[RetryableConnectionError(), RetryableConnectionError(), "ok"])
@@ -229,18 +263,25 @@ class OpenAIClientConstructionTests(unittest.TestCase):
         fake_client.responses.create = MagicMock(return_value=fake_response)
 
         fake_openai_module = MagicMock()
-        fake_openai_module.OpenAI = MagicMock(return_value=fake_client)
+        fake_client.responses.create = AsyncMock(return_value=fake_response)
+        fake_openai_module.AsyncOpenAI = MagicMock(return_value=fake_client)
 
         with patch.dict("sys.modules", {"openai": fake_openai_module}), \
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
-            result = openai_provider.run_conversation("static", "dynamic", [], [], "hello", lambda n, a: {}, 1)
+            async def execute_tool(_name, _args):
+                return {}
+
+            result = asyncio.run(openai_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", execute_tool, 1
+            ))
+            asyncio.run(openai_provider.shutdown_async_client())
 
         self.assertEqual(result, "回覆")
         # See app/providers/anthropic_provider.py's identical fix — the
         # SDK's own default retrying (max_retries=2) must be disabled so
         # retry.call_with_retry's LLM_MAX_RETRIES budget is the only one in
         # effect.
-        fake_openai_module.OpenAI.assert_called_once_with(api_key="test-key", max_retries=0)
+        fake_openai_module.AsyncOpenAI.assert_called_once_with(api_key="test-key", max_retries=0)
 
 
 class AnthropicProviderRetryWiringTests(unittest.TestCase):
@@ -253,22 +294,27 @@ class AnthropicProviderRetryWiringTests(unittest.TestCase):
         fake_client.messages.create = MagicMock(side_effect=[RetryableConnectionError(), fake_response])
 
         fake_anthropic_module = MagicMock()
-        fake_anthropic_module.Anthropic = MagicMock(return_value=fake_client)
+        fake_client.messages.create = AsyncMock(side_effect=[RetryableConnectionError(), fake_response])
+        fake_anthropic_module.AsyncAnthropic = MagicMock(return_value=fake_client)
 
         with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
              patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"), \
-             patch("app.providers.retry.time.sleep") as sleep_mock, \
+             patch("app.providers.retry.asyncio.sleep", new_callable=AsyncMock) as sleep_mock, \
              patch("app.providers.retry.LLM_MAX_RETRIES", 3):
-            result = anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", lambda name, args: {}, 1
-            )
+            async def execute_tool(_name, _args):
+                return {}
+
+            result = asyncio.run(anthropic_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", execute_tool, 1
+            ))
+            asyncio.run(anthropic_provider.shutdown_async_client())
         self.assertEqual(result, "回覆")
         self.assertEqual(fake_client.messages.create.call_count, 2)
-        sleep_mock.assert_called_once()
+        sleep_mock.assert_awaited_once()
         # PR review finding: the SDK's own default retrying (max_retries=2)
         # must be disabled so our retry.call_with_retry budget is the only
         # one in effect, instead of stacking on top of the SDK's.
-        fake_anthropic_module.Anthropic.assert_called_once_with(api_key="test-key", max_retries=0)
+        fake_anthropic_module.AsyncAnthropic.assert_called_once_with(api_key="test-key", max_retries=0)
 
 
 class GeminiProviderRetryWiringTests(unittest.TestCase):
@@ -278,7 +324,8 @@ class GeminiProviderRetryWiringTests(unittest.TestCase):
         fake_candidate = MagicMock(content=MagicMock())
         fake_response = MagicMock(candidates=[fake_candidate], function_calls=[], text="回覆")
         fake_client = MagicMock()
-        fake_client.models.generate_content = MagicMock(side_effect=[RetryableConnectionError(), fake_response])
+        fake_client.models.generate_content = AsyncMock(side_effect=[RetryableConnectionError(), fake_response])
+        fake_client.aio = fake_client
 
         fake_genai_module = MagicMock()
         fake_genai_module.Client = MagicMock(return_value=fake_client)
@@ -286,14 +333,18 @@ class GeminiProviderRetryWiringTests(unittest.TestCase):
 
         with patch.dict("sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}), \
              patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"), \
-             patch("app.providers.retry.time.sleep") as sleep_mock, \
+             patch("app.providers.retry.asyncio.sleep", new_callable=AsyncMock) as sleep_mock, \
              patch("app.providers.retry.LLM_MAX_RETRIES", 3):
-            result = gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", lambda name, args: {}, 1
-            )
+            async def execute_tool(_name, _args):
+                return {}
+
+            result = asyncio.run(gemini_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", execute_tool, 1
+            ))
+            asyncio.run(gemini_provider.shutdown_async_client())
         self.assertEqual(result, "回覆")
         self.assertEqual(fake_client.models.generate_content.call_count, 2)
-        sleep_mock.assert_called_once()
+        sleep_mock.assert_awaited_once()
 
 
 if __name__ == "__main__":

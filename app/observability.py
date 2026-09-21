@@ -200,6 +200,19 @@ def span(
         yield
         return
 
+    def merged_fields() -> dict[str, Any]:
+        """Merge inherited, operation, and explicit fields without collisions.
+
+        Explicit span fields are the most specific values.  In particular,
+        this prevents a metric inherited from a parent span from being passed
+        twice as the same keyword argument when a child operation reports its
+        own value.
+        """
+        merged: dict[str, Any] = dict(_METRICS.get() or {})
+        merged.update(metrics or {})
+        merged.update(fields)
+        return merged
+
     event(name + ".started", level=level, **fields)
     started = time.perf_counter()
     try:
@@ -210,11 +223,10 @@ def span(
             name + ".failed",
             level=logging.ERROR,
             duration_ms=duration_ms,
-            status="error",
+            status="timeout" if isinstance(exc, TimeoutError) else "error",
             error_type=type(exc).__name__,
             slow_threshold_ms=slow_threshold_ms,
-            **({**(_METRICS.get() or {}), **(metrics or {})}),
-            **fields,
+            **merged_fields(),
         )
         raise
     else:
@@ -233,8 +245,7 @@ def span(
             duration_ms=duration_ms,
             status="success",
             slow_threshold_ms=slow_threshold_ms,
-            **({**(_METRICS.get() or {}), **(metrics or {})}),
-            **fields,
+            **merged_fields(),
         )
 
 

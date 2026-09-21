@@ -30,7 +30,7 @@ async def run_turn(
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
-    Orchestrates the synchronous pipeline of Agents to produce a response.
+    Orchestrates the asynchronous pipeline of Agents to produce a response.
     Returns: (reply_text, private_messages, image_requests)
     """
     _logger.info(f"Supervisor starting turn for {display_name} ({user_id})")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from app import keeper, observability
@@ -53,12 +52,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     new_message = f"{display_name}：{text}"
 
     try:
-        # run_conversation is a plain synchronous function in every
-        # provider (see app/providers/*.py) — never awaited directly
-        # elsewhere in this codebase, always dispatched via asyncio.to_thread
-        # from async call sites (see app/legacy_commands.py's handle_text_
-        # message). Calling it with `await` directly, as the previous
-        # version of this file did, raises before the call even completes.
+        # Providers expose one native async contract.  Tool execution remains
+        # sequential inside the provider and offloads only synchronous state
+        # mutation at the tool gateway boundary.
         turn_metrics: dict[str, int] = {}
         with observability.metrics_context(turn_metrics), observability.span(
             "llm.turn", provider=LLM_PROVIDER,
@@ -67,9 +63,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
             metrics=turn_metrics,
         ):
-            await asyncio.to_thread(
-                provider.run_conversation, static_system, dynamic_system, TOOLS,
-                state.log, new_message, execute_tool, MAX_TOOL_ITERATIONS,
+            await provider.run_conversation(
+                static_system, dynamic_system, TOOLS, state.log, new_message,
+                execute_tool, MAX_TOOL_ITERATIONS,
             )
     except Exception:
         observability.event("llm.failed", level=logging.ERROR, agent="executor", status="error")

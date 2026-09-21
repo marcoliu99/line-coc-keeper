@@ -10,6 +10,7 @@ from app import config, logging_config, observability
 class ObservabilityTests(unittest.TestCase):
     def tearDown(self):
         observability._CONTEXT.set({})
+        observability._METRICS.set({})
 
     def test_request_context_provides_stable_correlations_and_hashes_identity(self):
         with patch("app.config.LOG_ENABLED", True), patch("app.config.LOG_TEXT_ENABLED", True), patch(
@@ -100,6 +101,26 @@ class ObservabilityTests(unittest.TestCase):
             with observability.span("rag.search", metrics=metrics):
                 metrics["result_count"] = 2
         self.assertTrue(any("rag.search.completed" in line for line in captured.output))
+
+    def test_span_explicit_fields_override_inherited_metrics_without_duplicate_keywords(self):
+        with (
+            patch("app.config.LOG_ENABLED", True),
+            self.assertLogs("app.observability", level="INFO") as captured,
+            observability.metrics_context({"reply_message_count": 2}),
+            observability.span(
+                "discord.reply",
+                metrics={"reply_message_count": 3},
+                reply_message_count=1,
+            ),
+        ):
+            pass
+
+        completed = next(
+            record.structured_event
+            for record in captured.records
+            if record.getMessage() == "discord.reply.completed"
+        )
+        self.assertEqual(completed["reply_message_count"], 1)
 
     def test_usage_fields_normalize_openai_usage_shapes(self):
         response = SimpleNamespace(

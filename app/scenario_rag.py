@@ -26,6 +26,7 @@ falls back to pure BM25, exactly like before embeddings existed here.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -39,9 +40,58 @@ from app.config import (
     OPENAI_API_KEY,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
+    SCENARIO_RAG_ENABLED,
+    SCENARIO_RAG_PREWARM_ENABLED,
+    SCENARIO_RAG_PREWARM_MAX_CONCURRENT,
 )
 
 _logger = logging.getLogger(__name__)
+_prewarm_semaphore: asyncio.Semaphore | None = None
+_prewarm_loop = None
+_prewarm_tasks: set[asyncio.Task] = set()
+
+
+async def _prewarm_index(group_id: str, scenario_text: str) -> None:
+    global _prewarm_semaphore, _prewarm_loop
+    loop = asyncio.get_running_loop()
+    if _prewarm_semaphore is None or _prewarm_loop is not loop:
+        _prewarm_semaphore = asyncio.Semaphore(SCENARIO_RAG_PREWARM_MAX_CONCURRENT)
+        _prewarm_loop = loop
+    async with _prewarm_semaphore:
+        # Yield once so a just-finished upload can send its confirmation before
+        # the optional, low-priority embedding work begins.
+        await asyncio.sleep(0)
+        try:
+            await asyncio.to_thread(get_index, group_id, scenario_text)
+            observability.event("rag.prewarm.completed", rag_kind="scenario", status="success")
+        except asyncio.CancelledError:
+            observability.event("rag.prewarm.cancelled", level=logging.INFO, rag_kind="scenario")
+            raise
+        except Exception as exc:  # noqa: BLE001 - prewarm must never block scenario activation.
+            observability.event(
+                "rag.prewarm.failed", level=logging.WARNING, rag_kind="scenario",
+                status="error", error_type=type(exc).__name__,
+            )
+
+
+def schedule_index_prewarm(group_id: str, scenario_text: str) -> asyncio.Task | None:
+    """Schedule optional scenario index/embedding work after activation."""
+    if not SCENARIO_RAG_ENABLED or not SCENARIO_RAG_PREWARM_ENABLED or not scenario_text.strip():
+        return None
+    task = asyncio.create_task(_prewarm_index(group_id, scenario_text))
+    _prewarm_tasks.add(task)
+    task.add_done_callback(_prewarm_tasks.discard)
+    return task
+
+
+async def shutdown_prewarm() -> None:
+    """Cancel pending prewarm tasks during bot shutdown."""
+    tasks = tuple(_prewarm_tasks)
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _log_group_id(group_id: str) -> str:

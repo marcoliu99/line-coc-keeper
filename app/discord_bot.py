@@ -14,7 +14,9 @@ import logging
 import re
 import time
 import unicodedata
+from collections.abc import Awaitable
 from pathlib import Path
+from typing import TypeVar
 
 import discord
 
@@ -25,7 +27,9 @@ from app import (
     locks,
     logging_config,
     observability,
+    providers,
     scenario_library,
+    scenario_rag,
 )
 from app.commands import router as command_router
 from app.commands import sudo as sudo_policy
@@ -50,11 +54,13 @@ from app.legacy_commands import (
     resolve_pdf_upload_choice,
 )
 from app.models import GroupState
+from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import StateRevisionConflict
 from app.repositories.group_state import load_state as load_group_state
 
 _logger = logging.getLogger(__name__)
 _backup_task: asyncio.Task | None = None
+_T = TypeVar("_T")
 
 MAX_DISCORD_MESSAGE_CHARS = 1900  # Discord's hard limit is 2000; leave a margin
 MAX_REPLY_MESSAGES = 10
@@ -135,12 +141,27 @@ def _record_sent_chunk(metrics: dict[str, int], chunk: str) -> None:
     observability.increment_metric("reply_bytes", byte_count)
 
 
+async def _discord_operation(awaitable: Awaitable[_T]) -> _T:
+    """Bound one Discord API operation without retrying a possible send."""
+    try:
+        async with asyncio.timeout(config.DISCORD_REQUEST_TIMEOUT_SECONDS):
+            return await awaitable
+    except asyncio.TimeoutError:
+        observability.event(
+            "discord.request.timeout",
+            level=logging.ERROR,
+            timeout_ms=config.DISCORD_REQUEST_TIMEOUT_SECONDS * 1000,
+            status="timeout",
+        )
+        raise
+
+
 async def _send_direct_message(
     channel: discord.abc.Messageable, text: str, *, view: discord.ui.View | None = None
 ) -> None:
     """Send a non-chunked public message with the same reply span as Reply."""
     if not config.LOG_ENABLED:
-        await channel.send(text, view=view)
+        await _discord_operation(channel.send(text, view=view))
         return
     byte_count = len(text.encode("utf-8"))
     with observability.span(
@@ -151,7 +172,7 @@ async def _send_direct_message(
         reply_chunk_count=1,
         reply_edit_count=0,
     ):
-        await channel.send(text, view=view)
+        await _discord_operation(channel.send(text, view=view))
     _record_reply_output(text)
 
 
@@ -160,7 +181,7 @@ async def _send_interaction_message(
 ) -> None:
     """Send an interaction response and include it in request metrics."""
     if not config.LOG_ENABLED:
-        await interaction.response.send_message(text, ephemeral=ephemeral)
+        await _discord_operation(interaction.response.send_message(text, ephemeral=ephemeral))
         return
     byte_count = len(text.encode("utf-8"))
     with observability.span(
@@ -172,7 +193,7 @@ async def _send_interaction_message(
         reply_edit_count=0,
         ephemeral=ephemeral,
     ):
-        await interaction.response.send_message(text, ephemeral=ephemeral)
+        await _discord_operation(interaction.response.send_message(text, ephemeral=ephemeral))
     _record_reply_output(text)
 
 
@@ -181,7 +202,7 @@ async def _edit_interaction_message(
 ) -> None:
     """Edit an existing interaction message without inflating message count."""
     if not config.LOG_ENABLED:
-        await interaction.response.edit_message(content=text, view=view)
+        await _discord_operation(interaction.response.edit_message(content=text, view=view))
         return
     byte_count = len(text.encode("utf-8"))
     with observability.span(
@@ -192,7 +213,7 @@ async def _edit_interaction_message(
         reply_chunk_count=0,
         reply_edit_count=1,
     ):
-        await interaction.response.edit_message(content=text, view=view)
+        await _discord_operation(interaction.response.edit_message(content=text, view=view))
     _record_reply_edit(text)
 
 
@@ -201,7 +222,7 @@ async def _edit_interaction_view(
 ) -> None:
     """Measure an interaction edit that changes only the component view."""
     if not config.LOG_ENABLED:
-        await interaction.response.edit_message(view=view)
+        await _discord_operation(interaction.response.edit_message(view=view))
         return
     with observability.span(
         "discord.reply",
@@ -211,7 +232,7 @@ async def _edit_interaction_view(
         reply_chunk_count=0,
         reply_edit_count=1,
     ):
-        await interaction.response.edit_message(view=view)
+        await _discord_operation(interaction.response.edit_message(view=view))
     _record_reply_edit("")
 
 
@@ -221,7 +242,7 @@ async def _send_direct_image(
     """Send a public attachment with Discord reply timing and byte metrics."""
     filename = f"page_{page_number}.png"
     if not config.LOG_ENABLED:
-        await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=filename))
+        await _discord_operation(channel.send(file=discord.File(io.BytesIO(png_bytes), filename=filename)))
         return
     with observability.span(
         "discord.reply",
@@ -232,7 +253,7 @@ async def _send_direct_image(
         reply_edit_count=0,
         reply_kind="image",
     ):
-        await channel.send(file=discord.File(io.BytesIO(png_bytes), filename=filename))
+        await _discord_operation(channel.send(file=discord.File(io.BytesIO(png_bytes), filename=filename)))
     _record_reply_binary(len(png_bytes))
 
 
@@ -241,7 +262,7 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
-                await channel.send(chunk)
+                await _discord_operation(channel.send(chunk))
             return
         reply_metrics = {
             "reply_message_count": 0,
@@ -259,7 +280,7 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
             # app/observability.py:span's **fields unpacking).
             observability.increment_metric("reply_edit_count", 0)
             for chunk in chunks:
-                await channel.send(chunk)
+                await _discord_operation(channel.send(chunk))
                 _record_sent_chunk(reply_metrics, chunk)
 
     return reply
@@ -317,9 +338,9 @@ async def _send_dm(owner_id: str, text: str) -> None:
     # owner_id is str(discord.Member.id), as stored on Character.owner_id. Raises
     # if the user has DMs from server members disabled; commands.py swallows
     # that (see its docstring on why it doesn't fall back to posting publicly).
-    user = client.get_user(int(owner_id)) or await client.fetch_user(int(owner_id))
+    user = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
     for chunk in _chunk_text(text):
-        await user.send(chunk)
+        await _discord_operation(user.send(chunk))
 
 
 def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
@@ -332,8 +353,8 @@ def _make_send_image(channel: discord.abc.Messageable) -> SendImage:
 
 
 async def _send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, page_number: int) -> None:
-    user = client.get_user(int(owner_id)) or await client.fetch_user(int(owner_id))
-    await user.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png"))
+    user = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
+    await _discord_operation(user.send(file=discord.File(io.BytesIO(png_bytes), filename=f"page_{page_number}.png")))
 
 
 def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
@@ -343,7 +364,7 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
-                await interaction.followup.send(chunk)
+                await _discord_operation(interaction.followup.send(chunk))
             return
         reply_metrics = {
             "reply_message_count": 0,
@@ -359,7 +380,7 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
             # span() field.
             observability.increment_metric("reply_edit_count", 0)
             for chunk in chunks:
-                await interaction.followup.send(chunk)
+                await _discord_operation(interaction.followup.send(chunk))
                 _record_sent_chunk(reply_metrics, chunk)
 
     return reply
@@ -787,6 +808,21 @@ client.add_dynamic_items(CheckButton, LuckSpendButton, PdfUploadChoiceButton, He
 @client.event
 async def on_ready() -> None:
     global _backup_task
+    provider_module = {
+        "openai": openai_provider,
+        "anthropic": anthropic_provider,
+        "gemini": gemini_provider,
+    }.get(config.LLM_PROVIDER)
+    provider_key = {
+        "openai": config.OPENAI_API_KEY,
+        "anthropic": config.ANTHROPIC_API_KEY,
+        "gemini": config.GEMINI_API_KEY,
+    }.get(config.LLM_PROVIDER, "")
+    if provider_module is not None and provider_key:
+        try:
+            await provider_module.get_async_client()
+        except Exception:
+            _logger.exception("failed to prewarm %s async provider client", config.LLM_PROVIDER)
     if _backup_task is None or _backup_task.done():
         _backup_task = asyncio.create_task(_backup_loop())
     print(f"Discord bot 已上線：{client.user}")
@@ -1020,11 +1056,21 @@ async def _handle_message(message: discord.Message) -> None:
             _logger.exception("also failed to report the above error back to conversation_id=%s", conversation_id)
 
 
+async def _run_bot() -> None:
+    try:
+        await client.start(DISCORD_BOT_TOKEN)
+    finally:
+        if not client.is_closed():
+            await client.close()
+        await scenario_rag.shutdown_prewarm()
+        await providers.shutdown_async_clients()
+
+
 def main() -> None:
     if not DISCORD_BOT_TOKEN:
         raise SystemExit("尚未設定 DISCORD_BOT_TOKEN，請檢查 .env")
     logging_config.configure_logging()
-    client.run(DISCORD_BOT_TOKEN)
+    asyncio.run(_run_bot())
 
 
 if __name__ == "__main__":

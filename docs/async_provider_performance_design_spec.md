@@ -8,7 +8,7 @@
 - 目前基準 commit：fe02e69b9e534b6939c27f7f3e05e05e153807a4
 - 遠端分支已建立並推送：origin/feature/async-provider-performance
 - 若 main_v2 在 PR 前有新 commit，必須重新 fetch、對齊並記錄新的 changeset 範圍。
-- 本文件目前是規格審閱版本；規格獲確認前不修改 runtime implementation。
+- 實作狀態：已開始實作；provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle 與回歸測試已納入本分支。後續仍需跑完整 static/coverage/benchmark 並在 PR 前重新對齊 `main_v2`。
 
 ## 1. 背景與問題
 
@@ -86,7 +86,7 @@ kqueue/select 是 macOS asyncio event loop 等待 I/O 的正常狀態，不是�
 - 不在沒有 benchmark 或遊戲流程測試時直接把 KEEPER_REASONING_EFFORT 從
   medium 改成 low、minimal 或其他值。
 
-## 4. 現況流程
+## 4. 現況流程（migration 前）
 
 ### 4.1 Agentic path
 
@@ -130,6 +130,32 @@ context_builder.build_context 目前先建立 scenario task 與 memory task；�
                             +-- await memory
 
 實作改為明確的 gather contract，但不得刪除現有 cache 或 BM25 fallback。
+
+### 4.4 實作後流程
+
+    Discord command
+          |
+          v
+    Supervisor / legacy Keeper
+          |
+          +-- await async provider.run_conversation
+          |       +-- await SDK async HTTP request
+          |       +-- cancellable async retry/backoff
+          |       +-- await tool callback（SDK 順序，逐一執行）
+          |
+          +-- tool gateway / legacy tool adapter
+                  +-- await asyncio.to_thread(sync state mutation)
+                  +-- cancellation 時等待 mutation 完成或寫 recovery marker
+
+    Context builder
+          +-- scenario task ----+
+          +-- memory task ------+-- asyncio.gather(return_exceptions=True)
+                                      +-- per-source status/fallback
+
+每個 provider client 是目前 event loop 的 lazy singleton；Discord bot runner 的
+`try/finally` 會先取消 prewarm、再等待 provider in-flight request 的 grace period
+並關閉三個 async client。同步 vision/text extraction API 仍維持既有 compatibility
+contract，沒有混入 conversation coroutine。
 
 ## 5. 設計
 

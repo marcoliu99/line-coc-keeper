@@ -1,8 +1,9 @@
+import time
 import unittest
 from unittest.mock import patch
 
 from app.domain.models import MechanicResult, StateDelta
-from app.models import GroupState
+from app.models import Character, GroupState
 
 
 class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
@@ -25,8 +26,10 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", False), \
                 patch.object(scenario_rag, "get_index") as mock_get_index, \
                 patch.object(memory_rag, "search_memory", return_value=[]):
+            state = self._state()
+            state.characters["u1"] = Character(name="P1", owner_id="u1")
             message = await context_builder.build_context(
-                state=self._state(), user_id="u1", display_name="P1", text="hi",
+                state=state, user_id="u1", display_name="P1", text="hi",
                 resolved_location=None, speaker_role="player", conversation_id="g",
             )
 
@@ -50,6 +53,50 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         mock_get_index.assert_called_once()
         mock_search.assert_called_once()
         self.assertEqual(message.payload["rag_context"], "formatted rag context")
+
+    async def test_scenario_and_memory_rag_are_gathered_and_one_failure_is_isolated(self):
+        from app import memory_rag, scenario_rag
+        from app.agents import context_builder
+
+        def slow_scenario_search(*_args, **_kwargs):
+            time.sleep(0.08)
+            raise RuntimeError("scenario index unavailable")
+
+        def slow_memory_search(*_args, **_kwargs):
+            time.sleep(0.08)
+            return [{"label": "old", "text": "memory"}]
+
+        with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(scenario_rag, "get_index", return_value="fake-index"), \
+                patch.object(scenario_rag, "search", side_effect=slow_scenario_search), \
+                patch.object(memory_rag, "search_memory", side_effect=slow_memory_search), \
+                patch.object(scenario_rag, "format_results", return_value=""), \
+                patch.object(memory_rag, "format_results", return_value="memory context"):
+            started = time.perf_counter()
+            state = self._state()
+            state.characters["u1"] = Character(name="P1", owner_id="u1")
+            message = await context_builder.build_context(
+                state=state, user_id="u1", display_name="P1", text="hi",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+            elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 0.15)
+        self.assertEqual(message.payload["rag_context"], "")
+        self.assertEqual(message.payload["rag_status"], "error")
+        self.assertEqual(message.payload["memory_context"], "memory context")
+        self.assertEqual(message.payload["memory_status"], "success")
+
+    def test_scenario_context_budget_keeps_structural_boundaries(self):
+        from app import keeper
+
+        scenario = "--- 第 1 頁 ---\n第一頁完整內容\n--- 第 2 頁 ---\n第二頁完整內容"
+        with patch.object(keeper, "MAX_SCENARIO_CHARS", 30):
+            bounded = keeper._bounded_scenario_context(scenario)
+
+        self.assertLessEqual(len(bounded), 30)
+        self.assertIn("第一頁完整內容", bounded)
+        self.assertNotIn("第二頁完整內容", bounded)
 
 
 class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):

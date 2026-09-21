@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import importlib.util
 import sys
@@ -21,13 +22,13 @@ class LoggingCompletionTests(unittest.TestCase):
     def test_legacy_keeper_turn_has_one_complete_turn_lifecycle(self):
         provider = SimpleNamespace(
             ANTHROPIC_MODEL="test-model",
-            run_conversation=lambda *args, **kwargs: "keeper reply",
+            run_conversation=AsyncMock(return_value="keeper reply"),
         )
         state = GroupState(group_id="g")
         with patch.object(config, "LOG_ENABLED", True), patch.object(config, "KEEPER_REASONING_EFFORT", "high"), \
                 patch.object(keeper, "LLM_PROVIDER", "anthropic"), patch.object(keeper, "_PROVIDERS", {"anthropic": provider}), \
                 self.assertLogs("app.observability", level="INFO") as captured:
-            keeper.run_turn(state, "u1", "Player", "look around")
+            asyncio.run(keeper.run_turn(state, "u1", "Player", "look around"))
 
         turn_started = [record for record in captured.records if record.getMessage() == "llm.turn.started"]
         turn_completed = [record for record in captured.records if record.getMessage() == "llm.turn.completed"]
@@ -102,7 +103,8 @@ class LoggingCompletionTests(unittest.TestCase):
             content=[SimpleNamespace(type="text", text="done")],
         )
         client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: response))
-        fake_anthropic = types.SimpleNamespace(Anthropic=lambda **kwargs: client)
+        client.messages.create = AsyncMock(return_value=response)
+        fake_anthropic = types.SimpleNamespace(AsyncAnthropic=lambda **kwargs: client)
         captured_metrics: list[dict] = []
 
         @contextlib.contextmanager
@@ -115,9 +117,13 @@ class LoggingCompletionTests(unittest.TestCase):
                 patch.object(anthropic_provider, "LOG_INCLUDE_USAGE", False), \
                 patch.object(anthropic_provider.observability, "span", fake_span), \
                 patch.object(anthropic_provider.observability, "event") as event:
-            result = anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", lambda name, args: {}, 1
-            )
+            async def execute_tool(_name, _args):
+                return {}
+
+            result = asyncio.run(anthropic_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", execute_tool, 1
+            ))
+            asyncio.run(anthropic_provider.shutdown_async_client())
 
         self.assertEqual(result, "done")
         self.assertEqual(captured_metrics, [{}])
@@ -138,8 +144,9 @@ class LoggingCompletionTests(unittest.TestCase):
             text="done",
         )
         client = SimpleNamespace(
-            models=SimpleNamespace(generate_content=lambda **kwargs: response)
+            models=SimpleNamespace(generate_content=AsyncMock(return_value=response))
         )
+        client.aio = client
         fake_genai = types.SimpleNamespace(Client=lambda **kwargs: client)
         fake_types = types.SimpleNamespace(
             FunctionDeclaration=lambda **kwargs: SimpleNamespace(**kwargs),
@@ -164,9 +171,13 @@ class LoggingCompletionTests(unittest.TestCase):
                 patch.object(gemini_provider, "LOG_INCLUDE_USAGE", False), \
                 patch.object(gemini_provider.observability, "span", fake_span), \
                 patch.object(gemini_provider.observability, "event") as event:
-            result = gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", lambda name, args: {}, 1
-            )
+            async def execute_tool(_name, _args):
+                return {}
+
+            result = asyncio.run(gemini_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", execute_tool, 1
+            ))
+            asyncio.run(gemini_provider.shutdown_async_client())
 
         self.assertEqual(result, "done")
         self.assertEqual(captured_metrics, [{}])
@@ -245,6 +256,26 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             await _send_direct_message(channel, "not sent")
         self.assertEqual(metrics, {})
 
+    async def test_discord_operation_timeout_is_logged_without_retrying(self):
+        from app.discord_bot import _send_direct_message
+
+        async def slow_send(*_args, **_kwargs):
+            await asyncio.sleep(0.05)
+
+        channel = SimpleNamespace(send=slow_send)
+        metrics = {}
+        with (
+            patch.object(config, "LOG_ENABLED", True),
+            patch.object(config, "DISCORD_REQUEST_TIMEOUT_SECONDS", 0.001),
+            observability.metrics_context(metrics),
+            self.assertRaises(asyncio.TimeoutError),
+            self.assertLogs("app.observability", level="ERROR") as captured,
+        ):
+            await _send_direct_message(channel, "timeout")
+
+        self.assertTrue(any("discord.request.timeout" in line for line in captured.output))
+        self.assertEqual(metrics, {})
+
     async def test_partial_chunk_failure_counts_only_successful_chunks(self):
         from app.discord_bot import _make_reply
 
@@ -283,6 +314,22 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
         self.assertEqual(metrics["reply_bytes"], 1900)
+        self.assertEqual(metrics["reply_edit_count"], 0)
+
+    async def test_interaction_followup_output_has_a_latency_span(self):
+        from app.discord_bot import _make_interaction_reply
+
+        interaction = SimpleNamespace(followup=SimpleNamespace(send=AsyncMock()))
+        metrics = {}
+        with (
+            patch.object(config, "LOG_ENABLED", True),
+            observability.metrics_context(metrics),
+            self.assertLogs("app.observability", level="INFO") as captured,
+        ):
+            await _make_interaction_reply(interaction)("follow-up")
+
+        self.assertTrue(any("discord.reply.completed" in line for line in captured.output))
+        self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_request_metrics_have_stable_zero_defaults(self):
@@ -345,7 +392,7 @@ class AgentLifecycleLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         provider = SimpleNamespace(
             ANTHROPIC_MODEL="agent-model",
-            run_conversation=lambda *args, **kwargs: "agent response",
+            run_conversation=AsyncMock(return_value="agent response"),
         )
         state = GroupState(group_id="g")
         executor_message = AgentMessage(payload={
@@ -378,7 +425,7 @@ class AgentLifecycleLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         provider = SimpleNamespace(
             ANTHROPIC_MODEL="guard-model",
-            run_conversation=lambda *args, **kwargs: "repaired",
+            run_conversation=AsyncMock(return_value="repaired"),
         )
         message = AgentMessage(payload={"state": GroupState(group_id="g")})
         with patch.object(config, "LOG_ENABLED", True), patch.object(config, "KEEPER_REASONING_EFFORT", "high"), \

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from app import keeper
 from app.domain.models import AgentMessage
 
@@ -38,10 +36,7 @@ async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str
     text = message.payload["text"]
     resolved_location = message.payload.get("resolved_location")
 
-    # keeper.run_turn is synchronous — dispatched via asyncio.to_thread like
-    # every other call site in this codebase (see app/legacy_commands.py's
-    # own handle_text_message), not awaited directly.
-    final_text, private_messages, image_requests = await asyncio.to_thread(
-        keeper.run_turn, state, user_id, display_name, text, resolved_location, "kp_assistant"
+    final_text, private_messages, image_requests = await keeper.run_turn(
+        state, user_id, display_name, text, resolved_location, "kp_assistant"
     )
     return final_text, private_messages, image_requests

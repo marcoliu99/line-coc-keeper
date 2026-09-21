@@ -104,7 +104,7 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", "240000"))
 # campaign_summary pass.
 MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", "40"))
 
-MAX_TOOL_ITERATIONS = 8  # guard against runaway tool-use loops
+MAX_TOOL_ITERATIONS = _env_int("MAX_TOOL_ITERATIONS", 8, minimum=1)  # guard against runaway tool-use loops
 
 # Scenario RAG (app/scenario_rag.py) — opt-in, defaults off. Off: the full
 # scenario text is stuffed into the cached system prompt block, same as
@@ -179,6 +179,20 @@ KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").st
 # next to how slow a normal Keeper turn already is.
 LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 3)
 LLM_RETRY_BASE_DELAY_SECONDS = _env_float("LLM_RETRY_BASE_DELAY_SECONDS", 1.0)
+LLM_REQUEST_TIMEOUT_SECONDS = _env_float("LLM_REQUEST_TIMEOUT_SECONDS", 60.0, minimum=0.1)
+LLM_TIMEOUT_RETRIES = _env_int("LLM_TIMEOUT_RETRIES", 1)
+EMBEDDING_REQUEST_TIMEOUT_SECONDS = _env_float("EMBEDDING_REQUEST_TIMEOUT_SECONDS", 20.0, minimum=0.1)
+DISCORD_REQUEST_TIMEOUT_SECONDS = _env_float("DISCORD_REQUEST_TIMEOUT_SECONDS", 10.0, minimum=0.1)
+TOOL_EXECUTION_TIMEOUT_SECONDS = _env_float("TOOL_EXECUTION_TIMEOUT_SECONDS", 30.0, minimum=0.1)
+PROVIDER_SHUTDOWN_GRACE_SECONDS = _env_float("PROVIDER_SHUTDOWN_GRACE_SECONDS", 5.0, minimum=0.1)
+
+# Scenario embedding prewarm remains opt-in so deployments do not incur a
+# surprise embedding request during startup/import.  The semaphore keeps a
+# background rebuild lower priority than player turns.
+SCENARIO_RAG_PREWARM_ENABLED = _env_bool("SCENARIO_RAG_PREWARM_ENABLED", False)
+SCENARIO_RAG_PREWARM_MAX_CONCURRENT = _env_int(
+    "SCENARIO_RAG_PREWARM_MAX_CONCURRENT", 1, minimum=1
+)
 
 # Observability. Structured performance events and ordinary developer text
 # logs have separate toggles so a developer can enable textual diagnostics

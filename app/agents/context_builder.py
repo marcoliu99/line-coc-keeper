@@ -6,6 +6,7 @@ from typing import Any
 
 from app import memory_rag, observability, scenario_rag
 from app.config import (
+    EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
@@ -62,7 +63,7 @@ async def build_context(
     # identically before.
     rag_task = None
     if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title and not state.combat.active:
-        def _run_scenario_rag() -> str:
+        def _run_scenario_rag() -> tuple[str, str]:
             # See app/keeper.py's search_scenario tool for why this is a
             # plain _logger call, not a structured event field. This site
             # runs proactively once per turn (whenever SCENARIO_RAG_ENABLED)
@@ -87,7 +88,8 @@ async def build_context(
                     has_embeddings=getattr(index, "has_embeddings", None),
                     index_cache=getattr(index, "index_cache", "unknown"),
                 )
-                return scenario_rag.format_results(results)
+                status = "fallback" if metrics.get("has_embeddings") is False else "success"
+                return scenario_rag.format_results(results), status
 
         rag_task = asyncio.create_task(asyncio.to_thread(_run_scenario_rag))
 
@@ -99,7 +101,7 @@ async def build_context(
     # (unconditional on SCENARIO_RAG_ENABLED), not just when that flag is on.
     memory_task = None
     if char and not state.combat.active:
-        def _run_memory_rag() -> str:
+        def _run_memory_rag() -> tuple[str, str]:
             # See _run_scenario_rag's comment above — this one runs on
             # essentially every player turn with a bound character
             # (unconditional on SCENARIO_RAG_ENABLED), so it's very likely
@@ -113,17 +115,72 @@ async def build_context(
                 embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=metrics,
             ):
                 results = memory_rag.search_memory(conversation_id, text, metrics=metrics)
-                return memory_rag.format_results(results)
+                status = "fallback" if metrics.get("has_embeddings") is False else "success"
+                return memory_rag.format_results(results), status
 
         memory_task = asyncio.create_task(asyncio.to_thread(_run_memory_rag))
 
-    # Await RAG tasks
+    async def _collect_rag_source(task: asyncio.Task | None, rag_kind: str) -> tuple[str, str]:
+        if task is None:
+            return "", "disabled"
+        try:
+            result = await asyncio.wait_for(task, EMBEDDING_REQUEST_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            if not task.done():
+                task.cancel()
+            observability.event("rag.source.cancelled", level=logging.WARNING, rag_kind=rag_kind)
+            raise
+        except asyncio.TimeoutError:
+            observability.event(
+                "rag.source.degraded", level=logging.WARNING,
+                rag_kind=rag_kind, status="timeout",
+                timeout_ms=EMBEDDING_REQUEST_TIMEOUT_SECONDS * 1000,
+            )
+            return "", "timeout"
+        except Exception as exc:
+            observability.event(
+                "rag.source.degraded", level=logging.WARNING,
+                rag_kind=rag_kind, status="error", error_type=type(exc).__name__,
+            )
+            _logger.exception("%s RAG failed; continuing without that source", rag_kind)
+            return "", "error"
+        if isinstance(result, tuple) and len(result) == 2:
+            result, status = result
+        else:
+            status = "success" if result else "empty"
+        if status != "success":
+            observability.event("rag.source.degraded", level=logging.INFO, rag_kind=rag_kind, status=status)
+        return result, status
+
+    # Await both sources at one explicit synchronization point.  The tasks
+    # start before gather, so scenario and memory search/embedding can overlap;
+    # return_exceptions=True keeps one optional source from discarding the
+    # other.  Cancellation is handled by _collect_rag_source and propagated.
     rag_context = ""
     memory_context = ""
-    if rag_task:
-        rag_context = await rag_task
-    if memory_task:
-        memory_context = await memory_task
+    rag_status = "disabled"
+    memory_status = "disabled"
+    tasks = [task for task in (rag_task, memory_task) if task is not None]
+    if tasks:
+        collected = await asyncio.gather(
+            *(
+                _collect_rag_source(task, rag_kind)
+                for task, rag_kind in ((rag_task, "scenario"), (memory_task, "memory"))
+                if task is not None
+            ),
+            return_exceptions=True,
+        )
+        result_by_kind = {
+            kind: result
+            for kind, result in zip(
+                (kind for task, kind in ((rag_task, "scenario"), (memory_task, "memory")) if task is not None),
+                collected,
+                strict=True,
+            )
+            if not isinstance(result, BaseException)
+        }
+        rag_context, rag_status = result_by_kind.get("scenario", ("", "error"))
+        memory_context, memory_status = result_by_kind.get("memory", ("", "error"))
 
     # 3. Compile the payload
     payload = {
@@ -137,6 +194,8 @@ async def build_context(
         "character": char, # Reference to the active Character (if any)
         "rag_context": rag_context,
         "memory_context": memory_context,
+        "rag_status": rag_status,
+        "memory_status": memory_status,
     }
 
     return AgentMessage(payload=payload)

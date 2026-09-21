@@ -50,6 +50,8 @@ LOG_FORMAT=json
 
 需要分析效能時開啟 `LOG_ENABLED=true`；只想暫時看文字 debug 時可以保持效能 log 關閉，改用 `LOG_TEXT_ENABLED=true` 與 `LOG_LEVEL=DEBUG`。正式環境若只想保留慢請求、fallback、retry 與錯誤，可使用 `LOG_LEVEL=WARNING`。完整欄位與流程見 [結構化效能與請求 Log 設計規格](structured_performance_logging_design_spec.md)。
 
+Async provider 的 timeout、retry、tool loop 與 Scenario RAG prewarm 設定也可在 `.env` 調整；完整變數表見 [API 設定](API.md)。預設仍維持 `KEEPER_REASONING_EFFORT=medium`、`MAX_TOOL_ITERATIONS=8` 與 lazy RAG index，避免未經 benchmark 就增加模型成本。
+
 ## 啟動
 
 ```bash
