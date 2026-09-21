@@ -6,7 +6,10 @@
 - 工作分支：feature/async-provider-performance
 - 分支基準：origin/main_v2
 - 目前基準 commit：fe02e69b9e534b6939c27f7f3e05e05e153807a4
+- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..9023551`
+- implementation checkpoint：`9023551`（`feat: migrate keeper provider flow to async I/O`）
 - 遠端分支已建立並推送：origin/feature/async-provider-performance
+- 本次 changeset 範圍是從 main tree 的 `fe02e69` 接續到 `9023551`；下次若 `main_v2` 有新 commit，先記錄新的起點，再繼續讀 patch/更新本段範圍。
 - 若 main_v2 在 PR 前有新 commit，必須重新 fetch、對齊並記錄新的 changeset 範圍。
 - 實作狀態：已開始實作；provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle 與回歸測試已納入本分支。後續仍需跑完整 static/coverage/benchmark 並在 PR 前重新對齊 `main_v2`。
 
