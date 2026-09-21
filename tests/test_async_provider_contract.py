@@ -6,7 +6,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.providers import (
+    anthropic_provider,
+    gemini_provider,
+    openai_provider,
+    shutdown_async_clients,
+)
+from app.providers.client_lifecycle import AsyncClientLifecycle
 
 
 class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
@@ -110,6 +116,39 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
         first.aclose.assert_awaited_once()
         second.aclose.assert_awaited_once()
+
+    async def test_shutdown_async_clients_attempts_all_providers_after_failure(self):
+        openai_shutdown = AsyncMock(side_effect=RuntimeError("openai close failed"))
+        anthropic_shutdown = AsyncMock()
+        gemini_shutdown = AsyncMock()
+        with patch.object(openai_provider, "shutdown_async_client", openai_shutdown), \
+                patch.object(anthropic_provider, "shutdown_async_client", anthropic_shutdown), \
+                patch.object(gemini_provider, "shutdown_async_client", gemini_shutdown), \
+                self.assertRaisesRegex(RuntimeError, "openai close failed"):
+            await shutdown_async_clients()
+
+        openai_shutdown.assert_awaited_once()
+        anthropic_shutdown.assert_awaited_once()
+        gemini_shutdown.assert_awaited_once()
+
+    async def test_lifecycle_bounds_transport_close_after_drain(self):
+        lifecycle = AsyncClientLifecycle("test", shutdown_grace_seconds=0.01)
+        client = object()
+        close_started = asyncio.Event()
+
+        async def hanging_close(_client, _owner):
+            close_started.set()
+            await asyncio.sleep(1)
+
+        await lifecycle.get_or_create(lambda: client, hanging_close)
+        started_at = asyncio.get_running_loop().time()
+        await lifecycle.shutdown(hanging_close)
+        elapsed = asyncio.get_running_loop().time() - started_at
+
+        self.assertLess(elapsed, 0.5)
+        self.assertTrue(close_started.is_set())
+        self.assertIsNone(lifecycle.current_state)
+        self.assertEqual(lifecycle.retired_states, ())
 
 
 class AsyncProviderCrossLoopTests(unittest.TestCase):

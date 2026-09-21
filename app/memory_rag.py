@@ -58,6 +58,22 @@ _B = 0.75  # BM25 length-normalization strength
 _MIN_COSINE_RELEVANCE = 0.32
 
 
+def _close_embedding_client(client: object, *, rag_kind: str) -> None:
+    """Close a synchronous embedding client without masking the RAG result."""
+    close = getattr(client, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as exc:  # noqa: BLE001 - cleanup must not break BM25 fallback.
+        observability.event(
+            "rag.embedding_client_close_failed",
+            level=logging.WARNING,
+            rag_kind=rag_kind,
+            error_type=type(exc).__name__,
+        )
+
+
 def _tokenize(text: str) -> list[str]:
     """Same scheme as app/scenario_rag.py's _tokenize — CJK runs become
     overlapping bigrams, ASCII words lowercase whole."""
@@ -79,6 +95,7 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[flo
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
         return None
+    client = None
     try:
         import openai
 
@@ -106,6 +123,9 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[flo
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
+    finally:
+        if client is not None:
+            _close_embedding_client(client, rag_kind=rag_kind)
 
 
 def _vector_norm(vec: list[float]) -> float:

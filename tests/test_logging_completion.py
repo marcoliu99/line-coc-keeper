@@ -374,11 +374,13 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch.object(discord_bot, "client", fake_client), \
                 patch.object(discord_bot.scenario_rag, "shutdown_prewarm", new_callable=AsyncMock) as shutdown_prewarm, \
+                patch.object(discord_bot.async_utils, "wait_for_background_tasks", new_callable=AsyncMock) as wait_background_tasks, \
                 patch.object(discord_bot.providers, "shutdown_async_clients", new_callable=AsyncMock) as shutdown_providers, \
                 self.assertRaises(RuntimeError):
             await discord_bot._run_bot()
 
         shutdown_prewarm.assert_awaited_once()
+        wait_background_tasks.assert_awaited_once()
         shutdown_providers.assert_awaited_once()
 
     async def test_request_metrics_have_stable_zero_defaults(self):

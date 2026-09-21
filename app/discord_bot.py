@@ -21,6 +21,7 @@ from typing import TypeVar, cast
 import discord
 
 from app import (
+    async_utils,
     config,
     db,
     help_service,
@@ -1112,7 +1113,12 @@ async def _run_bot() -> None:
             try:
                 await scenario_rag.shutdown_prewarm()
             finally:
-                await providers.shutdown_async_clients()
+                try:
+                    await async_utils.wait_for_background_tasks(
+                        config.PROVIDER_SHUTDOWN_GRACE_SECONDS
+                    )
+                finally:
+                    await providers.shutdown_async_clients()
 
 
 def main() -> None:

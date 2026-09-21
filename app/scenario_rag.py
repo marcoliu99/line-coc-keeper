@@ -48,19 +48,34 @@ from app.config import (
 )
 
 _logger = logging.getLogger(__name__)
-_prewarm_semaphore: asyncio.Semaphore | None = None
-_prewarm_loop = None
-_prewarm_tasks: set[asyncio.Task] = set()
-_prewarm_worker_tasks: set[asyncio.Task] = set()
+
+
+@dataclass
+class _PrewarmLoopState:
+    semaphore: asyncio.Semaphore
+    tasks: set[asyncio.Task]
+    worker_tasks: set[asyncio.Task]
+
+
+_prewarm_states: dict[asyncio.AbstractEventLoop, _PrewarmLoopState] = {}
+
+
+def _prewarm_state(loop: asyncio.AbstractEventLoop) -> _PrewarmLoopState:
+    state = _prewarm_states.get(loop)
+    if state is None:
+        state = _PrewarmLoopState(
+            semaphore=asyncio.Semaphore(SCENARIO_RAG_PREWARM_MAX_CONCURRENT),
+            tasks=set(),
+            worker_tasks=set(),
+        )
+        _prewarm_states[loop] = state
+    return state
 
 
 async def _prewarm_index(group_id: str, scenario_text: str) -> None:
-    global _prewarm_semaphore, _prewarm_loop
     loop = asyncio.get_running_loop()
-    if _prewarm_semaphore is None or _prewarm_loop is not loop:
-        _prewarm_semaphore = asyncio.Semaphore(SCENARIO_RAG_PREWARM_MAX_CONCURRENT)
-        _prewarm_loop = loop
-    async with _prewarm_semaphore:
+    state = _prewarm_state(loop)
+    async with state.semaphore:
         # Yield once so a just-finished upload can send its confirmation before
         # the optional, low-priority embedding work begins.
         await asyncio.sleep(0)
@@ -70,8 +85,20 @@ async def _prewarm_index(group_id: str, scenario_text: str) -> None:
             # call, so shutdown tracks the worker explicitly and gives it the
             # same bounded grace period as provider requests.
             worker = asyncio.create_task(asyncio.to_thread(get_index, group_id, scenario_text))
-            _prewarm_worker_tasks.add(worker)
-            worker.add_done_callback(_prewarm_worker_tasks.discard)
+            state.worker_tasks.add(worker)
+
+            def _consume_worker(done: asyncio.Task) -> None:
+                state.worker_tasks.discard(done)
+                if done.cancelled():
+                    return
+                # The wrapper normally awaits this task. If the wrapper is
+                # cancelled while the thread continues, consume the late
+                # exception here so loop shutdown cannot report an orphaned
+                # task. The wrapper remains responsible for the structured
+                # prewarm failure event on its normal path.
+                done.exception()
+
+            worker.add_done_callback(_consume_worker)
             await asyncio.shield(worker)
             observability.event("rag.prewarm.completed", rag_kind="scenario", status="success")
         except asyncio.CancelledError:
@@ -88,37 +115,45 @@ def schedule_index_prewarm(group_id: str, scenario_text: str) -> asyncio.Task | 
     """Schedule optional scenario index/embedding work after activation."""
     if not SCENARIO_RAG_ENABLED or not SCENARIO_RAG_PREWARM_ENABLED or not scenario_text.strip():
         return None
+    state = _prewarm_state(asyncio.get_running_loop())
     task = asyncio.create_task(_prewarm_index(group_id, scenario_text))
-    _prewarm_tasks.add(task)
-    task.add_done_callback(_prewarm_tasks.discard)
+    state.tasks.add(task)
+    task.add_done_callback(state.tasks.discard)
     return task
 
 
 async def shutdown_prewarm() -> None:
     """Cancel wrappers and wait a bounded time for their thread workers."""
-    tasks = tuple(_prewarm_tasks)
-    for task in tasks:
-        if not task.done():
-            task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    workers = tuple(_prewarm_worker_tasks)
-    if not workers:
+    loop = asyncio.get_running_loop()
+    state = _prewarm_states.get(loop)
+    if state is None:
         return
-    done, pending = await asyncio.wait(workers, timeout=PROVIDER_SHUTDOWN_GRACE_SECONDS)
-    for task in done:
-        # Consume a late worker exception even if the wrapper was cancelled.
-        async_utils.observe_background_task(task, operation="rag.prewarm")
-    if pending:
-        observability.event(
-            "rag.prewarm.shutdown_degraded",
-            level=logging.ERROR,
-            rag_kind="scenario",
-            status="timeout",
-            timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
-        )
-        for task in pending:
+    try:
+        tasks = tuple(state.tasks)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        workers = tuple(state.worker_tasks)
+        if not workers:
+            return
+        done, pending = await asyncio.wait(workers, timeout=PROVIDER_SHUTDOWN_GRACE_SECONDS)
+        for task in done:
+            # Consume a late worker exception even if the wrapper was cancelled.
             async_utils.observe_background_task(task, operation="rag.prewarm")
+        if pending:
+            observability.event(
+                "rag.prewarm.shutdown_degraded",
+                level=logging.ERROR,
+                rag_kind="scenario",
+                status="timeout",
+                timeout_ms=PROVIDER_SHUTDOWN_GRACE_SECONDS * 1000,
+            )
+            for task in pending:
+                async_utils.observe_background_task(task, operation="rag.prewarm")
+    finally:
+        _prewarm_states.pop(loop, None)
 
 
 def _log_group_id(group_id: str) -> str:
@@ -247,6 +282,22 @@ _EMBEDDING_BATCH_SIZE = 100  # conservative — well under OpenAI's per-request
 # instead of risking one oversized request failing outright.
 
 
+def _close_embedding_client(client: object, *, rag_kind: str) -> None:
+    """Close a synchronous embedding client without masking the RAG result."""
+    close = getattr(client, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as exc:  # noqa: BLE001 - cleanup must not break BM25 fallback.
+        observability.event(
+            "rag.embedding_client_close_failed",
+            level=logging.WARNING,
+            rag_kind=rag_kind,
+            error_type=type(exc).__name__,
+        )
+
+
 def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[float]] | None:
     """Best-effort: embed texts via OpenAI, batching requests so a large
     input list (a long scenario, or many fine-grained chunks) can't exceed
@@ -262,6 +313,7 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[f
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
         return None
+    client = None
     try:
         import openai
 
@@ -292,6 +344,9 @@ def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[f
         observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
                             embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
         return None
+    finally:
+        if client is not None:
+            _close_embedding_client(client, rag_kind=rag_kind)
 
 
 def _vector_norm(vec: list[float]) -> float:

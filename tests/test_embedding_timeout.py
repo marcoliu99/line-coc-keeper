@@ -13,7 +13,8 @@ from app import memory_rag, scenario_rag
 class EmbeddingClientTimeoutTests(unittest.TestCase):
     def test_scenario_embedding_client_has_real_timeout_and_no_sdk_retry(self):
         response = SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[0.1, 0.2])])
-        client = SimpleNamespace(embeddings=SimpleNamespace(create=MagicMock(return_value=response)))
+        close = MagicMock()
+        client = SimpleNamespace(embeddings=SimpleNamespace(create=MagicMock(return_value=response)), close=close)
         constructor = MagicMock(return_value=client)
         fake_openai = types.SimpleNamespace(OpenAI=constructor)
 
@@ -27,10 +28,12 @@ class EmbeddingClientTimeoutTests(unittest.TestCase):
             timeout=scenario_rag.EMBEDDING_REQUEST_TIMEOUT_SECONDS,
             max_retries=0,
         )
+        close.assert_called_once_with()
 
     def test_memory_embedding_client_has_real_timeout_and_no_sdk_retry(self):
         response = SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[0.3, 0.4])])
-        client = SimpleNamespace(embeddings=SimpleNamespace(create=MagicMock(return_value=response)))
+        close = MagicMock()
+        client = SimpleNamespace(embeddings=SimpleNamespace(create=MagicMock(return_value=response)), close=close)
         constructor = MagicMock(return_value=client)
         fake_openai = types.SimpleNamespace(OpenAI=constructor)
 
@@ -44,6 +47,7 @@ class EmbeddingClientTimeoutTests(unittest.TestCase):
             timeout=memory_rag.EMBEDDING_REQUEST_TIMEOUT_SECONDS,
             max_retries=0,
         )
+        close.assert_called_once_with()
 
 
 class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):

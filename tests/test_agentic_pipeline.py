@@ -178,6 +178,27 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         released.set()
         await asyncio.sleep(0.02)
 
+    async def test_detached_rag_worker_is_waited_by_shutdown_registry(self):
+        from app import async_utils
+
+        started = threading.Event()
+        released = threading.Event()
+
+        def blocking_worker():
+            started.set()
+            released.wait(timeout=1)
+
+        task = asyncio.create_task(asyncio.to_thread(blocking_worker))
+        async_utils.observe_background_task(task, operation="test.rag")
+        self.assertTrue(await asyncio.to_thread(started.wait, 1))
+
+        waiter = asyncio.create_task(async_utils.wait_for_background_tasks(0.5))
+        await asyncio.sleep(0.01)
+        self.assertFalse(waiter.done())
+        released.set()
+        await waiter
+        self.assertTrue(task.done())
+
     async def test_build_context_cancellation_propagates_and_observes_worker(self):
         from app import memory_rag, scenario_rag
         from app.agents import context_builder

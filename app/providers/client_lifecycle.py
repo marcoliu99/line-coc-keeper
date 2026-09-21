@@ -58,6 +58,11 @@ class AsyncClientLifecycle:
             state = self._current
             if state is None or state.loop is loop:
                 return None
+            if not state.loop.is_closed():
+                raise RuntimeError(
+                    f"{self.provider} client belongs to another active event loop; "
+                    "shut it down from its owning loop before switching"
+                )
             state.closing = True
             self._current = None
             self._retired[id(state)] = state
@@ -86,7 +91,33 @@ class AsyncClientLifecycle:
                 timeout_ms=self.shutdown_grace_seconds * 1000,
             )
         try:
-            await close(state.client, state.owner)
+            await asyncio.wait_for(
+                close(state.client, state.owner),
+                self.shutdown_grace_seconds,
+            )
+        except asyncio.TimeoutError:
+            from app import observability
+
+            observability.event(
+                "provider.shutdown.degraded",
+                level=logging.ERROR,
+                provider=self.provider,
+                status="close_timeout",
+                operation="close",
+                timeout_ms=self.shutdown_grace_seconds * 1000,
+            )
+        except Exception as exc:
+            from app import observability
+
+            observability.event(
+                "provider.shutdown.failed",
+                level=logging.ERROR,
+                provider=self.provider,
+                status="error",
+                operation="close",
+                error_type=type(exc).__name__,
+            )
+            raise
         finally:
             with self._changed:
                 state.closed = True
@@ -134,6 +165,11 @@ class AsyncClientLifecycle:
                     state = self._current
                     if state is not None and state.loop is loop and not state.closing:
                         return state.client
+                    if state is not None and state.loop is not loop and not state.loop.is_closed():
+                        raise RuntimeError(
+                            f"{self.provider} client belongs to another active event loop; "
+                            "shut it down from its owning loop before switching"
+                        )
                     if state is None:
                         return self._new_state(loop, create).client
             if wait:
@@ -161,6 +197,11 @@ class AsyncClientLifecycle:
                     if state is not None and state.loop is loop and not state.closing:
                         state.inflight += 1
                         return state.client, state
+                    if state is not None and state.loop is not loop and not state.loop.is_closed():
+                        raise RuntimeError(
+                            f"{self.provider} client belongs to another active event loop; "
+                            "shut it down from its owning loop before switching"
+                        )
                     if state is None:
                         state = self._new_state(loop, create)
                         state.inflight = 1
@@ -182,6 +223,7 @@ class AsyncClientLifecycle:
         close: Callable[[Any, Any], Awaitable[None]],
     ) -> None:
         """Block new acquisitions, drain current requests, then close."""
+        loop = asyncio.get_running_loop()
         while True:
             with self._changed:
                 if self._shutting_down:
@@ -192,6 +234,10 @@ class AsyncClientLifecycle:
                     state = self._current
                     if state is None:
                         return
+                    if state.loop is not loop and not state.loop.is_closed():
+                        raise RuntimeError(
+                            f"{self.provider} shutdown must run on the owning event loop"
+                        )
                     self._shutting_down = True
                     state.closing = True
                     self._current = None
