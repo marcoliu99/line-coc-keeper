@@ -6,13 +6,13 @@
 - 工作分支：feature/async-provider-performance
 - 分支基準：origin/main_v2
 - 目前基準 commit：fe02e69b9e534b6939c27f7f3e05e05e153807a4
-- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..aa93898`
-- 前一個 implementation checkpoint：`7155fc6`（`fix: close async provider review gaps`）
-- 本輪 review-fix checkpoint：`aa93898`（`fix: close async provider lifecycle review gaps`）。
+- 目前 implementation changeset：`fe02e69b9e534b6939c27f7f3e05e05e153807a4..6dc2ee0`
+- 前一個 implementation checkpoint：`aa93898`（`fix: close async provider lifecycle review gaps`）
+- 本輪 review-fix checkpoint：`6dc2ee0`（`fix: address async provider PR review feedback`）。
 - 遠端分支已建立並推送：origin/feature/async-provider-performance
-- 本次 changeset 範圍是從 main tree 的 `fe02e69` 接續到 implementation checkpoint `aa93898`；下次若 `main_v2` 有新 commit，先記錄新的起點，再繼續讀 patch/更新本段範圍。
+- 本次 changeset 範圍是從 main tree 的 `fe02e69` 接續到 implementation checkpoint `6dc2ee0`；下次若 `main_v2` 有新 commit，先記錄新的起點，再繼續讀 patch/更新本段範圍。
 - 若 main_v2 在 PR 前有新 commit，必須重新 fetch、對齊並記錄新的 changeset 範圍。
-- 實作狀態：已完成 provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle、取消 recovery marker、request identity 與 provider lifecycle/RAG fallback/cancellation/shutdown review fixes。`ruff check .`、`mypy app`、`python3 -m compileall -q app tests` 均通過；`pytest -q` 為 321 passed、1 skipped，`pytest --cov=app --cov-report=term-missing -q` 為 58%；benchmark 仍屬部署前的效能驗證工作，PR 前仍須重新對齊 `main_v2`。
+- 實作狀態：已完成 provider、Keeper/Agent async boundary、retry/timeout、RAG gather、Discord operation timeout、prewarm lifecycle、取消 recovery marker、request identity、provider lifecycle/RAG fallback/cancellation/shutdown review fixes，以及 PR review 的 bounded recovery-marker persistence 與可終止 prewarm worker。`ruff check .`、`mypy app`、`python3 -m compileall -q app tests` 均通過；`pytest -q` 為 323 passed、1 skipped，`pytest --cov=app --cov-report=term-missing -q` 為 58%；benchmark 仍屬部署前的效能驗證工作，PR 前仍須重新對齊 `main_v2`。
 
 ## 1. 背景與問題
 
@@ -323,9 +323,12 @@ Discord 層只在確定可以安全說明狀態時送出 timeout/cancelled 提�
 
 read-only tool 若已進入同步 worker，timeout/cancel 不會假裝停止底層 thread；
 呼叫端立即返回 partial/cancelled，但會掛上 background task observer，消費
-worker 最終結果或例外，避免未處理 task。真正的 embedding HTTP client 也設定
+worker 最終結果或例外，避免未處理 task。state-mutating tool 若超過 graceful
+等待時間，原 mutation worker 與 recovery-marker worker 都各自被 observer 追蹤；
+marker persistence 只等待一個 bounded grace period，不會因重新取得同一個 state
+lock 而讓 cancellation 無限期卡住。真正的 embedding HTTP client 也設定
 `timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS` 與 `max_retries=0`，使外層
-`asyncio.to_thread` timeout 不會成為唯一的網路保護。
+worker timeout 不會成為唯一的網路保護。
 
 #### Timeout fallback
 
@@ -484,7 +487,7 @@ fallback result 沒有可跨 source 比較的共同品質尺度。每個 source 
 雙側都不可用時不向玩家假稱有檢索結果，也不因 RAG optional failure 直接
 丟棄整個 LLM turn。
 
-Embedding API 目前仍透過同步 OpenAI embedding client 放在 `asyncio.to_thread`；
+Embedding API 目前仍透過同步 OpenAI embedding client 放在受管理的 worker；
 client 本身設定 request timeout/no SDK retry，讓同步 HTTP worker 具有真實網路
 上限；每次 embedding operation 結束後都在 `finally` 關閉同步 client，且 cleanup
 失敗不會覆蓋 BM25 fallback 或已取得的結果。BM25
@@ -504,9 +507,11 @@ Prewarm policy：
   shutdown 只處理目前 loop 的 prewarm，不把 asyncio task 或 semaphore 帶到另一個
   loop。底層 worker 若已超時仍由 observer 消費 late result/exception。
 - bot shutdown 取消尚未開始的 prewarm，等待已開始的 embedding batch 進入
-  timeout/recovery；prewarm wrapper 與實際 `to_thread` worker 分開追蹤，並在
-  shutdown grace period 內等待 worker；不新增 psutil 依賴，也不以不可靠的固定 OOM MB threshold
-  作為 correctness gate。
+  timeout/recovery；prewarm wrapper 與實際 worker 分開追蹤。prewarm 使用獨立的
+  `ProcessPoolExecutor`，不佔用 asyncio default executor；超過 shutdown grace
+  時由 process executor terminate worker，避免 `asyncio.run` 在 loop teardown
+  再等待 default executor 的長時間 join。不新增 psutil 依賴，也不以不可靠的固定
+  OOM MB threshold 作為 correctness gate。
 
 ### 5.7 Discord output 與使用者體感
 
@@ -598,7 +603,8 @@ request_id/turn_id，只增加 attempt，不建立新的 logical request：
 - scenario index memory/disk cache、prewarm 成功/失敗、lazy rebuild 有測試。
 - embedding client 將 timeout/no-retry 參數傳給 SDK，並在成功、失敗、timeout
   路徑執行同步 client close；prewarm worker shutdown 有 bounded grace 與 late
-  exception observer 測試，bot shutdown 也會等待 RAG/tool 的 detached worker registry。
+  exception observer 測試，bot shutdown 也會等待 RAG/tool 的 detached worker registry；
+  prewarm process 超時會被 terminate，不依賴 default executor teardown。
 - active combat 仍不啟動 proactive RAG。
 - source status 為 empty/fallback/timeout/error/cancelled 時，不注入虛假的
   RAG context；雙側失敗仍能繼續正常 LLM turn。
@@ -696,10 +702,11 @@ asyncio.to_thread(provider.run_conversation) 而不記錄原因。
 12. RAG：補上 query embedding status contract；proactive context 不接受 query
     embedding failure 的 BM25 結果；timeout/cancel 的 to_thread worker 交由
     observer/background registry 管理，parent cancellation 重新傳播；同步
-    embedding client 在 finally cleanup。
+    embedding client 在 finally cleanup；prewarm 使用可終止的獨立 process worker。
 13. Observability/shutdown：`CancelledError` 產生明確 cancelled span；bot
     runner 使用 nested finally 保證 cleanup chain，並在 provider shutdown 前
-    bounded wait detached background tasks。
+    bounded wait detached background tasks；recovery marker 與原 mutation worker
+    均有 bounded/observed cancellation path。
 
 仍維持兩項不在本次預設變更的調參決策：
 
