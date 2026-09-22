@@ -18,6 +18,7 @@ sys.modules.setdefault(
 from app import combat, keeper
 from app import legacy_commands as commands
 from app.commands import router
+from app.commands.handlers import system as system_handler
 from app.models import Character, GroupState
 
 
@@ -249,18 +250,24 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(fake_provider.calls[0][1]["previous_response_id"])
 
     async def test_kp_ooc_lifecycle_cleanup_commands(self):
+        # Exercises the real /coc kp, /coc end, /coc newgame dispatch path
+        # (app.commands.handlers.system.handle_system_command) rather than the
+        # orphaned app.legacy_commands._handle_coc_command it used to call —
+        # see docs/specs/bug-remove-dead-legacy-coc-command-handler.md.
         async def noop_dm(*args):
             raise AssertionError("DM should not be called")
 
         async def noop_image(*args):
             raise AssertionError("image should not be called")
 
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(system_handler) as store:
             state = GroupState(group_id="g", kp_assistant_user_id="kp")
             state.kp_ooc_log = [{"role": "kp_assistant", "content": "old kp"}]
             store.put(state)
             reply = ReplyCollector()
-            await commands._handle_coc_command("g", "kp", reply, noop_dm, noop_image, noop_image, "/coc kp quit")
+            await system_handler.handle_system_command(
+                "g", "kp", reply, noop_dm, noop_image, noop_image, ["/coc", "kp", "quit"]
+            )
             saved = store.get("g")
             self.assertEqual(saved.kp_assistant_user_id, "")
             self.assertEqual(saved.kp_ooc_log, [])
@@ -270,7 +277,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             state.log = [{"role": "user", "content": "formal log stays"}]
             store.put(state)
             reply = ReplyCollector()
-            await commands._handle_coc_command("g", "someone", reply, noop_dm, noop_image, noop_image, "/coc end")
+            await system_handler.handle_system_command(
+                "g", "someone", reply, noop_dm, noop_image, noop_image, ["/coc", "end"]
+            )
             saved = store.get("g")
             self.assertFalse(saved.active)
             self.assertEqual(saved.kp_assistant_user_id, "")
@@ -281,7 +290,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             state.kp_ooc_log = [{"role": "assistant", "content": "residue"}]
             store.put(state)
             reply = ReplyCollector()
-            await commands._handle_coc_command("g", "new-kp", reply, noop_dm, noop_image, noop_image, "/coc kp")
+            await system_handler.handle_system_command(
+                "g", "new-kp", reply, noop_dm, noop_image, noop_image, ["/coc", "kp"]
+            )
             saved = store.get("g")
             self.assertEqual(saved.kp_assistant_user_id, "new-kp")
             self.assertEqual(saved.kp_ooc_log, [])
@@ -290,7 +301,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             state.kp_ooc_log = [{"role": "kp_assistant", "content": "to reset"}]
             store.put(state)
             reply = ReplyCollector()
-            await commands._handle_coc_command("g", "anyone", reply, noop_dm, noop_image, noop_image, "/coc newgame")
+            await system_handler.handle_system_command(
+                "g", "anyone", reply, noop_dm, noop_image, noop_image, ["/coc", "newgame"]
+            )
             self.assertEqual(store.get("g").kp_ooc_log, [])
 
     async def test_pdf_success_clears_kp_ooc_log_but_parse_failure_does_not(self):
