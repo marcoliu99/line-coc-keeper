@@ -1883,7 +1883,7 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     for key, value in (pregen.get("extra_fields") or {}).items():
         if value not in (None, "", [], {}):
             lines.append(f"{key}：{value}")
-    if pregen.get("claimed_by"):
+    if pregen.get("claimed_by") or pregen.get("claimed"):
         lines.append("（此角色已被選走）")
     return "\n".join(lines)
 

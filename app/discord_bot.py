@@ -1325,10 +1325,26 @@ async def _run_bot() -> None:
                     await providers.shutdown_async_clients()
 
 
+def warn_if_privacy_isolation_disabled() -> None:
+    """spec §12 item #6: doesn't block startup (a KP may have a legitimate
+    local/dev reason to flip this), but a silent per-call WARNING deep in
+    spoiler_policy is easy to miss — surface it once, loudly, at boot."""
+    if config.PRIVACY_ISOLATION_ENABLED:
+        return
+    _logger.warning(
+        "PRIVACY_ISOLATION_ENABLED=false — 玩家私訊、秘密目標、戰鬥隱藏資訊等隱私保護"
+        "已全部停用，不建議用於正式營運環境。"
+    )
+    observability.event(
+        "privacy.isolation.disabled", level=logging.WARNING, reason="startup_config"
+    )
+
+
 def main() -> None:
     if not DISCORD_BOT_TOKEN:
         raise SystemExit("尚未設定 DISCORD_BOT_TOKEN，請檢查 .env")
     logging_config.configure_logging()
+    warn_if_privacy_isolation_disabled()
     asyncio.run(_run_bot())
 
 

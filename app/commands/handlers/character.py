@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from app import creation, pregen_extractor
+from app import creation, pregen_extractor, spoiler_policy
 from app.legacy_commands import (
     Reply,
     SendDM,
@@ -284,7 +284,10 @@ async def handle_character_command(
         if not (1 <= idx <= len(state.pregens)):
             await reply(f"編號超出範圍，目前有 {len(state.pregens)} 位預製角色。")
             return False
-        await reply(_pregen_full_sheet_text(state.pregens[idx - 1], idx))
+        # §7.2: allowlist-redact before this goes to the whole channel — never
+        # emits secret_goal, claimed_by's real user id, or unvetted extra_fields.
+        pregen_view = spoiler_policy.redact_public_pregen(state.pregens[idx - 1])
+        await reply(_pregen_full_sheet_text(pregen_view, idx))
         return True
 
     if sub == "usepregen":

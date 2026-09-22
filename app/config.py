@@ -213,6 +213,17 @@ LOG_SLOW_OPERATION_MS = _env_int("LOG_SLOW_OPERATION_MS", 1000)
 LOG_HASH_IDENTIFIERS = _env_bool("LOG_HASH_IDENTIFIERS", True)
 LOG_INCLUDE_USAGE = _env_bool("LOG_INCLUDE_USAGE", True)
 
+# Spoiler protection hardening (docs/spoiler-protection-hardening_design_spec.md)
+# — two independent switches. SPOILER_PROTECTION_ENABLED gates "劇情揭露節奏"
+# mechanisms (chapter gating, KP-only/public digest split, NPC/Narrator/scenario
+# spoiler prompt rules, the public-reply output guard, /coc index, /coc pregen);
+# a KP may turn it off for a freeform session or debugging. PRIVACY_ISOLATION_ENABLED
+# gates "資料歸屬" mechanisms (private DMs, secret goals, private handouts/images,
+# combat/damage info hidden from players) — leave this on in production; it's
+# only meant to be relaxed for local development. See app/spoiler_policy.py.
+SPOILER_PROTECTION_ENABLED = _env_bool("SPOILER_PROTECTION_ENABLED", True)
+PRIVACY_ISOLATION_ENABLED = _env_bool("PRIVACY_ISOLATION_ENABLED", True)
+
 # Reusable parsed PDF scenarios (separate from per-conversation state).
 SCENARIO_LIBRARY_DIR = Path(os.environ.get('SCENARIO_LIBRARY_DIR', str(DATA_DIR.parent / 'scenarios')))
 SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)

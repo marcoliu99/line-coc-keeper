@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from app import dice, observability
+from app import dice, observability, spoiler_policy
 from app.check_identity import new_check_id
 from app.models import (
     ArmorRule,
@@ -1121,6 +1121,9 @@ def end_combat(state: GroupState) -> None:
 
 
 def status_text(state: GroupState, include_private: bool = False) -> str:
+    # §3.4 mechanism #7: with privacy isolation off, enemy HP/armor/abilities
+    # are treated as always visible, regardless of what the caller asked for.
+    include_private = include_private or not spoiler_policy.is_privacy_isolation_enabled()
     combat = state.combat
     if not combat.active or not combat.order:
         return "目前沒有進行中的戰鬥。"

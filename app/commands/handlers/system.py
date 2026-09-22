@@ -15,6 +15,7 @@ from app import (
     scenario_rag,
     scene_digest,
     scene_map,
+    spoiler_policy,
 )
 from app.config import IMPORT_DIR
 from app.legacy_commands import (
@@ -225,7 +226,13 @@ async def handle_system_command(
         except KeyError:
             await reply("找不到這筆場景摘要。")
             return
-        await reply(str(digest_entry.get("public", {})))
+        # §7.3 mechanism #5: with spoiler protection off, show the whole
+        # entry (including the KP-only `private` block) rather than just the
+        # public-facing formatter's slice.
+        if spoiler_policy.is_spoiler_protection_enabled():
+            await reply(str(digest_entry.get("public", {})))
+        else:
+            await reply(str(digest_entry))
         return
 
     if sub == "scenario":
@@ -536,6 +543,19 @@ async def handle_system_command(
         save_state(state)
         if not index_data["npcs"] and not index_data["locations"]:
             await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
+            return
+        # §7.1: only the KP Assistant/Discord Keeper sees the full index
+        # (HP/abilities); everyone else gets names only.
+        is_privileged = state.kp_assistant_user_id == user_id or is_keeper
+        if spoiler_policy.is_spoiler_protection_enabled() and not is_privileged:
+            safe_index = spoiler_policy.redact_public_scenario_index(index_data)
+            lines = [f"已重新建立劇本索引：{len(index_data['npcs'])} 個 NPC／怪物、{len(index_data['locations'])} 個地點。"]
+            for n in safe_index["npcs"]:
+                lines.append(f"・{n.get('name') or '未知存在'}")
+            await reply(
+                "\n".join(lines)
+                + "\n\n（詳細數值僅供 KP Assistant／Discord Keeper 查看，一般玩家只會看到已登場的名稱。）"
+            )
             return
         lines = [f"已重新建立劇本索引：{len(index_data['npcs'])} 個 NPC／怪物、{len(index_data['locations'])} 個地點。"]
         for n in index_data["npcs"]:

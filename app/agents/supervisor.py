@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app import keeper
+from app import keeper, spoiler_policy
 from app.agents import (
     assistant,
     context_builder,
@@ -96,6 +96,17 @@ async def run_turn(
         _logger.warning(f"Narrative validation failed: {error_reason}. Triggering Guard Agent (Attempt {attempts + 1}).")
         reply_text = await guard.run_repair(message, reply_text, error_reason)
         attempts += 1
+
+    # 7. Spoiler output guard (§6 of the spoiler-protection-hardening spec) —
+    # separate from the Rule Validator/Guard Agent loop above, which only
+    # checks for system leaks/formatting. This is a deterministic scan for
+    # kp_only facts/clues and secret goals; a hit gets a fixed neutral
+    # fallback rather than another LLM repair attempt (see spoiler_policy).
+    spoiler_check = spoiler_policy.sanitize_public_text(
+        reply_text, spoiler_policy.collect_protected_terms(state)
+    )
+    if not spoiler_check.is_safe:
+        reply_text = spoiler_check.fallback_text or reply_text
 
     # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
     # pending_checks/combat/etc.) already happened inside the Executor's
