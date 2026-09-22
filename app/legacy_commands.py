@@ -1131,7 +1131,10 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         pending = state.pending_checks.pop(user_id, None)
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
         if pending:
-            pending_timeline_id = str(pending.get("timeline_id", "")).strip()
+            # Treat explicit null as an absent legacy timeline.  Converting it
+            # with str(...) would produce "None" and incorrectly reject the
+            # otherwise valid pending entry.
+            pending_timeline_id = str(pending.get("timeline_id") or "").strip()
             if pending_timeline_id and pending_timeline_id != timeline_id:
                 observability.event(
                     "check.result.stale",
@@ -1498,7 +1501,7 @@ def _resolve_luck_decision_deterministically(
             return _CheckResolution(reply_text="找不到你的角色。")
 
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
-        pending_timeline_id = str(pending.get("timeline_id", "")).strip()
+        pending_timeline_id = str(pending.get("timeline_id") or "").strip()
         if pending_timeline_id and pending_timeline_id != timeline_id:
             observability.event(
                 "luck.result.stale",

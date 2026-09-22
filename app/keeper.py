@@ -1148,6 +1148,27 @@ def _refresh_state_snapshot(state: GroupState) -> GroupState:
     return state
 
 
+def _save_state_checked(state: GroupState, *, reason: str) -> None:
+    """Persist state and make failures observable without swallowing them.
+
+    ``save_state`` raises on SQLite/serialization/revision failures; it does
+    not return a success flag.  Keep that fail-closed contract, but emit a
+    structured event before re-raising so callers never mistake a failed
+    canonical commit for a successful Discord response.
+    """
+    try:
+        save_state(state, reason=reason)
+    except Exception as exc:
+        observability.event(
+            "state.save.failed",
+            level=logging.ERROR,
+            reason=reason,
+            error_type=type(exc).__name__,
+            group_id_hash=observability.safe_identifier(state.group_id),
+        )
+        raise
+
+
 @overload
 def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], _StateMutation[_T]]) -> _T: ...
 @overload
@@ -1179,7 +1200,7 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
             should_save = result.should_save
             result = result.value
         if should_save:
-            save_state(latest_state, reason="tool")
+            _save_state_checked(latest_state, reason="tool")
         _sync_state_snapshot(state, latest_state)
     return result
 
@@ -1281,7 +1302,7 @@ def _commit_turn_result(
             latest_state.openai_previous_response_timeline_id = (
                 latest_state.timeline_id or f"legacy-{latest_state.group_id}"
             )
-        save_state(latest_state, reason="turn")
+        _save_state_checked(latest_state, reason="turn")
         _sync_state_snapshot(state, latest_state)
         return True
 
@@ -1316,7 +1337,7 @@ def _commit_kp_ooc_turn_result(
             ]
         )
         latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
-        save_state(latest_state, reason="kp_ooc")
+        _save_state_checked(latest_state, reason="kp_ooc")
         _sync_state_snapshot(state, latest_state)
         return True
 

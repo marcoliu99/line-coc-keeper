@@ -64,6 +64,22 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertEqual(persisted.timeline_id, timeline_id)
         self.assertEqual(persisted.openai_previous_response_timeline_id, "")
 
+    def test_canonical_save_failure_is_fail_closed_and_observable(self) -> None:
+        state = GroupState("save-failure", timeline_id="timeline-save")
+        group_state.save_state(state)
+
+        with patch.object(keeper, "save_state", side_effect=OSError("disk full")), \
+                patch.object(keeper.observability, "event") as event, \
+                self.assertRaises(OSError):
+            keeper._commit_turn_result(
+                state,
+                [{"role": "assistant", "content": "must not be treated as saved"}],
+                timeline_id="timeline-save",
+            )
+
+        self.assertTrue(any(call.args[0] == "state.save.failed" for call in event.call_args_list))
+        self.assertEqual(group_state.load_state(state.group_id).log, [])
+
     def test_memory_isolated_by_timeline_and_retry_is_idempotent(self) -> None:
         self.assertTrue(memory_rag.append_memory(
             "memory-group", "舊時間線的地下室紙條", timeline_id="timeline-old",
@@ -174,10 +190,19 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertFalse(_check_button_matches_pending("p1", {"type": "skill", "skill": "偵查"}, "", "legacy-g"))
         self.assertFalse(_check_button_matches_pending("p1", None, "check-new", "timeline-a"))
 
+        # Explicit null is how some legacy/migrated JSON payloads represent
+        # an absent timeline.  It must retain the same compatibility behavior
+        # as an omitted field, rather than becoming the literal string
+        # "None" and rejecting the button.
+        legacy_null_pending = {"type": "skill", "check_id": "check-new", "timeline_id": None}
+        self.assertTrue(_check_button_matches_pending("p1", legacy_null_pending, "check-new", "timeline-a"))
+
         decision = {"decision_id": "decision-new", "timeline_id": "timeline-a"}
         compact_decision_id = compact_identity_token("decision", "p1", "decision-new", "timeline-a")
         self.assertTrue(_luck_button_matches_pending("p1", decision, compact_decision_id, "timeline-a"))
         self.assertFalse(_luck_button_matches_pending("p1", decision, compact_decision_id, "timeline-b"))
+        legacy_null_decision = {"decision_id": "decision-new", "timeline_id": None}
+        self.assertTrue(_luck_button_matches_pending("p1", legacy_null_decision, "decision-new", "timeline-a"))
 
     def test_discord_identity_token_keeps_component_id_under_limit(self) -> None:
         try:

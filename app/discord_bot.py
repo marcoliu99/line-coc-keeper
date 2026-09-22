@@ -476,7 +476,10 @@ def _check_button_matches_pending(
     """Return whether a persisted CheckButton still names this pending check."""
     if not pending:
         return False
-    persisted_timeline_id = str(pending.get("timeline_id", "")).strip()
+    # Older/migrated payloads may explicitly contain null.  Do not turn that
+    # into the literal string "None": an absent timeline is the legacy
+    # compatibility value, while a non-empty value must match exactly.
+    persisted_timeline_id = str(pending.get("timeline_id") or "").strip()
     if persisted_timeline_id and persisted_timeline_id != timeline_id:
         return False
     current_id = effective_check_id(owner_id, pending, timeline_id)
@@ -615,11 +618,18 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             # Keeper or narration step raises.  Restore any newly-created
             # buttons even on that exceptional path, but only after the
             # conversation lock has been released by the async-with above.
-            if before_pending is not None and before_luck_pending is not None:
+            if before_pending is not None or before_luck_pending is not None:
                 try:
-                    await _post_pending_buttons(
-                        messageable, self.conversation_id, before_pending, before_luck_pending
-                    )
+                    if before_pending is None or before_luck_pending is None:
+                        _logger.error(
+                            "pending button snapshots were not captured as a pair for check callback "
+                            "conversation_id=%s",
+                            self.conversation_id,
+                        )
+                    else:
+                        await _post_pending_buttons(
+                            messageable, self.conversation_id, before_pending, before_luck_pending
+                        )
                 except Exception:
                     _logger.exception(
                         "failed to restore pending buttons after check callback failure for conversation_id=%s",
@@ -691,7 +701,9 @@ def _luck_button_matches_pending(
 ) -> bool:
     if not decision:
         return False
-    persisted_timeline_id = str(decision.get("timeline_id", "")).strip()
+    # See _check_button_matches_pending: null is an absent legacy timeline,
+    # not the identity string "None".
+    persisted_timeline_id = str(decision.get("timeline_id") or "").strip()
     if persisted_timeline_id and persisted_timeline_id != timeline_id:
         return False
     current_id = effective_decision_id(owner_id, decision, timeline_id)
@@ -792,11 +804,18 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
                     _send_dm_image, split_roll_feedback=True, acquire_legacy_for_keeper=False
                 )
         finally:
-            if before_pending is not None and before_luck_pending is not None:
+            if before_pending is not None or before_luck_pending is not None:
                 try:
-                    await _post_pending_buttons(
-                        messageable, self.conversation_id, before_pending, before_luck_pending
-                    )
+                    if before_pending is None or before_luck_pending is None:
+                        _logger.error(
+                            "pending button snapshots were not captured as a pair for Luck callback "
+                            "conversation_id=%s",
+                            self.conversation_id,
+                        )
+                    else:
+                        await _post_pending_buttons(
+                            messageable, self.conversation_id, before_pending, before_luck_pending
+                        )
                 except Exception:
                     _logger.exception(
                         "failed to restore pending buttons after Luck callback failure for conversation_id=%s",
