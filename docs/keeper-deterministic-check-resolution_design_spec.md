@@ -6,7 +6,8 @@
 - Base changeset: `b87625094a20fc7954ad1d05680c7987d0904812`
 - Working branch base before this correction: `d841c7a7f4a6f20199add6bd392ce66c4a325f9d`
 - Superseded implementation: `7f9a042` incorrectly made Keeper/system own the rolls.
-- Correction implementation changeset: pending
+- Correction implementation changeset: `1169b41` (`fix: make autoroll group-toggleable by all players`)
+- Effective review range: `b87625094a20fc7954ad1d05680c7987d0904812..1169b41`
 - This document records the corrected ownership model for the existing state-isolation branch.
 
 ## Problem and goal
