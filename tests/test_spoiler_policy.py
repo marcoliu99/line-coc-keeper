@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from app import combat, discord_bot, keeper, spoiler_policy
@@ -107,6 +109,36 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         self.assertIn("條件式旁白", prompt)
         self.assertIn("你手上的「劇本內容」是只有你知道的機密資料", prompt)
 
+    def test_static_prompt_keeps_secret_goal_rule_when_spoiler_off_but_privacy_on(self):
+        """Regression test for a code-review finding: the two switches must
+        stay independent. Disabling SPOILER_PROTECTION_ENABLED alone must not
+        also strip the private-info/secret-goal prompt rules — those are
+        privacy isolation's job (§2.3 mechanisms #1/#2), and with the output
+        guard also off in this configuration there's no second line of
+        defense if the prompt stopped saying not to leak them.
+
+        Uses full sentence fragments unique to each rule, not bare words like
+        "秘密目標" or "send_private_info" — both also appear in unrelated,
+        always-on bullets elsewhere in the prompt (the "★ 關鍵背景連結" bullet
+        and the TOOLS schema respectively), so a bare substring check there
+        would pass regardless of which switch is on."""
+        state = GroupState("group-independent-switches")
+        with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False), \
+                patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
+            prompt = keeper._build_static_prompt(state)
+        self.assertIn("只有你知道、只屬於那位玩家的私人動機", prompt)
+        self.assertIn("反推出私人資訊", prompt)
+        self.assertNotIn("條件式旁白", prompt)
+
+    def test_static_prompt_drops_secret_goal_rule_when_privacy_off(self):
+        state = GroupState("group-privacy-off")
+        with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
+                patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
+            prompt = keeper._build_static_prompt(state)
+        self.assertNotIn("只有你知道、只屬於那位玩家的私人動機", prompt)
+        self.assertNotIn("反推出私人資訊", prompt)
+        self.assertIn("條件式旁白", prompt)
+
     def test_combat_damage_filter_hides_enemy_fields_when_enabled(self):
         result = {"ok": True, "side": "enemy", "hp": 3, "armor_absorbed": 2, "final_damage": 5}
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
@@ -153,6 +185,47 @@ class PrivacyIsolationSwitchTests(unittest.TestCase):
             text = combat.status_text(state, include_private=False)
         self.assertNotIn("HP 未公開", text)
 
+    def test_scenario_image_visibility_gated_by_privacy_isolation_switch(self):
+        """§3.4 mechanism #3: search_scenario_images/show_scenario_image route
+        their public/kp_only check through spoiler_policy.filter_public_record
+        (see app/keeper.py's _scenario_allowed_chapter_ids callers) — confirm
+        the switch actually reaches that code path, not just
+        filter_public_record in isolation."""
+        with tempfile.TemporaryDirectory() as temp:
+            original_library_dir = keeper.scenario_library.SCENARIO_LIBRARY_DIR
+            keeper.scenario_library.SCENARIO_LIBRARY_DIR = Path(temp)
+            try:
+                text = (
+                    "--- 第 1 頁 ---\n調查員：陳墨\nSTR 65 DEX 75 SAN 55\n"
+                    "--- 第 2 頁 ---\n[圖片內容描述：一張地圖]\n"
+                )
+                scenario_id = keeper.scenario_library.save_scenario(
+                    b"%PDF-1.4 fake", title="Privacy Switch Test", filename="t.pdf", preview=text[:200],
+                    text=text, indexes={}, pregens=[], page_maps={2: {"id": "map-2"}},
+                    page_images={1: b"page-1", 2: b"page-2"},
+                )
+                state = GroupState(group_id="g-privacy-switch")
+                state.scenario_library_id = scenario_id
+                state.context_chapter_ids = ["chapter-01"]
+
+                # search_scenario_images/show_scenario_image operate solely on
+                # the `state` argument passed below — no load_state/save_state
+                # mock needed (they never call either).
+                with patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
+                    player_search = keeper._execute_tool(
+                        state, "search_scenario_images", {}, [], [], speaker_role="player"
+                    )
+                    self.assertEqual(
+                        sorted(a["type"] for a in player_search["assets"]), ["character_sheet", "map"]
+                    )
+
+                    player_show_sheet = keeper._execute_tool(
+                        state, "show_scenario_image", {"page_number": 1}, [], [], speaker_role="player"
+                    )
+                    self.assertTrue(player_show_sheet["ok"])
+            finally:
+                keeper.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
+
 
 class ProtectedTermCollectionTests(unittest.TestCase):
     def test_collect_protected_terms_gathers_secret_goals_and_kp_only_content(self):
@@ -176,6 +249,35 @@ class ProtectedTermCollectionTests(unittest.TestCase):
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False):
             terms = spoiler_policy.collect_protected_terms(state)
         self.assertEqual(terms, [])
+
+    def test_collect_protected_terms_drops_short_common_words(self):
+        """Code-review finding: an unqualified short kp_only fact/clue like
+        "地下室" or "市長" would otherwise block every later, ordinary mention
+        of that word for the rest of the session."""
+        state = GroupState("group-terms-short")
+        state.established_facts.append({"text": "市長", "visibility": "kp_only"})
+        state.known_clues.append({"text": "地下室", "visibility": "kp_only"})
+        state.known_clues.append({"text": "地下室有一道密門通往下水道", "visibility": "kp_only"})
+        with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
+            terms = spoiler_policy.collect_protected_terms(state)
+        self.assertNotIn("市長", terms)
+        self.assertNotIn("地下室", terms)
+        self.assertIn("地下室有一道密門通往下水道", terms)
+
+    def test_collect_protected_terms_excludes_secrets_later_disclosed_publicly(self):
+        """Code-review finding: a KP who wants to disclose a previously
+        kp_only fact/clue has no reveal command — the only path today is
+        recording the exact same wording again with visibility="public".
+        This must actually stop the old kp_only entry from still blocking
+        replies, or that workaround is useless."""
+        state = GroupState("group-terms-disclosed")
+        state.established_facts.append({"text": "幕後黑手其實是市長本人", "visibility": "kp_only"})
+        state.established_facts.append({"text": "幕後黑手其實是市長本人", "visibility": "public"})
+        state.known_clues.append({"text": "地下室藏著一本日記", "visibility": "kp_only"})
+        with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
+            terms = spoiler_policy.collect_protected_terms(state)
+        self.assertNotIn("幕後黑手其實是市長本人", terms)
+        self.assertIn("地下室藏著一本日記", terms)
 
 
 class PregenAndIndexCommandTests(unittest.TestCase):

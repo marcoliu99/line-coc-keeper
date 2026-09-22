@@ -1648,6 +1648,15 @@ def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
             _maintenance_in_flight.discard(group_id)
 
 
+def _scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:
+    """§3.4 mechanism #4: chapter gating is spoiler protection, not privacy —
+    disabled means any chapter's images are searchable. Shared by
+    search_scenario_images/show_scenario_image below."""
+    if not spoiler_policy.is_spoiler_protection_enabled():
+        return None
+    return set(state.context_chapter_ids)
+
+
 def _execute_tool(
     state: GroupState,
     name: str,
@@ -2469,18 +2478,11 @@ def _execute_tool(
         if name == "search_scenario_images":
             if not state.scenario_library_id:
                 return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-            # §3.4 mechanism #4: chapter gating is spoiler protection, not
-            # privacy — off means any chapter's images are searchable.
-            allowed_chapter_ids = (
-                set(state.context_chapter_ids)
-                if spoiler_policy.is_spoiler_protection_enabled()
-                else None
-            )
             assets = scenario_library.search_images(
                 state.scenario_library_id,
                 query=tool_input.get("query", ""),
                 image_type=tool_input.get("image_type", ""),
-                allowed_chapter_ids=allowed_chapter_ids,
+                allowed_chapter_ids=_scenario_allowed_chapter_ids(state),
             )
             # KP-only assets (see scenario_library._build_image_assets — currently
             # character_sheet pages, which may be NPC/villain stat blocks or a
@@ -2491,30 +2493,29 @@ def _execute_tool(
             # below should let them actually pull it up. §3.4 mechanism #3: this
             # ownership/visibility filter is privacy isolation, not spoiler
             # protection.
-            if speaker_role != "kp_assistant" and spoiler_policy.is_privacy_isolation_enabled():
-                assets = [a for a in assets if a.get("visibility", "public") == "public"]
+            if speaker_role != "kp_assistant":
+                if spoiler_policy.is_privacy_isolation_enabled():
+                    assets = [a for a in (spoiler_policy.filter_public_record(a) for a in assets) if a is not None]
+                else:
+                    # One WARNING per search call, not one per asset — a
+                    # library can have dozens of images, and filter_public_record
+                    # itself logs per-record (see its docstring).
+                    observability.event(
+                        "privacy.isolation.disabled", level=logging.WARNING, fn="search_scenario_images"
+                    )
             return {"ok": True, "assets": [{key: asset.get(key) for key in ("id", "page", "type", "tags", "description", "visibility")} for asset in assets]}
 
         if name == "show_scenario_image":
             if not state.scenario_library_id:
                 return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
             page = int(tool_input["page_number"])
-            allowed_chapter_ids = (
-                set(state.context_chapter_ids)
-                if spoiler_policy.is_spoiler_protection_enabled()
-                else None
-            )
             assets = scenario_library.search_images(
-                state.scenario_library_id, allowed_chapter_ids=allowed_chapter_ids
+                state.scenario_library_id, allowed_chapter_ids=_scenario_allowed_chapter_ids(state)
             )
             asset = next((item for item in assets if item.get("page") == page), None)
             if asset is None:
                 return {"ok": False, "error": "該圖片不在目前章節 Context，不能展示"}
-            if (
-                asset.get("visibility", "public") != "public"
-                and speaker_role != "kp_assistant"
-                and spoiler_policy.is_privacy_isolation_enabled()
-            ):
+            if speaker_role != "kp_assistant" and spoiler_policy.filter_public_record(asset) is None:
                 return {"ok": False, "error": "這一頁是 KP 專用資料，不能在一般遊戲流程中展示給玩家"}
             image_investigator: str = tool_input.get("investigator") or ""
             image_owner_id: str | None = None
@@ -2648,34 +2649,56 @@ def _spoiler_protection_prompt_rules() -> dict[str, str]:
     part of the same cached static prompt, so they're gated together by one
     SPOILER_PROTECTION_ENABLED check rather than three separate ones. Returns
     empty strings when disabled, which _build_static_prompt simply drops into
-    otherwise-unrelated bullet lists as blank lines."""
+    otherwise-unrelated bullet lists as blank lines.
+
+    Deliberately does NOT include the private-info/secret-goal rules — those
+    are §2.3 mechanisms #1/#2 (privacy isolation, not spoiler pacing) and live
+    in _privacy_isolation_prompt_rules() below instead, so a KP relaxing this
+    switch alone (spec §3.2: the two switches are independent) can't
+    accidentally also strip the instructions protecting player privacy — see
+    the code-review finding this split was written to fix."""
     if not spoiler_policy.is_spoiler_protection_enabled():
         observability.event(
             "spoiler.protection.disabled", level=logging.DEBUG, fn="_build_static_prompt"
         )
-        return {"scenario_secrecy": "", "private_info_and_metanarration": "", "npc_ally_secrecy": ""}
+        return {"scenario_secrecy": "", "metanarration": "", "npc_ally_secrecy": ""}
     return {
         "scenario_secrecy": (
             "- 你手上的「劇本內容」是只有你知道的機密資料。絕對不要主動把劇本裡的謎底、幕後真相或"
             "玩家尚未發現的資訊直接告訴玩家，要透過調查、檢定、線索慢慢揭露。"
         ),
-        "private_info_and_metanarration": (
-            "- 有些資訊只該讓特定調查員知道（秘密檢定結果、只有他發現的線索、私人物品內容等），這種時候呼叫\n"
-            "  send_private_info 私下告訴那位玩家，不要寫進公開回覆裡；公開回覆一樣要正常描述當下場景，\n"
-            "  只是用中性、不劇透的方式帶過那個角色在做什麼，不要讓其他玩家從公開內容反推出私人資訊是什麼。\n"
+        "metanarration": (
             "- **絕對不要在公開回覆裡寫出任何形式的「後設說明」或「條件式旁白」**，例如「（如果骨董商在場，這裡\n"
             "  就會認出這是卡西迪——但目前無人認得他）」這種句子。這種寫法就算沒直接講出答案，也已經洩漏了「這裡\n"
             "  有東西可以被特定人物認出來」這個事實本身，等於變相劇透。正確做法：如果符合條件的角色真的在場，\n"
             "  直接用 send_private_info 告訴那位玩家他認出了什麼；如果沒有符合條件的角色在場，就完全不要提這件事，\n"
             "  當作沒發生過，等以後有對的人在場、或用其他方式調查到才揭露。公開回覆只寫玩家角色們實際上看到、\n"
-            "  聽到、感受到的內容，不要有任何括號旁白解釋你身為守密人知道但玩家不知道的事。\n"
-            "- 角色卡上如果附了「秘密目標」，那是只有你知道、只屬於那位玩家的私人動機，不要在公開回覆裡提到；\n"
-            "  可以在適當時機透過劇情發展或 NPC 對話委婉暗示、引導那位玩家往那個方向行動，但不要直接講白。"
+            "  聽到、感受到的內容，不要有任何括號旁白解釋你身為守密人知道但玩家不知道的事。"
         ),
         "npc_ally_secrecy": (
             "- 絕對不能借 NPC 隊友的嘴講出守密人專屬的真相、最佳路線、怪物弱點或劇本結構；NPC 隊友如果要分析情況，\n"
             "  一定要包裝成「他自己的猜測」，而且這個猜測可以是錯的，需要的話讓他自己去問劇本裡的 NPC、查資料、\n"
             "  或呼叫 skill_check 才能真的拿到資訊，跟玩家角色一樣要走正常流程。"
+        ),
+    }
+
+
+def _privacy_isolation_prompt_rules() -> dict[str, str]:
+    """§2.3 mechanisms #1/#2 (private-info delivery / secret-goal secrecy)
+    prompt rules — gated by PRIVACY_ISOLATION_ENABLED, independent of
+    SPOILER_PROTECTION_ENABLED above. Returns empty strings when disabled."""
+    if not spoiler_policy.is_privacy_isolation_enabled():
+        observability.event(
+            "privacy.isolation.disabled", level=logging.WARNING, fn="_build_static_prompt"
+        )
+        return {"private_info_and_secret_goal": ""}
+    return {
+        "private_info_and_secret_goal": (
+            "- 有些資訊只該讓特定調查員知道（秘密檢定結果、只有他發現的線索、私人物品內容等），這種時候呼叫\n"
+            "  send_private_info 私下告訴那位玩家，不要寫進公開回覆裡；公開回覆一樣要正常描述當下場景，\n"
+            "  只是用中性、不劇透的方式帶過那個角色在做什麼，不要讓其他玩家從公開內容反推出私人資訊是什麼。\n"
+            "- 角色卡上如果附了「秘密目標」，那是只有你知道、只屬於那位玩家的私人動機，不要在公開回覆裡提到；\n"
+            "  可以在適當時機透過劇情發展或 NPC 對話委婉暗示、引導那位玩家往那個方向行動，但不要直接講白。"
         ),
     }
 
@@ -2742,6 +2765,7 @@ def _build_static_prompt(state: GroupState) -> str:
 呼叫 search_memory 工具去查更早、還沒被壓縮掉的原始對話內容，不要直接說忘記了或自己編一個答案。"""
     persona_block = state.keeper_persona.strip() or DEFAULT_PERSONA
     _spoiler_rules = _spoiler_protection_prompt_rules()
+    _privacy_rules = _privacy_isolation_prompt_rules()
     return f"""你是一位主持《克蘇魯的呼喚》第七版（Call of Cthulhu 7th Edition）跑團的守密人（Keeper），正在 Discord 頻道中透過文字對話主持一場遊戲。
 
 # 行為準則
@@ -2816,7 +2840,8 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色 HP 降到 0 時描述瀕死或死亡過程；SAN 降到 0 時描述永久性失常的下場。
 - COC7e 重傷規則：如果 adjust_character 扣血後回傳結果裡有 `major_wound`，預設已替玩家建立 CON
   檢定，必須要求玩家用 `/coc check CON`；只有 autoroll 開啟才直接照 `major_wound_check` 結果描述後果。
-{_spoiler_rules['private_info_and_metanarration']}
+{_privacy_rules['private_info_and_secret_goal']}
+{_spoiler_rules['metanarration']}
 - 角色卡標示「（暫離）」代表玩家目前不在，不管是不是在戰鬥中，都不需要特別等他、也不要主動描述
   他的角色在做什麼；照常推進其他人的劇情就好，他回來（狀態變回正常）之後再自然地把他寫回場景裡。
 - 角色卡如果標示「★ 關鍵背景連結」，代表那是這個角色最重要的一段個人連結（人、地、物）。不能不由分說就

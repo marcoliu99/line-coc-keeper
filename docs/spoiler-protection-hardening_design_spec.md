@@ -525,4 +525,15 @@ Facts/clues/scenario index/image asset 新增或正規化欄位：
 6. ~~`PRIVACY_ISOLATION_ENABLED=false` 的預期使用情境是什麼？是否應強制 `true`？~~ **已確認採方案 B**：不阻擋啟動（保留本機開發/除錯彈性），但 `app/discord_bot.py:main()` 在 `PRIVACY_ISOLATION_ENABLED=false` 時，於啟動當下記錄一次醒目的 `_logger.warning()` + `privacy.isolation.disabled` observability 事件，避免這件事被埋在運行期間才觸發的個別函式 log 裡而被忽略。
 7. ~~`SPOILER_PROTECTION_ENABLED=false` 是否也該在正式環境跳出 warning？~~ **已確認維持方案 A（現狀）**：不加啟動檢查，因為這一層本來就設計給 KP 依場次調整，風險等級（提前看到劇情）遠低於 `PRIVACY_ISOLATION_ENABLED`（玩家隱私外洩）。
 
+### 12.1 PR review 後追加修正（v3 實作階段）
+
+以下是 PR review（`/code-review`）針對已實作程式碼發現、並在同一次實作中修正的問題：
+
+1. **兩層開關耦合 bug（嚴重）**：`_spoiler_protection_prompt_rules()` 原本把「私人資訊/秘密目標不外洩」（機制 #1/#2，本應歸 `PRIVACY_ISOLATION_ENABLED`）跟「條件式旁白/元敘事」（純劇透，機制 #9/#10/#11）混在同一個 key 裡，用 `SPOILER_PROTECTION_ENABLED` 一起控制。後果：KP 只想放寬劇情揭露節奏（`SPOILER_PROTECTION_ENABLED=false`）但仍要保護玩家隱私（`PRIVACY_ISOLATION_ENABLED=true`）時，秘密目標/私人資訊的 prompt 規則會被意外一併移除，而此時 output guard 也同時停用，等於沒有第二道防線。已拆成獨立的 `_privacy_isolation_prompt_rules()`，兩者互不影響。
+2. **`filter_public_record`/`filter_player_record` 沒有任何呼叫點**：`app/keeper.py` 的 `search_scenario_images`/`show_scenario_image` 原本各自內聯判斷 visibility，沒有走這兩個為此而寫的集中式函式。已讓兩處改用 `filter_public_record()`；`filter_player_record()` 目前仍無呼叫點——查證後確認是因為專案的 image asset 目前只有 `public`/`kp_only` 兩種 visibility（`scenario_library.py` 從未賦值 `player_private`），docstring 已改為誠實說明保留原因，不是死代碼。
+3. **`allowed_chapter_ids` 判斷式重複兩次**：抽成共用 helper `_scenario_allowed_chapter_ids(state)`。
+4. **`filter_public_record` 逐筆呼叫造成 log 洗版**：`search_scenario_images` 原本讓每個 asset 都各自呼叫一次 `filter_public_record`，`PRIVACY_ISOLATION_ENABLED=false` 時等於每張圖都打一次 WARNING log。改成先判斷一次開關狀態，disabled 時整批直接放行 + 只打一次 log。
+5. **kp_only term 過短造成誤傷（`collect_protected_terms`）**：一個像「地下室」「市長」這種簡短/常見的 kp_only fact/clue，會讓之後任何提到這個詞的正常敘述都被 output guard 擋下。已加入最小長度過濾（`_MIN_PROTECTED_TERM_LENGTH = 4`）——這是權宜緩解，不是真正的修法（真正的修法是 item #1 的 scenario entity dictionary，仍是 follow-up）。
+6. **已揭露的秘密仍永久被擋（`collect_protected_terms`）**：`record_established_fact`/`record_clue` 沒有 promotion/removal 操作，KP 想揭露一個 kp_only 秘密時，即使照原文再記錄一次 `visibility="public"`，舊的 kp_only 版本仍然留在保護清單裡持續攔截。已讓 `collect_protected_terms()` 排除「文字內容後來被完全相同地以 public 重新記錄」的項目，讓「重新記錄一次 public 版本」成為一個可行的揭露手段——但仍然要求文字逐字相同，措辭不同的揭露、部分揭露仍會被擋；完整的 disclosure-tracking 機制維持 item #4 的決定，留給後續 spec。
+
 本文件 review 通過前，不開始修改 runtime code。

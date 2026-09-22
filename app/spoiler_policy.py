@@ -117,14 +117,47 @@ def sanitize_public_text(text: str, protected_terms: Sequence[str]) -> SpoilerCh
         return SpoilerCheckResult(is_safe=False, fallback_text=_NEUTRAL_FALLBACK_TEXT)
 
 
+# A term shorter than this is dropped from the protected-term list before
+# sanitize_public_text() ever sees it (code-review finding: an unqualified
+# raw kp_only fact/clue like "地下室" or "市長" would otherwise turn every
+# later, perfectly ordinary mention of that word into a blocked reply for the
+# rest of the session — record_established_fact/record_clue impose no
+# minimum length or marker format on what a KP writes). This is a blunt
+# mitigation, not a real fix (spec §12 item #1's "scenario entity dictionary"
+# is the real fix, deferred to a follow-up); it trades away protection for
+# genuinely short secrets to stop the common case of an everyday word being
+# treated as a leak marker.
+_MIN_PROTECTED_TERM_LENGTH = 4
+
+
 def collect_protected_terms(state: Any) -> list[str]:
     """Gathers the machine-readable secret markers sanitize_public_text()
     checks a reply against: player secret goals and kp_only facts/clues.
     Scoped to what GroupState actually tracks today — spec §12 open item #1
     ("scenario entity dictionary") is left for a follow-up once scenario data
-    carries per-entity chapter/visibility tags beyond images."""
+    carries per-entity chapter/visibility tags beyond images.
+
+    Two known limitations, both flagged by code review and left as-is rather
+    than half-fixed here (spec §12 item #4 defers a real reveal/disclosure
+    mechanism to a follow-up spec):
+
+    1. Terms shorter than _MIN_PROTECTED_TERM_LENGTH are dropped (see above).
+    2. A kp_only fact/clue whose exact text was later re-recorded as public
+       (e.g. the KP narrating a discovery and logging it again with
+       visibility="public") is excluded — this lets a KP "disclose" a secret
+       by re-recording its exact wording as public, but only if the wording
+       matches exactly; anything short of a real disclosure-tracking system
+       (a differently-worded reveal, a partial reveal) still gets blocked."""
     if not is_spoiler_protection_enabled():
         return []
+    disclosed_publicly: set[str] = set()
+    for fact in getattr(state, "established_facts", []):
+        if fact.get("visibility", Visibility.PUBLIC.value) == Visibility.PUBLIC.value and fact.get("text"):
+            disclosed_publicly.add(fact["text"])
+    for clue in getattr(state, "known_clues", []):
+        if clue.get("visibility", Visibility.PUBLIC.value) == Visibility.PUBLIC.value and clue.get("text"):
+            disclosed_publicly.add(clue["text"])
+
     terms: list[str] = []
     for character in state.active_characters():
         if character.secret_goal:
@@ -135,7 +168,7 @@ def collect_protected_terms(state: Any) -> list[str]:
     for clue in getattr(state, "known_clues", []):
         if clue.get("visibility") == Visibility.KP_ONLY.value and clue.get("text"):
             terms.append(clue["text"])
-    return terms
+    return [t for t in terms if len(t) >= _MIN_PROTECTED_TERM_LENGTH and t not in disclosed_publicly]
 
 
 def redact_public_pregen(pregen: Mapping[str, Any]) -> dict[str, Any]:
@@ -197,9 +230,15 @@ def filter_public_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def filter_player_record(record: Mapping[str, Any], owner_id: str) -> dict[str, Any] | None:
     """A record is visible to `owner_id` if it's public, or player_private and
-    they're the owner. Used for private handout/image visibility checks
-    (mechanism #3) — see app/keeper.py's search_scenario_images/
-    show_scenario_image."""
+    they're the owner.
+
+    Not currently called anywhere: today's only image-asset visibility values
+    are "public"/"kp_only" (see app/scenario_library.py — nothing assigns
+    player_private), so app/keeper.py's search_scenario_images/
+    show_scenario_image use the plain public/non-public split
+    (filter_public_record + a speaker_role check) instead. This is kept for
+    the day a handout/image actually needs per-owner player_private
+    visibility — don't remove it just because it's unused today."""
     if not is_privacy_isolation_enabled():
         observability.event(
             "privacy.isolation.disabled", level=logging.WARNING, fn="filter_player_record"
