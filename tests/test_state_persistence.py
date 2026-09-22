@@ -168,6 +168,48 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertIn("待處理的劇本上傳", replies[0])
         load_context.assert_not_called()
 
+    def test_scenario_use_clears_timeline_bound_player_decisions(self):
+        state = GroupState("discord-group-scenario-reset", kp_assistant_user_id="kp", timeline_id="timeline-old")
+        state.pending_checks["player"] = {"type": "skill", "timeline_id": "timeline-old"}
+        state.pending_luck_decisions["player"] = {"timeline_id": "timeline-old"}
+        state.deterministic_check_results["old"] = {"timeline_id": "timeline-old"}
+        context = {
+            "manifest": {"title": "New scenario"},
+            "text": "new scenario text",
+            "active_chapter_id": "chapter-1",
+            "context_chapter_ids": ["chapter-1"],
+            "indexes": {"npcs": [], "locations": []},
+            "pregens": [],
+            "scene_maps": {},
+            "page_numbers": [],
+        }
+        replies = []
+
+        async def reply(text):
+            replies.append(text)
+
+        with patch.object(system_handler, "load_state", return_value=state), \
+                patch.object(system_handler.scenario_library, "load_context", return_value=context), \
+                patch.object(system_handler, "save_state"), \
+                patch.object(system_handler, "clear_page_images"), \
+                patch.object(system_handler.scenario_library, "copy_context_images"), \
+                patch.object(system_handler.scenario_rag, "schedule_index_prewarm"):
+            asyncio.run(system_handler.handle_system_command(
+                state.group_id,
+                "kp",
+                reply,
+                None,
+                None,
+                None,
+                ["/coc", "scenario", "use", "new-scenario"],
+            ))
+
+        self.assertEqual(replies, ["KP 已選擇《New scenario》；目前 Context：chapter-1。"])
+        self.assertNotEqual(state.timeline_id, "timeline-old")
+        self.assertEqual(state.pending_checks, {})
+        self.assertEqual(state.pending_luck_decisions, {})
+        self.assertEqual(state.deterministic_check_results, {})
+
     def test_pdf_choice_requires_kp_or_keeper(self):
         state = GroupState("discord-group-pdf-auth", kp_assistant_user_id="kp")
         state.pending_pdf_upload = {"scenario_id": "upload"}
@@ -290,8 +332,17 @@ class StatePersistenceTests(unittest.TestCase):
         group_state.save_state(first)
         group_state.save_state(second)
 
+        # A stale legacy row may lack conversation_id, but its group-prefixed
+        # key still makes ownership unambiguous.  An unscoped row without
+        # either signal must remain untouched for safety.
+        db.set_json("characters", "group-a:retired-owner", {"sheet": {"name": "old"}})
+        db.set_json("characters", "unscoped-legacy", {"sheet": {"name": "keep"}})
+        group_state.save_state(first)
+
         self.assertEqual(db.get_json("characters", "group-a:same-user")["name"], "Ada A")
         self.assertEqual(db.get_json("characters", "group-b:same-user")["name"], "Ada B")
+        self.assertIsNone(db.get_json("characters", "group-a:retired-owner"))
+        self.assertIsNotNone(db.get_json("characters", "unscoped-legacy"))
 
     def test_scene_digest_keeps_same_named_active_characters_separate(self):
         state = GroupState("group-same-name")

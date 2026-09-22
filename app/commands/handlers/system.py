@@ -330,6 +330,13 @@ async def handle_system_command(
             # memory, and provider results must not bleed into this scenario.
             old_timeline_id = state.timeline_id or f"legacy-{conversation_id}"
             state.timeline_id = f"timeline-{uuid4().hex[:8]}"
+            # All player decisions and deterministic-result caches belong to
+            # the previous scenario timeline.  Clear them at the reset point
+            # so an old Discord button or typed command cannot be consumed by
+            # the newly selected scenario.
+            state.pending_checks.clear()
+            state.pending_luck_decisions.clear()
+            state.deterministic_check_results.clear()
             observability.event(
                 "provider.chain.reset",
                 reason="scenario_use",

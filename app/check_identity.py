@@ -38,3 +38,22 @@ def effective_check_id(owner_id: str, pending: dict[str, Any], timeline_id: str)
 def effective_decision_id(owner_id: str, decision: dict[str, Any], timeline_id: str) -> str:
     explicit = str(decision.get("decision_id", "")).strip()
     return explicit or _legacy_id("decision", owner_id, timeline_id, decision)
+
+
+def compact_identity_token(kind: str, owner_id: str, identity: str, timeline_id: str) -> str:
+    """Return a short transport token for a Discord component custom_id.
+
+    Discord limits component ``custom_id`` values to 100 characters.  Full
+    persisted check/decision IDs plus a Discord channel and owner ID can
+    exceed that limit, especially for legacy IDs.  This token is only a
+    transport representation: callbacks still load the current GroupState
+    and compare the token against the authoritative persisted identity and
+    timeline.  It must therefore never be used as the persisted ID itself.
+    """
+    if kind not in {"check", "decision"}:
+        raise ValueError(f"unsupported identity kind: {kind!r}")
+    prefix = "c" if kind == "check" else "d"
+    digest = hashlib.sha256(
+        f"{kind}|{owner_id}|{timeline_id}|{identity}".encode()
+    ).hexdigest()[:12]
+    return f"{prefix}{digest}"

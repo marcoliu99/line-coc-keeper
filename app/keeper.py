@@ -34,7 +34,7 @@ from app import (
     scenario_rag,
     scene_digest,
 )
-from app.check_identity import new_check_id, new_decision_id
+from app.check_identity import effective_check_id, new_check_id, new_decision_id
 from app.config import (
     LLM_PROVIDER,
     LOG_SLOW_OPERATION_MS,
@@ -1403,11 +1403,22 @@ def _persist_memory_maintenance_state(
     with locks.get_state_lock(group_id), db.transaction() as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT data FROM group_states WHERE key = ?", (group_id,)).fetchone()
-        latest_state = (
-            GroupState.from_dict(json.loads(row[0]))
-            if row is not None
-            else GroupState(group_id=group_id)
-        )
+        if row is None:
+            latest_state = GroupState(group_id=group_id)
+        else:
+            try:
+                latest_state = GroupState.from_dict(json.loads(row[0]))
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+                observability.event(
+                    "maintenance.commit_skipped",
+                    level=logging.WARNING,
+                    reason="corrupt_group_state",
+                    source_revision=source_revision,
+                    requested_timeline_id=timeline_id,
+                    idempotency_key_hash=idempotency_hash,
+                    error_type=type(exc).__name__,
+                )
+                return "corrupt_group_state"
         latest_timeline_id = latest_state.timeline_id or f"legacy-{group_id}"
         if latest_timeline_id != timeline_id:
             observability.event(
@@ -1435,7 +1446,12 @@ def _persist_memory_maintenance_state(
                 existing_chunks = json.loads(memory_row[0])
             except (TypeError, json.JSONDecodeError):
                 existing_chunks = []
-            if any(item.get("idempotency_key") == idempotency_key for item in existing_chunks):
+            if not isinstance(existing_chunks, list):
+                existing_chunks = []
+            if any(
+                isinstance(item, dict) and item.get("idempotency_key") == idempotency_key
+                for item in existing_chunks
+            ):
                 observability.event(
                     "maintenance.commit_skipped", level=logging.INFO,
                     reason="duplicate_idempotency_key", source_revision=source_revision,
@@ -1926,10 +1942,19 @@ def _execute_tool(
                         new_opts = sorted(str(o) for o in options)
                         if existing_opts == new_opts:
                             # 防守選項相同且有真實掷骰結果，重用現有結果
+                            persisted_timeline_id = target_state.timeline_id or f"legacy-{target_state.group_id}"
                             return _StateMutation({
                                 "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                                 "attacker_roll": existing.get("attacker_roll"),
                                 "attacker_tier": existing.get("attacker_tier"),
+                                # The response must carry the same stable
+                                # identity as the persisted pending entry.
+                                # Reusing a roll must not manufacture a new
+                                # check id that the button cannot consume.
+                                "check_id": effective_check_id(
+                                    target_char.owner_id, existing, persisted_timeline_id
+                                ),
+                                "timeline_id": persisted_timeline_id,
                                 "note": "防守選項相同，重用之前的掷骰結果（防重複）。",
                             }, should_save=False)
                     except (TypeError, ValueError):
@@ -3184,22 +3209,28 @@ async def _run_turn_impl(
             {"role": "user", "content": turn_message},
             {"role": "assistant", "content": final_text},
         ]
-        _commit_turn_result(
+        committed = _commit_turn_result(
             state, turn_log_entries, openai_response_id=openai_response_id,
             timeline_id=turn_timeline_id,
         )
+        if not committed:
+            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
     elif kp_turn_creates_canon:
         canonical_turn_message = _format_kp_canonical_history_message(effective_message_text, kp_canonical_tool_events)
         turn_log_entries = [
             {"role": "user", "content": canonical_turn_message},
             {"role": "assistant", "content": final_text},
         ]
-        _commit_turn_result(
+        committed = _commit_turn_result(
             state, turn_log_entries, openai_response_id=openai_response_id,
             timeline_id=turn_timeline_id,
         )
+        if not committed:
+            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
     else:
-        _commit_kp_ooc_turn_result(
+        committed = _commit_kp_ooc_turn_result(
             state, effective_message_text, final_text, timeline_id=turn_timeline_id
         )
+        if not committed:
+            return "（這次 KP Assistant 回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
     return final_text, private_messages, image_requests

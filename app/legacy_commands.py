@@ -178,6 +178,12 @@ def _apply_new_scenario(
     state.openai_previous_response_id = ""
     state.openai_previous_response_timeline_id = ""
     state.timeline_id = new_timeline_id
+    # Pending player decisions and deterministic check results are scoped to
+    # the old scenario.  Invalidate them together with the timeline so stale
+    # typed commands or Discord buttons cannot mutate the new scenario.
+    state.pending_checks.clear()
+    state.pending_luck_decisions.clear()
+    state.deterministic_check_results.clear()
     state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
     # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
     # first would find /coc start permanently refusing ("already started") for the new scenario.
@@ -1124,18 +1130,26 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         skill_arg: str | None = parts[2] if len(parts) > 2 else None
         pending = state.pending_checks.pop(user_id, None)
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
-        check_id = effective_check_id(user_id, pending, timeline_id) if pending else new_check_id()
-        action_context = str(pending.get("action_context", "")).strip() if pending else ""
-        if not action_context:
-            recent_user_message = next(
-                (
-                    str(entry.get("content", "")).strip()
-                    for entry in reversed(state.log)
-                    if entry.get("role") == "user" and str(entry.get("content", "")).strip()
-                ),
-                "",
-            )
-            action_context = recent_user_message[:237] + "..." if len(recent_user_message) > 240 else recent_user_message
+        if pending:
+            pending_timeline_id = str(pending.get("timeline_id", "")).strip()
+            if pending_timeline_id and pending_timeline_id != timeline_id:
+                observability.event(
+                    "check.result.stale",
+                    level=logging.WARNING,
+                    reason="timeline_mismatch",
+                    requested_timeline_id=pending_timeline_id,
+                    current_timeline_id=timeline_id,
+                    owner_id_hash=observability.safe_identifier(user_id),
+                )
+                save_state(state)
+                return _CheckResolution(reply_text="這個檢定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
+        # Keep the original entry separate from `pending`: a valid choice
+        # consumes the pending entry into the selected option, but its
+        # identity and action context must still follow that same persisted
+        # request.  Metadata is computed only after the skill/type match has
+        # been validated, so a mismatched command can never reuse old data for
+        # a fresh roll.
+        pending_entry = pending
 
         # A pending "choice" check (see keeper.py's offer_check_choice — e.g. 閃避
         # vs 反擊) needs the player to name one of the options; unlike the plain
@@ -1187,6 +1201,19 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     "沒有這個待處理的選擇。請使用正確的選項名稱；角色檢定由玩家用 /coc check 或按鈕擲骰。"
                 )
             )
+
+        check_id = effective_check_id(user_id, pending_entry, timeline_id) if pending_entry else new_check_id()
+        action_context = str(pending_entry.get("action_context", "")).strip() if pending_entry else ""
+        if not action_context:
+            recent_user_message = next(
+                (
+                    str(entry.get("content", "")).strip()
+                    for entry in reversed(state.log)
+                    if entry.get("role") == "user" and str(entry.get("content", "")).strip()
+                ),
+                "",
+            )
+            action_context = recent_user_message[:237] + "..." if len(recent_user_message) > 240 else recent_user_message
 
         if pending and pending.get("type") == "sanity":
             san_before = char.san
@@ -1471,8 +1498,24 @@ def _resolve_luck_decision_deterministically(
             return _CheckResolution(reply_text="找不到你的角色。")
 
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+        pending_timeline_id = str(pending.get("timeline_id", "")).strip()
+        if pending_timeline_id and pending_timeline_id != timeline_id:
+            observability.event(
+                "luck.result.stale",
+                level=logging.WARNING,
+                reason="timeline_mismatch",
+                requested_timeline_id=pending_timeline_id,
+                current_timeline_id=timeline_id,
+                owner_id_hash=observability.safe_identifier(user_id),
+            )
+            save_state(state)
+            return _CheckResolution(reply_text="這個 Luck 決定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
         decision_id = effective_decision_id(user_id, pending, timeline_id)
-        check_id = str(pending.get("check_id", "")).strip() or new_check_id()
+        # Keep the narration/result identity aligned with the persisted
+        # pending check.  Older Luck entries may not have check_id, so use the
+        # same deterministic legacy derivation as the button path instead of
+        # generating a new random id during resolution.
+        check_id = effective_check_id(user_id, pending, timeline_id)
         action_context = str(pending.get("action_context", "")).strip()[:240]
         if not action_context:
             recent_user_message = next(

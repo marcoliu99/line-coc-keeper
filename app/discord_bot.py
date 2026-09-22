@@ -32,7 +32,11 @@ from app import (
     scenario_library,
     scenario_rag,
 )
-from app.check_identity import effective_check_id, effective_decision_id
+from app.check_identity import (
+    compact_identity_token,
+    effective_check_id,
+    effective_decision_id,
+)
 from app.commands import router as command_router
 from app.commands import sudo as sudo_policy
 from app.config import (
@@ -450,18 +454,19 @@ def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
         return [("🎲 理智檢定", True, "")]
     if check.get("type") == "choice":
         return [
-            (f"選擇並擲 {o['label']}（{o['skill']} {o['skill_value']}%）", False, o["label"])
-            for o in check.get("options", [])
+            (f"選擇並擲 {o['label']}（{o['skill']} {o['skill_value']}%）", False, f"#{index}")
+            for index, o in enumerate(check.get("options", []))
         ]
     return [(f"🎲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False, "")]
 
 
-# The trailing option segment can be empty (plain check) or a Chinese option
-# label (e.g. "閃避") from offer_check_choice — [^:]* rather than \w+ so it
-# isn't restricted to ASCII word characters.
+# The trailing option segment can be empty (plain check), a compact choice
+# index (new buttons), or a Chinese option label (pre-existing buttons).
+# Full persisted IDs are accepted for backwards compatibility; new buttons
+# use compact_identity_token because Discord limits custom_id to 100 chars.
 _CHECK_BUTTON_ID_TEMPLATE = (
     r"coc_check:(?P<conversation_id>discord-channel-\d+):(?P<owner_id>\d+):"
-    r"(?:(?P<check_id>(?:check|legacy-check)-[^:]+):)?(?P<option>[^:]*)"
+    r"(?:(?P<check_id>(?:check|legacy-check)-[^:]+|c[0-9a-f]{12}):)?(?P<option>[^:]*)"
 )
 
 
@@ -471,12 +476,16 @@ def _check_button_matches_pending(
     """Return whether a persisted CheckButton still names this pending check."""
     if not pending:
         return False
+    persisted_timeline_id = str(pending.get("timeline_id", "")).strip()
+    if persisted_timeline_id and persisted_timeline_id != timeline_id:
+        return False
     current_id = effective_check_id(owner_id, pending, timeline_id)
     # A pre-identity button has no way to distinguish a replacement request
     # with the same owner/option text. It is therefore always stale; a fresh
-    # post-deploy render carries the deterministic legacy id above and can be
-    # used safely until the pending entry is consumed.
-    return bool(button_check_id and current_id == button_check_id)
+    # render carries either the full identity (legacy compatibility) or the
+    # compact token and can be used safely until the pending entry is consumed.
+    compact_id = compact_identity_token("check", owner_id, current_id, timeline_id)
+    return bool(button_check_id and button_check_id in {current_id, compact_id})
 
 
 class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
@@ -484,7 +493,8 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
 
     Ordinary checks create a button while autoroll is off. Clicking it runs
     the same player-triggered path as typing "/coc check"; autoroll is the
-    explicit KP opt-in exception. Persisted pending checks remain supported.
+    explicit group-level opt-in exception. Persisted pending checks remain
+    supported.
 
     Registered as a *dynamic* item (client.add_dynamic_items below, matched by
     the custom_id pattern above) rather than a plain per-message View, so it
@@ -543,6 +553,8 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             text = "上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。"
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
+        before_pending: dict | None = None
+        before_luck_pending: dict | None = None
         try:
             channel = interaction.channel
             if channel is None:
@@ -551,7 +563,6 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             await _edit_interaction_view(interaction, view=None)
             reply = _make_interaction_reply(interaction)
             send_image = _make_send_image(messageable)
-            command_text = f"/coc check {self.option}" if self.option else "/coc check"
             async with locks.get_conversation_lock(self.conversation_id):
                 state_before = await asyncio.to_thread(load_group_state, self.conversation_id)
                 pending = state_before.pending_checks.get(self.owner_id)
@@ -580,14 +591,40 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
                     return
                 before_pending = dict(state_before.pending_checks)
                 before_luck_pending = dict(state_before.pending_luck_decisions)
+                option = self.option
+                if pending.get("type") == "choice" and option.startswith("#"):
+                    try:
+                        option_index = int(option[1:])
+                        option = str(pending["options"][option_index]["label"])
+                    except (IndexError, KeyError, TypeError, ValueError):
+                        observability.event(
+                            "check.button.stale", level=logging.INFO,
+                            reason="invalid_choice_token",
+                            check_id=self.check_id or None,
+                            owner_id_hash=observability.safe_identifier(self.owner_id),
+                        )
+                        await _send_interaction_message(interaction, "這個檢定按鈕已經失效，請使用最新的按鈕。", ephemeral=True)
+                        return
+                command_text = f"/coc check {option}" if option else "/coc check"
                 await handle_check_command(
                     self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image,
                     command_text, split_roll_feedback=True, acquire_legacy_for_keeper=False
                 )
-            # Always attempt this, even if handle_check_command raised partway
-            # through: a check can be registered before a later tool fails.
-            await _post_pending_buttons(messageable, self.conversation_id, before_pending, before_luck_pending)
         finally:
+            # A deterministic check/luck entry may be persisted before a later
+            # Keeper or narration step raises.  Restore any newly-created
+            # buttons even on that exceptional path, but only after the
+            # conversation lock has been released by the async-with above.
+            if before_pending is not None and before_luck_pending is not None:
+                try:
+                    await _post_pending_buttons(
+                        messageable, self.conversation_id, before_pending, before_luck_pending
+                    )
+                except Exception:
+                    _logger.exception(
+                        "failed to restore pending buttons after check callback failure for conversation_id=%s",
+                        self.conversation_id,
+                    )
             locks.release_check(self.conversation_id, self.owner_id)
 
 
@@ -611,16 +648,14 @@ async def _post_check_buttons(
             continue
         try:
             current_state = await asyncio.to_thread(load_group_state, conversation_id)
-            if (
-                current_state.pending_checks.get(owner_id) != check
-                and not (current_state.state_revision == 0 and state.state_revision == 0)
-            ):
+            if current_state.pending_checks.get(owner_id) != check:
                 continue
             char = current_state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
             timeline_id = current_state.timeline_id or f"legacy-{conversation_id}"
-            check_id = effective_check_id(owner_id, check, timeline_id)
+            full_check_id = effective_check_id(owner_id, check, timeline_id)
+            check_id = compact_identity_token("check", owner_id, full_check_id, timeline_id)
             for label, danger, option in _check_button_specs(check):
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option, check_id))
             marker = f"{public_marker}\n" if public_marker else ""
@@ -646,7 +681,7 @@ _TIER_ZH = {"regular": "一般成功", "hard": "困難成功", "extreme": "極�
 # plus "skip") rather than [^:]* — nothing about it is freeform player text.
 _LUCK_BUTTON_ID_TEMPLATE = (
     r"coc_luck:(?P<conversation_id>discord-channel-\d+):(?P<owner_id>\d+):"
-    r"(?:(?P<decision_id>(?:decision|legacy-decision)-[^:]+):)?"
+    r"(?:(?P<decision_id>(?:decision|legacy-decision)-[^:]+|d[0-9a-f]{12}):)?"
     r"(?P<choice>skip|regular|hard|extreme)"
 )
 
@@ -656,11 +691,15 @@ def _luck_button_matches_pending(
 ) -> bool:
     if not decision:
         return False
+    persisted_timeline_id = str(decision.get("timeline_id", "")).strip()
+    if persisted_timeline_id and persisted_timeline_id != timeline_id:
+        return False
     current_id = effective_decision_id(owner_id, decision, timeline_id)
     # A pre-identity button cannot distinguish a replacement Luck decision,
-    # so it must not consume any pending decision. Newly rendered legacy
-    # entries use the deterministic compatibility id as their button id.
-    return bool(button_decision_id and current_id == button_decision_id)
+    # so it must not consume any pending decision. Fresh renders carry either
+    # the full identity (legacy compatibility) or the compact token.
+    compact_id = compact_identity_token("decision", owner_id, current_id, timeline_id)
+    return bool(button_decision_id and button_decision_id in {current_id, compact_id})
 
 
 class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
@@ -710,6 +749,8 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             text = "上一次的檢定還在處理中，請稍等結果出來，不要重複點擊。"
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
+        before_pending: dict | None = None
+        before_luck_pending: dict | None = None
         try:
             channel = interaction.channel
             if channel is None:
@@ -750,8 +791,17 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
                     self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image,
                     _send_dm_image, split_roll_feedback=True, acquire_legacy_for_keeper=False
                 )
-            await _post_pending_buttons(messageable, self.conversation_id, before_pending, before_luck_pending)
         finally:
+            if before_pending is not None and before_luck_pending is not None:
+                try:
+                    await _post_pending_buttons(
+                        messageable, self.conversation_id, before_pending, before_luck_pending
+                    )
+                except Exception:
+                    _logger.exception(
+                        "failed to restore pending buttons after Luck callback failure for conversation_id=%s",
+                        self.conversation_id,
+                    )
             locks.release_check(self.conversation_id, self.owner_id)
 
 
@@ -770,16 +820,14 @@ async def _post_luck_buttons(
             continue
         try:
             current_state = await asyncio.to_thread(load_group_state, conversation_id)
-            if (
-                current_state.pending_luck_decisions.get(owner_id) != decision
-                and not (current_state.state_revision == 0 and state.state_revision == 0)
-            ):
+            if current_state.pending_luck_decisions.get(owner_id) != decision:
                 continue
             char = current_state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
             timeline_id = current_state.timeline_id or f"legacy-{conversation_id}"
-            decision_id = effective_decision_id(owner_id, decision, timeline_id)
+            full_decision_id = effective_decision_id(owner_id, decision, timeline_id)
+            decision_id = compact_identity_token("decision", owner_id, full_decision_id, timeline_id)
             for option in decision["options"]:
                 label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
                 view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"], decision_id=decision_id))

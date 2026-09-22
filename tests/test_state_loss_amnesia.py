@@ -154,15 +154,123 @@ class StateLossAmnesiaTests(unittest.TestCase):
 
     def test_stale_check_button_identity_cannot_match_a_replacement(self) -> None:
         try:
-            from app.discord_bot import _check_button_matches_pending
+            from app.check_identity import compact_identity_token
+            from app.discord_bot import (
+                _check_button_matches_pending,
+                _luck_button_matches_pending,
+            )
         except ImportError:
             self.skipTest("discord.py is not installed")
 
-        pending = {"type": "skill", "check_id": "check-new", "skill": "偵查"}
+        pending = {
+            "type": "skill", "check_id": "check-new", "skill": "偵查",
+            "timeline_id": "timeline-a",
+        }
         self.assertTrue(_check_button_matches_pending("p1", pending, "check-new", "timeline-a"))
+        compact_check_id = compact_identity_token("check", "p1", "check-new", "timeline-a")
+        self.assertTrue(_check_button_matches_pending("p1", pending, compact_check_id, "timeline-a"))
         self.assertFalse(_check_button_matches_pending("p1", pending, "check-old", "timeline-a"))
+        self.assertFalse(_check_button_matches_pending("p1", pending, compact_check_id, "timeline-b"))
         self.assertFalse(_check_button_matches_pending("p1", {"type": "skill", "skill": "偵查"}, "", "legacy-g"))
         self.assertFalse(_check_button_matches_pending("p1", None, "check-new", "timeline-a"))
+
+        decision = {"decision_id": "decision-new", "timeline_id": "timeline-a"}
+        compact_decision_id = compact_identity_token("decision", "p1", "decision-new", "timeline-a")
+        self.assertTrue(_luck_button_matches_pending("p1", decision, compact_decision_id, "timeline-a"))
+        self.assertFalse(_luck_button_matches_pending("p1", decision, compact_decision_id, "timeline-b"))
+
+    def test_discord_identity_token_keeps_component_id_under_limit(self) -> None:
+        try:
+            from app.check_identity import compact_identity_token
+            from app.discord_bot import CheckButton, LuckSpendButton
+        except ImportError:
+            self.skipTest("discord.py is not installed")
+
+        conversation_id = "discord-channel-" + "9" * 18
+        owner_id = "8" * 19
+        timeline_id = "timeline-" + "a" * 32
+        check_token = compact_identity_token("check", owner_id, "check-" + "b" * 64, timeline_id)
+        decision_token = compact_identity_token("decision", owner_id, "decision-" + "c" * 64, timeline_id)
+        check_button = CheckButton(conversation_id, owner_id, "選擇並擲 閃避", option="#0", check_id=check_token)
+        luck_button = LuckSpendButton(
+            conversation_id, owner_id, "維持目前結果", "skip", decision_id=decision_token
+        )
+        self.assertLessEqual(len(check_button.item.custom_id), 100)
+        self.assertLessEqual(len(luck_button.item.custom_id), 100)
+
+    def test_corrupt_group_state_does_not_abort_memory_maintenance(self) -> None:
+        group_id = "maintenance-corrupt-state"
+        state = GroupState(group_id, timeline_id="timeline-a")
+        group_state.save_state(state)
+        with db.transaction() as conn:
+            conn.execute("UPDATE group_states SET data = ? WHERE key = ?", ("not-json", group_id))
+
+        result = keeper._persist_memory_maintenance_state(
+            group_id,
+            "摘要不應提交",
+            [{"role": "user", "content": "old"}],
+            timeline_id="timeline-a",
+            base_summary="",
+            source_revision=1,
+            idempotency_key="corrupt-state-key",
+            embedding=None,
+        )
+
+        self.assertEqual(result, "corrupt_group_state")
+        self.assertIsNone(db.get_json("memory_chunks", group_id))
+
+    def test_new_scenario_invalidates_pending_decisions_and_check_cache(self) -> None:
+        from app.legacy_commands import _apply_new_scenario
+
+        state = GroupState("scenario-reset", timeline_id="timeline-old")
+        state.pending_checks["p1"] = {"type": "skill", "timeline_id": "timeline-old"}
+        state.pending_luck_decisions["p1"] = {"timeline_id": "timeline-old"}
+        state.deterministic_check_results["old-result"] = {"timeline_id": "timeline-old"}
+
+        _apply_new_scenario(state, "new text", "New", {"npcs": [], "locations": []}, {}, [])
+
+        self.assertNotEqual(state.timeline_id, "timeline-old")
+        self.assertEqual(state.pending_checks, {})
+        self.assertEqual(state.pending_luck_decisions, {})
+        self.assertEqual(state.deterministic_check_results, {})
+
+    def test_stale_timeline_check_is_consumed_without_a_roll(self) -> None:
+        state = GroupState("stale-check", timeline_id="timeline-current", active=True)
+        state.characters["p1"] = Character(name="P1", owner_id="p1", skills={"偵查": 60})
+        state.pending_checks["p1"] = {
+            "type": "skill", "skill": "偵查", "skill_value": 60,
+            "bonus_dice": 0, "penalty_dice": 0, "timeline_id": "timeline-old",
+        }
+        group_state.save_state(state)
+
+        with patch.object(dice, "skill_check") as roll:
+            from app.legacy_commands import _resolve_check_deterministically
+
+            result = _resolve_check_deterministically("stale-check", "p1", "/coc check 偵查")
+
+        self.assertIn("時間線已經失效", result.reply_text)
+        roll.assert_not_called()
+        self.assertEqual(group_state.load_state(state.group_id).pending_checks, {})
+
+    def test_mismatched_skill_does_not_reuse_pending_identity_or_context(self) -> None:
+        state = GroupState("mismatched-check", timeline_id="timeline-current", active=True)
+        state.characters["p1"] = Character(name="P1", owner_id="p1", skills={"偵查": 60, "聆聽": 50})
+        pending = {
+            "type": "skill", "skill": "偵查", "skill_value": 60,
+            "bonus_dice": 0, "penalty_dice": 0, "check_id": "check-old",
+            "timeline_id": "timeline-current", "action_context": "調查血跡",
+        }
+        state.pending_checks["p1"] = pending
+        group_state.save_state(state)
+
+        with patch.object(dice, "skill_check") as roll:
+            from app.legacy_commands import _resolve_check_deterministically
+
+            result = _resolve_check_deterministically("mismatched-check", "p1", "/coc check 聆聽")
+
+        self.assertIn("正確的選項名稱", result.reply_text)
+        roll.assert_not_called()
+        self.assertEqual(group_state.load_state(state.group_id).pending_checks["p1"], pending)
 
 
 class MultiUserDeterministicCheckStressTests(unittest.IsolatedAsyncioTestCase):

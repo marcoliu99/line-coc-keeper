@@ -2,17 +2,18 @@
 
 ## 0. 文件狀態與 Changeset Tracking
 
-- 狀態：Implementation complete on the working branch；待整合前 final review。
+- 狀態：Implementation complete on the working branch；本次 PR review fixes 已完成，待整合前 final verification。
 - 整合目標：`main_v2`
 - 工作 branch：`fix/state-loss-amnesia-hardening`
 - 分支基準：`origin/main_v2`
 - 本次 spec 起始 changeset：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812`
-- implementation changeset：`76e319e6d4d4c87981c35447e9b71761f9af0bf1`
-- changeset range：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812` → `76e319e6d4d4c87981c35447e9b71761f9af0bf1`
-- verification：`pytest -q` 全部通過（既有 1 個 Discord 外部整合 skip）；`pytest --cov=app` 全部通過，總 coverage 59%；`ruff check app tests`、`mypy app`、`python3 -m compileall -q app tests` 全部通過。
+- implementation changeset：`9ab630c`
+- changeset range：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812` → `9ab630c`
+- verification：`pytest -q` 全部通過（既有 1 個 Discord 外部整合 skip）；`pytest --cov=app` 全部通過，總 coverage 60%；`ruff check app tests`、`mypy app`、`python3 -m compileall -q app tests` 全部通過。
 - 遠端 branch：`origin/fix/state-loss-amnesia-hardening`
 - 本文件取代先前以「maintenance stale state revision」為主要 root cause 的草稿；本次 implementation 以本文件的 correctness contract 為準，若實作採等價但較小的 code shape，必須同步更新本文件。
 - 若 `main_v2` 在實作或 PR review 期間新增 commit，必須先 fetch、重新對齊、更新本節 changeset 範圍，再繼續實作或更新 PR。
+- 本次 review follow-up 仍屬同一 changeset range；完成最新 commit 後必須把本節的 implementation changeset 與 range 更新為最新 commit，不能留下舊 hash。
 - 問題證據來源：
   - 先前 review 的 `docs/specs/bug-state-loss-amnesia.md` 草稿。
   - `/Users/marcoliu/workspace/line-coc-keeper-main-v2/.runtime/bots/profile-async.log`。
@@ -143,17 +144,21 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 3. request 排隊等待不代表 state rollback；實作必須保留 commit sequence／revision 供辨識。
 4. LLM timeout、429 或 provider failure 不得部分寫入 canonical state。
 5. `CancelledError` 不得被一般 fallback 捕捉成成功。
+6. `_commit_turn_result()` 與 `_commit_kp_ooc_turn_result()` 的 false return 表示 timeline commit gate 拒絕舊回覆；caller 不得繼續送出原始 final text、private messages 或 images，必須回傳明確的 stale-turn 訊息並要求依目前 timeline 重試。
 
 ### 3.6 Pending check 與 button identity
 
 1. 每筆 `pending_checks[owner_id]` 必須有不可變的 `check_id`；同一角色的新檢定不得沿用舊 ID。
-2. `CheckButton` 的 custom ID 必須包含 `check_id`；callback 必須在 conversation／state commit gate 中驗證目前 pending entry 的 ID 完全相同。
+2. `CheckButton` 的 custom ID 必須包含 full `check_id` 的 compact identity token；callback 必須在 conversation／state commit gate 中驗證目前 pending entry 的 full ID 與 timeline 完全相同。
 3. stale button 不得消費目前最新的另一筆檢定；只能回覆「這個按鈕已過期」並嘗試刷新目前有效按鈕。
 4. 同一個 check 的重複點擊必須是 idempotent：最多一個 request 可以消費 pending check，其餘 request 不得再次骰骰子。
 5. `pending_luck_decisions` 也必須有獨立的 `decision_id`；舊 Luck button 不得套用到新的 Luck decision。
 6. button 發送前必須以目前 state 做最後 identity check；發送後 callback 仍必須再次驗證，不能只相信發送前 snapshot。沒有 identity 的舊 button 不得消費新 pending；需要重新發布帶 identity 的 button。
 7. pending check 必須保存 bounded 的 origin metadata：`timeline_id`、建立時 revision、origin turn/request ID，以及足以描述「要檢定哪個行動」的短 context。不可把完整 prompt 或劇本全文放入 button／log。
 8. 檢定結果送回 Keeper 時，必須附帶 deterministic result、原始 skill request context 與目前 timeline；Keeper 不得靠自由回憶重新猜測玩家剛才要做的事情。
+9. Discord `custom_id` 不得超過 100 characters。完整 persisted `check_id`／`decision_id` 仍是 state 的 authoritative identity，但新按鈕只能攜帶包含 owner、timeline 與完整 identity hash 的短 transport token；callback 必須重新載入 state，以 full identity 或該 token 驗證，不能把短 token 當成 persisted ID。
+10. choice button 的 option 不得把任意長的 label 放進 `custom_id`；新按鈕使用 bounded option index，callback 在已驗證的 pending entry 中重新解析 label。舊版 raw-label button 僅作向後相容。
+11. scenario use／新劇本 upload 產生新 timeline 時，必須清除 `pending_checks`、`pending_luck_decisions` 與 deterministic check cache；resolver 仍須拒絕任何帶有不符 timeline metadata 的舊 pending entry。
 
 ## 4. 現況流程與修正後流程
 
@@ -255,8 +260,8 @@ conversation lock + state lock
       │
       ▼
 回覆玩家並發送 button
-      ├─ 發送前重新確認 check_id 仍存在
-      └─ custom_id = conversation + owner + check_id + option
+      ├─ 發送前重新確認 pending entry 完整內容仍相同
+      └─ custom_id = conversation + owner + compact identity token + bounded option index
       │
       ▼
 玩家按 button 或輸入 /coc check
@@ -284,6 +289,8 @@ Keeper narration 使用 fresh state／合法 provider chain
       ▼
 commit canonical log + response chain + background maintenance
 ```
+
+若 `handle_check_command`／Luck resolution 在 deterministic state commit 後、Keeper narration 前失敗，button callback 的 finally 仍須在 conversation lock 離開後重新執行 pending-button diff；不能因例外而讓新建立的 pending entry 永久沒有可按的 button。刷新失敗只能記錄錯誤，不能覆蓋原始例外。
 
 若產品上不希望 conversation lock 跨越 LLM narration，則必須改成持久化的 `CheckResolution` event／turn sequence，並在 Keeper narration 前以該 event 建立 fresh state；不得直接把 state lock 釋放後的舊 mutable `GroupState` instance 傳給 Keeper。
 
@@ -367,6 +374,12 @@ maintenance result:
 `action_context` 必須 bounded、適合放入 prompt；它不是完整 prompt、scenario text 或任意長度 user message。若 Keeper 沒有提供 context，resolution path 會從目前 log 取 bounded 的最近 user action；若仍沒有可驗證內容，Keeper message 使用明確的「只描述已確定結果、不要編造場景」fallback，不得假裝知道未知場景。
 
 `pending_luck_decisions` 使用同樣概念，但欄位名稱為 `decision_id`，並且保存原始 `check_id`；Luck button 的 callback 以 `decision_id` 驗證目前 decision，`check_id` 保留作為結果鏈結與 audit metadata。button 不需要把兩個 ID 都塞進 custom ID。
+
+Discord transport token 由 `kind + owner_id + timeline_id + effective identity` 的 SHA-256 digest 產生固定短值（check 以 `c` 開頭、Luck decision 以 `d` 開頭）。它只用來通過 Discord component 的長度限制；完整 ID 仍保留在 state，舊版完整 ID button 仍可被 callback 驗證。scenario reset 後 timeline 變更，即使 identity 恰好相同，舊 token 也不能通過。
+
+角色 mirror cleanup 對現代 row 使用 `conversation_id`，對沒有 metadata 的 legacy row 僅清理明確以 `<group_id>:` 開頭的 key；沒有 metadata 且沒有 group prefix 的 row 保留，避免誤刪無法判定歸屬的資料。
+
+Maintenance commit 若無法解析 authoritative `group_states` row，必須記錄 `maintenance.commit_skipped(reason=corrupt_group_state)`，不寫入 state／memory，也不得讓背景 maintenance task 以未驗證空 state 覆蓋資料。
 
 ### 5.5 Provider chain metadata
 

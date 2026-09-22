@@ -422,7 +422,8 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send):
+                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(discord_bot, "load_group_state", return_value=state):
             await discord_bot._post_luck_buttons(
                 channel,
                 "discord-channel-1",
