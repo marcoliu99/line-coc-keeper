@@ -145,6 +145,7 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 4. LLM timeout、429 或 provider failure 不得部分寫入 canonical state。
 5. `CancelledError` 不得被一般 fallback 捕捉成成功。
 6. `_commit_turn_result()` 與 `_commit_kp_ooc_turn_result()` 的 false return 表示 timeline commit gate 拒絕舊回覆；caller 不得繼續送出原始 final text、private messages 或 images，必須回傳明確的 stale-turn 訊息並要求依目前 timeline 重試。
+7. Agentic `supervisor.run_turn()` 也必須在第一個 agent await 前 capture timeline，並把同一個 `timeline_id` 傳入 canonical commit；不能只依賴 `_commit_turn_result()` 的 legacy fallback。
 
 ### 3.6 Pending check 與 button identity
 
@@ -289,6 +290,8 @@ Keeper narration 使用 fresh state／合法 provider chain
       ▼
 commit canonical log + response chain + background maintenance
 ```
+
+Agentic Supervisor 使用同一個 commit contract：`_ensure_turn_timeline(state)` 在 Context Builder 前執行並保存 `turn_timeline_id`，Executor／Narrator 完成後以該值呼叫 `_commit_turn_result(..., timeline_id=turn_timeline_id)`。若 commit gate 拒絕，Supervisor 只回傳 stale-turn 訊息，不回傳已被拒絕的 narration、private messages 或 image requests。
 
 若 `handle_check_command`／Luck resolution 在 deterministic state commit 後、Keeper narration 前失敗，button callback 的 finally 仍須在 conversation lock 離開後重新執行 pending-button diff；不能因例外而讓新建立的 pending entry 永久沒有可按的 button。刷新失敗只能記錄錯誤，不能覆蓋原始例外。
 
