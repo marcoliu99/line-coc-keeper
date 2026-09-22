@@ -56,6 +56,9 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 
 1. `memory_chunks` 目前主要以 `group_id` 尋找，缺少 `timeline_id`，因此背景 maintenance 可能將舊 timeline 的摘要寫入新 timeline 可搜尋的 memory。
 2. OpenAI Responses API 的 `openai_previous_response_id` 可能在 rollback 後沿用舊 provider conversation chain，使 canonical state 已 rollback，但模型仍讀到舊 server-side context。
+3. `pending_checks` 目前沒有可驗證的 check identity，Discord button 的 custom ID 主要只有 conversation／owner／option；按鈕在 state 被消費、替換或重新註冊後才送出／被點擊時，可能變成 stale button、無法解析，或意外套用到同一角色的新檢定。
+4. 檢定流程先在 state lock 下完成骰點與保存，再進入 Keeper narration；button path 在這兩段之間可能被其他 turn 插入，後續 narration 仍可能使用骰點當下的舊 `GroupState` snapshot。
+5. pending check 沒有保存原始「角色在什麼情境做什麼」的有限 context。當 provider response chain 或 history 不完整時，骰點結果只含「某技能、某數值、某 roll」，Keeper 會失去行動語境，因而反問玩家要在什麼場景做什麼。
 
 此外，背景 maintenance 在長時間 LLM／embedding 工作完成後才提交結果；若期間發生新回合、newgame 或 rollback，這就是 race 的衝突窗口，必須將結果視為 stale，不能靜默寫入或誤報成功。
 
@@ -67,7 +70,8 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 4. 將 stale maintenance result 明確標記為 skipped，而不是假設 state 已成功保存。
 5. 保持既有遊戲語意：角色、Luck roll、戰鬥、KP Assistant sudo、help、scenario continuity 的規則不因本修正改變。
 6. 透過測試重現並固定「maintenance 期間 newgame／rollback」的 race condition。
-7. 增加足夠 observability，使下一次可以由 `request_id`、`turn_id`、`maintenance_id`、`timeline_id` 與 revision 還原事件順序。
+7. 讓技能／SAN／choice check 的 button 與 `/coc check` 使用同一筆可驗證的 pending request，不因 stale button、重複點擊或併發 turn 而錯骰、漏骰或套用錯檢定。
+8. 增加足夠 observability，使下一次可以由 `request_id`、`turn_id`、`maintenance_id`、`check_id`、`timeline_id` 與 revision 還原事件順序。
 
 ## 2. 範圍與明確非目標
 
@@ -137,6 +141,17 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 3. request 排隊等待不代表 state rollback；實作必須保留 commit sequence／revision 供辨識。
 4. LLM timeout、429 或 provider failure 不得部分寫入 canonical state。
 5. `CancelledError` 不得被一般 fallback 捕捉成成功。
+
+### 3.6 Pending check 與 button identity
+
+1. 每筆 `pending_checks[owner_id]` 必須有不可變的 `check_id`；同一角色的新檢定不得沿用舊 ID。
+2. `CheckButton` 的 custom ID 必須包含 `check_id`；callback 必須在 conversation／state commit gate 中驗證目前 pending entry 的 ID 完全相同。
+3. stale button 不得消費目前最新的另一筆檢定；只能回覆「這個按鈕已過期」並嘗試刷新目前有效按鈕。
+4. 同一個 check 的重複點擊必須是 idempotent：最多一個 request 可以消費 pending check，其餘 request 不得再次骰骰子。
+5. `pending_luck_decisions` 也必須有獨立的 `decision_id`；舊 Luck button 不得套用到新的 Luck decision。
+6. button 發送前必須以目前 state 做最後 identity check；發送後 callback 仍必須再次驗證，不能只相信發送前 snapshot。
+7. pending check 必須保存 bounded 的 origin metadata：`timeline_id`、建立時 revision、origin turn/request ID，以及足以描述「要檢定哪個行動」的短 context。不可把完整 prompt 或劇本全文放入 button／log。
+8. 檢定結果送回 Keeper 時，必須附帶 deterministic result、原始 skill request context 與目前 timeline；Keeper 不得靠自由回憶重新猜測玩家剛才要做的事情。
 
 ## 4. 現況流程與修正後流程
 
@@ -224,6 +239,52 @@ state lock + SQLite transaction
       └─ commit gate 驗證失敗並安全丟棄，不可寫入新 timeline
 ```
 
+### 4.4 Skill check／button flow
+
+```text
+Keeper 呼叫 skill_check／sanity_check／choice
+      │
+      ▼
+conversation lock + state lock
+      ├─ 建立 check_id
+      ├─ 保存 timeline_id、origin revision、origin turn/request
+      ├─ 保存 bounded action context
+      └─ commit pending check
+      │
+      ▼
+回覆玩家並發送 button
+      ├─ 發送前重新確認 check_id 仍存在
+      └─ custom_id = conversation + owner + check_id + option
+      │
+      ▼
+玩家按 button 或輸入 /coc check
+      │
+      ▼
+同一個 conversation lock 內重新 load authoritative state
+      ├─ check_id 相同？
+      ├─ timeline_id 相同？
+      ├─ pending 尚未被消費？
+      └─ 不符合 → stale/expired response，不擲骰
+      │
+      ▼
+消費 pending + deterministic roll + save result
+      │
+      ▼
+保持同一 turn ordering，建立 Keeper result message
+      ├─ deterministic roll／tier
+      ├─ 原始 action context
+      ├─ current timeline
+      └─ 明確要求只能依既定結果敘事
+      │
+      ▼
+Keeper narration 使用 fresh state／合法 provider chain
+      │
+      ▼
+commit canonical log + response chain + background maintenance
+```
+
+若產品上不希望 conversation lock 跨越 LLM narration，則必須改成持久化的 `CheckResolution` event／turn sequence，並在 Keeper narration 前以該 event 建立 fresh state；不得直接把 state lock 釋放後的舊 mutable `GroupState` instance 傳給 Keeper。
+
 ## 5. 資料結構與 migration
 
 ### 5.1 MaintenanceRequest
@@ -277,7 +338,33 @@ class MaintenanceResult:
 
 `text` 仍不得出現在 performance log；資料庫內的既有 memory data 不因本功能自動刪除。
 
-### 5.4 Provider chain metadata
+### 5.4 Pending check payload
+
+新格式至少包含：
+
+```json
+{
+  "check_id": "check-...",
+  "timeline_id": "timeline-...",
+  "origin_revision": 123,
+  "origin_turn_id": "turn-...",
+  "origin_request_id": "request-...",
+  "type": "skill",
+  "skill": "偵查",
+  "skill_value": 60,
+  "bonus_dice": 0,
+  "penalty_dice": 0,
+  "difficulty": "regular",
+  "action_context": "在廢棄醫院調查血跡",
+  "created_at": "UTC timestamp"
+}
+```
+
+`action_context` 必須 bounded、適合放入 prompt；它不是完整 prompt、scenario text 或任意長度 user message。若 Keeper 沒有提供 context，系統應保存明確的 fallback marker，結果 narration 必須使用目前 log／scene digest 可驗證的內容，不得假裝知道未知場景。
+
+`pending_luck_decisions` 使用同樣概念，但欄位名稱為 `decision_id`，並且必須引用原始 `check_id`；Luck button 的 callback 同時驗證兩者。
+
+### 5.5 Provider chain metadata
 
 `GroupState` 必須能判斷 stored response chain 所屬 timeline。可採用下列任一等價實作，但實作前需在 code review 中固定一種：
 
@@ -286,7 +373,7 @@ class MaintenanceResult:
 
 缺少 chain timeline metadata 的 legacy state 不得直接信任其 response ID；migration 應清除該 ID，讓下一次 turn 建立新 chain。
 
-### 5.5 Legacy migration policy
+### 5.6 Legacy migration policy
 
 1. 先對 SQLite 做 backup，再進行 payload migration。
 2. 沒有 `timeline_id` 的既有 memory chunk 標記為 `legacy_unscoped=true`，預設不進入目前 RAG prompt。
@@ -335,6 +422,20 @@ conversation lock
 | validation success | 寫入 | 寫入 | transaction commit |
 
 「不寫」必須對應明確的 `maintenance.commit.skipped` event，不得回報 `state_saved=true`。
+
+### 6.4 Pending check commit gate
+
+技能檢定與按鈕是另一條短生命週期的 state transaction，必須使用相同的 freshness 原則：
+
+1. 先取得 conversation lock，再讀取 state；不得只依賴 button 發送時的 snapshot。
+2. 驗證 `check_id`／`decision_id`、owner、timeline 與 pending type。
+3. 驗證成功後才可消費 pending、執行一次 deterministic roll 並保存。
+4. 保存後產生一個不可變的 check result event，供 Keeper narration 使用；不得只把 mutable `GroupState` instance 傳過跨 await 邊界。
+5. 若 narration 需要等待 provider，後續 turn 不得在同一個 sequence 前插入；若不持有 conversation lock，則必須透過 persisted turn sequence／resolution event 保證順序。
+6. 任何 `check_id` mismatch、timeline mismatch、已消費或不存在的 pending，都不得再次骰骰子；必須回覆可理解的 stale/expired 訊息並重新載入有效 pending buttons。
+7. `pending_checks.pop()`、Luck decision consume、結果 log、角色數值更新與 response-chain metadata 的 commit 邊界必須明確；不能出現「骰點已保存，但 result narration 使用另一個 timeline」的半完成狀態。
+
+這一段專門處理「骰完後技能檢定失敗」與「按鈕按了沒有反應」的 correctness，不由 background maintenance 的結果推測或修補。
 
 ## 7. Provider chain reset policy
 
@@ -429,6 +530,9 @@ cancelled
 6. rollback／newgame 產生新 timeline 並清除 provider chain metadata。
 7. stale result 不會寫 state，也不會寫 memory。
 8. prefix mismatch 不會把 `state_saved` 誤報為 true。
+9. 每筆 pending check／Luck decision 都有唯一 identity；同一角色的新 request 不沿用舊 ID。
+10. stale CheckButton／LuckSpendButton callback 不會消費目前有效的新 request。
+11. check result event 會保留 bounded origin action context 與 timeline metadata。
 
 ### 9.2 Concurrency／integration tests
 
@@ -461,6 +565,15 @@ cancelled
    - transaction 期間沒有外部 I/O。
    - concurrent newgame／rollback 與 maintenance 不死結。
 
+7. pending check race：
+   - button 發送 snapshot 後 pending 被另一個 turn 消費，舊 button 只能回報 expired，不得再次骰骰子。
+   - 同一角色的舊 check button 不得解析到後來建立的新 check。
+   - button callback 與 `/coc check` 同時抵達時，只有一個可以 commit deterministic roll。
+
+8. check narration freshness：
+   - dice state save 與 Keeper narration 之間插入另一個 turn 時，narration 不可使用舊 mutable state。
+   - provider chain 缺失或被 reset 時，Keeper 仍能從 check result event 的 action context 描述正確場景，不得只回問「要在什麼場景做什麼」。
+
 ### 9.3 Regression tests
 
 - 現有 state persistence、checkpoint、rollback、scenario use、Memory RAG、OpenAI provider、legacy Keeper 與 agentic Keeper 測試全部通過。
@@ -477,8 +590,10 @@ cancelled
 4. maintenance worker 不在 validation 前寫入 state 或 memory。
 5. 所有 stale／duplicate／failure 結果都有明確 structured event。
 6. migration 後 legacy unscoped memory 不會默默污染新 timeline。
-7. concurrency regression tests 可以穩定重現並通過。
-8. implementation commit、測試結果與 changeset 範圍記錄回本文件最前方。
+7. stale check button 不會消費新 pending check，也不會造成第二次骰點。
+8. 骰點結果可以帶著原始 action context 完成 Keeper narration，不會在 context 缺失時無理由反問玩家場景。
+9. concurrency regression tests 可以穩定重現並通過。
+10. implementation commit、測試結果與 changeset 範圍記錄回本文件最前方。
 
 ## 11. 未決決策與 review gate
 
