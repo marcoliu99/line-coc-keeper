@@ -322,9 +322,9 @@ def sanity_check(current_san: int, loss_success: str, loss_failure: str) -> Sani
 # means the character truly grasps the horror and suffers an immediate Bout of
 # Madness (roll here), *failing* means they repress it and nothing happens —
 # easy to get backwards, since a passed check usually means "good outcome"
-# everywhere else in this project. The Keeper-owned sanity resolver in
-# app/keeper.py performs that INT check immediately; app/legacy_commands.py
-# only keeps the older pending snapshot format compatible.
+# everywhere else in this project. app/keeper.py and app/legacy_commands.py
+# either register that INT check for the player or resolve it immediately,
+# according to the group's autoroll mode.
 #
 # Table content is paraphrased (Keeper guidance in our own words, not a
 # verbatim rulebook quote) from the same coc-kp-host reference this project

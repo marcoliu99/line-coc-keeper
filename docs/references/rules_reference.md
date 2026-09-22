@@ -7,7 +7,7 @@
 - **d100 技能/屬性檢定**：`dice.skill_check(skill_value, bonus_dice, penalty_dice)`，含大失敗/失敗/成功/困難/極難/大成功六級判定，`skill_value < 50 and roll >= 96` 才算大失敗（符合 RAW：50% 以上的技能大失敗門檻是 100 而不是 96-100）。
 - **獎勵骰/懲罰骰**：`dice.roll_percentile_with_dice_pool`，多顆骰取消規則（一顆獎勵抵一顆懲罰）有做，但**沒有**限制「正常最多一顆、極端狀況最多兩顆」這個軟上限——目前呼叫端（Keeper 的工具呼叫）想給幾顆就給幾顆，全靠提示詞自律。
 - **理智檢定**：`dice.sanity_check(current_san, loss_success, loss_failure)`，roll ≤ current_san 才算成功，這點是對的（跟一般技能檢定一樣，只是拿 SAN 值本身當門檻）。
-- **Keeper 代擲角色檢定**：`skill_check`/`sanity_check` 工具會立即由程式擲骰、判定並回傳 authoritative 結果；玩家描述行動即可。`/coc check <選項名稱>` 只用來選擇待處理的閃避／反擊或其他互斥行動選項，不是玩家手動擲技能骰。建角 `/coc luck roll` 仍保留玩家擲 LUCK 的例外。
+- **角色檢定所有權**：`skill_check`/`sanity_check` 預設只建立 pending，玩家用 `/coc check` 或 Discord 按鈕明確觸發後，程式才擲骰、判定並回傳 authoritative 結果。任何玩家可用 `/coc autoroll on|off` 選擇讓新的角色檢定由系統立即代擲；預設 off。建角 `/coc luck roll` 始終保留玩家擲 LUCK 的例外。
 
 ## RAW 有寫、我們完全沒做的部分（落差清單）
 
@@ -59,7 +59,7 @@ RAW 完整流程：先攻意外攻擊 → DEX 順位輪流行動 → 攻擊方�
 - ✅ 閃避/反擊的對抗檢定機制——見上面「對抗檢定」一節，`npc_skill_check` + `offer_check_choice` 的 `attacker_tier` + `dice.resolve_opposed`，玩家 vs NPC 的情境已經是真正比較雙方成功等級，不是純敘事判斷。
 - ✅ **極限成功的加成傷害（穿刺武器 vs 非穿刺武器）**：`dice.calculate_impaling_damage` + `app/keeper.py` 的 `roll_impaling_damage` 工具——攻擊擲骰達到極限成功時（反擊不適用），武器傷害＋傷害加值都算到最大值；穿刺武器（刀劍、長矛、大多數槍械子彈）在最大值之上再額外重擲一次武器本身的傷害骰，非穿刺武器（棍棒、拳頭）只算最大值不重骰——經官方《守密人手冊》原文核對過公式。用真實 LLM 對話測過：極限成功＋穿刺武器（獵刀 1d4+2、DB +1d4）時 Keeper 正確呼叫這個工具，敘述的傷害數字跟工具實際算出來的一致；極限成功＋非穿刺武器（拳頭 1d3、DB +1d4）時正確不重骰，傷害等於最大值 7。
 - ~~沒有傷害加值（DB）自動套用到一般（非極限成功）的武器傷害~~ 已修正：`dice.roll_weapon_damage` + `app/keeper.py` 的 `roll_weapon_damage` 工具——一般命中只要給角色名稱跟武器傷害骰，系統自動查 `Character.damage_bonus` 加進去並正確加總（DB 是骰子表示式時分開擲兩顆骰再相加，是固定數字時直接加），不用 Keeper 自己手動拼字串（`roll_dice` 本來就無法解析「武器骰+DB骰」這種混合表示式）。用真實 LLM 對話測過：DB 是骰子表示式（`+1d4`）跟 DB 是固定值（`0`）兩種角色，Keeper 都正確呼叫這個工具，敘述的傷害數字跟工具實際算出來的一致。
-- **重傷判定**：`app/keeper.py` 的 `adjust_character` 與 `app/combat.py` 的 `apply_combat_damage` 都在單次傷害達角色最大 HP 一半、且角色仍存活時立即由 Keeper 系統擲 CON；失敗會自動加上「昏迷」「倒地」狀態標籤，結果放在 `major_wound_check`。不再建立玩家手動 `/coc check CON` 的 pending entry；HP 直接降到 0 時不另觸發重傷檢定。
+- **重傷判定**：`app/keeper.py` 的 `adjust_character` 與 `app/combat.py` 的 `apply_combat_damage` 都在單次傷害達角色最大 HP 一半、且角色仍存活時建立 CON pending；玩家用 `/coc check CON` 或按鈕觸發後才擲骰，失敗會自動加上「昏迷」「倒地」狀態標籤。只有 `/coc autoroll on` 時才立即由系統完成 CON 檢定並放入 `major_wound_check`；HP 直接降到 0 時不另觸發重傷檢定。
 - ❌ **沒有**戰技（擒抱、繳械、擊倒，比較 Build/體格）——`Character.build` 有存這個值，沒有對應的工具。
 - ❌ **沒有**「先攻意外攻擊」（偷襲者應該在正式輪次開始前就先打一下，不是排在 DEX 順位最後）。
 - ❌ **沒有**被多人圍攻時的獎勵骰規則（一輪內已經閃避/反擊過一次後，同輪再被攻擊要吃獎勵骰）。
@@ -76,7 +76,7 @@ RAW／coc-kp-host 的原則：結果取決於環境/運氣而不是角色行動�
 
 RAW：損失 5+ SAN 觸發臨時性瘋狂（INT 檢定，這裡**通過**才是壞結果——代表角色真的理解了恐怖之處）；一天內損失達當前 SAN 的 1/5 觸發不定性瘋狂；SAN 歸零永久瘋狂退出遊戲；瘋狂發作有「即時症狀」（1D10 戰鬥輪，查表Ⅶ）跟「總結症狀」（1D10 小時，查表Ⅷ）兩種跑法。
 
-**已修正（臨時性瘋狂）**：`app/dice.py` 新增 `MADNESS_TABLE_REALTIME`／`MADNESS_TABLE_SUMMARY` 與 `roll_madness()`；`dice.SanityCheckResult.risk_of_madness`（`loss >= 5`）會在 `sanity_check` 工具內立即接手：系統自動擲 INT，INT 成功才擲症狀表、失敗則不觸發。舊快照若仍有 pending SAN，`app/legacy_commands.py` 也會用相同規則相容處理；新流程不要求玩家 `/coc check INT`。
+**已修正（臨時性瘋狂）**：`app/dice.py` 新增 `MADNESS_TABLE_REALTIME`／`MADNESS_TABLE_SUMMARY` 與 `roll_madness()`；`dice.SanityCheckResult.risk_of_madness`（`loss >= 5`）在角色 SAN 檢定結算後建立 INT 檢定。預設由玩家用 `/coc check INT` 或按鈕觸發，`/coc autoroll on` 時才由系統立即完成；INT 成功才擲症狀表、失敗則不觸發。舊快照若仍有 pending SAN，`app/legacy_commands.py` 也會用相同規則相容處理。
 - 目前一律只用「即時症狀表Ⅶ」，因為這個 bot 完全沒有在追蹤「現在算不算戰鬥中/即時場景，還是正在跑一段摘要時間」這種概念，`roll_madness` 函式跟表格本身都保留了 `realtime` 參數／`MADNESS_TABLE_SUMMARY` 常數，之後真的需要區分的話架構都已經在了。
 - **不定性瘋狂**（一天內損失達當前 SAN 的 1/5）**還沒做**——這個 bot 完全沒有「遊戲內天數」的概念，沒有一個現成的時間軸可以拿來判斷「這幾次理智損失是不是在同一個遊戲日之內發生」，要做這個需要先決定怎麼定義/追蹤遊戲內的時間流逝，是比臨時性瘋狂更大的一塊，先跳過。
 - **永久瘋狂**（SAN 歸零）維持原樣，純靠 Keeper 敘事處理，沒有對應的查表機制——RAW 對永久瘋狂本身沒有規定要查症狀表（只代表角色退出遊戲），所以這部分不算落差。

@@ -134,6 +134,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
 
     def test_deterministic_check_has_identity_and_origin_context(self) -> None:
         state = GroupState("deterministic-identity")
+        state.autoroll_checks = True
         state.characters["p1"] = Character(name="P1", owner_id="p1")
         group_state.save_state(state)
 
@@ -173,6 +174,7 @@ class MultiUserDeterministicCheckStressTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(db, "DB_PATH", db_path):
                 db._ensure_tables()
                 state = GroupState("stress-group", timeline_id="timeline-stress", active=True)
+                state.autoroll_checks = True
                 for index in range(1, 7):
                     owner_id = f"p{index}"
                     state.characters[owner_id] = Character(

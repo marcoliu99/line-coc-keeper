@@ -60,6 +60,7 @@ class StatePersistenceTests(unittest.TestCase):
     def test_tool_recovery_markers_round_trip_and_old_snapshots_default_empty(self):
         legacy = GroupState.from_dict({"group_id": "legacy"})
         self.assertEqual(legacy.tool_recovery_markers, [])
+        self.assertFalse(legacy.autoroll_checks)
         state = GroupState("recovery")
         state.tool_recovery_markers.append({"tool_name": "apply_combat_damage", "status": "recovery_required"})
         restored = GroupState.from_dict(state.to_dict())
@@ -198,6 +199,38 @@ class StatePersistenceTests(unittest.TestCase):
             self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player", True))
         with patch.object(legacy_commands.config, "SCENARIO_LIFECYCLE_KP_ONLY", False):
             self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player"))
+
+    def test_autoroll_defaults_off_and_any_player_can_toggle(self):
+        state = GroupState("autoroll-policy", kp_assistant_user_id="kp")
+        replies = []
+
+        async def reply(text):
+            replies.append(text)
+
+        async def run(parts, user_id, is_keeper=False):
+            replies.clear()
+            with patch.object(system_handler, "load_state", return_value=state), patch.object(
+                system_handler, "save_state"
+            ) as save:
+                await system_handler.handle_system_command(
+                    state.group_id, user_id, reply, None, None, None, parts, is_keeper=is_keeper
+                )
+            return list(replies), save
+
+        player_replies, player_save = asyncio.run(run(["/coc", "autoroll", "on"], "player"))
+        self.assertIn("已開啟自動擲骰", player_replies[0])
+        self.assertTrue(state.autoroll_checks)
+        player_save.assert_called_once_with(state)
+
+        kp_replies, kp_save = asyncio.run(run(["/coc", "autoroll", "on"], "kp"))
+        self.assertIn("已開啟自動擲骰", kp_replies[0])
+        self.assertTrue(state.autoroll_checks)
+        kp_save.assert_called_once_with(state)
+
+        keeper_replies, keeper_save = asyncio.run(run(["/coc", "autoroll", "off"], "keeper", True))
+        self.assertIn("已關閉自動擲骰", keeper_replies[0])
+        self.assertFalse(state.autoroll_checks)
+        keeper_save.assert_called_once_with(state)
 
     def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
         state = GroupState("discord-group-conflict")

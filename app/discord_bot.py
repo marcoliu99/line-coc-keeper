@@ -441,19 +441,19 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
 def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
     """Return buttons for legacy checks and pending player choices.
 
-    New ordinary skill/SAN/attack checks are resolved by Keeper immediately,
-    so only a choice normally reaches this function. The plain branches remain
-    for persisted pre-deployment pending checks and are labelled as system
-    resolution rather than asking the player to roll.
+    Ordinary skill/SAN/attack/major-wound checks reach this function when
+    autoroll is off (the default), and the button is the player's explicit
+    roll trigger. Choice buttons first select the option and then trigger the
+    player's selected roll.
     """
     if check.get("type") == "sanity":
-        return [("🎭 由 Keeper 處理理智檢定", True, "")]
+        return [("🎲 理智檢定", True, "")]
     if check.get("type") == "choice":
         return [
-            (f"選擇 {o['label']}（{o['skill']} {o['skill_value']}%）", False, o["label"])
+            (f"選擇並擲 {o['label']}（{o['skill']} {o['skill_value']}%）", False, o["label"])
             for o in check.get("options", [])
         ]
-    return [(f"🎭 Keeper 擲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False, "")]
+    return [(f"🎲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False, "")]
 
 
 # The trailing option segment can be empty (plain check) or a Chinese option
@@ -482,10 +482,9 @@ def _check_button_matches_pending(
 class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """A choice button for a pending defensive/action choice.
 
-    Ordinary skill, attack, and SAN checks are resolved by Keeper tools and do
-    not create a button. Clicking a choice runs the same selection path as
-    typing "/coc check <option>"; the system then rolls the selected check.
-    Persisted legacy pending checks are also accepted for compatibility.
+    Ordinary checks create a button while autoroll is off. Clicking it runs
+    the same player-triggered path as typing "/coc check"; autoroll is the
+    explicit KP opt-in exception. Persisted pending checks remain supported.
 
     Registered as a *dynamic* item (client.add_dynamic_items below, matched by
     the custom_id pattern above) rather than a plain per-message View, so it
@@ -626,9 +625,9 @@ async def _post_check_buttons(
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option, check_id))
             marker = f"{public_marker}\n" if public_marker else ""
             if check.get("type") == "choice":
-                prompt = "請選擇要採取的防守／行動方式（系統會在你選定後擲骰）："
+                prompt = "請選擇要採取的防守／行動方式，並由你觸發擲骰："
             else:
-                prompt = "這是舊版待處理檢定，將由 Keeper 系統處理："
+                prompt = "請按鈕完成你的檢定（或輸入 /coc check）："
             text = f"{marker}👉 {name}，{prompt}"
             await _send_direct_message(channel, text, view=view)
         except Exception:

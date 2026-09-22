@@ -9,9 +9,9 @@
 本文件前半段保留當時針對 NPC 攻擊延遲的調查紀錄；目前實作已再收斂檢定流程：
 
 - NPC 攻擊方由 `offer_npc_attack_defense_choice` 立即由系統擲骰，玩家只選閃避／反擊。
-- 玩家選定選項後，`/coc check <選項名稱>` 或 Discord 按鈕只提交選擇，系統再替防守方擲骰並完成對抗判定。
-- 一般技能、攻擊、SAN 與重傷 CON 檢定都由 Keeper 的 deterministic tool 立即擲骰；不要求玩家輸入 `/coc check` 來手動擲骰。
-- `pending_checks` 只保留互斥選項與舊版本快照相容性；Luck 仍是看到系統結果後由玩家選擇是否花費。
+- 玩家選定選項後，`/coc check <選項名稱>` 或 Discord 按鈕預設會觸發防守方擲骰並完成對抗判定；只有 `/coc autoroll on` 時才由系統代擲。
+- 一般技能、攻擊、SAN 與重傷 CON 檢定預設先建立 `pending_checks`，由玩家用 `/coc check` 或按鈕觸發；任何玩家都可用 `/coc autoroll on` 開啟群組模式，讓新的檢定由 Keeper 的 deterministic tool 立即擲骰。
+- Luck 仍是看到角色骰結果後由玩家選擇是否花費；NPC 攻擊方的骰則始終由系統處理。
 
 詳細規格與狀態冪等策略見 `docs/keeper-deterministic-check-resolution_design_spec.md`。
 

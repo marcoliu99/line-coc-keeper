@@ -1172,8 +1172,8 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             if not pending:
                 return _CheckResolution(
                     reply_text=(
-                        "目前沒有待處理的選擇。技能、攻擊與 SAN 檢定由 Keeper 擲骰；請直接描述你的行動，"
-                        "不要用 /coc check 自己擲骰。"
+                        "目前沒有待處理的選擇。請先讓 Keeper 建立檢定；玩家用 /coc check 或按鈕擲骰，"
+                        "不要在沒有待處理請求時重複送出。"
                     )
                 )
         elif pending and pending.get("type") == "sanity":
@@ -1184,8 +1184,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 state.pending_checks[user_id] = pending
             return _CheckResolution(
                 reply_text=(
-                    "沒有這個待處理的選擇。技能、攻擊與 SAN 檢定由 Keeper 擲骰；請直接描述你的行動，"
-                    "不要用 /coc check 自己擲骰。"
+                    "沒有這個待處理的選擇。請使用正確的選項名稱；角色檢定由玩家用 /coc check 或按鈕擲骰。"
                 )
             )
 
@@ -1201,11 +1200,32 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 f"損失 {sanity_result.loss} 點理智（現在 SAN {sanity_result.san_after}）"
             )
 
-            if sanity_result.risk_of_madness:
-                # Compatibility path for a SAN check persisted before Keeper-
-                # owned resolution was deployed. The chained INT check is
-                # resolved immediately too; it must not create a new player-roll
-                # pending entry.
+            if sanity_result.risk_of_madness and not state.autoroll_checks:
+                int_value = keeper.resolve_skill_value(char, "INT")
+                chained_context = f"{action_context}；因 SAN 損失需要做 INT 檢定"
+                if len(chained_context) > 240:
+                    chained_context = chained_context[:237] + "..."
+                origin_context = observability.current_context()
+                state.pending_checks[user_id] = {
+                    "type": "skill", "skill": "INT", "skill_value": int_value,
+                    "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                    "madness_trigger": True, "madness_realtime": True,
+                    "check_id": new_check_id(), "timeline_id": timeline_id,
+                    "origin_revision": state.state_revision + 1,
+                    "origin_turn_id": str(origin_context.get("turn_id", "")),
+                    "origin_request_id": str(origin_context.get("request_id", "")),
+                    "action_context": chained_context,
+                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                }
+                roll_line += (
+                    "\n⚠️ 這次損失達到 5 點以上，觸發 COC7e「短暫瘋狂」規則：請玩家再用 /coc check INT。"
+                )
+                keeper_message = (
+                    f"（{char.name} 的 SAN 檢定已確定：擲出 {sanity_result.check.roll} → {outcome}，"
+                    f"損失 {sanity_result.loss} 點，現在 SAN {sanity_result.san_after}；因為損失達到 5 點以上，"
+                    "已建立待處理 INT 檢定，等待玩家擲骰後再判定是否短暫瘋狂。）"
+                )
+            elif sanity_result.risk_of_madness:
                 int_value = keeper.resolve_skill_value(char, "INT")
                 int_result = dice.skill_check(int_value)
                 if int_result.success:
@@ -1229,7 +1249,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     )
             else:
                 keeper_message = (
-                    f"（{char.name} 的理智檢定已由 Keeper 擲骰：SAN {san_before} 擲出 {sanity_result.check.roll} → {outcome}，"
+                    f"（{char.name} 的理智檢定已由玩家觸發擲骰：SAN {san_before} 擲出 {sanity_result.check.roll} → {outcome}，"
                     f"損失 {sanity_result.loss} 點理智，現在 SAN {sanity_result.san_after}。這是已經確定的結果，"
                     f"請根據這個結果描述角色的反應與後續發展，不要重新判定或改變這個結果。）"
                 )
@@ -1269,8 +1289,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             else:
                 return _CheckResolution(
                     reply_text=(
-                        "目前沒有待處理的檢定。請直接描述行動，讓 Keeper 呼叫 deterministic 檢定工具，"
-                        "不要用 /coc check 自己擲骰。"
+                        "目前沒有待處理的檢定。請先描述行動讓 Keeper 建立檢定，再用 /coc check 或按鈕擲骰。"
                     )
                 )
             display_label = None
@@ -2370,13 +2389,41 @@ async def _handle_coc_command(
                 state.log.append({"role": "assistant", "content": opening_text})
                 state.game_started = True
                 # Some published scenarios' opening text itself demands an
-                # immediate check ("everyone roll a Spot Hidden"). Resolve it
-                # here with the same Keeper-owned dice policy as skill_check /
-                # sanity_check; do not create player-roll pending entries.
+                # immediate check ("everyone roll a Spot Hidden"). The
+                # default is still player-owned: autoroll is the explicit
+                # group-level opt-in exception.
                 opening_check = extracted.get("opening_check")
                 if opening_check:
                     for owner_id, char in state.characters.items():
-                        if opening_check["type"] == "skill":
+                        if not state.autoroll_checks:
+                            if opening_check["type"] == "skill":
+                                value = keeper.resolve_skill_value(char, opening_check["skill"])
+                                state.pending_checks[owner_id] = {
+                                    "type": "skill",
+                                    "skill": opening_check["skill"],
+                                    "skill_value": value,
+                                    "bonus_dice": 0,
+                                    "penalty_dice": 0,
+                                    "difficulty": "regular",
+                                    "pushed": False,
+                                    **keeper._pending_check_metadata(
+                                        state,
+                                        owner_id,
+                                        {"action_context": opening_check.get("reason", "")},
+                                    ),
+                                }
+                            else:
+                                state.pending_checks[owner_id] = {
+                                    "type": "sanity",
+                                    "loss_success": opening_check.get("loss_success", "0"),
+                                    "loss_failure": opening_check.get("loss_failure", "1d4"),
+                                    **keeper._pending_check_metadata(
+                                        state,
+                                        owner_id,
+                                        {"action_context": opening_check.get("reason", "")},
+                                    ),
+                                }
+                        elif opening_check["type"] == "skill":
                             value = keeper.resolve_skill_value(char, opening_check["skill"])
                             skill_result = dice.skill_check(value)
                             opening_check_results.append(
@@ -2396,7 +2443,10 @@ async def _handle_coc_command(
                 save_state(state)
             await reply(opening_text)
             if opening_check and opening_check.get("reason"):
-                await reply(f"👉 {opening_check['reason']}——由 Keeper 系統擲骰，結果如下。")
+                await reply(
+                    f"👉 {opening_check['reason']}——"
+                    + ("由 Keeper 系統擲骰，結果如下。" if state.autoroll_checks else "請各自用「/coc check」或按鈕擲骰。")
+                )
             if opening_check_results:
                 await reply("\n".join(opening_check_results))
             return

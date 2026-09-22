@@ -844,14 +844,20 @@ class GroupState:
     current_room_id: dict[str, str] = field(default_factory=dict)  # owner_id -> room id
     party_facing: dict[str, str] = field(default_factory=dict)  # owner_id -> compass, default "N" when absent
 
-    # A legacy check the Keeper asked for before checks became Keeper-owned
-    # deterministic rolls. New ordinary skill/SAN checks do not create this;
-    # choice checks still use it until the player selects an option. Old
-    # snapshots remain readable and /coc check resolves them compatibly.
+    # A pending player-owned check requested by Keeper. In the default mode the
+    # player resolves it with /coc check or a Discord button; autoroll mode
+    # skips this entry for newly requested ordinary checks. Old snapshots remain
+    # readable and /coc check resolves them normally.
     pending_checks: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    # Same-turn idempotency cache for Keeper-owned deterministic checks. The
-    # key includes the current Keeper turn and normalized tool input, so an LLM
+    # Optional group-level override: ordinary investigator checks remain
+    # player-triggered by default. Only the KP Assistant or Discord Keeper may
+    # enable this through /coc autoroll on; old snapshots therefore load as
+    # False without a migration.
+    autoroll_checks: bool = False
+
+    # Same-turn idempotency cache for the optional autoroll path. The key
+    # includes the current Keeper turn and normalized tool input, so an LLM
     # retry cannot silently consume a second random roll. It is intentionally
     # bounded by the writer rather than retaining an unbounded campaign log.
     deterministic_check_results: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -1063,6 +1069,7 @@ class GroupState:
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
+            "autoroll_checks": self.autoroll_checks,
             "deterministic_check_results": self.deterministic_check_results,
             "pending_luck_decisions": self.pending_luck_decisions,
             "pending_pregen_luck": self.pending_pregen_luck,
@@ -1144,6 +1151,7 @@ class GroupState:
             current_room_id=data["current_room_id"] if isinstance(data.get("current_room_id"), dict) else {},
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
+            autoroll_checks=bool(data.get("autoroll_checks", False)),
             deterministic_check_results=(
                 data.get("deterministic_check_results", {})
                 if isinstance(data.get("deterministic_check_results", {}), dict)

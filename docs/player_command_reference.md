@@ -126,12 +126,23 @@
 
 ## 檢定
 
-### 技能或理智檢定
+### 切換自動擲骰
 
-玩家描述行動後由 Keeper 擲骰；/coc check 僅用於選擇待處理的防守或行動選項。
+預設關閉；所有玩家都可以開啟或關閉本群組設定。
 
 用法：
-- `/coc check <選項名稱>`
+- `/coc autoroll on|off`
+- `/coc autoroll`
+
+範例：
+- `/coc autoroll off`
+
+### 技能或理智檢定
+
+預設由玩家用 /coc check 或按鈕擲骰；若群組開啟 autoroll，才由 Keeper/system 自動處理。
+
+用法：
+- `/coc check [技能或選項名稱]`
 
 範例：
 - `/coc check 閃避`

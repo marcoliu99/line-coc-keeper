@@ -432,6 +432,28 @@ async def handle_system_command(
         await reply("已登記你為這局的 KP 助手。")
         return
 
+    if sub == "autoroll":
+        state = load_state(conversation_id)
+        action = parts[2].casefold() if len(parts) > 2 else "status"
+        if action not in {"on", "off", "status", "狀態", "開", "關"} or len(parts) > 3:
+            await reply("用法：/coc autoroll on|off（不帶參數可查看目前狀態）")
+            return
+        if action in {"status", "狀態"}:
+            await reply(
+                "目前自動擲骰：已開啟。新檢定會由 Keeper/system 立即處理。"
+                if state.autoroll_checks
+                else "目前自動擲骰：關閉（預設）。新檢定會等待玩家用 /coc check 或按鈕擲骰。"
+            )
+            return
+        state.autoroll_checks = action in {"on", "開"}
+        save_state(state)
+        await reply(
+            "已開啟自動擲骰；之後新建立的技能、攻擊、SAN、重傷 CON 檢定可由 Keeper/system 立即處理。"
+            if state.autoroll_checks
+            else "已關閉自動擲骰；之後新建立的角色檢定會等待玩家用 /coc check 或按鈕擲骰。"
+        )
+        return
+
     if sub == "status":
         state = load_state(conversation_id)
         if not state.scenario_title:

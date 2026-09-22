@@ -145,6 +145,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_kp_ooc_turn_persists_ooc_only_caps_and_preserves_openai_chain(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        state.autoroll_checks = True
         state.kp_ooc_log = [
             {"role": "kp_assistant" if i % 2 == 0 else "assistant", "content": f"old-{i}"}
             for i in range(20)
@@ -189,6 +190,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        state.autoroll_checks = True
         state.characters["p1"] = Character(name="Marco", owner_id="p1")
         state.kp_ooc_log = [{"role": "kp_assistant", "content": "old ooc"}]
         message_text = "Marco 把屍體的頭扭斷，血噴了一臉，做 SAN 0/1d4。"
@@ -464,6 +466,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse({"adjust_character", "adjust_ammo", "set_skill", "damage_combatant", "start_combat"} & tool_names)
 
         state = GroupState(group_id="g")
+        state.autoroll_checks = True
         state.characters["p1"] = Character(name="The Tough Guy/Dame", owner_id="p1", occupation="Dame")
         with StateStorePatch(keeper) as store:
             store.put(state)
@@ -493,6 +496,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
     def test_kp_assistant_fixed_damage_tools_are_allowed_and_canonical(self):
         state = GroupState(group_id="g")
+        state.autoroll_checks = True
         char = Character(name="Marco", owner_id="p1", character_id="char-marco", dex=50, hp=12, hp_max=12)
         state.characters["p1"] = char
         state.characters_by_id["char-marco"] = char
@@ -1009,6 +1013,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
     def test_san_reproduction_case_uses_kp_context_and_resolves_immediately(self):
         state = GroupState(group_id="g")
+        state.autoroll_checks = True
         state.characters["p1"] = Character(name="The Tough Guy/Dame", owner_id="p1", occupation="Dame")
         state.kp_ooc_log = [
             {"role": "kp_assistant", "content": "開場看到屍體要做 SAN，成功 1、失敗 1D4。"},

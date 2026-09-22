@@ -12,9 +12,11 @@ from __future__ import annotations
 import random
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
-from app import dice
+from app import dice, observability
+from app.check_identity import new_check_id
 from app.models import (
     ArmorRule,
     AttackRule,
@@ -267,18 +269,42 @@ def _pc_for_combatant(state: GroupState, combatant: Combatant):
 def _resolve_major_wound_check(
     state: GroupState, combatant: Combatant, final_damage: int, hp_after: int
 ) -> dict[str, Any] | None:
-    """Resolve a PC's major-wound CON check immediately.
+    """Resolve or register a PC's major-wound CON check according to policy.
 
-    Combat damage is a Keeper-owned game event, so it must not create a
-    player-roll ``pending_checks`` entry.  This helper intentionally keeps the
-    check inside ``apply_combat_damage``'s state mutation: HP, the CON result,
-    and the unconscious/knocked-down tags are committed together.
+    Combat damage is a Keeper-owned game event, but the investigator's CON
+    roll is player-owned by default. ``/coc autoroll on`` is the explicit
+    group-level exception. The HP mutation and pending registration remain in
+    the same state mutation so a concurrent turn cannot lose either one.
     """
     pc = _pc_for_combatant(state, combatant)
     if not pc or hp_after <= 0:
         return None
     if final_damage < pc.hp_max / 2:
         return None
+
+    if not state.autoroll_checks:
+        if pc.owner_id in state.pending_checks:
+            return None
+        if not state.timeline_id:
+            state.timeline_id = f"timeline-{uuid.uuid4().hex[:8]}"
+        origin_context = observability.current_context()
+        state.pending_checks[pc.owner_id] = {
+            "type": "skill",
+            "skill": "CON",
+            "skill_value": pc.con,
+            "bonus_dice": 0,
+            "penalty_dice": 0,
+            "difficulty": "regular",
+            "major_wound_trigger": True,
+            "check_id": new_check_id(),
+            "timeline_id": state.timeline_id,
+            "origin_revision": state.state_revision + 1,
+            "origin_turn_id": str(origin_context.get("turn_id", "")),
+            "origin_request_id": str(origin_context.get("request_id", "")),
+            "action_context": f"{pc.name} 因為重傷需要做 CON 檢定",
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        return {"pending": True, "skill": "CON", "skill_value": pc.con}
 
     con_result = dice.skill_check(pc.con)
     if not con_result.success:

@@ -1,10 +1,10 @@
 # 開發紀錄／已知限制
 
-### Keeper-owned deterministic checks（最新行為）
+### Player-owned checks with opt-in autoroll（最新行為）
 
-- 一般技能、攻擊、SAN 與重傷 CON 檢定現在由 Keeper 的 deterministic tool 立即擲骰並回傳 authoritative 結果；玩家只描述行動，不輸入 `/coc check` 來手動擲骰。
-- `/coc check <選項名稱>` 只負責提交閃避／反擊或其他互斥行動選擇，選定後由系統替該選項擲骰。建角 `/coc luck roll` 仍由玩家本人執行，檢定後的 Luck 花費也仍由玩家選擇。
-- 舊快照裡的 pending skill/SAN 檢定仍可由 `/coc check` 相容解析；新的普通檢定不會再建立這類 pending。這段最新行為 supersede 下方早期「玩家自己擲骰」紀錄。
+- 一般技能、攻擊、SAN 與重傷 CON 檢定預設先建立 pending，由玩家按 Discord 按鈕或輸入 `/coc check` 觸發並取得 authoritative 結果；建角 `/coc luck roll` 仍由玩家本人執行，檢定後的 Luck 花費也仍由玩家選擇。
+- 任何玩家可用 `/coc autoroll on|off` 切換群組模式，預設 off；開啟後新的角色檢定才可由 Keeper/system 立即代擲，既有 pending 不會因切換被偷偷消耗。
+- `7f9a042` 曾暫時把一般角色檢定改成 Keeper-owned immediate roll，已由 player-owned default + opt-in autoroll 修正並 supersede；舊快照的 pending skill/SAN 仍可由 `/coc check` 相容解析。
 
 ### PR #31 review fixes
 

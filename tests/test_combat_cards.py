@@ -667,6 +667,7 @@ class CombatCardTests(unittest.TestCase):
 
     def test_apply_combat_damage_resolves_major_wound_con_check_for_pc(self):
         state = self._state_with_pc()
+        state.autoroll_checks = True
         combat.start_combat(state)
 
         with patch.object(
@@ -692,6 +693,7 @@ class CombatCardTests(unittest.TestCase):
         """A pending choice must survive unrelated damage; the CON roll is
         resolved atomically instead of being added as another pending check."""
         state = self._state_with_pc()
+        state.autoroll_checks = True
         combat.start_combat(state)
         state.pending_checks["u1"] = {"type": "sanity", "skill_value": 40}
 
@@ -708,6 +710,19 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(state.pending_checks["u1"], {"type": "sanity", "skill_value": 40})
         self.assertIn("昏迷", state.characters["u1"].status_tags)
         self.assertIn("倒地", state.characters["u1"].status_tags)
+
+    def test_apply_combat_damage_defaults_to_player_major_wound_roll(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+
+        with patch.object(combat.dice, "skill_check") as check_mock:
+            result = combat.apply_combat_damage(state, "Mark", 6)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["major_wound_triggered"])
+        self.assertTrue(result["major_wound_check"]["pending"])
+        self.assertEqual(state.pending_checks["u1"]["skill"], "CON")
+        check_mock.assert_not_called()
 
     def test_add_combat_effect_applies_fixed_damage_at_turn_start(self):
         state = self._state_with_pc()

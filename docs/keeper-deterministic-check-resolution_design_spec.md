@@ -35,11 +35,11 @@ after choosing, the player also triggers the selected check.
 - Existing Luck-spend decisions remain player choices after the Keeper roll.
 - Existing persisted pending skill/SAN entries remain readable and are resolved
   by `/coc check`; new ordinary checks continue to create those entries.
-- `/coc check <skill>` without a pending Keeper request may remain available as
-  an explicit player-initiated check according to the existing command policy,
-  but Keeper tools must not silently roll in place of the player.
-- `/coc autoroll` is a group-level opt-in. It is `off` by default; only the
-  current KP Assistant or Discord Keeper role may use `/coc autoroll on|off`.
+- `/coc check <skill>` without a pending Keeper request is rejected by the
+  current command policy with guidance to let Keeper create the request first;
+  Keeper tools must not silently roll in place of the player.
+- `/coc autoroll` is a group-level opt-in. It is `off` by default; any player
+  may use `/coc autoroll on|off` to change the group setting.
   With `off`, newly requested investigator skill, attack, SAN, and major-wound
   CON checks wait for the player. With `on`, those newly requested checks may
   be resolved by the Keeper/system immediately. Existing pending checks are
@@ -101,10 +101,10 @@ NPC attack roll (system) -> pending Dodge/Fight Back choice
 - A persisted `pending_checks[type=skill|sanity]` is the normal player-owned
   request: `/coc check` resolves it with one application roll and sends the
   result to Keeper.
-- A new `/coc check <skill>` without a pending request follows the existing
-  explicit player command policy; it is never created implicitly by Keeper.
+- A new `/coc check <skill>` without a pending request is rejected by the
+  current explicit command policy; it is never created implicitly by Keeper.
 - `/coc autoroll` without an argument reports the current state; `on` and `off`
-  are explicit and restricted to KP operations. The default must remain off.
+  are explicit and available to every player. The default must remain off.
 - A stale choice button remains rejected by its existing check identity gate.
 - A stale or duplicate Luck button remains rejected by its existing decision
   identity gate.

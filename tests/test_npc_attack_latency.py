@@ -247,13 +247,14 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
 
 
 class AlreadyPendingCheckGuardTests(unittest.TestCase):
-    """Ordinary checks resolve immediately; only choices remain pending."""
+    """Ordinary checks follow the group's player-owned/autoroll policy."""
 
     def _options(self):
         return [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}]
 
-    def test_skill_check_is_immediate_and_does_not_create_pending(self):
+    def test_skill_check_autoroll_is_immediate_and_does_not_create_pending(self):
         state = _state_with_investigator()
+        state.autoroll_checks = True
         with StateStorePatch(keeper) as store:
             store.put(state)
             fake_roll = MagicMock(roll=99, tier="fumble", required_tier="regular", success=False)
@@ -271,8 +272,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertTrue(second["resolved"])
         self.assertEqual(saved_state.pending_checks, {})
 
-    def test_sanity_check_is_immediate_and_does_not_create_pending(self):
+    def test_sanity_check_autoroll_is_immediate_and_does_not_create_pending(self):
         state = _state_with_investigator()
+        state.autoroll_checks = True
         with StateStorePatch(keeper) as store:
             store.put(state)
             first = keeper._execute_tool(
@@ -290,8 +292,72 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertTrue(second["resolved"])
         self.assertEqual(saved_state.pending_checks, {})
 
-    def test_sanity_check_resolves_san_and_madness_immediately(self):
+    def test_character_checks_default_to_player_pending(self):
         state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check") as roll_mock:
+                result = keeper._execute_tool(
+                    state,
+                    "skill_check",
+                    {"investigator": "小明", "skill": "射擊"},
+                    [],
+                    [],
+                    speaker_role="player",
+                )
+            saved_state = store.store["g"]
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["pending"])
+        self.assertNotIn("resolved", result)
+        self.assertEqual(saved_state.pending_checks["u1"]["skill"], "射擊")
+        roll_mock.assert_not_called()
+
+    def test_sanity_check_defaults_to_player_pending(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.sanity_check") as roll_mock:
+                result = keeper._execute_tool(
+                    state,
+                    "sanity_check",
+                    {"investigator": "小明", "loss_success": "0", "loss_failure": "1d4"},
+                    [],
+                    [],
+                    speaker_role="player",
+                )
+            saved_state = store.store["g"]
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["pending"])
+        self.assertEqual(saved_state.pending_checks["u1"]["type"], "sanity")
+        self.assertEqual(saved_state.characters["u1"].san, 50)
+        roll_mock.assert_not_called()
+
+    def test_adjust_character_major_wound_defaults_to_player_pending(self):
+        state = _state_with_investigator()
+        state.characters["u1"].hp = 10
+        state.characters["u1"].hp_max = 10
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check") as roll_mock:
+                result = keeper._execute_tool(
+                    state,
+                    "adjust_character",
+                    {"investigator": "小明", "field": "hp", "delta": -5},
+                    [],
+                    [],
+                    speaker_role="player",
+                )
+            saved_state = store.store["g"]
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["major_wound"])
+        self.assertIsNone(result["major_wound_check"])
+        self.assertEqual(saved_state.pending_checks["u1"]["skill"], "CON")
+        self.assertEqual(saved_state.characters["u1"].hp, 5)
+        roll_mock.assert_not_called()
+
+    def test_sanity_check_autoroll_resolves_san_and_madness_immediately(self):
+        state = _state_with_investigator()
+        state.autoroll_checks = True
         state.characters["u1"].san = 60
         san_result = dice.SanityCheckResult(
             check=dice.SkillCheckResult(
@@ -339,8 +405,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertEqual(saved_state.characters["u1"].san, 54)
         self.assertEqual(saved_state.pending_checks, {})
 
-    def test_attack_skill_check_is_keeper_owned(self):
+    def test_attack_skill_check_autoroll_is_system_owned(self):
         state = _state_with_investigator()
+        state.autoroll_checks = True
         fake_roll = MagicMock(roll=22, tier="hard", required_tier="regular", success=True)
         with StateStorePatch(keeper) as store:
             store.put(state)
@@ -361,6 +428,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
 
     def test_same_turn_retry_reuses_the_authoritative_roll(self):
         state = _state_with_investigator()
+        state.autoroll_checks = True
         fake_roll = MagicMock(roll=37, tier="regular", required_tier="regular", success=True)
         tool_input = {"investigator": "小明", "skill": "射擊", "action_context": "瞄準"}
         with StateStorePatch(keeper) as store:
@@ -381,7 +449,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             store.put(state)
             resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 射擊")
         self.assertFalse(resolution.should_finalize)
-        self.assertIn("由 Keeper 擲骰", resolution.reply_text)
+        self.assertIn("玩家用 /coc check 或按鈕擲骰", resolution.reply_text)
 
     def test_offer_check_choice_reuses_identical_pending_request(self):
         state = _state_with_investigator()
