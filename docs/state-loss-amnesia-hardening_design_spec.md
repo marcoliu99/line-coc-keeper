@@ -580,6 +580,100 @@ cancelled
 - Discord integration tests 依目前專案規則處理；若環境缺少 Discord credentials，可 skip 外部 API 測試，但不得 skip 純 state／RAG／provider chain tests。
 - `ruff check .`、`mypy app`、`python3 -m compileall -q app tests` 與完整 `pytest` 必須在 implementation checkpoint 執行。
 
+### 9.4 Multi-user stress／race test
+
+本期必須加入可重複的 async 壓力測試，但預設不呼叫真實 Discord、OpenAI、embedding API。測試使用 fake transport、fake provider 與 in-memory／temporary SQLite，所有外部等待由 scenario script 控制。
+
+#### 9.4.1 測試角色與事件
+
+同一個 `conversation_id` 建立 5～6 個玩家與 1 個 KP Assistant：
+
+```text
+P1：普通調查行動／文字 turn
+P2：skill_check，使用 /coc check
+P3：skill_check，使用 Discord CheckButton
+P4：SAN check → INT chained check 或 Luck decision
+P5：戰鬥玩家行動／NPC 防守 choice button
+P6：可選的第二個玩家 action／重複點擊 stale button
+KP：KP Assistant act、away／retire、戰鬥裁定或正式 game tool
+```
+
+每一輪至少混合下列事件：
+
+- 2 個普通 player message。
+- 1 個 KP Assistant message 或 `/coc sudo ... act`。
+- 1 個 pending skill check registration。
+- 1 個 `/coc check` 與 1 個 button click，兩者要有一輪刻意同時抵達。
+- 1 個 combat defense choice 或 NPC attack resolution。
+- 1 個 Luck decision／skip。
+- 1 個背景 post-turn maintenance。
+- 至少一輪在 maintenance、button post 或 dice-save/narration 邊界插入另一個 turn。
+
+#### 9.4.2 兩種測試模式
+
+**A. Deterministic race reproduction**
+
+fake provider 在下列 barrier 暫停，測試再啟動指定的 concurrent operation：
+
+```text
+Barrier 1：pending check 已建立、button 尚未發送
+    → 另一個 request 消費／替換 pending check
+
+Barrier 2：dice result 已保存、Keeper narration 尚未開始
+    → 另一個 player turn 或 KP Assistant turn
+
+Barrier 3：maintenance snapshot 已建立、summary 尚未完成
+    → /coc newgame 或 rollback
+
+Barrier 4：old button 已發送、pending 已被新 check 替換
+    → 點擊舊 button
+```
+
+每個 barrier 都必須驗證最終 state，而不是只驗證沒有 exception。
+
+**B. Six-user load profile**
+
+同一 conversation 以 5～6 個玩家加 KP Assistant 發送 30～60 秒事件；使用固定 seed 產生事件順序與 0～500ms arrival jitter。每個 scenario 至少重跑 10 次，並保存：
+
+- accepted／rejected request 數量。
+- `commit_sequence`、`state_revision` 與 `timeline_id`。
+- 每個 `check_id` 的 create、button post、consume、roll、narration、final commit 次數。
+- stale button、duplicate roll、pending leak、lost log、state conflict、deadlock、cancelled task。
+- request／router／llm.turn／lock.wait／Discord output 的 P50、P95、P99、max。
+
+同一 conversation 的 request 依序提交是預期的 correctness 行為；壓力測試不應把「所有 request 同時完成」當成功條件，而應確認沒有錯序、漏寫、重骰或跨 timeline 污染。另加一組多 conversation 測試，確認不同 group 不會被同一把 lock 或 maintenance worker 互相阻塞。
+
+#### 9.4.3 AI latency replay profile
+
+依提供的 `profile-async.log` 設定 fake provider 的 replay profile。這些數值只用於測試等待與排隊，不代表每次真實 API 都必須達到相同時間：
+
+| Component | P95 | Observed max | Stress profile |
+|---|---:|---:|---|
+| `llm.request.completed` | 7.33s | 16.98s | 一輪 7.3s；worst case 17s |
+| `llm.turn.completed` | 10.77s | 34.69s | executor 7 iterations／6 tools，最高 35s |
+| input tokens | — | 58,165 | 使用 46k～58k token large-context case |
+| `lock.wait.completed` | 20.84s | 32.83s | 強制 20s queue wait，另測 35s極端值 |
+| `request.completed` | 33.04s | 258.01s | 33s queue profile；258s 只作 starvation regression，不作一般 timeout |
+| `rag.search.completed` | 0.93s | 4.85s | 0.9s normal；5s slow RAG |
+| `embedding.batch.completed` | 0.89s | 2.30s | 0.9s normal；2.5s slow embedding |
+| `discord.reply.completed` | 0.86s | 4.15s | 0.9s normal；4.5s slow Discord |
+| `maintenance.completed` | — | 4.64s | 5s background maintenance |
+
+log 中最差的 `llm.turn` 是 executor 34.69s、7 iterations、6 tool calls；最差的單次 `llm.request` 是 16.98s、約 58k input tokens。`request.completed` 的 258s 主要代表 queue／lock starvation，不能當作一般 LLM latency。壓力測試必須分開報告 provider latency 與 queue latency。
+
+#### 9.4.4 Stress test pass criteria
+
+在所有固定 seed、10 次重跑與 slow profile 下：
+
+1. 每個 accepted `check_id` 最多一筆 deterministic roll commit；stale／duplicate button 不得骰第二次。
+2. 每個有效 check result 都保留原始 action context、timeline 與 deterministic outcome；Keeper 不得因 context 缺失反問玩家「要在什麼場景做什麼」。
+3. `state_revision` 僅遞增；不存在 silent stale overwrite、lost log、lost pending check 或跨角色 Luck 消費。
+4. KP Assistant 的 turn 不得覆蓋玩家 turn；KP canonical game tool 與 OOC turn 必須維持既有 log 語意。
+5. 戰鬥 defense choice、skill check、SAN／INT chain 與 Luck decision 的 button／command 只能解析目前有效 identity。
+6. maintenance 在 newgame／rollback race 中只能 `committed` 或 `skipped_stale`，不得把舊 memory 寫入新 timeline。
+7. 所有 request 最終進入 `completed`、`rejected` 或明確 `timeout/cancelled`；不得留下未觀察的 asyncio task。
+8. 測試報告必須把「AI API 等待」「lock queue」「Discord output」分欄，不得用單一總時間推論是程式 CPU 慢。
+
 ## 10. 驗收條件
 
 本 bug 修正只有在以下條件全部完成時才算完成：
