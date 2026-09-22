@@ -673,7 +673,10 @@ class CombatCardTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_triggered"])
-        self.assertEqual(state.pending_checks["u1"], {
+        pending = state.pending_checks["u1"]
+        self.assertEqual({key: pending[key] for key in (
+            "type", "skill", "skill_value", "bonus_dice", "penalty_dice", "difficulty", "major_wound_trigger"
+        )}, {
             "type": "skill",
             "skill": "CON",
             "skill_value": 50,
@@ -682,6 +685,8 @@ class CombatCardTests(unittest.TestCase):
             "difficulty": "regular",
             "major_wound_trigger": True,
         })
+        self.assertTrue(pending["check_id"].startswith("check-"))
+        self.assertEqual(pending["timeline_id"], state.timeline_id)
 
     def test_apply_combat_damage_does_not_clobber_an_existing_pending_check(self):
         """A major wound's CON check is a side effect registered directly by

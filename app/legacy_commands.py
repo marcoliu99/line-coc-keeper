@@ -24,7 +24,9 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import yaml
 
@@ -48,6 +50,12 @@ from app import (
     scenario_rag,
 )
 from app import scene_map as scene_map_engine
+from app.check_identity import (
+    effective_check_id,
+    effective_decision_id,
+    new_check_id,
+    new_decision_id,
+)
 from app.config import SCENARIO_RAG_ENABLED
 from app.models import (
     BASE_SKILLS,
@@ -158,7 +166,18 @@ def _apply_new_scenario(
     state.scenario_text = text
     state.scenario_title = title
     state.active = True
+    old_timeline_id = state.timeline_id or f"legacy-{state.group_id}"
+    new_timeline_id = f"timeline-{uuid4().hex[:8]}"
+    observability.event(
+        "provider.chain.reset",
+        reason="scenario_upload",
+        old_timeline_id=old_timeline_id,
+        requested_timeline_id=new_timeline_id,
+        provider="openai",
+    )
     state.openai_previous_response_id = ""
+    state.openai_previous_response_timeline_id = ""
+    state.timeline_id = new_timeline_id
     state.game_started = False  # a new scenario hasn't had its own /coc start opening yet —
     # otherwise a group re-uploading a different PDF mid-campaign without running /coc newgame
     # first would find /coc start permanently refusing ("already started") for the new scenario.
@@ -844,6 +863,10 @@ class _CheckResolution:
     keeper_header: str = ""
     reply_text: str = ""
     should_finalize: bool = False
+    check_id: str = ""
+    decision_id: str = ""
+    timeline_id: str = ""
+    action_context: str = ""
 
 
 @dataclass
@@ -986,6 +1009,10 @@ async def _finalize_check_result(
     acquire_legacy_for_keeper: bool = False,
     roll_feedback_text: str = "",
     keeper_header: str = "",
+    check_id: str = "",
+    decision_id: str = "",
+    timeline_id: str = "",
+    action_context: str = "",
 ) -> None:
     """Shared tail for every resolved check (sanity, choice, plain skill, and
     a Luck-spend decision) — hands the already-determined result to the
@@ -1015,8 +1042,46 @@ async def _finalize_check_result(
         # mislabeled as a fresh Map Engine move this check never made.
         resolved_location = None
         async with locks.get_keeper_turn_lock(conversation_id):
+            # The deterministic dice transaction may have finished before the
+            # Keeper turn got the per-conversation slot.  Refresh the
+            # authoritative snapshot so the provider sees the state that was
+            # actually committed, not a stale mutable object from before a
+            # concurrent maintenance/state update.
+            fresh_state = keeper._refresh_state_snapshot(state)
+            current_timeline_id = fresh_state.timeline_id or f"legacy-{conversation_id}"
+            if timeline_id and current_timeline_id != timeline_id:
+                observability.event(
+                    "check.result.stale",
+                    level=logging.WARNING,
+                    reason="timeline_mismatch",
+                    requested_timeline_id=timeline_id,
+                    current_timeline_id=current_timeline_id,
+                    check_id=check_id or None,
+                    decision_id=decision_id or None,
+                )
+                await reply("這個檢定結果所屬的劇情時間線已經失效，請依目前劇情重新操作。")
+                return
+            fresh_char = fresh_state.get_active_character(user_id)
+            if fresh_char is None:
+                await reply("這個檢定結果所屬的角色已經不在目前劇情中，請使用目前有效的角色操作。")
+                return
+            context_note = action_context or (
+                "（未提供原始行動情境；只描述已確定的檢定結果，不要自行編造未確認的場景或行動。）"
+            )
+            identity_note = ""
+            if check_id:
+                identity_note += f" check_id={check_id}"
+            if decision_id:
+                identity_note += f" decision_id={decision_id}"
+            if timeline_id:
+                identity_note += f" timeline_id={timeline_id}"
+            keeper_context_message = (
+                f"【檢定結果上下文{identity_note}】\n"
+                f"【玩家原始行動情境】{context_note}\n"
+                f"{keeper_message}"
+            )
             keeper_reply, private_messages, image_requests = await keeper.run_turn(
-                state, user_id, char.name, keeper_message, resolved_location, "player"
+                fresh_state, user_id, fresh_char.name, keeper_context_message, resolved_location, "player"
             )
             if split_roll_feedback:
                 public_message = f"{keeper_header}\n\n{keeper_reply}" if keeper_header else keeper_reply
@@ -1058,6 +1123,19 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         parts = text.split()
         skill_arg: str | None = parts[2] if len(parts) > 2 else None
         pending = state.pending_checks.pop(user_id, None)
+        timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+        check_id = effective_check_id(user_id, pending, timeline_id) if pending else new_check_id()
+        action_context = str(pending.get("action_context", "")).strip() if pending else ""
+        if not action_context:
+            recent_user_message = next(
+                (
+                    str(entry.get("content", "")).strip()
+                    for entry in reversed(state.log)
+                    if entry.get("role") == "user" and str(entry.get("content", "")).strip()
+                ),
+                "",
+            )
+            action_context = recent_user_message[:237] + "..." if len(recent_user_message) > 240 else recent_user_message
 
         # A pending "choice" check (see keeper.py's offer_check_choice — e.g. 閃避
         # vs 反擊) needs the player to name one of the options; unlike the plain
@@ -1120,10 +1198,20 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 # *succeeding* this INT check is the outcome that triggers
                 # madness, not failing it — easy to get backwards.
                 int_value = keeper.resolve_skill_value(char, "INT")
+                chained_context = f"{action_context}；因 SAN 損失需要做 INT 檢定"
+                if len(chained_context) > 240:
+                    chained_context = chained_context[:237] + "..."
+                origin_context = observability.current_context()
                 state.pending_checks[user_id] = {
                     "type": "skill", "skill": "INT", "skill_value": int_value,
                     "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
                     "madness_trigger": True, "madness_realtime": True,
+                    "check_id": new_check_id(), "timeline_id": timeline_id,
+                    "origin_revision": state.state_revision + 1,
+                    "origin_turn_id": str(origin_context.get("turn_id", "")),
+                    "origin_request_id": str(origin_context.get("request_id", "")),
+                    "action_context": chained_context,
+                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 }
                 roll_line += (
                     "\n⚠️ 這次損失達到 5 點以上，觸發 COC7e「短暫瘋狂」規則：需要做一次 INT 檢定——"
@@ -1149,7 +1237,8 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             save_state(state)
             return _CheckResolution(
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
-                roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+                roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
+                check_id=check_id, timeline_id=timeline_id, action_context=action_context,
             )
 
         is_pushed = False
@@ -1220,7 +1309,8 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             save_state(state)
             return _CheckResolution(
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
-                roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+                roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
+                check_id=check_id, timeline_id=timeline_id, action_context=action_context,
             )
 
         # Luck-spend: only proactively offered when it's a near-miss (the cheapest
@@ -1231,7 +1321,14 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         luck_options = [] if is_pushed else luck.buyable_options(value, skill_result.roll, skill_result.tier, char.luck, difficulty)
         gate_cost = None if is_pushed else luck.cheapest_cost(value, skill_result.roll, skill_result.tier, difficulty)
         if luck_options and gate_cost is not None and gate_cost <= 7:
+            origin_context = observability.current_context()
             state.pending_luck_decisions[user_id] = {
+                "decision_id": new_decision_id(), "check_id": check_id, "timeline_id": timeline_id,
+                "origin_revision": state.state_revision + 1,
+                "origin_turn_id": str(origin_context.get("turn_id", "")),
+                "origin_request_id": str(origin_context.get("request_id", "")),
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "action_context": action_context,
                 "skill_name": skill_name, "display_label": display_label,
                 "value": value, "roll": skill_result.roll, "bonus_dice": bonus, "penalty_dice": penalty,
                 "original_tier": skill_result.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
@@ -1248,7 +1345,9 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {skill_result.roll} → {_tier_zh_for_result(skill_result)}{attacker_note}\n"
                     f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
                     f"（點下面按鈕，或輸入「/coc luck skip」維持目前結果、「/coc luck regular/hard/extreme」花費對應點數）"
-                )
+                ),
+                check_id=check_id, timeline_id=timeline_id, action_context=action_context,
+                decision_id=state.pending_luck_decisions[user_id]["decision_id"]
             )
 
         roll_line, keeper_message = _build_check_narration(
@@ -1264,7 +1363,8 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         save_state(state)
         return _CheckResolution(
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
-            roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+            roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
+            check_id=check_id, timeline_id=timeline_id, action_context=action_context,
         )
 
 
@@ -1296,7 +1396,9 @@ async def handle_check_command(
         conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
         reply, send_dm, send_image, send_dm_image, split_roll_feedback,
         acquire_legacy_for_keeper=acquire_legacy_for_keeper,
-        roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
+        roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header,
+        check_id=resolution.check_id, decision_id=resolution.decision_id,
+        timeline_id=resolution.timeline_id, action_context=resolution.action_context,
     )
     return True
 
@@ -1327,7 +1429,9 @@ async def handle_luck_decision(
         conversation_id, user_id, resolution.state, resolution.char, resolution.roll_line, resolution.keeper_message,
         reply, send_dm, send_image, send_dm_image, split_roll_feedback,
         acquire_legacy_for_keeper=acquire_legacy_for_keeper,
-        roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header
+        roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header,
+        check_id=resolution.check_id, decision_id=resolution.decision_id,
+        timeline_id=resolution.timeline_id, action_context=resolution.action_context,
     )
     return True
 
@@ -1343,6 +1447,21 @@ def _resolve_luck_decision_deterministically(
         char = state.get_active_character(user_id)
         if not char:
             return _CheckResolution(reply_text="找不到你的角色。")
+
+        timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+        decision_id = effective_decision_id(user_id, pending, timeline_id)
+        check_id = str(pending.get("check_id", "")).strip() or new_check_id()
+        action_context = str(pending.get("action_context", "")).strip()[:240]
+        if not action_context:
+            recent_user_message = next(
+                (
+                    str(entry.get("content", "")).strip()
+                    for entry in reversed(state.log)
+                    if entry.get("role") == "user" and str(entry.get("content", "")).strip()
+                ),
+                "",
+            )
+            action_context = recent_user_message[:237] + "..." if len(recent_user_message) > 240 else recent_user_message
 
         tier = pending["original_tier"]
         luck_spent = 0
@@ -1397,7 +1516,9 @@ def _resolve_luck_decision_deterministically(
         )
         return _CheckResolution(
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
-            roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True
+            roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
+            check_id=check_id, decision_id=decision_id, timeline_id=timeline_id,
+            action_context=action_context,
         )
 
 

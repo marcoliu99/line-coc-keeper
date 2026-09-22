@@ -726,7 +726,7 @@ class CombatState:
 
 @dataclass
 class GroupState:
-    CURRENT_SCHEMA_VERSION = 1
+    CURRENT_SCHEMA_VERSION = 2
 
     @classmethod
     def migrate_data(cls, data: dict[str, Any]) -> dict[str, Any]:
@@ -748,6 +748,16 @@ class GroupState:
             # v0 was the short-lived pre-versioned snapshot shape. Its fields
             # are already covered by from_dict's legacy defaults.
             0: lambda snapshot: {**snapshot, "schema_version": 1},
+            1: lambda snapshot: {
+                **snapshot,
+                "schema_version": 2,
+                # Existing response chains predate timeline binding.  Keep
+                # the id readable for compatibility; callers must only use it
+                # after assigning/validating this metadata.
+                "openai_previous_response_timeline_id": snapshot.get(
+                    "openai_previous_response_timeline_id", ""
+                ),
+            },
         }
         while version < cls.CURRENT_SCHEMA_VERSION:
             migrate = migrations.get(version)
@@ -795,6 +805,9 @@ class GroupState:
     # every turn — only updated on the rare turn where a trim actually fires.
     campaign_summary: str = ""
     openai_previous_response_id: str = ""
+    # A provider-side conversation is valid only inside the timeline that
+    # created it.  Empty means that no reusable chain is currently trusted.
+    openai_previous_response_timeline_id: str = ""
     creation_sessions: dict[str, CreationSession] = field(default_factory=dict)  # keyed by owner_id
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
@@ -1010,7 +1023,11 @@ class GroupState:
         return {
             "group_id": self.group_id,
             "schema_version": self.schema_version,
-            "timeline_id": self.timeline_id or f"legacy-{self.group_id}",
+            # Preserve an empty legacy value on serialization. The repository
+            # save path assigns a real timeline before writing; inventing a
+            # compatibility id here would make an old snapshot look newer
+            # than it is and could incorrectly widen provider/memory trust.
+            "timeline_id": self.timeline_id,
             "state_revision": self.state_revision,
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
@@ -1026,6 +1043,12 @@ class GroupState:
             "kp_ooc_log": self.kp_ooc_log,
             "campaign_summary": self.campaign_summary,
             "openai_previous_response_id": self.openai_previous_response_id,
+            # Do not infer trust for a legacy response ID while serializing.
+            # Missing chain metadata is deliberately preserved as empty so the
+            # provider path will reset it on the next turn instead of silently
+            # upgrading an unverified server-side conversation into a trusted
+            # chain.
+            "openai_previous_response_timeline_id": self.openai_previous_response_timeline_id,
             "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
             "pregens": self.pregens,
             "scenario_npc_index": self.scenario_npc_index,
@@ -1078,7 +1101,11 @@ class GroupState:
         return GroupState(
             group_id=data["group_id"],
             schema_version=int(data.get("schema_version", 1)),
-            timeline_id=data.get("timeline_id") or f"legacy-{data['group_id']}",
+            # Keep legacy snapshots without a timeline distinguishable from
+            # an explicitly assigned campaign timeline. Callers that need a
+            # compatibility search use ``legacy-<group_id>`` locally; the
+            # normal repository save/turn path initializes a fresh timeline.
+            timeline_id=data.get("timeline_id", ""),
             state_revision=int(data.get("state_revision", 0)),
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
@@ -1094,6 +1121,7 @@ class GroupState:
             kp_ooc_log=data.get("kp_ooc_log", []),
             campaign_summary=data.get("campaign_summary", ""),
             openai_previous_response_id=data.get("openai_previous_response_id", ""),
+            openai_previous_response_timeline_id=data.get("openai_previous_response_timeline_id", ""),
             creation_sessions={
                 k: CreationSession.from_dict(v) for k, v in data.get("creation_sessions", {}).items()
             },

@@ -405,8 +405,8 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
                 self.items.append(item)
 
         class FakeButton:
-            def __init__(self, conversation_id, owner_id, label, choice, danger=False):
-                self.args = (conversation_id, owner_id, label, choice, danger)
+            def __init__(self, conversation_id, owner_id, label, choice, danger=False, decision_id=""):
+                self.args = (conversation_id, owner_id, label, choice, danger, decision_id)
 
         state = GroupState(group_id="g")
         state.pending_luck_decisions["123"] = {

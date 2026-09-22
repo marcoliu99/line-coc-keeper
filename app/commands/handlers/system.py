@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from uuid import uuid4
 
 from app import (
     checkpoints,
     keeper,
     locks,
+    observability,
     scenario_index,
     scenario_intro,
     scenario_library,
@@ -323,12 +325,25 @@ async def handle_system_command(
             state.context_chapter_ids = context["context_chapter_ids"]
             state.scenario_npc_index = context["indexes"].get("npcs", [])
             state.scenario_location_index = context["indexes"].get("locations", [])
+            # Selecting a scenario is a new campaign context even when the
+            # live investigator sheets are retained.  Old maintenance,
+            # memory, and provider results must not bleed into this scenario.
+            old_timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+            state.timeline_id = f"timeline-{uuid4().hex[:8]}"
+            observability.event(
+                "provider.chain.reset",
+                reason="scenario_use",
+                old_timeline_id=old_timeline_id,
+                requested_timeline_id=state.timeline_id,
+                provider="openai",
+            )
             _replace_scene_maps_preserving_locations(state, context["scene_maps"])
             # Pregens belong to the selected library item. Keep live
             # investigators in state.characters, but never leak the previous
             # scenario's pregen pool into this scenario's /coc pregens list.
             state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
+            state.openai_previous_response_timeline_id = ""
             state.active = True
             clear_page_images(conversation_id)
             scenario_library.copy_context_images(

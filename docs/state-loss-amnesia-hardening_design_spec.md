@@ -2,14 +2,14 @@
 
 ## 0. 文件狀態與 Changeset Tracking
 
-- 狀態：Draft，等待 spec review；本階段不實作 runtime code。
+- 狀態：Implementation complete on the working branch；待整合前 final review。
 - 整合目標：`main_v2`
 - 工作 branch：`fix/state-loss-amnesia-hardening`
 - 分支基準：`origin/main_v2`
 - 本次 spec 起始 changeset：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812`
-- implementation changeset：TBD
+- implementation changeset：待 implementation commit 後回填；本文件必須與最後 commit／測試結果一起更新。
 - 遠端 branch：`origin/fix/state-loss-amnesia-hardening`
-- 本文件取代先前以「maintenance stale state revision」為主要 root cause 的草稿；實作前必須以本文件核准版本為準。
+- 本文件取代先前以「maintenance stale state revision」為主要 root cause 的草稿；本次 implementation 以本文件的 correctness contract 為準，若實作採等價但較小的 code shape，必須同步更新本文件。
 - 若 `main_v2` 在實作或 PR review 期間新增 commit，必須先 fetch、重新對齊、更新本節 changeset 範圍，再繼續實作或更新 PR。
 - 問題證據來源：
   - 先前 review 的 `docs/specs/bug-state-loss-amnesia.md` 草稿。
@@ -77,14 +77,14 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 
 ### 2.1 本期包含
 
-- `memory_chunks` payload 加入 timeline 與 idempotency metadata。
-- Memory RAG search 預設只搜尋目前 timeline。
-- Background maintenance 改為「worker 只產生結果，commit gate 才寫入 state／memory」。
-- Maintenance result 加入 immutable snapshot metadata、chunk hash 與明確 commit status。
+- `memory_chunks` payload 加入 timeline、created_at、source revision 與 idempotency metadata。
+- Memory RAG 的 production callers 明確傳入目前 timeline；`search_memory(..., timeline_id=None)` 僅保留給 legacy/test caller 的 unscoped compatibility path。
+- Background maintenance 改為「worker 只產生 summary/embedding，commit gate 才寫入 state／memory」。目前以函式參數保存 immutable snapshot，而非新增 `MaintenanceRequest` dataclass。
+- Maintenance result 加入 chunk hash 與明確 `commit_status`（committed／duplicate／stale_*）；stale 結果不會把 `state_saved` 回報為 true。
 - newgame／rollback／其他 timeline-changing operation 的 provider chain reset。
 - `openai_previous_response_id` 與 timeline 綁定，拒絕跨 timeline 使用。
 - stale result、prefix mismatch、timeline mismatch、provider chain reset 的 structured log。
-- legacy memory 與 legacy provider response ID 的安全 migration policy。
+- legacy memory 與 legacy provider response ID 的安全 compatibility policy。
 - state、RAG、provider chain、maintenance concurrency 與 lock ordering 測試。
 
 ### 2.2 本期不包含
@@ -119,8 +119,8 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 
 ### 3.3 Memory RAG
 
-1. 每一個 memory chunk 必須包含 `timeline_id`；沒有 timeline 的資料視為 legacy/unscoped。
-2. `search_memory(group_id, ...)` 預設必須取得目前 authoritative `timeline_id`，只搜尋該 timeline。
+1. 每一個新 memory chunk 必須包含 `timeline_id`；沒有 timeline 的資料視為 legacy/unscoped。
+2. production caller 必須先取得 authoritative `timeline_id`，再以 `search_memory(group_id, ..., timeline_id=...)` 搜尋該 timeline；`timeline_id=None` 只保留給 legacy/test compatibility path，不可由 production prompt path 使用。
 3. memory append 必須包含 deterministic `idempotency_key`，retry 不得重複加入同一 chunk。
 4. Stale maintenance 不得先 append memory 再做 state validation。
 5. Memory commit 必須在確認 timeline、log prefix／chunk identity 與 commit policy 後才可發生。
@@ -130,7 +130,7 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 
 1. Provider response chain 必須與 `timeline_id` 綁定。
 2. 只有當 stored chain timeline 等於目前 `GroupState.timeline_id` 時，才可傳入 `previous_response_id`。
-3. rollback、newgame 與任何 timeline-changing operation 必須清除 `openai_previous_response_id`，並清除其 chain timeline metadata。
+3. rollback、newgame、scenario upload／use 與任何 timeline-changing operation 必須清除 `openai_previous_response_id`，並清除其 chain timeline metadata。scenario chapter advance 雖保留同一 timeline，也會清除 OpenAI chain，避免 chapter context 與舊 server-side chain 混用。
 4. 新 timeline 的第一個 turn 必須從目前 static/dynamic prompt 與 history 建立新 provider chain，不得接續舊 timeline 的 server-side response chain。
 5. Provider chain reset 必須產生 structured event，包含 reason、old timeline、new timeline；不得記錄完整 response ID。
 
@@ -149,7 +149,7 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 3. stale button 不得消費目前最新的另一筆檢定；只能回覆「這個按鈕已過期」並嘗試刷新目前有效按鈕。
 4. 同一個 check 的重複點擊必須是 idempotent：最多一個 request 可以消費 pending check，其餘 request 不得再次骰骰子。
 5. `pending_luck_decisions` 也必須有獨立的 `decision_id`；舊 Luck button 不得套用到新的 Luck decision。
-6. button 發送前必須以目前 state 做最後 identity check；發送後 callback 仍必須再次驗證，不能只相信發送前 snapshot。
+6. button 發送前必須以目前 state 做最後 identity check；發送後 callback 仍必須再次驗證，不能只相信發送前 snapshot。沒有 identity 的舊 button 不得消費新 pending；需要重新發布帶 identity 的 button。
 7. pending check 必須保存 bounded 的 origin metadata：`timeline_id`、建立時 revision、origin turn/request ID，以及足以描述「要檢定哪個行動」的短 context。不可把完整 prompt 或劇本全文放入 button／log。
 8. 檢定結果送回 Keeper 時，必須附帶 deterministic result、原始 skill request context 與目前 timeline；Keeper 不得靠自由回憶重新猜測玩家剛才要做的事情。
 
@@ -182,9 +182,9 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 ```text
 正常 turn 回覆完成
       │
-      └─ 建立 immutable MaintenanceRequest
-           (maintenance_id, group_id, timeline_id,
-            base_revision, dropped_chunk_hash, scenario_identity)
+          └─ 建立 logical immutable maintenance snapshot
+           (maintenance context, group_id, timeline_id,
+            base_revision, dropped_chunk_hash, scenario policy)
                     │
                     ▼
           background worker 只做純計算
@@ -193,11 +193,11 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
           └─ 回傳 MaintenanceResult，不寫 state／memory
                     │
                     ▼
-          commit gate（conversation lock + state lock + DB transaction）
+          commit gate（per-group state lock + DB IMMEDIATE transaction）
                     │
                     ├─ load latest GroupState
                     ├─ 驗證 current timeline == request.timeline
-                    ├─ 驗證 scenario identity（若適用）
+                    ├─ 驗證 timeline／scenario policy（目前以 timeline gate 隔離）
                     ├─ 驗證 dropped chunk prefix／chunk identity
                     ├─ 驗證 idempotency key 尚未 commit
                     │
@@ -220,7 +220,7 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 ### 4.3 Timeline-changing flow
 
 ```text
-/coc rollback 或 /coc newgame
+/coc rollback、/coc newgame、/coc scenario use 或新劇本上傳
       │
       ▼
 get_conversation_lock
@@ -291,9 +291,10 @@ commit canonical log + response chain + background maintenance
 
 Maintenance request 是 immutable snapshot，不可由 worker 重新讀取舊 caller object 取代：
 
-```python
-@dataclass(frozen=True)
-class MaintenanceRequest:
+```text
+# Logical immutable snapshot. The current implementation keeps these values
+# as local immutable/tuple-like variables rather than adding a public class.
+maintenance snapshot:
     maintenance_id: str
     group_id: str
     timeline_id: str
@@ -306,11 +307,12 @@ class MaintenanceRequest:
 
 `dropped_chunk_hash` 必須由穩定序列化內容計算；不可把完整劇本文字寫入 structured log。
 
+目前 implementation 不新增獨立 `scenario_identity` 欄位；新劇本／scenario use／rollback 直接建立新的 `timeline_id`，因此 scenario isolation 由 timeline commit gate 實現。
+
 ### 5.2 MaintenanceResult
 
-```python
-@dataclass(frozen=True)
-class MaintenanceResult:
+```text
+maintenance result:
     request: MaintenanceRequest
     campaign_summary: str
     embedding: list[float] | None
@@ -331,7 +333,7 @@ class MaintenanceResult:
   "idempotency_key": "maintenance-...",
   "text": "...",
   "embedding": [0.1, 0.2],
-  "created_at": "UTC timestamp",
+  "created_at": "2026-09-22T00:00:00+00:00",
   "source_revision": 123
 }
 ```
@@ -360,9 +362,9 @@ class MaintenanceResult:
 }
 ```
 
-`action_context` 必須 bounded、適合放入 prompt；它不是完整 prompt、scenario text 或任意長度 user message。若 Keeper 沒有提供 context，系統應保存明確的 fallback marker，結果 narration 必須使用目前 log／scene digest 可驗證的內容，不得假裝知道未知場景。
+`action_context` 必須 bounded、適合放入 prompt；它不是完整 prompt、scenario text 或任意長度 user message。若 Keeper 沒有提供 context，resolution path 會從目前 log 取 bounded 的最近 user action；若仍沒有可驗證內容，Keeper message 使用明確的「只描述已確定結果、不要編造場景」fallback，不得假裝知道未知場景。
 
-`pending_luck_decisions` 使用同樣概念，但欄位名稱為 `decision_id`，並且必須引用原始 `check_id`；Luck button 的 callback 同時驗證兩者。
+`pending_luck_decisions` 使用同樣概念，但欄位名稱為 `decision_id`，並且保存原始 `check_id`；Luck button 的 callback 以 `decision_id` 驗證目前 decision，`check_id` 保留作為結果鏈結與 audit metadata。button 不需要把兩個 ID 都塞進 custom ID。
 
 ### 5.5 Provider chain metadata
 
@@ -371,16 +373,16 @@ class MaintenanceResult:
 - 新增 `openai_previous_response_timeline_id`。
 - 或將 response chain metadata 收納為 `{response_id, timeline_id}`。
 
-缺少 chain timeline metadata 的 legacy state 不得直接信任其 response ID；migration 應清除該 ID，讓下一次 turn 建立新 chain。
+缺少 chain timeline metadata 的 legacy state 不得直接信任其 response ID；目前 runtime 在 provider request path 將它視為 reset，傳入 `previous_response_id=None`，下一個成功 response 才會寫回新的 chain metadata。
 
 ### 5.6 Legacy migration policy
 
-1. 先對 SQLite 做 backup，再進行 payload migration。
-2. 沒有 `timeline_id` 的既有 memory chunk 標記為 `legacy_unscoped=true`，預設不進入目前 RAG prompt。
-3. legacy chunk 必須保留在資料庫，供人工檢查或日後明確指定 timeline 後恢復；不可直接假設它屬於目前 timeline。
-4. 沒有 chain timeline metadata 的既有 `openai_previous_response_id` 必須清除；這只會讓下一個 turn 重新建立 provider context，不會刪除 GroupState log。
-5. migration 必須可重複執行，且不得重複建立 memory chunk 或改變 state revision。
-6. 若 migration 發現不合法 payload，保留原始內容於 backup／quarantine，記錄 warning，不阻塞整個 bot 啟動；但該 chunk 不得被搜尋。
+1. 先對 SQLite 做 backup，再進行任何人工 payload migration。
+2. 沒有 `timeline_id` 的既有 memory chunk 會保留為 unscoped legacy；它只在 `legacy-<group_id>` 相容查詢可見。正常 turn 會先把缺少 timeline 的 legacy state 升級成新的 explicit timeline，因此 legacy chunk 不會進入升級後或新 `newgame`／rollback／scenario-use timeline。
+3. legacy chunk 必須保留在資料庫，供人工檢查；本期不提供自動把它宣告為新 timeline 的 migration。
+4. 沒有 chain timeline metadata 的既有 `openai_previous_response_id` 不得被 provider path 信任；下一個 turn 以 `previous_response_id=None` 建立新 chain，不刪除 GroupState log。
+5. retry 以 memory `idempotency_key` 去重；不得重複建立相同 chunk，也不得因 maintenance retry 額外改變 state revision。
+6. 若讀到不合法 optional memory payload，RAG 退化為空結果，不阻塞 bot 啟動。
 
 ## 6. Commit gate 與 lock ordering
 
@@ -390,7 +392,7 @@ maintenance result 進入 commit gate 後必須重新讀取 authoritative state�
 
 1. `group_id` 相同。
 2. `current.timeline_id == request.timeline_id`。
-3. scenario identity 相同，除非該 scenario operation 明確定義為同一 campaign continuity。
+3. timeline identity 相同；目前 `/coc scenario use`、`newgame` 與 rollback 都建立新 timeline，因此 scenario identity 由 timeline gate 間接隔離。
 4. `dropped_chunk` 仍是 current log 的預期 prefix，或使用等價且可驗證的 chunk/event identity。
 5. `idempotency_key` 尚未成功 commit。
 6. result 成功且 summary／embedding 通過基本 schema validation。
@@ -402,20 +404,26 @@ maintenance result 進入 commit gate 後必須重新讀取 authoritative state�
 所有會同時接觸 conversation、GroupState 與 memory 的流程固定採用：
 
 ```text
-conversation lock
-    → per-group state lock
-        → SQLite transaction
-            → state + memory commit
+    normal command: conversation lock
+        → per-group state lock
+            → SQLite transaction
+                → state + memory commit
+
+    detached maintenance worker:
+        per-group state lock
+            → SQLite IMMEDIATE transaction
+                → timeline/prefix/idempotency validation
+                → state + memory commit
 ```
 
-不得在持有 SQLite transaction 時等待 LLM、embedding、Discord API 或其他外部 I/O。worker 的慢工作必須在 commit gate 外完成。
+正常 request 仍遵守 conversation lock → state lock → transaction。detached maintenance 沒有可同步持有的 asyncio conversation lock，因此以 per-group state lock + SQLite `BEGIN IMMEDIATE` + timeline/prefix/idempotency gate 作為等價 commit boundary；兩條路徑都不得在持有 SQLite transaction 時等待 LLM、embedding、Discord API 或其他外部 I/O。worker 的慢工作必須在 commit gate 外完成。
 
 ### 6.3 Stale result policy
 
 | 驗證結果 | State | Memory | Retry／後續處理 |
 |---|---|---|---|
 | timeline mismatch | 不寫 | 不寫 | 丟棄並記錄；新 timeline 重新建立 maintenance |
-| scenario mismatch | 不寫 | 不寫 | 依 scenario policy 丟棄；不可混用摘要 |
+| scenario/timeline policy mismatch | 不寫 | 不寫 | 目前由新 timeline 的 gate 覆蓋；不可混用摘要 |
 | prefix/chunk mismatch | 不寫 | 不寫 | 丟棄；下一個 turn 可重新 snapshot |
 | duplicate idempotency key | 不重寫 | 不重寫 | 視為 idempotent success，記錄 duplicate |
 | summary/embedding failure | 不寫 | 不寫 | 保留原始 log；依既有 retry policy 處理 |
@@ -430,7 +438,7 @@ conversation lock
 1. 先取得 conversation lock，再讀取 state；不得只依賴 button 發送時的 snapshot。
 2. 驗證 `check_id`／`decision_id`、owner、timeline 與 pending type。
 3. 驗證成功後才可消費 pending、執行一次 deterministic roll 並保存。
-4. 保存後產生一個不可變的 check result event，供 Keeper narration 使用；不得只把 mutable `GroupState` instance 傳過跨 await 邊界。
+4. 保存後產生 bounded、不可變的 in-memory check resolution payload／canonical state commit，供 Keeper narration 使用；不得只把 mutable `GroupState` instance 傳過跨 await 邊界。Keeper phase 開始前必須 refresh authoritative state。
 5. 若 narration 需要等待 provider，後續 turn 不得在同一個 sequence 前插入；若不持有 conversation lock，則必須透過 persisted turn sequence／resolution event 保證順序。
 6. 任何 `check_id` mismatch、timeline mismatch、已消費或不存在的 pending，都不得再次骰骰子；必須回覆可理解的 stale/expired 訊息並重新載入有效 pending buttons。
 7. `pending_checks.pop()`、Luck decision consume、結果 log、角色數值更新與 response-chain metadata 的 commit 邊界必須明確；不能出現「骰點已保存，但 result narration 使用另一個 timeline」的半完成狀態。
@@ -443,13 +451,14 @@ conversation lock
 
 - `/coc newgame`。
 - `/coc rollback`。
-- 產生新 timeline 的 scenario reset／campaign reset。
+- 新劇本 upload、`/coc scenario use` 或其他產生新 timeline 的 scenario reset／campaign reset。
+- scenario chapter advance：保留 timeline，但清除 OpenAI response chain。
 - 任何 restore state 的管理操作。
 
 ### 7.2 不必 reset 的操作
 
 - 同一 timeline 內的正常玩家 turn。
-- 不改變 campaign identity 的普通 scenario context 更新；但 maintenance result 仍應檢查 scenario identity 是否符合該 operation 定義。
+- 不改變 campaign identity 的普通 scenario context 更新；chapter advance 是例外，保留 timeline 但清除 provider chain。
 
 ### 7.3 Provider request 行為
 
@@ -522,17 +531,17 @@ cancelled
 
 ### 9.1 Unit tests
 
-1. Memory chunk 缺 `timeline_id` 時標記 legacy/unscoped 且不被預設 search 返回。
+1. Memory chunk 缺 `timeline_id` 時標記 legacy/unscoped；只有 `legacy-<group_id>` compatibility timeline 可搜尋，fresh timeline 不得返回。
 2. Memory search 只返回 current timeline。
 3. 相同 idempotency key 重試不重複 append。
-4. `MaintenanceRequest` 的 hash／idempotency key 穩定且不受 list mutation 影響。
+4. maintenance snapshot 的 chunk hash／idempotency key 穩定且不受 worker 期間的 list mutation 影響。
 5. provider chain timeline 不同時自動清除 `previous_response_id`。
 6. rollback／newgame 產生新 timeline 並清除 provider chain metadata。
 7. stale result 不會寫 state，也不會寫 memory。
 8. prefix mismatch 不會把 `state_saved` 誤報為 true。
 9. 每筆 pending check／Luck decision 都有唯一 identity；同一角色的新 request 不沿用舊 ID。
 10. stale CheckButton／LuckSpendButton callback 不會消費目前有效的新 request。
-11. check result event 會保留 bounded origin action context 與 timeline metadata。
+11. check resolution／canonical commit 會保留 bounded origin action context 與 timeline metadata。
 
 ### 9.2 Concurrency／integration tests
 
@@ -572,7 +581,7 @@ cancelled
 
 8. check narration freshness：
    - dice state save 與 Keeper narration 之間插入另一個 turn 時，narration 不可使用舊 mutable state。
-   - provider chain 缺失或被 reset 時，Keeper 仍能從 check result event 的 action context 描述正確場景，不得只回問「要在什麼場景做什麼」。
+   - provider chain 缺失或被 reset 時，Keeper 仍能從 check resolution payload 的 action context 描述正確場景，不得只回問「要在什麼場景做什麼」。
 
 ### 9.3 Regression tests
 
@@ -699,4 +708,4 @@ log 中最差的 `llm.turn` 是 executor 34.69s、7 iterations、6 tool calls；
 4. rollback 是否清除全部 provider chain，或只清除 OpenAI chain。預設：本期至少清除 OpenAI；其他 provider 若有 server-side conversation identity，必須採同等 timeline policy。
 5. 是否將 stale maintenance 結果立即重排。預設：不在 stale snapshot 上重試；下一個正常 turn 或明確 maintenance scheduler 重新以 current timeline 建立 request。
 
-在使用者核准本 spec 前，不開始 runtime implementation。
+本文件已獲准進入 implementation；後續若 code shape 與 contract 有差異，必須先修改本文件並在 implementation review 中記錄理由。
