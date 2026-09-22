@@ -1,5 +1,11 @@
 # 開發紀錄／已知限制
 
+### Keeper-owned deterministic checks（最新行為）
+
+- 一般技能、攻擊、SAN 與重傷 CON 檢定現在由 Keeper 的 deterministic tool 立即擲骰並回傳 authoritative 結果；玩家只描述行動，不輸入 `/coc check` 來手動擲骰。
+- `/coc check <選項名稱>` 只負責提交閃避／反擊或其他互斥行動選擇，選定後由系統替該選項擲骰。建角 `/coc luck roll` 仍由玩家本人執行，檢定後的 Luck 花費也仍由玩家選擇。
+- 舊快照裡的 pending skill/SAN 檢定仍可由 `/coc check` 相容解析；新的普通檢定不會再建立這類 pending。這段最新行為 supersede 下方早期「玩家自己擲骰」紀錄。
+
 ### PR #31 review fixes
 
 - 修正劇本修正流程不覆蓋已 reconcile 的角色卡，保留 `claimed_by` 與手動補充欄位。

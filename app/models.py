@@ -844,14 +844,17 @@ class GroupState:
     current_room_id: dict[str, str] = field(default_factory=dict)  # owner_id -> room id
     party_facing: dict[str, str] = field(default_factory=dict)  # owner_id -> compass, default "N" when absent
 
-    # A check the Keeper asked for but hasn't been rolled yet — keyed by
-    # owner_id, cleared once /coc check resolves it. See app/keeper.py's
-    # skill_check/sanity_check tools (they register one of these instead of
-    # rolling) and app/commands.py's _handle_check_command (the player rolls).
-    # Shape: {"type": "skill", "skill": str, "skill_value": int, "bonus_dice":
-    # int, "penalty_dice": int} or {"type": "sanity", "loss_success": str,
-    # "loss_failure": str}.
+    # A legacy check the Keeper asked for before checks became Keeper-owned
+    # deterministic rolls. New ordinary skill/SAN checks do not create this;
+    # choice checks still use it until the player selects an option. Old
+    # snapshots remain readable and /coc check resolves them compatibly.
     pending_checks: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    # Same-turn idempotency cache for Keeper-owned deterministic checks. The
+    # key includes the current Keeper turn and normalized tool input, so an LLM
+    # retry cannot silently consume a second random roll. It is intentionally
+    # bounded by the writer rather than retaining an unbounded campaign log.
+    deterministic_check_results: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # A rolled check awaiting the player's Luck-spend decision (see app/luck.py
     # and app/commands.py's _finalize_check_result/handle_luck_decision) —
@@ -1060,6 +1063,7 @@ class GroupState:
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
+            "deterministic_check_results": self.deterministic_check_results,
             "pending_luck_decisions": self.pending_luck_decisions,
             "pending_pregen_luck": self.pending_pregen_luck,
             "game_started": self.game_started,
@@ -1140,6 +1144,11 @@ class GroupState:
             current_room_id=data["current_room_id"] if isinstance(data.get("current_room_id"), dict) else {},
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
+            deterministic_check_results=(
+                data.get("deterministic_check_results", {})
+                if isinstance(data.get("deterministic_check_results", {}), dict)
+                else {}
+            ),
             pending_luck_decisions=data.get("pending_luck_decisions", {}),
             pending_pregen_luck=data.get("pending_pregen_luck", {}),
             game_started=data.get("game_started", False),

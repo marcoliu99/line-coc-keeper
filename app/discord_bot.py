@@ -439,19 +439,21 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
 
 
 def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
-    """Returns (label, danger, option) triples — however many buttons this
-    pending check needs. A plain skill/sanity check needs exactly one
-    (option="", meaning "just /coc check", no option name to pass); a
-    "choice" check (see keeper.py's offer_check_choice — e.g. 閃避 vs 反擊)
-    needs one button per option, each resolving to "/coc check <該選項>"."""
+    """Return buttons for legacy checks and pending player choices.
+
+    New ordinary skill/SAN/attack checks are resolved by Keeper immediately,
+    so only a choice normally reaches this function. The plain branches remain
+    for persisted pre-deployment pending checks and are labelled as system
+    resolution rather than asking the player to roll.
+    """
     if check.get("type") == "sanity":
-        return [("🎲 理智檢定", True, "")]
+        return [("🎭 由 Keeper 處理理智檢定", True, "")]
     if check.get("type") == "choice":
         return [
-            (f"🎲 {o['label']}（{o['skill']} {o['skill_value']}%）", False, o["label"])
+            (f"選擇 {o['label']}（{o['skill']} {o['skill_value']}%）", False, o["label"])
             for o in check.get("options", [])
         ]
-    return [(f"🎲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False, "")]
+    return [(f"🎭 Keeper 擲 {check.get('skill', '')}（{check.get('skill_value', 0)}%）", False, "")]
 
 
 # The trailing option segment can be empty (plain check) or a Chinese option
@@ -478,12 +480,12 @@ def _check_button_matches_pending(
 
 
 class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
-    """A "🎲 roll" button under the Keeper's message whenever it asks for a
-    check — see app/keeper.py's skill_check/sanity_check/offer_check_choice
-    tools, which now only *register* a pending check (GroupState.
-    pending_checks) instead of secretly rolling for the player. Clicking this
-    runs exactly what typing "/coc check" (or "/coc check <option>" for a
-    choice) would — see app/commands.py's handle_check_command.
+    """A choice button for a pending defensive/action choice.
+
+    Ordinary skill, attack, and SAN checks are resolved by Keeper tools and do
+    not create a button. Clicking a choice runs the same selection path as
+    typing "/coc check <option>"; the system then rolls the selected check.
+    Persisted legacy pending checks are also accepted for compatibility.
 
     Registered as a *dynamic* item (client.add_dynamic_items below, matched by
     the custom_id pattern above) rather than a plain per-message View, so it
@@ -524,7 +526,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
         danger = item.style == discord.ButtonStyle.danger
         groups = match.groupdict()
         return cls(
-            match["conversation_id"], match["owner_id"], item.label or "🎲 擲骰", danger,
+            match["conversation_id"], match["owner_id"], item.label or "選擇", danger,
             match["option"], groups.get("check_id") or "",
         )
 
@@ -623,7 +625,11 @@ async def _post_check_buttons(
             for label, danger, option in _check_button_specs(check):
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option, check_id))
             marker = f"{public_marker}\n" if public_marker else ""
-            text = f"{marker}👉 {name}，輪到你檢定了，點下面按鈕擲骰（或直接輸入 /coc check）："
+            if check.get("type") == "choice":
+                prompt = "請選擇要採取的防守／行動方式（系統會在你選定後擲骰）："
+            else:
+                prompt = "這是舊版待處理檢定，將由 Keeper 系統處理："
+            text = f"{marker}👉 {name}，{prompt}"
             await _send_direct_message(channel, text, view=view)
         except Exception:
             # Never let one broken/unpostable entry (a malformed check dict,

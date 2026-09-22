@@ -95,7 +95,7 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
 
         index = type("Index", (), {"chunks": [1], "has_embeddings": False, "index_cache": "memory"})()
 
-        def memory_search(_group_id, _query, *, metrics):
+        def memory_search(_group_id, _query, *, metrics, **_kwargs):
             metrics["has_embeddings"] = False
             return [{"label": "old", "text": "fallback memory"}]
 
@@ -128,7 +128,7 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
             metrics["query_embedding_status"] = "fallback"
             return [{"page": 1, "text": "BM25 fallback"}]
 
-        def memory_search(_group_id, _query, *, metrics):
+        def memory_search(_group_id, _query, *, metrics, **_kwargs):
             metrics["has_embeddings"] = True
             metrics["query_embedding_status"] = "fallback"
             return [{"label": "old", "text": "BM25 fallback"}]

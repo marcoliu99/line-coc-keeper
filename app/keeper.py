@@ -26,6 +26,7 @@ from app import (
     db,
     dice,
     locks,
+    luck,
     memory_rag,
     observability,
     scenario_index,
@@ -33,7 +34,7 @@ from app import (
     scenario_rag,
     scene_digest,
 )
-from app.check_identity import new_check_id
+from app.check_identity import new_check_id, new_decision_id
 from app.config import (
     LLM_PROVIDER,
     LOG_SLOW_OPERATION_MS,
@@ -151,14 +152,11 @@ TOOLS = [
     {
         "name": "skill_check",
         "description": (
-            "『請求』一次 COC7e 技能或屬性百分比檢定——這個工具不會幫玩家骰骰子，"
-            "只會記錄下這次檢定要用哪個技能、目標值多少、有沒有獎懲骰，讓玩家自己用 "
-            "/coc check 指令擲骰。呼叫完之後，只能敘述『需要做這個檢定』的當下場景，"
-            "絕對不能自己編一個成功或失敗的結果——真正的結果會在玩家擲骰後，由系統以"
-            "訊息回饋給你，那時候才能描述後續發展。只在調查／偵查類行動、戰鬥相關行動、"
-            "或對劇情有重大影響的關鍵時刻才呼叫此工具請玩家檢定；日常瑣碎、明顯不影響"
-            "劇情走向的小動作直接敘述就好，不用每次都要求檢定（見下方系統提示的完整說明）。"
-            "不管是否呼叫這個工具，都不可以自行判定成敗。"
+            "由 Keeper 代表桌面執行一次 COC7e 技能或屬性百分比檢定。這個工具會由"
+            "deterministic dice engine 立即擲骰並回傳 roll、成功等級與 success；玩家只需"
+            "描述行動，不要請玩家輸入 /coc check，也不要自行編造結果。只在調查／偵查類"
+            "行動、戰鬥相關行動或對劇情有重大影響的關鍵時刻才呼叫；日常瑣碎、明顯不影響"
+            "劇情走向的小動作直接敘述即可。回傳結果是 authoritative，必須照結果敘事。"
         ),
         "input_schema": {
             "type": "object",
@@ -171,7 +169,7 @@ TOOLS = [
                     "type": "boolean",
                     "description": (
                         "這是不是「孤注一擲」(Pushed Roll，見下方系統提示同名段落) 的重新擲骰——"
-                        "玩家第一次檢定失敗、你提議孤注一擲、玩家講了更冒險的做法後才呼叫的那一次，"
+                        "第一次檢定失敗、你提議孤注一擲、玩家講了更冒險的做法後才呼叫的那一次，"
                         "設為 true；一般的第一次檢定不要設或設 false。COC7e 規則：孤注一擲的結果"
                         "不能再花 Luck 修改，設對這個欄位系統才擋得住。"
                     ),
@@ -181,9 +179,9 @@ TOOLS = [
                     "enum": ["regular", "hard", "extreme"],
                     "description": (
                         "COC7e 難度等級規則：不填或設 'regular'（一般）——對抗的技能/屬性低於 50，"
-                        "或這是一般標準的任務，玩家擲出的結果只要達到『成功』（含）以上就算過；"
+                        "或這是一般標準的任務，Keeper 擲出的結果只要達到『成功』（含）以上就算過；"
                         "設 'hard'（困難）——對抗的技能/屬性達到 50 以上，或這件事本來就非常困難，"
-                        "玩家這次一定要擲到『困難成功』（含）以上才算過，只擲到『成功』視同失敗；"
+                        "Keeper 這次一定要擲到『困難成功』（含）以上才算過，只擲到『成功』視同失敗；"
                         "設 'extreme'（極難）——對抗的技能/屬性達到 90 以上，或這件事幾乎是人類極限，"
                         "一定要擲到『極難成功』（含）以上才算過。這是任務/對手本身的難度，"
                         "跟 bonus_dice/penalty_dice（角色這次手氣好壞、環境優劣）是兩回事，不要混用——"
@@ -192,7 +190,7 @@ TOOLS = [
                 },
                 "action_context": {
                     "type": "string",
-                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供玩家骰完後 Keeper 接續敘事；不要放完整劇本或 prompt。",
+                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事；不要放完整劇本或 prompt。",
                 },
             },
             "required": ["investigator", "skill"],
@@ -201,10 +199,10 @@ TOOLS = [
     {
         "name": "offer_check_choice",
         "description": (
-            "『請求』一次有多個互斥選項的檢定——用在玩家要在幾個技能之間選一個的一般情境"
-            "（不涉及被 NPC 攻擊）。跟 skill_check 一樣不會幫玩家骰骰子，只記錄下"
-            "選項清單，讓玩家自己選一個、用 /coc check <選項名稱> 擲骰。呼叫完之後只能"
-            "敘述『需要在這幾個選項裡選一個』的當下場景，不能自己選、不能自己編結果。"
+            "建立一次有多個互斥選項的選擇——用在玩家要在幾個技能之間選一個的一般情境"
+            "（不涉及被 NPC 攻擊）。工具只建立選項等待玩家選擇；玩家用按鈕或"
+            "/coc check <選項名稱> 選定後，系統會替玩家擲出所選檢定並回傳結果。"
+            "不要把選擇按鈕描述成玩家手動擲骰，也不能自己替玩家選。"
             "如果這是被 NPC 攻擊時的防守選擇（COC7e 的『閃避』還是『反擊』），改用"
             "offer_npc_attack_defense_choice——那個工具會直接處理攻擊方的檢定，不用"
             "你自己先呼叫 npc_skill_check 再把結果填回這裡。"
@@ -239,7 +237,7 @@ TOOLS = [
                 },
                 "action_context": {
                     "type": "string",
-                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供玩家骰完後 Keeper 接續敘事。",
+                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事。",
                 },
             },
             "required": ["investigator", "options"],
@@ -269,10 +267,9 @@ TOOLS = [
         "description": (
             "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 對抗檢定的完整標準流程。這個工具會"
             "直接由程式碼擲出攻擊方（NPC/怪物）這次攻擊的成功等級，不用你自己先呼叫 npc_skill_check、"
-            "也不用自己編。跟 offer_check_choice 一樣不會幫玩家骰防守方的骰子，只記錄下選項清單，"
-            "讓玩家自己選一個、用 /coc check <選項名稱> 擲骰。呼叫完之後只能敘述『被攻擊、需要在這"
-            "幾個選項裡選一個』的當下場景，不能自己選、不能自己編結果、不能自己講攻擊有沒有命中——"
-            "玩家真的擲完骰後系統會自動判定。"
+            "也不用自己編。跟 offer_check_choice 一樣只記錄選項清單，讓玩家選一個；玩家選定後"
+            "系統會替防守方擲骰並自動判定。呼叫完之後只能敘述『被攻擊、需要在這幾個選項裡選一個』"
+            "的當下場景，不能自己選、不能自己編結果、不能自己講攻擊有沒有命中。"
             "options 要不要給『反擊』選項看攻擊距離：近戰（engaged）才能反擊，給「閃避」「反擊」"
             "兩個選項；遠程攻擊（near/any，例如槍械、投擲武器）COC7e 規則不允許反擊，只能給"
             "「閃避」一個選項——這種情況 options 只給一個是合法的，不要為了湊兩個選項硬塞一個假的"
@@ -302,7 +299,7 @@ TOOLS = [
                 "attacker_penalty_dice": {"type": "integer", "description": "攻擊方懲罰骰數量，預設 0"},
                 "action_context": {
                     "type": "string",
-                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供玩家骰完後 Keeper 接續敘事。",
+                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事。",
                 },
             },
             "required": ["investigator", "options", "attacker_skill_value"],
@@ -311,13 +308,12 @@ TOOLS = [
     {
         "name": "clear_pending_check",
         "description": (
-            "取消某位角色目前『待處理』的檢定（skill_check／sanity_check／offer_check_choice／"
-            "offer_npc_attack_defense_choice 任何一種、還沒被玩家用 /coc check 或按鈕解決的那筆），"
-            "不會擲骰、不會判定成敗，純粹把它從等待清單移除。用在原本要求的檢定已經因為劇情推進、"
+            "取消某位角色目前『待處理』的互斥選擇，或清理舊版本快照留下的 skill/SAN pending 檢定。"
+            "新的 skill_check／sanity_check 不會建立 pending；選擇項目還沒被玩家用 /coc check 或按鈕解決前，"
+            "這個工具不會擲骰、不會判定成敗，只會把它從等待清單移除。用在原本要求的選擇已經因劇情推進、"
             "戰鬥結束、角色離場等原因不再需要玩家回應的情況——例如威脅已經解除、角色已經倒下、"
-            "或你判斷這筆檢定不用再等玩家回覆了。呼叫 skill_check 等工具卻被『已經有一筆待處理的"
-            "檢定』擋下來、且確認那筆是真的過時、不會再有人處理時，才用這個工具清掉它、再重新發起"
-            "新的檢定；如果那筆待處理的檢定其實還有效、只是玩家還沒回覆，不要用這個工具去清掉它。"
+            "或你判斷這筆選擇不用再等玩家回覆了。若新檢定被舊 pending 擋下，且確認那筆真的過時，"
+            "才用這個工具清掉它；有效的選擇不要清掉。"
             "角色目前沒有待處理的檢定時呼叫這個工具是安全的 no-op，不會出錯。"
         ),
         "input_schema": {
@@ -331,14 +327,11 @@ TOOLS = [
     {
         "name": "sanity_check",
         "description": (
-            "『請求』一次理智檢定（SAN check）——用於角色目擊恐怖事物、遭遇超自然現象等場合，"
-            "但跟 skill_check 一樣不會幫玩家骰骰子，只記錄下成功/失敗各自的理智損失公式，"
-            "讓玩家自己用 /coc check 擲骰。呼叫完之後只能敘述『需要做理智檢定』的當下，"
-            "不能自己編結果或先扣理智，等玩家擲出結果、系統回饋給你之後才描述反應。"
-            "COC7e 規則：如果玩家擲完骰後這次損失達到 5 點以上，系統會自動接著請玩家做一次"
-            "INT 檢定判斷是否觸發『短暫瘋狂』（Bout of Madness），不用你自己另外呼叫任何工具、"
-            "也不用你自己判斷有沒有觸發——回饋訊息裡會清楚告訴你發生了什麼，你只要照那個結果"
-            "接續敘事即可。"
+            "由 Keeper 代表桌面執行一次理智檢定（SAN check）——用於角色目擊恐怖事物、"
+            "遭遇超自然現象等場合。工具會立即擲骰、套用成功/失敗的理智損失、更新 SAN，"
+            "並回傳 authoritative 結果；不要請玩家輸入 /coc check，也不要自己編結果或先扣"
+            "理智。COC7e 規則：損失達到 5 點以上時，系統會自動擲 INT 判斷短暫瘋狂，"
+            "你只要照回傳結果接續敘事。"
         ),
         "input_schema": {
             "type": "object",
@@ -348,7 +341,7 @@ TOOLS = [
                 "loss_failure": {"type": "string", "description": "檢定失敗時的理智損失，如 '1d6'、'1d10'"},
                 "action_context": {
                     "type": "string",
-                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供玩家骰完後 Keeper 接續敘事。",
+                    "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事。",
                 },
             },
             "required": ["investigator", "loss_success", "loss_failure"],
@@ -360,7 +353,7 @@ TOOLS = [
             "調整角色的 HP、MP、SAN 或 LUCK 數值（例如受傷扣血、花費幸運點、恢復精神力）。"
             "field 只能是 hp/mp/san/luck，delta 為正負整數變化量。"
             "COC7e 規則：如果這次扣血（field=hp、delta 為負）單次傷害達到角色最大 HP 的一半以上，"
-            "系統會自動接著幫玩家註冊一次 CON 檢定判斷會不會當場昏迷（重傷規則），不用你自己另外呼叫"
+            "系統會立即替玩家擲一次 CON 檢定判斷會不會當場昏迷（重傷規則），不用你自己另外呼叫"
             "任何工具、也不用你自己判斷有沒有觸發——回傳結果裡會清楚告訴你發生了什麼，你只要照那個"
             "結果接續敘事即可。"
         ),
@@ -894,17 +887,13 @@ def require_character(state: GroupState, name: str) -> Character:
 
 
 def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict | None:
-    """Returns an error dict if `char` already has an unresolved pending
-    check registered, else None. Shared by every tool that's about to
-    register a new pending_checks entry (skill_check/sanity_check/
-    offer_check_choice/offer_npc_attack_defense_choice) — see
-    docs/npc_attack_latency_design_spec.md's "風險 1": none of them
-    previously guarded against a repeat call for the same investigator,
-    which silently overwrote (and, for offer_npc_attack_defense_choice,
-    silently discarded an already-rolled attacker check) whatever was
-    already pending.
+    """Return an error for a legacy pending check, otherwise ``None``.
 
-    Always called from inside that tool's _mutate_and_save_state mutator,
+    New skill/SAN checks are resolved immediately and do not use this helper.
+    It remains available for older pending-check compatibility and for the
+    choice tools, whose pending entry represents a player action selection.
+
+    When called, this must be from inside that tool's _mutate_and_save_state mutator,
     against the freshly-reloaded `target_state` — not the outer, possibly
     stale `state` a caller was handed before this turn's lock was ever
     taken. An earlier revision checked the outer `state` directly (cheaper:
@@ -948,6 +937,60 @@ def _pending_check_metadata(target_state: GroupState, owner_id: str, tool_input:
         "action_context": context,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+
+
+def _deterministic_check_cache_key(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    owner_id: str,
+    speaker_role: str,
+) -> str:
+    """Return a same-turn idempotency key for a Keeper-owned check.
+
+    The turn id is the important boundary: two attacks in two different player
+    turns must roll independently even when their text and skill are identical,
+    while a provider retry inside one turn must not roll twice. Direct unit
+    calls without an observability turn intentionally skip this cache because
+    they do not have a trustworthy request boundary.
+    """
+    context = observability.current_context()
+    turn_id = str(context.get("turn_id", "")).strip()
+    if not turn_id:
+        return ""
+    payload = {
+        "turn_id": turn_id,
+        "tool": tool_name,
+        "input": tool_input,
+        "owner_id": owner_id,
+        "speaker_role": speaker_role,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _cached_check_result(state: GroupState, cache_key: str) -> dict[str, Any] | None:
+    if not cache_key:
+        return None
+    cached = state.deterministic_check_results.get(cache_key)
+    if not isinstance(cached, dict):
+        return None
+    result = cached.get("result")
+    return dict(result) if isinstance(result, dict) else None
+
+
+def _remember_check_result(state: GroupState, cache_key: str, result: dict[str, Any]) -> None:
+    if not cache_key:
+        return
+    state.deterministic_check_results[cache_key] = {
+        "result": dict(result),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    # Keep this cache small. It is only for retries of recent turns, not an
+    # audit log; the authoritative public event remains the committed turn.
+    if len(state.deterministic_check_results) > 128:
+        oldest = next(iter(state.deterministic_check_results))
+        state.deterministic_check_results.pop(oldest, None)
 
 
 def _is_identical_pending_check(existing: dict, new_check_dict: dict) -> bool:
@@ -1631,43 +1674,100 @@ def _execute_tool(
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            def _register_pending_skill_check(target_state: GroupState) -> _StateMutation[dict]:
+            owner_id = char.owner_id
+            cache_key = _deterministic_check_cache_key(name, tool_input, owner_id, speaker_role)
+
+            def _roll_skill_check(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
+                cached = _cached_check_result(target_state, cache_key)
+                if cached is not None:
+                    return _StateMutation(cached, should_save=False)
+                if target_char.owner_id in target_state.pending_checks:
+                    return _StateMutation(
+                        {
+                            "ok": False,
+                            "error": (
+                                f"{target_char.name} 仍有舊版待處理檢定；請先用最新按鈕或 /coc check 選擇完成，"
+                                "不要在它完成前開始另一個檢定。"
+                            ),
+                        },
+                        should_save=False,
+                    )
+                if target_char.owner_id in target_state.pending_luck_decisions:
+                    return _StateMutation(
+                        {
+                            "ok": False,
+                            "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
+                        },
+                        should_save=False,
+                    )
                 value = resolve_skill_value(target_char, tool_input["skill"])
                 bonus = int(tool_input.get("bonus_dice") or 0)
                 penalty = int(tool_input.get("penalty_dice") or 0)
                 difficulty = tool_input.get("difficulty") or "regular"
                 if difficulty not in ("regular", "hard", "extreme"):
                     difficulty = "regular"
-                new_check = {
-                    "type": "skill", "skill": tool_input["skill"], "skill_value": value,
-                    "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
-                    "pushed": bool(tool_input.get("pushed", False)),
+                pushed = bool(tool_input.get("pushed", False))
+                roll = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
+                metadata = _pending_check_metadata(target_state, target_char.owner_id, tool_input)
+                result: dict[str, Any] = {
+                    "ok": True,
+                    "resolved": True,
+                    "investigator": target_char.name,
+                    "skill": tool_input["skill"],
+                    "skill_value": value,
+                    "bonus_dice": bonus,
+                    "penalty_dice": penalty,
+                    "difficulty": difficulty,
+                    "roll": roll.roll,
+                    "tier": roll.tier,
+                    "required_tier": roll.required_tier,
+                    "success": roll.success,
+                    "check_id": metadata["check_id"],
+                    "timeline_id": metadata["timeline_id"],
+                    "action_context": metadata["action_context"],
+                    "note": "Keeper 已由 deterministic dice engine 擲完這次檢定；請直接依照結果敘事，不要再要求玩家擲攻擊骰或技能骰。",
                 }
-                new_check.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
-                # 先檢查是否已有待處理檢定
-                existing = target_state.pending_checks.get(target_char.owner_id)
-                if existing:
-                    # 如果完全相同，直接返回結果而不重新保存（防重複）
-                    if _is_identical_pending_check(existing, new_check):
-                        return _StateMutation({
-                            "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
-                            "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
-                            "note": "已經有相同的待處理檢定（防重複）。",
-                        }, should_save=False)
-                    # 否則拒絕（已有不同的待處理檢定）
-                    return _StateMutation({
-                        "ok": False,
-                        "error": f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）才能再要求新的檢定，不要重複呼叫。",
-                    }, should_save=False)
-                # 沒有待處理檢定，註冊新的
-                target_state.pending_checks[target_char.owner_id] = new_check
-                return _StateMutation({
-                    "ok": True, "pending": True, "investigator": target_char.name, "skill": tool_input["skill"],
-                    "skill_value": value, "bonus_dice": bonus, "penalty_dice": penalty, "difficulty": difficulty,
-                    "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會有真正的成敗——不要自己編一個。",
-                }, should_save=True)
-            return _mutate_and_save_state(state, _register_pending_skill_check)
+
+                luck_options = [] if pushed else luck.buyable_options(
+                    value, roll.roll, roll.tier, target_char.luck, difficulty
+                )
+                gate_cost = None if pushed else luck.cheapest_cost(value, roll.roll, roll.tier, difficulty)
+                if luck_options and gate_cost is not None and gate_cost <= 7:
+                    decision = {
+                        "decision_id": new_decision_id(),
+                        "check_id": metadata["check_id"],
+                        "timeline_id": metadata["timeline_id"],
+                        "origin_revision": target_state.state_revision + 1,
+                        "origin_turn_id": metadata["origin_turn_id"],
+                        "origin_request_id": metadata["origin_request_id"],
+                        "created_at": metadata["created_at"],
+                        "action_context": metadata["action_context"],
+                        "skill_name": tool_input["skill"],
+                        "display_label": None,
+                        "value": value,
+                        "roll": roll.roll,
+                        "bonus_dice": bonus,
+                        "penalty_dice": penalty,
+                        "original_tier": roll.tier,
+                        "attacker_tier": None,
+                        "difficulty": difficulty,
+                        "options": [{"tier": item.tier, "cost": item.cost} for item in luck_options],
+                        "major_wound_trigger": False,
+                    }
+                    target_state.pending_luck_decisions[target_char.owner_id] = decision
+                    result.update({
+                        "pending_luck": True,
+                        "decision_id": decision["decision_id"],
+                        "luck_options": decision["options"],
+                        "note": (
+                            "Keeper 已擲完檢定。這是接近成功的結果，玩家現在只可選擇是否花 Luck 修正；"
+                            "玩家不需要、也不可以自行重骰。先不要把最終成敗敘事成不可逆的結果。"
+                        ),
+                    })
+                _remember_check_result(target_state, cache_key, result)
+                return _StateMutation(result, should_save=True)
+            return _mutate_and_save_state(state, _roll_skill_check)
 
         if name == "offer_check_choice":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -1702,7 +1802,7 @@ def _execute_tool(
                 target_state.pending_checks[target_char.owner_id] = new_choice
                 return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                    "note": "還沒有骰出結果，等玩家自己選一個選項、用 /coc check <選項名稱> 擲骰後才會有結果——不要自己選、不要自己編一個。",
+                    "note": "等待玩家選一個選項；玩家只是在選擇行動，之後由 Keeper 的 deterministic dice engine 擲出所選檢定，不要要求玩家自己擲骰。",
                 }, should_save=True)
             return _mutate_and_save_state(state, _register_pending_choice)
 
@@ -1790,9 +1890,8 @@ def _execute_tool(
                 return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                     "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
-                    "note": "攻擊方檢定已經由系統擲好（tier 見上面），還沒有防守方的骰出結果——等玩家自己選"
-                            "一個選項、用 /coc check <選項名稱> 擲骰後才會有結果，不要自己選、不要自己編一個、"
-                            "也不要自己判定命中與否。",
+                    "note": "攻擊方檢定已經由系統擲好（tier 見上面）；等待玩家選一個防守選項，"
+                            "選定後由系統擲防守方骰子並判定，不要要求玩家自己擲攻擊或防守骰，也不要自己判定命中與否。",
                 }, should_save=True)
             return _mutate_and_save_state(state, _roll_and_register_defense_choice)
 
@@ -1821,20 +1920,68 @@ def _execute_tool(
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             loss_success = tool_input.get("loss_success", "0")
             loss_failure = tool_input.get("loss_failure", "1d4")
-            def _register_pending_sanity(target_state: GroupState) -> _StateMutation[dict]:
+            owner_id = char.owner_id
+            cache_key = _deterministic_check_cache_key(name, tool_input, owner_id, speaker_role)
+
+            def _roll_sanity_check(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
-                blocked = _reject_if_check_already_pending(target_state, target_char)
-                if blocked is not None:
-                    return _StateMutation(blocked, should_save=False)
-                target_state.pending_checks[target_char.owner_id] = {
-                    "type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure,
-                    **_pending_check_metadata(target_state, target_char.owner_id, tool_input),
+                cached = _cached_check_result(target_state, cache_key)
+                if cached is not None:
+                    return _StateMutation(cached, should_save=False)
+                if target_char.owner_id in target_state.pending_checks:
+                    return _StateMutation(
+                        {
+                            "ok": False,
+                            "error": f"{target_char.name} 仍有待處理的防守選擇，請先完成選擇再做 SAN 檢定。",
+                        },
+                        should_save=False,
+                    )
+                if target_char.owner_id in target_state.pending_luck_decisions:
+                    return _StateMutation(
+                        {"ok": False, "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。"},
+                        should_save=False,
+                    )
+                metadata = _pending_check_metadata(target_state, target_char.owner_id, tool_input)
+                sanity_result = dice.sanity_check(target_char.san, loss_success, loss_failure)
+                target_char.san = sanity_result.san_after
+                result: dict[str, Any] = {
+                    "ok": True,
+                    "resolved": True,
+                    "investigator": target_char.name,
+                    "current_san": sanity_result.san_before,
+                    "san_after": sanity_result.san_after,
+                    "loss": sanity_result.loss,
+                    "loss_expression": sanity_result.loss_expression,
+                    "roll": sanity_result.check.roll,
+                    "tier": sanity_result.check.tier,
+                    "success": sanity_result.check.success,
+                    "check_id": metadata["check_id"],
+                    "timeline_id": metadata["timeline_id"],
+                    "action_context": metadata["action_context"],
+                    "note": "Keeper 已由 deterministic dice engine 擲完 SAN 檢定並更新 SAN；不要要求玩家再輸入 /coc check。",
                 }
-                return _StateMutation({
-                    "ok": True, "pending": True, "investigator": target_char.name, "current_san": target_char.san,
-                    "note": "還沒有骰出結果，等玩家自己用 /coc check 擲骰後才會知道有沒有損失理智——不要自己編一個。",
-                }, should_save=True)
-            return _mutate_and_save_state(state, _register_pending_sanity)
+                if sanity_result.risk_of_madness:
+                    int_value = resolve_skill_value(target_char, "INT")
+                    int_result = dice.skill_check(int_value)
+                    result["madness_int_check"] = {
+                        "skill_value": int_value,
+                        "roll": int_result.roll,
+                        "tier": int_result.tier,
+                        "success": int_result.success,
+                    }
+                    if int_result.success:
+                        result["madness"] = dice.roll_madness(realtime=True)
+                        result["note"] = (
+                            "Keeper 已完成 SAN 與後續 INT 檢定；損失達 5 點並觸發短暫瘋狂，"
+                            "請照 madness 結果敘事，不要再要求玩家擲 INT。"
+                        )
+                    else:
+                        result["note"] = (
+                            "Keeper 已完成 SAN 與後續 INT 檢定；INT 未觸發短暫瘋狂，請照結果敘事。"
+                        )
+                _remember_check_result(target_state, cache_key, result)
+                return _StateMutation(result, should_save=True)
+            return _mutate_and_save_state(state, _roll_sanity_check)
 
         if name == "adjust_character":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -1846,7 +1993,7 @@ def _execute_tool(
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
 
-            def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool]:
+            def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool, dict[str, Any] | None]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
                 delta = int(tool_input["delta"])
@@ -1854,6 +2001,7 @@ def _execute_tool(
                 setattr(target_char, cur_attr, new_val)
 
                 major_wound = False
+                wound_roll: dict[str, Any] | None = None
                 # COC7e major wound rule, code-enforced the same way Bout of
                 # Madness is (see sanity_check above): a single hit dealing >=
                 # half of max HP knocks the investigator unconscious unless they
@@ -1862,25 +2010,34 @@ def _execute_tool(
                 # its own, so a second CON check on top would be redundant.
                 if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2:
                     major_wound = True
-                    target_state.pending_checks[target_char.owner_id] = {
-                        "type": "skill", "skill": "CON", "skill_value": resolve_skill_value(target_char, "CON"),
-                        "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
-                        "major_wound_trigger": True,
-                        **_pending_check_metadata(target_state, target_char.owner_id, {
-                            "action_context": f"{target_char.name} 因為重傷需要做 CON 檢定",
-                        }),
+                    con_value = resolve_skill_value(target_char, "CON")
+                    con_result = dice.skill_check(con_value)
+                    wound_roll = {
+                        "skill": "CON",
+                        "skill_value": con_value,
+                        "roll": con_result.roll,
+                        "tier": con_result.tier,
+                        "success": con_result.success,
                     }
-                return new_val, major_wound
+                    if not con_result.success:
+                        for tag in ("昏迷", "倒地"):
+                            if tag not in target_char.status_tags:
+                                target_char.status_tags.append(tag)
+                    # A major-wound check is resolved inside this same atomic
+                    # mutation. It must never overwrite a still-valid defense
+                    # choice or leave a new player-roll pending entry behind.
+                return new_val, major_wound, wound_roll
 
-            new_val, major_wound = _mutate_and_save_state(state, _apply_attribute_delta)
+            new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)
             refreshed_char = require_character(state, tool_input.get("investigator", ""))
             response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
             if major_wound:
                 response["major_wound"] = True
+                response["major_wound_check"] = wound_roll
                 response["note"] = (
                     "這次單一傷害達到重傷門檻（≥ 角色最大 HP 一半），COC7e 規則：角色必須做一次 CON 檢定，"
-                    "失敗會當場昏迷倒地——系統已經幫玩家註冊這次 CON 檢定，不用你自己判斷結果，"
-                    "先描述受到重擊當下的衝擊就好（不要講有沒有昏過去），等玩家輸入 /coc check CON 才知道結果。"
+                    "Keeper 已經擲完 CON 並把成功或昏迷倒地結果寫入狀態；不要要求玩家輸入 /coc check CON，"
+                    "直接照 major_wound_check 敘事。"
                 )
             return response
 
@@ -2184,14 +2341,14 @@ def _execute_tool(
             if asset.get("visibility", "public") != "public" and speaker_role != "kp_assistant":
                 return {"ok": False, "error": "這一頁是 KP 專用資料，不能在一般遊戲流程中展示給玩家"}
             image_investigator: str = tool_input.get("investigator") or ""
-            owner_id = None
+            image_owner_id: str | None = None
             if image_investigator:
                 char = find_character(state, image_investigator)
                 if not char:
                     return {"ok": False, "error": f"找不到角色「{image_investigator}」"}
-                owner_id = char.owner_id
-            image_requests.append((owner_id, page))
-            return {"ok": True, "page": page, "asset_type": asset.get("type"), "target": "private" if owner_id else "public"}
+                image_owner_id = char.owner_id
+            image_requests.append((image_owner_id, page))
+            return {"ok": True, "page": page, "asset_type": asset.get("type"), "target": "private" if image_owner_id else "public"}
 
         if name == "advance_scenario_chapter":
             def _advance(target_state: GroupState) -> dict:
@@ -2387,18 +2544,19 @@ def _build_static_prompt(state: GroupState) -> str:
 - 描述行動或檢定的後續發展時，優先用五感細節（看到什麼、聽到什麼、聞到什麼、觸感、體感反應）具體呈現當下發生了什麼，而不是直接丟出「你成功了」「你失敗了」這種抽象判定字眼——讓玩家從場景細節裡自己讀出結果，比直接宣告結果更有壓迫感、也更符合冷酷旁觀者的口吻。
 - 回覆裡不要用條列清單、表格、或「你可以選擇 1/2/3」這種選單式收尾；除非玩家已經卡住很久明確需要選項，否則讓玩家自己決定要做什麼，用一個開放的畫面或 NPC 反應收尾就好。
 
-# 檢定由玩家自己擲骰，不是你代骰
-- skill_check／sanity_check 這兩個工具現在只是「請求」一次檢定，不會幫你骰出結果：呼叫之後只會拿到
-  目標值、獎懲骰之類的設定資訊，沒有成功或失敗的結果。你要做的是在敘述裡明確講清楚「現在需要一次
-  什麼檢定、目標值大概怎樣、有沒有優勢劣勢」，然後停在那裡，等玩家自己輸入 `/coc check` 擲骰。
-- **絕對不要自己編一個檢定結果**——不管是「大失敗」「成功」還是任何等級，只要玩家還沒有真的擲出來，
-  你就不知道結果，也不能假裝知道。玩家擲骰後，系統會用一則訊息把真正的結果（擲出多少、什麼等級）
-  回饋給你，那時候你才能根據那個既定事實描述後續發展——這則訊息裡的結果是不能改的既定事實，
-  跟 Map Engine 解析出的位置一樣，你只負責敘述，不負責判定。
-- 這個規則的例外只有：`roll_dice`（單純的道具/傷害骰，不是角色的技能檢定，繼續由你直接呼叫）、
-  以及本來就不會有玩家角色可以骰的情境（例如純粹的環境描述、劇情事件擲骰）。
-- 玩家要在幾個互斥的技能之間自己選一個時（不是你幫他決定，是他要選），呼叫 `offer_check_choice`
-  給選項（至少兩個），不要用 `skill_check` 自己決定用哪個技能，也不要自己選好了才呼叫 `skill_check`。
+# 檢定由 Keeper 擲骰，玩家只描述行動或選擇
+- `skill_check`／`sanity_check` 會由 deterministic dice engine 立即擲出結果，回傳擲骰值、成功等級、
+  success 以及必要的狀態變更。玩家只要描述「我要攻擊／調查／抵抗什麼」；不要要求玩家輸入
+  `/coc check`，也不要自行編造或改寫工具回傳的結果。攻擊檢定同樣走 `skill_check`，絕對不能把攻擊骰
+  交給玩家手動擲。
+- 工具回傳結果後，直接依 authoritative result 敘事。若回傳 `pending_luck=true`，代表 Keeper 已經擲完，
+  玩家只是在選擇是否花 Luck 修正，不是重新擲骰；先不要把未選定的最終成敗寫死。
+- `offer_check_choice`／`offer_npc_attack_defense_choice` 只用來讓玩家選擇互斥行動。玩家選定按鈕或輸入
+  `/coc check <選項名稱>` 後，系統會替他擲出所選技能；不要把按鈕或指令說成玩家自己擲骰。
+- `/coc check <技能名>` 沒有待處理的選項時不是主動擲骰指令。請玩家直接描述行動，讓 Keeper 呼叫正確
+  的 deterministic tool；不要用 `roll_dice` 手動模擬角色的 d100 技能或攻擊檢定。
+- 這個規則的例外只有建角流程的玩家 LUCK（`/coc luck roll`）仍由玩家明確完成，以及單純的道具／
+  傷害骰等 `roll_dice`／武器傷害工具；角色技能、屬性、攻擊、閃避、反擊與 SAN 都由系統代擲。
 - **難度等級（COC7e 規則，不是憑感覺套用，每次呼叫 skill_check 前都要想一下這條）**：`skill_check` 的
   `difficulty` 參數決定這次判定的門檻，依 RAW 規則判斷——對抗的技能/屬性低於 50、或任務標準時不用填
   （等同 `'regular'`）；對抗的技能/屬性達到 50 以上、或這件事本來就非常困難時設 `'hard'`；對抗的
@@ -2413,22 +2571,21 @@ def _build_static_prompt(state: GroupState) -> str:
   `penalty_dice=1`）。
 
 # 孤注一擲（Pushed Roll）
-- 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check『請』玩家孤注一擲重新擲骰，而不是玩家講完就直接算過。這次呼叫 skill_check 一定要把 `pushed` 參數設成 true（COC7e 規則：孤注一擲的結果是最終結果，不能再花 Luck 修改，系統要靠這個參數才擋得住，不設的話玩家還是會看到花 Luck 的選項）。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
+- 玩家的技能或屬性檢定失敗、且情境上還有其他更冒險的做法可以再試一次時，可以主動提議「孤注一擲」：問玩家「你要怎麼豁出去再試一次？」，等玩家講出更激進、風險更高的做法後，再呼叫一次 skill_check 讓 Keeper 代擲。這次呼叫 skill_check 一定要把 `pushed` 參數設成 true（COC7e 規則：孤注一擲的結果是最終結果，不能再花 Luck 修改，系統靠這個欄位擋住 Luck 選項）。孤注一擲之間必須有時間流逝（幾秒到幾小時，視情境），且失敗要有貨真價實、比第一次更糟的後果，不能是「什麼事都沒發生」。
 - 只有技能／屬性檢定可以孤注一擲；理智檢定、幸運檢定、戰鬥的命中/閃避/傷害擲骰都不能重來。
 - 你手上的「劇本內容」是只有你知道的機密資料。絕對不要主動把劇本裡的謎底、幕後真相或玩家尚未發現的資訊直接告訴玩家，要透過調查、檢定、線索慢慢揭露。
-- 不用每次有不確定性的行動都要求玩家檢定——只在下列情況才呼叫 skill_check 工具『請』玩家檢定：
+- 不用每次有不確定性的行動都要求檢定——只在下列情況才呼叫 skill_check 工具讓 Keeper 代擲：
   (1) 調查／偵查類行動（找線索、辨認事物、專業知識判斷、搜索等）；
   (2) 戰鬥相關行動（攻擊命中、閃避、戰鬥中的技能對抗）；
   (3) 對劇情發展有重大影響的關鍵時刻（可能改變劇情走向的抉擇、逃脫危險、取得關鍵線索、說服關鍵 NPC 等）。
   日常、瑣碎、明顯不會失敗或失敗也不影響劇情的小動作（閒聊、簡單移動、清楚會成功的小事）直接用
   敘事帶過即可，不要為了小事也要求檢定；拿不準的話，優先往上面三類去想，而不是每個行動都檢定。
-  不管是否呼叫這個工具，都不可以自己憑空決定成敗，也不可以自己骰。
-- skill_check／sanity_check／offer_check_choice／offer_npc_attack_defense_choice 這幾個要求檢定的
-  工具，如果角色已經有一筆待處理的檢定，會直接被拒絕（防止重複要求把前一筆的內容悄悄覆蓋掉）。
-  遇到這種拒絕，先想這筆待處理的檢定是不是還有效——通常是玩家還沒來得及回覆，這種情況不要硬清掉，
-  等他們處理完；只有在確認那筆檢定已經過時（劇情已經跳過、角色已經離場或倒下等，不會再有人去處理）
-  時，才呼叫 clear_pending_check 清掉它，再重新發起新的檢定。
-- 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具『請』玩家做理智檢定。
+  不管是否呼叫這個工具，都不可以自己憑空決定成敗或編造骰值；照 deterministic tool 回傳結果敘事。
+- `skill_check`／`sanity_check` 會立即完成檢定，不建立玩家擲骰 pending。只有 `offer_check_choice`／
+  `offer_npc_attack_defense_choice` 會等待玩家選擇；若角色有待處理選擇，先等玩家按最新按鈕或輸入
+  `/coc check <選項名稱>`，不要清掉有效選擇來繞過流程。
+- 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具，直接依回傳的
+  SAN、損失與可能的 madness 結果敘事，不要請玩家做 `/coc check`。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
 - 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
 - **角色用武器攻擊、命中對方時的傷害**：一般（非極限成功）命中呼叫 roll_weapon_damage（給角色名稱
@@ -2442,10 +2599,9 @@ def _build_static_prompt(state: GroupState) -> str:
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
 - 角色 HP 降到 0 時描述瀕死或死亡過程；SAN 降到 0 時描述永久性失常的下場。
-- COC7e 重傷規則：如果 adjust_character 扣血後回傳結果裡有 `major_wound`，系統已經自動幫玩家註冊一次
-  CON 檢定（判斷會不會當場昏迷），不用你自己另外呼叫任何工具、也不用你自己判斷有沒有觸發——先描述
-  受到這次重擊當下的直接衝擊就好，還不知道會不會昏過去，等玩家自己用 /coc check CON 擲骰、結果出來
-  之後你才會收到確定的成敗，照那個結果接續敘事即可，不要自己先講角色昏倒了或撐住了。
+- COC7e 重傷規則：如果 adjust_character 扣血後回傳結果裡有 `major_wound`，系統已經自動擲完 CON
+  檢定並在 `major_wound_check` 回傳成功或昏迷倒地結果；不用再呼叫任何工具、也不要要求玩家用
+  `/coc check CON`，直接照 authoritative 結果描述受到重擊與後果。
 - 有些資訊只該讓特定調查員知道（秘密檢定結果、只有他發現的線索、私人物品內容等），這種時候呼叫
   send_private_info 私下告訴那位玩家，不要寫進公開回覆裡；公開回覆一樣要正常描述當下場景，
   只是用中性、不劇透的方式帶過那個角色在做什麼，不要讓其他玩家從公開內容反推出私人資訊是什麼。
@@ -2460,8 +2616,8 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色卡標示「（暫離）」代表玩家目前不在，不管是不是在戰鬥中，都不需要特別等他、也不要主動描述
   他的角色在做什麼；照常推進其他人的劇情就好，他回來（狀態變回正常）之後再自然地把他寫回場景裡。
 - 角色卡如果標示「★ 關鍵背景連結」，代表那是這個角色最重要的一段個人連結（人、地、物）。不能不由分說就
-  直接摧毀、殺死或永久奪走它——真的走到這個地步時，要先呼叫 skill_check 請玩家自己擲骰搶救（視情境判斷
-  合適的技能），玩家真的擲出失敗、連結真的失去時才呼叫 sanity_check 請他做理智檢定，損失設為
+  直接摧毀、殺死或永久奪走它——真的走到這個地步時，要先呼叫 skill_check 讓系統替玩家擲骰搶救（視情境判斷
+  合適的技能），檢定真的失敗、連結真的失去時才呼叫 sanity_check 讓系統做理智檢定，損失設為
   '1'/'1d6'。這個欄位是公開的（不像秘密目標），可以正常寫進公開敘述裡。
 
 # NPC 隊友
@@ -2574,9 +2730,9 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 offer_npc_attack_defense_choice 讓玩家自己選防守方式，不要自己幫玩家決定。options 要不要給「反擊」
 看攻擊距離（COC7e 規則，反擊只在近戰才合法）：近戰攻擊給「閃避」「反擊」兩個選項；遠程攻擊（槍械、
 投擲武器等）不能反擊，只給「閃避」一個選項，不要為了湊兩個硬塞假的反擊選項。這個工具會直接由程式碼
-擲出攻擊方（通常是 NPC）這次攻擊的成功等級，不用你自己先呼叫 npc_skill_check 再把結果填回去，玩家
-真的擲完骰後系統會自動判定攻擊有沒有命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用
-自己比較雙方骰出的等級誰贏。
+擲出攻擊方（通常是 NPC）這次攻擊的成功等級，不用你自己先呼叫 npc_skill_check 再把結果填回去；玩家
+只選防守選項，選定後系統會自動擲防守方骰並判定攻擊有沒有命中、反擊有沒有生效，你只需要照系統回饋的
+既定結果敘述，不用自己比較雙方骰出的等級誰贏。
 
 敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
 冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理：若是

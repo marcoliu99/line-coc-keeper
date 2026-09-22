@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app import combat
 from app.models import Character, EffectState, GroupState
@@ -665,45 +665,49 @@ class CombatCardTests(unittest.TestCase):
         self.assertIn("Dream Singer [敵方] DEX 60 HP 14/14", private)
         self.assertIn("護甲:Hide 2", private)
 
-    def test_apply_combat_damage_registers_major_wound_con_check_for_pc(self):
+    def test_apply_combat_damage_resolves_major_wound_con_check_for_pc(self):
         state = self._state_with_pc()
         combat.start_combat(state)
 
-        result = combat.apply_combat_damage(state, "Mark", 6)
+        with patch.object(
+            combat.dice,
+            "skill_check",
+            return_value=MagicMock(roll=42, tier="regular", success=True),
+        ) as check_mock:
+            result = combat.apply_combat_damage(state, "Mark", 6)
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_triggered"])
-        pending = state.pending_checks["u1"]
-        self.assertEqual({key: pending[key] for key in (
-            "type", "skill", "skill_value", "bonus_dice", "penalty_dice", "difficulty", "major_wound_trigger"
-        )}, {
-            "type": "skill",
+        self.assertEqual(result["major_wound_check"], {
             "skill": "CON",
             "skill_value": 50,
-            "bonus_dice": 0,
-            "penalty_dice": 0,
-            "difficulty": "regular",
-            "major_wound_trigger": True,
+            "roll": 42,
+            "tier": "regular",
+            "success": True,
         })
-        self.assertTrue(pending["check_id"].startswith("check-"))
-        self.assertEqual(pending["timeline_id"], state.timeline_id)
+        self.assertEqual(state.pending_checks, {})
+        check_mock.assert_called_once_with(50)
 
-    def test_apply_combat_damage_does_not_clobber_an_existing_pending_check(self):
-        """A major wound's CON check is a side effect registered directly by
-        apply_combat_damage (app/combat.py), bypassing keeper.py's
-        _reject_if_check_already_pending guard on the "front door" tools —
-        without this, damage from an unrelated event landing while the
-        player still has some other check outstanding (e.g. an unresolved
-        NPC-attack defense choice) would silently overwrite it."""
+    def test_apply_combat_damage_resolves_wound_without_clobbering_choice(self):
+        """A pending choice must survive unrelated damage; the CON roll is
+        resolved atomically instead of being added as another pending check."""
         state = self._state_with_pc()
         combat.start_combat(state)
         state.pending_checks["u1"] = {"type": "sanity", "skill_value": 40}
 
-        result = combat.apply_combat_damage(state, "Mark", 6)
+        with patch.object(
+            combat.dice,
+            "skill_check",
+            return_value=MagicMock(roll=99, tier="fail", success=False),
+        ):
+            result = combat.apply_combat_damage(state, "Mark", 6)
 
         self.assertTrue(result["ok"])
-        self.assertFalse(result["major_wound_triggered"])
+        self.assertTrue(result["major_wound_triggered"])
+        self.assertFalse(result["major_wound_check"]["success"])
         self.assertEqual(state.pending_checks["u1"], {"type": "sanity", "skill_value": 40})
+        self.assertIn("昏迷", state.characters["u1"].status_tags)
+        self.assertIn("倒地", state.characters["u1"].status_tags)
 
     def test_add_combat_effect_applies_fixed_damage_at_turn_start(self):
         state = self._state_with_pc()

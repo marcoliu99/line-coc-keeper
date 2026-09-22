@@ -9,8 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import db, dice, keeper, memory_rag
-from app import legacy_commands as commands
-from app.check_identity import effective_check_id
 from app.models import Character, GroupState
 from app.repositories import group_state
 
@@ -134,8 +132,8 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertEqual(chunks[0]["timeline_id"], "timeline-a")
         self.assertTrue(chunks[0]["idempotency_key"])
 
-    def test_pending_check_has_identity_and_origin_context(self) -> None:
-        state = GroupState("pending-identity")
+    def test_deterministic_check_has_identity_and_origin_context(self) -> None:
+        state = GroupState("deterministic-identity")
         state.characters["p1"] = Character(name="P1", owner_id="p1")
         group_state.save_state(state)
 
@@ -147,11 +145,11 @@ class StateLossAmnesiaTests(unittest.TestCase):
             [],
         )
         self.assertTrue(result["ok"])
-        pending = group_state.load_state(state.group_id).pending_checks["p1"]
-        self.assertTrue(pending["check_id"].startswith("check-"))
-        self.assertEqual(pending["timeline_id"], state.timeline_id)
-        self.assertEqual(pending["action_context"], "在醫院地下室檢查血跡")
-        self.assertEqual(effective_check_id("p1", pending, state.timeline_id), pending["check_id"])
+        self.assertTrue(result["resolved"])
+        self.assertTrue(result["check_id"].startswith("check-"))
+        self.assertEqual(result["timeline_id"], state.timeline_id)
+        self.assertEqual(result["action_context"], "在醫院地下室檢查血跡")
+        self.assertEqual(group_state.load_state(state.group_id).pending_checks, {})
 
     def test_stale_check_button_identity_cannot_match_a_replacement(self) -> None:
         try:
@@ -166,13 +164,8 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertFalse(_check_button_matches_pending("p1", None, "check-new", "timeline-a"))
 
 
-class MultiUserPendingCheckStressTests(unittest.IsolatedAsyncioTestCase):
-    """Small deterministic replay of six players plus a KP Assistant.
-
-    It intentionally uses the real SQLite/state locks and no external API.
-    The separate button-identity test covers the stale-click path; this test
-    focuses on six different owners resolving at once without lost state.
-    """
+class MultiUserDeterministicCheckStressTests(unittest.IsolatedAsyncioTestCase):
+    """Six player/KP-assistant check calls resolve without lost state."""
 
     async def test_six_users_and_kp_assistant_do_not_double_roll(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -185,57 +178,31 @@ class MultiUserPendingCheckStressTests(unittest.IsolatedAsyncioTestCase):
                     state.characters[owner_id] = Character(
                         name=f"Player {index}", owner_id=owner_id, skills={"偵查": 60}
                     )
-                    if index == 6:
-                        continue
-                    state.pending_checks[owner_id] = {
-                        "type": "skill",
-                        "skill": "偵查",
-                        "skill_value": 60,
-                        "bonus_dice": 0,
-                        "penalty_dice": 0,
-                        "difficulty": "regular",
-                        "check_id": f"check-{owner_id}",
-                        "timeline_id": state.timeline_id,
-                        "origin_revision": 1,
-                        "origin_turn_id": "turn-stress",
-                        "origin_request_id": "request-stress",
-                        "action_context": f"Player {index} 在現場調查",
-                    }
                 group_state.save_state(state)
-                kp_registration = keeper._execute_tool(
-                    GroupState.from_dict(state.to_dict()),
-                    "skill_check",
-                    {
-                        "investigator": "Player 6",
-                        "skill": "偵查",
-                        "action_context": "KP Assistant 代玩家登記戰鬥後的偵查檢定",
-                    },
-                    [],
-                    [],
-                    speaker_role="kp_assistant",
-                )
-                self.assertTrue(kp_registration["ok"])
-                state = group_state.load_state(state.group_id)
-
                 roll = dice.SkillCheckResult(
                     skill_value=60, roll=99, bonus_dice=0, penalty_dice=0,
                     tier="fail", success=False, required_tier="regular",
                 )
-                with patch.object(commands.dice, "skill_check", return_value=roll) as roll_mock:
+                with patch.object(keeper.dice, "skill_check", return_value=roll) as roll_mock:
                     results = await asyncio.gather(*(
                         asyncio.to_thread(
-                            commands._resolve_check_deterministically,
-                            state.group_id,
-                            owner_id,
-                            "/coc check 偵查",
+                            keeper._execute_tool,
+                            GroupState.from_dict(state.to_dict()),
+                            "skill_check",
+                            {
+                                "investigator": f"Player {index}",
+                                "skill": "偵查",
+                                "action_context": f"Player {index} 在現場調查",
+                            },
+                            [],
+                            [],
+                            speaker_role="kp_assistant" if index == 6 else "player",
                         )
-                        for owner_id in ["p1", "p2", "p3", "p4", "p5", "p6"]
+                        for index in range(1, 7)
                     ))
 
-                committed = [result for result in results if result.should_finalize]
-                rejected = [result for result in results if result.reply_text]
-                self.assertEqual(len(committed), 6)
-                self.assertEqual(len(rejected), 0)
+                self.assertEqual(len(results), 6)
+                self.assertTrue(all(result["ok"] and result["resolved"] for result in results))
                 self.assertEqual(roll_mock.call_count, 6)
                 final_state = group_state.load_state(state.group_id)
                 self.assertEqual(final_state.pending_checks, {})

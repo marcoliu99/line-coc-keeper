@@ -418,22 +418,20 @@ SpecialAbility(
    - 場景火勢擴散、煙霧、坍塌、儀式進度等環境效果。環境／全體效果可用保留 target
      `environment`／`all` 註冊；需要造成傷害時由固定時點展開到當時仍在場的戰鬥員。
 
-重傷規則必須與現有 PC `adjust_character` 行為一致：單次傷害達門檻時註冊 CON 檢定或套用對應狀態。NPC 是否需要重傷檢定由卡片或全域設定決定，預設普通敵人只用 HP/defeated，不替每個雜兵跑完整重傷流程。
+重傷規則必須與現有 PC `adjust_character` 行為一致：單次傷害達門檻時由 Keeper 系統立即擲 CON，並套用對應狀態。NPC 是否需要重傷檢定由卡片或全域設定決定，預設普通敵人只用 HP/defeated，不替每個雜兵跑完整重傷流程。
 
 目前 PC 重傷契約：
 
 - `apply_combat_damage` 對 PC 造成單次 final damage 達 `hp_max / 2` 且角色仍存活時，設定 `major_wound_triggered=True`。
-- 同時在 `state.pending_checks[owner_id]` 註冊一次 CON 檢定，格式與 `adjust_character` 的重傷檢定一致：
+- 同時在傷害結果的 `major_wound_check` 放入已完成的 CON 檢定結果；不建立玩家手動擲骰的 `pending_checks`：
 
 ```python
 {
-    "type": "skill",
     "skill": "CON",
     "skill_value": character.con,
-    "bonus_dice": 0,
-    "penalty_dice": 0,
-    "difficulty": "regular",
-    "major_wound_trigger": True,
+    "roll": 42,
+    "tier": "regular",
+    "success": True,
 }
 ```
 

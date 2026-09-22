@@ -226,13 +226,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final_text, "Marco 滿臉是血，需要做理智檢定。")
         self.assertEqual(private_messages, [])
         self.assertEqual(image_requests, [])
-        pending = saved.pending_checks["p1"]
-        self.assertEqual(
-            {key: pending[key] for key in ("type", "loss_success", "loss_failure")},
-            {"type": "sanity", "loss_success": "0", "loss_failure": "1d4"},
-        )
-        self.assertTrue(pending["check_id"].startswith("check-"))
-        self.assertEqual(pending["timeline_id"], saved.timeline_id)
+        self.assertEqual(saved.pending_checks, {})
         self.assertEqual(len(saved.log), 2)
         self.assertEqual(saved.log[0]["role"], "user")
         self.assertEqual(saved.log[1], {"role": "assistant", "content": "Marco 滿臉是血，需要做理智檢定。"})
@@ -247,7 +241,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"loss_failure": "1d4"', canonical_message)
         self.assertIn('"loss_success": "0"', canonical_message)
         self.assertIn('"ok": true', canonical_message)
-        self.assertIn('"pending": true', canonical_message)
+        self.assertIn('"resolved": true', canonical_message)
         self.assertEqual(saved.kp_ooc_log, [{"role": "kp_assistant", "content": "old ooc"}])
         self.assertEqual(saved.openai_previous_response_id, "canonical-response")
         self.assertIsNone(fake_provider.calls[0][1]["previous_response_id"])
@@ -483,13 +477,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(result["ok"])
             saved = store.get("g")
-            pending = saved.pending_checks["p1"]
-            self.assertEqual(
-                {key: pending[key] for key in ("type", "loss_success", "loss_failure")},
-                {"type": "sanity", "loss_success": "1", "loss_failure": "1d4"},
-            )
-            self.assertTrue(pending["check_id"].startswith("check-"))
-            self.assertEqual(pending["timeline_id"], saved.timeline_id)
+            self.assertTrue(result["resolved"])
+            self.assertEqual(saved.pending_checks, {})
 
             rejected = keeper._execute_tool(
                 state,
@@ -1018,7 +1007,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "找不到角色，無法建立正式傷害結果。"})
         self.assertEqual(saved.openai_previous_response_id, "formal-chain")
 
-    def test_san_reproduction_case_uses_kp_context_and_creates_pending_check(self):
+    def test_san_reproduction_case_uses_kp_context_and_resolves_immediately(self):
         state = GroupState(group_id="g")
         state.characters["p1"] = Character(name="The Tough Guy/Dame", owner_id="p1", occupation="Dame")
         state.kp_ooc_log = [
@@ -1039,10 +1028,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 speaker_role="kp_assistant",
             )
             self.assertTrue(result["ok"])
-            self.assertTrue(result["pending"])
-            self.assertEqual(store.get("g").pending_checks["p1"]["type"], "sanity")
-            self.assertEqual(store.get("g").pending_checks["p1"]["loss_success"], "1")
-            self.assertEqual(store.get("g").pending_checks["p1"]["loss_failure"], "1d4")
+            self.assertTrue(result["resolved"])
+            self.assertEqual(store.get("g").pending_checks, {})
 
     async def test_ordinary_message_without_kp_bypasses_priority_gate(self):
         async def noop_dm(*args):
