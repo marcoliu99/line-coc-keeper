@@ -5,6 +5,8 @@
 - Integration branch: `main_v2`
 - Base changeset: `b87625094a20fc7954ad1d05680c7987d0904812`
 - Working branch base before this correction: `d841c7a7f4a6f20199add6bd392ce66c4a325f9d`
+- Implementation changeset: `7f9a042` (`fix: make Keeper own character check rolls`)
+- Effective review range: `b87625094a20fc7954ad1d05680c7987d0904812..7f9a042`
 - This document records the check-ownership correction to the existing state-isolation branch.
 
 ## Problem and goal
