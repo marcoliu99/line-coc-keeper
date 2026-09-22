@@ -7,7 +7,9 @@
 - 工作 branch：`fix/state-loss-amnesia-hardening`
 - 分支基準：`origin/main_v2`
 - 本次 spec 起始 changeset：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812`
-- implementation changeset：待 implementation commit 後回填；本文件必須與最後 commit／測試結果一起更新。
+- implementation changeset：`76e319e6d4d4c87981c35447e9b71761f9af0bf1`
+- changeset range：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812` → `76e319e6d4d4c87981c35447e9b71761f9af0bf1`
+- verification：`pytest -q` 全部通過（既有 1 個 Discord 外部整合 skip）；`pytest --cov=app` 全部通過，總 coverage 59%；`ruff check app tests`、`mypy app`、`python3 -m compileall -q app tests` 全部通過。
 - 遠端 branch：`origin/fix/state-loss-amnesia-hardening`
 - 本文件取代先前以「maintenance stale state revision」為主要 root cause 的草稿；本次 implementation 以本文件的 correctness contract 為準，若實作採等價但較小的 code shape，必須同步更新本文件。
 - 若 `main_v2` 在實作或 PR review 期間新增 commit，必須先 fetch、重新對齊、更新本節 changeset 範圍，再繼續實作或更新 PR。
