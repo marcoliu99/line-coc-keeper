@@ -7,8 +7,8 @@
 - 工作 branch：`fix/state-loss-amnesia-hardening`
 - 分支基準：`origin/main_v2`
 - 本次 spec 起始 changeset：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812`
-- implementation changeset：`df8c06fe198a78c896dc3c2f00f159db2ada5034`
-- changeset range：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812` → `df8c06fe198a78c896dc3c2f00f159db2ada5034`
+- implementation changeset：`79c743d615d604ade890da693f56997500443043`
+- changeset range：`origin/main_v2:b87625094a20fc7954ad1d05680c7987d0904812` → `79c743d615d604ade890da693f56997500443043`
 - verification：`pytest -q` 全部通過（既有 1 個 Discord 外部整合 skip）；`pytest --cov=app` 全部通過，總 coverage 60%；`ruff check app tests`、`mypy app`、`python3 -m compileall -q app tests` 全部通過。
 - 遠端 branch：`origin/fix/state-loss-amnesia-hardening`
 - 本文件取代先前以「maintenance stale state revision」為主要 root cause 的草稿；本次 implementation 以本文件的 correctness contract 為準，若實作採等價但較小的 code shape，必須同步更新本文件。
@@ -146,6 +146,7 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 5. `CancelledError` 不得被一般 fallback 捕捉成成功。
 6. `_commit_turn_result()` 與 `_commit_kp_ooc_turn_result()` 的 false return 表示 timeline commit gate 拒絕舊回覆；caller 不得繼續送出原始 final text、private messages 或 images，必須回傳明確的 stale-turn 訊息並要求依目前 timeline 重試。
 7. Agentic `supervisor.run_turn()` 也必須在第一個 agent await 前 capture timeline，並把同一個 `timeline_id` 傳入 canonical commit；不能只依賴 `_commit_turn_result()` 的 legacy fallback。
+8. `save_state()` 失敗時會 raise，而不是回傳 boolean；canonical tool/turn/OOC commit 必須 fail closed，並產生 `state.save.failed` structured event，不能把未保存的回覆當成成功。
 
 ### 3.6 Pending check 與 button identity
 
@@ -160,6 +161,8 @@ Tuse：  maintenance 使用當時的結果寫入 state／memory／context
 9. Discord `custom_id` 不得超過 100 characters。完整 persisted `check_id`／`decision_id` 仍是 state 的 authoritative identity，但新按鈕只能攜帶包含 owner、timeline 與完整 identity hash 的短 transport token；callback 必須重新載入 state，以 full identity 或該 token 驗證，不能把短 token 當成 persisted ID。
 10. choice button 的 option 不得把任意長的 label 放進 `custom_id`；新按鈕使用 bounded option index，callback 在已驗證的 pending entry 中重新解析 label。舊版 raw-label button 僅作向後相容。
 11. scenario use／新劇本 upload 產生新 timeline 時，必須清除 `pending_checks`、`pending_luck_decisions` 與 deterministic check cache；resolver 仍須拒絕任何帶有不符 timeline metadata 的舊 pending entry。
+12. timeline metadata 為 `null` 的 legacy pending entry 視同未帶 timeline 的相容資料；不得以 `str(None) == "None"` 誤拒絕。非空 timeline 仍必須 exact-match。
+13. Check/Luck callback 的 pre-state snapshots 必須成對捕捉；若 invariant 被破壞，只記錄 error 並跳過刷新，不可用半套 snapshot 發送按鈕。
 
 ## 4. 現況流程與修正後流程
 
@@ -293,7 +296,7 @@ commit canonical log + response chain + background maintenance
 
 Agentic Supervisor 使用同一個 commit contract：`_ensure_turn_timeline(state)` 在 Context Builder 前執行並保存 `turn_timeline_id`，Executor／Narrator 完成後以該值呼叫 `_commit_turn_result(..., timeline_id=turn_timeline_id)`。若 commit gate 拒絕，Supervisor 只回傳 stale-turn 訊息，不回傳已被拒絕的 narration、private messages 或 image requests。
 
-若 `handle_check_command`／Luck resolution 在 deterministic state commit 後、Keeper narration 前失敗，button callback 的 finally 仍須在 conversation lock 離開後重新執行 pending-button diff；不能因例外而讓新建立的 pending entry 永久沒有可按的 button。刷新失敗只能記錄錯誤，不能覆蓋原始例外。
+若 `handle_check_command`／Luck resolution 在 deterministic state commit 後、Keeper narration 前失敗，button callback 的 finally 仍須在 conversation lock 離開後重新執行 pending-button diff；不能因例外而讓新建立的 pending entry 永久沒有可按的 button。刷新失敗只能記錄錯誤，不能覆蓋原始例外。兩份 snapshot 必須成對存在；若只有一份，視為 callback invariant failure，不進行部分刷新。
 
 若產品上不希望 conversation lock 跨越 LLM narration，則必須改成持久化的 `CheckResolution` event／turn sequence，並在 Keeper narration 前以該 event 建立 fresh state；不得直接把 state lock 釋放後的舊 mutable `GroupState` instance 傳給 Keeper。
 
@@ -715,6 +718,7 @@ log 中最差的 `llm.turn` 是 executor 34.69s、7 iterations、6 tool calls；
 8. 骰點結果可以帶著原始 action context 完成 Keeper narration，不會在 context 缺失時無理由反問玩家場景。
 9. concurrency regression tests 可以穩定重現並通過。
 10. implementation commit、測試結果與 changeset 範圍記錄回本文件最前方。
+11. `timeline_id=None` 的 button 與 legacy resolver regression tests 通過；state save failure 仍會 raise 且留下 `state.save.failed` event。
 
 ## 11. 未決決策與 review gate
 
