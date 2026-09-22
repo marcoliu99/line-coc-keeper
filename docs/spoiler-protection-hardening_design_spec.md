@@ -2,13 +2,13 @@
 
 ## 0. 文件狀態與 Changeset Tracking
 
-- 狀態：Spec draft v3，等待 review；尚未實作 runtime code。
+- 狀態：v3 spec 已實作完成，待 review（ruff/mypy/compileall/pytest 四項檢查皆通過，375 tests passed；尚未 commit）。
 - 整合目標：`main_v2`
 - 工作 branch：`feature/spoiler-protection-hardening`
 - 分支基準：`origin/main_v2`
-- spec 起始 changeset：`origin/main_v2`（建立 branch 時的最新 commit）
-- implementation changeset：尚未開始
-- changeset range：`origin/main_v2` → 尚未實作
+- spec 起始 changeset：`origin/main_v2`（建立 branch 時的最新 commit，`b876250`）
+- implementation changeset：working tree on top of `bf9165138a69a4ae7c06f88403c6b78937dae937`（spec v3 commit）— 尚未建立 commit，實際 commit hash 待整理後補上。
+- changeset range：`origin/main_v2` → `bf91651`（spec）→ 本次實作（尚未 commit）
 - 本功能不修改既有 state-loss PR #48 的 branch；所有變更從 `main_v2` 開始。
 
 ### 0.1 v2 變更摘要（相對 v1 draft）
@@ -522,7 +522,7 @@ Facts/clues/scenario index/image asset 新增或正規化欄位：
 3. output guard 擋下回覆時是否通知 KP？預設：只寫 structured log，不在公開頻道通知；KP 可透過 debug/observability 查詢。
 4. 是否允許 KP 明確 reveal 一個 `kp_only` fact？預設：本期只設計 policy hook，不自動新增 reveal command；另開後續 spec 處理可追蹤 reveal event。
 5. ~~§3.3 折衷設計：是否採單一開關，還是拆成兩層？~~ **已於 v3 確認採用兩層開關**（`SPOILER_PROTECTION_ENABLED` + `PRIVACY_ISOLATION_ENABLED`），見 §3。
-6. `PRIVACY_ISOLATION_ENABLED=false` 的預期使用情境是什麼？是否僅限本機開發/測試環境，正式營運環境是否應強制 `true`（例如啟動時 warning 或拒絕以 false 啟動）？**待 review 確認**。
-7. **（新增）**`SPOILER_PROTECTION_ENABLED=false` 是否也該在正式環境跳出 warning？預設：只記錄一次啟動時 log（`spoiler.protection.disabled` at startup），不阻擋啟動，因為這一層本來就設計給 KP 依場次調整。
+6. ~~`PRIVACY_ISOLATION_ENABLED=false` 的預期使用情境是什麼？是否應強制 `true`？~~ **已確認採方案 B**：不阻擋啟動（保留本機開發/除錯彈性），但 `app/discord_bot.py:main()` 在 `PRIVACY_ISOLATION_ENABLED=false` 時，於啟動當下記錄一次醒目的 `_logger.warning()` + `privacy.isolation.disabled` observability 事件，避免這件事被埋在運行期間才觸發的個別函式 log 裡而被忽略。
+7. ~~`SPOILER_PROTECTION_ENABLED=false` 是否也該在正式環境跳出 warning？~~ **已確認維持方案 A（現狀）**：不加啟動檢查，因為這一層本來就設計給 KP 依場次調整，風險等級（提前看到劇情）遠低於 `PRIVACY_ISOLATION_ENABLED`（玩家隱私外洩）。
 
 本文件 review 通過前，不開始修改 runtime code。

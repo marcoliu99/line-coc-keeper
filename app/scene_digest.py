@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from app import db, locks
+from app import db, locks, spoiler_policy
 from app.models import GroupState
 
 _logger = logging.getLogger(__name__)
@@ -68,8 +68,18 @@ def _public_state(state: GroupState) -> dict:
         },
         "locations": locations,
         "combat": combat_public,
-        "established_facts": [x for x in state.established_facts if x.get("visibility", "public") == "public"],
-        "known_clues": [x for x in state.known_clues if x.get("visibility", "public") == "public"],
+        # §3.4 mechanism #6: with spoiler protection off, kp_only facts/clues
+        # are kept in the public digest too rather than filtered out.
+        "established_facts": (
+            list(state.established_facts)
+            if not spoiler_policy.is_spoiler_protection_enabled()
+            else [x for x in state.established_facts if x.get("visibility", "public") == "public"]
+        ),
+        "known_clues": (
+            list(state.known_clues)
+            if not spoiler_policy.is_spoiler_protection_enabled()
+            else [x for x in state.known_clues if x.get("visibility", "public") == "public"]
+        ),
         "consumed_or_removed_items": state.consumed_or_removed_items,
     }
 

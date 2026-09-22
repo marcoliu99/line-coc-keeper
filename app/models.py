@@ -5,6 +5,8 @@ import random
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from app import spoiler_policy
+
 # Standard COC7e base skill percentages (subset covering the common cases).
 # Dodge and "Language (Own)" are computed per-investigator, not listed here.
 # Chinese skill names follow the official terminology table the project
@@ -213,6 +215,10 @@ class Character:
         top_skills = sorted(self.skills.items(), key=lambda kv: -kv[1])[:12]
         if top_skills:
             lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
+        if self.secret_goal and not spoiler_policy.is_privacy_isolation_enabled():
+            # §3.4 mechanism #2: with privacy isolation off, the secret goal
+            # is allowed to surface in this player-facing formatter too.
+            lines.append(f"（隱私隔離已關閉）秘密目標：{self.secret_goal}")
         return "\n".join(lines)
 
     def static_sheet_text(self) -> str:
