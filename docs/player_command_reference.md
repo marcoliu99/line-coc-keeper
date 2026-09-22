@@ -126,15 +126,26 @@
 
 ## 檢定
 
-### 技能或理智檢定
+### 切換自動擲骰
 
-自己擲出守密人要求的檢定，也可主動指定技能。
+預設關閉；所有玩家都可以開啟或關閉本群組設定。
 
 用法：
-- `/coc check [技能名] [獎勵骰數] [懲罰骰數]`
+- `/coc autoroll on|off`
+- `/coc autoroll`
 
 範例：
-- `/coc check 偵查`
+- `/coc autoroll off`
+
+### 技能或理智檢定
+
+預設由玩家用 /coc check 或按鈕擲骰；若群組開啟 autoroll，才由 Keeper/system 自動處理。
+
+用法：
+- `/coc check [技能或選項名稱]`
+
+範例：
+- `/coc check 閃避`
 
 ### Luck 擲骰與結果選擇
 

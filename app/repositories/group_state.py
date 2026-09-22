@@ -151,8 +151,18 @@ def _save_state_unlocked(
                 entry = json.loads(raw_entry)
             except (TypeError, json.JSONDecodeError):
                 continue
-            if (
+            if not isinstance(entry, dict):
+                continue
+            # Modern mirrors carry conversation_id.  Older rows may not have
+            # that metadata, but the group-prefixed key still gives us an
+            # unambiguous ownership boundary.  Rows without either signal
+            # are deliberately preserved for safety rather than guessed at.
+            owned_by_group = (
                 entry.get("conversation_id") == state.group_id
+                or mirror_key.startswith(f"{state.group_id}:")
+            )
+            if (
+                owned_by_group
                 and mirror_key not in expected_keys
             ):
                 db.delete_json_tx(conn, "characters", mirror_key)

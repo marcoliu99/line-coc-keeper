@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from uuid import uuid4
 
 from app import (
     checkpoints,
     keeper,
     locks,
+    observability,
     scenario_index,
     scenario_intro,
     scenario_library,
@@ -323,12 +325,32 @@ async def handle_system_command(
             state.context_chapter_ids = context["context_chapter_ids"]
             state.scenario_npc_index = context["indexes"].get("npcs", [])
             state.scenario_location_index = context["indexes"].get("locations", [])
+            # Selecting a scenario is a new campaign context even when the
+            # live investigator sheets are retained.  Old maintenance,
+            # memory, and provider results must not bleed into this scenario.
+            old_timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+            state.timeline_id = f"timeline-{uuid4().hex[:8]}"
+            # All player decisions and deterministic-result caches belong to
+            # the previous scenario timeline.  Clear them at the reset point
+            # so an old Discord button or typed command cannot be consumed by
+            # the newly selected scenario.
+            state.pending_checks.clear()
+            state.pending_luck_decisions.clear()
+            state.deterministic_check_results.clear()
+            observability.event(
+                "provider.chain.reset",
+                reason="scenario_use",
+                old_timeline_id=old_timeline_id,
+                requested_timeline_id=state.timeline_id,
+                provider="openai",
+            )
             _replace_scene_maps_preserving_locations(state, context["scene_maps"])
             # Pregens belong to the selected library item. Keep live
             # investigators in state.characters, but never leak the previous
             # scenario's pregen pool into this scenario's /coc pregens list.
             state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
+            state.openai_previous_response_timeline_id = ""
             state.active = True
             clear_page_images(conversation_id)
             scenario_library.copy_context_images(
@@ -415,6 +437,28 @@ async def handle_system_command(
         state.kp_assistant_user_id = user_id
         save_state(state)
         await reply("已登記你為這局的 KP 助手。")
+        return
+
+    if sub == "autoroll":
+        state = load_state(conversation_id)
+        action = parts[2].casefold() if len(parts) > 2 else "status"
+        if action not in {"on", "off", "status", "狀態", "開", "關"} or len(parts) > 3:
+            await reply("用法：/coc autoroll on|off（不帶參數可查看目前狀態）")
+            return
+        if action in {"status", "狀態"}:
+            await reply(
+                "目前自動擲骰：已開啟。新檢定會由 Keeper/system 立即處理。"
+                if state.autoroll_checks
+                else "目前自動擲骰：關閉（預設）。新檢定會等待玩家用 /coc check 或按鈕擲骰。"
+            )
+            return
+        state.autoroll_checks = action in {"on", "開"}
+        save_state(state)
+        await reply(
+            "已開啟自動擲骰；之後新建立的技能、攻擊、SAN、重傷 CON 檢定可由 Keeper/system 立即處理。"
+            if state.autoroll_checks
+            else "已關閉自動擲骰；之後新建立的角色檢定會等待玩家用 /coc check 或按鈕擲骰。"
+        )
         return
 
     if sub == "status":

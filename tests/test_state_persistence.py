@@ -60,6 +60,7 @@ class StatePersistenceTests(unittest.TestCase):
     def test_tool_recovery_markers_round_trip_and_old_snapshots_default_empty(self):
         legacy = GroupState.from_dict({"group_id": "legacy"})
         self.assertEqual(legacy.tool_recovery_markers, [])
+        self.assertFalse(legacy.autoroll_checks)
         state = GroupState("recovery")
         state.tool_recovery_markers.append({"tool_name": "apply_combat_damage", "status": "recovery_required"})
         restored = GroupState.from_dict(state.to_dict())
@@ -167,6 +168,48 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertIn("待處理的劇本上傳", replies[0])
         load_context.assert_not_called()
 
+    def test_scenario_use_clears_timeline_bound_player_decisions(self):
+        state = GroupState("discord-group-scenario-reset", kp_assistant_user_id="kp", timeline_id="timeline-old")
+        state.pending_checks["player"] = {"type": "skill", "timeline_id": "timeline-old"}
+        state.pending_luck_decisions["player"] = {"timeline_id": "timeline-old"}
+        state.deterministic_check_results["old"] = {"timeline_id": "timeline-old"}
+        context = {
+            "manifest": {"title": "New scenario"},
+            "text": "new scenario text",
+            "active_chapter_id": "chapter-1",
+            "context_chapter_ids": ["chapter-1"],
+            "indexes": {"npcs": [], "locations": []},
+            "pregens": [],
+            "scene_maps": {},
+            "page_numbers": [],
+        }
+        replies = []
+
+        async def reply(text):
+            replies.append(text)
+
+        with patch.object(system_handler, "load_state", return_value=state), \
+                patch.object(system_handler.scenario_library, "load_context", return_value=context), \
+                patch.object(system_handler, "save_state"), \
+                patch.object(system_handler, "clear_page_images"), \
+                patch.object(system_handler.scenario_library, "copy_context_images"), \
+                patch.object(system_handler.scenario_rag, "schedule_index_prewarm"):
+            asyncio.run(system_handler.handle_system_command(
+                state.group_id,
+                "kp",
+                reply,
+                None,
+                None,
+                None,
+                ["/coc", "scenario", "use", "new-scenario"],
+            ))
+
+        self.assertEqual(replies, ["KP 已選擇《New scenario》；目前 Context：chapter-1。"])
+        self.assertNotEqual(state.timeline_id, "timeline-old")
+        self.assertEqual(state.pending_checks, {})
+        self.assertEqual(state.pending_luck_decisions, {})
+        self.assertEqual(state.deterministic_check_results, {})
+
     def test_pdf_choice_requires_kp_or_keeper(self):
         state = GroupState("discord-group-pdf-auth", kp_assistant_user_id="kp")
         state.pending_pdf_upload = {"scenario_id": "upload"}
@@ -198,6 +241,38 @@ class StatePersistenceTests(unittest.TestCase):
             self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player", True))
         with patch.object(legacy_commands.config, "SCENARIO_LIFECYCLE_KP_ONLY", False):
             self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player"))
+
+    def test_autoroll_defaults_off_and_any_player_can_toggle(self):
+        state = GroupState("autoroll-policy", kp_assistant_user_id="kp")
+        replies = []
+
+        async def reply(text):
+            replies.append(text)
+
+        async def run(parts, user_id, is_keeper=False):
+            replies.clear()
+            with patch.object(system_handler, "load_state", return_value=state), patch.object(
+                system_handler, "save_state"
+            ) as save:
+                await system_handler.handle_system_command(
+                    state.group_id, user_id, reply, None, None, None, parts, is_keeper=is_keeper
+                )
+            return list(replies), save
+
+        player_replies, player_save = asyncio.run(run(["/coc", "autoroll", "on"], "player"))
+        self.assertIn("已開啟自動擲骰", player_replies[0])
+        self.assertTrue(state.autoroll_checks)
+        player_save.assert_called_once_with(state)
+
+        kp_replies, kp_save = asyncio.run(run(["/coc", "autoroll", "on"], "kp"))
+        self.assertIn("已開啟自動擲骰", kp_replies[0])
+        self.assertTrue(state.autoroll_checks)
+        kp_save.assert_called_once_with(state)
+
+        keeper_replies, keeper_save = asyncio.run(run(["/coc", "autoroll", "off"], "keeper", True))
+        self.assertIn("已關閉自動擲骰", keeper_replies[0])
+        self.assertFalse(state.autoroll_checks)
+        keeper_save.assert_called_once_with(state)
 
     def test_stale_state_save_is_rejected_instead_of_overwriting_newer_state(self):
         state = GroupState("discord-group-conflict")
@@ -257,8 +332,17 @@ class StatePersistenceTests(unittest.TestCase):
         group_state.save_state(first)
         group_state.save_state(second)
 
+        # A stale legacy row may lack conversation_id, but its group-prefixed
+        # key still makes ownership unambiguous.  An unscoped row without
+        # either signal must remain untouched for safety.
+        db.set_json("characters", "group-a:retired-owner", {"sheet": {"name": "old"}})
+        db.set_json("characters", "unscoped-legacy", {"sheet": {"name": "keep"}})
+        group_state.save_state(first)
+
         self.assertEqual(db.get_json("characters", "group-a:same-user")["name"], "Ada A")
         self.assertEqual(db.get_json("characters", "group-b:same-user")["name"], "Ada B")
+        self.assertIsNone(db.get_json("characters", "group-a:retired-owner"))
+        self.assertIsNotNone(db.get_json("characters", "unscoped-legacy"))
 
     def test_scene_digest_keeps_same_named_active_characters_separate(self):
         state = GroupState("group-same-name")

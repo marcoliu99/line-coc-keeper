@@ -25,10 +25,12 @@ survive a bot restart instead of only living in an in-memory cache.
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from app import db, embedding_cache, observability
@@ -185,24 +187,116 @@ def _save_raw_chunks(group_id: str, raw_chunks: list[dict]) -> None:
     db.set_json("memory_chunks", group_id, raw_chunks)
 
 
-def append_memory(group_id: str, text: str) -> None:
+_EMBEDDING_NOT_PROVIDED = object()
+
+
+def prepare_memory_embedding(text: str) -> list[float] | None:
+    """Prepare an embedding outside the memory commit boundary."""
+    if not text.strip():
+        return None
+    try:
+        embedded = _embed_texts([text], rag_kind="memory")
+        return embedded[0] if embedded is not None else None
+    except Exception:
+        _logger.exception("embedding failed while preparing a memory chunk")
+        return None
+
+
+def _append_memory_payload(
+    raw_chunks: list[dict],
+    *,
+    text: str,
+    timeline_id: str,
+    idempotency_key: str,
+    source_revision: int | None,
+    embedding: list[float] | None,
+) -> tuple[list[dict], bool]:
+    if idempotency_key and any(item.get("idempotency_key") == idempotency_key for item in raw_chunks):
+        return raw_chunks, False
+    label = f"記憶片段 #{len(raw_chunks) + 1}"
+    raw_chunks.append({
+        "label": label,
+        "chunk_id": idempotency_key or f"memory-{len(raw_chunks) + 1}",
+        "idempotency_key": idempotency_key,
+        "timeline_id": timeline_id,
+        "source_revision": source_revision,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "text": text,
+        "embedding": embedding,
+    })
+    return raw_chunks, True
+
+
+def append_memory(
+    group_id: str,
+    text: str,
+    *,
+    timeline_id: str = "",
+    idempotency_key: str = "",
+    source_revision: int | None = None,
+    embedding: list[float] | None | object = _EMBEDDING_NOT_PROVIDED,
+) -> bool:
     """Called once per rolling-summarization trim (see app/keeper.py's
     run_turn) — persists the chunk being dropped from state.log, embedding it
     best-effort (never raises; no OPENAI_API_KEY or a failed call just stores
     it without an embedding, still searchable via BM25 alone)."""
     if not text.strip():
-        return
+        return False
+    if embedding is _EMBEDDING_NOT_PROVIDED:
+        embedding = prepare_memory_embedding(text)
     raw_chunks = _load_raw_chunks(group_id)
-    label = f"記憶片段 #{len(raw_chunks) + 1}"
-    embedding = None
-    try:
-        embedded = _embed_texts([text], rag_kind="memory")
-        if embedded is not None:
-            embedding = embedded[0]
-    except Exception:
-        _logger.exception("embedding failed for a memory chunk, storing without one (BM25-only search still works)")
-    raw_chunks.append({"label": label, "text": text, "embedding": embedding})
-    _save_raw_chunks(group_id, raw_chunks)
+    raw_chunks, appended = _append_memory_payload(
+        raw_chunks,
+        text=text,
+        timeline_id=timeline_id,
+        idempotency_key=idempotency_key,
+        source_revision=source_revision,
+        embedding=cast(list[float] | None, embedding),
+    )
+    if appended:
+        _save_raw_chunks(group_id, raw_chunks)
+    return appended
+
+
+def append_memory_tx(
+    conn,
+    group_id: str,
+    text: str,
+    *,
+    timeline_id: str,
+    idempotency_key: str,
+    source_revision: int | None = None,
+    embedding: list[float] | None = None,
+) -> bool:
+    """Append a prepared memory chunk through an existing DB transaction.
+
+    The caller owns the state lock and transaction.  No embedding/network work
+    is allowed here; this function is deliberately a pure persistence step so
+    state trimming and memory append can commit or roll back together.
+    """
+    row = conn.execute("SELECT data FROM memory_chunks WHERE key = ?", (group_id,)).fetchone()
+    if row is None:
+        raw_chunks = []
+    else:
+        try:
+            decoded = json.loads(row[0])
+            raw_chunks = decoded if isinstance(decoded, list) else []
+        except (TypeError, json.JSONDecodeError):
+            # Memory is an optional index. A corrupt legacy payload must not
+            # abort an otherwise valid state transaction; rebuild the optional
+            # index from this newly committed chunk instead.
+            raw_chunks = []
+    raw_chunks, appended = _append_memory_payload(
+        raw_chunks,
+        text=text,
+        timeline_id=timeline_id,
+        idempotency_key=idempotency_key,
+        source_revision=source_revision,
+        embedding=embedding,
+    )
+    if appended:
+        db.set_json_tx(conn, "memory_chunks", group_id, raw_chunks)
+    return appended
 
 
 def _build_index(raw_chunks: list[dict]) -> MemoryIndex:
@@ -259,10 +353,10 @@ def _bm25_score(index: MemoryIndex, query_tokens: list[str], chunk: _Chunk, idf_
     return score
 
 
-_index_cache: dict[str, MemoryIndex] = {}
+_index_cache: dict[tuple[str, str | None], MemoryIndex] = {}
 
 
-def _get_index(group_id: str, raw_chunks: list[dict]) -> MemoryIndex:
+def _get_index(group_id: str, raw_chunks: list[dict], timeline_id: str | None) -> MemoryIndex:
     """Rebuilding was originally unconditional (tokenizing a handful of short
     trimmed chunks is cheap early on), but chunks only ever accumulate as a
     campaign goes on — a year-long campaign can build up hundreds of them,
@@ -270,20 +364,29 @@ def _get_index(group_id: str, raw_chunks: list[dict]) -> MemoryIndex:
     was re-tokenizing all of them from scratch. Cache the built index per
     group_id, keyed on chunk count: since append_memory only ever appends
     (existing chunks are immutable once written), a count mismatch against
-    the freshly-loaded raw_chunks is both necessary and sufficient to detect
-    a new chunk and rebuild — no separate invalidation call needed from
-    append_memory itself."""
-    cached = _index_cache.get(group_id)
+    the freshly-loaded, timeline-filtered raw_chunks is both necessary and
+    sufficient to detect a new chunk and rebuild — no separate invalidation
+    call is needed from append_memory itself. The cache key includes the
+    timeline because two timelines in one group must never share an index."""
+    cache_key = (group_id, timeline_id)
+    cached = _index_cache.get(cache_key)
     if cached is not None and len(cached.chunks) == len(raw_chunks):
         cached.index_cache = "memory"
         return cached
     index = _build_index(raw_chunks)
     index.index_cache = "rebuilt"
-    _index_cache[group_id] = index
+    _index_cache[cache_key] = index
     return index
 
 
-def search_memory(group_id: str, query: str, top_k: int = 3, *, metrics: dict[str, Any] | None = None) -> list[dict]:
+def search_memory(
+    group_id: str,
+    query: str,
+    top_k: int = 3,
+    *,
+    timeline_id: str | None = None,
+    metrics: dict[str, Any] | None = None,
+) -> list[dict]:
     """Returns up to top_k {"label": str, "text": str, "score": float},
     highest first. Empty list if there's no memory yet or nothing matches —
     callers should treat that as "nothing found", not an error. Same hybrid
@@ -291,13 +394,23 @@ def search_memory(group_id: str, query: str, top_k: int = 3, *, metrics: dict[st
     app/scenario_rag.py's search(), including that module's _MIN_COSINE_RELEVANCE
     gate on purely-semantic (no literal BM25 hit) candidates."""
     raw_chunks = _load_raw_chunks(group_id)
+    if timeline_id is not None:
+        # Chunks written before timeline binding have no timeline_id.  They
+        # remain visible to the original legacy timeline, but are deliberately
+        # not allowed to leak into a fresh timeline created by newgame/rollback.
+        raw_chunks = [
+            chunk
+            for chunk in raw_chunks
+            if chunk.get("timeline_id") == timeline_id
+            or (not chunk.get("timeline_id") and timeline_id.startswith("legacy-"))
+        ]
     if not raw_chunks:
         if metrics is not None:
             metrics.update(index_cache="empty", candidate_count=0,
                            has_embeddings=False, result_count=0,
                            query_embedding_status="not_used")
         return []
-    index = _get_index(group_id, raw_chunks)
+    index = _get_index(group_id, raw_chunks, timeline_id)
     if metrics is not None:
         metrics.update(index_cache=index.index_cache, candidate_count=len(index.chunks),
                        has_embeddings=index.has_embeddings)

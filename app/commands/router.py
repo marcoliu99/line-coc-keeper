@@ -32,7 +32,7 @@ from app.repositories.group_state import load_state
 _logger = logging.getLogger(__name__)
 
 _CHARACTER_COMMANDS = {"pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters", "retire"}
-_SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests"}
+_SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests", "autoroll"}
 _MAP_COMMANDS = {"showpage", "where", "enter", "leavemap"}
 
 
@@ -45,10 +45,10 @@ class _SudoDenied(Exception):
 def _sudo_check_matches_pending(pending: dict | None, args: tuple[str, ...]) -> bool:
     """Return whether a sudo check can resolve the subject's pending request.
 
-    ``handle_check_command`` intentionally supports a player-initiated check
-    when the supplied skill does not match the pending request. That behavior
-    is correct for normal players, but unsafe for sudo: KP delegation must
-    only consume the check the Keeper registered for this subject.
+    ``handle_check_command`` resolves a pending choice (or a legacy pending
+    check) and rejects a new player-initiated skill roll. Sudo still requires
+    an exact match so delegation cannot consume another subject's pending
+    request or bypass the player-choice boundary.
     """
     if not isinstance(pending, dict) or len(args) > 1:
         return False

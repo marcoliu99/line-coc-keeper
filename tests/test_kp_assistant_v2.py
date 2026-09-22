@@ -145,6 +145,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_kp_ooc_turn_persists_ooc_only_caps_and_preserves_openai_chain(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        state.autoroll_checks = True
         state.kp_ooc_log = [
             {"role": "kp_assistant" if i % 2 == 0 else "assistant", "content": f"old-{i}"}
             for i in range(20)
@@ -183,10 +184,13 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": "請記住這個幕後判斷"})
         self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "這是新的幕後回答"})
         self.assertNotIn("old-0", [entry["content"] for entry in saved.kp_ooc_log])
-        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
+        # A legacy state without explicit chain/timeline metadata is not
+        # trusted after the timeline-isolation hardening.
+        self.assertIsNone(fake_provider.calls[0][1]["previous_response_id"])
 
     async def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
+        state.autoroll_checks = True
         state.characters["p1"] = Character(name="Marco", owner_id="p1")
         state.kp_ooc_log = [{"role": "kp_assistant", "content": "old ooc"}]
         message_text = "Marco 把屍體的頭扭斷，血噴了一臉，做 SAN 0/1d4。"
@@ -224,10 +228,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final_text, "Marco 滿臉是血，需要做理智檢定。")
         self.assertEqual(private_messages, [])
         self.assertEqual(image_requests, [])
-        self.assertEqual(
-            saved.pending_checks["p1"],
-            {"type": "sanity", "loss_success": "0", "loss_failure": "1d4"},
-        )
+        self.assertEqual(saved.pending_checks, {})
         self.assertEqual(len(saved.log), 2)
         self.assertEqual(saved.log[0]["role"], "user")
         self.assertEqual(saved.log[1], {"role": "assistant", "content": "Marco 滿臉是血，需要做理智檢定。"})
@@ -242,10 +243,10 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"loss_failure": "1d4"', canonical_message)
         self.assertIn('"loss_success": "0"', canonical_message)
         self.assertIn('"ok": true', canonical_message)
-        self.assertIn('"pending": true', canonical_message)
+        self.assertIn('"resolved": true', canonical_message)
         self.assertEqual(saved.kp_ooc_log, [{"role": "kp_assistant", "content": "old ooc"}])
         self.assertEqual(saved.openai_previous_response_id, "canonical-response")
-        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
+        self.assertIsNone(fake_provider.calls[0][1]["previous_response_id"])
 
     async def test_kp_ooc_lifecycle_cleanup_commands(self):
         async def noop_dm(*args):
@@ -465,6 +466,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse({"adjust_character", "adjust_ammo", "set_skill", "damage_combatant", "start_combat"} & tool_names)
 
         state = GroupState(group_id="g")
+        state.autoroll_checks = True
         state.characters["p1"] = Character(name="The Tough Guy/Dame", owner_id="p1", occupation="Dame")
         with StateStorePatch(keeper) as store:
             store.put(state)
@@ -478,10 +480,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(result["ok"])
             saved = store.get("g")
-            self.assertEqual(
-                saved.pending_checks["p1"],
-                {"type": "sanity", "loss_success": "1", "loss_failure": "1d4"},
-            )
+            self.assertTrue(result["resolved"])
+            self.assertEqual(saved.pending_checks, {})
 
             rejected = keeper._execute_tool(
                 state,
@@ -496,6 +496,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
     def test_kp_assistant_fixed_damage_tools_are_allowed_and_canonical(self):
         state = GroupState(group_id="g")
+        state.autoroll_checks = True
         char = Character(name="Marco", owner_id="p1", character_id="char-marco", dex=50, hp=12, hp_max=12)
         state.characters["p1"] = char
         state.characters_by_id["char-marco"] = char
@@ -816,7 +817,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"rolls"', canonical_message)
         self.assertIn('"total"', canonical_message)
         self.assertEqual(saved.openai_previous_response_id, "game-resolution-roll-response")
-        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
+        self.assertIsNone(fake_provider.calls[0][1]["previous_response_id"])
 
     async def test_kp_roll_dice_ooc_randomizer_stays_in_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
@@ -865,7 +866,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": message_text})
         self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "幕後隨機結果已決定。"})
         self.assertEqual(saved.openai_previous_response_id, "formal-chain")
-        self.assertEqual(fake_provider.calls[0][1]["previous_response_id"], "formal-chain")
+        self.assertIsNone(fake_provider.calls[0][1]["previous_response_id"])
 
     async def test_kp_roll_weapon_damage_creates_canonical_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
@@ -1010,8 +1011,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "找不到角色，無法建立正式傷害結果。"})
         self.assertEqual(saved.openai_previous_response_id, "formal-chain")
 
-    def test_san_reproduction_case_uses_kp_context_and_creates_pending_check(self):
+    def test_san_reproduction_case_uses_kp_context_and_resolves_immediately(self):
         state = GroupState(group_id="g")
+        state.autoroll_checks = True
         state.characters["p1"] = Character(name="The Tough Guy/Dame", owner_id="p1", occupation="Dame")
         state.kp_ooc_log = [
             {"role": "kp_assistant", "content": "開場看到屍體要做 SAN，成功 1、失敗 1D4。"},
@@ -1031,10 +1033,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 speaker_role="kp_assistant",
             )
             self.assertTrue(result["ok"])
-            self.assertTrue(result["pending"])
-            self.assertEqual(store.get("g").pending_checks["p1"]["type"], "sanity")
-            self.assertEqual(store.get("g").pending_checks["p1"]["loss_success"], "1")
-            self.assertEqual(store.get("g").pending_checks["p1"]["loss_failure"], "1d4")
+            self.assertTrue(result["resolved"])
+            self.assertEqual(store.get("g").pending_checks, {})
 
     async def test_ordinary_message_without_kp_bypasses_priority_gate(self):
         async def noop_dm(*args):

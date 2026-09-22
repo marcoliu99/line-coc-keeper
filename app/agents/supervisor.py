@@ -34,6 +34,11 @@ async def run_turn(
     Returns: (reply_text, private_messages, image_requests)
     """
     _logger.info(f"Supervisor starting turn for {display_name} ({user_id})")
+    # Capture one authoritative timeline before any agent await.  Executor
+    # tools may initialize or persist timeline-bound state; without this
+    # early capture, a legacy state with no timeline would later fall back to
+    # ``legacy-*`` and the canonical log commit could reject the whole turn.
+    turn_timeline_id = keeper._ensure_turn_timeline(state)
 
     # 1. Build Context
     message = await context_builder.build_context(
@@ -103,12 +108,15 @@ async def run_turn(
     # this function's own `state` object so a caller that keeps using it
     # afterward sees the up-to-date snapshot.
     if state.game_started:
-        keeper._commit_turn_result(
+        committed = keeper._commit_turn_result(
             state,
             [
                 {"role": "user", "content": f"{speaker_role} {display_name}: {text}"},
                 {"role": "assistant", "content": reply_text},
             ],
+            timeline_id=turn_timeline_id,
         )
+        if not committed:
+            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
 
     return reply_text, private_messages, image_requests

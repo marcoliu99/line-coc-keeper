@@ -726,7 +726,7 @@ class CombatState:
 
 @dataclass
 class GroupState:
-    CURRENT_SCHEMA_VERSION = 1
+    CURRENT_SCHEMA_VERSION = 2
 
     @classmethod
     def migrate_data(cls, data: dict[str, Any]) -> dict[str, Any]:
@@ -748,6 +748,16 @@ class GroupState:
             # v0 was the short-lived pre-versioned snapshot shape. Its fields
             # are already covered by from_dict's legacy defaults.
             0: lambda snapshot: {**snapshot, "schema_version": 1},
+            1: lambda snapshot: {
+                **snapshot,
+                "schema_version": 2,
+                # Existing response chains predate timeline binding.  Keep
+                # the id readable for compatibility; callers must only use it
+                # after assigning/validating this metadata.
+                "openai_previous_response_timeline_id": snapshot.get(
+                    "openai_previous_response_timeline_id", ""
+                ),
+            },
         }
         while version < cls.CURRENT_SCHEMA_VERSION:
             migrate = migrations.get(version)
@@ -795,6 +805,9 @@ class GroupState:
     # every turn — only updated on the rare turn where a trim actually fires.
     campaign_summary: str = ""
     openai_previous_response_id: str = ""
+    # A provider-side conversation is valid only inside the timeline that
+    # created it.  Empty means that no reusable chain is currently trusted.
+    openai_previous_response_timeline_id: str = ""
     creation_sessions: dict[str, CreationSession] = field(default_factory=dict)  # keyed by owner_id
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
@@ -831,14 +844,23 @@ class GroupState:
     current_room_id: dict[str, str] = field(default_factory=dict)  # owner_id -> room id
     party_facing: dict[str, str] = field(default_factory=dict)  # owner_id -> compass, default "N" when absent
 
-    # A check the Keeper asked for but hasn't been rolled yet — keyed by
-    # owner_id, cleared once /coc check resolves it. See app/keeper.py's
-    # skill_check/sanity_check tools (they register one of these instead of
-    # rolling) and app/commands.py's _handle_check_command (the player rolls).
-    # Shape: {"type": "skill", "skill": str, "skill_value": int, "bonus_dice":
-    # int, "penalty_dice": int} or {"type": "sanity", "loss_success": str,
-    # "loss_failure": str}.
+    # A pending player-owned check requested by Keeper. In the default mode the
+    # player resolves it with /coc check or a Discord button; autoroll mode
+    # skips this entry for newly requested ordinary checks. Old snapshots remain
+    # readable and /coc check resolves them normally.
     pending_checks: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    # Optional group-level override: ordinary investigator checks remain
+    # player-triggered by default. Only the KP Assistant or Discord Keeper may
+    # enable this through /coc autoroll on; old snapshots therefore load as
+    # False without a migration.
+    autoroll_checks: bool = False
+
+    # Same-turn idempotency cache for the optional autoroll path. The key
+    # includes the current Keeper turn and normalized tool input, so an LLM
+    # retry cannot silently consume a second random roll. It is intentionally
+    # bounded by the writer rather than retaining an unbounded campaign log.
+    deterministic_check_results: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # A rolled check awaiting the player's Luck-spend decision (see app/luck.py
     # and app/commands.py's _finalize_check_result/handle_luck_decision) —
@@ -1010,7 +1032,11 @@ class GroupState:
         return {
             "group_id": self.group_id,
             "schema_version": self.schema_version,
-            "timeline_id": self.timeline_id or f"legacy-{self.group_id}",
+            # Preserve an empty legacy value on serialization. The repository
+            # save path assigns a real timeline before writing; inventing a
+            # compatibility id here would make an old snapshot look newer
+            # than it is and could incorrectly widen provider/memory trust.
+            "timeline_id": self.timeline_id,
             "state_revision": self.state_revision,
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
@@ -1026,6 +1052,12 @@ class GroupState:
             "kp_ooc_log": self.kp_ooc_log,
             "campaign_summary": self.campaign_summary,
             "openai_previous_response_id": self.openai_previous_response_id,
+            # Do not infer trust for a legacy response ID while serializing.
+            # Missing chain metadata is deliberately preserved as empty so the
+            # provider path will reset it on the next turn instead of silently
+            # upgrading an unverified server-side conversation into a trusted
+            # chain.
+            "openai_previous_response_timeline_id": self.openai_previous_response_timeline_id,
             "creation_sessions": {k: v.to_dict() for k, v in self.creation_sessions.items()},
             "pregens": self.pregens,
             "scenario_npc_index": self.scenario_npc_index,
@@ -1037,6 +1069,8 @@ class GroupState:
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
+            "autoroll_checks": self.autoroll_checks,
+            "deterministic_check_results": self.deterministic_check_results,
             "pending_luck_decisions": self.pending_luck_decisions,
             "pending_pregen_luck": self.pending_pregen_luck,
             "game_started": self.game_started,
@@ -1078,7 +1112,11 @@ class GroupState:
         return GroupState(
             group_id=data["group_id"],
             schema_version=int(data.get("schema_version", 1)),
-            timeline_id=data.get("timeline_id") or f"legacy-{data['group_id']}",
+            # Keep legacy snapshots without a timeline distinguishable from
+            # an explicitly assigned campaign timeline. Callers that need a
+            # compatibility search use ``legacy-<group_id>`` locally; the
+            # normal repository save/turn path initializes a fresh timeline.
+            timeline_id=data.get("timeline_id", ""),
             state_revision=int(data.get("state_revision", 0)),
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
@@ -1094,6 +1132,7 @@ class GroupState:
             kp_ooc_log=data.get("kp_ooc_log", []),
             campaign_summary=data.get("campaign_summary", ""),
             openai_previous_response_id=data.get("openai_previous_response_id", ""),
+            openai_previous_response_timeline_id=data.get("openai_previous_response_timeline_id", ""),
             creation_sessions={
                 k: CreationSession.from_dict(v) for k, v in data.get("creation_sessions", {}).items()
             },
@@ -1112,6 +1151,12 @@ class GroupState:
             current_room_id=data["current_room_id"] if isinstance(data.get("current_room_id"), dict) else {},
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
+            autoroll_checks=bool(data.get("autoroll_checks", False)),
+            deterministic_check_results=(
+                data.get("deterministic_check_results", {})
+                if isinstance(data.get("deterministic_check_results", {}), dict)
+                else {}
+            ),
             pending_luck_decisions=data.get("pending_luck_decisions", {}),
             pending_pregen_luck=data.get("pending_pregen_luck", {}),
             game_started=data.get("game_started", False),

@@ -95,7 +95,7 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
 
         index = type("Index", (), {"chunks": [1], "has_embeddings": False, "index_cache": "memory"})()
 
-        def memory_search(_group_id, _query, *, metrics):
+        def memory_search(_group_id, _query, *, metrics, **_kwargs):
             metrics["has_embeddings"] = False
             return [{"label": "old", "text": "fallback memory"}]
 
@@ -128,7 +128,7 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
             metrics["query_embedding_status"] = "fallback"
             return [{"page": 1, "text": "BM25 fallback"}]
 
-        def memory_search(_group_id, _query, *, metrics):
+        def memory_search(_group_id, _query, *, metrics, **_kwargs):
             metrics["has_embeddings"] = True
             metrics["query_embedding_status"] = "fallback"
             return [{"label": "old", "text": "BM25 fallback"}]
@@ -326,6 +326,73 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIs(captured_payload.get("mechanic_result"), fake_result)
+
+    async def test_supervisor_passes_captured_timeline_to_canonical_commit(self):
+        from app.agents import supervisor
+        from app.domain.models import AgentMessage
+
+        state = GroupState(group_id="g", game_started=True)
+        message = AgentMessage(payload={
+            "conversation_id": "g", "user_id": "u1", "display_name": "P1", "text": "attack",
+            "resolved_location": None, "speaker_role": "player", "state": state,
+            "character": None, "rag_context": "", "memory_context": "",
+        })
+        commit_kwargs: dict = {}
+
+        async def fake_build_context(**kwargs):
+            return message
+
+        async def fake_run_narrator(msg):
+            return "narration", [], []
+
+        def fake_commit(*args, **kwargs):
+            commit_kwargs.update(kwargs)
+            return True
+
+        with patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-captured"), \
+                patch.object(supervisor.keeper, "_commit_turn_result", side_effect=fake_commit), \
+                patch.object(supervisor.context_builder, "build_context", fake_build_context), \
+                patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
+                patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
+                patch.object(supervisor.rule_validator, "validate_narrative", return_value=(True, "")):
+            result = await supervisor.run_turn(
+                state=state, user_id="u1", display_name="P1", text="attack",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertEqual(result, ("narration", [], []))
+        self.assertEqual(commit_kwargs["timeline_id"], "timeline-captured")
+
+    async def test_supervisor_suppresses_stale_reply_when_canonical_commit_is_rejected(self):
+        from app.agents import supervisor
+        from app.domain.models import AgentMessage
+
+        state = GroupState(group_id="g", game_started=True)
+        message = AgentMessage(payload={
+            "conversation_id": "g", "user_id": "u1", "display_name": "P1", "text": "attack",
+            "resolved_location": None, "speaker_role": "player", "state": state,
+            "character": None, "rag_context": "", "memory_context": "",
+        })
+
+        async def fake_build_context(**kwargs):
+            return message
+
+        async def fake_run_narrator(msg):
+            return "stale narration", [("p2", "private")], [(None, 1)]
+
+        with patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-captured"), \
+                patch.object(supervisor.keeper, "_commit_turn_result", return_value=False), \
+                patch.object(supervisor.context_builder, "build_context", fake_build_context), \
+                patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
+                patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
+                patch.object(supervisor.rule_validator, "validate_narrative", return_value=(True, "")):
+            result = await supervisor.run_turn(
+                state=state, user_id="u1", display_name="P1", text="attack",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertEqual(result[1:], ([], []))
+        self.assertIn("時間線已經更新", result[0])
 
 
 if __name__ == "__main__":

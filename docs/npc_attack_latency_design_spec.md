@@ -4,13 +4,24 @@
 > `executor.py`／`narrator.py`，實際工具執行仍在 `app/keeper.py` 的
 > `_execute_tool`）。
 
+## 目前檢定所有權（後續修正）
+
+本文件前半段保留當時針對 NPC 攻擊延遲的調查紀錄；目前實作已再收斂檢定流程：
+
+- NPC 攻擊方由 `offer_npc_attack_defense_choice` 立即由系統擲骰，玩家只選閃避／反擊。
+- 玩家選定選項後，`/coc check <選項名稱>` 或 Discord 按鈕預設會觸發防守方擲骰並完成對抗判定；只有 `/coc autoroll on` 時才由系統代擲。
+- 一般技能、攻擊、SAN 與重傷 CON 檢定預設先建立 `pending_checks`，由玩家用 `/coc check` 或按鈕觸發；任何玩家都可用 `/coc autoroll on` 開啟群組模式，讓新的檢定由 Keeper 的 deterministic tool 立即擲骰。
+- Luck 仍是看到角色骰結果後由玩家選擇是否花費；NPC 攻擊方的骰則始終由系統處理。
+
+詳細規格與狀態冪等策略見 `docs/keeper-deterministic-check-resolution_design_spec.md`。
+
 ## 目標
 
 調查「每次到怪物（NPC）攻擊時，Keeper 回應總是特別久」這個現象的根因，並列出
 可行的優化方向。這份文件目前只到「調查＋選項」，還沒有定案要做哪個，等 review
 後再決定範圍、動手實作。
 
-## 現況（根因）
+## 歷史現況（檢定所有權修正前的根因）
 
 ### 1. NPC 攻擊是強制的多步驟序列式工具呼叫鏈，每一步都要重新問一次 LLM
 
@@ -471,7 +482,10 @@ test_attack_without_explicit_range_band_defaults_to_melee`（沒填
 `range_band` 時 `plan_enemy_turn` 回傳的還是 `"engaged"`，符合 schema
 description 現在承諾的行為）。
 
-#### 已修正：玩家打 NPC 這條路徑上的重複呼叫／pending check 覆蓋檢查
+#### 歷史調查：玩家打 NPC 這條路徑上的重複呼叫／pending check 覆蓋檢查
+
+以下是檢定所有權改成 Keeper 代擲前的調查紀錄；目前行為以本文件上方的
+「目前檢定所有權（後續修正）」及 deterministic check spec 為準。
 
 Marco 追問「玩家打 NPC、Keeper 自己敘事判斷」這條路徑有沒有查過重複呼叫／
 lock 問題——這條路徑（`skill_check` 玩家自己的攻擊擲骰、`roll_weapon_damage`／

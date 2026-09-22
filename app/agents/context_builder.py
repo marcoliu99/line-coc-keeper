@@ -123,7 +123,13 @@ async def build_context(
                 "memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                 embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=metrics,
             ):
-                results = memory_rag.search_memory(conversation_id, text, metrics=metrics)
+                search_kwargs: dict[str, Any] = {"metrics": metrics}
+                # Never let a missing legacy timeline turn this production
+                # prompt path into an unscoped group-wide memory search. A
+                # fresh/legacy state uses its compatibility timeline until a
+                # normal save initializes a new explicit timeline.
+                search_kwargs["timeline_id"] = state.timeline_id or f"legacy-{conversation_id}"
+                results = memory_rag.search_memory(conversation_id, text, **search_kwargs)
                 if not results:
                     return "", "empty"
                 if (

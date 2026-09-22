@@ -220,7 +220,20 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
             restored = GroupState.from_dict(state_data)
             if restored.group_id != group_id:
                 raise ValueError("checkpoint belongs to another group")
+            # A provider-side response chain belongs to the timeline that
+            # created it.  Restoring a checkpoint must never reconnect the new
+            # timeline to the old server-side conversation.
+            old_timeline_id = restored.timeline_id or f"legacy-{group_id}"
             restored.timeline_id = f"timeline-{uuid4().hex[:8]}"
+            observability.event(
+                "provider.chain.reset",
+                reason="rollback",
+                old_timeline_id=old_timeline_id,
+                requested_timeline_id=restored.timeline_id,
+                provider="openai",
+            )
+            restored.openai_previous_response_id = ""
+            restored.openai_previous_response_timeline_id = ""
 
             current_row = conn.execute(
                 "SELECT data FROM group_states WHERE key = ?", (group_id,)

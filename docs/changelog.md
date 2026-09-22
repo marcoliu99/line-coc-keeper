@@ -1,5 +1,11 @@
 # 開發紀錄／已知限制
 
+### Player-owned checks with opt-in autoroll（最新行為）
+
+- 一般技能、攻擊、SAN 與重傷 CON 檢定預設先建立 pending，由玩家按 Discord 按鈕或輸入 `/coc check` 觸發並取得 authoritative 結果；建角 `/coc luck roll` 仍由玩家本人執行，檢定後的 Luck 花費也仍由玩家選擇。
+- 任何玩家可用 `/coc autoroll on|off` 切換群組模式，預設 off；開啟後新的角色檢定才可由 Keeper/system 立即代擲，既有 pending 不會因切換被偷偷消耗。
+- `7f9a042` 曾暫時把一般角色檢定改成 Keeper-owned immediate roll，已由 player-owned default + opt-in autoroll 修正並 supersede；舊快照的 pending skill/SAN 仍可由 `/coc check` 相容解析。
+
 ### PR #31 review fixes
 
 - 修正劇本修正流程不覆蓋已 reconcile 的角色卡，保留 `claimed_by` 與手動補充欄位。
