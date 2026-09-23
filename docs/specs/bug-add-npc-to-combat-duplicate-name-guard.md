@@ -2,7 +2,7 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:10972c1a8966f48cd7bbcb0f7c850b1ac8558310
-- **implementation end**: TBD
+- **implementation end**: bug/add-npc-to-combat-duplicate-name-guard:af38360 — ruff/mypy/compileall/pytest all green (454 passed, 6 subtests)
 
 ## Purpose & Scope
 
