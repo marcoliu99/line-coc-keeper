@@ -1193,8 +1193,17 @@ def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | No
     candidate_names = {name}
     index_entry = _find_npc_index_entry_exact(state, name)
     if index_entry is not None:
-        candidate_names.add(index_entry.get("name", name))
-        candidate_names.update(index_entry.get("aliases") or [])
+        # scenario_npc_index is populated from an LLM's structured tool-call
+        # output (app/scenario_index.py) — its schema declares "name"/
+        # "aliases" as strings, but nothing enforces that at the Python
+        # level once it's persisted. A non-string item here (e.g. a nested
+        # object for a malformed alias) would raise TypeError from set.add/
+        # update below (unlike the older `in` membership check elsewhere,
+        # which tolerates any item type) and fail this whole tool call —
+        # filtering to strings keeps this lookup best-effort instead of a
+        # new crash risk this PR would otherwise introduce.
+        raw_candidates = [index_entry.get("name", name), *(index_entry.get("aliases") or [])]
+        candidate_names.update(c for c in raw_candidates if isinstance(c, str))
     for candidate in candidate_names:
         existing = combat.find_live_enemy(state, candidate)
         if existing is not None:

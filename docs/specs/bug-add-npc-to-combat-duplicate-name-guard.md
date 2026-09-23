@@ -144,3 +144,37 @@ one provider would leave a silent trap for whoever switches later.
 - The wrap-up call adds one extra LLM round-trip, but only in the rare case
   where a turn was already about to exhaust its iteration budget — it does
   not add latency to normal turns.
+
+## Deferred findings (round 4 review — recorded, not fixed in this branch)
+
+Two architectural observations, both real but treated as accepted tradeoffs
+or follow-up work rather than blocking this PR:
+
+1. **The duplicate-live-enemy invariant lives at the call sites
+   (`app/keeper.py`'s tool handler, `app/commands/handlers/combat.py`'s
+   slash command), not inside `combat.add_npc` itself** — the shared
+   mutation primitive the module's own docstring calls the stable public
+   API. A third future caller of `combat.add_npc` (a batch-import tool, an
+   auto-populate feature, a test helper reused in production) would bypass
+   both existing guards entirely and reintroduce the exact bug this PR
+   fixes. Not fixed here because `combat.py` deliberately doesn't depend on
+   the scenario index / alias resolution that lives in `keeper.py` — moving
+   the *alias-aware* check into `combat.add_npc` would need to either give
+   `combat.py` that dependency or thread pre-resolved candidate names
+   through the primitive's signature, both real design changes. A cheaper
+   partial mitigation worth considering later: an exact-name-only (no
+   alias) duplicate check directly in `combat.add_npc` as a defense-in-depth
+   backstop, catching at least the base case for any future caller that
+   forgets to check first.
+2. **The forced-wrapup block (build prompt with tools disabled, retry/span
+   boilerplate, catch-and-fallback) is near-duplicated across all three
+   provider files**, including the identical Chinese instruction string.
+   The round-3 review findings above are direct evidence of the real cost
+   of this duplication — the `.content`/`.output_text` exception-safety fix
+   was applied to `gemini_provider.py` first and missed in the other two
+   until a later review round caught it. Not refactored into a shared
+   helper in this branch because each provider's SDK call shape differs
+   enough (different client types, different message/content/candidate
+   structures) that extracting a clean shared abstraction is its own
+   nontrivial piece of work, not a quick win alongside everything else
+   already in this PR.

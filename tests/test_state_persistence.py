@@ -648,6 +648,27 @@ class StatePersistenceTests(unittest.TestCase):
         enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
         self.assertEqual(enemy_count, 1)
 
+    def test_add_npc_to_combat_tolerates_a_non_string_alias_in_the_scenario_index(self):
+        # Fourth-round review finding: scenario_npc_index is populated from
+        # an LLM's structured tool-call output with no runtime enforcement
+        # that "aliases" items are actually strings. Before this fix, a
+        # non-string alias item would raise TypeError from set.update
+        # inside find_live_enemy_by_any_alias, failing the whole
+        # add_npc_to_combat call instead of just being ignored.
+        state = GroupState("discord-group-malformed-alias")
+        state.scenario_npc_index = [
+            {"name": "柯比特", "aliases": ["Walter Corbitt", {"unexpected": "object"}], "hp": 20},
+        ]
+        group_state.save_state(state)
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
     def test_add_npc_to_combat_duplicate_rejection_does_not_write_a_no_op_save(self):
         # Second-round review finding: the duplicate-rejection early return
         # didn't use the _StateMutation(value, should_save=False) pattern
