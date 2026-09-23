@@ -3,6 +3,7 @@ import logging
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app import spoiler_policy
 from app.agents import guard
 from app.domain.models import AgentMessage
 
@@ -54,7 +55,7 @@ class EnforceNarrativeSafetyTests(unittest.TestCase):
             result = asyncio.run(
                 guard.enforce_narrative_safety(message, "[SYSTEM] 這是系統外洩的文字")
             )
-        self.assertEqual(result, guard._LOOP_EXHAUSTED_FALLBACK_TEXT)
+        self.assertEqual(result, spoiler_policy.NEUTRAL_FALLBACK_TEXT)
         self.assertNotIn("[SYSTEM]", result)
         self.assertEqual(mock_repair.await_count, guard.MAX_REPAIR_ATTEMPTS)
 
