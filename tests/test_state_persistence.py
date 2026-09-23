@@ -487,6 +487,64 @@ class StatePersistenceTests(unittest.TestCase):
         entries = checkpoints.list_checkpoints(state.group_id)
         self.assertEqual([entry["reason"] for entry in entries], ["auto_combat_start"])
 
+    def test_add_npc_to_combat_rejects_duplicate_of_a_live_enemy(self):
+        # Diagnosed from a live log: the Keeper re-searched a scenario NPC
+        # ("柯比特"/Corbitt) mid-turn and called add_npc_to_combat for it
+        # twice, producing two independent HP pools for one monster. This
+        # tool call must recognize the name is already an active enemy and
+        # refuse to create a second one.
+        state = GroupState("discord-group-dup-npc")
+        group_state.save_state(state)
+        first = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+        self.assertTrue(first["ok"])
+        self.assertNotIn("note", first)
+
+        second = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(second["ok"])
+        self.assertIn("柯比特", second.get("note", ""))
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
+    def test_add_npc_to_combat_allows_a_second_defeated_monster_of_same_name(self):
+        state = GroupState("discord-group-revived-npc")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+        enemy = next(c for c in state.combat.order if c.side == "enemy")
+        state.combat.enemy_cards[enemy.enemy_card_id].hp = 0
+        enemy.defeated = True
+        # _mutate_and_save_state reloads from the DB rather than trusting
+        # this in-memory `state` object, so the defeat above must be
+        # persisted before the next tool call will see it.
+        group_state.save_state(state)
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 2)
+
+    def test_add_npc_to_combat_allows_two_different_named_enemies(self):
+        state = GroupState("discord-group-two-enemies")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "老鼠群", "dex": 60, "hp": 5}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 2)
+
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")
         state.characters["u1"] = Character("Ada", "u1", carried_items=["鑰匙"])

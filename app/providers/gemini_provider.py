@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -165,6 +166,51 @@ async def run_conversation(
             result = await execute_tool(fc.name, dict(fc.args or {}))
             response_parts.append(types.Part.from_function_response(name=fc.name, response=result))
         contents.append(types.Content(role="user", parts=response_parts))
+    else:
+        # Every iteration up to max_iterations returned function calls — the
+        # calls themselves (start_combat, add_npc_to_combat, HP changes, ...)
+        # already executed and saved for real, but the Keeper never got a
+        # turn to narrate any of it. Spend one more request with no tools
+        # offered to force a plain-text wrap-up instead of silently
+        # returning the placeholder while state and narration diverge.
+        wrapup_config = types.GenerateContentConfig(
+            system_instruction=(
+                f"{static_system}\n\n{dynamic_system}\n\n"
+                "（系統提示：本回合的工具呼叫額度已用完，接下來不能再呼叫任何工具。"
+                "請根據上面剛執行的工具結果，直接用一段文字向玩家說明剛才發生的事，"
+                "不要再嘗試呼叫工具。）"
+            ),
+            temperature=KEEPER_TEMPERATURE,
+        )
+        try:
+            logical_request_id = observability.new_id("llm")
+            with observability.context(provider_request_id=logical_request_id), observability.span(
+                "llm.request",
+                provider="gemini",
+                model=GEMINI_MODEL,
+                logical_request_id=logical_request_id,
+                iteration=max_iterations,
+                timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
+                tool_count=0,
+                slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+            ):
+                async with _request_scope() as client:
+                    async def wrapup_once(wrapup_config=wrapup_config):
+                        async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                            return await client.models.generate_content(
+                                model=GEMINI_MODEL, contents=contents, config=wrapup_config
+                            )
+
+                    wrapup_response = await retry.async_call_with_retry(
+                        wrapup_once, provider="gemini", operation="generate_content",
+                        request_id=logical_request_id,
+                    )
+        except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
+            observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="gemini")
+        else:
+            wrapup_text = (wrapup_response.text or "").strip()
+            if wrapup_text:
+                final_text = wrapup_text
 
     return final_text
 

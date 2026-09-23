@@ -405,6 +405,40 @@ async def run_conversation(
             })
         active_previous_response_id = response.id
         input_items = next_input_items
+    else:
+        # Every iteration up to max_iterations returned tool calls — the
+        # Keeper never got a turn to produce actual narration, even though
+        # the tool calls it did make (start_combat, add_npc_to_combat, HP
+        # changes, ...) already executed and saved for real. Returning the
+        # placeholder here would silently leave state and narration out of
+        # sync (the player never told combat started, etc.), so spend one
+        # more request with tools disabled to force a plain-text wrap-up of
+        # whatever just happened instead.
+        wrapup_kwargs = {
+            "model": OPENAI_MODEL,
+            "instructions": (
+                f"{instructions}\n\n"
+                "（系統提示：本回合的工具呼叫額度已用完，接下來不能再呼叫任何工具。"
+                "請根據上面剛執行的工具結果，直接用一段文字向玩家說明剛才發生的事，"
+                "不要再嘗試呼叫工具。）"
+            ),
+            "input": input_items,
+            "previous_response_id": active_previous_response_id,
+            "temperature": KEEPER_TEMPERATURE,
+            **reasoning_kwargs,
+        }
+        try:
+            wrapup_response = await _create_response_async(_log_iteration=max_iterations, **wrapup_kwargs)
+        except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
+            observability.event(
+                "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",
+            )
+        else:
+            wrapup_text = (wrapup_response.output_text or "").strip()
+            if wrapup_text:
+                final_text = wrapup_text
+                if on_response_id is not None:
+                    on_response_id(wrapup_response.id)
 
     return final_text
 

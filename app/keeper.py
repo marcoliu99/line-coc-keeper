@@ -2516,12 +2516,27 @@ def _execute_tool(
                             "之後同一隻不要再用別的數字。）"
                         )
                         hp = canonical_hp
+                is_ally = bool(tool_input.get("is_ally", False))
+                # Guards against the Keeper re-searching a scenario NPC mid-turn
+                # and calling this tool a second time for a monster it already
+                # added — without this, the same name silently gets a second,
+                # independent HP pool instead of being recognized as the fight
+                # it's already in. Scoped to the enemy side only: a defeated
+                # duplicate is not matched, so a monster narratively coming
+                # back can still be added fresh.
+                existing = None if is_ally else combat.find_live_enemy(target_state, npc_name)
+                if existing is not None:
+                    return (
+                        f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
+                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
+                        "add_npc_to_combat。）"
+                    )
                 combat.add_npc(
                     target_state,
                     npc_name,
                     int(tool_input.get("dex", 50)),
                     hp,
-                    is_ally=bool(tool_input.get("is_ally", False)),
+                    is_ally=is_ally,
                     armor=tool_input.get("armor"),
                     attacks=tool_input.get("attacks"),
                     abilities=tool_input.get("abilities"),

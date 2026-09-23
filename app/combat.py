@@ -236,6 +236,29 @@ def _find_combatant(state: GroupState, name: str) -> Combatant | None:
     return None
 
 
+def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
+    """A non-defeated enemy-side combatant matching `name`, or None.
+
+    Same normalize + substring matching as `_find_combatant`, scoped to
+    active enemies only — used by add_npc's caller to stop the Keeper from
+    creating a second independent HP pool for a monster it already added
+    (e.g. re-searching a scenario NPC and calling add_npc_to_combat again
+    for the same name instead of noticing it's already in the fight). A
+    defeated combatant with the same name is not matched, so a monster
+    narratively returning after being killed can still be added fresh.
+    """
+    norm = _normalize(name)
+    if not norm:
+        return None
+    for c in state.combat.order:
+        if c.side != "enemy" or c.defeated:
+            continue
+        names = [c.name, c.display_name]
+        if any(norm == _normalize(n) or norm in _normalize(n) or _normalize(n) in norm for n in names if n):
+            return c
+    return None
+
+
 def _card_for(state: GroupState, combatant: Combatant) -> EnemyCombatCard | None:
     if combatant.enemy_card_id:
         return state.combat.enemy_cards.get(combatant.enemy_card_id)
