@@ -14,7 +14,7 @@ sys.modules.setdefault(
     ),
 )
 
-from app import discord_bot
+from app import dice, discord_bot
 
 
 class TierPercentageHintTests(unittest.TestCase):
@@ -151,6 +151,92 @@ class DefenseChoiceHintTests(unittest.TestCase):
         }
         hint = discord_bot._defense_choice_hint(check)
         self.assertIn("大失敗", hint)
+
+
+class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
+    """User-requested comprehensive check: a Dodge 20% / Fight Back 45%
+    investigator against every possible attacker_tier (fumble through
+    critical). For each tier, cross-checks the UI hint's own threshold math
+    (_defense_choice_hint) against what dice.resolve_opposed actually rules
+    for a roll landing exactly on that threshold — both must agree, since
+    the whole point of the fumble-clamp fix (§4.2) was to stop the hint from
+    promising a threshold that resolve_opposed wouldn't actually honor."""
+
+    DODGE_SKILL = 20
+    COUNTER_SKILL = 45
+
+    def _check(self, attacker_tier: str) -> dict:
+        return {
+            "attacker_tier": attacker_tier,
+            "options": [
+                {"label": "閃避", "skill": "閃避", "skill_value": self.DODGE_SKILL},
+                {"label": "反擊", "skill": "格鬥", "skill_value": self.COUNTER_SKILL},
+            ],
+        }
+
+    def test_attacker_fumble(self):
+        hint = discord_bot._defense_choice_hint(self._check("fumble"))
+        self.assertIn("選擇「閃避」需要達到或高於「大失敗」", hint)
+        self.assertIn("選擇「反擊」需要高於「一般成功」（≤45）", hint)
+        # Dodge: tying the attacker's own fumble is still "not hit" (both_miss).
+        self.assertEqual(dice.resolve_opposed("fumble", "fumble", is_counter=False), "both_miss")
+        # Fight Back: the hint's clamped "一般成功" threshold actually lands a hit...
+        self.assertEqual(dice.resolve_opposed("regular", "fumble", is_counter=True), "defender_wins")
+        # ...but the naive unclamped "fail" threshold (attacker_rank+1) would NOT
+        # — this is exactly the bug the clamp fixes.
+        self.assertEqual(dice.resolve_opposed("fail", "fumble", is_counter=True), "both_miss")
+
+    def test_attacker_fail(self):
+        hint = discord_bot._defense_choice_hint(self._check("fail"))
+        self.assertIn("選擇「閃避」需要達到或高於「失敗」", hint)
+        self.assertIn("選擇「反擊」需要高於「一般成功」（≤45）", hint)
+        self.assertEqual(dice.resolve_opposed("fail", "fail", is_counter=False), "both_miss")
+        self.assertEqual(dice.resolve_opposed("regular", "fail", is_counter=True), "defender_wins")
+
+    def test_attacker_regular(self):
+        hint = discord_bot._defense_choice_hint(self._check("regular"))
+        self.assertIn("選擇「閃避」需要達到或高於「一般成功」（≤20）", hint)
+        self.assertIn("選擇「反擊」需要高於「困難成功」（≤22）", hint)
+        self.assertEqual(dice.resolve_opposed("regular", "regular", is_counter=False), "tie_defender_wins")
+        self.assertEqual(dice.resolve_opposed("hard", "regular", is_counter=True), "defender_wins")
+        # Merely tying "一般成功" is NOT enough for Fight Back — confirms the
+        # hint is right to demand strictly higher ("困難成功").
+        self.assertEqual(dice.resolve_opposed("regular", "regular", is_counter=True), "tie_attacker_wins")
+
+    def test_attacker_hard(self):
+        hint = discord_bot._defense_choice_hint(self._check("hard"))
+        self.assertIn("選擇「閃避」需要達到或高於「困難成功」（≤10）", hint)
+        self.assertIn("選擇「反擊」需要高於「極難成功」（≤9）", hint)
+        self.assertEqual(dice.resolve_opposed("hard", "hard", is_counter=False), "tie_defender_wins")
+        self.assertEqual(dice.resolve_opposed("extreme", "hard", is_counter=True), "defender_wins")
+        self.assertEqual(dice.resolve_opposed("hard", "hard", is_counter=True), "tie_attacker_wins")
+
+    def test_attacker_extreme(self):
+        hint = discord_bot._defense_choice_hint(self._check("extreme"))
+        self.assertIn("選擇「閃避」需要達到或高於「極難成功」（≤4）", hint)
+        self.assertIn("選擇「反擊」需要高於「大成功」（骰出 01）", hint)
+        self.assertEqual(dice.resolve_opposed("extreme", "extreme", is_counter=False), "tie_defender_wins")
+        self.assertEqual(dice.resolve_opposed("critical", "extreme", is_counter=True), "defender_wins")
+        self.assertEqual(dice.resolve_opposed("extreme", "extreme", is_counter=True), "tie_attacker_wins")
+
+    def test_attacker_critical(self):
+        hint = discord_bot._defense_choice_hint(self._check("critical"))
+        self.assertIn("選擇「閃避」需要達到或高於「大成功」（骰出 01）", hint)
+        # Nothing beats Critical — Fight Back is omitted entirely, not shown
+        # with an impossible threshold.
+        self.assertNotIn("反擊", hint)
+        # Dodge remains winnable: both landing Critical is a tie, and ties
+        # favor the defender on a Dodge.
+        self.assertEqual(dice.resolve_opposed("critical", "critical", is_counter=False), "tie_defender_wins")
+        # Fight Back literally cannot win against Critical, at any tier.
+        for defender_tier in dice.TIER_RANK:
+            with self.subTest(defender_tier=defender_tier):
+                self.assertNotEqual(
+                    dice.resolve_opposed(defender_tier, "critical", is_counter=True), "defender_wins"
+                )
+                self.assertNotEqual(
+                    dice.resolve_opposed(defender_tier, "critical", is_counter=True), "tie_defender_wins"
+                )
 
 
 if __name__ == "__main__":

@@ -222,6 +222,16 @@ TOOLS = [
                             "skill": {"type": "string", "description": "這個選項要用的技能或屬性名稱"},
                             "bonus_dice": {"type": "integer", "description": "獎勵骰數量，預設 0"},
                             "penalty_dice": {"type": "integer", "description": "懲罰骰數量，預設 0"},
+                            "kind": {
+                                "type": "string",
+                                "enum": ["dodge", "counter"],
+                                "description": (
+                                    "如果這個選項是 COC7e 的閃避或反擊，填 dodge 或 counter；"
+                                    "系統靠這個欄位判斷是不是反擊，比單看 label 文字更準確。"
+                                    "不是閃避／反擊的一般選項（跟 offer_check_choice 的其他用途一樣）"
+                                    "可以不填。"
+                                ),
+                            },
                         },
                         "required": ["label", "skill"],
                     },
@@ -301,8 +311,17 @@ TOOLS = [
                             "skill": {"type": "string", "description": "這個選項要用的技能或屬性名稱"},
                             "bonus_dice": {"type": "integer", "description": "獎勵骰數量，預設 0"},
                             "penalty_dice": {"type": "integer", "description": "懲罰骰數量，預設 0"},
+                            "kind": {
+                                "type": "string",
+                                "enum": ["dodge", "counter"],
+                                "description": (
+                                    "這個選項是閃避還是反擊，請務必填寫（dodge 或 counter）——系統"
+                                    "靠這個欄位判斷平手規則、大成功時要不要過濾掉這個選項，比單看"
+                                    "label 文字更準確可靠。"
+                                ),
+                            },
                         },
-                        "required": ["label", "skill"],
+                        "required": ["label", "skill", "kind"],
                     },
                 },
                 "attacker_skill_value": {"type": "integer", "description": "攻擊方（NPC）這次攻擊技能的百分比值"},
@@ -1048,14 +1067,21 @@ def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[d
     against the official COC7e Fight Back text: it's a normal opposed
     roll at the defender's own combat skill, not a harder version of
     Dodge. (A prior revision here halved it as a house-rule
-    approximation; reverted.)"""
+    approximation; reverted.)
+
+    Passes "kind" (the caller's optional "dodge"/"counter" tag, see
+    dice.is_counter_option) straight through unmodified — this function
+    resolves skill_value, it doesn't validate or normalize kind."""
     options = []
     for opt in raw_options:
         value = resolve_skill_value(char, opt["skill"])
-        options.append({
+        resolved = {
             "label": opt["label"], "skill": opt["skill"], "skill_value": value,
             "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
-        })
+        }
+        if "kind" in opt:
+            resolved["kind"] = opt["kind"]
+        options.append(resolved)
     return options
 
 
@@ -1908,7 +1934,7 @@ def _execute_tool(
                 # 舊版兩步流程（npc_skill_check 先擲、這裡再註冊選項）從未套用，讓仍在用
                 # 這個入口的 Keeper 能給玩家一個數學上穩輸的反擊選項，補上同樣的過濾。
                 if attacker_tier == "critical":
-                    filtered_options = [o for o in options if "反擊" not in o["label"]]
+                    filtered_options = [o for o in options if not dice.is_counter_option(o)]
                     if not filtered_options:
                         return _StateMutation(
                             {
@@ -2068,7 +2094,7 @@ def _execute_tool(
                     # 設計）。code review 發現：這裡原本完全沒有過濾，若 LLM 違反 prompt
                     # 指示仍帶了反擊選項，玩家選中後會被 is_ranged 分支當「撲向掩體」
                     # 處理、敘事成撲向掩體結果，跟玩家實際選的「反擊」不符。
-                    filtered_options = [o for o in options if "反擊" not in o["label"]]
+                    filtered_options = [o for o in options if not dice.is_counter_option(o)]
                     if not filtered_options:
                         return _StateMutation(
                             {
@@ -2103,7 +2129,7 @@ def _execute_tool(
                 # 不能只在 Discord 按鈕顯示層隱藏，否則玩家還是能用 /coc check 反擊 之類
                 # 的文字輸入繞過去。
                 if npc_roll.tier == "critical":
-                    filtered_options = [o for o in options if "反擊" not in o["label"]]
+                    filtered_options = [o for o in options if not dice.is_counter_option(o)]
                     if not filtered_options:
                         return _StateMutation(
                             {

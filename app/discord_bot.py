@@ -469,10 +469,10 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     return reply
 
 
-_TIER_ZH_FULL = {
-    "fumble": "大失敗", "fail": "失敗", "regular": "一般成功",
-    "hard": "困難成功", "extreme": "極難成功", "critical": "大成功",
-}
+# Code review: this used to be its own independently-maintained copy of
+# dice.TIER_ZH, and had silently drifted from app/legacy_commands.py's copy
+# on "regular" ("一般成功" vs "成功"). Now a plain alias to the single source.
+_TIER_ZH_FULL = dice.TIER_ZH
 _TIER_ORDER = sorted(dice.TIER_RANK, key=lambda t: dice.TIER_RANK[t])
 
 
@@ -519,7 +519,7 @@ def _defense_choice_hint(check: dict) -> str:
     attacker_rank = dice.TIER_RANK[attacker_tier]
     lines = []
     for o in check.get("options", []):
-        is_counter = "反擊" in o["label"]
+        is_counter = dice.is_counter_option(o)
         needed_rank = attacker_rank + 1 if is_counter else attacker_rank
         # Code review: dice.resolve_opposed treats BOTH sides being
         # fail-or-worse as "both_miss", not a defender win — so if the

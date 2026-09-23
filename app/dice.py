@@ -163,6 +163,40 @@ def d100() -> int:
 
 TIER_RANK = {"fumble": 0, "fail": 1, "regular": 2, "hard": 3, "extreme": 4, "critical": 5}
 
+# Single source of truth for tier display text — code review flagged that
+# app/legacy_commands.py and app/discord_bot.py each maintained their own
+# independent copy of this same tier->Chinese mapping, and the two had
+# silently drifted apart on "regular" ("成功" vs "一般成功"). Both call sites
+# now import this instead.
+TIER_ZH = {
+    "fumble": "大失敗", "fail": "失敗", "regular": "一般成功",
+    "hard": "困難成功", "extreme": "極難成功", "critical": "大成功",
+}
+
+
+def is_counter_option(option: dict) -> bool:
+    """Whether a defense-choice option (offer_npc_attack_defense_choice /
+    offer_check_choice's {label, skill, ..., kind?} dict) represents Fight
+    Back, as opposed to Dodge.
+
+    Code review flagged that this used to be a bare "反擊" in label
+    substring match, independently re-implemented at four call sites across
+    app/keeper.py, app/legacy_commands.py and app/discord_bot.py — a future
+    change to the Fight Back option's wording (e.g. "反擊！" or an alternate
+    phrasing an LLM caller might use) would silently break all four without
+    raising anything.
+
+    Prefers the structured "kind" field ("dodge"/"counter") a caller can now
+    set explicitly. Falls back to the substring match when "kind" is absent
+    — offer_check_choice's options aren't always a Dodge/Fight Back pair (it's
+    also used for ordinary multi-choice prompts unrelated to combat), so an
+    unset "kind" must not be assumed to mean "not Fight Back"; it means "no
+    structured signal was given, fall back to the label"."""
+    kind = option.get("kind")
+    if kind in ("dodge", "counter"):
+        return kind == "counter"
+    return "反擊" in str(option.get("label", ""))
+
 
 def resolve_opposed(defender_tier: str, attacker_tier: str, is_counter: bool) -> str:
     """COC7e opposed-roll resolution for a melee Dodge/Fight Back choice vs.

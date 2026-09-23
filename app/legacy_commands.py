@@ -808,10 +808,10 @@ def _skill_names_match(a: str, b: str) -> bool:
     return bool(a) and bool(b) and (a == b or a in b or b in a)
 
 
-_CHECK_TIER_ZH = {
-    "fumble": "大失敗", "fail": "失敗", "regular": "成功",
-    "hard": "困難成功", "extreme": "極難成功", "critical": "大成功",
-}
+# Code review: this used to be its own independently-maintained copy of
+# dice.TIER_ZH, and had silently drifted from app/discord_bot.py's copy on
+# "regular" ("成功" vs "一般成功"). Now a plain alias to the single source.
+_CHECK_TIER_ZH = dice.TIER_ZH
 
 NATURAL_1_BONUS_PROMPT = (
     "【大成功額外獎勵】\n"
@@ -937,7 +937,7 @@ def _resolve_ranged_defense_outcome(defender_name: str, dive_success: bool, rang
 def _build_check_narration(
     char, skill_name: str, display_label: str | None, value: int, r, bonus: int, penalty: int,
     luck_spent: int = 0, original_tier: str | None = None, attacker_tier: str | None = None,
-    major_wound_trigger: bool = False, ranged_opposed_text: str | None = None,
+    major_wound_trigger: bool = False, ranged_opposed_text: str | None = None, is_counter: bool = False,
 ) -> tuple[str, str]:
     """Builds (roll_line, keeper_message) for a resolved skill/choice check —
     shared by the immediate-finalize path and handle_luck_decision (after a
@@ -954,6 +954,11 @@ def _build_check_narration(
     attacker_tier and ranged_opposed_text are mutually exclusive — a given
     choice check is either the melee opposed-roll path or the ranged path,
     never both.
+    is_counter (only meaningful when attacker_tier is set) must be computed
+    by the caller from the original option dict via dice.is_counter_option()
+    — this function no longer re-derives it from display_label's free text
+    (code review: a future label wording change could silently break a bare
+    "反擊" in display_label substring match here).
     major_wound_trigger (see keeper.py's adjust_character tool) is the CON
     check chained onto a single hit dealing >= half max HP — unlike the Bout
     of Madness INT check this flows through the normal Luck-spend path
@@ -970,7 +975,6 @@ def _build_check_narration(
     opposed_line = ""
     opposed_message = ""
     if attacker_tier is not None:
-        is_counter = display_label is not None and "反擊" in display_label
         opposed_text = _describe_opposed_outcome(char.name, is_counter, r.tier, attacker_tier)
         opposed_line = f"\n⚔️ {opposed_text}"
         opposed_message = f"（{opposed_text}）"
@@ -1205,6 +1209,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         choice_bonus: int | None = None
         choice_penalty: int | None = None
         choice_attacker_tier = None
+        choice_is_counter = False
         # Only set when the pending choice is a ranged offer_npc_attack_defense_choice
         # (see keeper.py's is_ranged branch) — the attacker's roll is deferred until
         # right here, after the defender's own dive-for-cover result is known, rather
@@ -1231,6 +1236,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             choice_bonus = int(matched["bonus_dice"])
             choice_penalty = int(matched["penalty_dice"])
             choice_attacker_tier = pending.get("attacker_tier")
+            choice_is_counter = dice.is_counter_option(matched)
             if pending.get("is_ranged"):
                 choice_ranged_attacker = {
                     "skill_value": int(pending.get("attacker_skill_value", 0)),
@@ -1358,11 +1364,13 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         # keeper.py's adjust_character tool. Unlike madness_trigger, this does NOT get an early-return
         # branch below: success here is a normal good outcome, so it flows through the ordinary Luck-spend
         # path like any other skill check — only _build_check_narration needs to know about it.
+        is_counter = False
         if choice_skill_name is not None:
             skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
             display_label = choice_display_label
             attacker_tier = choice_attacker_tier
             ranged_attacker = choice_ranged_attacker
+            is_counter = choice_is_counter
         else:
             if pending:
                 skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
@@ -1436,7 +1444,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "origin_request_id": str(origin_context.get("request_id", "")),
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "action_context": action_context,
-                "skill_name": skill_name, "display_label": display_label,
+                "skill_name": skill_name, "display_label": display_label, "is_counter": is_counter,
                 "value": value, "roll": skill_result.roll, "bonus_dice": bonus, "penalty_dice": penalty,
                 "original_tier": skill_result.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
                 "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
@@ -1468,11 +1476,11 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         )
         roll_line, keeper_message = _build_check_narration(
             char, skill_name, display_label, value, skill_result, bonus, penalty, attacker_tier=attacker_tier,
-            major_wound_trigger=major_wound_trigger, ranged_opposed_text=ranged_opposed_text,
+            major_wound_trigger=major_wound_trigger, ranged_opposed_text=ranged_opposed_text, is_counter=is_counter,
         )
         opposed_text = ""
         if attacker_tier is not None:
-            opposed_text = _describe_opposed_outcome(char.name, display_label is not None and "反擊" in display_label, skill_result.tier, attacker_tier)
+            opposed_text = _describe_opposed_outcome(char.name, is_counter, skill_result.tier, attacker_tier)
         elif ranged_opposed_text:
             opposed_text = ranged_opposed_text
         roll_feedback_text, keeper_header = _build_split_check_feedback(
@@ -1635,13 +1643,14 @@ def _resolve_luck_decision_deterministically(
         # does a *fresh* load_state rather than persisting this same `state`
         # object, so any mutation made after an earlier save here would
         # otherwise be silently discarded.
+        pending_is_counter = bool(pending.get("is_counter", False))
         roll_line, keeper_message = _build_check_narration(
             char, pending["skill_name"], pending["display_label"], pending["value"], r,
             pending["bonus_dice"], pending["penalty_dice"],
             luck_spent=luck_spent, original_tier=pending["original_tier"],
             attacker_tier=pending.get("attacker_tier"),
             major_wound_trigger=bool(pending.get("major_wound_trigger", False)),
-            ranged_opposed_text=ranged_opposed_text,
+            ranged_opposed_text=ranged_opposed_text, is_counter=pending_is_counter,
         )
         save_state(state)
         outcome_text = _tier_zh_for_tier(tier, required_tier)
@@ -1660,10 +1669,7 @@ def _resolve_luck_decision_deterministically(
         opposed_text = ""
         pending_attacker_tier = pending.get("attacker_tier")
         if pending_attacker_tier is not None:
-            opposed_text = _describe_opposed_outcome(
-                char.name, pending["display_label"] is not None and "反擊" in pending["display_label"],
-                tier, pending_attacker_tier,
-            )
+            opposed_text = _describe_opposed_outcome(char.name, pending_is_counter, tier, pending_attacker_tier)
         elif ranged_opposed_text:
             opposed_text = ranged_opposed_text
         roll_feedback_text, keeper_header = _build_split_check_feedback(

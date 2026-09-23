@@ -261,3 +261,65 @@ PR #54 的 `/code-review` 發現並修正了 3 個問題：
 新增 5 個（`tier_upper_bound` 正確性 + 跟 `skill_check` 邊界交叉驗證）、
 `tests/test_discord_defense_hint.py` 新增 2 個（`_tier_percentage_hint` 確實委派
 給 `dice.tier_upper_bound`，用 mock 一個明顯錯誤的回傳值證明沒有自己算）。
+
+## 8. 第二輪 PR review 後追加修正
+
+第二輪 `/code-review` 對 §7 的實作再發現 5 個問題，全部修正（433 tests passed，
+新增 5 個）：
+
+1. **[高] dedup/reuse 比對沒有考慮 `is_ranged`**：`offer_npc_attack_defense_choice`
+   的防重複邏輯只比對 `attacker_skill_value`/`bonus`/`penalty`/`options`，沒比對
+   `is_ranged`。一個先以 `is_ranged=False`（近戰）註冊、已擲出 `attacker_roll` 的
+   pending，若呼叫端只把 `is_ranged` 改成 `True` 重試，會被誤判成「完全相同、可
+   重用」，悄悄延用近戰對抗擲骰的舊結果。已在重用條件加上 `is_ranged` 比對。
+2. **[高] 遠程分支沒有伺服器端過濾反擊選項**：跟近戰 critical 分支一樣的問題，
+   `is_ranged` 分支原本完全信任 LLM 遵守 prompt 指示。已加上跟 critical 分支同樣
+   的過濾邏輯。
+3. **[高] dedup 比對用「未過濾」的 options，但保存的是「已過濾」的版本**：
+   critical 過濾發生在 dedup 比對之後，導致比對永遠不會相符——一個 critical 攻擊
+   後的合法重試會被誤判成不同請求、退回「已有待處理」錯誤，而不是優雅地重用快
+   取結果。改成用呼叫時的原始 `raw_option_labels` 快照比對，不受過濾影響。
+4. **[高] 舊版兩步流程 `offer_check_choice` 沒有 critical 過濾**：跟新版
+   `offer_npc_attack_defense_choice` 一樣的問題，補上同樣的 `attacker_tier ==
+   "critical"` 過濾。
+5. **[中] Luck decision 的 split feedback 完全沒有 `opposed_text`**：不只遠程漏了
+   （review 原本只提到這個），近戰的 `attacker_tier` 也一樣被漏掉——修好後兩者都
+   會正確出現在玩家看到的 deterministic feedback 裡，不再只靠 LLM 生成的敘事。
+6. **[中] `_defense_choice_hint` 在攻擊方 fumble 時，反擊門檻算錯**：
+   `attacker_rank + 1` 在 attacker 是 fumble（rank 0）時算出 rank 1（fail），但
+   `dice.resolve_opposed` 把「雙方都 fail-or-worse」判定成 `both_miss`（誰都沒
+   打中），不是反擊命中。反擊門檻已 clamp 到至少 `regular`（閃避不用 clamp，因為
+   `both_miss` 對閃避而言等同於「沒受傷」，本來就是安全的結果）。
+
+## 9. 維護性問題修正（非 bug）
+
+背景 review 額外發現兩個維護性問題，一併處理：
+
+1. **脆弱的字串匹配判斷選項類型**：`"反擊" in label` 這個判斷散落在 7 個地方
+   （`app/keeper.py` x3、`app/legacy_commands.py` x3、`app/discord_bot.py` x1），
+   若未來反擊選項的措辭改變，這些判斷會悄悄失效、不會報錯。新增
+   `dice.is_counter_option(option)` 作為單一權威判斷：優先讀取選項的結構化
+   `kind` 欄位（`"dodge"`/`"counter"`），只有 `kind` 缺席時才 fallback 回舊的
+   label 子字串匹配（保留向後相容）。`offer_npc_attack_defense_choice` 的 tool
+   schema 已把 `kind` 設為 required（這個工具的選項本來就一定是閃避/反擊）；
+   `offer_check_choice` 則設為 optional（它也用在非閃避/反擊的一般多選一情境）。
+   `_resolve_defense_options` 會把 `kind` 原封不動傳遞下去；近戰對抗結果敘事路徑
+   （`_build_check_narration`/`_describe_opposed_outcome`）改成由呼叫端傳入已判
+   斷好的 `is_counter: bool`，不再各自重新解析 `display_label` 字串；Luck
+   decision 的 pending 資料結構新增 `is_counter` 欄位，讓 resolve 階段能直接讀取
+   而不用重新猜測。
+2. **tier 中文對照表重複定義**：`app/discord_bot.py::_TIER_ZH_FULL` 跟
+   `app/legacy_commands.py::_CHECK_TIER_ZH` 是兩份獨立維護的 tier→中文對照表，
+   且 `"regular"` 翻譯不一致（「一般成功」vs「成功」）。統一移到
+   `app/dice.py::TIER_ZH`（採用「一般成功」，跟其他 tier 的兩字命名風格一致），
+   兩處改成純別名引用。
+
+## 10. 使用者要求的綜合驗證測試
+
+新增 `tests/test_discord_defense_hint.py::DodgeVsCounterAcrossAllAttackerTiersTests`
+（12 個測試）：固定閃避 20%、反擊 45%，對 6 種敵方 tier（fumble 到 critical）
+逐一驗證 `_defense_choice_hint()` 算出的門檻，跟 `dice.resolve_opposed()` 實際
+判定結果互相一致——包含刻意驗證「天真、未 clamp 的門檻」在 `resolve_opposed`
+下確實會判失敗，證明 §8 第 6 點的 clamp 修正是必要的，不是防禦性過度設計。
+
+**最終測試數**：439 tests passed + 6 subtests passed。
