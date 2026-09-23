@@ -669,6 +669,34 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(enemy_count, 1)
         self.assertIn("已經在戰鬥中", replies[-1])
 
+    def test_add_npc_to_combat_allows_the_same_species_under_distinct_display_names(self):
+        # User-raised scenario: two Deep Ones (魚人) attack simultaneously
+        # from different directions - same species/stats, but two distinct
+        # individuals, not a duplicate call for the same one. The duplicate
+        # guard is exact-name-match, so as long as the Keeper follows the
+        # naming instruction added to _build_static_prompt (give each
+        # same-species instance in one fight a distinct display name), both
+        # must be allowed into combat as separate combatants.
+        state = GroupState("discord-group-two-deep-ones")
+        group_state.save_state(state)
+        keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "魚人（左）", "dex": 40, "hp": 15}, [], [],
+        )
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "魚人（右）", "dex": 40, "hp": 15}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_names = {c.name for c in state.combat.order if c.side == "enemy"}
+        self.assertEqual(enemy_names, {"魚人（左）", "魚人（右）"})
+
+    def test_static_prompt_instructs_distinct_names_for_same_species_multiples(self):
+        state = GroupState("discord-group-prompt-check")
+        prompt = keeper._build_static_prompt(state)
+        self.assertIn("同一場戰鬥裡如果同時出現多隻同種怪物", prompt)
+
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")
         state.characters["u1"] = Character("Ada", "u1", carried_items=["鑰匙"])
