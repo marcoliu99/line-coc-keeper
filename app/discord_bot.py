@@ -284,6 +284,14 @@ async def _send_direct_image(
 
 def _make_reply(channel: discord.abc.Messageable) -> Reply:
     async def reply(text: str) -> None:
+        # Plain text log, not a structured event field — same rationale as
+        # app/keeper.py's search_scenario query log: the structured
+        # discord.reply span below only ever captures counts/bytes, never
+        # what was actually said, so "what story text did the Keeper just
+        # post to this channel" was previously unanswerable from the logs.
+        # Gated by LOG_TEXT_ENABLED like any other _logger call — independent
+        # of LOG_ENABLED, which only governs the structured metrics span.
+        _logger.info("discord_reply text=%r", text)
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
