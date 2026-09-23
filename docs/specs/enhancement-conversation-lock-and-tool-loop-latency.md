@@ -20,7 +20,8 @@ implementing any of it without an explicit go-ahead on a specific option.
 | 9 | Model tiering (cheap model for Executor) | **Verified against real API — see results below**; `gpt-4o-mini` not obviously better, needs its own mini-spec if pursued |
 | 10 | `reasoning_effort=none` for Executor | **Verified against real API — see results below**; `gpt-6-luna`/`none` promising, `/low` inconsistent |
 | 11 | Streaming | **Open** — needs its own design (edit-rate-limit batching) |
-| 12 | Dynamic tool scoping (34→combat/non-combat subset) | **Open** — fold into #9/#10's follow-up mini-spec |
+| 12 | Dynamic tool scoping (34→combat/non-combat subset) | **Open** — fold into #9/#10's follow-up mini-spec; real data now shows it also improves correctness, not just speed |
+| 13 | **Bug**: `app/agents/executor.py`'s tool list never includes `search_scenario` | **Found, out of scope here** — separate bug ticket, same category as PR #55 |
 
 Items 1-5 (first batch) are decided and make up this branch's actual
 implementation plan below. Items 6-11 (second batch) are evaluated further
@@ -576,6 +577,73 @@ favor on correctness specifically, even though its raw speed doesn't beat
 - None of this is enough data to greenlight shipping tiering yet — still
   recommending this stay a follow-up mini-spec (item 9/10's original
   status), just now with real numbers instead of assumptions to start from.
+
+## Broader scenario sweep for gpt-6-luna/none (8 real-play tool patterns)
+
+Ran 8 scenarios covering the actual tool variety seen in play (single/dual
+skill check, SAN, combat start with one vs. multiple NPCs — the exact
+"語塞" bug shape, dealing damage, spending Luck, scenario lookup), each
+once against baseline (`gpt-5.6-luna`/`medium`), candidate at the real
+35-tool list (`gpt-6-luna`/`none`), and candidate scoped to 6 core tools
+(`skill_check`, `sanity_check`, `start_combat`, `add_npc_to_combat`,
+`damage_combatant`, `adjust_character`).
+
+**Bug found and fixed while building this test, worth its own callout:**
+the first version of this test used bare `keeper.TOOLS` (34 tools), which
+is missing `search_scenario` — that tool is only added by `keeper.
+_tools_for_speaker_role("player")` when `SCENARIO_RAG_ENABLED` (35 tools
+total for real players; see `app/keeper.py:3240-3241`). Fixed to call that
+function directly, matching real production exactly. **Separately real
+latent bug found in the process**: `app/agents/tool_gateway.py`'s `TOOLS`
+constant is a bare `keeper.TOOLS` reference, not `_tools_for_speaker_role`
+— so `app/agents/executor.py` (the newer Supervisor/Executor path) never
+gets `search_scenario` in its tool list at all when `SCENARIO_RAG_ENABLED`
+is on, even though the static prompt it sends explicitly tells the model
+it must use that tool to look anything up. Confirmed by reading the import
+chain (`executor.py:6` imports `TOOLS` from `tool_gateway.py:40`, which is
+`keeper.TOOLS`, not the RAG-aware helper). Not part of this branch's scope
+to fix — flagging for a separate bug ticket, same category as the
+duplicate-NPC-add bug from PR #55.
+
+| Scenario | Baseline (35 tools) | Candidate, full (35 tools) | Candidate, scoped (6 tools) |
+|---|---|---|---|
+| single_skill_check | 3009ms ✅ | 2680ms ✅ | 1727ms ✅ |
+| dual_skill_check | 3444ms ✅ | 2909ms ✅ | 2609ms ✅ |
+| san_check | 2499ms ❌ (`search_scenario`) | 2046ms ✅ | 1651ms ✅ |
+| start_combat_single_npc | 2697ms ❌ (`search_scenario`) | 2515ms ❌ (`offer_npc_attack_defense_choice`) | 2148ms ❌ (`skill_check`) |
+| start_combat_multi_npc | 2373ms ✅ | 1774ms ✅ | 1651ms ✅ |
+| damage_npc | 2510ms ❌ (`get_combat_status`) | 2822ms ❌ (`adjust_ammo`) | 2301ms ✅ |
+| luck_spend | 2420ms ✅ | 1956ms ✅ | 1459ms ✅ |
+| scenario_lookup | 1536ms ✅ | 2234ms ✅ | 1855ms ❌ (tool not in the 6-tool scope — this script's own scoping choice, not a model failure) |
+
+**Reading this honestly, not just picking the flattering parts:**
+- Speed ordering is consistent across every matched scenario: scoped (6
+  tools) fastest → candidate full (35 tools) → baseline slowest. Matches
+  the earlier gpt-4o-mini finding that trimming the tool list helps
+  regardless of which model is doing the calling.
+- **Correctness is messier than a clean "smaller reasoning = worse" story.**
+  Baseline — the config actually running in production today — got 3 of 8
+  wrong (`san_check`, `start_combat_single_npc`, `damage_npc`). Candidate
+  (full) got 2 of 8 wrong, one of which (`adjust_ammo` for a stated 5-point
+  hit) is a clearly nonsensical tool choice. Candidate (scoped) got 1
+  genuine wrong answer (`start_combat_single_npc`, shared by all three
+  configs) plus 1 artifact of this test's own 6-tool set not including
+  `search_scenario` — arguably 1 real miss out of 8, the best of the three.
+- `start_combat_single_npc` failing for **all three** configs, including
+  the currently-live baseline, points at this test's `STATIC_INSTRUCTIONS`
+  being under-specified rather than a model-tier issue — the real
+  production static prompt has explicit combat-triggering rules ("看到
+  「打起來了」的場面...呼叫 start_combat", see `app/keeper.py`'s prompt-
+  building section) that this throwaway script's short instructions don't
+  reproduce. Not solid evidence against any of the three configs
+  specifically.
+- Net read: `gpt-6-luna`/`none`, especially scoped to a relevant tool
+  subset, looks at least as good on correctness as today's production
+  config and consistently faster. Still not enough trials (8 scenarios ×
+  1 run each) to treat as validated — the standing recommendation to keep
+  this as a follow-up mini-spec rather than ship it now stands, but the
+  direction keeps looking more promising each time it's tested rather than
+  less.
 
 ## Notes
 - `parallel_tool_calls` verification is explicitly out-of-band — a
