@@ -282,16 +282,33 @@ async def _send_direct_image(
     _record_reply_binary(len(png_bytes))
 
 
+def _log_reply_text(text: str) -> None:
+    """Plain text log, not a structured event field — same rationale as
+    app/keeper.py's search_scenario query log: the structured discord.reply
+    span (in both _make_reply and _make_interaction_reply below) only ever
+    captures counts/bytes, never what was actually said, so "what story text
+    did the Keeper just post to this channel" was previously unanswerable
+    from the logs.
+
+    The LOG_TEXT_ENABLED check happens here, at the call site, rather than
+    being left to app/logging_config.py's downstream _ChannelFilter:
+    - Correctness: configure_logging() skips installing that filter entirely
+      when both LOG_ENABLED and LOG_TEXT_ENABLED are false. A host that
+      configures its own root handler before we run would still capture
+      this record in full despite LOG_TEXT_ENABLED=false, defeating the
+      documented opt-out for potentially sensitive story text.
+    - Efficiency: even in the normal case, checking here means a disabled
+      toggle costs nothing — no LogRecord built, no formatting, nothing
+      queued to the background listener thread — on what is now a
+      per-reply (not per-rare-search) hot path.
+    """
+    if config.LOG_TEXT_ENABLED:
+        _logger.info("discord_reply text=%r", text)
+
+
 def _make_reply(channel: discord.abc.Messageable) -> Reply:
     async def reply(text: str) -> None:
-        # Plain text log, not a structured event field — same rationale as
-        # app/keeper.py's search_scenario query log: the structured
-        # discord.reply span below only ever captures counts/bytes, never
-        # what was actually said, so "what story text did the Keeper just
-        # post to this channel" was previously unanswerable from the logs.
-        # Gated by LOG_TEXT_ENABLED like any other _logger call — independent
-        # of LOG_ENABLED, which only governs the structured metrics span.
-        _logger.info("discord_reply text=%r", text)
+        _log_reply_text(text)
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
@@ -425,6 +442,7 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     # Used only after the initial interaction response has been consumed
     # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:
+        _log_reply_text(text)
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
