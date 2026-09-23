@@ -11,7 +11,6 @@ from app.agents import (
     guard,
     intent_router,
     narrator,
-    rule_validator,
     state_reducer,
 )
 from app.models import GroupState
@@ -85,17 +84,10 @@ async def run_turn(
     # 5. Narrator Agent generates the final text
     reply_text, private_messages, image_requests = await narrator.run_narrator(message)
 
-    # 6. Rule Validator & Guard Agent (Repair Loop)
-    max_repairs = 2
-    attempts = 0
-    while attempts < max_repairs:
-        is_valid, error_reason = rule_validator.validate_narrative(reply_text)
-        if is_valid:
-            break
-            
-        _logger.warning(f"Narrative validation failed: {error_reason}. Triggering Guard Agent (Attempt {attempts + 1}).")
-        reply_text = await guard.run_repair(message, reply_text, error_reason)
-        attempts += 1
+    # 6. Rule Validator & Guard Agent (Repair Loop) — see
+    # docs/specs/enhancement-guard-agent.md for the GUARD_ENABLED switch and
+    # the fail-closed fallback this delegates to.
+    reply_text = await guard.enforce_narrative_safety(message, reply_text)
 
     # 7. Spoiler output guard (§6 of the spoiler-protection-hardening spec) —
     # separate from the Rule Validator/Guard Agent loop above, which only
