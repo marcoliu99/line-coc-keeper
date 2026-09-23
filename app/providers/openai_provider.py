@@ -316,6 +316,7 @@ async def run_conversation(
     max_iterations: int,
     previous_response_id: str = "",
     on_response_id: Callable[[str], None] | None = None,
+    enable_wrapup: bool = True,
 ) -> str:
     if not OPENAI_API_KEY:
         return "（尚未設定 OPENAI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
@@ -414,31 +415,43 @@ async def run_conversation(
         # sync (the player never told combat started, etc.), so spend one
         # more request with tools disabled to force a plain-text wrap-up of
         # whatever just happened instead.
-        wrapup_kwargs = {
-            "model": OPENAI_MODEL,
-            "instructions": (
-                f"{instructions}\n\n"
-                "（系統提示：本回合的工具呼叫額度已用完，接下來不能再呼叫任何工具。"
-                "請根據上面剛執行的工具結果，直接用一段文字向玩家說明剛才發生的事，"
-                "不要再嘗試呼叫工具。）"
-            ),
-            "input": input_items,
-            "previous_response_id": active_previous_response_id,
-            "temperature": KEEPER_TEMPERATURE,
-            **reasoning_kwargs,
-        }
-        try:
-            wrapup_response = await _create_response_async(_log_iteration=max_iterations, **wrapup_kwargs)
-        except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
-            observability.event(
-                "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",
-            )
-        else:
-            wrapup_text = (wrapup_response.output_text or "").strip()
-            if wrapup_text:
-                final_text = wrapup_text
-                if on_response_id is not None:
-                    on_response_id(wrapup_response.id)
+        #
+        # Gated by enable_wrapup because this text isn't always what ends up
+        # in front of the player: app/agents/executor.py's Supervisor-path
+        # caller discards run_conversation's return value entirely (only the
+        # tool calls' side effects matter there) and app/agents/supervisor.py
+        # always runs a separate Narrator call afterward regardless of how
+        # Executor's turn went — so for that caller, this whole extra request
+        # would be a real API call (with the retry/timeout budget that
+        # implies) whose output could never reach the player. Only
+        # app/keeper.py's legacy run_turn path (its own single combined
+        # tool+narration call, no separate Narrator) actually needs this.
+        if enable_wrapup:
+            wrapup_kwargs = {
+                "model": OPENAI_MODEL,
+                "instructions": (
+                    f"{instructions}\n\n"
+                    "（系統提示：本回合的工具呼叫額度已用完，接下來不能再呼叫任何工具。"
+                    "請根據上面剛執行的工具結果，直接用一段文字向玩家說明剛才發生的事，"
+                    "不要再嘗試呼叫工具。）"
+                ),
+                "input": input_items,
+                "previous_response_id": active_previous_response_id,
+                "temperature": KEEPER_TEMPERATURE,
+                **reasoning_kwargs,
+            }
+            try:
+                wrapup_response = await _create_response_async(_log_iteration=max_iterations, **wrapup_kwargs)
+            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
+                observability.event(
+                    "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",
+                )
+            else:
+                wrapup_text = (wrapup_response.output_text or "").strip()
+                if wrapup_text:
+                    final_text = wrapup_text
+                    if on_response_id is not None:
+                        on_response_id(wrapup_response.id)
 
     return final_text
 

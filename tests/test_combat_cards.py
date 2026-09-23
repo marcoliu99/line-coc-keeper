@@ -1007,6 +1007,18 @@ class FindLiveEnemyTests(unittest.TestCase):
 
         self.assertIsNone(combat.find_live_enemy(state, "柯比特"))
 
+    def test_does_not_match_on_substring_overlap(self):
+        # PR #55 review finding: bidirectional substring matching treated
+        # "Cultist" and "Cultist Leader" as the same entity, silently
+        # blocking the second, distinct enemy from ever joining combat.
+        # find_live_enemy is exact-match only now specifically to avoid this.
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Cultist", 50, 10)
+
+        self.assertIsNone(combat.find_live_enemy(state, "Cultist Leader"))
+        self.assertIsNone(combat.find_live_enemy(state, "Cult"))
+
 
 if __name__ == "__main__":
     unittest.main()

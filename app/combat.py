@@ -237,15 +237,27 @@ def _find_combatant(state: GroupState, name: str) -> Combatant | None:
 
 
 def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
-    """A non-defeated enemy-side combatant matching `name`, or None.
+    """A non-defeated enemy-side combatant whose name/display_name exactly
+    matches `name` (after normalization), or None.
 
-    Same normalize + substring matching as `_find_combatant`, scoped to
-    active enemies only — used by add_npc's caller to stop the Keeper from
+    Deliberately EXACT matching only, unlike `_find_combatant`'s bidirectional
+    substring matching — used by add_npc's caller to stop the Keeper from
     creating a second independent HP pool for a monster it already added
     (e.g. re-searching a scenario NPC and calling add_npc_to_combat again
     for the same name instead of noticing it's already in the fight). A
     defeated combatant with the same name is not matched, so a monster
     narratively returning after being killed can still be added fresh.
+
+    Substring matching here would be actively harmful for this specific use:
+    two distinct live enemies that happen to share a substring (e.g.
+    "Cultist" and "Cultist Leader", or a base creature and its separately
+    indexed boss variant) would falsely collide, silently preventing the
+    second one from ever entering combat — the opposite failure mode from
+    the one this function exists to prevent. Callers that need to also catch
+    the same NPC re-added under a different scenario-index alias (e.g. "柯
+    比特" vs "Walter Corbitt") should call this once per known alias rather
+    than relying on substring overlap to bridge them — see
+    app/keeper.py's add_npc_to_combat handler.
     """
     norm = _normalize(name)
     if not norm:
@@ -253,8 +265,7 @@ def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
     for c in state.combat.order:
         if c.side != "enemy" or c.defeated:
             continue
-        names = [c.name, c.display_name]
-        if any(norm == _normalize(n) or norm in _normalize(n) or _normalize(n) in norm for n in names if n):
+        if norm == _normalize(c.name) or (c.display_name and norm == _normalize(c.display_name)):
             return c
     return None
 

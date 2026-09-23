@@ -66,6 +66,14 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             await provider.run_conversation(
                 static_system, dynamic_system, TOOLS, state.log, new_message,
                 execute_tool, MAX_TOOL_ITERATIONS,
+                # This call's return value is discarded entirely (only the
+                # tool calls' side effects matter to run_executor — see
+                # docstring above), and supervisor.py always runs a separate
+                # Narrator call afterward regardless of how this turn went.
+                # A forced wrap-up here would be a real extra API call whose
+                # output the player could never see — see each provider's
+                # own comment on the enable_wrapup-gated branch.
+                enable_wrapup=False,
             )
     except Exception:
         observability.event("llm.failed", level=logging.ERROR, agent="executor", status="error")

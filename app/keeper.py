@@ -2524,7 +2524,26 @@ def _execute_tool(
                 # it's already in. Scoped to the enemy side only: a defeated
                 # duplicate is not matched, so a monster narratively coming
                 # back can still be added fresh.
-                existing = None if is_ally else combat.find_live_enemy(target_state, npc_name)
+                #
+                # find_live_enemy itself only does exact matching (see its
+                # docstring for why substring matching would wrongly collide
+                # e.g. "Cultist" with "Cultist Leader") — so a duplicate
+                # under a *different* /coc index alias of the same entity
+                # (e.g. this call used "柯比特", an earlier call used "Walter
+                # Corbitt") would otherwise slip through as exact-string
+                # mismatches. Check every known alias of npc_name, not just
+                # npc_name itself, using the same index_entry already
+                # resolved above for the HP check.
+                existing = None
+                if not is_ally:
+                    candidate_names = {npc_name}
+                    if index_entry is not None:
+                        candidate_names.add(index_entry.get("name", npc_name))
+                        candidate_names.update(index_entry.get("aliases") or [])
+                    for candidate in candidate_names:
+                        existing = combat.find_live_enemy(target_state, candidate)
+                        if existing is not None:
+                            break
                 if existing is not None:
                     return (
                         f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"

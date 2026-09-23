@@ -64,6 +64,29 @@ class OpenAIWrapupTests(unittest.TestCase):
 
         self.assertEqual(result, PLACEHOLDER)
 
+    def test_enable_wrapup_false_skips_the_extra_call(self):
+        # PR #55 review finding: app/agents/executor.py's Supervisor-path
+        # caller discards this function's return value entirely and a
+        # separate Narrator call always runs afterward regardless — so a
+        # forced wrap-up there is a real extra API call whose output the
+        # player could never see. enable_wrapup=False must skip it.
+        from app.providers import openai_provider
+
+        fake_client = MagicMock()
+        fake_client.responses.create = AsyncMock(return_value=self._tool_call_response())
+        fake_openai_module = MagicMock()
+        fake_openai_module.AsyncOpenAI = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"openai": fake_openai_module}), \
+             patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
+            result = asyncio.run(openai_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 1, enable_wrapup=False,
+            ))
+            asyncio.run(openai_provider.shutdown_async_client())
+
+        self.assertEqual(result, PLACEHOLDER)
+        self.assertEqual(fake_client.responses.create.call_count, 1)
+
     def test_normal_turn_with_a_final_text_response_never_triggers_wrapup(self):
         from app.providers import openai_provider
 
@@ -128,6 +151,24 @@ class AnthropicWrapupTests(unittest.TestCase):
 
         self.assertEqual(result, PLACEHOLDER)
 
+    def test_enable_wrapup_false_skips_the_extra_call(self):
+        from app.providers import anthropic_provider
+
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(return_value=self._tool_use_response())
+        fake_anthropic_module = MagicMock()
+        fake_anthropic_module.AsyncAnthropic = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
+             patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"):
+            result = asyncio.run(anthropic_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 1, enable_wrapup=False,
+            ))
+            asyncio.run(anthropic_provider.shutdown_async_client())
+
+        self.assertEqual(result, PLACEHOLDER)
+        self.assertEqual(fake_client.messages.create.call_count, 1)
+
 
 class GeminiWrapupTests(unittest.TestCase):
     def _function_call_response(self):
@@ -190,6 +231,29 @@ class GeminiWrapupTests(unittest.TestCase):
             asyncio.run(gemini_provider.shutdown_async_client())
 
         self.assertEqual(result, PLACEHOLDER)
+
+    def test_enable_wrapup_false_skips_the_extra_call(self):
+        from app.providers import gemini_provider
+
+        fake_client = MagicMock()
+        fake_client.models.generate_content = AsyncMock(return_value=self._function_call_response())
+        fake_client.aio = fake_client
+
+        fake_genai_module = MagicMock()
+        fake_genai_module.Client = MagicMock(return_value=fake_client)
+        fake_types_module = MagicMock()
+        fake_types_module.Part.from_function_response = MagicMock(return_value=MagicMock())
+
+        with patch.dict(
+            "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
+        ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"):
+            result = asyncio.run(gemini_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 1, enable_wrapup=False,
+            ))
+            asyncio.run(gemini_provider.shutdown_async_client())
+
+        self.assertEqual(result, PLACEHOLDER)
+        self.assertEqual(fake_client.models.generate_content.call_count, 1)
 
 
 if __name__ == "__main__":

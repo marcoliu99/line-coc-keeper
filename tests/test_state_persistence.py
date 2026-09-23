@@ -545,6 +545,54 @@ class StatePersistenceTests(unittest.TestCase):
         enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
         self.assertEqual(enemy_count, 2)
 
+    def test_add_npc_to_combat_rejects_duplicate_under_a_different_scenario_index_alias(self):
+        # PR #55 review finding: the original duplicate guard only compared
+        # raw combatant name/display_name, so the same indexed NPC added
+        # under two non-overlapping aliases (e.g. "柯比特" then "Walter
+        # Corbitt") still created a second, independent HP pool - the exact
+        # corruption the guard exists to prevent. Fixed by resolving the
+        # scenario-index entry (which already tracks aliases) and checking
+        # every known alias, not just the exact string passed this call.
+        state = GroupState("discord-group-alias-dup")
+        state.scenario_npc_index = [
+            {"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 20},
+        ]
+        group_state.save_state(state)
+        first = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+        self.assertTrue(first["ok"])
+        self.assertNotIn("note", first)
+
+        second = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "Walter Corbitt", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(second["ok"])
+        self.assertIn("note", second)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
+    def test_add_npc_to_combat_does_not_treat_substring_overlapping_names_as_duplicates(self):
+        # PR #55 review finding: the original guard's substring matching
+        # (inherited from _find_combatant) treated "Cultist" and "Cultist
+        # Leader" as the same entity, silently blocking the second, distinct
+        # enemy from ever entering combat. find_live_enemy now does exact
+        # matching only, so two enemies with overlapping names must both be
+        # allowed in.
+        state = GroupState("discord-group-substring-overlap")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "Cultist", "dex": 50, "hp": 10}, [], [])
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "Cultist Leader", "dex": 60, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_names = sorted(c.name for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_names, ["Cultist", "Cultist Leader"])
+
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")
         state.characters["u1"] = Character("Ada", "u1", carried_items=["鑰匙"])

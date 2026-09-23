@@ -70,6 +70,7 @@ async def run_conversation(
     new_message: str,
     execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int,
+    enable_wrapup: bool = True,
 ) -> str:
     if not ANTHROPIC_API_KEY:
         return "（尚未設定 ANTHROPIC_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
@@ -171,47 +172,56 @@ async def run_conversation(
         # never got a turn to narrate any of it. Spend one more request with
         # no tools offered to force a plain-text wrap-up instead of silently
         # returning the placeholder while state and narration diverge.
-        wrapup_system = system_blocks + [{
-            "type": "text",
-            "text": (
-                "（系統提示：本回合的工具呼叫額度已用完，接下來不能再呼叫任何工具。"
-                "請根據上面剛執行的工具結果，直接用一段文字向玩家說明剛才發生的事，"
-                "不要再嘗試呼叫工具。）"
-            ),
-        }]
-        try:
-            logical_request_id = observability.new_id("llm")
-            with observability.context(provider_request_id=logical_request_id), observability.span(
-                "llm.request",
-                provider="anthropic",
-                model=ANTHROPIC_MODEL,
-                logical_request_id=logical_request_id,
-                iteration=max_iterations,
-                timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
-                tool_count=0,
-                slow_threshold_ms=LOG_SLOW_OPERATION_MS,
-            ):
-                async with _request_scope() as client:
-                    async def wrapup_once(wrapup_system=wrapup_system):
-                        async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
-                            return await client.messages.create(
-                                model=ANTHROPIC_MODEL,
-                                max_tokens=1024,
-                                temperature=KEEPER_TEMPERATURE,
-                                system=wrapup_system,
-                                messages=messages,
-                            )
+        #
+        # Gated by enable_wrapup: app/agents/executor.py's Supervisor-path
+        # caller discards this function's return value entirely (only the
+        # tool calls' side effects matter there), and a separate Narrator
+        # call always runs afterward regardless — for that caller this
+        # whole extra request would be pure waste, its output unreachable
+        # by the player. Only app/keeper.py's legacy run_turn path (no
+        # separate Narrator) actually needs it.
+        if enable_wrapup:
+            wrapup_system = system_blocks + [{
+                "type": "text",
+                "text": (
+                    "（系統提示：本回合的工具呼叫額度已用完，接下來不能再呼叫任何工具。"
+                    "請根據上面剛執行的工具結果，直接用一段文字向玩家說明剛才發生的事，"
+                    "不要再嘗試呼叫工具。）"
+                ),
+            }]
+            try:
+                logical_request_id = observability.new_id("llm")
+                with observability.context(provider_request_id=logical_request_id), observability.span(
+                    "llm.request",
+                    provider="anthropic",
+                    model=ANTHROPIC_MODEL,
+                    logical_request_id=logical_request_id,
+                    iteration=max_iterations,
+                    timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
+                    tool_count=0,
+                    slow_threshold_ms=LOG_SLOW_OPERATION_MS,
+                ):
+                    async with _request_scope() as client:
+                        async def wrapup_once(wrapup_system=wrapup_system):
+                            async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                                return await client.messages.create(
+                                    model=ANTHROPIC_MODEL,
+                                    max_tokens=1024,
+                                    temperature=KEEPER_TEMPERATURE,
+                                    system=wrapup_system,
+                                    messages=messages,
+                                )
 
-                    wrapup_response = await retry.async_call_with_retry(
-                        wrapup_once, provider="anthropic", operation="messages.create",
-                        request_id=logical_request_id,
-                    )
-        except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
-            observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="anthropic")
-        else:
-            wrapup_text = "".join(b.text for b in wrapup_response.content if b.type == "text").strip()
-            if wrapup_text:
-                final_text = wrapup_text
+                        wrapup_response = await retry.async_call_with_retry(
+                            wrapup_once, provider="anthropic", operation="messages.create",
+                            request_id=logical_request_id,
+                        )
+            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
+                observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="anthropic")
+            else:
+                wrapup_text = "".join(b.text for b in wrapup_response.content if b.type == "text").strip()
+                if wrapup_text:
+                    final_text = wrapup_text
 
     return final_text
 
