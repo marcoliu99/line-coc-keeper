@@ -14,11 +14,11 @@ implementing any of it without an explicit go-ahead on a specific option.
 | 3 | `MAX_TOOL_ITERATIONS` → 5, `HIGH_ITERATION_WATERMARK` = 4 | **Decided** |
 | 4 | `parallel_tool_calls` real-API verification | **Decided** — standalone script, out-of-band |
 | 5 | Macro tools (`initialize_encounter` etc.) | **Decided** — backlog |
-| 6 | Add usage/`cached_input_tokens` logging to the real turn loop | **Recommended, not yet decided** — see second batch |
+| 6 | Add usage/`cached_input_tokens` logging to the real turn loop | **Still recommended** (ongoing production visibility) — but the underlying question it was for (#8) is now answered directly, see below |
 | 7 | Cap Executor's output tokens | **Recommended, not yet decided** — scope: `executor.py` only |
-| 8 | Restructure prompt ordering for caching | **Not recommended yet** — needs #6's data first |
-| 9 | Model tiering (cheap model for Executor) | **Open** — real plumbing cost, needs its own mini-spec |
-| 10 | `reasoning_effort=none` for Executor | **Open** — depends on #9's plumbing |
+| 8 | Restructure prompt ordering for caching | **Answered: not needed.** Verified against the real API with the real production prompt — already caching at 99.9% on repeat calls. See results below |
+| 9 | Model tiering (cheap model for Executor) | **Verified against real API — see results below**; `gpt-4o-mini` not obviously better, needs its own mini-spec if pursued |
+| 10 | `reasoning_effort=none` for Executor | **Verified against real API — see results below**; `gpt-6-luna`/`none` promising, `/low` inconsistent |
 | 11 | Streaming | **Open** — needs its own design (edit-rate-limit batching) |
 | 12 | Dynamic tool scoping (34→combat/non-combat subset) | **Open** — fold into #9/#10's follow-up mini-spec |
 
@@ -488,6 +488,68 @@ behavior, just trims what's offered. Worth folding into the same
 than doing ad hoc, since getting the combat/non-combat tool split exactly
 right (not hiding something the Keeper legitimately needs mid-scene) needs
 the same care as the rest of that follow-up.
+
+## Real-API verification results (items 8, 9, 10)
+
+Two throwaway scripts (not committed, not part of app code — kept in the
+session scratchpad), run against the real OpenAI API from `line-coc-keeper-
+main-v2` (real `.env`, real live campaign state for an authentic prompt).
+
+### Prompt caching (item 8) — works, confirmed with the real prompt
+
+`verify_prompt_caching.py` built `instructions` the exact way `app/agents/
+executor.py` does (`prompt_config.build_executor_static_prompt(keeper.
+_build_static_prompt(state))` + dynamic block) from the real live
+`discord-channel-1550744273060765719` campaign state, then fired 3
+consecutive Responses API calls with that identical prefix:
+
+| Call | input_tokens | cached_input_tokens | duration |
+|---|---|---|---|
+| 1 (cold) | 17469 | 0 | 5087ms |
+| 2 (same prefix) | 17470 | **17448** (99.9%) | 2901ms |
+| 3 (same prefix, +2s) | 17468 | **17448** (99.9%) | 3437ms |
+
+**Conclusion: caching already works.** Both external proposals' claim that
+it was broken was built on misattributed log evidence (see the second/third
+batch sections above) — this settles it directly instead of by inference.
+No prompt restructuring needed. Item 6 (adding usage logging to the real
+loop) is still worth doing for ongoing visibility, but it's no longer
+gating a decision — this already answers the question it was meant to
+answer.
+
+### Executor model/reasoning tiering (items 9, 10) — real, mixed results
+
+`verify_executor_tiering.py` sent an identical two-skill-check prompt (with
+the real 34-tool schema) across model/effort combinations, twice (two
+separate runs):
+
+| Config | Run 1 | Run 2 | Correctness |
+|---|---|---|---|
+| `gpt-5.6-luna` / `medium` (current) | 3362ms | 4191ms | ✅ both — correct `skill_check` × 2 |
+| `gpt-6-luna` / `none` | 2510ms | 1999ms | ✅ both — correct `skill_check` × 2 |
+| `gpt-6-luna` / `low` | 1549ms | 2327ms | ⚠️ **1 of 2** — run 1 called `roll_dice` directly instead of `skill_check`, skipping the actual mechanic entirely; run 2 was correct |
+| `gpt-4o-mini` / `none` | — | — | ❌ **HTTP 400**: `"Unsupported parameter: 'reasoning.effort' is not supported with this model."` — confirmed non-reasoning models reject the param outright, same class of issue as `temperature` already being rejected for reasoning models (existing `_unsupported_params` fallback in `openai_provider.py` already handles exactly this generically — `("temperature", "reasoning")` are both checked — so a real integration would self-heal this automatically, unlike this standalone script) |
+| `gpt-4o-mini` / no reasoning param | 5084ms | — | ✅ correct, but **slowest of everything tested** — directly contradicts the proposal's "幾乎是即發即回，Sub-second 體驗" claim against our actual 34-tool schema |
+
+**Conclusions:**
+- `gpt-6-luna`/`none` is the most promising candidate seen so far — faster
+  than the current baseline in both runs, correct both times. Still only 2
+  data points; would want more trials across a wider variety of scenarios
+  (multi-NPC combat, index lookups, SAN checks) before trusting it in
+  production.
+- `gpt-6-luna`/`low` is **not reliable** — one wrong-tool-selection out of
+  two trials is a real correctness failure, not noise to wave away. This
+  concretely confirms this doc's earlier caution ("needs a real quality bar
+  tested against the ~10 tools, not assumed") rather than just a
+  theoretical concern.
+- `gpt-4o-mini` (Gemini's specific suggestion) does **not** show the clear
+  win it was pitched as — it was the slowest option tested here, on our
+  actual tool schema. Not recommending it as the default candidate for
+  item 9 based on this data; `gpt-6-luna`/`none` looks like the better
+  direction if model/effort tiering is pursued further.
+- None of this is enough data to greenlight shipping tiering yet — still
+  recommending this stay a follow-up mini-spec (item 9/10's original
+  status), just now with real numbers instead of assumptions to start from.
 
 ## Notes
 - `parallel_tool_calls` verification is explicitly out-of-band — a
