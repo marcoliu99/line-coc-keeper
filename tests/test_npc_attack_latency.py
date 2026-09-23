@@ -262,6 +262,51 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         skill_check_mock.assert_not_called()
         self.assertFalse(result["ok"])
 
+    def test_retrying_with_is_ranged_corrected_does_not_reuse_the_stale_melee_entry(self):
+        """Code-review regression: the reuse-on-duplicate-request branch
+        compared attacker_skill_value/bonus/penalty/options but never
+        is_ranged. If a firearm attack was first (mistakenly) registered
+        with is_ranged=False — leaving a melee entry with a real
+        attacker_roll already persisted — and the caller retries with only
+        is_ranged flipped to True (same skill value, bonus/penalty,
+        options), every other reuse condition still matched, so the stale
+        melee opposed-roll result was silently returned instead of the
+        retry actually switching to the ranged dive-for-cover mechanic.
+        Must now fall through to the "already pending" rejection instead."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            fake_roll = MagicMock(roll=10, tier="regular")
+            with patch("app.keeper.dice.skill_check", return_value=fake_roll):
+                first = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}],
+                        "attacker_skill_value": 55,
+                        "is_ranged": False,
+                    },
+                    [], [], speaker_role="player",
+                )
+            self.assertTrue(first["ok"])
+            self.assertEqual(first["attacker_tier"], "regular")
+
+            with patch("app.keeper.dice.skill_check") as skill_check_mock:
+                retry = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}],
+                        "attacker_skill_value": 55,
+                        "is_ranged": True,
+                    },
+                    [], [], speaker_role="player",
+                )
+
+        skill_check_mock.assert_not_called()
+        self.assertFalse(retry["ok"])
+        self.assertNotIn("attacker_tier", retry)
+
     def test_melee_defaults_is_ranged_to_false_and_still_pre_rolls(self):
         state = _state_with_investigator()
         with StateStorePatch(keeper) as store:
@@ -307,6 +352,41 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         labels = [o["label"] for o in result["options"]]
         self.assertEqual(labels, ["閃避"])
         self.assertEqual([o["label"] for o in saved_state.pending_checks["u1"]["options"]], ["閃避"])
+
+    def test_identical_retry_after_critical_filter_reuses_cached_roll(self):
+        """Code-review regression: the dedup/reuse comparison used to check
+        the RE-COMPUTED options (unfiltered, e.g. ["閃避","反擊"]) against
+        what got PERSISTED (already filtered down to ["閃避"] by the
+        critical-tier Fight Back removal above). Those two could never be
+        equal, so an identical retry with the same raw request fell through
+        to the generic "already pending" rejection instead of gracefully
+        reusing the earlier attacker_roll/attacker_tier — defeating the
+        whole point of the dedup branch specifically for the one case
+        (critical attacker) it's most likely to be hit for."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            raw_call = {
+                "investigator": "小明",
+                "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
+                "attacker_skill_value": 70,
+            }
+            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+                first = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice", raw_call, [], [], speaker_role="player",
+                )
+            self.assertTrue(first["ok"])
+
+            with patch("app.keeper.dice.skill_check") as skill_check_mock:
+                retry = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice", raw_call, [], [], speaker_role="player",
+                )
+
+        skill_check_mock.assert_not_called()
+        self.assertTrue(retry["ok"])
+        self.assertEqual(retry["attacker_tier"], "critical")
+        self.assertEqual([o["label"] for o in retry["options"]], ["閃避"])
+        self.assertIn("note", retry)
 
     def test_critical_attacker_with_only_a_fight_back_option_errors_without_saving(self):
         state = _state_with_investigator()
@@ -510,6 +590,41 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
         combined_text = resolution.roll_line + resolution.keeper_message
         self.assertIn("撲向掩體失敗", combined_text)
         self.assertIn("命中了", combined_text)
+
+    def test_luck_decision_split_feedback_includes_ranged_shot_result(self):
+        """Code-review regression: resolving a near-miss Luck decision
+        through a Discord Luck button uses split_roll_feedback=True. The
+        ranged attacker's shot IS rolled here (via ranged_opposed_text,
+        exactly once per docstring), and _build_check_narration receives
+        it, but the call building roll_feedback_text/keeper_header used to
+        pass only result_line with no opposed_text at all — so the
+        authoritative ranged outcome never reached the deterministic,
+        player-facing split feedback, leaving it entirely dependent on
+        whatever the generated Keeper narration happened to say."""
+        state = _state_with_investigator()
+        state.active = True
+        timeline_id = state.timeline_id or f"legacy-{state.group_id}"
+        state.pending_luck_decisions["u1"] = {
+            "decision_id": "decision-1", "check_id": "check-1", "timeline_id": timeline_id,
+            "origin_revision": state.state_revision + 1, "origin_turn_id": "", "origin_request_id": "",
+            "created_at": "2026-01-01T00:00:00+00:00", "action_context": "撲向掩體",
+            "skill_name": "閃避", "display_label": "閃避",
+            "value": 45, "roll": 30, "bonus_dice": 0, "penalty_dice": 0,
+            "original_tier": "regular", "attacker_tier": None, "difficulty": "regular",
+            "options": [], "major_wound_trigger": False,
+            "ranged_attacker": {"skill_value": 55, "bonus_dice": 0, "penalty_dice": 0},
+        }
+        with StateStorePatch(legacy_commands) as store:
+            store.put(state)
+            attacker_hit_roll = dice.SkillCheckResult(
+                skill_value=55, roll=30, bonus_dice=0, penalty_dice=0,
+                tier="regular", success=True, required_tier="regular",
+            )
+            with patch("app.legacy_commands.dice.skill_check", return_value=attacker_hit_roll):
+                resolution = legacy_commands._resolve_luck_decision_deterministically("g", "u1", "skip")
+
+        self.assertIn("遠程攻擊判定", resolution.roll_feedback_text)
+        self.assertIn("命中了", resolution.roll_feedback_text)
 
 
 class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):

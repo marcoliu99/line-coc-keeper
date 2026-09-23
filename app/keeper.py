@@ -1989,6 +1989,17 @@ def _execute_tool(
                     "attacker_bonus_dice": attacker_bonus,
                     "attacker_penalty_dice": attacker_penalty,
                     "is_ranged": is_ranged,
+                    # Code review: the dedup/reuse comparison below must match
+                    # against what the CALLER asked for, not what ended up
+                    # persisted after server-side filtering (critical-tier
+                    # Fight Back removal, ranged Fight Back removal) — those
+                    # filters can shrink the saved "options" (e.g. to just
+                    # ["閃避"]) relative to the raw request (["閃避","反擊"]),
+                    # so comparing against saved "options" made a legitimate
+                    # identical retry fail to match and fall through to the
+                    # generic "already pending" rejection instead of reusing
+                    # the cached roll.
+                    "raw_option_labels": sorted(str(o.get("label", "")) for o in raw_options),
                 }
                 new_choice.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
                 existing = target_state.pending_checks.get(target_char.owner_id)
@@ -2004,16 +2015,28 @@ def _execute_tool(
                     and existing.get("attacker_skill_value") == attacker_skill_value
                     and existing.get("attacker_bonus_dice", 0) == attacker_bonus
                     and existing.get("attacker_penalty_dice", 0) == attacker_penalty
+                    # Code review: is_ranged 沒被比對時，一個先以 is_ranged=False（近戰）
+                    # 註冊、已經擲出 attacker_roll 的 pending，會在呼叫端只把 is_ranged
+                    # 改成 True 重試時被誤判成「完全相同、可以重用」——因為前面幾個欄位
+                    # 剛好都符合。這樣會悄悄延用近戰對抗擲骰的舊結果，讓修正後的遠程呼叫
+                    # 錯誤地留在近戰 opposed-roll 路徑上，也連帶繞過遠程分支自己的反擊
+                    # 選項過濾（見下方 is_ranged 分支）。
+                    and existing.get("is_ranged", False) == is_ranged
                 ):
-                    # 比較防守選項是否相同（排序後比較）
+                    # 比較防守選項是否相同——用呼叫時的「原始 raw_option_labels」比對，
+                    # 不是比對 existing 已保存的 options，因為 critical/遠程過濾可能讓
+                    # 保存的 options 比原始請求少（見上方 new_choice 建構處的說明）；
+                    # existing 若是舊版沒有 raw_option_labels 欄位的資料，get 回傳 None
+                    # 不等於任何排序後的 list，安全地直接判定不相符、退回下面的拒絕分支。
                     try:
-                        existing_opts = sorted(str(o) for o in existing.get("options", []))
-                        new_opts = sorted(str(o) for o in options)
-                        if existing_opts == new_opts:
-                            # 防守選項相同且有真實掷骰結果，重用現有結果
+                        existing_labels = existing.get("raw_option_labels")
+                        new_labels = new_choice["raw_option_labels"]
+                        if existing_labels == new_labels:
+                            # 防守選項相同且有真實掷骰結果，重用現有（已套用過濾的）結果
                             persisted_timeline_id = target_state.timeline_id or f"legacy-{target_state.group_id}"
                             return _StateMutation({
-                                "ok": True, "pending": True, "investigator": target_char.name, "options": options,
+                                "ok": True, "pending": True, "investigator": target_char.name,
+                                "options": existing.get("options", options),
                                 "attacker_roll": existing.get("attacker_roll"),
                                 "attacker_tier": existing.get("attacker_tier"),
                                 # The response must carry the same stable

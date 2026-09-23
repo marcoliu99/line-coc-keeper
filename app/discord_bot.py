@@ -521,6 +521,17 @@ def _defense_choice_hint(check: dict) -> str:
     for o in check.get("options", []):
         is_counter = "反擊" in o["label"]
         needed_rank = attacker_rank + 1 if is_counter else attacker_rank
+        # Code review: dice.resolve_opposed treats BOTH sides being
+        # fail-or-worse as "both_miss", not a defender win — so if the
+        # attacker fumbled, attacker_rank+1 lands on "fail" (rank 1), and
+        # a Fight Back that only reaches "fail" still resolves to
+        # both_miss (no hit landed), not the counterattack actually
+        # connecting. Clamp to at least "regular" so this hint doesn't
+        # promise the player that "almost any roll" lands a Fight Back —
+        # Dodge doesn't need this clamp: both_miss and a defender win both
+        # mean "not hit", so a low needed_rank there is still accurate.
+        if is_counter and needed_rank <= dice.TIER_RANK["fail"]:
+            needed_rank = dice.TIER_RANK["regular"]
         if needed_rank >= len(_TIER_ORDER):
             # A Fight Back option against a Critical attacker is filtered out
             # server-side before this ever renders (see keeper.py's

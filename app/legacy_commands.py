@@ -1649,12 +1649,30 @@ def _resolve_luck_decision_deterministically(
             result_line = f"花費 {luck_spent} 點幸運：{pending['roll']} → {outcome_text}"
         else:
             result_line = f"維持原結果：{pending['roll']} → {outcome_text}"
+        # Code review: this call used to omit opposed_text entirely, so
+        # neither a melee attacker_tier nor a ranged_opposed_text ever
+        # reached the deterministic, player-facing split feedback — the shot
+        # was rolled above (see ranged_opposed_text's assignment) and the
+        # narration got it via _build_check_narration, but the split path's
+        # own roll_feedback_text/keeper_header never displays roll_line, so
+        # the authoritative outcome was silently absent from it, leaving the
+        # player dependent on generated Keeper narration to ever see it.
+        opposed_text = ""
+        pending_attacker_tier = pending.get("attacker_tier")
+        if pending_attacker_tier is not None:
+            opposed_text = _describe_opposed_outcome(
+                char.name, pending["display_label"] is not None and "反擊" in pending["display_label"],
+                tier, pending_attacker_tier,
+            )
+        elif ranged_opposed_text:
+            opposed_text = ranged_opposed_text
         roll_feedback_text, keeper_header = _build_split_check_feedback(
             char.name,
             pending["display_label"] or pending["skill_name"],
             str(pending["value"]),
             pending["roll"],
             outcome_text,
+            opposed_text,
             result_line=result_line,
         )
         return _CheckResolution(

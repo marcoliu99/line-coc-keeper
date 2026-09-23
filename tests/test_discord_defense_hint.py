@@ -117,6 +117,41 @@ class DefenseChoiceHintTests(unittest.TestCase):
         }
         self.assertEqual(discord_bot._defense_choice_hint(check), "")
 
+    def test_fight_back_threshold_clamped_to_regular_when_attacker_fumbled(self):
+        """Code-review regression: attacker_rank + 1 for a fumbled attacker
+        (rank 0) lands on "fail" (rank 1), which the hint used to present as
+        "almost any roll lands the counterattack". But dice.resolve_opposed
+        treats BOTH sides being fail-or-worse as both_miss (no hit at all),
+        not a defender win — so a Fight Back that only reaches "fail"
+        actually still resolves to both_miss, not a successful
+        counterattack. The hint must clamp up to "regular", the real
+        minimum that avoids both_miss."""
+        check = {
+            "attacker_tier": "fumble",
+            "options": [{"label": "反擊", "skill": "格鬥", "skill_value": 60}],
+        }
+        hint = discord_bot._defense_choice_hint(check)
+        # Only assert on the "選擇「反擊」需要..." clause's own tier, not the
+        # whole string — the leading "對方擲出「大失敗」" sentence legitimately
+        # contains "失敗" as a substring of "大失敗" and would make a bare
+        # assertNotIn("失敗", hint) a false failure.
+        self.assertIn("選擇「反擊」需要高於「一般成功」", hint)
+        self.assertNotIn("選擇「反擊」需要高於「失敗」", hint)
+        self.assertIn(f"≤{60}", hint)
+
+    def test_dodge_threshold_not_clamped_when_attacker_fumbled(self):
+        """Dodge doesn't need the both_miss clamp: both both_miss and an
+        outright defender win mean "not hit" for a Dodge, so a low
+        needed_rank (matching the attacker's own fumble) is still accurate
+        — unlike Fight Back, where both_miss means the counterattack didn't
+        land."""
+        check = {
+            "attacker_tier": "fumble",
+            "options": [{"label": "閃避", "skill": "閃避", "skill_value": 60}],
+        }
+        hint = discord_bot._defense_choice_hint(check)
+        self.assertIn("大失敗", hint)
+
 
 if __name__ == "__main__":
     unittest.main()
