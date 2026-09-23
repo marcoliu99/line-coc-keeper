@@ -64,6 +64,37 @@ class OpenAIWrapupTests(unittest.TestCase):
 
         self.assertEqual(result, PLACEHOLDER)
 
+    def test_keeps_placeholder_when_wrapup_response_output_text_property_raises(self):
+        # Third-round review finding: .output_text is a computed property
+        # over the Responses API's output items and can itself raise (e.g.
+        # a malformed/incomplete/safety-filtered response) - that access
+        # used to sit in the try/except's else clause, which never protects
+        # against exceptions (only Anthropic's equivalent .content access
+        # and this one were missed when gemini_provider.py's identical bug
+        # was fixed in an earlier round).
+        from app.providers import openai_provider
+
+        class _RaisingOutputText:
+            output: list = []  # noqa: RUF012 - throwaway test double, never mutated
+
+            @property
+            def output_text(self):
+                raise ValueError("malformed response")
+
+        fake_client = MagicMock()
+        fake_client.responses.create = AsyncMock(side_effect=[self._tool_call_response(), _RaisingOutputText()])
+        fake_openai_module = MagicMock()
+        fake_openai_module.AsyncOpenAI = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"openai": fake_openai_module}), \
+             patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
+            result = asyncio.run(openai_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 1
+            ))
+            asyncio.run(openai_provider.shutdown_async_client())
+
+        self.assertEqual(result, PLACEHOLDER)
+
     def test_enable_wrapup_false_skips_the_extra_call(self):
         # PR #55 review finding: app/agents/executor.py's Supervisor-path
         # caller discards this function's return value entirely and a
@@ -139,6 +170,33 @@ class AnthropicWrapupTests(unittest.TestCase):
 
         fake_client = MagicMock()
         fake_client.messages.create = AsyncMock(side_effect=[self._tool_use_response(), RuntimeError("boom")])
+        fake_anthropic_module = MagicMock()
+        fake_anthropic_module.AsyncAnthropic = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
+             patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"):
+            result = asyncio.run(anthropic_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 1
+            ))
+            asyncio.run(anthropic_provider.shutdown_async_client())
+
+        self.assertEqual(result, PLACEHOLDER)
+
+    def test_keeps_placeholder_when_wrapup_response_content_property_raises(self):
+        # Third-round review finding: .content access used to sit in the
+        # try/except's else clause, which never protects against
+        # exceptions raised while reading it (only gemini_provider.py's
+        # identical .text bug was fixed in an earlier round; this one and
+        # openai_provider.py's .output_text equivalent were missed).
+        from app.providers import anthropic_provider
+
+        class _RaisingContent:
+            @property
+            def content(self):
+                raise ValueError("malformed response")
+
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(side_effect=[self._tool_use_response(), _RaisingContent()])
         fake_anthropic_module = MagicMock()
         fake_anthropic_module.AsyncAnthropic = MagicMock(return_value=fake_client)
 

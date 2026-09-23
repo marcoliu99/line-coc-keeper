@@ -623,6 +623,31 @@ class StatePersistenceTests(unittest.TestCase):
         enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
         self.assertEqual(enemy_count, 2)
 
+    def test_add_npc_to_combat_alias_resolution_is_case_and_whitespace_insensitive(self):
+        # Third-round review finding: _find_npc_index_entry_exact did a
+        # literal string match against index names/aliases, unlike
+        # combat.find_live_enemy's normalized (lowercased, whitespace-
+        # collapsed) comparison. A case/whitespace variant of a registered
+        # alias used to fail to resolve the index entry at all, silently
+        # skipping alias expansion and letting a duplicate slip through.
+        state = GroupState("discord-group-alias-case-insensitive")
+        state.scenario_npc_index = [
+            {"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 20},
+        ]
+        group_state.save_state(state)
+        keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "  walter   corbitt ", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
     def test_add_npc_to_combat_duplicate_rejection_does_not_write_a_no_op_save(self):
         # Second-round review finding: the duplicate-rejection early return
         # didn't use the _StateMutation(value, should_save=False) pattern

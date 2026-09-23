@@ -216,12 +216,18 @@ async def run_conversation(
                             wrapup_once, provider="anthropic", operation="messages.create",
                             request_id=logical_request_id,
                         )
-            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
-                observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="anthropic")
-            else:
+                # Reading .content is kept inside this try, not a separate
+                # else clause, so a malformed/unexpected block shape here
+                # also falls back to the placeholder instead of propagating
+                # out of run_conversation uncaught (same class of bug fixed
+                # for gemini_provider.py's .text property in an earlier
+                # review round — missed here and in openai_provider.py at
+                # the time, now fixed in all three).
                 wrapup_text = "".join(b.text for b in wrapup_response.content if b.type == "text").strip()
                 if wrapup_text:
                     final_text = wrapup_text
+            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
+                observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="anthropic")
 
     return final_text
 

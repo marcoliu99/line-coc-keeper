@@ -442,16 +442,23 @@ async def run_conversation(
             }
             try:
                 wrapup_response = await _create_response_async(_log_iteration=max_iterations, **wrapup_kwargs)
-            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
-                observability.event(
-                    "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",
-                )
-            else:
+                # Reading .output_text is kept inside this try, not a
+                # separate else clause, so a malformed/incomplete/safety-
+                # filtered wrap-up response also falls back to the
+                # placeholder instead of propagating out of run_conversation
+                # uncaught (same class of bug fixed for gemini_provider.py's
+                # .text property in an earlier review round — missed here
+                # and in anthropic_provider.py at the time, now fixed in all
+                # three).
                 wrapup_text = (wrapup_response.output_text or "").strip()
                 if wrapup_text:
                     final_text = wrapup_text
                     if on_response_id is not None:
                         on_response_id(wrapup_response.id)
+            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
+                observability.event(
+                    "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",
+                )
 
     return final_text
 

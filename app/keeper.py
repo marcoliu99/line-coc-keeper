@@ -1132,12 +1132,20 @@ def _find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
     NPC re-added under a different alias, and a fuzzy mismatch there (e.g.
     matching "深潛者頭目" to the wrong sibling entry "深潛者（幼體）" instead
     of "深潛者（成年頭目）") would pull in an unrelated entry's aliases and
-    use them to wrongly block a genuinely different enemy from being added."""
+    use them to wrongly block a genuinely different enemy from being added.
+
+    Matches case/whitespace-insensitively (same normalization as
+    combat._normalize) so a name that differs from the registered index
+    entry only in case or spacing still resolves — without this, two calls
+    for the same NPC using slightly different capitalization of an alias
+    would fail to expand to the same candidate set, silently reopening the
+    duplicate-HP-pool bug this whole lookup exists to help prevent."""
     if not name:
         return None
+    norm = combat._normalize(name)
     for entry in state.scenario_npc_index:
         candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
-        if name in candidates:
+        if any(norm == combat._normalize(c) for c in candidates if c):
             return entry
     return None
 
