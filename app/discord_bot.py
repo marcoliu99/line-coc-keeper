@@ -477,19 +477,20 @@ _TIER_ORDER = sorted(dice.TIER_RANK, key=lambda t: dice.TIER_RANK[t])
 
 
 def _tier_percentage_hint(tier: str, skill_value: int) -> str:
-    """Reverse-engineers the %-under-skill-value a player needs to roll to
-    land a given tier — see docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md
-    §4.2. fail/fumble have no meaningful "aim for this" percentage (any
-    non-fumble roll already clears "at least fail"), so those just get a
-    plain-language fallback instead of a fabricated fraction."""
+    """The %-under-skill-value a player needs to roll to land a given tier
+    — see docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.2.
+    Delegates the actual threshold to dice.tier_upper_bound() (the same
+    formula skill_check() resolves a roll against) rather than
+    re-hardcoding skill_value//5 etc. here — code review flagged that a
+    second, independent copy of this formula could silently drift from
+    what the server actually resolves if the rule ever changes. "critical"
+    and fail/fumble aren't skill_value-derived bounds, so those still get
+    their own plain-language handling."""
     if tier == "critical":
         return "骰出 01"
-    if tier == "extreme":
-        return f"≤{skill_value // 5}"
-    if tier == "hard":
-        return f"≤{skill_value // 2}"
-    if tier == "regular":
-        return f"≤{skill_value}"
+    bound = dice.tier_upper_bound(skill_value, tier)
+    if bound is not None:
+        return f"≤{bound}"
     return "幾乎任何擲骰"
 
 

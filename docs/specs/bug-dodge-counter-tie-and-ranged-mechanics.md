@@ -233,3 +233,31 @@ NPC 已經擲出結果，你需要達到什麼程度才算贏」，容易讓玩�
   請仔細 review §1、§2 的規則描述是否跟你認知的 COC7e 規則完全一致，尤其 §2.5
   的未決問題需要你明確拍板才能開始實作。
 - 本文件 review 通過前，不開始修改 runtime code。
+
+## 7. PR review 後追加修正（實作階段）
+
+PR #54 的 `/code-review` 發現並修正了 3 個問題：
+
+1. **[高] 遠程情境沒有伺服器端過濾反擊選項**：`is_ranged=True` 分支原本完全信任
+   LLM 遵守 prompt 指示（遠程不給反擊），沒有強制過濾。若 LLM 違反指示仍帶了
+   「反擊」選項，玩家選中後會被 `is_ranged` 分支當「撲向掩體」處理、敘事成撲向
+   掩體結果，跟玩家實際選的不符——這正是 §4.2 已經為 critical tier 做的伺服器端
+   過濾防的同一類問題，但遠程分支沒有套用。已在 `app/keeper.py` 的 `is_ranged`
+   分支加上跟 critical 分支同樣的過濾邏輯（過濾後為空則回傳錯誤，不寫入 state）。
+2. **[高] 舊版兩步流程 `offer_check_choice` 沒有 critical 過濾**：新的合併版
+   `offer_npc_attack_defense_choice` 在攻擊方大成功時會過濾反擊選項，但仍在使用中
+   的舊版 `npc_skill_check` + `offer_check_choice` 兩步流程完全沒有這個過濾，讓
+   還在用舊流程的 Keeper 能給玩家一個數學上穩輸的反擊選項。已在 `offer_check_choice`
+   的 `_register_pending_choice` 加上同樣的 `attacker_tier == "critical"` 過濾。
+3. **[中] UI 門檻提示公式跟 `dice.py` 重複定義**：`app/discord_bot.py::_tier_percentage_hint`
+   原本自己硬編碼了一份 `skill_value//5`／`skill_value//2`／`skill_value` 公式，
+   跟 `dice.py::skill_check()` 內部的門檻邏輯是兩份獨立、沒有耦合的副本，未來規則
+   公式若調整，兩邊可能悄悄不同步。已在 `app/dice.py` 新增共用函式
+   `tier_upper_bound(skill_value, tier)`，讓 `skill_check()` 本身跟
+   `_tier_percentage_hint()` 都改從這裡取值，不再各自為政。
+
+**測試**：428 tests passed（新增 11 個）——`tests/test_npc_attack_latency.py` 新增
+4 個（遠程/舊流程的 critical 過濾正反案例）、`tests/test_dice_resolve_opposed.py`
+新增 5 個（`tier_upper_bound` 正確性 + 跟 `skill_check` 邊界交叉驗證）、
+`tests/test_discord_defense_hint.py` 新增 2 個（`_tier_percentage_hint` 確實委派
+給 `dice.tier_upper_bound`，用 mock 一個明顯錯誤的回傳值證明沒有自己算）。

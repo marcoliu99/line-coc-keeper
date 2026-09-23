@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_load=lambda data: {}))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
@@ -37,6 +38,20 @@ class TierPercentageHintTests(unittest.TestCase):
         # 47 // 2 = 23, 47 // 5 = 9 — exercises the floor (not round) behavior.
         self.assertEqual(discord_bot._tier_percentage_hint("hard", 47), "≤23")
         self.assertEqual(discord_bot._tier_percentage_hint("extreme", 47), "≤9")
+
+    def test_delegates_to_dice_tier_upper_bound_instead_of_reimplementing_it(self):
+        """Code-review regression: this hint used to hardcode
+        skill_value//5, skill_value//2, skill_value as its own separate
+        copy of dice.py's tier-threshold formula. If a future rule tweak
+        changes app/dice.py::tier_upper_bound() without this call site
+        picking it up, the hint would silently promise the player a
+        different threshold than what the server actually resolves — this
+        test would only catch that if the delegation itself is intact, so
+        it patches dice.tier_upper_bound with an obviously-wrong stub and
+        asserts the hint reflects the stub, proving it isn't computing its
+        own independent value."""
+        with patch.object(discord_bot.dice, "tier_upper_bound", return_value=999):
+            self.assertEqual(discord_bot._tier_percentage_hint("hard", 45), "≤999")
 
 
 class DefenseChoiceHintTests(unittest.TestCase):

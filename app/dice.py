@@ -249,6 +249,29 @@ def roll_percentile_with_dice_pool(bonus_dice: int = 0, penalty_dice: int = 0) -
 _VALID_REQUIRED_TIERS = ("regular", "hard", "extreme")
 
 
+def tier_upper_bound(skill_value: int, tier: str) -> int | None:
+    """The maximum roll (inclusive) that lands at least the given success
+    tier, for the tiers where "roll <= X" is a meaningful target to aim for
+    (extreme/hard/regular). Returns None for "critical" (a fixed "roll 01",
+    not a skill-value-derived fraction) and "fail"/"fumble" (there's no
+    upper-bound worth aiming for — any non-fumble roll already clears "at
+    least fail").
+
+    Single source of truth for the thresholds skill_check() below resolves a
+    roll against — code review flagged that app/discord_bot.py's player-
+    facing "you need <= X%" hint used to hardcode this same skill_value//5,
+    skill_value//2, skill_value formula as its own separate copy, so a
+    future tweak to these fractions could silently drift between what the
+    server actually resolves and what the hint promises the player."""
+    if tier == "extreme":
+        return skill_value // 5
+    if tier == "hard":
+        return skill_value // 2
+    if tier == "regular":
+        return skill_value
+    return None
+
+
 def skill_check(
     skill_value: int, bonus_dice: int = 0, penalty_dice: int = 0, required_tier: str = "regular"
 ) -> SkillCheckResult:
@@ -267,15 +290,23 @@ def skill_check(
         required_tier = "regular"
     roll = roll_percentile_with_dice_pool(bonus_dice, penalty_dice)
 
+    extreme_bound = tier_upper_bound(skill_value, "extreme")
+    hard_bound = tier_upper_bound(skill_value, "hard")
+    regular_bound = tier_upper_bound(skill_value, "regular")
+    assert extreme_bound is not None and hard_bound is not None and regular_bound is not None, (
+        "tier_upper_bound only returns None for tiers other than "
+        "extreme/hard/regular — these three literals always resolve to an int"
+    )
+
     if roll == 1:
         tier = "critical"
     elif roll == 100 or (skill_value < 50 and roll >= 96):
         tier = "fumble"
-    elif roll <= skill_value // 5:
+    elif roll <= extreme_bound:
         tier = "extreme"
-    elif roll <= skill_value // 2:
+    elif roll <= hard_bound:
         tier = "hard"
-    elif roll <= skill_value:
+    elif roll <= regular_bound:
         tier = "regular"
     else:
         tier = "fail"

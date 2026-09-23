@@ -208,6 +208,60 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertNotIn("attacker_roll", pending)
         self.assertEqual(pending["attacker_skill_value"], 55)
 
+    def test_ranged_attack_filters_out_fight_back_option_server_side(self):
+        """Code-review regression: is_ranged used to register whatever
+        options the LLM passed with no server-side filtering, contrary to
+        prompt instructions that ranged attacks never offer Fight Back
+        (COC7e allows no such thing against gunfire). If the LLM violated
+        that instruction and a player picked "反擊" anyway, the is_ranged
+        branch would resolve it as a dive-for-cover Dodge (see
+        legacy_commands._resolve_ranged_defense_outcome) and narrate a
+        result the player never actually chose — a rule-bypass class the PR
+        explicitly guarded against for the melee-critical case but missed
+        here."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check") as skill_check_mock:
+                result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
+                        "attacker_skill_value": 55,
+                        "is_ranged": True,
+                    },
+                    [], [], speaker_role="player",
+                )
+            saved_state = store.store["g"]
+
+        skill_check_mock.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertEqual([o["label"] for o in result["options"]], ["閃避"])
+        self.assertEqual(
+            [o["label"] for o in saved_state.pending_checks["u1"]["options"]], ["閃避"]
+        )
+
+    def test_ranged_attack_with_only_a_fight_back_option_errors_without_saving(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check") as skill_check_mock:
+                result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "反擊", "skill": "格鬥"}],
+                        "attacker_skill_value": 55,
+                        "is_ranged": True,
+                    },
+                    [], [], speaker_role="player",
+                )
+            self.assertEqual(store.store["g"].pending_checks, {})
+
+        skill_check_mock.assert_not_called()
+        self.assertFalse(result["ok"])
+
     def test_melee_defaults_is_ranged_to_false_and_still_pre_rolls(self):
         state = _state_with_investigator()
         with StateStorePatch(keeper) as store:
@@ -296,6 +350,76 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertEqual(npc_result, {"ok": True, "roll": 10, "tier": "regular", "skill_value": 50})
         self.assertTrue(choice_result["ok"])
         self.assertNotIn("attacker_tier", choice_result)  # not requested this time
+
+    def test_offer_check_choice_filters_fight_back_when_attacker_tier_is_critical(self):
+        """Code-review regression: offer_npc_attack_defense_choice filters
+        out Fight Back against a Critical attacker (§4.2 — nothing beats
+        Critical), but the older two-step flow this tool replaced
+        (npc_skill_check, then offer_check_choice with attacker_tier filled
+        in by hand) never got the same filter, even though it's still a
+        live, documented entry point. A Keeper still using that flow could
+        offer a player a Fight Back option that's mathematically guaranteed
+        to lose."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state, "offer_check_choice",
+                {
+                    "investigator": "小明",
+                    "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
+                    "attacker_tier": "critical",
+                },
+                [], [], speaker_role="player",
+            )
+            saved_state = store.store["g"]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([o["label"] for o in result["options"]], ["閃避"])
+        self.assertEqual(
+            [o["label"] for o in saved_state.pending_checks["u1"]["options"]], ["閃避"]
+        )
+
+    def test_offer_check_choice_with_only_fight_back_and_critical_tier_errors_without_saving(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state, "offer_check_choice",
+                {
+                    "investigator": "小明",
+                    "options": [{"label": "反擊", "skill": "格鬥"}, {"label": "其他", "skill": "偵查"}],
+                    "attacker_tier": "critical",
+                },
+                [], [], speaker_role="player",
+            )
+        self.assertTrue(result["ok"])
+        # Only "反擊" gets filtered — a non-Fight-Back second option survives.
+        self.assertEqual([o["label"] for o in result["options"]], ["其他"])
+
+    def test_offer_check_choice_critical_tier_with_only_fight_back_errors_without_saving(self):
+        """offer_check_choice requires >=2 raw options up front, so to reach
+        the "filtered down to zero" branch both options have to be Fight
+        Back variants (an edge case, but the filter matches on substring
+        "反擊" so this is what triggers it — not achievable with a single
+        option, which the tool rejects before the filter ever runs)."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state, "offer_check_choice",
+                {
+                    "investigator": "小明",
+                    "options": [
+                        {"label": "反擊", "skill": "格鬥"},
+                        {"label": "反擊（左手）", "skill": "格鬥"},
+                    ],
+                    "attacker_tier": "critical",
+                },
+                [], [], speaker_role="player",
+            )
+            self.assertEqual(store.store["g"].pending_checks, {})
+        self.assertFalse(result["ok"])
 
 
 class RangedDefenseEndToEndTests(unittest.TestCase):

@@ -1903,6 +1903,23 @@ def _execute_tool(
             def _register_pending_choice(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 options = _resolve_defense_options(target_char, raw_options)
+                # COC7e：攻擊方大成功時沒有任何等級贏得過它，「反擊」選項不成立——這是
+                # offer_npc_attack_defense_choice 已有的同一條規則，code review 發現這個
+                # 舊版兩步流程（npc_skill_check 先擲、這裡再註冊選項）從未套用，讓仍在用
+                # 這個入口的 Keeper 能給玩家一個數學上穩輸的反擊選項，補上同樣的過濾。
+                if attacker_tier == "critical":
+                    filtered_options = [o for o in options if "反擊" not in o["label"]]
+                    if not filtered_options:
+                        return _StateMutation(
+                            {
+                                "ok": False,
+                                "error": "攻擊方這次擲出大成功，沒有任何成功等級贏得過它，「反擊」選項"
+                                         "已不成立；但目前 options 只有反擊，沒有閃避可選，請至少提供一個"
+                                         "「閃避」選項後再重新呼叫這個工具。",
+                            },
+                            should_save=False,
+                        )
+                    options = filtered_options
                 new_choice: dict[str, Any] = {"type": "choice", "options": options}
                 new_choice.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
                 if attacker_tier:
@@ -2021,6 +2038,25 @@ def _execute_tool(
                     )
 
                 if is_ranged:
+                    # COC7e：遠程攻擊不允許「反擊」，只能撲向掩體——跟近戰大成功時濾掉
+                    # 反擊選項同一個道理，不能只靠 prompt 指示 LLM 別給反擊選項，玩家
+                    # 還是能用 /coc check 反擊 之類的文字輸入繞過純 UI 層隱藏，所以這裡
+                    # 也要伺服器端強制過濾（呼應下方近戰 critical 分支的同一個防禦性
+                    # 設計）。code review 發現：這裡原本完全沒有過濾，若 LLM 違反 prompt
+                    # 指示仍帶了反擊選項，玩家選中後會被 is_ranged 分支當「撲向掩體」
+                    # 處理、敘事成撲向掩體結果，跟玩家實際選的「反擊」不符。
+                    filtered_options = [o for o in options if "反擊" not in o["label"]]
+                    if not filtered_options:
+                        return _StateMutation(
+                            {
+                                "ok": False,
+                                "error": "遠程攻擊 COC7e 規則不允許「反擊」，但目前 options 只有反擊、"
+                                         "沒有「閃避」可選，請至少提供一個「閃避」選項後再重新呼叫這個工具。",
+                            },
+                            should_save=False,
+                        )
+                    options = filtered_options
+                    new_choice["options"] = options
                     # COC7e：遠程攻擊不是對抗檢定，攻擊方的命中判定完全獨立於防守方，
                     # 而且要等防守方決定「撲向掩體」有沒有成功，才知道攻擊方這次要不要
                     # 多帶一個懲罰骰——所以這裡不能像近戰一樣預先擲攻擊方，必須延後到
