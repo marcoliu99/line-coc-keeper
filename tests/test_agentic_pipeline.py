@@ -2,7 +2,7 @@ import asyncio
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.domain.models import MechanicResult, StateDelta
 from app.models import Character, GroupState
@@ -319,7 +319,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.executor, "run_executor", fake_run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.rule_validator, "validate_narrative", return_value=(True, "")):
+                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="attack",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -354,7 +354,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.context_builder, "build_context", fake_build_context), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.rule_validator, "validate_narrative", return_value=(True, "")):
+                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             result = await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="attack",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -385,7 +385,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.context_builder, "build_context", fake_build_context), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.rule_validator, "validate_narrative", return_value=(True, "")):
+                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             result = await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="attack",
                 resolved_location=None, speaker_role="player", conversation_id="g",

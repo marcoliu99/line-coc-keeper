@@ -224,6 +224,14 @@ LOG_INCLUDE_USAGE = _env_bool("LOG_INCLUDE_USAGE", True)
 SPOILER_PROTECTION_ENABLED = _env_bool("SPOILER_PROTECTION_ENABLED", True)
 PRIVACY_ISOLATION_ENABLED = _env_bool("PRIVACY_ISOLATION_ENABLED", True)
 
+# Guard Agent (docs/specs/enhancement-guard-agent.md) — controls whether a
+# narrative that fails app/agents/rule_validator.py's system-leak/format
+# check gets sent to an LLM for repair. The validator check itself always
+# runs regardless of this switch (it's a cheap regex scan); this only gates
+# the repair attempt. Disabled means a failed check sends the unrepaired
+# text through as-is (logged as a warning) instead of retrying via the LLM.
+GUARD_ENABLED = _env_bool("GUARD_ENABLED", True)
+
 # Reusable parsed PDF scenarios (separate from per-conversation state).
 SCENARIO_LIBRARY_DIR = Path(os.environ.get('SCENARIO_LIBRARY_DIR', str(DATA_DIR.parent / 'scenarios')))
 SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)

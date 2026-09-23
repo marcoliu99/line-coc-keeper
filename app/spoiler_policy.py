@@ -26,7 +26,13 @@ from app import config, observability
 
 _logger = logging.getLogger(__name__)
 
-_NEUTRAL_FALLBACK_TEXT = "局勢仍有未明之處，Keeper 暫不公開更多細節。"
+# Shared fail-closed fallback: whenever generated narrative can't be sent
+# as-is for a safety reason, replace it with this fixed neutral text instead
+# of the unsafe content — used here for a spoiler-leak hit, and reused by
+# app/agents/guard.py for its own "repair loop exhausted, still invalid"
+# fail-closed case (code review flagged these as two independently defined,
+# never-synced copies of the same "can't safely send this" concept).
+NEUTRAL_FALLBACK_TEXT = "局勢仍有未明之處，Keeper 暫不公開更多細節。"
 
 
 class Visibility(StrEnum):
@@ -105,7 +111,7 @@ def sanitize_public_text(text: str, protected_terms: Sequence[str]) -> SpoilerCh
                     fallback_used=True,
                 )
                 return SpoilerCheckResult(
-                    is_safe=False, matched_term=term, fallback_text=_NEUTRAL_FALLBACK_TEXT
+                    is_safe=False, matched_term=term, fallback_text=NEUTRAL_FALLBACK_TEXT
                 )
         observability.event("spoiler.guard.checked", level=logging.DEBUG, fallback_used=False)
         return SpoilerCheckResult(is_safe=True)
@@ -114,7 +120,7 @@ def sanitize_public_text(text: str, protected_terms: Sequence[str]) -> SpoilerCh
         # text through un-scanned.
         _logger.exception("sanitize_public_text failed; failing closed")
         observability.event("spoiler.guard.blocked", level=logging.ERROR, reason="guard_exception", fallback_used=True)
-        return SpoilerCheckResult(is_safe=False, fallback_text=_NEUTRAL_FALLBACK_TEXT)
+        return SpoilerCheckResult(is_safe=False, fallback_text=NEUTRAL_FALLBACK_TEXT)
 
 
 # A term shorter than this is dropped from the protected-term list before

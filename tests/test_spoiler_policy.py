@@ -37,7 +37,7 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
                 "你看到牆上寫著：秘密真相是管家", ["秘密真相是管家"]
             )
         self.assertFalse(result.is_safe)
-        self.assertEqual(result.fallback_text, spoiler_policy._NEUTRAL_FALLBACK_TEXT)
+        self.assertEqual(result.fallback_text, spoiler_policy.NEUTRAL_FALLBACK_TEXT)
 
     def test_sanitize_public_text_allows_safe_text_when_enabled(self):
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
@@ -50,7 +50,7 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
             # guard — it must fail closed (blocked), not silently pass.
             result = spoiler_policy.sanitize_public_text("任何文字", None)  # type: ignore[arg-type]
         self.assertFalse(result.is_safe)
-        self.assertEqual(result.fallback_text, spoiler_policy._NEUTRAL_FALLBACK_TEXT)
+        self.assertEqual(result.fallback_text, spoiler_policy.NEUTRAL_FALLBACK_TEXT)
 
     def test_redact_public_pregen_strips_notes_and_extra_fields_when_enabled(self):
         pregen = {
