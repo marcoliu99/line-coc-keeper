@@ -5,6 +5,27 @@ capture an external architecture proposal, check its claims against the
 actual code, and lay out options for the user to pick from. Do not start
 implementing any of it without an explicit go-ahead on a specific option.
 
+## Status at a glance
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Typing indicator (`channel.typing()`) | **Decided** — ship |
+| 2 | Queue-ack on `conversation_lock` contention | **Decided** — build (no OCC) |
+| 3 | `MAX_TOOL_ITERATIONS` → 5, `HIGH_ITERATION_WATERMARK` = 4 | **Decided** |
+| 4 | `parallel_tool_calls` real-API verification | **Decided** — standalone script, out-of-band |
+| 5 | Macro tools (`initialize_encounter` etc.) | **Decided** — backlog |
+| 6 | Add usage/`cached_input_tokens` logging to the real turn loop | **Recommended, not yet decided** — see second batch |
+| 7 | Cap Executor's output tokens | **Recommended, not yet decided** — scope: `executor.py` only |
+| 8 | Restructure prompt ordering for caching | **Not recommended yet** — needs #6's data first |
+| 9 | Model tiering (cheap model for Executor) | **Open** — real plumbing cost, needs its own mini-spec |
+| 10 | `reasoning_effort=none` for Executor | **Open** — depends on #9's plumbing |
+| 11 | Streaming | **Open** — needs its own design (edit-rate-limit batching) |
+
+Items 1-5 (first batch) are decided and make up this branch's actual
+implementation plan below. Items 6-11 (second batch) are evaluated further
+down but **not yet decided** — this doc lays out a recommendation for each,
+pending the user's sign-off, same as the first batch went through.
+
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:10972c1a8966f48cd7bbcb0f7c850b1ac8558310
 - **implementation end**: N/A — discussion branch
@@ -140,7 +161,7 @@ stuck" complaint that kicked off this whole investigation, independent of
 whatever happens with the lock/iteration questions. This one seems safe to
 just do without a big design discussion.
 
-## Decisions (user, after reviewing the above)
+## Decisions — first batch (user, after reviewing the above)
 
 1. **Lock**: do **not** narrow it into OCC / let two LLM turns for the same
    conversation actually run concurrently — correctly rejected on the same
@@ -332,6 +353,36 @@ message as text arrives, and Discord aggressively rate-limits message
 edits — a naive "edit on every token" implementation would get throttled
 fast. Needs its own design (batching edits every N tokens/M milliseconds,
 not every token) before this is a real plan, not just an API flag flip.
+
+## Recommendations — second batch (pending user sign-off, not yet decided)
+
+Mirroring how the first batch went (this doc laid out findings, the user
+picked): here's the recommended default for each item, ready to just
+confirm/override.
+
+1. **Add usage logging to the real turn loop first** (item 6 in the status
+   table) — cheap, low-risk, no behavior change (`observability.event`
+   logging only), and it's the prerequisite for having real data instead of
+   guessing on items 8-10. Recommend bundling this into the same PR as the
+   first batch's implementation, since it's small and unrelated to the lock
+   work but easy to ship alongside it.
+2. **Cap Executor's output tokens** (item 7) — recommend yes, scoped
+   strictly to `app/agents/executor.py`'s call (not `narrator.py`, not
+   `keeper.run_turn`). Needs one number decided: how many tokens is enough
+   margin for Executor's occasional short clarifying remarks without
+   clipping a tool call's JSON mid-stream — recommend erring generous
+   (e.g. 500, not the proposal's 300) until real data from item 6 shows
+   Executor's actual token usage distribution.
+3. **Prompt restructuring for caching** (item 8) — recommend **not yet**.
+   Wait for item 6's real `cached_input_tokens` numbers before deciding
+   there's even a problem to fix.
+4. **Model tiering** (item 9) and **`reasoning_effort=none` for Executor**
+   (item 10) — recommend treating as a follow-up mini-spec of its own
+   (needs a real quality bar tested against the ~10 tools, not assumed),
+   not part of this branch. Same backlog tier as macro tools.
+5. **Streaming** (item 11) — recommend backlog. Only helps the Narrator's
+   final text (not the tool-calling majority of turn latency) and needs its
+   own edit-rate-limit-aware design before it's a real plan.
 
 ## Notes
 - `parallel_tool_calls` verification is explicitly out-of-band — a
