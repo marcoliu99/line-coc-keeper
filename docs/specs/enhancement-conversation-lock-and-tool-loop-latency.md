@@ -547,6 +547,32 @@ separate runs):
   actual tool schema. Not recommending it as the default candidate for
   item 9 based on this data; `gpt-6-luna`/`none` looks like the better
   direction if model/effort tiering is pursued further.
+
+**Follow-up: is `gpt-4o-mini`'s slowness specific to the 34-tool schema?**
+Ran it 3× more at 34 tools and 3× more at a 4-tool scoped-down subset
+(`skill_check`, `roll_dice`, `search_scenario`, `get_character_sheet`,
+`adjust_character`) to check both whether the first 5084ms result was
+representative and whether the "dynamic tool scoping" idea (item 12) would
+actually help this model specifically:
+
+| Config | Runs | Avg | Correctness |
+|---|---|---|---|
+| `gpt-4o-mini` / 34 tools | 3847ms, 6450ms, 4126ms | **4808ms** | ✅ 3/3 |
+| `gpt-4o-mini` / 4 tools (scoped) | 3144ms, 2429ms, 2741ms | **2771ms** | ✅ 3/3 |
+
+Confirms the first result wasn't a fluke — `gpt-4o-mini` really does
+average ~4.8s against the real 34-tool schema (consistent with the earlier
+single 5084ms data point), meaningfully worse than `gpt-6-luna`/`none`'s
+~2-2.5s in the same condition. Tool scoping (item 12) does help this model
+specifically — cuts its average by ~42% — which is a genuine, separately-
+useful confirmation of item 12 regardless of which model ends up in the
+Executor role. But even scoped down to 4 tools, `gpt-4o-mini` (2771ms avg)
+still isn't clearly faster than `gpt-6-luna`/`none` was at the full 34-tool
+count (1999-2510ms) — so tool scoping alone doesn't make `gpt-4o-mini` the
+better pick either. Tool selection was correct in all 6 of these runs
+(unlike `gpt-6-luna`/`low`'s one miss), which is a mark in `gpt-4o-mini`'s
+favor on correctness specifically, even though its raw speed doesn't beat
+`gpt-6-luna`/`none` here.
 - None of this is enough data to greenlight shipping tiering yet — still
   recommending this stay a follow-up mini-spec (item 9/10's original
   status), just now with real numbers instead of assumptions to start from.
