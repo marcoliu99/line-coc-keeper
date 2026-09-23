@@ -887,7 +887,7 @@ def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tie
     dice.resolve_opposed) — always names both sides' tiers explicitly rather
     than just stating the verdict, so it's auditable in the channel, not a
     black box."""
-    outcome = dice.resolve_opposed(defender_tier, attacker_tier)
+    outcome = dice.resolve_opposed(defender_tier, attacker_tier, is_counter)
     attacker_zh = _CHECK_TIER_ZH[attacker_tier]
     if outcome == "both_miss":
         return f"對抗檢定：攻擊方「{attacker_zh}」，雙方都沒成功，這次攻擊沒有命中，{defender_name}沒有受傷，也沒有造成傷害。"
@@ -895,23 +895,65 @@ def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tie
         if is_counter:
             return f"對抗檢定：攻擊方「{attacker_zh}」，{defender_name}的成功等級更高，攻擊被化解，反擊命中，可以對攻擊方造成傷害。"
         return f"對抗檢定：攻擊方「{attacker_zh}」，{defender_name}的成功等級更高，成功閃避，沒有受到傷害。"
+    if outcome == "tie_defender_wins":
+        # Only reachable when is_counter is False (Dodge) — resolve_opposed
+        # never returns this for a Fight Back choice, where a tie instead
+        # favors the attacker (RAW: a tied Dodge protects the fully
+        # defensive side, unlike a tied Fight Back).
+        return f"對抗檢定：攻擊方「{attacker_zh}」，{defender_name}的成功等級與攻擊方打平（平手，依規則閃避方獲勝），成功閃避，沒有受到傷害。"
     tie_note = "（平手，依規則攻擊方獲勝）" if outcome == "tie_attacker_wins" else ""
     counter_note = "，反擊沒有生效" if is_counter else ""
     return f"對抗檢定：攻擊方「{attacker_zh}」，攻擊方成功等級較高{tie_note}，攻擊命中，{defender_name}受到傷害{counter_note}。"
 
 
+def _resolve_ranged_defense_outcome(defender_name: str, dive_success: bool, ranged_attacker: dict[str, int]) -> str:
+    """COC7e ranged-attack resolution — deliberately NOT dice.resolve_opposed
+    (that function is for melee Dodge/Fight Back only; verified against RAW,
+    see docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §2). A ranged
+    attack is never an opposed roll: the defender's only option is diving for
+    cover, an independent Dodge check that — if successful — gives the
+    attacker's shot one penalty die but does not by itself stop the shot.
+    The attacker's own roll alone (<=skill value, no Push allowed on a
+    firearm attack) determines whether it connects.
+
+    Rolls the attacker's shot exactly once — callers must call this exactly
+    once per resolved defender roll (not once per narration message) and
+    reuse the returned text everywhere it's needed, or the attacker would be
+    rolled twice with potentially different results for the same turn."""
+    penalty = ranged_attacker["penalty_dice"] + (1 if dive_success else 0)
+    attacker_result = dice.skill_check(
+        ranged_attacker["skill_value"], bonus_dice=ranged_attacker["bonus_dice"], penalty_dice=penalty
+    )
+    attacker_zh = _CHECK_TIER_ZH[attacker_result.tier]
+    dive_text = (
+        "撲向掩體成功，這次射擊被迫多承受 1 個懲罰骰" if dive_success
+        else "撲向掩體失敗，沒有讓攻擊方受到任何懲罰"
+    )
+    if attacker_result.success:
+        return f"遠程攻擊判定：{defender_name}{dive_text}；攻擊方仍然擲出「{attacker_zh}」，命中了，{defender_name}受到傷害。"
+    return f"遠程攻擊判定：{defender_name}{dive_text}；攻擊方擲出「{attacker_zh}」，沒有命中，{defender_name}沒有受到傷害。"
+
+
 def _build_check_narration(
     char, skill_name: str, display_label: str | None, value: int, r, bonus: int, penalty: int,
     luck_spent: int = 0, original_tier: str | None = None, attacker_tier: str | None = None,
-    major_wound_trigger: bool = False,
+    major_wound_trigger: bool = False, ranged_opposed_text: str | None = None,
 ) -> tuple[str, str]:
     """Builds (roll_line, keeper_message) for a resolved skill/choice check —
     shared by the immediate-finalize path and handle_luck_decision (after a
     Luck spend has overridden r.tier). luck_spent > 0 adds a note both humans
     and the Keeper can see that the tier was bought up, not rolled naturally.
-    attacker_tier (only set for a Dodge/Fight Back choice — see
+    attacker_tier (only set for a melee Dodge/Fight Back choice — see
     keeper.py's offer_check_choice/npc_skill_check) triggers the COC7e
     opposed-roll comparison, named explicitly in both messages.
+    ranged_opposed_text (only set for a ranged offer_npc_attack_defense_choice
+    — see keeper.py's is_ranged branch) is the ALREADY-RESOLVED narration
+    from _resolve_ranged_defense_outcome, computed once by the caller (never
+    computed in here) since that function rolls the attacker's shot as a side
+    effect and must not be invoked more than once per resolved defender roll.
+    attacker_tier and ranged_opposed_text are mutually exclusive — a given
+    choice check is either the melee opposed-roll path or the ranged path,
+    never both.
     major_wound_trigger (see keeper.py's adjust_character tool) is the CON
     check chained onto a single hit dealing >= half max HP — unlike the Bout
     of Madness INT check this flows through the normal Luck-spend path
@@ -932,6 +974,9 @@ def _build_check_narration(
         opposed_text = _describe_opposed_outcome(char.name, is_counter, r.tier, attacker_tier)
         opposed_line = f"\n⚔️ {opposed_text}"
         opposed_message = f"（{opposed_text}）"
+    elif ranged_opposed_text:
+        opposed_line = f"\n⚔️ {ranged_opposed_text}"
+        opposed_message = f"（{ranged_opposed_text}）"
 
     major_wound_line = ""
     major_wound_message = ""
@@ -1160,6 +1205,13 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         choice_bonus: int | None = None
         choice_penalty: int | None = None
         choice_attacker_tier = None
+        # Only set when the pending choice is a ranged offer_npc_attack_defense_choice
+        # (see keeper.py's is_ranged branch) — the attacker's roll is deferred until
+        # right here, after the defender's own dive-for-cover result is known, rather
+        # than pre-rolled like melee's choice_attacker_tier above (which is already
+        # rolled by the time the pending entry exists). See _build_check_narration's
+        # ranged_attacker param.
+        choice_ranged_attacker: dict[str, int] | None = None
         if pending and pending.get("type") == "choice":
             if skill_arg is None:
                 state.pending_checks[user_id] = pending
@@ -1179,6 +1231,12 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             choice_bonus = int(matched["bonus_dice"])
             choice_penalty = int(matched["penalty_dice"])
             choice_attacker_tier = pending.get("attacker_tier")
+            if pending.get("is_ranged"):
+                choice_ranged_attacker = {
+                    "skill_value": int(pending.get("attacker_skill_value", 0)),
+                    "bonus_dice": int(pending.get("attacker_bonus_dice", 0)),
+                    "penalty_dice": int(pending.get("attacker_penalty_dice", 0)),
+                }
             pending = None
         elif skill_arg is None:
             if not pending:
@@ -1290,6 +1348,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
 
         is_pushed = False
         attacker_tier = None
+        ranged_attacker: dict[str, int] | None = None  # see choice_ranged_attacker above
         difficulty = "regular"  # offer_check_choice options and a self-initiated /coc check with no
         # pending Keeper request have no difficulty concept — only a Keeper-registered plain skill_check
         # (see keeper.py's skill_check tool difficulty param) can set this above "regular".
@@ -1303,6 +1362,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             skill_name, value, bonus, penalty = choice_skill_name, choice_value, choice_bonus, choice_penalty
             display_label = choice_display_label
             attacker_tier = choice_attacker_tier
+            ranged_attacker = choice_ranged_attacker
         else:
             if pending:
                 skill_name, value, bonus, penalty = pending["skill"], pending["skill_value"], pending["bonus_dice"], pending["penalty_dice"]
@@ -1381,6 +1441,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "original_tier": skill_result.tier, "attacker_tier": attacker_tier, "difficulty": difficulty,
                 "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
                 "major_wound_trigger": major_wound_trigger,
+                "ranged_attacker": ranged_attacker,
             }
             save_state(state)
             options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
@@ -1397,13 +1458,23 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 decision_id=state.pending_luck_decisions[user_id]["decision_id"]
             )
 
+        # Roll the ranged attacker's shot exactly once here (see
+        # _resolve_ranged_defense_outcome's docstring) — reused below for
+        # both _build_check_narration and roll_feedback_text instead of
+        # letting each side call it separately, which would roll twice.
+        ranged_opposed_text = (
+            _resolve_ranged_defense_outcome(char.name, skill_result.success, ranged_attacker)
+            if ranged_attacker is not None else None
+        )
         roll_line, keeper_message = _build_check_narration(
             char, skill_name, display_label, value, skill_result, bonus, penalty, attacker_tier=attacker_tier,
-            major_wound_trigger=major_wound_trigger,
+            major_wound_trigger=major_wound_trigger, ranged_opposed_text=ranged_opposed_text,
         )
         opposed_text = ""
         if attacker_tier is not None:
             opposed_text = _describe_opposed_outcome(char.name, display_label is not None and "反擊" in display_label, skill_result.tier, attacker_tier)
+        elif ranged_opposed_text:
+            opposed_text = ranged_opposed_text
         roll_feedback_text, keeper_header = _build_split_check_feedback(
             char.name, display_label or skill_name, str(value), skill_result.roll, _tier_zh_for_result(skill_result), opposed_text
         )
@@ -1549,6 +1620,14 @@ def _resolve_luck_decision_deterministically(
             skill_value=pending["value"], roll=pending["roll"], bonus_dice=pending["bonus_dice"],
             penalty_dice=pending["penalty_dice"], tier=tier, success=success, required_tier=required_tier,
         )
+        # Roll the ranged attacker's shot exactly once here, using the FINAL
+        # (post-Luck-decision) r.success — see _resolve_ranged_defense_outcome's
+        # docstring on why this must not be called more than once.
+        ranged_attacker = pending.get("ranged_attacker")
+        ranged_opposed_text = (
+            _resolve_ranged_defense_outcome(char.name, r.success, ranged_attacker)
+            if ranged_attacker is not None else None
+        )
         # _build_check_narration can itself mutate char (e.g. appending "昏迷"/
         # "倒地" to status_tags for a failed major_wound_trigger check — see
         # its docstring), so save_state has to happen AFTER this call, not
@@ -1562,6 +1641,7 @@ def _resolve_luck_decision_deterministically(
             luck_spent=luck_spent, original_tier=pending["original_tier"],
             attacker_tier=pending.get("attacker_tier"),
             major_wound_trigger=bool(pending.get("major_wound_trigger", False)),
+            ranged_opposed_text=ranged_opposed_text,
         )
         save_state(state)
         outcome_text = _tier_zh_for_tier(tier, required_tier)

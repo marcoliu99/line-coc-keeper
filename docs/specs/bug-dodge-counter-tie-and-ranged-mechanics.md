@@ -2,7 +2,14 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:faf9fe6
-- **implementation end**: TBD
+- **implementation end**: 本次實作 commit（見 `git log bug/dodge-counter-tie-and-ranged-mechanics -1`）；四項檢查（ruff/mypy/compileall/pytest）皆通過，417 tests passed（新增 21 個：`tests/test_dice_resolve_opposed.py` 6 個、`tests/test_npc_attack_latency.py` 新增 6 個、`tests/test_discord_defense_hint.py` 10 個；另修正 1 個既有測試改用 non-critical tier）
+
+### 實作備註（跟原始草案的出入）
+
+- §2.4 提到的「pending_checks 資料結構是否需要更大幅調整」最終判斷：**不需要**。既有的防重複邏輯（`existing.get("attacker_roll") is not None` 那段）在遠程情境下天然不會觸發重用分支（因為遠程 pending 從不設定 `attacker_roll`），會自然落到「已有待處理檢定」的拒絕分支，這正是想要的行為，沒有額外改動這段邏輯本身，只新增了 `is_ranged` 欄位跟一個全新的 `is_ranged` 分支。
+- §2.4 的「誰先擲骰」順序反轉，實際上不需要真的反轉 `pending_checks` 的寫入順序——遠程分支單純「先不擲攻擊方」，把攻擊方的擲骰完全延後到 `app/legacy_commands.py` 玩家觸發 `/coc check` 時才做（新函式 `_resolve_ranged_defense_outcome`），不需要新的 pending 狀態機或欄位命名（沿用 `attacker_skill_value`/`attacker_bonus_dice`/`attacker_penalty_dice`，只是不在註冊時消耗它們）。
+- 新增 `_resolve_ranged_defense_outcome()` 明確要求呼叫端只呼叫一次（它會擲攻擊方的骰子，是有副作用的）——`_resolve_check_deterministically` 的立即結算路徑跟 `_resolve_luck_decision_deterministically` 的 Luck 花費結算路徑都各自呼叫一次，並把結果字串同時餵給 `_build_check_narration`（新增 `ranged_opposed_text` 參數）跟 `_build_split_check_feedback`，避免像近戰現有程式碼那樣呼叫兩次 `_describe_opposed_outcome`（近戰那樣做是安全的，因為那個函式不擲骰；遠程不能比照辦理）。
+- §4 UI 的門檻提示完全放在 `_post_check_buttons()` 的訊息文字裡，沒有動 `_check_button_specs()` 的按鈕文字本身（按鈕上仍只顯示技能%，跟原本一致）——這是原始 spec §4.2 就已經決定的設計，不是新出入。
 
 ## 0. 緣起
 

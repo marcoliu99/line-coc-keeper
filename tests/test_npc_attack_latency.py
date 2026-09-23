@@ -175,6 +175,105 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertEqual(len(result["options"]), 1)
         self.assertEqual(saved_state.pending_checks["u1"]["options"], result["options"])
 
+    def test_is_ranged_defers_the_attacker_roll_entirely(self):
+        """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §2: a
+        ranged attack is never an opposed roll, so the attacker must NOT be
+        rolled at registration time — only after the defender's own dive-
+        for-cover result is known (see legacy_commands._resolve_ranged_defense_outcome).
+        Regression guard for the bug this rebuild fixed: ranged attacks used
+        to be pre-rolled exactly like melee."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check") as skill_check_mock:
+                result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}],
+                        "attacker_skill_value": 55,
+                        "is_ranged": True,
+                    },
+                    [], [], speaker_role="player",
+                )
+            saved_state = store.store["g"]
+
+        skill_check_mock.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertNotIn("attacker_tier", result)
+        self.assertNotIn("attacker_roll", result)
+        pending = saved_state.pending_checks["u1"]
+        self.assertTrue(pending["is_ranged"])
+        self.assertNotIn("attacker_tier", pending)
+        self.assertNotIn("attacker_roll", pending)
+        self.assertEqual(pending["attacker_skill_value"], 55)
+
+    def test_melee_defaults_is_ranged_to_false_and_still_pre_rolls(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            fake_roll = MagicMock(roll=10, tier="regular")
+            with patch("app.keeper.dice.skill_check", return_value=fake_roll):
+                result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
+                        "attacker_skill_value": 50,
+                    },
+                    [], [], speaker_role="player",
+                )
+            saved_state = store.store["g"]
+
+        self.assertFalse(saved_state.pending_checks["u1"]["is_ranged"])
+        self.assertEqual(result["attacker_tier"], "regular")
+
+    def test_critical_attacker_filters_out_fight_back_option(self):
+        """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.2: no
+        tier beats Critical, so offering Fight Back against it is an option
+        that can never win — it must be filtered out server-side (not just
+        hidden in the Discord button), since a Dodge tie still favors the
+        defender (§1) and remains winnable."""
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+                result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
+                        "attacker_skill_value": 70,
+                    },
+                    [], [], speaker_role="player",
+                )
+            saved_state = store.store["g"]
+
+        self.assertTrue(result["ok"])
+        labels = [o["label"] for o in result["options"]]
+        self.assertEqual(labels, ["閃避"])
+        self.assertEqual([o["label"] for o in saved_state.pending_checks["u1"]["options"]], ["閃避"])
+
+    def test_critical_attacker_with_only_a_fight_back_option_errors_without_saving(self):
+        state = _state_with_investigator()
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+                result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {
+                        "investigator": "小明",
+                        "options": [{"label": "反擊", "skill": "格鬥"}],
+                        "attacker_skill_value": 70,
+                    },
+                    [], [], speaker_role="player",
+                )
+            # should_save=False on the error path — the pre-existing (empty)
+            # pending_checks must be untouched, not overwritten with a
+            # partially-built choice entry.
+            self.assertEqual(store.store["g"].pending_checks, {})
+        self.assertFalse(result["ok"])
+
     def test_npc_skill_check_and_offer_check_choice_are_unaffected(self):
         """Regression: both original tools must keep behaving exactly as
         before — this is an additive change, not a replacement."""
@@ -199,6 +298,96 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertNotIn("attacker_tier", choice_result)  # not requested this time
 
 
+class RangedDefenseEndToEndTests(unittest.TestCase):
+    """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §2 end-to-end:
+    a ranged offer_npc_attack_defense_choice all the way through /coc check's
+    resolution. Ranged combat is never dice.resolve_opposed — the attacker's
+    shot is a standalone check, deferred until the defender's own
+    dive-for-cover roll is known, with a penalty die added only if the dive
+    succeeded."""
+
+    def test_successful_dive_gives_attacker_a_penalty_die(self):
+        state = _state_with_investigator()
+        state.active = True
+        with StateStorePatch(keeper, legacy_commands) as store:
+            store.put(state)
+            keeper._execute_tool(
+                state, "offer_npc_attack_defense_choice",
+                {
+                    "investigator": "小明",
+                    "options": [{"label": "閃避", "skill": "閃避"}],
+                    "attacker_skill_value": 55,
+                    "is_ranged": True,
+                },
+                [], [], speaker_role="player",
+            )
+            # roll=35 (not something like 10) deliberately avoids landing
+            # within 7 points of the next tier's threshold (hard=22,
+            # extreme=9 for skill_value=45) — a near-miss would otherwise
+            # make this trip the Luck-spend offer branch instead of finalizing
+            # immediately, which is a different code path than this test means
+            # to exercise.
+            dive_success_roll = dice.SkillCheckResult(
+                skill_value=45, roll=35, bonus_dice=0, penalty_dice=0,
+                tier="regular", success=True, required_tier="regular",
+            )
+            attacker_miss_roll = dice.SkillCheckResult(
+                skill_value=55, roll=90, bonus_dice=0, penalty_dice=1,
+                tier="fail", success=False, required_tier="regular",
+            )
+            with patch(
+                "app.legacy_commands.dice.skill_check",
+                side_effect=[dive_success_roll, attacker_miss_roll],
+            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock:
+                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
+
+        resolve_opposed_mock.assert_not_called()
+        self.assertEqual(skill_check_mock.call_count, 2)
+        # Second call is the attacker's shot — must carry the +1 penalty die
+        # earned by the successful dive.
+        _, attacker_call_kwargs = skill_check_mock.call_args_list[1]
+        self.assertEqual(attacker_call_kwargs.get("penalty_dice"), 1)
+        combined_text = resolution.roll_line + resolution.keeper_message
+        self.assertIn("撲向掩體成功", combined_text)
+        self.assertIn("沒有命中", combined_text)
+
+    def test_failed_dive_gives_attacker_no_penalty_die(self):
+        state = _state_with_investigator()
+        state.active = True
+        with StateStorePatch(keeper, legacy_commands) as store:
+            store.put(state)
+            keeper._execute_tool(
+                state, "offer_npc_attack_defense_choice",
+                {
+                    "investigator": "小明",
+                    "options": [{"label": "閃避", "skill": "閃避"}],
+                    "attacker_skill_value": 55,
+                    "is_ranged": True,
+                },
+                [], [], speaker_role="player",
+            )
+            dive_fail_roll = dice.SkillCheckResult(
+                skill_value=45, roll=90, bonus_dice=0, penalty_dice=0,
+                tier="fail", success=False, required_tier="regular",
+            )
+            attacker_hit_roll = dice.SkillCheckResult(
+                skill_value=55, roll=30, bonus_dice=0, penalty_dice=0,
+                tier="regular", success=True, required_tier="regular",
+            )
+            with patch(
+                "app.legacy_commands.dice.skill_check",
+                side_effect=[dive_fail_roll, attacker_hit_roll],
+            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock:
+                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
+
+        resolve_opposed_mock.assert_not_called()
+        _, attacker_call_kwargs = skill_check_mock.call_args_list[1]
+        self.assertEqual(attacker_call_kwargs.get("penalty_dice"), 0)
+        combined_text = resolution.roll_line + resolution.keeper_message
+        self.assertIn("撲向掩體失敗", combined_text)
+        self.assertIn("命中了", combined_text)
+
+
 class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
     """Connects offer_npc_attack_defense_choice's pending_checks write all
     the way through to /coc check's actual resolution
@@ -210,11 +399,17 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
     actually experiences when they resolve it."""
 
     def test_choosing_fight_back_resolves_with_the_system_rolled_attacker_tier(self):
+        # tier="extreme", not "critical" — a Critical attacker filters out
+        # the Fight Back option entirely server-side (see keeper.py's
+        # offer_npc_attack_defense_choice: no tier can beat Critical, so
+        # offering Fight Back against it would be an option that can never
+        # win). "extreme" still exercises "attacker's tier beats defender's
+        # weaker Fight Back roll" without hitting that filter.
         state = _state_with_investigator()
         state.active = True
         with StateStorePatch(keeper, legacy_commands) as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="extreme")):
                 tool_result = keeper._execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
@@ -225,7 +420,7 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
                     [], [], speaker_role="player",
                 )
             self.assertTrue(tool_result["ok"])
-            self.assertEqual(tool_result["attacker_tier"], "critical")
+            self.assertEqual(tool_result["attacker_tier"], "extreme")
 
             defender_roll = dice.SkillCheckResult(
                 skill_value=60, roll=50, bonus_dice=0, penalty_dice=0,

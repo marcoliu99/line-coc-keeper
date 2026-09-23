@@ -24,6 +24,7 @@ from app import (
     async_utils,
     config,
     db,
+    dice,
     help_service,
     locks,
     logging_config,
@@ -468,6 +469,74 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     return reply
 
 
+_TIER_ZH_FULL = {
+    "fumble": "大失敗", "fail": "失敗", "regular": "一般成功",
+    "hard": "困難成功", "extreme": "極難成功", "critical": "大成功",
+}
+_TIER_ORDER = sorted(dice.TIER_RANK, key=lambda t: dice.TIER_RANK[t])
+
+
+def _tier_percentage_hint(tier: str, skill_value: int) -> str:
+    """Reverse-engineers the %-under-skill-value a player needs to roll to
+    land a given tier — see docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md
+    §4.2. fail/fumble have no meaningful "aim for this" percentage (any
+    non-fumble roll already clears "at least fail"), so those just get a
+    plain-language fallback instead of a fabricated fraction."""
+    if tier == "critical":
+        return "骰出 01"
+    if tier == "extreme":
+        return f"≤{skill_value // 5}"
+    if tier == "hard":
+        return f"≤{skill_value // 2}"
+    if tier == "regular":
+        return f"≤{skill_value}"
+    return "幾乎任何擲骰"
+
+
+def _defense_choice_hint(check: dict) -> str:
+    """Builds the "you need at least tier X (<=Y%)" hint for a pending melee
+    Dodge/Fight Back choice, so the button doesn't just show a bare skill %
+    that looks like an ordinary (non-opposed) check — see
+    docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.
+
+    Only applies once attacker_tier is already known, which is true for
+    melee (rolled up front) but never true for a ranged choice at this
+    point — a ranged offer_npc_attack_defense_choice defers the attacker's
+    shot until the player's own dive-for-cover roll is in (see keeper.py's
+    is_ranged branch), so this naturally returns "" there; a "threshold to
+    beat" wouldn't even make sense for ranged since dodging it isn't a tier
+    comparison in the first place (§2).
+
+    Dodge needs to only match attacker_tier (a tie favors the defender on a
+    Dodge — dice.resolve_opposed's is_counter=False branch), while Fight
+    Back needs to strictly beat it (a tie favors the attacker on a Fight
+    Back) — these are genuinely different thresholds, not the same number
+    with different wording."""
+    attacker_tier = check.get("attacker_tier")
+    if attacker_tier is None:
+        return ""
+    attacker_rank = dice.TIER_RANK[attacker_tier]
+    lines = []
+    for o in check.get("options", []):
+        is_counter = "反擊" in o["label"]
+        needed_rank = attacker_rank + 1 if is_counter else attacker_rank
+        if needed_rank >= len(_TIER_ORDER):
+            # A Fight Back option against a Critical attacker is filtered out
+            # server-side before this ever renders (see keeper.py's
+            # offer_npc_attack_defense_choice) — this is just a defensive
+            # skip in case that invariant is ever violated, not an expected path.
+            continue
+        needed_tier = _TIER_ORDER[needed_rank]
+        threshold = _tier_percentage_hint(needed_tier, o["skill_value"])
+        comparator = "高於" if is_counter else "達到或高於"
+        verb = "才能命中" if is_counter else "才能躲開"
+        lines.append(f"選擇「{o['label']}」需要{comparator}「{_TIER_ZH_FULL[needed_tier]}」（{threshold}）{verb}")
+    if not lines:
+        return ""
+    attacker_zh = _TIER_ZH_FULL[attacker_tier]
+    return f"對方擲出「{attacker_zh}」。\n   " + "；\n   ".join(lines) + "。"
+
+
 def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
     """Return buttons for legacy checks and pending player choices.
 
@@ -696,7 +765,9 @@ async def _post_check_buttons(
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option, check_id))
             marker = f"{public_marker}\n" if public_marker else ""
             if check.get("type") == "choice":
-                prompt = "請選擇要採取的防守／行動方式，並由你觸發擲骰："
+                hint = _defense_choice_hint(check)
+                hint_line = f"{hint}\n" if hint else ""
+                prompt = f"{hint_line}請選擇要採取的防守／行動方式，並由你觸發擲骰："
             else:
                 prompt = "請按鈕完成你的檢定（或輸入 /coc check）："
             text = f"{marker}👉 {name}，{prompt}"

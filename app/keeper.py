@@ -265,10 +265,11 @@ TOOLS = [
     {
         "name": "offer_npc_attack_defense_choice",
         "description": (
-            "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 對抗檢定的完整標準流程。這個工具會"
-            "直接由程式碼擲出攻擊方（NPC/怪物）這次攻擊的成功等級，不用你自己先呼叫 npc_skill_check、"
-            "也不用自己編。跟 offer_check_choice 一樣只記錄選項清單，讓玩家選一個；玩家選定後"
-            "用 /coc check 觸發防守方擲骰並自動判定（autoroll 開啟時才可由系統代擲）。呼叫完之後只能敘述『被攻擊、需要在這幾個選項裡選一個』"
+            "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 對抗檢定的完整標準流程。近戰跟遠程"
+            "在 COC7e 規則下走完全不同的判定機制（見 is_ranged 參數），這個工具會依 is_ranged 自動"
+            "選對的機制擲骰，不用你自己先呼叫 npc_skill_check、也不用自己編。跟 offer_check_choice "
+            "一樣只記錄選項清單，讓玩家選一個；玩家選定後用 /coc check 觸發防守方擲骰並自動判定"
+            "（autoroll 開啟時才可由系統代擲）。呼叫完之後只能敘述『被攻擊、需要在這幾個選項裡選一個』"
             "的當下場景，不能自己選、不能自己編結果、不能自己講攻擊有沒有命中。"
             "options 要不要給『反擊』選項看攻擊距離：近戰（engaged）才能反擊，給「閃避」「反擊」"
             "兩個選項；遠程攻擊（near/any，例如槍械、投擲武器）COC7e 規則不允許反擊，只能給"
@@ -279,6 +280,16 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "investigator": {"type": "string", "description": "調查員角色名稱"},
+                "is_ranged": {
+                    "type": "boolean",
+                    "description": (
+                        "這次攻擊是不是遠程（槍械、投擲武器等）。COC7e 規則：遠程攻擊不是對抗檢定——"
+                        "攻擊方單獨擲自己的技能檢定決定有沒有命中（不能孤注一擲），防守方唯一能做的"
+                        "是『撲向掩體』，是防守方自己獨立的閃避檢定，成功的話會讓攻擊方這次射擊多"
+                        "承受一個懲罰骰，但不會直接讓攻擊落空。近戰才是雙方比較成功等級的對抗檢定。"
+                        "近戰填 false 或省略；遠程一定要填 true，不要漏填讓系統誤判成近戰。"
+                    ),
+                },
                 "options": {
                     "type": "array",
                     "minItems": 1,
@@ -1945,6 +1956,7 @@ def _execute_tool(
             attacker_skill_value = max(0, min(100, int(tool_input["attacker_skill_value"])))
             attacker_bonus = int(tool_input.get("attacker_bonus_dice") or 0)
             attacker_penalty = int(tool_input.get("attacker_penalty_dice") or 0)
+            is_ranged = bool(tool_input.get("is_ranged", False))
 
             def _roll_and_register_defense_choice(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
@@ -1959,10 +1971,15 @@ def _execute_tool(
                     "attacker_skill_value": attacker_skill_value,
                     "attacker_bonus_dice": attacker_bonus,
                     "attacker_penalty_dice": attacker_penalty,
+                    "is_ranged": is_ranged,
                 }
                 new_choice.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
-                # 防重複：如果已經有完全相同的防守選項且有真實掷骰結果，重用現有結果而不重新掷
                 existing = target_state.pending_checks.get(target_char.owner_id)
+                # 防重複：如果已經有完全相同的防守選項且有真實掷骰結果，重用現有結果而不重新掷。
+                # 遠程情境的 attacker_roll 永遠是 None（見下方 is_ranged 分支——攻擊方要等
+                # 防守方擲完「撲向掩體」才會擲，見 §2.4），所以這個重用條件天生不會對遠程
+                # pending 觸發，遠程重複呼叫會自然落到下面的「已有待處理檢定」拒絕分支，
+                # 這正是我們要的行為（不會被誤判成「已擲過，重用結果」）。
                 if (
                     existing
                     and existing.get("type") == "choice"
@@ -2002,9 +2019,44 @@ def _execute_tool(
                         },
                         should_save=False,
                     )
+
+                if is_ranged:
+                    # COC7e：遠程攻擊不是對抗檢定，攻擊方的命中判定完全獨立於防守方，
+                    # 而且要等防守方決定「撲向掩體」有沒有成功，才知道攻擊方這次要不要
+                    # 多帶一個懲罰骰——所以這裡不能像近戰一樣預先擲攻擊方，必須延後到
+                    # 玩家觸發防守擲骰的當下才擲（見 app/legacy_commands.py 的
+                    # _build_check_narration ranged_attacker 分支）。這裡只登記選項跟
+                    # 攻擊方的技能值/骰數修正，不寫 attacker_tier/attacker_roll。
+                    target_state.pending_checks[target_char.owner_id] = new_choice
+                    return _StateMutation({
+                        "ok": True, "pending": True, "investigator": target_char.name, "options": options,
+                        "note": "遠程攻擊：這不是對抗檢定，不會預先擲攻擊方。等待玩家選擇「撲向掩體」並"
+                                "觸發擲骰後，系統才會依撲向掩體是否成功決定攻擊方要不要多帶一個懲罰骰，"
+                                "再擲攻擊方的命中判定；不要自行判定命中與否，也不要自己先講攻擊方擲出什麼。",
+                    }, should_save=True)
+
                 npc_roll = dice.skill_check(
                     attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty
                 )
+                # COC7e：攻擊方擲出大成功時，沒有任何等級能贏過它，「反擊」選項在規則上
+                # 已經不可能成立（閃避仍然可能贏——雙方都大成功時平手，閃避方獲勝，見
+                # dice.resolve_opposed 的 is_counter 分支），所以這裡強制濾掉反擊選項，
+                # 不能只在 Discord 按鈕顯示層隱藏，否則玩家還是能用 /coc check 反擊 之類
+                # 的文字輸入繞過去。
+                if npc_roll.tier == "critical":
+                    filtered_options = [o for o in options if "反擊" not in o["label"]]
+                    if not filtered_options:
+                        return _StateMutation(
+                            {
+                                "ok": False,
+                                "error": "攻擊方這次擲出大成功，沒有任何成功等級贏得過它，「反擊」選項"
+                                         "已不成立；但目前 options 只有反擊，沒有閃避可選，請至少提供一個"
+                                         "「閃避」選項後再重新呼叫這個工具。",
+                            },
+                            should_save=False,
+                        )
+                    options = filtered_options
+                    new_choice["options"] = options
                 new_choice["attacker_tier"] = npc_roll.tier
                 new_choice["attacker_roll"] = npc_roll.roll  # 保存掷骰結果供後續防重複檢查
                 target_state.pending_checks[target_char.owner_id] = new_choice
@@ -2954,12 +3006,15 @@ advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳
 呼叫 apply_combat_damage 或 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
 不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色被 NPC 攻擊時，呼叫
-offer_npc_attack_defense_choice 讓玩家自己選防守方式，不要自己幫玩家決定。options 要不要給「反擊」
-看攻擊距離（COC7e 規則，反擊只在近戰才合法）：近戰攻擊給「閃避」「反擊」兩個選項；遠程攻擊（槍械、
-投擲武器等）不能反擊，只給「閃避」一個選項，不要為了湊兩個硬塞假的反擊選項。這個工具會直接由程式碼
-擲出攻擊方（通常是 NPC）這次攻擊的成功等級，不用你自己先呼叫 npc_skill_check 再把結果填回去；玩家
-只選防守選項，選定後預設由玩家用 /coc check 觸發防守方骰；autoroll 開啟時才由系統自動擲骰並判定攻擊有沒有命中、反擊有沒有生效，你只需要照系統回饋的
-既定結果敘述，不用自己比較雙方骰出的等級誰贏。
+offer_npc_attack_defense_choice 讓玩家自己選防守方式，不要自己幫玩家決定。近戰跟遠程走完全不同的
+COC7e 判定機制，一定要正確填 is_ranged 參數，不要漏填：近戰（engaged）是雙方比較成功等級的對抗檢定，
+is_ranged 填 false 或省略，options 給「閃避」「反擊」兩個選項；遠程攻擊（槍械、投擲武器等）不是對抗
+檢定，攻擊方單獨判定命中、防守方只能「撲向掩體」，is_ranged 一定要填 true，options 只給「閃避」一個
+選項，不能反擊、不要為了湊兩個硬塞假的反擊選項。這個工具會直接由程式碼依 is_ranged 選對的機制擲骰
+（近戰立刻擲攻擊方；遠程會等玩家擲完撲向掩體的結果才擲攻擊方，不用你自己先呼叫 npc_skill_check 再把
+結果填回去）；玩家只選防守選項，選定後預設由玩家用 /coc check 觸發防守方骰；autoroll 開啟時才由系統
+自動擲骰並判定攻擊有沒有命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出
+的等級誰贏，遠程也不用自己判斷撲向掩體有沒有讓攻擊方多帶懲罰骰。
 
 敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
 冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理：若是
@@ -2967,8 +3022,9 @@ special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他�
 消耗該能力次數；若是 attack，看 target_ids 裡的 ID 開頭判斷目標類型——「pc:」開頭是玩家角色，「ally:」
 開頭是沒有玩家操控的隊友 NPC，「enemy:」開頭是敵方。目標是玩家角色（pc: 開頭）時，改走上一段「玩家角色
 被 NPC 攻擊時」的規則——直接呼叫 offer_npc_attack_defense_choice，攻擊方的 attacker_skill_value 就用
-這次 plan 的 required_rolls[0].skill_value，options 要不要給「反擊」看 required_rolls[0].range_band：
-engaged 給「閃避」「反擊」兩個選項，near/any 只給「閃避」一個選項；不用另外想辦法取得這些值，也不要
+這次 plan 的 required_rolls[0].skill_value，is_ranged 跟 options 都看 required_rolls[0].range_band：
+engaged 是近戰，is_ranged 填 false，options 給「閃避」「反擊」兩個選項；near/any 是遠程，is_ranged
+填 true，options 只給「閃避」一個選項；不用另外想辦法取得這些值，也不要
 對這個目標呼叫 resolve_enemy_action（玩家的防守結果出來後，命中與傷害由你在下一輪自然的
 apply_combat_damage／damage_combatant 呼叫處理，不是由 resolve_enemy_action 處理）；目標不是玩家角色（ally: 或 enemy: 開頭
 ——沒有玩家可以做防守選擇，例如隊友 NPC 或敵方陣營內鬥），才由你自己判定正式命中結果與傷害值放入
