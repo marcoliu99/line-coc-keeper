@@ -354,12 +354,15 @@ Builder／Intent Router／State Reducer／Rule Validator 都刻意維持純 Pyth
    `tests/test_kp_assistant_v2.py` 裡對應測試）。
 
    注意：`_handle_coc_command`（`app/legacy_commands.py`，處理 `/coc pc`／`/coc kp`／
-   `/coc newgame` 等指令的另一套舊派發邏輯）本身**還在**，只是失去了唯一的正式呼叫點
-   （原本只被剛刪掉的 `handle_text_message` 呼叫）——`router.py` 自己內聯重新實作了整套
-   `/coc` 指令派發（分派到 `app/commands/handlers/*.py`），不經過它。`_handle_coc_command`
-   現在只被 `tests/test_kp_assistant_v2.py` 裡另外 4 個測試（`/coc kp quit`／`/coc end`／
-   `/coc kp`／`/coc newgame`）直接呼叫，是跟這次處理的問題同類、但沒有一併處理的第二個
-   實例——這次複查沒有動它，留給之後決定。
+   `/coc newgame` 等指令的另一套舊派發邏輯）在這次複查當下**還在**，只是失去了唯一的
+   正式呼叫點（原本只被剛刪掉的 `handle_text_message` 呼叫）——`router.py` 自己內聯重新
+   實作了整套 `/coc` 指令派發（分派到 `app/commands/handlers/*.py`），不經過它。當時
+   `_handle_coc_command` 只被 `tests/test_kp_assistant_v2.py` 裡另外 4 個測試（`/coc kp
+   quit`／`/coc end`／`/coc kp`／`/coc newgame`）直接呼叫，是跟這次處理的問題同類、但
+   沒有一併處理的第二個實例。**後續更新（另一個獨立任務，見
+   `docs/specs/bug-remove-dead-legacy-coc-command-handler.md`）：`_handle_coc_command`
+   連同 `_handle_combat_subcommand`（共 738 行）已完整刪除，那 4 個測試也已改寫成呼叫
+   真正生效的 `app.commands.handlers.system.handle_system_command`。**
 
 7. **兩個「線路接對了但沒接上」的缺陷，複查時才發現、已修正。** 一是 `supervisor.py`
    呼叫 Executor 後算出的 `mechanic_result` 從沒寫回 `message.payload`——`narrator.py`

@@ -24,6 +24,7 @@ from app import (
     async_utils,
     config,
     db,
+    dice,
     help_service,
     locks,
     logging_config,
@@ -468,6 +469,86 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     return reply
 
 
+# Code review: this used to be its own independently-maintained copy of
+# dice.TIER_ZH, and had silently drifted from app/legacy_commands.py's copy
+# on "regular" ("一般成功" vs "成功"). Now a plain alias to the single source.
+_TIER_ZH_FULL = dice.TIER_ZH
+_TIER_ORDER = sorted(dice.TIER_RANK, key=lambda t: dice.TIER_RANK[t])
+
+
+def _tier_percentage_hint(tier: str, skill_value: int) -> str:
+    """The %-under-skill-value a player needs to roll to land a given tier
+    — see docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.2.
+    Delegates the actual threshold to dice.tier_upper_bound() (the same
+    formula skill_check() resolves a roll against) rather than
+    re-hardcoding skill_value//5 etc. here — code review flagged that a
+    second, independent copy of this formula could silently drift from
+    what the server actually resolves if the rule ever changes. "critical"
+    and fail/fumble aren't skill_value-derived bounds, so those still get
+    their own plain-language handling."""
+    if tier == "critical":
+        return "骰出 01"
+    bound = dice.tier_upper_bound(skill_value, tier)
+    if bound is not None:
+        return f"≤{bound}"
+    return "幾乎任何擲骰"
+
+
+def _defense_choice_hint(check: dict) -> str:
+    """Builds the "you need at least tier X (<=Y%)" hint for a pending melee
+    Dodge/Fight Back choice, so the button doesn't just show a bare skill %
+    that looks like an ordinary (non-opposed) check — see
+    docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.
+
+    Only applies once attacker_tier is already known, which is true for
+    melee (rolled up front) but never true for a ranged choice at this
+    point — a ranged offer_npc_attack_defense_choice defers the attacker's
+    shot until the player's own dive-for-cover roll is in (see keeper.py's
+    is_ranged branch), so this naturally returns "" there; a "threshold to
+    beat" wouldn't even make sense for ranged since dodging it isn't a tier
+    comparison in the first place (§2).
+
+    Dodge needs to only match attacker_tier (a tie favors the defender on a
+    Dodge — dice.resolve_opposed's is_counter=False branch), while Fight
+    Back needs to strictly beat it (a tie favors the attacker on a Fight
+    Back) — these are genuinely different thresholds, not the same number
+    with different wording."""
+    attacker_tier = check.get("attacker_tier")
+    if attacker_tier is None:
+        return ""
+    attacker_rank = dice.TIER_RANK[attacker_tier]
+    lines = []
+    for o in check.get("options", []):
+        is_counter = dice.is_counter_option(o)
+        needed_rank = attacker_rank + 1 if is_counter else attacker_rank
+        # Code review: dice.resolve_opposed treats BOTH sides being
+        # fail-or-worse as "both_miss", not a defender win — so if the
+        # attacker fumbled, attacker_rank+1 lands on "fail" (rank 1), and
+        # a Fight Back that only reaches "fail" still resolves to
+        # both_miss (no hit landed), not the counterattack actually
+        # connecting. Clamp to at least "regular" so this hint doesn't
+        # promise the player that "almost any roll" lands a Fight Back —
+        # Dodge doesn't need this clamp: both_miss and a defender win both
+        # mean "not hit", so a low needed_rank there is still accurate.
+        if is_counter and needed_rank <= dice.TIER_RANK["fail"]:
+            needed_rank = dice.TIER_RANK["regular"]
+        if needed_rank >= len(_TIER_ORDER):
+            # A Fight Back option against a Critical attacker is filtered out
+            # server-side before this ever renders (see keeper.py's
+            # offer_npc_attack_defense_choice) — this is just a defensive
+            # skip in case that invariant is ever violated, not an expected path.
+            continue
+        needed_tier = _TIER_ORDER[needed_rank]
+        threshold = _tier_percentage_hint(needed_tier, o["skill_value"])
+        comparator = "高於" if is_counter else "達到或高於"
+        verb = "才能命中" if is_counter else "才能躲開"
+        lines.append(f"選擇「{o['label']}」需要{comparator}「{_TIER_ZH_FULL[needed_tier]}」（{threshold}）{verb}")
+    if not lines:
+        return ""
+    attacker_zh = _TIER_ZH_FULL[attacker_tier]
+    return f"對方擲出「{attacker_zh}」。\n   " + "；\n   ".join(lines) + "。"
+
+
 def _check_button_specs(check: dict) -> list[tuple[str, bool, str]]:
     """Return buttons for legacy checks and pending player choices.
 
@@ -696,7 +777,9 @@ async def _post_check_buttons(
                 view.add_item(CheckButton(conversation_id, owner_id, label, danger, option, check_id))
             marker = f"{public_marker}\n" if public_marker else ""
             if check.get("type") == "choice":
-                prompt = "請選擇要採取的防守／行動方式，並由你觸發擲骰："
+                hint = _defense_choice_hint(check)
+                hint_line = f"{hint}\n" if hint else ""
+                prompt = f"{hint_line}請選擇要採取的防守／行動方式，並由你觸發擲骰："
             else:
                 prompt = "請按鈕完成你的檢定（或輸入 /coc check）："
             text = f"{marker}👉 {name}，{prompt}"

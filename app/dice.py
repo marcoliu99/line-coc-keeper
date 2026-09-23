@@ -163,21 +163,70 @@ def d100() -> int:
 
 TIER_RANK = {"fumble": 0, "fail": 1, "regular": 2, "hard": 3, "extreme": 4, "critical": 5}
 
+# Single source of truth for tier display text — code review flagged that
+# app/legacy_commands.py and app/discord_bot.py each maintained their own
+# independent copy of this same tier->Chinese mapping, and the two had
+# silently drifted apart on "regular" ("成功" vs "一般成功"). Both call sites
+# now import this instead.
+TIER_ZH = {
+    "fumble": "大失敗", "fail": "失敗", "regular": "一般成功",
+    "hard": "困難成功", "extreme": "極難成功", "critical": "大成功",
+}
 
-def resolve_opposed(defender_tier: str, attacker_tier: str) -> str:
-    """COC7e opposed-roll resolution (e.g. Dodge/Fight Back vs. an attack):
-    compare degree of success. Ties go to the active/attacking side — but if
-    *both* sides failed outright, neither effect happens at all (COC7e calls
-    this out as its own case, distinct from a tie between two successes).
-    Returns one of "defender_wins" (attack negated), "tie_attacker_wins" or
-    "attacker_wins" (attack lands), or "both_miss" (neither connects)."""
+
+def is_counter_option(option: dict) -> bool:
+    """Whether a defense-choice option (offer_npc_attack_defense_choice /
+    offer_check_choice's {label, skill, ..., kind?} dict) represents Fight
+    Back, as opposed to Dodge.
+
+    Code review flagged that this used to be a bare "反擊" in label
+    substring match, independently re-implemented at four call sites across
+    app/keeper.py, app/legacy_commands.py and app/discord_bot.py — a future
+    change to the Fight Back option's wording (e.g. "反擊！" or an alternate
+    phrasing an LLM caller might use) would silently break all four without
+    raising anything.
+
+    Prefers the structured "kind" field ("dodge"/"counter") a caller can now
+    set explicitly. Falls back to the substring match when "kind" is absent
+    — offer_check_choice's options aren't always a Dodge/Fight Back pair (it's
+    also used for ordinary multi-choice prompts unrelated to combat), so an
+    unset "kind" must not be assumed to mean "not Fight Back"; it means "no
+    structured signal was given, fall back to the label"."""
+    kind = option.get("kind")
+    if kind in ("dodge", "counter"):
+        return kind == "counter"
+    return "反擊" in str(option.get("label", ""))
+
+
+def resolve_opposed(defender_tier: str, attacker_tier: str, is_counter: bool) -> str:
+    """COC7e opposed-roll resolution for a melee Dodge/Fight Back choice vs.
+    an attack: compare degree of success. If *both* sides failed outright,
+    neither effect happens at all (COC7e calls this out as its own case,
+    distinct from a tie between two successes) — regardless of is_counter.
+
+    A tie between two successes is NOT resolved the same way for both
+    defensive choices (verified against RAW, not assumed):
+    - Fight Back (is_counter=True): a tie favors the attacker — fighting
+      back is inherently offensive ("trading damage"), so on a tie the
+      attacker's blow lands first.
+    - Dodge (is_counter=False): a tie favors the DEFENDER — dodging is a
+      fully committed defensive act (the character gives up any chance to
+      hurt the attacker to focus entirely on getting out of the way), so
+      RAW protects the purely defensive side on a tie. This is the bug this
+      is_counter parameter was added to fix: the previous version always
+      resolved ties in the attacker's favor regardless of which defensive
+      choice the player made, silently misjudging every tied Dodge as a hit.
+
+    Returns one of "defender_wins" (attack negated), "tie_defender_wins"
+    (attack negated on a tied Dodge), "tie_attacker_wins" or "attacker_wins"
+    (attack lands), or "both_miss" (neither connects)."""
     d_rank, a_rank = TIER_RANK[defender_tier], TIER_RANK[attacker_tier]
     if d_rank <= TIER_RANK["fail"] and a_rank <= TIER_RANK["fail"]:
         return "both_miss"
     if d_rank > a_rank:
         return "defender_wins"
     if d_rank == a_rank:
-        return "tie_attacker_wins"
+        return "tie_attacker_wins" if is_counter else "tie_defender_wins"
     return "attacker_wins"
 
 
@@ -234,6 +283,29 @@ def roll_percentile_with_dice_pool(bonus_dice: int = 0, penalty_dice: int = 0) -
 _VALID_REQUIRED_TIERS = ("regular", "hard", "extreme")
 
 
+def tier_upper_bound(skill_value: int, tier: str) -> int | None:
+    """The maximum roll (inclusive) that lands at least the given success
+    tier, for the tiers where "roll <= X" is a meaningful target to aim for
+    (extreme/hard/regular). Returns None for "critical" (a fixed "roll 01",
+    not a skill-value-derived fraction) and "fail"/"fumble" (there's no
+    upper-bound worth aiming for — any non-fumble roll already clears "at
+    least fail").
+
+    Single source of truth for the thresholds skill_check() below resolves a
+    roll against — code review flagged that app/discord_bot.py's player-
+    facing "you need <= X%" hint used to hardcode this same skill_value//5,
+    skill_value//2, skill_value formula as its own separate copy, so a
+    future tweak to these fractions could silently drift between what the
+    server actually resolves and what the hint promises the player."""
+    if tier == "extreme":
+        return skill_value // 5
+    if tier == "hard":
+        return skill_value // 2
+    if tier == "regular":
+        return skill_value
+    return None
+
+
 def skill_check(
     skill_value: int, bonus_dice: int = 0, penalty_dice: int = 0, required_tier: str = "regular"
 ) -> SkillCheckResult:
@@ -252,15 +324,23 @@ def skill_check(
         required_tier = "regular"
     roll = roll_percentile_with_dice_pool(bonus_dice, penalty_dice)
 
+    extreme_bound = tier_upper_bound(skill_value, "extreme")
+    hard_bound = tier_upper_bound(skill_value, "hard")
+    regular_bound = tier_upper_bound(skill_value, "regular")
+    assert extreme_bound is not None and hard_bound is not None and regular_bound is not None, (
+        "tier_upper_bound only returns None for tiers other than "
+        "extreme/hard/regular — these three literals always resolve to an int"
+    )
+
     if roll == 1:
         tier = "critical"
     elif roll == 100 or (skill_value < 50 and roll >= 96):
         tier = "fumble"
-    elif roll <= skill_value // 5:
+    elif roll <= extreme_bound:
         tier = "extreme"
-    elif roll <= skill_value // 2:
+    elif roll <= hard_bound:
         tier = "hard"
-    elif roll <= skill_value:
+    elif roll <= regular_bound:
         tier = "regular"
     else:
         tier = "fail"
