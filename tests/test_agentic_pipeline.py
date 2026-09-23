@@ -4,8 +4,37 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.domain.models import MechanicResult, StateDelta
+from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.models import Character, GroupState
+
+
+class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
+    """PR #55 review finding: run_executor discards run_conversation's
+    return value entirely (only the tool calls' side effects matter to a
+    MechanicResult), and supervisor.py always runs a separate Narrator call
+    afterward regardless of how the Executor's turn went. A forced wrap-up
+    call inside run_conversation would therefore be a real extra API
+    request whose output the player could never see — run_executor must
+    pass enable_wrapup=False."""
+
+    async def test_run_executor_disables_the_wrapup_call(self):
+        from app.agents import executor
+
+        state = GroupState(group_id="g")
+        message = AgentMessage(payload={
+            "state": state,
+            "text": "你攻擊怪物",
+            "user_id": "u1",
+            "display_name": "調查員",
+            "speaker_role": "player",
+        })
+
+        fake_run_conversation = AsyncMock(return_value="ignored")
+        with patch.object(executor, "_PROVIDERS", {"openai": type("P", (), {"run_conversation": fake_run_conversation})()}), \
+                patch.object(executor, "LLM_PROVIDER", "openai"):
+            await executor.run_executor(message)
+
+        self.assertFalse(fake_run_conversation.call_args.kwargs.get("enable_wrapup", True))
 
 
 class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):

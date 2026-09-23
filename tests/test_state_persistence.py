@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import checkpoints, db, keeper, scene_digest
+from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import system as system_handler
 from app.commands.handlers.system import _replace_scene_maps_preserving_locations
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
@@ -486,6 +487,261 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         entries = checkpoints.list_checkpoints(state.group_id)
         self.assertEqual([entry["reason"] for entry in entries], ["auto_combat_start"])
+
+    def test_add_npc_to_combat_rejects_duplicate_of_a_live_enemy(self):
+        # Diagnosed from a live log: the Keeper re-searched a scenario NPC
+        # ("柯比特"/Corbitt) mid-turn and called add_npc_to_combat for it
+        # twice, producing two independent HP pools for one monster. This
+        # tool call must recognize the name is already an active enemy and
+        # refuse to create a second one.
+        state = GroupState("discord-group-dup-npc")
+        group_state.save_state(state)
+        first = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+        self.assertTrue(first["ok"])
+        self.assertNotIn("note", first)
+
+        second = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(second["ok"])
+        self.assertIn("柯比特", second.get("note", ""))
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
+    def test_add_npc_to_combat_allows_a_second_defeated_monster_of_same_name(self):
+        state = GroupState("discord-group-revived-npc")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+        enemy = next(c for c in state.combat.order if c.side == "enemy")
+        state.combat.enemy_cards[enemy.enemy_card_id].hp = 0
+        enemy.defeated = True
+        # _mutate_and_save_state reloads from the DB rather than trusting
+        # this in-memory `state` object, so the defeat above must be
+        # persisted before the next tool call will see it.
+        group_state.save_state(state)
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 2)
+
+    def test_add_npc_to_combat_allows_two_different_named_enemies(self):
+        state = GroupState("discord-group-two-enemies")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "老鼠群", "dex": 60, "hp": 5}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 2)
+
+    def test_add_npc_to_combat_rejects_duplicate_under_a_different_scenario_index_alias(self):
+        # PR #55 review finding: the original duplicate guard only compared
+        # raw combatant name/display_name, so the same indexed NPC added
+        # under two non-overlapping aliases (e.g. "柯比特" then "Walter
+        # Corbitt") still created a second, independent HP pool - the exact
+        # corruption the guard exists to prevent. Fixed by resolving the
+        # scenario-index entry (which already tracks aliases) and checking
+        # every known alias, not just the exact string passed this call.
+        state = GroupState("discord-group-alias-dup")
+        state.scenario_npc_index = [
+            {"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 20},
+        ]
+        group_state.save_state(state)
+        first = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+        self.assertTrue(first["ok"])
+        self.assertNotIn("note", first)
+
+        second = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "Walter Corbitt", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(second["ok"])
+        self.assertIn("note", second)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
+    def test_add_npc_to_combat_does_not_treat_substring_overlapping_names_as_duplicates(self):
+        # PR #55 review finding: the original guard's substring matching
+        # (inherited from _find_combatant) treated "Cultist" and "Cultist
+        # Leader" as the same entity, silently blocking the second, distinct
+        # enemy from ever entering combat. find_live_enemy now does exact
+        # matching only, so two enemies with overlapping names must both be
+        # allowed in.
+        state = GroupState("discord-group-substring-overlap")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "Cultist", "dex": 50, "hp": 10}, [], [])
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "Cultist Leader", "dex": 60, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_names = sorted(c.name for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_names, ["Cultist", "Cultist Leader"])
+
+    def test_add_npc_to_combat_alias_resolution_does_not_use_fuzzy_matching(self):
+        # Second-round review finding: the duplicate guard's alias expansion
+        # originally reused _find_npc_index_entry, which has a difflib fuzzy
+        # fallback (ratio >= 0.6) meant for the HP-consistency check, where a
+        # wrong guess only mis-prices one number. Reused for duplicate
+        # detection, a wrong fuzzy match would pull in an unrelated entry's
+        # aliases and use them to wrongly block a genuinely different enemy.
+        # "深潛者頭目" is deliberately missing the "（成年頭目）" suffix so it
+        # doesn't exactly match either index entry — under the old fuzzy
+        # behavior this could resolve to the wrong entry's alias set.
+        state = GroupState("discord-group-fuzzy-alias")
+        state.scenario_npc_index = [
+            {"name": "深潛者（成年頭目）", "aliases": [], "hp": 30},
+            {"name": "深潛者（幼體）", "aliases": [], "hp": 8},
+        ]
+        group_state.save_state(state)
+        keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "深潛者（成年頭目）", "dex": 50, "hp": 30}, [], [],
+        )
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "深潛者頭目", "dex": 50, "hp": 30}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 2)
+
+    def test_add_npc_to_combat_alias_resolution_is_case_and_whitespace_insensitive(self):
+        # Third-round review finding: _find_npc_index_entry_exact did a
+        # literal string match against index names/aliases, unlike
+        # combat.find_live_enemy's normalized (lowercased, whitespace-
+        # collapsed) comparison. A case/whitespace variant of a registered
+        # alias used to fail to resolve the index entry at all, silently
+        # skipping alias expansion and letting a duplicate slip through.
+        state = GroupState("discord-group-alias-case-insensitive")
+        state.scenario_npc_index = [
+            {"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 20},
+        ]
+        group_state.save_state(state)
+        keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "  walter   corbitt ", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
+    def test_add_npc_to_combat_tolerates_a_non_string_alias_in_the_scenario_index(self):
+        # Fourth-round review finding: scenario_npc_index is populated from
+        # an LLM's structured tool-call output with no runtime enforcement
+        # that "aliases" items are actually strings. Before this fix, a
+        # non-string alias item would raise TypeError from set.update
+        # inside find_live_enemy_by_any_alias, failing the whole
+        # add_npc_to_combat call instead of just being ignored.
+        state = GroupState("discord-group-malformed-alias")
+        state.scenario_npc_index = [
+            {"name": "柯比特", "aliases": ["Walter Corbitt", {"unexpected": "object"}], "hp": 20},
+        ]
+        group_state.save_state(state)
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+
+    def test_add_npc_to_combat_duplicate_rejection_does_not_write_a_no_op_save(self):
+        # Second-round review finding: the duplicate-rejection early return
+        # didn't use the _StateMutation(value, should_save=False) pattern
+        # already established for other genuine no-op tool calls (see
+        # add_carried_item/remove_carried_item/add_status_tag/
+        # remove_status_tag), so every rejected duplicate call persisted a
+        # pointless extra write.
+        state = GroupState("discord-group-dup-no-save")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+        revision_before = group_state.load_state(state.group_id).state_revision
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("note", result)
+        revision_after = group_state.load_state(state.group_id).state_revision
+        self.assertEqual(revision_after, revision_before)
+
+    def test_combat_addnpc_slash_command_rejects_duplicate_live_enemy(self):
+        # Second-round review finding: the duplicate-enemy guard only lived
+        # in the Keeper LLM tool handler, not in combat.add_npc itself, so
+        # a human operator running /coc combat addnpc twice for the same
+        # live enemy bypassed it entirely and reproduced the original bug.
+        group_id = "discord-group-slash-dup"
+        state = GroupState(group_id)
+        group_state.save_state(state)
+        replies: list[str] = []
+
+        async def reply(text: str) -> None:
+            replies.append(text)
+
+        asyncio.run(combat_handler.handle_combat_command(
+            group_id, reply, ["/coc", "combat", "addnpc", "柯比特", "50", "20"],
+        ))
+        asyncio.run(combat_handler.handle_combat_command(
+            group_id, reply, ["/coc", "combat", "addnpc", "柯比特", "50", "20"],
+        ))
+
+        reloaded = group_state.load_state(group_id)
+        enemy_count = sum(1 for c in reloaded.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+        self.assertIn("已經在戰鬥中", replies[-1])
+
+    def test_add_npc_to_combat_allows_the_same_species_under_distinct_display_names(self):
+        # User-raised scenario: two Deep Ones (魚人) attack simultaneously
+        # from different directions - same species/stats, but two distinct
+        # individuals, not a duplicate call for the same one. The duplicate
+        # guard is exact-name-match, so as long as the Keeper follows the
+        # naming instruction added to _build_static_prompt (give each
+        # same-species instance in one fight a distinct display name), both
+        # must be allowed into combat as separate combatants.
+        state = GroupState("discord-group-two-deep-ones")
+        group_state.save_state(state)
+        keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "魚人（左）", "dex": 40, "hp": 15}, [], [],
+        )
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "魚人（右）", "dex": 40, "hp": 15}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_names = {c.name for c in state.combat.order if c.side == "enemy"}
+        self.assertEqual(enemy_names, {"魚人（左）", "魚人（右）"})
+
+    def test_static_prompt_instructs_distinct_names_for_same_species_multiples(self):
+        state = GroupState("discord-group-prompt-check")
+        prompt = keeper._build_static_prompt(state)
+        self.assertIn("同一場戰鬥裡如果同時出現多隻同種怪物", prompt)
 
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")

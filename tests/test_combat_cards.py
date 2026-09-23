@@ -950,5 +950,75 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(partner.active)
 
 
+class FindLiveEnemyTests(unittest.TestCase):
+    """combat.find_live_enemy — the duplicate-add guard's matching logic.
+
+    Diagnosed from a live log where the Keeper called add_npc_to_combat
+    twice for the same scenario NPC ("柯比特"/Corbitt) within one turn,
+    producing two independent HP pools for what should have been one
+    monster. This is the lookup the caller (app/keeper.py's
+    add_npc_to_combat handler) uses to detect that and skip the second add.
+    """
+
+    def _state_with_pc(self) -> GroupState:
+        state = GroupState(group_id="g")
+        char = Character(name="Mark", owner_id="u1", character_id="char-mark", dex=55, hp=12, hp_max=12)
+        state.characters = {"u1": char}
+        state.characters_by_id = {"char-mark": char}
+        state.active_character_id_by_user = {"u1": "char-mark"}
+        return state
+
+    def test_finds_a_live_enemy_by_exact_name(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "柯比特", 50, 20)
+
+        found = combat.find_live_enemy(state, "柯比特")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.name, "柯比特")
+
+    def test_does_not_match_a_defeated_enemy(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "柯比特", 50, 20)
+        enemy = next(c for c in state.combat.order if c.side == "enemy")
+        card = state.combat.enemy_cards[enemy.enemy_card_id]
+        card.hp = 0
+        enemy.defeated = True
+
+        self.assertIsNone(combat.find_live_enemy(state, "柯比特"))
+
+    def test_does_not_match_a_different_named_enemy(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "老鼠群", 50, 5)
+
+        self.assertIsNone(combat.find_live_enemy(state, "柯比特"))
+
+    def test_does_not_match_the_pc(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+
+        self.assertIsNone(combat.find_live_enemy(state, "Mark"))
+
+    def test_no_combat_active_returns_none(self):
+        state = self._state_with_pc()
+
+        self.assertIsNone(combat.find_live_enemy(state, "柯比特"))
+
+    def test_does_not_match_on_substring_overlap(self):
+        # PR #55 review finding: bidirectional substring matching treated
+        # "Cultist" and "Cultist Leader" as the same entity, silently
+        # blocking the second, distinct enemy from ever joining combat.
+        # find_live_enemy is exact-match only now specifically to avoid this.
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Cultist", 50, 10)
+
+        self.assertIsNone(combat.find_live_enemy(state, "Cultist Leader"))
+        self.assertIsNone(combat.find_live_enemy(state, "Cult"))
+
+
 if __name__ == "__main__":
     unittest.main()

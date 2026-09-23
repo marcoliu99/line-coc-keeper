@@ -1,4 +1,4 @@
-from app import checkpoints, combat
+from app import checkpoints, combat, keeper
 from app.legacy_commands import Reply
 from app.repositories.group_state import load_state, save_state
 
@@ -31,6 +31,21 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
         except ValueError:
             await reply("DEX 和 HP 必須是整數。")
             return
+        is_ally = action == "addally"
+        # Same duplicate guard as the Keeper's add_npc_to_combat tool
+        # (app/keeper.py) — without it, a human operator running this
+        # command twice for the same live enemy (or the same NPC under a
+        # different /coc index alias) reproduces the exact duplicate-HP-pool
+        # bug that guard exists to prevent, since this path calls
+        # combat.add_npc directly and previously had no check at all.
+        if not is_ally:
+            existing = keeper.find_live_enemy_by_any_alias(state, name)
+            if existing is not None:
+                await reply(
+                    f"「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
+                    "這隻怪物的血量與狀態沿用原本那份。"
+                )
+                return
         if not state.combat.active:
             checkpoints.create_checkpoint(
                 state,
@@ -39,7 +54,7 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
                 reason="auto_combat_start",
                 event_id=f"combat-start:{conversation_id}:{state.state_revision}",
             )
-        combat.add_npc(state, name, dex, hp, is_ally=(action == "addally"))
+        combat.add_npc(state, name, dex, hp, is_ally=is_ally)
         save_state(state, reason="combat")
         await reply(combat.status_text(state))
         return

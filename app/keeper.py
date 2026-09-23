@@ -50,7 +50,7 @@ from app.config import (
     SCENE_DIGEST_TURN_INTERVAL,
     TOOL_EXECUTION_TIMEOUT_SECONDS,
 )
-from app.models import BASE_SKILLS, Character, GroupState
+from app.models import BASE_SKILLS, Character, Combatant, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
@@ -1120,6 +1120,36 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
 _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-name fuzzy match
 
 
+def _find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
+    """Exact-match-only lookup of `name` against state.scenario_npc_index's
+    entry names/aliases — no fuzzy fallback. Split out from
+    _find_npc_index_entry (which layers a fuzzy fallback on top of this) for
+    callers where a *wrong* fuzzy match is costly, unlike the HP-consistency
+    check's fuzzy fallback which only ever corrects a number and can't
+    silently drop an entire combatant. See add_npc_to_combat's duplicate
+    guard in _execute_tool for the caller that needs this distinction: it
+    resolves every known alias of the requested name to also catch the same
+    NPC re-added under a different alias, and a fuzzy mismatch there (e.g.
+    matching "深潛者頭目" to the wrong sibling entry "深潛者（幼體）" instead
+    of "深潛者（成年頭目）") would pull in an unrelated entry's aliases and
+    use them to wrongly block a genuinely different enemy from being added.
+
+    Matches case/whitespace-insensitively (same normalization as
+    combat._normalize) so a name that differs from the registered index
+    entry only in case or spacing still resolves — without this, two calls
+    for the same NPC using slightly different capitalization of an alias
+    would fail to expand to the same candidate set, silently reopening the
+    duplicate-HP-pool bug this whole lookup exists to help prevent."""
+    if not name:
+        return None
+    norm = combat._normalize(name)
+    for entry in state.scenario_npc_index:
+        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
+        if any(norm == combat._normalize(c) for c in candidates if c):
+            return entry
+    return None
+
+
 def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     """Looks up `name` (whatever the Keeper called this NPC/monster when
     calling add_npc_to_combat) against state.scenario_npc_index — exact match
@@ -1132,10 +1162,9 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     in that case, same as before this existed."""
     if not name:
         return None
-    for entry in state.scenario_npc_index:
-        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
-        if name in candidates:
-            return entry
+    exact = _find_npc_index_entry_exact(state, name)
+    if exact is not None:
+        return exact
 
     import difflib
 
@@ -1151,6 +1180,35 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
                 best_ratio = ratio
                 best_entry = entry
     return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
+
+
+def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
+    """A non-defeated enemy-side combatant matching `name` or, if `name`
+    exactly matches a /coc index entry, any of that entry's other known
+    aliases — deliberately exact-match only at every step (see
+    combat.find_live_enemy's own docstring for why substring/fuzzy matching
+    would be actively harmful here). Shared by the add_npc_to_combat tool
+    handler and the /coc combat addnpc slash command so a duplicate can't
+    slip in through whichever path skips the other's check."""
+    candidate_names = {name}
+    index_entry = _find_npc_index_entry_exact(state, name)
+    if index_entry is not None:
+        # scenario_npc_index is populated from an LLM's structured tool-call
+        # output (app/scenario_index.py) — its schema declares "name"/
+        # "aliases" as strings, but nothing enforces that at the Python
+        # level once it's persisted. A non-string item here (e.g. a nested
+        # object for a malformed alias) would raise TypeError from set.add/
+        # update below (unlike the older `in` membership check elsewhere,
+        # which tolerates any item type) and fail this whole tool call —
+        # filtering to strings keeps this lookup best-effort instead of a
+        # new crash risk this PR would otherwise introduce.
+        raw_candidates = [index_entry.get("name", name), *(index_entry.get("aliases") or [])]
+        candidate_names.update(c for c in raw_candidates if isinstance(c, str))
+    for candidate in candidate_names:
+        existing = combat.find_live_enemy(state, candidate)
+        if existing is not None:
+            return existing
+    return None
 
 
 def _sync_state_snapshot(target: GroupState, source: GroupState) -> None:
@@ -2496,7 +2554,7 @@ def _execute_tool(
         if name == "add_npc_to_combat":
             npc_name = tool_input["name"]
             requested_hp = int(tool_input.get("hp", 10))
-            def _mutate_add_npc(target_state: GroupState) -> str:
+            def _mutate_add_npc(target_state: GroupState) -> _StateMutation[str]:
                 _ensure_auto_combat_checkpoint(target_state)
                 hp = requested_hp
                 index_note = ""
@@ -2516,17 +2574,40 @@ def _execute_tool(
                             "之後同一隻不要再用別的數字。）"
                         )
                         hp = canonical_hp
+                is_ally = bool(tool_input.get("is_ally", False))
+                # Guards against the Keeper re-searching a scenario NPC mid-turn
+                # and calling this tool a second time for a monster it already
+                # added — without this, the same name silently gets a second,
+                # independent HP pool instead of being recognized as the fight
+                # it's already in. Scoped to the enemy side only: a defeated
+                # duplicate is not matched, so a monster narratively coming
+                # back can still be added fresh. Also catches the same NPC
+                # re-added under a different /coc index alias (e.g. this call
+                # used "柯比特", an earlier call used "Walter Corbitt") via
+                # find_live_enemy_by_any_alias — see its own docstring, and
+                # _find_npc_index_entry_exact's for why that alias resolution
+                # deliberately does NOT use the fuzzy fallback the HP check
+                # above does (a wrong fuzzy match here would silently block a
+                # genuinely different enemy, not just misprice one).
+                existing = None if is_ally else find_live_enemy_by_any_alias(target_state, npc_name)
+                if existing is not None:
+                    return _StateMutation(
+                        f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
+                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
+                        "add_npc_to_combat。）",
+                        should_save=False,
+                    )
                 combat.add_npc(
                     target_state,
                     npc_name,
                     int(tool_input.get("dex", 50)),
                     hp,
-                    is_ally=bool(tool_input.get("is_ally", False)),
+                    is_ally=is_ally,
                     armor=tool_input.get("armor"),
                     attacks=tool_input.get("attacks"),
                     abilities=tool_input.get("abilities"),
                 )
-                return index_note
+                return _StateMutation(index_note, should_save=True)
             index_note = _mutate_and_save_state(state, _mutate_add_npc)
             response = {"ok": True, "status": combat.status_text(state)}
             if index_note:
@@ -2970,7 +3051,7 @@ def _build_static_prompt(state: GroupState) -> str:
   **攻擊擲骰**是極限成功（不是反擊），改呼叫 roll_impaling_damage，讓系統照 COC7e 規則正確算出
   「武器＋傷害加值都算最大值，穿刺武器再額外重骰一次武器傷害」的結果。不是武器傷害的一般描述性
   擲骰（道具檢定、環境傷害等）才用 roll_dice。
-- 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。加入敵人時，若劇本寫了護甲、攻擊、特殊能力、每輪/每戰使用限制或觸發條件，必須放進 add_npc_to_combat 的 armor/attacks/abilities；不要只填 HP 後靠臨場記憶。
+- 當敘事中出現「打起來了」的場面（攻擊、被攻擊、追逐戰鬥等），呼叫 start_combat 開始正式戰鬥、用 add_npc_to_combat 加入敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。加入敵人時，若劇本寫了護甲、攻擊、特殊能力、每輪/每戰使用限制或觸發條件，必須放進 add_npc_to_combat 的 armor/attacks/abilities；不要只填 HP 後靠臨場記憶。**同一場戰鬥裡如果同時出現多隻同種怪物（例如左右各撲來一隻魚人、三隻餓狼同時包抄），每一隻呼叫 add_npc_to_combat 時都要給不同的顯示名稱（例如「魚人（左）」／「魚人（右）」，或「餓狼一」／「餓狼二」／「餓狼三」），不要用完全相同的名字呼叫兩次——系統會把同名、還沒倒下的敵人視為重複加入同一隻而擋下第二次呼叫，用不同名字才能讓每一隻怪物各自有獨立血量、可以被玩家分別鎖定攻擊。**
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
