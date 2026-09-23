@@ -124,34 +124,75 @@ belongs in this spec.
    running the survivors 2-3× each for consistency instead of once, the
    way round 1 did.
 
-## Draft: ~10-tool scoped set (needs review, not final)
+## Dynamic tool scoping design (combat-active vs. not)
 
-Reasoning: cover the tool families that showed up across all 8 round-3
-scenarios plus the two round-3 misses that scoping should fix (`search_
-scenario` was missing; `get_combat_status`/`adjust_ammo` distractors
-should be excluded from non-combat scenes), while staying close to the
-user's ~10 target:
+User confirmed the direction: dynamic (combat-state-dependent), not one
+static list. Classified all 35 real tools into three tiers by reading
+every tool's actual description (`app.keeper.TOOLS` +
+`_SEARCH_SCENARIO_TOOL`), not guessing from the name alone:
 
+**Tier A — always available (12), regardless of combat state:**
 `skill_check`, `sanity_check`, `roll_dice`, `search_scenario`,
-`get_character_sheet`, `adjust_character`, `start_combat`,
-`add_npc_to_combat`, `damage_combatant`, `advance_combat_turn`
+`search_memory`, `get_character_sheet`, `adjust_character`,
+`record_established_fact`, `record_clue`, `add_status_tag`,
+`remove_status_tag`, `clear_pending_check`
 
-10 tools. Missing on purpose (would need a combat-active/inactive dynamic
-split, not a single static list, to add safely): `apply_combat_damage`,
-`get_combat_status`, `plan_enemy_turn`, `resolve_enemy_action`,
-`add_combat_effect`, `end_combat`, `offer_npc_attack_defense_choice`,
-`npc_skill_check` — all real combat-turn tools that a single static
-"always available" list can't safely include without re-introducing the
-`get_combat_status`/`adjust_ammo`-style distractor problem round 3 showed
-for non-combat scenes. This is exactly why item 12 in the parent doc was
-framed as *dynamic* scoping (combat vs. non-combat subset, like Gemini's
-`get_scoped_tools(is_in_combat)` sketch) rather than one fixed list — a
-single static ~10-tool list can cover exploration-and-simple-combat-start
-turns well, but a turn already mid-combat legitimately needs several of
-the excluded tools back. Worth confirming with the user whether the scope
-here is "one static ~10-tool list for the common case" or "a dynamic
-list that's ~10 tools in the non-combat state and something larger while
-`state.combat.active`" before finalizing.
+(Status tags and pending-check clearing look "combat-ish" by name but
+their own descriptions cover both cases equally — e.g. `add_status_tag`'s
+example set is "昏迷/倒地/中毒/著火", at least half of which happen outside
+formal combat too. Excluding these from non-combat scope would be a real
+functional regression, not a safe trim.)
+
+**Tier B — non-combat additions (9), offered only while `not state.combat.active`:**
+`start_combat` (the trigger into combat), `add_carried_item`,
+`remove_carried_item`, `search_scenario_images`, `show_scenario_image`,
+`advance_scenario_chapter`, `send_private_info`, `set_skill`,
+`offer_check_choice`
+
+**Tier C — combat additions (14), offered only while `state.combat.active`:**
+`add_npc_to_combat`, `get_combat_status`, `advance_combat_turn`,
+`damage_combatant`, `apply_combat_damage`, `plan_enemy_turn`,
+`resolve_enemy_action`, `add_combat_effect`, `end_combat`,
+`offer_npc_attack_defense_choice`, `npc_skill_check`,
+`roll_impaling_damage`, `roll_weapon_damage`, `adjust_ammo`
+
+**This is where the "~10" target and full functional coverage conflict,
+worth flagging directly rather than force-fitting a number that doesn't
+hold up:**
+
+- Non-combat total = Tier A + Tier B = **21 tools**, not 10. Getting to
+  10 would mean cutting things players routinely do outside combat —
+  picking up items, viewing scenario images/maps, advancing chapters,
+  recording clues, searching old conversation history — which isn't a
+  safe trim, it's a feature regression dressed up as an optimization.
+- Combat total = Tier A + Tier C = **26 tools**, not far off today's
+  full 35 — combat genuinely needs most of the tool surface (initiative,
+  damage, enemy AI planning, status effects, defense choices all being
+  separate tools is *why* combat turns are the ones burning through
+  `MAX_TOOL_ITERATIONS` in the first place).
+
+**Two ways to actually land near "~10", need the user's call:**
+1. **"~10" means Tier C specifically** (the combat-only *delta* added on
+   top of Tier A when entering combat) — Tier C is 14, close enough to
+   trim toward 10 by, e.g., deferring `plan_enemy_turn`/
+   `resolve_enemy_action` to a still-broader "enemy turn" sub-scope only
+   active on the enemy's initiative slot (finer-grained than just
+   combat/not-combat), or accepting 14 as "close to 10" without forcing
+   an exact count.
+2. **"~10" was this doc's own earlier test design** (the 6-tool scoped
+   set from round 3, expanded toward what the 8 test scenarios needed) —
+   in which case the real target was never "10 total in production", just
+   "roughly what round 3 tested", and the honest production number is
+   Tier A (12) for non-combat, no further trimming needed beyond removing
+   Tier C.
+
+Recommend (1) if the goal is squeezing Executor's prompt as small as
+possible even during combat (more engineering, finer-grained scoping);
+recommend (2) if the goal is mainly fixing the *non-combat* overhead
+(simpler — two static lists, no sub-scoping within combat) since that's
+already a 35→21 reduction (40%) for the common case without touching
+combat turns' tool availability at all. Needs the user's pick before this
+is implementation-ready.
 
 ## Notes
 - No code changes in this branch yet — spec/discussion only, per explicit
