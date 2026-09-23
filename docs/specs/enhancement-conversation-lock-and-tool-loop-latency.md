@@ -140,24 +140,199 @@ stuck" complaint that kicked off this whole investigation, independent of
 whatever happens with the lock/iteration questions. This one seems safe to
 just do without a big design discussion.
 
-## Open questions for the user
+## Decisions (user, after reviewing the above)
 
-1. **Typing indicator** — implement now as its own small PR (low risk,
-   independent of everything else here)? Recommended yes.
-2. **`parallel_tool_calls`** — worth spending time verifying against the
-   real OpenAI API whether the configured model supports it before writing
-   code, or shelve this angle?
-3. **Lock narrowing (OCC-style)** — given it isn't "adding missing safety"
-   but "removing a layer while designing around two real gaps it currently
-   also covers" (cross-tool-call staleness + history-ordering), is this
-   still worth pursuing, and at what priority relative to the other items?
-4. **`MAX_TOOL_ITERATIONS`** — keep at 16 (current, PR #55) and revisit
-   later with real multi-NPC-turn data, or lower it now that the wrap-up
-   fix makes a lower cap safer?
-5. **Macro tools** (`initialize_encounter` etc.) — worth a dedicated spec
-   of its own later, or not a priority right now?
+1. **Lock**: do **not** narrow it into OCC / let two LLM turns for the same
+   conversation actually run concurrently — correctly rejected on the same
+   grounds this doc raised (TRPG turns are a strongly-ordered event chain;
+   two players' actions resolving in parallel risks genuine narrative
+   contradictions, not just a data race). Instead: keep the conversation
+   fully serialized, but stop the *silent* wait — when a message arrives
+   and the conversation lock is already held, immediately send an
+   acknowledgement ("守密人正在處理上一位調查員的行動，你的動作已排入佇
+   列，請稍候……") before awaiting the lock, so the player gets instant
+   feedback instead of tens of seconds of nothing that reads as the bot
+   being dead. This preserves both the multi-step tool-call dependency
+   chain and conversation-history ordering (the actual correctness gaps
+   this doc raised against OCC) while fixing the "looks like it crashed"
+   UX problem.
+2. **Typing indicator**: ship immediately (independent, low-risk win).
+3. **`MAX_TOOL_ITERATIONS`**: final number is **5** (from 16) — low enough
+   to cut off the worst 80+-second chains, relying on PR #55's forced
+   wrap-up so "cut off early" still means real narration, not silence.
+   `HIGH_ITERATION_WATERMARK` = **4** (cap − 1, keeping the "one iteration
+   before actually hitting the wall" gap — a watermark equal to the cap
+   would only ever fire in lockstep with hitting it, which PR #55's
+   wrap-up path already logs on its own and adds no earlier signal).
+4. **`parallel_tool_calls`**: don't reason about it from docs — write a
+   small standalone script hitting the real OpenAI API with the configured
+   model (`gpt-5.6-luna`, `reasoning_effort=medium`) and a prompt that
+   forces multiple simultaneous tool calls (e.g. two independent skill
+   rolls), and see whether it actually parallelizes or 400s the same way
+   `temperature` did. Only add prompt/provider changes once support is
+   confirmed this way. Kept as a standalone experiment, not part of this
+   branch's app code.
+5. **Macro tools** (`initialize_encounter` etc.): backlog. Not part of this
+   latency hotfix — revisit once the front-line UX fixes (typing + queue
+   ack) are stable, since it's a combat-state-machine + tool-schema
+   redesign with real regression-testing cost, same risk class as the
+   melee-tie/ranged-combat rules work done earlier this session.
+
+Execution order: typing indicator + iteration tuning first (fast,
+independent wins), then the queue-ack mechanism (the actual fix for the
+"語塞" complaint that started this whole investigation). `parallel_tool_
+calls` verification runs separately as a throwaway script, not blocking
+anything here.
+
+## Implementation plan (this branch)
+
+- `app/discord_bot.py`: wrap `on_message`'s `await _handle_message(message)`
+  in `async with message.channel.typing():`, started before any lock
+  acquisition so it fires immediately on receipt.
+- `app/config.py`: `MAX_TOOL_ITERATIONS` default 8→5 (the earlier `.env`
+  override on `line-coc-keeper-main-v2` set it to 16 as a stopgap before
+  this decision; that override gets removed/updated to match once this
+  lands and the bot is restarted). `HIGH_ITERATION_WATERMARK` default 4.
+- `app/providers/{openai,anthropic,gemini}_provider.py`: track how many
+  iterations a turn actually used; if it reaches `HIGH_ITERATION_
+  WATERMARK` (4, separate from `MAX_TOOL_ITERATIONS` itself so the alarm
+  threshold can move independently of the hard cap), emit an
+  `observability.event("llm.turn.high_iteration_count", level=WARNING,
+  iteration_count=..., watermark=4)` — greppable/alertable without needing
+  to re-derive it from the per-request `iteration` field already logged on
+  every `llm.request` span.
+- `app/commands/router.py`: a small helper, e.g. `_notify_if_queued
+  (conversation_id, reply)`, called right before each of
+  `_handle_text_message_impl`'s `async with locks.get_conversation_lock
+  (conversation_id):` sites — checks `lock.locked()` and, if true, sends
+  the queued-notice reply before awaiting the lock. Deliberately a
+  best-effort UX hint (there's a benign TOCTOU race between the check and
+  the actual acquire — worst case an unnecessary notice if the lock frees
+  up in between, never a missed one that matters), not a new
+  synchronization primitive.
+
+## Testing Strategy
+- Typing indicator: a test on `on_message` confirming `channel.typing()` is
+  entered around `_handle_message`.
+- `MAX_TOOL_ITERATIONS` default: a config test asserting the new default
+  value (mirroring however existing config defaults are tested, if at all).
+- High-iteration observability event: extend `tests/test_llm_turn_wrapup.py`
+  style mocking — a turn using more than 4 iterations must emit the event
+  with the right count; a turn using 4 or fewer must not.
+- Queue-ack helper: a router-level test with the conversation lock
+  pre-acquired (simulating an in-flight turn), asserting a second message
+  triggers the queued-notice reply before it blocks on the lock; and a
+  case with the lock free asserting no notice is sent.
+- Standard four checks (ruff, mypy, compileall, pytest).
+
+## Second proposal batch: per-call latency (max_tokens, prompt caching, model tiering, reasoning_effort, streaming)
+
+**Critical correction found while checking this against the code: there are
+two separate turn architectures in this codebase, and most of these
+proposals only cleanly apply to one of them.**
+
+- `app/agents/supervisor.py` → `executor.run_executor` (tool-calling loop,
+  its own text output discarded — only the tool calls' side effects and the
+  `MechanicResult` it assembles matter) → `narrator.run_narrator` (a
+  *second*, separate LLM call, no tools, produces the actual reply text).
+  This is the path for ordinary free-text roleplay
+  (`router.py:584`/`_handle_ordinary_text_message_locked`).
+- `app/keeper.py`'s `run_turn`/`_run_turn_impl` — the older, single-call
+  architecture: **one** `provider.run_conversation` call that both decides
+  tool calls *and* has to produce the final narration text itself, no
+  separate Narrator step. Confirmed still live and heavily used: every
+  skill-check-result narration goes through this path
+  (`app/legacy_commands.py:1133`, inside the check-resolution flow — the
+  exact flow behind both "語塞" incidents this whole investigation started
+  from, confirmed via the live log's `agent="keeper"` tag vs. `agent=
+  "executor"`/`"narrator"` for the Supervisor path), plus KP-sudo and
+  system commands (`app/commands/handlers/system.py:659`).
+
+Both share the same `provider.run_conversation` function (which is why PR
+#55's wrap-up fix, living inside that shared function, already covers both
+paths correctly) — but that also means **"Executor doesn't need long
+output" and "give Executor a small/fast model" do not apply to
+`keeper.run_turn`'s single call**, since there it's the only call and it
+has to produce the actual narration. Capping `max_tokens`/turning off
+reasoning/downgrading the model for that path would directly cut narration
+quality on the single most common turn shape in actual play (every dice
+check). Any implementation of items 1/3/4 below needs to target
+`app/agents/executor.py` specifically (where the text output really is
+thrown away), not `run_conversation` itself or `keeper.run_turn`.
+
+### 1. Cap output tokens (Executor: ~300, Narrator: ~250-300 words)
+Valid for `executor.py`'s call specifically (its text is genuinely unused).
+Not valid for `keeper.run_turn`'s single-call path (see above) or for
+`narrator.py` if a tight length cap would clip legitimate longer scene
+descriptions — worth confirming with the user what narration-length
+ceiling is actually acceptable before hardcoding one, rather than assuming
+250-300 characters/words is right for this game's tone.
+
+### 2. Prompt caching / `cached_input_tokens`
+**The proposal's evidence doesn't actually hold up.** Checked the live log:
+only 3 lines anywhere mention `cached_input_tokens`, all from `_create_
+response` (the *synchronous* helper behind `analyze_image`/`analyze_text`
+— PDF/scenario-image OCR calls, unrelated to gameplay turns), because
+that's the only function in `openai_provider.py` that calls
+`observability.usage_fields(response)` at all. The actual turn loop
+(`_create_response_async`, used by every Keeper/Executor/Narrator call)
+**never logs usage/cached-token data in the first place** — its
+`observability.span("llm.request", ..., metrics=request_metrics)` never
+gets `request_metrics` populated with `usage_fields`. So "all requests show
+0 cached tokens" isn't evidence prompt caching is failing — it's evidence
+we're not measuring the calls that would tell us either way.
+
+On the ordering claim specifically: `app/keeper.py:_build_static_prompt`'s
+own docstring says static-first, scenario text bounded/RAG'd rather than
+inlined, and character sheets in the "rare-changing" static block with
+HP/SAN/Luck deliberately kept in `_build_dynamic_prompt` instead — i.e. the
+static/dynamic split this doc's authors already designed for was intended
+to be cache-friendly and matches the proposal's own "correct order"
+recommendation (static things first, per-turn state last). It also notes
+"Gemini's context caching isn't wired up yet" but says nothing suggesting
+OpenAI's is broken.
+
+Recommended first step, before touching prompt structure: add `**
+observability.usage_fields(response)` to `_create_response_async`'s
+`llm.request.completed` span the same way the sync `_create_response`
+already does, ship that alone, and read real `cached_input_tokens` numbers
+from the live log. If they're genuinely low despite the already-
+cache-friendly static/dynamic ordering, *then* there's a real prefix-
+stability bug to chase (e.g. something in `_build_dynamic_prompt` or the
+tool list ordering subtly changing byte-for-byte between calls). Don't
+restructure the prompt before that measurement exists — we'd be guessing
+at a fix for a problem we haven't actually observed yet, the exact mistake
+this whole doc started out correcting in the first proposal.
+
+### 3. Model tiering (small/fast model for Executor, keep the big model for Narrator)
+Directionally reasonable *for the Executor path specifically* (see above),
+but real plumbing cost: `LLM_PROVIDER`/`OPENAI_MODEL`/`KEEPER_REASONING_
+EFFORT` etc. are single global config values shared by every caller of
+`run_conversation`, including the legacy `keeper.run_turn` path. Giving
+Executor its own model means either a new config surface (`EXECUTOR_MODEL`
+etc.) threaded through `executor.py`'s own call, or restructuring
+`run_conversation` to accept a model override — a real design decision
+requiring its own mini-spec (which tool-matching quality bar a cheaper
+model needs to clear across all ~10 tools, tested against real cases, not
+assumed), not a config-flip.
+
+### 4. `reasoning_effort=none`/`low` for Executor specifically
+Same plumbing dependency as #3 (currently one shared `KEEPER_REASONING_
+EFFORT`). Once Executor can be addressed independently, this is a small
+addition on top of that same change — not separate work.
+
+### 5. Streaming
+Real technique for cutting perceived latency (lower TTFT), but two real
+constraints to design around, not just "turn it on": (a) mid-loop tool-call
+decisions can't act on partial/streamed function-call JSON — a token
+stream only helps the *final* narration output, not the multi-round
+tool-calling portion that's actually the bulk of the latency we've been
+chasing; (b) simulating streaming in Discord means repeatedly editing one
+message as text arrives, and Discord aggressively rate-limits message
+edits — a naive "edit on every token" implementation would get throttled
+fast. Needs its own design (batching edits every N tokens/M milliseconds,
+not every token) before this is a real plan, not just an API flag flip.
 
 ## Notes
-- Nothing in this branch should be implemented until the user picks which
-  of the above to actually pursue — this doc is the discussion artifact,
-  not a plan.
+- `parallel_tool_calls` verification is explicitly out-of-band — a
+  throwaway script against the real API, not app code in this branch.
