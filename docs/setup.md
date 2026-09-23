@@ -52,6 +52,26 @@ LOG_FORMAT=json
 
 Async provider 的 timeout、retry、tool loop 與 Scenario RAG prewarm 設定也可在 `.env` 調整；完整變數表見 [API 設定](API.md)。預設仍維持 `KEEPER_REASONING_EFFORT=medium`、`MAX_TOOL_ITERATIONS=8` 與 lazy RAG index，避免未經 benchmark 就增加模型成本。
 
+### 防劇透／隱私／Guard Agent 開關
+
+三個獨立的行為開關，預設皆為 `true`：
+
+```env
+# 劇透防護：章節限制、KP-only 摘要、公開摘要、NPC/Narrator 防劇透 prompt、
+# output guard、/coc index、/coc pregen。KP 可視場次需求關閉（自由劇本、除錯、直播模式）。
+SPOILER_PROTECTION_ENABLED=true
+
+# 隱私隔離：私人 DM、秘密目標、私人手卡/圖片、戰鬥隱藏資訊、敵方傷害過濾。
+# 正式環境強烈建議恆為 true，僅供本機開發/除錯時關閉。
+PRIVACY_ISOLATION_ENABLED=true
+
+# Guard Agent：敘述文字驗證失敗（系統外洩字樣、Markdown 未閉合）時是否呼叫 LLM
+# 修復。驗證檢查本身不受此開關影響，永遠執行；關閉時只記 log、直接送出未修復文字。
+GUARD_ENABLED=true
+```
+
+完整設計見 [防劇透強化設計規格](spoiler-protection-hardening_design_spec.md) 與 [Guard Agent 強化規格](specs/enhancement-guard-agent.md)。
+
 ## 啟動
 
 ```bash

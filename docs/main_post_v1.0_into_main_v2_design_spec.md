@@ -13,7 +13,7 @@
 > | Integration branch | `enhancement/merge-main-post-v1.0` |
 > | Integration branch 最新 changeset | `e3a0db8` |
 > | Pull request | [PR #34](https://github.com/marcoliu99/line-coc-keeper/pull/34)，target=`main_v2` |
-> | PR 狀態 | Open；`characters_by_id` migration review 已修正並標記 resolved |
+> | PR 狀態 | **Merged**（2026-09-19）；`characters_by_id` migration review 已修正並標記 resolved |
 >
 > ### 已完成範圍
 >

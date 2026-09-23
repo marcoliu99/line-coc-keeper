@@ -482,8 +482,10 @@ DamageResolution(
 
 後續可再拆出更高階 tool：
 
-- `create_enemy_combat_card(source_name, stat_block=None, count=1)`
-- `add_enemy_card_to_combat(enemy_card_id)`
+- ~~`create_enemy_combat_card(source_name, stat_block=None, count=1)`~~ / ~~`add_enemy_card_to_combat(enemy_card_id)`~~
+  已實作（`app/combat.py` 的 `create_enemy_card()` / `add_enemy_card_to_combat()`），但**目前只是
+  `add_npc_to_combat()` 內部呼叫的 private helper**，還沒有拆成兩個獨立暴露給 LLM 的 tool——
+  LLM 仍然只能一次呼叫 `add_npc_to_combat` 就完成建卡＋加入戰鬥，不能分兩步驟操作。
 - `get_combat_status(include_private=False)`
 - `apply_combat_effect(target_id, effect)` 若未來需要非傷害 effect 的泛用 schema
 

@@ -110,7 +110,7 @@
 * **角色卡檔（規範前綴：`role_*.txt` 或 `role_*.md`，例如 `role_carter.txt`）**：
   * **識別機制**：檔名以 `role_` 開頭。
   * **處理管線**：自動送入補齊引擎、跨語言比對與擇優融合管線。
-  * **多檔上傳**：確認 GM 幫全團上傳時，有可能把全團角色卡一次拖選進同一則訊息（Discord 原生支援一則訊息多附件）——現有程式碼只處理該則訊息裡第一個符合的 `role_` 附件（`app/discord_bot.py` 的 `role_attachments[0]`），其餘會被靜默忽略，這是需要修的實際 bug，要改成逐一處理該則訊息裡所有 `role_` 開頭附件。
+  * **多檔上傳**：GM 幫全團上傳時，有可能把全團角色卡一次拖選進同一則訊息（Discord 原生支援一則訊息多附件）——**已修復**：`app/discord_bot.py`（`role_attachments` 迴圈，約 1315-1330 行）改成 `for attachment in role_attachments:` 逐一處理該則訊息裡所有 `role_` 開頭附件，不再只看第一個、靜默忽略其餘。
 * **劇本檔（`.pdf`，例如 `scenario_the_haunting.pdf`）**：
   * **識別機制**：所有 `.pdf` 檔案。
   * **處理管線**：解析劇本全文、開場白、NPC/地點索引。

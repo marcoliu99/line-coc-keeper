@@ -42,6 +42,14 @@
 ### 2.2 不包含
 
 - 不記錄完整 user message、完整 prompt、完整 AI response 或劇本全文。
+  **例外（PR #53，見 [Discord 回覆文字 log 規格](specs/enhancement-discord-reply-text-logging.md)）：**
+  `app/discord_bot.py::_log_reply_text()` 會完整記錄公開頻道回覆的 AI 生成敘述文字。這條原則本來針對的是
+  本節定義的**結構化效能 log channel**（`LOG_ENABLED`，記錄 metadata／耗時／token usage），
+  `_log_reply_text()` 走的是另一個獨立的**一般文字 log channel**（`LOG_TEXT_ENABLED`，跟
+  `app/keeper.py` 的 `search_scenario` 查詢字串記錄同一類），加入的動機是「這次 Keeper 到底回覆了
+  什麼」在只有效能數字的情況下完全無法回溯，尤其在追查 AI 延遲／逾時／重試等問題時，需要對照
+  當下實際生成的內容才能判斷延遲是不是跟輸出長度、內容複雜度有關。正式環境若不想把故事內容
+  寫進 log，關閉 `LOG_TEXT_ENABLED` 即可完全跳過這條 log（連同其他所有一般文字 log）。
 - 不記錄 API key、authorization header、Discord token 或其他 secret。
 - 不在本功能內建立 dashboard、ELK、Grafana、Prometheus 或外部 SaaS 上傳。
 - 不改變 AI provider 的選擇、prompt、RAG ranking、tool 行為或遊戲規則。
@@ -52,7 +60,9 @@
 
 1. **先能定位，再追求統計**：每個慢請求必須可以由一個 `request_id` 找回完整事件序列。
 2. **wall-clock 與 elapsed 分離**：timestamp 用 UTC wall-clock；耗時用 `time.perf_counter()`，避免系統時間調整影響 duration。
-3. **不洩漏內容**：只記錄 metadata、長度、token usage 與錯誤類型，不記錄遊戲秘密或 prompt 內容。
+3. **不洩漏內容**：本節指**結構化效能 log channel**（`LOG_ENABLED`）——只記錄 metadata、長度、
+   token usage 與錯誤類型，不記錄遊戲秘密或 prompt 內容。獨立的一般文字 log channel
+   （`LOG_TEXT_ENABLED`）不受此條約束，可視 debug 需求記錄完整文字，見 §2.2 例外說明。
 4. **不阻塞主流程**：runtime 使用 daemon queue listener 將 formatter／檔案 rotation 移出 Discord event loop。
 5. **失敗可降級**：usage metadata 取不到時仍記錄 request completion；觀測失敗不可讓遊戲請求失敗。
 6. **低 cardinality event names**：事件名稱固定，細節放在欄位，不把 user text 或動態內容拼進 event name。
