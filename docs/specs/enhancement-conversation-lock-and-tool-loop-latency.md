@@ -10,7 +10,7 @@ implementing any of it without an explicit go-ahead on a specific option.
 | # | Item | Status |
 |---|---|---|
 | 1 | Typing indicator (`channel.typing()`) | **Decided** — ship |
-| 2 | Queue-ack on `conversation_lock` contention | **Decided** — build (no OCC) |
+| 2 | Queue-ack on `conversation_lock` contention (delayed-notice, ~2s) | **Decided** — build (no OCC) |
 | 3 | `MAX_TOOL_ITERATIONS` → 5, `HIGH_ITERATION_WATERMARK` = 4 | **Decided** |
 | 4 | `parallel_tool_calls` real-API verification | **Decided** — standalone script, out-of-band |
 | 5 | Macro tools (`initialize_encounter` etc.) | **Decided** — backlog |
@@ -20,6 +20,7 @@ implementing any of it without an explicit go-ahead on a specific option.
 | 9 | Model tiering (cheap model for Executor) | **Open** — real plumbing cost, needs its own mini-spec |
 | 10 | `reasoning_effort=none` for Executor | **Open** — depends on #9's plumbing |
 | 11 | Streaming | **Open** — needs its own design (edit-rate-limit batching) |
+| 12 | Dynamic tool scoping (34→combat/non-combat subset) | **Open** — fold into #9/#10's follow-up mini-spec |
 
 Items 1-5 (first batch) are decided and make up this branch's actual
 implementation plan below. Items 6-11 (second batch) are evaluated further
@@ -222,15 +223,16 @@ anything here.
   iteration_count=..., watermark=4)` — greppable/alertable without needing
   to re-derive it from the per-request `iteration` field already logged on
   every `llm.request` span.
-- `app/commands/router.py`: a small helper, e.g. `_notify_if_queued
-  (conversation_id, reply)`, called right before each of
-  `_handle_text_message_impl`'s `async with locks.get_conversation_lock
-  (conversation_id):` sites — checks `lock.locked()` and, if true, sends
-  the queued-notice reply before awaiting the lock. Deliberately a
-  best-effort UX hint (there's a benign TOCTOU race between the check and
-  the actual acquire — worst case an unnecessary notice if the lock frees
-  up in between, never a missed one that matters), not a new
-  synchronization primitive.
+- `app/commands/router.py`: a helper (e.g. `_acquire_conversation_lock_
+  with_notice(conversation_id, reply)`) replacing the bare `async with
+  locks.get_conversation_lock(conversation_id):` at each of `_handle_
+  text_message_impl`'s call sites. Revised design after reviewing a third
+  pass (see "Third batch" below): if the lock isn't immediately available,
+  start a background task that waits ~2.0s and, only if the lock is
+  *still* not acquired by then, sends the queued-notice reply — cancelled
+  the moment the real `lock.acquire()` succeeds. This avoids sending a
+  notice for waits that resolve almost immediately, unlike a plain
+  `lock.locked()` check done once up front.
 
 ## Testing Strategy
 - Typing indicator: a test on `on_message` confirming `channel.typing()` is
@@ -383,6 +385,109 @@ confirm/override.
 5. **Streaming** (item 11) — recommend backlog. Only helps the Narrator's
    final text (not the tool-calling majority of turn latency) and needs its
    own edit-rate-limit-aware design before it's a real plan.
+
+## Third batch: Gemini's code-level review (PDF, fed actual files + log excerpts)
+
+The user had Google Gemini review this same discussion plus actual source
+files (`discord_bot.py`, `locks.py`, `executor.py`, `config.py`) and log
+excerpts. Two of its claims are concrete and checkable — checked both
+directly against the installed library and the live log rather than taking
+them at face value, same as the rest of this doc.
+
+### Typing indicator: Gemini's `_typing_heartbeat()` is unnecessary — verified against the installed discord.py
+Gemini's review says `channel.typing()`/`trigger_typing()` "呼叫一次只能維持約10秒", and since LLM calls run 15s+, it proposes a manual background
+task that resends the typing signal in a loop (`_typing_heartbeat()`,
+`asyncio.wait_for(stop_event.wait(), timeout=8.0)` etc.) wrapped around the
+whole message handler.
+
+**Checked directly against the installed `discord.py` 2.7.1**
+(`python3 -c "import discord.context_managers, inspect;
+print(inspect.getsource(discord.context_managers.Typing))"`) — its
+`Typing.__aenter__` already spawns exactly this kind of background task
+(`do_typing`: `while True: await asyncio.sleep(5); await
+typing(channel.id)`) internally, cancelled cleanly in `__aexit__`. The
+library's own docstring confirms it too: "allows you to send a typing
+indicator to the destination for an indefinite period of time" when used
+as `async with`. So Gemini's premise is simply wrong for the version this
+project has installed — plain `async with message.channel.typing():
+await _handle_message(message)` (this doc's original plan) already
+re-sends the signal every 5 seconds for as long as the block is open, no
+extra heartbeat wrapper needed. Not adopting that part.
+
+### Queue-ack: Gemini's delayed-notice refinement is worth adopting
+Gemini's `_acquire_lock_with_notice()` sketch differs from this doc's
+original `_notify_if_queued` plan in one real way: instead of checking
+`lock.locked()` once and immediately sending a notice if true, it starts a
+background task that only actually sends the notice if the lock is *still*
+unacquired after a short delay (its sketch uses 2.0s), cancelling that task
+the moment the lock is acquired. This avoids sending a "queued" notice for
+a wait that resolves in, say, 200ms — which the original plan would have
+sent every time regardless of how short the wait turned out to be.
+**Adopting this refinement** into the implementation plan above (replacing
+the plain `lock.locked()` check) — same intent, better-tuned to actual wait
+length. Delay value: this doc will use 2.0s to match, unless the user wants
+different.
+
+### Prompt-caching / token numbers: the specific log evidence Gemini used is misattributed
+Gemini's deep-dive cites concrete numbers from the log: `tool_count: 34`,
+`input_tokens: 24864`, `cached_input_tokens: 0`, `output_tokens: 1879`,
+`duration_ms` ~16-18s, and attributes the 16-18s latency to prefill+decode
+of a 24.8k-token/1879-output request in the main Executor/Keeper loop.
+
+Checked both numbers directly:
+- **`tool_count: 34` is accurate** — `len(app.keeper.TOOLS)` really is 34,
+  confirmed by import. This part of the diagnosis (34 tool schemas on
+  every Executor-path call) is real and matches this doc's item 6/7
+  discussion above.
+- **The `input_tokens`/`output_tokens`/`cached_input_tokens` numbers are
+  not from the main conversation loop at all.** Traced the exact log lines
+  by request_id: they're `llm.request.completed` events with `iteration:
+  None` and `agent: None` — every genuine turn-loop request always carries
+  an `iteration` number (0, 1, 2...; confirmed separately in this doc's
+  second-batch section that `_create_response_async`, the real loop,
+  never logs usage fields at all). These specific lines come from
+  `app.providers.openai_provider._create_response` (the *synchronous*
+  helper) being called from `app/keeper.py:3188` — the rolling
+  conversation-history summarization path (`campaign_summary`, mentioned
+  in `MAX_LOG_TURNS`'s config comment), not the Keeper/Executor/Narrator
+  turn loop. A 24.8k-token input for *that* call makes complete sense (it's
+  summarizing a large chunk of old conversation history) and says nothing
+  about whether the main gameplay loop's `instructions` prefix is caching
+  or not — same root issue as this doc's second batch already found (we
+  aren't measuring the calls that would actually answer this question).
+  The `16-18s` duration figure is real and does also occur in genuine
+  turn-loop calls (confirmed: `llm.request.completed` durations across the
+  whole log range up to 18205ms), but without usage logging on those calls
+  we can't attribute it to token count the way Gemini did here — could
+  just as easily be `reasoning_effort=medium`'s thinking-token overhead
+  (which item 2 already flagged as a real, separately-confirmed cost).
+  Doesn't change the recommendation already in this doc (add usage
+  logging to the real loop first) — if anything, reinforces it.
+
+### Model tiering code sketch: real correctness gap for a 3-provider codebase
+Gemini's sketch adds `EXECUTOR_MODEL = os.environ.get("EXECUTOR_MODEL",
+"gpt-4o-mini")` as the *default*. This project supports three providers
+(`LLM_PROVIDER` = openai/anthropic/gemini — see `app/providers/`), and
+`"gpt-4o-mini"` is an OpenAI-specific model id. Defaulting to it
+unconditionally would silently break `EXECUTOR_MODEL` resolution the
+moment `LLM_PROVIDER` is anything else (there's no equivalent-tier
+Anthropic/Gemini model name to fall back to without provider-specific
+defaults). Any real implementation of item 9 (model tiering) needs a
+per-provider default, not a single hardcoded string — worth remembering
+if/when that item comes off the backlog.
+
+### Dynamic tool scoping (`get_scoped_tools(is_in_combat)`): reasonable, adds to the backlog item
+New idea not in the first two batches: filter the 34-tool list down to a
+combat/non-combat subset before sending it to the Executor, with a
+whitelist check in the tool executor to gracefully reject a stale/
+out-of-scope tool call instead of raising. This is a real, well-scoped
+mitigation for the confirmed 34-tool overhead (item 6/7) — narrower and
+less risky than full model tiering since it doesn't change model/reasoning
+behavior, just trims what's offered. Worth folding into the same
+"Executor-path token/latency" follow-up mini-spec as items 9/10 rather
+than doing ad hoc, since getting the combat/non-combat tool split exactly
+right (not hiding something the Keeper legitimately needs mid-scene) needs
+the same care as the rest of that follow-up.
 
 ## Notes
 - `parallel_tool_calls` verification is explicitly out-of-band — a
