@@ -50,7 +50,7 @@ from app.config import (
     SCENE_DIGEST_TURN_INTERVAL,
     TOOL_EXECUTION_TIMEOUT_SECONDS,
 )
-from app.models import BASE_SKILLS, Character, GroupState
+from app.models import BASE_SKILLS, Character, Combatant, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
@@ -1120,6 +1120,28 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
 _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-name fuzzy match
 
 
+def _find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
+    """Exact-match-only lookup of `name` against state.scenario_npc_index's
+    entry names/aliases — no fuzzy fallback. Split out from
+    _find_npc_index_entry (which layers a fuzzy fallback on top of this) for
+    callers where a *wrong* fuzzy match is costly, unlike the HP-consistency
+    check's fuzzy fallback which only ever corrects a number and can't
+    silently drop an entire combatant. See add_npc_to_combat's duplicate
+    guard in _execute_tool for the caller that needs this distinction: it
+    resolves every known alias of the requested name to also catch the same
+    NPC re-added under a different alias, and a fuzzy mismatch there (e.g.
+    matching "深潛者頭目" to the wrong sibling entry "深潛者（幼體）" instead
+    of "深潛者（成年頭目）") would pull in an unrelated entry's aliases and
+    use them to wrongly block a genuinely different enemy from being added."""
+    if not name:
+        return None
+    for entry in state.scenario_npc_index:
+        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
+        if name in candidates:
+            return entry
+    return None
+
+
 def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     """Looks up `name` (whatever the Keeper called this NPC/monster when
     calling add_npc_to_combat) against state.scenario_npc_index — exact match
@@ -1132,10 +1154,9 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     in that case, same as before this existed."""
     if not name:
         return None
-    for entry in state.scenario_npc_index:
-        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
-        if name in candidates:
-            return entry
+    exact = _find_npc_index_entry_exact(state, name)
+    if exact is not None:
+        return exact
 
     import difflib
 
@@ -1151,6 +1172,26 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
                 best_ratio = ratio
                 best_entry = entry
     return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
+
+
+def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
+    """A non-defeated enemy-side combatant matching `name` or, if `name`
+    exactly matches a /coc index entry, any of that entry's other known
+    aliases — deliberately exact-match only at every step (see
+    combat.find_live_enemy's own docstring for why substring/fuzzy matching
+    would be actively harmful here). Shared by the add_npc_to_combat tool
+    handler and the /coc combat addnpc slash command so a duplicate can't
+    slip in through whichever path skips the other's check."""
+    candidate_names = {name}
+    index_entry = _find_npc_index_entry_exact(state, name)
+    if index_entry is not None:
+        candidate_names.add(index_entry.get("name", name))
+        candidate_names.update(index_entry.get("aliases") or [])
+    for candidate in candidate_names:
+        existing = combat.find_live_enemy(state, candidate)
+        if existing is not None:
+            return existing
+    return None
 
 
 def _sync_state_snapshot(target: GroupState, source: GroupState) -> None:
@@ -2496,7 +2537,7 @@ def _execute_tool(
         if name == "add_npc_to_combat":
             npc_name = tool_input["name"]
             requested_hp = int(tool_input.get("hp", 10))
-            def _mutate_add_npc(target_state: GroupState) -> str:
+            def _mutate_add_npc(target_state: GroupState) -> _StateMutation[str]:
                 _ensure_auto_combat_checkpoint(target_state)
                 hp = requested_hp
                 index_note = ""
@@ -2523,32 +2564,21 @@ def _execute_tool(
                 # independent HP pool instead of being recognized as the fight
                 # it's already in. Scoped to the enemy side only: a defeated
                 # duplicate is not matched, so a monster narratively coming
-                # back can still be added fresh.
-                #
-                # find_live_enemy itself only does exact matching (see its
-                # docstring for why substring matching would wrongly collide
-                # e.g. "Cultist" with "Cultist Leader") — so a duplicate
-                # under a *different* /coc index alias of the same entity
-                # (e.g. this call used "柯比特", an earlier call used "Walter
-                # Corbitt") would otherwise slip through as exact-string
-                # mismatches. Check every known alias of npc_name, not just
-                # npc_name itself, using the same index_entry already
-                # resolved above for the HP check.
-                existing = None
-                if not is_ally:
-                    candidate_names = {npc_name}
-                    if index_entry is not None:
-                        candidate_names.add(index_entry.get("name", npc_name))
-                        candidate_names.update(index_entry.get("aliases") or [])
-                    for candidate in candidate_names:
-                        existing = combat.find_live_enemy(target_state, candidate)
-                        if existing is not None:
-                            break
+                # back can still be added fresh. Also catches the same NPC
+                # re-added under a different /coc index alias (e.g. this call
+                # used "柯比特", an earlier call used "Walter Corbitt") via
+                # find_live_enemy_by_any_alias — see its own docstring, and
+                # _find_npc_index_entry_exact's for why that alias resolution
+                # deliberately does NOT use the fuzzy fallback the HP check
+                # above does (a wrong fuzzy match here would silently block a
+                # genuinely different enemy, not just misprice one).
+                existing = None if is_ally else find_live_enemy_by_any_alias(target_state, npc_name)
                 if existing is not None:
-                    return (
+                    return _StateMutation(
                         f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
                         "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
-                        "add_npc_to_combat。）"
+                        "add_npc_to_combat。）",
+                        should_save=False,
                     )
                 combat.add_npc(
                     target_state,
@@ -2560,7 +2590,7 @@ def _execute_tool(
                     attacks=tool_input.get("attacks"),
                     abilities=tool_input.get("abilities"),
                 )
-                return index_note
+                return _StateMutation(index_note, should_save=True)
             index_note = _mutate_and_save_state(state, _mutate_add_npc)
             response = {"ok": True, "status": combat.status_text(state)}
             if index_note:

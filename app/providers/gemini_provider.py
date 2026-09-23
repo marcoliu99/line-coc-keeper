@@ -215,12 +215,17 @@ async def run_conversation(
                             wrapup_once, provider="gemini", operation="generate_content",
                             request_id=logical_request_id,
                         )
-            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
-                observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="gemini")
-            else:
+                # .text is a property that can itself raise (e.g. the SDK
+                # raises ValueError/AttributeError when the response was
+                # safety-blocked or has no valid candidate) — kept inside
+                # this try, not in a separate else clause, so that failure
+                # is also caught and falls back to the placeholder instead
+                # of raising out of run_conversation entirely.
                 wrapup_text = (wrapup_response.text or "").strip()
                 if wrapup_text:
                     final_text = wrapup_text
+            except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
+                observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="gemini")
 
     return final_text
 

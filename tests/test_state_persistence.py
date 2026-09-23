@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import checkpoints, db, keeper, scene_digest
+from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import system as system_handler
 from app.commands.handlers.system import _replace_scene_maps_preserving_locations
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
@@ -592,6 +593,81 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertNotIn("note", result)
         enemy_names = sorted(c.name for c in state.combat.order if c.side == "enemy")
         self.assertEqual(enemy_names, ["Cultist", "Cultist Leader"])
+
+    def test_add_npc_to_combat_alias_resolution_does_not_use_fuzzy_matching(self):
+        # Second-round review finding: the duplicate guard's alias expansion
+        # originally reused _find_npc_index_entry, which has a difflib fuzzy
+        # fallback (ratio >= 0.6) meant for the HP-consistency check, where a
+        # wrong guess only mis-prices one number. Reused for duplicate
+        # detection, a wrong fuzzy match would pull in an unrelated entry's
+        # aliases and use them to wrongly block a genuinely different enemy.
+        # "深潛者頭目" is deliberately missing the "（成年頭目）" suffix so it
+        # doesn't exactly match either index entry — under the old fuzzy
+        # behavior this could resolve to the wrong entry's alias set.
+        state = GroupState("discord-group-fuzzy-alias")
+        state.scenario_npc_index = [
+            {"name": "深潛者（成年頭目）", "aliases": [], "hp": 30},
+            {"name": "深潛者（幼體）", "aliases": [], "hp": 8},
+        ]
+        group_state.save_state(state)
+        keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "深潛者（成年頭目）", "dex": 50, "hp": 30}, [], [],
+        )
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "深潛者頭目", "dex": 50, "hp": 30}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("note", result)
+        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 2)
+
+    def test_add_npc_to_combat_duplicate_rejection_does_not_write_a_no_op_save(self):
+        # Second-round review finding: the duplicate-rejection early return
+        # didn't use the _StateMutation(value, should_save=False) pattern
+        # already established for other genuine no-op tool calls (see
+        # add_carried_item/remove_carried_item/add_status_tag/
+        # remove_status_tag), so every rejected duplicate call persisted a
+        # pointless extra write.
+        state = GroupState("discord-group-dup-no-save")
+        group_state.save_state(state)
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+        revision_before = group_state.load_state(state.group_id).state_revision
+
+        result = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("note", result)
+        revision_after = group_state.load_state(state.group_id).state_revision
+        self.assertEqual(revision_after, revision_before)
+
+    def test_combat_addnpc_slash_command_rejects_duplicate_live_enemy(self):
+        # Second-round review finding: the duplicate-enemy guard only lived
+        # in the Keeper LLM tool handler, not in combat.add_npc itself, so
+        # a human operator running /coc combat addnpc twice for the same
+        # live enemy bypassed it entirely and reproduced the original bug.
+        group_id = "discord-group-slash-dup"
+        state = GroupState(group_id)
+        group_state.save_state(state)
+        replies: list[str] = []
+
+        async def reply(text: str) -> None:
+            replies.append(text)
+
+        asyncio.run(combat_handler.handle_combat_command(
+            group_id, reply, ["/coc", "combat", "addnpc", "柯比特", "50", "20"],
+        ))
+        asyncio.run(combat_handler.handle_combat_command(
+            group_id, reply, ["/coc", "combat", "addnpc", "柯比特", "50", "20"],
+        ))
+
+        reloaded = group_state.load_state(group_id)
+        enemy_count = sum(1 for c in reloaded.combat.order if c.side == "enemy")
+        self.assertEqual(enemy_count, 1)
+        self.assertIn("已經在戰鬥中", replies[-1])
 
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")

@@ -232,6 +232,40 @@ class GeminiWrapupTests(unittest.TestCase):
 
         self.assertEqual(result, PLACEHOLDER)
 
+    def test_keeps_placeholder_when_wrapup_response_text_property_raises(self):
+        # Second-round review finding: `.text` is a property on the
+        # google-genai response object that can itself raise (e.g. the
+        # response was safety-blocked or has no valid candidate) - that
+        # access used to sit outside the try/except meant to guarantee this
+        # never propagates out of run_conversation.
+        from app.providers import gemini_provider
+
+        class _RaisingText:
+            @property
+            def text(self):
+                raise ValueError("no valid candidate")
+
+        fake_client = MagicMock()
+        fake_client.models.generate_content = AsyncMock(
+            side_effect=[self._function_call_response(), _RaisingText()]
+        )
+        fake_client.aio = fake_client
+
+        fake_genai_module = MagicMock()
+        fake_genai_module.Client = MagicMock(return_value=fake_client)
+        fake_types_module = MagicMock()
+        fake_types_module.Part.from_function_response = MagicMock(return_value=MagicMock())
+
+        with patch.dict(
+            "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
+        ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"):
+            result = asyncio.run(gemini_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 1
+            ))
+            asyncio.run(gemini_provider.shutdown_async_client())
+
+        self.assertEqual(result, PLACEHOLDER)
+
     def test_enable_wrapup_false_skips_the_extra_call(self):
         from app.providers import gemini_provider
 
