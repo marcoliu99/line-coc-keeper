@@ -513,6 +513,13 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
     def test_successful_dive_gives_attacker_a_penalty_die(self):
         state = _state_with_investigator()
         state.active = True
+        # luck=0 genuinely leaves no affordable buyable_options (real
+        # app/luck.py math, not mocked) so the Luck buy-up decision — now
+        # offered for ANY affordable tier-improving option, not just
+        # near-misses, see docs/specs/enhancement-luck-buyup-always-
+        # offered.md — can't trigger and interrupt what this test actually
+        # means to exercise: the ranged attacker's penalty-die carry-through.
+        state.characters["u1"].luck = 0
         with StateStorePatch(keeper, legacy_commands) as store:
             store.put(state)
             keeper._execute_tool(
@@ -533,17 +540,10 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
                 skill_value=55, roll=90, bonus_dice=0, penalty_dice=1,
                 tier="fail", success=False, required_tier="regular",
             )
-            # The Luck buy-up decision is now offered for ANY affordable
-            # tier-improving option, not just near-misses (see docs/specs/
-            # enhancement-luck-buyup-always-offered.md) — no roll value can
-            # dodge it anymore if a cheaper tier exists, so this test
-            # explicitly bypasses that branch (unrelated to what it means to
-            # exercise: the ranged attacker's penalty-die carry-through).
             with patch(
                 "app.legacy_commands.dice.skill_check",
                 side_effect=[dive_success_roll, attacker_miss_roll],
-            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock, \
-                    patch("app.legacy_commands.luck.buyable_options", return_value=[]):
+            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock:
                 resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
 
         resolve_opposed_mock.assert_not_called()
@@ -559,6 +559,9 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
     def test_failed_dive_gives_attacker_no_penalty_die(self):
         state = _state_with_investigator()
         state.active = True
+        # See test_successful_dive_gives_attacker_a_penalty_die above for why
+        # luck=0 (leaving no affordable buyable_options for real) is set here.
+        state.characters["u1"].luck = 0
         with StateStorePatch(keeper, legacy_commands) as store:
             store.put(state)
             keeper._execute_tool(
@@ -579,13 +582,10 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
                 skill_value=55, roll=30, bonus_dice=0, penalty_dice=0,
                 tier="regular", success=True, required_tier="regular",
             )
-            # See test_successful_dive_gives_attacker_a_penalty_die above for
-            # why buyable_options is patched to [] here too.
             with patch(
                 "app.legacy_commands.dice.skill_check",
                 side_effect=[dive_fail_roll, attacker_hit_roll],
-            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock, \
-                    patch("app.legacy_commands.luck.buyable_options", return_value=[]):
+            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock:
                 resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
 
         resolve_opposed_mock.assert_not_called()
@@ -650,6 +650,12 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
         # weaker Fight Back roll" without hitting that filter.
         state = _state_with_investigator()
         state.active = True
+        # luck=0 genuinely leaves no affordable buyable_options (real
+        # app/luck.py math, not mocked) — see RangedDefenseEndToEndTests
+        # above — so this test means to exercise the attacker-tier
+        # comparison, not the (now much more frequently offered) Luck
+        # buy-up decision.
+        state.characters["u1"].luck = 0
         with StateStorePatch(keeper, legacy_commands) as store:
             store.put(state)
             with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="extreme")):
@@ -669,12 +675,7 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
                 skill_value=60, roll=50, bonus_dice=0, penalty_dice=0,
                 tier="regular", success=True, required_tier="regular",
             )
-            # See RangedDefenseEndToEndTests above for why buyable_options is
-            # patched to [] — this test means to exercise the attacker-tier
-            # comparison, not the (now much more frequently offered) Luck
-            # buy-up decision.
-            with patch("app.legacy_commands.dice.skill_check", return_value=defender_roll), \
-                    patch("app.legacy_commands.luck.buyable_options", return_value=[]):
+            with patch("app.legacy_commands.dice.skill_check", return_value=defender_roll):
                 resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 反擊")
             saved_state = store.store["g"]
 
