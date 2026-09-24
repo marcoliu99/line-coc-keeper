@@ -229,13 +229,14 @@ implementation work either way.
   iteration_count=..., watermark=4)` — greppable/alertable without needing
   to re-derive it from the per-request `iteration` field already logged on
   every `llm.request` span.
-- `app/commands/router.py`: a helper (e.g. `_acquire_conversation_lock_
-  with_notice(conversation_id, reply)`) replacing the bare `async with
-  locks.get_conversation_lock(conversation_id):` at each of `_handle_
-  text_message_impl`'s call sites. If the lock isn't immediately available,
-  start a background task that waits ~10.0s and, only if the lock is
-  *still* not acquired by then, sends the queued-notice reply — cancelled
-  the moment the real `lock.acquire()` succeeds. This avoids sending a
+- `app/commands/router.py`: lock wait helpers start a background task that
+  waits ~10.0s and, only if the required lock(s) are still not acquired,
+  sends the queued-notice reply. For Keeper turns with a KP Assistant,
+  start the timer before waiting on `get_keeper_priority_gate`, then acquire
+  that gate followed by the conversation lock; this covers the whole queue
+  interval while preserving the existing lock order. For other call sites,
+  time only the conversation-lock wait. Cancel the task once acquisition
+  completes. This avoids sending a
   notice for waits that resolve almost immediately, unlike a plain
   `lock.locked()` check done once up front (this refinement came from
   reviewing Google Gemini's own take on this same design — see the
@@ -250,10 +251,10 @@ implementation work either way.
 - High-iteration observability event: extend `tests/test_llm_turn_wrapup.py`
   style mocking — a turn using more than 4 iterations must emit the event
   with the right count; a turn using 4 or fewer must not.
-- Queue-ack helper: a router-level test with the conversation lock
-  pre-acquired (simulating an in-flight turn), asserting a second message
-  triggers the queued-notice reply before it blocks on the lock; and a
-  case with the lock free asserting no notice is sent.
+- Queue-ack helper: router-level tests for a contended conversation lock
+  and a contended KP priority gate, asserting a long wait triggers one
+  notice before acquisition completes; quick lock/gate acquisition must
+  send no notice.
 - Standard four checks (ruff, mypy, compileall, pytest).
 
 ## Prompt caching — verified working, closed

@@ -139,6 +139,87 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
 
         self.assertFalse(still_locked)
 
+    def test_priority_gate_wait_is_included_in_queue_notice_delay(self):
+        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.02):
+            async def scenario() -> tuple[list[str], bool, bool]:
+                replies: list[str] = []
+
+                async def reply(message: str) -> None:
+                    replies.append(message)
+
+                gate = locks._keeper_priority_gates.setdefault(
+                    "conv-priority-wait", locks._KeeperPriorityGate()
+                )
+                await gate.acquire(is_kp=False)
+                lock = locks.get_conversation_lock("conv-priority-wait")
+                await lock.acquire()
+                lock.release()  # matches the real turn releasing this before its priority gate
+
+                waiter = asyncio.create_task(
+                    self._run_priority_wait("conv-priority-wait", reply)
+                )
+                await asyncio.sleep(0.06)
+                notice_was_sent_before_gate_release = len(replies) == 1
+                gate.release()
+                await waiter
+                return replies, notice_was_sent_before_gate_release, lock.locked() or gate.active
+
+            replies, notice_before_gate_release, any_lock_left_held = asyncio.run(scenario())
+
+        self.assertEqual(len(replies), 1)
+        self.assertTrue(notice_before_gate_release)
+        self.assertIn("排入佇列", replies[0])
+        self.assertFalse(any_lock_left_held)
+
+    async def _run_priority_wait(self, conversation_id: str, reply) -> None:
+        async with router._keeper_priority_gate_and_lock_with_notice(
+            conversation_id, is_kp=False, reply=reply
+        ):
+            pass
+
+    def test_priority_wait_that_resolves_before_delay_sends_no_notice(self):
+        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.2):
+            async def scenario() -> list[str]:
+                replies: list[str] = []
+
+                async def reply(message: str) -> None:
+                    replies.append(message)
+
+                gate = locks._keeper_priority_gates.setdefault(
+                    "conv-priority-quick", locks._KeeperPriorityGate()
+                )
+                await gate.acquire(is_kp=False)
+                waiter = asyncio.create_task(
+                    self._run_priority_wait("conv-priority-quick", reply)
+                )
+                await asyncio.sleep(0.02)
+                gate.release()
+                await waiter
+                return replies
+
+            replies = asyncio.run(scenario())
+
+        self.assertEqual(replies, [])
+
+    def test_priority_gate_and_lock_are_released_when_body_raises(self):
+        async def scenario() -> tuple[bool, bool]:
+            async def reply(_message: str) -> None:
+                pass
+
+            conversation_id = "conv-priority-body-raises"
+            with self.assertRaisesRegex(RuntimeError, "handler failed"):
+                async with router._keeper_priority_gate_and_lock_with_notice(
+                    conversation_id, is_kp=False, reply=reply
+                ):
+                    raise RuntimeError("handler failed")
+            gate = locks._keeper_priority_gates[conversation_id]
+            lock = locks.get_conversation_lock(conversation_id)
+            return gate.active, lock.locked()
+
+        gate_active, lock_held = asyncio.run(scenario())
+        self.assertFalse(gate_active)
+        self.assertFalse(lock_held)
+
 
 if __name__ == "__main__":
     unittest.main()

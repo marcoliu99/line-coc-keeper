@@ -416,6 +416,16 @@ async def _delayed_queue_notice(reply: Reply) -> None:
         observability.event("queue_ack.notice_failed", level=logging.WARNING)
 
 
+async def _stop_queue_notice_task(notify_task: asyncio.Task[None]) -> None:
+    notify_task.cancel()
+    try:
+        await notify_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:  # noqa: BLE001 - notice delivery must not affect lock cleanup
+        observability.event("queue_ack.notify_task_failed", level=logging.WARNING)
+
+
 @asynccontextmanager
 async def _conversation_lock_with_notice(conversation_id: str, reply: Reply) -> AsyncIterator[None]:
     """Acquires the per-conversation lock, but doesn't leave a queued
@@ -448,17 +458,35 @@ async def _conversation_lock_with_notice(conversation_id: str, reply: Reply) -> 
         try:
             await lock.acquire()
         finally:
-            notify_task.cancel()
-            try:
-                await notify_task
-            except asyncio.CancelledError:
-                pass  # expected: this is the normal case where cancel() actually won the race
-            except Exception:  # noqa: BLE001 - see docstring: must never block releasing the lock below
-                observability.event("queue_ack.notify_task_failed", level=logging.WARNING)
+            await _stop_queue_notice_task(notify_task)
     try:
         yield
     finally:
         lock.release()
+
+
+@asynccontextmanager
+async def _keeper_priority_gate_and_lock_with_notice(
+    conversation_id: str, *, is_kp: bool, reply: Reply
+) -> AsyncIterator[None]:
+    """Notify after a long wait for either Keeper scheduling gate.
+
+    Start the timer before the priority gate because that gate serializes
+    turns ahead of the conversation lock. Once the priority gate is
+    acquired, acquire the conversation lock in the established order, then
+    cancel the single notice task before entering the handler body.
+    """
+    notify_task = asyncio.ensure_future(_delayed_queue_notice(reply))
+    try:
+        async with (
+            locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp),
+            locks.get_conversation_lock(conversation_id),
+        ):
+            await _stop_queue_notice_task(notify_task)
+            yield
+    finally:
+        if not notify_task.done():
+            await _stop_queue_notice_task(notify_task)
 
 
 async def _handle_text_message_impl(
@@ -590,7 +618,9 @@ async def _handle_text_message_impl(
         return
 
     is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
-    async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp_priority), _conversation_lock_with_notice(conversation_id, reply):
+    async with _keeper_priority_gate_and_lock_with_notice(
+        conversation_id, is_kp=is_kp_priority, reply=reply
+    ):
         await _handle_ordinary_text_message_locked(
             conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
         )
