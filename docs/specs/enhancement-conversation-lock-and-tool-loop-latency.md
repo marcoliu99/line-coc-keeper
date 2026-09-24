@@ -366,13 +366,12 @@ adapter uses the Responses API (`instructions` field + `input` list,
 `response.output` filtered for `function_call` items), so it'd need
 translating either way, same as every other pasted proposal so far.
 
-**Not swapping PR #55's already-shipped, four-times-reviewed design for
-this without the user explicitly deciding the one-call latency saving is
-worth trading against tool-calling headroom** — recommend keeping PR #55's
-version as-is unless real production data (once the first-batch fixes here
-are live) shows turns are *still* frequently exhausting all 5 iterations
-even with the wrap-up safety net, at which point this would be a
-reasonable thing to reconsider with actual numbers instead of guessing.
+**Decided: keeping PR #55's shipped design as-is, not swapping to this.**
+User confirmed the one-call latency saving isn't worth trading away a
+round of tool-calling headroom out of an already-tight 5-iteration budget.
+Revisit only if real production data (once the first-batch fixes here are
+live) shows turns still frequently exhausting all 5 iterations even with
+the wrap-up safety net.
 
 ### Layer 3 (hard-cap search_scenario to 1 call per turn) — no evidence this problem actually exists
 The proposal assumes repeated `search_scenario` calls are "鬼打牆"
