@@ -76,6 +76,30 @@ change whose effect can only be confirmed empirically, not reasoned out.
   logic — this is a guidance/description problem, not a bug in what the
   function itself does.
 
+## Real-API verification
+
+Reconstructed the real incident: combat active, Ken's turn, user message
+"Ken 拉著 Marco 想從狹窄的爬行空間逃離火場，兩人都還沒逃出去" (matching
+the real escape-through-crawlspace scenario), `get_combat_status`/
+`skill_check`/`damage_combatant`/`advance_combat_turn` offered, real
+multi-round tool-calling loop against `gpt-6-luna`/`none` (this
+deployment's real Executor config). `advance_combat_turn`'s synthetic
+tool result always returns `current_turn: "Ken"` (matching the real
+`combat.advance_turn`'s actual behavior — it won't skip a combatant just
+because it's called again; Ken's turn genuinely isn't resolved).
+
+| Config | Tool sequence | `advance_combat_turn` spam count |
+|---|---|---|
+| OLD (current) | `get_combat_status → advance_combat_turn → advance_combat_turn → get_combat_status → advance_combat_turn → get_combat_status → advance_combat_turn → advance_combat_turn` | 5, hit max_rounds (8) without ever calling `skill_check` |
+| NEW (drafted) | `get_combat_status → skill_check` | 0 — converged in 2 rounds |
+
+**This is a clean, direct reproduction and fix of the real incident**: OLD
+exactly matches the production log's pattern (repeated `advance_combat_
+turn`/`get_combat_status` calls, never reaching `skill_check`, exhausting
+the iteration budget). NEW converges immediately once the description
+tells it what to do when the current combatant's turn is blocked on an
+unresolved check.
+
 ## Testing Strategy
 
 - Real-API verification first (per explicit instruction): construct a
