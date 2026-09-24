@@ -461,6 +461,12 @@ async def run_conversation(
                     "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",
                 )
 
+    iterations_used = iteration + 1
+    if iterations_used >= config.HIGH_ITERATION_WATERMARK:
+        observability.event(
+            "llm.turn.high_iteration_count", level=logging.WARNING, provider="openai",
+            iteration_count=iterations_used, watermark=config.HIGH_ITERATION_WATERMARK,
+        )
     return final_text
 
 

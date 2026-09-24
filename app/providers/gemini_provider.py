@@ -20,6 +20,7 @@ from app import observability
 from app.config import (
     GEMINI_API_KEY,
     GEMINI_MODEL,
+    HIGH_ITERATION_WATERMARK,
     KEEPER_TEMPERATURE,
     LLM_REQUEST_TIMEOUT_SECONDS,
     LOG_INCLUDE_USAGE,
@@ -110,6 +111,7 @@ async def run_conversation(
     contents.append(types.Content(role="user", parts=[types.Part(text=new_message)]))
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
+    iteration = -1
     for iteration in range(max_iterations):
         observability.increment_metric("iteration_count")
         request_metrics: dict[str, int | None] = {}
@@ -227,6 +229,12 @@ async def run_conversation(
             except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
                 observability.event("llm.turn.wrapup_failed", level=logging.WARNING, provider="gemini")
 
+    iterations_used = iteration + 1
+    if iterations_used >= HIGH_ITERATION_WATERMARK:
+        observability.event(
+            "llm.turn.high_iteration_count", level=logging.WARNING, provider="gemini",
+            iteration_count=iterations_used, watermark=HIGH_ITERATION_WATERMARK,
+        )
     return final_text
 
 
