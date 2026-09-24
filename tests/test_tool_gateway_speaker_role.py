@@ -50,6 +50,12 @@ class ToolGatewayDelegatesToSpeakerRoleTests(unittest.TestCase):
         self.assertLess(
             _tool_names(gateway_tools), _tool_names(tool_gateway.tools_for_speaker_role("player")),
         )
+        kp_roll_dice = next(tool for tool in gateway_tools if tool["name"] == "roll_dice")
+        player_roll_dice = next(
+            tool for tool in tool_gateway.tools_for_speaker_role("player") if tool["name"] == "roll_dice"
+        )
+        self.assertIn("roll_context", kp_roll_dice["input_schema"]["properties"])
+        self.assertNotIn("roll_context", player_roll_dice["input_schema"]["properties"])
 
 
 class ExecutorComputesToolsPerTurnTests(unittest.IsolatedAsyncioTestCase):
