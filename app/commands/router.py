@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 
 from app import help_service, locks, observability
 from app.agents import supervisor
@@ -403,6 +404,91 @@ async def handle_text_message(
         )
 
 
+_QUEUE_ACK_DELAY_SECONDS = 10.0
+_QUEUE_ACK_MESSAGE = "🕒 守密人正在處理上一位調查員的行動，你的動作已排入佇列，請稍候……"
+
+
+async def _delayed_queue_notice(reply: Reply) -> None:
+    await asyncio.sleep(_QUEUE_ACK_DELAY_SECONDS)
+    try:
+        await reply(_QUEUE_ACK_MESSAGE)
+    except Exception:  # noqa: BLE001 - best-effort UX hint, must never affect whether the lock gets released
+        observability.event("queue_ack.notice_failed", level=logging.WARNING)
+
+
+async def _stop_queue_notice_task(notify_task: asyncio.Task[None]) -> None:
+    notify_task.cancel()
+    try:
+        await notify_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:  # noqa: BLE001 - notice delivery must not affect lock cleanup
+        observability.event("queue_ack.notify_task_failed", level=logging.WARNING)
+
+
+@asynccontextmanager
+async def _conversation_lock_with_notice(conversation_id: str, reply: Reply) -> AsyncIterator[None]:
+    """Acquires the per-conversation lock, but doesn't leave a queued
+    message waiting in silence: if the lock is already held, a background
+    task sends a queued-notice reply only if the wait is *still* ongoing
+    after ~10s — cancelled the moment the real acquire succeeds. A wait
+    that resolves before then never triggers a notice at all; `typing()`
+    (see app/discord_bot.py's on_message) is already running for the whole
+    wait regardless, so this only needs to catch genuinely long waits
+    instead of adding a second signal on top of typing() for short ones.
+    See docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md
+    for the full design discussion (this deliberately does not narrow the
+    lock itself — see that doc for why an OCC-style rewrite was rejected).
+
+    Review finding fixed here: `_delayed_queue_notice` already swallows its
+    own `reply()` failures, but this cleanup also catches *any* exception
+    from awaiting the notify task (not just `CancelledError`) as a second
+    line of defense — if that cleanup ever let an exception through, it
+    would escape before the `lock.release()` below ever runs, permanently
+    leaking a lock that *was* successfully acquired and deadlocking every
+    future command in that conversation until the process restarts. The
+    notify task's own outcome must never be allowed to affect whether the
+    lock we already hold gets released.
+    """
+    lock = locks.get_conversation_lock(conversation_id)
+    if not lock.locked():
+        await lock.acquire()
+    else:
+        notify_task = asyncio.ensure_future(_delayed_queue_notice(reply))
+        try:
+            await lock.acquire()
+        finally:
+            await _stop_queue_notice_task(notify_task)
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+@asynccontextmanager
+async def _keeper_priority_gate_and_lock_with_notice(
+    conversation_id: str, *, is_kp: bool, reply: Reply
+) -> AsyncIterator[None]:
+    """Notify after a long wait for either Keeper scheduling gate.
+
+    Start the timer before the priority gate because that gate serializes
+    turns ahead of the conversation lock. Once the priority gate is
+    acquired, acquire the conversation lock in the established order, then
+    cancel the single notice task before entering the handler body.
+    """
+    notify_task = asyncio.ensure_future(_delayed_queue_notice(reply))
+    try:
+        async with (
+            locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp),
+            locks.get_conversation_lock(conversation_id),
+        ):
+            await _stop_queue_notice_task(notify_task)
+            yield
+    finally:
+        if not notify_task.done():
+            await _stop_queue_notice_task(notify_task)
+
+
 async def _handle_text_message_impl(
     conversation_id: str,
     user_id: str,
@@ -446,7 +532,7 @@ async def _handle_text_message_impl(
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
         try:
-            async with locks.get_conversation_lock(conversation_id):
+            async with _conversation_lock_with_notice(conversation_id, reply):
                 await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
         finally:
             locks.release_check(conversation_id, user_id)
@@ -458,7 +544,7 @@ async def _handle_text_message_impl(
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
         try:
-            async with locks.get_conversation_lock(conversation_id):
+            async with _conversation_lock_with_notice(conversation_id, reply):
                 if choice.casefold() == "roll":
                     await handle_pregen_luck_roll(conversation_id, user_id, reply)
                 else:
@@ -475,12 +561,12 @@ async def _handle_text_message_impl(
         sub = parts[1] if len(parts) > 1 else "help"
 
         if sub == "combat":
-            async with locks.get_conversation_lock(conversation_id):
+            async with _conversation_lock_with_notice(conversation_id, reply):
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
         if sub in _CHARACTER_COMMANDS:
-            async with locks.get_conversation_lock(conversation_id):
+            async with _conversation_lock_with_notice(conversation_id, reply):
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
 
@@ -500,7 +586,7 @@ async def _handle_text_message_impl(
                     is_keeper,
                 )
             else:
-                async with locks.get_conversation_lock(conversation_id):
+                async with _conversation_lock_with_notice(conversation_id, reply):
                     await system_handler.handle_system_command(
                         conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
                         is_keeper,
@@ -508,11 +594,11 @@ async def _handle_text_message_impl(
             return
 
         if sub in _MAP_COMMANDS:
-            async with locks.get_conversation_lock(conversation_id):
+            async with _conversation_lock_with_notice(conversation_id, reply):
                 await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts)
             return
 
-        async with locks.get_conversation_lock(conversation_id):
+        async with _conversation_lock_with_notice(conversation_id, reply):
             state = load_state(conversation_id)
             await reply(help_service.get_page(state, user_id).text)
         return
@@ -525,14 +611,16 @@ async def _handle_text_message_impl(
     # see app/locks.py's get_keeper_priority_gate docstring.
     scheduling_state = load_state(conversation_id)
     if not scheduling_state.kp_assistant_user_id:
-        async with locks.get_conversation_lock(conversation_id):
+        async with _conversation_lock_with_notice(conversation_id, reply):
             await _handle_ordinary_text_message_locked(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
             )
         return
 
     is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
-    async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp_priority), locks.get_conversation_lock(conversation_id):
+    async with _keeper_priority_gate_and_lock_with_notice(
+        conversation_id, is_kp=is_kp_priority, reply=reply
+    ):
         await _handle_ordinary_text_message_locked(
             conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
         )

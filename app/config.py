@@ -104,7 +104,21 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", "240000"))
 # campaign_summary pass.
 MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", "40"))
 
-MAX_TOOL_ITERATIONS = _env_int("MAX_TOOL_ITERATIONS", 8, minimum=1)  # guard against runaway tool-use loops
+# Guards against runaway tool-use loops. A turn that spends every iteration
+# on tool calls still gets a real narration (see each provider's forced
+# tools-disabled wrap-up call) rather than the old silent placeholder, so
+# this can stay low without turning "cut off early" into "goes silent" —
+# lowered from 8 to 5 once that safety net existed. See
+# docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md for the
+# full tradeoff discussion and HIGH_ITERATION_WATERMARK below for the
+# separate, lower observability alarm used to decide whether to go further.
+MAX_TOOL_ITERATIONS = _env_int("MAX_TOOL_ITERATIONS", 5, minimum=1)
+
+# Separate from MAX_TOOL_ITERATIONS itself: a turn using more iterations
+# than this (but still under the hard cap) logs a high-iteration warning
+# event so real usage data — not guessing — drives any future change to
+# the cap above.
+HIGH_ITERATION_WATERMARK = _env_int("HIGH_ITERATION_WATERMARK", 4, minimum=1)
 
 # Scenario RAG (app/scenario_rag.py) — opt-in, defaults off. Off: the full
 # scenario text is stuffed into the cached system prompt block, same as

@@ -354,6 +354,7 @@ async def run_conversation(
     reasoning_kwargs = {"reasoning": {"effort": KEEPER_REASONING_EFFORT}} if KEEPER_REASONING_EFFORT else {}
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
+    iteration = -1
     for iteration in range(max_iterations):
         request_kwargs = {
             "model": OPENAI_MODEL,
@@ -460,6 +461,12 @@ async def run_conversation(
                     "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",
                 )
 
+    iterations_used = iteration + 1
+    if iterations_used >= config.HIGH_ITERATION_WATERMARK:
+        observability.event(
+            "llm.turn.high_iteration_count", level=logging.WARNING, provider="openai",
+            iteration_count=iterations_used, watermark=config.HIGH_ITERATION_WATERMARK,
+        )
     return final_text
 
 

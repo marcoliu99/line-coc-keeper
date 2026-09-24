@@ -14,7 +14,8 @@ import logging
 import re
 import time
 import unicodedata
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TypeVar, cast
 
@@ -1198,6 +1199,33 @@ async def _backup_loop() -> None:
             _logger.exception("scheduled backup failed; will retry next interval")
 
 
+@asynccontextmanager
+async def _best_effort_typing(channel: discord.abc.Messageable) -> AsyncIterator[None]:
+    """Wraps `channel.typing()` so a Discord-side failure entering or
+    exiting it (rate limit, transient network hiccup — `Typing.__aenter__`
+    itself makes a real API call, see discord.py's `Typing` class) can
+    never block or fail actual message processing. The indicator is a
+    nice-to-have UX signal, not a prerequisite — review finding: the naive
+    `async with message.channel.typing():` wrapper made every message's
+    processing depend on that one API call succeeding first, a brand new
+    single point of failure that didn't exist before this indicator was
+    added."""
+    try:
+        typing_cm = channel.typing()
+        await typing_cm.__aenter__()
+    except Exception:  # noqa: BLE001 - the indicator failing must never block the message it's decorating
+        observability.event("discord.typing.failed", level=logging.WARNING)
+        typing_cm = None
+    try:
+        yield
+    finally:
+        if typing_cm is not None:
+            try:
+                await typing_cm.__aexit__(None, None, None)
+            except Exception:  # noqa: BLE001 - same reasoning as entering it
+                observability.event("discord.typing.exit_failed", level=logging.WARNING)
+
+
 @client.event
 async def on_message(message: discord.Message) -> None:
     if message.author.bot or _is_ooc_message(message.content):
@@ -1219,7 +1247,17 @@ async def on_message(message: discord.Message) -> None:
             )
         started = time.perf_counter() if observed else 0.0
         try:
-            await _handle_message(message)
+            # Entered before anything else (including the conversation
+            # lock) so Discord's typing indicator appears immediately on
+            # receipt, not only once processing actually starts — a queued
+            # message behind a long-running Keeper turn would otherwise
+            # look identical to the bot being dead for tens of seconds.
+            # `typing()` is an async context manager that keeps re-sending
+            # Discord's ~10s typing signal for as long as the block is open.
+            # _best_effort_typing wraps it so a Discord-side failure on the
+            # typing indicator itself can never block _handle_message.
+            async with _best_effort_typing(message.channel):
+                await _handle_message(message)
         except Exception as exc:
             if observed:
                 observability.event(

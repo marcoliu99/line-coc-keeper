@@ -348,5 +348,193 @@ class GeminiWrapupTests(unittest.TestCase):
         self.assertEqual(fake_client.models.generate_content.call_count, 1)
 
 
+def _high_iteration_event(mock_event) -> dict | None:
+    for call in mock_event.call_args_list:
+        args, kwargs = call
+        if args and args[0] == "llm.turn.high_iteration_count":
+            return kwargs
+    return None
+
+
+class OpenAIHighIterationWatermarkTests(unittest.TestCase):
+    """docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md
+    item 3: a turn using >= HIGH_ITERATION_WATERMARK (default 4) iterations
+    must emit a warning event, independent of whether it hit PR #55's
+    wrap-up path — this is a separate, earlier signal for deciding whether
+    MAX_TOOL_ITERATIONS itself should move, not a replacement for it."""
+
+    def _tool_call_response(self, call_id):
+        fc = MagicMock(type="function_call", arguments="{}", call_id=call_id, name="add_npc_to_combat")
+        return MagicMock(output=[fc], output_text="", id=f"resp_{call_id}")
+
+    def test_emits_event_when_iterations_reach_the_watermark(self):
+        from app.providers import openai_provider
+
+        text_response = MagicMock(output=[], output_text="敘述。", id="resp_final")
+        fake_client = MagicMock()
+        fake_client.responses.create = AsyncMock(side_effect=[
+            self._tool_call_response("c1"), self._tool_call_response("c2"),
+            self._tool_call_response("c3"), text_response,
+        ])
+        fake_openai_module = MagicMock()
+        fake_openai_module.AsyncOpenAI = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"openai": fake_openai_module}), \
+             patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"), \
+             patch("app.providers.openai_provider.observability.event") as mock_event:
+            result = asyncio.run(openai_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+            ))
+            asyncio.run(openai_provider.shutdown_async_client())
+
+        self.assertEqual(result, "敘述。")
+        event_kwargs = _high_iteration_event(mock_event)
+        self.assertIsNotNone(event_kwargs)
+        self.assertEqual(event_kwargs["iteration_count"], 4)
+        self.assertEqual(event_kwargs["watermark"], 4)
+
+    def test_no_event_when_iterations_stay_below_the_watermark(self):
+        from app.providers import openai_provider
+
+        text_response = MagicMock(output=[], output_text="敘述。", id="resp_final")
+        fake_client = MagicMock()
+        fake_client.responses.create = AsyncMock(side_effect=[
+            self._tool_call_response("c1"), self._tool_call_response("c2"), text_response,
+        ])
+        fake_openai_module = MagicMock()
+        fake_openai_module.AsyncOpenAI = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"openai": fake_openai_module}), \
+             patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"), \
+             patch("app.providers.openai_provider.observability.event") as mock_event:
+            asyncio.run(openai_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+            ))
+            asyncio.run(openai_provider.shutdown_async_client())
+
+        self.assertIsNone(_high_iteration_event(mock_event))
+
+
+class AnthropicHighIterationWatermarkTests(unittest.TestCase):
+    def _tool_use_response(self, call_id):
+        block = MagicMock(type="tool_use", id=call_id, name="add_npc_to_combat", input={})
+        return MagicMock(content=[block])
+
+    def test_emits_event_when_iterations_reach_the_watermark(self):
+        from app.providers import anthropic_provider
+
+        text_block = MagicMock(type="text", text="敘述。")
+        text_response = MagicMock(content=[text_block])
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(side_effect=[
+            self._tool_use_response("c1"), self._tool_use_response("c2"),
+            self._tool_use_response("c3"), text_response,
+        ])
+        fake_anthropic_module = MagicMock()
+        fake_anthropic_module.AsyncAnthropic = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
+             patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"), \
+             patch("app.providers.anthropic_provider.observability.event") as mock_event:
+            result = asyncio.run(anthropic_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+            ))
+            asyncio.run(anthropic_provider.shutdown_async_client())
+
+        self.assertEqual(result, "敘述。")
+        event_kwargs = _high_iteration_event(mock_event)
+        self.assertIsNotNone(event_kwargs)
+        self.assertEqual(event_kwargs["iteration_count"], 4)
+        self.assertEqual(event_kwargs["watermark"], 4)
+
+    def test_no_event_when_iterations_stay_below_the_watermark(self):
+        from app.providers import anthropic_provider
+
+        text_block = MagicMock(type="text", text="敘述。")
+        text_response = MagicMock(content=[text_block])
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(side_effect=[
+            self._tool_use_response("c1"), self._tool_use_response("c2"), text_response,
+        ])
+        fake_anthropic_module = MagicMock()
+        fake_anthropic_module.AsyncAnthropic = MagicMock(return_value=fake_client)
+
+        with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
+             patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"), \
+             patch("app.providers.anthropic_provider.observability.event") as mock_event:
+            asyncio.run(anthropic_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+            ))
+            asyncio.run(anthropic_provider.shutdown_async_client())
+
+        self.assertIsNone(_high_iteration_event(mock_event))
+
+
+class GeminiHighIterationWatermarkTests(unittest.TestCase):
+    def _function_call_response(self):
+        fc = MagicMock(name="add_npc_to_combat", args={})
+        candidate = MagicMock(content=MagicMock())
+        return MagicMock(candidates=[candidate], function_calls=[fc], text="")
+
+    def _text_response(self, text):
+        candidate = MagicMock(content=MagicMock())
+        return MagicMock(candidates=[candidate], function_calls=[], text=text)
+
+    def test_emits_event_when_iterations_reach_the_watermark(self):
+        from app.providers import gemini_provider
+
+        fake_client = MagicMock()
+        fake_client.models.generate_content = AsyncMock(side_effect=[
+            self._function_call_response(), self._function_call_response(),
+            self._function_call_response(), self._text_response("敘述。"),
+        ])
+        fake_client.aio = fake_client
+
+        fake_genai_module = MagicMock()
+        fake_genai_module.Client = MagicMock(return_value=fake_client)
+        fake_types_module = MagicMock()
+        fake_types_module.Part.from_function_response = MagicMock(return_value=MagicMock())
+
+        with patch.dict(
+            "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
+        ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"), \
+             patch("app.providers.gemini_provider.observability.event") as mock_event:
+            result = asyncio.run(gemini_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+            ))
+            asyncio.run(gemini_provider.shutdown_async_client())
+
+        self.assertEqual(result, "敘述。")
+        event_kwargs = _high_iteration_event(mock_event)
+        self.assertIsNotNone(event_kwargs)
+        self.assertEqual(event_kwargs["iteration_count"], 4)
+        self.assertEqual(event_kwargs["watermark"], 4)
+
+    def test_no_event_when_iterations_stay_below_the_watermark(self):
+        from app.providers import gemini_provider
+
+        fake_client = MagicMock()
+        fake_client.models.generate_content = AsyncMock(side_effect=[
+            self._function_call_response(), self._function_call_response(), self._text_response("敘述。"),
+        ])
+        fake_client.aio = fake_client
+
+        fake_genai_module = MagicMock()
+        fake_genai_module.Client = MagicMock(return_value=fake_client)
+        fake_types_module = MagicMock()
+        fake_types_module.Part.from_function_response = MagicMock(return_value=MagicMock())
+
+        with patch.dict(
+            "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
+        ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"), \
+             patch("app.providers.gemini_provider.observability.event") as mock_event:
+            asyncio.run(gemini_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+            ))
+            asyncio.run(gemini_provider.shutdown_async_client())
+
+        self.assertIsNone(_high_iteration_event(mock_event))
+
+
 if __name__ == "__main__":
     unittest.main()
