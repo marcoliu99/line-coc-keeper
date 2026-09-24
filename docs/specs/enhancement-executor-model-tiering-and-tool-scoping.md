@@ -111,29 +111,46 @@ hold against the now-correct 35-tool baseline (expect no material change,
 since the direction — `gpt-6-luna`/`none` ahead on both axes — was already
 consistent before this fix).
 
-## Open design questions for this mini-spec
+## Decisions
 
-1. **Scoped tool-set size**: user's target is **~10 tools** (not the 4-6
-   tested so far) — wide enough to cover skill checks, SAN, combat
-   start/damage/turn-advance, and scenario/character lookups without
-   needing separate scoped sets per scene type. Needs a concrete list
-   before implementation — draft below, needs review.
-2. **Per-provider defaults for `EXECUTOR_MODEL`**: Gemini's original code
-   sketch hardcoded `"gpt-4o-mini"` as the default, which would silently
-   break the moment `LLM_PROVIDER` is `anthropic` or `gemini` (no
-   equivalent-tier model name to fall back to). Any real implementation
-   needs a per-provider default, not one hardcoded string — and per the
-   round-1/2 data, `gpt-4o-mini` doesn't even look like the strongest
-   OpenAI-side candidate anyway (`gpt-6-luna`/`none` came out ahead on both
-   speed and correctness in every trial so far).
-3. **How many more trials before this is implementation-ready?** 8
-   scenarios × 1 run each is a direction indicator, not validation. Given
-   `gpt-6-luna`/`none` has now been ahead of baseline on every single trial
-   across 3 rounds, the marginal value of *many* more single-shot trials
-   is probably lower than: (a) fixing the `STATIC_INSTRUCTIONS`-too-short
-   test artifact so `start_combat_single_npc` gets a fair test, and (b)
-   running the survivors 2-3× each for consistency instead of once, the
-   way round 1 did.
+1. **Scoped tool-set size**: settled on the designed Tier A/B/C split
+   as-is (see below) — not forcing a fixed "~10" count. Non-combat scope
+   = A+B (21 tools), combat scope = A+C (26 tools).
+2. **`EXECUTOR_MODEL` per-provider defaults**: yes, build the per-provider
+   config surface, but focus the actual default value/tuning on OpenAI
+   first (`gpt-6-luna`/`none` per the trials so far) — Anthropic/Gemini
+   get the plumbing (so nothing breaks when `LLM_PROVIDER` isn't openai)
+   but not necessarily their own tuned candidate yet; that's follow-up
+   work once there's real data for those providers too.
+3. **More trials needed**: yes, current data (8 scenarios × 1 run each
+   against an ad hoc 6-tool test set) isn't enough. Next round tests
+   against the *real* tier groupings instead of an ad hoc set — see
+   "Round 4" below. Also fixing the `STATIC_INSTRUCTIONS`-too-short test
+   artifact first (`start_combat_single_npc` failed for all three configs
+   in round 3, most likely because the test prompt was missing the real
+   combat-triggering rule, not because of any model/tier difference).
+
+## Design requirement found while planning round 4: per-iteration rescoping, not per-turn
+
+Re-examining the Tier B/C split against a real multi-tool-call turn (the
+exact original bug shape: `search_scenario` → `start_combat` → `add_npc_
+to_combat` × 2, all in *one* turn) surfaces a real implementation
+constraint this doc hadn't addressed yet: `add_npc_to_combat` is Tier C
+(only offered while `state.combat.active`), but `start_combat` is what
+*sets* `state.combat.active` — if the tool list offered to the model is
+computed **once at turn start** (before any tool calls that turn), a turn
+that calls `start_combat` and *then* wants to add NPCs in the *same* turn
+would never have `add_npc_to_combat` available at all, since combat wasn't
+active yet when the list was built.
+
+This means "dynamic" scoping has to mean **recomputed before each
+iteration of the tool-calling loop** (re-checking `state.combat.active`
+after every tool execution, same as the state the Keeper already reloads
+fresh each round via `_mutate_and_save_state`), not computed once per
+turn. This is a real, non-trivial implementation detail for whenever this
+comes off the backlog — noted here so round 4's test harness (which needs
+to simulate a real multi-round conversation for the combat-start scenario,
+not a single-shot call) reflects it, and so it isn't missed later.
 
 ## Dynamic tool scoping design (combat-active vs. not)
 
