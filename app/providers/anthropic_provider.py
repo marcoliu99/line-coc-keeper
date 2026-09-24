@@ -72,9 +72,16 @@ async def run_conversation(
     execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int,
     enable_wrapup: bool = True,
+    model_override: str | None = None,
+    reasoning_effort_override: str | None = None,
 ) -> str:
     if not ANTHROPIC_API_KEY:
         return "（尚未設定 ANTHROPIC_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
+
+    # reasoning_effort_override has no Anthropic equivalent (accepted only so
+    # every provider's run_conversation shares one call signature — see
+    # app/agents/executor.py, which doesn't know which provider it's calling).
+    model = model_override or ANTHROPIC_MODEL
 
     # Cache the large/stable static system block and the (fully static) tool
     # definitions; the small per-turn dynamic block is left uncached on purpose —
@@ -111,7 +118,7 @@ async def run_conversation(
         with observability.context(provider_request_id=logical_request_id), observability.span(
             "llm.request",
             provider="anthropic",
-            model=ANTHROPIC_MODEL,
+            model=model,
             logical_request_id=logical_request_id,
             iteration=iteration,
             timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
@@ -123,7 +130,7 @@ async def run_conversation(
                 async def request_once():
                     async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
                         return await client.messages.create(
-                            model=ANTHROPIC_MODEL,
+                            model=model,
                             max_tokens=1024,
                             temperature=KEEPER_TEMPERATURE,
                             system=system_blocks,
@@ -146,7 +153,7 @@ async def run_conversation(
             observability.event(
                 "llm.usage",
                 provider="anthropic",
-                model=ANTHROPIC_MODEL,
+                model=model,
                 input_tokens=getattr(usage, "input_tokens", None),
                 cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
                 output_tokens=getattr(usage, "output_tokens", None),
@@ -196,7 +203,7 @@ async def run_conversation(
                 with observability.context(provider_request_id=logical_request_id), observability.span(
                     "llm.request",
                     provider="anthropic",
-                    model=ANTHROPIC_MODEL,
+                    model=model,
                     logical_request_id=logical_request_id,
                     iteration=max_iterations,
                     timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
@@ -207,7 +214,7 @@ async def run_conversation(
                         async def wrapup_once(wrapup_system=wrapup_system):
                             async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
                                 return await client.messages.create(
-                                    model=ANTHROPIC_MODEL,
+                                    model=model,
                                     max_tokens=1024,
                                     temperature=KEEPER_TEMPERATURE,
                                     system=wrapup_system,

@@ -178,6 +178,29 @@ KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", "0.6"))
 # stops sending it, the same fallback pattern already used for temperature.
 KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").strip().lower()
 
+# Model/reasoning-effort overrides for app/agents/executor.py's tool-calling
+# loop only (the Supervisor/Executor path — app/keeper.py's legacy run_turn,
+# app/agents/narrator.py, and app/agents/guard.py all keep using the
+# provider's plain *_MODEL/KEEPER_REASONING_EFFORT above, unaffected by
+# these). The Executor's own text output is always discarded (see
+# executor.py's docstring — app/agents/narrator.py produces the narration
+# players actually see, in a separate call), so it can run on a
+# cheaper/faster model without touching narration quality, as long as it
+# still reliably picks the right tools.
+#
+# Real-API verification (docs/specs/enhancement-executor-model-tiering-and-
+# tool-scoping.md, rounds 1-8): "gpt-6-luna"/"none" matched or beat the
+# then-current production OpenAI config on every scenario with a real
+# correct answer, and was consistently faster (see that spec's "Model
+# decision" section for the full evidence). Anthropic/Gemini have no
+# equivalent tuned candidate yet — left blank on purpose, meaning "no
+# override, use ANTHROPIC_MODEL/GEMINI_MODEL as-is" until real trial data
+# for those providers exists too; don't fill these in by guessing.
+EXECUTOR_MODEL_OPENAI = os.environ.get("EXECUTOR_MODEL_OPENAI", "gpt-6-luna")
+EXECUTOR_REASONING_EFFORT_OPENAI = os.environ.get("EXECUTOR_REASONING_EFFORT_OPENAI", "none").strip().lower()
+EXECUTOR_MODEL_ANTHROPIC = os.environ.get("EXECUTOR_MODEL_ANTHROPIC", "").strip()
+EXECUTOR_MODEL_GEMINI = os.environ.get("EXECUTOR_MODEL_GEMINI", "").strip()
+
 # Retry/backoff for transient LLM API failures (connection drops, timeouts,
 # 5xx) — see app/providers/retry.py. None of the three provider adapters
 # retried these at all before this: a single network blip during
