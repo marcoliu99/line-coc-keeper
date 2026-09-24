@@ -1996,11 +1996,16 @@ def _execute_tool(
                     ),
                 }
 
+                # Always offered whenever there's at least one tier-improving
+                # option the player can afford (buyable_options already
+                # filters to cost <= luck available) -- no cost cap on top
+                # of that; see docs/specs/enhancement-luck-buyup-always-
+                # offered.md for why the previous "<=7" near-miss-only gate
+                # was removed.
                 luck_options = [] if pushed else luck.buyable_options(
                     value, roll.roll, roll.tier, target_char.luck, difficulty
                 )
-                gate_cost = None if pushed else luck.cheapest_cost(value, roll.roll, roll.tier, difficulty)
-                if luck_options and gate_cost is not None and gate_cost <= 7:
+                if luck_options:
                     decision = {
                         "decision_id": new_decision_id(),
                         "check_id": metadata["check_id"],
@@ -2028,8 +2033,8 @@ def _execute_tool(
                         "decision_id": decision["decision_id"],
                         "luck_options": decision["options"],
                         "note": (
-                            "Keeper 已擲完檢定。這是接近成功的結果，玩家現在只可選擇是否花 Luck 修正；"
-                            "玩家不需要、也不可以自行重骰。先不要把最終成敗敘事成不可逆的結果。"
+                            "Keeper 已擲完檢定，有花 Luck 買到更好結果的選項可用。玩家現在只可選擇是否"
+                            "花 Luck 修正；玩家不需要、也不可以自行重骰。先不要把最終成敗敘事成不可逆的結果。"
                         ),
                     })
                 _remember_check_result(target_state, cache_key, result)
