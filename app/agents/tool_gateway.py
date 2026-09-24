@@ -37,7 +37,26 @@ _logger = logging.getLogger(__name__)
 # from a different orchestration layer. Token-count reduction from
 # condensing the tool list is a real, separate optimization that can be
 # revisited later without re-touching correctness.
-TOOLS: list[dict[str, Any]] = keeper.TOOLS
+def tools_for_speaker_role(speaker_role: str) -> list[dict[str, Any]]:
+    """The tool list for one turn, delegated to keeper._tools_for_speaker_
+    role — NOT a bare `keeper.TOOLS` constant, and deliberately computed
+    fresh per call rather than cached at import time, because the correct
+    list genuinely varies per turn in two ways keeper.py's own callers
+    (app/keeper.py:3423, the legacy run_turn path) already account for but
+    this module previously didn't:
+    1. It appends the scenario-search tool when SCENARIO_RAG_ENABLED — the
+       static prompt this Agent sends explicitly requires the model to
+       call search_scenario for any scenario detail in that mode; without
+       this, the tool was never actually offered even though the prompt
+       demanded it.
+    2. It's filtered/patched differently when speaker_role == "kp_
+       assistant" (a KP Assistant speaking an in-character line still
+       reaches this Agent for GAMEPLAY_ACTION-classified turns — only
+       OOC_ASSISTANT intent bypasses it, via app/agents/assistant.py).
+    A bare module-level constant can't reflect either of these, since
+    SCENARIO_RAG_ENABLED can differ per deployment and speaker_role
+    genuinely differs per turn."""
+    return keeper._tools_for_speaker_role(speaker_role)
 
 
 def make_tool_executor(

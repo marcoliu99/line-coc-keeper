@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from app import keeper, observability
-from app.agents.tool_gateway import TOOLS, make_tool_executor
+from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -39,6 +39,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     image_requests: list[tuple[str | None, int]] = []
     facts: list[str] = []
     execute_tool = make_tool_executor(state, private_messages, image_requests, speaker_role, facts)
+    # Computed fresh per turn, not a module-level constant — see tool_
+    # gateway.tools_for_speaker_role's own docstring for why (RAG-aware
+    # search_scenario inclusion, kp_assistant-specific filtering/patching).
+    tools = tools_for_speaker_role(speaker_role)
 
     # Prompt text lives in app/services/prompt_config.py — see that module's
     # header for why it reuses keeper._build_static_prompt/_build_dynamic_
@@ -64,7 +68,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             metrics=turn_metrics,
         ):
             await provider.run_conversation(
-                static_system, dynamic_system, TOOLS, state.log, new_message,
+                static_system, dynamic_system, tools, state.log, new_message,
                 execute_tool, MAX_TOOL_ITERATIONS,
                 # This call's return value is discarded entirely (only the
                 # tool calls' side effects matter to run_executor — see
