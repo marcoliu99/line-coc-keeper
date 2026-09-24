@@ -404,13 +404,38 @@ mistake this whole doc has been correcting other proposals for.
 Identical idea to this doc's item 5 (`initialize_encounter`), already
 decided: backlog, not part of this latency hotfix, same risk class as the
 melee-tie/ranged-combat rules work (needs its own spec, careful COC7e-
-correctness review, and real playtesting — a schema sketch alone doesn't
-cover the auto-rename-on-collision behavior it casually mentions
-("自動過濾重名/加編號"), which would need its own design given this doc's
-earlier finding that same-species multiples need *player-visible* distinct
-names, not just internally deduplicated IDs — see PR #55's `find_live_
-enemy_by_any_alias`/prompt-instruction fix for that exact case). Not
-reopening the backlog decision unless the user wants to.
+correctness review, and real playtesting).
+
+**Design constraint decided now, for whenever this comes off the backlog**
+— the proposal's schema sketch casually mentions the backend "自動過濾重名
+/加編號" (auto-filter duplicate names / auto-number) for the `enemies`
+array, and those two behaviors are not equally safe:
+
+- **"過濾重名" (silently drop an entry whose name duplicates an earlier
+  one in the same array) — rejected, must not do this.** Two Deep Ones
+  named "魚人" in the same `enemies` array are two distinct individuals
+  (the same left/right scenario from earlier in this doc), not a
+  duplicate to collapse into one — silently dropping the second entry
+  would just move PR #55's bug from "two separate tool calls" to "two
+  array elements in one call" instead of actually fixing it.
+- **"加編號" (auto-suffix a colliding name) — acceptable, but only as a
+  last-resort fallback, not the primary mechanism.** The primary
+  mechanism should be the same one PR #55 already established for the
+  single-add tool: the schema already requires a `name` per array entry,
+  so the Keeper should already be following the prompt instruction added
+  in PR #55 (give each same-species instance a distinct, player-legible
+  name like "魚人（左）"/"魚人（右）") before this tool is ever called.
+  Auto-numbering only kicks in if the Keeper genuinely submits the exact
+  same name twice in one array by mistake, and even then the resulting
+  suffix must land in the *player-visible* display name (e.g. "魚人
+  (2)"), not just an internal id — a hidden dedup key with both
+  combatants still showing as "魚人" on screen would leave players unable
+  to tell them apart in combat status, defeating the point of fixing this
+  at all.
+
+Not reopening the backlog decision itself — this only records the design
+constraint so a future implementation doesn't reintroduce PR #55's bug
+under a different call shape.
 
 ## Notes
 - Streaming (item 7) stays backlog — only helps the final narration output
