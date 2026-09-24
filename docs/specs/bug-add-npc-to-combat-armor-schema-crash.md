@@ -62,17 +62,21 @@ from_dict`/`SpecialAbility.from_dict` (`app/models.py`). `attacks`/
 list real field names — the same crash is reachable through either of
 them too if the model passes any unexpected key.
 
-Separately (found while reading `SpecialAbility`, not confirmed in a
-real incident): `SpecialAbility.trigger`/`check`/`effect`/`usage`/
-`reveal_policy` are typed as `dict[str, Any]`, but nothing validates the
-model actually provides a dict — a string value (a very plausible LLM
-mistake, e.g. `"trigger": "任何時候"` instead of a structured trigger
-object) would construct successfully (Python doesn't enforce dataclass
-type hints at runtime) and then crash later in unrelated consuming code
-(e.g. `_mark_round_start_abilities` calling `.get()` on it) — a delayed,
-harder-to-diagnose failure mode than the immediate `TypeError` this spec
-is centered on. Flagged for awareness; not this branch's primary scope
-unless real-API testing surfaces it as a live problem too.
+Also in scope (per explicit instruction — not deferred): `SpecialAbility.
+trigger`/`check`/`effect`/`usage`/`reveal_policy` are typed as
+`dict[str, Any]`, but nothing validates the model actually provides a
+dict — a string value (a very plausible LLM mistake, e.g. `"trigger":
+"任何時候"` instead of a structured trigger object) would construct
+successfully (Python doesn't enforce dataclass type hints at runtime)
+and then crash later in unrelated consuming code. Confirmed every real
+consumer of these five fields (`app/combat.py`, grepped all `.trigger`/
+`.check`/`.effect`/`.usage`/`.reveal_policy` accesses) reads them via
+`(ability.X or {}).get(...)` expecting a dict with specific known
+sub-keys (`type`, `on_success`, etc.) — a plain string could never
+satisfy any of those lookups meaningfully even if preserved verbatim, so
+the correct fix is the same as what already happens when the field is
+simply omitted: coerce a non-dict value to `{}` rather than trying to
+wrap it into a guessed key nothing downstream would read anyway.
 
 ## Changes
 
@@ -94,11 +98,13 @@ address different failure points of the same underlying issue:
    dropping unrecognized keys rather than raising. Applying to all three
    (not just `ArmorRule`) since they share the identical fragile pattern
    and the identical fix.
-
-Out of scope for this branch: the `SpecialAbility` dict-vs-string
-type-safety gap noted above (`trigger`/`check`/etc.) — worth its own
-follow-up if real-API testing or another incident confirms it's a live
-problem, not assumed here.
+3. **`SpecialAbility`'s dict-typed fields**: in the same `from_dict`,
+   coerce `trigger`/`check`/`effect`/`usage`/`reveal_policy` to `{}`
+   whenever the incoming value isn't already a `dict` — matching what
+   already happens when the model omits the field entirely, and
+   preventing the delayed downstream crash a wrong-typed string value
+   would otherwise cause the first time consuming code calls `.get()` on
+   it.
 
 ## Testing Strategy
 
