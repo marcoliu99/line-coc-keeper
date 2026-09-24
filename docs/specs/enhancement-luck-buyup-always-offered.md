@@ -97,3 +97,16 @@ if luck_options:
   not change `luck.py`'s cost formula, the tier thresholds, the Pushed
   Roll exclusion, or the Sanity-check/Fumble exclusions already baked
   into `luck._candidates`.
+- **Code-review observation, acknowledged, no action taken**: the gating
+  logic (`luck_options = luck.buyable_options(...); if luck_options:`) is
+  duplicated verbatim between `app/keeper.py` and `app/legacy_commands.py`
+  — this PR had to edit both identically, and any future change to this
+  condition needs the same manual sync. Not new duplication introduced by
+  this PR: both call sites already independently implemented the old
+  `<=7` gate before this change touched either of them (see the two
+  near-identical pre-existing comment blocks this PR replaced). Worth a
+  future small refactor (a shared helper both call sites use) if this
+  condition needs to change again, but out of scope for this PR, which is
+  already touching both call sites' logic and tests — bundling in a
+  structural refactor here would make the diff harder to review for what
+  is otherwise a small, well-isolated behavior change.
