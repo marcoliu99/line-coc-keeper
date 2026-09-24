@@ -186,3 +186,15 @@ docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md).
   scenario/event shape, so this is a real scaling caveat worth knowing
   about, not something this PR's real-API evidence rules out for larger/
   more complex events.
+- **Code-review finding, fixed**: the new "don't search future scenes/
+  secrets" spoiler-avoidance guidance is only correct for player-facing
+  turns. `_tools_for_speaker_role("kp_assistant")` passed the same shared
+  `_SEARCH_SCENARIO_TOOL` description through unchanged
+  (`_tool_definition_for_kp_assistant` only patched `roll_dice` before
+  this), so the KP Assistant — the human KP's own tool, not a
+  player-facing surface — inherited a restriction that's actively wrong
+  for it (a KP legitimately asks it to look ahead, e.g. prepping the next
+  encounter). Fixed by giving `search_scenario` a KP-specific description
+  variant (keeps the event-scoped query-bundling guidance, explicitly
+  permits looking ahead instead of restricting it) and extending
+  `_tool_definition_for_kp_assistant` to apply it for that one role.
