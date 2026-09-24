@@ -13,7 +13,7 @@ implementing any of it without an explicit go-ahead on a specific option.
 | 2 | Queue-ack on `conversation_lock` contention (delayed-notice, ~10s) | **Decided** — build (no OCC) |
 | 3 | `MAX_TOOL_ITERATIONS` → 5, `HIGH_ITERATION_WATERMARK` = 4 | **Decided** |
 | 4 | `parallel_tool_calls` real-API verification | **Answered: already on by default, no code change needed.** Verified against the real API — see "`parallel_tool_calls`" below |
-| 5 | Macro tools (`initialize_encounter` etc.) | **Decided** — backlog |
+| 5 | Macro tools (`initialize_encounter` etc.) | **Decided: backlog — split into its own doc**, `docs/specs/enhancement-macro-combat-initialization-tool.md` |
 | 6 | Prompt caching / `cached_input_tokens` | **Answered: works, no action needed.** Verified against the real API with the real production prompt — 99.9% cache hit on repeat calls. See "Prompt caching" below |
 | 7 | Streaming | **Open, backlog** — needs its own design (edit-rate-limit batching) |
 | 8 | Executor model tiering, `reasoning_effort=none`, output-token capping, dynamic tool scoping, and a real bug found along the way | **Split into its own doc** — `docs/specs/enhancement-executor-model-tiering-and-tool-scoping.md`. Needed more real-API trials than made sense to keep bundled here; three rounds of verification done there already |
@@ -400,42 +400,16 @@ times with the *same or near-synonymous* query in one turn — right now
 this would be guessing at a fix for a problem not yet observed, the same
 mistake this whole doc has been correcting other proposals for.
 
-### Layer 4 (macro tool `initialize_combat`) — same as item 5, already decided as backlog
-Identical idea to this doc's item 5 (`initialize_encounter`), already
-decided: backlog, not part of this latency hotfix, same risk class as the
-melee-tie/ranged-combat rules work (needs its own spec, careful COC7e-
-correctness review, and real playtesting).
-
-**Design constraint decided now, for whenever this comes off the backlog**
-— the proposal's schema sketch casually mentions the backend "自動過濾重名
-/加編號" (auto-filter duplicate names / auto-number) for the `enemies`
-array, and those two behaviors are not equally safe:
-
-- **"過濾重名" (silently drop an entry whose name duplicates an earlier
-  one in the same array) — rejected, must not do this.** Two Deep Ones
-  named "魚人" in the same `enemies` array are two distinct individuals
-  (the same left/right scenario from earlier in this doc), not a
-  duplicate to collapse into one — silently dropping the second entry
-  would just move PR #55's bug from "two separate tool calls" to "two
-  array elements in one call" instead of actually fixing it.
-- **"加編號" (auto-suffix a colliding name) — acceptable, but only as a
-  last-resort fallback, not the primary mechanism.** The primary
-  mechanism should be the same one PR #55 already established for the
-  single-add tool: the schema already requires a `name` per array entry,
-  so the Keeper should already be following the prompt instruction added
-  in PR #55 (give each same-species instance a distinct, player-legible
-  name like "魚人（左）"/"魚人（右）") before this tool is ever called.
-  Auto-numbering only kicks in if the Keeper genuinely submits the exact
-  same name twice in one array by mistake, and even then the resulting
-  suffix must land in the *player-visible* display name (e.g. "魚人
-  (2)"), not just an internal id — a hidden dedup key with both
-  combatants still showing as "魚人" on screen would leave players unable
-  to tell them apart in combat status, defeating the point of fixing this
-  at all.
-
-Not reopening the backlog decision itself — this only records the design
-constraint so a future implementation doesn't reintroduce PR #55's bug
-under a different call shape.
+### Layer 4 (macro tool `initialize_combat`) — split into its own doc
+Identical idea to this doc's item 5 (`initialize_encounter`) — split out,
+along with the design constraint this discussion already resolved (no
+silent duplicate-name filtering; auto-suffix only as a last-resort
+fallback, and only into the player-visible display name — see PR #55's
+`find_live_enemy_by_any_alias` fix for why), into
+`docs/specs/enhancement-macro-combat-initialization-tool.md`. Still
+backlog, same risk class as the melee-tie/ranged-combat rules work — that
+new doc has the full schema sketch and open questions for whenever it
+comes off the backlog.
 
 ## Notes
 - Streaming (item 7) stays backlog — only helps the final narration output
