@@ -27,7 +27,7 @@ discussion and all the real-API verification data gathered for it.
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:10972c1a8966f48cd7bbcb0f7c850b1ac8558310
-- **implementation end**: enhancement/conversation-lock-and-tool-loop-latency:0d22fb2 — ruff/mypy/compileall/pytest all green (487 passed, 6 subtests)
+- **implementation end**: enhancement/conversation-lock-and-tool-loop-latency:971cdac — ruff/mypy/compileall/pytest all green (490 passed, 6 subtests). Two code-review rounds after initial implementation fixed a lock-leak deadlock risk and a typing-indicator single-point-of-failure — see commit history for details.
 
 ## Background
 
