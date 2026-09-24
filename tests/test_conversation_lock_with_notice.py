@@ -105,6 +105,40 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
 
         self.assertFalse(asyncio.run(scenario()))
 
+    def test_lock_is_not_leaked_when_the_queued_notice_reply_itself_fails(self):
+        # Review finding: if the background notify task's reply() call
+        # raises a real exception (Discord API error, not a clean
+        # cancellation) before the main coroutine's lock.acquire() has
+        # resolved, that exception used to escape from `await notify_task`
+        # before the lock's own `finally: lock.release()` was ever reached
+        # - permanently leaking a lock that HAD been successfully acquired,
+        # deadlocking every future command in that conversation.
+        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.02):
+            async def scenario() -> bool:
+                async def failing_reply(_message: str) -> None:
+                    raise RuntimeError("Discord API error")
+
+                lock = locks.get_conversation_lock("conv-notify-fails")
+                await lock.acquire()
+
+                async def release_after(delay: float) -> None:
+                    await asyncio.sleep(delay)
+                    lock.release()
+
+                # Releases well after the notice delay has already fired
+                # (and failed), so the cleanup below has to deal with a
+                # notify_task that finished with a real exception rather
+                # than a clean cancellation.
+                asyncio.ensure_future(release_after(0.1))
+
+                async with router._conversation_lock_with_notice("conv-notify-fails", failing_reply):
+                    pass
+                return lock.locked()
+
+            still_locked = asyncio.run(scenario())
+
+        self.assertFalse(still_locked)
+
 
 if __name__ == "__main__":
     unittest.main()

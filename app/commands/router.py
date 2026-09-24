@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -411,7 +410,10 @@ _QUEUE_ACK_MESSAGE = "🕒 守密人正在處理上一位調查員的行動，�
 
 async def _delayed_queue_notice(reply: Reply) -> None:
     await asyncio.sleep(_QUEUE_ACK_DELAY_SECONDS)
-    await reply(_QUEUE_ACK_MESSAGE)
+    try:
+        await reply(_QUEUE_ACK_MESSAGE)
+    except Exception:  # noqa: BLE001 - best-effort UX hint, must never affect whether the lock gets released
+        observability.event("queue_ack.notice_failed", level=logging.WARNING)
 
 
 @asynccontextmanager
@@ -427,6 +429,16 @@ async def _conversation_lock_with_notice(conversation_id: str, reply: Reply) -> 
     See docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md
     for the full design discussion (this deliberately does not narrow the
     lock itself — see that doc for why an OCC-style rewrite was rejected).
+
+    Review finding fixed here: `_delayed_queue_notice` already swallows its
+    own `reply()` failures, but this cleanup also catches *any* exception
+    from awaiting the notify task (not just `CancelledError`) as a second
+    line of defense — if that cleanup ever let an exception through, it
+    would escape before the `lock.release()` below ever runs, permanently
+    leaking a lock that *was* successfully acquired and deadlocking every
+    future command in that conversation until the process restarts. The
+    notify task's own outcome must never be allowed to affect whether the
+    lock we already hold gets released.
     """
     lock = locks.get_conversation_lock(conversation_id)
     if not lock.locked():
@@ -437,8 +449,12 @@ async def _conversation_lock_with_notice(conversation_id: str, reply: Reply) -> 
             await lock.acquire()
         finally:
             notify_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await notify_task
+            except asyncio.CancelledError:
+                pass  # expected: this is the normal case where cancel() actually won the race
+            except Exception:  # noqa: BLE001 - see docstring: must never block releasing the lock below
+                observability.event("queue_ack.notify_task_failed", level=logging.WARNING)
     try:
         yield
     finally:

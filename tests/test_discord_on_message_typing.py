@@ -71,6 +71,63 @@ class OnMessageTypingIndicatorTests(unittest.TestCase):
         self.assertTrue(typing_cm.entered)
         self.assertTrue(typing_cm.exited)
 
+    def test_handle_message_still_runs_when_entering_typing_fails(self):
+        # Review finding: async with message.channel.typing() made
+        # Typing.__aenter__'s real Discord API call (send_typing) a hard
+        # prerequisite for processing any message at all - a transient
+        # failure on that call alone (rate limit, network hiccup) used to
+        # mean the message got silently dropped with no reply, an entirely
+        # new single point of failure. _best_effort_typing must let
+        # _handle_message run regardless.
+        from app import discord_bot
+
+        message = self._fake_message()
+
+        class _FailingTyping:
+            async def __aenter__(self) -> None:
+                raise RuntimeError("Discord typing API failed")
+
+            async def __aexit__(self, *exc_info: object) -> bool:
+                return False  # pragma: no cover - __aenter__ raises first
+
+        message.channel.typing = MagicMock(return_value=_FailingTyping())
+
+        handled: list[bool] = []
+
+        async def fake_handle_message(_message):
+            handled.append(True)
+
+        with patch.object(discord_bot, "_handle_message", fake_handle_message), \
+             patch.object(discord_bot.config, "LOG_ENABLED", False):
+            asyncio.run(discord_bot.on_message(message))
+
+        self.assertEqual(handled, [True])
+
+    def test_handle_message_still_runs_when_exiting_typing_fails(self):
+        from app import discord_bot
+
+        message = self._fake_message()
+
+        class _FailingExitTyping:
+            async def __aenter__(self) -> None:
+                return None
+
+            async def __aexit__(self, *exc_info: object) -> bool:
+                raise RuntimeError("Discord typing API failed on exit")
+
+        message.channel.typing = MagicMock(return_value=_FailingExitTyping())
+
+        handled: list[bool] = []
+
+        async def fake_handle_message(_message):
+            handled.append(True)
+
+        with patch.object(discord_bot, "_handle_message", fake_handle_message), \
+             patch.object(discord_bot.config, "LOG_ENABLED", False):
+            asyncio.run(discord_bot.on_message(message))
+
+        self.assertEqual(handled, [True])
+
 
 if __name__ == "__main__":
     unittest.main()
