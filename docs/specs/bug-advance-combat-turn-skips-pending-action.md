@@ -2,7 +2,7 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:80f245fc6591a021b40dbbedb9d44d41e6b9ec9f
-- **implementation end**: TBD
+- **implementation end**: bug/advance-combat-turn-skips-pending-action:8687311 — ruff/mypy/compileall/pytest all green
 
 ## Purpose & Scope
 
