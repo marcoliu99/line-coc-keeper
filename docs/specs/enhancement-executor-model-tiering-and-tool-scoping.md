@@ -14,7 +14,7 @@ section) for a future pass.
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:923a8c437e07c6c4b28cfea84fde6a6c3d27c203
   (rebased onto this after PR #55 merged, mid-branch — see git history)
-- **implementation end**: TBD
+- **implementation end**: enhancement/executor-model-tiering-and-tool-scoping:17b902b — ruff/mypy/compileall/pytest all green (model tiering only; dynamic tool scoping deferred)
 
 ## Background
 
