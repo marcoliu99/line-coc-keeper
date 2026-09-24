@@ -95,10 +95,21 @@ Supervisor/Executor path — never gets `search_scenario` in its tool list
 at all when `SCENARIO_RAG_ENABLED` is on, even though the static prompt it
 sends explicitly instructs the model to use that tool for any scenario
 detail. Confirmed by reading the import chain (`executor.py:6` → `tool_
-gateway.py:40` → `keeper.TOOLS`), not just log inference. **Needs its own
-bug-fix branch**, same category/urgency as PR #55's duplicate-NPC-add fix
-— tracked here only because it was discovered here, not because fixing it
-belongs in this spec.
+gateway.py:40` → `keeper.TOOLS`), not just log inference.
+
+**Fixed**: PR #57 (`bug/executor-tool-list-missing-search-scenario`,
+its own spec at `docs/specs/bug-executor-tool-list-missing-search-
+scenario.md`). Turned out worse than "missing one tool" —
+`context_builder.py` skips its automatic proactive RAG search entirely
+while `state.combat.active`, so mid-combat Executor turns had *zero*
+scenario grounding at all before this fix, not just a missing follow-up
+tool. Round 3's `scenario_lookup` scenario result above (recorded as "this
+test's own 6-tool scoping choice, not a model failure") was actually
+hitting this same underlying bug, not just a scoped-set omission — worth
+re-running round 3 once PR #57 merges to confirm the conclusions still
+hold against the now-correct 35-tool baseline (expect no material change,
+since the direction — `gpt-6-luna`/`none` ahead on both axes — was already
+consistent before this fix).
 
 ## Open design questions for this mini-spec
 
