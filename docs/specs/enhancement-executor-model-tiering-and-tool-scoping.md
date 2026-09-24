@@ -444,6 +444,36 @@ and round 8's "7/8, no regression" claims should both be read as "7/7
 scenarios with a real correct answer," not "1 real miss" — `luck_spend`
 wasn't measuring anything meaningful to begin with.
 
+## Model decision: `gpt-6-luna`/none for OpenAI
+
+With `luck_spend` disqualified as a scenario and the wording fix landed
+(PR #58), the accumulated evidence across rounds 1-8 now supports a
+concrete pick for the OpenAI-side `EXECUTOR_MODEL` default:
+
+- **Correctness**: `gpt-6-luna`/none passed all 7 scenarios with a real
+  correct answer in round 8's full sweep (post-fix, correct tier scope
+  per scenario), and went 6/6 in round 7's repeated N=3 trials on the two
+  scenarios that had looked shakiest pre-fix — same as the current
+  production baseline (`gpt-5.6-luna`/medium, also 6/6 in round 7).
+- **Speed**: consistently faster than the baseline across every round
+  that measured both — round 8's post-fix sweep: 1272-6092ms for
+  `gpt-6-luna`/none vs. round 6's baseline showing 2384-8668ms on the same
+  two hardest scenarios (not re-measured post-fix, but no round has ever
+  shown baseline faster).
+- **Other OpenAI configs ruled out**: `gpt-6-luna`/low showed a real
+  miss in round 1 (called `roll_dice` instead of `skill_check`) and
+  hasn't been retested post-fix; `gpt-6-luna`/medium had a real turn-2
+  stall (zero tool calls) in round 6 and also hasn't been retested
+  post-fix — neither has `none`'s clean track record, and `none` is also
+  the cheapest/fastest option, so there's no reason to prefer them absent
+  new evidence.
+
+**Recommendation: `EXECUTOR_MODEL` (OpenAI) = `gpt-6-luna`, reasoning
+effort = `none`.** This is a recommendation, not yet a decision — needs
+the user's confirmation before moving to implementation (per this
+branch's "spec first" workflow, and per the earlier decision to build the
+per-provider config surface but tune OpenAI first).
+
 ## Dynamic tool scoping design (combat-active vs. not)
 
 User confirmed the direction: dynamic (combat-state-dependent), not one
