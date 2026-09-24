@@ -1,9 +1,11 @@
 # Spec: conversation-lock and tool-loop latency — architecture discussion
 
-**Status: discussion only, nothing implemented yet.** This doc exists to
-capture an external architecture proposal, check its claims against the
-actual code, and lay out options for the user to pick from. Do not start
-implementing any of it without an explicit go-ahead on a specific option.
+**Status: first batch implemented** (typing indicator, queue-ack,
+`MAX_TOOL_ITERATIONS`/watermark — see Changeset Tracking below). This doc
+also captures the external architecture proposals that led here, checked
+against the actual code before anything became a real implementation
+plan; items that came off the backlog live in the split-out mini-specs
+linked from the status table.
 
 ## Status at a glance
 
@@ -25,7 +27,7 @@ discussion and all the real-API verification data gathered for it.
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:10972c1a8966f48cd7bbcb0f7c850b1ac8558310
-- **implementation end**: N/A — discussion branch
+- **implementation end**: enhancement/conversation-lock-and-tool-loop-latency:0d22fb2 — ruff/mypy/compileall/pytest all green (487 passed, 6 subtests)
 
 ## Background
 
