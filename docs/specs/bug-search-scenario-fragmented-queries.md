@@ -27,7 +27,9 @@ information need into several small sequential searches directly burns
 into that budget and adds latency, on top of just being redundant.
 
 This is a prompt/tool-description issue, not an application-logic bug:
-`_SEARCH_SCENARIO_TOOL`'s current description (`app/keeper.py:782-797`)
+`_SEARCH_SCENARIO_TOOL`'s current description (`app/keeper.py:806-822`
+as of this branch's rebased HEAD — was 782-797 at this doc's original
+diagnosis, before the branch was rebased onto main_v2 post PR #56-59)
 only says a search is *required* before inventing scenario content — it
 gives no guidance on how broad a single query should be, or when it's
 appropriate vs. wasteful to search again. Nothing currently discourages
@@ -171,3 +173,16 @@ docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md).
   and added an early-warning signal; this spec reduces how many
   iterations a single information need actually costs. Both target the
   same underlying "語塞"/slow-turn symptom from different angles.
+- **Code-review finding, accepted as a known tradeoff, no code change**:
+  `search()` is still capped at `SCENARIO_RAG_TOP_K` (5) chunks per call
+  (`app/config.py`), and for an event whose relevant facts are scattered
+  across *more* than 5 non-adjacent chunks, one broader/bundled query
+  could plausibly return the 5 highest blended-score chunks (which may
+  skew toward chunks matching many of the query's mixed terms) and still
+  miss a rarer-but-essential fact, forcing another search anyway. Not
+  treated as a bug: the new wording explicitly keeps this an escape
+  hatch, not a hard one-query cap ("如果一次查詢真的不夠涵蓋這個事件所需
+  的資訊，可以再查") — round 2's real trial only exercised one real
+  scenario/event shape, so this is a real scaling caveat worth knowing
+  about, not something this PR's real-API evidence rules out for larger/
+  more complex events.
