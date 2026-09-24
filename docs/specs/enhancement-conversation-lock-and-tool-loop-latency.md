@@ -10,9 +10,9 @@ implementing any of it without an explicit go-ahead on a specific option.
 | # | Item | Status |
 |---|---|---|
 | 1 | Typing indicator (`channel.typing()`) | **Decided** — ship |
-| 2 | Queue-ack on `conversation_lock` contention (delayed-notice, ~2s) | **Decided** — build (no OCC) |
+| 2 | Queue-ack on `conversation_lock` contention (delayed-notice, ~10s) | **Decided** — build (no OCC) |
 | 3 | `MAX_TOOL_ITERATIONS` → 5, `HIGH_ITERATION_WATERMARK` = 4 | **Decided** |
-| 4 | `parallel_tool_calls` real-API verification | **Decided** — standalone script, out-of-band |
+| 4 | `parallel_tool_calls` real-API verification | **Answered: already on by default, no code change needed.** Verified against the real API — see "`parallel_tool_calls`" below |
 | 5 | Macro tools (`initialize_encounter` etc.) | **Decided** — backlog |
 | 6 | Prompt caching / `cached_input_tokens` | **Answered: works, no action needed.** Verified against the real API with the real production prompt — 99.9% cache hit on repeat calls. See "Prompt caching" below |
 | 7 | Streaming | **Open, backlog** — needs its own design (edit-rate-limit batching) |
@@ -172,8 +172,13 @@ adopting that part.)
    fully serialized, but stop the *silent* wait — when a message arrives
    and the conversation lock is already held, send an acknowledgement
    ("守密人正在處理上一位調查員的行動，你的動作已排入佇列，請稍候……")
-   *only if the wait is still ongoing after ~2 seconds* (not immediately on
-   contention — a refinement adopted from a later review pass, see below),
+   *only if the wait is still ongoing after ~10 seconds* (not immediately on
+   contention — the delayed-notice idea itself was a refinement adopted
+   from a later review pass, see below; the 10s threshold is the user's
+   final call, up from that review's original 2s suggestion — a typing
+   indicator is already running the whole time regardless, so the queue
+   notice only needs to catch genuinely long waits, not add a second
+   "something's happening" signal on top of typing() for short ones),
    so the player gets feedback instead of tens of seconds of nothing that
    reads as the bot being dead, without spamming a notice for waits that
    resolve almost instantly. This preserves both the multi-step tool-call
@@ -188,12 +193,11 @@ adopting that part.)
    before actually hitting the wall" gap — a watermark equal to the cap
    would only ever fire in lockstep with hitting it, which PR #55's
    wrap-up path already logs on its own and adds no earlier signal).
-4. **`parallel_tool_calls`**: don't reason about it from docs — write a
-   small standalone script hitting the real OpenAI API with the configured
-   model and a prompt that forces multiple simultaneous tool calls, and see
-   whether it actually parallelizes or 400s the same way `temperature` did.
-   Only add prompt/provider changes once support is confirmed this way.
-   Kept as a standalone experiment, not part of this branch's app code.
+4. **`parallel_tool_calls`**: verified against the real API (see
+   "`parallel_tool_calls`" section below) — already on by default for the
+   configured model, `parallel_tool_calls=False` is the only setting that
+   visibly changes anything. No provider/prompt change needed; nothing to
+   implement for this item.
 5. **Macro tools** (`initialize_encounter` etc.): backlog. Not part of this
    latency hotfix — revisit once the front-line UX fixes (typing + queue
    ack) are stable, since it's a combat-state-machine + tool-schema
@@ -203,8 +207,8 @@ adopting that part.)
 Execution order: typing indicator + iteration tuning first (fast,
 independent wins), then the queue-ack mechanism (the actual fix for the
 "語塞" complaint that started this whole investigation). `parallel_tool_
-calls` verification runs separately as a throwaway script, not blocking
-anything here.
+calls` verification (item 4) is already done — see below — and needs no
+implementation work either way.
 
 ## Implementation plan (this branch)
 
@@ -227,7 +231,7 @@ anything here.
   with_notice(conversation_id, reply)`) replacing the bare `async with
   locks.get_conversation_lock(conversation_id):` at each of `_handle_
   text_message_impl`'s call sites. If the lock isn't immediately available,
-  start a background task that waits ~2.0s and, only if the lock is
+  start a background task that waits ~10.0s and, only if the lock is
   *still* not acquired by then, sends the queued-notice reply — cancelled
   the moment the real `lock.acquire()` succeeds. This avoids sending a
   notice for waits that resolve almost immediately, unlike a plain
@@ -284,9 +288,46 @@ adding ongoing usage/cache-hit logging to the real loop for production
 visibility is a nice-to-have, not gating anything, and isn't part of this
 branch's plan.
 
+## `parallel_tool_calls` — verified already on by default, closed
+
+Note while reading this: the live `.env` has since been updated to
+`OPENAI_MODEL=gpt-6-luna` (was `gpt-5.6-luna` throughout the rest of this
+doc's earlier verification rounds) — this test ran against whatever model
+is actually configured, not a hardcoded one.
+
+`verify_parallel_tool_calls.py` (throwaway, scratchpad-only) sent the same
+two-independent-skill-check prompt three ways: `parallel_tool_calls` left
+unset (exactly how `openai_provider.py` calls it today), explicitly `True`,
+and explicitly `False`. Used the real configured `KEEPER_TEMPERATURE` (0.6,
+not a hardcoded "safe" value like earlier test rounds used) specifically so
+the already-known `temperature`-rejected-by-reasoning-models 400 would
+actually reproduce, then retried without it — mirroring
+`openai_provider.py`'s real `_unsupported_params` fallback inline instead
+of hardcoding around the issue:
+
+| Config | Result |
+|---|---|
+| unset (today's actual behavior) | 400 on `temperature` (expected, self-healed same as production), then **2 tool calls in one response** |
+| `parallel_tool_calls=True` | Same 400/retry, then **2 tool calls in one response** |
+| `parallel_tool_calls=False` | Same 400/retry, then **only 1 tool call** — the model held the second `skill_check` back |
+
+**Conclusion: parallel tool calling is already on by default for the
+configured model** (`unset` behaves identically to explicit `True`, and
+`False` is the only setting that visibly changes anything, by *reducing*
+batching). No code change needed — adding `"parallel_tool_calls": True` to
+`request_kwargs` would be a no-op given the default already matches it.
+This closes item 4 the same way item 6 (caching) closed: measured directly
+against the real API instead of assumed from the original proposal's
+"confirm the default isn't disabled" framing.
+
+The `temperature` 400 itself is not a new finding — `openai_provider.py`
+already self-heals it in production via `_unsupported_params` — this test
+just deliberately reproduced it with the real configured value (rather than
+earlier verification rounds' hardcoded `temperature: 1`, which happened to
+dodge the issue) to confirm the fallback still engages correctly for
+whatever model ends up configured, including the now-current `gpt-6-luna`.
+
 ## Notes
-- `parallel_tool_calls` verification is explicitly out-of-band — a
-  throwaway script against the real API, not app code in this branch.
 - Streaming (item 7) stays backlog — only helps the final narration output
   (not the multi-round tool-calling majority of turn latency) and needs its
   own edit-rate-limit-aware design (Discord throttles message edits hard)
