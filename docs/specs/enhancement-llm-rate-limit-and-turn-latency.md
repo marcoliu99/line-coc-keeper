@@ -25,15 +25,18 @@
 
 ## 3. 提案方案
 
-### 3.1 Provider admission gate
+### 3.1 OpenAI admission gate 與分階段推出
 
-在共用 provider boundary 加入可設定的 async semaphore，控制同一程序中同時進行的 LLM API attempts。初始只包住單次網路 attempt，不包含工具執行及 backoff；429 後先釋放 slot，等待重試時間後再重新排隊。這樣等待重試的 request 不會佔住可用連線名額。
+第一階段只控制 OpenAI Responses API 的對話請求。在 OpenAI request boundary 加入可設定的 async semaphore，限制同一 bot process 同時進行的 API attempts。semaphore 只包住單次網路 attempt，不包含工具執行及 backoff；429 後先釋放 slot，等待重試時間後再重新排隊。這樣等待重試的 request 不會佔住可用名額，也不會阻塞 Anthropic／Gemini。
 
-按 provider 設定上限，避免 OpenAI 的限制不必要地阻塞其他 provider。第一版不做 token-per-minute 排程或跨程序分散式限流；若部署只有單一 bot process，process-local gate 足以驗證效果。部署多副本時，需另行決定共享限流器。
+具體推出步驟：
 
-每次 attempt 記錄 admission wait、實際 API latency、provider/model、attempt 序號、結果類別與安全的 provider request ID。不得記錄 prompt、回應本文、API key 或完整錯誤本文。
+1. **建立 baseline（至少 24 小時且至少 500 次 OpenAI attempts）**：記錄各時間窗的最大同時 request 數、429 比率、retry 次數、API latency、turn latency、conversation lock wait 和完成 turn 數。未達 500 次就延長觀察，不用小樣本定上限。
+2. **小流量試行**：先設 OpenAI process-local concurrency cap 為 4，透過環境變數可調；觀察至少 24 小時且至少 500 次 OpenAI attempts。每次 attempt 記錄 admission wait、實際 API latency、model、attempt 序號、結果類別與安全的 provider request ID。不得記錄 prompt、回應本文、API key 或完整錯誤本文。
+3. **調整規則**：若 429 比率低於 1%、admission wait P95 低於 0.5 秒，且 turn P95／throughput 沒有明顯退化，下一窗口把上限增加 1；若 429 比率高於 2% 或 admission wait P95 高於 2 秒，下一窗口減少 1。一次只改一個單位，至少觀察一個完整窗口。429 比率介於 1–2% 時維持上限，再收一個窗口。這些是首輪操作門檻，可在讀完 baseline 後調整。
+4. **保留或回退**：比較相近時段／流量下的 429 比率、turn P95 和完成 turn 數。只有 429 改善且 turn P95 未惡化超過 10%、throughput 未下降超過 5%，才保留新上限；否則回到前一上限並檢查 admission queue 是否成為瓶頸。
 
-上限須由部署實測決定，不直接猜一個「最佳」數值。以保守可配置值開始，對照限流前後 429 rate、P95 wait、throughput 和玩家 turn P95，再調高或調低。
+`4` 是可回退的試行值，不代表最佳值。若 baseline 顯示目前峰值低於 4，則先用 baseline 峰值作試行 cap，避免 limiter 人為製造排隊。第一階段不做 token-per-minute 排程、其他 provider 限流或跨程序共享限流。
 
 ### 3.2 Retry 與錯誤分類
 
@@ -45,11 +48,11 @@
 
 ### 3.3 長 turn 與工具呼叫數
 
-先用 structured logs 抽出 iteration ≥ 4 的代表性 turn，依序列出每輪模型請求、tool name、工具耗時、是否改變狀態，以及下一個呼叫是否依賴前一個結果。針對固定且常見的多步流程，評估是否設計 domain macro tool，讓模型一次提交完整意圖，由工具內部依序驗證及執行。
+先用 structured logs 抽出 iteration ≥ 4 的代表性 turn，依序列出每輪模型請求、tool name、工具耗時、是否改變狀態，以及下一個呼叫是否依賴前一個結果。遭遇建立與初始 NPC 設定的 macro tool 已在另一分支/spec 討論，不在本 spec 重複設計：`enhancement/macro-combat-initialization-tool`，文件 `docs/specs/enhancement-macro-combat-initialization-tool.md`。本工作只引用它作為可能減少往返的既有候選；是否實作依該 spec 的 COC7e 正確性審查與遊戲測試決定。
 
 在缺少依賴資訊前，不平行執行同一 turn 的 tool calls。後續若要併行，只允許明確標註為 read-only 且互相獨立的工具；會骰骰、改角色／戰鬥狀態、寫 log 或依前一步結果決策的工作仍依序執行。不要為降低 iteration 而降低驗證或跳過必要工具。
 
-可先從 log/trace 改善開始，不改 `MAX_TOOL_ITERATIONS=5`。如果調整後樣本仍有大量 4–5 iteration，再以實際工具鏈選擇 macro tool 或工具 schema/prompt 縮減作獨立變更。
+可先從 log/trace 改善開始，不改 `MAX_TOOL_ITERATIONS=5`。工具 schema/prompt 縮減另依高 iteration trace 證據評估。
 
 ### 3.4 同對話排隊
 
@@ -84,14 +87,14 @@ conversation lock
 
 ## 7. 待討論決策
 
-1. 第一版是否先上 process-local provider semaphore 與新 telemetry，再用部署結果調整併發上限？建議分階段做，避免猜測上限。
-2. 是否需要 OpenAI、Anthropic、Gemini 各自獨立的併發設定，或只為目前實際使用的 provider 設定？建議先看 log 中 429 的 provider/model 分布。
-3. 是否把常見多步遊戲操作（例如遭遇建立與初始 NPC 設定）列為 macro tool 候選？需要從高 iteration trace 挑出頻率最高且語意穩定的流程，再另寫狹義 spec。
-4. 是否需要多副本共享限流？只有部署多個 bot process 共用同一 provider quota 時才需要納入。
+1. 第一階段以 OpenAI 為主；其他 provider 暫不加 admission gate，除非 telemetry 顯示它們也有明顯限流。
+2. 採分階段推出：baseline → cap=4（若 baseline 峰值低於 4 則用峰值）試行 → 按 1%／2% 429 與 admission wait 門檻逐窗口調整 → 比較 turn P95 和 throughput 決定保留或回退。是否接受 24 小時／500 attempts 的窗口及上述門檻，請 review 時確認。
+3. Macro tool 已由 `enhancement/macro-combat-initialization-tool` 分支/spec 承接，不是本 spec 新增的設計決策；是否排入實作依該 spec review。
+4. 本階段不做跨程序共享限流；若未來確認多個 bot process 共用同一 OpenAI quota 並造成超額，再另開設計。
 
 ## 8. 實作前檢查
 
-- 確認 `profile-async2.log` 的 429 按 provider/model/status/error code 的分布，並確認 log 收集時的 `MAX_TOOL_ITERATIONS` 設定。
+- 確認 `profile-async2.log` 的 OpenAI 429 按 model/status/error code 的分布，並確認 log 收集時的 `MAX_TOOL_ITERATIONS` 設定。此檢查可決定試行 cap 是否採用 4，或採用較低的 baseline 峰值。
 - 確認使用的 SDK 版本如何公開 Retry-After、rate-limit reset、provider request ID 與結構化 error code。
 - 抽樣檢視高 iteration turn，避免把互相依賴或有序狀態變更的工具錯列為可平行工作。
 - 規格獲確認後，才依決定的階段開始實作與測試。
