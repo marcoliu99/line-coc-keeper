@@ -1,10 +1,68 @@
 # Spec: advance_combat_turn spammed instead of resolving a pending action
 
+## STATUS: INVALIDATED — see "Correction" below
+
+PR #62 (built from this spec) was closed without merging. The real root
+cause of the incident this spec was built around turned out to be
+different — see `docs/specs/bug-add-npc-to-combat-armor-schema-crash.md`
+for the actual fix. The description change proposed here has been
+reverted (never had verified justification once the real cause was
+found). Kept in the repo as an honest record of how the misdiagnosis
+happened and was caught, not as an active spec.
+
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:80f245fc6591a021b40dbbedb9d44d41e6b9ec9f
-- **implementation end**: bug/advance-combat-turn-skips-pending-action:8687311 — ruff/mypy/compileall/pytest all green
+- **implementation end**: N/A — reverted, see Correction section
 
-## Purpose & Scope
+## Correction (found after PR #62 was opened)
+
+A code-review comment on PR #62 pointed out that the verification's
+synthetic `advance_combat_turn` result always returned the same
+`current_turn` on every call — but the real `combat.advance_turn()`
+(`app/combat.py:1148-1176`) unconditionally cycles to the next combatant
+every single call; it has no concept of "this combatant's action is
+unresolved, don't advance." That claim in the original verification
+("matching real `combat.advance_turn`'s actual behavior") was written
+without checking the source and was wrong.
+
+Re-running the verification with the REAL state-transition logic (a real
+`GroupState`, real `combat.start_combat`/`add_npc`, every tool call routed
+through the real `keeper._execute_tool`) — neither the OLD nor the NEW
+description reproduced the original 6x-spam pattern at all.
+
+That prompted re-reading the actual production log's full context for
+`turn_25ed74e`, not just the tool-call sequence. The real cause:
+
+```
+start_combat 成功：Ken、marco 加入戰鬥（沒有敵人）
+add_npc_to_combat 失敗：ArmorRule.__init__() got an unexpected keyword argument 'name'
+advance_combat_turn 成功 ×6（round 1→4，Ken/marco 正常輪替）
+```
+
+`add_npc_to_combat` **crashed** — the model passed an `armor` entry with
+a `name` key, but `ArmorRule`'s real fields are `id`/`label`/`value`/
+`applies_to`/`bypass_tags`/`public_hint`. The enemy was never added;
+combat was left with only the two investigators and no NPC to act
+against, and the model spent the rest of the turn cycling `advance_
+combat_turn` (correctly, between the two real combatants — not a spam
+bug in itself) without ever resolving anything, because there was
+nothing to resolve. This is a downstream symptom of a real crash, not
+evidence the model didn't know how to handle a blocked pending action.
+
+Root cause of the crash: `add_npc_to_combat`'s `armor` parameter schema
+(`app/keeper.py`) documents no field names at all, unlike its `attacks`
+and `abilities` siblings which explicitly list their expected keys —
+the model had no way to know `name` was wrong. (This exact mistake was
+independently made while writing this investigation's own verification
+scripts too, using `armor=[{"name": ...}]` before discovering the real
+field names — same guess, same reason.)
+
+The `advance_combat_turn` description change this spec originally
+proposed has been reverted — it was never validated against anything
+real. See `docs/specs/bug-add-npc-to-combat-armor-schema-crash.md` for
+the actual fix.
+
+## Purpose & Scope (historical — see Correction above)
 
 Real production log evidence (`/Users/marcoliu/profile-async2.log`, real
 `gpt-6-luna`/`none` Executor turn, `turn_25ed74eaf...`, 2026-09-24
