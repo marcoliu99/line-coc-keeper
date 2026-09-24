@@ -332,6 +332,44 @@ against the *same* model/effort configs to see if pass rates improve —
 isolates "was it the wording" from "was it the model" far more cheaply
 than testing more models against the unfixed wording would.
 
+### Round 7 — wording fix, N=3 trials, confirms the hypothesis
+
+Applied both fixes from the tool-schema inspection above, as a **test-only
+patch** (not yet touched `app/keeper.py`): split the combat-trigger
+sentence so `start_combat`'s "no parameters, don't look anything up first"
+is separate from `add_npc_to_combat`'s lookup requirement, and patched
+`damage_combatant`/`apply_combat_damage`'s descriptions with one
+disambiguating sentence each. Reran round 6's two hardest scenarios
+(`start_combat_single_npc`, `damage_npc`) against the two most
+decision-relevant configs, N=3 trials each instead of 1, per round 6's
+own conclusion that single-run verdicts aren't reliable.
+
+| Config | start_combat_single_npc | damage_npc |
+|---|---|---|
+| `gpt-5.6-luna`/medium (today's prod) | 3/3 ✅ (all turn 1, 2459-3934ms) | 3/3 ✅ (2 of 3 via a get_combat_status detour that still lands correctly, 3060-4155ms) |
+| `gpt-6-luna`/none | 3/3 ✅ (all turn 1, 1242-1477ms) | 3/3 ✅ (all turn 1 — **no detour at all**, 1504-1816ms) |
+
+**This confirms the wording hypothesis, not just "the model got lucky
+again":** both scenarios go from round 6's mixed/coin-flip results to a
+clean 6/6 across both configs once the ambiguity is removed — and for
+`gpt-6-luna`/none specifically, `damage_npc` stopped taking the
+`get_combat_status` detour entirely (all 3 trials resolved directly to
+`damage_combatant` on turn 1), while the baseline model still took that
+detour 2 of 3 times even with the fixed wording (still landing correctly,
+just slower). This is a meaningfully positive result for the tiering
+question too: with the ambiguity fixed, `gpt-6-luna`/none is both
+correct (6/6) and consistently faster (1242-1816ms) than today's
+production baseline (2459-4155ms) on exactly the two scenarios that
+looked shakiest before this fix.
+
+**Actionable takeaway independent of the model/tiering decision:** these
+two wording fixes look like a legitimate, low-risk improvement to make to
+the *real* production prompt/tool descriptions in `app/keeper.py`
+regardless of which model ends up running the Executor — they measurably
+reduced ambiguity for both the current production model and the
+candidate. Worth splitting into its own small bug/enhancement branch
+rather than bundling into this still-discussion-only tiering spec.
+
 ## Dynamic tool scoping design (combat-active vs. not)
 
 User confirmed the direction: dynamic (combat-state-dependent), not one
