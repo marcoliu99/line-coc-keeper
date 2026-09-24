@@ -810,6 +810,15 @@ _SEARCH_SCENARIO_TOOL = {
         "劇本改用檢索模式時（看到『這份劇本改用檢索模式』的提示）必須用這個工具查詢，"
         "不能憑空想像劇本內容；查詢字詞盡量用劇本裡可能出現的具體名詞（人名、地名、物品、關鍵字），"
         "不要問完整句子。"
+        "查詢時以「目前這個事件/場景」為單位思考需要哪些劇本資料，不要只查眼前缺"
+        "的單一事實——呼叫前先想一想這個事件接下來可能還會用到哪些相關資訊（相關"
+        "的 NPC/怪物/地點、目前情境與遭遇、可能的行動與行為模式、相關法術/武器/能"
+        "力、使用條件與代價與限制、立即的後續發展），把這些一起包進同一次查詢"
+        "裡，不要每個小問題都分開各查一次。查詢範圍要涵蓋這個事件需要的東西，但"
+        "不要查到之後才會發生的場景、秘密或遭遇，避免劇透也避免資料過大。拿到查"
+        "詢結果後，先仔細看有沒有涵蓋到目前需要的資訊，只有真的缺東西才再查一"
+        "次；不要因為想再三確認已經查到的內容而重複查詢——但這不代表只能查一"
+        "次，如果一次查詢真的不夠涵蓋這個事件所需的資訊，可以再查。"
     ),
     "input_schema": {
         "type": "object",
@@ -819,6 +828,31 @@ _SEARCH_SCENARIO_TOOL = {
         "required": ["query"],
     },
 }
+
+# search_scenario's own description tells players' turns not to look up
+# future scenes/secrets (spoiler avoidance) — but the KP Assistant IS the
+# human KP's own tool, not a player-facing surface, so that restriction is
+# actively wrong for it: a KP legitimately asks it to look ahead (e.g.
+# prepping the next encounter). See _tool_definition_for_kp_assistant below,
+# which swaps this in for that one role instead of the shared description.
+_SEARCH_SCENARIO_DESCRIPTION_KP_ASSISTANT = (
+    "在劇本全文裡搜尋跟這個查詢最相關的段落（依頁面為單位），回傳前幾筆最符合的內容。"
+    "劇本改用檢索模式時（看到『這份劇本改用檢索模式』的提示）必須用這個工具查詢，"
+    "不能憑空想像劇本內容；查詢字詞盡量用劇本裡可能出現的具體名詞（人名、地名、物品、關鍵字），"
+    "不要問完整句子。"
+    "查詢時以「目前這個提問」為單位思考需要哪些劇本資料，不要只查眼前缺"
+    "的單一事實——呼叫前先想一想這個提問接下來可能還會用到哪些相關資訊（相關"
+    "的 NPC/怪物/地點、目前情境與遭遇、可能的行動與行為模式、相關法術/武器/能"
+    "力、使用條件與代價與限制、立即的後續發展），把這些一起包進同一次查詢"
+    "裡，不要每個小問題都分開各查一次。"
+    "你是 KP 本人專用的助手，不是在對玩家說話，玩家看不到這裡的查詢或結果，"
+    "所以可以視 KP 提問的實際需要查詢之後章節、尚未發生的場景、秘密或遭遇"
+    "（例如 KP 想先備下一場戲、確認後續劇情），不需要為了避免劇透而保留；"
+    "查詢範圍還是要對應 KP 這次實際問的東西，不要沒來由地把整本劇本都撈一遍。"
+    "拿到查詢結果後，先仔細看有沒有涵蓋到目前需要的資訊，只有真的缺東西才再查一"
+    "次；不要因為想再三確認已經查到的內容而重複查詢——但這不代表只能查一"
+    "次，如果一次查詢真的不夠涵蓋這次提問所需的資訊，可以再查。"
+)
 
 _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "get_character_sheet",
@@ -3340,6 +3374,8 @@ def _format_kp_canonical_history_message(message_text: str, canonical_tool_event
 
 
 def _tool_definition_for_kp_assistant(tool: dict) -> dict:
+    if tool["name"] == "search_scenario":
+        return {**tool, "description": _SEARCH_SCENARIO_DESCRIPTION_KP_ASSISTANT}
     if tool["name"] != "roll_dice":
         return tool
 

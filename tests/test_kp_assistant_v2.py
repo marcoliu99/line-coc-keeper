@@ -3,6 +3,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_load=lambda data: {}))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
@@ -717,6 +718,21 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
     def test_ordinary_speaker_roll_dice_schema_does_not_expose_roll_context(self):
         roll_dice_tool = tool_by_name(keeper._tools_for_speaker_role("player"), "roll_dice")
         self.assertNotIn("roll_context", roll_dice_tool["input_schema"]["properties"])
+
+    def test_kp_assistant_search_scenario_description_permits_future_lookups(self):
+        """Code-review finding on PR #60: the player-facing search_scenario
+        description tells the model not to look up future scenes/secrets
+        (spoiler avoidance) — but the KP Assistant IS the human KP's own
+        tool, not a player-facing surface, so that restriction is wrong for
+        it (e.g. a KP legitimately asks it to prep the next encounter)."""
+        with patch("app.keeper.SCENARIO_RAG_ENABLED", True):
+            player_tool = tool_by_name(keeper._tools_for_speaker_role("player"), "search_scenario")
+            kp_tool = tool_by_name(keeper._tools_for_speaker_role("kp_assistant"), "search_scenario")
+
+        self.assertIn("不要查到之後才會發生的場景", player_tool["description"])
+        self.assertNotIn("不要查到之後才會發生的場景", kp_tool["description"])
+        self.assertIn("尚未發生的場景", kp_tool["description"])
+        self.assertIn("不是在對玩家說話", kp_tool["description"])
 
     def test_kp_roll_dice_tool_definition_adds_context_without_global_mutation(self):
         global_roll_dice_tool = tool_by_name(keeper.TOOLS, "roll_dice")
