@@ -2,7 +2,7 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:80f245fc6591a021b40dbbedb9d44d41e6b9ec9f
-- **implementation end**: TBD
+- **implementation end**: bug/add-npc-to-combat-armor-schema-crash:15066b5 — ruff/mypy/compileall/pytest all green (full suite)
 
 ## Purpose & Scope
 
