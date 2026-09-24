@@ -545,7 +545,11 @@ TOOLS = [
                 "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
                 "armor": {
                     "type": "array",
-                    "description": "敵人護甲規則；玩家未發現前不要公開具體數字",
+                    "description": (
+                        "敵人護甲規則，每筆含 id/label/value/applies_to/bypass_tags/public_hint 等"
+                        "（不是 name——欄位名稱是 label，不要跟 attacks/abilities 的 name 搞混）；"
+                        "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
+                    ),
                     "items": {"type": "object"},
                 },
                 "attacks": {
