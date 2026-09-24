@@ -36,13 +36,13 @@ static prompt text).
    "properties": {}}`). The model plausibly over-generalizes "look it up
    first" onto `start_combat` too, producing spurious/looping
    `search_scenario` calls before (or instead of) `start_combat`.
-2. **`damage_combatant` and `apply_combat_damage` both plausibly mean
-   "deal damage," with no rule for which to prefer.** `damage_combatant`
-   takes a flat `name`+`delta` (already-final number); `apply_combat_
-   damage` takes `target`+`raw_damage` and computes armor reduction
-   internally. Neither description says when to use one over the other,
-   causing the model to sometimes detour through `get_combat_status`
-   (to check armor / decide) before committing to either.
+2. **The tools have different damage semantics, but the descriptions did
+   not distinguish them safely.** `damage_combatant` sends negative deltas
+   through the armor-aware `apply_combat_damage` implementation, so it
+   does not accept an already-final damage value. `apply_combat_damage`
+   accepts raw damage and calculates armor. The original wording suggested
+   using `damage_combatant` for final damage, which applied armor twice and
+   reduced HP loss incorrectly.
 
 ## Changes
 
@@ -54,18 +54,17 @@ static prompt text).
   7's `REVISED_COMBAT_TRIGGER_RULE` (see the tiering spec's script,
   session scratchpad, for the verbatim text used in the real-API test).
   Keep the PR #55 same-species-naming rule intact, unchanged.
-- `app/keeper.py`'s `TOOLS` list: `damage_combatant` and `apply_combat_
-  damage` tool `description` fields get one disambiguating sentence each,
-  matching round 7's tested wording:
-  - `damage_combatant`: state that when the narrative already gives a
-    final damage/heal number, use this tool directly without querying
-    combat status first.
-  - `apply_combat_damage`: state that it's only for when the system needs
-    to compute armor reduction itself, and to use `damage_combatant`
-    instead when a final number is already given.
-- No other prompt text, tool schema, or behavior changes — this is a
-  wording-only fix, confirmed sufficient by the round 7 test without
-  needing any model/config change.
+- `app/combat.py`: add `apply_final_combat_damage`, which follows the same
+  authoritative HP synchronization, damage-trigger, and major-wound flow
+  as `apply_combat_damage` while skipping armor reduction because the
+  supplied number is already final.
+- `app/keeper.py`: distinguish raw and final damage in tool descriptions;
+  expose `apply_final_combat_damage` as a formal tool and allow it for KP
+  Assistant turns alongside the existing formal damage tool. Update
+  combat prompts so raw damage uses `apply_combat_damage`, final damage
+  uses `apply_final_combat_damage`, and `damage_combatant` is not presented
+  as a final-damage path.
+- Keep `apply_combat_damage`'s existing raw-damage behavior unchanged.
 
 ## Testing Strategy
 
@@ -74,11 +73,11 @@ static prompt text).
   behavioral code path, so no existing test should need updating unless
   one happens to assert on the exact old prompt/description text (grep
   for the changed strings across `tests/` before editing).
-- No new automated test is meaningful here: correctness was already
-  verified empirically via real-API trials (round 7, N=3 per scenario per
-  config, 6/6 pass rate) rather than something a mocked unit test could
-  exercise (the failure mode is LLM tool-selection behavior against real
-  prompt text, not application logic).
+- Automated tests confirm armor is applied once on the raw-damage path and
+  not applied again on the final-damage path, including the KP Assistant
+  tool allowlist and canonical-result behavior. The prompt wording
+  selection remains empirically verified via the real-API trials (round 7,
+  N=3 per scenario per config, 6/6 pass rate).
 - Optional follow-up (not blocking this branch): once this lands, round 3
   of the tiering spec's 8-scenario sweep could be re-run against the now-
   fixed static prompt to confirm no other scenario regresses from the

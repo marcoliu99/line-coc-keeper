@@ -379,12 +379,13 @@ def apply_combat_damage(
     damage_type: str = "physical",
     tags: list[str] | None = None,
     source_id: str = "",
+    bypass_armor: bool = False,
 ) -> dict[str, Any]:
     combatant = _find_combatant(state, target_name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
     card = _card_for(state, combatant)
-    armor, armor_label = _armor_reduction(card, damage_type, tags or [])
+    armor, armor_label = (0, "") if bypass_armor else _armor_reduction(card, damage_type, tags or [])
     final = max(0, int(raw_damage) - armor)
     before = combatant.hp
     after = max(0, before - final)
@@ -419,6 +420,31 @@ def apply_combat_damage(
         "public_summary": f"{combatant.display_name} 受到 {final} 點傷害" + ("（部分傷害被擋下）" if armor else ""),
         "private_notes": f"raw={raw_damage}, armor={armor_label or '-'}:{armor}, source={source_id}",
     }
+
+
+def apply_final_combat_damage(
+    state: GroupState,
+    target_name: str,
+    final_damage: int,
+    *,
+    damage_type: str = "physical",
+    tags: list[str] | None = None,
+    source_id: str = "",
+) -> dict[str, Any]:
+    """Apply an already-final damage amount without subtracting armor again.
+
+    This retains the authoritative combat-damage side effects while making
+    the damage/armor distinction explicit at the call site.
+    """
+    return apply_combat_damage(
+        state,
+        target_name,
+        final_damage,
+        damage_type=damage_type,
+        tags=tags,
+        source_id=source_id,
+        bypass_armor=True,
+    )
 
 
 def damage_combatant(state: GroupState, name: str, delta: int) -> dict:

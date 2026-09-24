@@ -645,6 +645,26 @@ class CombatCardTests(unittest.TestCase):
         self.assertNotIn("3", result["public_summary"])
         self.assertIn("部分傷害被擋下", result["public_summary"])
 
+    def test_apply_final_combat_damage_does_not_subtract_armor_again(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Armored Thing",
+            40,
+            10,
+            armor=[{"id": "hide", "label": "Thick Hide", "value": 3, "applies_to": "physical"}],
+        )
+
+        result = combat.apply_final_combat_damage(state, "Armored Thing", 5, damage_type="physical")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["raw_damage"], 5)
+        self.assertEqual(result["armor_reduction"], 0)
+        self.assertEqual(result["final_damage"], 5)
+        self.assertEqual(result["hp_after"], 5)
+        self.assertIn("_trigger:on_damage_taken", next(iter(state.combat.enemy_cards.values())).status_tags)
+
     def test_public_combat_status_hides_enemy_hp(self):
         state = self._state_with_pc()
         combat.start_combat(state)

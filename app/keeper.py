@@ -583,8 +583,8 @@ TOOLS = [
         "name": "damage_combatant",
         "description": (
             "調整戰鬥中某位角色或敵人的 HP（受傷用負數，治療用正數）。適用於戰鬥中的任何一方，"
-            "包含玩家角色與 NPC。當敘述已經明確給出最終傷害/治療數字時（例如「造成 5 點傷害」），"
-            "直接用這個工具即可，不需要先查詢戰鬥狀態或護甲。"
+            "包含玩家角色與 NPC。負數 delta 會走正式傷害流程並套用護甲；若輸入的是已計算完成、不可再扣護甲的"
+            "最終傷害，請改用 apply_final_combat_damage。"
         ),
         "input_schema": {
             "type": "object",
@@ -637,9 +637,8 @@ TOOLS = [
     {
         "name": "apply_combat_damage",
         "description": (
-            "套用正式戰鬥傷害，會分開計算 raw damage、護甲抵銷、final damage 與 HP。"
-            "只有在需要系統依角色的護甲規則自動計算實際傷害時才用這個工具；如果敘述已經給出"
-            "最終傷害數字，改用 damage_combatant，不需要用這個工具重算。"
+            "套用正式戰鬥傷害。raw_damage 是尚未扣除護甲的原始傷害，系統會計算護甲抵銷、final damage 與 HP。"
+            "若傷害數字已經是扣除護甲後的最終值，改用 apply_final_combat_damage，避免重複扣除護甲。"
             "玩家未發現前，公開敘事不可洩漏護甲/弱點的精確數值。"
         ),
         "input_schema": {
@@ -652,6 +651,25 @@ TOOLS = [
                 "source_id": {"type": "string"},
             },
             "required": ["target", "raw_damage"],
+        },
+    },
+    {
+        "name": "apply_final_combat_damage",
+        "description": (
+            "套用已經確定的最終傷害數字；final_damage 已包含護甲等減免，不會再次扣除護甲。"
+            "仍會正式更新戰鬥 HP、傷害觸發與重傷檢定。只有在傷害數字已是最終值時使用；"
+            "若要由系統依目標護甲計算，請用 apply_combat_damage 並傳入 raw_damage。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "final_damage": {"type": "integer", "minimum": 0},
+                "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "source_id": {"type": "string"},
+            },
+            "required": ["target", "final_damage"],
         },
     },
     {
@@ -817,6 +835,7 @@ _KP_ASSISTANT_ALLOWED_TOOL_NAMES = {
     "roll_weapon_damage",
     "roll_impaling_damage",
     "apply_combat_damage",
+    "apply_final_combat_damage",
     "add_combat_effect",
     "search_scenario_images",
     "show_scenario_image",
@@ -835,6 +854,7 @@ _KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = {
     "roll_weapon_damage",
     "roll_impaling_damage",
     "apply_combat_damage",
+    "apply_final_combat_damage",
     "add_combat_effect",
 }
 
@@ -887,7 +907,7 @@ KP 助手是協助你主持這場 Call of Cthulhu 遊戲的人類共同主持者
    如果骰子是在決定傷害、正式隨機效果、已經發生事件的隨機結果，或遊戲世界內需要 authoritative randomness 的結果，使用 roll_context="game_resolution"。例如「碎玻璃割傷 Marco，骰 1d3 傷害」應呼叫 roll_dice，expression="1d3"，purpose="碎玻璃割傷 Marco 的傷害"，roll_context="game_resolution"；成功時會觸發 Dice Creates Canon，整個造成這顆骰子的 KP 主持指示會正式寫入世界歷史。
    如果骰子只是 KP 幕後挑方案、隨機選劇情方向、自己決定要用哪個 NPC 或點子，且不直接構成目前世界事實，使用 roll_context="ooc_randomizer"。例如「我幕後骰 1d6，1–3 用 NPC A，4–6 用 NPC B」應呼叫 roll_dice，expression="1d6"，purpose="幕後決定下一幕使用哪個 NPC"，roll_context="ooc_randomizer"；這顆骰子雖然真的由 deterministic tool 擲出，但不構成遊戲世界事件，不會觸發 Dice Creates Canon，該 KP turn 仍留在 OOC history。
    正式遊戲事件已確定需要擲普通武器傷害時，可以呼叫 roll_weapon_damage，例如「Marco 開槍命中，骰他的 1d8 武器傷害」；這個工具會依角色 deterministic state 套用該角色的 damage bonus。正式規則已確定要計算極限成功／穿刺類傷害時，可以呼叫 roll_impaling_damage，例如「這次攻擊是極限成功，計算穿刺傷害」。
-   武器傷害工具只產生 authoritative 傷害結果；若 KP 助手明確裁定已發生固定傷害、環境傷害或持續效果，必須使用 apply_combat_damage 或 add_combat_effect 走正式戰鬥傷害流程，讓系統保存 raw damage、護甲、重傷與 HP 同步結果。
+   武器傷害工具只產生 authoritative 傷害結果；若 KP 助手明確裁定已發生固定傷害、環境傷害或持續效果，必須使用 apply_combat_damage（傳入尚未扣護甲的 raw_damage）、apply_final_combat_damage（傳入已扣除減免的 final_damage）或 add_combat_effect 走正式戰鬥流程，讓系統保存傷害、護甲、重傷與 HP 同步結果。
    KP Assistant 仍不能使用 adjust_character、damage_combatant 等泛用 mutation tools 直接覆寫 HP 或用正負 delta 繞過傷害流程。
    當 KP Assistant 成功觸發正式 deterministic check / damage workflow 時，該輪主持指示會成為正式遊戲歷史，而不再只是 OOC 討論。
    這只允許你建立合法檢定／對抗／傷害流程；不得用自然語言或未開放工具直接覆寫已完成骰點、HP、SAN、Luck、彈藥、物品、地圖位置或戰鬥狀態。
@@ -2662,6 +2682,19 @@ def _execute_tool(
             result = _mutate_and_save_state(state, _mutate_apply_combat_damage)
             return _filter_public_combat_damage_result(result, speaker_role)
 
+        if name == "apply_final_combat_damage":
+            def _mutate_apply_final_combat_damage(target_state: GroupState) -> dict:
+                return combat.apply_final_combat_damage(
+                    target_state,
+                    tool_input["target"],
+                    int(tool_input["final_damage"]),
+                    damage_type=tool_input.get("damage_type", "physical"),
+                    tags=tool_input.get("tags") or [],
+                    source_id=tool_input.get("source_id", ""),
+                )
+            result = _mutate_and_save_state(state, _mutate_apply_final_combat_damage)
+            return _filter_public_combat_damage_result(result, speaker_role)
+
         if name == "add_combat_effect":
             def _mutate_add_combat_effect(target_state: GroupState) -> dict:
                 return combat.add_combat_effect(
@@ -3175,7 +3208,7 @@ def _build_dynamic_prompt(
 DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情方便就打亂順序或把不同 DEX 的人合併敘述成同時
 發生；只有 DEX 剛好相同的戰鬥員才可以敘述成同時行動。某位戰鬥員的行動（含擲骰結果）處理完後，必須呼叫
 advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
-呼叫 apply_combat_damage 或 damage_combatant 更新血量；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
+呼叫 apply_combat_damage（尚未扣護甲的 raw_damage）或 apply_final_combat_damage（已扣除減免的 final_damage）更新 HP；治療才用 damage_combatant；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
 禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
 不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色被 NPC 攻擊時，呼叫
 offer_npc_attack_defense_choice 讓玩家自己選防守方式，不要自己幫玩家決定。近戰跟遠程走完全不同的
@@ -3198,7 +3231,7 @@ special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他�
 engaged 是近戰，is_ranged 填 false，options 給「閃避」「反擊」兩個選項；near/any 是遠程，is_ranged
 填 true，options 只給「閃避」一個選項；不用另外想辦法取得這些值，也不要
 對這個目標呼叫 resolve_enemy_action（玩家的防守結果出來後，命中與傷害由你在下一輪自然的
-apply_combat_damage／damage_combatant 呼叫處理，不是由 resolve_enemy_action 處理）；目標不是玩家角色（ally: 或 enemy: 開頭
+apply_combat_damage／apply_final_combat_damage／damage_combatant 呼叫處理，不是由 resolve_enemy_action 處理）；目標不是玩家角色（ally: 或 enemy: 開頭
 ——沒有玩家可以做防守選擇，例如隊友 NPC 或敵方陣營內鬥），才由你自己判定正式命中結果與傷害值放入
 outcome，呼叫 resolve_enemy_action 統一套用護甲與 HP 變更。plan 裡的 private_reason、敵人能力真名、
 POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，不得寫進公開回覆。公開敘事只使用 public_hint，
