@@ -2,7 +2,7 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:95bfb77e2be979cf2d82609ca9fb8111011247b6
-- **implementation end**: TBD
+- **implementation end**: enhancement/luck-buyup-always-offered:d3fead5 — ruff/mypy/compileall/pytest all green
 
 ## Purpose & Scope
 
