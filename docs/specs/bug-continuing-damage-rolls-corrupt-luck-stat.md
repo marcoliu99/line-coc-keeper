@@ -153,12 +153,45 @@ effect is on record) use a higher reasoning effort than ordinary turns,
 even at the cost of some of the speed gains `none` was chosen for? This
 branch's scope is the immediate bug; that broader tiering question
 belongs in the tiering spec if pursued, but is flagged here since this
-investigation is what surfaced the evidence for it. Not deciding this
-in this branch — needs the user's input on whether it's worth pursuing,
-and if so, real-API trials at the tiering spec's own level of rigor
-(this branch's N=1-per-condition trials are suggestive, not conclusive,
-given this project's already-documented high run-to-run variance for
-`none`).
+investigation is what surfaced the evidence for it.
+
+### Follow-up sampling: `low` as a possible middle ground
+
+Ran additional real trials at `reasoning_effort=low` against the same
+real scenario (same real state/prompt/tools, same "already 2 rounds into
+hand-rolling" history) to see whether a cheaper-than-`medium` tier could
+still avoid `none`'s active failures:
+
+| Effort | Trials | Correctly called `add_combat_effect` | Actively wrong (corrupts state / ends combat / misattributes) |
+|---|---|---|---|
+| `none` | 4 | 0/4 | **4/4** — 4 different wrong outcomes, including one that called `end_combat()` outright |
+| `low` | 7 | 2/7 | **0/7** |
+| `medium` | 1 | 1/1 | 0/1 |
+
+The 5/7 `low` "misses" were not wrong tool calls at all — the model made
+**no tool call**, instead directly narrating something like:
+
+> 「柯比特身上的火焰仍未熄滅，黑煙貼著天花板翻捲；但這一輪的火焰傷害尚未
+> 結算...Ken，你要怎麼行動？」
+
+i.e. it acknowledged the fire is ongoing and punted the mechanical
+resolution back to the player, rather than guessing wrong. This never
+corrupts state, but the effect still never gets set up mechanically —
+this scenario will resurface the same unresolved situation next turn.
+
+**Reading**: `low` looks like a genuinely different failure profile from
+`none`, not just "a bit better" — it trades reliability (2/7 fully
+correct) for safety (0/7 actively wrong), whereas `none` was unreliable
+*and* unsafe (4/4 actively wrong). This makes `low` worth its own
+consideration as a middle-ground candidate for combat-with-ongoing-
+effects turns specifically, separate from whether `medium` is used
+everywhere in combat — but this is still N=7/4/1, well short of the
+tiering spec's own N≥3-5-per-condition bar for a real decision. Not
+deciding this here — needs the user's input on whether it's worth
+pursuing, and if so, real-API trials at the tiering spec's own level of
+rigor (this branch's samples are suggestive, not conclusive, given this
+project's already-documented high run-to-run variance at low effort
+tiers).
 
 ## Changes (pending real-API verification)
 
