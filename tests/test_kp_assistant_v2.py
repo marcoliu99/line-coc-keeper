@@ -473,6 +473,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             "roll_weapon_damage",
             "roll_impaling_damage",
             "apply_combat_damage",
+            "apply_final_combat_damage",
             "add_combat_effect",
         }
         self.assertTrue(expected_allowed.issubset(tool_names))
@@ -515,6 +516,13 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         state.characters_by_id["char-marco"] = char
         state.active_character_id_by_user["p1"] = "char-marco"
         combat.start_combat(state)
+        combat.add_npc(
+            state,
+            "Armored Thing",
+            40,
+            10,
+            armor=[{"id": "hide", "label": "Thick Hide", "value": 3, "applies_to": "physical"}],
+        )
 
         with StateStorePatch(keeper) as store:
             store.put(state)
@@ -542,6 +550,14 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 [],
                 speaker_role="kp_assistant",
             )
+            final_damage_result = keeper._execute_tool(
+                state,
+                "apply_final_combat_damage",
+                {"target": "Armored Thing", "final_damage": 5, "source_id": "established-hit"},
+                [],
+                [],
+                speaker_role="kp_assistant",
+            )
             blocked_result = keeper._execute_tool(
                 state,
                 "damage_combatant",
@@ -555,9 +571,16 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effect_result["damage"], "1")
         self.assertEqual(effect_result["damage_type"], "fire")
         self.assertTrue(damage_result["ok"])
+        self.assertTrue(final_damage_result["ok"])
+        self.assertEqual(final_damage_result["armor_reduction"], 0)
+        self.assertEqual(final_damage_result["final_damage"], 5)
+        self.assertEqual(final_damage_result["hp_after"], 5)
         self.assertFalse(blocked_result["ok"])
         self.assertTrue(keeper._kp_tool_result_creates_canon("add_combat_effect", {}, effect_result))
         self.assertTrue(keeper._kp_tool_result_creates_canon("apply_combat_damage", {}, damage_result))
+        self.assertTrue(
+            keeper._kp_tool_result_creates_canon("apply_final_combat_damage", {}, final_damage_result)
+        )
         self.assertEqual(store.get("g").characters_by_id["char-marco"].hp, 11)
 
     def test_kp_assistant_can_see_private_enemy_hp_in_combat_status(self):
