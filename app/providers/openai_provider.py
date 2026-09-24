@@ -354,6 +354,7 @@ async def run_conversation(
     reasoning_kwargs = {"reasoning": {"effort": KEEPER_REASONING_EFFORT}} if KEEPER_REASONING_EFFORT else {}
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
+    iteration = -1
     for iteration in range(max_iterations):
         request_kwargs = {
             "model": OPENAI_MODEL,

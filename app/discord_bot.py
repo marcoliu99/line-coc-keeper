@@ -1219,7 +1219,15 @@ async def on_message(message: discord.Message) -> None:
             )
         started = time.perf_counter() if observed else 0.0
         try:
-            await _handle_message(message)
+            # Entered before anything else (including the conversation
+            # lock) so Discord's typing indicator appears immediately on
+            # receipt, not only once processing actually starts — a queued
+            # message behind a long-running Keeper turn would otherwise
+            # look identical to the bot being dead for tens of seconds.
+            # `typing()` is an async context manager that keeps re-sending
+            # Discord's ~10s typing signal for as long as the block is open.
+            async with message.channel.typing():
+                await _handle_message(message)
         except Exception as exc:
             if observed:
                 observability.event(
