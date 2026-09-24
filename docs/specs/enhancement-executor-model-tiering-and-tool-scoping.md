@@ -1,16 +1,20 @@
 # Spec: Executor model tiering + dynamic tool scoping
 
-**Status: discussion only, nothing implemented yet.** Split out of
-`docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md` (items
-9/10/12/13 there) once that doc's own first-batch decisions (typing
-indicator, queue-ack, `MAX_TOOL_ITERATIONS`) were ready to implement on
-their own — this follow-up needs more real-API trials before it's
-implementation-ready, so it's kept separate rather than blocking or
-bloating that doc further.
+**Status: model tiering implemented; dynamic tool scoping still
+deferred.** Split out of `docs/specs/enhancement-conversation-lock-and-
+tool-loop-latency.md` (items 9/10/12/13 there) once that doc's own
+first-batch decisions (typing indicator, queue-ack, `MAX_TOOL_ITERATIONS`)
+were ready to implement on their own — this follow-up needed more
+real-API trials before it was implementation-ready. Rounds 1-8 settled the
+model pick (see "Model decision" below); per explicit instruction, the
+first implementation pass covers model tiering only — dynamic Tier A/B/C
+tool scoping stays a documented, not-yet-implemented design (see that
+section) for a future pass.
 
 ## Changeset Tracking
-- **main_v2 start**: origin/main_v2:10972c1a8966f48cd7bbcb0f7c850b1ac8558310
-- **implementation end**: N/A — discussion branch
+- **main_v2 start**: origin/main_v2:923a8c437e07c6c4b28cfea84fde6a6c3d27c203
+  (rebased onto this after PR #55 merged, mid-branch — see git history)
+- **implementation end**: TBD
 
 ## Background
 

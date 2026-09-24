@@ -317,9 +317,14 @@ async def run_conversation(
     previous_response_id: str = "",
     on_response_id: Callable[[str], None] | None = None,
     enable_wrapup: bool = True,
+    model_override: str | None = None,
+    reasoning_effort_override: str | None = None,
 ) -> str:
     if not OPENAI_API_KEY:
         return "（尚未設定 OPENAI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
+
+    model = model_override or OPENAI_MODEL
+    reasoning_effort = KEEPER_REASONING_EFFORT if reasoning_effort_override is None else reasoning_effort_override
 
     import openai
 
@@ -348,16 +353,16 @@ async def run_conversation(
         input_items.append({"role": "user", "content": new_message})
         active_previous_response_id = None
 
-    # Omitted entirely (not sent as an empty/None value) when
-    # KEEPER_REASONING_EFFORT="" — that's the escape hatch back to the old
+    # Omitted entirely (not sent as an empty/None value) when the effective
+    # reasoning_effort is "" — that's the escape hatch back to the old
     # "don't touch this parameter at all" behavior for anyone who wants it.
-    reasoning_kwargs = {"reasoning": {"effort": KEEPER_REASONING_EFFORT}} if KEEPER_REASONING_EFFORT else {}
+    reasoning_kwargs = {"reasoning": {"effort": reasoning_effort}} if reasoning_effort else {}
 
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     iteration = -1
     for iteration in range(max_iterations):
         request_kwargs = {
-            "model": OPENAI_MODEL,
+            "model": model,
             "instructions": instructions,
             "input": input_items,
             "tools": openai_tools,
@@ -429,7 +434,7 @@ async def run_conversation(
         # tool+narration call, no separate Narrator) actually needs this.
         if enable_wrapup:
             wrapup_kwargs = {
-                "model": OPENAI_MODEL,
+                "model": model,
                 "instructions": (
                     f"{instructions}\n\n"
                     "（系統提示：本回合的工具呼叫額度已用完，接下來不能再呼叫任何工具。"
