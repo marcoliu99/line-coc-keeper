@@ -282,6 +282,56 @@ comes off the backlog — noted here so round 4's test harness (which needs
 to simulate a real multi-round conversation for the combat-start scenario,
 not a single-shot call) reflects it, and so it isn't missed later.
 
+### Tool-schema/prompt inspection — two concrete, real candidate causes found
+
+Read the actual tool definitions in `app/keeper.py` (`start_combat`:524,
+`add_npc_to_combat`:532, `get_combat_status`:573, `damage_combatant`:583,
+`apply_combat_damage`:634) rather than continuing to guess from behavior
+alone. Found two real, concrete issues — not proof the model is innocent,
+but plausible, fixable root causes that fit the observed *variance*
+better than a pure model/tier explanation would (a genuinely broken tool
+schema would tend to fail consistently; an *ambiguous* one would produce
+exactly the coin-flip pattern round 6 saw):
+
+1. **`start_combat` takes zero parameters** (`"input_schema": {"type":
+   "object", "properties": {}}`) — there is nothing about it a scenario
+   lookup could ever inform. Yet the static prompt's combat-trigger rule
+   (`app/keeper.py:3054`) puts the "呼叫 start_combat" instruction and the
+   "加入敵人時...必須放進 add_npc_to_combat 的 armor/attacks/abilities；
+   不要只填 HP 後靠臨場記憶" lookup requirement in the *same* sentence,
+   with the lookup caveat immediately following the two tool names
+   together. The lookup requirement is genuinely about `add_npc_to_combat`
+   only (which does take armor/attacks/abilities parameters worth
+   looking up first), but the sentence structure plausibly lets the model
+   over-generalize "look it up first" onto `start_combat` too, even
+   though `start_combat` has no parameters that benefit from it — this
+   would explain the repeated `search_scenario` calls immediately
+   preceding (and sometimes instead of) `start_combat` across rounds 4-6.
+2. **Two tools both plausibly mean "deal damage," with no explicit rule
+   for when to use which**: `damage_combatant` ("調整戰鬥中某位角色或敵人
+   的 HP（受傷用負數，治療用正數）") takes a flat `name`+`delta`, while
+   `apply_combat_damage` ("套用正式戰鬥傷害，會分開計算 raw damage、護甲
+   抵銷、final damage 與 HP") takes `target`+`raw_damage` and computes
+   armor reduction internally. Neither tool's description says when to
+   prefer it over the other, and nothing in `STATIC_INSTRUCTIONS` (or, as
+   far as this investigation found, the real production static prompt)
+   disambiguates them either. A model facing "命中造成 5 點傷害" has a
+   real, legitimate reason to hesitate between "this is already the final
+   number, use the simple delta tool" and "this is combat damage, the
+   correctly-named tool for that is apply_combat_damage, which needs to
+   know about armor first" — which would explain the `get_combat_status`
+   detours seen for `damage_npc` in rounds 4-6.
+
+**Not yet confirmed empirically** — these are inspection-based hypotheses,
+consistent with the variance pattern but not yet tested against a fix.
+Cheapest next step once resumed: reword just the combat-trigger sentence
+to separate the `start_combat` instruction from the lookup caveat, and/or
+add one clarifying line on `damage_combatant` vs. `apply_combat_damage`'s
+description, then rerun round 6's exact 3-scenario x N-trial matrix
+against the *same* model/effort configs to see if pass rates improve —
+isolates "was it the wording" from "was it the model" far more cheaply
+than testing more models against the unfixed wording would.
+
 ## Dynamic tool scoping design (combat-active vs. not)
 
 User confirmed the direction: dynamic (combat-state-dependent), not one
