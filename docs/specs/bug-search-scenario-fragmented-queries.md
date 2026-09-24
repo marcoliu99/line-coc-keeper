@@ -75,6 +75,69 @@ it at one call").
   > 次；不要因為想再三確認已經查到的內容而重複查詢——但這不代表只能查一
   > 次，如果一次查詢真的不夠涵蓋這個事件所需的資訊，可以再查。
 
+## Real-API verification
+
+Two rounds, both against real OpenAI calls (real cost each time).
+
+### Round 1 — synthetic corpus (superseded, see round 2)
+
+First attempt used a small hand-written 5-chunk corpus about a fictional
+NPC "赫爾曼" with a crude keyword-overlap retrieval mock standing in for
+`app/scenario_rag.py`. Initial run (missing an "attacks" chunk from the
+corpus by mistake) showed OLD description → 3 search calls, NEW → 2. Once
+the missing chunk was added, **both configs converged to exactly 1
+call each** — the earlier 3→2 gap was fully explained by the corpus's own
+missing data (both configs kept fruitlessly searching for a fact that
+genuinely wasn't there), not by the wording change. This round is kept
+here as a documented negative result, not deleted: a 5-6-chunk synthetic
+corpus with `top_k=5` is too small/easy to distinguish "the model bundled
+its queries well" from "there was nothing left to search for" — not
+powerful enough to validate or refute the hypothesis either way.
+
+### Round 2 — real production scenario data, both real agent configs
+
+Used the actual `app/scenario_rag.build_index`/`search` pipeline (real
+BM25 + real OpenAI embeddings, not a mock) against the real scenario text
+already on disk in this deployment: `data/scenarios/the-haunting-
+scenario-trimmed-81eeddbe/scenario.txt` (75,125 chars → 260 chunks,
+`has_embeddings=True`). This is "The Haunting," a real published COC
+scenario whose villain NPC, Walter Corbitt, is almost certainly the real
+NPC behind this project's original "柯比特" log evidence — the scenario
+text confirms his stats (Flesh Ward armor, a Dominate spell variant, a
+floating-dagger attack) are genuinely scattered across several
+non-adjacent pages, exactly the shape described in that original log.
+
+Trigger message: `"戰鬥中，柯比特（Corbitt）這時候現身加入戰局，朝你逼近。"`
+— requires gathering his HP/armor/attacks/abilities to call
+`add_npc_to_combat`, the same real action shape as the original bug.
+Tested **both** real agents that offer `search_scenario`, each at this
+deployment's actual real config (`app/config.py`):
+
+| Agent | Config | OLD description | NEW description |
+|---|---|---|---|
+| Keeper (`app/keeper.py`'s legacy `run_turn`) | `gpt-6-luna`/medium | **8 calls, hit max_rounds without ever committing to `add_npc_to_combat`** | 3 calls, converged cleanly |
+| Executor (Supervisor/Executor path) | `gpt-6-luna`/none | 3 calls | 2 calls |
+
+**The Keeper/legacy result is a direct reproduction of this project's
+original "語塞" iteration-exhaustion bug**, not just a slow/redundant
+search pattern: under the OLD description, across 8 rounds the model
+never converged on a final answer, and — notably — two of its
+intermediate queries stated *different, self-contradictory* stat guesses
+for the same NPC (round 2: `"STR 35 CON 55 SIZ 35 POW 50 DEX 70"`; round
+5: `"STR 90 CON 115 SIZ 55"`), i.e. it wasn't just repeating searches, it
+was actively hallucinating different numbers between them while failing
+to settle on the real ones. Under the NEW description, the same model/
+config converged cleanly in 3 rounds with a coherent, single set of
+stats.
+
+This is real, production-representative evidence (not a synthetic
+corpus's artifact) that the wording fix reduces fragmented `search_
+scenario` calls for **both** agents that use it, and for the Keeper path
+specifically prevents a real occurrence of the iteration-exhaustion
+failure mode this project has already spent significant effort
+mitigating elsewhere (`MAX_TOOL_ITERATIONS`/`HIGH_ITERATION_WATERMARK`,
+docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md).
+
 ## Testing Strategy
 
 - This is LLM tool-selection/query-formulation behavior, not application
