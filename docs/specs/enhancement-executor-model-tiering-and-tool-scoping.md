@@ -130,6 +130,58 @@ consistent before this fix).
    in round 3, most likely because the test prompt was missing the real
    combat-triggering rule, not because of any model/tier difference).
 
+### Round 4 — real Tier A/B/C groupings, fixed STATIC_INSTRUCTIONS, gpt-6-luna/none
+
+Used the exact Tier A (12) / B (9) / C (14) lists from "Dynamic tool
+scoping design" below, and the real production combat-trigger prompt text
+(verbatim from `app/keeper.py:3054`, including PR #55's same-species-
+naming rule) instead of round 3's shortened `STATIC_INSTRUCTIONS`. Also
+rewrote `start_combat_single_npc`'s message to be an unambiguous lethal
+threat (a deep one lunging for the throat) instead of round 3's "a rat
+nips at your ankle" one-liner.
+
+| Scenario | Real state | A only (12) | A+B (21) | A+C (26) | Correct-scope result |
+|---|---|---|---|---|---|
+| single_skill_check | non-combat | 4172ms ✅ | 2001ms ✅ | 1885ms ✅ | A+B: ✅ |
+| dual_skill_check | non-combat | 2833ms ✅ | 2171ms ❌ (only 1 `skill_check`, not 2) | 2838ms ✅ | A+B: ❌ |
+| san_check | non-combat | 2630ms ✅ | 2792ms ✅ | 1742ms ✅ | A+B: ✅ |
+| start_combat_single_npc | non-combat | 2038ms ❌ (`search_scenario`) | 1901ms ❌ (`search_scenario`) | 1869ms ❌ (`search_scenario`) | A+B: ❌* |
+| start_combat_multi_npc | non-combat | 1965ms ❌ (`search_scenario`) | 1648ms ✅ | 1764ms ❌ (`search_scenario`) | A+B: ✅ |
+| damage_npc | combat | 1695ms ❌ (`search_scenario`) | 1990ms ❌ (`search_scenario`) | 1250ms ❌ (`get_combat_status`) | A+C: ❌* |
+| luck_spend | non-combat | 1928ms ✅ | 1825ms ❌ (`search_scenario`) | 1755ms ❌ (`get_character_sheet`) | A+B: ❌* |
+| scenario_lookup | non-combat | 2056ms ✅ | 2032ms ✅ | 1779ms ✅ | A+B: ✅ |
+
+**Important methodology finding, not a model regression (marked `*`
+above):** with the real, fuller combat-trigger prompt — which explicitly
+tells the model it must look up the scenario for enemy armor/attacks/
+abilities before calling `add_npc_to_combat`, and generally "don't
+improvise, look it up" — the model now frequently calls `search_scenario`
+*first*, as a legitimate first step toward the "correct" tool, not
+instead of it. This test only fires **one** model turn per scenario and
+checks the single tool call chosen, so it cannot distinguish "wrong tool"
+from "right first step of a multi-call turn that would call
+`start_combat`/`damage_combatant` next, once it sees the search result."
+Round 1-3 didn't surface this because their shorter `STATIC_INSTRUCTIONS`
+didn't push the model toward search-first behavior as strongly.
+
+This is the same underlying architecture gap as the per-iteration
+rescoping requirement below, from the test-harness side: **single-shot
+tool-call tests can't validate turns that legitimately span multiple tool
+calls.** `get_combat_status` for `damage_npc` and `get_character_sheet`
+for `luck_spend` are similarly plausible legitimate first steps (checking
+current HP/ammo before applying damage; checking current Luck before
+spending it), not obviously wrong — round 3's shorter-prompt baseline
+happened not to trigger this pattern, not because it was more "correct."
+
+**What this means for round 5 (not yet run):** the test harness needs a
+real 2-turn simulation for scenarios where a lookup-then-act sequence is
+plausible — feed back a synthetic tool result for the first call (e.g. a
+fake `search_scenario` result describing the deep one's stats) and check
+what the model calls *next*, the same way `app/agents/executor.py`'s real
+tool-calling loop would. A single-shot test genuinely cannot separate
+"the model picked the wrong tool" from "the model is executing tool call
+1 of 2 correctly."
+
 ## Design requirement found while planning round 4: per-iteration rescoping, not per-turn
 
 Re-examining the Tier B/C split against a real multi-tool-call turn (the
