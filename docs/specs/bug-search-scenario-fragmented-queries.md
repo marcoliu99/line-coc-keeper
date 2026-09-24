@@ -2,7 +2,7 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:923a8c437e07c6c4b28cfea84fde6a6c3d27c203
-- **implementation end**: TBD
+- **implementation end**: bug/search-scenario-fragmented-queries:ad3f0fc — ruff/mypy/compileall/pytest all green
 
 ## Purpose & Scope
 
