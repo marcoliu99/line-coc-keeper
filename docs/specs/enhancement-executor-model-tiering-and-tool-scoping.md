@@ -403,6 +403,47 @@ the damage tools), not something that PR needed to address, and a
 candidate for its own follow-up investigation if `luck_spend` reliability
 becomes a priority later.
 
+### `luck_spend` scenario investigated — it isn't model instability, it's a bad test scenario
+
+Traced how spending Luck to improve a skill check result actually works in
+production (`app/keeper.py:1899-1976`, `app/legacy_commands.py:1530-1620`,
+`app/discord_bot.py:885-951`), instead of continuing to treat the 3
+different "wrong" answers across rounds 4/5/8 as evidence of model
+flakiness.
+
+**Finding: "花費 Luck 來提升這次偵查檢定的結果" describes an action that
+never reaches the Executor's tool-calling loop at all in real production.**
+When `skill_check` rolls a near-miss, it *itself* detects buyable Luck
+options (`luck.buyable_options`) and sets `pending_luck=True` on its own
+result — the player is then shown a Discord button, and clicking it
+invokes `handle_luck_decision` → `_resolve_luck_decision_deterministically`,
+which pops `state.pending_luck_decisions` and deducts Luck directly. This
+entire flow is deterministic application code triggered by a button click,
+**not an LLM tool call** — there is no scenario where the real Executor is
+asked "the player wants to spend Luck on this check, which tool do I
+call?" and the honestly correct answer is "none of them; this isn't an
+LLM decision."
+
+This means **this test scenario has never had a correct answer to score
+against**, in any of rounds 1-8 — the "instability" observed (three
+different wrong tool choices: `search_scenario`, `get_character_sheet`,
+`skill_check`) was the model reasonably improvising an answer to an
+ill-posed question the real system would never actually ask it, not a
+real reliability gap. This scenario should be dropped or replaced before
+any future round: `adjust_character`'s own description does legitimately
+cover *other*, genuinely freeform Luck expenditures outside the
+structured check-buyup flow (its docstring example is literally "花費幸運
+點" — e.g. a KP-adjudicated "spend Luck to have happened to bring the
+right tool," not tied to any specific just-rolled check) — a corrected
+scenario for future rounds should use one of *those* instead, e.g. "玩家
+決定花 10 點 Luck，希望這次剛好帶了能撬開這扇門的工具" (spending Luck on
+a narrative contingency, not on an already-executed skill check).
+
+**Correction to earlier rounds' scorekeeping:** round 4's "8 scenarios"
+and round 8's "7/8, no regression" claims should both be read as "7/7
+scenarios with a real correct answer," not "1 real miss" — `luck_spend`
+wasn't measuring anything meaningful to begin with.
+
 ## Dynamic tool scoping design (combat-active vs. not)
 
 User confirmed the direction: dynamic (combat-state-dependent), not one
