@@ -491,6 +491,12 @@ dynamic-scoping work, to be picked up as its own follow-up later.
 
 ## Dynamic tool scoping design (combat-active vs. not)
 
+**Split out into its own mini-spec:** `docs/specs/enhancement-executor-
+dynamic-tool-scoping.md` (`enhancement/executor-dynamic-tool-scoping`
+branch). This section is kept below as-is for the historical record and
+because the model-tiering work above cites it, but further design/
+implementation work on tool scoping happens in that spec, not here.
+
 User confirmed the direction: dynamic (combat-state-dependent), not one
 static list. Classified all 35 real tools into three tiers by reading
 every tool's actual description (`app.keeper.TOOLS` +
