@@ -225,6 +225,41 @@ description, or the static prompt's ordering) are the real lever, not
 just which model runs them, before concluding anything about `gpt-6-luna`/
 `none` specifically vs. the current production model.
 
+### Round 6 — same 2-turn simulation, 4 model/effort configs on the 3 known-hard scenarios
+
+| Config | start_combat_single_npc | damage_npc | luck_spend |
+|---|---|---|---|
+| `gpt-5.6-luna`/medium (today's prod) | 8668ms ✅ (turn 2: search_scenario → start_combat) | 4275ms ✅ (turn 2: get_combat_status → apply_combat_damage) | 2384ms ✅ (turn 1) |
+| `gpt-6-luna`/none | 1532ms ✅ (turn 1) | 2693ms ✅ (turn 1) | 2897ms ✅ (turn 2: get_character_sheet → adjust_character) |
+| `gpt-6-luna`/low | 1145ms ✅ (turn 1) | 3456ms ✅ (turn 2: get_combat_status → apply_combat_damage) | 2672ms ✅ (turn 1) |
+| `gpt-6-luna`/medium | 9682ms ❌ (turn 2: search_scenario → **no tool call at all**) | 4317ms ✅ (turn 2) | 1894ms ✅ (turn 1) |
+
+**This is the most important finding of the whole tiering investigation
+so far, and it isn't about which model to pick:** every config in this
+round passed `start_combat_single_npc` and `damage_npc` except one
+(`gpt-6-luna`/medium, which stalled with zero tool calls after its second
+turn). Round 5, one run earlier, had `gpt-6-luna`/none fail *both* of
+those same two scenarios outright. Same model, same effort, same prompt,
+same synthetic tool-result payload — different outcome. **Single-run
+(or even 2-run) pass/fail verdicts on these scenarios are not reliable
+signal**; the variance run-to-run is large enough to flip a scenario from
+FAIL to PASS with no code or config change at all.
+
+This means every earlier round's "config X failed scenario Y" claims
+(round 1's `gpt-6-luna`/low mismatch, round 3's baseline `start_combat_
+single_npc` failure, round 4's and round 5's `gpt-6-luna`/none failures)
+should be read as "failed *that specific run*," not "this config is
+unreliable for this scenario" — the sample size per cell has been 1,
+occasionally 2. **Before any model/tier decision is implementation-ready,
+these specific hard scenarios need N≥3-5 repeated trials per config** to
+get an actual pass rate instead of a single coin flip. Cheaper first step
+before spending more on that: this also somewhat undercuts the earlier
+"maybe the tool schema/description itself is the problem" theory from
+round 5's closing note — a schema problem would more likely fail
+consistently, not flip between runs; high run-to-run variance points more
+toward this being inherent model sampling noise on an ambiguous-enough
+scenario, which repeated trials would confirm or refute directly.
+
 ## Design requirement found while planning round 4: per-iteration rescoping, not per-turn
 
 Re-examining the Tier B/C split against a real multi-tool-call turn (the
