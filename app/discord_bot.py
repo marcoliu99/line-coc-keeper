@@ -825,8 +825,10 @@ def _luck_button_matches_pending(
 
 
 class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
-    """A "花 N 點 Luck → 一般成功" (or "維持目前結果") button posted after a
-    near-miss roll — see app/commands.py's handle_check_command (which decides
+    """A "花 N 點 Luck → 一般成功" (or "維持目前結果") button posted whenever
+    there's at least one tier-improving option the player can afford — not
+    just a near-miss, see docs/specs/enhancement-luck-buyup-always-offered.md
+    — via app/legacy_commands.py's handle_check_command (which decides
     whether to prompt at all) and handle_luck_decision (what clicking one of
     these actually resolves to). Same discord.ui.DynamicItem + timeout=None
     pattern as CheckButton above, for the same reason: survives bot restarts.

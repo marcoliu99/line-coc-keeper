@@ -67,8 +67,12 @@ def buyable_options(
 
 def cheapest_cost(skill_value: int, roll: int, current_tier: str, required_tier: str = "regular") -> int | None:
     """Min cost among all better-ranked (and difficulty-sufficient) tiers,
-    ignoring affordability — used to decide whether to proactively prompt at
-    all (see app/commands.py: only offered when this is <= 7, a near-miss,
-    not on every single roll)."""
+    ignoring affordability. Not currently called from app/ — both call
+    sites (app/keeper.py, app/legacy_commands.py) used to gate the
+    proactive Luck-spend prompt to near-misses (cost <= 7) with this, but
+    that gate was removed (see docs/specs/enhancement-luck-buyup-always-
+    offered.md); buyable_options alone (which already filters by
+    affordability) now decides whether to prompt. Left in place as a
+    small, independently-meaningful utility rather than deleted."""
     candidates = _candidates(skill_value, roll, current_tier, required_tier)
     return min((c.cost for c in candidates), default=None)
