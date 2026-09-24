@@ -1428,14 +1428,16 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 check_id=check_id, timeline_id=timeline_id, action_context=action_context,
             )
 
-        # Luck-spend: only proactively offered when it's a near-miss (the cheapest
-        # possible upgrade costs <= 7 Luck) — see app/luck.py. Sanity checks are
-        # excluded (handled above, already finalized by this point), and so is a
-        # Pushed Roll (COC7e optional rule: a pushed reroll's result is final,
-        # can't be bought up again with Luck on top of it).
+        # Luck-spend: always offered whenever there's at least one tier-
+        # improving option the player can afford (buyable_options already
+        # filters to cost <= luck available) — no cost cap on top of that;
+        # see docs/specs/enhancement-luck-buyup-always-offered.md for why
+        # the previous "<=7" near-miss-only gate was removed. Sanity checks
+        # are excluded (handled above, already finalized by this point),
+        # and so is a Pushed Roll (COC7e optional rule: a pushed reroll's
+        # result is final, can't be bought up again with Luck on top of it).
         luck_options = [] if is_pushed else luck.buyable_options(value, skill_result.roll, skill_result.tier, char.luck, difficulty)
-        gate_cost = None if is_pushed else luck.cheapest_cost(value, skill_result.roll, skill_result.tier, difficulty)
-        if luck_options and gate_cost is not None and gate_cost <= 7:
+        if luck_options:
             origin_context = observability.current_context()
             state.pending_luck_decisions[user_id] = {
                 "decision_id": new_decision_id(), "check_id": check_id, "timeline_id": timeline_id,

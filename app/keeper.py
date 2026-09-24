@@ -1962,11 +1962,16 @@ def _execute_tool(
                     ),
                 }
 
+                # Always offered whenever there's at least one tier-improving
+                # option the player can afford (buyable_options already
+                # filters to cost <= luck available) -- no cost cap on top
+                # of that; see docs/specs/enhancement-luck-buyup-always-
+                # offered.md for why the previous "<=7" near-miss-only gate
+                # was removed.
                 luck_options = [] if pushed else luck.buyable_options(
                     value, roll.roll, roll.tier, target_char.luck, difficulty
                 )
-                gate_cost = None if pushed else luck.cheapest_cost(value, roll.roll, roll.tier, difficulty)
-                if luck_options and gate_cost is not None and gate_cost <= 7:
+                if luck_options:
                     decision = {
                         "decision_id": new_decision_id(),
                         "check_id": metadata["check_id"],
