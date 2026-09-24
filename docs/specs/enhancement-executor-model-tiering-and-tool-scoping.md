@@ -474,6 +474,17 @@ the user's confirmation before moving to implementation (per this
 branch's "spec first" workflow, and per the earlier decision to build the
 per-provider config surface but tune OpenAI first).
 
+**User confirmed this model pick.** Scope for the first implementation
+pass, per explicit instruction: **model tiering only — dynamic Tier A/B/C
+tool scoping is deliberately deferred, not implemented now.** The
+Executor keeps using the full real tool list (`tools_for_speaker_role`,
+unchanged from PR #57) for this pass; only `EXECUTOR_MODEL`/reasoning-
+effort plumbing lands. This sidesteps the not-yet-designed per-iteration
+rescoping requirement entirely for now (see that section above) — nothing
+about combat-state-dependent tool availability changes in this pass, so
+that open design question stays deferred along with the rest of the
+dynamic-scoping work, to be picked up as its own follow-up later.
+
 ## Dynamic tool scoping design (combat-active vs. not)
 
 User confirmed the direction: dynamic (combat-state-dependent), not one
