@@ -327,6 +327,92 @@ earlier verification rounds' hardcoded `temperature: 1`, which happened to
 dodge the issue) to confirm the fallback still engages correctly for
 whatever model ends up configured, including the now-current `gpt-6-luna`.
 
+## Fourth batch: "four-layer fix" for MAX_TOOL_ITERATIONS (another external proposal)
+
+Same treatment as the earlier batches — check each layer against what's
+already decided/shipped and against real log evidence before adopting
+anything.
+
+### Layer 1 (config lowering + watermark) — already decided, no new information
+`MAX_TOOL_ITERATIONS=5` + `HIGH_ITERATION_WATERMARK=4` is exactly item 3's
+decision already in this doc. Nothing to change.
+
+### Layer 2 (reserve the last iteration as tools-disabled, instead of PR #55's extra wrap-up call) — a real alternative design, conflicts with already-shipped code
+**This is not additive to PR #55 — it's a different design for the same
+problem, and PR #55 is already merged and live** (`app/providers/{openai,
+anthropic,gemini}_provider.py`, `enable_wrapup` gating, four review rounds).
+Comparing the two:
+
+- **PR #55 (shipped)**: all `N` iterations get to try tools; only if the
+  loop truly exhausts them without ever producing text does it pay for
+  *one extra* (`N+1`th) tools-disabled call to force narration. Best case
+  (model finishes in 2 rounds): 2 calls, no waste. Worst case: `N+1` calls.
+- **This proposal**: strip tools on iteration `N-1` (the last one)
+  pre-emptively, guaranteeing narration fits inside the existing budget —
+  worst case is `N` calls, one cheaper than PR #55's `N+1`, but every turn
+  that would have needed the full `N` rounds now only gets `N-1` real
+  tool-calling rounds before being forced to narrate on whatever facts
+  exist so far.
+
+Real tradeoff, not a strict improvement: proposal saves one API call in
+the worst case, at the cost of one fewer round of real tool-calling
+headroom in every turn that runs long — with `MAX_TOOL_ITERATIONS` already
+tight at 5, that's a meaningful chunk of an already-scarce budget (a
+`start_combat` + 2×`add_npc_to_combat` turn, 3 rounds, would have 2 rounds
+of slack under PR #55's scheme vs. 1 under this one). Also worth noting the
+pasted code sketch uses Chat-Completions-style `messages.append({"role":
+"system", ...})` and reads `response.tool_calls` — this codebase's OpenAI
+adapter uses the Responses API (`instructions` field + `input` list,
+`response.output` filtered for `function_call` items), so it'd need
+translating either way, same as every other pasted proposal so far.
+
+**Not swapping PR #55's already-shipped, four-times-reviewed design for
+this without the user explicitly deciding the one-call latency saving is
+worth trading against tool-calling headroom** — recommend keeping PR #55's
+version as-is unless real production data (once the first-batch fixes here
+are live) shows turns are *still* frequently exhausting all 5 iterations
+even with the wrap-up safety net, at which point this would be a
+reasonable thing to reconsider with actual numbers instead of guessing.
+
+### Layer 3 (hard-cap search_scenario to 1 call per turn) — no evidence this problem actually exists
+The proposal assumes repeated `search_scenario` calls are "鬼打牆"
+(unproductive repetition/synonym-guessing) and proposes both a prompt
+instruction and a hard tool-gateway rate limit (reject the 2nd+ call with a
+`rate_limited` status). **Checked against the actual queries logged in the
+diagnosed 82.9s "語塞" turn** (this doc's own earlier root-cause finding)
+— the four `search_scenario` calls in that turn were:
+
+1. "柯比特藏身處 遭到攻擊 開始戰鬥 Corbitt body attacks Flesh Ward"
+2. "Walter Corbitt attacks investigators when they approach body hiding place..."
+3. "Corbitt casts Flesh Ward as soon as anyone enters the house..."
+4. "Corbitt Dominate spell variant effects on investigator check"
+
+These are four **different** queries progressively covering different
+facts about one complex NPC (when it wakes up, its Flesh Ward ability, its
+separate Dominate ability) — not the same query rephrased/re-guessed. A
+hard 1-call-per-turn cap would have blocked the model from looking up both
+Flesh Ward *and* Dominate in the same turn, forcing it to either guess at
+the ability it didn't get to look up or spend a whole extra turn on it —
+a real capability regression for legitimately multi-faceted scenario
+research, to fix a failure mode (repeating the *same* query) this doc has
+no actual evidence of happening. Not recommending this layer without first
+finding a real log example of `search_scenario` being called multiple
+times with the *same or near-synonymous* query in one turn — right now
+this would be guessing at a fix for a problem not yet observed, the same
+mistake this whole doc has been correcting other proposals for.
+
+### Layer 4 (macro tool `initialize_combat`) — same as item 5, already decided as backlog
+Identical idea to this doc's item 5 (`initialize_encounter`), already
+decided: backlog, not part of this latency hotfix, same risk class as the
+melee-tie/ranged-combat rules work (needs its own spec, careful COC7e-
+correctness review, and real playtesting — a schema sketch alone doesn't
+cover the auto-rename-on-collision behavior it casually mentions
+("自動過濾重名/加編號"), which would need its own design given this doc's
+earlier finding that same-species multiples need *player-visible* distinct
+names, not just internally deduplicated IDs — see PR #55's `find_live_
+enemy_by_any_alias`/prompt-instruction fix for that exact case). Not
+reopening the backlog decision unless the user wants to.
+
 ## Notes
 - Streaming (item 7) stays backlog — only helps the final narration output
   (not the multi-round tool-calling majority of turn latency) and needs its
