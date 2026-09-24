@@ -370,6 +370,39 @@ reduced ambiguity for both the current production model and the
 candidate. Worth splitting into its own small bug/enhancement branch
 rather than bundling into this still-discussion-only tiering spec.
 
+### Round 8 — full 8-scenario sweep against the real fixed prompt (PR #58)
+
+The wording fix landed as its own branch: `bug/combat-trigger-prompt-and-
+damage-tool-ambiguity` (PR #58, spec at `docs/specs/bug-combat-trigger-
+prompt-and-damage-tool-ambiguity.md`). Reran round 4's full 8-scenario
+sweep — not just the 2 scenarios round 7 targeted — against that branch's
+real `app/keeper.py` (not a hand-copied string), `gpt-6-luna`/none, each
+scenario at its correct-scope tool set (A+B or A+C), to check for
+regressions in the 6 scenarios that weren't part of the original
+diagnosis.
+
+| Scenario | Result |
+|---|---|
+| single_skill_check | 3104ms ✅ |
+| dual_skill_check | 6092ms ✅ (both skill_check calls landed, unlike round 4's single-call miss) |
+| san_check | 2009ms ✅ |
+| start_combat_single_npc | 1364ms ✅ |
+| start_combat_multi_npc | 1272ms ✅ |
+| damage_npc | 1308ms ✅ |
+| luck_spend | 2595ms ❌ (`skill_check`) |
+| scenario_lookup | 1936ms ✅ |
+
+7/8, no new regressions — the two originally-targeted scenarios and all 6
+others (including `dual_skill_check`, which round 4 had failed) pass
+cleanly. `luck_spend`'s single-run miss here is consistent with the
+already-documented non-determinism on that scenario from round 6 (a
+different wrong tool each time it's failed so far: `search_scenario` in
+round 4, `get_character_sheet` in round 5, `skill_check` here) — unrelated
+to either of PR #58's fixes (`luck_spend` doesn't touch `start_combat` or
+the damage tools), not something that PR needed to address, and a
+candidate for its own follow-up investigation if `luck_spend` reliability
+becomes a priority later.
+
 ## Dynamic tool scoping design (combat-active vs. not)
 
 User confirmed the direction: dynamic (combat-state-dependent), not one
