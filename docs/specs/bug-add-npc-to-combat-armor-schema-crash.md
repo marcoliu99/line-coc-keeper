@@ -106,6 +106,25 @@ address different failure points of the same underlying issue:
    would otherwise cause the first time consuming code calls `.get()` on
    it.
 
+## Real-API verification (schema documentation fix)
+
+Reconstructed the real incident (柯比特/Corbitt, Flesh Ward armor, real
+35-tool schema, `gpt-6-luna`/`none` — this deployment's real Executor
+config), 4 trials each for OLD (hand-copied, matches what was on disk
+before this branch) vs. NEW (read live from this branch's already-edited
+`app/keeper.py`) `armor` description:
+
+| Config | Used `name` instead of `label` (would crash) |
+|---|---|
+| OLD | **3/4** |
+| NEW | **0/4** |
+
+All 4 NEW trials correctly used `id`/`label`, and 3 of 4 also correctly
+used `bypass_tags`/`public_hint` unprompted — the fuller field
+documentation didn't just fix the one crashing mistake, it got the model
+using the richer schema more completely. Confirms the schema-
+documentation half of this fix directly addresses the real incident.
+
 ## Testing Strategy
 
 - **Defensive parsing**: straightforward unit tests — `ArmorRule.
