@@ -182,6 +182,49 @@ tool-calling loop would. A single-shot test genuinely cannot separate
 "the model picked the wrong tool" from "the model is executing tool call
 1 of 2 correctly."
 
+### Round 5 — 2-turn simulation, retesting the 3 flagged scenarios
+
+Used the real OpenAI Responses API multi-turn contract
+(`previous_response_id` + `function_call_output`) against each scenario's
+correct-scope tool set, feeding back a synthetic but realistic tool result
+for whichever lookup tool turn 1 called, then checking turn 2's call — the
+same shape `app/agents/executor.py`'s real loop uses.
+
+**Result: the round 4 "legitimate first step" hypothesis does NOT hold.**
+This is a real, useful correction, not confirmation:
+
+- **`start_combat_single_npc`** (A+B, gpt-6-luna/none): turn 1 calls
+  `search_scenario`; fed back a realistic deep-one stat block (HP/armor/
+  attacks); turn 2 calls `search_scenario` **again**, not `start_combat`.
+  Genuinely stuck, not "step 1 of 2."
+- **`damage_npc`** (A+C): turn 1 calls `search_scenario`; fed back a
+  realistic rat stat block; turn 2 calls `get_combat_status` — a second,
+  different lookup, still not `damage_combatant`/`apply_combat_damage`.
+  Suggests the model may be in a genuine multi-lookup spiral for this
+  scenario, not a 2-call sequence — matches this project's own real
+  incident history (`MAX_TOOL_ITERATIONS`/`HIGH_ITERATION_WATERMARK` in
+  the parent latency spec exist because of exactly this failure mode in
+  production).
+- **`luck_spend`** (A+B): this run's turn 1 called `skill_check` —
+  neither a lookup tool nor the expected `adjust_character` — a third,
+  different wrong answer from round 4's `search_scenario`. Confirms
+  real run-to-run non-determinism on this scenario even at `reasoning:
+  none`, independent of the lookup-first question.
+
+**Revised honest reading:** round 4's charitable "maybe it's just doing
+lookup-then-act" explanation was worth testing (and the test harness gap
+it identified — single-shot tests can't validate multi-call turns — is
+still a real, correct point, see the per-iteration rescoping section
+below) but for `gpt-6-luna`/`none` specifically, these 3 scenarios are
+genuine, reproducible-ish correctness gaps, not test artifacts. Combined
+with round 1's `start_combat_single_npc` failure under `gpt-5.6-luna`/
+`medium` (today's actual production config) too, this scenario may simply
+be hard for this tool schema regardless of model/effort tier — worth
+checking whether the *tool descriptions themselves* (`start_combat`'s
+description, or the static prompt's ordering) are the real lever, not
+just which model runs them, before concluding anything about `gpt-6-luna`/
+`none` specifically vs. the current production model.
+
 ## Design requirement found while planning round 4: per-iteration rescoping, not per-turn
 
 Re-examining the Tier B/C split against a real multi-tool-call turn (the
