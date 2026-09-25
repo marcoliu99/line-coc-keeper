@@ -69,25 +69,20 @@ though this bug's fix (a clearer tool description/prompt rule) is
 independent of that unresolved question and should be tried on its own
 merits first.
 
-## Proposed fix (pending real-API verification)
+## Implemented fix
 
-Candidate, not yet decided:
+Strengthen `clear_pending_check`'s description to cover a Keeper correcting
+its own already-registered check: clear the stale pending entry, then
+re-register the corrected version. The re-registration follows the original
+tool flow: simple checks use `skill_check`/`sanity_check`, ordinary mutually
+exclusive choices use `offer_check_choice`, and NPC attack defense choices use
+`offer_npc_attack_defense_choice` with corrected options and attack context.
+This keeps corrections from flattening a choice into one check or dropping
+the opposed-attack context. A regression test checks that the tool description
+states each route.
 
-- Strengthen `clear_pending_check`'s description to explicitly name this
-  scenario: when your own narration tells the player a previously-
-  established check's skill/parameters were wrong and must be redone,
-  call `clear_pending_check` for that investigator *and then* re-register
-  the corrected check via `skill_check` — don't just narrate the
-  correction. A wording change here is the minimal, most targeted fix
-  since the tool already exists and already does the right thing
-  mechanically; it's a description-omission bug, not a missing-capability
-  bug.
-- Possibly also add a short rule near the static prompt's existing
-  check-flow guidance (`app/keeper.py`'s `_build_static_prompt`) reminding
-  the model that narration and mechanical state must stay in sync —
-  needs checking whether this duplicates existing guidance elsewhere
-  before adding it (avoid restating the same rule in two places if one
-  strengthened tool description is sufficient).
+The fix stays in the tool description; no additional static-prompt rule or
+runtime state mutation was needed.
 
 ## Real-API verification (done)
 

@@ -112,6 +112,14 @@ def tool_by_name(tools: list[dict], name: str) -> dict:
 
 
 class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
+    def test_clear_pending_check_guides_re_registration_by_original_flow(self):
+        description = tool_by_name(keeper.TOOLS, "clear_pending_check")["description"]
+
+        self.assertIn("skill_check／sanity_check", description)
+        self.assertIn("重新呼叫 offer_check_choice", description)
+        self.assertIn("重新呼叫 offer_npc_attack_defense_choice", description)
+        self.assertIn("不要把互斥選項改成單一 skill_check／sanity_check", description)
+
     def test_group_state_kp_ooc_log_serialization(self):
         state = GroupState(group_id="g")
         self.assertEqual(state.kp_ooc_log, [])
