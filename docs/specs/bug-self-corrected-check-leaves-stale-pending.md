@@ -2,7 +2,7 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:a005d7912a5b0e9b2b8b62b83d8ecc46eff9d09c
-- **implementation end**: TBD
+- **implementation end**: bug/self-corrected-check-leaves-stale-pending — ruff/mypy/compileall/pytest all green
 
 ## Purpose & Scope
 
