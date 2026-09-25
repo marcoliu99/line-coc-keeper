@@ -89,17 +89,52 @@ Candidate, not yet decided:
   before adding it (avoid restating the same rule in two places if one
   strengthened tool description is sufficient).
 
-## Real-API verification (required before landing any wording change)
+## Real-API verification (done)
 
-Reconstruct the real incident (Ken, axe vs. brawl skill confusion mid-
-combat, real 36-tool schema, `gpt-6-luna`/`none` — this deployment's real
-Executor config) across several real trials, comparing OLD (current
-`clear_pending_check` description) vs. NEW (candidate wording):
-whether the model calls `clear_pending_check` (and re-registers the
-corrected check) when its own narration disavows a previously-established
-one, vs. leaving the stale pending check in place as it did in the real
-incident. N≥3-5 trials per condition per this project's established bar
-(documented high run-to-run variance at low/none reasoning effort tiers).
+Reconstructed the real incident exactly: real `GroupState` (not a
+synthetic mock), Ken with `格鬥（鬥毆）45` and the same wrong
+`格鬥（斧頭攻擊；依斧頭傷害技能）20` skill entry, real combat via
+`combat.start_combat`/`combat.add_npc`, the wrong pending check registered
+via a real `keeper._execute_tool("skill_check", ...)` call (not hand-typed
+into `state.pending_checks`), real 36-tool schema via
+`keeper._tools_for_speaker_role("player")`, real static/dynamic prompts,
+`gpt-6-luna`/`none` (this deployment's real Executor config), a player
+message pointing out the skill mismatch (mirroring the real incident's
+"你說得對" reply). All tool calls the model made were executed through
+the real `keeper._execute_tool` against the real, mutating state — not
+stubbed — so the result reflects actual state-mutation behavior, not just
+which tool name got picked.
+
+| Config | Called `clear_pending_check` | Stale 20% check actually gone afterward |
+|---|---|---|
+| OLD (current description) | **0/4** | 0/4 |
+| NEW (candidate description) | **4/4** | 3/4 |
+
+OLD reproduced the real incident exactly in all 4 trials — the model
+never called `clear_pending_check`, only narrated (or did unrelated
+things like `get_character_sheet`/`adjust_ammo`), leaving the stale wrong
+check in place precisely as the real production log showed.
+
+NEW got the model to call `clear_pending_check` in all 4 trials — a
+qualitative behavior change, not a marginal shift. 3 of those 4 also
+successfully re-registered a corrected check (or otherwise resolved the
+turn) leaving the stale entry gone; the 4th trial called
+`clear_pending_check` correctly but then called `skill_check` again with
+the *same wrong* 20% skill instead of the corrected `格鬥（鬥毆）` —
+a real but distinctly less severe residual failure (the model did engage
+the "clear it and redo it" instruction, it just picked the wrong skill
+name on the redo, rather than silently leaving the original disavowed
+check live for the player to resolve).
+
+**Conclusion**: the wording fix directly and substantially addresses the
+real bug (leaving a disavowed check live for the player to accidentally
+resolve) — 0/4 → 4/4 on the core "does it even try to fix state" question.
+It does not fully close a secondary, lesser failure mode (picking the
+wrong skill on re-registration), which is a `gpt-6-luna`/`none` skill-
+selection reliability question closer in kind to `docs/specs/enhancement-
+executor-reasoning-effort-for-combat-ongoing-effects.md`'s open question
+than to this bug's specific scope. Worth landing this fix on its own
+merits regardless.
 
 ## Testing Strategy
 
