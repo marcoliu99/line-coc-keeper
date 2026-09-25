@@ -1024,6 +1024,19 @@ def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict
             "error": f"{char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
                      "才能再要求新的檢定，不要重複呼叫。",
         }
+    # Code-review finding: this guard only ever checked pending_checks —
+    # a character mid-Luck-decision (autoroll_checks was on when the
+    # earlier check resolved, then got turned off before the decision was
+    # made) has nothing in pending_checks yet, so a new check would sail
+    # through and leave the character stuck with two independent unresolved
+    # states at once. The autoroll branch already guards against this
+    # (skill_check's own autoroll path checks pending_luck_decisions); this
+    # non-autoroll path needs the same guard.
+    if char.owner_id in state.pending_luck_decisions:
+        return {
+            "ok": False,
+            "error": f"{char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
+        }
     return None
 
 
@@ -1922,6 +1935,14 @@ def _execute_tool(
                         "pushed": bool(tool_input.get("pushed", False)),
                     }
                     new_check.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
+                    if target_char.owner_id in target_state.pending_luck_decisions:
+                        return _StateMutation(
+                            {
+                                "ok": False,
+                                "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
+                            },
+                            should_save=False,
+                        )
                     existing = target_state.pending_checks.get(target_char.owner_id)
                     if existing:
                         if _is_identical_pending_check(existing, new_check):

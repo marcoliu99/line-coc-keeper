@@ -776,6 +776,28 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertEqual(saved_state.characters["u1"].san, 50)
         roll_mock.assert_not_called()
 
+    def test_sanity_check_rejects_when_a_luck_decision_is_still_pending(self):
+        """Code-review finding: non-autoroll skill_check/sanity_check never
+        checked pending_luck_decisions (only the autoroll branch did) — a
+        character could end up with two independent unresolved states at
+        once (e.g. autoroll got turned off mid-decision). sanity_check goes
+        through _reject_if_check_already_pending, which needed the same
+        guard the autoroll branch already has."""
+        state = _state_with_investigator()
+        state.pending_luck_decisions["u1"] = {"options": []}
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state,
+                "sanity_check",
+                {"investigator": "小明", "loss_success": "0", "loss_failure": "1d4"},
+                [],
+                [],
+                speaker_role="player",
+            )
+        self.assertFalse(result["ok"])
+        self.assertIn("Luck", result["error"])
+
     def test_adjust_character_major_wound_defaults_to_player_pending(self):
         state = _state_with_investigator()
         state.characters["u1"].hp = 10
@@ -913,6 +935,23 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertEqual(first["roll"], second["roll"])
         self.assertEqual(first["check_id"], second["check_id"])
         roll_mock.assert_called_once()
+
+    def test_skill_check_rejects_when_a_luck_decision_is_still_pending(self):
+        """Code-review finding: the non-autoroll skill_check branch only
+        checked pending_checks before registering a new one — never
+        pending_luck_decisions, unlike the autoroll branch a few lines
+        below it in the same function. A character could end up with two
+        independent unresolved states (a fresh pending check AND a stale
+        Luck decision) at once."""
+        state = _state_with_investigator()
+        state.pending_luck_decisions["u1"] = {"options": []}
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player",
+            )
+        self.assertFalse(result["ok"])
+        self.assertIn("Luck", result["error"])
 
     def test_check_command_does_not_start_a_new_skill_roll(self):
         state = _state_with_investigator()
