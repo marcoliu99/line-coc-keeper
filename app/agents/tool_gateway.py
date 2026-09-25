@@ -65,6 +65,7 @@ def make_tool_executor(
     image_requests: list[tuple[str | None, int]],
     speaker_role: str,
     facts: list[str],
+    check_status: dict[str, Any] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -132,9 +133,35 @@ def make_tool_executor(
                     )
                 raise
         facts.append(_describe_tool_call(tool_name, result))
+        if check_status is not None:
+            _record_check_status(check_status, tool_name, result)
         return result
 
     return execute
+
+
+_CHECK_REGISTRATION_TOOLS = frozenset({
+    "skill_check", "sanity_check", "offer_check_choice", "offer_npc_attack_defense_choice",
+})
+
+
+def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[str, Any]) -> None:
+    """Track player-check state from actual tool results for Narrator policy."""
+    if tool_name in _CHECK_REGISTRATION_TOOLS:
+        status["tool_called"] = True
+        if result.get("ok") and result.get("pending") is True:
+            status["pending"] = {
+                key: result[key]
+                for key in ("investigator", "skill", "skill_value", "difficulty", "options")
+                if key in result
+            }
+        elif result.get("ok") and result.get("resolved") is True:
+            status["pending"] = None
+            status["resolved"] = True
+    elif tool_name == "clear_pending_check" and result.get("ok") and result.get("cleared"):
+        status["tool_called"] = True
+        status["pending"] = None
+        status["cleared"] = True
 
 
 def _describe_tool_call(tool_name: str, result: dict[str, Any]) -> str:
