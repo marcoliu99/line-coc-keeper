@@ -1,5 +1,6 @@
 import unittest
 
+from app import combat
 from app.keeper import _CombatStatusToolGate
 from app.models import Combatant, CombatState, GroupState
 
@@ -42,6 +43,26 @@ class CombatStatusToolGateTests(unittest.TestCase):
         gate = _CombatStatusToolGate(self._active_state())
         gate.observe_tool_result("advance_combat_turn", {"ok": True, "current_turn": "Cultist"})
 
+        self.assertEqual(gate.tools_for_request(self.tools), self.tools)
+
+    def test_enemy_turn_start_damage_reopens_status_tool(self):
+        state = self._active_state()
+        combat.add_npc(
+            state,
+            "Cultist",
+            dex=30,
+            hp=5,
+            attacks=[{"label": "claw", "skill_name": "Fighting", "skill_value": 40, "damage": "1d3"}],
+        )
+        enemy = next(combatant for combatant in state.combat.order if combatant.name == "Cultist")
+        combat.add_combat_effect(state, "Cultist", "burning", timing="turn_start", damage="1")
+        gate = _CombatStatusToolGate(state)
+
+        result = combat.plan_enemy_turn(state, "Cultist")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(enemy.hp, 4)
+        gate.observe_tool_result("plan_enemy_turn", result)
         self.assertEqual(gate.tools_for_request(self.tools), self.tools)
 
     def test_successful_mutation_with_complete_status_keeps_tool_withheld(self):

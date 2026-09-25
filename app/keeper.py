@@ -3426,6 +3426,7 @@ def _tools_for_speaker_role(speaker_role: str) -> list[dict]:
 _COMBAT_STATUS_INVALIDATING_TOOLS = frozenset({
     "start_combat",
     "add_npc_to_combat",
+    "plan_enemy_turn",
     "advance_combat_turn",
     "damage_combatant",
     "resolve_enemy_action",
