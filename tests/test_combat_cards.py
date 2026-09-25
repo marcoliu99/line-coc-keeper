@@ -261,6 +261,71 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(card.abilities[0].usage["used_total"], 1)
         self.assertEqual(card.abilities[0].usage["used_this_round"], 1)
 
+    def test_armor_entry_with_an_unexpected_key_does_not_crash(self):
+        """docs/specs/bug-add-npc-to-combat-armor-schema-crash.md: a real
+        production incident had the LLM use `name` instead of `label` in
+        an armor entry, crashing ArmorRule.__init__() with an unexpected
+        keyword argument and silently failing to add the enemy at all."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Corbitt", 70, 30, armor=[
+            {"name": "Flesh Ward", "value": 2, "applies_to": "physical"},
+        ])
+        enemy = next(c for c in state.combat.order if c.name == "Corbitt")
+        card = state.combat.enemy_cards[enemy.enemy_card_id]
+        self.assertEqual(len(card.armor), 1)
+        self.assertEqual(card.armor[0].value, 2)
+        self.assertEqual(card.armor[0].applies_to, "physical")
+        # "name" isn't a real ArmorRule field, but it's aliased to label
+        # instead of just being dropped -- recovers the model's actual
+        # intent instead of silently blanking the armor's display name.
+        self.assertEqual(card.armor[0].label, "Flesh Ward")
+
+    def test_attack_entry_with_an_unexpected_key_does_not_crash(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Attacker", 60, 14, attacks=[
+            {"id": "claw", "label": "爪擊", "damage": "1D6", "unexpected_field": "whatever"},
+        ])
+        enemy = next(c for c in state.combat.order if c.name == "Attacker")
+        card = state.combat.enemy_cards[enemy.enemy_card_id]
+        self.assertEqual(card.attacks[0].damage, "1D6")
+
+    def test_ability_entry_with_an_unexpected_key_does_not_crash(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Caster", 60, 14, abilities=[
+            {"id": "spell", "name": "咒術", "priority": 1, "unexpected_field": "whatever"},
+        ])
+        enemy = next(c for c in state.combat.order if c.name == "Caster")
+        card = state.combat.enemy_cards[enemy.enemy_card_id]
+        self.assertEqual(card.abilities[0].name, "咒術")
+
+    def test_ability_with_a_string_trigger_instead_of_a_dict_is_coerced_to_empty(self):
+        """docs/specs/bug-add-npc-to-combat-armor-schema-crash.md: trigger/
+        check/effect/usage/reveal_policy are typed as dict but nothing
+        validated the LLM actually provided one -- a plain string (a
+        plausible mistake, e.g. "任何時候" instead of a structured
+        trigger object) used to construct successfully and then crash the
+        first time consuming code called .get() on it (e.g. plan_enemy_
+        turn's (ability.trigger or {}).get("type"))."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Dominator", 60, 14, abilities=[
+            {"id": "dominate", "name": "支配", "trigger": "任何時候", "check": "not a dict either"},
+        ])
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dominator")
+        ability = state.combat.enemy_cards[
+            next(c for c in state.combat.order if c.name == "Dominator").enemy_card_id
+        ].abilities[0]
+        self.assertEqual(ability.trigger, {})
+        self.assertEqual(ability.check, {})
+        # Must not raise -- plan_enemy_turn reads ability.trigger via
+        # (ability.trigger or {}).get("type"), which used to crash here
+        # before the coercion when trigger was still the raw string.
+        plan = combat.plan_enemy_turn(state)
+        self.assertIn("ok", plan)
+
     def test_repeated_enemy_planning_reuses_unresolved_plan(self):
         state = self._state_with_pc()
         combat.start_combat(state)

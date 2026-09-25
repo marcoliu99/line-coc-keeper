@@ -1,7 +1,9 @@
 """Investigator (character) model and quick-generation for COC 7th Edition."""
 from __future__ import annotations
 
+import dataclasses
 import random
+import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -404,10 +406,48 @@ class CreationSession:
         return CreationSession(**data)
 
 
+def _generate_sub_id() -> str:
+    """Fallback id for an armor/attack/ability entry the LLM didn't (or,
+    after _known_fields_only drops an unrecognized key, effectively
+    didn't) give an id — see _known_fields_only's docstring."""
+    return uuid.uuid4().hex[:8]
+
+
+def _known_fields_only(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """Drops any key not in cls's dataclass fields before constructing it.
+
+    The LLM is the source of armor/attacks/abilities entries for enemy
+    combat cards (see app/keeper.py's add_npc_to_combat tool), and a
+    plain **data unpack into a dataclass raises TypeError on any
+    unexpected key — a real production incident hit this via an armor
+    entry using `name` instead of `label` (see docs/specs/bug-add-npc-
+    to-combat-armor-schema-crash.md). A model guessing a plausible-but-
+    wrong key shouldn't crash the whole tool call; better field-name
+    documentation reduces how often this happens (see that same tool's
+    description), but this is the backstop for whenever it doesn't.
+    `id`/`label`/`name` also have safe defaults on these dataclasses now
+    (see each one below) so dropping a key here never trades one crash
+    (unexpected keyword) for another (missing required argument)."""
+    known = {f.name for f in dataclasses.fields(cls)}
+    return {k: v for k, v in data.items() if k in known}
+
+
+def _alias_name_to_label(data: dict[str, Any]) -> dict[str, Any]:
+    """ArmorRule/AttackRule's display-name field is `label`, not `name` —
+    but `name` is a very plausible guess (it's the real field name on
+    SpecialAbility, and on add_npc_to_combat's own top-level `name`
+    parameter), and is exactly the mistake the real production incident
+    this file's docstrings reference made. Recovers the model's actual
+    intent instead of just silently dropping it to an empty label."""
+    if "label" not in data and "name" in data:
+        data = {**data, "label": data["name"]}
+    return data
+
+
 @dataclass
 class ArmorRule:
-    id: str
-    label: str
+    id: str = field(default_factory=_generate_sub_id)
+    label: str = ""
     value: int = 0
     applies_to: str = "all"
     bypass_tags: list[str] = field(default_factory=list)
@@ -418,13 +458,13 @@ class ArmorRule:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> ArmorRule:
-        return ArmorRule(**data)
+        return ArmorRule(**_known_fields_only(ArmorRule, _alias_name_to_label(data)))
 
 
 @dataclass
 class AttackRule:
-    id: str
-    label: str
+    id: str = field(default_factory=_generate_sub_id)
+    label: str = ""
     skill_name: str = "格鬥（鬥毆）"
     skill_value: int = 25
     damage: str = "1D3"
@@ -439,13 +479,13 @@ class AttackRule:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> AttackRule:
-        return AttackRule(**data)
+        return AttackRule(**_known_fields_only(AttackRule, _alias_name_to_label(data)))
 
 
 @dataclass
 class SpecialAbility:
-    id: str
-    name: str
+    id: str = field(default_factory=_generate_sub_id)
+    name: str = ""
     priority: int = 0
     trigger: dict[str, Any] = field(default_factory=dict)
     check: dict[str, Any] = field(default_factory=dict)
@@ -460,7 +500,19 @@ class SpecialAbility:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> SpecialAbility:
-        return SpecialAbility(**data)
+        cleaned = dict(_known_fields_only(SpecialAbility, data))
+        # trigger/check/effect/usage/reveal_policy are read everywhere as
+        # (ability.X or {}).get(...) expecting a dict with specific known
+        # sub-keys (see app/combat.py) -- a non-dict value (a plausible
+        # LLM mistake, e.g. a plain description string) could never
+        # satisfy any of those lookups even if kept, so it's coerced away
+        # to {} here -- the same fallback already used when the model
+        # omits the field entirely -- instead of constructing successfully
+        # and crashing the first time consuming code calls .get() on it.
+        for dict_field in ("trigger", "check", "effect", "usage", "reveal_policy"):
+            if dict_field in cleaned and not isinstance(cleaned[dict_field], dict):
+                cleaned[dict_field] = {}
+        return SpecialAbility(**cleaned)
 
 
 @dataclass
