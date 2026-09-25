@@ -97,3 +97,38 @@ log" problem this session's own investigation kept running into.
   hardcoded path, even though the user's own phrasing named a specific
   directory — matches every other configurable path in this script
   (`DATA_DIR`, `DB_PATH`, etc. equivalents elsewhere in the project).
+
+## Post-implementation review fixes
+
+Three real gaps found by review, all fixed before merge:
+
+1. **`LOG_FILE` was reconstructed at stop-time from `_settings()` instead
+   of recorded at start-time.** If `LOG_FILE` was only set for the specific
+   `start` invocation's environment (not `.env` itself), or `.env` changed
+   between start and stop, stop-time `_settings()` would silently resolve
+   to a different value than what the actual running bot process used —
+   archiving the wrong file or nothing at all. A relative `LOG_FILE` also
+   used to resolve against whatever directory happened to invoke `stop`,
+   while the bot process itself always runs with `cwd=ROOT` (see `start()`'s
+   `subprocess.Popen(..., cwd=ROOT, ...)`). Fixed by resolving `LOG_FILE`
+   once at `start()` time (relative to `ROOT`, matching the bot's own
+   resolution) and storing it in the instance manifest as `log_file_path`;
+   `stop()` now reads that instead of re-deriving it.
+2. **Two instances sharing the same `LOG_FILE` would race on stop.**
+   `LOG_FILE` is a plain environment setting, not instance-scoped — nothing
+   stops two concurrently-running `bot_lifecycle.py` instances from being
+   configured with the same one. Stopping either would archive-and-delete
+   the shared path while the other instance's `RotatingFileHandler` still
+   had it open, orphaning that instance's subsequent log output. Fixed by
+   checking every other instance manifest for the same `log_file_path` with
+   a still-alive `pid` before touching the file; if found, the log is left
+   in place for that other instance's own eventual stop to archive.
+3. **Archival I/O failures could propagate out of `stop()`.** The
+   function's own docstring claimed "never raises," but `shutil.copy2`/
+   `.mkdir()`/`.unlink()` weren't actually wrapped in a `try/except` — an
+   unwritable `BOT_LOG_ARCHIVE_DIR` or a full disk would raise `OSError`
+   after the bot process had already exited, leaving `stop()`'s own
+   manifest cleanup (`manifest_path.unlink()`) never reached and a stale
+   manifest that a later `stop` would refuse to process. Fixed by wrapping
+   each artifact's copy+remove in `try/except OSError`, printing a warning
+   instead of raising.

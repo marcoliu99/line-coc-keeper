@@ -42,6 +42,19 @@ def _path_setting(settings: dict[str, str], name: str, default: str) -> Path:
     return (ROOT / path).resolve() if not path.is_absolute() else path.resolve()
 
 
+def _resolve_log_file_path(settings: dict[str, str]) -> Path | None:
+    """Resolve LOG_FILE (app/config.py's structured-log setting) the same
+    way the bot process itself would: relative to ROOT, since start() always
+    launches it with cwd=ROOT (see the subprocess.Popen call below) — not
+    relative to whatever directory happens to invoke this script. Returns
+    None when LOG_FILE isn't set (structured file logging is opt-in)."""
+    raw = settings.get("LOG_FILE", "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else (ROOT / path).resolve()
+
+
 def _manifest_path(instance: str) -> Path:
     if not INSTANCE_RE.fullmatch(instance):
         raise SystemExit(f"invalid instance name: {instance!r}")
@@ -311,6 +324,7 @@ def start(bot: str, name: str | None) -> int:
         except SystemExit:
             _terminate_process_group(bot_pgid, signal.SIGTERM)
             raise
+    log_file_path = _resolve_log_file_path(settings)
     manifest = {
         "instance": instance,
         "pid": process.pid,
@@ -320,6 +334,7 @@ def start(bot: str, name: str | None) -> int:
         "bot": bot,
         "command": command,
         "log_path": str(log_path),
+        "log_file_path": str(log_file_path) if log_file_path is not None else "",
     }
     profiler_data = _profiler_manifest(
         profiler,
@@ -379,16 +394,43 @@ def _archive_and_remove(src: Path, archive_dir: Path, timestamp: str) -> Path:
     return dest
 
 
-def _archive_stopped_instance_artifacts(settings: dict[str, str], manifest: dict) -> None:
+def _other_live_instance_shares_log(log_path: Path, instance: str) -> bool:
+    """True if some OTHER instance's manifest still points at log_path and
+    that instance's process is still alive. Nothing stops two concurrently-
+    running instances from being configured with the same LOG_FILE (it's a
+    plain environment setting, not instance-scoped) — deleting it out from
+    under a still-writing process would silently orphan that process's own
+    log output for the rest of its life, and either corrupt or vanish
+    entirely once it also exits without a file left to write into."""
+    for other_path in RUNTIME_DIR.glob("*.json"):
+        if other_path.stem == instance:
+            continue
+        try:
+            other_manifest = json.loads(other_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(other_manifest, dict):
+            continue
+        if other_manifest.get("log_file_path") != str(log_path):
+            continue
+        other_pid = other_manifest.get("pid")
+        if isinstance(other_pid, int) and _alive(other_pid):
+            return True
+    return False
+
+
+def _archive_stopped_instance_artifacts(instance: str, settings: dict[str, str], manifest: dict) -> None:
     """Copy the structured JSON log and (if profiling with pyinstrument)
     the profile HTML into BOT_LOG_ARCHIVE_DIR under a timestamp-prefixed
     name, then remove the originals — called only after stop() has
     confirmed the instance's process (and any attached profiler) has
     fully exited, so both files are done being written. Each artifact is
-    independent and optional: a missing LOG_FILE setting or a non-
-    pyinstrument profiler is a silent no-op for that artifact, and this
-    never raises — archiving is best-effort and must not turn a
-    successful stop into a failure."""
+    independent and optional: a missing log_file_path or a non-pyinstrument
+    profiler is a silent no-op for that artifact. Archiving is best-effort
+    and must never raise — the bot process has already exited by the time
+    this runs, and stop() still needs to remove the instance manifest
+    afterward regardless of whether an unwritable/full archive disk made
+    this fail."""
     archive_dir = Path(settings.get("BOT_LOG_ARCHIVE_DIR", "~/coc_v2_log")).expanduser()
     # Microsecond precision, not just seconds — a quick stop/start cycle
     # during dev testing (this project has seen several within the same
@@ -396,13 +438,18 @@ def _archive_stopped_instance_artifacts(settings: dict[str, str], manifest: dict
     # second-granularity name and silently overwrite each other.
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
 
-    log_file = settings.get("LOG_FILE", "").strip()
+    log_file = str(manifest.get("log_file_path", "")).strip()
     if log_file:
-        log_path = Path(log_file).expanduser()
-        if log_path.is_file():
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            dest = _archive_and_remove(log_path, archive_dir, timestamp)
-            print(f"archived log -> {dest}")
+        log_path = Path(log_file)
+        if _other_live_instance_shares_log(log_path, instance):
+            print(f"log {log_path} is still in use by another running instance; leaving it for that instance's own stop to archive")
+        elif log_path.is_file():
+            try:
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                dest = _archive_and_remove(log_path, archive_dir, timestamp)
+                print(f"archived log -> {dest}")
+            except OSError as exc:
+                print(f"warning: failed to archive log {log_path}: {exc}")
 
     profiler = manifest.get("profiler")
     if isinstance(profiler, dict) and profiler.get("tool") == "pyinstrument":
@@ -416,9 +463,12 @@ def _archive_stopped_instance_artifacts(settings: dict[str, str], manifest: dict
         while not output_path.is_file() and time.monotonic() < deadline:
             time.sleep(0.2)
         if output_path.is_file():
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            dest = _archive_and_remove(output_path, archive_dir, timestamp)
-            print(f"archived profile -> {dest}")
+            try:
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                dest = _archive_and_remove(output_path, archive_dir, timestamp)
+                print(f"archived profile -> {dest}")
+            except OSError as exc:
+                print(f"warning: failed to archive profile {output_path}: {exc}")
         else:
             print(f"warning: pyinstrument output not found at {output_path}, nothing archived")
 
@@ -455,7 +505,7 @@ def stop(instance: str) -> int:
         raise SystemExit(f"failed to stop {instance}; manifest retained: {manifest_path}")
     if isinstance(profiler, dict) and profiler.get("tool") == "py-spy":
         _stop_attached_profiler(profiler, timeout)
-    _archive_stopped_instance_artifacts(_settings(), manifest)
+    _archive_stopped_instance_artifacts(instance, _settings(), manifest)
     manifest_path.unlink(missing_ok=True)
     print(f"stopped {instance}; log retained at {manifest.get('log_path', '')}")
     return 0
