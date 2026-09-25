@@ -1455,6 +1455,7 @@ def _commit_turn_result(
     openai_response_id: str | None = None,
     *,
     timeline_id: str | None = None,
+    invalidate_openai_response_chain: bool = False,
 ) -> bool:
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -1471,7 +1472,10 @@ def _commit_turn_result(
             _sync_state_snapshot(state, latest_state)
             return False
         latest_state.log.extend(log_entries)
-        if openai_response_id is not None:
+        if invalidate_openai_response_chain:
+            latest_state.openai_previous_response_id = ""
+            latest_state.openai_previous_response_timeline_id = ""
+        elif openai_response_id is not None:
             latest_state.openai_previous_response_id = openai_response_id
             latest_state.openai_previous_response_timeline_id = (
                 latest_state.timeline_id or f"legacy-{latest_state.group_id}"
@@ -3695,6 +3699,7 @@ async def _run_turn_impl(
     # "as an AI" fragment. Applied unconditionally (not gated by
     # is_ephemeral) since a leaked system-prompt fragment is just as real a
     # problem in KP-only OOC text as in canonical player-facing narrative.
+    provider_text = final_text
     final_text = await guard.enforce_narrative_safety(AgentMessage(payload={}), final_text)
 
     if not is_ephemeral or kp_turn_creates_canon:
@@ -3709,6 +3714,11 @@ async def _run_turn_impl(
         if not _spoiler_check.is_safe:
             final_text = _spoiler_check.fallback_text or final_text
 
+    # The provider response chain contains provider_text. If deterministic
+    # safety processing changes what is persisted, the next turn must rebuild
+    # context from canonical history instead of reusing that divergent chain.
+    output_was_repaired = final_text != provider_text
+
     if not is_ephemeral:
         turn_log_entries = [
             {"role": "user", "content": turn_message},
@@ -3717,6 +3727,7 @@ async def _run_turn_impl(
         committed = _commit_turn_result(
             state, turn_log_entries, openai_response_id=openai_response_id,
             timeline_id=turn_timeline_id,
+            invalidate_openai_response_chain=output_was_repaired,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
@@ -3729,6 +3740,7 @@ async def _run_turn_impl(
         committed = _commit_turn_result(
             state, turn_log_entries, openai_response_id=openai_response_id,
             timeline_id=turn_timeline_id,
+            invalidate_openai_response_chain=output_was_repaired,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []

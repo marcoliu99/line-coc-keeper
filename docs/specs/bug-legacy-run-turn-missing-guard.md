@@ -44,6 +44,13 @@ first, then the separate kp_only-content spoiler check). Applied
 unconditionally (not gated by `is_ephemeral`), covering all three current
 callers of this legacy path with one fix.
 
+When Guard or the subsequent spoiler sanitizer changes the provider text,
+invalidate the OpenAI response chain as part of the canonical turn commit.
+The provider response id references the unmodified response, while persisted
+history contains the repaired text; reusing that id would make later turns
+omit the repaired canonical history. Clear the chain under the same state
+lock that commits the output.
+
 `guard.enforce_narrative_safety(message: AgentMessage, reply_text: str)`
 takes an `AgentMessage`, but neither it nor `run_repair` actually reads
 anything off it (confirmed via `grep -n "message\." app/agents/guard.py`
@@ -64,6 +71,8 @@ app.keeper` smoke test.
   (`tests/test_kp_assistant_v2.py`): a provider returning text containing
   `[SYSTEM]` gets repaired via the (mocked) Guard Agent before `run_turn`
   returns, instead of the leaked fragment reaching the caller unfiltered.
+- The test also asserts that the repaired response clears the persisted
+  OpenAI response id and timeline metadata.
 - Full existing `test_kp_assistant_v2.py` suite (37 pre-existing tests)
   must keep passing unchanged — confirms the guard check is a no-op for
   every existing legitimate-text scenario (no LLM repair call triggered

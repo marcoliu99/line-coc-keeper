@@ -233,9 +233,12 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                         del keeper._PROVIDERS["openai"]
                     else:
                         keeper._PROVIDERS["openai"] = original_provider
+            saved = store.get("g")
 
         self.assertEqual(final_text, "你環顧四周，一片寂靜。")
         self.assertNotIn("[SYSTEM]", final_text)
+        self.assertEqual(saved.openai_previous_response_id, "")
+        self.assertEqual(saved.openai_previous_response_timeline_id, "")
 
     async def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
