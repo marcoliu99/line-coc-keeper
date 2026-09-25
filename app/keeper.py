@@ -386,7 +386,9 @@ TOOLS = [
             "代擲並回傳結果。不要自行判斷重傷檢定結果。"
             "只能用在 investigator 參數指名的那位角色自己的數值變化（例如角色自己受傷、花費自己"
             "的幸運點）；不能拿來記錄或暫存跟這位角色無關的擲骰結果（例如別人的傷害骰、環境效果"
-            "骰），也不能用來對敵人造成傷害——敵人傷害一律用 apply_combat_damage 或 damage_combatant。"
+            "骰），也不能用來對敵人造成傷害——敵人傷害一律用 apply_combat_damage（傳未扣護甲的"
+            "raw_damage）、apply_final_combat_damage（傳已扣除護甲的 final_damage，避免重複扣"
+            "護甲）或 damage_combatant。"
         ),
         "input_schema": {
             "type": "object",
