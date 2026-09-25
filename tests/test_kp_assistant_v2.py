@@ -186,6 +186,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.kp_ooc_log[-2], {"role": "kp_assistant", "content": "請記住這個幕後判斷"})
         self.assertEqual(saved.kp_ooc_log[-1], {"role": "assistant", "content": "這是新的幕後回答"})
         self.assertNotIn("old-0", [entry["content"] for entry in saved.kp_ooc_log])
+        tools_for_request = fake_provider.calls[0][1]["tools_for_request"]
+        self.assertIn("get_combat_status", {tool["name"] for tool in tools_for_request()})
         # A legacy state without explicit chain/timeline metadata is not
         # trusted after the timeline-isolation hardening.
         self.assertIsNone(fake_provider.calls[0][1]["previous_response_id"])

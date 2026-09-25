@@ -58,6 +58,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     image_requests: list[tuple[str | None, int]] = []
     facts: list[str] = []
     execute_tool = make_tool_executor(state, private_messages, image_requests, speaker_role, facts)
+    combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
     # gateway.tools_for_speaker_role's own docstring for why (RAG-aware
     # search_scenario inclusion, kp_assistant-specific filtering/patching).
@@ -87,9 +88,18 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             reasoning_effort=reasoning_effort_override or observability.llm_reasoning_effort(LLM_PROVIDER),
             metrics=turn_metrics,
         ):
+            async def execute_turn_tool(name: str, tool_input: dict) -> dict:
+                result = await execute_tool(name, tool_input)
+                combat_status_gate.observe_tool_result(name, result)
+                return result
+
+            provider_options = (
+                {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools)}
+                if LLM_PROVIDER == "openai" else {}
+            )
             await provider.run_conversation(
                 static_system, dynamic_system, tools, state.log, new_message,
-                execute_tool, MAX_TOOL_ITERATIONS,
+                execute_turn_tool if LLM_PROVIDER == "openai" else execute_tool, MAX_TOOL_ITERATIONS,
                 # This call's return value is discarded entirely (only the
                 # tool calls' side effects matter to run_executor — see
                 # docstring above), and supervisor.py always runs a separate
@@ -98,6 +108,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 # output the player could never see — see each provider's
                 # own comment on the enable_wrapup-gated branch.
                 enable_wrapup=False,
+                **provider_options,
                 # Model/reasoning-effort tiering for this Agent only — see
                 # app/config.py's EXECUTOR_MODEL_* comment and
                 # docs/specs/enhancement-executor-model-tiering-and-tool-

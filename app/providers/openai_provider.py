@@ -319,6 +319,7 @@ async def run_conversation(
     enable_wrapup: bool = True,
     model_override: str | None = None,
     reasoning_effort_override: str | None = None,
+    tools_for_request: Callable[[], list[dict]] | None = None,
 ) -> str:
     if not OPENAI_API_KEY:
         return "（尚未設定 OPENAI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
@@ -328,17 +329,18 @@ async def run_conversation(
 
     import openai
 
-    # Responses API tools are flat (no nested "function" wrapper, unlike Chat
-    # Completions) — see FunctionToolParam in the SDK's type stubs.
-    openai_tools = [
-        {
-            "type": "function",
-            "name": t["name"],
-            "description": t["description"],
-            "parameters": t["input_schema"],
-        }
-        for t in tools
-    ]
+    def _provider_tools(current_tools: list[dict]) -> list[dict]:
+        # Responses API tools are flat (no nested "function" wrapper, unlike
+        # Chat Completions) — see FunctionToolParam in the SDK's type stubs.
+        return [
+            {
+                "type": "function",
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            }
+            for t in current_tools
+        ]
 
     # instructions is the Responses API's dedicated system-prompt field —
     # unlike the Chat Completions provider, this doesn't need a "system" role
@@ -361,6 +363,8 @@ async def run_conversation(
     final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     iteration = -1
     for iteration in range(max_iterations):
+        current_tools = tools_for_request() if tools_for_request is not None else tools
+        openai_tools = _provider_tools(current_tools)
         request_kwargs = {
             "model": model,
             "instructions": instructions,

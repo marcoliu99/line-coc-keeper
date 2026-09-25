@@ -3413,6 +3413,54 @@ def _tools_for_speaker_role(speaker_role: str) -> list[dict]:
     ]
 
 
+_COMBAT_STATUS_INVALIDATING_TOOLS = frozenset({
+    "start_combat",
+    "add_npc_to_combat",
+    "advance_combat_turn",
+    "damage_combatant",
+    "resolve_enemy_action",
+    "apply_combat_damage",
+    "apply_final_combat_damage",
+    "end_combat",
+})
+
+
+class _CombatStatusToolGate:
+    """Withhold a redundant initial status lookup while the prompt snapshot
+    is current, then expose it after a successful combat mutation whose result
+    did not include a complete status snapshot.
+
+    This is request-local control state only; it never mutates GroupState.
+    """
+
+    def __init__(self, state: GroupState):
+        self._withhold_status = state.combat.active and bool(state.combat.order)
+
+    @staticmethod
+    def _has_complete_status(result: object) -> bool:
+        if not isinstance(result, dict):
+            return False
+        status = result.get("status")
+        return isinstance(status, str) and (
+            status.startswith("戰鬥中 - 第 ") or status == "目前沒有進行中的戰鬥。"
+        )
+
+    def observe_tool_result(self, tool_name: str, result: object) -> None:
+        if (
+            self._withhold_status
+            and tool_name in _COMBAT_STATUS_INVALIDATING_TOOLS
+            and isinstance(result, dict)
+            and result.get("ok") is True
+            and not self._has_complete_status(result)
+        ):
+            self._withhold_status = False
+
+    def tools_for_request(self, tools: list[dict]) -> list[dict]:
+        if not self._withhold_status:
+            return tools
+        return [tool for tool in tools if tool.get("name") != "get_combat_status"]
+
+
 async def run_turn(
     state: GroupState,
     user_id: str,
@@ -3505,6 +3553,7 @@ async def _run_turn_impl(
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     tools = _tools_for_speaker_role(speaker_role)
+    combat_status_gate = _CombatStatusToolGate(state)
     kp_turn_creates_canon = kp_manual_canon_trigger
     kp_canonical_tool_events: list[dict] = []
 
@@ -3565,6 +3614,7 @@ async def _run_turn_impl(
                 "tool_input": dict(tool_input),
                 "result": dict(result),
             })
+        combat_status_gate.observe_tool_result(name, result)
         return result
 
     openai_response_id: str | None = None
@@ -3601,6 +3651,7 @@ async def _run_turn_impl(
             MAX_TOOL_ITERATIONS,
             previous_response_id=previous_response_id,
             on_response_id=remember_openai_response_id,
+            tools_for_request=lambda: combat_status_gate.tools_for_request(tools),
         )
     else:
         final_text = await provider.run_conversation(
