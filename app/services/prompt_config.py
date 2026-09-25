@@ -76,6 +76,30 @@ def build_dynamic_prompt_with_context(keeper_dynamic_prompt: str, rag_context: s
     return "\n\n".join(parts)
 
 
+EXECUTOR_SCENARIO_RAG_POLICY = """【Executor 劇本檢索規則】
+先檢查本回合提供的【劇本相關內容】是否已回答目前行動所需的具體劇本事實。內容已明確涵蓋的事實直接重用，不要為了確認或改寫查詢而再次呼叫 search_scenario。
+只有在缺少一項會影響本次判定或眼前後果的具體事實時，才呼叫 search_scenario 補查。工具回傳已回答問題後，採用該結果繼續處理；只有另一項不同且會影響本次判定的事實仍未解答時，才再查一次。
+若本回合沒有可用的【劇本相關內容】，遇到必須依劇本決定的事實時仍可照常搜尋。若上下文與搜尋結果都沒有說明該事實，保留未知，不要自行補造。
+這些規則只決定如何重用劇本資訊，不會自行建立檢定、擲骰、改變角色狀態或推進場景；仍須依玩家實際行動與完整規則決定必要機制。"""
+
+
+def build_executor_dynamic_prompt_with_context(
+    keeper_dynamic_prompt: str,
+    rag_context: str,
+    memory_context: str,
+) -> str:
+    """Build Executor context with a turn-scoped policy for reusing proactive
+    scenario retrieval while preserving follow-up searches for missing facts.
+
+    The Narrator continues to use ``build_dynamic_prompt_with_context`` and
+    does not receive this retrieval policy.
+    """
+    dynamic_prompt = build_dynamic_prompt_with_context(
+        keeper_dynamic_prompt, rag_context, memory_context
+    )
+    return f"{dynamic_prompt}\n\n{EXECUTOR_SCENARIO_RAG_POLICY}"
+
+
 def build_resolved_check_history_block(
     events: list[dict], character_values: dict | None
 ) -> str:
