@@ -113,7 +113,56 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         "發生的事實：",
     ]
     lines.extend(f"- {fact}" for fact in result.narrative_facts)
+    status = result.check_status
+    if status.get("pending"):
+        pending = status["pending"]
+        lines.extend([
+            "【待處理檢定狀態：已建立】",
+            f"調查員：{pending.get('investigator', '未知')}",
+            f"技能／選項：{pending.get('skill') or pending.get('options') or '見工具結果'}",
+            "這是權威狀態。回覆必須明確告知檢定／選擇已建立並等待玩家處理；禁止說尚未建立、沒有待處理檢定，或要求守密人重新建立。",
+        ])
+    elif not status.get("pending"):
+        lines.append(
+            "【待處理檢定狀態：本回合沒有建立】不得指示玩家擲骰、按檢定按鈕或輸入 /coc check；"
+            "可以描述尚待處理的行動，但不可暗示已有檢定等待玩家。"
+        )
     return "\n".join(lines)
+
+
+def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str:
+    """Correct explicit roll instructions that contradict this turn's tools."""
+    status = result.check_status
+    pending = status.get("pending")
+    if pending:
+        denial_phrases = ("尚未建立", "沒有建立", "還沒建立", "沒有待處理", "尚未有待處理")
+        if any(phrase in text for phrase in denial_phrases):
+            investigator = pending.get("investigator", "調查員")
+            skill = pending.get("skill")
+            detail = f"「{skill}」" if skill else "這次"
+            return f"{investigator} 的{detail}檢定已建立並等待處理。請使用 /coc check 擲骰或選擇。"
+        return text
+
+    lower_text = text.lower()
+    check_command_index = lower_text.find("/coc check")
+    negation_words = ("不要", "勿", "不必", "不需要", "不用", "無需", "不需")
+    command_context = (
+        text[max(0, check_command_index - 12):check_command_index + 24]
+        if check_command_index >= 0 else ""
+    )
+    command_is_negated = any(word in command_context for word in negation_words)
+    asks_for_check = (
+        (check_command_index >= 0 and not command_is_negated)
+        or ("請按檢定按鈕" in text and not any(word in text for word in negation_words))
+        or (
+        any(word in text for word in ("擲骰", "投骰", "擲出結果"))
+            and any(word in text for word in ("請", "需要", "可以", "使用", "按鈕"))
+            and not any(word in text for word in negation_words)
+        )
+    )
+    if asks_for_check:
+        return "這回合沒有建立待處理檢定，目前不需要擲骰或使用 /coc check。請描述你接下來採取的行動。"
+    return text
 
 
 PURE_ROLEPLAY_BLOCK = "【純角色扮演（無機制判定）】請以 KP 的身分自然地回應玩家的行動或對話。"

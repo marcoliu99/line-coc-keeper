@@ -392,6 +392,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             return "narration", [], []
 
         with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
+                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", fake_run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -403,6 +404,81 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIs(captured_payload.get("mechanic_result"), fake_result)
+
+    async def test_supervisor_corrects_narration_that_requests_roll_without_pending_check(self):
+        from app.agents import supervisor
+        from app.domain.models import AgentMessage
+
+        state = GroupState(group_id="g")
+        message = AgentMessage(payload={
+            "conversation_id": "g", "user_id": "u1", "display_name": "P1",
+            "text": "嘗試撬門", "resolved_location": None, "speaker_role": "player",
+            "state": state, "character": None, "rag_context": "", "memory_context": "",
+        })
+        fake_result = MechanicResult(
+            success=True, action_type="none", narrative_facts=["search_scenario 成功"],
+            state_delta=StateDelta(), check_status={"tool_called": False, "pending": None},
+        )
+
+        async def fake_build_context(**kwargs):
+            return message
+
+        async def fake_run_narrator(_msg):
+            return "請使用 /coc check 擲骰。", [], []
+
+        with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
+                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
+                patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
+                patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
+                patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
+                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+            reply, _, _ = await supervisor.run_turn(
+                state=state, user_id="u1", display_name="P1", text="嘗試撬門",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertIn("沒有建立待處理檢定", reply)
+        self.assertNotIn("請使用 /coc check 擲骰", reply)
+
+    async def test_supervisor_replaces_denial_of_registered_pending_check(self):
+        from app.agents import supervisor
+        from app.domain.models import AgentMessage
+
+        state = GroupState(group_id="g")
+        state.pending_checks["u1"] = {"investigator": "P1", "skill": "STR"}
+        message = AgentMessage(payload={
+            "conversation_id": "g", "user_id": "u1", "display_name": "P1",
+            "text": "嘗試撬門", "resolved_location": None, "speaker_role": "player",
+            "state": state, "character": None, "rag_context": "", "memory_context": "",
+        })
+        fake_result = MechanicResult(
+            success=True, action_type="tool_calls", narrative_facts=["skill_check 成功：pending=True"],
+            state_delta=StateDelta(),
+            check_status={"tool_called": True, "pending": {"investigator": "P1", "skill": "STR"}},
+        )
+
+        async def fake_build_context(**kwargs):
+            return message
+
+        async def fake_run_narrator(_msg):
+            return "STR 檢定尚未建立，請守密人重新建立。", [], []
+
+        with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
+                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
+                patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
+                patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
+                patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
+                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+            reply, _, _ = await supervisor.run_turn(
+                state=state, user_id="u1", display_name="P1", text="嘗試撬門",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertIn("P1", reply)
+        self.assertIn("已建立", reply)
+        self.assertIn("/coc check", reply)
 
     async def test_supervisor_passes_captured_timeline_to_canonical_commit(self):
         from app.agents import supervisor

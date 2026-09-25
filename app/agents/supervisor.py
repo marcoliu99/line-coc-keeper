@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app import keeper, spoiler_policy
+from app import keeper, observability, spoiler_policy
 from app.agents import (
     assistant,
     context_builder,
@@ -13,7 +13,9 @@ from app.agents import (
     narrator,
     state_reducer,
 )
+from app.domain.models import MechanicResult
 from app.models import GroupState
+from app.services import prompt_config
 
 _logger = logging.getLogger(__name__)
 
@@ -66,9 +68,27 @@ async def run_turn(
         return await assistant.run_assistant(message)
 
     # 3. Route to Executor (Slow Path) or Skip to Narrator (Fast Path)
+    mechanic_result: MechanicResult | None = None
     if intent == "GAMEPLAY_ACTION":
         _logger.info("Routing to ExecutorAgent (Slow Path)")
         mechanic_result = await executor.run_executor(message)
+        # The post-tool in-memory snapshot is synchronized from persisted state
+        # by _mutate_and_save_state. Prefer that authoritative final state to
+        # tool-call summaries, and include a pending check carried in from an
+        # earlier turn too.
+        pending_check = state.pending_checks.get(user_id)
+        if pending_check:
+            pending_details = {
+                key: pending_check[key]
+                for key in ("investigator", "skill", "skill_value", "difficulty", "options")
+                if key in pending_check
+            }
+            active_character = state.get_active_character(user_id)
+            if active_character is not None:
+                pending_details.setdefault("investigator", active_character.name)
+            mechanic_result.check_status["pending"] = pending_details
+        else:
+            mechanic_result.check_status["pending"] = None
         # Narrator reads this back out of the payload (see narrator.py) to
         # decide between build_mechanic_facts_block and PURE_ROLEPLAY_BLOCK —
         # without this, every GAMEPLAY_ACTION turn silently narrated as if
@@ -99,6 +119,12 @@ async def run_turn(
     )
     if not spoiler_check.is_safe:
         reply_text = spoiler_check.fallback_text or reply_text
+
+    if intent == "GAMEPLAY_ACTION" and mechanic_result is not None:
+        checked_reply = prompt_config.enforce_mechanic_check_consistency(reply_text, mechanic_result)
+        if checked_reply != reply_text:
+            observability.event("narrator.check_consistency.corrected", status="corrected")
+            reply_text = checked_reply
 
     # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
     # pending_checks/combat/etc.) already happened inside the Executor's

@@ -31,6 +31,7 @@ class MechanicResult:
     narrative_facts: list[str]
     state_delta: StateDelta
     events: list[GameEvent] = field(default_factory=list)
+    check_status: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

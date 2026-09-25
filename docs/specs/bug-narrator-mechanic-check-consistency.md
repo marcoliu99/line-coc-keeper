@@ -3,7 +3,7 @@
 ## Changeset Tracking
 
 - **main_v2 start**: origin/main_v2:0fb7113fa112c58aeefd32f1044c1f63bea43ad3
-- **implementation end**: pending
+- **implementation end**: fix/narrator-obeys-mechanic-facts — full pytest, Ruff, mypy, and compileall pass
 
 ## Problem
 
@@ -45,9 +45,9 @@ tool-free and writes scene prose only.
 
 ## Design
 
-1. Derive a small structured check-status value from the actual successful
-   `skill_check` tool result, rather than asking Narrator to infer it from
-   scenario prose. Pass it alongside `MechanicResult`.
+1. Derive a small structured check-status value from actual check-tool
+   results, then reconcile it with the post-Executor persisted state snapshot
+   for the active player. Pass the final status alongside `MechanicResult`.
 2. Include explicit conditional instructions in the Narrator's mechanic
    facts block: registered pending checks are real and must be presented as
    registered; without one, do not direct the player to roll or call

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from app import keeper, observability
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
@@ -38,7 +39,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     facts: list[str] = []
-    execute_tool = make_tool_executor(state, private_messages, image_requests, speaker_role, facts)
+    check_status: dict[str, Any] = {"tool_called": False, "pending": None}
+    execute_tool = make_tool_executor(
+        state, private_messages, image_requests, speaker_role, facts, check_status
+    )
     combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
     # gateway.tools_for_speaker_role's own docstring for why (RAG-aware
@@ -98,6 +102,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             action_type="error",
             narrative_facts=["機制執行時發生錯誤，請視為純敘事處理，不要假設任何判定結果"],
             state_delta=StateDelta(),
+            check_status=check_status,
         )
 
     message.payload["private_messages"] = private_messages
@@ -112,4 +117,5 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # empty (see state_reducer.apply_mechanic_result's docstring for why
         # it must not try to re-apply anything on top of that).
         state_delta=StateDelta(),
+        check_status=check_status,
     )
