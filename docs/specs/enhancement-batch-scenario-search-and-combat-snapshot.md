@@ -2,7 +2,9 @@
 
 ## Status
 
-Design spec for review. No runtime changes are included in this revision.
+The user approved implementation after a small real-provider trial. The first
+implementation is scoped to combat snapshot reuse; multi-query scenario search
+remains a separate, unimplemented item in this spec.
 
 ## Goal
 
@@ -50,12 +52,43 @@ behavior; treat them as the baseline. Parsed observations from
   The batch tool should be assessed alongside that already existing context;
   this spec does not add another proactive RAG pass.
 - There were 27 `get_combat_status` calls. Twelve were first-iteration calls
-  with no earlier same-turn state-mutating tool, so the prompt's combat
-  snapshot was still current. These 12 are candidates for removal, not a
-  claim that all status calls are unnecessary.
+  with no earlier same-turn state-mutating tool. Log result text was available
+  for 11 of those: nine returned an active combat status, two said no combat
+  was active, and one had no extractable status text. The nine active cases
+  are evidence-backed candidates for gating; the two inactive cases must keep
+  status lookup available. The unclassified case is not counted as a saving.
 
 These two opportunities can overlap within a turn, so their counts must not be
 added to estimate total savings.
+
+## Pre-implementation real-provider trial
+
+Ran real OpenAI Responses API calls with the configured Executor model
+`gpt-6-luna` and reasoning effort `none`. All trials used synthetic combat
+state and a mock tool executor that performed no game-state writes.
+
+- Direct status question, one run per variant: both baseline and gated tool
+  lists answered directly in one request; neither called a tool. This case did
+  not exercise the status-call pattern.
+- Focused action with only `skill_check` and `get_combat_status` exposed, two
+  runs per variant: baseline called status then skill check in both runs
+  (three requests each). The gated variant used two requests once; on the
+  other run it called `skill_check` twice and used three requests. This narrow
+  schema is not representative enough to establish the expected saving and
+  showed model variance in tool choice.
+- Focused action with the production player tool list, one run per variant:
+  both used three requests. Baseline did not call `get_combat_status` and
+  instead selected an unrelated `adjust_ammo` call; the gated variant did not
+  select that call. No stale-state decision occurred. This is a smoke check,
+  not evidence of a guaranteed request reduction.
+
+Interpretation: the real-provider trial did not show increased request count
+or stale state with the production tool list, but it was too small and failed
+to reproduce a baseline status call with that full list. The production log
+provides the stronger evidence that first-iteration status calls occur. Treat
+the expected benefit as conditional: up to nine observed calls are candidates,
+with actual savings to be measured after rollout. Keep the metric-based
+rollback criteria below.
 
 ## Scope
 
@@ -251,4 +284,6 @@ before widening use.
   must move that preparation into the request loop without changing the
   sequential order of mutations. Other providers stay unchanged pending data.
 
-Implementation remains out of scope until this spec is reviewed.
+Only combat snapshot reuse is approved for the current implementation pass;
+the multi-query scenario search remains unimplemented until separately
+approved.
