@@ -1,6 +1,10 @@
 # LLM 限流與長回合延遲改善規格
 
-**狀態：待討論**。本文件提出分階段方案與待決選項；尚未開始實作。
+**狀態：3.1／3.2 已拍板（簡化版），3.3／3.4 維持待討論**。原本 3.1
+提案的「baseline → 分視窗自動調整 cap」機制已決定不做——對單一開發者
+維護、流量不大的 Discord bot 來說，建自動調整機制跟一整套量測指標的
+投入產出比不划算。改採「先做 3.2、3.1 用手動固定 cap」的簡化版本，
+細節見 3.1／3.2 與第 7 節。尚未開始實作。
 
 ## 1. 問題與目標
 
@@ -25,20 +29,33 @@
 
 ## 3. 提案方案
 
-### 3.1 OpenAI admission gate 與分階段推出
+### 3.1 OpenAI admission gate（簡化版：手動固定 cap，不做自動調整）
 
-第一階段只控制 OpenAI Responses API 的對話請求。在 OpenAI request boundary 加入可設定的 async semaphore，限制同一 bot process 同時進行的 API attempts。semaphore 只包住單次網路 attempt，不包含工具執行及 backoff；429 後先釋放 slot，等待重試時間後再重新排隊。這樣等待重試的 request 不會佔住可用名額，也不會阻塞 Anthropic／Gemini。
+**決定（取代原本的分階段自動調整提案）**：這個專案是單一開發者維護、
+流量不大的 Discord bot，還沒有證據顯示 429 真的是這個 process 自己
+併發造成的（也可能是帳號整體 quota/TPM 限制，加 process-local 併發
+上限對這種情況沒有幫助）。原提案要求的「baseline 24h/500 次 → 逐視窗
+按 429 比率／admission wait 門檻自動調整 cap」需要額外量測、記錄與
+人工 review 循環，投入產出比對這個規模不划算，決定不做。
 
-具體推出步驟：
+改用最簡單的版本：
 
-1. **建立 baseline（至少 24 小時且至少 500 次 OpenAI attempts）**：記錄各時間窗的最大同時 request 數、429 比率、retry 次數、API latency、turn latency、conversation lock wait 和完成 turn 數。未達 500 次就延長觀察，不用小樣本定上限。
-2. **小流量試行**：先設 OpenAI process-local concurrency cap 為 4，透過環境變數可調；觀察至少 24 小時且至少 500 次 OpenAI attempts。每次 attempt 記錄 admission wait、實際 API latency、model、attempt 序號、結果類別與安全的 provider request ID。不得記錄 prompt、回應本文、API key 或完整錯誤本文。
-3. **調整規則**：若 429 比率低於 1%、admission wait P95 低於 0.5 秒，且 turn P95／throughput 沒有明顯退化，下一窗口把上限增加 1；若 429 比率高於 2% 或 admission wait P95 高於 2 秒，下一窗口減少 1。一次只改一個單位，至少觀察一個完整窗口。429 比率介於 1–2% 時維持上限，再收一個窗口。這些是首輪操作門檻，可在讀完 baseline 後調整。
-4. **保留或回退**：比較相近時段／流量下的 429 比率、turn P95 和完成 turn 數。只有 429 改善且 turn P95 未惡化超過 10%、throughput 未下降超過 5%，才保留新上限；否則回到前一上限並檢查 admission queue 是否成為瓶頸。
+1. 在 OpenAI request boundary 加入可設定的 async semaphore，限制同一
+   bot process 同時進行的 API attempts。semaphore 只包住單次網路
+   attempt，不包含工具執行及 backoff；429 後先釋放 slot，等待重試時間
+   後再重新排隊，避免等待中的 request 佔住名額或阻塞 Anthropic／
+   Gemini。
+2. Cap 值透過環境變數設定，**憑觀察手動決定初始值**（看一段時間的既有
+   log，抓同時進行的 OpenAI request 數的實際尖峰，抓不到具體證據就先
+   用一個保守值，例如 3）——不做自動 baseline 收集流程。
+3. 上線後**手動觀察**既有的 structured log（429 比率、turn latency）
+   一段時間（例如一兩週），覺得太緊或太鬆再手動調整環境變數，不建自動
+   調整規則或分視窗評估機制。
 
-`4` 是可回退的試行值，不代表最佳值。若 baseline 顯示目前峰值低於 4，則先用 baseline 峰值作試行 cap，避免 limiter 人為製造排隊。第一階段不做 token-per-minute 排程、其他 provider 限流或跨程序共享限流。
+第一階段不做 token-per-minute 排程、其他 provider 限流或跨程序共享
+限流。
 
-### 3.2 Retry 與錯誤分類
+### 3.2 Retry 與錯誤分類（優先做——風險低、效益直接，不依賴 3.1 的決定）
 
 - 保留 429、暫時性 5xx、timeout／網路錯誤可重試；Bad Request、認證錯誤及其他永久 4xx 不重試。
 - 指數退避加入 full jitter，降低多個 request 同步重試造成的再碰撞。
@@ -83,18 +100,25 @@ conversation lock
 
 新增單元測試覆蓋 semaphore 上限、取消時釋放 slot、429 後釋放並重新排隊、Retry-After、jitter 範圍、Bad Request 不重試、錯誤 request ID 安全記錄，以及 tool parallelism 的依賴／副作用規則。加入模擬多 conversation 同時請求的測試，確認限流不會破壞同 conversation 順序。
 
-以同一組流量情境比較部署前後：429/所有 attempts 比率、重試次數、admission wait P50/P95、API latency P50/P95、turn latency P50/P95、iteration 分布、conversation lock wait P50/P95 與每分鐘完成 turn 數。需同時觀察成功率與 throughput，避免用「429 變少」掩蓋吞吐量大幅下降。分開報告冷啟動和穩態數據。
+**不需要**自動化的分視窗前後比較機制（已隨 3.1 簡化決定移除）。上線後
+用既有的 structured log 手動看一下 429 比率跟 turn latency 有沒有明顯
+改善／變差即可，不需要建立正式的部署前後比較報表。
 
 ## 7. 待討論決策
 
-1. 第一階段以 OpenAI 為主；其他 provider 暫不加 admission gate，除非 telemetry 顯示它們也有明顯限流。
-2. 採分階段推出：baseline → cap=4（若 baseline 峰值低於 4 則用峰值）試行 → 按 1%／2% 429 與 admission wait 門檻逐窗口調整 → 比較 turn P95 和 throughput 決定保留或回退。是否接受 24 小時／500 attempts 的窗口及上述門檻，請 review 時確認。
+1. **[已解決]** 第一階段以 OpenAI 為主；其他 provider 暫不加 admission gate，除非 telemetry 顯示它們也有明顯限流。
+2. **[已解決，2026-09-25]** 原提案「baseline → cap=4 試行 → 按 1%／2%
+   429 與 admission wait 門檻逐窗口自動調整 → 比較 turn P95／throughput
+   決定保留或回退」的整套自動調整機制**決定不做**——理由見 3.1：單一
+   開發者維護、流量不大的專案，這套機制的建置與觀察成本划不來。改用
+   3.1 描述的簡化版：手動決定初始 cap、手動看 log 決定要不要調整。
 3. Macro tool 已由 `enhancement/macro-combat-initialization-tool` 分支/spec 承接，不是本 spec 新增的設計決策；是否排入實作依該 spec review。
 4. 本階段不做跨程序共享限流；若未來確認多個 bot process 共用同一 OpenAI quota 並造成超額，再另開設計。
 
 ## 8. 實作前檢查
 
-- 確認 `profile-async2.log` 的 OpenAI 429 按 model/status/error code 的分布，並確認 log 收集時的 `MAX_TOOL_ITERATIONS` 設定。此檢查可決定試行 cap 是否採用 4，或採用較低的 baseline 峰值。
+- 確認 `profile-async2.log` 的 OpenAI 429 按 model/status/error code 的分布，並確認 log 收集時的 `MAX_TOOL_ITERATIONS` 設定。此檢查可幫助手動決定 3.1 的初始 cap 值該抓多少（例如取觀察到的同時 attempt 尖峰，或抓不到就先保守用 3）。
 - 確認使用的 SDK 版本如何公開 Retry-After、rate-limit reset、provider request ID 與結構化 error code。
 - 抽樣檢視高 iteration turn，避免把互相依賴或有序狀態變更的工具錯列為可平行工作。
-- 規格獲確認後，才依決定的階段開始實作與測試。
+- 規格獲確認後，才依決定的階段開始實作與測試。3.2（retry jitter／
+  Retry-After）不依賴 3.1 的 cap 值，可以先實作。
