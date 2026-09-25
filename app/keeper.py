@@ -1392,6 +1392,48 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
     return result
 
 
+_CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
+
+
+def _character_attribute_snapshot(char: Character) -> dict[str, int]:
+    return {name: int(getattr(char, name)) for name in _CHECK_EVENT_ATTRIBUTE_NAMES}
+
+
+def _persist_resolved_check_event(state: GroupState, event_seed: dict[str, Any]) -> None:
+    """Persist a resolved Keeper-tool check against the committed character state."""
+    with locks.get_state_lock(state.group_id):
+        latest = load_state(state.group_id)
+        timeline_id = latest.timeline_id or f"legacy-{latest.group_id}"
+        if timeline_id != event_seed["timeline_id"]:
+            return
+        if any(
+            event.get("event_id") == event_seed["event_id"]
+            for event in latest.resolved_check_events
+            if isinstance(event, dict)
+        ):
+            return
+        char = latest.get_active_character(event_seed["owner_id"])
+        if char is None or char.character_id != event_seed["character_id"]:
+            return
+        after = _character_attribute_snapshot(char)
+        event = {key: value for key, value in event_seed.items() if key != "state_before"}
+        event["state_effects"] = [
+            {
+                "field": _CHECK_EVENT_ATTRIBUTE_NAMES[field],
+                "before": before,
+                "after": after[field],
+                "delta": after[field] - before,
+            }
+            for field, before in event_seed["state_before"].items()
+            if before != after[field]
+        ]
+        event["resolved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        latest.resolved_check_events.append(event)
+        del latest.resolved_check_events[:-20]
+        _save_state_checked(latest, reason="resolved_check_event")
+        _sync_state_snapshot(state, latest)
+
+
 def _record_tool_recovery_marker_sync(
     state: GroupState, tool_name: str, tool_input: dict[str, Any]
 ) -> None:
@@ -1915,8 +1957,15 @@ def _execute_tool(
                 return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
             owner_id = char.owner_id
             cache_key = _deterministic_check_cache_key(name, tool_input, owner_id, speaker_role)
+            # Set by _roll_skill_check only when autoroll fully resolves the
+            # check right here with no further player interaction (no Luck
+            # buy-up offered) — see the resolved_check_events wiring after
+            # _mutate_and_save_state below for why this can't be persisted
+            # from inside the mutator itself.
+            resolved_event_seed: dict[str, Any] | None = None
 
             def _roll_skill_check(target_state: GroupState) -> _StateMutation[dict]:
+                nonlocal resolved_event_seed
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 if not target_state.autoroll_checks:
                     value = resolve_skill_value(target_char, tool_input["skill"])
@@ -2014,6 +2063,7 @@ def _execute_tool(
                 if difficulty not in ("regular", "hard", "extreme"):
                     difficulty = "regular"
                 pushed = bool(tool_input.get("pushed", False))
+                state_before = _character_attribute_snapshot(target_char)
                 roll = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
                 metadata = _pending_check_metadata(target_state, target_char.owner_id, tool_input)
                 result: dict[str, Any] = {
@@ -2080,9 +2130,27 @@ def _execute_tool(
                             "花 Luck 修正；玩家不需要、也不可以自行重骰。先不要把最終成敗敘事成不可逆的結果。"
                         ),
                     })
+                elif target_state.autoroll_checks:
+                    resolved_event_seed = {
+                        "event_id": metadata["check_id"],
+                        "check_id": metadata["check_id"],
+                        "timeline_id": metadata["timeline_id"],
+                        "owner_id": target_char.owner_id,
+                        "character_id": target_char.character_id,
+                        "investigator": target_char.name,
+                        "skill": tool_input["skill"],
+                        "skill_value": value,
+                        "roll": roll.roll,
+                        "difficulty": difficulty,
+                        "outcome": f"{roll.tier} {'成功' if roll.success else '失敗'}",
+                        "state_before": state_before,
+                    }
                 _remember_check_result(target_state, cache_key, result)
                 return _StateMutation(result, should_save=True)
-            return _mutate_and_save_state(state, _roll_skill_check)
+            result = _mutate_and_save_state(state, _roll_skill_check)
+            if resolved_event_seed is not None and result.get("resolved") and not result.get("pending_luck"):
+                _persist_resolved_check_event(state, resolved_event_seed)
+            return result
 
         if name == "offer_check_choice":
             char = find_character(state, tool_input.get("investigator", ""))
@@ -2346,8 +2414,10 @@ def _execute_tool(
             loss_failure = tool_input.get("loss_failure", "1d4")
             owner_id = char.owner_id
             cache_key = _deterministic_check_cache_key(name, tool_input, owner_id, speaker_role)
+            sanity_event_seed: dict[str, Any] | None = None
 
             def _roll_sanity_check(target_state: GroupState) -> _StateMutation[dict]:
+                nonlocal sanity_event_seed
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 if not target_state.autoroll_checks:
                     blocked = _reject_if_check_already_pending(target_state, target_char)
@@ -2386,6 +2456,7 @@ def _execute_tool(
                         should_save=False,
                     )
                 metadata = _pending_check_metadata(target_state, target_char.owner_id, tool_input)
+                state_before = _character_attribute_snapshot(target_char)
                 sanity_result = dice.sanity_check(target_char.san, loss_success, loss_failure)
                 target_char.san = sanity_result.san_after
                 result: dict[str, Any] = {
@@ -2427,9 +2498,26 @@ def _execute_tool(
                         result["note"] = (
                             "Keeper 已完成 SAN 與後續 INT 檢定；INT 未觸發短暫瘋狂，請照結果敘事。"
                         )
+                sanity_event_seed = {
+                    "event_id": metadata["check_id"],
+                    "check_id": metadata["check_id"],
+                    "timeline_id": metadata["timeline_id"],
+                    "owner_id": target_char.owner_id,
+                    "character_id": target_char.character_id,
+                    "investigator": target_char.name,
+                    "skill": "SAN",
+                    "skill_value": sanity_result.san_before,
+                    "roll": sanity_result.check.roll,
+                    "difficulty": "regular",
+                    "outcome": f"{sanity_result.check.tier} {'成功' if sanity_result.check.success else '失敗'}",
+                    "state_before": state_before,
+                }
                 _remember_check_result(target_state, cache_key, result)
                 return _StateMutation(result, should_save=True)
-            return _mutate_and_save_state(state, _roll_sanity_check)
+            result = _mutate_and_save_state(state, _roll_sanity_check)
+            if sanity_event_seed is not None and result.get("resolved"):
+                _persist_resolved_check_event(state, sanity_event_seed)
+            return result
 
         if name == "adjust_character":
             char = find_character(state, tool_input.get("investigator", ""))

@@ -18,6 +18,19 @@ from app.models import GroupState
 _logger = logging.getLogger(__name__)
 
 
+def _resolved_events_for_character(
+    state: GroupState, user_id: str, character_id: str, conversation_id: str
+) -> list[dict[str, Any]]:
+    timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+    return [
+        dict(event)
+        for event in state.resolved_check_events[-20:]
+        if event.get("owner_id") == user_id
+        and event.get("character_id") == character_id
+        and event.get("timeline_id") == timeline_id
+    ]
+
+
 async def build_context(
     state: GroupState,
     user_id: str,
@@ -221,6 +234,12 @@ async def build_context(
         "resolved_location": resolved_location,
         "state": state,  # Reference to the current GroupState
         "character": char, # Reference to the active Character (if any)
+        # Historical finalized outcomes are deliberately separate from this
+        # turn's tool results. Filter by owner, active character, and current
+        # timeline so switched investigators never inherit each other's sheet history.
+        "resolved_check_events": _resolved_events_for_character(
+            state, user_id, char.character_id, conversation_id
+        ) if char else [],
         "rag_context": rag_context,
         "memory_context": memory_context,
         "rag_status": rag_status,

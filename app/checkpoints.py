@@ -225,6 +225,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
             # timeline to the old server-side conversation.
             old_timeline_id = restored.timeline_id or f"legacy-{group_id}"
             restored.timeline_id = f"timeline-{uuid4().hex[:8]}"
+            restored.resolved_check_events.clear()
             observability.event(
                 "provider.chain.reset",
                 reason="rollback",

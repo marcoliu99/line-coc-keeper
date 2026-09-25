@@ -921,6 +921,10 @@ class GroupState:
     # readable and /coc check resolves them normally.
     pending_checks: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # Bounded audit trail of player checks once finalized, including only
+    # committed character attribute changes observed across resolution.
+    resolved_check_events: list[dict[str, Any]] = field(default_factory=list)
+
     # Optional group-level override: ordinary investigator checks remain
     # player-triggered by default. Only the KP Assistant or Discord Keeper may
     # enable this through /coc autoroll on; old snapshots therefore load as
@@ -1140,6 +1144,7 @@ class GroupState:
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
+            "resolved_check_events": self.resolved_check_events,
             "autoroll_checks": self.autoroll_checks,
             "deterministic_check_results": self.deterministic_check_results,
             "pending_luck_decisions": self.pending_luck_decisions,
@@ -1222,6 +1227,11 @@ class GroupState:
             current_room_id=data["current_room_id"] if isinstance(data.get("current_room_id"), dict) else {},
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
+            resolved_check_events=(
+                [dict(item) for item in data.get("resolved_check_events", [])[-20:] if isinstance(item, dict)]
+                if isinstance(data.get("resolved_check_events", []), list)
+                else []
+            ),
             autoroll_checks=bool(data.get("autoroll_checks", False)),
             deterministic_check_results=(
                 data.get("deterministic_check_results", {})
