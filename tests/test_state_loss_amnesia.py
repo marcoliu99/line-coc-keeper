@@ -251,6 +251,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         state.pending_checks["p1"] = {"type": "skill", "timeline_id": "timeline-old"}
         state.pending_luck_decisions["p1"] = {"timeline_id": "timeline-old"}
         state.deterministic_check_results["old-result"] = {"timeline_id": "timeline-old"}
+        state.resolved_check_events.append({"event_id": "old-event", "timeline_id": "timeline-old"})
 
         _apply_new_scenario(state, "new text", "New", {"npcs": [], "locations": []}, {}, [])
 
@@ -258,6 +259,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertEqual(state.pending_checks, {})
         self.assertEqual(state.pending_luck_decisions, {})
         self.assertEqual(state.deterministic_check_results, {})
+        self.assertEqual(state.resolved_check_events, [])
 
     def test_stale_timeline_check_is_consumed_without_a_roll(self) -> None:
         state = GroupState("stale-check", timeline_id="timeline-current", active=True)

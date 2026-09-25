@@ -221,6 +221,15 @@ async def build_context(
         "resolved_location": resolved_location,
         "state": state,  # Reference to the current GroupState
         "character": char, # Reference to the active Character (if any)
+        # Historical finalized outcomes are deliberately separate from this
+        # turn's tool results. Filter by owner and current timeline so this
+        # context cannot leak another investigator's private sheet history.
+        "resolved_check_events": [
+            dict(event)
+            for event in state.resolved_check_events[-20:]
+            if event.get("owner_id") == user_id
+            and event.get("timeline_id") == (state.timeline_id or f"legacy-{conversation_id}")
+        ] if char else [],
         "rag_context": rag_context,
         "memory_context": memory_context,
         "rag_status": rag_status,
