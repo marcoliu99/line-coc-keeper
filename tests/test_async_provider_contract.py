@@ -59,6 +59,55 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["first", "second"])
         self.assertEqual(client.responses.create.await_count, 2)
 
+    async def test_openai_refreshes_tool_list_after_successful_combat_mutation(self):
+        from app import keeper
+        from app.models import Combatant, CombatState, GroupState
+
+        first = SimpleNamespace(
+            output=[SimpleNamespace(
+                type="function_call", name="advance_combat_turn", arguments="{}", call_id="1"
+            )],
+            id="response-1",
+        )
+        final = SimpleNamespace(output=[], output_text="Cultist 接著行動。", id="response-2")
+        client = SimpleNamespace(
+            responses=SimpleNamespace(create=AsyncMock(side_effect=[first, final]))
+        )
+        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(return_value=client))
+        state = GroupState(group_id="g")
+        state.combat = CombatState(
+            active=True,
+            round_number=2,
+            order=[Combatant(name="Investigator", dex=70, hp=10, hp_max=10, is_pc=True)],
+        )
+        gate = keeper._CombatStatusToolGate(state)
+        tools = [
+            {"name": "advance_combat_turn", "description": "advance", "input_schema": {"type": "object"}},
+            {"name": "get_combat_status", "description": "status", "input_schema": {"type": "object"}},
+        ]
+
+        async def execute_tool(name, _args):
+            result = {"ok": True, "round": 2, "current_turn": "Cultist"}
+            gate.observe_tool_result(name, result)
+            return result
+
+        with patch.dict(sys.modules, {"openai": fake_openai}), \
+                patch.object(openai_provider, "OPENAI_API_KEY", "test-key"), \
+                patch.object(openai_provider, "_unsupported_params", set()):
+            result = await openai_provider.run_conversation(
+                "static", "dynamic", tools, [], "continue", execute_tool, 2,
+                tools_for_request=lambda: gate.tools_for_request(tools),
+            )
+
+        self.assertEqual(result, "Cultist 接著行動。")
+        sent_tools = [call.kwargs["tools"] for call in client.responses.create.await_args_list]
+        self.assertEqual([tool["name"] for tool in sent_tools[0]], ["advance_combat_turn"])
+        self.assertEqual(
+            {tool["name"] for tool in sent_tools[1]},
+            {"advance_combat_turn", "get_combat_status"},
+        )
+        self.assertEqual(client.responses.create.await_count, 2)
+
     async def test_async_openai_client_is_reused_and_closed(self):
         client = SimpleNamespace(
             responses=SimpleNamespace(create=AsyncMock()),

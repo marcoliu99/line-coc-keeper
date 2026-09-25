@@ -36,6 +36,54 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(fake_run_conversation.call_args.kwargs.get("enable_wrapup", True))
 
+    async def test_openai_executor_withholds_status_tool_when_snapshot_is_present(self):
+        from app.agents import executor
+        from app.models import Combatant, CombatState
+
+        state = GroupState(group_id="g")
+        state.combat = CombatState(
+            active=True,
+            round_number=1,
+            order=[Combatant(name="Investigator", dex=70, hp=10, hp_max=10, is_pc=True)],
+        )
+        message = AgentMessage(payload={
+            "state": state,
+            "text": "我攻擊怪物",
+            "user_id": "u1",
+            "display_name": "調查員",
+            "speaker_role": "player",
+        })
+        fake_run_conversation = AsyncMock(return_value="ignored")
+        with patch.object(executor, "_PROVIDERS", {
+            "openai": type("P", (), {"run_conversation": fake_run_conversation})()
+        }), patch.object(executor, "LLM_PROVIDER", "openai"):
+            await executor.run_executor(message)
+
+        tools_for_request = fake_run_conversation.call_args.kwargs["tools_for_request"]
+        offered_names = {tool["name"] for tool in tools_for_request()}
+        self.assertNotIn("get_combat_status", offered_names)
+
+    async def test_openai_executor_keeps_status_tool_without_combat_snapshot(self):
+        from app.agents import executor
+
+        state = GroupState(group_id="g")
+        message = AgentMessage(payload={
+            "state": state,
+            "text": "我攻擊怪物",
+            "user_id": "u1",
+            "display_name": "調查員",
+            "speaker_role": "player",
+        })
+        fake_run_conversation = AsyncMock(return_value="ignored")
+        with patch.object(executor, "_PROVIDERS", {
+            "openai": type("P", (), {"run_conversation": fake_run_conversation})()
+        }), patch.object(executor, "LLM_PROVIDER", "openai"):
+            await executor.run_executor(message)
+
+        tools_for_request = fake_run_conversation.call_args.kwargs["tools_for_request"]
+        offered_names = {tool["name"] for tool in tools_for_request()}
+        self.assertIn("get_combat_status", offered_names)
+
 
 class ExecutorModelTieringTests(unittest.IsolatedAsyncioTestCase):
     """docs/specs/enhancement-executor-model-tiering-and-tool-scoping.md:
