@@ -344,6 +344,13 @@ TOOLS = [
             "戰鬥結束、角色離場等原因不再需要玩家回應的情況——例如威脅已經解除、角色已經倒下、"
             "或你判斷這筆選擇不用再等玩家回覆了。若新檢定被舊 pending 擋下，且確認那筆真的過時，"
             "才用這個工具清掉它；有效的選擇不要清掉。"
+            "你自己口頭更正一筆先前建立的檢定時也要同步更正待處理狀態：先用這個工具清掉舊項目，"
+            "再依原本建立它的流程重新登記正確版本。若舊項目是 skill_check／sanity_check 建立的單一檢定，"
+            "用正確參數重新呼叫原本的 skill_check／sanity_check；若舊項目是 offer_check_choice 建立的互斥選擇，"
+            "用修正後的完整選項重新呼叫 offer_check_choice；若舊項目是 offer_npc_attack_defense_choice 建立的防守選擇，"
+            "用修正後的完整防守選項及攻擊情境重新呼叫 offer_npc_attack_defense_choice。"
+            "不要把互斥選項改成單一 skill_check／sanity_check，否則會丟失其他選項或對抗攻擊脈絡；"
+            "也不能只在敘述裡說『這筆不算』卻留著舊的待處理檢定，否則玩家之後 /coc check 會擲到你已經說不算的那一筆。"
             "角色目前沒有待處理的檢定時呼叫這個工具是安全的 no-op，不會出錯。"
         ),
         "input_schema": {
