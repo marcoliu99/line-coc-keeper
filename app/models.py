@@ -517,8 +517,8 @@ class SpecialAbility:
 
 @dataclass
 class EffectState:
-    id: str
-    label: str
+    id: str = field(default_factory=_generate_sub_id)
+    label: str = ""
     source_id: str = ""
     target_id: str = ""
     timing: str = "turn_start"
@@ -534,7 +534,14 @@ class EffectState:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> EffectState:
-        return EffectState(**data)
+        # Same _known_fields_only backstop as ArmorRule/AttackRule/
+        # SpecialAbility above (see that helper's docstring for the real
+        # production incident it exists for) — EffectState is built from
+        # add_combat_effect's LLM-controlled input the same way, and is
+        # also deserialized from every persisted GroupState on load, so an
+        # unrecognized key here would crash every load_state call for any
+        # group with a surviving combat effect, not just one tool call.
+        return EffectState(**_known_fields_only(EffectState, data))
 
 
 @dataclass
@@ -602,10 +609,10 @@ class EnemyCombatCard:
 class Combatant:
     """One participant in an active combat's initiative order."""
 
-    name: str
-    dex: int
-    hp: int
-    hp_max: int
+    name: str = ""
+    dex: int = 0
+    hp: int = 0
+    hp_max: int = 0
     is_pc: bool = False
     is_ally: bool = False  # Keeper-run NPC fighting on the investigators' side
     # (a hired guide, a friendly cultist defector, ...) — distinct from is_pc since
@@ -631,7 +638,13 @@ class Combatant:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Combatant:
-        return Combatant(**data)
+        # Same _known_fields_only backstop as ArmorRule/AttackRule/
+        # SpecialAbility/EffectState above — Combatant is deserialized from
+        # every persisted GroupState with an active/recent combat on load,
+        # so an unrecognized key (a future field rename, a stray key from
+        # some other code path) would otherwise crash load_state entirely
+        # for that group, not just fail one tool call.
+        return Combatant(**_known_fields_only(Combatant, data))
 
 
 @dataclass

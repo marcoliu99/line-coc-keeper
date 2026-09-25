@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app import combat
-from app.models import Character, EffectState, GroupState
+from app.models import Character, Combatant, EffectState, GroupState
 
 
 class CombatCardTests(unittest.TestCase):
@@ -1165,6 +1165,41 @@ class FindCombatantTests(unittest.TestCase):
         grunt = next(c for c in state.combat.order if c.name == "深潛者")
         self.assertEqual(boss.hp, 25)
         self.assertEqual(grunt.hp, 10)
+
+
+class EffectStateAndCombatantDefensiveParsingTests(unittest.TestCase):
+    """Code-review finding: ArmorRule/AttackRule/SpecialAbility got the
+    _known_fields_only backstop (docs/specs/bug-add-npc-to-combat-armor-
+    schema-crash.md), but EffectState/Combatant — deserialized from every
+    persisted GroupState with a surviving combat effect/combatant on
+    load_state — never got the same protection. An unexpected key here
+    used to crash the whole from_dict call, not just one tool call."""
+
+    def test_effect_state_with_an_unexpected_key_does_not_crash(self):
+        effect = EffectState.from_dict({
+            "id": "eff-1", "label": "燃燒", "damage": "1d6", "timing": "round_start",
+            "source": "molotov",  # not a real field
+        })
+        self.assertEqual(effect.label, "燃燒")
+        self.assertEqual(effect.damage, "1d6")
+
+    def test_effect_state_missing_id_and_label_uses_safe_defaults(self):
+        effect = EffectState.from_dict({"damage": "1d4"})
+        self.assertTrue(effect.id)
+        self.assertEqual(effect.label, "")
+
+    def test_combatant_with_an_unexpected_key_does_not_crash(self):
+        combatant = Combatant.from_dict({
+            "name": "Corbitt", "dex": 50, "hp": 20, "hp_max": 20,
+            "faction": "undead",  # not a real field
+        })
+        self.assertEqual(combatant.name, "Corbitt")
+        self.assertEqual(combatant.hp, 20)
+
+    def test_combatant_missing_required_fields_uses_safe_defaults(self):
+        combatant = Combatant.from_dict({"is_pc": True})
+        self.assertEqual(combatant.name, "")
+        self.assertEqual(combatant.hp, 0)
 
 
 if __name__ == "__main__":
