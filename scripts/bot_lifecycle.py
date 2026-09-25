@@ -372,6 +372,57 @@ def _verified_attached_profiler(profiler: dict) -> tuple[int, int, str]:
     return pid, pgid, actual
 
 
+def _archive_and_remove(src: Path, archive_dir: Path, timestamp: str) -> Path:
+    dest = archive_dir / f"{timestamp}_{src.name}"
+    shutil.copy2(src, dest)
+    src.unlink()
+    return dest
+
+
+def _archive_stopped_instance_artifacts(settings: dict[str, str], manifest: dict) -> None:
+    """Copy the structured JSON log and (if profiling with pyinstrument)
+    the profile HTML into BOT_LOG_ARCHIVE_DIR under a timestamp-prefixed
+    name, then remove the originals — called only after stop() has
+    confirmed the instance's process (and any attached profiler) has
+    fully exited, so both files are done being written. Each artifact is
+    independent and optional: a missing LOG_FILE setting or a non-
+    pyinstrument profiler is a silent no-op for that artifact, and this
+    never raises — archiving is best-effort and must not turn a
+    successful stop into a failure."""
+    archive_dir = Path(settings.get("BOT_LOG_ARCHIVE_DIR", "~/coc_v2_log")).expanduser()
+    # Microsecond precision, not just seconds — a quick stop/start cycle
+    # during dev testing (this project has seen several within the same
+    # minute) must not produce two archives that collide on the same
+    # second-granularity name and silently overwrite each other.
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+
+    log_file = settings.get("LOG_FILE", "").strip()
+    if log_file:
+        log_path = Path(log_file).expanduser()
+        if log_path.is_file():
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            dest = _archive_and_remove(log_path, archive_dir, timestamp)
+            print(f"archived log -> {dest}")
+
+    profiler = manifest.get("profiler")
+    if isinstance(profiler, dict) and profiler.get("tool") == "pyinstrument":
+        output_path = Path(str(profiler.get("output_path", ""))).expanduser()
+        # The SIGINT stop() already sent (and waited out) is what makes
+        # pyinstrument flush this file — by now the profiled process is
+        # confirmed dead, so it should already exist; poll briefly anyway
+        # as a safety margin against a slow filesystem flush rather than
+        # assuming zero latency.
+        deadline = time.monotonic() + 10
+        while not output_path.is_file() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if output_path.is_file():
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            dest = _archive_and_remove(output_path, archive_dir, timestamp)
+            print(f"archived profile -> {dest}")
+        else:
+            print(f"warning: pyinstrument output not found at {output_path}, nothing archived")
+
+
 def _stop_attached_profiler(profiler: dict, timeout: float) -> None:
     pid, pgid, _actual = _verified_attached_profiler(profiler)
     if not _alive(pid):
@@ -404,6 +455,7 @@ def stop(instance: str) -> int:
         raise SystemExit(f"failed to stop {instance}; manifest retained: {manifest_path}")
     if isinstance(profiler, dict) and profiler.get("tool") == "py-spy":
         _stop_attached_profiler(profiler, timeout)
+    _archive_stopped_instance_artifacts(_settings(), manifest)
     manifest_path.unlink(missing_ok=True)
     print(f"stopped {instance}; log retained at {manifest.get('log_path', '')}")
     return 0

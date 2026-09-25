@@ -150,5 +150,72 @@ class BotLifecycleScriptTests(unittest.TestCase):
                     env_file.unlink(missing_ok=True)
 
 
+class ArchiveStoppedInstanceArtifactsTests(unittest.TestCase):
+    def test_archives_both_log_and_pyinstrument_html_then_removes_originals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / "profile-async.log"
+            log_path.write_text("{}\n", encoding="utf-8")
+            html_path = root / "instance.pyinstrument.html"
+            html_path.write_text("<html></html>", encoding="utf-8")
+            archive_dir = root / "archive"
+            settings = {"LOG_FILE": str(log_path), "BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {"profiler": {"tool": "pyinstrument", "output_path": str(html_path)}}
+
+            bot_lifecycle._archive_stopped_instance_artifacts(settings, manifest)
+
+            self.assertFalse(log_path.exists())
+            self.assertFalse(html_path.exists())
+            archived = sorted(p.name for p in archive_dir.iterdir())
+            self.assertEqual(len(archived), 2)
+            self.assertTrue(any(name.endswith("_profile-async.log") for name in archived))
+            self.assertTrue(any(name.endswith("_instance.pyinstrument.html") for name in archived))
+            # timestamp prefix distinguishes archived files from the source name
+            for name in archived:
+                self.assertNotEqual(name, "profile-async.log")
+                self.assertNotEqual(name, "instance.pyinstrument.html")
+
+    def test_no_log_file_setting_is_a_silent_noop_for_the_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest: dict = {}
+            bot_lifecycle._archive_stopped_instance_artifacts(settings, manifest)
+            self.assertFalse(archive_dir.exists())
+
+    def test_non_pyinstrument_profiler_does_not_touch_its_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            svg_path = root / "instance.py-spy.svg"
+            svg_path.write_text("<svg></svg>", encoding="utf-8")
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {"profiler": {"tool": "py-spy", "output_path": str(svg_path)}}
+            bot_lifecycle._archive_stopped_instance_artifacts(settings, manifest)
+            self.assertTrue(svg_path.exists())
+
+    def test_missing_pyinstrument_output_warns_but_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {"profiler": {"tool": "pyinstrument", "output_path": str(root / "never-written.html")}}
+            bot_lifecycle._archive_stopped_instance_artifacts(settings, manifest)  # must not raise
+
+    def test_two_calls_produce_distinctly_named_archives(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive_dir = root / "archive"
+            log_path = root / "profile-async.log"
+            settings = {"LOG_FILE": str(log_path), "BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            for i in range(2):
+                log_path.write_text(f"run {i}\n", encoding="utf-8")
+                bot_lifecycle._archive_stopped_instance_artifacts(settings, {})
+            archived = sorted(p.name for p in archive_dir.iterdir())
+            self.assertEqual(len(archived), 2)
+            self.assertNotEqual(archived[0], archived[1])
+
+
 if __name__ == "__main__":
     unittest.main()
