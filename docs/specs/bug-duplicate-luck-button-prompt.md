@@ -106,3 +106,35 @@ real-API trials.
   second, unrelated new attack's defense-choice being posted by the same
   overlapping-call mechanism, not a separate bug — the fix above covers
   both `_post_check_buttons` and `_post_luck_buttons` symmetrically.
+
+## Post-implementation review fixes
+
+Two real gaps found by review, both fixed before merge:
+
+1. **The `_buttons_posted` marker broke legacy button identities.**
+   `check_identity.py`'s `_legacy_id` derives an entry's identity by
+   hashing its *entire* dict (minus `check_id`/`decision_id`) when no
+   explicit id is set — true for persisted pre-identity checks and for
+   the opening-scene checks `app/commands/handlers/system.py:627-641`
+   registers without one. The button's identity token was computed from
+   the entry *before* it was marked posted; a callback later re-derives
+   the same identity from the *persisted* (now-marked) entry to verify
+   the click. Since `_buttons_posted` wasn't excluded from that hash, the
+   two tokens differed — every such button would be rejected as expired
+   on the very first click. Fixed by excluding `_buttons_posted` from
+   `_legacy_id`'s hashed value, the same way `check_id`/`decision_id`
+   already are.
+2. **A failed send left the claim permanently stranded.** If
+   `_send_direct_message` raised *after* `_buttons_posted` was already
+   saved (an exhausted rate-limit/network retry, or the process exiting
+   between the save and the send), the entry stayed marked posted forever
+   — every future `_post_check_buttons`/`_post_luck_buttons` call would
+   skip it, permanently stranding a genuinely still-pending check/
+   decision with no button ever shown again. Fixed by tracking whether
+   the claim was actually saved this call (`claimed`), and on any
+   exception after that point, releasing it via
+   `_release_stranded_posting_claim` — which re-verifies under the
+   conversation lock that the persisted entry (ignoring the marker
+   itself) still matches what was claimed before clearing it, so it
+   never clobbers a different entry that may have replaced it in the
+   meantime.
