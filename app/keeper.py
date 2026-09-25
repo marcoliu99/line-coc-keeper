@@ -2414,6 +2414,27 @@ def _execute_tool(
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
 
+            # Do not apply a major-wound hit while another player-owned check
+            # for this investigator is pending. The state model can hold only
+            # one pending check per owner, so reject atomically and let the
+            # Keeper retry after the existing check resolves.
+            requested_delta = int(tool_input["delta"])
+            if (
+                field_name == "hp"
+                and requested_delta < 0
+                and not state.autoroll_checks
+                and char.owner_id in state.pending_checks
+            ):
+                requested_hp = max(0, char.hp + requested_delta)
+                if requested_hp > 0 and -requested_delta >= char.hp_max / 2:
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"{char.name} 已有待處理檢定；為避免遺失重傷必須的 CON 檢定，"
+                            "本次傷害未套用。請先完成現有檢定，再重新套用傷害。"
+                        ),
+                    }
+
             def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool, dict[str, Any] | None]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
@@ -2461,11 +2482,6 @@ def _execute_tool(
                                 {"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
                             ),
                         }
-                    # else: a pending check already exists for this character
-                    # (non-autoroll) — matching combat.py's _resolve_major_
-                    # wound_check, major_wound stays False so the caller
-                    # never claims a new CON check was registered when
-                    # nothing was actually written to pending_checks.
                 return new_val, major_wound, wound_roll
 
             new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)

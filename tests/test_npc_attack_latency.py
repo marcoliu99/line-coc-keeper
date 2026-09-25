@@ -799,13 +799,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertEqual(saved_state.characters["u1"].hp, 5)
         roll_mock.assert_not_called()
 
-    def test_adjust_character_major_wound_does_not_falsely_claim_pending_when_one_already_exists(self):
-        """Regression: app/combat.py's equivalent _resolve_major_wound_check
-        returns None (no major_wound_triggered) when the PC already has a
-        pending check in non-autoroll mode, since nothing new gets written
-        to pending_checks — adjust_character's own major-wound branch must
-        match that, not unconditionally set major_wound=True regardless of
-        whether it actually registered anything."""
+    def test_adjust_character_rejects_major_wound_while_check_is_pending(self):
+        """A per-owner pending-check slot cannot hold both checks; reject the
+        hit atomically so its mandatory major-wound CON check is not lost."""
         state = _state_with_investigator()
         state.characters["u1"].hp = 10
         state.characters["u1"].hp_max = 10
@@ -824,13 +820,12 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
                 speaker_role="player",
             )
             saved_state = store.store["g"]
-        self.assertTrue(result["ok"])
-        self.assertNotIn("major_wound", result)
-        self.assertNotIn("note", result)
-        # The pre-existing pending check must survive untouched — not
-        # silently overwritten by the (never-executed) CON registration.
+        self.assertFalse(result["ok"])
+        self.assertIn("本次傷害未套用", result["error"])
+        # Neither HP nor the pre-existing pending check changes; the Keeper
+        # can retry this damage after resolving the existing check.
         self.assertEqual(saved_state.pending_checks["u1"]["skill"], "偵查")
-        self.assertEqual(saved_state.characters["u1"].hp, 5)
+        self.assertEqual(saved_state.characters["u1"].hp, 10)
 
     def test_sanity_check_autoroll_resolves_san_and_madness_immediately(self):
         state = _state_with_investigator()

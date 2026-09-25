@@ -46,21 +46,21 @@ new pending check).
 
 ## Fix
 
-Move `major_wound = True` into each branch that actually acts (the
-`autoroll_checks` branch and the "no existing pending check" `elif`
-branch), matching `combat.py`'s pattern. When neither branch runs (an
-unrelated pending check already exists), `major_wound` stays `False` and
-the response omits `major_wound`/`major_wound_check`/the misleading `note`
-entirely — the HP change itself still applies and saves correctly; only the
-false claim is removed.
+The pending-check map has one slot per owner. If a threshold HP loss would
+cause a mandatory CON check while that owner already has another pending
+check, reject the adjustment before mutation. The tool returns an explicit
+conflict explaining that the existing check must resolve before the Keeper
+retries the damage. This preserves both the current HP and existing check,
+and prevents applying damage while silently dropping the required CON check.
+When there is no conflict, continue to set `major_wound` only when the CON
+check is auto-resolved or successfully registered.
 
 ## Testing Strategy
 
-- New regression test in `tests/test_npc_attack_latency.py`: character with
-  an existing unrelated pending check takes major-wound-threshold damage
-  via `adjust_character` — asserts `major_wound` is absent from the result,
-  no misleading `note`, the pre-existing pending check is untouched, and
-  the HP change itself still applied.
+- Regression test in `tests/test_npc_attack_latency.py`: character with
+  an existing unrelated pending check receives a major-wound damage
+  adjustment — asserts an explicit conflict and that neither HP nor the
+  pre-existing pending check changes.
 - Existing `test_adjust_character_major_wound_defaults_to_player_pending`
   (the no-existing-pending-check happy path) must keep passing unchanged.
 - Pure application logic, no real-API verification needed — this is a
