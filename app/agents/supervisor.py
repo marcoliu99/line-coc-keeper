@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import Any
 
 from app import keeper, observability, spoiler_policy
@@ -71,19 +72,38 @@ async def run_turn(
     mechanic_result: MechanicResult | None = None
     if intent == "GAMEPLAY_ACTION":
         _logger.info("Routing to ExecutorAgent (Slow Path)")
+        pending_checks_before = deepcopy(state.pending_checks)
         mechanic_result = await executor.run_executor(message)
         # The post-tool in-memory snapshot is synchronized from persisted state
         # by _mutate_and_save_state. Prefer that authoritative final state to
         # tool-call summaries, and include a pending check carried in from an
         # earlier turn too.
-        pending_check = state.pending_checks.get(user_id)
+        new_or_changed_pending = [
+            (owner_id, pending_check)
+            for owner_id, pending_check in state.pending_checks.items()
+            if pending_checks_before.get(owner_id) != pending_check
+        ]
+        # Prefer a check newly created or replaced by this turn, even when it
+        # belongs to another player. Otherwise preserve the active player's
+        # existing pending check so Narrator does not tell them to create it
+        # again.
+        pending_check = (
+            new_or_changed_pending[-1][1]
+            if new_or_changed_pending
+            else state.pending_checks.get(user_id)
+        )
+        pending_owner_id = (
+            new_or_changed_pending[-1][0]
+            if new_or_changed_pending
+            else user_id
+        )
         if pending_check:
             pending_details = {
                 key: pending_check[key]
                 for key in ("investigator", "skill", "skill_value", "difficulty", "options")
                 if key in pending_check
             }
-            active_character = state.get_active_character(user_id)
+            active_character = state.get_active_character(pending_owner_id)
             if active_character is not None:
                 pending_details.setdefault("investigator", active_character.name)
             mechanic_result.check_status["pending"] = pending_details

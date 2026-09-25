@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.domain.models import MechanicResult
 
 # 【提示詞集中管理】
@@ -145,19 +147,25 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
 
     lower_text = text.lower()
     check_command_index = lower_text.find("/coc check")
-    negation_words = ("不要", "勿", "不必", "不需要", "不用", "無需", "不需")
+    negation_pattern = r"(?:不要|勿|不必|不需要|不用|無需|不需)[^，。；！？,;!?\n]{0,5}$"
     command_context = (
-        text[max(0, check_command_index - 12):check_command_index + 24]
+        re.split(r"[，。；！？,;!?\n]", text[:check_command_index])[-1]
         if check_command_index >= 0 else ""
     )
-    command_is_negated = any(word in command_context for word in negation_words)
+    command_is_negated = re.search(negation_pattern, command_context) is not None
+    roll_phrases = ("擲骰", "投骰", "擲出結果")
+    roll_indices = [index for phrase in roll_phrases for index in [text.find(phrase)] if index >= 0]
+    roll_is_negated = any(
+        re.search(negation_pattern, re.split(r"[，。；！？,;!?\n]", text[:index])[-1]) is not None
+        for index in roll_indices
+    )
     asks_for_check = (
         (check_command_index >= 0 and not command_is_negated)
-        or ("請按檢定按鈕" in text and not any(word in text for word in negation_words))
+        or ("請按檢定按鈕" in text and not re.search(negation_pattern, text[:text.find("請按檢定按鈕")]))
         or (
-        any(word in text for word in ("擲骰", "投骰", "擲出結果"))
+            bool(roll_indices)
             and any(word in text for word in ("請", "需要", "可以", "使用", "按鈕"))
-            and not any(word in text for word in negation_words)
+            and not roll_is_negated
         )
     )
     if asks_for_check:

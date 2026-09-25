@@ -70,6 +70,10 @@ produced at the tool gateway boundary from the tool's actual return value.
   each of the two contradictory outputs.
 - Supervisor/Narrator pipeline test proving that the structured result reaches
   the final response validation path.
+- Review follow-up: reconcile pending checks from the pre/post Executor state
+  across all owners, and scope negation to the specific roll instruction.
+- Regression tests cover checks created for another player and unrelated
+  negation earlier in the narration.
 - Run relevant tests, full pytest, Ruff, mypy, and compileall.
 
 ## Tradeoffs

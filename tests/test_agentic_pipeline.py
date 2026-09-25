@@ -480,6 +480,49 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已建立", reply)
         self.assertIn("/coc check", reply)
 
+    async def test_supervisor_uses_new_pending_check_owned_by_another_player(self):
+        from app.agents import supervisor
+        from app.domain.models import AgentMessage
+
+        state = GroupState(group_id="g")
+        message = AgentMessage(payload={
+            "conversation_id": "g", "user_id": "speaker", "display_name": "Speaker",
+            "text": "攻擊者造成重傷", "resolved_location": None, "speaker_role": "player",
+            "state": state, "character": None, "rag_context": "", "memory_context": "",
+        })
+        fake_result = MechanicResult(
+            success=True, action_type="tool_calls", narrative_facts=["CON check pending"],
+            state_delta=StateDelta(), check_status={"tool_called": True, "pending": None},
+        )
+
+        async def fake_build_context(**kwargs):
+            return message
+
+        async def fake_run_executor(_msg):
+            state.pending_checks["target"] = {
+                "investigator": "Target", "skill": "CON", "difficulty": "regular",
+            }
+            return fake_result
+
+        async def fake_run_narrator(msg):
+            self.assertEqual(msg.payload["mechanic_result"].check_status["pending"]["investigator"], "Target")
+            return "Target 的 CON 檢定尚未建立。", [], []
+
+        with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
+                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
+                patch.object(supervisor.executor, "run_executor", fake_run_executor), \
+                patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
+                patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
+                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+            reply, _, _ = await supervisor.run_turn(
+                state=state, user_id="speaker", display_name="Speaker", text="攻擊者造成重傷",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+            )
+
+        self.assertIn("Target", reply)
+        self.assertIn("已建立", reply)
+
     async def test_supervisor_passes_captured_timeline_to_canonical_commit(self):
         from app.agents import supervisor
         from app.domain.models import AgentMessage

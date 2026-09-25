@@ -95,6 +95,14 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
 
         self.assertEqual(enforce_mechanic_check_consistency(text, result), text)
 
+    def test_unrelated_negation_does_not_hide_roll_instruction(self):
+        text = "你不需要鑰匙；請擲骰決定是否撬開門。"
+        result = mechanic_result({"tool_called": False, "pending": None})
+
+        corrected = enforce_mechanic_check_consistency(text, result)
+
+        self.assertIn("沒有建立待處理檢定", corrected)
+        self.assertNotEqual(corrected, text)
 
 if __name__ == "__main__":
     unittest.main()
