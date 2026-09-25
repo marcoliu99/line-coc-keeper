@@ -54,7 +54,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     # prompt (character sheets, combat status, NPC/location index, and every
     # tool-usage rule) rather than re-deriving a second copy.
     static_system = prompt_config.build_executor_static_prompt(keeper._build_static_prompt(state))
-    dynamic_system = prompt_config.build_dynamic_prompt_with_context(
+    dynamic_system = prompt_config.build_executor_dynamic_prompt_with_context(
         keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
     )
 

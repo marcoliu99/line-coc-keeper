@@ -58,7 +58,7 @@ Use the existing `build_dynamic_prompt_with_context` path so the rule is limited
 - Add focused tests showing the Executor prompt includes the reuse policy and retains the actual RAG block.
 - Add tests that empty/degraded context still allows the scenario search tool and that the policy does not suppress mechanic tools or imply a result.
 - Run the existing provider, Executor, prompt configuration, and state/narration tests, then the full suite and static checks.
-- The pre-implementation 20-trial API A/B run is recorded below. After implementation, rerun the isolated `/tmp` harness against the real local Corbitt RAG corpus and record actual retrieved page identifiers, search-tool calls, mechanic-tool outcomes, LLM iteration counts from observability metrics, and elapsed time. Keep the harness and report outside the repository's unit tests.
+- The pre-implementation and post-implementation 20-trial API A/B runs are recorded below. The harness and reports stay outside the repository's unit tests.
 
 ## Pre-implementation API experiment
 
@@ -73,6 +73,20 @@ The temporary harness at `/tmp/coc_search_loop_experiment_actual_rag.py` used th
 | Estimated LLM requests per trial | 3 | 2 |
 
 The mean elapsed time was 51.9% lower in the reuse group; the median was 49.9% lower. The LLM request count is an estimate derived from the sequential tool-call pattern, not provider telemetry. `search_scenario` performed real read-only retrieval; `skill_check` was stubbed to avoid mutating local game state. The same hard DEX requirement was explicitly fixed in both prompts, so the experiment demonstrates search/latency reduction while preserving that mechanic call, but it does not establish that the proactive RAG passages alone contain every rule needed to choose the check difficulty or consequence. This is a small, prompt-level experiment and not a production latency guarantee.
+
+## Post-implementation API experiment
+
+After implementing the Executor-specific reuse policy, the isolated harness at `/tmp/coc_search_loop_post_impl_20.py` ran another 20 interleaved API trials against the real local Corbitt RAG index. It used the actual `build_executor_dynamic_prompt_with_context` function and the application's real `search_scenario` and `skill_check` tool schemas, filtered to those two tools for a controlled comparison. A read-only real RAG query (`地下室樓梯 年久失修 Push roll falling 1D6 HP Corbitt basement`) returned 3 results from pages 7, 17, and 10, formatted to 1,096 characters. The static benchmark prompt held the action and hard DEX check constant. Scenario search used the real read-only RAG implementation; the skill-check handler returned a pending result without mutating game state. A temporary wrapper around `_create_response_async` counted actual Responses API invocations per trial.
+
+| Measure | Pre-change prompt (n=10) | Executor RAG reuse policy (n=10) |
+| --- | ---: | ---: |
+| Mean elapsed time | 7.97 s | 5.29 s |
+| Median elapsed time | 7.72 s | 5.22 s |
+| Scenario search calls | 10 | 0 |
+| Hard DEX checks created | 10/10 | 10/10 |
+| Mean Responses API calls | 3 | 2 |
+
+Mean elapsed time was 33.6% lower and median elapsed time 32.4% lower in the reuse group. This controlled trial shows that the implemented dynamic-context policy can avoid a redundant scenario lookup when the supplied real RAG passage already contains the relevant rule, while preserving the fixed mechanic outcome. It does not measure the full 36-tool Executor request or guarantee the same savings when proactive RAG omits a decision-relevant fact; the production policy explicitly allows a follow-up search in that case. The exact request count came from the temporary wrapper because the async OpenAI provider does not currently populate the shared `iteration_count` metric.
 
 ## Tradeoffs and unresolved questions
 
