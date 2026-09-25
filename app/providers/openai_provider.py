@@ -157,6 +157,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
                         max_attempts=LLM_MAX_RETRIES,
                         error_type=type(exc).__name__,
                         status="error",
+                        **retry._extract_safe_error_fields(exc),
                     )
                 else:
                     observability.event(
@@ -174,7 +175,10 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
                 continue
             if is_connection_retry:
                 connection_attempt += 1
-                time.sleep(LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (connection_attempt - 1)))
+                retry_after = retry._extract_retry_after_seconds(exc)
+                computed_delay = LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (connection_attempt - 1))
+                delay = retry_after if retry_after is not None else retry._full_jitter_delay(computed_delay)
+                time.sleep(delay)
                 continue
             raise
         else:

@@ -12,6 +12,7 @@ shared retry helper, and each provider's actual wiring.
 import asyncio
 import contextlib
 import unittest
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.providers import retry
@@ -182,11 +183,13 @@ class CallWithRetryTests(unittest.TestCase):
         fn = MagicMock(side_effect=[RetryableConnectionError(), RetryableConnectionError(), "ok"])
         with patch("app.providers.retry.time.sleep") as sleep_mock, \
              patch("app.providers.retry.LLM_MAX_RETRIES", 3), \
-             patch("app.providers.retry.LLM_RETRY_BASE_DELAY_SECONDS", 1.0):
+             patch("app.providers.retry.LLM_RETRY_BASE_DELAY_SECONDS", 1.0), \
+             patch("app.providers.retry.random.uniform", side_effect=lambda _lo, hi: hi):
             result = retry.call_with_retry(fn, provider="test", operation="op")
         self.assertEqual(result, "ok")
         self.assertEqual(fn.call_count, 3)
-        # Exponential backoff: 1s then 2s.
+        # Exponential backoff: 1s then 2s (jitter patched to always return
+        # the upper bound so the computed delay stays checkable exactly).
         sleep_mock.assert_has_calls([unittest.mock.call(1.0), unittest.mock.call(2.0)])
 
     def test_exhausts_retries_and_reraises(self):
@@ -222,6 +225,171 @@ class CallWithRetryTests(unittest.TestCase):
         sleep_mock.assert_not_called()
 
 
+class JitterAndSafeErrorFieldTests(unittest.TestCase):
+    def test_full_jitter_delay_stays_within_bounds(self):
+        for _ in range(50):
+            delay = retry._full_jitter_delay(4.0)
+            self.assertGreaterEqual(delay, 0.0)
+            self.assertLessEqual(delay, 4.0)
+
+    def test_retry_after_from_response_headers_overrides_computed_backoff(self):
+        class FakeResponse:
+            headers: ClassVar[dict[str, str]] = {"retry-after": "7"}
+
+        exc = FakeStatusError(429)
+        exc.response = FakeResponse()
+        fn = MagicMock(side_effect=[exc, "ok"])
+        with patch("app.providers.retry.time.sleep") as sleep_mock, \
+             patch("app.providers.retry.LLM_MAX_RETRIES", 3), \
+             patch("app.providers.retry.LLM_RETRY_BASE_DELAY_SECONDS", 1.0):
+            result = retry.call_with_retry(fn, provider="test", operation="op")
+        self.assertEqual(result, "ok")
+        sleep_mock.assert_called_once_with(7.0)
+
+    def test_missing_retry_after_returns_none_rather_than_guessing(self):
+        self.assertIsNone(retry._extract_retry_after_seconds(FakeStatusError(429)))
+
+    def test_retry_after_accepts_http_date_form(self):
+        from datetime import UTC, datetime, timedelta
+        from email.utils import format_datetime
+
+        target = datetime.now(UTC) + timedelta(seconds=30)
+
+        class FakeResponse:
+            headers: ClassVar[dict[str, str]] = {"retry-after": format_datetime(target, usegmt=True)}
+
+        exc = FakeStatusError(429)
+        exc.response = FakeResponse()
+        delay = retry._extract_retry_after_seconds(exc)
+        self.assertIsNotNone(delay)
+        # Allow a little slack for the time this test itself takes to run.
+        self.assertAlmostEqual(delay, 30.0, delta=2.0)
+
+    def test_retry_after_unparseable_string_returns_none(self):
+        self.assertIsNone(retry._parse_retry_after_value("not-a-real-value"))
+
+    def test_retry_after_past_http_date_clamps_to_zero(self):
+        from datetime import UTC, datetime, timedelta
+        from email.utils import format_datetime
+
+        past = datetime.now(UTC) - timedelta(seconds=60)
+        delay = retry._parse_retry_after_value(format_datetime(past, usegmt=True))
+        self.assertEqual(delay, 0.0)
+
+    def test_safe_error_fields_extracts_status_code_and_request_id(self):
+        class FakeResponse:
+            headers: ClassVar[dict[str, str]] = {"x-request-id": "req_abc123"}
+
+        exc = FakeStatusError(429)
+        exc.response = FakeResponse()
+        exc.code = "rate_limit_exceeded"
+        fields = retry._extract_safe_error_fields(exc)
+        self.assertEqual(fields["status_code"], 429)
+        self.assertEqual(fields["provider_error_code"], "rate_limit_exceeded")
+        self.assertEqual(fields["provider_request_id"], "req_abc123")
+
+    def test_safe_error_fields_are_empty_when_nothing_identifiable(self):
+        self.assertEqual(retry._extract_safe_error_fields(UnrelatedValueError("boom")), {})
+
+
+class AdmissionGateTests(unittest.TestCase):
+    """Spec: docs/specs/enhancement-llm-rate-limit-and-turn-latency.md 3.1 —
+    a manually-sized, OpenAI-only admission gate; no auto-tuning."""
+
+    def setUp(self):
+        retry._admission_semaphores.clear()
+
+    def tearDown(self):
+        retry._admission_semaphores.clear()
+
+    def test_non_openai_provider_is_never_gated(self):
+        self.assertIsNone(retry._admission_semaphore_for("anthropic"))
+        self.assertIsNone(retry._admission_semaphore_for("gemini"))
+
+    def test_openai_provider_gets_a_semaphore_sized_to_config(self):
+        with patch("app.providers.retry.OPENAI_MAX_CONCURRENT_REQUESTS", 2):
+            semaphore = retry._admission_semaphore_for("openai")
+        self.assertIsInstance(semaphore, asyncio.Semaphore)
+        self.assertEqual(semaphore._value, 2)
+
+    def test_admission_gate_serializes_requests_beyond_the_cap(self):
+        """With cap=1, a second concurrent attempt must wait for the first
+        to release its slot before its own attempt starts — proves the
+        semaphore actually gates concurrency, not just that it exists."""
+        order: list[str] = []
+
+        async def slow_ok():
+            order.append("start")
+            await asyncio.sleep(0.05)
+            order.append("end")
+            return "ok"
+
+        async def run():
+            with patch("app.providers.retry.OPENAI_MAX_CONCURRENT_REQUESTS", 1):
+                await asyncio.gather(
+                    retry.async_call_with_retry(slow_ok, provider="openai", operation="op"),
+                    retry.async_call_with_retry(slow_ok, provider="openai", operation="op"),
+                )
+
+        asyncio.run(run())
+        self.assertEqual(order, ["start", "end", "start", "end"])
+
+    def test_admission_slot_is_released_before_backoff_sleep(self):
+        """Spec 3.1 point 1: a request waiting out a 429 backoff must not
+        keep holding the admission slot, or a second conversation's attempt
+        would be blocked behind someone else's retry wait instead of just
+        the in-flight network attempts."""
+        calls = 0
+
+        async def fails_once_then_ok():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RetryableConnectionError()
+            return "ok"
+
+        async def quick_ok():
+            return "ok2"
+
+        async def run():
+            with patch("app.providers.retry.OPENAI_MAX_CONCURRENT_REQUESTS", 1), \
+                 patch("app.providers.retry.asyncio.sleep", new_callable=AsyncMock):
+                first = asyncio.create_task(
+                    retry.async_call_with_retry(fails_once_then_ok, provider="openai", operation="op")
+                )
+                await asyncio.sleep(0)  # let `first`'s attempt fail and release its slot
+                second_result = await retry.async_call_with_retry(quick_ok, provider="openai", operation="op")
+                first_result = await first
+            return first_result, second_result
+
+        first_result, second_result = asyncio.run(run())
+        self.assertEqual(first_result, "ok")
+        self.assertEqual(second_result, "ok2")
+
+    def test_admission_slot_is_released_on_cancellation(self):
+        async def hangs():
+            await asyncio.sleep(10)
+
+        async def quick_ok():
+            return "ok"
+
+        async def run():
+            with patch("app.providers.retry.OPENAI_MAX_CONCURRENT_REQUESTS", 1):
+                task = asyncio.create_task(
+                    retry.async_call_with_retry(hangs, provider="openai", operation="op")
+                )
+                await asyncio.sleep(0)  # let it acquire the slot and start hanging
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return await asyncio.wait_for(
+                    retry.async_call_with_retry(quick_ok, provider="openai", operation="op"),
+                    timeout=1.0,
+                )
+
+        self.assertEqual(asyncio.run(run()), "ok")
+
+
 class OpenAICreateResponseRetryTests(unittest.TestCase):
     """openai_provider._create_response merges connection-retry into its
     existing unsupported-parameter retry loop — see that function's
@@ -239,11 +407,31 @@ class OpenAICreateResponseRetryTests(unittest.TestCase):
         client = self._fake_client([RetryableConnectionError(), fake_response])
         with patch("app.providers.openai_provider.time.sleep") as sleep_mock, \
              patch("app.providers.openai_provider.LLM_MAX_RETRIES", 3), \
-             patch("app.providers.openai_provider.LLM_RETRY_BASE_DELAY_SECONDS", 1.0):
+             patch("app.providers.openai_provider.LLM_RETRY_BASE_DELAY_SECONDS", 1.0), \
+             patch("app.providers.retry.random.uniform", side_effect=lambda _lo, hi: hi):
             result = openai_provider._create_response(client, model="gpt-test", input=[])
         self.assertIs(result, fake_response)
         self.assertEqual(client.responses.create.call_count, 2)
+        # Jitter patched to always return the upper bound so the computed
+        # delay stays checkable exactly.
         sleep_mock.assert_called_once_with(1.0)
+
+    def test_retries_connection_error_honoring_retry_after_header(self):
+        from app.providers import openai_provider
+
+        class FakeResponse:
+            headers: ClassVar[dict[str, str]] = {"retry-after": "9"}
+
+        exc = FakeStatusError(429)
+        exc.response = FakeResponse()
+        fake_response = MagicMock()
+        client = self._fake_client([exc, fake_response])
+        with patch("app.providers.openai_provider.time.sleep") as sleep_mock, \
+             patch("app.providers.openai_provider.LLM_MAX_RETRIES", 3), \
+             patch("app.providers.openai_provider.LLM_RETRY_BASE_DELAY_SECONDS", 1.0):
+            result = openai_provider._create_response(client, model="gpt-test", input=[])
+        self.assertIs(result, fake_response)
+        sleep_mock.assert_called_once_with(9.0)
 
     def test_exhausts_connection_retries_and_reraises(self):
         from app.providers import openai_provider
