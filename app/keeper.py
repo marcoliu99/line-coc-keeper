@@ -2430,9 +2430,9 @@ def _execute_tool(
                 # 0 or below — RAW already treats that as unconscious/dying on
                 # its own, so a second CON check on top would be redundant.
                 if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2:
-                    major_wound = True
                     con_value = resolve_skill_value(target_char, "CON")
                     if target_state.autoroll_checks:
+                        major_wound = True
                         con_result = dice.skill_check(con_value)
                         wound_roll = {
                             "skill": "CON",
@@ -2446,6 +2446,7 @@ def _execute_tool(
                                 if tag not in target_char.status_tags:
                                     target_char.status_tags.append(tag)
                     elif target_char.owner_id not in target_state.pending_checks:
+                        major_wound = True
                         target_state.pending_checks[target_char.owner_id] = {
                             "type": "skill",
                             "skill": "CON",
@@ -2460,6 +2461,11 @@ def _execute_tool(
                                 {"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
                             ),
                         }
+                    # else: a pending check already exists for this character
+                    # (non-autoroll) — matching combat.py's _resolve_major_
+                    # wound_check, major_wound stays False so the caller
+                    # never claims a new CON check was registered when
+                    # nothing was actually written to pending_checks.
                 return new_val, major_wound, wound_roll
 
             new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)
