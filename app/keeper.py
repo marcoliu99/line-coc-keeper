@@ -3708,28 +3708,45 @@ async def _run_turn_impl(
                 state.openai_previous_response_id = response_id
                 state.openai_previous_response_timeline_id = current_timeline_id
 
-        final_text = await provider.run_conversation(
-            static_prompt,
-            dynamic_prompt,
-            tools,
-            history,
-            turn_message,
-            execute_turn_tool,
-            MAX_TOOL_ITERATIONS,
-            previous_response_id=previous_response_id,
-            on_response_id=remember_openai_response_id,
-            tools_for_request=lambda: combat_status_gate.tools_for_request(tools),
-        )
+        try:
+            final_text = await provider.run_conversation(
+                static_prompt,
+                dynamic_prompt,
+                tools,
+                history,
+                turn_message,
+                execute_turn_tool,
+                MAX_TOOL_ITERATIONS,
+                previous_response_id=previous_response_id,
+                on_response_id=remember_openai_response_id,
+                tools_for_request=lambda: combat_status_gate.tools_for_request(tools),
+            )
+        except Exception:
+            # Unlike app/agents/executor.py/narrator.py (each wrapped by
+            # their own try/except — see supervisor.py), this legacy single-
+            # call path has no outer safety net at all: an unhandled
+            # exception here used to propagate straight out of run_turn to
+            # whichever caller invoked it (legacy_commands.py, assistant.py,
+            # commands/handlers/system.py — none of which catch it either),
+            # discarding every tool call this turn already executed and
+            # saved, with no reply ever reaching the player. Same fallback
+            # text narrator.py already uses for its own equivalent failure.
+            _logger.exception("keeper.run_turn provider call failed")
+            final_text = "（守密人一時語塞，請再說一次剛才的行動）"
     else:
-        final_text = await provider.run_conversation(
-            static_prompt,
-            dynamic_prompt,
-            tools,
-            history,
-            turn_message,
-            execute_turn_tool,
-            MAX_TOOL_ITERATIONS,
-        )
+        try:
+            final_text = await provider.run_conversation(
+                static_prompt,
+                dynamic_prompt,
+                tools,
+                history,
+                turn_message,
+                execute_turn_tool,
+                MAX_TOOL_ITERATIONS,
+            )
+        except Exception:
+            _logger.exception("keeper.run_turn provider call failed")
+            final_text = "（守密人一時語塞，請再說一次剛才的行動）"
 
     # Rule Validator & Guard Agent (system-leak/format repair loop) — see
     # app/agents/supervisor.py's equivalent step 6 and docs/specs/

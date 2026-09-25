@@ -240,6 +240,44 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.openai_previous_response_id, "")
         self.assertEqual(saved.openai_previous_response_timeline_id, "")
 
+    async def test_run_turn_falls_back_gracefully_when_the_provider_call_raises(self):
+        """Code-review finding: keeper.run_turn's provider.run_conversation
+        call had no try/except at all, unlike app/agents/executor.py's and
+        narrator.py's equivalent calls (each wrapped by their own). An
+        unhandled exception here used to propagate straight out of
+        run_turn, past every caller (legacy_commands.py, assistant.py,
+        commands/handlers/system.py) that doesn't catch it either, so the
+        player never got any reply — not even an error message — even
+        though any tool calls already executed earlier in the same turn
+        had already saved for real."""
+        class RaisingProvider:
+            async def run_conversation(self, *_args, **_kwargs):
+                raise RuntimeError("simulated provider failure")
+
+        state = GroupState(group_id="g")
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = RaisingProvider()
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                final_text, private_messages, image_requests = await keeper.run_turn(
+                    state, user_id="p1", speaker_name="Marco", message_text="你攻擊怪物",
+                    speaker_role="player",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+        self.assertEqual(final_text, "（守密人一時語塞，請再說一次剛才的行動）")
+        self.assertEqual(private_messages, [])
+        self.assertEqual(image_requests, [])
+
     async def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         state.autoroll_checks = True
