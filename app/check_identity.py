@@ -24,7 +24,20 @@ def new_decision_id() -> str:
 
 
 def _legacy_id(prefix: str, owner_id: str, timeline_id: str, value: dict[str, Any]) -> str:
-    stable_value = {key: item for key, item in value.items() if key not in {"check_id", "decision_id"}}
+    # "_buttons_posted" (app/discord_bot.py's duplicate-post guard) is
+    # internal bookkeeping, not part of the check/decision's own identity —
+    # excluding it here matters specifically for legacy entries with no
+    # explicit check_id/decision_id (persisted pre-identity checks, and the
+    # opening-scene checks app/commands/handlers/system.py registers
+    # without one): without this exclusion, a button's embedded identity
+    # token (computed from the entry BEFORE it's marked posted) would stop
+    # matching the identity recomputed from the persisted entry (marked
+    # AFTER) the moment a callback re-derives it, and the button would be
+    # rejected as expired on the very first click.
+    stable_value = {
+        key: item for key, item in value.items()
+        if key not in {"check_id", "decision_id", "_buttons_posted"}
+    }
     encoded = json.dumps(stable_value, ensure_ascii=False, sort_keys=True, default=str)
     digest = hashlib.sha256(f"{prefix}|{owner_id}|{timeline_id}|{encoded}".encode()).hexdigest()[:24]
     return f"legacy-{prefix}-{digest}"

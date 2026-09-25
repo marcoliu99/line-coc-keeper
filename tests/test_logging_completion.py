@@ -6,7 +6,7 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app import config, keeper, memory_rag, observability, scenario_rag
 from app.domain.models import AgentMessage
@@ -423,7 +423,8 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
-                patch.object(discord_bot, "load_group_state", return_value=state):
+                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch("app.repositories.group_state.save_state", MagicMock()):
             await discord_bot._post_luck_buttons(
                 channel,
                 "discord-channel-1",
@@ -436,6 +437,207 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(send.await_args.args[1].startswith("【KP Assistant 代操作：小明】\n"))
         view = send.await_args.kwargs["view"]
         self.assertEqual([item.args[3] for item in view.items], ["regular", "hard", "extreme", "skip"])
+
+    async def test_luck_button_posted_only_once_when_two_overlapping_calls_race(self):
+        """Real-incident finding: every caller of _post_pending_buttons
+        (CheckButton/LuckSpendButton callbacks, on_message) snapshots its
+        own before_pending locally and only diffs against that — with no
+        cross-call marker, two overlapping request-handling flows for the
+        same conversation (e.g. one player's button click still in flight
+        when another player's message finishes processing) could each
+        independently conclude "this decision is new to me" and both post
+        a button for the same Luck decision. See docs/specs/bug-duplicate-
+        luck-button-prompt.md for the real Discord transcript this
+        reproduces."""
+        from app import discord_bot
+
+        class FakeView:
+            def __init__(self, timeout=None):
+                self.items = []
+
+            def add_item(self, item):
+                self.items.append(item)
+
+        class FakeButton:
+            def __init__(self, conversation_id, owner_id, label, choice, danger=False, decision_id=""):
+                pass
+
+        state = GroupState(group_id="g")
+        state.pending_luck_decisions["123"] = {
+            "options": [{"cost": 1, "tier": "regular"}],
+        }
+        channel = SimpleNamespace()
+        send = AsyncMock()
+        save = MagicMock()
+
+        with patch.object(discord_bot.discord.ui, "View", FakeView), \
+                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
+                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch("app.repositories.group_state.save_state", save):
+            # Two overlapping callers, each with its own stale before-
+            # snapshot captured before the decision existed — exactly what
+            # a genuine race between two concurrent request-handling flows
+            # looks like from _post_luck_buttons' point of view.
+            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+
+        send.assert_awaited_once()
+        save.assert_called_once()
+
+    async def test_check_button_posted_only_once_when_two_overlapping_calls_race(self):
+        from app import discord_bot
+
+        class FakeView:
+            def __init__(self, timeout=None):
+                self.items = []
+
+            def add_item(self, item):
+                self.items.append(item)
+
+        class FakeButton:
+            def __init__(self, conversation_id, owner_id, label, danger, option, check_id):
+                pass
+
+        state = GroupState(group_id="g")
+        state.pending_checks["123"] = {"type": "skill", "skill": "閃避", "skill_value": 30}
+        channel = SimpleNamespace()
+        send = AsyncMock()
+        save = MagicMock()
+
+        with patch.object(discord_bot.discord.ui, "View", FakeView), \
+                patch.object(discord_bot, "CheckButton", FakeButton), \
+                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch("app.repositories.group_state.save_state", save):
+            await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
+            await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
+
+        send.assert_awaited_once()
+        save.assert_called_once()
+
+    async def test_luck_button_still_posts_normally_for_a_single_non_overlapping_call(self):
+        """Regression guard: the durable marker must not break the plain,
+        common case of exactly one caller posting exactly one button."""
+        from app import discord_bot
+
+        class FakeView:
+            def __init__(self, timeout=None):
+                self.items = []
+
+            def add_item(self, item):
+                self.items.append(item)
+
+        class FakeButton:
+            def __init__(self, conversation_id, owner_id, label, choice, danger=False, decision_id=""):
+                pass
+
+        state = GroupState(group_id="g")
+        state.pending_luck_decisions["123"] = {
+            "options": [{"cost": 1, "tier": "regular"}],
+        }
+        channel = SimpleNamespace()
+        send = AsyncMock()
+        save = MagicMock()
+
+        with patch.object(discord_bot.discord.ui, "View", FakeView), \
+                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
+                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch("app.repositories.group_state.save_state", save):
+            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+
+        send.assert_awaited_once()
+
+    async def test_legacy_check_button_identity_survives_being_marked_posted(self):
+        """Review finding on PR #78: for entries without an explicit
+        check_id (legacy persisted checks, and the opening-scene checks
+        app/commands/handlers/system.py registers without one — see
+        :627-641 there), the button's identity token must stay derivable
+        from the persisted (now-marked-posted) entry. _legacy_id's hash
+        used to include "_buttons_posted", so the token computed before
+        the entry was marked (what the button was actually built with)
+        differed from the token recomputed after (what a callback
+        verifies against) — every such button would be rejected as
+        expired on the very first click."""
+        from app import check_identity, discord_bot
+
+        captured_check_id: dict[str, str] = {}
+
+        class FakeView:
+            def __init__(self, timeout=None):
+                self.items = []
+
+            def add_item(self, item):
+                self.items.append(item)
+
+        class FakeButton:
+            def __init__(self, conversation_id, owner_id, label, danger, option, check_id):
+                captured_check_id["value"] = check_id
+
+        state = GroupState(group_id="g")
+        state.pending_checks["123"] = {"type": "skill", "skill": "閃避", "skill_value": 30}
+        channel = SimpleNamespace()
+        send = AsyncMock()
+        save = MagicMock()
+        conversation_id = "discord-channel-1"
+
+        with patch.object(discord_bot.discord.ui, "View", FakeView), \
+                patch.object(discord_bot, "CheckButton", FakeButton), \
+                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch("app.repositories.group_state.save_state", save):
+            await discord_bot._post_check_buttons(channel, conversation_id, state, {})
+
+        marked_entry = state.pending_checks["123"]
+        self.assertTrue(marked_entry.get("_buttons_posted"))
+        timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+        recomputed_full_id = check_identity.effective_check_id("123", marked_entry, timeline_id)
+        recomputed_token = check_identity.compact_identity_token("check", "123", recomputed_full_id, timeline_id)
+        self.assertEqual(recomputed_token, captured_check_id["value"])
+
+    async def test_stranded_posting_claim_is_released_so_a_later_call_can_repost(self):
+        """Review finding on PR #78: if _send_direct_message raises after
+        the _buttons_posted claim was already saved (an exhausted rate-
+        limit/network retry, or the process exiting between the save and
+        the send), the entry must not be permanently stranded — a later
+        call must still be able to post it."""
+        from app import discord_bot
+
+        class FakeView:
+            def __init__(self, timeout=None):
+                self.items = []
+
+            def add_item(self, item):
+                self.items.append(item)
+
+        class FakeButton:
+            def __init__(self, conversation_id, owner_id, label, choice, danger=False, decision_id=""):
+                pass
+
+        state = GroupState(group_id="g")
+        state.pending_luck_decisions["123"] = {
+            "options": [{"cost": 1, "tier": "regular"}],
+        }
+        channel = SimpleNamespace()
+        send = AsyncMock(side_effect=[RuntimeError("simulated Discord send failure"), None])
+        save = MagicMock()
+
+        with patch.object(discord_bot.discord.ui, "View", FakeView), \
+                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
+                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch("app.repositories.group_state.save_state", save):
+            # First attempt: claim gets saved, then the send fails.
+            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+            self.assertNotIn("_buttons_posted", state.pending_luck_decisions.get("123", {}))
+
+            # A later, independent call (its own fresh before_pending) must
+            # still be able to post it — not permanently skipped.
+            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+
+        self.assertEqual(send.await_count, 2)
+        self.assertTrue(state.pending_luck_decisions["123"].get("_buttons_posted"))
 
 
 class AgentLifecycleLoggingTests(unittest.IsolatedAsyncioTestCase):

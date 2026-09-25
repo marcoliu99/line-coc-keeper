@@ -746,6 +746,49 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             locks.release_check(self.conversation_id, self.owner_id)
 
 
+def _equal_ignoring_posted_marker(a: dict, b: dict) -> bool:
+    def strip(d: dict) -> dict:
+        return {k: v for k, v in d.items() if k != "_buttons_posted"}
+
+    return strip(a) == strip(b)
+
+
+async def _release_stranded_posting_claim(
+    conversation_id: str, owner_id: str, original_entry: dict, collection_name: str,
+) -> None:
+    """Clears a `_buttons_posted` claim that was saved but never actually
+    reached the player — e.g. `_send_direct_message` raised after an
+    exhausted rate-limit/network retry, or the process exited between the
+    save and the send. Without this, the entry would be permanently
+    skipped by every future `_post_check_buttons`/`_post_luck_buttons`
+    call (that's the whole point of the marker), stranding a genuinely
+    still-pending check/decision with no button ever shown for it again.
+
+    Only clears the claim if the persisted entry is still — apart from the
+    marker itself — the same one this call just claimed; if it's already
+    been resolved or replaced by the time this runs, leaves it alone."""
+    try:
+        async with locks.get_conversation_lock(conversation_id):
+            current_state = await asyncio.to_thread(load_group_state, conversation_id)
+            collection = getattr(current_state, collection_name)
+            current_entry = collection.get(owner_id)
+            if (
+                current_entry is None
+                or not current_entry.get("_buttons_posted")
+                or not _equal_ignoring_posted_marker(current_entry, original_entry)
+            ):
+                return
+            current_entry.pop("_buttons_posted", None)
+            from app.repositories.group_state import save_state as save_group_state
+
+            await asyncio.to_thread(save_group_state, current_state)
+    except Exception:
+        _logger.exception(
+            "failed to release stranded posting claim for owner_id=%s in conversation_id=%s",
+            owner_id, conversation_id,
+        )
+
+
 async def _post_check_buttons(
     channel: discord.abc.Messageable,
     conversation_id: str,
@@ -760,14 +803,35 @@ async def _post_check_buttons(
     fresh buttons; a stale/duplicate pending entry never gets re-posted.
     Takes an already-loaded `state` (see _post_pending_buttons) rather than
     loading its own — every caller needs this same post-turn state for both
-    this and _post_luck_buttons, so there's no reason to read it twice."""
+    this and _post_luck_buttons, so there's no reason to read it twice.
+
+    Every caller of _post_pending_buttons snapshots its OWN before_pending
+    right at the start of its own request handling and only diffs against
+    that local snapshot — with no cross-call marker, two overlapping
+    requests for the same conversation (e.g. one player's button click
+    still in flight when another player's message finishes processing)
+    can each independently conclude "this check is new to me" and both
+    post a button for it (see docs/specs/bug-duplicate-luck-button-
+    prompt.md for the real incident this reproduces). The `_buttons_posted`
+    flag checked-and-set under the conversation lock below closes that:
+    whichever call gets the lock first claims it durably in persisted
+    state, so a second, overlapping call sees it's already spoken for and
+    skips — not just "different from my stale snapshot"."""
+    from app.repositories.group_state import save_state as save_group_state
+
     for owner_id, check in state.pending_checks.items():
         if before_pending.get(owner_id) == check:
             continue
+        claimed = False
         try:
-            current_state = await asyncio.to_thread(load_group_state, conversation_id)
-            if current_state.pending_checks.get(owner_id) != check:
-                continue
+            async with locks.get_conversation_lock(conversation_id):
+                current_state = await asyncio.to_thread(load_group_state, conversation_id)
+                current_check = current_state.pending_checks.get(owner_id)
+                if current_check != check or current_check.get("_buttons_posted"):
+                    continue
+                current_check["_buttons_posted"] = True
+                await asyncio.to_thread(save_group_state, current_state)
+                claimed = True
             char = current_state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
@@ -793,6 +857,12 @@ async def _post_check_buttons(
             _logger.exception(
                 "failed to post check button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
             )
+            if claimed:
+                # The _buttons_posted claim was saved, but the actual send
+                # (or view/text construction) failed after that — without
+                # this, the check would be permanently skipped by every
+                # future call, stranding it with no button ever shown.
+                await _release_stranded_posting_claim(conversation_id, owner_id, check, "pending_checks")
 
 
 _TIER_ZH = {"regular": "一般成功", "hard": "困難成功", "extreme": "極難成功"}
@@ -945,14 +1015,27 @@ async def _post_luck_buttons(
 ) -> None:
     """Same content-diff pattern as _post_check_buttons, for pending Luck-spend
     decisions (see app/commands.py's handle_check_command). Takes an already-
-    loaded `state` for the same reason _post_check_buttons does."""
+    loaded `state` for the same reason _post_check_buttons does.
+
+    Same `_buttons_posted` durable-marker fix as _post_check_buttons — see
+    that function's docstring for why a purely local before/after diff
+    isn't enough to prevent two overlapping requests from each posting a
+    button for the same decision."""
+    from app.repositories.group_state import save_state as save_group_state
+
     for owner_id, decision in state.pending_luck_decisions.items():
         if before_pending.get(owner_id) == decision:
             continue
+        claimed = False
         try:
-            current_state = await asyncio.to_thread(load_group_state, conversation_id)
-            if current_state.pending_luck_decisions.get(owner_id) != decision:
-                continue
+            async with locks.get_conversation_lock(conversation_id):
+                current_state = await asyncio.to_thread(load_group_state, conversation_id)
+                current_decision = current_state.pending_luck_decisions.get(owner_id)
+                if current_decision != decision or current_decision.get("_buttons_posted"):
+                    continue
+                current_decision["_buttons_posted"] = True
+                await asyncio.to_thread(save_group_state, current_state)
+                claimed = True
             char = current_state.get_active_character(owner_id)
             name = char.name if char else "你"
             view = discord.ui.View(timeout=None)
@@ -970,6 +1053,8 @@ async def _post_luck_buttons(
             _logger.exception(
                 "failed to post luck button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
             )
+            if claimed:
+                await _release_stranded_posting_claim(conversation_id, owner_id, decision, "pending_luck_decisions")
 
 
 async def _post_pending_buttons(
