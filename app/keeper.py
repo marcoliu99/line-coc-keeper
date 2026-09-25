@@ -3565,6 +3565,26 @@ async def run_turn(
         )
 
 
+def _provider_failure_fallback_text(mutating_tools_ran: list[str]) -> str:
+    """Text to show when provider.run_conversation raises partway through a
+    turn. A later iteration can fail after earlier iterations already ran
+    and saved real mutations (a roll, ammo, damage, a new pending check,
+    ...) — narrator.py's plain "please repeat the action" text is only
+    safe when nothing could have mutated state yet (true for narrator.py,
+    which has no tools at all), not here, where retrying the same action
+    risks re-rolling a check or double-applying damage/ammo rather than
+    just wasting a message. Only state-mutating tool calls count (see
+    READ_ONLY_TOOL_NAMES) — a turn that only ever called read-only tools
+    before failing is exactly as safe to retry as narrator.py's case."""
+    if mutating_tools_ran:
+        return (
+            "（守密人在整理接下來的敘述時遇到問題，但你剛才的行動已經有部分結果被"
+            "系統記錄——請不要重複剛才的行動，先描述你接下來想做什麼，或用指令"
+            "查看目前狀態。）"
+        )
+    return "（守密人一時語塞，請再說一次剛才的行動）"
+
+
 async def _run_turn_impl(
     state: GroupState,
     user_id: str,
@@ -3623,9 +3643,19 @@ async def _run_turn_impl(
     combat_status_gate = _CombatStatusToolGate(state)
     kp_turn_creates_canon = kp_manual_canon_trigger
     kp_canonical_tool_events: list[dict] = []
+    # Tracks whether any state-mutating tool call actually completed this
+    # turn — used by the provider-failure fallback below to decide whether
+    # it's safe to ask the player to repeat their action. A later provider
+    # iteration can fail after earlier iterations already ran and saved
+    # real mutations (a roll, ammo, damage, ...); telling the player to
+    # "just repeat the action" in that case risks re-rolling a check or
+    # double-applying damage/ammo, not just wasting a message.
+    mutating_tools_ran: list[str] = []
 
     async def execute_turn_tool(name: str, tool_input: dict) -> dict:
         nonlocal kp_turn_creates_canon
+        if name not in READ_ONLY_TOOL_NAMES:
+            mutating_tools_ran.append(name)
         observability.increment_metric("tool_call_count")
         with observability.span(
             "llm.tool",
@@ -3729,10 +3759,9 @@ async def _run_turn_impl(
             # whichever caller invoked it (legacy_commands.py, assistant.py,
             # commands/handlers/system.py — none of which catch it either),
             # discarding every tool call this turn already executed and
-            # saved, with no reply ever reaching the player. Same fallback
-            # text narrator.py already uses for its own equivalent failure.
+            # saved, with no reply ever reaching the player.
             _logger.exception("keeper.run_turn provider call failed")
-            final_text = "（守密人一時語塞，請再說一次剛才的行動）"
+            final_text = _provider_failure_fallback_text(mutating_tools_ran)
     else:
         try:
             final_text = await provider.run_conversation(
@@ -3746,7 +3775,7 @@ async def _run_turn_impl(
             )
         except Exception:
             _logger.exception("keeper.run_turn provider call failed")
-            final_text = "（守密人一時語塞，請再說一次剛才的行動）"
+            final_text = _provider_failure_fallback_text(mutating_tools_ran)
 
     # Rule Validator & Guard Agent (system-leak/format repair loop) — see
     # app/agents/supervisor.py's equivalent step 6 and docs/specs/

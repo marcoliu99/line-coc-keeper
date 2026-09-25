@@ -43,11 +43,32 @@ executed and saved earlier in the same turn already took effect.
    uses, so the model can see and potentially recover from it.
 2. Wrap both `provider.run_conversation(...)` call sites in
    `_run_turn_impl` with `try/except Exception`, logging and falling back
-   to the same neutral text `narrator.py` already uses for its own
-   equivalent failure (`"（守密人一時語塞，請再說一次剛才的行動）"`).
+   to `_provider_failure_fallback_text(mutating_tools_ran)`.
    `except Exception` (not bare `except`) so `asyncio.CancelledError`
    (which inherits from `BaseException`, not `Exception`) still propagates
    correctly.
+
+### Review finding: don't ask for a retry after mutating tools already ran
+
+A first version of fix #2 always fell back to the same neutral "please
+repeat the action" text `narrator.py` uses for its own equivalent failure.
+Review caught that this is unsafe here (unlike in `narrator.py`, which has
+no tools at all): `provider.run_conversation` runs multiple iterations,
+and a *later* iteration can fail after an *earlier* iteration's tool call
+already executed and saved a real mutation (a roll, ammo, damage, a new
+pending check, ...). Telling the player to "just repeat the action" in
+that case risks re-rolling a check or double-applying an effect, not just
+wasting a message — and the non-OpenAI branch has the identical problem
+(same `execute_turn_tool` callback, same fallback text).
+
+Fixed by tracking whether any state-mutating tool call (anything not in
+`READ_ONLY_TOOL_NAMES`) actually ran this turn, via a list appended to
+inside `execute_turn_tool` (shared by both branches). The exception
+handler picks between two fallback texts based on that: the original
+"please repeat" text when nothing mutated yet (safe, matches
+`narrator.py`'s case exactly), or a different text explicitly warning the
+player NOT to repeat the action and to describe what they want to do next
+instead, when something already did.
 
 ## Testing Strategy
 
@@ -57,8 +78,12 @@ executed and saved earlier in the same turn already took effect.
   invoked for that malformed call, and the turn still completes.
 - `test_run_turn_falls_back_gracefully_when_the_provider_call_raises`
   (`tests/test_kp_assistant_v2.py`): a provider whose `run_conversation`
-  raises still returns the narrator-style fallback text from `run_turn`
-  instead of propagating.
+  raises before any tool call still returns the original "please repeat"
+  fallback text.
+- `test_run_turn_does_not_ask_for_a_retry_after_a_mutating_tool_already_ran`
+  (`tests/test_kp_assistant_v2.py`): a provider that runs one real
+  mutating tool call (`adjust_character`) and then raises gets the
+  different fallback text, explicitly not the "please repeat" wording.
 - Pure application logic (error handling, not model behavior), no
   real-API verification needed.
 - Standard four checks (ruff, mypy, compileall, pytest).
