@@ -58,7 +58,21 @@ Use the existing `build_dynamic_prompt_with_context` path so the rule is limited
 - Add focused tests showing the Executor prompt includes the reuse policy and retains the actual RAG block.
 - Add tests that empty/degraded context still allows the scenario search tool and that the policy does not suppress mechanic tools or imply a result.
 - Run the existing provider, Executor, prompt configuration, and state/narration tests, then the full suite and static checks.
-- After implementation, rerun the isolated `/tmp` API A/B harness with 20 interleaved trials against the real local Corbitt RAG corpus. Record actual retrieved page identifiers, search-tool calls, mechanic-tool outcomes, LLM iteration counts from observability metrics, and elapsed time. Keep the harness and report outside the repository's unit tests.
+- The pre-implementation 20-trial API A/B run is recorded below. After implementation, rerun the isolated `/tmp` harness against the real local Corbitt RAG corpus and record actual retrieved page identifiers, search-tool calls, mechanic-tool outcomes, LLM iteration counts from observability metrics, and elapsed time. Keep the harness and report outside the repository's unit tests.
+
+## Pre-implementation API experiment
+
+The temporary harness at `/tmp/coc_search_loop_experiment_actual_rag.py` used the local `The Haunting Scenario trimmed` state and the real `scenario_rag.search()`/`search_scenario` implementation. The proactive query was `嘗試下到地下室`; it returned 3 RAG results from pages 7 and 17, formatted to 835 characters. The configured model was `gpt-5.6-luna`. Twenty API trials were interleaved: 10 baseline trials instructed to perform an additional scenario search, and 10 reuse trials instructed to use the already-injected RAG context when sufficient.
+
+| Measure | Baseline: search again (n=10) | Reuse current RAG (n=10) |
+| --- | ---: | ---: |
+| Mean elapsed time | 9.50 s | 4.57 s |
+| Median elapsed time | 8.87 s | 4.44 s |
+| Scenario search tool calls | 10 | 0 |
+| Hard DEX checks created | 10/10 | 10/10 |
+| Estimated LLM requests per trial | 3 | 2 |
+
+The mean elapsed time was 51.9% lower in the reuse group; the median was 49.9% lower. The LLM request count is an estimate derived from the sequential tool-call pattern, not provider telemetry. `search_scenario` performed real read-only retrieval; `skill_check` was stubbed to avoid mutating local game state. The same hard DEX requirement was explicitly fixed in both prompts, so the experiment demonstrates search/latency reduction while preserving that mechanic call, but it does not establish that the proactive RAG passages alone contain every rule needed to choose the check difficulty or consequence. This is a small, prompt-level experiment and not a production latency guarantee.
 
 ## Tradeoffs and unresolved questions
 
@@ -68,4 +82,4 @@ Use the existing `build_dynamic_prompt_with_context` path so the rule is limited
 
 ## Review gate
 
-This document is the design checkpoint. Implementation will begin after the user confirms this spec.
+The user confirmed this design for implementation after requesting that the pre-implementation API results be added to the spec.
