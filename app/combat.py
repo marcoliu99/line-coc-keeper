@@ -228,11 +228,38 @@ def add_npc(
 
 
 def _find_combatant(state: GroupState, name: str) -> Combatant | None:
+    """Look up a combatant by name/id, preferring an exact match and only
+    falling back to substring matching when that's unambiguous.
+
+    Plain substring matching alone (the old behavior) picks whichever
+    combatant happens to appear first in `state.combat.order` that has ANY
+    matching field — including two distinct live enemies whose names
+    overlap (e.g. "深潛者" vs "深潛者頭目"), which can silently apply
+    damage/effects to the wrong one with no error at all. An exact match is
+    checked first and always wins when present; substring matching is kept
+    as a fallback (callers do rely on referring to a combatant by a partial
+    name, e.g. an NPC's short name instead of its full registered display
+    name) but only returns a result when exactly one combatant matches that
+    way — an ambiguous partial name returns None (not-found) instead of
+    guessing, same as find_live_enemy's own docstring recommends for this
+    class of problem."""
     norm = _normalize(name)
+    if not norm:
+        return None
+
+    def _fields(c: Combatant) -> list[str]:
+        return [c.name, c.display_name, c.combatant_id, c.enemy_card_id, c.character_id]
+
     for c in state.combat.order:
-        names = [c.name, c.display_name, c.combatant_id, c.enemy_card_id, c.character_id]
-        if norm and any(norm == _normalize(n) or norm in _normalize(n) or _normalize(n) in norm for n in names if n):
+        if any(norm == _normalize(n) for n in _fields(c) if n):
             return c
+
+    substring_matches = [
+        c for c in state.combat.order
+        if any(norm in _normalize(n) or _normalize(n) in norm for n in _fields(c) if n)
+    ]
+    if len(substring_matches) == 1:
+        return substring_matches[0]
     return None
 
 
