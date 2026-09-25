@@ -3,7 +3,8 @@
 ## Changeset tracking
 
 - **main_v2 start**: `origin/main_v2:f2c37d5`
-- **implementation**: pending
+- **implementation**: `bug/resolved-check-outcome-context:b7000773`
+- **verification**: full pytest, Ruff, mypy, and compileall pass
 
 ## Problem
 
