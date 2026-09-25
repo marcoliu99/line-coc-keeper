@@ -5,6 +5,8 @@ import os
 import stat
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -152,30 +154,80 @@ class BotLifecycleScriptTests(unittest.TestCase):
 
 
 class ArchiveStoppedInstanceArtifactsTests(unittest.TestCase):
-    def test_archives_both_log_and_pyinstrument_html_then_removes_originals(self):
+    def test_archives_runtime_log_structured_log_and_pyinstrument_html(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            log_path = root / "profile-async.log"
-            log_path.write_text("{}\n", encoding="utf-8")
+            runtime_log = root / "profile-async.log"
+            runtime_log.write_text("bot output\n", encoding="utf-8")
+            structured_log = root / "structured.jsonl"
+            structured_log.write_text("{}\n", encoding="utf-8")
             html_path = root / "instance.pyinstrument.html"
             html_path.write_text("<html></html>", encoding="utf-8")
             archive_dir = root / "archive"
             settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
-            manifest = {"log_file_path": str(log_path), "profiler": {"tool": "pyinstrument", "output_path": str(html_path)}}
+            manifest = {
+                "log_path": str(runtime_log),
+                "log_file_path": str(structured_log),
+                "profiler": {"tool": "pyinstrument", "output_path": str(html_path)},
+            }
 
             with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"):
                 bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)
 
-            self.assertFalse(log_path.exists())
+            self.assertFalse(runtime_log.exists())
+            self.assertFalse(structured_log.exists())
             self.assertFalse(html_path.exists())
             archived = sorted(p.name for p in archive_dir.iterdir())
-            self.assertEqual(len(archived), 2)
-            self.assertTrue(any(name.endswith("_profile-async.log") for name in archived))
+            self.assertEqual(len(archived), 3)
+            self.assertTrue(any(name.endswith("_runtime_profile-async.log") for name in archived))
+            self.assertTrue(any(name.endswith("_structured.jsonl") for name in archived))
             self.assertTrue(any(name.endswith("_instance.pyinstrument.html") for name in archived))
-            # timestamp prefix distinguishes archived files from the source name
+            # Timestamp and artifact labels distinguish the archived copies.
             for name in archived:
-                self.assertNotEqual(name, "profile-async.log")
+                self.assertNotEqual(name, "structured.jsonl")
                 self.assertNotEqual(name, "instance.pyinstrument.html")
+
+    def test_waits_for_nonempty_stable_html_before_archiving_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_log = root / "profile-async.log"
+            runtime_log.write_text("bot output\n", encoding="utf-8")
+            html_path = root / "instance.pyinstrument.html"
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {
+                "log_path": str(runtime_log),
+                "log_file_path": "",
+                "profiler": {"tool": "pyinstrument", "output_path": str(html_path)},
+            }
+            original_archive = bot_lifecycle._archive_and_remove
+            archived_sources = []
+
+            def write_html_later():
+                time.sleep(0.04)
+                html_path.write_text("<html>complete</html>", encoding="utf-8")
+
+            def verify_ready_before_archive(src, dest_dir, timestamp, *, label=""):
+                self.assertTrue(html_path.is_file())
+                self.assertGreater(html_path.stat().st_size, 0)
+                archived_sources.append(src)
+                return original_archive(src, dest_dir, timestamp, label=label)
+
+            writer = threading.Thread(target=write_html_later)
+            writer.start()
+            try:
+                with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"), \
+                        patch.object(bot_lifecycle, "_PROFILE_WAIT_TIMEOUT_SECONDS", 1), \
+                        patch.object(bot_lifecycle, "_PROFILE_POLL_INTERVAL_SECONDS", 0.01), \
+                        patch.object(bot_lifecycle, "_archive_and_remove", side_effect=verify_ready_before_archive):
+                    bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)
+            finally:
+                writer.join(timeout=1)
+
+            self.assertFalse(writer.is_alive())
+            self.assertCountEqual(archived_sources, [runtime_log, html_path])
+            self.assertFalse(runtime_log.exists())
+            self.assertFalse(html_path.exists())
 
     def test_no_log_file_path_in_manifest_is_a_silent_noop_for_the_log(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -202,11 +254,20 @@ class ArchiveStoppedInstanceArtifactsTests(unittest.TestCase):
     def test_missing_pyinstrument_output_warns_but_does_not_raise(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            log_path = root / "runtime.log"
+            log_path.write_text("bot output\n", encoding="utf-8")
             archive_dir = root / "archive"
             settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
-            manifest = {"profiler": {"tool": "pyinstrument", "output_path": str(root / "never-written.html")}}
-            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"):
+            manifest = {
+                "log_path": str(log_path),
+                "profiler": {"tool": "pyinstrument", "output_path": str(root / "never-written.html")},
+            }
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"), \
+                    patch.object(bot_lifecycle, "_PROFILE_WAIT_TIMEOUT_SECONDS", 0.01), \
+                    patch.object(bot_lifecycle, "_PROFILE_POLL_INTERVAL_SECONDS", 0.001):
                 bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)  # must not raise
+            self.assertFalse(log_path.exists())
+            self.assertTrue(any(path.name.endswith("_runtime_runtime.log") for path in archive_dir.iterdir()))
 
     def test_two_calls_produce_distinctly_named_archives(self):
         with tempfile.TemporaryDirectory() as tmp:

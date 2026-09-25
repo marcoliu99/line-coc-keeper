@@ -1,4 +1,4 @@
-# Spec: archive structured log + pyinstrument profile on bot stop
+# Spec: archive bot logs + pyinstrument profile on bot stop
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:a005d7912a5b0e9b2b8b62b83d8ecc46eff9d09c
@@ -6,7 +6,8 @@
 
 ## Purpose & Scope
 
-Direct user request. Two established problems this addresses:
+Direct user request. Archive a complete per-run bundle after each stopped bot
+instance. There are two different log files that must not be confused:
 
 1. **The structured JSON log (`LOG_FILE`) accumulates forever across bot
    restarts** — `app/logging_config.py`'s `RotatingFileHandler` opens in
@@ -14,18 +15,18 @@ Direct user request. Two established problems this addresses:
    many independent process lifetimes (this session's own log analysis
    found one file spanning 37 hours and 7 restarts). This makes "what
    happened in this one run" hard to isolate without manual bookkeeping.
-2. **Archiving profiling artifacts (log + pyinstrument HTML) is currently
-   a manual copy-and-rename step** the user does by hand after each
-   `bot_lifecycle.py stop` (the `profile-async*.log`/`profile-async.
-   pyinstrument*.html` files analyzed throughout this session were all
-   manually copied out of `.runtime/bots/`).
+2. **The lifecycle stdout/stderr log (`manifest.log_path`) lives at
+   `.runtime/bots/<instance>.log`** and captures process output. This is
+   distinct from structured `LOG_FILE`; profiling runs often have no
+   structured log configured.
+3. **Archiving profiling artifacts (run log + pyinstrument HTML) was a
+   manual copy-and-rename step** after each `bot_lifecycle.py stop`.
 
-**User's explicit requirement** (verbatim intent): when the bot is
-stopped, automatically copy the structured log and the pyinstrument HTML
-into `~/coc_v2_log/`, wait until the HTML is actually fully written before
-copying it, then remove the originals — not append mode, each archived
-file gets a timestamp prefix in its filename so repeated stops never
-collide or silently overwrite each other.
+When the bot is stopped, wait until the pyinstrument HTML is fully written,
+then copy the instance lifecycle log, any configured structured log, and the
+HTML into `~/coc_v2_log/` under one timestamp prefix. Remove successfully
+copied originals so a later run starts fresh. If the HTML never becomes ready
+within the bounded wait, warn and still archive available logs after waiting.
 
 ## Design
 
@@ -33,18 +34,20 @@ Hook into `scripts/bot_lifecycle.py`'s `stop()`, right after it has
 confirmed the bot process (and, for `py-spy`, the attached profiler) has
 fully exited — before deleting the instance manifest. At that point:
 
-- The structured log (`LOG_FILE` from `.env`/environment — the same
-  setting `app/logging_config.py` already reads) is fully flushed since
-  the process that was writing to it is confirmed dead.
+- The lifecycle log (`manifest.log_path`) and structured log
+  (`manifest.log_file_path`) are fully flushed since the process that was
+  writing to them is confirmed dead. The structured log may be shared by
+  another live instance, in which case it must be left in place.
 - If profiling with `pyinstrument`, the profiled process has already
   received the graceful `SIGINT` `stop()` already sends specifically for
   this tool (see `graceful_signal` in `stop()` — pyinstrument needs
   `SIGINT`, not `SIGTERM`, to flush its HTML report) and is now confirmed
   exited, so the HTML file should already be complete. Poll briefly
-  (bounded timeout) for its existence anyway as a safety margin against
-  a slow filesystem flush, rather than assuming zero latency.
+  (bounded timeout) until it exists, is non-empty, and its size remains
+  unchanged across checks. Only after that wait should any logs or HTML be
+  copied, keeping the run's artifacts together.
 
-For each of the two artifacts that exists:
+For each available artifact:
 1. Copy it to `~/coc_v2_log/<UTC timestamp>_<original filename>` (dir
    created if missing; overridable via a new `BOT_LOG_ARCHIVE_DIR` setting,
    consistent with this script's existing `BOT_STOP_TIMEOUT`-style
@@ -53,38 +56,31 @@ For each of the two artifacts that exists:
    the log; the profiler's `output_path` from the instance manifest for
    the HTML).
 
-Both artifacts are archived independently — a missing/absent one (no
-`LOG_FILE` configured, or profiler wasn't `pyinstrument`) is a silent
-no-op for that artifact, not an error; `stop()`'s own success is never
-blocked by archiving. A failure to find the pyinstrument HTML after the
-poll timeout prints a warning but does not fail the stop.
+Artifacts are archived independently after the HTML wait: missing log paths
+and non-pyinstrument profiles are silent no-ops; a missing HTML after timeout
+prints a warning, while available logs are still preserved. `stop()`'s own
+success is never blocked by archiving.
 
-**Scope note**: only the structured JSON log (`LOG_FILE`) and the
-`pyinstrument` HTML are in scope, per the explicit request ("log 跟
-html"). `bot_lifecycle.py`'s own separate `.runtime/bots/<instance>.log`
-(raw subprocess stdout/stderr capture — a different file from `LOG_FILE`)
-and `py-spy`'s `.svg` output are NOT touched by this change.
+**Scope note**: archive both the per-instance `.runtime/bots/<instance>.log`
+stdout/stderr capture and the optional structured JSON `LOG_FILE`, plus
+pyinstrument HTML. `py-spy`'s `.svg` output remains out of scope.
 
 ## Consequence worth calling out
 
-Since the log is deleted after each stop, `LOG_FILE`'s `RotatingFileHandler`
-starts a fresh file on the next `start` (it already handles a missing
-file the same as an empty one). This is a deliberate, wanted side effect:
-each run's log becomes fully self-contained in the source location while
-the process is alive, and the archived copy in `~/coc_v2_log/` is the
-permanent, uniquely-named record — solving the "one giant multi-restart
-log" problem this session's own investigation kept running into.
+Since each per-instance runtime log is deleted after stop, the next `start`
+creates a fresh one. If the structured `LOG_FILE` is configured and not
+shared by another live instance, it is also archived and removed; its
+`RotatingFileHandler` starts a fresh file on the next `start`. The uniquely
+named copies in `~/coc_v2_log/` remain the permanent records for each run.
 
 ## Testing Strategy
 
-- Unit tests for the new archiving function in isolation (temp dirs,
-  fake `LOG_FILE`/profiler-output paths) — covering: both artifacts
-  present and archived+removed; only the log present (no profiler);
-  neither present (silent no-op); pyinstrument HTML not yet on disk at
-  call time but appears within the poll window (simulated via a
-  short-lived background write); HTML never appears within the poll
-  window (warns, doesn't raise); timestamp prefix present and distinct
-  across two calls.
+- Unit tests for the archiving function in isolation (temp dirs) — covering:
+  lifecycle log, structured log, and HTML archived+removed; missing
+  `log_file_path` while `log_path` is present; delayed HTML generation where
+  logs remain untouched until the HTML is complete; missing HTML after the
+  wait where logs are still archived; absent log paths; timestamp prefixes;
+  and safe handling of I/O failures.
 - No real bot process needed for these tests — the function only touches
   the filesystem paths it's given, independent of `stop()`'s process-
   management logic.
@@ -132,3 +128,13 @@ Three real gaps found by review, all fixed before merge:
    manifest that a later `stop` would refuse to process. Fixed by wrapping
    each artifact's copy+remove in `try/except OSError`, printing a warning
    instead of raising.
+
+## Follow-up correction after merge
+
+Runtime inspection found that the active profile instance had an empty
+`log_file_path` but a valid `log_path` pointing to
+`.runtime/bots/profile-async.log`. The original implementation archived only
+`log_file_path`, so it archived the HTML but omitted the log the user needed.
+The follow-up archives both manifest log paths, waits for the HTML to become
+non-empty and stable before copying any artifact, and preserves available logs
+if the HTML does not appear before timeout.

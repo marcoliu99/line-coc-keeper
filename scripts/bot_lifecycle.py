@@ -26,6 +26,8 @@ RUNTIME_DIR = ROOT / ".runtime" / "bots"
 INSTANCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _PROFILER_OFF_VALUES = frozenset({"", "0", "false", "none", "off", "disabled"})
 _PROFILER_TOOLS = frozenset({"py-spy", "pyinstrument"})
+_PROFILE_WAIT_TIMEOUT_SECONDS = 10.0
+_PROFILE_POLL_INTERVAL_SECONDS = 0.2
 
 
 def _settings() -> dict[str, str]:
@@ -387,8 +389,9 @@ def _verified_attached_profiler(profiler: dict) -> tuple[int, int, str]:
     return pid, pgid, actual
 
 
-def _archive_and_remove(src: Path, archive_dir: Path, timestamp: str) -> Path:
-    dest = archive_dir / f"{timestamp}_{src.name}"
+def _archive_and_remove(src: Path, archive_dir: Path, timestamp: str, *, label: str = "") -> Path:
+    label_prefix = f"{label}_" if label else ""
+    dest = archive_dir / f"{timestamp}_{label_prefix}{src.name}"
     shutil.copy2(src, dest)
     src.unlink()
     return dest
@@ -419,18 +422,33 @@ def _other_live_instance_shares_log(log_path: Path, instance: str) -> bool:
     return False
 
 
+def _wait_for_pyinstrument_output(path: Path) -> bool:
+    """Wait for pyinstrument's HTML report to be non-empty and stable."""
+    deadline = time.monotonic() + _PROFILE_WAIT_TIMEOUT_SECONDS
+    previous_size = -1
+    stable_samples = 0
+    while time.monotonic() < deadline:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > 0 and size == previous_size:
+            stable_samples += 1
+            if stable_samples >= 1:
+                return True
+        else:
+            stable_samples = 0
+        previous_size = size
+        time.sleep(_PROFILE_POLL_INTERVAL_SECONDS)
+    return False
+
+
 def _archive_stopped_instance_artifacts(instance: str, settings: dict[str, str], manifest: dict) -> None:
-    """Copy the structured JSON log and (if profiling with pyinstrument)
-    the profile HTML into BOT_LOG_ARCHIVE_DIR under a timestamp-prefixed
-    name, then remove the originals — called only after stop() has
-    confirmed the instance's process (and any attached profiler) has
-    fully exited, so both files are done being written. Each artifact is
-    independent and optional: a missing log_file_path or a non-pyinstrument
-    profiler is a silent no-op for that artifact. Archiving is best-effort
-    and must never raise — the bot process has already exited by the time
-    this runs, and stop() still needs to remove the instance manifest
-    afterward regardless of whether an unwritable/full archive disk made
-    this fail."""
+    """After the process exits, wait for pyinstrument output before
+    archiving its HTML together with the instance stdout/stderr log and any
+    configured structured log. Each source is optional and archived at most
+    once; a missing HTML warns but does not prevent preserving available
+    logs. Archiving is best-effort and must never raise."""
     archive_dir = Path(settings.get("BOT_LOG_ARCHIVE_DIR", "~/coc_v2_log")).expanduser()
     # Microsecond precision, not just seconds — a quick stop/start cycle
     # during dev testing (this project has seen several within the same
@@ -438,39 +456,58 @@ def _archive_stopped_instance_artifacts(instance: str, settings: dict[str, str],
     # second-granularity name and silently overwrite each other.
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
 
-    log_file = str(manifest.get("log_file_path", "")).strip()
-    if log_file:
-        log_path = Path(log_file)
-        if _other_live_instance_shares_log(log_path, instance):
-            print(f"log {log_path} is still in use by another running instance; leaving it for that instance's own stop to archive")
-        elif log_path.is_file():
-            try:
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                dest = _archive_and_remove(log_path, archive_dir, timestamp)
-                print(f"archived log -> {dest}")
-            except OSError as exc:
-                print(f"warning: failed to archive log {log_path}: {exc}")
-
     profiler = manifest.get("profiler")
+    profile_path: Path | None = None
     if isinstance(profiler, dict) and profiler.get("tool") == "pyinstrument":
-        output_path = Path(str(profiler.get("output_path", ""))).expanduser()
-        # The SIGINT stop() already sent (and waited out) is what makes
-        # pyinstrument flush this file — by now the profiled process is
-        # confirmed dead, so it should already exist; poll briefly anyway
-        # as a safety margin against a slow filesystem flush rather than
-        # assuming zero latency.
-        deadline = time.monotonic() + 10
-        while not output_path.is_file() and time.monotonic() < deadline:
-            time.sleep(0.2)
-        if output_path.is_file():
-            try:
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                dest = _archive_and_remove(output_path, archive_dir, timestamp)
-                print(f"archived profile -> {dest}")
-            except OSError as exc:
-                print(f"warning: failed to archive profile {output_path}: {exc}")
+        output_path = str(profiler.get("output_path", "")).strip()
+        if output_path:
+            candidate = Path(output_path).expanduser()
         else:
-            print(f"warning: pyinstrument output not found at {output_path}, nothing archived")
+            candidate = None
+        if candidate is None or not _wait_for_pyinstrument_output(candidate):
+            profile_display = candidate if candidate is not None else "<empty output_path>"
+            print(f"warning: pyinstrument output was not ready at {profile_display}; archiving available logs only")
+        else:
+            profile_path = candidate
+
+    structured_log = str(manifest.get("log_file_path", "")).strip()
+    raw_log = str(manifest.get("log_path", "")).strip()
+    structured_identity = Path(structured_log).expanduser().resolve() if structured_log else None
+    runtime_identity = Path(raw_log).expanduser().resolve() if raw_log else None
+    log_paths: list[Path] = []
+    seen: set[Path] = set()
+    for raw_path in (raw_log, structured_log):
+        if not raw_path:
+            continue
+        path = Path(raw_path).expanduser()
+        identity = path.resolve()
+        if identity not in seen:
+            seen.add(identity)
+            log_paths.append(path)
+
+    for log_path in log_paths:
+        identity = log_path.resolve()
+        is_shared_structured_log = identity == structured_identity
+        if is_shared_structured_log and _other_live_instance_shares_log(log_path, instance):
+            print(f"log {log_path} is still in use by another running instance; leaving it for that instance's own stop to archive")
+            continue
+        if not log_path.is_file():
+            continue
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            label = "runtime" if identity == runtime_identity and identity != structured_identity else ""
+            dest = _archive_and_remove(log_path, archive_dir, timestamp, label=label)
+            print(f"archived log -> {dest}")
+        except OSError as exc:
+            print(f"warning: failed to archive log {log_path}: {exc}")
+
+    if profile_path is not None and profile_path.is_file():
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            dest = _archive_and_remove(profile_path, archive_dir, timestamp)
+            print(f"archived profile -> {dest}")
+        except OSError as exc:
+            print(f"warning: failed to archive profile {profile_path}: {exc}")
 
 
 def _stop_attached_profiler(profiler: dict, timeout: float) -> None:
@@ -507,7 +544,7 @@ def stop(instance: str) -> int:
         _stop_attached_profiler(profiler, timeout)
     _archive_stopped_instance_artifacts(instance, _settings(), manifest)
     manifest_path.unlink(missing_ok=True)
-    print(f"stopped {instance}; log retained at {manifest.get('log_path', '')}")
+    print(f"stopped {instance}")
     return 0
 
 
