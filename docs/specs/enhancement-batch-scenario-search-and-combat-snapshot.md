@@ -6,6 +6,16 @@ The user approved implementation after a small real-provider trial. The first
 implementation is scoped to combat snapshot reuse; multi-query scenario search
 remains a separate, unimplemented item in this spec.
 
+## Implementation tracking
+
+- **main_v2 start**: `origin/main_v2:cb11eb812661e1616b8452961c15c1c973897c38`
+- **combat snapshot gate**: `enhancement/batch-scenario-search-and-combat-snapshot:d82a971`
+  — OpenAI request-level tool refresh, shared by legacy Keeper and Executor;
+  regression coverage added; full pytest, ruff, mypy (3 changed source files),
+  and compileall passed.
+- **multi-query scenario search**: still design-only; not implemented in this
+  changeset.
+
 ## Goal
 
 Reduce avoidable model/tool round trips in gameplay turns by addressing two
@@ -274,15 +284,10 @@ before widening use.
 
 ## Review decisions
 
-- The user has requested a small real-provider trial before implementation;
-  this is a required gate, not an optional follow-up.
 - Proposed bounds for review: maximum four query strings per batch and merged
   result limit of twice `SCENARIO_RAG_TOP_K`.
-- The second optimization uses deterministic per-request tool availability,
-  not prompt-only wording, and targets OpenAI in the first pass. The current
-  OpenAI loop creates provider tool schemas only once per turn; implementation
-  must move that preparation into the request loop without changing the
-  sequential order of mutations. Other providers stay unchanged pending data.
+- The implemented combat-status gate targets OpenAI only; Anthropic and Gemini
+  remain unchanged pending their own evidence.
 
 Only combat snapshot reuse is approved for the current implementation pass;
 the multi-query scenario search remains unimplemented until separately
