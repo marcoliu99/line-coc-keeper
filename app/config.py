@@ -59,6 +59,15 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # caveat as GEMINI_MODEL above.
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
 
+# Caps how many OpenAI conversation requests this process has in flight at
+# once (see docs/specs/enhancement-llm-rate-limit-and-turn-latency.md 3.1).
+# Deliberately a manually-tuned fixed value, not an auto-adjusting one — pick
+# it by watching real 429 rates/turn latency in the structured logs, not by
+# guessing. 3 is a conservative starting point for a single-developer,
+# low-traffic deployment; adjust manually if you have evidence for a
+# different number.
+OPENAI_MAX_CONCURRENT_REQUESTS = _env_int("OPENAI_MAX_CONCURRENT_REQUESTS", 3, minimum=1)
+
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data/groups")).expanduser().resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 

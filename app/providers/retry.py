@@ -15,18 +15,114 @@ import asyncio
 import enum
 import inspect
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from app import observability
 from app.config import (
     LLM_MAX_RETRIES,
     LLM_RETRY_BASE_DELAY_SECONDS,
     LLM_TIMEOUT_RETRIES,
+    OPENAI_MAX_CONCURRENT_REQUESTS,
 )
 
 T = TypeVar("T")
+
+# Per-provider admission gate limiting concurrent in-flight API attempts for
+# this process (see docs/specs/enhancement-llm-rate-limit-and-turn-latency.md
+# 3.1). Only OpenAI is gated today — no confirmed evidence Anthropic/Gemini
+# need one, so they stay ungated rather than picking an arbitrary cap for
+# them too. Built lazily, inside async_call_with_retry (i.e. only once an
+# event loop is actually running it), rather than at import time.
+_admission_semaphores: dict[str, asyncio.Semaphore] = {}
+
+
+def _admission_semaphore_for(provider: str) -> asyncio.Semaphore | None:
+    if provider != "openai":
+        return None
+    semaphore = _admission_semaphores.get(provider)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(OPENAI_MAX_CONCURRENT_REQUESTS)
+        _admission_semaphores[provider] = semaphore
+    return semaphore
+
+
+def _full_jitter_delay(computed_delay: float) -> float:
+    """AWS-style "full jitter": sleep a random duration between 0 and the
+    computed exponential-backoff delay, instead of always sleeping the exact
+    same amount. Spreads out retries that would otherwise collide again when
+    several requests fail around the same time and all follow the same fixed
+    schedule."""
+    return random.uniform(0, computed_delay)
+
+
+def _extract_retry_after_seconds(exc: BaseException) -> float | None:
+    """Best-effort, duck-typed search of exc's cause/context chain for a
+    Retry-After (or equivalent rate-limit-reset) value the SDK or HTTP
+    response exposes. Returns None — never a guess parsed out of the error
+    message — when nothing usable is found, so callers fall back to the
+    normal computed backoff."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        retry_after = getattr(current, "retry_after", None)
+        if isinstance(retry_after, int | float) and retry_after >= 0:
+            return float(retry_after)
+        headers = getattr(getattr(current, "response", None), "headers", None)
+        if headers is not None:
+            for key in ("retry-after", "Retry-After"):
+                try:
+                    value = headers.get(key)
+                except AttributeError:
+                    value = None
+                if value is not None:
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        pass
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _extract_safe_error_fields(exc: BaseException) -> dict[str, Any]:
+    """Best-effort, duck-typed extraction of the handful of provider-error
+    fields that are safe to put in structured logs: HTTP status, the
+    provider's own error code, and an API-side request id if the SDK exposes
+    one. Never the prompt, response body, API key, or the exception's own
+    str() — a field this can't confidently identify is simply left out
+    rather than guessed at."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    fields: dict[str, Any] = {}
+    while current is not None and id(current) not in seen:
+        if "status_code" not in fields:
+            status_code = getattr(current, "status_code", None)
+            if isinstance(status_code, int):
+                fields["status_code"] = status_code
+        if "provider_error_code" not in fields:
+            code = getattr(current, "code", None)
+            if isinstance(code, str):
+                fields["provider_error_code"] = code
+        if "provider_request_id" not in fields:
+            request_id = getattr(current, "request_id", None)
+            if isinstance(request_id, str) and request_id:
+                fields["provider_request_id"] = request_id
+            else:
+                headers = getattr(getattr(current, "response", None), "headers", None)
+                for key in ("x-request-id", "X-Request-Id", "request-id"):
+                    try:
+                        value = headers.get(key) if headers is not None else None
+                    except AttributeError:
+                        value = None
+                    if value:
+                        fields["provider_request_id"] = value
+                        break
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return fields
 
 
 class ProviderError(str, enum.Enum):
@@ -157,7 +253,9 @@ def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:
             attempt += 1
             if attempt > LLM_MAX_RETRIES or not is_retryable(exc):
                 raise
-            delay = LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+            retry_after = _extract_retry_after_seconds(exc)
+            computed_delay = LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+            delay = retry_after if retry_after is not None else _full_jitter_delay(computed_delay)
             observability.increment_metric("llm_retry_count")
             observability.event(
                 "llm.request.retry",
@@ -168,6 +266,7 @@ def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:
                 max_attempts=LLM_MAX_RETRIES,
                 delay_s=delay,
                 error_type=type(exc).__name__,
+                **_extract_safe_error_fields(exc),
             )
             time.sleep(delay)
 
@@ -190,19 +289,34 @@ async def async_call_with_retry(
     logical_request_id = request_id or current.get("provider_request_id") or observability.new_id("llm")
     attempt = 0
     timeout_attempts = 0
+    semaphore = _admission_semaphore_for(provider)
     while True:
+        admission_wait_s = 0.0
+        if semaphore is not None:
+            admission_wait_start = time.monotonic()
+            await semaphore.acquire()
+            admission_wait_s = time.monotonic() - admission_wait_start
         try:
-            with observability.context(provider_request_id=logical_request_id), observability.span(
-                "llm.request.attempt",
-                provider=provider,
-                api_operation=operation,
-                logical_request_id=logical_request_id,
-                attempt=attempt + 1,
-            ):
-                result = fn()
-                if not inspect.isawaitable(result):
-                    raise TypeError("async_call_with_retry callback must return an awaitable")
-                return await result
+            try:
+                with observability.context(provider_request_id=logical_request_id), observability.span(
+                    "llm.request.attempt",
+                    provider=provider,
+                    api_operation=operation,
+                    logical_request_id=logical_request_id,
+                    attempt=attempt + 1,
+                    admission_wait_s=admission_wait_s,
+                ):
+                    result = fn()
+                    if not inspect.isawaitable(result):
+                        raise TypeError("async_call_with_retry callback must return an awaitable")
+                    return await result
+            finally:
+                # Release before backoff/retry-queueing, not after — a
+                # request waiting out a 429's backoff must not hold an
+                # admission slot another conversation's attempt could be
+                # using in the meantime (spec 3.1, point 1).
+                if semaphore is not None:
+                    semaphore.release()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -220,7 +334,9 @@ async def async_call_with_retry(
             if attempt >= LLM_MAX_RETRIES:
                 raise
             attempt += 1
-            delay = LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+            retry_after = _extract_retry_after_seconds(exc)
+            computed_delay = LLM_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+            delay = retry_after if retry_after is not None else _full_jitter_delay(computed_delay)
             observability.increment_metric("llm_retry_count")
             observability.event(
                 "llm.request.retry",
@@ -233,5 +349,6 @@ async def async_call_with_retry(
                 delay_s=delay,
                 error_type=type(exc).__name__,
                 error_kind=error_kind.value,
+                **_extract_safe_error_fields(exc),
             )
             await asyncio.sleep(delay)

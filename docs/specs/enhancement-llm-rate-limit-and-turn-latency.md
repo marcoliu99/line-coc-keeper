@@ -1,10 +1,14 @@
 # LLM 限流與長回合延遲改善規格
 
-**狀態：3.1／3.2 已拍板（簡化版），3.3／3.4 維持待討論**。原本 3.1
+**狀態：3.1／3.2 已實作（簡化版），3.3／3.4 維持待討論**。原本 3.1
 提案的「baseline → 分視窗自動調整 cap」機制已決定不做——對單一開發者
 維護、流量不大的 Discord bot 來說，建自動調整機制跟一整套量測指標的
 投入產出比不划算。改採「先做 3.2、3.1 用手動固定 cap」的簡化版本，
-細節見 3.1／3.2 與第 7 節。尚未開始實作。
+細節見 3.1／3.2 與第 7 節。
+
+## Changeset Tracking
+- **main_v2 start**: origin/main_v2:80f245fc6591a021b40dbbedb9d44d41e6b9ec9f
+- **implementation end**: enhancement/llm-rate-limit-and-turn-latency（3.1/3.2 only）— ruff/mypy/compileall/pytest all green (full suite)
 
 ## 1. 問題與目標
 
