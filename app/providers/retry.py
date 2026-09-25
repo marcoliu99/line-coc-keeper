@@ -18,6 +18,8 @@ import logging
 import random
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, TypeVar
 
 from app import observability
@@ -58,6 +60,25 @@ def _full_jitter_delay(computed_delay: float) -> float:
     return random.uniform(0, computed_delay)
 
 
+def _parse_retry_after_value(value: str) -> float | None:
+    """RFC 9110 10.2.3 lets a Retry-After header be either delay-seconds
+    ("120") or an HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT") — try the
+    numeric form first (the common case for the providers this project
+    talks to), then the date form, converting it to a nonnegative delay
+    from now. Returns None if neither parses, rather than guessing."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    try:
+        target = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=UTC)
+    return max(0.0, (target - datetime.now(UTC)).total_seconds())
+
+
 def _extract_retry_after_seconds(exc: BaseException) -> float | None:
     """Best-effort, duck-typed search of exc's cause/context chain for a
     Retry-After (or equivalent rate-limit-reset) value the SDK or HTTP
@@ -78,10 +99,9 @@ def _extract_retry_after_seconds(exc: BaseException) -> float | None:
                 except AttributeError:
                     value = None
                 if value is not None:
-                    try:
-                        return float(value)
-                    except (TypeError, ValueError):
-                        pass
+                    parsed = _parse_retry_after_value(value)
+                    if parsed is not None:
+                        return parsed
         seen.add(id(current))
         current = current.__cause__ or current.__context__
     return None

@@ -249,6 +249,33 @@ class JitterAndSafeErrorFieldTests(unittest.TestCase):
     def test_missing_retry_after_returns_none_rather_than_guessing(self):
         self.assertIsNone(retry._extract_retry_after_seconds(FakeStatusError(429)))
 
+    def test_retry_after_accepts_http_date_form(self):
+        from datetime import UTC, datetime, timedelta
+        from email.utils import format_datetime
+
+        target = datetime.now(UTC) + timedelta(seconds=30)
+
+        class FakeResponse:
+            headers: ClassVar[dict[str, str]] = {"retry-after": format_datetime(target, usegmt=True)}
+
+        exc = FakeStatusError(429)
+        exc.response = FakeResponse()
+        delay = retry._extract_retry_after_seconds(exc)
+        self.assertIsNotNone(delay)
+        # Allow a little slack for the time this test itself takes to run.
+        self.assertAlmostEqual(delay, 30.0, delta=2.0)
+
+    def test_retry_after_unparseable_string_returns_none(self):
+        self.assertIsNone(retry._parse_retry_after_value("not-a-real-value"))
+
+    def test_retry_after_past_http_date_clamps_to_zero(self):
+        from datetime import UTC, datetime, timedelta
+        from email.utils import format_datetime
+
+        past = datetime.now(UTC) - timedelta(seconds=60)
+        delay = retry._parse_retry_after_value(format_datetime(past, usegmt=True))
+        self.assertEqual(delay, 0.0)
+
     def test_safe_error_fields_extracts_status_code_and_request_id(self):
         class FakeResponse:
             headers: ClassVar[dict[str, str]] = {"x-request-id": "req_abc123"}
@@ -380,11 +407,31 @@ class OpenAICreateResponseRetryTests(unittest.TestCase):
         client = self._fake_client([RetryableConnectionError(), fake_response])
         with patch("app.providers.openai_provider.time.sleep") as sleep_mock, \
              patch("app.providers.openai_provider.LLM_MAX_RETRIES", 3), \
-             patch("app.providers.openai_provider.LLM_RETRY_BASE_DELAY_SECONDS", 1.0):
+             patch("app.providers.openai_provider.LLM_RETRY_BASE_DELAY_SECONDS", 1.0), \
+             patch("app.providers.retry.random.uniform", side_effect=lambda _lo, hi: hi):
             result = openai_provider._create_response(client, model="gpt-test", input=[])
         self.assertIs(result, fake_response)
         self.assertEqual(client.responses.create.call_count, 2)
+        # Jitter patched to always return the upper bound so the computed
+        # delay stays checkable exactly.
         sleep_mock.assert_called_once_with(1.0)
+
+    def test_retries_connection_error_honoring_retry_after_header(self):
+        from app.providers import openai_provider
+
+        class FakeResponse:
+            headers: ClassVar[dict[str, str]] = {"retry-after": "9"}
+
+        exc = FakeStatusError(429)
+        exc.response = FakeResponse()
+        fake_response = MagicMock()
+        client = self._fake_client([exc, fake_response])
+        with patch("app.providers.openai_provider.time.sleep") as sleep_mock, \
+             patch("app.providers.openai_provider.LLM_MAX_RETRIES", 3), \
+             patch("app.providers.openai_provider.LLM_RETRY_BASE_DELAY_SECONDS", 1.0):
+            result = openai_provider._create_response(client, model="gpt-test", input=[])
+        self.assertIs(result, fake_response)
+        sleep_mock.assert_called_once_with(9.0)
 
     def test_exhausts_connection_retries_and_reraises(self):
         from app.providers import openai_provider
