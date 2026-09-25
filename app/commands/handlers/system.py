@@ -344,6 +344,7 @@ async def handle_system_command(
             state.pending_checks.clear()
             state.pending_luck_decisions.clear()
             state.deterministic_check_results.clear()
+            state.resolved_check_events.clear()
             observability.event(
                 "provider.chain.reset",
                 reason="scenario_use",

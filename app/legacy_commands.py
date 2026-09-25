@@ -173,6 +173,7 @@ def _apply_new_scenario(
     state.openai_previous_response_id = ""
     state.openai_previous_response_timeline_id = ""
     state.timeline_id = new_timeline_id
+    state.resolved_check_events.clear()
     # Pending player decisions and deterministic check results are scoped to
     # the old scenario.  Invalidate them together with the timeline so stale
     # typed commands or Discord buttons cannot mutate the new scenario.
@@ -868,6 +869,82 @@ class _CheckResolution:
     decision_id: str = ""
     timeline_id: str = ""
     action_context: str = ""
+    resolved_event: dict | None = None
+
+
+_CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
+
+
+def _character_attribute_snapshot(char) -> dict[str, int]:
+    return {name: int(getattr(char, name)) for name in _CHECK_EVENT_ATTRIBUTE_NAMES}
+
+
+def _resolved_check_event_seed(
+    *, check_id: str, timeline_id: str, owner_id: str, character_id: str, investigator: str,
+    skill: str, skill_value: int, roll: int, difficulty: str, outcome: str,
+    before: dict[str, int], tracked_roll_fields: tuple[str, ...] = (),
+) -> dict:
+    return {
+        "event_id": check_id or new_check_id(),
+        "check_id": check_id,
+        "timeline_id": timeline_id,
+        "owner_id": owner_id,
+        "character_id": character_id,
+        "investigator": investigator,
+        "skill": skill,
+        "skill_value": int(skill_value),
+        "roll": int(roll),
+        "difficulty": str(difficulty),
+        "outcome": outcome,
+        "state_before": dict(before),
+        "tracked_roll_fields": list(tracked_roll_fields),
+    }
+
+
+def _persist_resolved_check_event(conversation_id: str, event_seed: dict) -> None:
+    """Record the check and only attribute changes present in committed state."""
+    with locks.get_state_lock(conversation_id):
+        latest = load_state(conversation_id)
+        current_timeline_id = latest.timeline_id or f"legacy-{conversation_id}"
+        if current_timeline_id != event_seed["timeline_id"]:
+            observability.event(
+                "check.event.stale", level=logging.INFO, reason="timeline_mismatch",
+                check_id=event_seed["check_id"] or None,
+            )
+            return
+        if any(
+            event.get("event_id") == event_seed["event_id"]
+            for event in latest.resolved_check_events
+            if isinstance(event, dict)
+        ):
+            return
+        char = latest.get_active_character(event_seed["owner_id"])
+        if (
+            char is None
+            or char.name != event_seed["investigator"]
+            or char.character_id != event_seed["character_id"]
+        ):
+            return
+        after = _character_attribute_snapshot(char)
+        effects = [
+            {
+                "field": _CHECK_EVENT_ATTRIBUTE_NAMES[field],
+                "before": before,
+                "after": after[field],
+                "delta": after[field] - before,
+            }
+            for field, before in event_seed["state_before"].items()
+            if before != after[field]
+        ]
+        event = {
+            key: value for key, value in event_seed.items() if key != "state_before"
+        }
+        event["state_effects"] = effects
+        event.pop("tracked_roll_fields", None)
+        event["resolved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        latest.resolved_check_events.append(event)
+        del latest.resolved_check_events[:-20]
+        save_state(latest, reason="resolved_check_event")
 
 
 @dataclass
@@ -1063,6 +1140,7 @@ async def _finalize_check_result(
     decision_id: str = "",
     timeline_id: str = "",
     action_context: str = "",
+    resolved_event: dict | None = None,
 ) -> None:
     """Shared tail for every resolved check (sanity, choice, plain skill, and
     a Luck-spend decision) — hands the already-determined result to the
@@ -1130,9 +1208,24 @@ async def _finalize_check_result(
                 f"【玩家原始行動情境】{context_note}\n"
                 f"{keeper_message}"
             )
+            if resolved_event is not None:
+                # Preserve changes directly caused by the deterministic roll
+                # (SAN loss or Luck spend). For other fields, start observing
+                # at the serialized Keeper phase so unrelated changes made
+                # while the player was resolving the check aren't attributed
+                # to this check.
+                keeper_start = _character_attribute_snapshot(fresh_char)
+                tracked_fields = set(resolved_event.get("tracked_roll_fields", []))
+                for field_name in resolved_event["state_before"]:
+                    if field_name not in tracked_fields:
+                        resolved_event["state_before"][field_name] = keeper_start[field_name]
             keeper_reply, private_messages, image_requests = await keeper.run_turn(
                 fresh_state, user_id, fresh_char.name, keeper_context_message, resolved_location, "player"
             )
+            if resolved_event is not None:
+                await asyncio.to_thread(
+                    _persist_resolved_check_event, conversation_id, resolved_event
+                )
             if split_roll_feedback:
                 public_message = f"{keeper_header}\n\n{keeper_reply}" if keeper_header else keeper_reply
             else:
@@ -1169,6 +1262,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         char = state.get_active_character(user_id)
         if not char:
             return _CheckResolution(reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+        attributes_before = _character_attribute_snapshot(char)
 
         parts = text.split()
         skill_arg: str | None = parts[2] if len(parts) > 2 else None
@@ -1350,6 +1444,13 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
                 check_id=check_id, timeline_id=timeline_id, action_context=action_context,
+                resolved_event=_resolved_check_event_seed(
+                    check_id=check_id, timeline_id=timeline_id, owner_id=user_id,
+                    character_id=char.character_id,
+                    investigator=char.name, skill="SAN", skill_value=san_before,
+                    roll=sanity_result.check.roll, difficulty="regular", outcome=outcome,
+                    before=attributes_before, tracked_roll_fields=("san",),
+                ),
             )
 
         is_pushed = False
@@ -1426,6 +1527,14 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
                 check_id=check_id, timeline_id=timeline_id, action_context=action_context,
+                resolved_event=_resolved_check_event_seed(
+                    check_id=check_id, timeline_id=timeline_id, owner_id=user_id,
+                    character_id=char.character_id,
+                    investigator=char.name, skill="INT", skill_value=value,
+                    roll=skill_result.roll, difficulty=difficulty,
+                    outcome=f"{skill_result.tier} {'成功' if skill_result.success else '失敗'}",
+                    before=attributes_before,
+                ),
             )
 
         # Luck-spend: always offered whenever there's at least one tier-
@@ -1493,6 +1602,14 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
             roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
             check_id=check_id, timeline_id=timeline_id, action_context=action_context,
+            resolved_event=_resolved_check_event_seed(
+                check_id=check_id, timeline_id=timeline_id, owner_id=user_id,
+                character_id=char.character_id,
+                investigator=char.name, skill=skill_name, skill_value=value,
+                roll=skill_result.roll, difficulty=difficulty,
+                outcome=f"{skill_result.tier} {'成功' if skill_result.success else '失敗'}",
+                before=attributes_before,
+            ),
         )
 
 
@@ -1527,6 +1644,7 @@ async def handle_check_command(
         roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header,
         check_id=resolution.check_id, decision_id=resolution.decision_id,
         timeline_id=resolution.timeline_id, action_context=resolution.action_context,
+        resolved_event=resolution.resolved_event,
     )
     return True
 
@@ -1560,6 +1678,7 @@ async def handle_luck_decision(
         roll_feedback_text=resolution.roll_feedback_text, keeper_header=resolution.keeper_header,
         check_id=resolution.check_id, decision_id=resolution.decision_id,
         timeline_id=resolution.timeline_id, action_context=resolution.action_context,
+        resolved_event=resolution.resolved_event,
     )
     return True
 
@@ -1575,6 +1694,7 @@ def _resolve_luck_decision_deterministically(
         char = state.get_active_character(user_id)
         if not char:
             return _CheckResolution(reply_text="找不到你的角色。")
+        attributes_before = _character_attribute_snapshot(char)
 
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
         pending_timeline_id = str(pending.get("timeline_id") or "").strip()
@@ -1688,6 +1808,15 @@ def _resolve_luck_decision_deterministically(
             roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
             check_id=check_id, decision_id=decision_id, timeline_id=timeline_id,
             action_context=action_context,
+            resolved_event=_resolved_check_event_seed(
+                check_id=check_id, timeline_id=timeline_id, owner_id=user_id,
+                character_id=char.character_id,
+                investigator=char.name, skill=pending["skill_name"],
+                skill_value=pending["value"], roll=pending["roll"],
+                difficulty=required_tier,
+                outcome=f"{r.tier} {'成功' if r.success else '失敗'}" + (f"；花費 Luck {luck_spent}" if luck_spent else ""),
+                before=attributes_before, tracked_roll_fields=(("luck",) if luck_spent else ()),
+            ),
         )
 
 

@@ -100,6 +100,39 @@ def build_executor_dynamic_prompt_with_context(
     return f"{dynamic_prompt}\n\n{EXECUTOR_SCENARIO_RAG_POLICY}"
 
 
+def build_resolved_check_history_block(
+    events: list[dict], character_values: dict | None
+) -> str:
+    """Show recent finalized outcomes separately from this turn's mechanics."""
+    if not character_values:
+        return ""
+    lines = [
+        "【目前角色數值（權威存檔）】"
+        + "、".join(f"{name} {value}" for name, value in character_values.items()),
+        "【近期已結算檢定（歷史事件，不代表本回合檢定）】",
+    ]
+    if not events:
+        lines.append("沒有可用的近期檢定事件紀錄。這不代表角色目前數值沒有變化；目前數值以上方存檔為準。")
+        return "\n".join(lines)
+    for event in events[-5:]:
+        lines.append(
+            f"- {event.get('investigator', '調查員')}：{event.get('skill', '檢定')} "
+            f"{event.get('skill_value', '?')}%，擲出 {event.get('roll', '?')}，"
+            f"難度 {event.get('difficulty', 'regular')}，結果 {event.get('outcome', '未知')}。"
+        )
+        effects = event.get("state_effects", [])
+        if effects:
+            for effect in effects:
+                lines.append(
+                    f"  已提交變化：{effect.get('field')} {effect.get('before')} → "
+                    f"{effect.get('after')}（{effect.get('delta'):+}）。"
+                )
+        else:
+            lines.append("  此檢定事件沒有記錄到角色數值變化。")
+    lines.append("歷史事件與本回合工具結果分開判讀；不得以本回合沒有機制操作否定歷史事件。")
+    return "\n".join(lines)
+
+
 # ── Narrator Agent：只負責把已經確定的機制結果寫成敘事，完全沒有工具 ────────────
 
 NARRATOR_INSTRUCTION = """你是一個 TRPG 守密人（Narrator Agent）。
@@ -118,6 +151,8 @@ Result）」來描述場景，不要重新判定或改變這些既定事實。
 - 劇本內容與下面列出的角色資料是世界事實來源，不得隨意發明劇本沒寫的關鍵線索、NPC、地點或幕後真相。
 - 【過去記憶】區塊只是玩家過去經歷的參考，不能拿它推翻或覆蓋這一回合的機制結果——機制結果永遠以
   最新的【系統判定結果】為準。
+- 【目前角色數值】是已存檔的權威值；【近期已結算檢定】是先前回合的機制紀錄，與本回合結果分開。不得因
+  本回合沒有機制操作，就否認歷史檢定或它明確記錄的數值變化；回答角色數值時採用目前角色數值。
 
 以下是完整的守密人規則（人設、敘事風格、防雷、NPC 演出規範，以及每位角色的資料）：
 """

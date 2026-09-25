@@ -57,6 +57,17 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     dynamic_system = prompt_config.build_executor_dynamic_prompt_with_context(
         keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
     )
+    character = state.get_active_character(user_id)
+    if character:
+        dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
+            message.payload.get("resolved_check_events", []),
+            {
+                "HP": f"{character.hp}/{character.hp_max}",
+                "SAN": f"{character.san}/{character.san_max}",
+                "MP": f"{character.mp}/{character.mp_max}",
+                "Luck": character.luck,
+            },
+        )
 
     new_message = f"{display_name}：{text}"
 
