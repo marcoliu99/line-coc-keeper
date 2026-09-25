@@ -1105,5 +1105,67 @@ class FindLiveEnemyTests(unittest.TestCase):
         self.assertIsNone(combat.find_live_enemy(state, "Cult"))
 
 
+class FindCombatantTests(unittest.TestCase):
+    """Code-review finding: _find_combatant's old bidirectional substring
+    matching could silently apply damage/effects to the wrong one of two
+    live enemies whose names overlap — the same failure class
+    find_live_enemy was already fixed for (see FindLiveEnemyTests above),
+    but _find_combatant (used by apply_combat_damage/damage_combatant/
+    add_combat_effect/plan_enemy_turn) never got the equivalent fix."""
+
+    def _state_with_pc(self) -> GroupState:
+        state = GroupState(group_id="g")
+        state.characters["u1"] = Character(name="Mark", owner_id="u1", hp=10, hp_max=10)
+        return state
+
+    def test_exact_match_wins_even_when_a_substring_match_also_exists(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "深潛者", 50, 10)
+        combat.add_npc(state, "深潛者頭目", 60, 30)
+
+        found = combat._find_combatant(state, "深潛者頭目")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.name, "深潛者頭目")
+
+    def test_ambiguous_substring_match_returns_none_instead_of_guessing(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Cultist", 50, 10)
+        combat.add_npc(state, "Cultist Leader", 60, 30)
+
+        # "Cult" substring-matches both — neither an exact match, so this
+        # must not silently pick whichever happens to be first in order.
+        self.assertIsNone(combat._find_combatant(state, "Cult"))
+
+    def test_unambiguous_substring_match_still_resolves(self):
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Cultist Leader", 60, 30)
+
+        found = combat._find_combatant(state, "Cultist")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.name, "Cultist Leader")
+
+    def test_apply_combat_damage_targets_the_exact_match_not_the_first_overlapping_name(self):
+        # End-to-end regression through the actual damage-application path,
+        # not just the lookup helper in isolation.
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "深潛者", 50, 10)
+        combat.add_npc(state, "深潛者頭目", 60, 30)
+
+        result = combat.apply_combat_damage(state, "深潛者頭目", 5)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["target"], "深潛者頭目")
+        boss = next(c for c in state.combat.order if c.name == "深潛者頭目")
+        grunt = next(c for c in state.combat.order if c.name == "深潛者")
+        self.assertEqual(boss.hp, 25)
+        self.assertEqual(grunt.hp, 10)
+
+
 if __name__ == "__main__":
     unittest.main()
