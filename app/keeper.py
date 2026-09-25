@@ -2414,6 +2414,27 @@ def _execute_tool(
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
 
+            # Do not apply a major-wound hit while another player-owned check
+            # for this investigator is pending. The state model can hold only
+            # one pending check per owner, so reject atomically and let the
+            # Keeper retry after the existing check resolves.
+            requested_delta = int(tool_input["delta"])
+            if (
+                field_name == "hp"
+                and requested_delta < 0
+                and not state.autoroll_checks
+                and char.owner_id in state.pending_checks
+            ):
+                requested_hp = max(0, char.hp + requested_delta)
+                if requested_hp > 0 and -requested_delta >= char.hp_max / 2:
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"{char.name} 已有待處理檢定；為避免遺失重傷必須的 CON 檢定，"
+                            "本次傷害未套用。請先完成現有檢定，再重新套用傷害。"
+                        ),
+                    }
+
             def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool, dict[str, Any] | None]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
@@ -2430,9 +2451,9 @@ def _execute_tool(
                 # 0 or below — RAW already treats that as unconscious/dying on
                 # its own, so a second CON check on top would be redundant.
                 if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2:
-                    major_wound = True
                     con_value = resolve_skill_value(target_char, "CON")
                     if target_state.autoroll_checks:
+                        major_wound = True
                         con_result = dice.skill_check(con_value)
                         wound_roll = {
                             "skill": "CON",
@@ -2446,6 +2467,7 @@ def _execute_tool(
                                 if tag not in target_char.status_tags:
                                     target_char.status_tags.append(tag)
                     elif target_char.owner_id not in target_state.pending_checks:
+                        major_wound = True
                         target_state.pending_checks[target_char.owner_id] = {
                             "type": "skill",
                             "skill": "CON",

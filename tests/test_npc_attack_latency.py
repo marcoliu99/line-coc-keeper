@@ -799,6 +799,34 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertEqual(saved_state.characters["u1"].hp, 5)
         roll_mock.assert_not_called()
 
+    def test_adjust_character_rejects_major_wound_while_check_is_pending(self):
+        """A per-owner pending-check slot cannot hold both checks; reject the
+        hit atomically so its mandatory major-wound CON check is not lost."""
+        state = _state_with_investigator()
+        state.characters["u1"].hp = 10
+        state.characters["u1"].hp_max = 10
+        state.pending_checks["u1"] = {
+            "type": "skill", "skill": "偵查", "skill_value": 50,
+            "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular", "pushed": False,
+        }
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state,
+                "adjust_character",
+                {"investigator": "小明", "field": "hp", "delta": -5},
+                [],
+                [],
+                speaker_role="player",
+            )
+            saved_state = store.store["g"]
+        self.assertFalse(result["ok"])
+        self.assertIn("本次傷害未套用", result["error"])
+        # Neither HP nor the pre-existing pending check changes; the Keeper
+        # can retry this damage after resolving the existing check.
+        self.assertEqual(saved_state.pending_checks["u1"]["skill"], "偵查")
+        self.assertEqual(saved_state.characters["u1"].hp, 10)
+
     def test_sanity_check_autoroll_resolves_san_and_madness_immediately(self):
         state = _state_with_investigator()
         state.autoroll_checks = True
