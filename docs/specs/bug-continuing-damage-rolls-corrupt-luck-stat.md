@@ -2,7 +2,7 @@
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:80f245fc6591a021b40dbbedb9d44d41e6b9ec9f
-- **implementation end**: bug/continuing-damage-rolls-corrupt-luck-stat:c45b7fc — ruff/mypy/compileall/pytest all green. **Stopgap only** — per round 3's finding, the deeper root cause (gpt-6-luna/none's unreliability tracking continuing combat state) remains unresolved; see "Open design question" above.
+- **implementation end**: bug/continuing-damage-rolls-corrupt-luck-stat (rebased onto origin/main_v2:cb11eb87c02ff850b8ee6c86e0d5a34b2c92e75c) — ruff/mypy/compileall/pytest all green. **Stopgap only, landing as-is per explicit decision (2026-09-25)**: the deeper root cause (gpt-6-luna/none's unreliability tracking continuing combat state) is NOT fixed by this PR — see "Open design question" below, which continues in a separate branch (`enhancement/executor-reasoning-effort-for-combat-ongoing-effects`) rather than blocking this stopgap.
 
 ## Purpose & Scope
 
