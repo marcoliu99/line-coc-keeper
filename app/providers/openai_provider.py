@@ -407,8 +407,20 @@ async def run_conversation(
 
         next_input_items: list[dict] = []
         for fc in function_calls:
-            args = json.loads(fc.arguments or "{}")
-            result = await execute_tool(fc.name, args)
+            try:
+                args = json.loads(fc.arguments or "{}")
+            except (TypeError, ValueError) as exc:
+                # A malformed tool-call argument payload from the model is
+                # a real (if rare) failure mode, not something to assume
+                # never happens — surface it to the model as an ordinary
+                # tool failure (the same {"ok": False, "error": ...} shape
+                # every other tool failure already uses) instead of letting
+                # json.JSONDecodeError propagate and crash the whole turn,
+                # discarding every tool call already executed and saved
+                # earlier in this same turn.
+                result = {"ok": False, "error": f"工具呼叫參數不是合法的 JSON，無法解析：{exc}"}
+            else:
+                result = await execute_tool(fc.name, args)
             next_input_items.append({
                 "type": "function_call_output",
                 "call_id": fc.call_id,

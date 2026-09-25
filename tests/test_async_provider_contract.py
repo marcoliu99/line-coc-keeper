@@ -59,6 +59,33 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["first", "second"])
         self.assertEqual(client.responses.create.await_count, 2)
 
+    async def test_openai_malformed_tool_call_arguments_do_not_crash_the_turn(self):
+        """Code-review finding: json.loads(fc.arguments) had no try/except
+        — a malformed tool-call argument payload from the model would raise
+        json.JSONDecodeError straight out of run_conversation, crashing the
+        whole turn (and discarding every tool call already executed earlier
+        in the same turn, whose state changes already saved for real)."""
+        first = SimpleNamespace(
+            output=[SimpleNamespace(
+                type="function_call", name="broken_call", arguments="{not valid json", call_id="1"
+            )],
+            id="response-1",
+        )
+        final = SimpleNamespace(output=[], output_text="done", id="response-2")
+        client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(side_effect=[first, final])))
+        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(return_value=client))
+        execute_tool = AsyncMock(return_value={"ok": True})
+
+        with patch.dict(sys.modules, {"openai": fake_openai}), \
+                patch.object(openai_provider, "OPENAI_API_KEY", "test-key"), \
+                patch.object(openai_provider, "_unsupported_params", set()):
+            result = await openai_provider.run_conversation(
+                "static", "dynamic", [], [], "hello", execute_tool, 2
+            )
+
+        self.assertEqual(result, "done")
+        execute_tool.assert_not_awaited()
+
     async def test_openai_refreshes_tool_list_after_successful_combat_mutation(self):
         from app import keeper
         from app.models import Combatant, CombatState, GroupState

@@ -240,6 +240,85 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.openai_previous_response_id, "")
         self.assertEqual(saved.openai_previous_response_timeline_id, "")
 
+    async def test_run_turn_falls_back_gracefully_when_the_provider_call_raises(self):
+        """Code-review finding: keeper.run_turn's provider.run_conversation
+        call had no try/except at all, unlike app/agents/executor.py's and
+        narrator.py's equivalent calls (each wrapped by their own). An
+        unhandled exception here used to propagate straight out of
+        run_turn, past every caller (legacy_commands.py, assistant.py,
+        commands/handlers/system.py) that doesn't catch it either, so the
+        player never got any reply — not even an error message — even
+        though any tool calls already executed earlier in the same turn
+        had already saved for real."""
+        class RaisingProvider:
+            async def run_conversation(self, *_args, **_kwargs):
+                raise RuntimeError("simulated provider failure")
+
+        state = GroupState(group_id="g")
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = RaisingProvider()
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                final_text, private_messages, image_requests = await keeper.run_turn(
+                    state, user_id="p1", speaker_name="Marco", message_text="你攻擊怪物",
+                    speaker_role="player",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+        self.assertEqual(final_text, "（守密人一時語塞，請再說一次剛才的行動）")
+        self.assertEqual(private_messages, [])
+        self.assertEqual(image_requests, [])
+
+    async def test_run_turn_does_not_ask_for_a_retry_after_a_mutating_tool_already_ran(self):
+        """Review finding on the fix above: a later provider iteration can
+        fail *after* an earlier iteration's mutating tool call already ran
+        and saved for real (a roll, damage, ammo, a new pending check...).
+        Telling the player to "just repeat the action" in that case risks
+        re-rolling a check or double-applying an effect — the fallback text
+        must be different once any mutating tool has actually run this
+        turn, not narrator.py's blanket retry message."""
+        state = GroupState(group_id="g")
+        state.characters["p1"] = Character(name="Marco", owner_id="p1")
+
+        class RaisingAfterOneMutatingToolProvider:
+            async def run_conversation(self, *args, **_kwargs):
+                execute_tool = args[5]
+                await execute_tool("adjust_character", {
+                    "investigator": "Marco", "field": "luck", "delta": -5,
+                })
+                raise RuntimeError("simulated failure on a later iteration")
+
+        original_provider = keeper._PROVIDERS.get("openai")
+        original_llm_provider = keeper.LLM_PROVIDER
+
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            keeper._PROVIDERS["openai"] = RaisingAfterOneMutatingToolProvider()
+            keeper.LLM_PROVIDER = "openai"
+            try:
+                final_text, _private_messages, _image_requests = await keeper.run_turn(
+                    state, user_id="p1", speaker_name="Marco", message_text="花費幸運",
+                    speaker_role="player",
+                )
+            finally:
+                keeper.LLM_PROVIDER = original_llm_provider
+                if original_provider is None:
+                    del keeper._PROVIDERS["openai"]
+                else:
+                    keeper._PROVIDERS["openai"] = original_provider
+
+        self.assertNotEqual(final_text, "（守密人一時語塞，請再說一次剛才的行動）")
+        self.assertIn("不要重複剛才的行動", final_text)
+
     async def test_kp_sanity_check_creates_canonical_log_instead_of_ooc_log(self):
         state = GroupState(group_id="g", openai_previous_response_id="formal-chain")
         state.autoroll_checks = True
