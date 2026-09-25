@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts import bot_lifecycle
 
@@ -148,6 +149,144 @@ class BotLifecycleScriptTests(unittest.TestCase):
             finally:
                 if not existed:
                     env_file.unlink(missing_ok=True)
+
+
+class ArchiveStoppedInstanceArtifactsTests(unittest.TestCase):
+    def test_archives_both_log_and_pyinstrument_html_then_removes_originals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / "profile-async.log"
+            log_path.write_text("{}\n", encoding="utf-8")
+            html_path = root / "instance.pyinstrument.html"
+            html_path.write_text("<html></html>", encoding="utf-8")
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {"log_file_path": str(log_path), "profiler": {"tool": "pyinstrument", "output_path": str(html_path)}}
+
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"):
+                bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)
+
+            self.assertFalse(log_path.exists())
+            self.assertFalse(html_path.exists())
+            archived = sorted(p.name for p in archive_dir.iterdir())
+            self.assertEqual(len(archived), 2)
+            self.assertTrue(any(name.endswith("_profile-async.log") for name in archived))
+            self.assertTrue(any(name.endswith("_instance.pyinstrument.html") for name in archived))
+            # timestamp prefix distinguishes archived files from the source name
+            for name in archived:
+                self.assertNotEqual(name, "profile-async.log")
+                self.assertNotEqual(name, "instance.pyinstrument.html")
+
+    def test_no_log_file_path_in_manifest_is_a_silent_noop_for_the_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest: dict = {}
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"):
+                bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)
+            self.assertFalse(archive_dir.exists())
+
+    def test_non_pyinstrument_profiler_does_not_touch_its_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            svg_path = root / "instance.py-spy.svg"
+            svg_path.write_text("<svg></svg>", encoding="utf-8")
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {"profiler": {"tool": "py-spy", "output_path": str(svg_path)}}
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"):
+                bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)
+            self.assertTrue(svg_path.exists())
+
+    def test_missing_pyinstrument_output_warns_but_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {"profiler": {"tool": "pyinstrument", "output_path": str(root / "never-written.html")}}
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"):
+                bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)  # must not raise
+
+    def test_two_calls_produce_distinctly_named_archives(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive_dir = root / "archive"
+            log_path = root / "profile-async.log"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"):
+                for i in range(2):
+                    log_path.write_text(f"run {i}\n", encoding="utf-8")
+                    bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, {"log_file_path": str(log_path)})
+            archived = sorted(p.name for p in archive_dir.iterdir())
+            self.assertEqual(len(archived), 2)
+            self.assertNotEqual(archived[0], archived[1])
+
+    def test_archival_io_failure_is_caught_and_warned_not_raised(self):
+        """P2 review finding: if the archive dir is unwritable (or the disk
+        is full), this must not propagate — stop() still needs to remove
+        the instance manifest afterward, and a crash here would leave that
+        cleanup undone even though the bot process already exited."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / "profile-async.log"
+            log_path.write_text("{}\n", encoding="utf-8")
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+            manifest = {"log_file_path": str(log_path)}
+
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", root / "runtime"), \
+                    patch.object(bot_lifecycle.shutil, "copy2", side_effect=OSError("disk full")):
+                bot_lifecycle._archive_stopped_instance_artifacts("inst", settings, manifest)  # must not raise
+
+            # Left in place since the copy failed before the unlink step.
+            self.assertTrue(log_path.exists())
+
+    def test_shared_log_still_used_by_another_live_instance_is_left_alone(self):
+        """P1 review finding: two instances can be configured with the same
+        LOG_FILE (it's a plain environment setting, not instance-scoped).
+        Deleting it out from under a still-running instance would silently
+        orphan that instance's own log output."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_dir = root / "runtime"
+            runtime_dir.mkdir()
+            log_path = root / "shared.log"
+            log_path.write_text("{}\n", encoding="utf-8")
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+
+            other_manifest = {"pid": os.getpid(), "log_file_path": str(log_path)}
+            (runtime_dir / "other-instance.json").write_text(json.dumps(other_manifest), encoding="utf-8")
+
+            manifest = {"log_file_path": str(log_path)}
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", runtime_dir):
+                bot_lifecycle._archive_stopped_instance_artifacts("this-instance", settings, manifest)
+
+            self.assertTrue(log_path.exists())
+            self.assertFalse(archive_dir.exists())
+
+    def test_shared_log_with_no_other_live_instance_is_archived_normally(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_dir = root / "runtime"
+            runtime_dir.mkdir()
+            log_path = root / "shared.log"
+            log_path.write_text("{}\n", encoding="utf-8")
+            archive_dir = root / "archive"
+            settings = {"BOT_LOG_ARCHIVE_DIR": str(archive_dir)}
+
+            # A dead pid (0 is never a valid process id to signal) — this
+            # other instance's manifest is stale, not actually still running.
+            other_manifest = {"pid": 999999999, "log_file_path": str(log_path)}
+            (runtime_dir / "other-instance.json").write_text(json.dumps(other_manifest), encoding="utf-8")
+
+            manifest = {"log_file_path": str(log_path)}
+            with patch.object(bot_lifecycle, "RUNTIME_DIR", runtime_dir):
+                bot_lifecycle._archive_stopped_instance_artifacts("this-instance", settings, manifest)
+
+            self.assertFalse(log_path.exists())
+            self.assertEqual(len(list(archive_dir.iterdir())), 1)
 
 
 if __name__ == "__main__":
