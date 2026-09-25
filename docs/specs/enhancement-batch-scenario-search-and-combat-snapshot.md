@@ -89,25 +89,47 @@ added to estimate total savings.
   BM25 fallback was used in existing RAG telemetry. Do not log scenario text
   or result content in structured telemetry.
 
-### 2. Reuse the combat snapshot
+### 2. Reuse the combat snapshot with deterministic tool availability
 
-- When combat is active, explicitly label the dynamic prompt's combat block as
-  the authoritative snapshot for the start of this model turn.
-- Update combat instructions and the `get_combat_status` description: do not
-  call the status tool if the prompt contains a combat snapshot and no prior
-  tool in this turn has changed combat state. Use that snapshot for the initial
-  decision.
-- After a tool changes combat state (for example, adding/removing a combatant,
-  applying damage, ending combat, or advancing the turn), the prompt snapshot
-  may be stale. Use a complete, authoritative status returned by that tool if
-  available; otherwise call `get_combat_status` before relying on changed
-  round/order/current-actor data. Never use the initial snapshot to override a
-  later successful mutation result.
-- Keep `get_combat_status` available for non-combat turns where state is not
-  included in the prompt, for missing/incomplete snapshots, and for state
-  refresh after relevant mutations. Preserve its existing public/private
-  visibility rules.
-- Do not remove or lazily omit combat state from the prompt in this change.
+Prompt wording alone is not a reliable control: the model can still choose a
+status call even when the snapshot is present. Prefer controlling whether the
+read-only tool is exposed for each model request:
+
+- In the first implementation, apply this to OpenAI only, matching the
+  provider used by the supplied baseline. When combat is active and the request
+  includes a complete combat snapshot, omit `get_combat_status` from the
+  initial request's tool list. The snapshot remains the authoritative status at
+  the start of that model turn.
+- After a successful tool call that changes combat state (for example,
+  adding/removing a combatant, applying damage, ending combat, or advancing the
+  turn), inspect its result. If it contains a complete, authoritative status
+  snapshot, carry that forward. Otherwise expose `get_combat_status` in the
+  tools list of the next model request in the same tool loop, so the model can
+  fetch current round/order/current-actor data when it needs them.
+- Refresh tool availability between model requests in the tool loop; do not
+  make the tool available retroactively to other calls in an already-returned
+  batch. State-changing tools continue to execute in their existing order.
+- If combat is inactive or the initial snapshot is missing/incomplete, preserve
+  current tool availability. Apply the same gating only when a KP Assistant
+  request has a complete private snapshot; preserve existing public/private
+  visibility rules and never expose a private snapshot or result to a
+  player-facing request.
+- Keep combat state in the dynamic prompt. Do not depend on model instructions
+  alone to suppress the redundant initial status call.
+- Leave Anthropic and Gemini behavior unchanged in this first pass; consider
+  them after the OpenAI trial and rollout data.
+
+This is a narrower and more deterministic optimization than changing status
+tool descriptions: it makes the redundant initial call impossible while
+preserving a refresh path after mutations. It does require the shared provider
+tool loop to support per-request tool-list updates and a reliable
+classification of successful combat-state mutations. The current OpenAI
+adapter serializes the tool list once before its loop, so it must be adjusted
+to prepare the applicable schemas before each request. Scope the mutation
+classifier to operations that change combat round/order/combatants/HP/active
+state, and treat a tool error or failed result as no mutation. If these
+integration requirements cannot be met without changing state mutation order,
+do not fall back to prompt-only guidance; stop and revise the design.
 
 ## Explicit non-goals
 
@@ -124,6 +146,11 @@ added to estimate total savings.
 - `search_scenario` tool schema gains optional `queries: string[]`; single
   `query: string` remains supported. Runtime validation enforces exactly one
   form and a maximum batch size of four.
+- The OpenAI provider loop may supply a per-request tool list. While a complete
+  snapshot is present, `get_combat_status` is withheld for the first request
+  and added after a successful combat mutation when its result did not include
+  a complete current snapshot. This is request-local control state, not
+  persisted game state. Other providers are out of scope for this first pass.
 - Scenario retrieval may add an internal multi-query helper that accepts a
   shared index and returns a bounded, deterministically merged result list.
   The existing one-query search API remains available to other callers.
@@ -135,7 +162,10 @@ added to estimate total savings.
 ```text
 Gameplay turn starts
   -> prompt includes combat snapshot when combat is active
-  -> model uses snapshot unless absent or invalidated by a successful mutation
+  -> initial tool list omits get_combat_status while that snapshot is current
+  -> after a successful combat mutation, inspect its result
+       -> complete current snapshot: carry it forward
+       -> incomplete/missing snapshot: expose get_combat_status next request
   -> if scenario lookup is needed:
        one query for one need, or queries[] for related needs in this event
        -> local retrievals -> interleaved/deduplicated bounded result
@@ -153,6 +183,12 @@ Gameplay turn starts
 - Reusing a prompt snapshot is safe only until a successful combat-state
   mutation. Tool-result completeness must be checked before treating it as the
   new snapshot.
+- Withholding the status tool prevents an unnecessary initial call, but means a
+  model cannot request it in the same batch as its first state mutation. It
+  becomes available on the next provider request if that mutation did not
+  return a complete snapshot. This may preserve or add a post-mutation model
+  round in some cases; compare round counts and correctness in the provider
+  trial.
 - Batching reduces model tool-loop cycles, but could alter retrieval quality
   or embedding request timing. Evaluate tool-call reduction and correctness
   separately from wall-clock latency.
@@ -167,13 +203,28 @@ Implementation should add tests for:
   output bound, and BM25 fallback on embedding failure.
 - Player versus KP Assistant description preserves role-specific spoiler
   behavior.
-- Prompt instructions reuse an initial combat snapshot, but permit refresh
-  after a state-changing tool; no change to public/private status visibility.
+- OpenAI initial tool-list construction omits the status tool only when a complete
+  current snapshot is present; successful mutations refresh tool availability
+  on the next request when their results are incomplete.
+- Mutation batches retain their existing execution order; private status is
+  never exposed to player-facing requests.
 
-Before rollout, replay representative turns from the current log using the
-same scenario data and compare old single-query behavior against batches for
-retrieved fact coverage and model tool rounds. After rollout, compare at least
-the next 24 hours / 500 OpenAI attempts where available, reporting separately:
+Before implementation approval, a small real-provider trial is required.
+Use the configured OpenAI model/reasoning setting with the same scenario data,
+starting state, prompt and equivalent tools. For scenario retrieval, compare
+the current single-query tool with the proposed batch input. For combat status,
+compare current tool availability with the proposed per-request OpenAI tool
+list, using a read-only or mocked state mutation so no production game state
+changes. Compare retrieved fact coverage, tool choices, and total model
+requests. Keep the trial narrow (one or two representative cases per
+optimization, with repeated runs only where needed to distinguish model
+variance); record the exact model, reasoning setting, tool schema, prompt
+version, and outcomes. If batching misses needed facts, or gated status access
+increases requests or produces stale combat decisions, revise the design
+before coding.
+
+After implementation and rollout, compare at least the next 24 hours / 500
+OpenAI attempts where available, reporting separately:
 
 - `search_scenario` calls per scenario-lookup turn and extra model rounds
   removed by multi-query calls;
@@ -190,10 +241,14 @@ before widening use.
 
 ## Review decisions
 
-1. Is a maximum of four query strings per batch and a merged result limit of
-   twice `SCENARIO_RAG_TOP_K` acceptable?
-2. Should the follow-up comparison use the same current log scenarios through
-   a replay harness, or should we also run a small real-provider trial before
-   implementation approval?
+- The user has requested a small real-provider trial before implementation;
+  this is a required gate, not an optional follow-up.
+- Proposed bounds for review: maximum four query strings per batch and merged
+  result limit of twice `SCENARIO_RAG_TOP_K`.
+- The second optimization uses deterministic per-request tool availability,
+  not prompt-only wording, and targets OpenAI in the first pass. The current
+  OpenAI loop creates provider tool schemas only once per turn; implementation
+  must move that preparation into the request loop without changing the
+  sequential order of mutations. Other providers stay unchanged pending data.
 
 Implementation remains out of scope until this spec is reviewed.
