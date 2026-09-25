@@ -83,16 +83,9 @@ async def run_conversation(
     execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int,
     enable_wrapup: bool = True,
-    model_override: str | None = None,
-    reasoning_effort_override: str | None = None,
 ) -> str:
     if not GEMINI_API_KEY:
         return "（尚未設定 GEMINI_API_KEY，守密人無法回應，請管理員檢查 .env 設定）"
-
-    # reasoning_effort_override has no Gemini equivalent (accepted only so
-    # every provider's run_conversation shares one call signature — see
-    # app/agents/executor.py, which doesn't know which provider it's calling).
-    model = model_override or GEMINI_MODEL
 
     from google.genai import types
 
@@ -126,7 +119,7 @@ async def run_conversation(
         with observability.context(provider_request_id=logical_request_id), observability.span(
             "llm.request",
             provider="gemini",
-            model=model,
+            model=GEMINI_MODEL,
             logical_request_id=logical_request_id,
             iteration=iteration,
             timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
@@ -138,7 +131,7 @@ async def run_conversation(
                 async def request_once():
                     async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
                         return await client.models.generate_content(
-                            model=model, contents=contents, config=config
+                            model=GEMINI_MODEL, contents=contents, config=config
                         )
 
                 response = await retry.async_call_with_retry(
@@ -157,7 +150,7 @@ async def run_conversation(
             observability.event(
                 "llm.usage",
                 provider="gemini",
-                model=model,
+                model=GEMINI_MODEL,
                 input_tokens=getattr(usage, "prompt_token_count", None),
                 cached_input_tokens=getattr(usage, "cached_content_token_count", None),
                 output_tokens=getattr(usage, "candidates_token_count", None),
@@ -206,7 +199,7 @@ async def run_conversation(
                 with observability.context(provider_request_id=logical_request_id), observability.span(
                     "llm.request",
                     provider="gemini",
-                    model=model,
+                    model=GEMINI_MODEL,
                     logical_request_id=logical_request_id,
                     iteration=max_iterations,
                     timeout_ms=LLM_REQUEST_TIMEOUT_SECONDS * 1000,
@@ -217,7 +210,7 @@ async def run_conversation(
                         async def wrapup_once(wrapup_config=wrapup_config):
                             async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
                                 return await client.models.generate_content(
-                                    model=model, contents=contents, config=wrapup_config
+                                    model=GEMINI_MODEL, contents=contents, config=wrapup_config
                                 )
 
                         wrapup_response = await retry.async_call_with_retry(

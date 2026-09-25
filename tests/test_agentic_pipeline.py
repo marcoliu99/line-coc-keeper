@@ -85,54 +85,6 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("get_combat_status", offered_names)
 
 
-class ExecutorModelTieringTests(unittest.IsolatedAsyncioTestCase):
-    """docs/specs/enhancement-executor-model-tiering-and-tool-scoping.md:
-    run_executor passes a per-provider model/reasoning-effort override to
-    run_conversation, tuned for OpenAI (gpt-6-luna/none, per that spec's
-    real-API rounds 1-8) and left as None (no override, provider's plain
-    *_MODEL as-is) for Anthropic/Gemini until they have their own tuned
-    candidate."""
-
-    async def _run_with_provider(self, provider_name: str, fake_run_conversation) -> None:
-        from app.agents import executor
-
-        state = GroupState(group_id="g")
-        message = AgentMessage(payload={
-            "state": state,
-            "text": "你攻擊怪物",
-            "user_id": "u1",
-            "display_name": "調查員",
-            "speaker_role": "player",
-        })
-        fake_provider = type("P", (), {"run_conversation": fake_run_conversation})()
-        with patch.object(executor, "_PROVIDERS", {provider_name: fake_provider}), \
-                patch.object(executor, "LLM_PROVIDER", provider_name):
-            await executor.run_executor(message)
-
-    async def test_openai_gets_the_tuned_model_and_reasoning_effort_override(self):
-        from app.config import EXECUTOR_MODEL_OPENAI, EXECUTOR_REASONING_EFFORT_OPENAI
-
-        fake_run_conversation = AsyncMock(return_value="ignored")
-        await self._run_with_provider("openai", fake_run_conversation)
-
-        kwargs = fake_run_conversation.call_args.kwargs
-        self.assertEqual(kwargs.get("model_override"), EXECUTOR_MODEL_OPENAI)
-        self.assertEqual(kwargs.get("reasoning_effort_override"), EXECUTOR_REASONING_EFFORT_OPENAI)
-        # Regression guard for the spec's actual recommendation, not just
-        # "whatever config.py currently says" — a default drifting away
-        # from the real-API-verified pick should fail this test loudly.
-        self.assertEqual(EXECUTOR_MODEL_OPENAI, "gpt-6-luna")
-        self.assertEqual(EXECUTOR_REASONING_EFFORT_OPENAI, "none")
-
-    async def test_anthropic_gets_no_override_without_a_tuned_candidate(self):
-        fake_run_conversation = AsyncMock(return_value="ignored")
-        await self._run_with_provider("anthropic", fake_run_conversation)
-
-        kwargs = fake_run_conversation.call_args.kwargs
-        self.assertIsNone(kwargs.get("model_override"))
-        self.assertIsNone(kwargs.get("reasoning_effort_override"))
-
-
 class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
     """Regression tests for the review finding that context_builder ran
     scenario_rag.get_index/search on every turn regardless of

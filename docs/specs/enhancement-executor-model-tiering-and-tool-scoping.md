@@ -1,20 +1,66 @@
 # Spec: Executor model tiering + dynamic tool scoping
 
-**Status: model tiering implemented; dynamic tool scoping still
-deferred.** Split out of `docs/specs/enhancement-conversation-lock-and-
-tool-loop-latency.md` (items 9/10/12/13 there) once that doc's own
-first-batch decisions (typing indicator, queue-ack, `MAX_TOOL_ITERATIONS`)
-were ready to implement on their own — this follow-up needed more
-real-API trials before it was implementation-ready. Rounds 1-8 settled the
-model pick (see "Model decision" below); per explicit instruction, the
-first implementation pass covers model tiering only — dynamic Tier A/B/C
-tool scoping stays a documented, not-yet-implemented design (see that
-section) for a future pass.
+**Status: REVERTED (2026-09-25).** Model tiering (`gpt-6-luna`/`none` for
+the Executor) was implemented per this spec, then later found — via real
+production log analysis, not synthetic trials — to be a net regression,
+and was removed entirely (`enhancement/revert-executor-model-tiering`).
+See "Reversal" section below for the real-data evidence. Dynamic tool
+scoping was never implemented (stayed deferred the whole time this spec
+was active) and is now moot along with it — see that section's own note.
+
+## Reversal (2026-09-25)
+
+Real production log (`/Users/marcoliu/profile-async3.log`, 2026-09-23
+through 2026-09-25, segmented by the Executor's actual logged
+model/reasoning_effort at each point in time — not assumed from config,
+read directly off `llm.turn.completed` events):
+
+| Segment | Executor config | Turns | High-iteration rate | Latency p50/p95 | 429 rate |
+|---|---|---|---|---|---|
+| B | `gpt-6-luna`/`medium` (pre-tiering) | 32 | **0%** (0/32) | 6.9s / 14.9s | 0.7% (1/137) |
+| C | `gpt-6-luna`/`none` (this spec's pick) | 104 | **49%** (51/104) | 10.4s / 24.9s, max 51.8s | 8.6% (53/617) |
+| D | `gpt-6-luna`/`low` (ad hoc, post-restart) | 27 | 37% (10/27) | 7.9s / 19.6s | 0% (0/146, confounded with a same-time retry/jitter deploy — see note below) |
+
+`none` — chosen by this spec specifically to be faster/cheaper — was
+worse than the plain `medium` default on every measured axis in real
+usage: 0% high-iteration turns became 49%, p95 latency nearly doubled
+(14.9s → 24.9s, with a 51.8s outlier), and the 429 rate rose more than
+10x. This directly contradicts the real-API verification rounds 1-8 this
+spec's "Model decision" section is based on.
+
+**Why the earlier verification missed this**: rounds 1-8 measured
+per-scenario tool-selection correctness and per-call latency in isolated,
+scripted trials — a legitimate methodology for "does it pick the right
+tool," but it could not surface the failure mode that actually mattered
+in production: `none`'s tendency to spin through many more tool-call
+iterations per turn on real, evolving conversation state (the same
+underlying unreliability documented independently in `docs/specs/bug-
+continuing-damage-rolls-corrupt-luck-stat.md` and `docs/specs/bug-self-
+corrected-check-leaves-stale-pending.md`, both traced to `gpt-6-luna`/
+`none` specifically). Isolated single-turn trials don't accumulate that
+cost the way a real multi-turn session does.
+
+**Decision**: revert the whole mechanism (`EXECUTOR_MODEL_*`/
+`EXECUTOR_REASONING_EFFORT_OPENAI` config, the per-provider override
+plumbing in each `run_conversation`, `app/agents/executor.py`'s
+`_EXECUTOR_MODEL_OVERRIDES`) rather than just changing the default —
+per explicit instruction, the feature itself "感覺沒用" (feels useless)
+given real usage never justified its complexity. The Executor now uses
+the same `OPENAI_MODEL`/`KEEPER_REASONING_EFFORT` as every other agent,
+with no separate tier.
+
+**Downstream specs affected**: `docs/specs/enhancement-executor-
+reasoning-effort-for-combat-ongoing-effects.md` (which asked "should
+combat-with-ongoing-effects turns use a higher effort than the Executor's
+separate `none` default") is now moot — there is no separate Executor
+default to carve an exception out of anymore. That branch should be
+closed/abandoned rather than pursued.
 
 ## Changeset Tracking
 - **main_v2 start**: origin/main_v2:923a8c437e07c6c4b28cfea84fde6a6c3d27c203
   (rebased onto this after PR #55 merged, mid-branch — see git history)
 - **implementation end**: enhancement/executor-model-tiering-and-tool-scoping:17b902b — ruff/mypy/compileall/pytest all green (model tiering only; dynamic tool scoping deferred)
+- **reverted**: enhancement/revert-executor-model-tiering — ruff/mypy/compileall/pytest all green; see "Reversal" section below
 
 ## Background
 
