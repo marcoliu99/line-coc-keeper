@@ -715,6 +715,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertTrue(first["resolved"])
         self.assertTrue(second["resolved"])
         self.assertEqual(saved_state.pending_checks, {})
+        self.assertEqual([event["skill"] for event in saved_state.resolved_check_events], ["閃避", "格鬥"])
 
     def test_sanity_check_autoroll_is_immediate_and_does_not_create_pending(self):
         state = _state_with_investigator()
@@ -735,6 +736,8 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertTrue(first["resolved"])
         self.assertTrue(second["resolved"])
         self.assertEqual(saved_state.pending_checks, {})
+        self.assertEqual([event["skill"] for event in saved_state.resolved_check_events], ["SAN", "SAN"])
+        self.assertTrue(all("check_id" in event for event in saved_state.resolved_check_events))
 
     def test_character_checks_default_to_player_pending(self):
         state = _state_with_investigator()

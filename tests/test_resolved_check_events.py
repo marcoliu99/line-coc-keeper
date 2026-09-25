@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from app.agents.context_builder import _resolved_events_for_character
 from app.legacy_commands import _persist_resolved_check_event
 from app.models import Character, GroupState
 from app.services.prompt_config import build_resolved_check_history_block
@@ -96,6 +97,23 @@ class ResolvedCheckEventTests(unittest.TestCase):
         self.assertIn("88", block)
         self.assertIn("HP 12 → 7（-5）", block)
         self.assertIn("與本回合工具結果分開", block)
+
+    def test_context_history_is_limited_to_the_active_character(self):
+        state = GroupState("g", timeline_id="timeline-a")
+        marco = Character(name="Marco", owner_id="p1", character_id="char-a")
+        investigator_b = Character(name="Other", owner_id="p1", character_id="char-b")
+        state.characters_by_id = {marco.character_id: marco, investigator_b.character_id: investigator_b}
+        state.set_active_character("p1", investigator_b.character_id)
+        state.resolved_check_events = [
+            {"event_id": "a", "owner_id": "p1", "character_id": "char-a", "timeline_id": "timeline-a"},
+            {"event_id": "b", "owner_id": "p1", "character_id": "char-b", "timeline_id": "timeline-a"},
+            {"event_id": "old", "owner_id": "p1", "character_id": "char-b", "timeline_id": "timeline-old"},
+            {"event_id": "other-owner", "owner_id": "p2", "character_id": "char-b", "timeline_id": "timeline-a"},
+        ]
+
+        events = _resolved_events_for_character(state, "p1", investigator_b.character_id, "g")
+
+        self.assertEqual([event["event_id"] for event in events], ["b"])
 
     def test_event_history_is_bounded_when_appending(self):
         state = GroupState("g", timeline_id="timeline-a")
