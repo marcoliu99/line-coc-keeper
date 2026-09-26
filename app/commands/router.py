@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from app import help_service, locks, observability
@@ -31,6 +31,18 @@ from app.legacy_commands import (
 from app.repositories.group_state import load_state
 
 _logger = logging.getLogger(__name__)
+PostTurnHook = Callable[[], Awaitable[None]]
+
+
+async def _run_post_turn_hook(hook: PostTurnHook | None) -> None:
+    if hook is None:
+        return
+    try:
+        await hook()
+    except Exception:
+        # Button recovery remains available to the Discord caller. Never
+        # replace the turn's original error or prevent lock release.
+        _logger.exception("failed to claim pending buttons before releasing conversation lock")
 
 _CHARACTER_COMMANDS = {"pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters", "retire"}
 _SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests", "autoroll"}
@@ -322,6 +334,7 @@ async def _handle_sudo_command(
     format_mention: FormatMention,
     is_keeper: bool,
     allow_opaque_target: bool,
+    post_turn_hook: PostTurnHook | None = None,
 ) -> None:
     parsed, parse_error = sudo_policy.parse_sudo_command(
         parts, allow_opaque_target=allow_opaque_target
@@ -336,17 +349,20 @@ async def _handle_sudo_command(
     try:
         dispatch_status = "rejected"
         async with locks.get_keeper_priority_gate(conversation_id, is_kp=True), locks.get_conversation_lock(conversation_id):
-            dispatch_status = await _dispatch_sudo_locked(
-                conversation_id,
-                actor_user_id,
-                is_keeper,
-                parsed,
-                reply,
-                send_dm,
-                send_image,
-                send_dm_image,
-                format_mention,
-            )
+            try:
+                dispatch_status = await _dispatch_sudo_locked(
+                    conversation_id,
+                    actor_user_id,
+                    is_keeper,
+                    parsed,
+                    reply,
+                    send_dm,
+                    send_image,
+                    send_dm_image,
+                    format_mention,
+                )
+            finally:
+                await _run_post_turn_hook(post_turn_hook)
     except _SudoDenied as exc:
         _record_sudo_event(
             "sudo.denied",
@@ -396,11 +412,14 @@ async def handle_text_message(
     format_mention: FormatMention = lambda owner_id: owner_id,
     is_keeper: bool = False,
     allow_opaque_sudo_target: bool = False,
+    *,
+    post_turn_hook: PostTurnHook | None = None,
 ) -> None:
     with observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
         await _handle_text_message_impl(
             conversation_id, user_id, get_display_name, reply, send_dm, send_image,
             send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
+            post_turn_hook,
         )
 
 
@@ -427,7 +446,9 @@ async def _stop_queue_notice_task(notify_task: asyncio.Task[None]) -> None:
 
 
 @asynccontextmanager
-async def _conversation_lock_with_notice(conversation_id: str, reply: Reply) -> AsyncIterator[None]:
+async def _conversation_lock_with_notice(
+    conversation_id: str, reply: Reply, post_turn_hook: PostTurnHook | None = None,
+) -> AsyncIterator[None]:
     """Acquires the per-conversation lock, but doesn't leave a queued
     message waiting in silence: if the lock is already held, a background
     task sends a queued-notice reply only if the wait is *still* ongoing
@@ -462,12 +483,16 @@ async def _conversation_lock_with_notice(conversation_id: str, reply: Reply) -> 
     try:
         yield
     finally:
-        lock.release()
+        try:
+            await _run_post_turn_hook(post_turn_hook)
+        finally:
+            lock.release()
 
 
 @asynccontextmanager
 async def _keeper_priority_gate_and_lock_with_notice(
-    conversation_id: str, *, is_kp: bool, reply: Reply
+    conversation_id: str, *, is_kp: bool, reply: Reply,
+    post_turn_hook: PostTurnHook | None = None,
 ) -> AsyncIterator[None]:
     """Notify after a long wait for either Keeper scheduling gate.
 
@@ -483,7 +508,10 @@ async def _keeper_priority_gate_and_lock_with_notice(
             locks.get_conversation_lock(conversation_id),
         ):
             await _stop_queue_notice_task(notify_task)
-            yield
+            try:
+                yield
+            finally:
+                await _run_post_turn_hook(post_turn_hook)
     finally:
         if not notify_task.done():
             await _stop_queue_notice_task(notify_task)
@@ -501,6 +529,7 @@ async def _handle_text_message_impl(
     format_mention: FormatMention = lambda owner_id: owner_id,
     is_keeper: bool = False,
     allow_opaque_sudo_target: bool = False,
+    post_turn_hook: PostTurnHook | None = None,
 ) -> None:
     text = text.strip()
 
@@ -524,6 +553,7 @@ async def _handle_text_message_impl(
             format_mention,
             is_keeper,
             allow_opaque_sudo_target,
+            post_turn_hook,
         )
         return
 
@@ -532,7 +562,7 @@ async def _handle_text_message_impl(
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
         try:
-            async with _conversation_lock_with_notice(conversation_id, reply):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
                 await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
         finally:
             locks.release_check(conversation_id, user_id)
@@ -544,7 +574,7 @@ async def _handle_text_message_impl(
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
         try:
-            async with _conversation_lock_with_notice(conversation_id, reply):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
                 if choice.casefold() == "roll":
                     await handle_pregen_luck_roll(conversation_id, user_id, reply)
                 else:
@@ -561,12 +591,12 @@ async def _handle_text_message_impl(
         sub = parts[1] if len(parts) > 1 else "help"
 
         if sub == "combat":
-            async with _conversation_lock_with_notice(conversation_id, reply):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
         if sub in _CHARACTER_COMMANDS:
-            async with _conversation_lock_with_notice(conversation_id, reply):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
 
@@ -586,7 +616,7 @@ async def _handle_text_message_impl(
                     is_keeper,
                 )
             else:
-                async with _conversation_lock_with_notice(conversation_id, reply):
+                async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
                     await system_handler.handle_system_command(
                         conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
                         is_keeper,
@@ -594,11 +624,11 @@ async def _handle_text_message_impl(
             return
 
         if sub in _MAP_COMMANDS:
-            async with _conversation_lock_with_notice(conversation_id, reply):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
                 await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts)
             return
 
-        async with _conversation_lock_with_notice(conversation_id, reply):
+        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
             state = load_state(conversation_id)
             await reply(help_service.get_page(state, user_id).text)
         return
@@ -611,7 +641,7 @@ async def _handle_text_message_impl(
     # see app/locks.py's get_keeper_priority_gate docstring.
     scheduling_state = load_state(conversation_id)
     if not scheduling_state.kp_assistant_user_id:
-        async with _conversation_lock_with_notice(conversation_id, reply):
+        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
             await _handle_ordinary_text_message_locked(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
             )
@@ -619,7 +649,8 @@ async def _handle_text_message_impl(
 
     is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
     async with _keeper_priority_gate_and_lock_with_notice(
-        conversation_id, is_kp=is_kp_priority, reply=reply
+        conversation_id, is_kp=is_kp_priority, reply=reply,
+        post_turn_hook=post_turn_hook,
     ):
         await _handle_ordinary_text_message_locked(
             conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
