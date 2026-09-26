@@ -389,6 +389,13 @@
 用法：
 - `/coc scenario template approve 劇本ID 模板版本`
 
+### 產生中文模板 **[KP-only]**
+
+產生或恢復來源單元翻譯。
+
+用法：
+- `/coc scenario template generate 劇本ID`
+
 ### 匯入中文模板 **[KP-only]**
 
 從 IMPORT_DIR 匯入校對後的 Markdown 模板。

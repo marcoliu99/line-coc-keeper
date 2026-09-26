@@ -499,18 +499,22 @@ def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, id
     return score
 
 
-def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int) -> list[dict]:
+def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int,
+                 eligible: list[_Chunk] | None = None) -> list[dict]:
     rows: list[dict] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[str] = set()
+    candidates = eligible if eligible is not None else [c for _, c in scored]
     for score, chunk in scored:
-        identity = (chunk.record_id or f"page:{chunk.page}:text:{chunk.text}", chunk.visibility)
+        if len(rows) >= top_k:
+            break
+        identity = chunk.record_id or f"page:{chunk.page}:text:{chunk.text}"
         if identity in seen:
             continue
         seen.add(identity)
-        rows.append({"page": chunk.page, "text": chunk.result_text or chunk.text,
-                     "score": score, "record_id": chunk.record_id})
-        if len(rows) >= top_k:
-            break
+        siblings = [c for c in candidates if chunk.record_id and c.record_id == chunk.record_id] or [chunk]
+        contents = list(dict.fromkeys(c.result_text or c.text for c in siblings))
+        rows.append({"page": chunk.page, "text": "\n\n".join(contents), "score": score,
+                     "record_id": chunk.record_id})
     return rows
 
 
@@ -565,7 +569,7 @@ def search(
         if metrics is not None:
             metrics["query_embedding_status"] = "not_used"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = _result_rows(scored, top_k)
+        results = _result_rows(scored, top_k, eligible)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -582,7 +586,7 @@ def search(
         if metrics is not None:
             metrics["query_embedding_status"] = "fallback"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = _result_rows(scored, top_k)
+        results = _result_rows(scored, top_k, eligible)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -612,7 +616,7 @@ def search(
         score = weight * cos + (1 - weight) * bm25_norm
         combined.append((score, c))
     combined.sort(key=lambda sc: -sc[0])
-    results = _result_rows(combined, top_k)
+    results = _result_rows(combined, top_k, eligible)
     if metrics is not None:
         metrics["result_count"] = len(results)
     return results
@@ -741,8 +745,33 @@ def get_record_index(cache_key: str, records: list[dict]) -> ScenarioIndex:
                 continue
             source_note = ""
             if visibility == "kp_only" and record.get("rule_text"):
-                source_note = f"\n原文片段：{str(record.get('source_excerpt', ''))[:500]}"
+                source_note = f"\n原文片段：{record.get('source_excerpt', '')!s}"
+            if visibility == "kp_only" and record.get("rules"):
+                body += "\n" + json.dumps(record["rules"], ensure_ascii=False)
             parent = f"[{record.get('id', '')}｜{visibility}] {record.get('name', '')}\n{body}{source_note}"
+            # Expand explicit dependencies only from this already chapter-filtered
+            # record set and only within the same visibility scope.
+            visited = {record.get("source_id")}
+            pending_refs = list(record.get("related_source_ids", []))
+            while pending_refs:
+                source_id = pending_refs.pop(0)
+                if source_id in visited:
+                    continue
+                visited.add(source_id)
+                related = next((r for r in records if r.get("source_id") == source_id), None)
+                if related is None:
+                    continue
+                pending_refs.extend(related.get("related_source_ids", []))
+                if visibility == "public":
+                    related_text = related.get("public_text", "") if related.get("visibility") != "kp_only" else ""
+                else:
+                    related_text = "\n".join(str(related.get(k, "")) for k in ("kp_text", "rule_text"))
+                    if related.get("rules"):
+                        related_text += "\n" + json.dumps(related["rules"], ensure_ascii=False)
+                        related_text += "\n原文片段：" + related.get("source_excerpt", "")
+                if related_text.strip():
+                    parent += f"\n\n[關聯 {related['id']}｜{visibility}]\n{related_text}"
+
             # Child text is searchable; the result carries the entire parent.
             for start in range(0, len(body), 500):
                 chunks.append(_Chunk(

@@ -12,6 +12,7 @@ later.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import enum
 import inspect
 import logging
@@ -43,6 +44,9 @@ T = TypeVar("T")
 # them too. Built lazily, inside async_call_with_retry (i.e. only once an
 # event loop is actually running it), rather than at import time.
 _admission_semaphores: dict[str, asyncio.Semaphore] = {}
+background_request: contextvars.ContextVar[bool] = contextvars.ContextVar("background_request", default=False)
+_foreground_requests: dict[str, int] = {}
+
 
 
 def _admission_semaphore_for(provider: str) -> asyncio.Semaphore | None:
@@ -328,6 +332,23 @@ def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:
 
 
 async def async_call_with_retry(
+    fn: Callable[[], Awaitable[T]], *, provider: str, operation: str,
+    request_id: str | None = None, admission: Admission | None = None,
+    estimated_tokens: int | None = None,
+) -> T:
+    foreground = not background_request.get()
+    if foreground:
+        _foreground_requests[provider] = _foreground_requests.get(provider, 0) + 1
+    try:
+        return await _async_call_with_retry(fn, provider=provider, operation=operation,
+                                           request_id=request_id, admission=admission,
+                                           estimated_tokens=estimated_tokens)
+    finally:
+        if foreground:
+            _foreground_requests[provider] -= 1
+
+
+async def _async_call_with_retry(
     fn: Callable[[], Awaitable[T]],
     *,
     provider: str,
@@ -352,11 +373,17 @@ async def async_call_with_retry(
         admission_wait_start = time.monotonic()
         while True:
             turn_budget.remaining()
+            while background_request.get() and _foreground_requests.get(provider, 0):
+                await turn_budget.sleep(0.05)
             if admission is not None:
                 await admission.wait(estimated_tokens)
             if semaphore is not None:
                 async with asyncio.timeout(turn_budget.remaining()):
                     await semaphore.acquire()
+            if background_request.get() and _foreground_requests.get(provider, 0):
+                if semaphore is not None:
+                    semaphore.release()
+                continue
             try:
                 delay = admission.delay(estimated_tokens, reserve=True) if admission else 0
             except BaseException:

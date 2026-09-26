@@ -55,7 +55,7 @@ _logger = logging.getLogger(__name__)
 _TABLES = (
     "group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary",
     "state_checkpoints", "scene_digests", "manual_pregen_assets",
-    "scenario_template_jobs", "scenario_template_preferences",
+    "scenario_template_jobs", "scenario_template_checkpoints", "scenario_template_preferences",
 )
 
 _SCHEMA = """

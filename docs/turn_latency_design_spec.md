@@ -744,3 +744,11 @@ normal number of requests; no fixed additional review call is introduced.
 This is an interface dependency, not a dependency on merging one PR first.
 Keep #83's Chinese-template functionality independent; synchronize the handoff
 contract when implementing Candidate A after the consistency repair lands.
+
+
+## Current template specification
+
+The current implementation contract and flow diagram are maintained separately in
+[Source-linked Chinese scenario templates](scenario_templates_design_spec.md).
+The Chinese-template proposal above is retained as design history; its paragraph
+chunking, schema-v1, and background scheduling details are superseded there.

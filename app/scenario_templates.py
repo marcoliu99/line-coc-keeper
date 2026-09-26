@@ -8,6 +8,9 @@ import logging
 import re
 import shutil
 import tempfile
+import time
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -18,7 +21,9 @@ from app.providers import anthropic_provider, gemini_provider, openai_provider
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 _LOCALE = "zh-TW"
-_VERSION = 1
+_VERSION = 2
+_GENERATOR_VERSION = "source-units-v2"
+_RULE_FIELDS = ("trigger", "check", "success", "failure", "exceptions")
 _SAFE_VARIANT = re.compile(r"zh-TW-[a-f0-9]{12}")
 _NUMBER = re.compile(r"(?i)\b\d+d\d+(?:[+-]\d+)?\b|\b\d+(?:\.\d+)?%?\b")
 _NEGATIVE = re.compile(r"\b(?:not|never|without|cannot|no)\b", re.IGNORECASE)
@@ -37,8 +42,13 @@ _TOOL = {
                 "rule_text": {"type": "string"},
                 "keywords": {"type": "array", "items": {"type": "string"}},
                 "uncertainty": {"type": "string"},
+                "rules": {"type": "array", "items": {"type": "object", "properties": {
+                    field: {"type": "object", "properties": {"text": {"type": "string"}, "source_quote": {"type": "string"}}, "required": ["text", "source_quote"]}
+                    for field in _RULE_FIELDS
+                }}},
+                "related_source_ids": {"type": "array", "items": {"type": "string"}},
             }, "required": ["type", "name", "aliases", "public_text",
-                            "kp_text", "rule_text", "keywords", "uncertainty"],
+                            "kp_text", "rule_text", "keywords", "uncertainty", "rules", "related_source_ids"],
         }}},
         "required": ["records"],
     },
@@ -69,25 +79,42 @@ def _chapter_hash(manifest: dict[str, Any]) -> str:
 
 
 def _blocks(manifest: dict[str, Any], text: str) -> list[dict[str, Any]]:
+    """Keep heading-based scene/rule units intact across paragraphs and pages.
+
+    Level 1/2 headings start units; subordinate headings stay with their parent.
+    Unstructured chapters remain whole and require manual preparation if too big.
+    Never silently cut a trigger away from its consequence to fit a request.
+    """
     chapters = [c for c in manifest.get("chapters", []) if c.get("kind") == "playable"]
     pages = scenario_rag.split_pages(text) or [(1, text)]
     result: list[dict[str, Any]] = []
-    for page, page_text in pages:
-        chapter = next((c["id"] for c in chapters
-                        if c["start_page"] <= page <= c["end_page"]), "")
-        if not chapter:
-            continue
-        # Paragraph boundaries keep a scene/rule together when possible.
-        paragraphs = re.split(r"\n\s*\n", page_text)
-        number = 0
-        for paragraph in paragraphs:
-            paragraph = paragraph.strip()
-            if not paragraph:
+    def flush(lines: list[str], source_pages: list[int], heading: str, chapter_id: str) -> None:
+        value = "\n".join(lines).strip()
+        if value:
+            unit_id = f"{chapter_id}-u{len(result) + 1}"
+            result.append({"id": unit_id, "page": source_pages[0], "pages": list(source_pages),
+                           "chapter_id": chapter_id, "heading": heading, "text": value})
+        lines.clear()
+        source_pages.clear()
+
+    for chapter in chapters:
+        lines: list[str] = []
+        source_pages: list[int] = []
+        heading = chapter.get("title", chapter["id"])
+
+
+        for page, body in pages:
+            if not chapter["start_page"] <= page <= chapter["end_page"]:
                 continue
-            for start in range(0, len(paragraph), 3000):
-                number += 1
-                result.append({"id": f"p{page}-b{number}", "page": page,
-                               "chapter_id": chapter, "text": paragraph[start:start + 3000]})
+            for line in body.splitlines():
+                if re.match(r"^#{1,2}\s+\S", line):
+                    flush(lines, source_pages, heading, chapter["id"])
+                    heading = line.lstrip("# ")
+                if line.strip() or lines:
+                    lines.append(line)
+                    if page not in source_pages:
+                        source_pages.append(page)
+        flush(lines, source_pages, heading, chapter["id"])
     if not result:
         raise ValueError("沒有可翻譯的遊玩章節")
     return result
@@ -125,6 +152,7 @@ def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
         manifest = {"scenario_id": scenario_id, "variant_id": variant_id,
                     "source_hash": source_hash, "chapter_hash": chapter_hash,
                     "locale": _LOCALE, "schema_version": _VERSION,
+                    "generator_version": _GENERATOR_VERSION,
                     "origin": origin, "review_status": "review_required",
                     "record_count": len(records), "issues": issues}
         (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -149,7 +177,7 @@ def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
     return variant_id
 
 
-def _validate(scenario_id: str, records: list[dict[str, Any]]) -> tuple[str, str, list[str]]:
+def _validate(scenario_id: str, records: list[dict[str, Any]], *, partial: bool = False) -> tuple[str, str, list[str]]:
     manifest, text = _source(scenario_id)
     source_blocks = {b["id"]: b for b in _blocks(manifest, text)}
     grouped: dict[str, list[dict[str, Any]]] = {}
@@ -182,15 +210,40 @@ def _validate(scenario_id: str, records: list[dict[str, Any]]) -> tuple[str, str
                 raise ValueError(f"模板 {field} 格式錯誤")  # noqa: TRY004 - user input validation
         if not any(str(record.get(k, "")).strip() for k in ("public_text", "kp_text", "rule_text")):
             raise ValueError("模板記錄缺少中文內容")
+        if not isinstance(record.get("related_source_ids"), list) or any(
+            ref not in source_blocks for ref in record["related_source_ids"]
+        ):
+            raise ValueError("模板關聯來源不存在")
+        rules = record.get("rules")
+        if not isinstance(rules, list):
+            raise ValueError("模板缺少結構化規則")  # noqa: TRY004 - user import validation
+        if record["rule_text"].strip() and not rules:
+            raise ValueError("規則摘要必須附上欄位與逐項原文引述")
+        for rule in rules:
+            if not isinstance(rule, dict) or not rule or set(rule) - set(_RULE_FIELDS):
+                raise ValueError("規則欄位無效")
+            for evidence in rule.values():
+                if not isinstance(evidence, dict) or not isinstance(evidence.get("text"), str) or not evidence["text"].strip():
+                    raise ValueError("規則缺少翻譯文字")
+                quote = evidence.get("source_quote")
+                if not isinstance(quote, str) or not quote.strip() or quote not in block["text"]:
+                    raise ValueError("規則原文引述無法定位")
+                numbers = lambda text: Counter(x.casefold() for x in _NUMBER.findall(text))
+                if numbers(quote) != numbers(evidence["text"]):
+                    raise ValueError("規則欄位數值與其原文引述不符")
         grouped.setdefault(source_id, []).append(record)
     missing = set(source_blocks) - set(grouped)
-    if missing:
+    if missing and not partial:
         raise ValueError(f"模板漏掉 {len(missing)} 個來源區塊")
+    if any(len(items) != 1 for items in grouped.values()):
+        raise ValueError("每個來源單元必須完整對應一筆記錄")
     issues: list[str] = []
     for source_id, block in source_blocks.items():
+        if source_id not in grouped:
+            continue
         translated = " ".join(str(r.get(k, "")) for r in grouped[source_id]
                               for k in ("public_text", "kp_text", "rule_text"))
-        absent = set(_NUMBER.findall(block["text"])) - set(_NUMBER.findall(translated))
+        absent = {n.casefold() for n in _NUMBER.findall(block["text"])} - {n.casefold() for n in _NUMBER.findall(translated)}
         if absent:
             issues.append(f"{source_id} 數值未對齊：{', '.join(sorted(absent)[:10])}")
         if _NEGATIVE.search(block["text"]) and not re.search(r"不|無|未|非|禁止|不能", translated):
@@ -200,7 +253,7 @@ def _validate(scenario_id: str, records: list[dict[str, Any]]) -> tuple[str, str
     return manifest["content_hash"], _chapter_hash(manifest), issues
 
 
-def _generate_sync(scenario_id: str, source_hash: str, chapter_hash: str) -> str:
+async def _generate(scenario_id: str, source_hash: str, chapter_hash: str) -> str:
     provider = _PROVIDERS.get(LLM_PROVIDER)
     if provider is None:
         raise RuntimeError("未設定可用的 LLM_PROVIDER")
@@ -208,36 +261,52 @@ def _generate_sync(scenario_id: str, source_hash: str, chapter_hash: str) -> str
     if manifest["content_hash"] != source_hash or _chapter_hash(manifest) != chapter_hash:
         raise ValueError("劇本已重新解析，請重新排程")
     records: list[dict[str, Any]] = []
+    units = _blocks(manifest, text)
     glossary: dict[str, str] = {}
-    for block in _blocks(manifest, text):
-        response = provider.analyze_text(
-            block["text"], _TOOL,
-            "把這一個劇本來源區塊完整翻成繁體中文。可拆成多筆有意義的場景、線索、規則、NPC 或事件記錄，"
-            "但不可略過內容、補造規則或改寫骰式/數值/否定條件。公開描述與 KP 秘密分欄；"
-            "所有輸出欄位用繁體中文，原文姓名可保留在 aliases。"
-            f"來源 ID：{block['id']}；頁碼：{block['page']}。"
-            f"已確認術語對照：{json.dumps(glossary, ensure_ascii=False)[:1500]}。",
+    for block in units:
+        current, _ = _source(scenario_id)
+        if current["content_hash"] != source_hash or _chapter_hash(current) != chapter_hash:
+            raise ValueError("來源已變更；停止舊版生成")
+        if len(block["text"]) > 16000:
+            raise ValueError(f"{block['id']} 超出完整單元預算；請 KP 整理標題或手動匯入，不自動切斷規則")
+        checkpoint_key = json.dumps([scenario_id, source_hash, chapter_hash, _GENERATOR_VERSION, block["id"]])
+        saved = db.get_json("scenario_template_checkpoints", checkpoint_key)
+        if saved is not None:
+            _validate(scenario_id, [saved], partial=True)
+            records.append(saved)
+            for alias in saved.get("aliases", []):
+                glossary.setdefault(alias, saved["name"])
+            continue
+        prompt = (
+            "把整個來源單元忠實翻為繁體中文，records 必須恰好一筆。保留所有段落、條件、否定、數值與例外。"
+            "public_text 僅含可公開內容；kp_text 含完整秘密翻譯；rule_text 為規則摘要。"
+            "rules 每個非空 trigger/check/success/failure/exceptions 欄位都需 text 翻譯及逐字 source_quote。"
+            "原文沒寫的欄位省略，不推導規則。related_source_ids 只填已知的來源 ID，未知則留空。"
+            f"來源 {block['id']}，標題 {block['heading']}，頁碼 {block['pages']}。"
+            f"同章來源目錄：{json.dumps([{'id': u['id'], 'heading': u['heading']} for u in units if u['chapter_id'] == block['chapter_id']], ensure_ascii=False)}"
+            f"已確認術語：{json.dumps(glossary, ensure_ascii=False)[:1500]}"
         )
+        if LLM_PROVIDER == "openai":
+            response = await openai_provider.analyze_text_background(block["text"], _TOOL, prompt)
+        else:
+            response = await asyncio.to_thread(provider.analyze_text, block["text"], _TOOL, prompt)
         items = (response or {}).get("records")
-        if not isinstance(items, list) or not items:
-            raise RuntimeError(f"{block['id']} 翻譯未產生記錄")
-        for index, item in enumerate(items, 1):
-            if not isinstance(item, dict):
-                raise RuntimeError(f"{block['id']} 記錄格式錯誤")  # noqa: TRY004 - provider output
-            visibility = "kp_only" if str(item.get("kp_text", "")).strip() and not str(item.get("public_text", "")).strip() else "public"
-            records.append({"id": f"{block['id']}-r{index}", "source_id": block["id"],
-                            "page": block["page"], "chapter_id": block["chapter_id"],
-                            "visibility": visibility, "type": str(item.get("type", "scene")),
-                            "name": str(item.get("name", "")), "aliases": item.get("aliases") or [],
-                            "public_text": str(item.get("public_text", "")),
-                            "kp_text": str(item.get("kp_text", "")),
-                            "rule_text": str(item.get("rule_text", "")),
-                            "keywords": item.get("keywords") or [],
-                            "uncertainty": str(item.get("uncertainty", "")),
-                            "source_excerpt": block["text"][:900]})
-            for alias in records[-1]["aliases"]:
-                if isinstance(alias, str) and alias.strip():
-                    glossary.setdefault(alias, records[-1]["name"])
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            raise ValueError(f"{block['id']} 必須產生一筆完整記錄")
+        item = items[0]
+        record = {**item, "id": f"{block['id']}-r1", "source_id": block["id"],
+                  "page": block["page"], "source_pages": block["pages"], "chapter_id": block["chapter_id"],
+                  "visibility": "kp_only" if not str(item.get("public_text", "")).strip() else "public",
+                  "source_excerpt": block["text"], "source_heading": block["heading"]}
+        _validate(scenario_id, [record], partial=True)
+        current, _ = _source(scenario_id)
+        if current["content_hash"] != source_hash or _chapter_hash(current) != chapter_hash:
+            raise ValueError("來源已變更；不保存舊版 checkpoint")
+        records.append(record)
+        db.set_json("scenario_template_checkpoints", checkpoint_key, record)
+        for alias in record.get("aliases", []):
+            if isinstance(alias, str):
+                glossary.setdefault(alias, str(record.get("name", "")))
     _, _, issues = _validate(scenario_id, records)
     return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="generated")
 
@@ -251,7 +320,8 @@ async def _run_job(scenario_id: str, source_hash: str, chapter_hash: str) -> Non
             db.set_json("scenario_template_jobs", scenario_id,
                         {"status": "processing", "source_hash": source_hash, "chapter_hash": chapter_hash})
             try:
-                variant_id = await asyncio.to_thread(_generate_sync, scenario_id, source_hash, chapter_hash)
+                started = time.monotonic()
+                variant_id = await _generate(scenario_id, source_hash, chapter_hash)
             except Exception as exc:  # noqa: BLE001 - background job must record provider failures
                 if _tasks.get(scenario_id) is current_task:
                     db.set_json("scenario_template_jobs", scenario_id,
@@ -261,7 +331,8 @@ async def _run_job(scenario_id: str, source_hash: str, chapter_hash: str) -> Non
                 if _tasks.get(scenario_id) is current_task:
                     db.set_json("scenario_template_jobs", scenario_id,
                                 {"status": "review_required", "source_hash": source_hash,
-                                 "chapter_hash": chapter_hash, "variant_id": variant_id})
+                                 "chapter_hash": chapter_hash, "variant_id": variant_id,
+                                 "duration_seconds": time.monotonic() - started})
     finally:
         if _tasks.get(scenario_id) is current_task:
             _tasks.pop(scenario_id, None)
@@ -277,6 +348,8 @@ def queue_generation(scenario_id: str) -> bool:
             scenario_id in _tasks and not _tasks[scenario_id].done()):
         return False
     if any(v.get("source_hash") == source_hash and v.get("chapter_hash") == chapter_hash
+           and v.get("schema_version") == _VERSION
+           and v.get("generator_version") == _GENERATOR_VERSION
            and v.get("review_status") in ("review_required", "approved")
            for v in _all_variants(scenario_id)):
         return False
@@ -294,6 +367,8 @@ def resume_pending_jobs() -> None:
                 saved = next((v for v in _all_variants(scenario_id)
                               if v.get("source_hash") == job.get("source_hash")
                               and v.get("chapter_hash") == job.get("chapter_hash")
+                              and v.get("schema_version") == _VERSION
+                              and v.get("generator_version") == _GENERATOR_VERSION
                               and v.get("review_status") in ("review_required", "approved")), None)
                 if saved is not None:
                     db.set_json("scenario_template_jobs", scenario_id,
@@ -313,7 +388,9 @@ def status(scenario_id: str) -> dict[str, Any]:
         job = {**job, "status": "stale"}
     return {"job": job,
             "variants": [{**v, "current": v.get("source_hash") == manifest["content_hash"]
-                          and v.get("chapter_hash") == _chapter_hash(manifest)}
+                          and v.get("chapter_hash") == _chapter_hash(manifest)
+                          and v.get("schema_version") == _VERSION
+                          and v.get("generator_version") == _GENERATOR_VERSION}
                          for v in _all_variants(scenario_id)]}
 
 
@@ -324,17 +401,23 @@ def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], li
     records = scenario_library._read_json(path / "records.json", None)
     if not isinstance(variant, dict) or not isinstance(records, list):
         raise FileNotFoundError(variant_id)
+    if variant.get("schema_version") != _VERSION or variant.get("generator_version") != _GENERATOR_VERSION:
+        raise ValueError("模板結構版本已過期，請重新產生或匯入校對")
     if variant.get("chapter_hash") != _chapter_hash(manifest):
         raise ValueError("中文模板章節版本已過期")
     return variant, records
 
 
-def approve(scenario_id: str, variant_id: str) -> None:
+def approve(scenario_id: str, variant_id: str, *, reviewer_id: str) -> None:
     variant, records = _read_variant(scenario_id, variant_id)
     _, _, issues = _validate(scenario_id, records)
     if issues:
         raise ValueError("尚有翻譯疑點：" + "；".join(issues[:3]))
+    if not reviewer_id:
+        raise ValueError("核准必須記錄校對者")
     variant["review_status"] = "approved"
+    variant["reviewed_by"] = reviewer_id
+    variant["reviewed_at"] = datetime.now(timezone.utc).isoformat()
     path = _variant_dir(scenario_id, variant["source_hash"], variant_id) / "manifest.json"
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(variant, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -366,11 +449,11 @@ def import_markdown(scenario_id: str, filename: str) -> str:
         raise ValueError("匯入模板的來源或章節版本已過期")
     source_blocks = {b["id"]: b for b in _blocks(*_source(scenario_id))}
     for record in records:
-        record["source_excerpt"] = source_blocks[record["source_id"]]["text"][:900]
+        record["source_excerpt"] = source_blocks[record["source_id"]]["text"]
     return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="manual")
 
 
-def preview(scenario_id: str, variant_id: str, limit: int = 1800) -> str:
+def preview(scenario_id: str, variant_id: str, limit: int = 1700, page: int = 1) -> str:
     variant, records = _read_variant(scenario_id, variant_id)
     lines = [f"模板 {variant_id}（{variant['review_status']}）"]
     if variant.get("issues"):
@@ -381,13 +464,14 @@ def preview(scenario_id: str, variant_id: str, limit: int = 1800) -> str:
             chapter = record["chapter_id"]
             lines.append(f"【{chapter}】")
         lines.append(f"{record['type']}｜第 {record['page']} 頁｜{record['source_id']}：{record['name']} "
-                     f"[{record['visibility']}]\n{record.get('public_text') or record.get('kp_text') or record.get('rule_text')}")
+                     f"[{record['visibility']}]\n" + json.dumps({k: record.get(k) for k in ('public_text', 'kp_text', 'rules', 'rule_text', 'source_excerpt')}, ensure_ascii=False))
         if record.get("uncertainty"):
             lines.append(f"待釐清：{record['uncertainty']}")
-        if sum(map(len, lines)) > limit:
-            lines.append("…其餘內容請開啟劇本庫中的 template.md 校對。")
-            break
-    return "\n".join(lines)[:limit]
+    content = "\n".join(lines)
+    pages = max(1, (len(content) + limit - 1) // limit)
+    if page < 1 or page > pages:
+        raise ValueError(f"預覽頁碼應為 1–{pages}")
+    return f"校對預覽 {page}/{pages}；preview 可加頁碼查看完整原文與翻譯。\n" + content[(page - 1) * limit:page * limit]
 
 
 def _pref_key(group_id: str, scenario_id: str) -> str:
@@ -440,7 +524,7 @@ def index_for_state(state: Any) -> scenario_rag.ScenarioIndex:
                 if selected:
                     digest = hashlib.sha256(json.dumps(
                         [scenario_id, variant["source_hash"], variant["chapter_hash"],
-                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, "record-v1"],
+                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, "record-v2"],
                         ensure_ascii=False).encode("utf-8")).hexdigest()
                     return scenario_rag.get_record_index(f"template:{scenario_id}:{digest}", selected)
         except (FileNotFoundError, ValueError):
@@ -469,6 +553,9 @@ def clean_scenario(scenario_id: str) -> None:
         task.cancel()
     shutil.rmtree(_root() / scenario_id, ignore_errors=True)
     db.delete_json("scenario_template_jobs", scenario_id)
+    for key in db.list_keys("scenario_template_checkpoints"):
+        if json.loads(key)[0] == scenario_id:
+            db.delete_json("scenario_template_checkpoints", key)
     for key in db.list_keys("scenario_indexes"):
         if key.startswith(f"template:{scenario_id}:"):
             db.delete_json("scenario_indexes", key)

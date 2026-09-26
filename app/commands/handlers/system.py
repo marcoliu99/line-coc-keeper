@@ -256,11 +256,14 @@ async def handle_system_command(
                 await reply("只有 KP 可以管理中文劇本模板。")
                 return
             if len(parts) < 5:
-                await reply("用法：/coc scenario template status|preview|approve|import 劇本ID [版本或檔名]")
+                await reply("用法：/coc scenario template status|preview|approve|import|generate 劇本ID [版本或檔名]")
                 return
             operation, scenario_id = parts[3].casefold(), parts[4]
             try:
-                if operation == "status":
+                if operation == "generate":
+                    queued = scenario_templates.queue_generation(scenario_id)
+                    await reply("已排程中文模板生成，已完成的來源單元會重用。" if queued else "已有處理中或待校對模板。")
+                elif operation == "status":
                     info = scenario_templates.status(scenario_id)
                     variants = info["variants"]
                     lines = [f"中文模板工作：{info['job'].get('status', '尚未建立')}"]
@@ -276,16 +279,16 @@ async def handle_system_command(
                         lines.append(notice)
                     await reply("\n".join(lines))
                 elif operation == "preview" and len(parts) >= 6:
-                    await send_dm(user_id, scenario_templates.preview(scenario_id, parts[5]))
+                    await send_dm(user_id, scenario_templates.preview(scenario_id, parts[5], page=int(parts[6]) if len(parts) > 6 else 1))
                     await reply("中文模板預覽已私訊給 KP。")
                 elif operation == "approve" and len(parts) >= 6:
-                    scenario_templates.approve(scenario_id, parts[5])
+                    scenario_templates.approve(scenario_id, parts[5], reviewer_id=user_id)
                     await reply(f"中文模板 {parts[5]} 已通過校對，可用 /coc scenario use {scenario_id} {parts[5]} 啟用。")
                 elif operation == "import" and len(parts) >= 6:
                     variant_id = await asyncio.to_thread(scenario_templates.import_markdown, scenario_id, parts[5])
                     await reply(f"已匯入中文模板 {variant_id}；請先 status、preview 與 approve。")
                 else:
-                    await reply("用法：/coc scenario template status|preview|approve|import 劇本ID [版本或檔名]")
+                    await reply("用法：/coc scenario template status|preview|approve|import|generate 劇本ID [版本或檔名]")
             except (FileNotFoundError, ValueError, KeyError) as exc:
                 await reply(f"中文模板無法處理：{exc}")
             return
@@ -538,7 +541,7 @@ async def handle_system_command(
             scenario_templates.clean_scenario(parts[3])
             await reply("已清除劇本庫項目。")
             return
-        await reply("用法：/coc scenario list | use 劇本ID [模板版本] | template status|preview|approve|import | clean 劇本ID | reparse | cancel | import 檔名.pdf | merge ID...")
+        await reply("用法：/coc scenario list | use 劇本ID [模板版本] | template status|preview|approve|import|generate | clean 劇本ID | reparse | cancel | import 檔名.pdf | merge ID...")
         return
     if sub == "import":
         await _handle_local_import(conversation_id, user_id, reply, parts)

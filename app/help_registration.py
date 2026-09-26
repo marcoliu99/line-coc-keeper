@@ -57,6 +57,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("scenario", "newgame"), "scenario", "開始新遊戲", "重置群組狀態並開始新的一局。", ("/coc newgame",), command=("newgame",)),
         HelpEntry(("scenario", "list"), "scenario", "列出劇本庫", "查看可用劇本與目前使用中的劇本。", ("/coc scenario list",), ("/coc scenario list",), command=("scenario", "list")),
         HelpEntry(("scenario", "use"), "scenario", "選用劇本", "從劇本庫選擇劇本與已校對的中文模板版本。", ("/coc scenario use 劇本ID [模板版本]",), ("/coc scenario use abc123 zh-TW-123456789abc",), notes=("省略版本時沿用此群組對該劇本的選擇。",), kp_only=True, command=("scenario", "use")),
+        HelpEntry(("scenario", "template_generate"), "scenario", "產生中文模板", "產生或恢復來源單元翻譯。", ("/coc scenario template generate 劇本ID",), kp_only=True, command=("scenario", "template", "generate")),
         HelpEntry(("scenario", "template_status"), "scenario", "查看中文模板", "查看背景處理、版本與待核對項目。", ("/coc scenario template status 劇本ID",), kp_only=True, command=("scenario", "template", "status")),
         HelpEntry(("scenario", "template_preview"), "scenario", "預覽中文模板", "將模板的 KP 校對預覽傳送私訊。", ("/coc scenario template preview 劇本ID 模板版本",), kp_only=True, command=("scenario", "template", "preview")),
         HelpEntry(("scenario", "template_approve"), "scenario", "核准中文模板", "檢查來源與規則後核准模板供 RAG 使用。", ("/coc scenario template approve 劇本ID 模板版本",), kp_only=True, command=("scenario", "template", "approve")),
