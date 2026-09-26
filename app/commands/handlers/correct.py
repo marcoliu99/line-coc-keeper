@@ -11,9 +11,11 @@ import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app import db
 from app.legacy_commands import Reply
 from app.models import GroupState
 from app.repositories.group_state import load_state, save_state
+from app.services.narrative_corrections import target_receipt
 
 _MESSAGE_URL = re.compile(r"^https://(?:canary\.|ptb\.)?discord\.com/channels/\d+/\d+/(\d+)$")
 _MESSAGE_ID = re.compile(r"^\d{5,25}$")
@@ -21,7 +23,6 @@ _MAX_ISSUE_LENGTH = 500
 _MAX_RESOLUTION_LENGTH = 1000
 _MAX_PENDING_PER_GROUP = 12
 _MAX_PENDING_PER_REPORTER = 3
-_MAX_APPROVED_IN_STATE = 24
 _MAX_CLOSED_IN_STATE = 12
 
 
@@ -46,11 +47,21 @@ def _prune_adjudicated(state: GroupState) -> None:
     """Bound state size; approved decisions also remain in the canonical log."""
     approved = [item for item in state.narrative_corrections if item.get("status") == "approved"]
     closed = [item for item in state.narrative_corrections if item.get("status") in {"rejected", "withdrawn"}]
-    retained = {id(item) for item in approved[-_MAX_APPROVED_IN_STATE:] + closed[-_MAX_CLOSED_IN_STATE:]}
+    retained = {id(item) for item in approved + closed[-_MAX_CLOSED_IN_STATE:]}
     state.narrative_corrections[:] = [
         item for item in state.narrative_corrections
-        if item.get("status") == "pending" or id(item) in retained
+        if item.get("status") in {"pending", "superseded"} or id(item) in retained
     ]
+
+
+def _save(state: GroupState) -> None:
+    state.openai_previous_response_id = ""
+    state.openai_previous_response_timeline_id = ""
+    def archive(conn):
+        for record in state.narrative_corrections:
+            key = f"{state.group_id}:{record.get('timeline_id', '')}:{record['id']}"
+            db.set_json_tx(conn, "narrative_correction_archive", key, record)
+    save_state(state, reason="narrative_correction", mutate_tx=archive)
 
 
 async def handle_correct_command(
@@ -66,18 +77,43 @@ async def handle_correct_command(
     is_kp = is_keeper or bool(state.kp_assistant_user_id and state.kp_assistant_user_id == user_id)
     action = parts[2].casefold() if len(parts) > 2 else ""
 
+    if action == "supersede":
+        old = _find_report(state, parts[3]) if len(parts) == 5 else None
+        replacement = _find_report(state, parts[4]) if len(parts) == 5 else None
+        if not is_kp or old is None or replacement is None or old is replacement or old.get("status") != "approved" or replacement.get("status") != "approved":
+            await reply("只有 KP 可整併有效更正：/coc correct supersede <舊編號> <取代它的核准編號>")
+            return
+        old["status"] = "superseded"
+        old["superseded_by"] = replacement["id"]
+        _save(state)
+        await reply(f"更正 #{old['id']} 已由 #{replacement['id']} 取代；原紀錄保留。")
+        return
+
+    if action == "hold":
+        report = _find_report(state, parts[3]) if len(parts) >= 5 else None
+        scope = [x.strip() for x in " ".join(parts[4:]).split("|") if x.strip()]
+        if not is_kp or report is None or report.get("status") != "pending" or not scope or len(scope) > 8 or any(len(x) < 2 or len(x) > 80 for x in scope):
+            await reply("只有 KP 可標記待核對範圍：/coc correct hold <編號> <地點或實體名稱|別名>（每項 2–80 字，最多 8 項）")
+            return
+        report["hold_scope"] = scope
+        report["held_by"] = user_id
+        _save(state)
+        await reply("已標記核對範圍；符合指定名稱的行動與狀態工具將暫停。未列出的代稱不保證自動辨識。")
+        return
+
     if action == "list":
         visible = [
             item for item in _active_reports(state)
-            if item.get("status") == "pending" and (is_kp or item.get("reporter_id") == user_id)
+            if item.get("status") in {"pending", "approved"} and (is_kp or item.get("reporter_id") == user_id)
         ]
         if not visible:
             await reply("目前沒有可查看的待核對敘事異議。")
             return
         lines = ["待核對敘事異議："]
-        for item in visible[-10:]:
-            lines.append(f"#{item['id']}｜訊息 {item['target_message_id']}｜{item['issue']}")
-        await reply("\n".join(lines))
+        for item in visible:
+            lines.append(f"#{item['id']}｜{item['status']}｜訊息 {item['target_message_id']}｜{item.get('resolution') or item['issue']}")
+        for start in range(0, len(lines), 5):
+            await reply("\n".join(lines[start:start + 5]))
         return
 
     if action in {"approve", "reject", "withdraw"}:
@@ -121,7 +157,7 @@ async def handle_correct_command(
             state.openai_previous_response_id = ""
             state.openai_previous_response_timeline_id = ""
         _prune_adjudicated(state)
-        save_state(state, reason="narrative_correction")
+        _save(state)
         await reply(message)
         return
 
@@ -140,6 +176,16 @@ async def handle_correct_command(
 
     if not state.timeline_id:
         state.timeline_id = f"timeline-{uuid4().hex[:8]}"
+
+    if not referenced_message_id and len(parts) > 2 and parts[2].startswith("https://"):
+        channel_id = parts[2].split("/")[-2]
+        if conversation_id != f"discord-channel-{channel_id}":
+            await reply("訊息連結必須屬於目前頻道。")
+            return
+    receipt = target_receipt(state, target)
+    if receipt is None:
+        await reply("無法確認目標是本頻道、目前時間線的 Keeper 訊息。請回覆可追溯的新訊息；舊訊息可由 KP 使用既有主持修正流程處理。")
+        return
 
     for item in _active_reports(state):
         if (
@@ -169,7 +215,9 @@ async def handle_correct_command(
         "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "timeline_id": state.timeline_id,
+        "conversation_id": conversation_id,
+        "target_receipt": receipt,
     }
     state.narrative_corrections.append(report)
-    save_state(state, reason="narrative_correction")
+    _save(state)
     await reply(f"已收到敘事糾正提報 #{report['id']}，待核對。提報不會改寫劇情或觸發遊戲行動。")

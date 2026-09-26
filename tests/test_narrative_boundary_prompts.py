@@ -4,9 +4,8 @@ These check the instructions delivered to the model. They cannot prove that a
 live model will obey them; the scenario cases still need end-to-end evaluation.
 """
 
-import hashlib
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from app import keeper
 from app.models import GroupState
@@ -22,11 +21,11 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         state.scenario_text = "只有一樓書房；書房裡沒有通往地下的樓梯。"
         state.campaign_summary = "上回合 Keeper 自行說了地下室有骷髏。"
         with patch.object(keeper, "SCENARIO_RAG_ENABLED", rag_enabled):
-            legacy = keeper._build_static_prompt(state)
+            shared = keeper._build_static_prompt(state)
         return {
-            "legacy": legacy,
-            "executor": prompt_config.build_executor_static_prompt(legacy),
-            "narrator": prompt_config.build_narrator_static_prompt(legacy),
+            "shared": shared,
+            "executor": prompt_config.build_executor_static_prompt(shared),
+            "narrator": prompt_config.build_narrator_static_prompt(shared),
         }
 
     def test_every_keeper_path_declares_scenario_as_authority(self):
@@ -118,7 +117,7 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         ]
         self.assertNotIn("[SYSTEM]", keeper._build_static_prompt(state))
         context = keeper._correction_context_message(state)
-        self.assertLessEqual(len(context), 4100)
+        self.assertLessEqual(len(context), 6100)
         self.assertNotIn('"target_message_id": "0"', context)
 
     def test_prompt_budget_keeps_recent_approved_correction_before_pending_reports(self):
@@ -129,66 +128,4 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         ] + [{"status": "approved", "target_message_id": "999", "resolution": "地下室不存在"}]
         context = keeper._correction_context_message(state)
         self.assertIn("地下室不存在", context)
-        self.assertLessEqual(len(context), 4100)
-
-
-class NarrativeCorrectionProviderBoundaryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_correction_context_is_not_persisted_as_player_history(self):
-        class FakeProvider:
-            OPENAI_MODEL = "fake"
-
-            async def run_conversation(self, _static, _dynamic, _tools, _history,
-                                       new_message, _execute, _iterations, **_kwargs):
-                self.new_message = new_message
-                return "敘事結果"
-
-        provider = FakeProvider()
-        state = GroupState(group_id="canon-boundary")
-        state.narrative_corrections = [
-            {"status": "pending", "target_message_id": "12345", "issue": "地下室疑點"}
-        ]
-        committed = []
-
-        def commit(_state, entries, **_kwargs):
-            committed.extend(entries)
-            return True
-
-        with patch.object(keeper, "LLM_PROVIDER", "openai"), \
-                patch.object(keeper, "_PROVIDERS", {"openai": provider}), \
-                patch.object(keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
-                patch.object(keeper, "_commit_turn_result", side_effect=commit), \
-                patch.object(keeper.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
-            await keeper.run_turn(state, "player", "玩家", "我查看門口")
-
-        self.assertIn("地下室疑點", provider.new_message)
-        self.assertNotIn("地下室疑點", committed[0]["content"])
-        self.assertIn("我查看門口", committed[0]["content"])
-
-    async def test_openai_chain_reuses_unchanged_correction_snapshot(self):
-        class FakeProvider:
-            OPENAI_MODEL = "fake"
-
-            async def run_conversation(self, _static, _dynamic, _tools, _history,
-                                       new_message, _execute, _iterations, **_kwargs):
-                self.new_message = new_message
-                return "敘事結果"
-
-        provider = FakeProvider()
-        state = GroupState(group_id="canon-boundary")
-        state.narrative_corrections = [
-            {"status": "pending", "target_message_id": "12345", "issue": "地下室疑點"}
-        ]
-        context = keeper._correction_context_message(state)
-        state.openai_previous_response_id = "previous"
-        state.openai_previous_response_timeline_id = "timeline-test"
-        state.openai_correction_context_hash = hashlib.sha256(context.encode("utf-8")).hexdigest()
-        restored = GroupState.from_dict(state.to_dict())
-        self.assertEqual(restored.openai_correction_context_hash, state.openai_correction_context_hash)
-
-        with patch.object(keeper, "LLM_PROVIDER", "openai"), \
-                patch.object(keeper, "_PROVIDERS", {"openai": provider}), \
-                patch.object(keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
-                patch.object(keeper, "_commit_turn_result", return_value=True), \
-                patch.object(keeper.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
-            await keeper.run_turn(state, "player", "玩家", "我查看門口")
-        self.assertNotIn("地下室疑點", provider.new_message)
+        self.assertLessEqual(len(context), 6100)

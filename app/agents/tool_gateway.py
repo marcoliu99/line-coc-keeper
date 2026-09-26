@@ -80,6 +80,11 @@ def make_tool_executor(
     """
 
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        from app.services.narrative_corrections import blocking_reply
+        if tool_name not in keeper.READ_ONLY_TOOL_NAMES:
+            blocked = blocking_reply(state, tool_input)
+            if blocked:
+                return {"ok": False, "error": "narrative_correction_hold", "message": blocked}
         observability.increment_metric("tool_call_count")
         with observability.span(
             "llm.tool",
@@ -146,21 +151,57 @@ _CHECK_REGISTRATION_TOOLS = frozenset({
 
 
 def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[str, Any]) -> None:
-    """Track player-check state from actual tool results for Narrator policy."""
+    """Track player-check state from actual tool results for Narrator policy.
+
+    Keep the pending/resolved distinction structured: a failed tool call does
+    not resolve or create a check, and a roll awaiting Luck is not a final
+    outcome.
+    """
     if tool_name in _CHECK_REGISTRATION_TOOLS:
         status["tool_called"] = True
         if result.get("ok") and result.get("pending") is True:
             status["pending"] = {
                 key: result[key]
-                for key in ("investigator", "skill", "skill_value", "difficulty", "options")
+                for key in (
+                    "investigator", "skill", "skill_value", "difficulty", "options",
+                    "check_id", "timeline_id",
+                )
                 if key in result
             }
+            status["pending_luck"] = None
+            status["resolved"] = None
+        elif result.get("ok") and result.get("pending_luck") is True:
+            status["pending"] = None
+            status["pending_luck"] = {
+                "investigator": result.get("investigator"),
+                "skill_name": result.get("skill_name", result.get("skill")),
+                "skill_value": result.get("value", result.get("skill_value")),
+                "difficulty": result.get("difficulty"),
+                "roll": result.get("roll"),
+                "original_tier": result.get("original_tier", result.get("tier")),
+                "options": result.get("options", result.get("luck_options", [])),
+                **{
+                    key: result[key]
+                    for key in ("decision_id", "check_id", "timeline_id", "action_context")
+                    if key in result
+                },
+            }
+            status["resolved"] = None
         elif result.get("ok") and result.get("resolved") is True:
             status["pending"] = None
-            status["resolved"] = True
+            status["pending_luck"] = None
+            status["resolved"] = {
+                key: result[key]
+                for key in (
+                    "investigator", "skill", "skill_value", "difficulty", "roll", "tier",
+                    "required_tier", "success", "check_id", "timeline_id",
+                )
+                if key in result
+            }
     elif tool_name == "clear_pending_check" and result.get("ok") and result.get("cleared"):
         status["tool_called"] = True
         status["pending"] = None
+        status["pending_luck"] = None
         status["cleared"] = True
 
 

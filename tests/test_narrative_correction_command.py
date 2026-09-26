@@ -19,6 +19,12 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
         self.save_state = save_patch.start()
         self.addCleanup(load_patch.stop)
         self.addCleanup(save_patch.stop)
+        receipt_patch = patch.object(router.correct_handler, "target_receipt", side_effect=lambda state, target: {
+            "conversation_id": state.group_id, "timeline_id": state.timeline_id,
+            "message_id": target, "excerpt": "Keeper narration",
+        })
+        receipt_patch.start()
+        self.addCleanup(receipt_patch.stop)
 
     def test_correct_is_a_known_coc_command(self):
         self.assertTrue(router.is_known_coc_command("correct"))
@@ -133,7 +139,7 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
             {"id": f"a{index}", "status": "approved"} for index in range(40)
         ]
         correct._prune_adjudicated(self.state)
-        self.assertEqual(len(self.state.narrative_corrections), 36)
+        self.assertEqual(len(self.state.narrative_corrections), 52)
         self.assertEqual(self.state.narrative_corrections[-1]["id"], "a39")
 
     async def test_only_kp_can_approve_and_approval_survives_serialization(self):

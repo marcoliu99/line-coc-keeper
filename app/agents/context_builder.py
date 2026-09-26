@@ -14,6 +14,7 @@ from app.config import (
 )
 from app.domain.models import AgentMessage
 from app.models import GroupState
+from app.services import narrative_corrections
 
 _logger = logging.getLogger(__name__)
 
@@ -244,6 +245,7 @@ async def build_context(
         "memory_context": memory_context,
         "rag_status": rag_status,
         "memory_status": memory_status,
+        "correction_context": narrative_corrections.projection(state)[0],
     }
 
     return AgentMessage(payload=payload)

@@ -36,7 +36,7 @@
 
 玩家描述行動或要求鑑定，Keeper 選擇技能與難度並建立待處理檢定；預設由玩家
 按 Discord 按鈕或輸入 `/coc check` 觸發 deterministic dice engine。結果回傳給
-Keeper 敘事。建角時的 LUCK 仍是玩家自己的 `/coc luck roll`。
+Keeper 敘事。預製角色卡的 LUCK 若仍空白，才由玩家自己輸入 `/coc luck roll`。
 
 - `skill_check`／`sanity_check` 預設只建立 pending，不立即擲角色骰；玩家完成 `/coc check` 後才回傳擲骰值、成功等級、success 與狀態變更。
 - `/coc autoroll` 預設是 off；任何玩家都可以用 `/coc autoroll on|off` 切換群組設定。
@@ -44,7 +44,7 @@ Keeper 敘事。建角時的 LUCK 仍是玩家自己的 `/coc luck roll`。
 - `offer_check_choice`／`offer_npc_attack_defense_choice` 先等待玩家選擇互斥選項；玩家按按鈕或輸入
   `/coc check <選項名稱>` 後，預設仍由玩家觸發所選技能的骰。
 - Keeper 收到結果後直接敘事，不能自己重骰或改判；沒有待處理檢定時，不要自行替玩家建立隱藏骰局。
-- 例外：建角 LUCK 仍由玩家明確輸入 `/coc luck roll`；`roll_dice`（NPC、道具/傷害骰）仍由 Keeper 直接呼叫。
+- 例外：預製角色卡的 LUCK 空白時，由玩家明確輸入 `/coc luck roll`；卡面有值則直接沿用。`roll_dice`（NPC、道具/傷害骰）仍由 Keeper 直接呼叫。
 - **難度等級**：`skill_check` 的 `difficulty` 參數（`hard`／`extreme`）——對手技能/屬性 ≥50 或任務本身很困難就要設 `hard`，≥90 或接近人類極限設 `extreme`；設了之後玩家一定要擲到那個等級（含）以上才算過，只達到較低等級一律算失敗。跟 `bonus_dice`/`penalty_dice`（角色手氣/環境優劣）是兩回事，可以同時使用。
 
 細節見 `docs/references/rules_reference.md`。

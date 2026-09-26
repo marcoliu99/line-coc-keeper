@@ -47,6 +47,47 @@ class PregenLuckRollTests(unittest.TestCase):
         restored = GroupState.from_dict(state.to_dict())
         self.assertEqual(restored.pending_pregen_luck, {"p1": "char-1"})
 
+    def test_corrected_pdf_blank_luck_does_not_reuse_old_pdf_value(self):
+        manual = {"source": "manual", "name": "A", "occupation": "醫生"}
+        old_pdf = {"source": "llm_extracted", "name": "A", "occupation": "醫生", "luck": 65}
+        merged = pregen_extractor._merge_pregens(manual, old_pdf)
+        self.assertEqual(merged["luck_origin"], "llm_extracted")
+        corrected_pdf = {"source": "llm_extracted", "name": "A", "occupation": "醫生"}
+        corrected = pregen_extractor._merge_pregens(merged, corrected_pdf)
+        self.assertNotIn("luck", corrected)
+        state = GroupState(group_id="g1", pregens=[corrected])
+        legacy_commands._claim_pregen(state, 0, "p1")
+        self.assertIn("p1", state.pending_pregen_luck)
+
+    def test_manual_luck_survives_corrected_pdf(self):
+        manual = {"source": "manual", "name": "A", "occupation": "醫生", "luck": 70}
+        old_pdf = {"source": "llm_extracted", "name": "A", "occupation": "醫生", "luck": 65}
+        merged = pregen_extractor._merge_pregens(manual, old_pdf)
+        corrected = pregen_extractor._merge_pregens(
+            merged, {"source": "llm_extracted", "name": "A", "occupation": "醫生"}
+        )
+        self.assertEqual(corrected["luck"], 70)
+        self.assertEqual(corrected["luck_origin"], "manual")
+
+    def test_new_blank_manual_card_clears_old_manual_luck(self):
+        old_manual = {"source": "manual", "name": "A", "occupation": "醫生", "luck": 70}
+        pdf = {"source": "llm_extracted", "name": "A", "occupation": "醫生"}
+        merged = pregen_extractor._merge_pregens(old_manual, pdf)
+        updated = pregen_extractor._merge_pregens(
+            merged, {"source": "manual", "name": "A", "occupation": "醫生"}
+        )
+        self.assertNotIn("luck", updated)
+
+    def test_new_blank_manual_card_uses_current_verified_pdf_luck(self):
+        old_manual = {"source": "manual", "name": "A", "occupation": "醫生", "luck": 70}
+        pdf = {"source": "llm_extracted", "name": "A", "occupation": "醫生", "luck": 65}
+        merged = pregen_extractor._merge_pregens(old_manual, pdf)
+        updated = pregen_extractor._merge_pregens(
+            merged, {"source": "manual", "name": "A", "occupation": "醫生"}
+        )
+        self.assertEqual(updated["luck"], 65)
+        self.assertEqual(updated["luck_origin"], "llm_extracted")
+
 
 class PregenPreviewTests(unittest.TestCase):
     def test_preview_labels_luck_and_caps_skills(self):
@@ -56,7 +97,7 @@ class PregenPreviewTests(unittest.TestCase):
         }
         text = legacy_commands._pregen_full_sheet_text(pregen, 1)
         self.assertIn("卡面 LUCK 65", text)
-        self.assertIn("玩家取用時重新骰定", text)
+        self.assertIn("選用時沿用", text)
         self.assertNotIn("LUCK 65\n", text)
         skill_line = next(line for line in text.splitlines() if line.startswith("主要技能："))
         shown = skill_line.removeprefix("主要技能：").split("、")
@@ -67,7 +108,7 @@ class PregenPreviewTests(unittest.TestCase):
         text = legacy_commands._pregen_full_sheet_text(
             {"name": "A", "occupation": "醫生", "str_": 50}, 1
         )
-        self.assertIn("玩家取用時骰定 LUCK", text)
+        self.assertIn("選用後由玩家擲骰", text)
 
 
 class ManualRoleSheetTests(unittest.TestCase):

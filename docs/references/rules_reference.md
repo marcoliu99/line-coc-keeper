@@ -7,7 +7,7 @@
 - **d100 技能/屬性檢定**：`dice.skill_check(skill_value, bonus_dice, penalty_dice)`，含大失敗/失敗/成功/困難/極難/大成功六級判定，`skill_value < 50 and roll >= 96` 才算大失敗（符合 RAW：50% 以上的技能大失敗門檻是 100 而不是 96-100）。
 - **獎勵骰/懲罰骰**：`dice.roll_percentile_with_dice_pool`，多顆骰取消規則（一顆獎勵抵一顆懲罰）有做，但**沒有**限制「正常最多一顆、極端狀況最多兩顆」這個軟上限——目前呼叫端（Keeper 的工具呼叫）想給幾顆就給幾顆，全靠提示詞自律。
 - **理智檢定**：`dice.sanity_check(current_san, loss_success, loss_failure)`，roll ≤ current_san 才算成功，這點是對的（跟一般技能檢定一樣，只是拿 SAN 值本身當門檻）。
-- **角色檢定所有權**：`skill_check`/`sanity_check` 預設只建立 pending，玩家用 `/coc check` 或 Discord 按鈕明確觸發後，程式才擲骰、判定並回傳 authoritative 結果。任何玩家可用 `/coc autoroll on|off` 選擇讓新的角色檢定由系統立即代擲；預設 off。建角 `/coc luck roll` 始終保留玩家擲 LUCK 的例外。
+- **角色檢定所有權**：`skill_check`/`sanity_check` 預設只建立 pending，玩家用 `/coc check` 或 Discord 按鈕明確觸發後，程式才擲骰、判定並回傳 authoritative 結果。任何玩家可用 `/coc autoroll on|off` 選擇讓新的角色檢定由系統立即代擲；預設 off。預製角色卡 LUCK 空白時，建角 `/coc luck roll` 仍只由玩家本人觸發；卡面有值則沿用。
 
 ## RAW 有寫、我們完全沒做的部分（落差清單）
 

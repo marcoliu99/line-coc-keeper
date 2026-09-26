@@ -114,8 +114,11 @@ def _normalize(term: str) -> str:
 def _load() -> dict:
     data = db.get_json(_TABLE, _KEY)
     if data is None:
+        # Lookups must stay read-only: character matching also runs inside
+        # state transactions, where a second connection cannot initialize
+        # this table without contending for the writer lock. _learn persists
+        # the initial dictionary when an alias is actually added.
         data = {k: dict(v) for k, v in _INITIAL.items()}
-        db.set_json(_TABLE, _KEY, data)
     return data
 
 

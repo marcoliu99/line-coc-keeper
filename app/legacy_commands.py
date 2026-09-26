@@ -46,6 +46,7 @@ from app import (
     scenario_rag,
 )
 from app import scene_map as scene_map_engine
+from app.agents import supervisor
 from app.check_identity import (
     effective_check_id,
     effective_decision_id,
@@ -59,6 +60,7 @@ from app.models import (
     Character,
     GroupState,
 )
+from app.repositories import manual_pregens
 from app.repositories.group_state import (
     clear_page_images,
     load_page_image,
@@ -331,6 +333,7 @@ async def handle_pdf_upload(
     file_name: str,
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
+    expected_revision: int | None = None,
 ) -> bool:
     """`reply` acknowledges the upload and `push` delivers the extracted result
     after the potentially long vision/OCR pass. Discord can pass the same
@@ -361,6 +364,17 @@ async def handle_pdf_upload(
     # SECOND upload's content instead, which is especially bad for "全新劇本"
     # (wipes map position, resets the LLM conversation thread).
     existing_state = load_state(conversation_id)
+    if expected_revision is not None and existing_state.state_revision != expected_revision:
+        await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
+        return False
+    previous_content_hash = ""
+    if existing_state.scenario_library_id:
+        try:
+            previous_content_hash = scenario_library.load_context(
+                existing_state.scenario_library_id
+            )["manifest"].get("content_hash", "")
+        except (FileNotFoundError, ValueError):
+            pass
     if existing_state.pending_pregen_luck:
         await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再處理新的劇本 PDF。")
         return False
@@ -394,6 +408,10 @@ async def handle_pdf_upload(
             # stale snapshot back would silently revert whatever changed.
             async with locks.get_conversation_lock(conversation_id):
                 state = load_state(conversation_id)
+                if expected_revision is not None and state.state_revision != expected_revision:
+                    scenario_library.discard_staged_upload(key)
+                    await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
+                    return False
                 if state.pending_scenario_upload is not None:
                     scenario_library.discard_staged_upload(key)
                     await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
@@ -453,6 +471,9 @@ async def handle_pdf_upload(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
+        if expected_revision is not None and state.state_revision != expected_revision:
+            await push("遊戲狀態已更新，這份 PDF 沒有套用；請重新開啟 Help 操作。")
+            return False
         # Do not expose the replacement PDF's images until the GM has chosen
         # new-versus-correction. The immutable library entry already contains
         # them; the selected two-chapter window is copied only on activation.
@@ -462,6 +483,7 @@ async def handle_pdf_upload(
             raced = False
             state.pending_pdf_upload = {
                 "scenario_id": scenario_id,
+                "previous_content_hash": previous_content_hash,
                 "text": text,
                 "title": library_context["manifest"]["title"],
                 "low_text_pages": low_text_pages,
@@ -478,10 +500,17 @@ async def handle_pdf_upload(
             confirmation_pending = True
         else:
             raced = False
+            old_pool = list(state.pregens)
             _apply_new_scenario(state, text, library_context["manifest"]["title"], extracted_index, page_maps, pregens)
             _install_library_context(state, scenario_id, library_context)
             _install_context_images(conversation_id, scenario_id, library_context)
-            save_state(state)
+            install_result: dict[str, bool] = {}
+            def install_first(conn):
+                manual_pregens.capture_legacy(conn, conversation_id, None, old_pool)
+                state.pregens, install_result["stale"] = manual_pregens.install_pool(
+                    conn, conversation_id, scenario_id, library_context, bind_unassigned=True,
+                )
+            save_state(state, mutate_tx=install_first)
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
     if raced:
@@ -501,7 +530,7 @@ async def handle_pdf_upload(
 
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
-    ))
+    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
     return True
 
 
@@ -521,6 +550,16 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
         save_state(state)
         return "這個待處理劇本庫項目已不存在，請重新上傳 PDF。"
     extracted_index = context["indexes"]
+    old_pool = list(state.pregens)
+    old_scenario_id = state.scenario_library_id or None
+    old_hash = ""
+    if old_scenario_id == scenario_id:
+        old_hash = pending.get("previous_content_hash", "")
+    elif old_scenario_id:
+        try:
+            old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
+        except (FileNotFoundError, ValueError):
+            pass
     if choice == "new":
         _apply_new_scenario(
             state, context["text"], context["manifest"]["title"], extracted_index,
@@ -539,11 +578,19 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     )
     _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
-    save_state(state)
+    install_result: dict[str, bool] = {}
+    def install_selected(conn):
+        manual_pregens.capture_legacy(conn, conversation_id, old_scenario_id, old_pool, old_hash)
+        claimed = [p for p in old_pool if p.get("claimed_by")] if choice != "new" else []
+        state.pregens, install_result["stale"] = manual_pregens.install_pool(
+            conn, conversation_id, scenario_id, context,
+            bind_unassigned=(old_scenario_id is None), claimed=claimed,
+        )
+    save_state(state, mutate_tx=install_selected)
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
         context["scene_maps"], extracted_index, len(state.pregens),
-    )
+    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "")
 
 async def resolve_pdf_upload_choice(
     conversation_id: str,
@@ -670,13 +717,39 @@ async def handle_role_sheet_upload(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
-        state.pregens, action = pregen_extractor.reconcile_pregen_into_pool(state.pregens, pregen)
-        save_state(state)
+        scenario_id = state.scenario_library_id or None
+        try:
+            context = scenario_library.load_context(scenario_id) if scenario_id else None
+        except (FileNotFoundError, ValueError):
+            context = None
+            scenario_id = None
+        old_pool = list(state.pregens)
+        result: dict[str, str] = {}
+        def save_manual(conn):
+            manual_pregens.capture_legacy(
+                conn, conversation_id, scenario_id, old_pool,
+                context["manifest"].get("content_hash", "") if context else "",
+            )
+            result["asset_id"], result["action"] = manual_pregens.store_upload(
+                conn, conversation_id, scenario_id, pregen, file_name,
+            )
+            if context and scenario_id:
+                claimed = [p for p in old_pool if p.get("claimed_by")]
+                state.pregens, _ = manual_pregens.install_pool(
+                    conn, conversation_id, scenario_id, context, claimed=claimed,
+                )
+            else:
+                state.pregens, _ = pregen_extractor.reconcile_pregen_into_pool(old_pool, pregen)
+        try:
+            save_state(state, mutate_tx=save_manual)
+        except ValueError as exc:
+            await reply(str(exc))
+            return
 
     name_note = f"「{pregen['name']}」" if pregen["name"] else "（姓名由玩家決定）"
-    action_note = {"added": "已新增", "replaced": "已更新", "merged": "已與現有角色比對成功，完成擇優融合"}[action]
+    action_note = "已更新" if result["action"] == "updated" else "已新增"
     await reply(
-        f"角色卡{action_note}：{name_note}，職業「{pregen['occupation']}」，"
+        f"角色卡{action_note}（資產 ID：{result['asset_id']}）：{name_note}，職業「{pregen['occupation']}」，"
         f"{len(pregen['skills'])} 項技能。用「/coc pregens」查看目前所有預製角色。"
     )
 
@@ -1219,8 +1292,35 @@ async def _finalize_check_result(
                 for field_name in resolved_event["state_before"]:
                     if field_name not in tracked_fields:
                         resolved_event["state_before"][field_name] = keeper_start[field_name]
-            keeper_reply, private_messages, image_requests = await keeper.run_turn(
-                fresh_state, user_id, fresh_char.name, keeper_context_message, resolved_location, "player"
+            resolved_check_context = None
+            if resolved_event is not None:
+                resolved_check_context = {
+                    key: resolved_event[key]
+                    for key in (
+                        "investigator", "skill", "skill_value", "roll", "difficulty",
+                        "outcome", "action_context", "check_id", "timeline_id",
+                    )
+                    if key in resolved_event
+                }
+            if resolved_check_context is None:
+                # Legacy snapshots can lack the structured event. The dice
+                # were still resolved by the deterministic transaction above;
+                # keep the follow-up type explicit and forbid another roll.
+                resolved_check_context = {
+                    "investigator": fresh_char.name,
+                    "outcome": roll_line,
+                    "action_context": context_note,
+                }
+            keeper_reply, private_messages, image_requests = await supervisor.run_turn(
+                state=fresh_state,
+                user_id=user_id,
+                display_name=fresh_char.name,
+                text=keeper_context_message,
+                resolved_location=resolved_location,
+                speaker_role="player",
+                conversation_id=conversation_id,
+                turn_kind="resolved_check_followup",
+                resolved_check_context=resolved_check_context,
             )
             if resolved_event is not None:
                 await asyncio.to_thread(
@@ -1761,7 +1861,7 @@ def _resolve_luck_decision_deterministically(
         # _build_check_narration can itself mutate char (e.g. appending "昏迷"/
         # "倒地" to status_tags for a failed major_wound_trigger check — see
         # its docstring), so save_state has to happen AFTER this call, not
-        # before it: keeper.run_turn's own state commit (_commit_turn_result)
+        # before it: the shared turn result commit (_commit_turn_result)
         # does a *fresh* load_state rather than persisting this same `state`
         # object, so any mutation made after an earlier save here would
         # otherwise be silently discarded.
@@ -2033,13 +2133,17 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
             raise ValueError("你已經認領過這位預製角色，不能重新骰定。")
         raise ValueError("這位角色已經被其他玩家選走了。")
 
-    char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era, luck=0)
+    sheet_luck = pregen_extractor.pregen_luck_value(pregen.get("luck"))
+    char = pregen_extractor.pregen_to_character(
+        pregen, user_id, era=state.era, luck=sheet_luck if sheet_luck is not None else 0,
+    )
     if custom_name:
         char.name = custom_name
     state.characters[user_id] = char
     state.set_active_character(user_id, char.character_id)
     pregen["claimed_by"] = user_id
-    state.pending_pregen_luck[user_id] = char.character_id
+    if sheet_luck is None:
+        state.pending_pregen_luck[user_id] = char.character_id
     return char
 
 
@@ -2092,10 +2196,11 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu"]
     labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU"}
     attr_line = " ".join(f"{labels[a]} {pregen[a]}" for a in attrs if isinstance(pregen.get(a), (int, float)))
-    if isinstance(pregen.get("luck"), (int, float)):
-        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {pregen['luck']}，玩家取用時重新骰定）"
-    elif attr_line:
-        attr_line += "（玩家取用時骰定 LUCK）"
+    sheet_luck = pregen_extractor.pregen_luck_value(pregen.get("luck"))
+    if sheet_luck is not None:
+        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {sheet_luck}，選用時沿用）"
+    else:
+        attr_line += f"{' ' if attr_line else ''}（LUCK 空白，選用後由玩家擲骰）"
     if attr_line:
         lines.append(attr_line)
     vitals = []

@@ -13,9 +13,9 @@ Keeper 必須能依劇本描寫環境、扮演 NPC、回應玩家行動並維持
 ## 現況與缺口
 
 - `app/services/prompt_config.py` 的 Narrator 指令已要求依劇本與機制結果敘述，禁止隨意發明關鍵線索、NPC、地點或真相。`docs/keeper_skill.md` 也要求一次只推進一個場景片段。
-- `app/agents/narrator.py` 沒有工具，收到劇本／記憶脈絡、權威角色狀態及 Executor 的結果後生成回覆。`app/agents/supervisor.py` 隨後依序執行 Guard、劇透字詞掃描及檢定一致性修正，才將回合文字寫入正式歷史。
+- `app/agents/narrator.py` 在一般回合沒有工具；檢定後續與開場後備使用限定工具。收到劇本／記憶脈絡、權威角色狀態及 Executor 的結果後生成回覆。`app/agents/supervisor.py` 隨後依序執行 Guard、劇透字詞掃描及檢定一致性修正，才將回合文字寫入正式歷史。
 - `app/agents/rule_validator.py` 的確定性驗證只抓系統外洩字眼與未閉合的 Markdown；`app/spoiler_policy.py` 的公開回覆掃描只對已收集到的敏感字詞做字面比對。這些檢查無法可靠判斷「擅自新增重要 NPC」「替玩家決定下一步」或「尚未達成條件卻跳場景」。
-- Executor 的工具可能在 Narrator 輸出前已改動權威狀態。若只在最終文字上設防，無法撤銷已執行的工具副作用。舊版 `app/keeper.py` 單一 Keeper 路徑也會產生公開敘事，不能只涵蓋 Agentic Supervisor。
+- Executor 的工具可能在 Narrator 輸出前已改動權威狀態。若只在最終文字上設防，無法撤銷已執行的工具副作用。所有玩家入口已統一至 Supervisor；獨立 KP Assistant 也必須取得相同更正資料。
 - `record_established_fact`／`record_clue` 目前檢查非空文字、visibility 與重複內容後便可保存；工具成功只證明「資料寫入成功」，不自動證明輸入內容符合劇本。未來若以這些記錄作正典來源，寫入前也須檢查來源，否則 AI 可先記錄自己編的密門，再引用該記錄繞過邊界。
 - 現有劇透防護處理「何時公開秘密」，但「能否宣稱一件新事情已發生」還需要另一份規則；兩者應共用事實來源，不應把所有新描述一律視為劇透。
 - `app/services/prompt_config.py` 已有 `EXECUTOR_SCENARIO_RAG_POLICY`，要求先重用本回合提供的 RAG 片段，缺少會影響判定的具體事實才補查。`app/keeper.py` 在 RAG 模式也要求查不到時不能憑典型 COC 劇本印象腦補。這兩段與既有劇情提示詞必須保留；新規則只補強「資料缺漏不等於創作許可」，不在每個回合固定增加一次 RAG 搜尋或另一個 LLM 審稿呼叫。現有 Guard 遇到既有驗證失敗時仍可能條件式呼叫 LLM 修復；必要的劇本補查也可能增加該回合往返，這兩種情況不受「不固定加審稿」影響。
@@ -65,7 +65,7 @@ Keeper 必須能依劇本描寫環境、扮演 NPC、回應玩家行動並維持
 
 「已確認不存在」和「目前檢索片段沒有提到」必須區分。若完整可用劇本／權威地圖已確認無地下室，可直說沒有地下室；若只是單次 RAG 沒命中，回覆**「目前無法確認有這個地點」**，不得憑檢索缺口斷言它不存在，也不能創造它或繼續探索其內部。只有該事實會影響當前判定時，沿用現有 `EXECUTOR_SCENARIO_RAG_POLICY` 補查；補查仍無證據就維持無法確認。不能為了所有地點詢問而固定多做一次搜尋。
 
-### 候選提示詞文字（供審閱，尚未寫入程式）
+### 共用提示詞政策（已實作）
 
 ```text
 【劇本正典邊界｜最高優先】
@@ -81,7 +81,7 @@ Keeper 必須能依劇本描寫環境、扮演 NPC、回應玩家行動並維持
 敘事合理性或玩家期待與劇本衝突時，劇本優先。已正式結算的狀態變化須繼續保持一致。
 ```
 
-這段是共用約束的候選文字，不取代現有 `EXECUTOR_SCENARIO_RAG_POLICY`、劇情節奏提示詞、Narrator 的機制事實提示或劇透／隱私政策。落地時需量測新增 token 與回合延遲，並確認 legacy Keeper 與 Agentic 路徑各自只注入一次。
+這段是共用約束的候選文字，不取代現有 `EXECUTOR_SCENARIO_RAG_POLICY`、劇情節奏提示詞、Narrator 的機制事實提示或劇透／隱私政策。落地時需量測新增 token 與回合延遲，並確認各個現行 agent 每次請求只注入一次。
 
 ## 待確認的邊界範圍
 
@@ -105,7 +105,7 @@ Keeper 可描述玩家已宣告行動的可見後果及必要的即時反應，�
 2. **沿用現有檢索路徑**：本回合已有足夠的劇本片段時直接重用；只有缺少會影響當前行動的具體事實才補查。不增加每回合固定 `search_scenario`、額外 LLM 驗證或第二次 Narrator 呼叫。檢索仍無法確認時，不能補造內容。
 3. **在狀態變更前設邊界**：若實測顯示提示詞仍會讓 Executor 擅自 `start_combat`、`add_npc_to_combat` 或建立重要事實，評估在對應工具入口檢查來源及當前條件。僅靠 Narrator 事後改字無法處理已落庫的副作用；不能用沒有證據的通用「世界元素偵測器」直接阻擋所有工具。
 4. **在敘事輸出前核對**：若仍出現文字憑空創造地點或敵人，評估是否有足夠結構化資訊做低成本檢查；沒有可靠依據時先保留未知或使用中性回覆，不設每回合額外 LLM 審稿。
-5. **兼顧兩條路徑**：Agentic Supervisor 與仍在使用的 `keeper.run_turn` 應套用同一政策定義；KP Assistant 的明確主持修正可新增／覆蓋事實，但應保留來源與範圍，不由一般玩家話語冒充。
+5. **兼顧兩條路徑**：Supervisor 下的 Executor、Narrator 與獨立 KP Assistant 應套用同一政策定義；KP Assistant 的明確主持修正可新增／覆蓋事實，但應保留來源與範圍，不由一般玩家話語冒充。
 
 第一階段優先低成本提示詞補強與真實案例驗證；若無法守住，再依具體失敗點補工具前置檢查或輸出檢查。純關鍵字無法可靠辨識「世界元素是否由劇本授權」，不列為唯一防線。
 
@@ -113,7 +113,7 @@ Keeper 可描述玩家已宣告行動的可見後果及必要的即時反應，�
 
 每筆提報綁定建立時的 `timeline_id`。切換劇本或重開時間線後，舊提報不能在新局列出、核准或送入 Keeper 敘事上下文；下一筆新局提報會清掉留在即時狀態的舊時間線紀錄。舊局已公開的更正仍保留於原遊戲紀錄。
 
-`GroupState.narrative_corrections` 保存獨立的提報紀錄，包括目標訊息、疑點、提報者、狀態、時間與 KP 的公開更正。舊存檔沒有此欄位時預設空清單。固定 system 規則要求 KP 核准更正優先於衝突的舊摘要及 Memory RAG；玩家疑點與 KP 裁定文字以有數量及字數上限的低信任回合資料傳入，不插入 system prompt，也不存入每回合正式玩家訊息。OpenAI 回應鏈已持有同一份更正快照時，後續回合不重複附上，快照改變才更新。每位玩家及每局的待審件數有上限；已拒絕、撤回及較舊的已核准紀錄從即時 state 清理，已核准的公開更正仍留在正式遊戲紀錄。不直接刪改玩家看過的舊訊息；若已改變角色數值或其他權威狀態，仍須 KP 另外檢視回溯或修正。`established_facts`、`known_clues` 與工具來源檢查屬實際情境測試後的第二階段候選，不能把舊劇情文字無條件升格為權威事實。
+`GroupState.narrative_corrections` 保存目前時間線的有效裁定與待核對提報；每次寫入同時以同一交易保存永久 archive。有效核准更正不按時間淘汰，只有 KP 明確 supersede 才失效。共用 context builder 將裁定以低信任的 user-role 資料提供給各 agent，不寫進普通玩家歷史。輸入預算不足時在模型及工具前明確暫停，不靜默刪除有效更正。具體介面、範圍限制與流程以本文最後的 Revised implementation contract 為準。
 
 現有 `docs/keeper_skill.md` 容許玩家帶有未登記但合理的日常小物，亦要求 Keeper 主動用既有 NPC 意圖和環境變化維持張力。使用者已確認保留日常小物及不影響劇情／機制的感官細節；例如普通筆、手帕、雨聲可依既有規則出現，但武器、解謎道具、逃生通道、敵人蹤跡與新線索不能藉「細節」名義補出。物品是否合理仍由現有年代、來源、負擔能力及合法性規則判斷；本規格不取代那些規則。
 
@@ -129,7 +129,7 @@ Keeper 可描述玩家已宣告行動的可見後果及必要的即時反應，�
 - 具體輸入、權威材料與期望結果列在 [劇情邊界情境測試案例](narrative_boundaries_eval_cases.md)；提示詞單元測試只驗證政策有進入各執行路徑，仍需用實際回合檢驗模型敘事與工具副作用。
 - 收集至少數個「本來應允許」與「確實越界」的真實回合，標記原始輸入、劇本可用片段、當時狀態、工具呼叫、輸出及期望的停點。優先包括「玩家找不存在的地下室／骷髏」「失敗檢定憑空冒出敵人」「NPC／線索由玩家猜測變成事實」。
 - 覆蓋：普通感官描寫、NPC 合理反應、未揭露線索、玩家尚未決定的選項、場景轉換、KP 明確改寫設定，以及沒有劇本可查的自由場次。
-- 分別驗證 Agentic 與舊版 Keeper 路徑；若涉及工具前置檢查，確認被拒絕時沒有部分狀態更新；若涉及輸出重寫，確認正式歷史只保存最終送出的文字。
+- 分別驗證一般回合、檢定後續、開場後備及独立 KP Assistant；若涉及工具前置檢查，確認被拒絕時沒有部分狀態更新；若涉及輸出重寫，確認正式歷史只保存最終送出的文字。
 - 模擬錯誤地點已公開、玩家已據此行動，以及舊訊息已進 `campaign_summary`／Memory RAG 的情況：更正後的下一輪不能重新宣稱該地點存在；已發生的玩家行動與工具副作用要分別處理，不靠刪除對話掩蓋。
 - 模擬玩家正確提報、錯誤提報、單次 RAG 無結果、已由 KP 改編劇本、多人在異議期間接續行動，以及涉劇透的更正；確認 `/coc correct` 在一般劇情訊息前分流，提報本身不進入 Supervisor／Executor、不擲骰、不觸發遊戲工具，待裁定內容不能成為新正典，確認後只有受影響的敘事與狀態被修正。另驗證回覆參照、明確訊息 ID、缺少或無效目標及重複送出指令的處理。
 - 比較修訂前後的工具呼叫次數、RAG 查詢次數、模型 iteration、額外 token 與回合延遲；不接受靠每回合多一輪 LLM 呼叫才達到的修正。並記錄越界率與誤擋率，再決定是否需要第二階段防線。
@@ -142,3 +142,44 @@ Keeper 可描述玩家已宣告行動的可見後果及必要的即時反應，�
 4. 不固定增加每回合 LLM 審稿的前提下，哪幾個真實案例最值得做對照試驗，判定提示詞補強是否足夠？
 5. **已決定：**本期由 KP 明確確認並發布更正，不讓 AI 單憑一次 RAG 命中或未命中自行裁定。
 6. **已決定：**玩家提報使用專用 `/coc correct`，於一般劇情訊息之前分流。可回覆目標訊息，或明確提供訊息 ID／連結；不把一般玩家話語當成提報指令。
+
+
+## Revised implementation contract (2026-09-27)
+
+This section supersedes the legacy Keeper, recency pruning, and implicit
+pending-dispute guarantees above. All production entry points use Supervisor
+and its independent Assistant. No retired Keeper entry is restored.
+
+* Approved corrections remain effective until explicitly superseded. Save each
+  report in `narrative_correction_archive` in the same transaction as group state.
+  Effective state records are never evicted by age. A 6,000-character projection
+  includes every effective decision and KP hold; if those exceed the budget,
+  stop before model/tool execution and ask the KP to consolidate with
+  `/coc correct supersede <old-id> <approved-replacement-id>`.
+* Context Builder supplies one correction projection to Executor, Narrator
+  (including resolved checks/opening), and Assistant. Assistant starts a fresh
+  provider chain when correction context is present. Correction data remains
+  user-role data and is not copied into ordinary player history.
+* Record bot output receipts by conversation/message ID, timeline, state revision,
+  available turn ID, and excerpt. Reports require a receipt for the current
+  timeline. Legacy messages without receipts use explicit KP canon commands;
+  never infer a historical message's timeline from its snowflake.
+* Player allegations do not automatically block gameplay. A KP may mark a pending
+  report with `/coc correct hold <id> <entity|alias>`. Supervisor checks the action
+  and resolved location; the shared gateway checks mutation arguments. These are
+  explicit name matches, not semantic proof or an alias-inference system.
+  Approval/rejection/withdrawal removes the hold. Unrelated actions continue.
+* Canon/source validation remains distinct from PR89 state validation. No general
+  semantic authorization claim is made from a successful tool receipt or source ID.
+
+Flow:
+
+    bot output -> timeline-bound receipt -> player report -> KP adjudication
+    -> transaction: state + permanent archive
+    -> common correction projection -> all live agents
+    -> scoped hold check -> tools -> PR89 validation -> narration
+
+Tests cover retained old decisions, budget overflow before effects, actual live
+agent provider inputs, explicit scope holds, archive persistence, target ownership
+and timeline isolation. No paid API benchmark is required for these deterministic
+contracts; model obedience remains a separate evaluation.

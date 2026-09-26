@@ -54,7 +54,7 @@ _logger = logging.getLogger(__name__)
 # user input.
 _TABLES = (
     "group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary",
-    "state_checkpoints", "scene_digests",
+    "state_checkpoints", "scene_digests", "manual_pregen_assets", "narrative_correction_archive", "narrative_message_receipts",
 )
 
 _SCHEMA = """

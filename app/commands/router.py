@@ -336,6 +336,7 @@ async def _handle_sudo_command(
     is_keeper: bool,
     allow_opaque_target: bool,
     post_turn_hook: PostTurnHook | None = None,
+    expected_revision: int | None = None,
 ) -> None:
     parsed, parse_error = sudo_policy.parse_sudo_command(
         parts, allow_opaque_target=allow_opaque_target
@@ -351,6 +352,8 @@ async def _handle_sudo_command(
         dispatch_status = "rejected"
         async with locks.get_keeper_priority_gate(conversation_id, is_kp=True), locks.get_conversation_lock(conversation_id):
             try:
+                if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                    return
                 dispatch_status = await _dispatch_sudo_locked(
                     conversation_id,
                     actor_user_id,
@@ -415,18 +418,27 @@ async def handle_text_message(
     allow_opaque_sudo_target: bool = False,
     *,
     post_turn_hook: PostTurnHook | None = None,
+    expected_revision: int | None = None,
     referenced_message_id: str | None = None,
 ) -> None:
     with observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
         await _handle_text_message_impl(
             conversation_id, user_id, get_display_name, reply, send_dm, send_image,
             send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
-            post_turn_hook, referenced_message_id,
+            post_turn_hook, expected_revision, referenced_message_id,
         )
 
 
 _QUEUE_ACK_DELAY_SECONDS = 10.0
 _QUEUE_ACK_MESSAGE = "🕒 守密人正在處理上一位調查員的行動，你的動作已排入佇列，請稍候……"
+
+
+async def _help_revision_matches(conversation_id: str, expected_revision: int | None, reply: Reply) -> bool:
+    """Validate a Help form under the command's existing conversation lock."""
+    if expected_revision is None or load_state(conversation_id).state_revision == expected_revision:
+        return True
+    await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
+    return False
 
 
 async def _delayed_queue_notice(reply: Reply) -> None:
@@ -532,6 +544,7 @@ async def _handle_text_message_impl(
     is_keeper: bool = False,
     allow_opaque_sudo_target: bool = False,
     post_turn_hook: PostTurnHook | None = None,
+    expected_revision: int | None = None,
     referenced_message_id: str | None = None,
 ) -> None:
     text = text.strip()
@@ -557,6 +570,7 @@ async def _handle_text_message_impl(
             is_keeper,
             allow_opaque_sudo_target,
             post_turn_hook,
+            expected_revision,
         )
         return
 
@@ -566,6 +580,8 @@ async def _handle_text_message_impl(
             return
         try:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                    return
                 await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
         finally:
             locks.release_check(conversation_id, user_id)
@@ -578,6 +594,8 @@ async def _handle_text_message_impl(
             return
         try:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                    return
                 if choice.casefold() == "roll":
                     await handle_pregen_luck_roll(conversation_id, user_id, reply)
                 else:
@@ -603,11 +621,15 @@ async def _handle_text_message_impl(
 
         if sub == "combat":
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                    return
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
         if sub in _CHARACTER_COMMANDS:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                    return
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
             return
 
@@ -622,12 +644,17 @@ async def _handle_text_message_impl(
                 "import", "merge", "reparse",
             }
             if is_long_scenario_operation:
+                async with locks.get_conversation_lock(conversation_id):
+                    if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                        return
                 await system_handler.handle_system_command(
                     conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
-                    is_keeper,
+                    is_keeper, expected_revision,
                 )
             else:
                 async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                    if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                        return
                     await system_handler.handle_system_command(
                         conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
                         is_keeper,
@@ -636,6 +663,8 @@ async def _handle_text_message_impl(
 
         if sub in _MAP_COMMANDS:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                    return
                 await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts)
             return
 

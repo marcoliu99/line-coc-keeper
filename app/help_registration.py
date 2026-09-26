@@ -42,7 +42,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("character", "retire"), "character", "退出目前角色", "解除目前角色的 active binding，但保留角色歷史資料。", ("/coc retire [角色名]",), ("/coc retire 小明",), command=("retire",)),
         HelpEntry(("check", "check"), "check", "技能或理智檢定", "預設由玩家用 /coc check 或按鈕擲骰；若群組開啟 autoroll，才由 Keeper/system 自動處理。", ("/coc check [技能或選項名稱]",), ("/coc check 閃避",), command=("check",)),
         HelpEntry(("check", "autoroll"), "check", "切換自動擲骰", "預設關閉；所有玩家都可以開啟或關閉本群組設定。", ("/coc autoroll on|off", "/coc autoroll"), ("/coc autoroll off",), command=("autoroll",)),
-        HelpEntry(("check", "luck"), "check", "Luck 擲骰與結果選擇", "選角後由玩家擲 LUCK；一般檢定只要有付得起的升級選項，就可以選擇是否花費 Luck 買到更好的結果。", ("/coc luck roll", "/coc luck skip|regular|hard|extreme"), ("/coc luck roll",), command=("luck",)),
+        HelpEntry(("check", "luck"), "check", "Luck 擲骰與結果選擇", "預製角色卡的 LUCK 空白時由玩家擲定；卡面有值則沿用。一般檢定可選擇是否花 Luck 買到更好的結果。", ("/coc luck roll", "/coc luck skip|regular|hard|extreme"), ("/coc luck roll",), command=("luck",)),
         HelpEntry(("combat", "start"), "combat", "開始戰鬥", "依 DEX 建立戰鬥先攻順位。", ("/coc combat start",), command=("combat", "start")),
         HelpEntry(("combat", "addnpc"), "combat", "加入敵人", "將 NPC／敵人加入目前戰鬥。", ("/coc combat addnpc 名稱 DEX HP",), command=("combat", "addnpc")),
         HelpEntry(("combat", "addally"), "combat", "加入友方 NPC", "將站在我方的 NPC 隊友加入戰鬥。", ("/coc combat addally 名稱 DEX HP",), command=("combat", "addally")),
@@ -57,6 +57,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("scenario", "newgame"), "scenario", "開始新遊戲", "重置群組狀態並開始新的一局。", ("/coc newgame",), command=("newgame",)),
         HelpEntry(("scenario", "list"), "scenario", "列出劇本庫", "查看可用劇本與目前使用中的劇本。", ("/coc scenario list",), ("/coc scenario list",), command=("scenario", "list")),
         HelpEntry(("scenario", "use"), "scenario", "選用劇本", "從劇本庫選擇目前要使用的劇本。", ("/coc scenario use 劇本ID",), ("/coc scenario use abc123",), notes=("KP-only：只有目前登記的 KP Assistant 可以執行。",), kp_only=True, command=("scenario", "use")),
+        HelpEntry(("scenario", "cards"), "scenario", "管理手動角色卡", "列出或刪除這個群組在指定劇本保存的手動角色卡。", ("/coc scenario cards list 劇本ID", "/coc scenario cards delete 劇本ID 資產ID"), notes=("只有目前的 KP Assistant 或 Discord Keeper 可以執行。",), kp_only=True, command=("scenario", "cards")),
         HelpEntry(("scenario", "reparse"), "scenario", "重新解析劇本", "重新處理等待中的相似劇本 PDF。", ("/coc scenario reparse",), notes=lifecycle_note, command=("scenario", "reparse"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "cancel"), "scenario", "取消劇本處理", "放棄目前等待處理的相似劇本 PDF。", ("/coc scenario cancel",), notes=lifecycle_note, command=("scenario", "cancel"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "clean"), "scenario", "清理劇本庫", "刪除沒有被任何群組使用的劇本庫項目。", ("/coc scenario clean 劇本ID",), notes=lifecycle_note, command=("scenario", "clean"), kp_only=lifecycle_kp_only),
@@ -78,7 +79,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("kp", "rollback"), "kp", "回溯遊戲狀態", "將群組狀態恢復到指定回溯節點。", ("/coc rollback 節點ID或唯一名稱",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("rollback",)),
         HelpEntry(("kp", "digest"), "kp", "查看場景摘要", "查看目前或指定的場景摘要。", ("/coc digest", "/coc digest 摘要ID", "/coc digest clean 摘要ID"), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digest",)),
         HelpEntry(("kp", "digests"), "kp", "列出場景摘要", "列出目前群組的場景摘要歷史。", ("/coc digests",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digests",)),
-        HelpEntry(("other", "correct"), "other", "提報敘事錯誤", "針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。", ("回覆 Keeper 訊息：/coc correct <疑點>", "/coc correct <訊息 ID／連結> <疑點>", "/coc correct list", "/coc correct withdraw <提報編號>"), notes=("KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。",), command=("correct",)),
+        HelpEntry(("other", "correct"), "other", "提報敘事錯誤", "針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。", ("回覆 Keeper 訊息：/coc correct <疑點>", "/coc correct <訊息 ID／連結> <疑點>", "/coc correct list", "/coc correct withdraw <提報編號>"), notes=("KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。另可 hold <編號> <實體|別名> 暫停指定範圍，supersede <舊編號> <核准替代編號> 整併有效更正。目標須有本頻道目前時間線的訊息紀錄。",), command=("correct",)),
         HelpEntry(("other", "roll"), "other", "單純擲骰", "不經過守密人，直接擲骰。", ("/roll 1d100", "/roll 3d6+2"), ("/roll 1d100",), command=()),
     ]
 
