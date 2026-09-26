@@ -1728,6 +1728,15 @@ async def _handle_message(message: discord.Message) -> None:
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
                 format_mention, is_keeper, post_turn_hook=claim_after_locked_turn,
+                referenced_message_id=(
+                    str(message.reference.message_id)
+                    if command_parts[0].casefold() == "/coc"
+                    and len(command_parts) > 1
+                    and command_parts[1].casefold() == "correct"
+                    and message.reference is not None
+                    and message.reference.message_id is not None
+                    else None
+                ),
             )
         finally:
             # Always attempt this, even if handle_text_message raised partway

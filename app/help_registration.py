@@ -78,6 +78,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("kp", "rollback"), "kp", "回溯遊戲狀態", "將群組狀態恢復到指定回溯節點。", ("/coc rollback 節點ID或唯一名稱",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("rollback",)),
         HelpEntry(("kp", "digest"), "kp", "查看場景摘要", "查看目前或指定的場景摘要。", ("/coc digest", "/coc digest 摘要ID", "/coc digest clean 摘要ID"), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digest",)),
         HelpEntry(("kp", "digests"), "kp", "列出場景摘要", "列出目前群組的場景摘要歷史。", ("/coc digests",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digests",)),
+        HelpEntry(("other", "correct"), "other", "提報敘事錯誤", "針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。", ("回覆 Keeper 訊息：/coc correct <疑點>", "/coc correct <訊息 ID／連結> <疑點>", "/coc correct list", "/coc correct withdraw <提報編號>"), notes=("KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。",), command=("correct",)),
         HelpEntry(("other", "roll"), "other", "單純擲骰", "不經過守密人，直接擲骰。", ("/roll 1d100", "/roll 3d6+2"), ("/roll 1d100",), command=()),
     ]
 

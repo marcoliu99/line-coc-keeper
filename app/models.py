@@ -875,6 +875,9 @@ class GroupState:
     # hold everything. Fed into the (cached) static prompt, not re-summarized
     # every turn — only updated on the rare turn where a trim actually fires.
     campaign_summary: str = ""
+    # Player reports remain allegations until a KP explicitly adjudicates them.
+    # Approved entries supersede conflicting old narration and summaries.
+    narrative_corrections: list[dict[str, Any]] = field(default_factory=list)
     openai_previous_response_id: str = ""
     # A provider-side conversation is valid only inside the timeline that
     # created it.  Empty means that no reusable chain is currently trusted.
@@ -1126,6 +1129,7 @@ class GroupState:
             "log": self.log,
             "kp_ooc_log": self.kp_ooc_log,
             "campaign_summary": self.campaign_summary,
+            "narrative_corrections": self.narrative_corrections,
             "openai_previous_response_id": self.openai_previous_response_id,
             # Do not infer trust for a legacy response ID while serializing.
             # Missing chain metadata is deliberately preserved as empty so the
@@ -1207,6 +1211,11 @@ class GroupState:
             log=data.get("log", []),
             kp_ooc_log=data.get("kp_ooc_log", []),
             campaign_summary=data.get("campaign_summary", ""),
+            narrative_corrections=(
+                [dict(item) for item in data.get("narrative_corrections", []) if isinstance(item, dict)]
+                if isinstance(data.get("narrative_corrections", []), list)
+                else []
+            ),
             openai_previous_response_id=data.get("openai_previous_response_id", ""),
             openai_previous_response_timeline_id=data.get("openai_previous_response_timeline_id", ""),
             creation_sessions={
