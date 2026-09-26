@@ -70,7 +70,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             },
         )
 
-    new_message = f"{display_name}：{text}"
+    new_message = f"{display_name}：{text}" + keeper._correction_context_message(state)
     scenario_search_count = 0
     turn_status = "success"
 

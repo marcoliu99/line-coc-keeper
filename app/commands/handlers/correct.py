@@ -19,6 +19,10 @@ _MESSAGE_URL = re.compile(r"^https://(?:canary\.|ptb\.)?discord\.com/channels/\d
 _MESSAGE_ID = re.compile(r"^\d{5,25}$")
 _MAX_ISSUE_LENGTH = 500
 _MAX_RESOLUTION_LENGTH = 1000
+_MAX_PENDING_PER_GROUP = 12
+_MAX_PENDING_PER_REPORTER = 3
+_MAX_APPROVED_IN_STATE = 24
+_MAX_CLOSED_IN_STATE = 12
 
 
 def _target_id(token: str) -> str | None:
@@ -30,6 +34,17 @@ def _target_id(token: str) -> str | None:
 
 def _find_report(state: GroupState, report_id: str) -> dict | None:
     return next((item for item in state.narrative_corrections if item.get("id") == report_id), None)
+
+
+def _prune_adjudicated(state: GroupState) -> None:
+    """Bound state size; approved decisions also remain in the canonical log."""
+    approved = [item for item in state.narrative_corrections if item.get("status") == "approved"]
+    closed = [item for item in state.narrative_corrections if item.get("status") in {"rejected", "withdrawn"}]
+    retained = {id(item) for item in approved[-_MAX_APPROVED_IN_STATE:] + closed[-_MAX_CLOSED_IN_STATE:]}
+    state.narrative_corrections[:] = [
+        item for item in state.narrative_corrections
+        if item.get("status") == "pending" or id(item) in retained
+    ]
 
 
 async def handle_correct_command(
@@ -86,7 +101,7 @@ async def handle_correct_command(
                 report["resolution"] = resolution
                 message = (
                     f"【敘事更正 #{report['id']}】先前訊息 {report['target_message_id']} "
-                    f"涉及的「{report['issue']}」已更正：{resolution}"
+                    f"已由 KP 更正：{resolution}"
                 )
             else:
                 report["status"] = "rejected"
@@ -99,6 +114,7 @@ async def handle_correct_command(
             # narration. Rebuild the next turn from the corrected local log.
             state.openai_previous_response_id = ""
             state.openai_previous_response_timeline_id = ""
+        _prune_adjudicated(state)
         save_state(state, reason="narrative_correction")
         await reply(message)
         return
@@ -125,6 +141,13 @@ async def handle_correct_command(
         ):
             await reply(f"這筆敘事異議已收到（#{item['id']}），目前待核對。")
             return
+
+    pending = [item for item in state.narrative_corrections if item.get("status") == "pending"]
+    if len(pending) >= _MAX_PENDING_PER_GROUP or sum(
+        item.get("reporter_id") == user_id for item in pending
+    ) >= _MAX_PENDING_PER_REPORTER:
+        await reply("待核對敘事異議已達上限；請先由 KP 處理，或撤回你不再需要的提報。")
+        return
 
     report = {
         "id": uuid4().hex[:10],

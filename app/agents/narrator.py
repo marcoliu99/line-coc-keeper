@@ -55,7 +55,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     else:
         dynamic_system += "\n\n" + prompt_config.PURE_ROLEPLAY_BLOCK
 
-    new_message = f"{display_name}：{text}"
+    new_message = f"{display_name}：{text}" + keeper._correction_context_message(state)
     history = state.log
 
     async def _no_tools(_name: str, _tool_input: dict) -> dict:

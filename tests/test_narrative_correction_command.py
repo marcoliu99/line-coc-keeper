@@ -87,6 +87,28 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.state.narrative_corrections), 1)
         self.save_state.assert_called_once()
 
+    async def test_pending_reports_are_capped_per_player(self):
+        reply = AsyncMock()
+        for index in range(4):
+            await router.handle_text_message(
+                "correction-test", "player", AsyncMock(), reply,
+                AsyncMock(), AsyncMock(), AsyncMock(),
+                f"/coc correct 9876543210 疑點{index}",
+            )
+        self.assertEqual(len(self.state.narrative_corrections), 3)
+        self.assertIn("已達上限", reply.await_args.args[0])
+
+    async def test_closed_reports_are_pruned_but_recent_approved_remains(self):
+        from app.commands.handlers import correct
+        self.state.narrative_corrections = [
+            {"id": str(index), "status": "rejected"} for index in range(30)
+        ] + [
+            {"id": f"a{index}", "status": "approved"} for index in range(40)
+        ]
+        correct._prune_adjudicated(self.state)
+        self.assertEqual(len(self.state.narrative_corrections), 36)
+        self.assertEqual(self.state.narrative_corrections[-1]["id"], "a39")
+
     async def test_only_kp_can_approve_and_approval_survives_serialization(self):
         reply = AsyncMock()
         self.state.kp_assistant_user_id = "kp"
