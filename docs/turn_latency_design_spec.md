@@ -707,3 +707,40 @@ with KP review before activation; and determine which template units require
 original-source text alongside the translated result at runtime.
 Pending-check terminal detection also remains gated on proving that no further
 action is owed.
+
+### Candidate A compatibility gate: preserve the turn decision (2026-09-26)
+
+This early-stop proposal remains **unimplemented**. Source review in
+`bug/log-backed-turn-consistency` found that Executor's ordinary completion
+text is currently discarded even though it may explain why an action was
+postponed or rejected. The related repair introduces a validated
+`MechanicResult.turn_resolution` handoff using the existing completion.
+Do not implement early stopping by removing that handoff.
+
+Before stopping immediately after a check tool:
+
+1. Verify the real final pending/Luck state, owner, character, check/decision
+   identity and timeline; `pending=true` by itself is insufficient.
+2. Establish that no other work remains: enemy initialization, ammo/material
+   changes, pending correction, other actors, and multi-tool responses must
+   retain the normal loop unless their work is explicitly complete. If the
+   remaining-work condition cannot be proved, keep the completion request.
+3. Produce the same validated `await_check`/`await_luck` decision directly
+   from authoritative state and actual tool results. Do not guess a model's
+   missing explanation or treat missing completion as `no_mechanics`.
+4. Deferred, cancelled, blocked, no-check and incomplete outcomes keep the
+   ordinary completion until there is an independently verified equivalent.
+   An off-turn attack must not be forced into a check just to trigger early stop.
+5. Run the normal decision validator and Narrator interface; malformed or
+   unmatched identities fail as incomplete without replaying committed tools.
+
+Required integration tests compare early-stop enabled/disabled with real tool
+handlers: identical state, referenced checks, public next action and decision;
+no duplicate damage/ammo, no skipped enemies, no loss of correction context,
+no reroll after resolution, and strictly fewer logical requests on eligible
+turns. Test all supported provider adapters. An ineligible case must keep the
+normal number of requests; no fixed additional review call is introduced.
+
+This is an interface dependency, not a dependency on merging one PR first.
+Keep #83's Chinese-template functionality independent; synchronize the handoff
+contract when implementing Candidate A after the consistency repair lands.
