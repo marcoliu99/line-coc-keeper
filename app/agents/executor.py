@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -75,6 +76,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         )
 
     new_message = f"{display_name}：{text}"
+    scenario_search_count = 0
+    turn_status = "success"
 
     try:
         # Providers expose one native async contract.  Tool execution remains
@@ -89,8 +92,12 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             metrics=turn_metrics,
         ):
             async def execute_turn_tool(name: str, tool_input: dict) -> dict:
+                nonlocal scenario_search_count
+                if name == "search_scenario":
+                    scenario_search_count += 1
                 result = await execute_tool(name, tool_input)
-                combat_status_gate.observe_tool_result(name, result)
+                if LLM_PROVIDER == "openai":
+                    combat_status_gate.observe_tool_result(name, result)
                 return result
 
             provider_options = (
@@ -99,7 +106,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             )
             await provider.run_conversation(
                 static_system, dynamic_system, tools, state.log, new_message,
-                execute_turn_tool if LLM_PROVIDER == "openai" else execute_tool, MAX_TOOL_ITERATIONS,
+                execute_turn_tool, MAX_TOOL_ITERATIONS,
                 # This call's return value is discarded entirely (only the
                 # tool calls' side effects matter to run_executor — see
                 # docstring above), and supervisor.py always runs a separate
@@ -110,7 +117,11 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 enable_wrapup=False,
                 **provider_options,
             )
+    except asyncio.CancelledError:
+        turn_status = "cancelled"
+        raise
     except Exception:
+        turn_status = "error"
         observability.event("llm.failed", level=logging.ERROR, agent="executor", status="error")
         _logger.exception("Executor LLM call failed")
         return MechanicResult(
@@ -119,6 +130,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             narrative_facts=["機制執行時發生錯誤，請視為純敘事處理，不要假設任何判定結果"],
             state_delta=StateDelta(),
             check_status=check_status,
+        )
+    finally:
+        observability.event(
+            "executor.scenario_search.summary", count=scenario_search_count, status=turn_status,
         )
 
     message.payload["private_messages"] = private_messages
