@@ -38,7 +38,7 @@ def _fingerprint(pregen: dict) -> str:
     return hashlib.sha256(json.dumps(_clean(pregen), ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def _upsert(data: dict, pregen: dict, filename: str) -> tuple[str, str]:
+def _upsert(data: dict, pregen: dict, filename: str, *, asset_id: str | None = None) -> tuple[str, str]:
     entries = data["entries"]
     for entry in entries:
         old = entry["pregen"]
@@ -49,7 +49,7 @@ def _upsert(data: dict, pregen: dict, filename: str) -> tuple[str, str]:
             entry["filename"] = filename
             entry["pregen"] = _clean(pregen)
             return entry["asset_id"], "updated"
-    asset_id = uuid4().hex
+    asset_id = asset_id or uuid4().hex
     entries.append({"asset_id": asset_id, "filename": filename, "pregen": _clean(pregen)})
     return asset_id, "added"
 
@@ -91,13 +91,10 @@ def bind_pending(conn: Connection, group_id: str, scenario_id: str) -> None:
         return
     selected = _read(conn, group_id, scenario_id)
     for entry in pending["entries"]:
-        match = next((existing for existing in selected["entries"]
-                      if character_matcher.is_same_character(existing["pregen"], entry["pregen"])), None)
-        if match is None:
-            selected["entries"].append(entry)
-        else:
-            match["pregen"] = entry["pregen"]
-            match["filename"] = entry["filename"]
+        # Apply the same filename/identity checks as a direct upload. A
+        # pending card must not introduce two different characters with one
+        # filename, which would make subsequent updates ambiguous.
+        _upsert(selected, entry["pregen"], entry["filename"], asset_id=entry["asset_id"])
     _write(conn, group_id, scenario_id, selected)
     db.delete_json_tx(conn, "manual_pregen_assets", _key(group_id, None))
 
@@ -146,7 +143,11 @@ def install_pool(
         conn, group_id, scenario_id, context["pregens"],
         context["manifest"].get("content_hash", ""),
     )
-    return [*deepcopy(claimed or []), *pool], stale
+    claimed_cards = deepcopy(claimed or [])
+    pool = [p for p in pool if not any(
+        character_matcher.is_same_character(p, claimed_card) for claimed_card in claimed_cards
+    )]
+    return [*claimed_cards, *pool], stale
 
 
 def delete_asset(conn: Connection, group_id: str, scenario_id: str, asset_id: str) -> dict:

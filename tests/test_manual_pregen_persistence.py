@@ -82,6 +82,28 @@ class ManualPregenPersistenceTests(unittest.TestCase):
         self.assertEqual(assets[0]["asset_id"], old_id)
         self.assertEqual(assets[0]["pregen"]["str_"], 75)
 
+    def test_pending_binding_rejects_filename_owned_by_another_character(self):
+        with patch("app.character_matcher.dictionary.lookup_character_alias", return_value=None):
+            with db.transaction() as conn:
+                manual_pregens.store_upload(conn, "g", "s", _card("林文"), "role_same.md")
+                manual_pregens.store_upload(conn, "g", None, _card("陳雅"), "role_same.md")
+                with self.assertRaises(ValueError):
+                    manual_pregens.bind_pending(conn, "g", "s")
+        self.assertEqual(len(manual_pregens.list_assets("g", "s")), 1)
+        self.assertEqual(len(manual_pregens.list_assets("g", None)), 1)
+
+    def test_rebuild_keeps_claimed_card_without_unclaimed_duplicate(self):
+        claimed = {**_card(), "claimed_by": "player"}
+        with db.transaction() as conn:
+            manual_pregens.store_upload(conn, "g", "s", _card(), "role_lin.md")
+            for context in (
+                _context("s"),
+                _context("s", [{"name": "林文", "occupation": "記者", "source": "llm_extracted"}], "new-hash"),
+            ):
+                pool, _ = manual_pregens.install_pool(conn, "g", "s", context, claimed=[claimed])
+                self.assertEqual(len(pool), 1)
+                self.assertEqual(pool[0]["claimed_by"], "player")
+
     def test_asset_and_state_rollback_together_on_conflict_or_error(self):
         state = GroupState("g")
         group_state.save_state(state)
