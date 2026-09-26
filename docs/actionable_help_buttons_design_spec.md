@@ -196,3 +196,14 @@ On final submission, pass the observed state revision/timeline and selected obje
 ## Review checkpoint
 
 Coverage is decided: implement all 52 currently registered Help entries. The user approved implementation after reviewing this spec.
+
+## PR #88 review correction (approved)
+
+A guarded reparse must not consume its staged source when parsing or the final
+revision check fails. Check the upload result and discard the source only after
+acceptance. On failure/exception, reload state under the conversation lock and
+restore the claimed pending upload only if the timeline is unchanged and no
+newer pending upload has replaced it. Preserve the bytes even when a newer
+upload or timeline prevents restoration; never overwrite the newer state.
+No schema migration or extra model request. Regression tests cover concurrent
+revision changes, retry success, exceptions, newer uploads, and timeline resets.
