@@ -167,7 +167,7 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
 
 
 class ResolvedCheckKeeperFollowupTests(unittest.IsolatedAsyncioTestCase):
-    async def test_resolved_check_followup_is_read_only_and_keeps_roll_authoritative(self):
+    async def test_resolved_check_followup_exposes_combat_tools_without_new_roll(self):
         from app import keeper
         from app.models import GroupState
 
@@ -210,6 +210,45 @@ class ResolvedCheckKeeperFollowupTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不得重擲", args[1])
         self.assertIn("已結算", reply)
         self.assertIn("結果為「failure 失敗」", reply)
+
+    async def test_resolved_check_can_execute_damage_followup(self):
+        from app import keeper
+        from app.models import GroupState
+
+        class FakeProvider:
+            OPENAI_MODEL = "fake"
+
+            async def run_conversation(self, _static, _dynamic, tools, _history, _message,
+                                       execute_tool, _iterations, **_kwargs):
+                self.assert_names = {tool["name"] for tool in tools}
+                result = await execute_tool("apply_combat_damage", {"target": "Enemy", "raw_damage": 3})
+                self.result = result
+                return "敵人受到傷害。"
+
+        provider = FakeProvider()
+        state = GroupState(group_id="g")
+        calls = []
+
+        def execute(_state, name, payload, *_args):
+            calls.append((name, payload))
+            return {"ok": True, "damage": 3}
+
+        with patch.object(keeper, "LLM_PROVIDER", "openai"), \
+                patch.object(keeper, "_PROVIDERS", {"openai": provider}), \
+                patch.object(keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(keeper, "_build_static_prompt", return_value="static"), \
+                patch.object(keeper, "_build_dynamic_prompt", return_value="dynamic"), \
+                patch.object(keeper, "_execute_tool", side_effect=execute), \
+                patch.object(keeper, "_commit_turn_result", return_value=True), \
+                patch.object(keeper.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+            await keeper.run_turn(
+                state, "u1", "Mick", "防守檢定結果",
+                resolved_check_context={"investigator": "Mick", "skill": "閃避", "roll": 70,
+                                        "difficulty": "regular", "outcome": "failure 失敗"},
+            )
+        self.assertIn("apply_combat_damage", provider.assert_names)
+        self.assertEqual(calls, [("apply_combat_damage", {"target": "Enemy", "raw_damage": 3})])
+        self.assertEqual(provider.result["damage"], 3)
 
     def test_roll_instruction_without_pending_check_is_replaced(self):
         result = mechanic_result({"tool_called": False, "pending": None})
