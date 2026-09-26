@@ -16,7 +16,7 @@ it must not insert `0` or a generated value.
 ## Scope and Non-Goals
 
 - Cover PDF extraction, `role_` manual sheets, the merged pregen pool,
-  previews, both `/coc usepregen` command paths, and the pending-Luck gate
+  previews, the `/coc usepregen` command and its shared claim helper, and the pending-Luck gate
   before play starts.
 - Keep `/coc luck roll` player-owned for sheets whose Luck remains blank.
   The Keeper and `/coc sudo` cannot roll on the player's behalf.
@@ -57,7 +57,9 @@ a manual sheet.
 This diagram describes the behavior after implementation. Source
 verification of PDF Luck and direct use of a final sheet value are the new
 steps. A `role_` sheet may be imported before or after the PDF; both orders
-reach the same merge and claim decision.
+  reach the same merge and claim decision. On the first PDF upload, preserve
+  any already imported `role_` candidates through library-context loading
+  so they can actually enter that merge.
 
 ```mermaid
 flowchart TD
@@ -119,8 +121,8 @@ check, claim behavior, and display text.
    valid sheet Luck value to the pure `pregen_to_character()` constructor.
    Use temporary `0` and create pending state only for blank Luck. Keep the
    existing claim, `claimed_by`, character ID, and save behavior.
-2. Both `app/commands/handlers/character.py` and the legacy command path
-   respond according to that shared claim result. For a filled value, say
+2. `app/commands/handlers/character.py` invokes the shared claim helper in
+   `app/legacy_commands.py` and responds according to its result. For a filled value, say
    that sheet Luck N was used and play may start. For a blank value, prompt
    the player to run `/coc luck roll`. Never show a roll prompt for a filled
    sheet.
@@ -149,7 +151,7 @@ Its skill aliases, persistent pending state, and ownership rules still apply.
   enter the merge.
 - Keep Luck blank in the template. Parsing, merging, saving, and reloading
   blank sheets must not generate a Luck value.
-- Both `/coc usepregen` paths show the same message and pending behavior.
+- `/coc usepregen` and the shared claim helper agree on the message and pending behavior.
   A filled sheet can proceed directly to `/coc start`; a blank sheet needs
   that player's `/coc luck roll` first.
 - Treat `0` and purely numeric legacy strings as filled. Never interpret

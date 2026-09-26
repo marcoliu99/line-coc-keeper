@@ -320,7 +320,10 @@ async def handle_character_command(
             await reply(str(exc) + " 輸入「/coc pregens」看看還有哪些可選。")
             return False
         save_state(state)
-        await reply(f"已使用預製角色！\n\n{char.sheet_text()}\n\n請輸入「/coc luck roll」完成玩家 LUCK 擲骰。")
+        luck_note = ("請輸入「/coc luck roll」完成玩家 LUCK 擲骰。"
+                     if user_id in state.pending_pregen_luck else
+                     f"已沿用角色卡的 LUCK {char.luck}，現在可以開始遊戲。")
+        await reply(f"已使用預製角色！\n\n{char.sheet_text()}\n\n{luck_note}")
         if char.secret_goal:
             try:
                 await send_dm(user_id, f"🤫（私訊）你的秘密目標：{char.secret_goal}")
