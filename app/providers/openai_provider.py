@@ -21,8 +21,10 @@ import contextlib
 import inspect
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from app import config, observability
 from app.config import (
@@ -35,8 +37,9 @@ from app.config import (
     OPENAI_MODEL,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
-from app.providers import retry
+from app.providers import admission, retry, turn_budget
 from app.providers.client_lifecycle import AsyncClientLifecycle
+from app.services import input_budget
 
 # Populated per-process the first time the API rejects one of these — see
 # _create_response.
@@ -56,7 +59,10 @@ async def _close_client(client) -> None:
 def _create_client():
     import openai
 
-    return openai.AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=0)
+    return openai.AsyncOpenAI(
+        api_key=OPENAI_API_KEY, max_retries=0,
+        http_client=openai.DefaultAsyncHttpxClient(event_hooks={"response": [admission.observe_http_response]}),
+    )
 
 
 async def _close_lifecycle_client(client, _owner) -> None:
@@ -79,6 +85,43 @@ async def _request_scope():
         yield client
     finally:
         _client_lifecycle.release(state)
+
+
+class IncompleteResponseError(RuntimeError):
+    """A partial response cannot authorize tools or become canonical prose."""
+
+
+def _ensure_complete(response) -> None:
+    status = getattr(response, 'status', None)
+    if status in ('incomplete', 'failed', 'cancelled'):
+        observability.event('llm.response.incomplete', provider='openai', status=status,
+                            reason=getattr(getattr(response, 'incomplete_details', None), 'reason', None))
+        raise IncompleteResponseError('OpenAI response did not complete')
+
+
+def _unsupported_parameter(exc: Exception, kwargs: dict) -> str | None:
+    """Only a specific 400 parameter rejection can negotiate capabilities."""
+    if getattr(exc, "status_code", None) != 400:
+        return None
+    body = getattr(exc, "body", None)
+    error = body.get("error", body) if isinstance(body, dict) else {}
+    if not isinstance(error, dict):
+        error = {}
+    param = error.get("param")
+    code = error.get("code")
+    if param in ("temperature", "reasoning") and param in kwargs and isinstance(code, str) and code in {
+        "unsupported_parameter", "unsupported_value",
+    }:
+        return param
+    # Some SDK-compatible endpoints only expose a textual 400. Require the
+    # explicit unsupported parameter label, never a substring of a 429/body.
+    match = re.search(r"unsupported (?:parameter|value):?\s*['\"](temperature|reasoning)['\"]", str(exc), re.IGNORECASE)
+    return match.group(1).lower() if match and match.group(1).lower() in kwargs else None
+
+
+def _temperature_policy(kwargs: dict) -> None:
+    if config.OPENAI_OMIT_TEMPERATURE:
+        kwargs.pop("temperature", None)
 
 
 def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
@@ -104,6 +147,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
     overlapping retry mechanisms fighting over the same exception. Reuses
     retry.is_retryable() for the classification so all three providers
     agree on what counts as transient."""
+    _temperature_policy(kwargs)
     for param in _unsupported_params:
         kwargs.pop(param, None)
     connection_attempt = 0
@@ -125,8 +169,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
         try:
             response = client.responses.create(**kwargs)
         except Exception as exc:
-            exc_text = str(exc).lower()
-            offending = next((p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text), None)
+            offending = _unsupported_parameter(exc, kwargs)
             is_connection_retry = (
                 offending is None and connection_attempt < LLM_MAX_RETRIES and retry.is_retryable(exc)
             )
@@ -193,6 +236,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
                     status="success",
                     **observability.usage_fields(response),
                 )
+            _ensure_complete(response)
             return response
 
 
@@ -257,8 +301,10 @@ def _is_invalid_previous_response_id_error(
     return any(marker in message for marker in response_missing_markers)
 
 
-async def _create_response_async(_client=None, *, _log_iteration: int | None = None, **kwargs):
+async def _create_response_async(_client=None, *, _log_iteration: int | None = None,
+                                 _input_tokens_estimate: int | None = None, **kwargs):
     """Async Responses API helper preserving unsupported-parameter fallback."""
+    _temperature_policy(kwargs)
     for param in _unsupported_params:
         kwargs.pop(param, None)
     logical_request_id = observability.new_id("llm")
@@ -280,19 +326,17 @@ async def _create_response_async(_client=None, *, _log_iteration: int | None = N
                 try:
                     async with _request_scope() as client:
                         async def request_once():
-                            async with asyncio.timeout(LLM_REQUEST_TIMEOUT_SECONDS):
+                            async with asyncio.timeout(turn_budget.remaining(LLM_REQUEST_TIMEOUT_SECONDS)):
                                 return await client.responses.create(**kwargs)
 
                         response = await retry.async_call_with_retry(
                             request_once, provider="openai", operation="responses.create",
                             request_id=logical_request_id,
+                            admission=admission.controller(str(kwargs.get("model", OPENAI_MODEL))),
+                            estimated_tokens=_input_tokens_estimate,
                         )
                 except Exception as exc:
-                    exc_text = str(exc).lower()
-                    offending = next(
-                        (p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text),
-                        None,
-                    )
+                    offending = _unsupported_parameter(exc, kwargs)
                     if offending is None:
                         raise
                     _unsupported_params.add(offending)
@@ -307,6 +351,10 @@ async def _create_response_async(_client=None, *, _log_iteration: int | None = N
                         status="error",
                     )
                     continue
+        observability.event("llm.response", provider="openai", model=kwargs.get("model"),
+                            logical_request_id=logical_request_id,
+                            **observability.usage_fields(response))
+        _ensure_complete(response)
         return response
 
 
@@ -321,6 +369,7 @@ async def run_conversation(
     previous_response_id: str = "",
     on_response_id: Callable[[str], None] | None = None,
     enable_wrapup: bool = True,
+    response_stage: str = "default",
     tools_for_request: Callable[[], list[dict]] | None = None,
 ) -> str:
     if not OPENAI_API_KEY:
@@ -344,7 +393,18 @@ async def run_conversation(
     # instructions is the Responses API's dedicated system-prompt field —
     # unlike the Chat Completions provider, this doesn't need a "system" role
     # message mixed into the input list.
+    history = await asyncio.to_thread(
+        input_budget.select_history, history, OPENAI_MODEL,
+        config.OPENAI_HISTORY_TOKEN_BUDGET, config.OPENAI_HISTORY_MIN_TURNS,
+    )
+    output_limit = {
+        "executor": config.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS,
+        "narrator": config.OPENAI_NARRATOR_MAX_OUTPUT_TOKENS,
+    }.get(response_stage, config.OPENAI_DEFAULT_MAX_OUTPUT_TOKENS)
     instructions = f"{static_system}\n\n{dynamic_system}"
+    inherited_tokens: int | None = None
+    static_tokens = input_budget.estimate(static_system, OPENAI_MODEL)
+    dynamic_tokens = input_budget.estimate(dynamic_system, OPENAI_MODEL)
 
     if previous_response_id:
         input_items: list[dict] = [{"role": "user", "content": new_message}]
@@ -360,12 +420,12 @@ async def run_conversation(
     # wants it.
     reasoning_kwargs = {"reasoning": {"effort": KEEPER_REASONING_EFFORT}} if KEEPER_REASONING_EFFORT else {}
 
-    final_text = "（守密人一時語塞，請再說一次剛才的行動）"
+    final_text = "守密人一時無法完成回覆。已提交的變更會保留，請查看目前狀態，不要重做剛才的行動。"
     iteration = -1
     for iteration in range(max_iterations):
         current_tools = tools_for_request() if tools_for_request is not None else tools
         openai_tools = _provider_tools(current_tools)
-        request_kwargs = {
+        request_kwargs: dict[str, Any] = {
             "model": OPENAI_MODEL,
             "instructions": instructions,
             "input": input_items,
@@ -373,10 +433,26 @@ async def run_conversation(
             "temperature": KEEPER_TEMPERATURE,
             **reasoning_kwargs,
         }
+        if output_limit:
+            request_kwargs["max_output_tokens"] = output_limit
         if active_previous_response_id:
             request_kwargs["previous_response_id"] = active_previous_response_id
+        new_input_tokens = input_budget.estimate(input_items, OPENAI_MODEL)
+        tools_tokens = input_budget.estimate(openai_tools, OPENAI_MODEL)
+        estimated_input = (
+            inherited_tokens + new_input_tokens if active_previous_response_id and inherited_tokens is not None
+            else None if active_previous_response_id
+            else static_tokens + dynamic_tokens + tools_tokens + new_input_tokens
+        )
+        observability.event('llm.input.composition', stage=response_stage,
+                            static_tokens_estimate=static_tokens, dynamic_tokens_estimate=dynamic_tokens,
+                            tools_tokens_estimate=tools_tokens, new_input_tokens_estimate=new_input_tokens,
+                            inherited_tokens=inherited_tokens, input_tokens_estimate=estimated_input,
+                            inherited_context_unknown=bool(active_previous_response_id and inherited_tokens is None))
+        reservation = estimated_input + output_limit if estimated_input is not None else None
         try:
-            response = await _create_response_async(_log_iteration=iteration, **request_kwargs)
+            response = await _create_response_async(_log_iteration=iteration,
+                                                     _input_tokens_estimate=reservation, **request_kwargs)
         except Exception as exc:
             if (
                 iteration == 0
@@ -393,10 +469,18 @@ async def run_conversation(
                 active_previous_response_id = None
                 request_kwargs["input"] = input_items
                 request_kwargs.pop("previous_response_id", None)
-                response = await _create_response_async(_log_iteration=iteration, **request_kwargs)
+                response = await _create_response_async(
+                    _log_iteration=iteration,
+                    _input_tokens_estimate=static_tokens + dynamic_tokens + tools_tokens + input_budget.estimate(input_items, OPENAI_MODEL) + output_limit,
+                    **request_kwargs,
+                )
             else:
                 raise
 
+        _ensure_complete(response)
+        usage = getattr(response, 'usage', None)
+        used_input, used_output = getattr(usage, 'input_tokens', None), getattr(usage, 'output_tokens', None)
+        inherited_tokens = used_input + used_output if isinstance(used_input, int) and isinstance(used_output, int) else estimated_input
         function_calls = [item for item in response.output if item.type == "function_call"]
 
         if not function_calls:
@@ -449,7 +533,7 @@ async def run_conversation(
         # app/keeper.py's legacy run_turn path (its own single combined
         # tool+narration call, no separate Narrator) actually needs this.
         if enable_wrapup:
-            wrapup_kwargs = {
+            wrapup_kwargs: dict[str, Any] = {
                 "model": OPENAI_MODEL,
                 "instructions": (
                     f"{instructions}\n\n"
@@ -462,8 +546,15 @@ async def run_conversation(
                 "temperature": KEEPER_TEMPERATURE,
                 **reasoning_kwargs,
             }
+            if output_limit:
+                wrapup_kwargs["max_output_tokens"] = output_limit
             try:
-                wrapup_response = await _create_response_async(_log_iteration=max_iterations, **wrapup_kwargs)
+                wrapup_response = await _create_response_async(
+                    _log_iteration=max_iterations,
+                    _input_tokens_estimate=(inherited_tokens + input_budget.estimate(input_items, OPENAI_MODEL) + output_limit
+                                            if inherited_tokens is not None else None),
+                    **wrapup_kwargs,
+                )
                 # Reading .output_text is kept inside this try, not a
                 # separate else clause, so a malformed/incomplete/safety-
                 # filtered wrap-up response also falls back to the
@@ -472,11 +563,14 @@ async def run_conversation(
                 # .text property in an earlier review round — missed here
                 # and in anthropic_provider.py at the time, now fixed in all
                 # three).
+                _ensure_complete(wrapup_response)
                 wrapup_text = (wrapup_response.output_text or "").strip()
                 if wrapup_text:
                     final_text = wrapup_text
                     if on_response_id is not None:
                         on_response_id(wrapup_response.id)
+            except (IncompleteResponseError, turn_budget.TurnDeadlineExceeded):
+                raise
             except Exception:  # noqa: BLE001 - fall back to placeholder text rather than fail the turn
                 observability.event(
                     "llm.turn.wrapup_failed", level=logging.WARNING, provider="openai",

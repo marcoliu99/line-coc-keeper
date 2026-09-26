@@ -10,3 +10,4 @@ python-dotenv>=1.0.1
 markitdown[pdf]>=0.1.7
 markitdown-ocr>=0.1.0
 PyYAML>=6.0
+tiktoken>=0.7.0
