@@ -51,6 +51,7 @@ latency or judge a complete Keeper turn. Results are saved under
 | Mocked conversation-lock contention; next turn holds lock for 250 ms, n=3 each | `_post_check_buttons` median 252.11 ms | Previously claimed direct send median 0.05 ms | The second lock acquisition creates the expected wait. Discord network time and full claim integration were mocked. |
 | Real-model search flow; n=3 each | Median 11.96 s; median 5 API calls; 10 search rounds total; 1 `skill_check` call total | Batch first search and cap at two rounds: median 13.78 s; median 5 API calls; 6 search rounds total; 5 `skill_check` calls total | Fewer tool rounds did not reduce model calls or elapsed time. Expected one pending check per run was not reliable; candidate check counts were 0, 2, and 3. |
 | Real-model proactive RAG, with one fixed DEX check; n=3 each | Raw Chinese-query context: Executor median 6.32 s, 3 API calls, 1 explicit search per run, 3/3 one check | English-aligned context: Executor median 4.83 s, 2 API calls, 0 explicit searches, 3/3 one check | Better initial evidence can save an Executor search round in this narrow setup. These Executor times exclude query rewrite and retrieval. |
+| Chinese query against scenario text; n=3 each | Original English scenario: RAG plus Executor median 7.26 s, 3 API calls, 1 explicit search per run, 3/3 one check | Page 10 translated into Chinese, other 26 pages unchanged: median 4.22 s, 2 API calls, 0 explicit searches, 3/3 one check | The translated basement rule entered the top five RAG results in all three runs. This is a one-page, one-action trial, not a full translated scenario or full Discord turn. |
 
 The raw Chinese action `我也走下地下室` returned five chunks, none containing
 the basement stairs, Push, or fall terms needed for this ruling. Adding the
@@ -63,12 +64,33 @@ unpaired, tiny-sample estimate, not a measured end-to-end A/B difference.
 None of the three English results included the `1d6` damage term, so English
 alignment alone does not prove complete scenario coverage.
 
+The Chinese-page trial kept the same Chinese action and model prompt in both
+arms. The original English scenario's proactive top five never contained all
+four target markers (stairs, Push, fall, `1D6`); the Chinese-localized page
+was ranked first and supplied all four in all three runs. The warmed RAG
+search median was 0.03 seconds in both arms. The translated scenario index
+took 2.33 seconds to build with embeddings once; that build cost is excluded
+from the steady-state turn figures. The translation was a manually cleaned
+rendering of the basement page, so an additional OCR-cleanup control replaced
+that page with an equivalently cleaned English rendering. With the same
+Chinese query, its top five still omitted the basement page and all four
+markers. Retrieval results were deterministic on the repeated identical
+query; the three model turns per arm are the latency samples. The fixed DEX
+instruction and stubbed check test tool-loop cost, not spontaneous rules
+selection, final narration, or Discord delivery. Results are recorded in
+`/private/tmp/coc_chinese_scenario_small_trial_results.json`; the temporary
+trial script and cleaned-English control are also under `/private/tmp`.
+
 **Decision from the trial:** keep the button fix. Do not add the two-round
 search cap, batch search schema, or a per-turn model rewrite as a latency
 optimization now. The batch/cap trial did not pass its latency or one-check
 gate; the rewrite's extra call can outweigh the saved Executor call. A
 separate search design needs an outcome-aware replay that checks retrieval
 evidence, tool calls, final ruling, and complete turn latency.
+One-time translation or a bilingual scene index now has a concrete
+single-scene signal worth testing separately; it is not part of this button
+latency implementation. Translation accuracy, term consistency, index build
+cost, and performance across other scenes remain open.
 
 ## Scope
 
@@ -153,7 +175,7 @@ inside the conversation lock.
 ## Executor search follow-up
 
 `context_builder.build_context` and Executor continue to use the existing
-proactive context and `search_scenario` tool. The real-model trial exposed a
+proactive context and `search_scenario` tool. The real-model trials exposed a
 retrieval-language mismatch in the basement-stairs example, but the tested
 batch/cap candidate did not make the final check sequence more reliable or
 faster. The earlier RAG-reuse spec's “no hard per-turn search cap” decision
@@ -162,9 +184,10 @@ existing reuse prompt was present during the logged three-search incident.
 
 The search count event should distinguish turns with zero, one, and multiple
 explicit searches. A later search spec can use these counts and controlled
-replays to evaluate a no-extra-model-call alignment method or another
-retrieval change. It must check that necessary evidence and the final ruling
-remain correct before using a search-round limit.
+replays to evaluate one-time scenario translation, bilingual indexing, or
+another no-extra-model-call alignment method. It must check that necessary
+evidence and the final ruling remain correct before using a search-round
+limit.
 
 ## Integration and observability
 
@@ -211,9 +234,11 @@ remain correct before using a search-round limit.
 - **Search decision:** retain the current Executor search policy. The
   batch/two-round candidate reduced explicit searches but showed no speedup
   and produced missing or duplicate `skill_check` calls in the isolated
-  replay. Query-language alignment is worth separate investigation, but a
-  per-turn model rewrite was slower in the narrow one-search comparison once
-  its estimated cost was included.
+  replay. Translating the relevant scenario page once improved retrieval and
+  reduced median isolated turn time by 3.04 seconds in the basement trial.
+  It still needs broader correctness and latency testing before changing the
+  scenario pipeline. A per-turn model rewrite was slower in the narrow
+  one-search comparison once its estimated cost was included.
 - **Button ordering:** send outside the conversation lock to avoid holding
   game state serialization during Discord network I/O. The claim is made
   before release; a button may become stale before delivery, as it can
