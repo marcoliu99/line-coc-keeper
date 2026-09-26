@@ -59,6 +59,7 @@ from app.models import (
     Character,
     GroupState,
 )
+from app.repositories import manual_pregens
 from app.repositories.group_state import (
     clear_page_images,
     load_page_image,
@@ -361,6 +362,14 @@ async def handle_pdf_upload(
     # SECOND upload's content instead, which is especially bad for "全新劇本"
     # (wipes map position, resets the LLM conversation thread).
     existing_state = load_state(conversation_id)
+    previous_content_hash = ""
+    if existing_state.scenario_library_id:
+        try:
+            previous_content_hash = scenario_library.load_context(
+                existing_state.scenario_library_id
+            )["manifest"].get("content_hash", "")
+        except (FileNotFoundError, ValueError):
+            pass
     if existing_state.pending_pregen_luck:
         await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再處理新的劇本 PDF。")
         return False
@@ -462,6 +471,7 @@ async def handle_pdf_upload(
             raced = False
             state.pending_pdf_upload = {
                 "scenario_id": scenario_id,
+                "previous_content_hash": previous_content_hash,
                 "text": text,
                 "title": library_context["manifest"]["title"],
                 "low_text_pages": low_text_pages,
@@ -478,10 +488,17 @@ async def handle_pdf_upload(
             confirmation_pending = True
         else:
             raced = False
+            old_pool = list(state.pregens)
             _apply_new_scenario(state, text, library_context["manifest"]["title"], extracted_index, page_maps, pregens)
             _install_library_context(state, scenario_id, library_context)
             _install_context_images(conversation_id, scenario_id, library_context)
-            save_state(state)
+            install_result: dict[str, bool] = {}
+            def install_first(conn):
+                manual_pregens.capture_legacy(conn, conversation_id, None, old_pool)
+                state.pregens, install_result["stale"] = manual_pregens.install_pool(
+                    conn, conversation_id, scenario_id, library_context, bind_unassigned=True,
+                )
+            save_state(state, mutate_tx=install_first)
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
     if raced:
@@ -501,7 +518,7 @@ async def handle_pdf_upload(
 
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
-    ))
+    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
     return True
 
 
@@ -521,6 +538,16 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
         save_state(state)
         return "這個待處理劇本庫項目已不存在，請重新上傳 PDF。"
     extracted_index = context["indexes"]
+    old_pool = list(state.pregens)
+    old_scenario_id = state.scenario_library_id or None
+    old_hash = ""
+    if old_scenario_id == scenario_id:
+        old_hash = pending.get("previous_content_hash", "")
+    elif old_scenario_id:
+        try:
+            old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
+        except (FileNotFoundError, ValueError):
+            pass
     if choice == "new":
         _apply_new_scenario(
             state, context["text"], context["manifest"]["title"], extracted_index,
@@ -539,11 +566,19 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     )
     _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
-    save_state(state)
+    install_result: dict[str, bool] = {}
+    def install_selected(conn):
+        manual_pregens.capture_legacy(conn, conversation_id, old_scenario_id, old_pool, old_hash)
+        claimed = [p for p in old_pool if p.get("claimed_by")] if choice != "new" else []
+        state.pregens, install_result["stale"] = manual_pregens.install_pool(
+            conn, conversation_id, scenario_id, context,
+            bind_unassigned=(old_scenario_id is None), claimed=claimed,
+        )
+    save_state(state, mutate_tx=install_selected)
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
         context["scene_maps"], extracted_index, len(state.pregens),
-    )
+    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "")
 
 async def resolve_pdf_upload_choice(
     conversation_id: str,
@@ -670,13 +705,39 @@ async def handle_role_sheet_upload(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
-        state.pregens, action = pregen_extractor.reconcile_pregen_into_pool(state.pregens, pregen)
-        save_state(state)
+        scenario_id = state.scenario_library_id or None
+        try:
+            context = scenario_library.load_context(scenario_id) if scenario_id else None
+        except (FileNotFoundError, ValueError):
+            context = None
+            scenario_id = None
+        old_pool = list(state.pregens)
+        result: dict[str, str] = {}
+        def save_manual(conn):
+            manual_pregens.capture_legacy(
+                conn, conversation_id, scenario_id, old_pool,
+                context["manifest"].get("content_hash", "") if context else "",
+            )
+            result["asset_id"], result["action"] = manual_pregens.store_upload(
+                conn, conversation_id, scenario_id, pregen, file_name,
+            )
+            if context and scenario_id:
+                claimed = [p for p in old_pool if p.get("claimed_by")]
+                state.pregens, _ = manual_pregens.install_pool(
+                    conn, conversation_id, scenario_id, context, claimed=claimed,
+                )
+            else:
+                state.pregens, _ = pregen_extractor.reconcile_pregen_into_pool(old_pool, pregen)
+        try:
+            save_state(state, mutate_tx=save_manual)
+        except ValueError as exc:
+            await reply(str(exc))
+            return
 
     name_note = f"「{pregen['name']}」" if pregen["name"] else "（姓名由玩家決定）"
-    action_note = {"added": "已新增", "replaced": "已更新", "merged": "已與現有角色比對成功，完成擇優融合"}[action]
+    action_note = "已更新" if result["action"] == "updated" else "已新增"
     await reply(
-        f"角色卡{action_note}：{name_note}，職業「{pregen['occupation']}」，"
+        f"角色卡{action_note}（資產 ID：{result['asset_id']}）：{name_note}，職業「{pregen['occupation']}」，"
         f"{len(pregen['skills'])} 項技能。用「/coc pregens」查看目前所有預製角色。"
     )
 

@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 import tempfile
 import types
@@ -40,12 +41,17 @@ class StateStorePatch:
         self.modules = modules
         self.store: dict[str, GroupState] = {}
         self.originals = []
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute("CREATE TABLE manual_pregen_assets (key TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT)")
 
     def __enter__(self):
         def load_state(group_id: str) -> GroupState:
             return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
 
-        def save_state(state: GroupState, *, reason: str = "command") -> None:
+        def save_state(state: GroupState, *, reason: str = "command", mutate_tx=None) -> None:
+            if mutate_tx is not None:
+                mutate_tx(self.conn)
+                self.conn.commit()
             self.store[state.group_id] = clone_state(state)
 
         for module in self.modules:
@@ -58,6 +64,7 @@ class StateStorePatch:
         for module, load_state, save_state in reversed(self.originals):
             module.load_state = load_state
             module.save_state = save_state
+        self.conn.close()
 
     def put(self, state: GroupState) -> None:
         self.store[state.group_id] = clone_state(state)

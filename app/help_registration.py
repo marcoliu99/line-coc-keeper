@@ -57,6 +57,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("scenario", "newgame"), "scenario", "開始新遊戲", "重置群組狀態並開始新的一局。", ("/coc newgame",), command=("newgame",)),
         HelpEntry(("scenario", "list"), "scenario", "列出劇本庫", "查看可用劇本與目前使用中的劇本。", ("/coc scenario list",), ("/coc scenario list",), command=("scenario", "list")),
         HelpEntry(("scenario", "use"), "scenario", "選用劇本", "從劇本庫選擇目前要使用的劇本。", ("/coc scenario use 劇本ID",), ("/coc scenario use abc123",), notes=("KP-only：只有目前登記的 KP Assistant 可以執行。",), kp_only=True, command=("scenario", "use")),
+        HelpEntry(("scenario", "cards"), "scenario", "管理手動角色卡", "列出或刪除這個群組在指定劇本保存的手動角色卡。", ("/coc scenario cards list 劇本ID", "/coc scenario cards delete 劇本ID 資產ID"), notes=("只有目前的 KP Assistant 或 Discord Keeper 可以執行。",), kp_only=True, command=("scenario", "cards")),
         HelpEntry(("scenario", "reparse"), "scenario", "重新解析劇本", "重新處理等待中的相似劇本 PDF。", ("/coc scenario reparse",), notes=lifecycle_note, command=("scenario", "reparse"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "cancel"), "scenario", "取消劇本處理", "放棄目前等待處理的相似劇本 PDF。", ("/coc scenario cancel",), notes=lifecycle_note, command=("scenario", "cancel"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "clean"), "scenario", "清理劇本庫", "刪除沒有被任何群組使用的劇本庫項目。", ("/coc scenario clean 劇本ID",), notes=lifecycle_note, command=("scenario", "clean"), kp_only=lifecycle_kp_only),
