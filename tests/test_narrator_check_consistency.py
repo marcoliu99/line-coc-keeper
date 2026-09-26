@@ -202,7 +202,10 @@ class ResolvedCheckKeeperFollowupTests(unittest.IsolatedAsyncioTestCase):
 
         args, _kwargs = provider.args
         offered_tools = args[2]
-        self.assertTrue(all(tool["name"] in keeper.READ_ONLY_TOOL_NAMES for tool in offered_tools))
+        offered_names = {tool["name"] for tool in offered_tools}
+        self.assertTrue(offered_names <= keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES)
+        self.assertTrue({"apply_combat_damage", "apply_final_combat_damage", "advance_combat_turn"} <= offered_names)
+        self.assertNotIn("skill_check", offered_names)
         self.assertIn("擲出 69", args[1])
         self.assertIn("不得重擲", args[1])
         self.assertIn("已結算", reply)

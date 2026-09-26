@@ -814,6 +814,14 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "report_summary",
 })
 
+# A resolved player roll can still require combat effects. Its dice and
+# pending-check state are final, but damage and turn progression are not.
+RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES = READ_ONLY_TOOL_NAMES | frozenset({
+    "apply_combat_damage",
+    "apply_final_combat_damage",
+    "advance_combat_turn",
+})
+
 # Common {name, description, input_schema} shape works unmodified for both Claude
 # and Gemini; any provider-specific extras (e.g. Anthropic's cache_control) are
 # added by the adapter in app/providers/, not here.
@@ -3735,10 +3743,9 @@ async def _run_turn_impl(
     image_requests: list[tuple[str | None, int]] = []
     tools = _tools_for_speaker_role(speaker_role)
     if resolved_check_context is not None:
-        # Dice/state effects have already been committed by the deterministic
-        # check path. Follow-up narration may inspect scenario/status facts,
-        # but cannot create another check, start combat, or mutate state.
-        tools = [tool for tool in tools if tool.get("name") in READ_ONLY_TOOL_NAMES]
+        # The roll is committed, so no tool may create another check. Combat
+        # damage and turn progression may still be consequences of that roll.
+        tools = [tool for tool in tools if tool.get("name") in RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES]
     combat_status_gate = _CombatStatusToolGate(state)
     kp_turn_creates_canon = kp_manual_canon_trigger
     kp_canonical_tool_events: list[dict] = []

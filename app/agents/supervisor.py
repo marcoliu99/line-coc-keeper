@@ -144,6 +144,7 @@ async def run_turn(
             mechanic_result.check_status["pending_luck"] = luck_details
             # A pending Luck decision takes precedence over pending narration:
             # the dice are known, but the final tier/outcome is not.
+            mechanic_result.check_status["pending"] = None
             mechanic_result.check_status["resolved"] = None
         else:
             mechanic_result.check_status.setdefault("pending_luck", None)
