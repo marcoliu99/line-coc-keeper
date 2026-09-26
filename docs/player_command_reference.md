@@ -462,6 +462,19 @@
 
 ## 其他
 
+### 提報敘事錯誤
+
+針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。
+
+用法：
+- `回覆 Keeper 訊息：/coc correct <疑點>`
+- `/coc correct <訊息 ID／連結> <疑點>`
+- `/coc correct list`
+- `/coc correct withdraw <提報編號>`
+
+注意：
+- KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。
+
 ### 單純擲骰
 
 不經過守密人，直接擲骰。

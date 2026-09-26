@@ -10,6 +10,7 @@ from app.agents import supervisor
 from app.commands import sudo as sudo_policy
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import combat as combat_handler
+from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import map_handler
 from app.commands.handlers import system as system_handler
 from app.legacy_commands import (
@@ -397,7 +398,7 @@ async def _handle_sudo_command(
 def is_known_coc_command(subcommand: str) -> bool:
     """Return whether Discord should route this `/coc` subcommand to a handler."""
     normalized = subcommand.casefold()
-    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck", "sudo"}
+    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck", "sudo", "correct"}
 
 
 async def handle_text_message(
@@ -414,12 +415,13 @@ async def handle_text_message(
     allow_opaque_sudo_target: bool = False,
     *,
     post_turn_hook: PostTurnHook | None = None,
+    referenced_message_id: str | None = None,
 ) -> None:
     with observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
         await _handle_text_message_impl(
             conversation_id, user_id, get_display_name, reply, send_dm, send_image,
             send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
-            post_turn_hook,
+            post_turn_hook, referenced_message_id,
         )
 
 
@@ -530,6 +532,7 @@ async def _handle_text_message_impl(
     is_keeper: bool = False,
     allow_opaque_sudo_target: bool = False,
     post_turn_hook: PostTurnHook | None = None,
+    referenced_message_id: str | None = None,
 ) -> None:
     text = text.strip()
 
@@ -581,6 +584,14 @@ async def _handle_text_message_impl(
                     await handle_luck_decision(conversation_id, user_id, choice, reply, send_dm, send_image, send_dm_image)
         finally:
             locks.release_check(conversation_id, user_id)
+        return
+
+    if coc_subcommand == "correct":
+        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+            await correct_handler.handle_correct_command(
+                conversation_id, user_id, reply, command_parts,
+                is_keeper=is_keeper, referenced_message_id=referenced_message_id,
+            )
         return
 
     if is_coc_command:
