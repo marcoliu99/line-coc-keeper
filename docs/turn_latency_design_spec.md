@@ -372,20 +372,33 @@ propose changing that setting. Do not translate player queries on each turn.
    dice, thresholds, negation, uncertainty, and conditional wording exactly;
    do not fill gaps with COC conventions or model guesses. Mark unclear source
    text as needing KP review instead of inventing a translation.
-4. Make each template unit self-contained for retrieval. When a long unit
-   must be split to fit RAG chunks, repeat its canonical scene/name and
-   keywords in each part, retain the source page/section reference, and keep
-   dependent trigger/result conditions together. This matters because the
-   current index chunks by page and paragraph at roughly 400 characters.
+4. Make each template unit self-contained for retrieval. The index builder
+   must accept validated records as chunk boundaries rather than pass the
+   template through the current page/paragraph splitter (roughly 400
+   characters). If a record is too long, index smaller searchable parts but
+   return the complete parent rule within the same visibility scope, including
+   its dependent trigger/result conditions, as one result. Keep record ID,
+   aliases, source link, and visibility on every part; never split a
+   condition from its consequence. Keep public description and KP-only facts
+   in separate searchable units. Apply visibility according to the requesting
+   context before ranking: internal adjudication may access KP facts, while a
+   public-facing result cannot accidentally include them.
 5. When the original PDF parse succeeds, enqueue one background preprocessing
    job for the Chinese template. Do not hold up PDF import or initial play
-   while it runs. Save the generated template as a versioned language variant
-   under the original scenario library item, alongside (not over) the
-   original PDF and `scenario.txt`. Store source hash, page/heading, chapter
-   ID, record ID, template version, locale, glossary version, job status, and
-   KP review status. Persist job status so an interrupted job can resume or
-   be retried after restart. Extend the library's atomic save/replace flow so
-   reparsing the original cannot silently delete a saved language variant.
+   while it runs. Save the generated template as an immutable, versioned
+   language variant belonging to the original scenario ID, alongside (not
+   over) its PDF and `scenario.txt`. Store the variant outside the source
+   directory that `scenario_library.save_scenario` atomically replaces; for
+   example, use
+   `SCENARIO_LIBRARY_DIR/_variants/<scenario_id>/<source_hash>/<locale>/<variant_id>/`.
+   Keep a variant manifest with source hash, page/heading and source-block
+   references, chapter ID, record ID, schema version, template version,
+   locale, glossary version, generator version, and KP review status.
+   Persist job status separately so an interrupted job
+   can resume or be retried after restart. Pin each job to a source hash;
+   validate and atomically publish its complete output only if the source
+   still matches. A concurrent reparse must never silently delete a variant
+   or activate a template generated from an older source.
    Rebuild the variant when its source hash, chapter map, glossary, template,
    or translation version is stale. Reuse the existing CJK bigram/BM25 plus
    embedding index; add no per-turn translation call.
@@ -394,14 +407,18 @@ propose changing that setting. Do not translate player queries on each turn.
    duration, token usage, and retry/failure status so the one-time cost can
    be compared with fewer in-game retrieval rounds. Build or prewarm the
    embeddings index only when a reviewed variant is activated.
-6. After KP review, selecting the language variant should load its template
-   text for the current chapter window into `GroupState.scenario_text`. The
-   existing proactive context and explicit `search_scenario` call then search
-   the selected Chinese text. Keep the variant ID in group state so restart
-   and chapter advancement continue using the same language. Reuse original
-   page images, maps, chapter IDs, and scenario identity. If preprocessing or
-   index building fails, leave the original scenario selectable and clearly
-   report that the Chinese variant is unavailable.
+6. After KP review, selecting the language variant changes the text used by
+   proactive RAG and explicit `search_scenario` for the current chapter
+   window. Keep `GroupState.scenario_text` as the original-source context:
+   current consumers include scenario comparison, pregen/index extraction,
+   opening narration, map lookup, and non-RAG prompt paths. Introduce an
+   explicit selected-RAG-context loader/cache instead of silently changing
+   all those consumers to translated text. Audit each call site and only
+   switch the intended retrieval paths. Keep the variant ID in group state
+   so restart and chapter advancement continue using the same language.
+   Reuse original page images, maps, chapter IDs, and scenario identity. If
+   preprocessing or index building fails, leave the original scenario
+   selectable and clearly report that the Chinese variant is unavailable.
 
 ### Import, review, and activation flow
 
@@ -415,38 +432,63 @@ the original scenario do not wait for translation. Proposed flow:
 
 1. The job extracts canonical terms and aliases, then translates and
    structures playable content in page/section batches using the fixed
-   template and glossary. It validates unique record IDs, parent/link
-   targets, chapter and visibility values, source references, and source
-   hash. A mismatch or malformed record fails the variant build without
-   changing the original scenario. Status moves through `queued`,
+   template and glossary. Give every source block a stable source ID and
+   record whether it was translated, excluded with a reason, or needs review.
+   Before activation, every playable source block must have a translated
+   record with a source link and pass validation, or have an explicit
+   KP-approved exclusion; an unresolved block cannot disappear from the
+   generated variant. It
+   validates unique record IDs, parent/link targets, chapter and visibility
+   values, source references, and source hash. Compare extracted numbers,
+   dice expressions, time limits, skill thresholds, and explicit negations
+   against the linked source blocks; unresolved or mismatched mechanics block
+   activation until a KP corrects them. A malformed or incomplete build does
+   not change the original scenario. Status moves through `queued`,
    `processing`, `review_required`, and `failed` or `stale` as appropriate.
-2. Save the generated Markdown and metadata under that library item's
-   versioned template directory. Keep source PDF, original extracted text,
-   images, maps, and scenario ID unchanged. Library replacement/reparse must
-   preserve existing template versions; a changed source hash creates a new
-   draft version and does not silently rewrite a version a group already
-   selected.
+2. Save generated Markdown, machine-readable records, coverage report, and
+   metadata in the separate immutable variant namespace described above.
+   Keep source PDF, original extracted text, images, maps, and scenario ID
+   unchanged. A changed source hash creates a new draft; the old version
+   remains available for audit but cannot be served for the new source until
+   revalidated. A group selecting a stale version receives the original
+   retrieval context and a clear status message.
 3. Provide `/coc scenario template status <scenario_id>` and a preview grouped
    by chapter and record type, including unresolved translation notes and
    source links. The KP reviews terminology, mechanics, room/Handout links,
-   and spoiler visibility. Only a reviewed version can be activated for
-   play; a draft remains available for editing. A manual
+   and spoiler visibility. Prioritize flagged source blocks and rules with
+   dice, thresholds, time limits, or negative conditions, then sample ordinary
+   prose. Show the source-block coverage report and unresolved mechanics
+   prominently. Only a reviewed, complete version can
+   be activated for play; a draft remains available for editing. A manual
    `/coc scenario template import <scenario_id> <file.md>` path can also
-   import a prepared or corrected template after the same validation.
+   import a prepared or corrected template after the same validation. Resolve
+   its file only inside the configured import directory, with the same
+   traversal and symlink checks as PDF import.
 4. Extend scenario selection with an optional reviewed template variant,
    e.g. `/coc scenario use <scenario_id> zh-TW-v1`. Persist the selected
    variant ID in the group's active state, and keep a durable preference
    keyed by `(group_id, scenario_id)` so `/coc newgame` does not forget which
    reviewed language version that group uses. Default old records to
    `original`. Existing groups keep their current selection until the KP
-   explicitly switches it.
+   explicitly switches it. Resolve the saved preference only after checking
+   that its source and chapter-map hashes match the current source and its
+   review status is active.
 5. When activating or advancing a chapter, `scenario_library.load_context`
-   selects original text or the chosen template, then applies the same
-   current/next chapter window. Index only that selected accessible text.
-   Map search results to template record IDs and the original page/heading;
+   still returns the original context and source-linked assets. A separate
+   selected-RAG-context loader reads the reviewed template for the same
+   current/next chapter window. Build an index from only that selected window,
+   applying chapter and visibility filters before ranking. Map search
+   results to template record IDs and the original page/heading. For
+   decision-critical mechanics, include a bounded original-source excerpt
+   with the Chinese rule in Executor evidence so it can verify a translated
+   condition without another model search round; measure the added token
+   cost in the pilot. Keep source excerpts out of public narration.
    `/coc showpage` and map/image behavior continue to use original page
-   numbers. If a group has no reviewed variant selected, keep indexing its
-   currently selected original text.
+   numbers. Reuse a built index across groups only when scenario ID, source
+   hash, variant ID, chapter window, visibility policy, embedding model, and
+   chunker version all match; the current disk index is keyed per group, so
+   this requires a new shared cache key and migration/fallback behavior. If
+   a group has no reviewed variant selected, keep indexing its original text.
 
 For the first pilot, run background generation on the Corbitt and Lightless
 Beacon source artifacts, review the generated Markdown, and activate one
@@ -455,14 +497,23 @@ variant through the same validated import path. The small basement trial
 passed translated text to Executor; it did not test template generation,
 review, or activation, so those need separate validation.
 
+`/coc scenario clean <scenario_id>` must remove that scenario's source and
+derived variants/indexes under the same library management operation, after
+the existing active-user check. A saved group preference pointing at a deleted
+variant must resolve to `original` with a visible status instead of a missing
+file error. Reparse retains old immutable variants for audit; explicit clean
+deletes them. This does not delete the separate, group-owned manual role-card
+repository.
+
 ### Persistence boundary and adjacent role-card issue
 
-The language template is reusable scenario-library content; `GroupState`
-should carry only the selected variant ID and the currently loaded chapter
-window. It must not be the only place where generated Markdown or translation
-status is saved. This lets restart, `/coc newgame`, and later scenario
-selection reuse the reviewed variant without uploading or translating it
-again.
+The language template is reusable scenario-library content. For this feature,
+`GroupState` should carry only the selected variant ID and the current
+chapter window, while its existing `scenario_text` remains original-source
+context. Generated Markdown, records, and translation status live in the
+separate variant store; the group preference survives `/coc newgame`. This
+lets restart and later scenario selection reuse the reviewed variant without
+uploading or translating it again.
 
 The existing manual role-sheet flow illustrates why this boundary matters:
 `handle_role_sheet_upload` reconciles the card into `state.pregens` and calls
@@ -567,13 +618,13 @@ linked_records: generator-shed, radio-repair, coast-guard-rescue, youngling-stat
 Keep the two possible rescue arrival times as alternatives from the source;
 do not normalize them into one guaranteed arrival time.
 
-The RAG index must treat each template record as a chunk boundary. If one
-record exceeds the current roughly 400-character chunk target, split it into
-numbered parts with the record ID, canonical name, aliases, source link, and
-visibility repeated in each part. Keep conditional mechanics together when
-possible; if they must span parts, include the relevant trigger with the
-outcome. This may require making the index builder accept explicit template
-units instead of relying only on page/paragraph splitting.
+The RAG index must treat each validated template record as a boundary. If
+one record exceeds the search chunk target, index numbered child parts with
+the record ID, canonical name, aliases, source link, and visibility repeated
+in each part. Retrieval returns the complete parent unit for the matched
+visibility scope, so the trigger and consequence arrive together. The
+template index builder therefore needs an explicit-record input path instead
+of relying on the current page/paragraph splitter.
 
 Example record based on the supplied basement-stairs section (the template
 does not assert that this transcription has been verified against the source):
@@ -616,13 +667,30 @@ original PDF parse, followed by KP review and explicit activation.
 - Have a KP compare template units with the original for dice, damage, skill
   thresholds, proper names, negation, Push rules, and player/KP visibility.
   Track corrections and terminology consistency across pages. Verify
-  source-hash/version invalidation, restart, partial-build fallback, and no
-  chapter or group leakage.
+  source-block coverage, source-hash/version invalidation, restart,
+  simultaneous reparse/build, partial-build fallback, and no chapter or group
+  leakage. Verify that source comparison and extraction commands still read
+  the original `scenario_text`, and that retrieval never joins a public
+  description with a KP-only parent result. Verify explicit scenario clean
+  removes derived variants/indexes and invalidates saved language preferences.
 - Compare one-time translation and embedding cost against repeated-turn
   savings. Keep template generation off the player-turn critical path until
   multi-scene replay preserves rulings and reduces complete turn latency
-  without a per-turn translation request. Record preprocessing, retrieval,
-  and model time separately.
+  without a per-turn translation request. Compare source-excerpt inclusion
+  for decision-critical rules, recording answer accuracy, context tokens,
+  preprocessing, retrieval, and model time separately. Verify a second group
+  can reuse a compatible immutable variant index without rebuilding it.
+
+The storage and retrieval choices above are informed by published patterns,
+not by a claim that they improve this bot's latency: [Azure AI Search's
+multilingual index guidance](https://learn.microsoft.com/en-us/azure/search/search-language-support)
+describes language-specific content selection, while [Azure's hybrid search
+overview](https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview)
+explains why keyword and vector retrieval complement one another. [Amazon
+Bedrock's chunking guidance](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-chunking.html)
+describes preserving source mappings and retrieving a larger parent after a
+smaller child match. The local one-page trial remains the only latency evidence
+for this scenario design.
 
 ## Follow-up scope and review decisions
 
