@@ -753,13 +753,27 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
     }
     for key in _MERGE_ATTR_KEYS:
         if key == "luck":
-            # A blank manual field is available for a verified PDF value.
-            # Presence of an old null/empty key alone must not win.
-            value = pregen_luck_value(manual.get(key))
-            if value is None:
-                value = pregen_luck_value(llm.get(key))
+            # Preserve both sources separately. A newer PDF replaces the old
+            # PDF value (including clearing it); a newer manual upload can
+            # clear its own value without reviving an old manual value.
+            if manual.get("source") == "manual":
+                manual_value = pregen_luck_value(manual.get(key))
+            elif manual.get("source") == "merged" and manual.get("luck_origin") == "manual":
+                manual_value = pregen_luck_value(manual.get(key))
+            else:
+                manual_value = None
+            if llm.get("source") == "llm_extracted":
+                pdf_value = pregen_luck_value(llm.get(key))
+            elif llm.get("source") == "merged":
+                pdf_value = pregen_luck_value(llm.get("luck_pdf_value"))
+            else:
+                pdf_value = None
+            value = manual_value if manual_value is not None else pdf_value
             if value is not None:
                 merged[key] = value
+                merged["luck_origin"] = "manual" if manual_value is not None else "llm_extracted"
+            if pdf_value is not None:
+                merged["luck_pdf_value"] = pdf_value
             continue
         if key in manual:
             merged[key] = manual[key]
