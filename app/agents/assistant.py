@@ -5,10 +5,21 @@ from typing import Any
 
 from app import keeper, observability, spoiler_policy
 from app.agents import guard, tool_gateway
+from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
 
 _logger = logging.getLogger(__name__)
 _ROLE = "kp_assistant"
+
+
+def _provider_failure_fallback_text(mutating_tools_ran: list[str]) -> str:
+    if mutating_tools_ran:
+        return (
+            "（守密人在整理接下來的敘述時遇到問題，但你剛才的行動已經有部分結果被"
+            "系統記錄——請不要重複剛才的行動，先描述你接下來想做什麼，或用指令"
+            "查看目前狀態。）"
+        )
+    return "（守密人一時語塞，請再說一次剛才的行動）"
 
 
 async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
@@ -109,23 +120,23 @@ async def _run_assistant_turn(
         try:
             final_text = await provider.run_conversation(
                 static_prompt, dynamic_prompt, tools, state.log, turn_message,
-                execute_assistant_tool, keeper.MAX_TOOL_ITERATIONS,
+                execute_assistant_tool, MAX_TOOL_ITERATIONS,
                 previous_response_id=previous_response_id,
                 on_response_id=remember_openai_response_id,
                 tools_for_request=lambda: combat_status_gate.tools_for_request(tools),
             )
         except Exception:
             _logger.exception("KP Assistant provider call failed")
-            final_text = keeper._provider_failure_fallback_text(mutating_tools_ran)
+            final_text = _provider_failure_fallback_text(mutating_tools_ran)
     else:
         try:
             final_text = await provider.run_conversation(
                 static_prompt, dynamic_prompt, tools, state.log, turn_message,
-                execute_assistant_tool, keeper.MAX_TOOL_ITERATIONS,
+                execute_assistant_tool, MAX_TOOL_ITERATIONS,
             )
         except Exception:
             _logger.exception("KP Assistant provider call failed")
-            final_text = keeper._provider_failure_fallback_text(mutating_tools_ran)
+            final_text = _provider_failure_fallback_text(mutating_tools_ran)
 
     provider_text = final_text
     final_text = await guard.enforce_narrative_safety(AgentMessage(payload={}), final_text)

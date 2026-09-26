@@ -207,9 +207,8 @@ async def run_turn(
     # pending_checks/combat/etc.) already happened inside the Executor's
     # tool calls, via keeper._execute_tool's own locked
     # (_mutate_and_save_state) path — see state_reducer.py's docstring.
-    # What's left here is just committing this turn's log entries, the same
-    # way app/keeper.py's own run_turn does for the old single-LLM path:
-    # reload the latest state under the state lock (so this can't clobber
+    # What's left here is just committing this turn's log entries: reload
+    # the latest state under the state lock (so this can't clobber
     # whatever the tool calls above already saved), append, save, then sync
     # this function's own `state` object so a caller that keeps using it
     # afterward sees the up-to-date snapshot.

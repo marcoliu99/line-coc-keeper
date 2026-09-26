@@ -35,23 +35,18 @@ from app import (
     scene_digest,
     spoiler_policy,
 )
-from app.agents import guard
 from app.check_identity import effective_check_id, new_check_id, new_decision_id
 from app.config import (
     LLM_PROVIDER,
-    LOG_SLOW_OPERATION_MS,
     MAX_LOG_TURNS,
     MAX_SCENARIO_CHARS,
-    MAX_TOOL_ITERATIONS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
     SCENARIO_RAG_TOP_K,
     SCENE_DIGEST_TURN_INTERVAL,
-    TOOL_EXECUTION_TIMEOUT_SECONDS,
 )
-from app.domain.models import AgentMessage
 from app.models import BASE_SKILLS, Character, Combatant, GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import (
@@ -61,7 +56,6 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
-from app.services import prompt_config
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
@@ -826,7 +820,7 @@ RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES = READ_ONLY_TOOL_NAMES | frozenset({
 # and Gemini; any provider-specific extras (e.g. Anthropic's cache_control) are
 # added by the adapter in app/providers/, not here.
 
-# Only added to the tool list when SCENARIO_RAG_ENABLED (see run_turn below) —
+# Only added to the tool list when SCENARIO_RAG_ENABLED —
 # with the full scenario text already in the cached static prompt (the default),
 # this tool would be redundant; it only exists to compensate for that text being
 # withheld under RAG mode (see _build_static_prompt's scenario stub above).
@@ -3500,7 +3494,7 @@ _SUMMARY_TOOL = {
 
 
 def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]) -> str:
-    """Rolling summarization — see run_turn below, called only on the rare
+    """Rolling summarization — called only on the rare maintenance
     turn where state.log is about to be trimmed past MAX_LOG_TURNS*4. Folds
     old_messages (the chunk about to be dropped) into current_summary via one
     forced tool call, dispatched through whichever LLM_PROVIDER is configured
@@ -3629,328 +3623,3 @@ class _CombatStatusToolGate:
         if not self._withhold_status:
             return tools
         return [tool for tool in tools if tool.get("name") != "get_combat_status"]
-
-
-async def run_turn(
-    state: GroupState,
-    user_id: str,
-    speaker_name: str,
-    message_text: str,
-    resolved_location: dict | None = None,
-    speaker_role: str = "player",
-    resolved_check_context: dict[str, Any] | None = None,
-) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
-    """Observed boundary for every direct Keeper turn entry point.
-
-    The Supervisor agents have their own turn spans, but legacy command paths
-    still call ``keeper.run_turn`` directly. Keeping the lifecycle here makes
-    both entry styles produce the same ``llm.turn`` schema without forcing
-    every Discord/command adapter to remember a second instrumentation rule.
-    """
-    provider = _PROVIDERS.get(LLM_PROVIDER)
-    model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None) if provider else None
-    turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
-    agent = "kp_assistant" if speaker_role == "kp_assistant" else "keeper"
-    turn_metrics: dict[str, int] = {}
-    with (
-        observability.context(turn_id=turn_id),
-        observability.metrics_context(turn_metrics),
-        observability.span(
-            "llm.turn",
-            provider=LLM_PROVIDER,
-            model=model,
-            agent=agent,
-            reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
-            metrics=turn_metrics,
-        ),
-    ):
-        return await _run_turn_impl(
-            state, user_id, speaker_name, message_text, resolved_location, speaker_role,
-            resolved_check_context,
-        )
-
-
-def _provider_failure_fallback_text(mutating_tools_ran: list[str]) -> str:
-    """Text to show when provider.run_conversation raises partway through a
-    turn. A later iteration can fail after earlier iterations already ran
-    and saved real mutations (a roll, ammo, damage, a new pending check,
-    ...) — narrator.py's plain "please repeat the action" text is only
-    safe when nothing could have mutated state yet (true for narrator.py,
-    which has no tools at all), not here, where retrying the same action
-    risks re-rolling a check or double-applying damage/ammo rather than
-    just wasting a message. Only state-mutating tool calls count (see
-    READ_ONLY_TOOL_NAMES) — a turn that only ever called read-only tools
-    before failing is exactly as safe to retry as narrator.py's case."""
-    if mutating_tools_ran:
-        return (
-            "（守密人在整理接下來的敘述時遇到問題，但你剛才的行動已經有部分結果被"
-            "系統記錄——請不要重複剛才的行動，先描述你接下來想做什麼，或用指令"
-            "查看目前狀態。）"
-        )
-    return "（守密人一時語塞，請再說一次剛才的行動）"
-
-
-async def _run_turn_impl(
-    state: GroupState,
-    user_id: str,
-    speaker_name: str,
-    message_text: str,
-    resolved_location: dict | None = None,
-    speaker_role: str = "player",
-    resolved_check_context: dict[str, Any] | None = None,
-) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
-    """Returns (public_reply_text, private_messages, image_requests):
-    - private_messages: (owner_id, message) pairs queued via send_private_info.
-    - image_requests: (owner_id_or_None, page_number) pairs queued via
-      show_scenario_image — owner_id is None for a public post.
-    `resolved_location` is app/commands.py's Map/Scene Engine result (see
-    _resolve_map_action there) — {"room_name", "room_description"} when this
-    message's movement was already resolved deterministically against a
-    scenario floor plan, else None. `user_id` is the speaker's platform user id,
-    used to look up per-character map position for player speakers when
-    resolved_location wasn't computed this turn (see GroupState.current_map_page).
-    `speaker_role` is an explicit caller-provided identity marker ("player" or
-    "kp_assistant"). KP Assistant turns receive the OOC host-instruction prompt
-    and message wrapper below, plus a separate OOC working-memory context that
-    is kept out of the public game log; player turns never receive that OOC
-    context. Formal player/Keeper history persistence and the OpenAI canonical
-    response chain remain gated by `is_ephemeral`.
-    The caller is responsible for actually delivering private_messages/image_requests
-    via platform-specific channels; nothing here sends anything itself."""
-    provider = _PROVIDERS.get(LLM_PROVIDER)
-    if provider is None:
-        return f"（設定錯誤：LLM_PROVIDER=\"{LLM_PROVIDER}\" 不是支援的供應商，請在 .env 設成 anthropic、gemini 或 openai）", [], []
-
-    is_ephemeral = speaker_role == "kp_assistant"
-    turn_timeline_id = _ensure_turn_timeline(state)
-    static_prompt = _build_static_prompt(state)
-    dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
-    if resolved_check_context is not None:
-        dynamic_prompt += "\n\n" + prompt_config.build_resolved_check_outcome_block(resolved_check_context)
-    kp_manual_canon_trigger, effective_message_text = _parse_kp_manual_canon_trigger(speaker_role, message_text)
-    turn_message = _format_turn_message(speaker_name, effective_message_text, speaker_role)
-
-    # No extra slicing here — state.log is already bounded to at most
-    # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
-    # at that one point, back down to MAX_LOG_TURNS*2). Slicing it again on
-    # every read (e.g. state.log[-MAX_LOG_TURNS*2:]) looks harmless but
-    # actually defeats prompt caching for this entire block: once the log
-    # passes that slice's window size, the slice becomes a sliding window
-    # whose start point shifts forward every single turn, so consecutive
-    # turns' `history` never share a common prefix for Anthropic/OpenAI's
-    # cache to match against — verified by tracing the exact slice against a
-    # simulated 200-turn log, confirming zero turns after the initial ~40
-    # shared a growing prefix with the previous turn. Sending the log
-    # unsliced between trims means it only ever grows turn to turn (a real
-    # growing prefix, which caching can actually exploit) until the trim
-    # resets it — the one deliberate cache-miss point, same as before.
-    history = state.log
-    private_messages: list[tuple[str, str]] = []
-    image_requests: list[tuple[str | None, int]] = []
-    tools = _tools_for_speaker_role(speaker_role)
-    if resolved_check_context is not None:
-        # The roll is committed, so no tool may create another check. Combat
-        # damage and turn progression may still be consequences of that roll.
-        tools = [tool for tool in tools if tool.get("name") in RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES]
-    combat_status_gate = _CombatStatusToolGate(state)
-    kp_turn_creates_canon = kp_manual_canon_trigger
-    kp_canonical_tool_events: list[dict] = []
-    # Tracks whether any state-mutating tool call actually completed this
-    # turn — used by the provider-failure fallback below to decide whether
-    # it's safe to ask the player to repeat their action. A later provider
-    # iteration can fail after earlier iterations already ran and saved
-    # real mutations (a roll, ammo, damage, ...); telling the player to
-    # "just repeat the action" in that case risks re-rolling a check or
-    # double-applying damage/ammo, not just wasting a message.
-    mutating_tools_ran: list[str] = []
-
-    async def execute_turn_tool(name: str, tool_input: dict) -> dict:
-        nonlocal kp_turn_creates_canon
-        if name not in READ_ONLY_TOOL_NAMES:
-            mutating_tools_ran.append(name)
-        observability.increment_metric("tool_call_count")
-        with observability.span(
-            "llm.tool",
-            tool_name=observability.tool_name(name),
-            slow_threshold_ms=LOG_SLOW_OPERATION_MS,
-        ):
-            task = asyncio.create_task(asyncio.to_thread(
-                _execute_tool,
-                state,
-                name,
-                tool_input,
-                private_messages,
-                image_requests,
-                speaker_role,
-            ))
-            try:
-                if name in READ_ONLY_TOOL_NAMES:
-                    result = await asyncio.wait_for(
-                        asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
-                    )
-                else:
-                    result = await asyncio.shield(task)
-            except asyncio.TimeoutError:
-                observability.event(
-                    "llm.tool.timeout", level=logging.WARNING,
-                    tool_name=observability.tool_name(name), status="timeout",
-                    timeout_ms=TOOL_EXECUTION_TIMEOUT_SECONDS * 1000,
-                )
-                async_utils.observe_background_task(task, operation=f"llm.tool:{name}")
-                result = {"ok": False, "error": "timeout", "partial": True}
-            except asyncio.CancelledError:
-                if name in READ_ONLY_TOOL_NAMES:
-                    async_utils.observe_background_task(task, operation=f"llm.tool:{name}")
-                    raise
-                try:
-                    result = await asyncio.wait_for(
-                        asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS
-                    )
-                except asyncio.TimeoutError:
-                    async_utils.observe_background_task(task, operation=f"llm.tool:{name}")
-                    await record_tool_recovery_marker_bounded(state, name, tool_input)
-                    observability.event(
-                        "llm.tool.recovery_required",
-                        level=logging.ERROR,
-                        tool_name=observability.tool_name(name),
-                        status="partial",
-                    )
-                raise
-        if speaker_role == "kp_assistant" and _kp_tool_result_creates_canon(name, tool_input, result):
-            kp_turn_creates_canon = True
-            kp_canonical_tool_events.append({
-                "tool_name": name,
-                "tool_input": dict(tool_input),
-                "result": dict(result),
-            })
-        combat_status_gate.observe_tool_result(name, result)
-        return result
-
-    openai_response_id: str | None = None
-    if LLM_PROVIDER == "openai":
-        current_timeline_id = turn_timeline_id
-        previous_response_id: str | None = state.openai_previous_response_id
-        chain_timeline_id = state.openai_previous_response_timeline_id
-        if previous_response_id and chain_timeline_id != current_timeline_id:
-            observability.event(
-                "provider.chain.reset",
-                level=logging.WARNING,
-                provider="openai",
-                reason="missing_timeline_metadata" if not chain_timeline_id else "timeline_mismatch",
-                old_timeline_id=chain_timeline_id or "",
-                requested_timeline_id=current_timeline_id,
-                chain_timeline_id=chain_timeline_id,
-            )
-            previous_response_id = None
-
-        def remember_openai_response_id(response_id: str) -> None:
-            nonlocal openai_response_id
-            openai_response_id = response_id
-            if not is_ephemeral:
-                state.openai_previous_response_id = response_id
-                state.openai_previous_response_timeline_id = current_timeline_id
-
-        try:
-            final_text = await provider.run_conversation(
-                static_prompt,
-                dynamic_prompt,
-                tools,
-                history,
-                turn_message,
-                execute_turn_tool,
-                MAX_TOOL_ITERATIONS,
-                previous_response_id=previous_response_id,
-                on_response_id=remember_openai_response_id,
-                tools_for_request=lambda: combat_status_gate.tools_for_request(tools),
-            )
-        except Exception:
-            # Unlike app/agents/executor.py/narrator.py (each wrapped by
-            # their own try/except — see supervisor.py), this legacy single-
-            # call path has no outer safety net at all: an unhandled
-            # exception here used to propagate straight out of run_turn to
-            # whichever caller invoked it (legacy_commands.py, assistant.py,
-            # commands/handlers/system.py — none of which catch it either),
-            # discarding every tool call this turn already executed and
-            # saved, with no reply ever reaching the player.
-            _logger.exception("keeper.run_turn provider call failed")
-            final_text = _provider_failure_fallback_text(mutating_tools_ran)
-    else:
-        try:
-            final_text = await provider.run_conversation(
-                static_prompt,
-                dynamic_prompt,
-                tools,
-                history,
-                turn_message,
-                execute_turn_tool,
-                MAX_TOOL_ITERATIONS,
-            )
-        except Exception:
-            _logger.exception("keeper.run_turn provider call failed")
-            final_text = _provider_failure_fallback_text(mutating_tools_ran)
-
-    # Rule Validator & Guard Agent (system-leak/format repair loop) — see
-    # app/agents/supervisor.py's equivalent step 6 and docs/specs/
-    # enhancement-guard-agent.md. This legacy single-call path (still used
-    # for the KP Assistant's OOC conversation, opening narration, and
-    # /coc check result narration) never had this protection at all before
-    # — only the deterministic spoiler-content check below, which checks
-    # for a completely different problem (leaked kp_only facts, not system-
-    # prompt/formatting leaks) and would never catch a stray "[SYSTEM]" or
-    # "as an AI" fragment. Applied unconditionally (not gated by
-    # is_ephemeral) since a leaked system-prompt fragment is just as real a
-    # problem in KP-only OOC text as in canonical player-facing narrative.
-    provider_text = final_text
-    final_text = await guard.enforce_narrative_safety(AgentMessage(payload={}), final_text)
-    if resolved_check_context is not None:
-        final_text = prompt_config.enforce_resolved_check_consistency(final_text, resolved_check_context)
-
-    if not is_ephemeral or kp_turn_creates_canon:
-        # §6 output guard: this text is about to enter the canonical/public
-        # game log (the true KP-only OOC branch below never reaches here).
-        # Separate from the Rule Validator/Guard Agent check above, which
-        # only checks for system leaks/formatting — this is a deterministic
-        # scan for kp_only facts/clues and secret goals.
-        _spoiler_check = spoiler_policy.sanitize_public_text(
-            final_text, spoiler_policy.collect_protected_terms(state)
-        )
-        if not _spoiler_check.is_safe:
-            final_text = _spoiler_check.fallback_text or final_text
-
-    # The provider response chain contains provider_text. If deterministic
-    # safety processing changes what is persisted, the next turn must rebuild
-    # context from canonical history instead of reusing that divergent chain.
-    output_was_repaired = final_text != provider_text
-
-    if not is_ephemeral:
-        turn_log_entries = [
-            {"role": "user", "content": turn_message},
-            {"role": "assistant", "content": final_text},
-        ]
-        committed = _commit_turn_result(
-            state, turn_log_entries, openai_response_id=openai_response_id,
-            timeline_id=turn_timeline_id,
-            invalidate_openai_response_chain=output_was_repaired,
-        )
-        if not committed:
-            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
-    elif kp_turn_creates_canon:
-        canonical_turn_message = _format_kp_canonical_history_message(effective_message_text, kp_canonical_tool_events)
-        turn_log_entries = [
-            {"role": "user", "content": canonical_turn_message},
-            {"role": "assistant", "content": final_text},
-        ]
-        committed = _commit_turn_result(
-            state, turn_log_entries, openai_response_id=openai_response_id,
-            timeline_id=turn_timeline_id,
-            invalidate_openai_response_chain=output_was_repaired,
-        )
-        if not committed:
-            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
-    else:
-        committed = _commit_kp_ooc_turn_result(
-            state, effective_message_text, final_text, timeline_id=turn_timeline_id
-        )
-        if not committed:
-            return "（這次 KP Assistant 回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
-    return final_text, private_messages, image_requests
