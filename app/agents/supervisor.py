@@ -73,6 +73,7 @@ async def run_turn(
     if intent == "GAMEPLAY_ACTION":
         _logger.info("Routing to ExecutorAgent (Slow Path)")
         pending_checks_before = deepcopy(state.pending_checks)
+        pending_luck_before = deepcopy(state.pending_luck_decisions)
         mechanic_result = await executor.run_executor(message)
         # The post-tool in-memory snapshot is synchronized from persisted state
         # by _mutate_and_save_state. Prefer that authoritative final state to
@@ -97,18 +98,57 @@ async def run_turn(
             if new_or_changed_pending
             else user_id
         )
-        if pending_check:
+        if pending_check is None:
+            mechanic_result.check_status["pending"] = None
+        else:
             pending_details = {
                 key: pending_check[key]
-                for key in ("investigator", "skill", "skill_value", "difficulty", "options")
+                for key in (
+                    "investigator", "skill", "skill_value", "difficulty", "options",
+                    "check_id", "timeline_id",
+                )
                 if key in pending_check
             }
             active_character = state.get_active_character(pending_owner_id)
             if active_character is not None:
                 pending_details.setdefault("investigator", active_character.name)
             mechanic_result.check_status["pending"] = pending_details
-        else:
+
+        # A pending Luck decision means a roll already happened but its
+        # outcome is not final. Carry it explicitly to Narrator, including
+        # decisions created earlier (e.g. a retried wall action may have been
+        # rejected because this choice remains outstanding).
+        new_or_changed_luck = [
+            (owner_id, decision)
+            for owner_id, decision in state.pending_luck_decisions.items()
+            if pending_luck_before.get(owner_id) != decision
+        ]
+        luck_owner_id, pending_luck = (
+            new_or_changed_luck[-1]
+            if new_or_changed_luck
+            else (user_id, state.pending_luck_decisions.get(user_id))
+        )
+        if pending_luck:
+            luck_details: dict[str, Any] = {
+                key: pending_luck[key]
+                for key in (
+                    "skill_name", "display_label", "value", "roll", "original_tier",
+                    "difficulty", "options", "decision_id", "check_id", "timeline_id",
+                    "action_context",
+                )
+                if key in pending_luck
+            }
+            active_character = state.get_active_character(luck_owner_id)
+            if active_character is not None:
+                luck_details["investigator"] = active_character.name
+            mechanic_result.check_status["pending_luck"] = luck_details
+            # A pending Luck decision takes precedence over pending narration:
+            # the dice are known, but the final tier/outcome is not.
             mechanic_result.check_status["pending"] = None
+            mechanic_result.check_status["resolved"] = None
+        else:
+            mechanic_result.check_status.setdefault("pending_luck", None)
+
         # Narrator reads this back out of the payload (see narrator.py) to
         # decide between build_mechanic_facts_block and PURE_ROLEPLAY_BLOCK —
         # without this, every GAMEPLAY_ACTION turn silently narrated as if

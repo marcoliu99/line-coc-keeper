@@ -40,7 +40,12 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     facts: list[str] = []
-    check_status: dict[str, Any] = {"tool_called": False, "pending": None}
+    check_status: dict[str, Any] = {
+        "tool_called": False,
+        "pending": None,
+        "pending_luck": None,
+        "resolved": None,
+    }
     execute_tool = make_tool_executor(
         state, private_messages, image_requests, speaker_role, facts, check_status
     )

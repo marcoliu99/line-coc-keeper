@@ -149,7 +149,7 @@
 
 ### Luck 擲骰與結果選擇
 
-選角後由玩家擲 LUCK；一般檢定只要有付得起的升級選項，就可以選擇是否花費 Luck 買到更好的結果。
+預製角色卡的 LUCK 空白時由玩家擲定；卡面有值則沿用。一般檢定可選擇是否花 Luck 買到更好的結果。
 
 用法：
 - `/coc luck roll`
@@ -267,6 +267,17 @@
 
 用法：
 - `/coc scenario cancel`
+
+### 管理手動角色卡 **[KP-only]**
+
+列出或刪除這個群組在指定劇本保存的手動角色卡。
+
+用法：
+- `/coc scenario cards list 劇本ID`
+- `/coc scenario cards delete 劇本ID 資產ID`
+
+注意：
+- 只有目前的 KP Assistant 或 Discord Keeper 可以執行。
 
 ### 清理劇本庫
 

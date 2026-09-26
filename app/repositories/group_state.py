@@ -18,7 +18,9 @@ import logging
 import re
 import shutil
 import time
+from collections.abc import Callable
 from pathlib import Path
+from sqlite3 import Connection
 from uuid import uuid4
 
 from app import config, db, locks, observability
@@ -68,15 +70,21 @@ def load_state(group_id: str) -> GroupState:
             raise
 
 
-def save_state(state: GroupState, *, reason: str = "command") -> None:
+def save_state(
+    state: GroupState, *, reason: str = "command",
+    mutate_tx: Callable[[Connection], None] | None = None,
+) -> None:
     metrics: dict[str, int | bool] = {}
     if config.LOG_ENABLED:
         metrics["state_size_bytes"] = len(json.dumps(state.to_dict(), ensure_ascii=False).encode("utf-8"))
     with observability.span("state.save", operation=reason, metrics=metrics):
-        _save_state_impl(state, reason=reason)
+        _save_state_impl(state, reason=reason, mutate_tx=mutate_tx)
 
 
-def _save_state_impl(state: GroupState, *, reason: str = "command") -> None:
+def _save_state_impl(
+    state: GroupState, *, reason: str = "command",
+    mutate_tx: Callable[[Connection], None] | None = None,
+) -> None:
     """Persist one state snapshot under the authoritative per-group lock.
 
     The revision check turns a stale read-modify-write into an explicit
@@ -105,6 +113,8 @@ def _save_state_impl(state: GroupState, *, reason: str = "command") -> None:
                     f"state revision conflict for {_log_group_id(state.group_id)}: "
                     f"loaded={state.state_revision}, current={current.get('state_revision', 0)}"
                 )
+            if mutate_tx is not None:
+                mutate_tx(conn)
             _save_state_unlocked(state, reason=reason, conn=conn)
     except StateRevisionConflict:
         current_revision = current.get("state_revision", 0) if current else None
