@@ -3749,7 +3749,7 @@ async def _run_turn_impl(
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
     kp_manual_canon_trigger, effective_message_text = _parse_kp_manual_canon_trigger(speaker_role, message_text)
     turn_message = _format_turn_message(speaker_name, effective_message_text, speaker_role)
-    turn_message += _correction_context_message(state)
+    provider_message = turn_message + _correction_context_message(state)
 
     # No extra slicing here — state.log is already bounded to at most
     # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
@@ -3873,7 +3873,7 @@ async def _run_turn_impl(
                 dynamic_prompt,
                 tools,
                 history,
-                turn_message,
+                provider_message,
                 execute_turn_tool,
                 MAX_TOOL_ITERATIONS,
                 previous_response_id=previous_response_id,
@@ -3898,7 +3898,7 @@ async def _run_turn_impl(
                 dynamic_prompt,
                 tools,
                 history,
-                turn_message,
+                provider_message,
                 execute_turn_tool,
                 MAX_TOOL_ITERATIONS,
             )

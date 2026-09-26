@@ -5,7 +5,7 @@ live model will obey them; the scenario cases still need end-to-end evaluation.
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app import keeper
 from app.models import GroupState
@@ -117,3 +117,36 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         context = keeper._correction_context_message(state)
         self.assertIn("地下室不存在", context)
         self.assertLessEqual(len(context), 4100)
+
+
+class NarrativeCorrectionProviderBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_correction_context_is_not_persisted_as_player_history(self):
+        class FakeProvider:
+            OPENAI_MODEL = "fake"
+
+            async def run_conversation(self, _static, _dynamic, _tools, _history,
+                                       new_message, _execute, _iterations, **_kwargs):
+                self.new_message = new_message
+                return "敘事結果"
+
+        provider = FakeProvider()
+        state = GroupState(group_id="canon-boundary")
+        state.narrative_corrections = [
+            {"status": "pending", "target_message_id": "12345", "issue": "地下室疑點"}
+        ]
+        committed = []
+
+        def commit(_state, entries, **_kwargs):
+            committed.extend(entries)
+            return True
+
+        with patch.object(keeper, "LLM_PROVIDER", "openai"), \
+                patch.object(keeper, "_PROVIDERS", {"openai": provider}), \
+                patch.object(keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(keeper, "_commit_turn_result", side_effect=commit), \
+                patch.object(keeper.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+            await keeper.run_turn(state, "player", "玩家", "我查看門口")
+
+        self.assertIn("地下室疑點", provider.new_message)
+        self.assertNotIn("地下室疑點", committed[0]["content"])
+        self.assertIn("我查看門口", committed[0]["content"])
