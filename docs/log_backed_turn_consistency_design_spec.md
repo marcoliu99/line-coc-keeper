@@ -302,3 +302,26 @@ PR89＋PR90 的50回合重測在03-scoped重現：先新增接收者背包，再
 驗收：修正前3項反向交接案例失敗（兩種裁決＋Supervisor交接）；修正後全套
 `python3 -m pytest -o addopts='' -q --tb=short`：702 passed、1 skipped、15 subtests passed。
 mypy（69個source files）、修改檔案Ruff與git diff --check通過。
+
+## PR #89/#90 review corrections (approved)
+
+- Incomplete replies preserve the warning and derive the next action from live
+  pending/Luck/resolved state, with Luck taking priority; no extra LLM call.
+- Narrator authority contains only validated structural resolution fields.
+  Free-form model reasons remain internal diagnostics, never authoritative input.
+- Capture turn-start and per-tool gameplay snapshots for all characters, checks,
+  combat, resources and scenario progress, excluding logs/provider metadata.
+  Deferred handoffs reject committed changes, including compensated mutations.
+  The sole setup exception is verified start_combat/add_npc_to_combat work in a
+  newly initialized encounter, without changing existing combatants/resources.
+  Cancellation permits only clearing the referenced unrolled actor check;
+  unrelated changes, including other owners' waits, make it incomplete.
+- Publish private/image output queue references into the turn payload before
+  awaiting the provider, preserving prior successful outputs on any failure.
+- No persisted schema change, rollback, replay, or fixed review-model phase.
+- Regression tests use actual tool handlers and isolated SQLite, with mocked
+  providers to cover failures, cross-actor/enemy changes, compensated changes,
+  setup-only deferral, cancellation isolation, output routing, and next actions.
+
+Implement these shared fixes on PR89, then merge that branch into PR90 so both
+PR heads contain the same validation and output-preservation fixes.
