@@ -231,3 +231,121 @@ def test_referenced_check_not_overridden_by_other_players_luck(state):
     assert captured[0].check_status['pending']['check_id'] == 'ken-check'
     assert captured[0].check_status['pending_luck'] is None
     assert state.pending_luck_decisions['a']['decision_id'] == 'marco-luck'
+
+
+@pytest.mark.parametrize('kind', ['resolved', 'resolved_without_check'])
+def test_real_transfer_completes_with_unchanged_old_check(state, kind):
+    state.pending_checks['a'] = pending('old-inspection', '偵查木板牆')
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
+        await args[5]('add_carried_item', {'investigator': 'Ken', 'item': '一瓶煤油'})
+        return decision(state, kind, evidence_refs=['tool:1', 'tool:2'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'resolved_without_check'
+    stored = group_state.load_state(state.group_id)
+    assert stored.pending_checks['a']['check_id'] == 'old-inspection'
+    assert stored.get_active_character('a').carried_items == []
+    assert stored.get_active_character('b').carried_items == ['一瓶煤油']
+    assert fake.await_count == 1
+
+
+def test_real_crafting_resolved_uses_inventory_evidence(state):
+    async def provider(*args, **kwargs):
+        await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
+        await args[5]('add_carried_item', {'investigator': 'Marco', 'item': '未點燃燃燒瓶'})
+        return decision(state, 'resolved', evidence_refs=['tool:1', 'tool:2'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'resolved_without_check'
+    assert group_state.load_state(state.group_id).get_active_character('a').carried_items == ['未點燃燃燒瓶']
+
+
+def test_real_end_combat_is_completion_without_roll(state):
+    combat.start_combat(state)
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('end_combat', {})
+        return decision(state, 'resolved', evidence_refs=['tool:1'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'resolved_without_check'
+    assert not group_state.load_state(state.group_id).combat.active
+
+
+@pytest.mark.parametrize('mode', ['old_craft_check', 'new_other_check', 'failed_add', 'missing_ref', 'old_luck'])
+def test_completion_does_not_hide_remaining_or_unproven_work(state, mode):
+    if mode == 'old_craft_check':
+        state.pending_checks['a'] = pending()
+    if mode == 'old_luck':
+        state.pending_luck_decisions['a'] = {'decision_id': 'luck-old'}
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
+        target = 'nobody' if mode == 'failed_add' else ('Marco' if mode == 'old_craft_check' else 'Ken')
+        await args[5]('add_carried_item', {'investigator': target, 'item': '未點燃燃燒瓶' if mode == 'old_craft_check' else '一瓶煤油'})
+        if mode == 'new_other_check':
+            state.pending_checks['b'] = pending('new-check')
+        refs = ['tool:1'] if mode in {'missing_ref', 'failed_add'} else ['tool:1', 'tool:2']
+        return decision(state, 'resolved_without_check', evidence_refs=refs)
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'incomplete'
+    assert fake.await_count == 1  # failed validation never replays mutations
+
+
+def test_compensated_ammunition_change_is_not_deferred(state):
+    combat.start_combat(state)
+    state.get_active_character('a').weapons = {'gun': {'ammo': 6, 'ammo_max': 6}}
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('adjust_ammo', {'investigator': 'Marco', 'weapon': 'gun', 'delta': -1})
+        await args[5]('adjust_ammo', {'investigator': 'Marco', 'weapon': 'gun', 'delta': 1})
+        return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert state.get_active_character('a').weapons['gun']['ammo'] == 6
+    assert result.turn_resolution.disposition == 'incomplete'
+
+
+@pytest.mark.parametrize('name,result', [
+    ('get_character_sheet', {'ok': True}),
+    ('clear_pending_check', {'ok': True, 'cleared': False}),
+    ('end_combat', {'ok': True}),
+    ('search_scenario', {'ok': True, 'results': ''}),
+])
+def test_successful_read_or_noop_does_not_prove_completion(state, name, result):
+    resolved = turn_resolution.validate_resolution(decision(state, 'resolved', evidence_refs=['tool:1']),
+        state=state, user_id='a', before_pending={}, before_luck={}, before_actor={}, has_scenario=False,
+        tool_events=[{'name': name, 'result': result}])
+    assert resolved.disposition == 'incomplete'
+
+
+def test_supervisor_hands_off_completed_transfer_and_old_pending_together(state):
+    state.pending_checks['a'] = pending('old-inspection', '偵查木板牆')
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
+        await args[5]('add_carried_item', {'investigator': 'Ken', 'item': '一瓶煤油'})
+        return decision(state, 'resolved', evidence_refs=['tool:1', 'tool:2'])
+    async def context(**kwargs):
+        return AgentMessage(kwargs)
+    async def narrate(msg):
+        mechanic = msg.payload['mechanic_result']
+        assert mechanic.turn_resolution.disposition == 'resolved_without_check'
+        assert mechanic.check_status['pending']['check_id'] == 'old-inspection'
+        assert mechanic.check_status['pending']['action_context'] == '偵查木板牆'
+        return '煤油已交給 Ken。', [], []
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+            patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
+            patch.object(supervisor.narrator, 'run_narrator', side_effect=narrate):
+        reply, _, _ = asyncio.run(supervisor.run_turn(state, 'a', 'Marco', '我把煤油交給 Ken', None, 'player', state.group_id))
+    assert '煤油已交給 Ken' in reply and '/coc check' in reply
+    assert '尚未完整處理' not in reply

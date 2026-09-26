@@ -238,7 +238,8 @@ Resolved-check followup / opening fallback / KP Assistant retain their boundarie
 - `turn_context.py` 集中權威狀態與歷史投影；空背包也明確提供。
 - `turn_resolution.py` 驗證 `no_mechanics / await_check / await_luck / deferred /
   resolved / resolved_without_check / cancelled / blocked / incomplete`。
-  `resolved` 專門處理工具已擲骰結算，必須引用當前角色、當前 timeline 的成功結果。
+  `resolved` 接受已擲骰結算或可核對的狀態變更；擲骰必須引用當前角色、當前 timeline 的成功結果。
+  非擲骰變更通過驗證後正規化為 `resolved_without_check`。
 - 驗證只讀；JSON 格式錯誤或證據不足會標示 incomplete，不重做已提交工具、重骰或回滾。
 - 取消必須有真實 clear_pending_check；暫緩不得掩飾已花費的彈藥或資源。
 - 其他角色的 Luck 不覆蓋裁決指定的待檢定；所有角色的狀態仍保留在投影中。
@@ -254,3 +255,32 @@ Resolved-check followup / opening fallback / KP Assistant retain their boundarie
 限制：來源引用可證明模型確實取得依據，不能證明所有劇本語意推論都正確；
 `blocked` 的自然語言理由也不是完整規則驗證。下一步文字檢查是有限規則，非語意審稿模型。
 尚未重跑付費真實 API，不能據此宣稱模型正確率或耗時已提升。
+
+
+## 9. PR #89 真實 API 回歸修正
+
+10 案診斷發現四個已提交變更的回合被降為 incomplete：獨立交接被既有偵查 pending
+阻擋，另三案將非擲骰工具完成稱為 resolved，與原驗證器定義不符。使用者已要求先修本 PR。
+
+```text
+工具執行前：記錄背包／戰鬥旗標／發話者資源
+  -> 真實工具提交
+  -> 保存參數、結果、執行前資料與資源是否曾改動（僅內部）
+  -> completion 裁決
+  -> 本次新增／更換任何角色檢定或 Luck？是：不得完成
+  -> 仍有發話者舊 pending？僅允許已驗證的獨立同物品交接；Luck 不豁免
+  -> 已結算骰，或可核對的完整背包變更／戰鬥結束
+  -> 非擲骰完成正規化為 resolved_without_check
+  -> Narrator 同時收到「本次已完成」和「舊檢定仍待處理」
+```
+
+- 非擲骰證據採明確工具類別：add/remove_carried_item、end_combat。
+  所有相關變更工具均須成功並被引用；背包最後回執須等於目前 state，工具必須有實際變更。
+  end_combat 須原先 active、現在 inactive。查詢／空搜尋／no-op 不能獨自證明 resolved。
+- 獨立交接豁免：恰好移除發話者一個物品、加入另一角色相同物品，完整核對數量差；
+  僅可伴隨 search_scenario/get_character_sheet 查詢，舊 pending 原樣保留。
+  舊製作檢定、新增他人檢定、Luck、失敗或漏引用工具仍保守判 incomplete。
+- 暫緩還要查每個工具是否曾改動發話者資源；先扣彈藥再補回仍不可稱完全未執行。
+- 原地修正不新增 LLM 請求、DB schema 或限流策略。驗證仍不保證劇本推論／所有工具意圖正確。
+- 測試使用真實 Keeper 工具與 SQLite，涵蓋交接保留舊檢定、製作、結束戰鬥、失敗／缺引用、
+  新建他人檢定、Luck、查詢與 no-op、彈藥補償；模型 API 複測另列，不能以 mock 當成實测。

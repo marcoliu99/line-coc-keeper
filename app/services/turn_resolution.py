@@ -6,6 +6,7 @@ references establish provenance, not semantic proof of a scenario inference.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
 
 from app.domain.models import TurnResolution
@@ -17,6 +18,54 @@ _DISPOSITIONS = {
     "resolved", "cancelled", "blocked", "incomplete",
 }
 
+
+
+def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: list[str], actor_name: str) -> tuple[bool, bool]:
+    """Return (verified mutation, independent exact-item transfer).
+
+    Inventory receipts must agree with final state; lookup/no-op success is not
+    completion. Only a matched transfer may coexist with an unchanged old check.
+    """
+    inventory = []
+    latest = {}
+    ended = False
+    for i, event in enumerate(events, 1):
+        name, result = event['name'], event['result']
+        if (name in {'add_carried_item', 'remove_carried_item', 'end_combat'}
+                and (not result.get('ok') or f'tool:{i}' not in refs)):
+            return False, False
+        if name in {'add_carried_item', 'remove_carried_item'}:
+            owner = result.get('investigator')
+            before = event.get('inventory_before', {}).get(owner)
+            after = result.get('carried_items')
+            if before is None or not isinstance(after, list) or before == after:
+                return False, False
+            inventory.append(event)
+            latest[owner] = after
+        if name == 'end_combat':
+            ended = bool(event.get('combat_active_before') and not state.combat.active)
+    chars = {c.name: c for c in state.active_characters()}
+    if any(owner not in chars or chars[owner].carried_items != items for owner, items in latest.items()):
+        return False, False
+    actor_involved = any(e['result'].get('investigator') == actor_name for e in inventory)
+    transfer = False
+    if len(inventory) == 2:
+        remove, add = inventory
+        giver, receiver = remove['result'].get('investigator'), add['result'].get('investigator')
+        item = remove.get('arguments', {}).get('item')
+        if (remove['name'] == 'remove_carried_item' and add['name'] == 'add_carried_item'
+                and giver == actor_name and receiver != giver and isinstance(item, str)
+                and add.get('arguments', {}).get('item') == item):
+            transfer = (
+                Counter(remove['inventory_before'][giver]) - Counter(remove['result']['carried_items']) == Counter([item])
+                and Counter(add['result']['carried_items']) - Counter(add['inventory_before'][receiver]) == Counter([item])
+                and Counter(remove['result']['carried_items']) - Counter(remove['inventory_before'][giver]) == Counter()
+                and Counter(add['inventory_before'][receiver]) - Counter(add['result']['carried_items']) == Counter()
+            )
+    transfer = transfer and all(e['name'] in {
+        'add_carried_item', 'remove_carried_item', 'search_scenario', 'get_character_sheet',
+    } for e in events)
+    return bool(ended or (inventory and actor_involved)), transfer
 
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
@@ -87,20 +136,35 @@ def validate_resolution(
         ))
         # Never present a partially spent shot/action as merely waiting.
         now = actor_snapshot(state, user_id)
-        if not actual_wait or pending or luck or now != before_actor:
+        if (not actual_wait or pending or luck or now != before_actor
+                or any(e.get("actor_changed") for e in tool_events)):
             return incomplete("暫緩裁決與目前順位或已提交變更不一致")
     elif disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
-        if (pending or luck) and disposition in {"resolved", "resolved_without_check"}:
-            return incomplete("仍有未處理的檢定或 Luck，不能宣稱已完成或無需機制")
-        if disposition == "resolved" and not any(
+        mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
+        if disposition in {"resolved", "resolved_without_check"}:
+            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'end_combat'} for e in tool_events) and not mutation:
+                return incomplete("物品或戰鬥變更缺少完整且可核對的工具證據")
+            # A newly created/replaced check for any participant is still work.
+            changed_wait = any(before_pending.get(owner) != record for owner, record in state.pending_checks.items())
+            changed_luck = any(before_luck.get(owner) != record for owner, record in state.pending_luck_decisions.items())
+            if changed_wait or changed_luck or ((pending or luck) and not (transfer and not luck)):
+                return incomplete("本次仍有待處理檢定或 Luck；既有檢定只允許獨立且已驗證的物品交接")
+        rolled = any(
             f"tool:{i}" in refs and e["result"].get("ok") and e["result"].get("resolved")
             and e["result"].get("investigator") == actor.name
             and e["result"].get("timeline_id") == state.timeline_id
             for i, e in enumerate(tool_events, 1)
-        ):
-            return incomplete("沒有已結算工具結果")
-        if disposition == "resolved_without_check" and not any(ref != 'state' for ref in refs):
-            return incomplete("免檢定完成缺少劇本或工具依據")
+        )
+        if disposition == "resolved" and not (rolled or mutation):
+            return incomplete("沒有可核對的結算或狀態變更結果")
+        if disposition == "resolved" and mutation and not rolled:
+            disposition = "resolved_without_check"
+        scenario_evidence = "scenario_context" in refs or any(
+            f"tool:{i}" in refs and e['name'] == 'search_scenario' and e['result'].get('results')
+            for i, e in enumerate(tool_events, 1)
+        )
+        if disposition == "resolved_without_check" and not (mutation or scenario_evidence):
+            return incomplete("免檢定完成缺少劇本或可核對的工具變更依據")
         if disposition == "no_mechanics" and tool_events:
             return incomplete("已有工具操作，不能當作沒有機制")
     return TurnResolution(

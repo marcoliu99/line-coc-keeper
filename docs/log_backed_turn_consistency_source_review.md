@@ -289,3 +289,19 @@ The old probe results in section 6 describe the baseline, not the corrected runt
 
 Provider JSON compliance and scenario interpretation remain live-model verification limits.
 The validator verifies state and evidence provenance, not every natural-language rule inference.
+
+
+## 10. PR #89 API-discovered regressions
+
+The subsequent 10-case API diagnostic completed 39 logical requests with 15 TPM retries.
+Four turns had real mutations but incomplete handoff. See design spec section 9 for the repair:
+verified non-roll mutations now normalize to resolved_without_check; an unchanged old check may
+coexist with a proven independent inventory transfer. New checks/Luck and unproven/failed mutations
+still block completion. Per-tool actor changes prevent compensated ammo expenditure from being
+misreported as untouched deferred work. The API diagnostic used pre-fix 30e14ac; its results are
+not evidence of post-fix live-model accuracy.
+
+Post-fix verification: full isolated pytest **683 passed, 1 skipped, 15 subtests passed**;
+37 handoff regressions passed, including Supervisor carrying completed transfer and old pending
+together. Mypy (69 source files), changed-file Ruff and diff whitespace checks passed. No additional
+paid API calls were made for this repair; live-model confirmation remains outstanding.

@@ -101,10 +101,16 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 nonlocal scenario_search_count
                 if name == "search_scenario":
                     scenario_search_count += 1
+                inventory_before = {c.name: list(c.carried_items) for c in state.active_characters()}
+                combat_active_before = state.combat.active
+                actor_before_tool = turn_resolution.actor_snapshot(state, user_id)
                 result = await execute_tool(name, tool_input)
                 if LLM_PROVIDER == "openai":
                     combat_status_gate.observe_tool_result(name, result)
-                tool_events.append({"name": name, "result": deepcopy(result)})
+                tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
+                                    "inventory_before": inventory_before,
+                                    "combat_active_before": combat_active_before,
+                                    "actor_changed": actor_before_tool != turn_resolution.actor_snapshot(state, user_id)})
                 return {**result, "evidence_ref": f"tool:{len(tool_events)}",
                         "current_turn_state": turn_context.current_state(state)}
 
