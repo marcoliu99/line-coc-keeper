@@ -3,6 +3,8 @@
 狀態：待確認；尚未修改 runtime。分支：`bug/log-backed-turn-consistency`。
 基底：`origin/main_v2`，`95d8ca35e21379c9f976b295e60d3926f10d6c0f`。
 
+完整程式追蹤、接口與流程圖：[source review](log_backed_turn_consistency_source_review.md)。
+
 ## 1. 目標與證據
 
 依現有 main_v2 `.env`、隔離 DATA、玩家 log 的 50 組配對／100 回合測試，
@@ -113,7 +115,7 @@ header，不能區分帳號其他程序流量、RPM、TPM、供應端節流。
   如果聲稱取消但 state 沒改，輸出 incomplete，不能同時說取消成功又請玩家擲舊骰。
 - 不能只用「沒有」「不是」關鍵字自動刪資料；不能從 Narrator 自由文字推動 mutation。
 - 不取消已結算結果／待 Luck 當作未擲骰；不同玩家 pending 不能被誤清。
-- 沿用既有 /coc correct 場外更正流程與權限，不另造第二個更正入口。
+- PR #86 的 /coc correct 尚未合併進本基底；本修正不假定該入口已存在。未來整合时保留其場外權限與流程，不另造第二個更正入口，也不把核准文字自動當作 pending mutation。
 
 ### C. 背包現況與歷史快照分離
 
@@ -213,3 +215,7 @@ Resolved-check followup / opening fallback / KP Assistant retain their boundarie
 以空 check_status 呼叫 enforce_mechanic_check_consistency：
 `invalid_instruction_passes_guard=True`（句子如 §2.2）。
 兩項是修復前重現，尚不是通過的回歸測試；runtime 修改後應把期望反轉，並納入正式 tests。
+
+## 9. Detailed source review update
+
+51 個既有相關測試通過，但零 API 的新探測確認權威 pending 輸入缺失、Executor 裁決交接遺失、舊背包快照混入與無效檢定指示漏攔。修正優先序為權威 context、歷史 projection、明確裁決交接與最終 next-action 一致性；詳見 source review。尚未修改 runtime。
