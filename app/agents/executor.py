@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from copy import deepcopy
 from typing import Any
 
 from app import keeper, observability
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
-from app.domain.models import AgentMessage, MechanicResult, StateDelta
+from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.providers import anthropic_provider, gemini_provider, openai_provider
-from app.services import prompt_config
+from app.services import prompt_config, turn_context, turn_resolution
 
 _logger = logging.getLogger(__name__)
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
@@ -76,6 +77,11 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         )
 
     new_message = f"{display_name}：{text}"
+    before_pending = deepcopy(state.pending_checks)
+    before_luck = deepcopy(state.pending_luck_decisions)
+    before_actor = turn_resolution.actor_snapshot(state, user_id)
+    tool_events: list[dict[str, Any]] = []
+    completion = ""
     scenario_search_count = 0
     turn_status = "success"
 
@@ -95,25 +101,27 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 nonlocal scenario_search_count
                 if name == "search_scenario":
                     scenario_search_count += 1
+                inventory_before = {c.name: list(c.carried_items) for c in state.active_characters()}
+                combat_active_before = state.combat.active
+                actor_before_tool = turn_resolution.actor_snapshot(state, user_id)
                 result = await execute_tool(name, tool_input)
                 if LLM_PROVIDER == "openai":
                     combat_status_gate.observe_tool_result(name, result)
-                return result
+                tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
+                                    "inventory_before": inventory_before,
+                                    "combat_active_before": combat_active_before,
+                                    "actor_changed": actor_before_tool != turn_resolution.actor_snapshot(state, user_id)})
+                return {**result, "evidence_ref": f"tool:{len(tool_events)}",
+                        "current_turn_state": turn_context.current_state(state)}
 
             provider_options = (
                 {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools)}
                 if LLM_PROVIDER == "openai" else {}
             )
-            await provider.run_conversation(
+            completion = await provider.run_conversation(
                 static_system, dynamic_system, tools, state.log, new_message,
                 execute_turn_tool, MAX_TOOL_ITERATIONS,
-                # This call's return value is discarded entirely (only the
-                # tool calls' side effects matter to run_executor — see
-                # docstring above), and supervisor.py always runs a separate
-                # Narrator call afterward regardless of how this turn went.
-                # A forced wrap-up here would be a real extra API call whose
-                # output the player could never see — see each provider's
-                # own comment on the enable_wrapup-gated branch.
+                # Reuse the existing completion; never force an extra wrap-up.
                 enable_wrapup=False,
                 **provider_options,
             )
@@ -130,6 +138,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             narrative_facts=["機制執行時發生錯誤，請視為純敘事處理，不要假設任何判定結果"],
             state_delta=StateDelta(),
             check_status=check_status,
+            turn_resolution=TurnResolution(reason="機制流程發生錯誤；不重播已提交的變更"),
         )
     finally:
         observability.event(
@@ -139,14 +148,23 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     message.payload["private_messages"] = private_messages
     message.payload["image_requests"] = image_requests
 
+    resolution = turn_resolution.validate_resolution(
+        completion, state=state, user_id=user_id, before_pending=before_pending,
+        before_luck=before_luck, tool_events=tool_events,
+        has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
+        before_actor=before_actor,
+    )
+    observability.event("executor.resolution", disposition=resolution.disposition,
+                        evidence_count=len(resolution.evidence_refs))
     return MechanicResult(
         success=True,
         action_type="tool_calls" if facts else "none",
-        narrative_facts=facts or ["這句話不需要任何機制判定"],
+        narrative_facts=facts or ["本回合沒有工具操作；是否完成行動以裁決狀態為準"],
         # Real state changes already happened above via execute_tool's calls
         # into keeper._execute_tool — this StateDelta is intentionally left
         # empty (see state_reducer.apply_mechanic_result's docstring for why
         # it must not try to re-apply anything on top of that).
         state_delta=StateDelta(),
         check_status=check_status,
+        turn_resolution=resolution,
     )
