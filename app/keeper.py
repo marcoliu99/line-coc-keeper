@@ -1511,6 +1511,7 @@ def _commit_turn_result(
     *,
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
+    correction_context_hash: str | None = None,
 ) -> bool:
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -1530,11 +1531,14 @@ def _commit_turn_result(
         if invalidate_openai_response_chain:
             latest_state.openai_previous_response_id = ""
             latest_state.openai_previous_response_timeline_id = ""
+            latest_state.openai_correction_context_hash = ""
         elif openai_response_id is not None:
             latest_state.openai_previous_response_id = openai_response_id
             latest_state.openai_previous_response_timeline_id = (
                 latest_state.timeline_id or f"legacy-{latest_state.group_id}"
             )
+            if correction_context_hash is not None:
+                latest_state.openai_correction_context_hash = correction_context_hash
         _save_state_checked(latest_state, reason="turn")
         _sync_state_snapshot(state, latest_state)
         return True
@@ -3749,7 +3753,9 @@ async def _run_turn_impl(
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
     kp_manual_canon_trigger, effective_message_text = _parse_kp_manual_canon_trigger(speaker_role, message_text)
     turn_message = _format_turn_message(speaker_name, effective_message_text, speaker_role)
-    provider_message = turn_message + _correction_context_message(state)
+    correction_context = _correction_context_message(state)
+    correction_context_hash = hashlib.sha256(correction_context.encode("utf-8")).hexdigest()
+    provider_message = turn_message + correction_context
 
     # No extra slicing here — state.log is already bounded to at most
     # MAX_LOG_TURNS*4 entries by the trim logic below (it only ever shrinks
@@ -3859,6 +3865,12 @@ async def _run_turn_impl(
                 chain_timeline_id=chain_timeline_id,
             )
             previous_response_id = None
+        if previous_response_id and state.openai_correction_context_hash == correction_context_hash:
+            # The previous response chain already contains this exact bounded
+            # snapshot; repeating it each turn would grow provider history.
+            provider_message = turn_message
+        elif previous_response_id and not correction_context:
+            provider_message = turn_message + "\n\n【敘事更正資料更新】目前沒有有效異議或更正。"
 
         def remember_openai_response_id(response_id: str) -> None:
             nonlocal openai_response_id
@@ -3946,6 +3958,7 @@ async def _run_turn_impl(
             state, turn_log_entries, openai_response_id=openai_response_id,
             timeline_id=turn_timeline_id,
             invalidate_openai_response_chain=output_was_repaired,
+            correction_context_hash=correction_context_hash,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
@@ -3959,6 +3972,7 @@ async def _run_turn_impl(
             state, turn_log_entries, openai_response_id=openai_response_id,
             timeline_id=turn_timeline_id,
             invalidate_openai_response_chain=output_was_repaired,
+            correction_context_hash=correction_context_hash,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []

@@ -879,6 +879,7 @@ class GroupState:
     # Approved entries supersede conflicting old narration and summaries.
     narrative_corrections: list[dict[str, Any]] = field(default_factory=list)
     openai_previous_response_id: str = ""
+    openai_correction_context_hash: str = ""
     # A provider-side conversation is valid only inside the timeline that
     # created it.  Empty means that no reusable chain is currently trusted.
     openai_previous_response_timeline_id: str = ""
@@ -1131,6 +1132,7 @@ class GroupState:
             "campaign_summary": self.campaign_summary,
             "narrative_corrections": self.narrative_corrections,
             "openai_previous_response_id": self.openai_previous_response_id,
+            "openai_correction_context_hash": self.openai_correction_context_hash,
             # Do not infer trust for a legacy response ID while serializing.
             # Missing chain metadata is deliberately preserved as empty so the
             # provider path will reset it on the next turn instead of silently
@@ -1217,6 +1219,7 @@ class GroupState:
                 else []
             ),
             openai_previous_response_id=data.get("openai_previous_response_id", ""),
+            openai_correction_context_hash=data.get("openai_correction_context_hash", ""),
             openai_previous_response_timeline_id=data.get("openai_previous_response_timeline_id", ""),
             creation_sessions={
                 k: CreationSession.from_dict(v) for k, v in data.get("creation_sessions", {}).items()
