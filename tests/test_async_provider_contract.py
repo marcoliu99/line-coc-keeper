@@ -41,7 +41,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
         )
         final = SimpleNamespace(output=[], output_text="done", id="response-2")
         client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(side_effect=[first, final])))
-        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(return_value=client))
+        fake_openai = types.SimpleNamespace(DefaultAsyncHttpxClient=MagicMock(), AsyncOpenAI=MagicMock(return_value=client))
         calls: list[str] = []
 
         async def execute_tool(name, _args):
@@ -73,7 +73,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
         )
         final = SimpleNamespace(output=[], output_text="done", id="response-2")
         client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(side_effect=[first, final])))
-        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(return_value=client))
+        fake_openai = types.SimpleNamespace(DefaultAsyncHttpxClient=MagicMock(), AsyncOpenAI=MagicMock(return_value=client))
         execute_tool = AsyncMock(return_value={"ok": True})
 
         with patch.dict(sys.modules, {"openai": fake_openai}), \
@@ -100,7 +100,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
         client = SimpleNamespace(
             responses=SimpleNamespace(create=AsyncMock(side_effect=[first, final]))
         )
-        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(return_value=client))
+        fake_openai = types.SimpleNamespace(DefaultAsyncHttpxClient=MagicMock(), AsyncOpenAI=MagicMock(return_value=client))
         state = GroupState(group_id="g")
         state.combat = CombatState(
             active=True,
@@ -140,7 +140,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
             responses=SimpleNamespace(create=AsyncMock()),
             aclose=AsyncMock(),
         )
-        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(return_value=client))
+        fake_openai = types.SimpleNamespace(DefaultAsyncHttpxClient=MagicMock(), AsyncOpenAI=MagicMock(return_value=client))
         with patch.dict(sys.modules, {"openai": fake_openai}), \
                 patch.object(openai_provider, "OPENAI_API_KEY", "test-key"):
             first = await openai_provider.get_async_client()
@@ -148,7 +148,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
             await openai_provider.shutdown_async_client()
 
         self.assertIs(first, second)
-        fake_openai.AsyncOpenAI.assert_called_once_with(api_key="test-key", max_retries=0)
+        fake_openai.AsyncOpenAI.assert_called_once_with(api_key="test-key", max_retries=0, http_client=fake_openai.DefaultAsyncHttpxClient.return_value)
         client.aclose.assert_awaited_once()
 
     async def test_shutdown_waits_for_an_inflight_request_before_closing(self):
@@ -156,7 +156,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
             responses=SimpleNamespace(create=AsyncMock()),
             aclose=AsyncMock(),
         )
-        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(return_value=client))
+        fake_openai = types.SimpleNamespace(DefaultAsyncHttpxClient=MagicMock(), AsyncOpenAI=MagicMock(return_value=client))
         with patch.dict(sys.modules, {"openai": fake_openai}), \
                 patch.object(openai_provider, "OPENAI_API_KEY", "test-key"):
             async with openai_provider._request_scope() as scoped_client:
@@ -177,7 +177,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
             responses=SimpleNamespace(create=AsyncMock()),
             aclose=AsyncMock(),
         )
-        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(side_effect=[first, second]))
+        fake_openai = types.SimpleNamespace(DefaultAsyncHttpxClient=MagicMock(), AsyncOpenAI=MagicMock(side_effect=[first, second]))
         with patch.dict(sys.modules, {"openai": fake_openai}), \
                 patch.object(openai_provider, "OPENAI_API_KEY", "test-key"):
             async with openai_provider._request_scope():
@@ -237,7 +237,7 @@ class AsyncProviderCrossLoopTests(unittest.TestCase):
             responses=SimpleNamespace(create=AsyncMock()),
             aclose=AsyncMock(),
         )
-        fake_openai = types.SimpleNamespace(AsyncOpenAI=MagicMock(side_effect=[first, second]))
+        fake_openai = types.SimpleNamespace(DefaultAsyncHttpxClient=MagicMock(), AsyncOpenAI=MagicMock(side_effect=[first, second]))
 
         async def get_client():
             from app.providers import openai_provider

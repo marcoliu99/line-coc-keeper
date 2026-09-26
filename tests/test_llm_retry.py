@@ -502,7 +502,9 @@ class OpenAIClientConstructionTests(unittest.TestCase):
         # SDK's own default retrying (max_retries=2) must be disabled so
         # retry.call_with_retry's LLM_MAX_RETRIES budget is the only one in
         # effect.
-        fake_openai_module.AsyncOpenAI.assert_called_once_with(api_key="test-key", max_retries=0)
+        fake_openai_module.AsyncOpenAI.assert_called_once_with(
+            api_key="test-key", max_retries=0, http_client=fake_openai_module.DefaultAsyncHttpxClient.return_value
+        )
 
 
 class AnthropicProviderRetryWiringTests(unittest.TestCase):

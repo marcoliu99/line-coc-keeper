@@ -355,6 +355,49 @@ def test_supervisor_hands_off_completed_transfer_and_old_pending_together(state,
     assert '尚未完整處理' not in reply
 
 
+def test_truncated_executor_preserves_prior_committed_tool_without_replay(state, monkeypatch):
+    from app.providers import openai_provider
+    def response(status, name, item):
+        return SimpleNamespace(status=status, id=status, usage=None,
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output=[SimpleNamespace(type="function_call", name=name, call_id=status,
+                arguments=json.dumps({"investigator": "Marco", "item": item}))])
+    create = AsyncMock(side_effect=[response("completed", "remove_carried_item", "一瓶煤油"),
+                                   response("incomplete", "add_carried_item", "不應新增")])
+    monkeypatch.setattr(openai_provider, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(openai_provider, "_create_response_async", create)
+    monkeypatch.setattr(executor, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(executor, "_PROVIDERS", {"openai": openai_provider})
+    result = asyncio.run(executor.run_executor(message(state)))
+    stored = group_state.load_state(state.group_id)
+    assert stored.get_active_character("a").carried_items == []
+    assert len(stored.consumed_or_removed_items) == 1
+    assert result.turn_resolution.disposition == "incomplete"
+    assert create.await_count == 2
+
+
+@pytest.mark.parametrize("kind", ["player_action", "resolved_check_followup", "opening_fallback"])
+def test_truncated_narrator_uses_safe_fallback(state, monkeypatch, kind):
+    from app.agents import narrator
+    from app.providers import openai_provider
+    create = AsyncMock(return_value=SimpleNamespace(status="incomplete", incomplete_details=None, output=[]))
+    monkeypatch.setattr(openai_provider, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(openai_provider, "_create_response_async", create)
+    monkeypatch.setattr(narrator, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(narrator, "_PROVIDERS", {"openai": openai_provider})
+    msg = message(state)
+    msg.payload.update(turn_kind=kind, resolved_check_context={"investigator": "Marco", "roll": 42, "outcome": "成功"})
+    reply, _, _ = asyncio.run(narrator.run_narrator(msg))
+    assert msg.payload["narration_failed"]
+    assert create.await_count == 1
+    if kind == "opening_fallback":
+        assert "遊戲尚未開始" in reply
+    else:
+        assert "重做" in reply and "不要" in reply
+        if kind == "resolved_check_followup":
+            assert "42" in reply and "已結算" in reply
+
+
 @pytest.mark.parametrize('add_first', [False, True])
 @pytest.mark.parametrize('mode', ['same_owner', 'different_item', 'duplicate_add', 'noop_add',
                                   'failed_remove', 'missing_ref', 'final_state_mismatch'])
@@ -588,3 +631,30 @@ def test_deferred_without_full_snapshot_fails_closed(state):
         state=state, user_id='a', before_pending={}, before_luck={}, tool_events=[],
         has_scenario=False, before_actor=turn_resolution.actor_snapshot(state, 'a'))
     assert result.disposition == 'incomplete'
+
+
+def test_truncated_continuation_keeps_successful_private_output_queues(state, monkeypatch):
+    from app.providers import openai_provider
+    state.scenario_library_id = 'test-scenario'
+    calls = [
+        SimpleNamespace(type='function_call', name='send_private_info', call_id='private',
+            arguments=json.dumps({'investigator': 'Ken', 'message': 'private clue'})),
+        SimpleNamespace(type='function_call', name='show_scenario_image', call_id='image',
+            arguments=json.dumps({'investigator': 'Ken', 'page_number': 2})),
+    ]
+    create = AsyncMock(side_effect=[
+        SimpleNamespace(status='completed', id='completed', usage=None, output=calls),
+        SimpleNamespace(status='incomplete', id='truncated', usage=None,
+            incomplete_details=SimpleNamespace(reason='max_output_tokens'), output=calls),
+    ])
+    monkeypatch.setattr(openai_provider, 'OPENAI_API_KEY', 'test-key')
+    monkeypatch.setattr(openai_provider, '_create_response_async', create)
+    monkeypatch.setattr(executor, 'LLM_PROVIDER', 'openai')
+    monkeypatch.setattr(executor, '_PROVIDERS', {'openai': openai_provider})
+    msg = message(state)
+    with patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
+        result = asyncio.run(executor.run_executor(msg))
+    assert not result.success and result.turn_resolution.disposition == 'incomplete'
+    assert msg.payload['private_messages'] == [('b', 'private clue')]
+    assert msg.payload['image_requests'] == [('b', 2)]
+    assert create.await_count == 2

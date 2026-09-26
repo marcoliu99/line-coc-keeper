@@ -62,7 +62,7 @@ class OpenAIWrapupTests(unittest.TestCase):
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
-        self.assertEqual(result, PLACEHOLDER)
+        self.assertIn("不要重做剛才的行動", result)
 
     def test_keeps_placeholder_when_wrapup_response_output_text_property_raises(self):
         # Third-round review finding: .output_text is a computed property
@@ -93,7 +93,7 @@ class OpenAIWrapupTests(unittest.TestCase):
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
-        self.assertEqual(result, PLACEHOLDER)
+        self.assertIn("不要重做剛才的行動", result)
 
     def test_enable_wrapup_false_skips_the_extra_call(self):
         # PR #55 review finding: app/agents/executor.py's Supervisor-path
@@ -115,7 +115,7 @@ class OpenAIWrapupTests(unittest.TestCase):
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
-        self.assertEqual(result, PLACEHOLDER)
+        self.assertIn("不要重做剛才的行動", result)
         self.assertEqual(fake_client.responses.create.call_count, 1)
 
     def test_normal_turn_with_a_final_text_response_never_triggers_wrapup(self):

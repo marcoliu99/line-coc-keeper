@@ -1,0 +1,437 @@
+{
+  "manifest": {
+    "runtime_commit": "776bf1f8b2f6a484cce710e9bef95b7daa26d6ef",
+    "arms": [
+      "baseline",
+      "admission",
+      "history",
+      "output"
+    ],
+    "cases": 10,
+    "tokens_per_60s": 180000,
+    "output_reservation": 1200,
+    "history_user_sections": 5,
+    "turn_deadline_s": 180,
+    "between_arm_cooldown_s": 65,
+    "omit_temperature_all_arms": true,
+    "python": "3.14.1",
+    "openai_sdk": "3.16.2",
+    "tiktoken": "0.14.0",
+    "tokenizer": "o200k_base",
+    "tokenizer_fallback": true,
+    "model": "gpt-6-luna",
+    "reasoning_effort": "medium"
+  },
+  "summary": {
+    "baseline": {
+      "turns": 10,
+      "logical_requests": 36,
+      "rate_limit_errors": 13,
+      "retry_sleep_s": 69.0,
+      "admission_wait_s": 0,
+      "mean_turn_s": 24.669589529256335,
+      "median_turn_s": 24.171370459022,
+      "max_turn_s": 58.14989383285865,
+      "transport_completed": 10,
+      "api_completed": 10,
+      "validated_handoff": 10,
+      "observable_contract_pass": 10,
+      "legacy_contract_pass": 7,
+      "truncated_responses": 0,
+      "input_tokens": 990645,
+      "output_tokens": 10273,
+      "cached_tokens": 411280,
+      "estimated_component_totals": {
+        "static": 325963,
+        "dynamic": 127393,
+        "tools": 236084,
+        "history": 303807,
+        "current": 664,
+        "tool_results": 28117,
+        "prior_outputs": 44634
+      },
+      "estimate_to_actual_mean": 1.0700370254922715
+    },
+    "admission": {
+      "turns": 10,
+      "logical_requests": 37,
+      "rate_limit_errors": 0,
+      "retry_sleep_s": 0,
+      "admission_wait_s": 201.18520704191178,
+      "mean_turn_s": 39.99334469998721,
+      "median_turn_s": 37.17845764604863,
+      "max_turn_s": 89.36354570789263,
+      "transport_completed": 10,
+      "api_completed": 10,
+      "validated_handoff": 8,
+      "observable_contract_pass": 7,
+      "legacy_contract_pass": 6,
+      "truncated_responses": 0,
+      "input_tokens": 1015159,
+      "output_tokens": 13114,
+      "cached_tokens": 539796,
+      "estimated_component_totals": {
+        "static": 335246,
+        "dynamic": 132596,
+        "tools": 245116,
+        "history": 302371,
+        "current": 686,
+        "tool_results": 28696,
+        "prior_outputs": 62636
+      },
+      "estimate_to_actual_mean": 1.0834371865382775
+    },
+    "history": {
+      "turns": 10,
+      "logical_requests": 37,
+      "rate_limit_errors": 0,
+      "retry_sleep_s": 0,
+      "admission_wait_s": 143.01759862690233,
+      "mean_turn_s": 31.513042983412742,
+      "median_turn_s": 25.969681708607823,
+      "max_turn_s": 64.83360995794646,
+      "transport_completed": 10,
+      "api_completed": 10,
+      "validated_handoff": 9,
+      "observable_contract_pass": 9,
+      "legacy_contract_pass": 7,
+      "truncated_responses": 0,
+      "input_tokens": 755227,
+      "output_tokens": 11379,
+      "cached_tokens": 433592,
+      "estimated_component_totals": {
+        "static": 334626,
+        "dynamic": 125867,
+        "tools": 245323,
+        "history": 31135,
+        "current": 628,
+        "tool_results": 38775,
+        "prior_outputs": 68911
+      },
+      "estimate_to_actual_mean": 1.1021943004619008
+    },
+    "output": {
+      "turns": 10,
+      "logical_requests": 34,
+      "rate_limit_errors": 0,
+      "retry_sleep_s": 0,
+      "admission_wait_s": 201.47172316606157,
+      "mean_turn_s": 36.82819807496853,
+      "median_turn_s": 41.31957987498026,
+      "max_turn_s": 65.2764768328052,
+      "transport_completed": 10,
+      "api_completed": 9,
+      "validated_handoff": 10,
+      "observable_contract_pass": 9,
+      "legacy_contract_pass": 7,
+      "truncated_responses": 1,
+      "input_tokens": 921176,
+      "output_tokens": 10965,
+      "cached_tokens": 502133,
+      "estimated_component_totals": {
+        "static": 307450,
+        "dynamic": 116307,
+        "tools": 218020,
+        "history": 286231,
+        "current": 603,
+        "tool_results": 21209,
+        "prior_outputs": 46820
+      },
+      "estimate_to_actual_mean": 1.0757918042024988
+    }
+  },
+  "cases": [
+    {
+      "arm": "baseline",
+      "case": "wall_inspection",
+      "elapsed_s": 15.408314042026177,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "no_attack_correction",
+      "elapsed_s": 10.952002791920677,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "read_status",
+      "elapsed_s": 12.592266540974379,
+      "disposition": "no_mechanics",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "inventory_handoff",
+      "elapsed_s": 14.441204374888912,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "start_shoot_body",
+      "elapsed_s": 27.494914166862145,
+      "disposition": "deferred",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "start_melee_rats",
+      "elapsed_s": 29.410934082930908,
+      "disposition": "deferred",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "escape_transition",
+      "elapsed_s": 24.551037209108472,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "combat_craft",
+      "elapsed_s": 58.14989383285865,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "combat_handoff",
+      "elapsed_s": 29.903624542057514,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "baseline",
+      "case": "end_then_explore",
+      "elapsed_s": 23.79170370893553,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "admission",
+      "case": "wall_inspection",
+      "elapsed_s": 20.322177791967988,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "admission",
+      "case": "no_attack_correction",
+      "elapsed_s": 10.863732625031844,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "admission",
+      "case": "read_status",
+      "elapsed_s": 45.18686154205352,
+      "disposition": "incomplete",
+      "failed_contracts": [
+        "validated_handoff"
+      ]
+    },
+    {
+      "arm": "admission",
+      "case": "inventory_handoff",
+      "elapsed_s": 14.262231749948114,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "admission",
+      "case": "start_shoot_body",
+      "elapsed_s": 67.6272754999809,
+      "disposition": "incomplete",
+      "failed_contracts": [
+        "validated_handoff",
+        "attack_wait_or_resolution"
+      ]
+    },
+    {
+      "arm": "admission",
+      "case": "start_melee_rats",
+      "elapsed_s": 56.05190449999645,
+      "disposition": "deferred",
+      "failed_contracts": []
+    },
+    {
+      "arm": "admission",
+      "case": "escape_transition",
+      "elapsed_s": 29.170053750043735,
+      "disposition": "no_mechanics",
+      "failed_contracts": [
+        "pending_actor_check"
+      ]
+    },
+    {
+      "arm": "admission",
+      "case": "combat_craft",
+      "elapsed_s": 89.36354570789263,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "admission",
+      "case": "combat_handoff",
+      "elapsed_s": 55.02441429090686,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "admission",
+      "case": "end_then_explore",
+      "elapsed_s": 12.061249542050064,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "wall_inspection",
+      "elapsed_s": 11.456427874974906,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "no_attack_correction",
+      "elapsed_s": 7.491238999878988,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "read_status",
+      "elapsed_s": 15.713129334151745,
+      "disposition": "no_mechanics",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "inventory_handoff",
+      "elapsed_s": 36.2262340830639,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "start_shoot_body",
+      "elapsed_s": 64.83360995794646,
+      "disposition": "incomplete",
+      "failed_contracts": [
+        "validated_handoff",
+        "attack_wait_or_resolution"
+      ]
+    },
+    {
+      "arm": "history",
+      "case": "start_melee_rats",
+      "elapsed_s": 54.8216685410589,
+      "disposition": "deferred",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "escape_transition",
+      "elapsed_s": 14.002533874940127,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "combat_craft",
+      "elapsed_s": 51.2789659590926,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "combat_handoff",
+      "elapsed_s": 15.20818724995479,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "history",
+      "case": "end_then_explore",
+      "elapsed_s": 44.098433959065005,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "wall_inspection",
+      "elapsed_s": 14.704124624840915,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "no_attack_correction",
+      "elapsed_s": 8.333790082950145,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "read_status",
+      "elapsed_s": 45.38294062507339,
+      "disposition": "no_mechanics",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "inventory_handoff",
+      "elapsed_s": 12.62327149999328,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "start_shoot_body",
+      "elapsed_s": 63.97659245901741,
+      "disposition": "deferred",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "start_melee_rats",
+      "elapsed_s": 55.482437500031665,
+      "disposition": "deferred",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "escape_transition",
+      "elapsed_s": 41.16301833302714,
+      "disposition": "await_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "combat_craft",
+      "elapsed_s": 65.2764768328052,
+      "disposition": "resolved_without_check",
+      "failed_contracts": [
+        "no_truncated_response"
+      ]
+    },
+    {
+      "arm": "output",
+      "case": "combat_handoff",
+      "elapsed_s": 19.863187375012785,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    },
+    {
+      "arm": "output",
+      "case": "end_then_explore",
+      "elapsed_s": 41.47614141693339,
+      "disposition": "resolved_without_check",
+      "failed_contracts": []
+    }
+  ]
+}
