@@ -33,7 +33,13 @@ def _target_id(token: str) -> str | None:
 
 
 def _find_report(state: GroupState, report_id: str) -> dict | None:
-    return next((item for item in state.narrative_corrections if item.get("id") == report_id), None)
+    return next((item for item in _active_reports(state) if item.get("id") == report_id), None)
+
+
+def _active_reports(state: GroupState) -> list[dict]:
+    """A correction can only affect the campaign timeline that created it."""
+    return [item for item in state.narrative_corrections
+            if item.get("timeline_id", "") == state.timeline_id]
 
 
 def _prune_adjudicated(state: GroupState) -> None:
@@ -62,7 +68,7 @@ async def handle_correct_command(
 
     if action == "list":
         visible = [
-            item for item in state.narrative_corrections
+            item for item in _active_reports(state)
             if item.get("status") == "pending" and (is_kp or item.get("reporter_id") == user_id)
         ]
         if not visible:
@@ -132,7 +138,10 @@ async def handle_correct_command(
         )
         return
 
-    for item in state.narrative_corrections:
+    if not state.timeline_id:
+        state.timeline_id = f"timeline-{uuid4().hex[:8]}"
+
+    for item in _active_reports(state):
         if (
             item.get("status") == "pending"
             and item.get("reporter_id") == user_id
@@ -142,13 +151,16 @@ async def handle_correct_command(
             await reply(f"這筆敘事異議已收到（#{item['id']}），目前待核對。")
             return
 
-    pending = [item for item in state.narrative_corrections if item.get("status") == "pending"]
+    pending = [item for item in _active_reports(state) if item.get("status") == "pending"]
     if len(pending) >= _MAX_PENDING_PER_GROUP or sum(
         item.get("reporter_id") == user_id for item in pending
     ) >= _MAX_PENDING_PER_REPORTER:
         await reply("待核對敘事異議已達上限；請先由 KP 處理，或撤回你不再需要的提報。")
         return
 
+    # The next report is the first write in this timeline; discard inactive
+    # records so repeated scenario switches cannot accumulate stale reports.
+    state.narrative_corrections[:] = _active_reports(state)
     report = {
         "id": uuid4().hex[:10],
         "target_message_id": target,

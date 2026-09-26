@@ -97,6 +97,18 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         self.assertIn('"status": "pending"', correction_data)
         self.assertIn("KP 已核准的更正優先", prompt)
 
+    def test_old_timeline_correction_is_not_sent_to_new_scenario(self):
+        state = GroupState(group_id="canon-boundary", timeline_id="timeline-new")
+        state.narrative_corrections = [
+            {"status": "approved", "timeline_id": "timeline-old",
+             "target_message_id": "12345", "resolution": "舊劇本沒有地下室"},
+            {"status": "approved", "timeline_id": "timeline-new",
+             "target_message_id": "67890", "resolution": "新劇本沒有閣樓"},
+        ]
+        context = keeper._correction_context_message(state)
+        self.assertNotIn("舊劇本沒有地下室", context)
+        self.assertIn("新劇本沒有閣樓", context)
+
     def test_player_issue_never_enters_system_prompt_and_context_is_bounded(self):
         state = GroupState(group_id="canon-boundary")
         state.narrative_corrections = [

@@ -98,6 +98,33 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.state.narrative_corrections), 3)
         self.assertIn("已達上限", reply.await_args.args[0])
 
+    async def test_old_timeline_reports_cannot_be_approved_or_block_new_reports(self):
+        reply = AsyncMock()
+        self.state.kp_assistant_user_id = "kp"
+        await router.handle_text_message(
+            "correction-test", "player", AsyncMock(), reply,
+            AsyncMock(), AsyncMock(), AsyncMock(),
+            "/coc correct 9876543210 舊劇本沒有地下室",
+        )
+        old_id = self.state.narrative_corrections[0]["id"]
+        self.state.timeline_id = "timeline-new-campaign"
+
+        await router.handle_text_message(
+            "correction-test", "kp", AsyncMock(), reply,
+            AsyncMock(), AsyncMock(), AsyncMock(),
+            f"/coc correct approve {old_id} 地下室不存在",
+        )
+        self.assertEqual(self.state.narrative_corrections[0]["status"], "pending")
+        self.assertIn("找不到", reply.await_args.args[0])
+
+        await router.handle_text_message(
+            "correction-test", "player", AsyncMock(), reply,
+            AsyncMock(), AsyncMock(), AsyncMock(),
+            "/coc correct 9876543210 新劇本沒有地下室",
+        )
+        self.assertEqual(len(self.state.narrative_corrections), 1)
+        self.assertEqual(self.state.narrative_corrections[0]["timeline_id"], "timeline-new-campaign")
+
     async def test_closed_reports_are_pruned_but_recent_approved_remains(self):
         from app.commands.handlers import correct
         self.state.narrative_corrections = [

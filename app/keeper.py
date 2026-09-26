@@ -3363,8 +3363,10 @@ def _build_static_prompt(state: GroupState) -> str:
 
 def _correction_context_message(state: GroupState) -> str:
     """Bounded correction data for a user-role turn message, never a system prompt."""
-    approved = [item for item in state.narrative_corrections if item.get("status") == "approved"][-12:]
-    pending = [item for item in state.narrative_corrections if item.get("status") == "pending"][-8:]
+    active = [item for item in state.narrative_corrections
+              if item.get("timeline_id", "") == state.timeline_id]
+    approved = [item for item in active if item.get("status") == "approved"][-12:]
+    pending = [item for item in active if item.get("status") == "pending"][-8:]
     if not approved and not pending:
         return ""
     records = [
