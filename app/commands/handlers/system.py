@@ -18,6 +18,7 @@ from app import (
     scene_map,
     spoiler_policy,
 )
+from app.agents import supervisor
 from app.config import IMPORT_DIR
 from app.legacy_commands import (
     FormatMention,
@@ -752,13 +753,19 @@ async def handle_system_command(
             "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
         )
         async with locks.get_keeper_turn_lock(conversation_id):
-            keeper_reply, private_messages, image_requests = await keeper.run_turn(
-                state, user_id, "守密人", keeper_message, None
+            fresh_state = keeper._refresh_state_snapshot(state)
+            if fresh_state.game_started:
+                return
+            keeper_reply, private_messages, image_requests = await supervisor.run_turn(
+                state=fresh_state,
+                user_id=user_id,
+                display_name="守密人",
+                text=keeper_message,
+                resolved_location=None,
+                speaker_role="player",
+                conversation_id=conversation_id,
+                turn_kind="opening_fallback",
             )
-        with locks.get_state_lock(conversation_id):
-            state = load_state(conversation_id)
-            state.game_started = True
-            save_state(state)
         await _run_post_turn_maintenance_after_output(
             conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
         )

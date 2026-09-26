@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app import config, keeper, memory_rag, observability, scenario_rag
+from app.agents import assistant
 from app.domain.models import AgentMessage
 from app.models import GroupState
 
@@ -20,7 +21,7 @@ class LoggingCompletionTests(unittest.TestCase):
         observability._CONTEXT.set({})
         observability._METRICS.set({})
 
-    def test_legacy_keeper_turn_has_one_complete_turn_lifecycle(self):
+    def test_kp_assistant_turn_has_one_complete_turn_lifecycle(self):
         provider = SimpleNamespace(
             ANTHROPIC_MODEL="test-model",
             run_conversation=AsyncMock(return_value="keeper reply"),
@@ -29,14 +30,17 @@ class LoggingCompletionTests(unittest.TestCase):
         with patch.object(config, "LOG_ENABLED", True), patch.object(config, "KEEPER_REASONING_EFFORT", "high"), \
                 patch.object(keeper, "LLM_PROVIDER", "anthropic"), patch.object(keeper, "_PROVIDERS", {"anthropic": provider}), \
                 self.assertLogs("app.observability", level="INFO") as captured:
-            asyncio.run(keeper.run_turn(state, "u1", "Player", "look around"))
+            asyncio.run(assistant.run_assistant(AgentMessage(payload={
+                "state": state, "user_id": "u1", "display_name": "KP",
+                "text": "幕後討論", "resolved_location": None,
+            })))
 
         turn_started = [record for record in captured.records if record.getMessage() == "llm.turn.started"]
         turn_completed = [record for record in captured.records if record.getMessage() == "llm.turn.completed"]
         self.assertEqual(len(turn_started), 1)
         self.assertEqual(len(turn_completed), 1)
         event = turn_completed[0].structured_event
-        self.assertEqual(event["agent"], "keeper")
+        self.assertEqual(event["agent"], "kp_assistant")
         self.assertIsNone(event["reasoning_effort"])
         self.assertTrue(event["turn_id"].startswith("turn_"))
 

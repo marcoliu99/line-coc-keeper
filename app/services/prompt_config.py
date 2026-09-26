@@ -165,6 +165,32 @@ def build_narrator_static_prompt(keeper_static_prompt: str) -> str:
     return NARRATOR_INSTRUCTION + keeper_static_prompt
 
 
+def build_tool_enabled_narrator_static_prompt(keeper_static_prompt: str, turn_kind: str) -> str:
+    """One narrative conversation with only the tools valid for this entry."""
+    if turn_kind == "resolved_check_followup":
+        instruction = (
+            "你是守密人。玩家檢定已由程式結算；先依權威結果處理必要的劇本或戰鬥後果，"
+            "再向玩家敘事。你可以使用本回合提供的後續工具，但不可建立新檢定、重擲、"
+            "重扣已提交的數值，或讓已結算結果變成待處理。\n"
+        )
+    elif turn_kind == "opening_fallback":
+        instruction = (
+            "你是守密人。這是遊戲尚未開始時的開場後備生成。先依劇本資料查清起點，"
+            "必要時使用提供的查詢工具；只敘述劇本支持的場景，不要假設玩家已行動，"
+            "也不要建立檢定、擲骰或改動遊戲狀態。\n"
+        )
+    else:
+        raise ValueError(f"unsupported narrative turn kind: {turn_kind}")
+    return instruction + keeper_static_prompt
+
+
+OPENING_FALLBACK_BLOCK = (
+    "【開場後備】劇本沒有可直接朗讀的開場段落。依劇本背景、委託與起點寫三百字內的"
+    "第二人稱開場白。若目前是檢索模式且缺少必要背景，先查 search_scenario；"
+    "查不到的地點、NPC 或事件保持未知。這是第一段敘述，玩家尚未採取行動。"
+)
+
+
 def build_mechanic_facts_block(result: MechanicResult) -> str:
     """GAMEPLAY_ACTION 情境：把 Executor 產出的 MechanicResult 轉成 Narrator
     看得懂的「既定事實」區塊，附加在 dynamic_system 後面。"""
@@ -226,7 +252,7 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
         "這次檢定已由系統擲骰並定案。只敘述這個結果允許的後果；不得重擲或改判、"
         "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
-        "本回合只開放唯讀查詢工具，不得建立新檢定或改動遊戲狀態。"
+        "本回合不得建立新檢定；若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
     )
 
 

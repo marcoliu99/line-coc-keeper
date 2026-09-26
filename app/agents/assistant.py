@@ -1,42 +1,171 @@
 from __future__ import annotations
 
-from app import keeper
+import logging
+from typing import Any
+
+from app import keeper, observability, spoiler_policy
+from app.agents import guard, tool_gateway
+from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
+
+_logger = logging.getLogger(__name__)
+_ROLE = "kp_assistant"
+
+
+def _provider_failure_fallback_text(mutating_tools_ran: list[str]) -> str:
+    if mutating_tools_ran:
+        return (
+            "（守密人在整理接下來的敘述時遇到問題，但你剛才的行動已經有部分結果被"
+            "系統記錄——請不要重複剛才的行動，先描述你接下來想做什麼，或用指令"
+            "查看目前狀態。）"
+        )
+    return "（守密人一時語塞，請再說一次剛才的行動）"
 
 
 async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
-    """OOC Assistant Path（Phase 10）：KP 助手的場外討論走這一條，完全繞開
-    Executor／State Reducer／Narrator／Rule Validator／Guard 那條「機制判定與
-    故事生成」流水線。
-
-    這個階段刻意薄到只剩一行實際呼叫——直接把整個回合委派給
-    `keeper.run_turn(..., speaker_role="kp_assistant")`，不在這裡另外組
-    static/dynamic prompt、不另外過濾工具、不另外決定要落庫到 `state.log`
-    還是 `state.kp_ooc_log`。原因：這個函式原本（在拆出 Phase 10 這條路徑
-    之前）自己重新組過一次這些邏輯，結果就是 main 之後幫 KP Assistant 加的
-    「Dice Creates Canon」功能（KP 成功觸發正式擲骰／檢定時，這輪對話要從
-    `kp_ooc_log` 升格寫進正式 `state.log`，並正確銜接 OpenAI 的
-    `previous_response_id` 對話鏈——見 `app/keeper.py` 的
-    `_kp_tool_result_creates_canon`／`_format_kp_canonical_history_message`）
-    完全沒有反映到這裡，因為這裡是另一份平行的複製品，`keeper.run_turn` 加了
-    新規則，這裡不會自動跟著變。`keeper.run_turn` 才是唯一持續在維護、對
-    `speaker_role="kp_assistant"` 的完整行為（static／dynamic prompt、工具
-    白名單、要不要走 canonical 升格、OpenAI response id 鏈要不要延續、要落庫
-    到哪個 log）負責的地方，這裡只負責從 AgentMessage 轉接參數過去，任何一種
-    「只搬一部分邏輯過來」都有漏掉東西的風險，見這次 rebase 到 main 之後才
-    發現的落差。
-
-    資料隔離（不觸發這輪的 post-turn maintenance，因為 OOC 討論不是真的劇情
-    回合，沒有東西需要背景壓縮）由呼叫端 app/commands/router.py 已經有的
-    `run_maintenance=not is_kp_assistant` 負責，這裡不用重複處理。
-    """
+    """Run the independent KP Assistant conversation and commit its result."""
     state = message.payload["state"]
     user_id = message.payload["user_id"]
     display_name = message.payload["display_name"]
-    text = message.payload["text"]
+    message_text = message.payload["text"]
     resolved_location = message.payload.get("resolved_location")
 
-    final_text, private_messages, image_requests = await keeper.run_turn(
-        state, user_id, display_name, text, resolved_location, "kp_assistant"
+    provider = keeper._PROVIDERS.get(keeper.LLM_PROVIDER)
+    if provider is None:
+        return (
+            f'（設定錯誤：LLM_PROVIDER="{keeper.LLM_PROVIDER}" 不是支援的供應商，請在 .env 設成 anthropic、gemini 或 openai）',
+            [], [],
+        )
+
+    turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
+    turn_metrics: dict[str, int] = {}
+    model = getattr(provider, f"{keeper.LLM_PROVIDER.upper()}_MODEL", None)
+    with (
+        observability.context(turn_id=turn_id),
+        observability.metrics_context(turn_metrics),
+        observability.span(
+            "llm.turn",
+            provider=keeper.LLM_PROVIDER,
+            model=model,
+            agent=_ROLE,
+            reasoning_effort=observability.llm_reasoning_effort(keeper.LLM_PROVIDER),
+            metrics=turn_metrics,
+        ),
+    ):
+        return await _run_assistant_turn(
+            state, user_id, display_name, message_text, resolved_location, provider
+        )
+
+
+async def _run_assistant_turn(
+    state: Any,
+    user_id: str,
+    display_name: str,
+    message_text: str,
+    resolved_location: dict | None,
+    provider: Any,
+) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
+    turn_timeline_id = keeper._ensure_turn_timeline(state)
+    static_prompt = keeper._build_static_prompt(state)
+    dynamic_prompt = keeper._build_dynamic_prompt(state, user_id, resolved_location, _ROLE)
+    manual_canon, effective_text = keeper._parse_kp_manual_canon_trigger(_ROLE, message_text)
+    turn_message = keeper._format_turn_message(display_name, effective_text, _ROLE)
+    tools = tool_gateway.tools_for_speaker_role(_ROLE)
+    allowed_tools = {tool["name"] for tool in tools}
+    private_messages: list[tuple[str, str]] = []
+    image_requests: list[tuple[str | None, int]] = []
+    canonical_tool_events: list[dict] = []
+    mutating_tools_ran: list[str] = []
+    facts: list[str] = []
+    execute_tool = tool_gateway.make_tool_executor(
+        state, private_messages, image_requests, _ROLE, facts
     )
+    combat_status_gate = keeper._CombatStatusToolGate(state)
+
+    async def execute_assistant_tool(name: str, tool_input: dict) -> dict:
+        if name not in allowed_tools:
+            return {"ok": False, "error": f"KP Assistant 不允許使用工具：{name}"}
+        if name not in keeper.READ_ONLY_TOOL_NAMES:
+            mutating_tools_ran.append(name)
+        result = await execute_tool(name, tool_input)
+        if keeper._kp_tool_result_creates_canon(name, tool_input, result):
+            canonical_tool_events.append({
+                "tool_name": name,
+                "tool_input": dict(tool_input),
+                "result": dict(result),
+            })
+        combat_status_gate.observe_tool_result(name, result)
+        return result
+
+    openai_response_id: str | None = None
+    if keeper.LLM_PROVIDER == "openai":
+        previous_response_id: str | None = state.openai_previous_response_id
+        chain_timeline_id = state.openai_previous_response_timeline_id
+        if previous_response_id and chain_timeline_id != turn_timeline_id:
+            observability.event(
+                "provider.chain.reset",
+                level=logging.WARNING,
+                provider="openai",
+                reason="missing_timeline_metadata" if not chain_timeline_id else "timeline_mismatch",
+                old_timeline_id=chain_timeline_id or "",
+                requested_timeline_id=turn_timeline_id,
+                chain_timeline_id=chain_timeline_id,
+            )
+            previous_response_id = None
+
+        def remember_openai_response_id(response_id: str) -> None:
+            nonlocal openai_response_id
+            openai_response_id = response_id
+
+        try:
+            final_text = await provider.run_conversation(
+                static_prompt, dynamic_prompt, tools, state.log, turn_message,
+                execute_assistant_tool, MAX_TOOL_ITERATIONS,
+                previous_response_id=previous_response_id,
+                on_response_id=remember_openai_response_id,
+                tools_for_request=lambda: combat_status_gate.tools_for_request(tools),
+            )
+        except Exception:
+            _logger.exception("KP Assistant provider call failed")
+            final_text = _provider_failure_fallback_text(mutating_tools_ran)
+    else:
+        try:
+            final_text = await provider.run_conversation(
+                static_prompt, dynamic_prompt, tools, state.log, turn_message,
+                execute_assistant_tool, MAX_TOOL_ITERATIONS,
+            )
+        except Exception:
+            _logger.exception("KP Assistant provider call failed")
+            final_text = _provider_failure_fallback_text(mutating_tools_ran)
+
+    provider_text = final_text
+    final_text = await guard.enforce_narrative_safety(AgentMessage(payload={}), final_text)
+    creates_canon = manual_canon or bool(canonical_tool_events)
+    if creates_canon:
+        spoiler_check = spoiler_policy.sanitize_public_text(
+            final_text, spoiler_policy.collect_protected_terms(state)
+        )
+        if not spoiler_check.is_safe:
+            final_text = spoiler_check.fallback_text or final_text
+        canonical_message = keeper._format_kp_canonical_history_message(
+            effective_text, canonical_tool_events
+        )
+        committed = keeper._commit_turn_result(
+            state,
+            [
+                {"role": "user", "content": canonical_message},
+                {"role": "assistant", "content": final_text},
+            ],
+            openai_response_id=openai_response_id,
+            timeline_id=turn_timeline_id,
+            invalidate_openai_response_chain=final_text != provider_text,
+        )
+        if not committed:
+            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
+    else:
+        committed = keeper._commit_kp_ooc_turn_result(
+            state, effective_text, final_text, timeline_id=turn_timeline_id
+        )
+        if not committed:
+            return "（這次 KP Assistant 回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
     return final_text, private_messages, image_requests

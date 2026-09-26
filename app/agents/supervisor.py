@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 
 from app import keeper, observability, spoiler_policy
 from app.agents import (
@@ -19,6 +19,7 @@ from app.models import GroupState
 from app.services import prompt_config
 
 _logger = logging.getLogger(__name__)
+PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
 
 
 async def run_turn(
@@ -29,6 +30,9 @@ async def run_turn(
     resolved_location: dict[str, Any] | None,
     speaker_role: str,
     conversation_id: str,
+    *,
+    turn_kind: PlayerTurnKind = "player_action",
+    resolved_check_context: dict[str, Any] | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
@@ -52,18 +56,24 @@ async def run_turn(
         speaker_role=speaker_role,
         conversation_id=conversation_id,
     )
+    message.payload["turn_kind"] = turn_kind
+    if turn_kind == "resolved_check_followup":
+        if not resolved_check_context:
+            raise ValueError("resolved_check_followup requires an authoritative result")
+        message.payload["resolved_check_context"] = resolved_check_context
 
     # 2. Intent Routing (Fast Path vs Slow Path)
-    intent = intent_router.classify_intent(message)
+    intent = (
+        intent_router.classify_intent(message)
+        if turn_kind == "player_action" else turn_kind.upper()
+    )
     message.payload["intent"] = intent
     
     _logger.info(f"Intent classified as: {intent}")
 
-    # Phase 10: OOC Assistant Path — KP 助手的場外討論完全繞開「機制判定與故事
-    # 生成」這條主線（Executor／State Reducer／Narrator／Rule Validator／
-    # Guard），直接在這裡回傳。資料隔離見 app/agents/assistant.py 的 docstring：
-    # 這輪對話進 state.kp_ooc_log，不進 state.log，所以下面的
-    # keeper._commit_turn_result 也不能執行到——提早 return。
+    # KP Assistant uses its own provider/tool/Guard/commit path. Its OOC
+    # replies enter kp_ooc_log; explicit or tool-created canon enters log.
+    # Neither case goes through the player Executor/Narrator pipeline.
     if intent == "OOC_ASSISTANT":
         _logger.info("Routing to AssistantAgent (OOC Path)")
         return await assistant.run_assistant(message)
@@ -163,11 +173,18 @@ async def run_turn(
 
     # 5. Narrator Agent generates the final text
     reply_text, private_messages, image_requests = await narrator.run_narrator(message)
+    if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
+        # A failed opening produced no scene. Leave /coc start retryable.
+        return reply_text, [], []
 
     # 6. Rule Validator & Guard Agent (Repair Loop) — see
     # docs/specs/enhancement-guard-agent.md for the GUARD_ENABLED switch and
     # the fail-closed fallback this delegates to.
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
+    if turn_kind == "resolved_check_followup":
+        reply_text = prompt_config.enforce_resolved_check_consistency(
+            reply_text, resolved_check_context or {}
+        )
 
     # 7. Spoiler output guard (§6 of the spoiler-protection-hardening spec) —
     # separate from the Rule Validator/Guard Agent loop above, which only
@@ -190,13 +207,12 @@ async def run_turn(
     # pending_checks/combat/etc.) already happened inside the Executor's
     # tool calls, via keeper._execute_tool's own locked
     # (_mutate_and_save_state) path — see state_reducer.py's docstring.
-    # What's left here is just committing this turn's log entries, the same
-    # way app/keeper.py's own run_turn does for the old single-LLM path:
-    # reload the latest state under the state lock (so this can't clobber
+    # What's left here is just committing this turn's log entries: reload
+    # the latest state under the state lock (so this can't clobber
     # whatever the tool calls above already saved), append, save, then sync
     # this function's own `state` object so a caller that keeps using it
     # afterward sees the up-to-date snapshot.
-    if state.game_started:
+    if state.game_started or turn_kind != "player_action":
         committed = keeper._commit_turn_result(
             state,
             [
@@ -204,6 +220,8 @@ async def run_turn(
                 {"role": "assistant", "content": reply_text},
             ],
             timeline_id=turn_timeline_id,
+            start_game=(turn_kind == "opening_fallback"),
+            invalidate_openai_response_chain=True,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
