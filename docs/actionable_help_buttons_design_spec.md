@@ -2,7 +2,7 @@
 
 ## Status and goal
 
-Draft for review. Branch: `enhancement/actionable-help-buttons`. Integration branch: `main_v2`.
+Implementation approved and in progress. Branch: `enhancement/actionable-help-buttons`. Integration branch: `main_v2`.
 
 Today, Discord `/coc help` provides persistent root → category → detail navigation. A detail page prints the command syntax, but its buttons only navigate back. **All 52 entries currently registered in `app/help_registration.py` must have a working button path**, including multi-step KP commands. The button invokes the existing command behavior using the clicking user's identity and current channel state. The text command remains available. If a command's prerequisite is absent, the action opens the relevant picker or displays the command handler's specific explanation; it never presents an inert **執行** button.
 
@@ -123,7 +123,7 @@ The registry must declare an explicit action plan for **every** entry. Do not in
 
 | 地圖（4） | 按鈕與輸入 → 現有指令 |
 | --- | --- |
-| `map/showpage` | 有存圖頁碼選單；若沒有索引則頁碼 Modal → `/coc showpage 頁碼` |
+| `map/showpage` | 已知地圖頁選單，另提供頁碼 Modal 供任何劇本頁使用 → `/coc showpage 頁碼` |
 | `map/where` | 查看位置 → `/coc where` |
 | `map/enter` | 目前 `scene_maps` 的地圖頁碼選單 → `/coc enter 頁碼` |
 | `map/leavemap` | 確認 → `/coc leavemap` |
@@ -195,4 +195,4 @@ On final submission, pass the observed state revision/timeline and selected obje
 
 ## Review checkpoint
 
-Coverage is decided: implement all 52 currently registered Help entries. The remaining review is of the interaction details and confirmation list above. The branch has no runtime changes yet.
+Coverage is decided: implement all 52 currently registered Help entries. The user approved implementation after reviewing this spec.

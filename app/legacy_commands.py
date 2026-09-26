@@ -332,6 +332,7 @@ async def handle_pdf_upload(
     file_name: str,
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
+    expected_revision: int | None = None,
 ) -> bool:
     """`reply` acknowledges the upload and `push` delivers the extracted result
     after the potentially long vision/OCR pass. Discord can pass the same
@@ -362,6 +363,9 @@ async def handle_pdf_upload(
     # SECOND upload's content instead, which is especially bad for "全新劇本"
     # (wipes map position, resets the LLM conversation thread).
     existing_state = load_state(conversation_id)
+    if expected_revision is not None and existing_state.state_revision != expected_revision:
+        await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
+        return False
     previous_content_hash = ""
     if existing_state.scenario_library_id:
         try:
@@ -403,6 +407,10 @@ async def handle_pdf_upload(
             # stale snapshot back would silently revert whatever changed.
             async with locks.get_conversation_lock(conversation_id):
                 state = load_state(conversation_id)
+                if expected_revision is not None and state.state_revision != expected_revision:
+                    scenario_library.discard_staged_upload(key)
+                    await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
+                    return False
                 if state.pending_scenario_upload is not None:
                     scenario_library.discard_staged_upload(key)
                     await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
@@ -462,6 +470,9 @@ async def handle_pdf_upload(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
+        if expected_revision is not None and state.state_revision != expected_revision:
+            await push("遊戲狀態已更新，這份 PDF 沒有套用；請重新開啟 Help 操作。")
+            return False
         # Do not expose the replacement PDF's images until the GM has chosen
         # new-versus-correction. The immutable library entry already contains
         # them; the selected two-chapter window is copied only on activation.
