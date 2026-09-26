@@ -15,7 +15,9 @@ import asyncio
 import enum
 import inspect
 import logging
+import math
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -67,7 +69,8 @@ def _parse_retry_after_value(value: str) -> float | None:
     talks to), then the date form, converting it to a nonnegative delay
     from now. Returns None if neither parses, rather than guessing."""
     try:
-        return float(value)
+        seconds = float(value)
+        return seconds if math.isfinite(seconds) and seconds >= 0 else None
     except (TypeError, ValueError):
         pass
     try:
@@ -89,7 +92,7 @@ def _extract_retry_after_seconds(exc: BaseException) -> float | None:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         retry_after = getattr(current, "retry_after", None)
-        if isinstance(retry_after, int | float) and retry_after >= 0:
+        if isinstance(retry_after, int | float) and math.isfinite(retry_after) and retry_after >= 0:
             return float(retry_after)
         headers = getattr(getattr(current, "response", None), "headers", None)
         if headers is not None:
@@ -107,6 +110,32 @@ def _extract_retry_after_seconds(exc: BaseException) -> float | None:
     return None
 
 
+def _safe_rate_limit_headers(exc: BaseException) -> dict[str, Any]:
+    """Allowlist numeric quotas/durations; never log arbitrary header strings."""
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is None or not hasattr(headers, "items"):
+        return {}
+    normalized = {str(k).lower(): v for k, v in headers.items()}
+    fields: dict[str, Any] = {}
+    for dimension in ("requests", "tokens"):
+        for kind in ("limit", "remaining", "reset"):
+            value = normalized.get(f"x-ratelimit-{kind}-{dimension}")
+            if not isinstance(value, str) or len(value) > 64:
+                continue
+            key = f"rate_limit_{kind}_{dimension}"
+            if kind == "reset":
+                if re.fullmatch(r"(?:[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h|d))+", value):
+                    fields[key] = value
+            else:
+                try:
+                    number = float(value)
+                except ValueError:
+                    continue
+                if math.isfinite(number) and number >= 0:
+                    fields[key] = number
+    return fields
+
+
 def _extract_safe_error_fields(exc: BaseException) -> dict[str, Any]:
     """Best-effort, duck-typed extraction of the handful of provider-error
     fields that are safe to put in structured logs: HTTP status, the
@@ -118,6 +147,8 @@ def _extract_safe_error_fields(exc: BaseException) -> dict[str, Any]:
     current: BaseException | None = exc
     fields: dict[str, Any] = {}
     while current is not None and id(current) not in seen:
+        for key, value in _safe_rate_limit_headers(current).items():
+            fields.setdefault(key, value)
         if "status_code" not in fields:
             status_code = getattr(current, "status_code", None)
             if isinstance(status_code, int):
@@ -285,6 +316,9 @@ def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:
                 attempt=attempt,
                 max_attempts=LLM_MAX_RETRIES,
                 delay_s=delay,
+                delay_source="retry_after" if retry_after is not None else "jitter",
+                retry_after_s=retry_after,
+                backoff_s=computed_delay,
                 error_type=type(exc).__name__,
                 **_extract_safe_error_fields(exc),
             )
@@ -367,6 +401,9 @@ async def async_call_with_retry(
                 attempt=attempt,
                 max_attempts=LLM_MAX_RETRIES,
                 delay_s=delay,
+                delay_source="retry_after" if retry_after is not None else "jitter",
+                retry_after_s=retry_after,
+                backoff_s=computed_delay,
                 error_type=type(exc).__name__,
                 error_kind=error_kind.value,
                 **_extract_safe_error_fields(exc),
