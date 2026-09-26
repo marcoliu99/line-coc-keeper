@@ -418,6 +418,68 @@ KP 秘密資訊：忠實翻譯，並沿用原章節可見範圍。
 Do not infer that 「推進（Push）」 is allowed just because it is a common
 Call of Cthulhu mechanic; include it only if the source says so.
 
+### Template record types and source links
+
+The supplied Corbitt Markdown outline is the reference case for the template.
+Use record types that match the material instead of putting the whole module
+into one long overview block:
+
+- `overview`: era, region, patron, assignment, payment, campaign-level secret,
+  and play phases;
+- `investigation_location`: location, NPCs, available approaches, checks,
+  consequences, and clue/Handout IDs;
+- `handout_or_clue`: what it reveals, who can provide it, its source, and
+  links to the next relevant record;
+- `room_or_scene`: hierarchical location, description, events, threats, and
+  exits or connections;
+- `check_rule`: trigger, eligible skills/characteristics, difficulty or
+  opposed value, success/failure, Push, and Push-failure consequence;
+- `npc_or_encounter`: identity, role, stats, abilities, attacks, defenses,
+  damage, Sanity effects, and defeat conditions;
+- `ending_or_hook`: required outcome, reward or consequence, and follow-up
+  leads.
+
+Give every record a stable ID and parent ID. For example, distinguish
+Corbitt House ground-floor Room 1 from Basement Room 1 with IDs such as
+`corbitt-house-ground-room-01` and `corbitt-house-basement-room-01`; never
+rely on the repeated label `Room 1` alone. Preserve source links as Markdown
+heading paths/anchors, plus PDF page and paragraph when available. Handouts,
+checks, rooms, and NPCs should link by ID so a retrieved clue can point to a
+related rule without copying or conflating their contents. Preserve chapter
+and public/KP visibility metadata on every record.
+
+The RAG index must treat each template record as a chunk boundary. If one
+record exceeds the current roughly 400-character chunk target, split it into
+numbered parts with the record ID, canonical name, aliases, source link, and
+visibility repeated in each part. Keep conditional mechanics together when
+possible; if they must span parts, include the relevant trigger with the
+outcome. This may require making the index builder accept explicit template
+units instead of relying only on page/paragraph splitting.
+
+Example record based on the supplied basement-stairs section (the template
+does not assert that this transcription has been verified against the source):
+
+```text
+record_id: corbitt-house-basement-stairs
+parent_id: corbitt-house-basement
+type: check_rule
+canonical_name: 地下室階梯陷阱
+aliases: 地下室樓梯、階梯晃動、下樓跌落
+source: Markdown heading「決戰階段 > 地下室 > 階梯陷阱」；PDF 頁碼（若有）
+visibility: 依來源章節與 KP 可見規則
+trigger: 調查員逐一下樓時
+check: DEX 或 Climb 複合檢定，任一合格即成功
+success: 安全下樓
+failure: 可退回或推進檢定
+push_failure: 墜落至地下室，承受 1D6 傷害
+assistance: 通過者可協助並給獎勵骰；失敗可能使兩人一同墜落
+校對狀態: 待 KP 校對
+```
+
+The source visibility should determine `visibility`; the example's value is
+illustrative and must not be copied without checking the source's spoiler
+policy.
+
 The first usable template can be authored and proofread outside the bot, then
 exported as a page-preserving Chinese PDF for the existing import flow. That
 is the smallest end-to-end trial and requires no runtime translation feature.
@@ -429,12 +491,12 @@ source-to-template audit mapping, so those need separate validation.
 ### Acceptance and rollout gate
 
 - Prepare template-based Chinese content and labeled Chinese actions across
-  several pages and scene types, including irrelevant queries, similar room
-  names, negative/conditional
-  rules, and restricted future chapters. Check source page and chunk recall
-  at five, ranking, explicit search counts, API calls, complete Discord turn
-  p50/p95, and final ruling accuracy. The basement example remains one case,
-  not the whole acceptance set.
+  several pages and scene types, including irrelevant queries, similarly
+  named rooms on different floors, Handout-to-location cross-references,
+  negative/conditional rules, and restricted future chapters. Check source
+  page and chunk recall at five, ranking, explicit search counts, API calls,
+  complete Discord turn p50/p95, and final ruling accuracy. The basement
+  example remains one case, not the whole acceptance set.
 - Have a KP compare template units with the original for dice, damage, skill
   thresholds, proper names, negation, Push rules, and player/KP visibility.
   Track corrections and terminology consistency across pages. Verify
