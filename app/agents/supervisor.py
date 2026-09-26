@@ -71,11 +71,9 @@ async def run_turn(
     
     _logger.info(f"Intent classified as: {intent}")
 
-    # Phase 10: OOC Assistant Path — KP 助手的場外討論完全繞開「機制判定與故事
-    # 生成」這條主線（Executor／State Reducer／Narrator／Rule Validator／
-    # Guard），直接在這裡回傳。資料隔離見 app/agents/assistant.py 的 docstring：
-    # 這輪對話進 state.kp_ooc_log，不進 state.log，所以下面的
-    # keeper._commit_turn_result 也不能執行到——提早 return。
+    # KP Assistant uses its own provider/tool/Guard/commit path. Its OOC
+    # replies enter kp_ooc_log; explicit or tool-created canon enters log.
+    # Neither case goes through the player Executor/Narrator pipeline.
     if intent == "OOC_ASSISTANT":
         _logger.info("Routing to AssistantAgent (OOC Path)")
         return await assistant.run_assistant(message)

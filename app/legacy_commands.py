@@ -1850,7 +1850,7 @@ def _resolve_luck_decision_deterministically(
         # _build_check_narration can itself mutate char (e.g. appending "昏迷"/
         # "倒地" to status_tags for a failed major_wound_trigger check — see
         # its docstring), so save_state has to happen AFTER this call, not
-        # before it: keeper.run_turn's own state commit (_commit_turn_result)
+        # before it: the shared turn result commit (_commit_turn_result)
         # does a *fresh* load_state rather than persisting this same `state`
         # object, so any mutation made after an earlier save here would
         # otherwise be silently discarded.

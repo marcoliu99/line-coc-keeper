@@ -8,14 +8,14 @@
 
 ## 現況與剩餘範圍
 
-一般玩家文字及 KP **代玩家行動**已走 `app/agents/supervisor.py`；它依意圖走純敘事快路徑或 Executor → Narrator，並共用 `keeper._execute_tool` 的權威工具。玩家劇情仍有 **2 個直接呼叫 `keeper.run_turn` 的入口**：
+一般玩家文字及 KP **代玩家行動**走 `app/agents/supervisor.py`；它依意圖走純敘事快路徑或 Executor → Narrator，並共用 `keeper._execute_tool` 的權威工具。原先兩個直接呼叫 `keeper.run_turn` 的玩家入口已遷移：
 
 | 入口 | 位置 | 需要保持的行為 |
 | --- | --- | --- |
 | 已結算檢定後續 | `app/legacy_commands.py` 的檢定結果階段 | 骰子與角色數值已由程式提交；敘事不得重骰或重扣。部分結果可能需要後續工具，且仍須保留 Luck、待處理狀態、時間線驗證及公開／私密回覆。 |
 | `/coc start` 開場後備 | `app/commands/handlers/system.py` | 劇本已有開場時繼續使用現成抽取結果與可能的開場檢定；只有缺少現成開場時才由模型依劇本資料生成，必要時可 `search_scenario`，再正確標記 `game_started`。 |
 
-另外，`app/agents/assistant.py` 仍直接呼叫 `keeper.run_turn(..., speaker_role="kp_assistant")`。這是**刻意保留的獨立 agent**，不是本期剩餘玩家流程。它有 `kp_ooc_log`、明確 `!` 正典指令、成功工具結果的正典升格、KP 工具白名單與 OpenAI 對話鏈隔離；本期不得為了消除函式引用而搬進玩家回合。
+KP Assistant 保留**獨立 agent**，但直接在 `app/agents/assistant.py` 執行自己的 provider 對話、工具權限、OOC／正典提交，不再呼叫 `keeper.run_turn`。它沿用 `kp_ooc_log`、明確 `!` 正典指令、成功工具結果的正典升格、KP 工具白名單與 OpenAI 對話鏈隔離。
 
 玩家管線與 KP Assistant 已共用靜態／動態 Keeper 提示詞、工具 schema 與 `_execute_tool`。工作重點是把兩個入口轉為同一玩家管線的輸入，不重寫骰子或戰鬥。
 
@@ -48,10 +48,16 @@ flowchart TD
     Opening --> Supervisor
     Router -->|KP Assistant 場外訊息| KPOOC[Supervisor 的 OOC_ASSISTANT 分流]
     KPOOC --> Assistant[agents.assistant.run_assistant]
-    Assistant --> KPKeeper[keeper.run_turn: KP Assistant 專用]
+    Assistant --> KPProvider[Provider.run_conversation: KP OOC 提示詞與正式歷史]
+    KPProvider --> KPGateway[tool_gateway.make_tool_executor: KP 工具白名單]
+    KPGateway --> Authority[keeper._execute_tool]
+    KPProvider --> KPGuard[guard.enforce_narrative_safety]
+    KPGuard --> KPDecision{明確 ! 或成功正典工具?}
+    KPDecision -->|否| KPOOCLog[keeper._commit_kp_ooc_turn_result]
+    KPDecision -->|是| KPCanon[spoiler_policy → keeper._commit_turn_result]
 ```
 
-上圖中的按鈕仍由 Discord adapter 驗證擁有者、檢定／Luck ID 與時間線；命令與按鈕共用同一個確定性結算函式。`/coc start` 的現成開場是資料抽取結果，不經模型，不改成另一個模型回合。其他管理命令、PDF 上傳與地圖操作沿用原 router；本期只改上圖三個玩家敘事入口。
+上圖中的按鈕仍由 Discord adapter 驗證擁有者、檢定／Luck ID 與時間線；命令與按鈕共用同一個確定性結算函式。`/coc start` 的現成開場是資料抽取結果，不經模型，不改成另一個模型回合。其他管理命令、PDF 上傳與地圖操作沿用原 router。KP Assistant 自己持有模型對話與提交分支，不經玩家 Executor／Narrator，也不進舊 Keeper 回合。
 
 ```mermaid
 flowchart TD
@@ -103,7 +109,7 @@ flowchart TD
 | Provider `run_conversation` | Executor 與 Narrator 仍使用 OpenAI／Anthropic／Gemini 的既有介面；特殊輸入由 Narrator 的一次工具對話產生最終文字，可在該對話內迭代工具。 |
 | `keeper._commit_turn_result` | 在狀態鎖下比對時間線、一次追加正式 log；開場後備同一交易設定 `game_started`，失敗時保持可重試。Supervisor 的模型對話依正式 log 重建上下文，因此提交時清除舊 Keeper OpenAI response 鏈，避免 KP Assistant 續用缺少新玩家回合的舊鏈。 |
 | `_run_post_turn_maintenance_after_output` | 提交成功後才送公開文字、私訊及圖片，再排程既有記憶／摘要維護；失效時間線不配送工具副作用。 |
-| `assistant.run_assistant` | KP Assistant 經 Supervisor 的 OOC 分流進獨立 agent，仍呼叫 KP 專用 `keeper.run_turn`；OOC 歷史和主持正典規則不併入玩家管線。 |
+| `assistant.run_assistant` | KP Assistant 經 Supervisor 的 OOC 分流進獨立 agent；自己組 KP 提示詞、正式歷史與工具清單，直接呼叫 Provider。工具 callback 再驗證 KP 白名單，透過 `tool_gateway` 執行權威工具；Guard 後依 `!` 或成功正典工具選擇 `kp_ooc_log` 或正式 `log` 提交，不呼叫 `keeper.run_turn`。 |
 
 **工具權限**：檢定後續沿用 `RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES`（唯讀查詢、傷害結算、戰鬥回合推進），不能使用 `skill_check`／`sanity_check` 等再建檢定的工具。開場後備允許劇本／記憶查詢及必要圖片／私訊展示，不提供擲骰或狀態變更工具。兩者在工具 callback 再次核對實際名稱，避免只靠模型收到的工具清單。底層仍共用 `_execute_tool`，不另寫骰子或戰鬥規則。
 
@@ -111,14 +117,14 @@ flowchart TD
 
 1. 定義一個玩家回合輸入契約，明確標示 `player_action`、`resolved_check_followup`、`opening_fallback`，攜帶已驗證角色、原行動脈絡、已結算事件或開場來源。三種輸入都進 `supervisor.run_turn`；檢定後續與開場不進一般文字意圖分類。
 2. 共用 Context、行動／既定結果、Narrator、Guard／劇透保護及正式提交。一般玩家行動的行動階段使用 Executor；檢定後續從權威已結算事件開始，跳過原擲骰；開場從劇本與開場情境開始。需要劇本補查或後續工具時，必須在這條管線的既有工具階段處理，不能另設一個與 Supervisor 平行的完整模型迴圈。具體工具權限及何時呼叫模型，由真實案例驗證後定案。
-3. 共用時間線檢查、工具副作用追蹤、失敗時的安全回覆、私訊／圖片請求與唯一正式歷史提交。後續工具若已改狀態而模型失敗，不能要求玩家重做原行動。KP Assistant 保留其獨立 agent 與 OOC 提交規則。
+3. 共用時間線檢查、工具副作用追蹤、失敗時的安全回覆、私訊／圖片請求與唯一正式歷史提交。後續工具若已改狀態而模型失敗，不能要求玩家重做原行動。KP Assistant 保留獨立 agent 與 OOC 提交規則，從舊 Keeper 模型迴圈遷出。
 4. 先遷移 `/coc start` 後備，再遷移檢定後續；保留現有一般玩家與 KP 代玩家行為。完成後，玩家劇情不再直接呼叫 `keeper.run_turn`，也不透過新名稱間接回到舊玩家迴圈。
 
 ### 關鍵流程
 
 - **檢定後續**：程式先完成骰子／Luck／狀態提交 → 權威事件進同一 Context／結果階段 → 必要後續工具及敘事進同一玩家管線 → Guard、劇透與時間線檢查 → 正式歷史只追加一次 → 交付公開與私密內容。
 - **開場**：角色與劇本就緒 → 優先使用現成開場抽取結果 → 缺少現成開場才以 `opening_fallback` 輸入同一 Context／敘事／保護／提交管線 → 依劇本／RAG 生成 → 標記 `game_started` 並公開。不可把開場當成玩家行動，也不能讓意圖分類憑空建立檢定。
-- **KP Assistant**：留在獨立 agent。純場外討論只進 `kp_ooc_log`；明確主持指令或正式工具結果才升格 `state.log`。本期只跑回歸測試確保無變化。
+- **KP Assistant**：獨立 provider 對話 → KP 工具白名單及權威工具 → Guard → 純場外討論進 `kp_ooc_log`，明確主持指令或正式工具結果進 `state.log`；無 `keeper.run_turn` 轉接。
 
 ## 資料結構與相容性
 
@@ -138,7 +144,7 @@ flowchart TD
 - 三種玩家輸入都要有實際路由測試，確認它們經過同一 Context、輸出保護與正式提交，且檢定與開場不直接或間接呼叫舊玩家 `keeper.run_turn`；KP 代玩家路徑仍工作。
 - 檢定：技能、SAN、Luck、多人待處理、回溯後舊按鈕、模型失敗前後有／無工具副作用；確認不重骰、不中途重扣，正式歷史只有一次結果。
 - 開場：有現成開場（含 opening_check）、無現成開場需 RAG、模型失敗、重複 `/coc start`、同時請求與時間線切換；`game_started` 與公開文字一致。
-- KP Assistant 現有 OOC／正式事件升格／工具權限／對話鏈測試保持通過，證明獨立 agent 未受重構影響。
+- KP Assistant 的實際路由不得呼叫 `keeper.run_turn`；OOC／正式事件升格／工具權限／對話鏈／時間線測試保持通過。
 - 以現況「需後續敘事的 `/coc check` 會啟動一次 `keeper.run_turn` 模型對話，可含多次工具迭代」作基準，量測重構前後的平均 API 請求、RAG 查詢及延遲；不得為了省請求漏掉劇本後果，也不得無條件增加一次 LLM 往返。跑完整測試套件，PR 前重新對齊最新 `main_v2`。
 
 ## 待確認

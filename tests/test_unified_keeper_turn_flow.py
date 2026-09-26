@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from app import db, keeper, legacy_commands
-from app.agents import narrator, supervisor
+from app.agents import assistant, narrator, supervisor
 from app.commands.handlers import system
 from app.domain.models import AgentMessage
 from app.models import Character, GroupState
@@ -22,6 +22,103 @@ def _context(state: GroupState, text: str) -> AgentMessage:
 
 
 class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
+    async def test_kp_assistant_runs_without_legacy_keeper_turn(self):
+        class Provider:
+            async def run_conversation(self, *_args, **kwargs):
+                self.previous_response_id = kwargs.get("previous_response_id")
+                return "幕後備註"
+
+        provider = Provider()
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            db, "DB_PATH", Path(directory) / "state.db"
+        ):
+            db._ensure_tables()
+            state = GroupState(group_id="assistant-ooc", timeline_id="current",
+                               openai_previous_response_id="formal-chain",
+                               openai_previous_response_timeline_id="current")
+            save_state(state)
+            message = AgentMessage(payload={
+                "state": state, "user_id": "kp", "display_name": "KP",
+                "text": "這個線索稍後再揭露", "resolved_location": None,
+            })
+            with (
+                patch.object(keeper, "_PROVIDERS", {"openai": provider}),
+                patch.object(keeper, "LLM_PROVIDER", "openai"),
+                patch.object(keeper, "run_turn", side_effect=AssertionError("legacy Keeper loop")),
+            ):
+                reply, private, images = await assistant.run_assistant(message)
+            persisted = load_state("assistant-ooc")
+        self.assertEqual((reply, private, images), ("幕後備註", [], []))
+        self.assertEqual(provider.previous_response_id, "formal-chain")
+        self.assertEqual(persisted.log, [])
+        self.assertEqual(persisted.kp_ooc_log[-2]["content"], "這個線索稍後再揭露")
+        self.assertEqual(persisted.kp_ooc_log[-1]["content"], "幕後備註")
+        self.assertEqual(persisted.openai_previous_response_id, "formal-chain")
+
+    async def test_kp_assistant_successful_game_tool_promotes_canon_without_legacy_loop(self):
+        class Provider:
+            async def run_conversation(self, *_args, **_kwargs):
+                execute_tool = _args[5]
+                self.blocked = await execute_tool("forbidden_tool", {})
+                self.rolled = await execute_tool(
+                    "roll_dice", {"expression": "1d6", "roll_context": "game_resolution"}
+                )
+                return "骰出了 4。"
+
+        provider = Provider()
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            db, "DB_PATH", Path(directory) / "state.db"
+        ):
+            db._ensure_tables()
+            state = GroupState(group_id="assistant-canon", timeline_id="current")
+            save_state(state)
+            message = AgentMessage(payload={
+                "state": state, "user_id": "kp", "display_name": "KP",
+                "text": "替怪物擲骰", "resolved_location": None,
+            })
+            with (
+                patch.object(keeper, "_PROVIDERS", {"openai": provider}),
+                patch.object(keeper, "LLM_PROVIDER", "openai"),
+                patch.object(keeper, "run_turn", side_effect=AssertionError("legacy Keeper loop")),
+                patch.object(keeper, "_execute_tool", return_value={"ok": True, "result": 4}) as execute,
+            ):
+                reply, _, _ = await assistant.run_assistant(message)
+            persisted = load_state("assistant-canon")
+        self.assertEqual(reply, "骰出了 4。")
+        self.assertFalse(provider.blocked["ok"])
+        self.assertEqual(provider.rolled["result"], 4)
+        execute.assert_called_once()
+        self.assertEqual(persisted.kp_ooc_log, [])
+        self.assertEqual(len(persisted.log), 2)
+        self.assertIn("DETERMINISTIC GAME WORKFLOW", persisted.log[0]["content"])
+
+    async def test_kp_assistant_explicit_canon_uses_public_guard_and_timeline(self):
+        class Provider:
+            async def run_conversation(self, *_args, **_kwargs):
+                return "門後沒有第二隻怪物。"
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            db, "DB_PATH", Path(directory) / "state.db"
+        ):
+            db._ensure_tables()
+            state = GroupState(group_id="assistant-manual", timeline_id="current")
+            save_state(state)
+            message = AgentMessage(payload={
+                "state": state, "user_id": "kp", "display_name": "KP",
+                "text": "!門後沒有第二隻怪物", "resolved_location": None,
+            })
+            with (
+                patch.object(keeper, "_PROVIDERS", {"openai": Provider()}),
+                patch.object(keeper, "LLM_PROVIDER", "openai"),
+                patch.object(keeper, "run_turn", side_effect=AssertionError("legacy Keeper loop")),
+            ):
+                reply, _, _ = await assistant.run_assistant(message)
+            persisted = load_state("assistant-manual")
+        self.assertEqual(reply, "門後沒有第二隻怪物。")
+        self.assertEqual(persisted.log[0]["content"], "[KP Assistant] 門後沒有第二隻怪物")
+        self.assertEqual(persisted.log[1]["content"], reply)
+        self.assertEqual(persisted.kp_ooc_log, [])
+
     async def test_opening_pipeline_persists_scene_and_started_flag_together(self):
         class Provider:
             calls = 0
