@@ -313,3 +313,21 @@ Supervisor.run_turn [共用 ContextVar deadline：180 秒]
 整合時保留PR90的截斷測試與PR89新增的順序／負面測試。
 全套pytest：728 passed、1 skipped、15 subtests passed；mypy（72 files）、
 修改檔案Ruff、git diff --check通過。本修正未追加付費API試驗。
+
+## PR #90 review follow-up (approved)
+
+Merged PR89's shared review fixes: pending/Luck instructions survive incomplete
+handoffs, unvalidated reasons are excluded from Narrator authority, deferred and
+cancelled decisions verify complete gameplay mutations, and output queues are
+attached before the Executor awaits a provider. Verified encounter setup remains
+compatible with off-turn deferral. No extra fixed model request or rollback.
+
+An additional real OpenAI provider-loop regression queues a private clue and an
+image, then returns an incomplete continuation containing repeated calls. Only
+the earlier successful outputs are preserved, once each, for their original
+recipient; the incomplete response's tool calls are not executed.
+
+Verification after the merge: isolated full suite 751 passed, 1 skipped,
+15 subtests passed; mypy passed (72 source files), changed-file Ruff and
+`git diff --check` passed. The integration branch remains an ancestor and there
+are no unresolved merge entries. No additional paid API benchmark was run.

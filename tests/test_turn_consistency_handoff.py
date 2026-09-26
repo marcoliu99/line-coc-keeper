@@ -631,3 +631,30 @@ def test_deferred_without_full_snapshot_fails_closed(state):
         state=state, user_id='a', before_pending={}, before_luck={}, tool_events=[],
         has_scenario=False, before_actor=turn_resolution.actor_snapshot(state, 'a'))
     assert result.disposition == 'incomplete'
+
+
+def test_truncated_continuation_keeps_successful_private_output_queues(state, monkeypatch):
+    from app.providers import openai_provider
+    state.scenario_library_id = 'test-scenario'
+    calls = [
+        SimpleNamespace(type='function_call', name='send_private_info', call_id='private',
+            arguments=json.dumps({'investigator': 'Ken', 'message': 'private clue'})),
+        SimpleNamespace(type='function_call', name='show_scenario_image', call_id='image',
+            arguments=json.dumps({'investigator': 'Ken', 'page_number': 2})),
+    ]
+    create = AsyncMock(side_effect=[
+        SimpleNamespace(status='completed', id='completed', usage=None, output=calls),
+        SimpleNamespace(status='incomplete', id='truncated', usage=None,
+            incomplete_details=SimpleNamespace(reason='max_output_tokens'), output=calls),
+    ])
+    monkeypatch.setattr(openai_provider, 'OPENAI_API_KEY', 'test-key')
+    monkeypatch.setattr(openai_provider, '_create_response_async', create)
+    monkeypatch.setattr(executor, 'LLM_PROVIDER', 'openai')
+    monkeypatch.setattr(executor, '_PROVIDERS', {'openai': openai_provider})
+    msg = message(state)
+    with patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
+        result = asyncio.run(executor.run_executor(msg))
+    assert not result.success and result.turn_resolution.disposition == 'incomplete'
+    assert msg.payload['private_messages'] == [('b', 'private clue')]
+    assert msg.payload['image_requests'] == [('b', 2)]
+    assert create.await_count == 2
