@@ -1219,8 +1219,24 @@ async def _finalize_check_result(
                 for field_name in resolved_event["state_before"]:
                     if field_name not in tracked_fields:
                         resolved_event["state_before"][field_name] = keeper_start[field_name]
+            keeper_kwargs = {}
+            if resolved_event is not None:
+                keeper_kwargs["resolved_check_context"] = {
+                    key: resolved_event[key]
+                    for key in (
+                        "investigator", "skill", "skill_value", "roll", "difficulty",
+                        "outcome", "action_context", "check_id", "timeline_id",
+                    )
+                    if key in resolved_event
+                }
             keeper_reply, private_messages, image_requests = await keeper.run_turn(
-                fresh_state, user_id, fresh_char.name, keeper_context_message, resolved_location, "player"
+                fresh_state,
+                user_id,
+                fresh_char.name,
+                keeper_context_message,
+                resolved_location,
+                "player",
+                **keeper_kwargs,
             )
             if resolved_event is not None:
                 await asyncio.to_thread(
