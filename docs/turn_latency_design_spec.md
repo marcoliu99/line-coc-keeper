@@ -377,22 +377,81 @@ propose changing that setting. Do not translate player queries on each turn.
    keywords in each part, retain the source page/section reference, and keep
    dependent trigger/result conditions together. This matters because the
    current index chunks by page and paragraph at roughly 400 characters.
-5. Save the generated Chinese template as a versioned derived scenario text
-   while retaining the original PDF and source-to-template mapping (source
-   hash, page, section, unit ID, and template version). Keep it as a distinct
-   library artifact; do not overwrite the original `scenario.txt` or PDF.
-   Extend the library's atomic save/replace flow so reparsing the original
-   cannot silently delete the translated artifact. On source, chapter-window,
-   glossary, template, or translation-version changes, regenerate the derived
-   text and its RAG index. Reuse the existing CJK bigram/BM25 plus embedding
-   index; add no per-turn translation call.
-6. At activation, make RAG search the Chinese template for both proactive
-   context and explicit `search_scenario` calls. Return the matching Chinese
-   template unit with its source page reference. Keep review status visible
-   to the KP; units with unresolved translation issues must not be treated
-   as verified mechanical rulings. If preprocessing or index building fails,
-   keep the original scenario usable and report that the Chinese version is
-   not ready.
+5. When the original PDF parse succeeds, enqueue one background preprocessing
+   job for the Chinese template. Do not hold up PDF import or initial play
+   while it runs. Save the generated template as a versioned language variant
+   under the original scenario library item, alongside (not over) the
+   original PDF and `scenario.txt`. Store source hash, page/heading, chapter
+   ID, record ID, template version, locale, glossary version, job status, and
+   KP review status. Persist job status so an interrupted job can resume or
+   be retried after restart. Extend the library's atomic save/replace flow so
+   reparsing the original cannot silently delete a saved language variant.
+   Rebuild the variant when its source hash, chapter map, glossary, template,
+   or translation version is stale. Reuse the existing CJK bigram/BM25 plus
+   embedding index; add no per-turn translation call.
+   Run at most one scenario-template job at a time and keep its API requests
+   outside the gameplay request semaphore/reserved capacity. Record build
+   duration, token usage, and retry/failure status so the one-time cost can
+   be compared with fewer in-game retrieval rounds. Build or prewarm the
+   embeddings index only when a reviewed variant is activated.
+6. After KP review, selecting the language variant should load its template
+   text for the current chapter window into `GroupState.scenario_text`. The
+   existing proactive context and explicit `search_scenario` call then search
+   the selected Chinese text. Keep the variant ID in group state so restart
+   and chapter advancement continue using the same language. Reuse original
+   page images, maps, chapter IDs, and scenario identity. If preprocessing or
+   index building fails, leave the original scenario selectable and clearly
+   report that the Chinese variant is unavailable.
+
+### Import, review, and activation flow
+
+The original PDF remains the source scenario imported through the existing
+`/coc scenario import` flow. After extraction and the normal source artifact
+are saved, queue preprocessing of that extracted Markdown-like text into a
+normalized Chinese template. The template becomes a **language variant of
+that scenario**, with the original PDF, page images, maps, and chapter
+identity retained. Generation is a background step; importing and playing
+the original scenario do not wait for translation. Proposed flow:
+
+1. The job extracts canonical terms and aliases, then translates and
+   structures playable content in page/section batches using the fixed
+   template and glossary. It validates unique record IDs, parent/link
+   targets, chapter and visibility values, source references, and source
+   hash. A mismatch or malformed record fails the variant build without
+   changing the original scenario. Status moves through `queued`,
+   `processing`, `review_required`, and `failed` or `stale` as appropriate.
+2. Save the generated Markdown and metadata under that library item's
+   versioned template directory. Keep source PDF, original extracted text,
+   images, maps, and scenario ID unchanged. Library replacement/reparse must
+   preserve existing template versions; a changed source hash creates a new
+   draft version and does not silently rewrite a version a group already
+   selected.
+3. Provide `/coc scenario template status <scenario_id>` and a preview grouped
+   by chapter and record type, including unresolved translation notes and
+   source links. The KP reviews terminology, mechanics, room/Handout links,
+   and spoiler visibility. Only a reviewed version can be activated for
+   play; a draft remains available for editing. A manual
+   `/coc scenario template import <scenario_id> <file.md>` path can also
+   import a prepared or corrected template after the same validation.
+4. Extend scenario selection with an optional reviewed template variant,
+   e.g. `/coc scenario use <scenario_id> zh-TW-v1`. Persist the selected
+   variant ID in `GroupState` with a backwards-compatible default of
+   `original`. Existing groups keep their current selection until the KP
+   explicitly switches it.
+5. When activating or advancing a chapter, `scenario_library.load_context`
+   selects original text or the chosen template, then applies the same
+   current/next chapter window. Index only that selected accessible text.
+   Map search results to template record IDs and the original page/heading;
+   `/coc showpage` and map/image behavior continue to use original page
+   numbers. If a group has no reviewed variant selected, keep indexing its
+   currently selected original text.
+
+For the first pilot, run background generation on the Corbitt and Lightless
+Beacon source artifacts, review the generated Markdown, and activate one
+reviewed Chinese variant. KP-authored Markdown can serve as a corrected
+variant through the same validated import path. The small basement trial
+passed translated text to Executor; it did not test template generation,
+review, or activation, so those need separate validation.
 
 Example template unit (omit fields the source does not contain; write
 「原文未提及」 only when that absence matters to a ruling):
@@ -512,13 +571,9 @@ The source visibility should determine `visibility`; the example's value is
 illustrative and must not be copied without checking the source's spoiler
 policy.
 
-The first usable template can be authored and proofread outside the bot, then
-exported as a page-preserving Chinese PDF for the existing import flow. That
-is the smallest end-to-end trial and requires no runtime translation feature.
-If it improves retrieval and ruling quality, automate the same template
-contract in a later implementation. The small basement trial passed
-translated text to Executor; it did not test a structured template or
-source-to-template audit mapping, so those need separate validation.
+A prepared Markdown import remains available for KP edits and offline trials.
+The proposed normal path is automatic background generation after the
+original PDF parse, followed by KP review and explicit activation.
 
 ### Acceptance and rollout gate
 
@@ -536,24 +591,24 @@ source-to-template audit mapping, so those need separate validation.
   source-hash/version invalidation, restart, partial-build fallback, and no
   chapter or group leakage.
 - Compare one-time translation and embedding cost against repeated-turn
-  savings. Keep automation out of the runtime path until multi-scene replay
-  preserves rulings and reduces complete turn latency without a per-turn
-  translation request. Record preprocessing, retrieval, and model time
-  separately.
+  savings. Keep template generation off the player-turn critical path until
+  multi-scene replay preserves rulings and reduces complete turn latency
+  without a per-turn translation request. Record preprocessing, retrieval,
+  and model time separately.
 
 ## Follow-up scope and review decisions
 
 The current branch's runtime implementation remains the pending-button change
 and search-count event in `404c417`. Candidate A, B, C, and the Chinese
 scenario template above are **spec-only**. Proposed order: first improve async
-usage and result-level observability, then evaluate the manually prepared
-Chinese template and terminal-check stop independently; investigate roleplay
-routing after labeling actual turns. These are separate correctness gates,
-not a bundled code change.
+usage and result-level observability, then evaluate the generated Chinese
+template and terminal-check stop independently; investigate roleplay routing
+after labeling actual turns. These are separate correctness gates, not a
+bundled code change.
 
 Review choices before a new implementation: approve the template fields and
-terminology rules; decide whether the first trial uses a manually prepared
-Chinese PDF/text or bot-generated output with KP review; and determine which
-template units require original-source text alongside the translated result
-at runtime. Pending-check terminal detection also remains gated on proving
-that no further action is owed.
+terminology rules; confirm automatic background generation after PDF parse
+with KP review before activation; and determine which template units require
+original-source text alongside the translated result at runtime.
+Pending-check terminal detection also remains gated on proving that no further
+action is owed.
