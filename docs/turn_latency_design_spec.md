@@ -420,12 +420,14 @@ Call of Cthulhu mechanic; include it only if the source says so.
 
 ### Template record types and source links
 
-The supplied Corbitt Markdown outline is the reference case for the template.
-Use record types that match the material instead of putting the whole module
-into one long overview block:
+The supplied Corbitt House and Lightless Beacon Markdown outlines are the
+reference cases for the template. Use record types that match the material
+instead of putting the whole module into one long overview block:
 
 - `overview`: era, region, patron, assignment, payment, campaign-level secret,
   and play phases;
+- `investigator_hook`: pre-generated character role, personal motivation,
+  private information, and conflict or incentive that can affect choices;
 - `investigation_location`: location, NPCs, available approaches, checks,
   consequences, and clue/Handout IDs;
 - `handout_or_clue`: what it reveals, who can provide it, its source, and
@@ -436,6 +438,8 @@ into one long overview block:
   opposed value, success/failure, Push, and Push-failure consequence;
 - `npc_or_encounter`: identity, role, stats, abilities, attacks, defenses,
   damage, Sanity effects, and defeat conditions;
+- `event_or_timeline`: absolute or relative time, trigger conditions,
+  warning cues, event effects, and links to affected scenes/NPCs;
 - `ending_or_hook`: required outcome, reward or consequence, and follow-up
   leads.
 
@@ -447,6 +451,34 @@ heading paths/anchors, plus PDF page and paragraph when available. Handouts,
 checks, rooms, and NPCs should link by ID so a retrieved clue can point to a
 related rule without copying or conflating their contents. Preserve chapter
 and public/KP visibility metadata on every record.
+
+The second reference module adds records that are easy to lose in a
+location-only template: the six pre-generated investigators' different
+motivations in Corbitt House, four character hooks in Lightless Beacon, and
+Lightless Beacon's generator failure, storm, assault, and rescue conditions.
+Represent relative clocks and alternative triggers explicitly, such as
+"about 45 minutes after entry" or "when the search ends / investigators leave
+the cottage". Link every event to the affected records so RAG can retrieve
+the trigger and consequences together. Keep distinct source facts as distinct
+fields: a lead-in, an absolute deadline, and an alternate trigger must not be
+flattened into an ambiguous single timestamp.
+
+Example event record based on the Lightless Beacon outline:
+
+```text
+record_id: lightless-beacon-youngling-assault
+parent_id: lightless-beacon-island
+type: event_or_timeline
+source: Markdown heading「場景五 > 決戰圍攻」；PDF 頁碼（若有）
+trigger: 調查員完成搜查或走出燈塔小屋
+effect: 島上剩餘幼怪發動圍攻
+conditional_links: 若已修好無線電並求援，海岸警衛隊可能於破曉或危急時趕到
+linked_records: generator-shed, radio-repair, coast-guard-rescue, youngling-stat-block
+校對狀態: 待 KP 校對
+```
+
+Keep the two possible rescue arrival times as alternatives from the source;
+do not normalize them into one guaranteed arrival time.
 
 The RAG index must treat each template record as a chunk boundary. If one
 record exceeds the current roughly 400-character chunk target, split it into
@@ -493,10 +525,11 @@ source-to-template audit mapping, so those need separate validation.
 - Prepare template-based Chinese content and labeled Chinese actions across
   several pages and scene types, including irrelevant queries, similarly
   named rooms on different floors, Handout-to-location cross-references,
-  negative/conditional rules, and restricted future chapters. Check source
-  page and chunk recall at five, ranking, explicit search counts, API calls,
-  complete Discord turn p50/p95, and final ruling accuracy. The basement
-  example remains one case, not the whole acceptance set.
+  distinct investigator motivations, timed events, environmental failures,
+  negative/conditional rules, and restricted future chapters. Use both
+  Corbitt House and Lightless Beacon as structurally different pilots. Check
+  source page and chunk recall at five, ranking, explicit search counts, API
+  calls, complete Discord turn p50/p95, and final ruling accuracy.
 - Have a KP compare template units with the original for dice, damage, skill
   thresholds, proper names, negation, Push rules, and player/KP visibility.
   Track corrections and terminology consistency across pages. Verify
