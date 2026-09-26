@@ -45,7 +45,10 @@ from app.repositories.group_state import (
 )
 
 
-async def _handle_local_import(conversation_id: str, user_id: str, reply: Reply, parts: list[str]) -> None:
+async def _handle_local_import(
+    conversation_id: str, user_id: str, reply: Reply, parts: list[str],
+    expected_revision: int | None = None,
+) -> None:
     state = load_state(conversation_id)
     if state.kp_assistant_user_id != user_id:
         await reply("只有目前登記的 KP Assistant 可以匯入伺服器上的 PDF。")
@@ -55,16 +58,20 @@ async def _handle_local_import(conversation_id: str, user_id: str, reply: Reply,
         await reply("用法：/coc scenario import 檔名.pdf")
         return
     try:
-        pdf_path = scenario_library.safe_import_path(IMPORT_DIR, parts[filename_index])
+        pdf_path = scenario_library.safe_import_path(IMPORT_DIR, " ".join(parts[filename_index:]))
         pdf_bytes = pdf_path.read_bytes()
     except (FileNotFoundError, ValueError, OSError):
         await reply("找不到允許匯入的 PDF；只能使用 IMPORT_DIR 內的檔案名稱，不能帶路徑。")
         return
     await reply(f"已讀取伺服器檔案《{pdf_path.name}》，開始解析...")
-    await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pdf_path.name)
+    await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pdf_path.name,
+                            expected_revision=expected_revision)
 
 
-async def _handle_staged_merge(conversation_id: str, user_id: str, reply: Reply, parts: list[str]) -> None:
+async def _handle_staged_merge(
+    conversation_id: str, user_id: str, reply: Reply, parts: list[str],
+    expected_revision: int | None = None,
+) -> None:
     state = load_state(conversation_id)
     if state.kp_assistant_user_id != user_id:
         await reply("只有目前登記的 KP Assistant 可以合併 PDF。")
@@ -98,7 +105,8 @@ async def _handle_staged_merge(conversation_id: str, user_id: str, reply: Reply,
     from app.pdf_loader import combine_pdfs
     merged = await asyncio.to_thread(combine_pdfs, payloads)
     merged_name = f"{selected[0]['file_name'].rsplit('.', 1)[0]}_merged.pdf"
-    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name)
+    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name,
+                                       expected_revision=expected_revision)
     if not accepted:
         return
     for item in selected:
@@ -134,6 +142,7 @@ async def handle_system_command(
     parts: list[str],
     format_mention: FormatMention = lambda owner_id: owner_id,
     is_keeper: bool = False,
+    expected_revision: int | None = None,
 ) -> None:
     sub = parts[1].casefold() if len(parts) > 1 else ""
 
@@ -291,10 +300,10 @@ async def handle_system_command(
             await reply(f"已刪除手動角色卡資產 {asset_id}。")
             return
         if action == "import":
-            await _handle_local_import(conversation_id, user_id, reply, parts)
+            await _handle_local_import(conversation_id, user_id, reply, parts, expected_revision)
             return
         if action == "merge":
-            await _handle_staged_merge(conversation_id, user_id, reply, parts)
+            await _handle_staged_merge(conversation_id, user_id, reply, parts, expected_revision)
             return
         if action == "list":
             entries = scenario_library.list_scenarios()
@@ -319,6 +328,9 @@ async def handle_system_command(
             # release it before the intentionally long PDF extraction begins.
             async with locks.get_conversation_lock(conversation_id):
                 state = load_state(conversation_id)
+                if expected_revision is not None and state.state_revision != expected_revision:
+                    await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
+                    return
                 if not _is_kp_or_keeper(state, user_id, is_keeper):
                     await reply("只有目前的 KP Assistant 或 Discord Keeper 可以重新解析劇本。")
                     return
@@ -338,11 +350,13 @@ async def handle_system_command(
                     return
                 state.pending_scenario_upload = None
                 save_state(state)
+                commit_revision = state.state_revision
             candidate_matches = pending.get("matches") or []
             reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
             await handle_pdf_upload(
                 conversation_id, reply, reply, pdf_bytes, pending["file_name"],
                 skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
+                expected_revision=commit_revision if expected_revision is not None else None,
             )
             scenario_library.discard_staged_upload(pending["key"])
             return
