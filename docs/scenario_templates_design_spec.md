@@ -1,5 +1,18 @@
 # Source-linked Chinese scenario templates
 
+## Current direction: external preparation by default
+
+The user has selected external preparation with source-bound templates. The latest
+implementation adds `template export`, removes translation queueing from PDF import,
+and pauses old unfinished translation jobs on startup. Explicit `template generate`
+is still available only on request. The earlier automatic lifecycle described below
+is historical and superseded by this paragraph and the
+[reference review / authoring contract](scenario_template_reference_review.md).
+
+Four user-provided PDFs and official long-campaign materials inform that contract.
+The role-card template now preserves open descriptive fields and age; prose does not
+implicitly authorize a mechanical state change.
+
 ## 1. Why this exists: remove repeated cross-language work from gameplay
 
 The primary goal of PR #83 is faster, correct Chinese-language play against an
@@ -216,16 +229,15 @@ not parse arbitrary Chinese prose or infer source IDs from page headings. Curren
 validation requires one record per existing source unit, plus structured quote-backed
 rule fields. Ordinary translated Markdown cannot be promised as a drop-in input.
 
-Recommended next implementation: export a source-bound editable skeleton for external
+Implemented in this revision: export a source-bound editable skeleton for external
 preparation, then import and validate it without any translation API call. Human-
 friendly Markdown sections can compile deterministically to the internal records;
 keep machine IDs/version metadata managed by the export/import tooling. Specify the
 format before adding its parser. Ambiguous/missing mappings fail for correction.
 
-For an external-first product, make automatic post-parse generation opt-in; do not
-queue paid translation simply because an English PDF was imported. This is a proposed
-lifecycle change: the current PR still supports automatic background generation.
-Retain explicit generation as an optional convenience only if needed.
+Automatic post-parse generation is now removed. Explicit generation remains an
+optional command and is labeled as an API operation in Help. Startup does not resume
+old paid jobs.
 
 For evaluation, a reviewed externally translated scenario can exercise the Chinese
 retrieval arm immediately through the existing records import format. Measure its
@@ -269,11 +281,12 @@ Schema/generator version mismatches make old variants unavailable for activation
 ### Background lifecycle and admission
 
 Persist each structurally valid translated unit as a checkpoint keyed by scenario,
-source hash, chapter hash, generator version, and source-unit ID. Retry/restart reuses
-completed units, reconstructs the glossary, and resumes missing work. Source changes
+source hash, chapter hash, generator version, and source-unit ID. Explicit retry reuses
+completed units, reconstructs the glossary, and resumes missing work. Startup pauses
+old unfinished jobs and never initiates translation requests. Source changes
 are checked before requests, checkpoints and final publication; clean removes jobs,
 checkpoints, variants and indexes. `/coc scenario template generate <id>` explicitly
-retries a failed build. Automatic post-parse generation remains supported.
+retries a failed build. Post-parse automatic generation has been removed; explicit generation remains optional.
 
 OpenAI preprocessing uses the same async request helper, admission controller,
 429 cooldown, and request semaphore as gameplay. Background requests wait while
@@ -300,3 +313,10 @@ cyclic links, restart after partial failure, foreground priority, and incomplete
 responses. Existing provider/retry tests still run. No production latency improvement
 is claimed from these deterministic tests. The original/alias-only/full-translation
 live comparison remains an explicit future evaluation, not a completed benchmark.
+
+### External preparation / open role fields verification
+
+Full isolated suite after the external-export and role-template revision: 782 passed,
+1 skipped, 15 subtests passed. Mypy checked 74 files. No paid model or embedding calls
+were used; the supplied PDFs were inspected locally and official campaign references
+were browsed for design evidence. The live game's records were not modified.

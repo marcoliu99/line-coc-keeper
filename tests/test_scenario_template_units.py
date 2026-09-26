@@ -149,3 +149,48 @@ def test_link_expansion_keeps_chapter_and_visibility_boundaries():
     private = scenario_rag.search(index, 'stairs', 1)[0]['text']
     assert 'secret-link' in private
     assert 'future' not in private
+
+
+def test_external_export_is_source_bound_private_and_never_translates(tmp_path, monkeypatch):
+    import json
+    import re
+    monkeypatch.setattr(templates, 'IMPORT_DIR', tmp_path)
+    monkeypatch.setattr(templates, '_source', lambda _: (MANIFEST, SOURCE))
+    with patch.object(templates, 'queue_generation') as queued, patch.object(openai_provider, 'analyze_text_background') as llm:
+        first = templates.export_template('scenario')
+        second = templates.export_template('scenario')
+    queued.assert_not_called()
+    llm.assert_not_called()
+    assert first != second and first.parent == tmp_path
+    assert first.stat().st_mode & 0o077 == 0
+    match = re.search(r'```json\s*(\{.*?\})\s*```', first.read_text(), re.DOTALL)
+    payload = json.loads(match.group(1))
+    assert payload['source_hash'] == MANIFEST['content_hash']
+    assert payload['chapter_hash'] == templates._chapter_hash(MANIFEST)
+    blank = payload['records'][0]
+    assert blank['source_id'] == 'c1-u1'
+    assert blank['source_excerpt'] == SOURCE and blank['source_pages'] == [1]
+    with pytest.raises(ValueError, match='中文內容'):
+        templates.import_markdown('scenario', first.name)
+    # External editor fills the existing schema without needing another API.
+    payload['records'][0].update(item())
+    payload['records'][0]['visibility'] = 'public'
+    first.write_text('```json\n' + json.dumps(payload) + '\n```')
+    with patch.object(templates, '_save_variant', return_value='manual-version') as save:
+        assert templates.import_markdown('scenario', first.name) == 'manual-version'
+    assert save.call_args.kwargs['origin'] == 'manual'
+    assert save.call_args.args[3][0]['source_excerpt'] == SOURCE
+
+
+def test_startup_pauses_old_jobs_instead_of_spending_api_calls():
+    jobs = {'old-auto': {'status': 'processing', 'source_hash': 'old'},
+            'old-queued': {'status': 'queued'}, 'done': {'status': 'approved'}}
+    with patch.object(templates.db, 'list_keys', return_value=list(jobs)), \
+            patch.object(templates.db, 'get_json', side_effect=lambda _table, key: jobs[key]), \
+            patch.object(templates.db, 'set_json', side_effect=lambda _table, key, value: jobs.__setitem__(key, value)), \
+            patch.object(templates, 'queue_generation') as queued:
+        templates.pause_pending_jobs()
+    queued.assert_not_called()
+    assert jobs['old-auto'] == {'status': 'paused', 'source_hash': 'old'}
+    assert jobs['old-queued']['status'] == 'paused'
+    assert jobs['done']['status'] == 'approved'

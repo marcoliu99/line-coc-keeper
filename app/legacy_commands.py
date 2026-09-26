@@ -465,12 +465,6 @@ async def handle_pdf_upload(
         preview=preview, text=text, indexes=extracted_index, pregens=pregens,
         page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
     )
-    # Translation runs after the original artifact is safely available and
-    # never holds the PDF upload response open.
-    try:
-        scenario_templates.queue_generation(scenario_id)
-    except Exception:
-        _logger.exception("failed to queue Chinese scenario template for %s", scenario_id)
     library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
     text = library_context["text"]
     extracted_index = library_context["indexes"]

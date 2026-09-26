@@ -78,7 +78,7 @@ _REPORT_TOOL = {
                             "值）。這是為了讓系統學會這個劇本用的技能譯名，之後遇到同樣的原文能直接辨識。",
                             "additionalProperties": {"type": "string"},
                         },
-                        "notes": {"type": "string", "description": "簡短背景介紹，若劇本有寫的話"},
+                        "notes": {"type": "string", "description": "忠實保留原卡的自由文字背景與段落，不為了簡短而刪掉人物關係、信念或動機；未填欄位不可補寫"},
                         "secret_goal": {
                             "type": "string",
                             "description": (
@@ -101,7 +101,8 @@ _REPORT_TOOL = {
                             "type": "object",
                             "description": (
                                 "角色卡上其他劇本自訂欄位，不能丟棄。例如信念、重要之人、住址、組織、"
-                                "裝備備註、特殊能力、公開秘密、聯絡方式或任何不同劇本新增的欄位。key 使用"
+                                "裝備備註、特殊能力、公開秘密、聯絡方式、外觀描述、性格、重要地點、珍藏物品或任何不同劇本新增的欄位。"
+                                "自由文字保留完整段落，不轉成枚舉／數值；原卡有標題但留白的欄位保留空字串，不替玩家補寫。key 使用"
                                 "欄位原名，value 保留完整內容；不要把未看見的內容補出來。"
                             ),
                             "additionalProperties": {},
@@ -593,11 +594,20 @@ def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
     pregen["extra_fields"] = {
         section_name: body
         for section_name, body in sections.items()
-        if section_name not in excluded_sections and body
+        if section_name not in excluded_sections
     }
 
+    if "年齡" in info or "年紀" in info:
+        pregen["extra_fields"]["年齡"] = info.get("年齡", info.get("年紀", ""))
+
+    # Weapon/ammo classification must not discard authored damage, range,
+    # special conditions or prose. Keep the original block as descriptive data;
+    # it does not grant unimplemented combat automation.
+    if sections.get("武器"):
+        pregen["extra_fields"]["武器原始描述"] = sections["武器"]
+
     pregen["secret_goal"] = sections.get("角色扮演動機", "")
-    pregen["key_connection"] = ""
+    pregen["key_connection"] = sections.get("關鍵背景連結", "").strip()
     return pregen
 
 
@@ -756,9 +766,7 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
             # Preserve both sources separately. A newer PDF replaces the old
             # PDF value (including clearing it); a newer manual upload can
             # clear its own value without reviving an old manual value.
-            if manual.get("source") == "manual":
-                manual_value = pregen_luck_value(manual.get(key))
-            elif manual.get("source") == "merged" and manual.get("luck_origin") == "manual":
+            if manual.get("source") == "manual" or manual.get("source") == "merged" and manual.get("luck_origin") == "manual":
                 manual_value = pregen_luck_value(manual.get(key))
             else:
                 manual_value = None

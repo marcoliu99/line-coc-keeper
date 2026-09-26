@@ -44,7 +44,8 @@ DESCRIPTION = Field("描述", paragraph=True)
 
 ACTIONS: tuple[HelpExecution, ...] = (
     _a("template_status", "scenario/template_status", "查看模板", "select", "/coc scenario template status", source="scenario"),
-    _a("template_generate", "scenario/template_generate", "產生模板", "select", "/coc scenario template generate", source="scenario", confirm=True),
+    _a("template_export", "scenario/template_export", "匯出空白模板", "select", "/coc scenario template export", source="scenario"),
+    _a("template_generate", "scenario/template_generate", "手動啟動翻譯", "select", "/coc scenario template generate", source="scenario", confirm=True),
     _a("template_preview", "scenario/template_preview", "預覽模板", "select", "/coc scenario template preview", Field("模板版本"), source="scenario"),
     _a("template_approve", "scenario/template_approve", "核准模板", "select", "/coc scenario template approve", Field("模板版本"), source="scenario", confirm=True),
     _a("template_import", "scenario/template_import", "匯入模板", "select", "/coc scenario template import", Field("Markdown 檔名"), source="scenario", confirm=True),

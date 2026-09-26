@@ -389,9 +389,16 @@
 用法：
 - `/coc scenario template approve 劇本ID 模板版本`
 
-### 產生中文模板 **[KP-only]**
+### 匯出中文化模板 **[KP-only]**
 
-產生或恢復來源單元翻譯。
+匯出來源 ID、頁碼與原文，供外部中文化；不呼叫翻譯 API。
+
+用法：
+- `/coc scenario template export 劇本ID`
+
+### 手動啟動翻譯 **[KP-only]**
+
+明確要求產生或恢復來源單元翻譯，會呼叫模型 API；PDF 匯入與啟動不會自動翻譯。
 
 用法：
 - `/coc scenario template generate 劇本ID`

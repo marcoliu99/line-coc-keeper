@@ -359,25 +359,55 @@ def queue_generation(scenario_id: str) -> bool:
     return True
 
 
-def resume_pending_jobs() -> None:
+def pause_pending_jobs() -> None:
+    """Startup must not restart paid translation, including old automatic jobs."""
     for scenario_id in db.list_keys("scenario_template_jobs"):
+        active = _tasks.get(scenario_id)
+        if active is not None and not active.done():
+            continue  # Discord reconnect must not relabel a manually started live job.
         job = db.get_json("scenario_template_jobs", scenario_id) or {}
         if job.get("status") in ("queued", "processing"):
-            try:
-                saved = next((v for v in _all_variants(scenario_id)
-                              if v.get("source_hash") == job.get("source_hash")
-                              and v.get("chapter_hash") == job.get("chapter_hash")
-                              and v.get("schema_version") == _VERSION
-                              and v.get("generator_version") == _GENERATOR_VERSION
-                              and v.get("review_status") in ("review_required", "approved")), None)
-                if saved is not None:
-                    db.set_json("scenario_template_jobs", scenario_id,
-                                {**job, "status": saved["review_status"],
-                                 "variant_id": saved["variant_id"]})
-                    continue
-                queue_generation(scenario_id)
-            except (FileNotFoundError, ValueError):
-                db.delete_json("scenario_template_jobs", scenario_id)
+            db.set_json("scenario_template_jobs", scenario_id, {**job, "status": "paused"})
+
+
+def export_template(scenario_id: str) -> Path:
+    """Export a source-bound blank workbook without any model or embedding call.
+
+    Full original units stay in this private preparation file. Empty translated
+    fields and uncertainty markers deliberately prevent approval before editing.
+    """
+    manifest, text = _source(scenario_id)
+    records = []
+    for block in _blocks(manifest, text):
+        records.append({
+            "id": f"{block['id']}-r1", "source_id": block["id"],
+            "page": block["page"], "source_pages": block["pages"],
+            "chapter_id": block["chapter_id"], "source_heading": block["heading"],
+            "source_excerpt": block["text"], "type": "source_unit",
+            "name": block["heading"], "aliases": [], "keywords": [],
+            "visibility": "kp_only", "public_text": "", "kp_text": "", "rule_text": "",
+            "rules": [], "related_source_ids": [], "uncertainty": "尚未翻譯與校對",
+        })
+    root = IMPORT_DIR.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    # Unique file avoids overwriting the KP's partly translated workbook. Do not
+    # derive a path component from the supplied scenario ID or title.
+    fd, filename = tempfile.mkstemp(prefix="scenario-template-", suffix=".md", dir=root)
+    import os
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(
+            "# External Chinese scenario preparation\n\n"
+            "Private Keeper workbook: contains unredacted source material.\n"
+            "Keep IDs, hashes, chapter and source page fields unchanged. Translate complete units; "
+            "do not infer missing rules. Preserve triggers, success/failure, Push, costs, limits and exceptions. "
+            "Put rule translations and exact original quotes in rules fields "
+            "trigger/check/success/failure/exceptions. Mark public versus KP content explicitly. "
+            "Keep unresolved text in uncertainty; clear it only after review. "
+            "source_pages are PDF positions, not printed page labels. "
+            "Use related_source_ids for dependencies; links do not unlock other chapters.\n\n"
+        )
+        stream.write(_records_text(records, manifest["content_hash"], _chapter_hash(manifest)))
+    return Path(filename)
 
 
 def status(scenario_id: str) -> dict[str, Any]:
