@@ -435,7 +435,9 @@ the original scenario do not wait for translation. Proposed flow:
    import a prepared or corrected template after the same validation.
 4. Extend scenario selection with an optional reviewed template variant,
    e.g. `/coc scenario use <scenario_id> zh-TW-v1`. Persist the selected
-   variant ID in `GroupState` with a backwards-compatible default of
+   variant ID in the group's active state, and keep a durable preference
+   keyed by `(group_id, scenario_id)` so `/coc newgame` does not forget which
+   reviewed language version that group uses. Default old records to
    `original`. Existing groups keep their current selection until the KP
    explicitly switches it.
 5. When activating or advancing a chapter, `scenario_library.load_context`
@@ -452,6 +454,32 @@ reviewed Chinese variant. KP-authored Markdown can serve as a corrected
 variant through the same validated import path. The small basement trial
 passed translated text to Executor; it did not test template generation,
 review, or activation, so those need separate validation.
+
+### Persistence boundary and adjacent role-card issue
+
+The language template is reusable scenario-library content; `GroupState`
+should carry only the selected variant ID and the currently loaded chapter
+window. It must not be the only place where generated Markdown or translation
+status is saved. This lets restart, `/coc newgame`, and later scenario
+selection reuse the reviewed variant without uploading or translating it
+again.
+
+The existing manual role-sheet flow illustrates why this boundary matters:
+`handle_role_sheet_upload` reconciles the card into `state.pregens` and calls
+`save_state`, so the merge is saved for the current group state. However,
+`/coc scenario use` reloads `pregens.json` from the scenario-library item into
+`state.pregens`, and `/coc newgame` resets `GroupState`; manually imported
+cards are not currently a durable scenario-library or reusable group asset.
+That explains why a later setup can require importing the same card again.
+
+If manual role cards should survive campaign resets, handle that as a separate
+follow-up: preserve manually sourced pregen records in durable storage keyed
+by `(group_id, scenario_id)` and merge them with the scenario's extracted
+`pregens.json` when loading that scenario. Keep that group-owned data separate
+from the shared scenario library so one group's manual character sheets do
+not appear in another group's roster. Reuse the existing identity matching
+and best-of-both merge rules; do not persist live HP/SAN/Luck or claimed
+`Character` progress in this roster.
 
 Example template unit (omit fields the source does not contain; write
 「原文未提及」 only when that absence matters to a ruling):
