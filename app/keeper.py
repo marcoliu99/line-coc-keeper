@@ -1520,6 +1520,7 @@ def _commit_turn_result(
     *,
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
+    start_game: bool = False,
 ) -> bool:
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -1535,7 +1536,12 @@ def _commit_turn_result(
             )
             _sync_state_snapshot(state, latest_state)
             return False
+        if start_game and latest_state.game_started:
+            _sync_state_snapshot(state, latest_state)
+            return False
         latest_state.log.extend(log_entries)
+        if start_game:
+            latest_state.game_started = True
         if invalidate_openai_response_chain:
             latest_state.openai_previous_response_id = ""
             latest_state.openai_previous_response_timeline_id = ""

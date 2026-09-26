@@ -2,7 +2,7 @@
 
 ## 狀態與目標
 
-討論稿。工作分支：`refactor/unify-keeper-turn-flow`，整合目標：`main_v2`。本期讓一般玩家文字、已結算檢定後續，以及 `/coc start` 沒有現成開場白時的生成，全部經過**同一條 Supervisor 玩家回合管線**。KP Assistant 是獨立的主持 agent，保留自己的場外對話與正式事件升格流程，不納入玩家管線。
+實作中。工作分支：`refactor/unify-keeper-turn-flow`，整合目標：`main_v2`。本期讓一般玩家文字、已結算檢定後續，以及 `/coc start` 沒有現成開場白時的生成，全部經過**同一條 Supervisor 玩家回合管線**。KP Assistant 是獨立的主持 agent，保留自己的場外對話與正式事件升格流程，不納入玩家管線。
 
 「單一流程」要求共用**上下文準備 → 行動／既定結果 → 敘事 → 輸出保護 → 正式提交**各階段及資料契約，不能把 `keeper.run_turn` 包進 Supervisor 後仍保留一套玩家專用模型迴圈。各階段可依輸入跳過不需要的工作，但沒有另一條完整的玩家回合路徑。這是**行為等價的重構**：維持既有檢定敘事、必要工具與公開文字。現況的檢定後續會進 `keeper.run_turn`，啟動一個模型對話，遇工具迭代時可能有多次 API 請求；程式上的「跳回 Keeper」本身不是額外 API 請求。統一後量測往返次數與延遲，可能因去除重複處理而下降，但不以刪減敘事為手段。PR #86 的劇情邊界改動在另一分支；實作前須與合併後的 `main_v2` 對齊，保留其正典、RAG 與劇情提示詞。
 
@@ -19,13 +19,93 @@
 
 玩家管線與 KP Assistant 已共用靜態／動態 Keeper 提示詞、工具 schema 與 `_execute_tool`。工作重點是把兩個入口轉為同一玩家管線的輸入，不重寫骰子或戰鬥。
 
-```text
-一般玩家文字 ------\
-已結算檢定事件 ----+--> Supervisor 玩家管線 --> 同一套輸出保護與正式提交
-開場後備請求 ------/
+### 所有本期入口與介面
 
-KP Assistant -------> 獨立主持 agent
+```mermaid
+flowchart TD
+    Discord[Discord 文字或互動按鈕] --> Router[commands.router.handle_text_message]
+    Discord --> CheckButton[discord_bot.CheckButton]
+    Discord --> LuckButton[discord_bot.LuckSpendButton]
+    Router -->|一般玩家文字| Ordinary[_handle_ordinary_text_message_locked]
+    Router -->|KP 代玩家行動| Sudo[_run_sudo_act_locked]
+    Router -->|/coc check| Check[legacy_commands.handle_check_command]
+    Router -->|/coc luck| Luck[legacy_commands.handle_luck_decision]
+    CheckButton --> Check
+    LuckButton --> Luck
+    Check --> Dice[_resolve_check_deterministically]
+    Luck --> LuckResolve[_resolve_luck_decision_deterministically]
+    Dice --> Finalize[_finalize_check_result]
+    LuckResolve --> Finalize
+    Router -->|/coc start| Start[system.handle_system_command]
+    Start --> Intro[scenario_intro.extract_opening_narration]
+    Intro -->|已有開場| Existing[原文開場及 opening_check 直接存檔和發送]
+    Intro -->|沒有現成開場| Opening[opening_fallback 輸入]
+    Ordinary --> Player[player_action 輸入]
+    Sudo --> Player
+    Finalize --> Resolved[resolved_check_followup 輸入]
+    Player --> Supervisor[agents.supervisor.run_turn]
+    Resolved --> Supervisor
+    Opening --> Supervisor
+    Router -->|KP Assistant 場外訊息| KPOOC[Supervisor 的 OOC_ASSISTANT 分流]
+    KPOOC --> Assistant[agents.assistant.run_assistant]
+    Assistant --> KPKeeper[keeper.run_turn: KP Assistant 專用]
 ```
+
+上圖中的按鈕仍由 Discord adapter 驗證擁有者、檢定／Luck ID 與時間線；命令與按鈕共用同一個確定性結算函式。`/coc start` 的現成開場是資料抽取結果，不經模型，不改成另一個模型回合。其他管理命令、PDF 上傳與地圖操作沿用原 router；本期只改上圖三個玩家敘事入口。
+
+```mermaid
+flowchart TD
+    Input[Supervisor: turn_kind + state + user + text + resolved_location] --> Timeline[keeper._ensure_turn_timeline]
+    Timeline --> Context[context_builder.build_context]
+    Context --> ScenarioRAG[scenario_rag 查詢或劇本原文]
+    Context --> MemoryRAG[memory_rag: 同一 timeline]
+    Context --> Route{turn_kind}
+    Route -->|player_action| Intent[intent_router.classify_intent]
+    Intent -->|GAMEPLAY_ACTION| Executor[executor.run_executor]
+    Executor --> Gateway[tool_gateway.make_tool_executor]
+    Executor --> Provider
+    Gateway --> Authority[keeper._execute_tool]
+    Authority --> State[(GroupState / SQLite)]
+    Executor --> Reducer[state_reducer: 不重複套用工具結果]
+    Intent -->|PURE_ROLEPLAY| Narrator[narrator.run_narrator]
+    Reducer --> Narrator
+    Route -->|resolved_check_followup| Resolved[權威骰值及行動情境；跳過意圖分類與重擲]
+    Route -->|opening_fallback| Opening[劇本起點；跳過意圖分類與玩家行動]
+    Resolved --> Restricted[受限工具的同一次敘事對話]
+    Opening --> Restricted
+    Restricted --> Narrator
+    Restricted --> Gateway
+    Narrator --> Provider[OpenAI / Anthropic / Gemini run_conversation]
+    Provider -->|受限工具呼叫| Gateway
+    Narrator -->|開場生成失敗| Retry[保留 game_started=false；/coc start 可重試]
+    Narrator --> Guard[guard.enforce_narrative_safety]
+    Guard --> Consistency[檢定結果一致性及 spoiler_policy]
+    Consistency --> Commit[keeper._commit_turn_result: timeline 驗證及一次正式提交]
+    Commit --> State
+    Commit -->|時間線已變| Stale[拒絕舊回覆與舊輸出]
+    Commit -->|opening_fallback 成功| Started[同一交易設 game_started]
+    Commit --> Delivery[公開 reply / send_dm / send_image]
+    Delivery --> Maintenance[_run_post_turn_maintenance_after_output]
+```
+
+普通 `GAMEPLAY_ACTION` 沿用 Executor 模型判定加 Narrator 敘事；純角色扮演只用 Narrator。已結算檢定與開場後備在 **同一個 `narrator.run_narrator` 敘事階段**完成必要工具及文字，只有一個模型對話，不固定再呼叫一次 Executor。受限工具由 `tool_gateway` 執行，最後仍走同一 Guard、劇透保護、時間線提交與輸出配送。模型可在該對話內多次呼叫工具；「單次模型對話」不保證只有一次 API request。
+
+| 介面 | 輸入／輸出契約 |
+| --- | --- |
+| `router.handle_text_message`、Discord Check／Luck 按鈕 | 驗證命令、角色、按鈕身分及對話鎖；文字和按鈕各自進入相同的確定性檢定／Luck 結算函式。一般文字與 KP 代操作進 `player_action`。 |
+| `legacy_commands._finalize_check_result` | 接受已提交的骰子／Luck 結果、角色、`check_id`／`decision_id`／`timeline_id` 與原行動情境；等候 Keeper 回合鎖、重讀狀態，驗證角色及時間線後傳入 `resolved_check_followup`。不再呼叫玩家版 `keeper.run_turn`。 |
+| `system.handle_system_command` 的 `/coc start` | 驗證劇本、角色及 Luck 待決；`extract_opening_narration` 有現成文字時直接保存，沒有時以 `opening_fallback` 呼叫 Supervisor。 |
+| `supervisor.run_turn` | `state, user_id, display_name, text, resolved_location, speaker_role, conversation_id, turn_kind, resolved_check_context` → `(public_text, private_messages, image_requests)`；`turn_kind` 只接受 `player_action`、`resolved_check_followup`、`opening_fallback`。 |
+| `context_builder.build_context` | 收同一組角色、劇本、時間線；回傳 `AgentMessage`，含 RAG、Memory、最近已結算事件。開場及檢定後續也走此階段。 |
+| `intent_router.classify_intent` | 只分類一般文字；已結算檢定及開場使用明確類型，不能被文字中的「擲骰」「走」誤判為新行動。 |
+| `executor.run_executor` | 只處理一般遊戲行動；經 `tool_gateway` 呼叫權威 `_execute_tool`，已寫入狀態的結果由 `MechanicResult` 傳給 Narrator。 |
+| `narrator.run_narrator` | 一般文字無工具；檢定後續只提供查詢及必要戰鬥後果工具，開場只提供查詢／展示工具。回傳敘事、私訊及圖片請求；工具名稱在實際執行處再次驗證。 |
+| Provider `run_conversation` | Executor 與 Narrator 仍使用 OpenAI／Anthropic／Gemini 的既有介面；特殊輸入由 Narrator 的一次工具對話產生最終文字，可在該對話內迭代工具。 |
+| `keeper._commit_turn_result` | 在狀態鎖下比對時間線、一次追加正式 log；開場後備同一交易設定 `game_started`，失敗時保持可重試。 |
+| `_run_post_turn_maintenance_after_output` | 提交成功後才送公開文字、私訊及圖片，再排程既有記憶／摘要維護；失效時間線不配送工具副作用。 |
+| `assistant.run_assistant` | KP Assistant 經 Supervisor 的 OOC 分流進獨立 agent，仍呼叫 KP 專用 `keeper.run_turn`；OOC 歷史和主持正典規則不併入玩家管線。 |
+
+**工具權限**：檢定後續沿用 `RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES`（唯讀查詢、傷害結算、戰鬥回合推進），不能使用 `skill_check`／`sanity_check` 等再建檢定的工具。開場後備允許劇本／記憶查詢及必要圖片／私訊展示，不提供擲骰或狀態變更工具。兩者在工具 callback 再次核對實際名稱，避免只靠模型收到的工具清單。底層仍共用 `_execute_tool`，不另寫骰子或戰鬥規則。
 
 ## 方案
 
