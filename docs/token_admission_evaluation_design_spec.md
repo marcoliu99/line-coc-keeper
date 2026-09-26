@@ -222,3 +222,29 @@ usage 表僅加總已取得usage的回應，不含未回傳usage的失敗嘗試�
 原始state、完整敘事及工具軌跡留在本機 `/private/tmp/coc-token-admission-eval/`；不提交repo。
 去識別化聚合與逐案例數值見 `docs/evaluations/token_admission_20260926.json`。
 測試原型離線4項通過，修改檔案Ruff、compileall、git diff --check通過。
+
+## 核准實作（2026-09-26）
+
+使用者已要求實作，合入 PR89 修正版作為依賴（776bf1f），不重做其裁決邏輯。
+
+- OpenAI 對話歷史預設軟預算4000 estimated tokens；至少保留最近2個完整user區段。
+  超長區段不切半；0可停用。僅裁 provider 輸入，不改儲存log、state、RAG、怪物機制提示。
+- 組成計數採可用的tiktoken；無法取得encoding時明確標記保守UTF-8 byte估計。
+  不為每回合新增計數API。延續鏈用前次usage追蹤；未知鏈標記unknown，不能當零。
+- OpenAI output各stage上限可設定，預設0（省略）。不套用已實測失敗的統一1200。
+  API incomplete/failed/cancelled 不執行當次回應任何工具，不保存其response_id，不自動重送。
+  先前工具已提交的效果保留；Narrator失敗不提示重做玩家行動。
+- 本process共用scope控制器：依成功／失敗HTTP回應headers更新requests/tokens剩餘量與reset，
+  以header推估恢復速率；已知預算不足才等待，沒有header時不臆造180000硬窗口。
+  429依Retry-After或既有backoff更新共同冷卻，即使該請求已耗盡重試也通知其他請求。
+  過時／亂序header採保守合併，不提前解除冷卻；quota/billing錯誤不重試。
+- 冷卻／預算等待在HTTP semaphore前，取得slot後再次確認；取消不占slot。
+  scope預設目前模型，可設定共享model pool名稱。本輪支援同process，跨process/Redis不在此實作。
+- 玩家回合共用180秒LLM截止時間；覆蓋准入、slot、API與重試、後續Narrator/Guard。
+  不強制取消正在提交的同步工具；實際工具執行及DB提交可使總牆鐘略超過deadline。
+- HTTP成功headers透過SDK httpx response hook取得，保持既有Responses回傳型別與工具協定。
+  同步影像／離線呼叫不納入本輪async玩家准入；需明確記錄此限制，不宣稱帳戶級全域控制。
+
+驗收：歷史完整區段／狀態不变、truncated工具不執行、已提交變更不重播、
+共享429冷卻、reset/remaining、亂序header、截止／取消／slot釋放、正常工具續接、
+三provider既有回歸。先通過離線全套；本次不自動追加付費API試驗。
