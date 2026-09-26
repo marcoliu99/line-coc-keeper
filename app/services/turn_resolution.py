@@ -49,8 +49,10 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
         return False, False
     actor_involved = any(e['result'].get('investigator') == actor_name for e in inventory)
     transfer = False
-    if len(inventory) == 2:
-        remove, add = inventory
+    if len(inventory) == 2 and {e['name'] for e in inventory} == {'remove_carried_item', 'add_carried_item'}:
+        # Match by operation, preserving chronological receipts and tool:N references.
+        remove = next(e for e in inventory if e['name'] == 'remove_carried_item')
+        add = next(e for e in inventory if e['name'] == 'add_carried_item')
         giver, receiver = remove['result'].get('investigator'), add['result'].get('investigator')
         item = remove.get('arguments', {}).get('item')
         if (remove['name'] == 'remove_carried_item' and add['name'] == 'add_carried_item'

@@ -304,3 +304,12 @@ Supervisor.run_turn [共用 ContextVar deadline：180 秒]
 - SDK MockTransport 測試驗證真實 SDK response hook 可更新成功 headers，不呼叫真實 API。
 - mypy：72個 source files 通過；修改檔案 Ruff 及 git diff --check 通過。
 - 本次未追加付費 API 測試。前述40回合數據屬舊隔離原型，不能當作新自適應准入策略的效能證明。
+
+
+### PR89 交接順序修正同步
+
+已同步 PR89 `e8a56df`：按工具種類配對同物品交接，允許先add後remove，
+維持原事件引用順序與完整數量／最終state檢查；詳見交接spec第10節。
+整合時保留PR90的截斷測試與PR89新增的順序／負面測試。
+全套pytest：728 passed、1 skipped、15 subtests passed；mypy（72 files）、
+修改檔案Ruff、git diff --check通過。本修正未追加付費API試驗。

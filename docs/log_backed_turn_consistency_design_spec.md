@@ -284,3 +284,21 @@ Resolved-check followup / opening fallback / KP Assistant retain their boundarie
 - 原地修正不新增 LLM 請求、DB schema 或限流策略。驗證仍不保證劇本推論／所有工具意圖正確。
 - 測試使用真實 Keeper 工具與 SQLite，涵蓋交接保留舊檢定、製作、結束戰鬥、失敗／缺引用、
   新建他人檢定、Luck、查詢與 no-op、彈藥補償；模型 API 複測另列，不能以 mock 當成實测。
+
+
+## 10. 交接驗證與工具順序無關（核准修正）
+
+PR89＋PR90 的50回合重測在03-scoped重現：先新增接收者背包，再移除交付者物品，
+最終state與數量都正確，但驗證器按事件位置認定remove/add，誤判incomplete。使用者已要求修正。
+
+- 將恰好兩筆背包變更按工具種類配對：必須一筆remove與一筆add，不要求呼叫先後順序。
+- 原始事件與tool:N引用保持原順序；不重排執行、不新增工具呼叫，不改state或DB schema。
+- 仍驗證發話者交付、不同接收者、同一物品、每邊恰好一份增減、成功且完整引用、
+  最後回執符合state；同角色、異物品、重複工具、no-op、失敗、漏引用及數量不符不得豁免舊pending。
+- 保留舊pending／Luck與額外工具的限制。既有Supervisor/Narrator交接同樣驗證兩種順序。
+- 真實Keeper＋隔離SQLite回歸：兩種順序都完成且不重播；負面案例保持incomplete。
+  本次不追加付費API，不更動正式DATA。
+
+驗收：修正前3項反向交接案例失敗（兩種裁決＋Supervisor交接）；修正後全套
+`python3 -m pytest -o addopts='' -q --tb=short`：702 passed、1 skipped、15 subtests passed。
+mypy（69個source files）、修改檔案Ruff與git diff --check通過。

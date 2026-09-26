@@ -233,13 +233,15 @@ def test_referenced_check_not_overridden_by_other_players_luck(state):
     assert state.pending_luck_decisions['a']['decision_id'] == 'marco-luck'
 
 
+@pytest.mark.parametrize('add_first', [False, True])
 @pytest.mark.parametrize('kind', ['resolved', 'resolved_without_check'])
-def test_real_transfer_completes_with_unchanged_old_check(state, kind):
+def test_real_transfer_completes_with_unchanged_old_check(state, kind, add_first):
     state.pending_checks['a'] = pending('old-inspection', '偵查木板牆')
     group_state.save_state(state)
     async def provider(*args, **kwargs):
-        await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
-        await args[5]('add_carried_item', {'investigator': 'Ken', 'item': '一瓶煤油'})
+        calls = [('remove_carried_item', 'Marco'), ('add_carried_item', 'Ken')]
+        for name, owner in reversed(calls) if add_first else calls:
+            await args[5](name, {'investigator': owner, 'item': '一瓶煤油'})
         return decision(state, kind, evidence_refs=['tool:1', 'tool:2'])
     fake = AsyncMock(side_effect=provider)
     with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
@@ -327,12 +329,14 @@ def test_successful_read_or_noop_does_not_prove_completion(state, name, result):
     assert resolved.disposition == 'incomplete'
 
 
-def test_supervisor_hands_off_completed_transfer_and_old_pending_together(state):
+@pytest.mark.parametrize('add_first', [False, True])
+def test_supervisor_hands_off_completed_transfer_and_old_pending_together(state, add_first):
     state.pending_checks['a'] = pending('old-inspection', '偵查木板牆')
     group_state.save_state(state)
     async def provider(*args, **kwargs):
-        await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
-        await args[5]('add_carried_item', {'investigator': 'Ken', 'item': '一瓶煤油'})
+        calls = [('remove_carried_item', 'Marco'), ('add_carried_item', 'Ken')]
+        for name, owner in reversed(calls) if add_first else calls:
+            await args[5](name, {'investigator': owner, 'item': '一瓶煤油'})
         return decision(state, 'resolved', evidence_refs=['tool:1', 'tool:2'])
     async def context(**kwargs):
         return AgentMessage(kwargs)
@@ -392,3 +396,56 @@ def test_truncated_narrator_uses_safe_fallback(state, monkeypatch, kind):
         assert "重做" in reply and "不要" in reply
         if kind == "resolved_check_followup":
             assert "42" in reply and "已結算" in reply
+
+
+@pytest.mark.parametrize('add_first', [False, True])
+@pytest.mark.parametrize('mode', ['same_owner', 'different_item', 'duplicate_add', 'noop_add',
+                                  'failed_remove', 'missing_ref', 'final_state_mismatch'])
+def test_invalid_transfer_never_bypasses_old_pending(state, add_first, mode):
+    state.pending_checks['a'] = pending('old-inspection', '偵查木板牆')
+    if mode == 'noop_add':
+        state.get_active_character('b').carried_items = ['一瓶煤油']
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        calls = [
+            ('remove_carried_item', {'investigator': 'Marco', 'item': '不存在' if mode == 'failed_remove' else '一瓶煤油'}),
+            ('add_carried_item', {'investigator': 'Marco' if mode == 'same_owner' else 'Ken',
+                                 'item': '空瓶' if mode == 'different_item' else '一瓶煤油'}),
+        ]
+        for name, arguments in reversed(calls) if add_first else calls:
+            await args[5](name, arguments)
+        refs = ['tool:1', 'tool:2']
+        if mode == 'duplicate_add':
+            await args[5]('add_carried_item', {'investigator': 'Ken', 'item': '空瓶'})
+            refs.append('tool:3')
+        if mode == 'missing_ref':
+            refs.pop()
+        if mode == 'final_state_mismatch':
+            state.get_active_character('b').carried_items.append('未引用的變更')
+        return decision(state, 'resolved_without_check', evidence_refs=refs)
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'incomplete'
+    assert state.pending_checks['a']['check_id'] == 'old-inspection'
+    assert fake.await_count == 1
+
+
+@pytest.mark.parametrize('add_first', [False, True])
+def test_transfer_receipts_must_remove_exactly_one_item(state, add_first):
+    state.pending_checks['a'] = pending('old-inspection', '偵查木板牆')
+    state.get_active_character('a').carried_items = []
+    state.get_active_character('b').carried_items = ['一瓶煤油']
+    events = [
+        {'name': 'remove_carried_item', 'arguments': {'item': '一瓶煤油'},
+         'inventory_before': {'Marco': ['一瓶煤油', '一瓶煤油']},
+         'result': {'ok': True, 'investigator': 'Marco', 'carried_items': []}},
+        {'name': 'add_carried_item', 'arguments': {'item': '一瓶煤油'},
+         'inventory_before': {'Ken': []},
+         'result': {'ok': True, 'investigator': 'Ken', 'carried_items': ['一瓶煤油']}},
+    ]
+    result = turn_resolution.validate_resolution(
+        decision(state, 'resolved_without_check', evidence_refs=['tool:1', 'tool:2']),
+        state=state, user_id='a', before_pending=deepcopy(state.pending_checks), before_luck={},
+        tool_events=list(reversed(events)) if add_first else events, has_scenario=False, before_actor={})
+    assert result.disposition == 'incomplete'
