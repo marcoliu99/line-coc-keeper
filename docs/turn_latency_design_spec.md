@@ -1,5 +1,10 @@
 # Turn latency: pending buttons and scenario search
 
+**Status (2026-09-26):** The pending-button and search-count scope below was
+implemented with tests and pushed in `404c417`. The Chinese-search and
+model-round-trip designs at the end of this document are proposals for a
+separate review. They have not been implemented.
+
 ## Problem and goal
 
 Three Discord runtime logs from 2026-09-25 show two avoidable sources of
@@ -92,7 +97,7 @@ single-scene signal worth testing separately; it is not part of this button
 latency implementation. Translation accuracy, term consistency, index build
 cost, and performance across other scenes remain open.
 
-## Scope
+## Implemented scope
 
 1. Claim new pending check/Luck button intents before the current request
    releases its already-held conversation lock, then send the Discord message
@@ -106,7 +111,7 @@ cost, and performance across other scenes remain open.
    or scenario text. This makes later search experiments measurable without
    changing the search policy in this change.
 
-## Non-goals
+## Non-goals for the implemented scope
 
 - No concurrent Keeper turns in one conversation and no removal of the outer
   conversation lock. Turn order, tool dependencies, and narration history
@@ -229,6 +234,10 @@ limit.
    sample sizes and queue load. Use the search count to size a separate
    outcome-aware search experiment, not to claim a speedup from this change.
 
+The implementation in `404c417` passed `python3 -m pytest -q` and Ruff on the
+changed Python files on 2026-09-26. Live button-delivery timing after rollout
+is still to be measured.
+
 ## Review decisions and tradeoffs
 
 - **Search decision:** retain the current Executor search policy. The
@@ -247,3 +256,158 @@ limit.
   durable outbox/lease would solve it but adds a schema and delivery worker;
   this latency change keeps the current failure rollback and does not add a
   persistent queue.
+
+## Follow-up evidence from the same logs (proposal only)
+
+The following counts use completed turn IDs and per-request structured events,
+not pyinstrument's process-wide idle time. They describe different traffic in
+the `medium` and `high` runs, so differences between runs are not causal A/B
+estimates. The `max` run has only four completed turn IDs and is too small to
+guide a new optimization.
+
+| Measure | `medium` log | `high` log | Interpretation |
+| --- | ---: | ---: | --- |
+| Completed turn IDs | 86 | 91 | Includes more than ordinary text requests. |
+| Executor spans | 69; median 10.22 s | 77; median 14.66 s | Executor often dominates the mechanics part of a turn. |
+| Narrator spans | 69; median 5.90 s | 76; median 8.51 s | Usually one separate model request after Executor. |
+| Executor turns with no tool execution | 30/69; median 5.49 s | 27/77; median 5.55 s | An upper bound on turns that *might* qualify for a safer Narrator-only route; the logs do not say what the player asked. |
+| Executor turns with a tool and a final text-only API request | 39/69; final request median 4.84 s | 50/77; final request median 4.05 s | Executor's returned text is discarded by the Supervisor path; not every final request is safe to omit. |
+| Final tool was `skill_check` or `offer_npc_attack_defense_choice` | 12/69; final API median 3.30 s | 27/77; final API median 4.07 s | Candidate upper bound for a pending-check terminal stop. Logs do not record whether each result was actually `pending=true`. |
+| Explicit scenario searches per turn | 0:49, 1:23, 2:7, 3+:7 | 0:50, 1:20, 2:14, 3+:7 | A search-round limit would affect a small tail and could miss needed evidence. |
+
+The OpenAI tool-calling loop in `app/providers/openai_provider.py` always sends
+the tool output back for another Responses request. In the Supervisor path,
+`app/agents/executor.py` uses tool side effects and facts while discarding the
+returned text; `app/agents/supervisor.py` then calls Narrator. A last
+`skill_check` call is only a *candidate* saving: an automatic roll, failed
+registration, multiple player actions, or another required tool would make an
+early stop wrong. The observed 3.30/4.07-second medians are durations of
+those final requests, not measured end-to-end savings.
+
+The per-request log reported 35-36 available tools in nearly all tool-bearing
+OpenAI calls (median 36). It cannot yet quantify their token cost: only one
+of 265 `medium` and one of 319 `high` completed async LLM request events
+recorded `input_tokens`. The sync OpenAI helper records usage, but
+`_create_response_async` omits it. Tool-schema reduction therefore needs
+token instrumentation and correctness review before any latency claim.
+
+### Candidate A: stop Executor after a terminal pending check
+
+Propose a narrowly scoped provider-loop stop signal from Executor's tool
+callback. It may stop after a *successful* `skill_check`, `sanity_check`,
+`offer_check_choice`, or `offer_npc_attack_defense_choice` result with
+`pending=true`, and only when the model response contained a single tool call
+and the turn has no known remaining action. Preserve the tool result, facts,
+state mutation, response ID handling, and subsequent Narrator call. The stop
+must never fire for a failed/resolved check, a read-only search, a tool result
+requiring correction, legacy Keeper calls whose returned text is visible, or
+multi-tool responses. Define the remaining-action guard with labeled replay
+cases before implementation; if it cannot be made reliable, leave the loop
+unchanged. No general iteration cap is proposed.
+
+Replay real anonymized single-action and multi-action turns through all
+supported providers. Assert identical pending state, tool sequence, facts,
+Narrator policy, button delivery, and player-visible ruling. Then compare
+model requests and complete turn p50/p95 with a controlled A/B. The count of
+eligible turns and saved time must be measured from tool **results**, since
+tool names in the current logs cannot establish eligibility.
+
+### Candidate B: broaden the pure-roleplay fast path cautiously
+
+`app/agents/intent_router.py` currently skips Executor for a small exact
+acknowledgment set, empty text, and parenthesized OOC. Review a labeled sample
+of the 30 and 27 no-tool Executor turns to find actual narration-only inputs.
+Only a high-precision rule for those inputs may route directly to Narrator;
+ambiguous wording stays on the current Executor path. A retrospective no-tool
+result alone is not a routing rule: an action can require scenario lookup or a
+state change even when Executor failed to call a tool. Evaluate false skips
+against checks, combat, scenario-dependent questions, mixed roleplay/actions,
+and pending decisions before measuring API calls and end-to-end latency.
+
+### Candidate C: measure prompt cost before changing tool exposure
+
+Add async OpenAI usage fields (input, cached input where available, output,
+and reasoning tokens) to the existing `llm.request` span without logging
+prompt or scenario content. Compare token counts, cache rates, request time,
+and correctness by agent and tool count. A later tool-visibility or schema
+change must retain the tools required for the turn's role and state, including
+scenario search, check registration, and recovery. Do not assume that fewer
+tools imply fewer seconds; the earlier `none`/`low` model-tiering experiment
+was reverted after production regressions. A controlled `medium`/`high`
+configuration A/B can be considered separately with a ruling-quality gate.
+
+## Chinese scenario retrieval proposal (separate review and implementation)
+
+### Goal and decision boundary
+
+The one-page trial shows that a Chinese rendering of the relevant basement
+rule can make a Chinese query retrieve the needed scene without an extra
+Executor search round. It does not validate automatic translation, a whole
+scenario, or final ruling correctness. The first implementation candidate is
+an **optional, one-time Chinese retrieval sidecar** for scenarios whose active
+source is English. Do not translate each player query with a model. An
+already-Chinese scenario can use the existing CJK-aware index directly.
+
+### Data and build flow
+
+1. Keep `GroupState.scenario_text` and the original PDF/OCR text authoritative.
+   Segment the *currently accessible* source text using the existing
+   `scenario_rag` page and chunk boundaries. Translate each source chunk into
+   searchable Chinese with page context, retaining numbers, dice expressions,
+   skill names, proper names, negations, and rule conditions. Never replace
+   the source text or its page markers with generated translation.
+2. Store each Chinese chunk with a stable mapping to its source-text hash,
+   page number, ordinal within the page, and source-chunk hash. Add a
+   versioned, namespaced sidecar key in the existing SQLite
+   `scenario_indexes` cache rather than changing `GroupState` or adding a
+   database table. Bind the key and metadata to the conversation, accessible
+   chapter-window hash, translation recipe/model version, and index version.
+   Rebuild on source or chapter-window change; never retrieve chunks from a
+   chapter that the current state has not exposed. Keep original-index and
+   sidecar cache entries separate.
+3. Build once after scenario import/activation, off the Discord turn path,
+   with explicit opt-in and observable build progress/cost. Until the sidecar
+   is valid and ready, use the existing original-language index. A failed or
+   partial translation must leave the original path usable. Reuse the current
+   CJK bigram/BM25 plus embedding search; do not add a per-turn LLM call.
+4. For Chinese player actions, search the Chinese sidecar in both proactive
+   context and the explicit `search_scenario` tool. Resolve hits through the
+   stored mapping to the source page/chunk before presenting evidence to
+   Executor. The initial A/B should compare (a) Chinese-only translated
+   evidence, matching the small trial, (b) paired Chinese plus original
+   evidence, and (c) original-only evidence after Chinese-sidecar ranking.
+   Choose the smallest presentation that preserves rule accuracy and page
+   attribution; original source text wins when the translation conflicts.
+   This presentation choice is open because the small trial gave Executor
+   translated text, so search-only Chinese indexing has not been tested.
+
+### Acceptance and rollout gate
+
+- Prepare labeled Chinese actions across several pages and scene types,
+  including irrelevant queries, similar room names, negative/conditional
+  rules, and restricted future chapters. Check source page and chunk recall
+  at five, ranking, explicit search counts, API calls, complete Discord turn
+  p50/p95, and final ruling accuracy. The basement example remains one case,
+  not the whole acceptance set.
+- Human-review a sample of generated translations for dice, damage, skill
+  thresholds, proper names, negation, and Push rules. Reject or rebuild bad
+  chunks; verify source-hash/version invalidation, restart, partial-build
+  fallback, and no chapter or group leakage.
+- Compare one-time translation and embedding cost against repeated-turn
+  savings. Keep the feature opt-in until multi-scene replay preserves rulings
+  and reduces complete turn latency without a per-turn translation request.
+  Record retrieval and index-build timing separately from model time.
+
+## Follow-up scope and review decisions
+
+The current branch's runtime implementation remains the pending-button change
+and search-count event in `404c417`. Candidate A, B, C, and Chinese retrieval
+above are **spec-only**. Proposed order: first improve async usage and
+result-level observability, then replay the terminal-check stop and Chinese
+retrieval independently; investigate roleplay routing after labeling actual
+turns. These are separate correctness gates, not a bundled code change.
+
+Review choices before a new implementation: whether automatic Chinese
+sidecar preparation should be a command or a configuration opt-in; which
+evidence presentation passes the bilingual ruling trial; and whether
+pending-check terminal detection can prove that no further action is owed.
