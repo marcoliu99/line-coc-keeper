@@ -453,7 +453,9 @@ class OpenAICreateResponseRetryTests(unittest.TestCase):
 
         openai_provider._unsupported_params.clear()
         fake_response = MagicMock()
-        client = self._fake_client([Exception("Unsupported parameter: 'temperature'"), fake_response])
+        rejected = FakeStatusError(400)
+        rejected.args = ("Unsupported parameter: 'temperature'",)
+        client = self._fake_client([rejected, fake_response])
         with patch("app.providers.openai_provider.time.sleep") as sleep_mock:
             result = openai_provider._create_response(client, model="gpt-test", input=[], temperature=0.6)
         self.assertIs(result, fake_response)
@@ -500,7 +502,9 @@ class OpenAIClientConstructionTests(unittest.TestCase):
         # SDK's own default retrying (max_retries=2) must be disabled so
         # retry.call_with_retry's LLM_MAX_RETRIES budget is the only one in
         # effect.
-        fake_openai_module.AsyncOpenAI.assert_called_once_with(api_key="test-key", max_retries=0)
+        fake_openai_module.AsyncOpenAI.assert_called_once_with(
+            api_key="test-key", max_retries=0, http_client=fake_openai_module.DefaultAsyncHttpxClient.return_value
+        )
 
 
 class AnthropicProviderRetryWiringTests(unittest.TestCase):

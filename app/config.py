@@ -169,6 +169,8 @@ SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEI
 # tiers, damage) shouldn't get creative embellishment. 0.5-0.7 is the
 # requested range; 0.6 sits in the middle.
 KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", "0.6"))
+# Explicit opt-out for deployments whose OpenAI model rejects temperature.
+OPENAI_OMIT_TEMPERATURE = os.environ.get("OPENAI_OMIT_TEMPERATURE", "false").lower() in {"1", "true", "yes"}
 
 # Reasoning effort for the Keeper's own narration on OpenAI's Responses API
 # (app/providers/openai_provider.py's run_conversation only — see
@@ -260,3 +262,13 @@ SCENARIO_LIBRARY_DIR = Path(os.environ.get('SCENARIO_LIBRARY_DIR', str(DATA_DIR.
 SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 IMPORT_DIR = Path(os.environ.get("IMPORT_DIR", "imports")).resolve()
 IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+# History is a soft input-only budget; full state/RAG and stored logs remain.
+OPENAI_HISTORY_TOKEN_BUDGET = _env_int("OPENAI_HISTORY_TOKEN_BUDGET", 4000)
+OPENAI_HISTORY_MIN_TURNS = _env_int("OPENAI_HISTORY_MIN_TURNS", 2, minimum=1)
+OPENAI_ADAPTIVE_ADMISSION_ENABLED = _env_bool("OPENAI_ADAPTIVE_ADMISSION_ENABLED", True)
+OPENAI_RATE_LIMIT_SCOPE = os.environ.get("OPENAI_RATE_LIMIT_SCOPE", "").strip()
+LLM_TURN_DEADLINE_SECONDS = _env_float("LLM_TURN_DEADLINE_SECONDS", 180.0)
+OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS = _env_int("OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS", 0)
+OPENAI_NARRATOR_MAX_OUTPUT_TOKENS = _env_int("OPENAI_NARRATOR_MAX_OUTPUT_TOKENS", 0)
+OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 0)

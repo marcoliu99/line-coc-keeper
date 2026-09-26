@@ -3371,10 +3371,10 @@ def _build_dynamic_prompt(
     secret_goals = "\n".join(c.keeper_notes_text() for c in active_characters if c.secret_goal)
     secret_block = f"\n\n{secret_goals}" if secret_goals else ""
     digest = scene_digest.latest_digest(state.group_id, state.timeline_id)
-    digest_block = ""
-    if digest:
-        digest_block = f"\n\n# 目前場景摘要（timeline={state.timeline_id}，只採用目前 timeline 的最新版本）\n{digest.get('public', {})}"
-        digest_block += f"\n\n# Keeper 專用摘要（不可透露給玩家）\n{digest.get('private', {})}"
+    from app.services import turn_context
+
+    digest_block = turn_context.digest_history(state, digest)
+    authority = turn_context.authority_block(state)
 
     location_block = ""
     if resolved_location:
@@ -3470,6 +3470,7 @@ POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，不�
 
     return f"""# 目前動態數值（HP/SAN/Luck/彈藥/攜帶物品/狀態——這些才是當下最新的，屬性和技能請看上面的角色登記區塊）
 {chars_text}{secret_block}{digest_block}
+{authority}
 {combat_block}{location_block}{kp_assistant_block}
 """
 

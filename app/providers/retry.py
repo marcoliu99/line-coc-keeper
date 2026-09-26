@@ -15,7 +15,9 @@ import asyncio
 import enum
 import inspect
 import logging
+import math
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -29,6 +31,8 @@ from app.config import (
     LLM_TIMEOUT_RETRIES,
     OPENAI_MAX_CONCURRENT_REQUESTS,
 )
+from app.providers import turn_budget
+from app.providers.admission import Admission
 
 T = TypeVar("T")
 
@@ -67,7 +71,8 @@ def _parse_retry_after_value(value: str) -> float | None:
     talks to), then the date form, converting it to a nonnegative delay
     from now. Returns None if neither parses, rather than guessing."""
     try:
-        return float(value)
+        seconds = float(value)
+        return seconds if math.isfinite(seconds) and seconds >= 0 else None
     except (TypeError, ValueError):
         pass
     try:
@@ -89,7 +94,7 @@ def _extract_retry_after_seconds(exc: BaseException) -> float | None:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         retry_after = getattr(current, "retry_after", None)
-        if isinstance(retry_after, int | float) and retry_after >= 0:
+        if isinstance(retry_after, int | float) and math.isfinite(retry_after) and retry_after >= 0:
             return float(retry_after)
         headers = getattr(getattr(current, "response", None), "headers", None)
         if headers is not None:
@@ -107,6 +112,32 @@ def _extract_retry_after_seconds(exc: BaseException) -> float | None:
     return None
 
 
+def _safe_rate_limit_headers(exc: BaseException) -> dict[str, Any]:
+    """Allowlist numeric quotas/durations; never log arbitrary header strings."""
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is None or not hasattr(headers, "items"):
+        return {}
+    normalized = {str(k).lower(): v for k, v in headers.items()}
+    fields: dict[str, Any] = {}
+    for dimension in ("requests", "tokens"):
+        for kind in ("limit", "remaining", "reset"):
+            value = normalized.get(f"x-ratelimit-{kind}-{dimension}")
+            if not isinstance(value, str) or len(value) > 64:
+                continue
+            key = f"rate_limit_{kind}_{dimension}"
+            if kind == "reset":
+                if re.fullmatch(r"(?:[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h|d))+", value):
+                    fields[key] = value
+            else:
+                try:
+                    number = float(value)
+                except ValueError:
+                    continue
+                if math.isfinite(number) and number >= 0:
+                    fields[key] = number
+    return fields
+
+
 def _extract_safe_error_fields(exc: BaseException) -> dict[str, Any]:
     """Best-effort, duck-typed extraction of the handful of provider-error
     fields that are safe to put in structured logs: HTTP status, the
@@ -118,6 +149,8 @@ def _extract_safe_error_fields(exc: BaseException) -> dict[str, Any]:
     current: BaseException | None = exc
     fields: dict[str, Any] = {}
     while current is not None and id(current) not in seen:
+        for key, value in _safe_rate_limit_headers(current).items():
+            fields.setdefault(key, value)
         if "status_code" not in fields:
             status_code = getattr(current, "status_code", None)
             if isinstance(status_code, int):
@@ -285,6 +318,9 @@ def call_with_retry(fn: Callable[[], T], *, provider: str, operation: str) -> T:
                 attempt=attempt,
                 max_attempts=LLM_MAX_RETRIES,
                 delay_s=delay,
+                delay_source="retry_after" if retry_after is not None else "jitter",
+                retry_after_s=retry_after,
+                backoff_s=computed_delay,
                 error_type=type(exc).__name__,
                 **_extract_safe_error_fields(exc),
             )
@@ -297,6 +333,8 @@ async def async_call_with_retry(
     provider: str,
     operation: str,
     request_id: str | None = None,
+    admission: Admission | None = None,
+    estimated_tokens: int | None = None,
 ) -> T:
     """Async counterpart of :func:`call_with_retry`.
 
@@ -311,11 +349,26 @@ async def async_call_with_retry(
     timeout_attempts = 0
     semaphore = _admission_semaphore_for(provider)
     while True:
-        admission_wait_s = 0.0
-        if semaphore is not None:
-            admission_wait_start = time.monotonic()
-            await semaphore.acquire()
-            admission_wait_s = time.monotonic() - admission_wait_start
+        admission_wait_start = time.monotonic()
+        while True:
+            turn_budget.remaining()
+            if admission is not None:
+                await admission.wait(estimated_tokens)
+            if semaphore is not None:
+                async with asyncio.timeout(turn_budget.remaining()):
+                    await semaphore.acquire()
+            try:
+                delay = admission.delay(estimated_tokens, reserve=True) if admission else 0
+            except BaseException:
+                if semaphore is not None:
+                    semaphore.release()
+                raise
+            if delay <= 0:
+                break
+            if semaphore is not None:
+                semaphore.release()
+            await turn_budget.sleep(delay)
+        admission_wait_s = time.monotonic() - admission_wait_start
         try:
             try:
                 with observability.context(provider_request_id=logical_request_id), observability.span(
@@ -326,10 +379,11 @@ async def async_call_with_retry(
                     attempt=attempt + 1,
                     admission_wait_s=admission_wait_s,
                 ):
-                    result = fn()
-                    if not inspect.isawaitable(result):
-                        raise TypeError("async_call_with_retry callback must return an awaitable")
-                    return await result
+                    async with asyncio.timeout(turn_budget.remaining()):
+                        result = fn()
+                        if not inspect.isawaitable(result):
+                            raise TypeError("async_call_with_retry callback must return an awaitable")
+                        return await result
             finally:
                 # Release before backoff/retry-queueing, not after — a
                 # request waiting out a 429's backoff must not hold an
@@ -340,7 +394,15 @@ async def async_call_with_retry(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if isinstance(exc, turn_budget.TurnDeadlineExceeded):
+                raise
             error_kind = classify_exception(exc)
+            if admission is not None and error_kind == ProviderError.RATE_LIMITED:
+                admission.observe(getattr(getattr(exc, "response", None), "headers", None))
+                server_delay = _extract_retry_after_seconds(exc)
+                admission.defer(server_delay if server_delay is not None else _full_jitter_delay(
+                    LLM_RETRY_BASE_DELAY_SECONDS * (2 ** attempt)))
+            turn_budget.remaining()
             if error_kind == ProviderError.TIMEOUT:
                 if timeout_attempts >= LLM_TIMEOUT_RETRIES:
                     raise
@@ -367,8 +429,11 @@ async def async_call_with_retry(
                 attempt=attempt,
                 max_attempts=LLM_MAX_RETRIES,
                 delay_s=delay,
+                delay_source="retry_after" if retry_after is not None else "jitter",
+                retry_after_s=retry_after,
+                backoff_s=computed_delay,
                 error_type=type(exc).__name__,
                 error_kind=error_kind.value,
                 **_extract_safe_error_fields(exc),
             )
-            await asyncio.sleep(delay)
+            await turn_budget.sleep(delay)
