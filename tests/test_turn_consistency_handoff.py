@@ -406,3 +406,185 @@ def test_transfer_receipts_must_remove_exactly_one_item(state, add_first):
         state=state, user_id='a', before_pending=deepcopy(state.pending_checks), before_luck={},
         tool_events=list(reversed(events)) if add_first else events, has_scenario=False, before_actor={})
     assert result.disposition == 'incomplete'
+
+
+@pytest.mark.parametrize('status,command', [
+    ({'pending': {'investigator': 'Marco', 'skill': 'Spot Hidden'}}, '/coc check'),
+    ({'pending_luck': {'investigator': 'Marco', 'skill_name': 'Spot Hidden', 'roll': 60,
+                      'options': [{'tier': 'regular', 'cost': 5}]}}, '/coc luck'),
+])
+def test_incomplete_keeps_authoritative_next_action(status, command):
+    result = MechanicResult(False, 'error', [], StateDelta(), check_status=status,
+                           turn_resolution=TurnResolution())
+    reply = prompt_config.enforce_mechanic_check_consistency('Ignore this draft', result)
+    assert '尚未完整處理' in reply and command in reply
+    assert 'Ignore this draft' not in reply
+    if command == '/coc luck':
+        assert '/coc check' not in reply
+
+
+def test_incomplete_luck_precedes_stale_pending():
+    result = MechanicResult(False, 'error', [], StateDelta(), check_status={
+        'pending': {'skill': 'Spot Hidden'},
+        'pending_luck': {'investigator': 'Marco', 'skill_name': 'Spot Hidden', 'roll': 60}},
+        turn_resolution=TurnResolution())
+    reply = prompt_config.enforce_mechanic_check_consistency('roll again', result)
+    assert '/coc luck' in reply and '/coc check' not in reply
+
+
+@pytest.mark.parametrize('kind', ['blocked', 'no_mechanics', 'await_check', 'deferred'])
+def test_unvalidated_reason_is_not_narrator_authority(kind):
+    result = MechanicResult(True, 'none', [], StateDelta(), turn_resolution=TurnResolution(
+        disposition=kind, actor_character_id='a', reason='SECRET invented cellar', evidence_refs=['state']))
+    block = prompt_config.build_mechanic_facts_block(result)
+    assert 'SECRET' not in block and 'invented cellar' not in block
+    assert f'"disposition": "{kind}"' in block
+    assert '"reason"' not in block
+
+
+def _executor_with_provider(state, provider):
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert fake.await_count == 1
+    return result
+
+
+@pytest.mark.parametrize('compensate', [False, True])
+def test_deferred_rejects_enemy_damage_even_if_restored(state, compensate):
+    combat.start_combat(state)
+    combat.add_npc(state, 'Enemy', 20, 10)
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        assert (await args[5]('damage_combatant', {'name': 'Enemy', 'delta': -3}))['ok']
+        if compensate:
+            assert (await args[5]('damage_combatant', {'name': 'Enemy', 'delta': 3}))['ok']
+        return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
+    result = _executor_with_provider(state, provider)
+    assert result.turn_resolution.disposition == 'incomplete'
+    stored = group_state.load_state(state.group_id)
+    enemy = next(c for c in stored.combat.order if c.name == 'Enemy')
+    assert enemy.hp == (10 if compensate else 7)
+
+
+def test_deferred_rejects_other_character_inventory_change(state):
+    combat.start_combat(state)
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('add_carried_item', {'investigator': 'Ken', 'item': 'Unrequested item'})
+        return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
+    result = _executor_with_provider(state, provider)
+    assert result.turn_resolution.disposition == 'incomplete'
+    assert 'Unrequested item' in group_state.load_state(state.group_id).get_active_character('b').carried_items
+
+
+def test_setup_only_encounter_can_still_defer(state):
+    async def provider(*args, **kwargs):
+        await args[5]('start_combat', {})
+        await args[5]('add_npc_to_combat', {'name': 'Enemy', 'dex': 20, 'hp': 10})
+        await args[5]('get_combat_status', {})
+        return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
+    result = _executor_with_provider(state, provider)
+    assert result.turn_resolution.disposition == 'deferred'
+    assert group_state.load_state(state.group_id).combat.active
+
+
+@pytest.mark.parametrize('extra', ['inventory', 'enemy', 'other_pending', 'compensated'])
+def test_cancellation_rejects_unrelated_committed_changes(state, extra):
+    state.pending_checks = {'a': pending(), 'b': pending('other')}
+    combat.start_combat(state)
+    combat.add_npc(state, 'Enemy', 20, 10)
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('clear_pending_check', {'investigator': 'Marco'})
+        if extra in {'inventory', 'compensated'}:
+            await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
+            if extra == 'compensated':
+                await args[5]('add_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
+        elif extra == 'enemy':
+            await args[5]('damage_combatant', {'name': 'Enemy', 'delta': -3})
+        else:
+            await args[5]('clear_pending_check', {'investigator': 'Ken'})
+        return decision(state, 'cancelled', check_id='old', evidence_refs=['tool:1'])
+    result = _executor_with_provider(state, provider)
+    assert result.turn_resolution.disposition == 'incomplete'
+    assert '已取消這筆' not in prompt_config.enforce_mechanic_check_consistency('cancelled', result)
+    assert 'a' not in group_state.load_state(state.group_id).pending_checks
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('incomplete continuation'), TimeoutError('timeout')])
+def test_private_outputs_survive_executor_failure(state, failure):
+    state.scenario_library_id = 'test-scenario'
+    msg = message(state)
+    async def provider(*args, **kwargs):
+        assert (await args[5]('send_private_info', {'investigator': 'Ken', 'message': 'private clue'}))['ok']
+        assert (await args[5]('show_scenario_image', {'investigator': 'Ken', 'page_number': 2}))['ok']
+        raise failure
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+         patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
+        result = asyncio.run(executor.run_executor(msg))
+    assert not result.success and result.turn_resolution.disposition == 'incomplete'
+    assert msg.payload['private_messages'] == [('b', 'private clue')]
+    assert msg.payload['image_requests'] == [('b', 2)]
+    assert fake.await_count == 1
+
+
+def test_supervisor_preserves_failed_executor_private_outputs(state):
+    from app.agents import narrator
+    state.scenario_library_id = 'test-scenario'
+    state.game_started = True
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('send_private_info', {'investigator': 'Ken', 'message': 'private clue'})
+        await args[5]('show_scenario_image', {'investigator': 'Ken', 'page_number': 2})
+        raise TimeoutError('after successful tools')
+    async def context(**kwargs):
+        return AgentMessage(kwargs)
+    executor_call = AsyncMock(side_effect=provider)
+    narration_call = AsyncMock(return_value='A safe public response.')
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=executor_call)}), \
+         patch.object(narrator, 'LLM_PROVIDER', 'openai'), \
+         patch.object(narrator, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=narration_call)}), \
+         patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
+         patch.object(supervisor.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text), \
+         patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
+        reply, private, images = asyncio.run(supervisor.run_turn(
+            state, 'a', 'Marco', '我調查房間', None, 'player', state.group_id))
+    assert '尚未完整處理' in reply and 'private clue' not in reply
+    assert private == [('b', 'private clue')] and images == [('b', 2)]
+    assert executor_call.await_count == narration_call.await_count == 1
+
+
+@pytest.mark.parametrize('failure', ['malformed', 'exception', 'iteration_cap'])
+def test_supervisor_failure_after_check_keeps_next_action(state, failure):
+    async def provider(*args, **kwargs):
+        assert (await args[5]('skill_check', {'investigator': 'Marco', 'skill': '偵查'}))['ok']
+        if failure == 'exception':
+            raise TimeoutError('after check')
+        return '' if failure == 'iteration_cap' else 'not valid JSON'
+    async def context(**kwargs):
+        return AgentMessage(kwargs)
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+         patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
+         patch.object(supervisor.narrator, 'run_narrator', AsyncMock(return_value=('請使用 /coc check。', [], []))), \
+         patch.object(supervisor.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text):
+        reply, _, _ = asyncio.run(supervisor.run_turn(
+            state, 'a', 'Marco', '我偵查房間', None, 'player', state.group_id))
+    assert '/coc check' in reply and '尚未完整處理' in reply
+    assert group_state.load_state(state.group_id).pending_checks['a']['check_id']
+    assert fake.await_count == 1
+
+
+def test_deferred_without_full_snapshot_fails_closed(state):
+    combat.start_combat(state)
+    result = turn_resolution.validate_resolution(
+        decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b')),
+        state=state, user_id='a', before_pending={}, before_luck={}, tool_events=[],
+        has_scenario=False, before_actor=turn_resolution.actor_snapshot(state, 'a'))
+    assert result.disposition == 'incomplete'

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from copy import deepcopy
 from typing import Any
 
 from app.domain.models import TurnResolution
@@ -72,7 +73,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
     before_luck: dict, tool_events: list[dict[str, Any]], has_scenario: bool,
-    before_actor: dict[str, Any],
+    before_actor: dict[str, Any], before_gameplay: dict[str, Any] | None = None,
 ) -> TurnResolution:
     actor_id = character_id(state, user_id)
     def incomplete(reason: str) -> TurnResolution:
@@ -124,7 +125,8 @@ def validate_resolution(
                       and e['result'].get('investigator') == actor.name for e in tool_events)
         if (not old or not check_id or old.get('check_id') != check_id or pending or luck
                 or before_luck.get(user_id) or not cleared
-                or old.get('timeline_id', state.timeline_id) != state.timeline_id):
+                or old.get('timeline_id', state.timeline_id) != state.timeline_id
+                or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, 'cancelled')):
             return incomplete("尚未確認原本的未擲檢定已取消")
     elif disposition == "deferred":
         current = None
@@ -139,7 +141,8 @@ def validate_resolution(
         # Never present a partially spent shot/action as merely waiting.
         now = actor_snapshot(state, user_id)
         if (not actual_wait or pending or luck or now != before_actor
-                or any(e.get("actor_changed") for e in tool_events)):
+                or any(e.get("actor_changed") for e in tool_events)
+                or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, "deferred")):
             return incomplete("暫緩裁決與目前順位或已提交變更不一致")
     elif disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
         mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
@@ -184,3 +187,64 @@ def actor_snapshot(state: GroupState, user_id: str) -> dict[str, Any]:
     return deepcopy({key: getattr(char, key) for key in (
         "hp", "mp", "san", "luck", "carried_items", "weapons", "status_tags",
     )})
+
+
+# Diagnostic/provider bookkeeping does not constitute a game action. All other
+# persisted fields (including every character and enemy card) are compared.
+_NON_GAMEPLAY_FIELDS = {
+    "state_revision", "log", "kp_ooc_log", "campaign_summary",
+    "openai_previous_response_id", "openai_previous_response_timeline_id",
+}
+
+
+def gameplay_snapshot(state: GroupState) -> dict[str, Any]:
+    return deepcopy({key: value for key, value in state.to_dict().items()
+                     if key not in _NON_GAMEPLAY_FIELDS})
+
+
+def _setup_only(before: dict, after: dict, event: dict) -> bool:
+    """Allow encounter initialization, never damage or advancing an existing turn."""
+    if event["name"] not in {"start_combat", "add_npc_to_combat"} or not event["result"].get("ok"):
+        return False
+    if {k: v for k, v in before.items() if k != "combat"} != {k: v for k, v in after.items() if k != "combat"}:
+        return False
+    old, new = before["combat"], after["combat"]
+    if not new["active"] or new["round_number"] != 1 or new["effects"] or new["plans"]:
+        return False
+    if old["active"]:
+        old_order = {c["combatant_id"]: c for c in old["order"]}
+        new_order = {c["combatant_id"]: c for c in new["order"]}
+        if any(new_order.get(cid) != c for cid, c in old_order.items()):
+            return False
+        if any(new["enemy_cards"].get(cid) != card for cid, card in old["enemy_cards"].items()):
+            return False
+        if old["order"] and (not new["order"] or
+                old["order"][old["current_index"]]["combatant_id"] !=
+                new["order"][new["current_index"]]["combatant_id"]):
+            return False
+    return True
+
+
+def _isolated_changes(state: GroupState, before: dict | None, events: list[dict],
+                      owner: str, actor_name: str, disposition: str) -> bool:
+    # Production always supplies snapshots. Without evidence, fail closed.
+    if before is None:
+        return False
+    expected = before
+    for event in events:
+        previous, current = event.get("gameplay_before"), event.get("gameplay_after")
+        if previous != expected or current is None:
+            return False
+        allowed = previous == current
+        if disposition == "cancelled" and event["name"] == "clear_pending_check":
+            result = event["result"]
+            if result.get("ok") and result.get("cleared") and result.get("investigator") == actor_name:
+                cancelled = deepcopy(previous)
+                cancelled["pending_checks"].pop(owner, None)
+                allowed = current == cancelled
+        if disposition == "deferred" and not before["combat"]["active"]:
+            allowed = allowed or _setup_only(previous, current, event)
+        if not allowed:
+            return False
+        expected = current
+    return gameplay_snapshot(state) == expected

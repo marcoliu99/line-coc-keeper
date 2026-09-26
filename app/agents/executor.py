@@ -40,6 +40,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
 
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
+    # Attach the same queues before awaiting anything: prior successful outputs
+    # survive a failed continuation, without replaying their tools.
+    message.payload["private_messages"] = private_messages
+    message.payload["image_requests"] = image_requests
     facts: list[str] = []
     check_status: dict[str, Any] = {
         "tool_called": False,
@@ -80,6 +84,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     before_pending = deepcopy(state.pending_checks)
     before_luck = deepcopy(state.pending_luck_decisions)
     before_actor = turn_resolution.actor_snapshot(state, user_id)
+    before_gameplay = turn_resolution.gameplay_snapshot(state)
     tool_events: list[dict[str, Any]] = []
     completion = ""
     scenario_search_count = 0
@@ -104,12 +109,15 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 inventory_before = {c.name: list(c.carried_items) for c in state.active_characters()}
                 combat_active_before = state.combat.active
                 actor_before_tool = turn_resolution.actor_snapshot(state, user_id)
+                gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
                 result = await execute_tool(name, tool_input)
                 if LLM_PROVIDER == "openai":
                     combat_status_gate.observe_tool_result(name, result)
                 tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
                                     "inventory_before": inventory_before,
                                     "combat_active_before": combat_active_before,
+                                    "gameplay_before": gameplay_before_tool,
+                                    "gameplay_after": turn_resolution.gameplay_snapshot(state),
                                     "actor_changed": actor_before_tool != turn_resolution.actor_snapshot(state, user_id)})
                 return {**result, "evidence_ref": f"tool:{len(tool_events)}",
                         "current_turn_state": turn_context.current_state(state)}
@@ -145,14 +153,11 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             "executor.scenario_search.summary", count=scenario_search_count, status=turn_status,
         )
 
-    message.payload["private_messages"] = private_messages
-    message.payload["image_requests"] = image_requests
-
     resolution = turn_resolution.validate_resolution(
         completion, state=state, user_id=user_id, before_pending=before_pending,
         before_luck=before_luck, tool_events=tool_events,
         has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
-        before_actor=before_actor,
+        before_actor=before_actor, before_gameplay=before_gameplay,
     )
     observability.event("executor.resolution", disposition=resolution.disposition,
                         evidence_count=len(resolution.evidence_refs))

@@ -325,3 +325,9 @@ mypy（69個source files）、修改檔案Ruff與git diff --check通過。
 
 Implement these shared fixes on PR89, then merge that branch into PR90 so both
 PR heads contain the same validation and output-preservation fixes.
+
+Review-fix verification: isolated full suite 724 passed, 1 skipped, 15 subtests
+passed; mypy passed (69 source files), changed-file Ruff and diff checks passed.
+The regressions include real SQLite/tool mutations and the full
+Executor -> Narrator -> Supervisor output path with mocked providers. No paid
+API, production DATA changes, additional fixed LLM stage, or tool replay.
