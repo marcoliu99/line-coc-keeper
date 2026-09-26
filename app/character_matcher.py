@@ -143,7 +143,7 @@ def _remember_name_pair(a: dict[str, Any], b: dict[str, Any]) -> None:
     dictionary.learn_character_alias(name_b, name_a)
 
 
-def is_same_character(a: dict[str, Any], b: dict[str, Any]) -> bool:
+def is_same_character(a: dict[str, Any], b: dict[str, Any], *, learn_aliases: bool = True) -> bool:
     """True if pregen dicts `a` and `b` are judged to describe the same
     investigator — see this module's docstring for the three gates. Any gate
     passing is sufficient; a gate-2/3 match (not already resolvable by gate 1
@@ -152,9 +152,11 @@ def is_same_character(a: dict[str, Any], b: dict[str, Any]) -> bool:
     if _names_match(a.get("name", ""), b.get("name", "")):
         return True
     if _fingerprint_match(a, b):
-        _remember_name_pair(a, b)
+        if learn_aliases:
+            _remember_name_pair(a, b)
         return True
     if _occupation_and_skills_match(a, b):
-        _remember_name_pair(a, b)
+        if learn_aliases:
+            _remember_name_pair(a, b)
         return True
     return False
