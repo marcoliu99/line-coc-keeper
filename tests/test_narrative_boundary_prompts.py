@@ -107,3 +107,13 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         context = keeper._correction_context_message(state)
         self.assertLessEqual(len(context), 4100)
         self.assertNotIn('"target_message_id": "0"', context)
+
+    def test_prompt_budget_keeps_recent_approved_correction_before_pending_reports(self):
+        state = GroupState(group_id="canon-boundary")
+        state.narrative_corrections = [
+            {"status": "pending", "target_message_id": str(index), "issue": "疑點" * 250}
+            for index in range(8)
+        ] + [{"status": "approved", "target_message_id": "999", "resolution": "地下室不存在"}]
+        context = keeper._correction_context_message(state)
+        self.assertIn("地下室不存在", context)
+        self.assertLessEqual(len(context), 4100)
