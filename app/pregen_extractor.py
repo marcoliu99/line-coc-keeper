@@ -726,7 +726,7 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
 
 
 def reconcile_pregen_into_pool(
-    pool: list[dict[str, Any]], new_pregen: dict[str, Any]
+    pool: list[dict[str, Any]], new_pregen: dict[str, Any], *, learn_aliases: bool = True
 ) -> tuple[list[dict[str, Any]], str]:
     """Merges `new_pregen` into `pool` (a new list; the input is not
     mutated), replacing the previous "same occupation string -> overwrite"
@@ -758,7 +758,7 @@ def reconcile_pregen_into_pool(
     for i, existing in enumerate(pool):
         if existing.get("claimed_by"):
             continue
-        if not character_matcher.is_same_character(existing, new_pregen):
+        if not character_matcher.is_same_character(existing, new_pregen, learn_aliases=learn_aliases):
             continue
         if existing.get("source") == new_pregen.get("source"):
             replacement = dict(new_pregen)

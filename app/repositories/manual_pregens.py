@@ -10,6 +10,12 @@ from uuid import uuid4
 from app import character_matcher, db, pregen_extractor
 
 
+def _same_character(a: dict, b: dict) -> bool:
+    # Repository callers hold the GroupState write transaction. Matching
+    # cannot learn dictionary aliases through a second SQLite connection.
+    return character_matcher.is_same_character(a, b, learn_aliases=False)
+
+
 def _key(group_id: str, scenario_id: str | None) -> str:
     return json.dumps([group_id, scenario_id], ensure_ascii=False, separators=(",", ":"))
 
@@ -42,7 +48,7 @@ def _upsert(data: dict, pregen: dict, filename: str, *, asset_id: str | None = N
     entries = data["entries"]
     for entry in entries:
         old = entry["pregen"]
-        same = character_matcher.is_same_character(old, pregen)
+        same = _same_character(old, pregen)
         if entry["filename"] == filename and not same and (old.get("name") or pregen.get("name")):
             raise ValueError("同名檔案已屬於另一位角色；請改名後再匯入。")
         if same or (entry["filename"] == filename and not old.get("name") and not pregen.get("name")):
@@ -66,13 +72,13 @@ def capture_legacy(
             continue
         source = pregen.get("source")
         if source == "manual":
-            if any(character_matcher.is_same_character(e["pregen"], pregen) for e in data["entries"]):
+            if any(_same_character(e["pregen"], pregen) for e in data["entries"]):
                 continue
             _upsert(data, pregen, f"legacy-{_fingerprint(pregen)[:12]}.md")
             changed = True
         elif source == "merged" and scenario_id and source_hash:
             fingerprint = _fingerprint(pregen)
-            if any(character_matcher.is_same_character(e["pregen"], pregen) for e in data["entries"]):
+            if any(_same_character(e["pregen"], pregen) for e in data["entries"]):
                 continue
             if any(s.get("fingerprint") == fingerprint for s in data["legacy_snapshots"]):
                 continue
@@ -107,7 +113,7 @@ def store_upload(
     asset_id, action = _upsert(data, pregen, filename)
     data["legacy_snapshots"] = [
         item for item in data["legacy_snapshots"]
-        if not character_matcher.is_same_character(item["pregen"], pregen)
+        if not _same_character(item["pregen"], pregen)
     ]
     _write(conn, group_id, scenario_id, data)
     return asset_id, action
@@ -120,16 +126,16 @@ def build_pool(
     data = _read(conn, group_id, scenario_id)
     pool = [_clean(p) for p in scenario_pregens]
     for entry in sorted(data["entries"], key=lambda item: item["asset_id"]):
-        pool, _ = pregen_extractor.reconcile_pregen_into_pool(pool, entry["pregen"])
+        pool, _ = pregen_extractor.reconcile_pregen_into_pool(pool, entry["pregen"], learn_aliases=False)
     stale = False
     for item in sorted(data["legacy_snapshots"], key=lambda snapshot: snapshot["asset_id"]):
         if item["source_hash"] != source_hash:
             stale = True
             continue
-        if any(character_matcher.is_same_character(e["pregen"], item["pregen"])
+        if any(_same_character(e["pregen"], item["pregen"])
                for e in data["entries"]):
             continue
-        pool, _ = pregen_extractor.reconcile_pregen_into_pool(pool, item["pregen"])
+        pool, _ = pregen_extractor.reconcile_pregen_into_pool(pool, item["pregen"], learn_aliases=False)
     return pool, stale
 
 
@@ -145,7 +151,7 @@ def install_pool(
     )
     claimed_cards = deepcopy(claimed or [])
     pool = [p for p in pool if not any(
-        character_matcher.is_same_character(p, claimed_card) for claimed_card in claimed_cards
+        _same_character(p, claimed_card) for claimed_card in claimed_cards
     )]
     return [*claimed_cards, *pool], stale
 

@@ -83,12 +83,12 @@ class ManualPregenPersistenceTests(unittest.TestCase):
         self.assertEqual(assets[0]["pregen"]["str_"], 75)
 
     def test_pending_binding_rejects_filename_owned_by_another_character(self):
-        with patch("app.character_matcher.dictionary.lookup_character_alias", return_value=None):
-            with db.transaction() as conn:
-                manual_pregens.store_upload(conn, "g", "s", _card("林文"), "role_same.md")
-                manual_pregens.store_upload(conn, "g", None, _card("陳雅"), "role_same.md")
-                with self.assertRaises(ValueError):
-                    manual_pregens.bind_pending(conn, "g", "s")
+        with db.transaction() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            manual_pregens.store_upload(conn, "g", "s", _card("林文"), "role_same.md")
+            manual_pregens.store_upload(conn, "g", None, _card("陳雅"), "role_same.md")
+            with self.assertRaises(ValueError):
+                manual_pregens.bind_pending(conn, "g", "s")
         self.assertEqual(len(manual_pregens.list_assets("g", "s")), 1)
         self.assertEqual(len(manual_pregens.list_assets("g", None)), 1)
 
