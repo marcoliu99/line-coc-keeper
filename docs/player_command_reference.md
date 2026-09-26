@@ -371,18 +371,46 @@
 用法：
 - `/coc status`
 
-### 選用劇本 **[KP-only]**
+### 核准中文模板 **[KP-only]**
 
-從劇本庫選擇目前要使用的劇本。
+檢查來源與規則後核准模板供 RAG 使用。
 
 用法：
-- `/coc scenario use 劇本ID`
+- `/coc scenario template approve 劇本ID 模板版本`
+
+### 匯入中文模板 **[KP-only]**
+
+從 IMPORT_DIR 匯入校對後的 Markdown 模板。
+
+用法：
+- `/coc scenario template import 劇本ID 檔名.md`
+
+### 預覽中文模板 **[KP-only]**
+
+將模板的 KP 校對預覽傳送私訊。
+
+用法：
+- `/coc scenario template preview 劇本ID 模板版本`
+
+### 查看中文模板 **[KP-only]**
+
+查看背景處理、版本與待核對項目。
+
+用法：
+- `/coc scenario template status 劇本ID`
+
+### 選用劇本 **[KP-only]**
+
+從劇本庫選擇劇本與已校對的中文模板版本。
+
+用法：
+- `/coc scenario use 劇本ID [模板版本]`
 
 範例：
-- `/coc scenario use abc123`
+- `/coc scenario use abc123 zh-TW-123456789abc`
 
 注意：
-- KP-only：只有目前登記的 KP Assistant 可以執行。
+- 省略版本時沿用此群組對該劇本的選擇。
 
 ## KP 助手
 

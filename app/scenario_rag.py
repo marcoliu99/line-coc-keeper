@@ -501,9 +501,9 @@ def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, id
 
 def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int) -> list[dict]:
     rows: list[dict] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for score, chunk in scored:
-        identity = chunk.record_id or f"page:{chunk.page}:text:{chunk.text}"
+        identity = (chunk.record_id or f"page:{chunk.page}:text:{chunk.text}", chunk.visibility)
         if identity in seen:
             continue
         seen.add(identity)

@@ -507,9 +507,10 @@ async def handle_pdf_upload(
         )
         return True
 
+    variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
-    ))
+    ) + (f"\n{variant_notice}" if variant_notice else ""))
     return True
 
 
@@ -548,10 +549,11 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
     save_state(state)
+    variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
         context["scene_maps"], extracted_index, len(state.pregens),
-    )
+    ) + (f"\n{variant_notice}" if variant_notice else "")
 
 async def resolve_pdf_upload_choice(
     conversation_id: str,

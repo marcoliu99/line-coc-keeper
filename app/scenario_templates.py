@@ -243,22 +243,28 @@ def _generate_sync(scenario_id: str, source_hash: str, chapter_hash: str) -> str
 
 
 async def _run_job(scenario_id: str, source_hash: str, chapter_hash: str) -> None:
+    current_task = asyncio.current_task()
     try:
         async with _gate:
+            if _tasks.get(scenario_id) is not current_task:
+                return
             db.set_json("scenario_template_jobs", scenario_id,
                         {"status": "processing", "source_hash": source_hash, "chapter_hash": chapter_hash})
             try:
                 variant_id = await asyncio.to_thread(_generate_sync, scenario_id, source_hash, chapter_hash)
             except Exception as exc:  # noqa: BLE001 - background job must record provider failures
-                db.set_json("scenario_template_jobs", scenario_id,
-                            {"status": "failed", "source_hash": source_hash,
-                             "chapter_hash": chapter_hash, "error": str(exc)[:300]})
+                if _tasks.get(scenario_id) is current_task:
+                    db.set_json("scenario_template_jobs", scenario_id,
+                                {"status": "failed", "source_hash": source_hash,
+                                 "chapter_hash": chapter_hash, "error": str(exc)[:300]})
             else:
-                db.set_json("scenario_template_jobs", scenario_id,
-                            {"status": "review_required", "source_hash": source_hash,
-                             "chapter_hash": chapter_hash, "variant_id": variant_id})
+                if _tasks.get(scenario_id) is current_task:
+                    db.set_json("scenario_template_jobs", scenario_id,
+                                {"status": "review_required", "source_hash": source_hash,
+                                 "chapter_hash": chapter_hash, "variant_id": variant_id})
     finally:
-        _tasks.pop(scenario_id, None)
+        if _tasks.get(scenario_id) is current_task:
+            _tasks.pop(scenario_id, None)
 
 
 def queue_generation(scenario_id: str) -> bool:
