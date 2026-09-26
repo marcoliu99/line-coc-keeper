@@ -8,21 +8,25 @@ report only what's explicitly written in the text (never invent numbers), so
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from app import character_matcher, dictionary
 from app.config import LLM_PROVIDER
 from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
+from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.skill_aliases import canonical_skill_name
 
 
 def roll_player_luck() -> int:
     """Roll the LUCK result only after the player explicitly requests it."""
     return _roll(3, 6, 5)
-from app.providers import anthropic_provider, gemini_provider, openai_provider
-from app.skill_aliases import canonical_skill_name
 
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
+_logger = logging.getLogger(__name__)
+_PAGE_MARKER = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
+_LUCK_ON_SHEET = re.compile(r"(?i)(?:\bLUCK\b|幸運)\s*(?:\([^)]{0,20}\))?\s*[:：]?\s*(\d{1,3})(?!\d)")
 
 _REPORT_TOOL = {
     "name": "report_pregens",
@@ -56,6 +60,8 @@ _REPORT_TOOL = {
                         "str_": {"type": "integer"}, "con": {"type": "integer"}, "siz": {"type": "integer"},
                         "dex": {"type": "integer"}, "app": {"type": "integer"}, "int_": {"type": "integer"},
                         "pow_": {"type": "integer"}, "edu": {"type": "integer"}, "luck": {"type": "integer"},
+                        "luck_source_page": {"type": "integer", "description": "有填 luck 時必填：角色卡所在的 PDF 頁碼。"},
+                        "luck_source_excerpt": {"type": "string", "description": "有填 luck 時必填：從該角色卡原文逐字複製含 LUCK/幸運 標籤與數值的短片段。"},
                         "hp_max": {"type": "integer"}, "mp_max": {"type": "integer"}, "san_max": {"type": "integer"},
                         "skills": {
                             "type": "object",
@@ -170,6 +176,57 @@ def _clean_pregen_keys(pregen: dict[str, Any]) -> None:
         pregen[new_key] = pregen.pop(old_key)
 
 
+def pregen_luck_value(value: Any) -> int | None:
+    """Return a filled sheet value, preserving zero and rejecting blanks."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value.is_integer() and value >= 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _scenario_pages(text: str) -> dict[int, str]:
+    markers = list(_PAGE_MARKER.finditer(text))
+    if not markers:
+        return {1: text}
+    return {int(match.group(1)): text[match.end():markers[i + 1].start() if i + 1 < len(markers) else len(text)]
+            for i, match in enumerate(markers)}
+
+
+def _verified_pdf_luck(pregen: dict[str, Any], pregens: list[dict[str, Any]], pages: dict[int, str]) -> int | None:
+    value = pregen_luck_value(pregen.get("luck"))
+    if value is None:
+        return None
+    page = pregen.get("luck_source_page")
+    excerpt = pregen.get("luck_source_excerpt")
+    if isinstance(page, bool) or not isinstance(page, int) or not isinstance(excerpt, str):
+        return None
+    source = " ".join(pages.get(page, "").split()).casefold()
+    quote = " ".join(excerpt.split()).casefold()
+    if not source or not quote or len(quote) > 1200 or source.count(quote) != 1:
+        return None
+    matched = _LUCK_ON_SHEET.search(quote)
+    if matched is None or int(matched.group(1)) != value:
+        return None
+    luck_at = source.index(quote) + matched.start()
+    names: list[tuple[int, int, str]] = []
+    for candidate in pregens:
+        name = str(candidate.get("name") or "").strip().casefold()
+        if not name:
+            continue
+        for found in re.finditer(re.escape(name), source):
+            if found.start() <= luck_at:
+                names.append((found.start(), len(name), name))
+    if not names:
+        return None
+    nearest = max(names)
+    return value if nearest[2] == str(pregen.get("name") or "").strip().casefold() else None
+
+
 def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text
     functions) rather than being hard-coded to Anthropic — this used to always
@@ -189,11 +246,24 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         "以及一份技能列表）。職業請同時回報原文（occupation_original）跟中文翻譯"
         "（occupation_translated）；每個技能除了 skills 裡的中文名稱＋數值，也請在"
         "skill_translations 裡附上這個技能在劇本原文裡的寫法，讓系統可以學會這個劇本用的"
-        "譯名。用 report_pregens 工具回報結果。",
+        "譯名。用 report_pregens 工具回報結果。"
+        "若角色卡原文有 LUCK/幸運 數值，除了 luck，必須回報 luck_source_page，"
+        "以及從同一張角色卡逐字複製、同時包含 LUCK/幸運 標籤與數值的 luck_source_excerpt；"
+        "空白欄位不得填 luck。",
     )
     pregens = (result or {}).get("pregens", []) or []
+    pages = _scenario_pages(scenario_text)
     for pregen in pregens:
         _clean_pregen_keys(pregen)
+        if "luck" in pregen:
+            verified = _verified_pdf_luck(pregen, pregens, pages)
+            if verified is None:
+                _logger.warning("dropping unverified PDF pregen Luck for %s", pregen.get("name"))
+                pregen.pop("luck", None)
+            else:
+                pregen["luck"] = verified
+        pregen.pop("luck_source_page", None)
+        pregen.pop("luck_source_excerpt", None)
         _preserve_extra_fields(pregen)
         # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above —
         # see that function's own comment for why reconciliation needs this.
@@ -581,9 +651,9 @@ def pregen_to_character(
 ) -> Character:
     """Build one fresh character from a pregen snapshot.
 
-    This pure constructor does not roll or record ownership.  The command
-    flow creates a pending character with ``luck=0`` and lets the player
-    explicitly trigger the LUCK roll afterward.
+    This pure constructor does not roll or record ownership. The claim flow
+    supplies verified sheet Luck when present, or a temporary zero while
+    the player-owned Luck roll is pending.
     """
     str_ = _int_or(pregen.get("str_"), 50)
     con = _int_or(pregen.get("con"), 50)
@@ -682,6 +752,29 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
         "occupation": manual.get("occupation") or llm.get("occupation", ""),
     }
     for key in _MERGE_ATTR_KEYS:
+        if key == "luck":
+            # Preserve both sources separately. A newer PDF replaces the old
+            # PDF value (including clearing it); a newer manual upload can
+            # clear its own value without reviving an old manual value.
+            if manual.get("source") == "manual":
+                manual_value = pregen_luck_value(manual.get(key))
+            elif manual.get("source") == "merged" and manual.get("luck_origin") == "manual":
+                manual_value = pregen_luck_value(manual.get(key))
+            else:
+                manual_value = None
+            if llm.get("source") == "llm_extracted":
+                pdf_value = pregen_luck_value(llm.get(key))
+            elif llm.get("source") == "merged":
+                pdf_value = pregen_luck_value(llm.get("luck_pdf_value"))
+            else:
+                pdf_value = None
+            value = manual_value if manual_value is not None else pdf_value
+            if value is not None:
+                merged[key] = value
+                merged["luck_origin"] = "manual" if manual_value is not None else "llm_extracted"
+            if pdf_value is not None:
+                merged["luck_pdf_value"] = pdf_value
+            continue
         if key in manual:
             merged[key] = manual[key]
         elif key in llm:
@@ -726,7 +819,7 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
 
 
 def reconcile_pregen_into_pool(
-    pool: list[dict[str, Any]], new_pregen: dict[str, Any]
+    pool: list[dict[str, Any]], new_pregen: dict[str, Any], *, learn_aliases: bool = True
 ) -> tuple[list[dict[str, Any]], str]:
     """Merges `new_pregen` into `pool` (a new list; the input is not
     mutated), replacing the previous "same occupation string -> overwrite"
@@ -758,7 +851,7 @@ def reconcile_pregen_into_pool(
     for i, existing in enumerate(pool):
         if existing.get("claimed_by"):
             continue
-        if not character_matcher.is_same_character(existing, new_pregen):
+        if not character_matcher.is_same_character(existing, new_pregen, learn_aliases=learn_aliases):
             continue
         if existing.get("source") == new_pregen.get("source"):
             replacement = dict(new_pregen)

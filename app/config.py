@@ -100,7 +100,7 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", "240000"))
 
 # MAX_LOG_TURNS: how many recent chat turns stay verbatim in the Keeper's
 # context (trim triggers at 4x this many log entries — see app/keeper.py's
-# run_turn — keeping 2x after trimming). app/providers/anthropic_provider.py
+# post-turn maintenance — keeping 2x after trimming). app/providers/anthropic_provider.py
 # caches the conversation-history prefix too (not just the scenario text), so
 # a longer history costs much less per turn than a naive re-send would.
 # Trimmed content isn't just dropped — the same trim point folds it into
@@ -191,8 +191,8 @@ KEEPER_REASONING_EFFORT = os.environ.get("KEEPER_REASONING_EFFORT", "medium").st
 # 5xx) — see app/providers/retry.py. None of the three provider adapters
 # retried these at all before this: a single network blip during
 # client.messages.create/generate_content/responses.create raised straight
-# out of run_conversation, through keeper.run_turn, and surfaced to the
-# player as a bare "發生錯誤了：..." with their whole turn lost, even though
+# out of run_conversation and surfaced to the player with their whole turn
+# lost, even though
 # the failure had nothing to do with their input and a retry a second later
 # would very likely have succeeded. LLM_MAX_RETRIES=0 disables retrying
 # entirely (first failure always raises immediately, same as before this

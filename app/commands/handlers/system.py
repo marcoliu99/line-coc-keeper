@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import (
+    character_matcher,
     checkpoints,
     keeper,
     locks,
@@ -18,6 +19,7 @@ from app import (
     scene_map,
     spoiler_policy,
 )
+from app.agents import supervisor
 from app.config import IMPORT_DIR
 from app.legacy_commands import (
     FormatMention,
@@ -34,6 +36,7 @@ from app.legacy_commands import (
     handle_pdf_upload,
 )
 from app.models import GroupState
+from app.repositories import manual_pregens
 from app.repositories.group_state import (
     clear_page_images,
     load_state,
@@ -277,6 +280,55 @@ async def handle_system_command(
             except (FileNotFoundError, ValueError, KeyError) as exc:
                 await reply(f"中文模板無法處理：{exc}")
             return
+        if action == "cards":
+            if not (is_keeper or state.kp_assistant_user_id == user_id):
+                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以管理手動角色卡。")
+                return
+            if len(parts) < 5 or parts[3] not in {"list", "delete"}:
+                await reply("用法：/coc scenario cards list 劇本ID | delete 劇本ID 資產ID")
+                return
+            scenario_id = parts[4]
+            if parts[3] == "list":
+                assets = manual_pregens.list_assets(conversation_id, scenario_id)
+                lines = [f"劇本 {scenario_id} 的手動角色卡："]
+                lines.extend(
+                    f"・{item['asset_id']} {item['pregen'].get('name') or '未命名'} "
+                    f"({item.get('filename', '舊版合併卡')})"
+                    for item in assets
+                )
+                await reply("\n".join(lines) if assets else "這個劇本沒有保存的手動角色卡。")
+                return
+            if len(parts) < 6:
+                await reply("用法：/coc scenario cards delete 劇本ID 資產ID")
+                return
+            asset_id = parts[5]
+            assets = manual_pregens.list_assets(conversation_id, scenario_id)
+            target = next((item for item in assets if item["asset_id"] == asset_id), None)
+            if target is None:
+                await reply("找不到這張手動角色卡資產。")
+                return
+            if state.scenario_library_id == scenario_id and any(
+                p.get("claimed_by") and character_matcher.is_same_character(p, target["pregen"])
+                for p in state.pregens
+            ):
+                await reply("這張角色卡已被認領；請先結束或重開新局，再刪除持久資料。")
+                return
+            context = None
+            if state.scenario_library_id == scenario_id:
+                try:
+                    context = scenario_library.load_context(scenario_id)
+                except (FileNotFoundError, ValueError):
+                    pass
+            def remove_card(conn):
+                manual_pregens.delete_asset(conn, conversation_id, scenario_id, asset_id)
+                if context:
+                    state.pregens, _ = manual_pregens.install_pool(
+                        conn, conversation_id, scenario_id, context,
+                        claimed=[p for p in state.pregens if p.get("claimed_by")],
+                    )
+            save_state(state, mutate_tx=remove_card)
+            await reply(f"已刪除手動角色卡資產 {asset_id}。")
+            return
         if action == "import":
             await _handle_local_import(conversation_id, user_id, reply, parts)
             return
@@ -372,6 +424,14 @@ async def handle_system_command(
             except (FileNotFoundError, ValueError) as exc:
                 await reply(f"中文模板無法啟用：{exc}")
                 return
+            old_pool = list(state.pregens)
+            old_scenario_id = state.scenario_library_id or None
+            old_hash = ""
+            if old_scenario_id:
+                try:
+                    old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
+                except (FileNotFoundError, ValueError):
+                    pass
             state.scenario_library_id = parts[3]
             state.scenario_variant_id = variant_id
             state.scenario_title = context["manifest"]["title"]
@@ -413,11 +473,21 @@ async def handle_system_command(
                 parts[3], context["page_numbers"],
                 lambda page, image: save_page_image(conversation_id, page, image),
             )
-            save_state(state)
+            install_result: dict[str, bool] = {}
+            def install_cards(conn):
+                manual_pregens.capture_legacy(
+                    conn, conversation_id, old_scenario_id, old_pool, old_hash,
+                )
+                state.pregens, install_result["stale"] = manual_pregens.install_pool(
+                    conn, conversation_id, parts[3], context,
+                    bind_unassigned=(old_scenario_id is None),
+                )
+            save_state(state, mutate_tx=install_cards)
             if len(parts) > 4:
                 scenario_templates.select_variant(conversation_id, parts[3], variant_id)
             scenario_templates.schedule_index_prewarm(state)
-            await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。"
+            note = "\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""
+            await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。{note}"
                         + (f"\n{preference_notice}" if preference_notice and len(parts) == 4 else ""))
             return
         if action == "clean":
@@ -445,7 +515,19 @@ async def handle_system_command(
         await _handle_local_import(conversation_id, user_id, reply, parts)
         return
     if sub == "newgame":
-        save_state(GroupState(group_id=conversation_id), reason="newgame")
+        previous = load_state(conversation_id)
+        previous_id = previous.scenario_library_id or None
+        previous_hash = ""
+        if previous_id:
+            try:
+                previous_hash = scenario_library.load_context(previous_id)["manifest"].get("content_hash", "")
+            except (FileNotFoundError, ValueError):
+                pass
+        def retain_manual_cards(conn):
+            manual_pregens.capture_legacy(
+                conn, conversation_id, previous_id, previous.pregens, previous_hash,
+            )
+        save_state(GroupState(group_id=conversation_id), reason="newgame", mutate_tx=retain_manual_cards)
         await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
         return
 
@@ -709,13 +791,19 @@ async def handle_system_command(
             "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
         )
         async with locks.get_keeper_turn_lock(conversation_id):
-            keeper_reply, private_messages, image_requests = await keeper.run_turn(
-                state, user_id, "守密人", keeper_message, None
+            fresh_state = keeper._refresh_state_snapshot(state)
+            if fresh_state.game_started:
+                return
+            keeper_reply, private_messages, image_requests = await supervisor.run_turn(
+                state=fresh_state,
+                user_id=user_id,
+                display_name="守密人",
+                text=keeper_message,
+                resolved_location=None,
+                speaker_role="player",
+                conversation_id=conversation_id,
+                turn_kind="opening_fallback",
             )
-        with locks.get_state_lock(conversation_id):
-            state = load_state(conversation_id)
-            state.game_started = True
-            save_state(state)
         await _run_post_turn_maintenance_after_output(
             conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
         )
