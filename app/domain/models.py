@@ -25,6 +25,17 @@ class GameEvent:
 
 
 @dataclass
+class TurnResolution:
+    """Validated handoff, never an instruction to mutate state."""
+    disposition: str = "incomplete"
+    actor_character_id: str = ""
+    waiting_for: str = ""
+    check_id: str = ""
+    reason: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
+
+
+@dataclass
 class MechanicResult:
     success: bool
     action_type: str
@@ -32,6 +43,7 @@ class MechanicResult:
     state_delta: StateDelta
     events: list[GameEvent] = field(default_factory=list)
     check_status: dict[str, Any] = field(default_factory=dict)
+    turn_resolution: TurnResolution | None = None
 
 
 @dataclass

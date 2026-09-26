@@ -21,6 +21,7 @@ import contextlib
 import inspect
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 
@@ -81,6 +82,31 @@ async def _request_scope():
         _client_lifecycle.release(state)
 
 
+def _unsupported_parameter(exc: Exception, kwargs: dict) -> str | None:
+    """Only a specific 400 parameter rejection can negotiate capabilities."""
+    if getattr(exc, "status_code", None) != 400:
+        return None
+    body = getattr(exc, "body", None)
+    error = body.get("error", body) if isinstance(body, dict) else {}
+    if not isinstance(error, dict):
+        error = {}
+    param = error.get("param")
+    code = error.get("code")
+    if param in ("temperature", "reasoning") and param in kwargs and isinstance(code, str) and code in {
+        "unsupported_parameter", "unsupported_value",
+    }:
+        return param
+    # Some SDK-compatible endpoints only expose a textual 400. Require the
+    # explicit unsupported parameter label, never a substring of a 429/body.
+    match = re.search(r"unsupported (?:parameter|value):?\s*['\"](temperature|reasoning)['\"]", str(exc), re.IGNORECASE)
+    return match.group(1).lower() if match and match.group(1).lower() in kwargs else None
+
+
+def _temperature_policy(kwargs: dict) -> None:
+    if config.OPENAI_OMIT_TEMPERATURE:
+        kwargs.pop("temperature", None)
+
+
 def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
     """Some model tiers (reasoning-focused releases in particular) reject
     certain optional parameters outright with a 400 instead of silently
@@ -104,6 +130,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
     overlapping retry mechanisms fighting over the same exception. Reuses
     retry.is_retryable() for the classification so all three providers
     agree on what counts as transient."""
+    _temperature_policy(kwargs)
     for param in _unsupported_params:
         kwargs.pop(param, None)
     connection_attempt = 0
@@ -125,8 +152,7 @@ def _create_response(client, *, _log_iteration: int | None = None, **kwargs):
         try:
             response = client.responses.create(**kwargs)
         except Exception as exc:
-            exc_text = str(exc).lower()
-            offending = next((p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text), None)
+            offending = _unsupported_parameter(exc, kwargs)
             is_connection_retry = (
                 offending is None and connection_attempt < LLM_MAX_RETRIES and retry.is_retryable(exc)
             )
@@ -259,6 +285,7 @@ def _is_invalid_previous_response_id_error(
 
 async def _create_response_async(_client=None, *, _log_iteration: int | None = None, **kwargs):
     """Async Responses API helper preserving unsupported-parameter fallback."""
+    _temperature_policy(kwargs)
     for param in _unsupported_params:
         kwargs.pop(param, None)
     logical_request_id = observability.new_id("llm")
@@ -288,11 +315,7 @@ async def _create_response_async(_client=None, *, _log_iteration: int | None = N
                             request_id=logical_request_id,
                         )
                 except Exception as exc:
-                    exc_text = str(exc).lower()
-                    offending = next(
-                        (p for p in ("temperature", "reasoning") if p in kwargs and p in exc_text),
-                        None,
-                    )
+                    offending = _unsupported_parameter(exc, kwargs)
                     if offending is None:
                         raise
                     _unsupported_params.add(offending)

@@ -453,7 +453,9 @@ class OpenAICreateResponseRetryTests(unittest.TestCase):
 
         openai_provider._unsupported_params.clear()
         fake_response = MagicMock()
-        client = self._fake_client([Exception("Unsupported parameter: 'temperature'"), fake_response])
+        rejected = FakeStatusError(400)
+        rejected.args = ("Unsupported parameter: 'temperature'",)
+        client = self._fake_client([rejected, fake_response])
         with patch("app.providers.openai_provider.time.sleep") as sleep_mock:
             result = openai_provider._create_response(client, model="gpt-test", input=[], temperature=0.6)
         self.assertIs(result, fake_response)
