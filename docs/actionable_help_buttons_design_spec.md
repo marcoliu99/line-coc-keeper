@@ -207,3 +207,8 @@ newer pending upload has replaced it. Preserve the bytes even when a newer
 upload or timeline prevents restoration; never overwrite the newer state.
 No schema migration or extra model request. Regression tests cover concurrent
 revision changes, retry success, exceptions, newer uploads, and timeline resets.
+
+Review-fix verification: isolated full suite 651 passed, 1 skipped, 15 subtests
+passed; mypy passed (68 source files), changed-file Ruff and diff checks passed.
+The real guarded upload path now retains its source across a revision abort and
+successfully consumes it on retry. No paid API or production DATA was used.

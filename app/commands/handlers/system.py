@@ -351,14 +351,29 @@ async def handle_system_command(
                 state.pending_scenario_upload = None
                 save_state(state)
                 commit_revision = state.state_revision
+                claimed_timeline = state.timeline_id
             candidate_matches = pending.get("matches") or []
             reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
-            await handle_pdf_upload(
-                conversation_id, reply, reply, pdf_bytes, pending["file_name"],
-                skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
-                expected_revision=commit_revision if expected_revision is not None else None,
-            )
-            scenario_library.discard_staged_upload(pending["key"])
+            accepted = False
+            try:
+                accepted = await handle_pdf_upload(
+                    conversation_id, reply, reply, pdf_bytes, pending["file_name"],
+                    skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
+                    expected_revision=commit_revision if expected_revision is not None else None,
+                )
+            finally:
+                if accepted:
+                    scenario_library.discard_staged_upload(pending["key"])
+                else:
+                    # Do not save the pre-extraction snapshot over concurrent play.
+                    # A newer upload or timeline owns its state; keep the source
+                    # bytes without resurrecting an old session's pending item.
+                    async with locks.get_conversation_lock(conversation_id):
+                        recovery_state = load_state(conversation_id)
+                        if (recovery_state.timeline_id == claimed_timeline
+                                and recovery_state.pending_scenario_upload is None):
+                            recovery_state.pending_scenario_upload = pending
+                            save_state(recovery_state)
             return
         if action == "cancel":
             if not _is_kp_or_keeper(state, user_id, is_keeper):
