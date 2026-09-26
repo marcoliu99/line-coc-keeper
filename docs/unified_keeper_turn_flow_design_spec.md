@@ -101,7 +101,7 @@ flowchart TD
 | `executor.run_executor` | 只處理一般遊戲行動；經 `tool_gateway` 呼叫權威 `_execute_tool`，已寫入狀態的結果由 `MechanicResult` 傳給 Narrator。 |
 | `narrator.run_narrator` | 一般文字無工具；檢定後續只提供查詢及必要戰鬥後果工具，開場只提供查詢／展示工具。回傳敘事、私訊及圖片請求；工具名稱在實際執行處再次驗證。 |
 | Provider `run_conversation` | Executor 與 Narrator 仍使用 OpenAI／Anthropic／Gemini 的既有介面；特殊輸入由 Narrator 的一次工具對話產生最終文字，可在該對話內迭代工具。 |
-| `keeper._commit_turn_result` | 在狀態鎖下比對時間線、一次追加正式 log；開場後備同一交易設定 `game_started`，失敗時保持可重試。 |
+| `keeper._commit_turn_result` | 在狀態鎖下比對時間線、一次追加正式 log；開場後備同一交易設定 `game_started`，失敗時保持可重試。Supervisor 的模型對話依正式 log 重建上下文，因此提交時清除舊 Keeper OpenAI response 鏈，避免 KP Assistant 續用缺少新玩家回合的舊鏈。 |
 | `_run_post_turn_maintenance_after_output` | 提交成功後才送公開文字、私訊及圖片，再排程既有記憶／摘要維護；失效時間線不配送工具副作用。 |
 | `assistant.run_assistant` | KP Assistant 經 Supervisor 的 OOC 分流進獨立 agent，仍呼叫 KP 專用 `keeper.run_turn`；OOC 歷史和主持正典規則不併入玩家管線。 |
 
@@ -122,7 +122,7 @@ flowchart TD
 
 ## 資料結構與相容性
 
-預期不新增 `GroupState` 欄位或資料庫 schema。沿用 `log`、`pending_checks`、已結算檢定事件、時間線與 `openai_previous_response_id`；KP Assistant 的 `kp_ooc_log` 保持原樣。若現有事件不足以無歧義表示檢定後續，先提出最小資料變更及舊存檔預設值，不能用對話文字反推權威骰子結果。
+預期不新增 `GroupState` 欄位或資料庫 schema。沿用 `log`、`pending_checks`、已結算檢定事件與時間線；Supervisor 提交後清掉不再代表最新正式歷史的 `openai_previous_response_id`，KP Assistant 下一次依存檔重建自己的對話。KP Assistant 的 `kp_ooc_log` 保持原樣。若現有事件不足以無歧義表示檢定後續，先提出最小資料變更及舊存檔預設值，不能用對話文字反推權威骰子結果。
 
 ## 非目標
 

@@ -224,6 +224,7 @@ async def run_turn(
             ],
             timeline_id=turn_timeline_id,
             start_game=(turn_kind == "opening_fallback"),
+            invalidate_openai_response_chain=True,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []

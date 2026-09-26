@@ -36,7 +36,9 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         ):
             db._ensure_tables()
             state = GroupState(group_id="opening-pipeline", active=True,
-                               timeline_id="timeline-current", scenario_text="書房是故事起點。")
+                               timeline_id="timeline-current", scenario_text="書房是故事起點。",
+                               openai_previous_response_id="old-chain",
+                               openai_previous_response_timeline_id="timeline-current")
             save_state(state)
             with patch.object(narrator, "_PROVIDERS", {"openai": provider}), \
                     patch.object(narrator, "LLM_PROVIDER", "openai"), \
@@ -50,6 +52,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply, "你站在書房門前。")
         self.assertTrue(persisted.game_started)
         self.assertEqual(len(persisted.log), 2)
+        self.assertEqual(persisted.openai_previous_response_id, "")
 
     async def test_check_tail_calls_supervisor_with_authoritative_result(self):
         character = Character(name="調查員", owner_id="player")
