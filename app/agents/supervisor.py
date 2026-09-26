@@ -16,12 +16,14 @@ from app.agents import (
 )
 from app.domain.models import MechanicResult
 from app.models import GroupState
+from app.providers.turn_budget import with_turn_deadline
 from app.services import prompt_config
 
 _logger = logging.getLogger(__name__)
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
 
 
+@with_turn_deadline
 async def run_turn(
     state: GroupState,
     user_id: str,

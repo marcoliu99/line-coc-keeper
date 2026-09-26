@@ -86,7 +86,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     image_requests = message.payload.get("image_requests", [])
     tools: list[dict] = []
     execute_tool: Callable[[str, dict], Awaitable[dict]] = _no_tools
-    provider_options: dict = {}
+    provider_options: dict = {"response_stage": "narrator"} if LLM_PROVIDER == "openai" else {}
     if tool_enabled:
         allowed = (
             keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
@@ -149,6 +149,6 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         elif turn_kind == "opening_fallback":
             reply_text = "（開場生成暫時失敗，遊戲尚未開始；請稍後再輸入 /coc start。）"
         else:
-            reply_text = "（守密人一時語塞，請再說一次剛才的行動）"
+            reply_text = "守密人暫時無法完成敘事。已提交的變更會保留；請查看目前狀態，不要重擲或重做剛才的行動。"
 
     return reply_text, private_messages, image_requests

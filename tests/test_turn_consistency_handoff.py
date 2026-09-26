@@ -349,3 +349,46 @@ def test_supervisor_hands_off_completed_transfer_and_old_pending_together(state)
         reply, _, _ = asyncio.run(supervisor.run_turn(state, 'a', 'Marco', '我把煤油交給 Ken', None, 'player', state.group_id))
     assert '煤油已交給 Ken' in reply and '/coc check' in reply
     assert '尚未完整處理' not in reply
+
+
+def test_truncated_executor_preserves_prior_committed_tool_without_replay(state, monkeypatch):
+    from app.providers import openai_provider
+    def response(status, name, item):
+        return SimpleNamespace(status=status, id=status, usage=None,
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output=[SimpleNamespace(type="function_call", name=name, call_id=status,
+                arguments=json.dumps({"investigator": "Marco", "item": item}))])
+    create = AsyncMock(side_effect=[response("completed", "remove_carried_item", "一瓶煤油"),
+                                   response("incomplete", "add_carried_item", "不應新增")])
+    monkeypatch.setattr(openai_provider, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(openai_provider, "_create_response_async", create)
+    monkeypatch.setattr(executor, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(executor, "_PROVIDERS", {"openai": openai_provider})
+    result = asyncio.run(executor.run_executor(message(state)))
+    stored = group_state.load_state(state.group_id)
+    assert stored.get_active_character("a").carried_items == []
+    assert len(stored.consumed_or_removed_items) == 1
+    assert result.turn_resolution.disposition == "incomplete"
+    assert create.await_count == 2
+
+
+@pytest.mark.parametrize("kind", ["player_action", "resolved_check_followup", "opening_fallback"])
+def test_truncated_narrator_uses_safe_fallback(state, monkeypatch, kind):
+    from app.agents import narrator
+    from app.providers import openai_provider
+    create = AsyncMock(return_value=SimpleNamespace(status="incomplete", incomplete_details=None, output=[]))
+    monkeypatch.setattr(openai_provider, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(openai_provider, "_create_response_async", create)
+    monkeypatch.setattr(narrator, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(narrator, "_PROVIDERS", {"openai": openai_provider})
+    msg = message(state)
+    msg.payload.update(turn_kind=kind, resolved_check_context={"investigator": "Marco", "roll": 42, "outcome": "成功"})
+    reply, _, _ = asyncio.run(narrator.run_narrator(msg))
+    assert msg.payload["narration_failed"]
+    assert create.await_count == 1
+    if kind == "opening_fallback":
+        assert "遊戲尚未開始" in reply
+    else:
+        assert "重做" in reply and "不要" in reply
+        if kind == "resolved_check_followup":
+            assert "42" in reply and "已結算" in reply

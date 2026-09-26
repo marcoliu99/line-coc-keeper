@@ -31,6 +31,8 @@ from app.config import (
     LLM_TIMEOUT_RETRIES,
     OPENAI_MAX_CONCURRENT_REQUESTS,
 )
+from app.providers import turn_budget
+from app.providers.admission import Admission
 
 T = TypeVar("T")
 
@@ -331,6 +333,8 @@ async def async_call_with_retry(
     provider: str,
     operation: str,
     request_id: str | None = None,
+    admission: Admission | None = None,
+    estimated_tokens: int | None = None,
 ) -> T:
     """Async counterpart of :func:`call_with_retry`.
 
@@ -345,11 +349,26 @@ async def async_call_with_retry(
     timeout_attempts = 0
     semaphore = _admission_semaphore_for(provider)
     while True:
-        admission_wait_s = 0.0
-        if semaphore is not None:
-            admission_wait_start = time.monotonic()
-            await semaphore.acquire()
-            admission_wait_s = time.monotonic() - admission_wait_start
+        admission_wait_start = time.monotonic()
+        while True:
+            turn_budget.remaining()
+            if admission is not None:
+                await admission.wait(estimated_tokens)
+            if semaphore is not None:
+                async with asyncio.timeout(turn_budget.remaining()):
+                    await semaphore.acquire()
+            try:
+                delay = admission.delay(estimated_tokens, reserve=True) if admission else 0
+            except BaseException:
+                if semaphore is not None:
+                    semaphore.release()
+                raise
+            if delay <= 0:
+                break
+            if semaphore is not None:
+                semaphore.release()
+            await turn_budget.sleep(delay)
+        admission_wait_s = time.monotonic() - admission_wait_start
         try:
             try:
                 with observability.context(provider_request_id=logical_request_id), observability.span(
@@ -360,10 +379,11 @@ async def async_call_with_retry(
                     attempt=attempt + 1,
                     admission_wait_s=admission_wait_s,
                 ):
-                    result = fn()
-                    if not inspect.isawaitable(result):
-                        raise TypeError("async_call_with_retry callback must return an awaitable")
-                    return await result
+                    async with asyncio.timeout(turn_budget.remaining()):
+                        result = fn()
+                        if not inspect.isawaitable(result):
+                            raise TypeError("async_call_with_retry callback must return an awaitable")
+                        return await result
             finally:
                 # Release before backoff/retry-queueing, not after — a
                 # request waiting out a 429's backoff must not hold an
@@ -374,7 +394,15 @@ async def async_call_with_retry(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if isinstance(exc, turn_budget.TurnDeadlineExceeded):
+                raise
             error_kind = classify_exception(exc)
+            if admission is not None and error_kind == ProviderError.RATE_LIMITED:
+                admission.observe(getattr(getattr(exc, "response", None), "headers", None))
+                server_delay = _extract_retry_after_seconds(exc)
+                admission.defer(server_delay if server_delay is not None else _full_jitter_delay(
+                    LLM_RETRY_BASE_DELAY_SECONDS * (2 ** attempt)))
+            turn_budget.remaining()
             if error_kind == ProviderError.TIMEOUT:
                 if timeout_attempts >= LLM_TIMEOUT_RETRIES:
                     raise
@@ -408,4 +436,4 @@ async def async_call_with_retry(
                 error_kind=error_kind.value,
                 **_extract_safe_error_fields(exc),
             )
-            await asyncio.sleep(delay)
+            await turn_budget.sleep(delay)

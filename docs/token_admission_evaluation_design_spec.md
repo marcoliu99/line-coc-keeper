@@ -1,8 +1,8 @@
 # Token 准入與輸入組成量測：試驗規格
 
-狀態：40回合隔離API試驗已完成；尚未變更 production runtime。
+狀態：40回合隔離API試驗已完成；核准後的 runtime 實作與離線驗收已完成，尚未部署。
 分支：enhancement/token-admission-evaluation，基底 main_v2 95d8ca3。
-測試 runtime 固定 PR #89 修正版 776bf1f；其程式未複製／合併進本分支。
+歷史 API 試驗 runtime 固定 PR #89 修正版 776bf1f；核准實作階段已將該分支合入作為依賴。
 
 ## 問題與目標
 
@@ -215,7 +215,7 @@ usage 表僅加總已取得usage的回應，不含未回傳usage的失敗嘗試�
 - 歷史縮減在本輪降低輸入量；完整回合仍須連同正確性與准入等待評估，不能只看Token。
 - 輸出上限的效果以上表為準，不宣稱自動提升2–3倍吞吐。其他組曾有單次1748 output，其中1663 reasoning，說明上限需留推理餘裕。
 - 正式版先校正估計、結合headers／共享冷卻／總deadline，採小幅可配置歷史預算；保留state與RAG。
-- 正式runtime尚未接入，本輪只交付原型、離線測試、API結果與規格。
+- 上述 API 試驗階段只交付原型、離線測試、API結果與規格；後續核准實作見下節。
 
 ### 重現與資料保護
 
@@ -248,3 +248,59 @@ usage 表僅加總已取得usage的回應，不含未回傳usage的失敗嘗試�
 驗收：歷史完整區段／狀態不变、truncated工具不執行、已提交變更不重播、
 共享429冷卻、reset/remaining、亂序header、截止／取消／slot釋放、正常工具續接、
 三provider既有回歸。先通過離線全套；本次不自動追加付費API試驗。
+
+
+## 實作接口與流程
+
+```text
+Supervisor.run_turn [共用 ContextVar deadline：180 秒]
+  -> Context Builder：讀取完整 state / RAG / pending / Luck
+  -> Executor.run_executor [response_stage=executor]
+     -> OpenAI.run_conversation
+        -> input_budget.select_history：只裁送出的 history 副本
+        -> input_budget.estimate：static / dynamic / tools / input
+           延續請求：前次 usage input+output + 新工具結果；未知鏈明示 unknown
+        -> _create_response_async
+           -> retry.async_call_with_retry
+              -> Admission.wait：共享冷卻 + headers 推估 RPM/TPM
+              -> HTTP semaphore.acquire -> 原子預約再次確認
+                 不足：release -> 等待 -> 再准入
+              -> Responses API [單次 timeout 與共用 deadline 取較短值]
+                 -> SDK response hook -> Admission.observe(headers)
+                 -> 429：Admission.defer -> release slot -> backoff -> 准入
+           -> _ensure_complete
+              不完整：丟出例外，不執行這份回覆工具、不保存 response_id
+        -> 完整 function calls -> Tool Gateway -> 真實 state / DB 提交
+        -> 同一 deadline 內繼續工具結果交接
+  -> Python TurnResolution：對照工具結果與最新 state
+  -> Narrator.run_narrator [response_stage=narrator，同一 provider / deadline]
+     -> 截斷／失敗：安全訊息，保留已提交效果，不要求重做／重骰
+  -> 既有 Guard／機制指示檢查 -> 回覆玩家
+```
+
+| 設定 | 預設 | 意義 |
+|---|---:|---|
+| OPENAI_HISTORY_TOKEN_BUDGET | 4000 | history 軟預算，0 停用 |
+| OPENAI_HISTORY_MIN_TURNS | 2 | 至少保留完整 user 區段 |
+| OPENAI_ADAPTIVE_ADMISSION_ENABLED | true | headers 准入及共享冷卻 |
+| OPENAI_RATE_LIMIT_SCOPE | 空 | 預設模型；可指定共享 pool 名稱 |
+| LLM_TURN_DEADLINE_SECONDS | 180 | Supervisor 內所有 LLM 工作共用；0 停用 |
+| OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS | 0 | 0 省略，不強制截斷 |
+| OPENAI_NARRATOR_MAX_OUTPUT_TOKENS | 0 | 同上，獨立調整 |
+| OPENAI_DEFAULT_MAX_OUTPUT_TOKENS | 0 | 其他 OpenAI 對話呼叫 |
+
+### 限制與驗證結果
+
+- headers 的恢復速率只是本地推估，不保證消除429；未知headers僅沿用並發限制與已知冷卻。
+- output cap 未設定時本地預約只估輸入；不是服務商的精確限額公式。
+- 已知 request estimate 超過觀測單次容量時直接失敗，避免永遠排隊。
+- 僅同process async 呼叫共享；多worker、同步影像及其他應用的流量需另外整合。
+- tiktoken 已加入依賴；encoding不可用時以UTF-8 bytes保守估計，可能過度裁切或延後請求。
+- 較早對話細節可能不再送出；當前權威 state、RAG 及機制提示完整保留。
+- pytest 全套：709 passed、1 skipped、15 subtests passed（隔離 DB/DATA，使用本機 tiktoken 快取）。
+  指令：`python3 -m pytest -o addopts='' -q --tb=short`。
+- 截斷測試驗證未完成 response 中工具不執行、不保存id；先前已提交扣物品不重播，DB效果仍在。
+  Narrator一般／檢定後續／開場三入口均有失敗回覆驗證；正常工具續接仍保留usage預估與stage cap。
+- SDK MockTransport 測試驗證真實 SDK response hook 可更新成功 headers，不呼叫真實 API。
+- mypy：72個 source files 通過；修改檔案 Ruff 及 git diff --check 通過。
+- 本次未追加付費 API 測試。前述40回合數據屬舊隔離原型，不能當作新自適應准入策略的效能證明。

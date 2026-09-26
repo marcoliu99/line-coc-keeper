@@ -115,7 +115,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         "current_turn_state": turn_context.current_state(state)}
 
             provider_options = (
-                {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools)}
+                {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools), "response_stage": "executor"}
                 if LLM_PROVIDER == "openai" else {}
             )
             completion = await provider.run_conversation(
