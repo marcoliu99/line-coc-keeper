@@ -694,13 +694,12 @@ for this scenario design.
 
 ## Follow-up scope and review decisions
 
-The current branch's runtime implementation remains the pending-button change
-and search-count event in `404c417`. Candidate A, B, C, and the Chinese
-scenario template above are **spec-only**. Proposed order: first improve async
-usage and result-level observability, then evaluate the generated Chinese
-template and terminal-check stop independently; investigate roleplay routing
-after labeling actual turns. These are separate correctness gates, not a
-bundled code change.
+The Chinese scenario template's generation, review, version storage, group
+selection, and RAG retrieval path are now implemented on this branch. A live
+KP review and the Corbitt/Lightless
+Beacon latency pilot above remain outstanding; no production speedup is claimed
+from the implementation alone. Candidate A, B, and C remain separate review
+topics.
 
 Review choices before a new implementation: approve the template fields and
 terminology rules; confirm automatic background generation after PDF parse

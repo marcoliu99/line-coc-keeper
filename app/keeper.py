@@ -32,6 +32,7 @@ from app import (
     scenario_index,
     scenario_library,
     scenario_rag,
+    scenario_templates,
     scene_digest,
     spoiler_policy,
 )
@@ -3025,7 +3026,7 @@ def _execute_tool(
             with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K,
                                     embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                                     embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
-                index = scenario_rag.get_index(state.group_id, state.scenario_text)
+                index = scenario_templates.index_for_state(state)
                 results = scenario_rag.search(index, scenario_query, top_k=SCENARIO_RAG_TOP_K)
                 scenario_metrics.update(
                     candidate_count=len(getattr(index, "chunks", ())),

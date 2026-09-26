@@ -12,7 +12,8 @@ from app import (
     scenario_index,
     scenario_intro,
     scenario_library,
-    scenario_rag,
+    scenario_rag,  # noqa: F401 - retained for existing command integration mocks
+    scenario_templates,
     scene_digest,
     scene_map,
     spoiler_policy,
@@ -238,6 +239,44 @@ async def handle_system_command(
     if sub == "scenario":
         action = parts[2].casefold() if len(parts) > 2 else "list"
         state = load_state(conversation_id)
+        if action == "template":
+            if not _is_kp_or_keeper(state, user_id, is_keeper):
+                await reply("只有 KP 可以管理中文劇本模板。")
+                return
+            if len(parts) < 5:
+                await reply("用法：/coc scenario template status|preview|approve|import 劇本ID [版本或檔名]")
+                return
+            operation, scenario_id = parts[3].casefold(), parts[4]
+            try:
+                if operation == "status":
+                    info = scenario_templates.status(scenario_id)
+                    variants = info["variants"]
+                    lines = [f"中文模板工作：{info['job'].get('status', '尚未建立')}"]
+                    if info["job"].get("error"):
+                        lines.append(f"錯誤：{info['job']['error']}")
+                    for variant in variants:
+                        lines.append(f"・{variant['variant_id']}：{variant['review_status']}"
+                                     + ("（來源有效）" if variant["current"] else "（來源已變更）")
+                                     + f"，{variant.get('record_count', 0)} 筆，"
+                                     f"{len(variant.get('issues', []))} 個待核對項目")
+                    notice = scenario_templates.preference_notice(conversation_id, scenario_id)
+                    if notice:
+                        lines.append(notice)
+                    await reply("\n".join(lines))
+                elif operation == "preview" and len(parts) >= 6:
+                    await send_dm(user_id, scenario_templates.preview(scenario_id, parts[5]))
+                    await reply("中文模板預覽已私訊給 KP。")
+                elif operation == "approve" and len(parts) >= 6:
+                    scenario_templates.approve(scenario_id, parts[5])
+                    await reply(f"中文模板 {parts[5]} 已通過校對，可用 /coc scenario use {scenario_id} {parts[5]} 啟用。")
+                elif operation == "import" and len(parts) >= 6:
+                    variant_id = await asyncio.to_thread(scenario_templates.import_markdown, scenario_id, parts[5])
+                    await reply(f"已匯入中文模板 {variant_id}；請先 status、preview 與 approve。")
+                else:
+                    await reply("用法：/coc scenario template status|preview|approve|import 劇本ID [版本或檔名]")
+            except (FileNotFoundError, ValueError, KeyError) as exc:
+                await reply(f"中文模板無法處理：{exc}")
+            return
         if action == "import":
             await _handle_local_import(conversation_id, user_id, reply, parts)
             return
@@ -325,7 +364,16 @@ async def handle_system_command(
             except (FileNotFoundError, ValueError):
                 await reply("找不到可使用的劇本 ID。請先用 /coc scenario list 查看。")
                 return
+            preference_notice = scenario_templates.preference_notice(conversation_id, parts[3])
+            variant_id = parts[4] if len(parts) > 4 else scenario_templates.preferred_variant(conversation_id, parts[3])
+            try:
+                if variant_id != "original":
+                    scenario_templates.require_approved(parts[3], variant_id)
+            except (FileNotFoundError, ValueError) as exc:
+                await reply(f"中文模板無法啟用：{exc}")
+                return
             state.scenario_library_id = parts[3]
+            state.scenario_variant_id = variant_id
             state.scenario_title = context["manifest"]["title"]
             state.scenario_text = context["text"]
             state.active_chapter_id = context["active_chapter_id"]
@@ -366,8 +414,11 @@ async def handle_system_command(
                 lambda page, image: save_page_image(conversation_id, page, image),
             )
             save_state(state)
-            scenario_rag.schedule_index_prewarm(conversation_id, state.scenario_text)
-            await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。")
+            if len(parts) > 4:
+                scenario_templates.select_variant(conversation_id, parts[3], variant_id)
+            scenario_templates.schedule_index_prewarm(state)
+            await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。"
+                        + (f"\n{preference_notice}" if preference_notice and len(parts) == 4 else ""))
             return
         if action == "clean":
             if not _is_kp_or_keeper(state, user_id, is_keeper):
@@ -385,9 +436,10 @@ async def handle_system_command(
             except FileNotFoundError:
                 await reply("找不到該劇本 ID。")
                 return
+            scenario_templates.clean_scenario(parts[3])
             await reply("已清除劇本庫項目。")
             return
-        await reply("用法：/coc scenario list | use 劇本ID | clean 劇本ID | reparse | cancel | import 檔名.pdf | merge ID...")
+        await reply("用法：/coc scenario list | use 劇本ID [模板版本] | template status|preview|approve|import | clean 劇本ID | reparse | cancel | import 檔名.pdf | merge ID...")
         return
     if sub == "import":
         await _handle_local_import(conversation_id, user_id, reply, parts)
