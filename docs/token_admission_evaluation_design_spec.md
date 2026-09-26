@@ -72,3 +72,48 @@ API完成率、裁決 incomplete 與機制契約，並保留失敗樣本。
 - https://developers.openai.com/api/docs/guides/reasoning
 
 輸出上限包含 reasoning；需處理 incomplete，不能以截斷輸出掩飾錯誤。
+
+## 正式實作候選接口（待本輪結果決定）
+
+```text
+provider.run_conversation
+  -> InputEstimate(parts, total, tokenizer, inherited_context_known)
+  -> AdmissionController.reserve(scope, estimate, output_budget, deadline)
+       + RPM 窗口 + TPM 窗口 + scope 共用冷卻
+       + 等待前檢查整個回合 deadline；取消則退出
+  -> 現有 HTTP 並發 semaphore
+  -> provider API attempt
+  -> observe(headers, usage, status)
+       + 429 更新共同 cooldown；Retry-After 不提前截短
+       + 每次重試重新准入，已消耗額度不因 HTTP 完成立刻釋放
+  -> 原有 Executor / Narrator 裁決與工具 state 更新
+```
+
+scope 至少對應 provider／project／實際 shared-model limit pool；不是每個群組各配180000。
+多個服務實例共享額度時需集中 ledger；本輪原型只適用一個 sequential runner，沒有跨程序互斥保證。
+正式版應在占用 HTTP semaphore 前等待預算；本輪試验透過 retry callback 包裝，等待發生於既有
+semaphore 內，但只有單一 in-flight request，因此不測也不推論並發公平性／slot利用率。
+
+可能設定：enabled、tokens_per_minute、requests_per_minute、headroom、turn_deadline_seconds、
+各任務 output_limit；讀取實際 headers 後保守校正。不得把200000當所有帳戶的固定上限。
+unknown previous_response_id 的繼承上下文不可估成零；正式版需恢復已保存的用量／上下文資訊
+或保守預算，試驗遇到未知鏈則直接失敗並記錄。
+
+歷史裁切優先是輸入組裝策略，而非刪除資料庫記錄。需保持最新 authoritative state、
+pending action_context、Luck、敵方機制、RAG，以及可供追查的完整儲存歷史。
+max_output_tokens 命中上限須列入失敗／未完成，不能算作輸出更短而已；不自動重播工具。
+
+## 重跑說明
+
+測試工具位於 `scripts/experiments/`，不被 app import。需安裝 tiktoken；資料集不提交。
+設定 `COC_TRIAL_ROOT`（含 fixtures.json、snapshot.db、groups/、scenarios/），
+`COC_TRIAL_SOURCE`（固定版本的 PR89 runtime checkout），`COC_TRIAL_ENV`（main_v2 .env）。
+使用新空結果目錄避免混合舊結果；ledger 不應手動清空以繞過已消耗額度。
+
+```bash
+python3 -m pytest -o addopts='' -q tests/test_token_admission_experiment.py
+python3 scripts/experiments/run_token_admission.py batch --limit 40
+python3 scripts/experiments/analyze_token_admission.py
+```
+
+`batch` 會消耗真實 API 額度；一次最多四組各10回合，每回合可有多次 API 請求。
