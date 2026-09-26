@@ -1,6 +1,6 @@
 # Log 驅動的回合一致性與重試診斷修正
 
-狀態：待確認；尚未修改 runtime。分支：`bug/log-backed-turn-consistency`。
+狀態：已獲准並完成 runtime 與回歸測試；真實模型複測尚未執行。分支：`bug/log-backed-turn-consistency`。
 基底：`origin/main_v2`，`95d8ca35e21379c9f976b295e60d3926f10d6c0f`。
 
 完整程式追蹤、接口與流程圖：[source review](log_backed_turn_consistency_source_review.md)。
@@ -89,7 +89,7 @@ header，不能區分帳號其他程序流量、RPM、TPM、供應端節流。
 - 使用既有 provider.run_conversation 最後文字回應，要求小型 JSON 裁決。
 - 新增內部 typed TurnResolution，放入 MechanicResult，非 GroupState 持久欄位。
 - 欄位：disposition（no_mechanics／await_check／await_luck／deferred／
-  resolved_without_check／cancelled／blocked／incomplete）、actor character_id、
+  resolved／resolved_without_check／cancelled／blocked／incomplete）、actor character_id、
   waiting_for character_id（可空）、相關 check_id、簡短 reason、evidence_refs。
 - evidence_refs 只能指本回合真實工具結果、已載入劇本片段或可識別權威 state；
   自由文字理由不是新正典、不能建立檢定、扣血、建立敵人或修改背包。
@@ -218,4 +218,39 @@ Resolved-check followup / opening fallback / KP Assistant retain their boundarie
 
 ## 9. Detailed source review update
 
-51 個既有相關測試通過，但零 API 的新探測確認權威 pending 輸入缺失、Executor 裁決交接遺失、舊背包快照混入與無效檢定指示漏攔。修正優先序為權威 context、歷史 projection、明確裁決交接與最終 next-action 一致性；詳見 source review。尚未修改 runtime。
+51 個既有相關測試通過，但零 API 的新探測確認權威 pending 輸入缺失、Executor 裁決交接遺失、舊背包快照混入與無效檢定指示漏攔。修正優先序為權威 context、歷史 projection、明確裁決交接與最終 next-action 一致性；詳見 source review；以上為實作前的診斷紀錄。
+
+
+## 8. 實作結果（2026-09-26）
+
+```text
+最新 state + 同 timeline 歷史事件（排除舊背包／戰鬥快照）
+  -> Executor：角色、pending、Luck、背包、先攻、敵方完整機制
+  -> 工具逐次提交 state；回傳 tool:N + 最新狀態投影
+  -> 既有 completion 回傳 TurnResolution（不新增 LLM 請求）
+  -> Python 驗證角色／timeline／check ID／成功工具引用／實際狀態
+  -> Supervisor 按裁決指定角色整理檢定與 Luck，保留其他角色資料
+  -> Narrator 依工具事實與已驗證裁決敘事
+  -> Python 檢查下一步指示；不完整／暫緩／取消使用確定性回覆
+  -> 玩家
+```
+
+- `turn_context.py` 集中權威狀態與歷史投影；空背包也明確提供。
+- `turn_resolution.py` 驗證 `no_mechanics / await_check / await_luck / deferred /
+  resolved / resolved_without_check / cancelled / blocked / incomplete`。
+  `resolved` 專門處理工具已擲骰結算，必須引用當前角色、當前 timeline 的成功結果。
+- 驗證只讀；JSON 格式錯誤或證據不足會標示 incomplete，不重做已提交工具、重骰或回滾。
+- 取消必須有真實 clear_pending_check；暫緩不得掩飾已花費的彈藥或資源。
+- 其他角色的 Luck 不覆蓋裁決指定的待檢定；所有角色的狀態仍保留在投影中。
+- retry 診斷補充安全 quota headers、delay_source、Retry-After；不改既有重試預算。
+  `OPENAI_OMIT_TEMPERATURE` 預設 false；僅明確 unsupported parameter 400 才協商移除參數。
+  未修改實際 .env 或生產 DATA。
+- PR #83 已另提交相容性規格 `151a1a6`（基底對齊 merge `0f09b10`）。
+  建立檢定後提早結束仍未啟用；將來必須保留可驗證裁決交接。
+
+驗證使用隔離 SQLite 與真實工具，provider/Narrator 使用 mock；涵蓋取消、多人等待、
+歷史消耗後重新取得、工具部分完成、錯誤裁決與無效下一步指示。全套測試結果見 source review。
+
+限制：來源引用可證明模型確實取得依據，不能證明所有劇本語意推論都正確；
+`blocked` 的自然語言理由也不是完整規則驗證。下一步文字檢查是有限規則，非語意審稿模型。
+尚未重跑付費真實 API，不能據此宣稱模型正確率或耗時已提升。

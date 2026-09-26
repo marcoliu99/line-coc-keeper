@@ -1,7 +1,7 @@
 # 回合一致性：source review 與修正流程
 
 日期：2026-09-26。程式基底：main_v2 `95d8ca3`。
-此文件是程式審查／設計，尚未實作修正。搭配
+第 1–8 節保留實作前程式審查／設計；修正已實作，結果見第 9 節。搭配
 [修正規格](log_backed_turn_consistency_design_spec.md) 閱讀。
 
 ## 1. 結論
@@ -269,3 +269,23 @@ Do not increase retry budget or add extra LLM review to paper over game-state er
 - No-tool Executor output is distinguishable from a completed action, refusal or missing work.
 - Existing wrapup suppression, sequential mutation and no-reroll behavior remain tested.
 - API behavior improvements require a later bounded real-model check; unit tests alone cannot prove them.
+
+
+## 9. Implementation verification (2026-09-26)
+
+Implemented the approved flow; see design spec section 8 for the current diagram and interfaces.
+The old probe results in section 6 describe the baseline, not the corrected runtime.
+
+- Full isolated suite: **668 passed, 1 skipped, 15 subtests passed**.
+- `python3 -m mypy app`: 69 source files passed.
+- Ruff on modified runtime/test files and `git diff --check`: passed.
+- Full-repository Ruff still has baseline `SIM114` at `app/pregen_extractor.py:759`;
+  unrelated baseline code was not changed.
+- Regression tests exercise actual SQLite persistence and Keeper tools; mocked provider completions
+  verify exactly one existing Executor conversation, with wrapup disabled.
+- Multi-player regressions reject using another actor's resolved roll as completion evidence and
+  preserve the referenced pending check when another player has a Luck decision.
+- No new real API benchmark and no production environment/data changes.
+
+Provider JSON compliance and scenario interpretation remain live-model verification limits.
+The validator verifies state and evidence provenance, not every natural-language rule inference.
