@@ -183,16 +183,71 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
             f"技能／選項：{pending.get('skill') or pending.get('options') or '見工具結果'}",
             "這是權威狀態。回覆必須明確告知檢定／選擇已建立並等待玩家處理；禁止說尚未建立、沒有待處理檢定，或要求守密人重新建立。",
         ])
-    elif not status.get("pending"):
+    pending_luck = status.get("pending_luck")
+    if pending_luck:
+        options = pending_luck.get("options") or []
+        options_text = "、".join(
+            f"/coc luck {option.get('tier')}（花費 {option.get('cost')} 點）"
+            for option in options if isinstance(option, dict)
+        )
+        investigator = pending_luck.get("investigator", "調查員")
+        skill = pending_luck.get("skill_name", "檢定")
+        lines.extend([
+            "【待處理 Luck 決定：骰已擲出，最終結果尚未定案】",
+            f"調查員：{investigator}；檢定：{skill}；原始骰值：{pending_luck.get('roll', '未知')}；原始等級：{pending_luck.get('original_tier', '未知')}。",
+            f"可用選項：{options_text or '依待處理 Luck 按鈕選擇'}；輸入 /coc luck skip 可保留原骰結果。",
+            "必須請玩家完成這筆既有 Luck 決定；禁止要求重新擲骰、建立另一筆檢定，或把骰值說成已定案的成敗。暫停同一行動的後續結果敘述。",
+        ])
+    resolved = status.get("resolved")
+    if resolved:
+        outcome = "成功" if resolved.get("success") else "失敗"
+        lines.extend([
+            "【已結算檢定：結果權威且不得重擲】",
+            f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {resolved.get('difficulty', 'regular')}，等級 {resolved.get('tier', '未知')}，結果 {outcome}。",
+            "這筆檢定已結算。不得改成尚未結算、因先攻延後同一擲骰結果、要求再擲一次，或從檢定結果自行推導未提供的傷害、破壞或戰鬥。",
+        ])
+    if not status.get("pending") and not pending_luck and not resolved:
         lines.append(
-            "【待處理檢定狀態：本回合沒有建立】不得指示玩家擲骰、按檢定按鈕或輸入 /coc check；"
+            "【檢定狀態：沒有待處理／新建立檢定，也沒有本回合已結算結果】不得指示玩家擲骰、按檢定按鈕或輸入 /coc check；"
             "可以描述尚待處理的行動，但不可暗示已有檢定等待玩家。"
         )
     return "\n".join(lines)
 
 
+def build_resolved_check_outcome_block(result: dict) -> str:
+    """Build a bounded, structured authority block for post-roll narration."""
+    outcome = str(result.get("outcome", "結果未知"))
+    skill = result.get("skill", "檢定")
+    return (
+        "【已結算檢定：權威機制結果】\n"
+        f"調查員：{result.get('investigator', '未知')}；檢定：{skill}；"
+        f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
+        f"難度：{result.get('difficulty', 'regular')}；最終結果：{outcome}。\n"
+        f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
+        "這次檢定已由系統擲骰並定案。只敘述這個結果允許的後果；不得重擲或改判、"
+        "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
+        "本回合只開放唯讀查詢工具，不得建立新檢定或改動遊戲狀態。"
+    )
+
+
+def enforce_resolved_check_consistency(text: str, result: dict) -> str:
+    """Fail closed when post-roll narration says the authoritative roll is unresolved."""
+    contradictions = (
+        "行動尚未結算", "結果尚未結算", "檢定尚未結算", "還沒輪到", "等輪到",
+        "請再擲", "重新擲", "重新建立檢定",
+    )
+    if not any(phrase in text for phrase in contradictions):
+        return text
+    outcome = str(result.get("outcome", "結果未知"))
+    return (
+        f"{result.get('investigator', '調查員')} 的 {result.get('skill', '檢定')} 已結算："
+        f"擲出 {result.get('roll', '未知')}，難度 {result.get('difficulty', 'regular')}，"
+        f"結果為「{outcome}」。這次結果不得重擲或改判；未由機制結果確認的額外後果尚未發生。"
+    )
+
+
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str:
-    """Correct explicit roll instructions that contradict this turn's tools."""
+    """Enforce check, Luck, and resolved-result state after model narration."""
     status = result.check_status
     pending = status.get("pending")
     if pending:
@@ -202,7 +257,35 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
             skill = pending.get("skill")
             detail = f"「{skill}」" if skill else "這次"
             return f"{investigator} 的{detail}檢定已建立並等待處理。請使用 /coc check 擲骰或選擇。"
+        has_check_instruction = "/coc check" in text or "檢定按鈕" in text
+        if not has_check_instruction:
+            investigator = pending.get("investigator", "調查員")
+            skill = pending.get("skill")
+            detail = f"{skill} 檢定" if skill else "檢定／選擇"
+            return f"{text.rstrip()}\n\n{investigator} 的{detail}已建立，請按檢定按鈕或輸入 /coc check 完成。"
         return text
+
+    pending_luck = status.get("pending_luck")
+    if pending_luck:
+        if any(phrase in text for phrase in (
+            "重新擲", "再擲一次", "重新建立檢定", "結果已定案", "檢定已成功", "檢定失敗",
+            "/coc check", "尚未建立", "沒有建立", "沒有待處理",
+        )):
+            return _pending_luck_fallback(pending_luck)
+        if "/coc luck" not in text and "Luck 按鈕" not in text and "幸運按鈕" not in text:
+            return f"{text.rstrip()}\n\n{_pending_luck_instruction(pending_luck)}"
+        return text
+
+    resolved = status.get("resolved")
+    if resolved and any(phrase in text for phrase in ("行動尚未結算", "結果尚未結算", "還沒輪到", "等輪到", "請再擲", "重新擲")):
+        investigator = resolved.get("investigator", "調查員")
+        skill = resolved.get("skill", "檢定")
+        outcome = "成功" if resolved.get("success") else "失敗"
+        return (
+            f"{investigator} 的 {skill} 檢定已結算：擲出 {resolved.get('roll', '未知')}，"
+            f"難度 {resolved.get('difficulty', 'regular')}，結果為{outcome}。"
+            "此結果不會重擲或改判；尚未由機制結果確認的額外後果仍未發生。"
+        )
 
     lower_text = text.lower()
     check_command_index = lower_text.find("/coc check")
@@ -230,6 +313,24 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
     if asks_for_check:
         return "這回合沒有建立待處理檢定，目前不需要擲骰或使用 /coc check。請描述你接下來採取的行動。"
     return text
+
+
+def _pending_luck_instruction(pending_luck: dict) -> str:
+    options = pending_luck.get("options") or []
+    choices = "、".join(
+        f"/coc luck {option.get('tier')}（{option.get('cost')} 點）"
+        for option in options if isinstance(option, dict)
+    )
+    investigator = pending_luck.get("investigator", "調查員")
+    skill = pending_luck.get("skill_name", "檢定")
+    return (
+        f"{investigator} 的 {skill} 已擲出 {pending_luck.get('roll', '未知')}，目前仍等待 Luck 決定；"
+        f"請使用 Luck 按鈕或輸入 /coc luck skip 保留原結果{f'，或 {choices}' if choices else ''}。"
+    )
+
+
+def _pending_luck_fallback(pending_luck: dict) -> str:
+    return _pending_luck_instruction(pending_luck) + " 最終成敗尚未定案，請先處理這筆決定。"
 
 
 PURE_ROLEPLAY_BLOCK = "【純角色扮演（無機制判定）】請以 KP 的身分自然地回應玩家的行動或對話。"

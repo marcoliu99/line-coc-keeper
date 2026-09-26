@@ -61,6 +61,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
+from app.services import prompt_config
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
@@ -811,6 +812,14 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "search_memory",
     "search_scenario",
     "report_summary",
+})
+
+# A resolved player roll can still require combat effects. Its dice and
+# pending-check state are final, but damage and turn progression are not.
+RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES = READ_ONLY_TOOL_NAMES | frozenset({
+    "apply_combat_damage",
+    "apply_final_combat_damage",
+    "advance_combat_turn",
 })
 
 # Common {name, description, input_schema} shape works unmodified for both Claude
@@ -3623,6 +3632,7 @@ async def run_turn(
     message_text: str,
     resolved_location: dict | None = None,
     speaker_role: str = "player",
+    resolved_check_context: dict[str, Any] | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """Observed boundary for every direct Keeper turn entry point.
 
@@ -3649,7 +3659,8 @@ async def run_turn(
         ),
     ):
         return await _run_turn_impl(
-            state, user_id, speaker_name, message_text, resolved_location, speaker_role
+            state, user_id, speaker_name, message_text, resolved_location, speaker_role,
+            resolved_check_context,
         )
 
 
@@ -3680,6 +3691,7 @@ async def _run_turn_impl(
     message_text: str,
     resolved_location: dict | None = None,
     speaker_role: str = "player",
+    resolved_check_context: dict[str, Any] | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """Returns (public_reply_text, private_messages, image_requests):
     - private_messages: (owner_id, message) pairs queued via send_private_info.
@@ -3707,6 +3719,8 @@ async def _run_turn_impl(
     turn_timeline_id = _ensure_turn_timeline(state)
     static_prompt = _build_static_prompt(state)
     dynamic_prompt = _build_dynamic_prompt(state, user_id, resolved_location, speaker_role)
+    if resolved_check_context is not None:
+        dynamic_prompt += "\n\n" + prompt_config.build_resolved_check_outcome_block(resolved_check_context)
     kp_manual_canon_trigger, effective_message_text = _parse_kp_manual_canon_trigger(speaker_role, message_text)
     turn_message = _format_turn_message(speaker_name, effective_message_text, speaker_role)
 
@@ -3728,6 +3742,10 @@ async def _run_turn_impl(
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     tools = _tools_for_speaker_role(speaker_role)
+    if resolved_check_context is not None:
+        # The roll is committed, so no tool may create another check. Combat
+        # damage and turn progression may still be consequences of that roll.
+        tools = [tool for tool in tools if tool.get("name") in RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES]
     combat_status_gate = _CombatStatusToolGate(state)
     kp_turn_creates_canon = kp_manual_canon_trigger
     kp_canonical_tool_events: list[dict] = []
@@ -3878,6 +3896,8 @@ async def _run_turn_impl(
     # problem in KP-only OOC text as in canonical player-facing narrative.
     provider_text = final_text
     final_text = await guard.enforce_narrative_safety(AgentMessage(payload={}), final_text)
+    if resolved_check_context is not None:
+        final_text = prompt_config.enforce_resolved_check_consistency(final_text, resolved_check_context)
 
     if not is_ephemeral or kp_turn_creates_canon:
         # §6 output guard: this text is about to enter the canonical/public

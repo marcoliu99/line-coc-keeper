@@ -1280,8 +1280,24 @@ async def _finalize_check_result(
                 for field_name in resolved_event["state_before"]:
                     if field_name not in tracked_fields:
                         resolved_event["state_before"][field_name] = keeper_start[field_name]
+            keeper_kwargs = {}
+            if resolved_event is not None:
+                keeper_kwargs["resolved_check_context"] = {
+                    key: resolved_event[key]
+                    for key in (
+                        "investigator", "skill", "skill_value", "roll", "difficulty",
+                        "outcome", "action_context", "check_id", "timeline_id",
+                    )
+                    if key in resolved_event
+                }
             keeper_reply, private_messages, image_requests = await keeper.run_turn(
-                fresh_state, user_id, fresh_char.name, keeper_context_message, resolved_location, "player"
+                fresh_state,
+                user_id,
+                fresh_char.name,
+                keeper_context_message,
+                resolved_location,
+                "player",
+                **keeper_kwargs,
             )
             if resolved_event is not None:
                 await asyncio.to_thread(
@@ -2094,13 +2110,17 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
             raise ValueError("你已經認領過這位預製角色，不能重新骰定。")
         raise ValueError("這位角色已經被其他玩家選走了。")
 
-    char = pregen_extractor.pregen_to_character(pregen, user_id, era=state.era, luck=0)
+    sheet_luck = pregen_extractor.pregen_luck_value(pregen.get("luck"))
+    char = pregen_extractor.pregen_to_character(
+        pregen, user_id, era=state.era, luck=sheet_luck if sheet_luck is not None else 0,
+    )
     if custom_name:
         char.name = custom_name
     state.characters[user_id] = char
     state.set_active_character(user_id, char.character_id)
     pregen["claimed_by"] = user_id
-    state.pending_pregen_luck[user_id] = char.character_id
+    if sheet_luck is None:
+        state.pending_pregen_luck[user_id] = char.character_id
     return char
 
 
@@ -2153,10 +2173,11 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
     attrs = ["str_", "con", "siz", "dex", "app", "int_", "pow_", "edu"]
     labels = {"str_": "STR", "con": "CON", "siz": "SIZ", "dex": "DEX", "app": "APP", "int_": "INT", "pow_": "POW", "edu": "EDU"}
     attr_line = " ".join(f"{labels[a]} {pregen[a]}" for a in attrs if isinstance(pregen.get(a), (int, float)))
-    if isinstance(pregen.get("luck"), (int, float)):
-        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {pregen['luck']}，玩家取用時重新骰定）"
-    elif attr_line:
-        attr_line += "（玩家取用時骰定 LUCK）"
+    sheet_luck = pregen_extractor.pregen_luck_value(pregen.get("luck"))
+    if sheet_luck is not None:
+        attr_line += f"{' ' if attr_line else ''}（卡面 LUCK {sheet_luck}，選用時沿用）"
+    else:
+        attr_line += f"{' ' if attr_line else ''}（LUCK 空白，選用後由玩家擲骰）"
     if attr_line:
         lines.append(attr_line)
     vitals = []
