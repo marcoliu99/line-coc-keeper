@@ -40,6 +40,42 @@ LLM 回傳的 LUCK 是否真的出現在**該角色卡**的原文。因此不能
 或劇本敘述中的 LUCK 數字來替它補值。這個保守處理可能使 OCR
 模糊的卡片改走玩家擲骰流程，KP 可透過手動角色卡補正數值。
 
+## 從 PDF 解析到開局的目標流程
+
+下圖描述本規格實作完成後的流程；其中「核對 PDF LUCK 原文」與
+「有值直接沿用」是本次要新增的行為。`role_` 手動卡可以在 PDF 前後
+匯入，最後都經同一個角色池融合與選角判斷。
+
+```mermaid
+flowchart TD
+    A[上傳劇本 PDF] --> B[抽取 PDF 文字與頁碼]
+    B --> C[LLM 抽取預製角色卡]
+    C --> D{該角色的 LUCK 有回傳數值?}
+    D -->|否| F[PDF 角色卡的 LUCK 保持空白]
+    D -->|是| E{能在該角色卡原文核對標籤與數值?}
+    E -->|是| G[保留 PDF 卡面 LUCK]
+    E -->|否或有歧義| F
+    F --> H[保存 PDF 預製角色資料]
+    G --> H
+    M["可選：匯入 role_ 手動角色卡；空白 LUCK 保持空白"] --> I[依現有規則擇優融合]
+    H --> I
+    I --> J[保存最後的 state.pregens 角色池]
+    J --> K["/coc pregens 預覽最後卡面值"]
+    K --> L["玩家 /coc usepregen 認領"]
+    L --> N{融合後 LUCK 有有效數值?}
+    N -->|是，包含 0| O["Character.luck 沿用卡面值；不建立 pending"]
+    O --> S["允許 /coc start"]
+    N -->|否，空白或缺欄| P["Character.luck 暫設 0；建立 pending_pregen_luck"]
+    P --> Q["僅該玩家執行 /coc luck roll"]
+    Q --> R["擲 3d6 × 5；寫入 Character；清除 pending"]
+    R --> S
+```
+
+PDF 解析與融合本身都不擲 LUCK。若 LLM 回傳的 PDF LUCK 無法核對，
+只移除該來源的可疑數值；手動卡若有明確數值，融合後仍可沿用。
+玩家擲出的數值不回寫 `state.pregens`，再次選用或預覽也不會把它
+誤當成共享卡面值。
+
 現有擇優融合照常運作：手動卡有 LUCK 時用手動值；手動卡空白而
 PDF 卡有值時由 PDF 補入；兩者都空白時融合結果仍空白。**LUCK
 判斷必須在融合完成後、玩家認領當下，對 `state.pregens[index]`
