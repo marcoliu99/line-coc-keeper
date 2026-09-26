@@ -1,0 +1,161 @@
+{
+  "provenance": "Preserved from /private/tmp/coc_chinese_scenario_small_trial_results.json; historical 2026-09-26 pilot, not rerun for this review.",
+  "records": [
+    {
+      "trial": 1,
+      "condition": "english_original",
+      "rag_s": 0.03,
+      "executor_s": 8.38,
+      "total_s": 8.41,
+      "rag_pages": [
+        7,
+        17,
+        7,
+        7,
+        17
+      ],
+      "rag_context_chars": 1808,
+      "markers": {
+        "stairs": true,
+        "push": false,
+        "fall": false,
+        "damage_1d6": false
+      },
+      "api_calls": 3,
+      "searches": 1,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 2,
+      "condition": "chinese_page10",
+      "rag_s": 0.03,
+      "executor_s": 4.44,
+      "total_s": 4.47,
+      "rag_pages": [
+        10,
+        7,
+        17,
+        7,
+        7
+      ],
+      "rag_context_chars": 1899,
+      "markers": {
+        "stairs": true,
+        "push": true,
+        "fall": true,
+        "damage_1d6": true
+      },
+      "api_calls": 2,
+      "searches": 0,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 3,
+      "condition": "chinese_page10",
+      "rag_s": 0.03,
+      "executor_s": 4.19,
+      "total_s": 4.22,
+      "rag_pages": [
+        10,
+        7,
+        17,
+        7,
+        7
+      ],
+      "rag_context_chars": 1899,
+      "markers": {
+        "stairs": true,
+        "push": true,
+        "fall": true,
+        "damage_1d6": true
+      },
+      "api_calls": 2,
+      "searches": 0,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 4,
+      "condition": "english_original",
+      "rag_s": 0.02,
+      "executor_s": 7.24,
+      "total_s": 7.26,
+      "rag_pages": [
+        7,
+        17,
+        7,
+        7,
+        17
+      ],
+      "rag_context_chars": 1808,
+      "markers": {
+        "stairs": true,
+        "push": false,
+        "fall": false,
+        "damage_1d6": false
+      },
+      "api_calls": 3,
+      "searches": 1,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 5,
+      "condition": "english_original",
+      "rag_s": 0.03,
+      "executor_s": 6.36,
+      "total_s": 6.39,
+      "rag_pages": [
+        7,
+        17,
+        7,
+        7,
+        17
+      ],
+      "rag_context_chars": 1808,
+      "markers": {
+        "stairs": true,
+        "push": false,
+        "fall": false,
+        "damage_1d6": false
+      },
+      "api_calls": 3,
+      "searches": 1,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 6,
+      "condition": "chinese_page10",
+      "rag_s": 0.03,
+      "executor_s": 2.41,
+      "total_s": 2.44,
+      "rag_pages": [
+        10,
+        7,
+        17,
+        7,
+        7
+      ],
+      "rag_context_chars": 1899,
+      "markers": {
+        "stairs": true,
+        "push": true,
+        "fall": true,
+        "damage_1d6": true
+      },
+      "api_calls": 2,
+      "searches": 0,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    }
+  ]
+}

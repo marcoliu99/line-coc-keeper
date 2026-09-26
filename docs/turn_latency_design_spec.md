@@ -1,9 +1,12 @@
 # Turn latency: pending buttons and scenario search
 
-**Status (2026-09-26):** The pending-button and search-count scope below was
-implemented with tests and pushed in `404c417`. The Chinese scenario-template
-and model-round-trip designs at the end of this document are proposals for a
-separate review. They have not been implemented.
+**Status (updated 2026-09-27):** Button-claim latency changes were implemented
+in `404c417` and are integrated. The historical measurements below remain the
+motivation for PR #83. Chinese scenario-template generation/review/retrieval is now
+implemented on that PR; its current contract, source review and evaluation plan live
+in [scenario_templates_design_spec.md](scenario_templates_design_spec.md). The older
+proposal below is historical and is superseded where it conflicts with that contract.
+Early-stop and broader roleplay-routing candidates remain proposals.
 
 ## Problem and goal
 
