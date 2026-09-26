@@ -12,6 +12,9 @@ def contracts(r):
     checks = dict(r["assertions"])
     disposition = r.get("resolution", {}).get("disposition")
     checks["validated_handoff"] = disposition not in (None, "incomplete")
+    checks["no_truncated_response"] = not any(
+        x.get("response_status") == "incomplete" for x in r["requests"]
+    )
     if r["kind"] in ("attack", "shoot"):
         checks.pop("pending_actor_check", None)
         checks["attack_wait_or_resolution"] = disposition in (
@@ -62,9 +65,15 @@ for arm in ["baseline", "admission", "history", "output"]:
         "mean_turn_s": statistics.mean(timings),
         "median_turn_s": statistics.median(timings),
         "max_turn_s": max(timings),
+        "transport_completed": sum(
+            r["error"] is None
+            and not any(e["event"] == "llm.failed" for e in r["events"])
+            for r in rs
+        ),
         "api_completed": sum(
             r["error"] is None
             and not any(e["event"] == "llm.failed" for e in r["events"])
+            and not any(x.get("response_status") == "incomplete" for x in r["requests"])
             for r in rs
         ),
         "validated_handoff": sum(
