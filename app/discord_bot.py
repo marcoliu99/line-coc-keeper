@@ -34,6 +34,7 @@ from app import (
     providers,
     scenario_library,
     scenario_rag,
+    scenario_templates,
 )
 from app.check_identity import (
     compact_identity_token,
@@ -1484,6 +1485,7 @@ async def on_ready() -> None:
             _logger.exception("failed to prewarm %s async provider client", config.LLM_PROVIDER)
     if _backup_task is None or _backup_task.done():
         _backup_task = asyncio.create_task(_backup_loop())
+    scenario_templates.resume_pending_jobs()
     print(f"Discord bot 已上線：{client.user}")
 
 

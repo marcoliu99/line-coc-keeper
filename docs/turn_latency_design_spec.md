@@ -1,5 +1,10 @@
 # Turn latency: pending buttons and scenario search
 
+**Status (2026-09-26):** The pending-button and search-count scope below was
+implemented with tests and pushed in `404c417`. The Chinese scenario-template
+and model-round-trip designs at the end of this document are proposals for a
+separate review. They have not been implemented.
+
 ## Problem and goal
 
 Three Discord runtime logs from 2026-09-25 show two avoidable sources of
@@ -92,7 +97,7 @@ single-scene signal worth testing separately; it is not part of this button
 latency implementation. Translation accuracy, term consistency, index build
 cost, and performance across other scenes remain open.
 
-## Scope
+## Implemented scope
 
 1. Claim new pending check/Luck button intents before the current request
    releases its already-held conversation lock, then send the Discord message
@@ -106,7 +111,7 @@ cost, and performance across other scenes remain open.
    or scenario text. This makes later search experiments measurable without
    changing the search policy in this change.
 
-## Non-goals
+## Non-goals for the implemented scope
 
 - No concurrent Keeper turns in one conversation and no removal of the outer
   conversation lock. Turn order, tool dependencies, and narration history
@@ -229,6 +234,10 @@ limit.
    sample sizes and queue load. Use the search count to size a separate
    outcome-aware search experiment, not to claim a speedup from this change.
 
+The implementation in `404c417` passed `python3 -m pytest -q` and Ruff on the
+changed Python files on 2026-09-26. Live button-delivery timing after rollout
+is still to be measured.
+
 ## Review decisions and tradeoffs
 
 - **Search decision:** retain the current Executor search policy. The
@@ -247,3 +256,454 @@ limit.
   durable outbox/lease would solve it but adds a schema and delivery worker;
   this latency change keeps the current failure rollback and does not add a
   persistent queue.
+
+## Follow-up evidence from the same logs (proposal only)
+
+The following counts use completed turn IDs and per-request structured events,
+not pyinstrument's process-wide idle time. They describe different traffic in
+the `medium` and `high` runs, so differences between runs are not causal A/B
+estimates. The `max` run has only four completed turn IDs and is too small to
+guide a new optimization.
+
+| Measure | `medium` log | `high` log | Interpretation |
+| --- | ---: | ---: | --- |
+| Completed turn IDs | 86 | 91 | Includes more than ordinary text requests. |
+| Executor spans | 69; median 10.22 s | 77; median 14.66 s | Executor often dominates the mechanics part of a turn. |
+| Narrator spans | 69; median 5.90 s | 76; median 8.51 s | Usually one separate model request after Executor. |
+| Executor turns with no tool execution | 30/69; median 5.49 s | 27/77; median 5.55 s | An upper bound on turns that *might* qualify for a safer Narrator-only route; the logs do not say what the player asked. |
+| Executor turns with a tool and a final text-only API request | 39/69; final request median 4.84 s | 50/77; final request median 4.05 s | Executor's returned text is discarded by the Supervisor path; not every final request is safe to omit. |
+| Final tool was `skill_check` or `offer_npc_attack_defense_choice` | 12/69; final API median 3.30 s | 27/77; final API median 4.07 s | Candidate upper bound for a pending-check terminal stop. Logs do not record whether each result was actually `pending=true`. |
+| Explicit scenario searches per turn | 0:49, 1:23, 2:7, 3+:7 | 0:50, 1:20, 2:14, 3+:7 | A search-round limit would affect a small tail and could miss needed evidence. |
+
+The OpenAI tool-calling loop in `app/providers/openai_provider.py` always sends
+the tool output back for another Responses request. In the Supervisor path,
+`app/agents/executor.py` uses tool side effects and facts while discarding the
+returned text; `app/agents/supervisor.py` then calls Narrator. A last
+`skill_check` call is only a *candidate* saving: an automatic roll, failed
+registration, multiple player actions, or another required tool would make an
+early stop wrong. The observed 3.30/4.07-second medians are durations of
+those final requests, not measured end-to-end savings.
+
+The per-request log reported 35-36 available tools in nearly all tool-bearing
+OpenAI calls (median 36). It cannot yet quantify their token cost: only one
+of 265 `medium` and one of 319 `high` completed async LLM request events
+recorded `input_tokens`. The sync OpenAI helper records usage, but
+`_create_response_async` omits it. Tool-schema reduction therefore needs
+token instrumentation and correctness review before any latency claim.
+
+### Candidate A: stop Executor after a terminal pending check
+
+Propose a narrowly scoped provider-loop stop signal from Executor's tool
+callback. It may stop after a *successful* `skill_check`, `sanity_check`,
+`offer_check_choice`, or `offer_npc_attack_defense_choice` result with
+`pending=true`, and only when the model response contained a single tool call
+and the turn has no known remaining action. Preserve the tool result, facts,
+state mutation, response ID handling, and subsequent Narrator call. The stop
+must never fire for a failed/resolved check, a read-only search, a tool result
+requiring correction, legacy Keeper calls whose returned text is visible, or
+multi-tool responses. Define the remaining-action guard with labeled replay
+cases before implementation; if it cannot be made reliable, leave the loop
+unchanged. No general iteration cap is proposed.
+
+Replay real anonymized single-action and multi-action turns through all
+supported providers. Assert identical pending state, tool sequence, facts,
+Narrator policy, button delivery, and player-visible ruling. Then compare
+model requests and complete turn p50/p95 with a controlled A/B. The count of
+eligible turns and saved time must be measured from tool **results**, since
+tool names in the current logs cannot establish eligibility.
+
+### Candidate B: broaden the pure-roleplay fast path cautiously
+
+`app/agents/intent_router.py` currently skips Executor for a small exact
+acknowledgment set, empty text, and parenthesized OOC. Review a labeled sample
+of the 30 and 27 no-tool Executor turns to find actual narration-only inputs.
+Only a high-precision rule for those inputs may route directly to Narrator;
+ambiguous wording stays on the current Executor path. A retrospective no-tool
+result alone is not a routing rule: an action can require scenario lookup or a
+state change even when Executor failed to call a tool. Evaluate false skips
+against checks, combat, scenario-dependent questions, mixed roleplay/actions,
+and pending decisions before measuring API calls and end-to-end latency.
+
+### Candidate C: measure prompt cost before changing tool exposure
+
+Add async OpenAI usage fields (input, cached input where available, output,
+and reasoning tokens) to the existing `llm.request` span without logging
+prompt or scenario content. Compare token counts, cache rates, request time,
+and correctness by agent and tool count. A later tool-visibility or schema
+change must retain the tools required for the turn's role and state, including
+scenario search, check registration, and recovery. Do not assume that fewer
+tools imply fewer seconds; the earlier `none`/`low` model-tiering experiment
+was reverted after production regressions. A controlled `medium`/`high`
+configuration A/B can be considered separately with a ruling-quality gate.
+
+## Chinese scenario template proposal (separate review and implementation)
+
+### Goal and decision boundary
+
+The one-page trial shows that a Chinese rendering of the relevant basement
+rule can make a Chinese query retrieve the needed scene without an extra
+Executor search round. It does not validate a whole scenario or final ruling
+correctness. The requested direction is to preprocess the scenario into a
+consistent, structured Chinese scenario template, then use that Chinese text
+as the source indexed by RAG. `SCENARIO_RAG_ENABLED` is already enabled in the
+user's normal workflow; this design assumes retrieval mode and does not
+propose changing that setting. Do not translate player queries on each turn.
+
+### Data and build flow
+
+1. Extract the original PDF/OCR into page-preserving source blocks. Keep the
+   original PDF and extracted source text as the audit source. Translate and
+   normalize the whole playable scenario once during preprocessing, before
+   RAG indexes it. Preserve page numbers, chapter IDs, image references, and
+   the existing chapter access window so a translated template cannot expose
+   later or KP-only material early.
+2. Use a fixed Chinese template for every scene, rule, NPC, clue, and handout.
+   Each retrievable unit has: canonical name and aliases/keywords; unit type;
+   player-visible description; KP-only information when present; trigger and
+   conditions; required skill or characteristic; target/dice expression;
+   success, failure, Push, and consequence rules when present; exceptions and
+   cross-references; and original page/section references. Keep narrative
+   prose as a faithful translation in its own field. Put normalized rule
+   summaries in a separate field so a summary cannot silently replace or
+   expand the source rule.
+3. Apply a per-scenario glossary for names, skills, places, recurring terms,
+   and common Chinese aliases. Preserve original names on first mention and
+   keep the same Chinese rendering throughout. Preserve numbers, units,
+   dice, thresholds, negation, uncertainty, and conditional wording exactly;
+   do not fill gaps with COC conventions or model guesses. Mark unclear source
+   text as needing KP review instead of inventing a translation.
+4. Make each template unit self-contained for retrieval. The index builder
+   must accept validated records as chunk boundaries rather than pass the
+   template through the current page/paragraph splitter (roughly 400
+   characters). If a record is too long, index smaller searchable parts but
+   return the complete parent rule within the same visibility scope, including
+   its dependent trigger/result conditions, as one result. Keep record ID,
+   aliases, source link, and visibility on every part; never split a
+   condition from its consequence. Keep public description and KP-only facts
+   in separate searchable units. Apply visibility according to the requesting
+   context before ranking: internal adjudication may access KP facts, while a
+   public-facing result cannot accidentally include them.
+5. When the original PDF parse succeeds, enqueue one background preprocessing
+   job for the Chinese template. Do not hold up PDF import or initial play
+   while it runs. Save the generated template as an immutable, versioned
+   language variant belonging to the original scenario ID, alongside (not
+   over) its PDF and `scenario.txt`. Store the variant outside the source
+   directory that `scenario_library.save_scenario` atomically replaces; for
+   example, use
+   `SCENARIO_LIBRARY_DIR/_variants/<scenario_id>/<source_hash>/<locale>/<variant_id>/`.
+   Keep a variant manifest with source hash, page/heading and source-block
+   references, chapter ID, record ID, schema version, template version,
+   locale, glossary version, generator version, and KP review status.
+   Persist job status separately so an interrupted job
+   can resume or be retried after restart. Pin each job to a source hash;
+   validate and atomically publish its complete output only if the source
+   still matches. A concurrent reparse must never silently delete a variant
+   or activate a template generated from an older source.
+   Rebuild the variant when its source hash, chapter map, glossary, template,
+   or translation version is stale. Reuse the existing CJK bigram/BM25 plus
+   embedding index; add no per-turn translation call.
+   Run at most one scenario-template job at a time and keep its API requests
+   outside the gameplay request semaphore/reserved capacity. Record build
+   duration, token usage, and retry/failure status so the one-time cost can
+   be compared with fewer in-game retrieval rounds. Build or prewarm the
+   embeddings index only when a reviewed variant is activated.
+6. After KP review, selecting the language variant changes the text used by
+   proactive RAG and explicit `search_scenario` for the current chapter
+   window. Keep `GroupState.scenario_text` as the original-source context:
+   current consumers include scenario comparison, pregen/index extraction,
+   opening narration, map lookup, and non-RAG prompt paths. Introduce an
+   explicit selected-RAG-context loader/cache instead of silently changing
+   all those consumers to translated text. Audit each call site and only
+   switch the intended retrieval paths. Keep the variant ID in group state
+   so restart and chapter advancement continue using the same language.
+   Reuse original page images, maps, chapter IDs, and scenario identity. If
+   preprocessing or index building fails, leave the original scenario
+   selectable and clearly report that the Chinese variant is unavailable.
+
+### Import, review, and activation flow
+
+The original PDF remains the source scenario imported through the existing
+`/coc scenario import` flow. After extraction and the normal source artifact
+are saved, queue preprocessing of that extracted Markdown-like text into a
+normalized Chinese template. The template becomes a **language variant of
+that scenario**, with the original PDF, page images, maps, and chapter
+identity retained. Generation is a background step; importing and playing
+the original scenario do not wait for translation. Proposed flow:
+
+1. The job extracts canonical terms and aliases, then translates and
+   structures playable content in page/section batches using the fixed
+   template and glossary. Give every source block a stable source ID and
+   record whether it was translated, excluded with a reason, or needs review.
+   Before activation, every playable source block must have a translated
+   record with a source link and pass validation, or have an explicit
+   KP-approved exclusion; an unresolved block cannot disappear from the
+   generated variant. It
+   validates unique record IDs, parent/link targets, chapter and visibility
+   values, source references, and source hash. Compare extracted numbers,
+   dice expressions, time limits, skill thresholds, and explicit negations
+   against the linked source blocks; unresolved or mismatched mechanics block
+   activation until a KP corrects them. A malformed or incomplete build does
+   not change the original scenario. Status moves through `queued`,
+   `processing`, `review_required`, and `failed` or `stale` as appropriate.
+2. Save generated Markdown, machine-readable records, coverage report, and
+   metadata in the separate immutable variant namespace described above.
+   Keep source PDF, original extracted text, images, maps, and scenario ID
+   unchanged. A changed source hash creates a new draft; the old version
+   remains available for audit but cannot be served for the new source until
+   revalidated. A group selecting a stale version receives the original
+   retrieval context and a clear status message.
+3. Provide `/coc scenario template status <scenario_id>` and a preview grouped
+   by chapter and record type, including unresolved translation notes and
+   source links. The KP reviews terminology, mechanics, room/Handout links,
+   and spoiler visibility. Prioritize flagged source blocks and rules with
+   dice, thresholds, time limits, or negative conditions, then sample ordinary
+   prose. Show the source-block coverage report and unresolved mechanics
+   prominently. Only a reviewed, complete version can
+   be activated for play; a draft remains available for editing. A manual
+   `/coc scenario template import <scenario_id> <file.md>` path can also
+   import a prepared or corrected template after the same validation. Resolve
+   its file only inside the configured import directory, with the same
+   traversal and symlink checks as PDF import.
+4. Extend scenario selection with an optional reviewed template variant,
+   e.g. `/coc scenario use <scenario_id> zh-TW-v1`. Persist the selected
+   variant ID in the group's active state, and keep a durable preference
+   keyed by `(group_id, scenario_id)` so `/coc newgame` does not forget which
+   reviewed language version that group uses. Default old records to
+   `original`. Existing groups keep their current selection until the KP
+   explicitly switches it. Resolve the saved preference only after checking
+   that its source and chapter-map hashes match the current source and its
+   review status is active.
+5. When activating or advancing a chapter, `scenario_library.load_context`
+   still returns the original context and source-linked assets. A separate
+   selected-RAG-context loader reads the reviewed template for the same
+   current/next chapter window. Build an index from only that selected window,
+   applying chapter and visibility filters before ranking. Map search
+   results to template record IDs and the original page/heading. For
+   decision-critical mechanics, include a bounded original-source excerpt
+   with the Chinese rule in Executor evidence so it can verify a translated
+   condition without another model search round; measure the added token
+   cost in the pilot. Keep source excerpts out of public narration.
+   `/coc showpage` and map/image behavior continue to use original page
+   numbers. Reuse a built index across groups only when scenario ID, source
+   hash, variant ID, chapter window, visibility policy, embedding model, and
+   chunker version all match; the current disk index is keyed per group, so
+   this requires a new shared cache key and migration/fallback behavior. If
+   a group has no reviewed variant selected, keep indexing its original text.
+
+For the first pilot, run background generation on the Corbitt and Lightless
+Beacon source artifacts, review the generated Markdown, and activate one
+reviewed Chinese variant. KP-authored Markdown can serve as a corrected
+variant through the same validated import path. The small basement trial
+passed translated text to Executor; it did not test template generation,
+review, or activation, so those need separate validation.
+
+`/coc scenario clean <scenario_id>` must remove that scenario's source and
+derived variants/indexes under the same library management operation, after
+the existing active-user check. A saved group preference pointing at a deleted
+variant must resolve to `original` with a visible status instead of a missing
+file error. Reparse retains old immutable variants for audit; explicit clean
+deletes them. This does not delete the separate, group-owned manual role-card
+repository.
+
+### Persistence boundary and adjacent role-card issue
+
+The language template is reusable scenario-library content. For this feature,
+`GroupState` should carry only the selected variant ID and the current
+chapter window, while its existing `scenario_text` remains original-source
+context. Generated Markdown, records, and translation status live in the
+separate variant store; the group preference survives `/coc newgame`. This
+lets restart and later scenario selection reuse the reviewed variant without
+uploading or translating it again.
+
+The existing manual role-sheet flow illustrates why this boundary matters:
+`handle_role_sheet_upload` reconciles the card into `state.pregens` and calls
+`save_state`, so the merge is saved for the current group state. However,
+`/coc scenario use` reloads `pregens.json` from the scenario-library item into
+`state.pregens`, and `/coc newgame` resets `GroupState`; manually imported
+cards are not currently a durable scenario-library or reusable group asset.
+That explains why a later setup can require importing the same card again.
+
+If manual role cards should survive campaign resets, handle that as a separate
+follow-up: preserve manually sourced pregen records in durable storage keyed
+by `(group_id, scenario_id)` and merge them with the scenario's extracted
+`pregens.json` when loading that scenario. Keep that group-owned data separate
+from the shared scenario library so one group's manual character sheets do
+not appear in another group's roster. Reuse the existing identity matching
+and best-of-both merge rules; do not persist live HP/SAN/Luck or claimed
+`Character` progress in this roster.
+
+Example template unit (omit fields the source does not contain; write
+「原文未提及」 only when that absence matters to a ruling):
+
+```text
+--- 第 10 頁 ---
+## 場景單元：地下室階梯
+類型：場景／判定規則
+標準名稱：地下室階梯
+別名與檢索詞：地下室、樓梯、跌落、推進（Push）
+玩家可見描述：忠實翻譯原文敘述。
+KP 秘密資訊：忠實翻譯，並沿用原章節可見範圍。
+觸發條件：玩家做出什麼行動時適用。
+判定：技能或特徵；難度；骰式／目標值。
+成功：原文寫明的結果。
+失敗：原文寫明的結果。
+推進：原文寫明的推進規則；沒有就省略。
+例外與後續：保留原文條件及跨頁參照。
+來源：原文第 10 頁，對應段落識別碼。
+校對狀態：待 KP 校對／已校對。
+```
+
+Do not infer that 「推進（Push）」 is allowed just because it is a common
+Call of Cthulhu mechanic; include it only if the source says so.
+
+### Template record types and source links
+
+The supplied Corbitt House and Lightless Beacon Markdown outlines are the
+reference cases for the template. Use record types that match the material
+instead of putting the whole module into one long overview block:
+
+- `overview`: era, region, patron, assignment, payment, campaign-level secret,
+  and play phases;
+- `investigator_hook`: pre-generated character role, personal motivation,
+  private information, and conflict or incentive that can affect choices;
+- `investigation_location`: location, NPCs, available approaches, checks,
+  consequences, and clue/Handout IDs;
+- `handout_or_clue`: what it reveals, who can provide it, its source, and
+  links to the next relevant record;
+- `room_or_scene`: hierarchical location, description, events, threats, and
+  exits or connections;
+- `check_rule`: trigger, eligible skills/characteristics, difficulty or
+  opposed value, success/failure, Push, and Push-failure consequence;
+- `npc_or_encounter`: identity, role, stats, abilities, attacks, defenses,
+  damage, Sanity effects, and defeat conditions;
+- `event_or_timeline`: absolute or relative time, trigger conditions,
+  warning cues, event effects, and links to affected scenes/NPCs;
+- `ending_or_hook`: required outcome, reward or consequence, and follow-up
+  leads.
+
+Give every record a stable ID and parent ID. For example, distinguish
+Corbitt House ground-floor Room 1 from Basement Room 1 with IDs such as
+`corbitt-house-ground-room-01` and `corbitt-house-basement-room-01`; never
+rely on the repeated label `Room 1` alone. Preserve source links as Markdown
+heading paths/anchors, plus PDF page and paragraph when available. Handouts,
+checks, rooms, and NPCs should link by ID so a retrieved clue can point to a
+related rule without copying or conflating their contents. Preserve chapter
+and public/KP visibility metadata on every record.
+
+The second reference module adds records that are easy to lose in a
+location-only template: the six pre-generated investigators' different
+motivations in Corbitt House, four character hooks in Lightless Beacon, and
+Lightless Beacon's generator failure, storm, assault, and rescue conditions.
+Represent relative clocks and alternative triggers explicitly, such as
+"about 45 minutes after entry" or "when the search ends / investigators leave
+the cottage". Link every event to the affected records so RAG can retrieve
+the trigger and consequences together. Keep distinct source facts as distinct
+fields: a lead-in, an absolute deadline, and an alternate trigger must not be
+flattened into an ambiguous single timestamp.
+
+Example event record based on the Lightless Beacon outline:
+
+```text
+record_id: lightless-beacon-youngling-assault
+parent_id: lightless-beacon-island
+type: event_or_timeline
+source: Markdown heading「場景五 > 決戰圍攻」；PDF 頁碼（若有）
+trigger: 調查員完成搜查或走出燈塔小屋
+effect: 島上剩餘幼怪發動圍攻
+conditional_links: 若已修好無線電並求援，海岸警衛隊可能於破曉或危急時趕到
+linked_records: generator-shed, radio-repair, coast-guard-rescue, youngling-stat-block
+校對狀態: 待 KP 校對
+```
+
+Keep the two possible rescue arrival times as alternatives from the source;
+do not normalize them into one guaranteed arrival time.
+
+The RAG index must treat each validated template record as a boundary. If
+one record exceeds the search chunk target, index numbered child parts with
+the record ID, canonical name, aliases, source link, and visibility repeated
+in each part. Retrieval returns the complete parent unit for the matched
+visibility scope, so the trigger and consequence arrive together. The
+template index builder therefore needs an explicit-record input path instead
+of relying on the current page/paragraph splitter.
+
+Example record based on the supplied basement-stairs section (the template
+does not assert that this transcription has been verified against the source):
+
+```text
+record_id: corbitt-house-basement-stairs
+parent_id: corbitt-house-basement
+type: check_rule
+canonical_name: 地下室階梯陷阱
+aliases: 地下室樓梯、階梯晃動、下樓跌落
+source: Markdown heading「決戰階段 > 地下室 > 階梯陷阱」；PDF 頁碼（若有）
+visibility: 依來源章節與 KP 可見規則
+trigger: 調查員逐一下樓時
+check: DEX 或 Climb 複合檢定，任一合格即成功
+success: 安全下樓
+failure: 可退回或推進檢定
+push_failure: 墜落至地下室，承受 1D6 傷害
+assistance: 通過者可協助並給獎勵骰；失敗可能使兩人一同墜落
+校對狀態: 待 KP 校對
+```
+
+The source visibility should determine `visibility`; the example's value is
+illustrative and must not be copied without checking the source's spoiler
+policy.
+
+A prepared Markdown import remains available for KP edits and offline trials.
+The proposed normal path is automatic background generation after the
+original PDF parse, followed by KP review and explicit activation.
+
+### Acceptance and rollout gate
+
+- Prepare template-based Chinese content and labeled Chinese actions across
+  several pages and scene types, including irrelevant queries, similarly
+  named rooms on different floors, Handout-to-location cross-references,
+  distinct investigator motivations, timed events, environmental failures,
+  negative/conditional rules, and restricted future chapters. Use both
+  Corbitt House and Lightless Beacon as structurally different pilots. Check
+  source page and chunk recall at five, ranking, explicit search counts, API
+  calls, complete Discord turn p50/p95, and final ruling accuracy.
+- Have a KP compare template units with the original for dice, damage, skill
+  thresholds, proper names, negation, Push rules, and player/KP visibility.
+  Track corrections and terminology consistency across pages. Verify
+  source-block coverage, source-hash/version invalidation, restart,
+  simultaneous reparse/build, partial-build fallback, and no chapter or group
+  leakage. Verify that source comparison and extraction commands still read
+  the original `scenario_text`, and that retrieval never joins a public
+  description with a KP-only parent result. Verify explicit scenario clean
+  removes derived variants/indexes and invalidates saved language preferences.
+- Compare one-time translation and embedding cost against repeated-turn
+  savings. Keep template generation off the player-turn critical path until
+  multi-scene replay preserves rulings and reduces complete turn latency
+  without a per-turn translation request. Compare source-excerpt inclusion
+  for decision-critical rules, recording answer accuracy, context tokens,
+  preprocessing, retrieval, and model time separately. Verify a second group
+  can reuse a compatible immutable variant index without rebuilding it.
+
+The storage and retrieval choices above are informed by published patterns,
+not by a claim that they improve this bot's latency: [Azure AI Search's
+multilingual index guidance](https://learn.microsoft.com/en-us/azure/search/search-language-support)
+describes language-specific content selection, while [Azure's hybrid search
+overview](https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview)
+explains why keyword and vector retrieval complement one another. [Amazon
+Bedrock's chunking guidance](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-chunking.html)
+describes preserving source mappings and retrieving a larger parent after a
+smaller child match. The local one-page trial remains the only latency evidence
+for this scenario design.
+
+## Follow-up scope and review decisions
+
+The Chinese scenario template's generation, review, version storage, group
+selection, and RAG retrieval path are now implemented on this branch. A live
+KP review and the Corbitt/Lightless
+Beacon latency pilot above remain outstanding; no production speedup is claimed
+from the implementation alone. Candidate A, B, and C remain separate review
+topics.
+
+Review choices before a new implementation: approve the template fields and
+terminology rules; confirm automatic background generation after PDF parse
+with KP review before activation; and determine which template units require
+original-source text alongside the translated result at runtime.
+Pending-check terminal detection also remains gated on proving that no further
+action is owed.

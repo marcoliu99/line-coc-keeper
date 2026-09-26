@@ -44,6 +44,7 @@ from app import (
     scenario_index,
     scenario_library,
     scenario_rag,
+    scenario_templates,
 )
 from app import scene_map as scene_map_engine
 from app.check_identity import (
@@ -231,6 +232,7 @@ def _install_library_context(
 ) -> None:
     """Copy the selected chapter window from an immutable library entry into state."""
     state.scenario_library_id = scenario_id
+    state.scenario_variant_id = scenario_templates.preferred_variant(state.group_id, scenario_id)
     state.scenario_title = context["manifest"]["title"]
     state.scenario_text = context["text"]
     state.active_chapter_id = context["active_chapter_id"]
@@ -445,6 +447,12 @@ async def handle_pdf_upload(
         preview=preview, text=text, indexes=extracted_index, pregens=pregens,
         page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
     )
+    # Translation runs after the original artifact is safely available and
+    # never holds the PDF upload response open.
+    try:
+        scenario_templates.queue_generation(scenario_id)
+    except Exception:
+        _logger.exception("failed to queue Chinese scenario template for %s", scenario_id)
     library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
     text = library_context["text"]
     extracted_index = library_context["indexes"]
@@ -499,9 +507,10 @@ async def handle_pdf_upload(
         )
         return True
 
+    variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
-    ))
+    ) + (f"\n{variant_notice}" if variant_notice else ""))
     return True
 
 
@@ -540,10 +549,11 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
     save_state(state)
+    variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
         context["scene_maps"], extracted_index, len(state.pregens),
-    )
+    ) + (f"\n{variant_notice}" if variant_notice else "")
 
 async def resolve_pdf_upload_choice(
     conversation_id: str,
@@ -564,8 +574,7 @@ async def resolve_pdf_upload_choice(
             return
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
         state = load_state(conversation_id)
-        scenario_text = state.scenario_text
-    scenario_rag.schedule_index_prewarm(conversation_id, scenario_text)
+    scenario_templates.schedule_index_prewarm(state)
     await push(text)
 
 

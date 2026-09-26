@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from app import async_utils, memory_rag, observability, scenario_rag
+from app import async_utils, memory_rag, observability, scenario_rag, scenario_templates
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
@@ -93,7 +93,7 @@ async def build_context(
                 embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT,
                 metrics=metrics,
             ):
-                index = scenario_rag.get_index(conversation_id, state.scenario_text)
+                index = scenario_templates.index_for_state(state)
                 results = scenario_rag.search(index, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics)
                 metrics.update(
                     candidate_count=len(getattr(index, "chunks", ())),

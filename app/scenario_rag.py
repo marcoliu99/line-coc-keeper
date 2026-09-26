@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import multiprocessing
@@ -219,6 +220,9 @@ _MIN_COSINE_RELEVANCE = 0.32
 class _Chunk:
     page: int
     text: str
+    result_text: str = ""
+    record_id: str = ""
+    visibility: str = "public"
     tokens: list[str] = field(default_factory=list)
     term_counts: dict[str, int] = field(default_factory=dict)
     embedding: list[float] | None = None
@@ -495,12 +499,28 @@ def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, id
     return score
 
 
+def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int) -> list[dict]:
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for score, chunk in scored:
+        identity = (chunk.record_id or f"page:{chunk.page}:text:{chunk.text}", chunk.visibility)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        rows.append({"page": chunk.page, "text": chunk.result_text or chunk.text,
+                     "score": score, "record_id": chunk.record_id})
+        if len(rows) >= top_k:
+            break
+    return rows
+
+
 def search(
     index: ScenarioIndex,
     query: str,
     top_k: int = 5,
     *,
     metrics: dict[str, object] | None = None,
+    allowed_visibility: set[str] | None = None,
 ) -> list[dict]:
     """Returns up to top_k {"page": int, "text": str, "score": float} results,
     highest-scoring first. An empty/no-match query returns an empty list
@@ -536,14 +556,16 @@ def search(
         return []
 
     idf_cache = _idf_cache(index, query_tokens)
-    bm25_raw = {id(c): _bm25_score(index, query_tokens, c, idf_cache) for c in index.chunks}
-    matched = [c for c in index.chunks if bm25_raw[id(c)] > 0]
+    eligible = [c for c in index.chunks
+                if allowed_visibility is None or c.visibility in allowed_visibility]
+    bm25_raw = {id(c): _bm25_score(index, query_tokens, c, idf_cache) for c in eligible}
+    matched = [c for c in eligible if bm25_raw[id(c)] > 0]
 
     if not index.has_embeddings:
         if metrics is not None:
             metrics["query_embedding_status"] = "not_used"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = _result_rows(scored, top_k)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -560,7 +582,7 @@ def search(
         if metrics is not None:
             metrics["query_embedding_status"] = "fallback"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = [{"page": c.page, "text": c.text, "score": s} for s, c in scored[:top_k]]
+        results = _result_rows(scored, top_k)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -573,7 +595,7 @@ def search(
 
     candidates = {id(c) for c in matched}  # a literal BM25 hit is always trusted, regardless of cosine
     cosine_scores: dict[int, float] = {}
-    for c in index.chunks:
+    for c in eligible:
         if c.embedding is None:
             continue
         cos = _cosine_similarity(query_vec, query_norm, c.embedding, c.norm)
@@ -581,7 +603,7 @@ def search(
         if cos >= _MIN_COSINE_RELEVANCE:
             candidates.add(id(c))
 
-    by_id = {id(c): c for c in index.chunks}
+    by_id = {id(c): c for c in eligible}
     combined: list[tuple[float, _Chunk]] = []
     for cid in candidates:
         c = by_id[cid]
@@ -590,7 +612,7 @@ def search(
         score = weight * cos + (1 - weight) * bm25_norm
         combined.append((score, c))
     combined.sort(key=lambda sc: -sc[0])
-    results = [{"page": c.page, "text": c.text, "score": s} for s, c in combined[:top_k]]
+    results = _result_rows(combined, top_k)
     if metrics is not None:
         metrics["result_count"] = len(results)
     return results
@@ -612,7 +634,9 @@ def _save_index_to_disk(group_id: str, index: ScenarioIndex) -> None:
         payload = {
             "text_hash": index.text_hash,
             "has_embeddings": index.has_embeddings,
-            "chunks": [{"page": c.page, "text": c.text, "embedding": c.embedding} for c in index.chunks],
+            "chunks": [{"page": c.page, "text": c.text, "embedding": c.embedding,
+                        "result_text": c.result_text, "record_id": c.record_id,
+                        "visibility": c.visibility} for c in index.chunks],
         }
         db.set_json("scenario_indexes", group_id, payload)
     except Exception:
@@ -634,6 +658,8 @@ def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
             embedding = c.get("embedding")
             chunks.append(_Chunk(
                 page=c["page"], text=c["text"], embedding=embedding,
+                result_text=c.get("result_text", ""), record_id=c.get("record_id", ""),
+                visibility=c.get("visibility", "public"),
                 # Recomputed on load rather than persisted: cheap (O(chunks),
                 # once per bot restart) and avoids needing a schema migration
                 # for indexes saved before `norm` existed on this dataclass.
@@ -686,4 +712,51 @@ def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
                         chunk_count=len(index.chunks), reason="cache_miss")
     _index_cache[group_id] = index
     _save_index_to_disk(group_id, index)
+    return index
+
+
+def get_record_index(cache_key: str, records: list[dict]) -> ScenarioIndex:
+    """Index validated template records once per immutable variant/window."""
+    serialized = json.dumps(records, ensure_ascii=False, sort_keys=True)
+    text_hash = hashlib.md5(serialized.encode("utf-8"), usedforsecurity=False).hexdigest()
+    cached = _index_cache.get(cache_key)
+    if cached is not None and cached.text_hash == text_hash:
+        cached.index_cache = "memory"
+        return cached
+    disk = _load_index_from_disk(cache_key)
+    if disk is not None and disk.text_hash == text_hash:
+        disk.index_cache = "disk"
+        _index_cache[cache_key] = disk
+        return disk
+    chunks: list[_Chunk] = []
+    for record in records:
+        prefix = " ".join([str(record.get("name", "")),
+                           *[str(x) for x in record.get("aliases", [])],
+                           *[str(x) for x in record.get("keywords", [])]])
+        for visibility, body in (
+            ("public", str(record.get("public_text", ""))),
+            ("kp_only", "\n".join(str(record.get(k, "")) for k in ("kp_text", "rule_text"))),
+        ):
+            if not body.strip() or (record.get("visibility") == "kp_only" and visibility == "public"):
+                continue
+            source_note = ""
+            if visibility == "kp_only" and record.get("rule_text"):
+                source_note = f"\n原文片段：{str(record.get('source_excerpt', ''))[:500]}"
+            parent = f"[{record.get('id', '')}｜{visibility}] {record.get('name', '')}\n{body}{source_note}"
+            # Child text is searchable; the result carries the entire parent.
+            for start in range(0, len(body), 500):
+                chunks.append(_Chunk(
+                    page=int(record["page"]), text=f"{prefix} {body[start:start + 500]}",
+                    result_text=parent, record_id=str(record.get("id", "")),
+                    visibility=visibility,
+                ))
+    stats, average = _compute_bm25_stats(chunks)
+    embeddings = _embed_texts([c.text for c in chunks], rag_kind="scenario")
+    if embeddings is not None:
+        for chunk, vector in zip(chunks, embeddings, strict=True):
+            chunk.embedding, chunk.norm = vector, _vector_norm(vector)
+    index = ScenarioIndex(chunks=chunks, doc_freq=stats, avg_length=average,
+                          text_hash=text_hash, has_embeddings=embeddings is not None)
+    _index_cache[cache_key] = index
+    _save_index_to_disk(cache_key, index)
     return index
