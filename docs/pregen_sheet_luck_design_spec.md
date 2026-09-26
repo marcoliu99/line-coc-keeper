@@ -1,132 +1,158 @@
-# 預製角色卡 LUCK 值優先設計規格
+# Use the Luck Value on the Final Pregenerated Character Sheet
 
-## 目標與現況
+## Goal and Current Behavior
 
-目前 `/coc usepregen` 無論角色卡的 LUCK 是否有數值，都先建立
-`luck=0` 的角色並要求玩家執行 `/coc luck roll`。這會捨棄 PDF 抽取、
-手動匯入及擇優融合後角色卡上已存在的 LUCK。
+Today, `/coc usepregen` creates a character with `luck=0` and asks the player
+to run `/coc luck roll`, even when the sheet already contains a Luck value.
+This discards Luck values extracted from a PDF, imported from a manual sheet,
+or retained after the two sources are merged.
 
-改為**只看最後供玩家選用的預製角色卡**：融合後 LUCK 有數值便沿用；
-融合後仍空白或缺欄，才由玩家選角後擲 `3d6 × 5`。預製角色卡範本的
-`幸運 LUCK：` 維持空白，不能預填 `0` 或自動骰值。
+The new rule uses **the final pregenerated sheet offered to the player**.
+If that sheet has a Luck value, use it. Only when Luck is still blank or
+missing after merging does the player roll `3d6 × 5` after claiming the
+character. The pregenerated sheet template must keep `幸運 LUCK：` blank;
+it must not insert `0` or a generated value.
 
-## 範圍與非目標
+## Scope and Non-Goals
 
-- 涵蓋 PDF 抽取、`role_` 手動角色卡、擇優融合後的角色池、預覽、
-  兩條 `/coc usepregen` 指令路徑，以及開局 pending 判斷。
-- 保留玩家本人使用 `/coc luck roll` 完成**空白卡**的流程；KP 或
-  `/coc sudo` 不能代骰。
-- 不改變其他八項基本屬性、普通 `/coc pc`／`/coc create` 建角、
-  已認領角色的 LUCK，亦不把玩家骰出的結果寫回共用角色池。
+- Cover PDF extraction, `role_` manual sheets, the merged pregen pool,
+  previews, both `/coc usepregen` command paths, and the pending-Luck gate
+  before play starts.
+- Keep `/coc luck roll` player-owned for sheets whose Luck remains blank.
+  The Keeper and `/coc sudo` cannot roll on the player's behalf.
+- Do not change the other eight base attributes, ordinary `/coc pc` or
+  `/coc create` creation, Luck on an already claimed character, or the
+  shared pregen pool when a player rolls Luck.
 
-## 資料與融合規則
+## Data and Merge Rules
 
-不為手動卡的空白 LUCK 增加「禁止補值」標記。`role_` 模板的
-`幸運 LUCK：` 保持空白；解析器對空白欄位維持既有的缺欄表示。
-PDF 也只抽取來源明確寫出的數值，不推算缺值。
+Do not add a marker meaning "never fill Luck" to a blank manual sheet.
+The `role_` template keeps `幸運 LUCK：` blank, and its parser continues
+to represent that blank field as missing. PDF extraction must report only
+values explicitly present in the source; it must not calculate missing Luck.
 
-### PDF 解析的來源驗證
+### Source Verification During PDF Parsing
 
-目前 `extract_pregens()` 的 LLM 工具描述已要求「只回報文本明確寫出
-的數值，不要編造或推算」，`luck` 亦非必填；程式本身沒有對缺值
-自動擲骰或套預設值。但抽取結果進入角色池前，現有程式沒有核對
-LLM 回傳的 LUCK 是否真的出現在**該角色卡**的原文。因此不能只
-依賴提示字句來保證空白仍空白。
+The current `extract_pregens()` tool description already tells the LLM to
+report only explicit values, without inventing or calculating missing ones.
+`luck` is optional, and the program does not roll or assign a default during
+PDF parsing. However, before an extracted pregen enters the pool, the
+program currently does **not** verify that an LLM-reported Luck value appears
+on **that character's sheet**. The prompt alone cannot guarantee that a
+blank field stays blank.
 
-實作時要求每個由 PDF 抽出的 LUCK 附可定位的原文依據，例如角色卡
-所在頁／區塊及包含 `LUCK`／`幸運` 標籤與數值的短原文片段。儲存
-前確認片段來自該角色卡、標籤與數值相符；找不到或有歧義時，移除
-該筆 pregen 的 `luck`，記錄需人工核對的診斷資訊。不可拿其他角色
-或劇本敘述中的 LUCK 數字來替它補值。這個保守處理可能使 OCR
-模糊的卡片改走玩家擲骰流程，KP 可透過手動角色卡補正數值。
+Require a locatable source for every Luck value extracted from a PDF, such
+as the character sheet's page or block and a short excerpt containing both
+the `LUCK` or `幸運` label and its value. Before saving the extracted pregen,
+verify that the excerpt belongs to that character and that its label and
+number agree with the reported value. If the source cannot be found or is
+ambiguous, remove that pregen's `luck` and record a diagnostic for manual
+review. A Luck number belonging to another character or to scenario prose
+must not fill this field. This conservative rule may send an OCR-damaged
+sheet through the player-roll path; the Keeper can correct it by importing
+a manual sheet.
 
-## 從 PDF 解析到開局的目標流程
+## Target Flow: From PDF Parsing to Starting Play
 
-下圖描述本規格實作完成後的流程；其中「核對 PDF LUCK 原文」與
-「有值直接沿用」是本次要新增的行為。`role_` 手動卡可以在 PDF 前後
-匯入，最後都經同一個角色池融合與選角判斷。
+This diagram describes the behavior after implementation. Source
+verification of PDF Luck and direct use of a final sheet value are the new
+steps. A `role_` sheet may be imported before or after the PDF; both orders
+reach the same merge and claim decision.
 
 ```mermaid
 flowchart TD
-    A[上傳劇本 PDF] --> B[抽取 PDF 文字與頁碼]
-    B --> C[LLM 抽取預製角色卡]
-    C --> D{該角色的 LUCK 有回傳數值?}
-    D -->|否| F[PDF 角色卡的 LUCK 保持空白]
-    D -->|是| E{能在該角色卡原文核對標籤與數值?}
-    E -->|是| G[保留 PDF 卡面 LUCK]
-    E -->|否或有歧義| F
-    F --> H[保存 PDF 預製角色資料]
+    A[Upload scenario PDF] --> B[Extract PDF text and page references]
+    B --> C[LLM extracts pregenerated character sheets]
+    C --> D{Did the LLM report Luck for this character?}
+    D -->|No| F[Leave Luck blank on the PDF pregen]
+    D -->|Yes| E{Do this character's source label and value match?}
+    E -->|Yes| G[Keep the verified PDF Luck value]
+    E -->|No or ambiguous| F
+    F --> H[Save PDF pregen data]
     G --> H
-    M["可選：匯入 role_ 手動角色卡；空白 LUCK 保持空白"] --> I[依現有規則擇優融合]
+    M["Optional: import a role_ sheet; leave blank Luck blank"] --> I[Merge sources using existing precedence]
     H --> I
-    I --> J[保存最後的 state.pregens 角色池]
-    J --> K["/coc pregens 預覽最後卡面值"]
-    K --> L["玩家 /coc usepregen 認領"]
-    L --> N{融合後 LUCK 有有效數值?}
-    N -->|是，包含 0| O["Character.luck 沿用卡面值；不建立 pending"]
-    O --> S["允許 /coc start"]
-    N -->|否，空白或缺欄| P["Character.luck 暫設 0；建立 pending_pregen_luck"]
-    P --> Q["僅該玩家執行 /coc luck roll"]
-    Q --> R["擲 3d6 × 5；寫入 Character；清除 pending"]
+    I --> J[Save the final state.pregens pool]
+    J --> K["/coc pregens previews the final sheet"]
+    K --> L["Player claims it with /coc usepregen"]
+    L --> N{Does merged Luck have a valid value?}
+    N -->|Yes, including 0| O["Set Character.luck from the sheet; no pending roll"]
+    O --> S["Allow /coc start"]
+    N -->|No, blank or missing| P["Set temporary luck=0; add pending_pregen_luck"]
+    P --> Q["Only that player runs /coc luck roll"]
+    Q --> R["Roll 3d6 × 5; update Character; clear pending"]
     R --> S
 ```
 
-PDF 解析與融合本身都不擲 LUCK。若 LLM 回傳的 PDF LUCK 無法核對，
-只移除該來源的可疑數值；手動卡若有明確數值，融合後仍可沿用。
-玩家擲出的數值不回寫 `state.pregens`，再次選用或預覽也不會把它
-誤當成共享卡面值。
+Neither PDF parsing nor merging rolls Luck. If the PDF value reported by the
+LLM cannot be verified, remove only that suspect source value. A verified
+value on a manual sheet may still survive the merge. A player's eventual
+roll is not written back to `state.pregens`, so future previews do not show
+it as a shared sheet value.
 
-現有擇優融合照常運作：手動卡有 LUCK 時用手動值；手動卡空白而
-PDF 卡有值時由 PDF 補入；兩者都空白時融合結果仍空白。**LUCK
-判斷必須在融合完成後、玩家認領當下，對 `state.pregens[index]`
-執行一次**，不能以手動卡或 PDF 卡的單一來源判斷。
-融合處理 LUCK 時，以有效數值判定「有值」；即使舊資料把空白存成
-`None` 或空字串，也要讓另一來源的有效數值補入，不能僅因 key
-存在就阻止補值。其他屬性的融合優先順序不變。
+Keep the current merge precedence: a filled manual Luck value wins; a blank
+manual field can be filled by a verified PDF value; if both sources are
+blank, the merged result remains blank. **Decide whether to roll only after
+the merge, when the player claims `state.pregens[index]`.** Do not make this
+decision from either source alone. For Luck specifically, an older record's
+`None` or empty string must also count as blank, so another source's valid
+number can fill it. Keep the precedence for other attributes unchanged.
 
-| 融合後的 `luck` | 選角結果 |
+| Final `luck` value | Result when claimed |
 | --- | --- |
-| 有有效整數，包含 `0` | 直接寫入新角色的 `Character.luck`，不建立 pending |
-| 缺欄、`None` 或空白字串 | 新角色暫設 `luck=0`，加入 `pending_pregen_luck`，等玩家擲骰 |
+| Valid integer, including `0` | Set the new `Character.luck` directly; create no pending roll |
+| Missing, `None`, or empty string | Temporarily set `luck=0`, add `pending_pregen_luck`, and wait for the player to roll |
 
-若舊角色池存有純數字字串，可按現有數值轉換規則讀取；不得把布林值、
-負數或其他非法文字當成已填值。`Character.luck` 仍為整數，
-`pending_pregen_luck` 仍只記錄真正等待玩家擲骰的角色；不需資料庫
-結構變更。
+An old pool entry containing a purely numeric string may use the existing
+integer conversion. A boolean, negative number, or other invalid text must
+not count as a filled Luck value. `Character.luck` remains an integer, and
+`pending_pregen_luck` records only characters that actually need a roll.
+No database schema change is needed.
 
-目前無需決定新的 UI 或資料遷移：沿用現有預製角色卡範本、角色池
-與 pending 結構，僅修正 LUCK 的有值判斷、認領及顯示。
+No new UI or data migration decision is required. Keep the existing sheet
+template, pregen pool, and pending-state structure; change the Luck value
+check, claim behavior, and display text.
 
-## 指令與顯示流程
+## Commands and Display
 
-1. 共用 `_claim_pregen()` 從最後的角色池取出該筆 pregen。有效 LUCK
-   直接傳入純 `pregen_to_character()` 建構函式；空白才用暫值 `0`
-   並建立 pending。認領、`claimed_by`、角色 ID 與保存流程維持原樣。
-2. `app/commands/handlers/character.py` 與 legacy 指令路徑都依共用
-   claim 的結果回覆。有值時顯示「沿用角色卡 LUCK N，可以開始遊戲」；
-   空白時才提示 `/coc luck roll`。不得對有值角色顯示待擲訊息。
-3. `/coc pregen` 預覽有值時顯示「卡面 LUCK N，選用時沿用」；空白
-   或缺欄時顯示「LUCK 空白，選用後由玩家擲骰」。數值 `0` 是已填值，
-   不得被 `if value` 一類判斷誤認為空白。
-4. `/coc start`、劇本切換及 PDF 處理只被真正存在的 pending 擋下。
-   有值角色執行 `/coc luck roll` 時，沿用現有「沒有等待擲骰角色」
-   的拒絕訊息。空白卡完成一次骰點後不可再次重骰。
+1. Shared `_claim_pregen()` reads the final pregen from the pool. Pass a
+   valid sheet Luck value to the pure `pregen_to_character()` constructor.
+   Use temporary `0` and create pending state only for blank Luck. Keep the
+   existing claim, `claimed_by`, character ID, and save behavior.
+2. Both `app/commands/handlers/character.py` and the legacy command path
+   respond according to that shared claim result. For a filled value, say
+   that sheet Luck N was used and play may start. For a blank value, prompt
+   the player to run `/coc luck roll`. Never show a roll prompt for a filled
+   sheet.
+3. `/coc pregen` previews a filled value as "Sheet LUCK N; retained when
+   claimed" and a blank or missing value as "LUCK blank; player rolls after
+   claiming." `0` is a filled value and must not be mistaken for blank by
+   a truthiness check.
+4. `/coc start`, scenario switching, and PDF handling are blocked only by
+   actual pending rolls. If a character with sheet Luck runs
+   `/coc luck roll`, retain the existing "no character awaiting a Luck roll"
+   rejection. A player whose blank sheet required a roll cannot roll again
+   after completing it.
 
-本規格取代 [既有 LUCK 規格](pregen_luck_roll_design_spec.md)中
-「所有預製角色都要重新擲 LUCK」和對應預覽文案；技能 alias、
-pending 持久化與骰點所有權規則仍適用。
+This spec supersedes the "reroll Luck for every pregen" behavior and related
+preview text in the [earlier Luck spec](pregen_luck_roll_design_spec.md).
+Its skill aliases, persistent pending state, and ownership rules still apply.
 
-## 驗收
+## Acceptance Criteria
 
-- PDF／手動卡／融合結果的 LUCK 有值時都沿用；手動空白、PDF 有值
-  的融合結果沿用 PDF 值；雙方皆空白才進入 pending。
-- PDF 原文的 LUCK 欄位空白、缺欄、屬於其他角色或只有無法核對的
-  LLM 數值時，抽取結果不得產生可沿用的 LUCK；有明確來源的卡面
-  數值才可進入融合。
-- 範本中的幸運欄位保持空白；空白解析、融合、狀態保存與重新載入
-  不會自動產生 LUCK。
-- 兩個 `/coc usepregen` 路徑的訊息與 pending 一致；有值時可直接
-  `/coc start`，空白時須由本人 `/coc luck roll` 才可開始。
-- `0` 與純數字字串按有值處理；非法內容不會被誤認為卡面數值。
-- 已認領角色不被重新賦值，共用 pregen 不受玩家擲骰影響，重複
-  認領與重複擲骰仍被拒絕。
+- Use Luck present on a PDF sheet, manual sheet, or final merged sheet. When
+  manual Luck is blank and verified PDF Luck is filled, use the PDF value.
+  Create pending state only when the final sheet is blank.
+- Do not produce usable extracted Luck for a blank or missing PDF field, a
+  value belonging to another character, or an LLM value without verifiable
+  source evidence. Only an explicit value on that character's sheet may
+  enter the merge.
+- Keep Luck blank in the template. Parsing, merging, saving, and reloading
+  blank sheets must not generate a Luck value.
+- Both `/coc usepregen` paths show the same message and pending behavior.
+  A filled sheet can proceed directly to `/coc start`; a blank sheet needs
+  that player's `/coc luck roll` first.
+- Treat `0` and purely numeric legacy strings as filled. Never interpret
+  invalid content as a sheet value.
+- Do not change already claimed characters or the shared pregen when a
+  player rolls. Continue rejecting duplicate claims and duplicate rolls.
