@@ -298,3 +298,7 @@ PR89＋PR90 的50回合重測在03-scoped重現：先新增接收者背包，再
 - 保留舊pending／Luck與額外工具的限制。既有Supervisor/Narrator交接同樣驗證兩種順序。
 - 真實Keeper＋隔離SQLite回歸：兩種順序都完成且不重播；負面案例保持incomplete。
   本次不追加付費API，不更動正式DATA。
+
+驗收：修正前3項反向交接案例失敗（兩種裁決＋Supervisor交接）；修正後全套
+`python3 -m pytest -o addopts='' -q --tb=short`：702 passed、1 skipped、15 subtests passed。
+mypy（69個source files）、修改檔案Ruff與git diff --check通過。
