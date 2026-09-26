@@ -43,6 +43,15 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
                 self.assertPolicy(prompt, "只有劇本條件或已成立的正式事件確實使攻擊")
                 self.assertNotIn("看到戰鬥發生就立刻呼叫", prompt)
 
+    def test_existing_npc_stats_and_multiple_enemy_rules_are_preserved(self):
+        for path, prompt in self._prompts().items():
+            with self.subTest(path=path):
+                self.assertPolicy(prompt, "若劇本寫了護甲、攻擊、特殊能力、每輪/每戰使用限制或觸發條件，必須先查劇本")
+                self.assertPolicy(prompt, "add_npc_to_combat 的 armor/attacks/abilities")
+                self.assertPolicy(prompt, "不要只填 HP 後靠臨場記憶")
+                self.assertPolicy(prompt, "同一場戰鬥裡如果同時出現多隻同種怪物")
+                self.assertPolicy(prompt, "每一隻呼叫 add_npc_to_combat 時都要給不同的顯示名稱")
+
     def test_rag_miss_is_unknown_and_followup_search_is_conditional(self):
         for path, prompt in self._prompts(rag_enabled=True).items():
             with self.subTest(path=path):
