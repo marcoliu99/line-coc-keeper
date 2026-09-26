@@ -30,10 +30,45 @@ loads and saves usually take milliseconds; median scenario retrieval is about
 0.25 seconds. `request.completed` includes work after the text reply, so the
 router span and the later button-posting tail must be measured separately.
 
-The goal is to deliver a newly created check/Luck button promptly after its
-turn's narration and to remove repeated same-scene scenario searches that
-consume extra model iterations, while preserving ordered game state and
-scenario correctness.
+The goal for this change is to deliver a newly created check/Luck button
+promptly after its turn's narration, while preserving ordered game state. A
+small trial did not validate the proposed scenario-search change, so search
+behavior remains unchanged in this spec. Its latency and relevance findings
+are recorded below for a separate design.
+
+## Small-scale verification (2026-09-26)
+
+These were isolated trials using a copy of the scenario database. The model
+trials used the configured OpenAI model (`gpt-6-luna`, `medium` reasoning) and
+real scenario retrieval, but only `search_scenario` and a stubbed
+`skill_check`; no game state was changed. One warm-up call per A/B trial was
+excluded. Each arm had three scored runs, too few to estimate production
+latency or judge a complete Keeper turn. Results are saved under
+`/private/tmp/coc_*_small_trial_results.json` for this review.
+
+| Trial | Current path | Candidate | What it establishes |
+| --- | --- | --- | --- |
+| Mocked conversation-lock contention; next turn holds lock for 250 ms, n=3 each | `_post_check_buttons` median 252.11 ms | Previously claimed direct send median 0.05 ms | The second lock acquisition creates the expected wait. Discord network time and full claim integration were mocked. |
+| Real-model search flow; n=3 each | Median 11.96 s; median 5 API calls; 10 search rounds total; 1 `skill_check` call total | Batch first search and cap at two rounds: median 13.78 s; median 5 API calls; 6 search rounds total; 5 `skill_check` calls total | Fewer tool rounds did not reduce model calls or elapsed time. Expected one pending check per run was not reliable; candidate check counts were 0, 2, and 3. |
+| Real-model proactive RAG, with one fixed DEX check; n=3 each | Raw Chinese-query context: Executor median 6.32 s, 3 API calls, 1 explicit search per run, 3/3 one check | English-aligned context: Executor median 4.83 s, 2 API calls, 0 explicit searches, 3/3 one check | Better initial evidence can save an Executor search round in this narrow setup. These Executor times exclude query rewrite and retrieval. |
+
+The raw Chinese action `我也走下地下室` returned five chunks, none containing
+the basement stairs, Push, or fall terms needed for this ruling. Adding the
+previous Chinese narration still missed them. Three model-generated English
+search phrases found those terms in the top five chunks in all three runs;
+rewrite median was 3.35 seconds and retrieval median 0.24 seconds. Adding
+those median components to the 4.83-second aligned Executor median gives an
+illustrative 8.42 seconds versus 6.32 seconds for raw context. This is an
+unpaired, tiny-sample estimate, not a measured end-to-end A/B difference.
+None of the three English results included the `1d6` damage term, so English
+alignment alone does not prove complete scenario coverage.
+
+**Decision from the trial:** keep the button fix. Do not add the two-round
+search cap, batch search schema, or a per-turn model rewrite as a latency
+optimization now. The batch/cap trial did not pass its latency or one-check
+gate; the rewrite's extra call can outweigh the saved Executor call. A
+separate search design needs an outcome-aware replay that checks retrieval
+evidence, tool calls, final ruling, and complete turn latency.
 
 ## Scope
 
@@ -43,14 +78,11 @@ scenario correctness.
    second time. Cover ordinary text, `/coc check`, `/coc luck`, and both
    existing button callbacks. Keep a fallback for routes without one outer
    conversation lock and for partial failures.
-2. Offer Executor a bounded, one-round way to retrieve several distinct
-   facts about the current scene. Add a turn-local policy that prevents a
-   succession of equivalent `search_scenario` queries; allow one explicit
-   follow-up for a distinct missing fact. Keep the existing proactive RAG
-   context and its reuse policy.
-3. Record the latency from the end of turn processing to button send start
-   and completion, and count Executor scenario-search invocations and
-   duplicate/follow-up decisions without logging new scenario text.
+2. Record the latency from the end of turn processing to button send start
+   and completion. Record a turn-level count of Executor scenario-search
+   invocations using existing structured logging conventions, without query
+   or scenario text. This makes later search experiments measurable without
+   changing the search policy in this change.
 
 ## Non-goals
 
@@ -67,6 +99,8 @@ scenario correctness.
 - No new scenario index, database table, state schema migration, or change to
   the scenario's access-control/spoiler policy.
 - No general batching or parallel execution of state-mutating tools.
+- No search batch schema, hard search-round cap, or per-turn LLM rewrite of
+  player queries. The small trial did not show a safe latency win.
 
 ## Data structures and contracts
 
@@ -79,15 +113,9 @@ the Discord send. It is never written to the story log or database. Claims
 for one completed turn should be collected and saved in one short state
 transaction while the caller already owns the conversation lock.
 
-Executor keeps a turn-local `ScenarioSearchState`: the already supplied
-`rag_context`, normalized queries attempted this turn, result identities,
-and the count of explicit search rounds. This is discarded at turn end and
-must not leak scenario passages across users or timelines. Existing
-`search_scenario` callers remain compatible with its required `query` string;
-Executor may add up to two optional `related_queries`. A batch returns a
-bounded set of unique page/chunk passages, with at least one relevant result
-per nonempty query when available and no more than the current total output
-limit. Search results remain read-only evidence, never a game-state change.
+No new Executor search state or tool schema is needed. The existing
+`search_scenario` interface and read-only result contract remain intact. A
+per-turn integer search count is sufficient for the new aggregate event.
 
 ## Pending-button flow
 
@@ -122,41 +150,21 @@ This is a change to *when* the durable claim is made, not permission to run
 two game turns at once or to send buttons while holding a network operation
 inside the conversation lock.
 
-## Executor search flow
+## Executor search follow-up
 
-1. `context_builder.build_context` continues to retrieve proactive scenario
-   context. Executor first inspects that evidence; it need not call a search
-   tool when the concrete ruling is already supported.
-2. When detail is missing, the first explicit search can include one main
-   query and up to two related, distinct current-scene queries. The gateway
-   executes these local searches under one model tool-call round, removes
-   duplicate passages, and bounds the combined result to the existing
-   `SCENARIO_RAG_TOP_K`/response-size budget. A search failure or empty
-   result is reported as such; it is never treated as evidence.
-3. If a later *distinct* fact becomes necessary, one follow-up search is
-   available with a required `missing_fact` description. Rephrasings of an
-   already attempted query or requests whose returned passages duplicate
-   the previous evidence receive an explicit already-covered result. Use
-   `scenario_rag._tokenize` for exact normalized-token repeats and identify
-   retrieved passages by `(page, hash(text))`; do not introduce another LLM
-   call just to decide whether two queries are similar. `missing_fact` is
-   optional in the first tool schema and required in OpenAI's follow-up
-   schema; the gateway validates it for providers with static schemas.
-   After that follow-up, Executor proceeds with established facts or states
-   the uncertainty; it does not invent a ruling to satisfy a latency budget.
-4. OpenAI's existing `tools_for_request` callback may narrow the offered
-   schema by search phase. The gateway enforces the same bound for other
-   providers, so their static tool lists cannot bypass it. Existing KP
-   Assistant and legacy single-agent Keeper search behavior is unchanged.
+`context_builder.build_context` and Executor continue to use the existing
+proactive context and `search_scenario` tool. The real-model trial exposed a
+retrieval-language mismatch in the basement-stairs example, but the tested
+batch/cap candidate did not make the final check sequence more reliable or
+faster. The earlier RAG-reuse spec's “no hard per-turn search cap” decision
+therefore remains in force. Prompt wording alone is also insufficient: the
+existing reuse prompt was present during the logged three-search incident.
 
-This intentionally revises the earlier RAG-reuse spec's “no hard per-turn
-search cap” non-goal for Executor only. A two-round limit plus multi-query
-first round is the proposed tradeoff. The implementation must first replay
-the logged basement-stairs case and at least one genuinely distinct-fact
-case with the configured model. If the distinct-fact case cannot be answered
-correctly within this contract, revise this spec before implementing a
-stricter limit. Prompt wording alone is insufficient: the existing reuse
-prompt was present during the three-search incident.
+The search count event should distinguish turns with zero, one, and multiple
+explicit searches. A later search spec can use these counts and controlled
+replays to evaluate a no-extra-model-call alignment method or another
+retrieval change. It must check that necessary evidence and the final ruling
+remain correct before using a search-round limit.
 
 ## Integration and observability
 
@@ -164,16 +172,15 @@ prompt was present during the three-search incident.
   handoff rather than replacing locks or creating a second independent
   posting path. Reuse `_buttons_posted`, button identity helpers, and the
   stranded-claim release logic from the duplicate-button fix.
-- Keep `app/agents/executor.py` as the owner of turn-local search state and
-  `app/agents/tool_gateway.py`/`app/keeper.py` as the existing read-only
-  search execution boundary. Reuse `scenario_rag.search` and current result
-  formatting; do not add a new network retrieval service.
+- Count explicit `search_scenario` calls at the existing Executor tool
+  execution boundary. Do not change `app/agents/tool_gateway.py`,
+  `app/keeper.py`, `scenario_rag.search`, or result formatting for this spec.
 - Add structured events for `pending_button.claimed`,
-  `pending_button.send.completed/failed`, and
-  `executor.scenario_search.accepted/reused/limited`. Record elapsed time,
-  kind, count, and status; do not add player text, query text, page content,
-  owner IDs, or Discord message bodies to structured events. Existing
-  `LOG_TEXT_ENABLED` query logging remains separate.
+  `pending_button.send.completed/failed`, and one
+  `executor.scenario_search.summary` per turn. Record elapsed time, kind,
+  count, and status as applicable; do not add player text, query text, page
+  content, owner IDs, or Discord message bodies to structured events.
+  Existing `LOG_TEXT_ENABLED` query logging remains separate.
 - Measure final narration delivery and button delivery separately. A lower
   `request.completed` duration alone is not evidence that players got their
   buttons sooner.
@@ -189,27 +196,24 @@ prompt was present during the three-search incident.
    decision for the same owner, legacy IDs, choice buttons, send failure,
    cancellation, and exception paths that saved a pending entry before the
    later turn failed. Verify no lock leak or stranded `_buttons_posted` flag.
-3. Search unit tests: proactive context sufficient (zero explicit search),
-   batched distinct queries (one model round and bounded deduplicated
-   passages), equivalent follow-up (no second retrieval), genuinely missing
-   fact (one follow-up allowed), empty/degraded first result, and provider
-   parity. Assert no mechanic tool or scenario access-control regression.
-4. Controlled replay of the basement-stairs case and a distinct-fact case
-   with the configured real model. Record Responses API calls, search
-   rounds, final check/ruling, and elapsed time against the current branch.
-   A result that merely suppresses needed evidence fails the experiment.
-5. Run relevant Discord/router, Executor/RAG, provider, and state tests,
+3. Search instrumentation tests: assert the per-turn event reports zero,
+   one, and multiple explicit `search_scenario` calls correctly, including
+   tool errors, without exposing query or scenario text. Verify that the
+   existing tool result and access-control behavior stays unchanged.
+4. Run relevant Discord/router, Executor/RAG, provider, and state tests,
    then the full project suite and existing static checks. In a subsequent
-   live log, compare button-send tail and model requests per gameplay turn
-   against the baselines above; report sample sizes and queue load.
+   live log, compare button-send tail against the baseline above; report
+   sample sizes and queue load. Use the search count to size a separate
+   outcome-aware search experiment, not to claim a speedup from this change.
 
 ## Review decisions and tradeoffs
 
-- **Recommended:** two explicit Executor search rounds at most, with up to
-  three related queries in the first round. This gives distinct facts a path
-  while bounding the repeated same-scene pattern. The real-model replay is
-  a gate before finalizing this change because an arbitrary search cap can
-  hide a necessary clue.
+- **Search decision:** retain the current Executor search policy. The
+  batch/two-round candidate reduced explicit searches but showed no speedup
+  and produced missing or duplicate `skill_check` calls in the isolated
+  replay. Query-language alignment is worth separate investigation, but a
+  per-turn model rewrite was slower in the narrow one-search comparison once
+  its estimated cost was included.
 - **Button ordering:** send outside the conversation lock to avoid holding
   game state serialization during Discord network I/O. The claim is made
   before release; a button may become stale before delivery, as it can
