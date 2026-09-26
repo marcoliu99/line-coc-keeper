@@ -16,6 +16,7 @@ import time
 import unicodedata
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeVar, cast
 
@@ -666,6 +667,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             return
         before_pending: dict | None = None
         before_luck_pending: dict | None = None
+        claimed_intents: list[_PendingButtonIntent] | None = None
         try:
             channel = interaction.channel
             if channel is None:
@@ -717,10 +719,15 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
                         await _send_interaction_message(interaction, "這個檢定按鈕已經失效，請使用最新的按鈕。", ephemeral=True)
                         return
                 command_text = f"/coc check {option}" if option else "/coc check"
-                await handle_check_command(
-                    self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image,
-                    command_text, split_roll_feedback=True, acquire_legacy_for_keeper=False
-                )
+                try:
+                    await handle_check_command(
+                        self.conversation_id, self.owner_id, reply, _send_dm, send_image, _send_dm_image,
+                        command_text, split_roll_feedback=True, acquire_legacy_for_keeper=False
+                    )
+                finally:
+                    claimed_intents = await _try_claim_pending_buttons_locked(
+                        self.conversation_id, before_pending, before_luck_pending,
+                    )
         finally:
             # A deterministic check/luck entry may be persisted before a later
             # Keeper or narration step raises.  Restore any newly-created
@@ -735,9 +742,12 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
                             self.conversation_id,
                         )
                     else:
-                        await _post_pending_buttons(
-                            messageable, self.conversation_id, before_pending, before_luck_pending
-                        )
+                        if claimed_intents is None:
+                            await _post_pending_buttons(
+                                messageable, self.conversation_id, before_pending, before_luck_pending
+                            )
+                        else:
+                            await _send_claimed_button_intents(messageable, self.conversation_id, claimed_intents)
                 except Exception:
                     _logger.exception(
                         "failed to restore pending buttons after check callback failure for conversation_id=%s",
@@ -751,6 +761,82 @@ def _equal_ignoring_posted_marker(a: dict, b: dict) -> bool:
         return {k: v for k, v in d.items() if k != "_buttons_posted"}
 
     return strip(a) == strip(b)
+
+
+@dataclass(frozen=True)
+class _PendingButtonIntent:
+    kind: str
+    owner_id: str
+    entry: dict
+    name: str
+    timeline_id: str
+    public_marker: str | None
+    claimed_at: float
+
+
+async def _claim_pending_buttons_locked(
+    conversation_id: str,
+    before_pending: dict,
+    before_luck_pending: dict,
+    *,
+    sudo_command: sudo_policy.ParsedSudoCommand | None = None,
+) -> list[_PendingButtonIntent]:
+    """Claim this turn's new buttons while its caller owns the conversation lock.
+
+    There is one state load and at most one save for both collections. No
+    Discord I/O occurs here; the caller sends returned intents after unlock.
+    """
+    from app.repositories.group_state import save_state as save_group_state
+
+    state = await asyncio.to_thread(load_group_state, conversation_id)
+    marker = command_router.sudo_public_marker(state, sudo_command) if sudo_command else None
+    timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+    claimed_at = time.perf_counter()
+    intents: list[_PendingButtonIntent] = []
+    for kind, collection, before in (
+        ("check", state.pending_checks, before_pending),
+        ("luck", state.pending_luck_decisions, before_luck_pending),
+    ):
+        for owner_id, entry in collection.items():
+            if before.get(owner_id) == entry or entry.get("_buttons_posted"):
+                continue
+            original = dict(entry)
+            entry["_buttons_posted"] = True
+            character = state.get_active_character(owner_id)
+            intents.append(_PendingButtonIntent(
+                kind=kind,
+                owner_id=owner_id,
+                entry=original,
+                name=character.name if character else "你",
+                timeline_id=timeline_id,
+                public_marker=marker,
+                claimed_at=claimed_at,
+            ))
+    if intents:
+        await asyncio.to_thread(save_group_state, state)
+        # Saving a legacy state can create its first timeline_id. Identity
+        # tokens must use the persisted value that callbacks will verify.
+        if state.timeline_id and state.timeline_id != timeline_id:
+            intents = [replace(intent, timeline_id=state.timeline_id) for intent in intents]
+        for intent in intents:
+            observability.event("pending_button.claimed", kind=intent.kind, status="success")
+    return intents
+
+
+async def _try_claim_pending_buttons_locked(
+    conversation_id: str,
+    before_pending: dict,
+    before_luck_pending: dict,
+    *,
+    sudo_command: sudo_policy.ParsedSudoCommand | None = None,
+) -> list[_PendingButtonIntent] | None:
+    try:
+        return await _claim_pending_buttons_locked(
+            conversation_id, before_pending, before_luck_pending, sudo_command=sudo_command,
+        )
+    except Exception:
+        _logger.exception("failed to claim pending buttons before unlock for conversation_id=%s", conversation_id)
+        return None
 
 
 async def _release_stranded_posting_claim(
@@ -789,6 +875,30 @@ async def _release_stranded_posting_claim(
         )
 
 
+async def _send_check_button(
+    channel: discord.abc.Messageable,
+    conversation_id: str,
+    owner_id: str,
+    check: dict,
+    name: str,
+    timeline_id: str,
+    public_marker: str | None,
+) -> None:
+    view = discord.ui.View(timeout=None)
+    full_check_id = effective_check_id(owner_id, check, timeline_id)
+    check_id = compact_identity_token("check", owner_id, full_check_id, timeline_id)
+    for label, danger, option in _check_button_specs(check):
+        view.add_item(CheckButton(conversation_id, owner_id, label, danger, option, check_id))
+    marker = f"{public_marker}\n" if public_marker else ""
+    if check.get("type") == "choice":
+        hint = _defense_choice_hint(check)
+        hint_line = f"{hint}\n" if hint else ""
+        prompt = f"{hint_line}請選擇要採取的防守／行動方式，並由你觸發擲骰："
+    else:
+        prompt = "請按鈕完成你的檢定（或輸入 /coc check）："
+    await _send_direct_message(channel, f"{marker}👉 {name}，{prompt}", view=view)
+
+
 async def _post_check_buttons(
     channel: discord.abc.Messageable,
     conversation_id: str,
@@ -823,6 +933,7 @@ async def _post_check_buttons(
         if before_pending.get(owner_id) == check:
             continue
         claimed = False
+        claimed_at = 0.0
         try:
             async with locks.get_conversation_lock(conversation_id):
                 current_state = await asyncio.to_thread(load_group_state, conversation_id)
@@ -832,23 +943,22 @@ async def _post_check_buttons(
                 current_check["_buttons_posted"] = True
                 await asyncio.to_thread(save_group_state, current_state)
                 claimed = True
+                claimed_at = time.perf_counter()
+                observability.event("pending_button.claimed", kind="check", status="success")
             char = current_state.get_active_character(owner_id)
             name = char.name if char else "你"
-            view = discord.ui.View(timeout=None)
             timeline_id = current_state.timeline_id or f"legacy-{conversation_id}"
-            full_check_id = effective_check_id(owner_id, check, timeline_id)
-            check_id = compact_identity_token("check", owner_id, full_check_id, timeline_id)
-            for label, danger, option in _check_button_specs(check):
-                view.add_item(CheckButton(conversation_id, owner_id, label, danger, option, check_id))
-            marker = f"{public_marker}\n" if public_marker else ""
-            if check.get("type") == "choice":
-                hint = _defense_choice_hint(check)
-                hint_line = f"{hint}\n" if hint else ""
-                prompt = f"{hint_line}請選擇要採取的防守／行動方式，並由你觸發擲骰："
-            else:
-                prompt = "請按鈕完成你的檢定（或輸入 /coc check）："
-            text = f"{marker}👉 {name}，{prompt}"
-            await _send_direct_message(channel, text, view=view)
+            send_started = time.perf_counter()
+            await _send_check_button(
+                channel, conversation_id, owner_id, check, name, timeline_id, public_marker,
+            )
+            finished = time.perf_counter()
+            observability.event(
+                "pending_button.send.completed", kind="check", status="success",
+                claim_to_send_start_ms=(send_started - claimed_at) * 1000,
+                send_duration_ms=(finished - send_started) * 1000,
+                claim_to_send_completed_ms=(finished - claimed_at) * 1000,
+            )
         except Exception:
             # Never let one broken/unpostable entry (a malformed check dict,
             # a transient Discord API error, ...) silently swallow every
@@ -858,6 +968,7 @@ async def _post_check_buttons(
                 "failed to post check button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
             )
             if claimed:
+                observability.event("pending_button.send.failed", kind="check", status="error")
                 # The _buttons_posted claim was saved, but the actual send
                 # (or view/text construction) failed after that — without
                 # this, the check would be permanently skipped by every
@@ -945,6 +1056,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             return
         before_pending: dict | None = None
         before_luck_pending: dict | None = None
+        claimed_intents: list[_PendingButtonIntent] | None = None
         try:
             channel = interaction.channel
             if channel is None:
@@ -981,10 +1093,15 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
                     return
                 before_pending = dict(state_before.pending_checks)
                 before_luck_pending = dict(state_before.pending_luck_decisions)
-                await handle_luck_decision(
-                    self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image,
-                    _send_dm_image, split_roll_feedback=True, acquire_legacy_for_keeper=False
-                )
+                try:
+                    await handle_luck_decision(
+                        self.conversation_id, self.owner_id, self.choice, reply, _send_dm, send_image,
+                        _send_dm_image, split_roll_feedback=True, acquire_legacy_for_keeper=False
+                    )
+                finally:
+                    claimed_intents = await _try_claim_pending_buttons_locked(
+                        self.conversation_id, before_pending, before_luck_pending,
+                    )
         finally:
             if before_pending is not None or before_luck_pending is not None:
                 try:
@@ -995,15 +1112,38 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
                             self.conversation_id,
                         )
                     else:
-                        await _post_pending_buttons(
-                            messageable, self.conversation_id, before_pending, before_luck_pending
-                        )
+                        if claimed_intents is None:
+                            await _post_pending_buttons(
+                                messageable, self.conversation_id, before_pending, before_luck_pending
+                            )
+                        else:
+                            await _send_claimed_button_intents(messageable, self.conversation_id, claimed_intents)
                 except Exception:
                     _logger.exception(
                         "failed to restore pending buttons after Luck callback failure for conversation_id=%s",
                         self.conversation_id,
                     )
             locks.release_check(self.conversation_id, self.owner_id)
+
+
+async def _send_luck_button(
+    channel: discord.abc.Messageable,
+    conversation_id: str,
+    owner_id: str,
+    decision: dict,
+    name: str,
+    timeline_id: str,
+    public_marker: str | None,
+) -> None:
+    view = discord.ui.View(timeout=None)
+    full_decision_id = effective_decision_id(owner_id, decision, timeline_id)
+    decision_id = compact_identity_token("decision", owner_id, full_decision_id, timeline_id)
+    for option in decision["options"]:
+        label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
+        view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"], decision_id=decision_id))
+    view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True, decision_id=decision_id))
+    marker = f"{public_marker}\n" if public_marker else ""
+    await _send_direct_message(channel, f"{marker}🍀 {name}，要花 Luck 買到更好的結果嗎？", view=view)
 
 
 async def _post_luck_buttons(
@@ -1027,6 +1167,7 @@ async def _post_luck_buttons(
         if before_pending.get(owner_id) == decision:
             continue
         claimed = False
+        claimed_at = 0.0
         try:
             async with locks.get_conversation_lock(conversation_id):
                 current_state = await asyncio.to_thread(load_group_state, conversation_id)
@@ -1036,25 +1177,95 @@ async def _post_luck_buttons(
                 current_decision["_buttons_posted"] = True
                 await asyncio.to_thread(save_group_state, current_state)
                 claimed = True
+                claimed_at = time.perf_counter()
+                observability.event("pending_button.claimed", kind="luck", status="success")
             char = current_state.get_active_character(owner_id)
             name = char.name if char else "你"
-            view = discord.ui.View(timeout=None)
             timeline_id = current_state.timeline_id or f"legacy-{conversation_id}"
-            full_decision_id = effective_decision_id(owner_id, decision, timeline_id)
-            decision_id = compact_identity_token("decision", owner_id, full_decision_id, timeline_id)
-            for option in decision["options"]:
-                label = f"花 {option['cost']} 點 Luck → {_TIER_ZH[option['tier']]}"
-                view.add_item(LuckSpendButton(conversation_id, owner_id, label, option["tier"], decision_id=decision_id))
-            view.add_item(LuckSpendButton(conversation_id, owner_id, "維持目前結果", "skip", danger=True, decision_id=decision_id))
-            marker = f"{public_marker}\n" if public_marker else ""
-            text = f"{marker}🍀 {name}，要花 Luck 買到更好的結果嗎？"
-            await _send_direct_message(channel, text, view=view)
+            send_started = time.perf_counter()
+            await _send_luck_button(
+                channel, conversation_id, owner_id, decision, name, timeline_id, public_marker,
+            )
+            finished = time.perf_counter()
+            observability.event(
+                "pending_button.send.completed", kind="luck", status="success",
+                claim_to_send_start_ms=(send_started - claimed_at) * 1000,
+                send_duration_ms=(finished - send_started) * 1000,
+                claim_to_send_completed_ms=(finished - claimed_at) * 1000,
+            )
         except Exception:
             _logger.exception(
                 "failed to post luck button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
             )
             if claimed:
+                observability.event("pending_button.send.failed", kind="luck", status="error")
                 await _release_stranded_posting_claim(conversation_id, owner_id, decision, "pending_luck_decisions")
+
+
+async def _release_button_intents(
+    conversation_id: str, intents: list[_PendingButtonIntent],
+) -> None:
+    for intent in intents:
+        collection = "pending_checks" if intent.kind == "check" else "pending_luck_decisions"
+        await _release_stranded_posting_claim(
+            conversation_id, intent.owner_id, intent.entry, collection,
+        )
+
+
+async def _send_claimed_button_intents(
+    channel: discord.abc.Messageable,
+    conversation_id: str,
+    intents: list[_PendingButtonIntent],
+) -> None:
+    """Send already-claimed buttons without acquiring the conversation lock.
+
+    A fresh state read before each Luck send preserves the existing protection
+    against a decision changing while an earlier check send awaited Discord.
+    """
+    for index, intent in enumerate(intents):
+        started = time.perf_counter()
+        try:
+            if intent.kind == "luck":
+                current_state = await asyncio.to_thread(load_group_state, conversation_id)
+                current = current_state.pending_luck_decisions.get(intent.owner_id)
+                if (
+                    current is None
+                    or not current.get("_buttons_posted")
+                    or not _equal_ignoring_posted_marker(current, intent.entry)
+                ):
+                    observability.event("pending_button.send.completed", kind="luck", status="stale")
+                    continue
+                await _send_luck_button(
+                    channel, conversation_id, intent.owner_id, intent.entry,
+                    intent.name, intent.timeline_id, intent.public_marker,
+                )
+            else:
+                await _send_check_button(
+                    channel, conversation_id, intent.owner_id, intent.entry,
+                    intent.name, intent.timeline_id, intent.public_marker,
+                )
+            finished = time.perf_counter()
+            observability.event(
+                "pending_button.send.completed", kind=intent.kind, status="success",
+                claim_to_send_start_ms=(started - intent.claimed_at) * 1000,
+                send_duration_ms=(finished - started) * 1000,
+                claim_to_send_completed_ms=(finished - intent.claimed_at) * 1000,
+            )
+        except asyncio.CancelledError:
+            observability.event("pending_button.send.failed", kind=intent.kind, status="cancelled")
+            cleanup = asyncio.create_task(_release_button_intents(conversation_id, intents[index:]))
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                async_utils.observe_background_task(cleanup, operation="pending_button.claim_release")
+            raise
+        except Exception:
+            _logger.exception(
+                "failed to send claimed %s button for owner_id=%s in conversation_id=%s",
+                intent.kind, intent.owner_id, conversation_id,
+            )
+            observability.event("pending_button.send.failed", kind=intent.kind, status="error")
+            await _release_button_intents(conversation_id, [intent])
 
 
 async def _post_pending_buttons(
@@ -1066,9 +1277,10 @@ async def _post_pending_buttons(
     *,
     sudo_command: sudo_policy.ParsedSudoCommand | None = None,
 ) -> None:
-    """Shared tail for every place that posts fresh check/Luck-spend buttons
-    after a command or turn finishes (CheckButton/LuckSpendButton callbacks,
-    on_message).
+    """Recovery path for turns that could not claim buttons inside their lock.
+
+    Normal text and button turns send previously claimed intents directly;
+    routes without one outer lock and failed claims still use this path.
 
     Loads state once for _post_check_buttons, then loads it AGAIN,
     separately, right before _post_luck_buttons — this is NOT the same as
@@ -1499,14 +1711,23 @@ async def _handle_message(message: discord.Message) -> None:
         state_before = await asyncio.to_thread(load_group_state, conversation_id)
         before_pending = dict(state_before.pending_checks)
         before_luck_pending = dict(state_before.pending_luck_decisions)
+        claimed_intents: list[_PendingButtonIntent] | None = None
         sudo_command: sudo_policy.ParsedSudoCommand | None = None
         if command_parts[0].casefold() == "/coc" and len(command_parts) > 1 and command_parts[1].casefold() == "sudo":
             sudo_command, _ = sudo_policy.parse_sudo_command(command_parts, allow_opaque_target=False)
+
+        async def claim_after_locked_turn() -> None:
+            nonlocal claimed_intents
+            claimed_intents = await _try_claim_pending_buttons_locked(
+                conversation_id, before_pending, before_luck_pending,
+                sudo_command=sudo_command,
+            )
+
         try:
             is_keeper = _is_keeper_member(message.author)
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
-                format_mention, is_keeper,
+                format_mention, is_keeper, post_turn_hook=claim_after_locked_turn,
             )
         finally:
             # Always attempt this, even if handle_text_message raised partway
@@ -1514,13 +1735,16 @@ async def _handle_message(message: discord.Message) -> None:
             # (e.g. skill_check's tool call) before a *later* tool call in the
             # same turn blows up, and that would otherwise silently strand a
             # pending check with no button ever posted for it.
-            await _post_pending_buttons(
-                message.channel,
-                conversation_id,
-                before_pending,
-                before_luck_pending,
-                sudo_command=sudo_command,
-            )
+            if claimed_intents is None:
+                await _post_pending_buttons(
+                    message.channel,
+                    conversation_id,
+                    before_pending,
+                    before_luck_pending,
+                    sudo_command=sudo_command,
+                )
+            else:
+                await _send_claimed_button_intents(message.channel, conversation_id, claimed_intents)
     except StateRevisionConflict:
         observability.mark_request_error()
         _logger.warning(
