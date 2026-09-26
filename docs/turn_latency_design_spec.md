@@ -1,8 +1,8 @@
 # Turn latency: pending buttons and scenario search
 
 **Status (2026-09-26):** The pending-button and search-count scope below was
-implemented with tests and pushed in `404c417`. The Chinese-search and
-model-round-trip designs at the end of this document are proposals for a
+implemented with tests and pushed in `404c417`. The Chinese scenario-template
+and model-round-trip designs at the end of this document are proposals for a
 separate review. They have not been implemented.
 
 ## Problem and goal
@@ -336,78 +336,129 @@ tools imply fewer seconds; the earlier `none`/`low` model-tiering experiment
 was reverted after production regressions. A controlled `medium`/`high`
 configuration A/B can be considered separately with a ruling-quality gate.
 
-## Chinese scenario retrieval proposal (separate review and implementation)
+## Chinese scenario template proposal (separate review and implementation)
 
 ### Goal and decision boundary
 
 The one-page trial shows that a Chinese rendering of the relevant basement
 rule can make a Chinese query retrieve the needed scene without an extra
-Executor search round. It does not validate automatic translation, a whole
-scenario, or final ruling correctness. The first implementation candidate is
-an **optional, one-time Chinese retrieval sidecar** for scenarios whose active
-source is English. Do not translate each player query with a model. An
-already-Chinese scenario can use the existing CJK-aware index directly.
+Executor search round. It does not validate a whole scenario or final ruling
+correctness. The requested direction is to preprocess the scenario into a
+consistent, structured Chinese scenario template, then use that Chinese text
+as the source indexed by RAG. `SCENARIO_RAG_ENABLED` is already enabled in the
+user's normal workflow; this design assumes retrieval mode and does not
+propose changing that setting. Do not translate player queries on each turn.
 
 ### Data and build flow
 
-1. Keep `GroupState.scenario_text` and the original PDF/OCR text authoritative.
-   Segment the *currently accessible* source text using the existing
-   `scenario_rag` page and chunk boundaries. Translate each source chunk into
-   searchable Chinese with page context, retaining numbers, dice expressions,
-   skill names, proper names, negations, and rule conditions. Never replace
-   the source text or its page markers with generated translation.
-2. Store each Chinese chunk with a stable mapping to its source-text hash,
-   page number, ordinal within the page, and source-chunk hash. Add a
-   versioned, namespaced sidecar key in the existing SQLite
-   `scenario_indexes` cache rather than changing `GroupState` or adding a
-   database table. Bind the key and metadata to the conversation, accessible
-   chapter-window hash, translation recipe/model version, and index version.
-   Rebuild on source or chapter-window change; never retrieve chunks from a
-   chapter that the current state has not exposed. Keep original-index and
-   sidecar cache entries separate.
-3. Build once after scenario import/activation, off the Discord turn path,
-   with explicit opt-in and observable build progress/cost. Until the sidecar
-   is valid and ready, use the existing original-language index. A failed or
-   partial translation must leave the original path usable. Reuse the current
-   CJK bigram/BM25 plus embedding search; do not add a per-turn LLM call.
-4. For Chinese player actions, search the Chinese sidecar in both proactive
-   context and the explicit `search_scenario` tool. Resolve hits through the
-   stored mapping to the source page/chunk before presenting evidence to
-   Executor. The initial A/B should compare (a) Chinese-only translated
-   evidence, matching the small trial, (b) paired Chinese plus original
-   evidence, and (c) original-only evidence after Chinese-sidecar ranking.
-   Choose the smallest presentation that preserves rule accuracy and page
-   attribution; original source text wins when the translation conflicts.
-   This presentation choice is open because the small trial gave Executor
-   translated text, so search-only Chinese indexing has not been tested.
+1. Extract the original PDF/OCR into page-preserving source blocks. Keep the
+   original PDF and extracted source text as the audit source. Translate and
+   normalize the whole playable scenario once during preprocessing, before
+   RAG indexes it. Preserve page numbers, chapter IDs, image references, and
+   the existing chapter access window so a translated template cannot expose
+   later or KP-only material early.
+2. Use a fixed Chinese template for every scene, rule, NPC, clue, and handout.
+   Each retrievable unit has: canonical name and aliases/keywords; unit type;
+   player-visible description; KP-only information when present; trigger and
+   conditions; required skill or characteristic; target/dice expression;
+   success, failure, Push, and consequence rules when present; exceptions and
+   cross-references; and original page/section references. Keep narrative
+   prose as a faithful translation in its own field. Put normalized rule
+   summaries in a separate field so a summary cannot silently replace or
+   expand the source rule.
+3. Apply a per-scenario glossary for names, skills, places, recurring terms,
+   and common Chinese aliases. Preserve original names on first mention and
+   keep the same Chinese rendering throughout. Preserve numbers, units,
+   dice, thresholds, negation, uncertainty, and conditional wording exactly;
+   do not fill gaps with COC conventions or model guesses. Mark unclear source
+   text as needing KP review instead of inventing a translation.
+4. Make each template unit self-contained for retrieval. When a long unit
+   must be split to fit RAG chunks, repeat its canonical scene/name and
+   keywords in each part, retain the source page/section reference, and keep
+   dependent trigger/result conditions together. This matters because the
+   current index chunks by page and paragraph at roughly 400 characters.
+5. Save the generated Chinese template as a versioned derived scenario text
+   while retaining the original PDF and source-to-template mapping (source
+   hash, page, section, unit ID, and template version). Keep it as a distinct
+   library artifact; do not overwrite the original `scenario.txt` or PDF.
+   Extend the library's atomic save/replace flow so reparsing the original
+   cannot silently delete the translated artifact. On source, chapter-window,
+   glossary, template, or translation-version changes, regenerate the derived
+   text and its RAG index. Reuse the existing CJK bigram/BM25 plus embedding
+   index; add no per-turn translation call.
+6. At activation, make RAG search the Chinese template for both proactive
+   context and explicit `search_scenario` calls. Return the matching Chinese
+   template unit with its source page reference. Keep review status visible
+   to the KP; units with unresolved translation issues must not be treated
+   as verified mechanical rulings. If preprocessing or index building fails,
+   keep the original scenario usable and report that the Chinese version is
+   not ready.
+
+Example template unit (omit fields the source does not contain; write
+「原文未提及」 only when that absence matters to a ruling):
+
+```text
+--- 第 10 頁 ---
+## 場景單元：地下室階梯
+類型：場景／判定規則
+標準名稱：地下室階梯
+別名與檢索詞：地下室、樓梯、跌落、推進（Push）
+玩家可見描述：忠實翻譯原文敘述。
+KP 秘密資訊：忠實翻譯，並沿用原章節可見範圍。
+觸發條件：玩家做出什麼行動時適用。
+判定：技能或特徵；難度；骰式／目標值。
+成功：原文寫明的結果。
+失敗：原文寫明的結果。
+推進：原文寫明的推進規則；沒有就省略。
+例外與後續：保留原文條件及跨頁參照。
+來源：原文第 10 頁，對應段落識別碼。
+校對狀態：待 KP 校對／已校對。
+```
+
+Do not infer that 「推進（Push）」 is allowed just because it is a common
+Call of Cthulhu mechanic; include it only if the source says so.
+
+The first usable template can be authored and proofread outside the bot, then
+exported as a page-preserving Chinese PDF for the existing import flow. That
+is the smallest end-to-end trial and requires no runtime translation feature.
+If it improves retrieval and ruling quality, automate the same template
+contract in a later implementation. The small basement trial passed
+translated text to Executor; it did not test a structured template or
+source-to-template audit mapping, so those need separate validation.
 
 ### Acceptance and rollout gate
 
-- Prepare labeled Chinese actions across several pages and scene types,
-  including irrelevant queries, similar room names, negative/conditional
+- Prepare template-based Chinese content and labeled Chinese actions across
+  several pages and scene types, including irrelevant queries, similar room
+  names, negative/conditional
   rules, and restricted future chapters. Check source page and chunk recall
   at five, ranking, explicit search counts, API calls, complete Discord turn
   p50/p95, and final ruling accuracy. The basement example remains one case,
   not the whole acceptance set.
-- Human-review a sample of generated translations for dice, damage, skill
-  thresholds, proper names, negation, and Push rules. Reject or rebuild bad
-  chunks; verify source-hash/version invalidation, restart, partial-build
-  fallback, and no chapter or group leakage.
+- Have a KP compare template units with the original for dice, damage, skill
+  thresholds, proper names, negation, Push rules, and player/KP visibility.
+  Track corrections and terminology consistency across pages. Verify
+  source-hash/version invalidation, restart, partial-build fallback, and no
+  chapter or group leakage.
 - Compare one-time translation and embedding cost against repeated-turn
-  savings. Keep the feature opt-in until multi-scene replay preserves rulings
-  and reduces complete turn latency without a per-turn translation request.
-  Record retrieval and index-build timing separately from model time.
+  savings. Keep automation out of the runtime path until multi-scene replay
+  preserves rulings and reduces complete turn latency without a per-turn
+  translation request. Record preprocessing, retrieval, and model time
+  separately.
 
 ## Follow-up scope and review decisions
 
 The current branch's runtime implementation remains the pending-button change
-and search-count event in `404c417`. Candidate A, B, C, and Chinese retrieval
-above are **spec-only**. Proposed order: first improve async usage and
-result-level observability, then replay the terminal-check stop and Chinese
-retrieval independently; investigate roleplay routing after labeling actual
-turns. These are separate correctness gates, not a bundled code change.
+and search-count event in `404c417`. Candidate A, B, C, and the Chinese
+scenario template above are **spec-only**. Proposed order: first improve async
+usage and result-level observability, then evaluate the manually prepared
+Chinese template and terminal-check stop independently; investigate roleplay
+routing after labeling actual turns. These are separate correctness gates,
+not a bundled code change.
 
-Review choices before a new implementation: whether automatic Chinese
-sidecar preparation should be a command or a configuration opt-in; which
-evidence presentation passes the bilingual ruling trial; and whether
-pending-check terminal detection can prove that no further action is owed.
+Review choices before a new implementation: approve the template fields and
+terminology rules; decide whether the first trial uses a manually prepared
+Chinese PDF/text or bot-generated output with KP review; and determine which
+template units require original-source text alongside the translated result
+at runtime. Pending-check terminal detection also remains gated on proving
+that no further action is owed.
