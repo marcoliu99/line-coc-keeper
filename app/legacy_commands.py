@@ -46,6 +46,7 @@ from app import (
     scenario_rag,
 )
 from app import scene_map as scene_map_engine
+from app.agents import supervisor
 from app.check_identity import (
     effective_check_id,
     effective_decision_id,
@@ -1280,9 +1281,9 @@ async def _finalize_check_result(
                 for field_name in resolved_event["state_before"]:
                     if field_name not in tracked_fields:
                         resolved_event["state_before"][field_name] = keeper_start[field_name]
-            keeper_kwargs = {}
+            resolved_check_context = None
             if resolved_event is not None:
-                keeper_kwargs["resolved_check_context"] = {
+                resolved_check_context = {
                     key: resolved_event[key]
                     for key in (
                         "investigator", "skill", "skill_value", "roll", "difficulty",
@@ -1290,14 +1291,25 @@ async def _finalize_check_result(
                     )
                     if key in resolved_event
                 }
-            keeper_reply, private_messages, image_requests = await keeper.run_turn(
-                fresh_state,
-                user_id,
-                fresh_char.name,
-                keeper_context_message,
-                resolved_location,
-                "player",
-                **keeper_kwargs,
+            if resolved_check_context is None:
+                # Legacy snapshots can lack the structured event. The dice
+                # were still resolved by the deterministic transaction above;
+                # keep the follow-up type explicit and forbid another roll.
+                resolved_check_context = {
+                    "investigator": fresh_char.name,
+                    "outcome": roll_line,
+                    "action_context": context_note,
+                }
+            keeper_reply, private_messages, image_requests = await supervisor.run_turn(
+                state=fresh_state,
+                user_id=user_id,
+                display_name=fresh_char.name,
+                text=keeper_context_message,
+                resolved_location=resolved_location,
+                speaker_role="player",
+                conversation_id=conversation_id,
+                turn_kind="resolved_check_followup",
+                resolved_check_context=resolved_check_context,
             )
             if resolved_event is not None:
                 await asyncio.to_thread(
@@ -1838,7 +1850,7 @@ def _resolve_luck_decision_deterministically(
         # _build_check_narration can itself mutate char (e.g. appending "昏迷"/
         # "倒地" to status_tags for a failed major_wound_trigger check — see
         # its docstring), so save_state has to happen AFTER this call, not
-        # before it: keeper.run_turn's own state commit (_commit_turn_result)
+        # before it: the shared turn result commit (_commit_turn_result)
         # does a *fresh* load_state rather than persisting this same `state`
         # object, so any mutation made after an earlier save here would
         # otherwise be silently discarded.
