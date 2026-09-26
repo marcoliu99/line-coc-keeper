@@ -28,6 +28,9 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         lifecycle_kp_only = config.SCENARIO_LIFECYCLE_KP_ONLY
     lifecycle_note = ("KP-only：需要目前 KP Assistant 或 Discord Keeper role。",) if lifecycle_kp_only else ()
     return [
+        HelpEntry(("character", "purchases"), "character", "查看購買紀錄", "查看現金、待確認報價與近期買入。", ("/coc purchases",), command=("purchases",)),
+        HelpEntry(("character", "purchase"), "character", "確認購買", "依已顯示的報價結算付款與物品入袋。", ("/coc purchase 報價ID",), command=("purchase",)),
+        HelpEntry(("kp", "funds"), "kp", "登記現金", "登記已確認的角色幣別與餘額，不從信用評級猜測現金。", ("/coc funds 角色名稱 幣別 餘額",), kp_only=True, command=("funds",)),
         HelpEntry(("character", "pc"), "character", "快速建立調查員", "建立一位自訂調查員。", ("/coc pc 角色名 [職業]",), ("/coc pc 小明 記者",), visibility="when_no_pregens", command=("pc",)),
         HelpEntry(("character", "create"), "character", "互動式建立調查員", "先擲屬性，再分配職業與興趣技能點數。", ("/coc create 角色名 [職業]", "/coc alloc occ|int 技能名 點數", "/coc create status|done|cancel"), ("/coc create 小明 記者",), visibility="when_no_pregens", command=("create",)),
         HelpEntry(("character", "pregens"), "character", "查看預設角色", "查看劇本附帶的預製調查員。", ("/coc pregens",), ("/coc pregens",), visibility="when_scenario_loaded", command=("pregens",)),

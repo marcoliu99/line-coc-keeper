@@ -14,6 +14,9 @@ from app.domain.models import TurnResolution
 from app.models import GroupState
 from app.services.turn_context import character_id
 
+INFORMATION_QUERY_TOOLS = frozenset({"search_scenario", "search_memory", "get_character_sheet",
+                                      "get_combat_status", "search_scenario_images"})
+
 _DISPOSITIONS = {
     "no_mechanics", "await_check", "await_luck", "deferred", "resolved_without_check",
     "resolved", "cancelled", "blocked", "incomplete",
@@ -30,6 +33,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     inventory = []
     latest = {}
     ended = False
+    purchase_effect = False
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
         if (name in {'add_carried_item', 'remove_carried_item', 'end_combat'}
@@ -43,6 +47,22 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 return False, False
             inventory.append(event)
             latest[owner] = after
+        if name == "purchase_items":
+            receipt = result.get("purchase", {})
+            stored = state.commerce.get("transactions", {}).get(receipt.get("id"))
+            if not result.get("ok") or f"tool:{i}" not in refs or not stored or stored != receipt or receipt.get("investigator") != actor_name:
+                return False, False
+            purchase_effect = True
+            if receipt.get("status") == "purchased" and not result.get("duplicate"):
+                owner = receipt["investigator"]
+                before = event.get("inventory_before", {}).get(owner)
+                after = result.get("carried_items")
+                added: Counter[str] = Counter()
+                for item in receipt["items"]:
+                    added[item["name"]] += item["quantity"]
+                if before is None or not isinstance(after, list) or Counter(after) != Counter(before) + added:
+                    return False, False
+                latest[owner] = after
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
@@ -68,7 +88,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     transfer = transfer and all(e['name'] in {
         'add_carried_item', 'remove_carried_item', 'search_scenario', 'get_character_sheet',
     } for e in events)
-    return bool(ended or (inventory and actor_involved)), transfer
+    return bool(ended or purchase_effect or (inventory and actor_involved)), transfer
 
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
@@ -76,36 +96,36 @@ def validate_resolution(
     before_actor: dict[str, Any], before_gameplay: dict[str, Any] | None = None,
 ) -> TurnResolution:
     actor_id = character_id(state, user_id)
-    def incomplete(reason: str) -> TurnResolution:
-        return TurnResolution(actor_character_id=actor_id, reason=reason)
+    def incomplete(reason: str, code: str) -> TurnResolution:
+        return TurnResolution(actor_character_id=actor_id, reason=reason, validation_code=code)
     if not isinstance(text, str) or len(text) > 8192:
-        return incomplete("裁決資料過長")
+        return incomplete("裁決資料過長", "completion_too_long")
     try:
         data = json.loads(text)
     except (ValueError, TypeError):
-        return incomplete("未收到有效的回合裁決；已執行工具不會重做")
+        return incomplete("未收到有效的回合裁決；已執行工具不會重做", "invalid_json")
     if not isinstance(data, dict):
-        return incomplete("裁決格式不正確")
+        return incomplete("裁決格式不正確", "invalid_object")
     disposition = data.get("disposition")
     if not isinstance(disposition, str) or disposition not in _DISPOSITIONS or data.get("actor_character_id") != actor_id or not actor_id:
-        return incomplete("裁決角色或狀態不正確")
+        return incomplete("裁決角色或狀態不正確", "invalid_actor_or_disposition")
     for key in ("waiting_for", "check_id", "reason"):
         if not isinstance(data.get(key, ""), str) or len(data.get(key, "")) > 600:
-            return incomplete("裁決欄位不正確")
+            return incomplete("裁決欄位不正確", "invalid_fields")
     refs = data.get("evidence_refs", [])
     if not isinstance(refs, list) or len(refs) > 20 or not all(isinstance(x, str) for x in refs):
-        return incomplete("裁決依據格式不正確")
+        return incomplete("裁決依據格式不正確", "invalid_evidence_format")
     valid_refs = {"state"}
     if has_scenario:
         valid_refs.add("scenario_context")
     valid_refs.update(f"tool:{i}" for i, e in enumerate(tool_events, 1) if e['result'].get('ok'))
     if not refs or not set(refs) <= valid_refs:
-        return incomplete("裁決引用了不存在或失敗的依據")
+        return incomplete("裁決引用了不存在或失敗的依據", "invalid_evidence_reference")
     waiting = data.get("waiting_for", "")
     check_id = data.get("check_id", "")
     actor = state.get_active_character(user_id)
     if actor is None:
-        return incomplete("沒有可核對的行動角色")
+        return incomplete("沒有可核對的行動角色", "missing_actor")
     pending = state.pending_checks.get(user_id)
     luck = state.pending_luck_decisions.get(user_id)
     if disposition in {"await_check", "await_luck"}:
@@ -116,9 +136,9 @@ def validate_resolution(
         record = collection.get(owner or "", {})
         expected_id = record.get("check_id") if disposition == "await_check" else record.get("decision_id")
         if not expected_id or check_id != expected_id or record.get("timeline_id", state.timeline_id) != state.timeline_id:
-            return incomplete("要求處理的檢定／Luck 決定不存在或已過期")
+            return incomplete("要求處理的檢定／Luck 決定不存在或已過期", "pending_identity_mismatch")
         if disposition == "await_check" and owner in state.pending_luck_decisions:
-            return incomplete("骰已擲出，必須先處理 Luck")
+            return incomplete("骰已擲出，必須先處理 Luck", "luck_takes_precedence")
     elif disposition == "cancelled":
         old = before_pending.get(user_id)
         cleared = any(e['name'] == 'clear_pending_check' and e['result'].get('cleared')
@@ -127,7 +147,7 @@ def validate_resolution(
                 or before_luck.get(user_id) or not cleared
                 or old.get('timeline_id', state.timeline_id) != state.timeline_id
                 or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, 'cancelled')):
-            return incomplete("尚未確認原本的未擲檢定已取消")
+            return incomplete("尚未確認原本的未擲檢定已取消", "cancellation_not_verified")
     elif disposition == "deferred":
         current = None
         if state.combat.active and 0 <= state.combat.current_index < len(state.combat.order):
@@ -143,17 +163,17 @@ def validate_resolution(
         if (not actual_wait or pending or luck or now != before_actor
                 or any(e.get("actor_changed") for e in tool_events)
                 or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, "deferred")):
-            return incomplete("暫緩裁決與目前順位或已提交變更不一致")
+            return incomplete("暫緩裁決與目前順位或已提交變更不一致", "deferral_not_verified")
     elif disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
         mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
         if disposition in {"resolved", "resolved_without_check"}:
-            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'end_combat'} for e in tool_events) and not mutation:
-                return incomplete("物品或戰鬥變更缺少完整且可核對的工具證據")
+            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'end_combat', 'purchase_items'} for e in tool_events) and not mutation:
+                return incomplete("物品或戰鬥變更缺少完整且可核對的工具證據", "inventory_or_combat_not_verified")
             # A newly created/replaced check for any participant is still work.
             changed_wait = any(before_pending.get(owner) != record for owner, record in state.pending_checks.items())
             changed_luck = any(before_luck.get(owner) != record for owner, record in state.pending_luck_decisions.items())
             if changed_wait or changed_luck or ((pending or luck) and not (transfer and not luck)):
-                return incomplete("本次仍有待處理檢定或 Luck；既有檢定只允許獨立且已驗證的物品交接")
+                return incomplete("本次仍有待處理檢定或 Luck；既有檢定只允許獨立且已驗證的物品交接", "unfinished_check_or_luck")
         rolled = any(
             f"tool:{i}" in refs and e["result"].get("ok") and e["result"].get("resolved")
             and e["result"].get("investigator") == actor.name
@@ -161,7 +181,7 @@ def validate_resolution(
             for i, e in enumerate(tool_events, 1)
         )
         if disposition == "resolved" and not (rolled or mutation):
-            return incomplete("沒有可核對的結算或狀態變更結果")
+            return incomplete("沒有可核對的結算或狀態變更結果", "missing_resolved_effect")
         if disposition == "resolved" and mutation and not rolled:
             disposition = "resolved_without_check"
         scenario_evidence = "scenario_context" in refs or any(
@@ -169,12 +189,16 @@ def validate_resolution(
             for i, e in enumerate(tool_events, 1)
         )
         if disposition == "resolved_without_check" and not (mutation or scenario_evidence):
-            return incomplete("免檢定完成缺少劇本或可核對的工具變更依據")
-        if disposition == "no_mechanics" and tool_events:
-            return incomplete("已有工具操作，不能當作沒有機制")
+            return incomplete("免檢定完成缺少劇本或可核對的工具變更依據", "missing_scenario_or_mutation_evidence")
+        if disposition == "no_mechanics" and tool_events and (
+            any(e["name"] not in INFORMATION_QUERY_TOOLS or not e["result"].get("ok") for e in tool_events)
+            or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, "no_mechanics")
+        ):
+            return incomplete("已有工具操作，不能當作沒有機制", "no_mechanics_has_effects")
     return TurnResolution(
         disposition=disposition, actor_character_id=actor_id, waiting_for=waiting,
         check_id=check_id, reason=data.get("reason", "")[:600], evidence_refs=list(refs),
+        validation_code="model_incomplete" if disposition == "incomplete" else "validated",
     )
 
 
@@ -185,7 +209,7 @@ def actor_snapshot(state: GroupState, user_id: str) -> dict[str, Any]:
     if char is None:
         return {}
     return deepcopy({key: getattr(char, key) for key in (
-        "hp", "mp", "san", "luck", "carried_items", "weapons", "status_tags",
+        "hp", "mp", "san", "luck", "carried_items", "cash_balances", "weapons", "status_tags",
     )})
 
 

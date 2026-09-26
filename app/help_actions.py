@@ -43,6 +43,9 @@ DESCRIPTION = Field("描述", paragraph=True)
 
 
 ACTIONS: tuple[HelpExecution, ...] = (
+    _a("purchases", "character/purchases", "查看購買紀錄", "direct", "/coc purchases"),
+    _a("purchase", "character/purchase", "確認購買", "form", "/coc purchase", Field("報價 ID"), confirm=True),
+    _a("funds", "kp/funds", "登記現金", "form", "/coc funds", NAME, Field("幣別"), Field("餘額"), confirm=True),
     # Characters
     _a("pc", "character/pc", "建立角色", "form", "/coc pc", NAME, OCCUPATION),
     _a("create", "character/create", "開始建角", "form", "/coc create", NAME, OCCUPATION),
