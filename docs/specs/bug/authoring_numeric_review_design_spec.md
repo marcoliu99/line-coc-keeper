@@ -89,3 +89,42 @@ registry and original PDF; unresolved items must be reported explicitly.
   new export. No production source, draft, approval or existing export was changed.
 * Existing approved variants are not automatically migrated/revoked. This change
   revalidates when approval is requested; it adds no gameplay review request.
+
+## Follow-up: executable source repair (authorized 2026-09-27)
+
+Implement an administrator CLI, `python3 -m app.scenario_source_review`, with
+`prepare`, `check`, `publish`, and `rebind` operations. These are preparation tasks,
+not player actions or automatic background translation. No paid APIs are used.
+
+* Prepare snapshots source/PDF/chapter identity in a private server registry,
+  exports physical-page images, original extraction and local native candidates,
+  and an editable Markdown JSON proposal. Every physical page is represented.
+* Each proposed page has text, a review note and PDF evidence rectangles. Missing
+  text, review notes or evidence blocks publication. Raster pages need transcription;
+  a native candidate alone is never certified complete. Explicit `image_only` is
+  allowed only with an image reference and a review note (no invented spatial text).
+* Check reports the exact old/new numeric counts and a digest covering the complete
+  proposal and trusted source identity. Changes are not applied by checking.
+* Publish requires an operator-supplied reviewer and the checked proposal digest,
+  revalidates source/PDF/chapter identity, and atomically creates a NEW library ID.
+  Original source, exports and active game selection are never overwritten. The
+  audit stores before/after page text, evidence, numeric differences and reviewer.
+  Source-dependent indexes, role-card objects and inferred maps are invalidated;
+  original PDF/page images remain available. Regenerating those derived objects is
+  a separate operation. New source publication is not Chinese-template approval.
+* Rebind creates a new ordinary authoring export. A saved record is reusable only
+  when it has one source unit whose exact text uniquely matches one new unit.
+  Recompile quotes, replace source/record/unit IDs and drop old relation IDs. Reuse
+  records with relations/dependencies only as manual reference, never detach rules
+  silently. Changed/ambiguous/multi-unit records remain in a private migration
+  report; new records retain their pending translation markers. Reuse is never
+  automatically imported or approved. User edits only the results copy.
+* Tests cover stale/tampered snapshots, changed proposals, missing physical pages,
+  bounds and evidence, numeric audit retention, idempotent new-source publication,
+  preservation of originals/active data, and conservative translation rebinding.
+
+    prepare -> page images + proposal
+      -> page-by-page PDF review -> check + digest
+      -> publish(reviewer, digest) -> new scenario + immutable audit
+      -> rebind(old export) -> fresh workbooks + reusable result drafts + report
+      -> normal import -> full numeric review -> explicit template approval
