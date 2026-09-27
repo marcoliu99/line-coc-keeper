@@ -406,6 +406,53 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(state.timeline_id, original_timeline)
         self.assertIsNone(db.get_json("group_states", state.group_id))
 
+    def test_all_save_failures_logged_without_structured_logging_and_rolled_back(self):
+        for failure in ("mirror", "companion", "commit"):
+            with self.subTest(failure=failure):
+                state = GroupState("private-save-" + failure)
+                state.characters["u"] = Character("Ada", "u", character_id="card")
+                group_state.save_state(state)
+                before = db.get_json("group_states", state.group_id)
+                mirrors = db.get_json("characters", state.group_id + ":u")
+                state.characters["u"].hp = 1
+                error = sqlite3.OperationalError("injected " + failure)
+                original_write, original_connect = db.set_json_tx, db._connect
+
+                def write(conn, table, key, value, failure=failure, error=error, original_write=original_write):
+                    if failure == "mirror" and table == "characters":
+                        raise error
+                    return original_write(conn, table, key, value)
+
+                def companion(conn, failure=failure, error=error, original_write=original_write):
+                    original_write(conn, "memory_chunks", "companion", {"new": True})
+                    if failure == "companion":
+                        raise error
+
+                @contextmanager
+                def connect(failure=failure, error=error, original_connect=original_connect):
+                    with original_connect() as conn:
+                        yield conn
+                        if failure == "commit":
+                            raise error
+
+                with patch.object(group_state.config, "LOG_ENABLED", False), \
+                     patch.object(db, "set_json_tx", side_effect=write), \
+                     patch.object(db, "_connect", connect), \
+                     self.assertLogs("app.repositories.group_state", level=logging.ERROR) as logs, \
+                     self.assertRaises(sqlite3.OperationalError) as raised:
+                    group_state.save_state(state, reason="review-test", mutate_tx=companion)
+                self.assertIs(raised.exception, error)
+                record = logs.records[0]
+                self.assertIn("state_save_failure", record.getMessage())
+                self.assertIn("reason=review-test", record.getMessage())
+                self.assertIn("duration_ms=", record.getMessage())
+                self.assertNotIn(state.group_id, record.getMessage())
+                self.assertIsNotNone(record.exc_info)
+                self.assertEqual(state.state_revision, before["state_revision"])
+                self.assertEqual(db.get_json("group_states", state.group_id), before)
+                self.assertEqual(db.get_json("characters", state.group_id + ":u"), mirrors)
+                self.assertIsNone(db.get_json("memory_chunks", "companion"))
+
     def test_maintenance_commit_failure_never_publishes_receipt(self):
         state = GroupState("maintenance-commit-failure", timeline_id="original")
         state.log = [{"role": "user", "content": "old"}]

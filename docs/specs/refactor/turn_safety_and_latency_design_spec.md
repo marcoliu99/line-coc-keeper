@@ -468,3 +468,7 @@ state lock -> BEGIN IMMEDIATE -> old group + exact old/new keys
 Verification: isolated full suite **994 passed, 1 skipped, 33 subtests**; Ruff passed; mypy **83 files passed**. Added commit failure, mirror failure/atomicity, missing-alias repair, unchanged timestamps, retired aliases, key collision and bounded-read tests. Existing maintenance/checkpoint tests remain enabled.
 
 Run `python3 scripts/benchmark_state_mirrors.py` for an isolated synthetic probe (20 fixed-size log-only saves per size). Measured 1/10/100/1000 conversations: **2 mirror rows read, 0 written, 0 deleted** at every size; median local transaction times **0.564/0.575/0.584/0.475 ms**. These are local observations, not live API or end-to-end latency claims.
+
+## PR #98 review correction
+
+Non-conflict save exceptions must emit state_save_failure with a hashed group ID, reason, elapsed time and traceback, then propagate the original exception. Text diagnostics remain available with structured logging disabled. Fault injection covers mirror writes, companion transactions and commit failures; rollback and unchanged in-memory revision remain required.

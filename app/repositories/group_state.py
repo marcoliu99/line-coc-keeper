@@ -128,6 +128,13 @@ def _save_state_impl(
             int((time.monotonic() - started) * 1000),
         )
         raise
+    except Exception:
+        _logger.exception(
+            "state_save_failure group_id=%s revision=%s reason=%s duration_ms=%s",
+            _log_group_id(state.group_id), state.state_revision, reason,
+            int((time.monotonic() - started) * 1000),
+        )
+        raise
 
     return committed
 

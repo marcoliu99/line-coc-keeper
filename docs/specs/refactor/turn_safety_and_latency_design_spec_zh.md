@@ -468,3 +468,7 @@ Mixed/OOC 以既有實際路徑及新的正確性需求建立專屬 fixture，�
 驗證：隔離資料完整測試 **994 passed、1 skipped、33 subtests**；Ruff 通過；mypy **83 檔通過**。新增提交失敗、鏡像寫入失敗與原子性、遺失別名修補、時間戳不變、退役別名、鍵值碰撞及有界查詢測試。原有維護與回溯測試持續執行。
 
 `python3 scripts/benchmark_state_mirrors.py` 可重做隔離合成量測：每種規模 20 次、目標團固定大小且只改紀錄。1／10／100／1000 團時，均僅讀 **2 列鏡像、寫 0 列、刪 0 列**；本機交易中位數為 **0.564／0.575／0.584／0.475 ms**。這不是 API 或完整遊戲回合耗時保證。
+
+## PR #98 review correction
+
+非版本衝突的存檔例外須記錄 state_save_failure、群組雜湊、原因、耗時與 traceback，再原樣拋出。結構化 logging 關閉時仍保留文字診斷。注入鏡像寫入、伴隨交易及 commit 失敗，確認 rollback 與記憶體 revision 不變。
