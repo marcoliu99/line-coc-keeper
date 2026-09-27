@@ -262,3 +262,18 @@ class PdfQualityRegressionTests(unittest.TestCase):
                 result, attempts = pdf_loader._repair_local_regions(doc[0], evidence, [], source, [1])
         self.assertEqual(result, source)
         self.assertEqual(attempts[0]['status'], 'review_required')
+
+    def test_import_pipeline_reuses_ai_transcription_and_marks_failures(self):
+        from app import pdf_ai_repair
+        provider = types.SimpleNamespace(analyze_image=lambda *args: {
+            'regions': [{'block_id': 0, 'status': 'readable', 'text': 'Alice STR: 60'}]})
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+             patch.dict(pdf_ai_repair._PROVIDERS, {pdf_ai_repair.LLM_PROVIDER: provider}):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), quality_report=report, local_ocr_limit=0)
+        self.assertIn('Alice STR: 60', text)
+        self.assertNotIn('PDF_UNRESOLVED_FIELDS', text)
+        self.assertEqual(report['ai_repair_requests'], 1)
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), local_ocr_limit=0, ai_repair_limit=0)
+        self.assertIn('[PDF_UNRESOLVED_FIELDS: STR]', text)

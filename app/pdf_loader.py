@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import pymupdf
 
-from app import pdf_quality
+from app import pdf_ai_repair, pdf_quality
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
 
@@ -345,7 +345,7 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
     return text, attempts
 
 
-def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
+def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8, ai_repair_limit: int = 8) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
     """Return complete source, review pages, legacy truncation flag, images, maps.
 
     The source is never cut to a prompt budget. The optional report distinguishes
@@ -355,6 +355,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     report.update(version=pdf_quality.VERSION, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
                   pages=[], continuations=[], derived_descriptions={})
     local_budget = [max(0, local_ocr_limit)]
+    ai_budget = [max(0, ai_repair_limit)]
     layout_pages = _pymupdf4llm_page_chunks(pdf_bytes)
     texts: list[str] = []
     images: dict[int, bytes] = {}
@@ -419,6 +420,17 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD:
                     pending.pop(number)
 
+        # Repair only remaining numeric/corrupted blocks, before extraction consumers.
+        for i, row in enumerate(report["pages"]):
+            texts[i], ai_result = pdf_ai_repair.repair_page(doc[i], row, texts[i], ai_budget)
+            row["ai_repair"] = ai_result
+            if any(r["status"] == "accepted" for r in ai_result["regions"]):
+                row["method"] += "+ai_repair"
+                if len(texts[i]) >= _LOW_TEXT_THRESHOLD:
+                    pending.pop(i + 1, None)
+            if ai_result["unresolved_labels"]:
+                row["warnings"].append("ai_fields_unresolved")
+
         maps: dict[int, dict] = {}
         if pending:
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))) as executor:
@@ -453,6 +465,10 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     review = []
     for i, text in enumerate(texts):
         row = report["pages"][i]
+        unresolved = row["ai_repair"]["unresolved_labels"]
+        if unresolved:
+            text += "\n[PDF_UNRESOLVED_FIELDS: " + ",".join(unresolved) + "]"
+            texts[i] = text
         row["extracted_chars"] = len(text)
         row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if not text.strip():
@@ -466,6 +482,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     full_text = "\n\n".join(f"--- 第 {i + 1} 頁 ---\n{t}" for i, t in enumerate(texts)).strip()
     report["review_pages"] = review
     report["source_chars"] = len(full_text)
+    report["ai_repair_requests"] = max(0, ai_repair_limit) - ai_budget[0]
     report["local_ocr_attempts"] = max(0, local_ocr_limit) - local_budget[0]
     return full_text, review, False, images, maps
 

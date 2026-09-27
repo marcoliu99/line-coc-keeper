@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'region-repair-v3'
+VERSION = 'ai-import-repair-v4'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 

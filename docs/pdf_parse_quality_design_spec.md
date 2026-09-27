@@ -156,3 +156,51 @@ Automatic crop replacement is restricted to observable replacement-character dam
 with intact surrounding evidence; numeric corrections and uncertain table repairs
 remain inspectable candidates. This intentionally avoids silently overwriting
 source with unverified OCR. Image-only pages use the existing page OCR path.
+
+## Phase 4: AI-assisted import repair without a human Keeper dependency
+
+After local OCR, group unresolved numeric regions on each page into a cropped
+vision request using the configured provider's existing analyze_image interface.
+Bound calls per import, retain crop/hash, response and validation decisions. The
+model must transcribe visible original-language evidence, distinguish blank from
+unreadable, and never infer mechanics. Candidate context is untrusted source data.
+
+Reuse a validated transcript only at a unique source location. Preserve established
+numeric pairs and intact source numbers. Blank/unresolved Luck cannot be assigned
+by this repair stage; players retain the existing Luck-roll flow. Failures do not
+abort other pages or require KP Assistant. Unresolved markers remain in the source
+for downstream extraction; affected character fields must not receive constructor
+defaults. Manual explicit role-card values can resolve those fields through the
+existing reconciliation flow. Store all decisions in parse_quality.json; gameplay
+reuses the imported result instead of a fixed extra model call each turn.
+
+### Phase 4 execution and failure behavior
+
+Up to eight page-group requests per import, each containing up to eight suspect
+blocks and nearby image context. This is import-time paid vision using the configured
+provider; there is no new per-turn call and no human-KP login requirement. Tests
+mock provider responses and do not spend API credit. The artifact records request
+counts (provider dispatch attempts, not guaranteed billable calls), crop hash, raw
+response, per-region decisions and unresolved labels. Repeated gameplay reuses the
+imported artifact; explicit reparse may issue new repair requests.
+
+Accepted text must preserve known pairs, original numbers and most intact words;
+new numeric tokens must belong to requested unresolved non-Luck labels. Duplicate
+region IDs, unreadable/blank responses and unexplained values are rejected. This
+checks evidence consistency, not proof that a model read every pixel correctly.
+Blank Luck alone does not trigger a repair call; mixed-region responses cannot
+fill blank/unresolved Luck. Existing player Luck-roll behavior remains in place.
+
+Named character pages carrying unresolved core-attribute markers remove those
+attributes from extracted pregens. The constructor refuses those specific incomplete
+cards instead of inserting 50; other characters/pages remain usable. Explicit manual
+role-card values clear the affected flags and remain authoritative on re-extraction.
+The page/name association is conservative: multiple characters on a marked page may
+need clearer source separation. This is not a blanket guarantee for every NPC
+mechanic or unidentified entity; unresolved markers remain available to the Keeper.
+
+Verification: 799 tests passed, one skipped, 15 subtests passed; mypy 75 source files.
+Coverage includes provider failure/budget exhaustion, readable/blank/unreadable
+responses, blank Luck, contradictory additions, duplicate responses, import-to-source
+integration, constructor-default prevention and repeated manual reconciliation.
+No live vision quality benchmark was performed in this phase.
