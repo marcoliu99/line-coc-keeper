@@ -130,7 +130,24 @@ Reordering `build_executor_static_prompt` / `build_narrator_static_prompt` from 
 - The composition event does not count the block twice now that it rides in input. **Met.**
 - The flag restores the previous composition exactly. **Met.**
 - Measured: 2.2% to 92.9% over 50 turns with distinct dynamic blocks. **Met.**
-- Correctness: current HP/SAN/location present in every request that previously carried them. **Met offline**; a live session has not yet been played on this branch.
+- Correctness: current HP/SAN/location present in every request that previously carried them. **Met offline and in a live session.**
+
+### 2.5.1 Live session
+
+`scripts/experiments/live_narration_ab.py` plays the same turns twice through Executor, Narrator, Guard and the spoiler scan against a copy of the live database, restored between arms, with storage paths redirected before `app.config` is imported so live data is never touched.
+
+Narration is intact under the new placement. Both arms reported the carried inventory correctly down to the revolver's six rounds, both held the player to an outstanding Investigate or Listen check before letting a later action proceed, and both kept the character in the basement storeroom rather than inventing a room. Median reply length was 103 characters against 103 over four turns, and 80 against 71 over three.
+
+The real pipeline also confirms what the harness could not, because it chains requests within a turn through `previous_response_id`:
+
+| | overall cached | requests that start a turn |
+|---|---|---|
+| today | 63.2% | **0.0%** across all five |
+| WP2 | **85.8%** | 58–79%, none at zero |
+
+Today's zeroes are exactly the turn-opening Executor request and the Narrator request; under WP2 no request in the run cached nothing.
+
+Latency did not separate: 20.3 s against 18.7 s medians over three turns, and 19.8 s against 13.7 s over four, with the arms diverging in state as play continued — arm A created an Investigate check where arm B created Listen — so their tool counts differ and neither ordering is controlled. Nothing here supports a latency claim in either direction.
 
 ### 2.6 What this does not buy
 
