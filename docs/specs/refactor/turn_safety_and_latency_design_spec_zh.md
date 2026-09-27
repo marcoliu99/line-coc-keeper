@@ -4,7 +4,7 @@
 
 ## 1. 狀態、來源與結論
 
-分類：`refactor`，包含 bug 修正與效能工作包。狀態：**proposed；等待設計核准**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。分支：`refactor/turn-safety-and-latency`。
+分類：`refactor`，包含 bug 修正與效能工作包。狀態：**proposed；等待設計核准**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。後續已對齊 `main_v2` `e03d5dc`，Review R1–R6 補強見第 12 節。分支：`refactor/turn-safety-and-latency`。
 
 本規格完整閱讀使用者提供的兩份 ChatGPT 文件，並對照目前程式後，選擇採納其中建議。不將文件較舊的程式基準直接當成目前事實。本次只有文件，沒有實作應用程式、遷移正式資料、部署或進行真實 API 效能測試。
 
@@ -100,21 +100,26 @@ Transport(message/interaction ID, actor) -> 適用時先 defer
        +-> ACK/roleplay -> 足夠的最小 context -> 原 Narrator
        `-> RetrievalPlan -> 授權 evidence [Scenario || Memory]
             +-> ordinary: MovementProposal [不寫 state]
-            |    -> Executor <-> 序列 gateway/tools [各自提交]
-            |    -> 適用時驗證/提交移動
+            |    -> Executor <-> gateway/tools [共用 admission；先到達再做依賴效果]
+            |    -> 僅無剩餘到達依賴時可 final 提交（§12.1）
             |    -> 最新 state + 已驗證 resolution/requirements
             |    -> 普通 Narrator [無工具]
             +-> resolved: 權威 check + Luck 最終結果
-            |    -> 適用時驗證/提交綁定的移動
+            |    -> 共用 admission 驗證/提交此 check 綁定的移動
             |    -> 限定 Narrator <-> 允許的後續 tools
             `-> opening fallback: 限定 Narrator <-> 開場 tools
                     |
                     v
             核對實際 outcomes、pending、execution health
-            -> 機制一致性 -> Guard -> 重驗改過的文字
-            -> 最終收件安全 -> final commit [canon/outcome/outputs]
+            -> Python DeliveryEnvelope [facts / narrative / controls / audience]
+            -> 機制一致性 -> Guard -> 重驗改過的文字 -> 最終收件安全
+            -> delivery contract [失敗：一次安全 fallback 再驗；仍失敗則 blocked]
+            -> final commit [canon/outcome/outputs]
             -> 立即 claim 發送 -> transport -> receipts
-                 `-> 只恢復輸出/核對，不能重做 gameplay
+                 `-> server RecoveryMode
+                      +-> delivery_only：補送封存內容，零模型
+                      +-> render_only：tools=[] 且 callback 拒絕工具
+                      `-> reconcile_required：核對未決效果，不重跑整回合
 ```
 
 檢定結果路徑的移動提交，必須在 Luck／最終結果驗證後、限定 Narrator 使用結果前。Narrator 若執行允許的後續工具，一樣收集 outcome 並走最終驗證／commit，不再加普通 Narrator。開場優先沿用既有抽出的開場白，只有原本 fallback 才用模型。
@@ -126,6 +131,9 @@ Transport(message/interaction ID, actor) -> 適用時先 defer
 | Context | `context_builder.build_context` | 純 base projection，再 `RetrievalPlan` enrichment；worker 輸入不可變 |
 | Movement | `intent_parser`、`scene_map`、map handlers | `MovementProposal`／共用 service；取消 Supervisor 前提交 |
 | Execution | `executor.run_executor`、gateway、`keeper._execute_tool` | `ToolExecutionContext`、observed outcomes；沿用 domain mutators |
+| Admission | 所有 mutator／時間線切換入口 | 共用 `MutationAdmission`；hold owner、authority、evidence 與寫入前重驗 |
+| Output contract | 既有 Narrator 回應、renderer／commit | 模型 mixed 分段候選 -> server `DeliveryEnvelope`；分開正典與收件投影 |
+| Recovery mode | 既有 task ownership；後續 ledger／outbox | Server `RecoveryMode` 優先於 turn_kind，恢復敘事不得開工具 |
 | Checks | check／Luck callbacks、`_finalize_check_result` | 原 identity／result + optional proposal/evidence refs |
 | Resolution | `turn_resolution.validate_resolution` | 用 committed move event 驗證 proposal；disposition 與執行健康分開 |
 | Narration | 普通／限定 `narrator`、`prompt_config` | 分階段規則、具 scope 的需求；不指示不可用工具 |
@@ -151,7 +159,7 @@ PLAYER_OOC 第一版不給工具。公開回答只用公開 context，授權自�
 - 無地圖劇本照常依劇本裁定，不為新介面硬造節點；只有來源／已成立遊戲事件支持時才記敘事位置。
 - 已知合法多段路線不強迫逐房宣告；在真正的選擇、檢定及場景反應點停下。必要條件未知時仍交既有 Executor。
 - 驗證目前 timeline、active character、origin、source version、動作授權及適用 check/Luck 最終結果後，只提交一次。別人的獨立 pending 不一律擋住本角色。
-- 不需 tool continuation 時，Executor final 回應可攜帶移動 proposal decision；未驗證前仍不可信。本地 commit 先產生 event，再驗證 completed resolution，最後給 Narrator。不執行損壞／incomplete JSON，不新增固定收尾請求。
+- 沒有剩餘到達依賴機制、且反應點條件／依據已核定時，Executor final 回應可攜帶移動 proposal decision（詳 §12.1）；未驗證前仍不可信。本地 commit 先產生 event，再驗證 completed resolution，最後給 Narrator。不執行損壞／incomplete JSON，不新增固定收尾請求。
 - Commit 後更新完整 caller 快照。摘要等無關 revision 變動可重驗，不能覆蓋新 state 或再走一次。Sudo 保留實際 actor 與 subject。
 - Final 回應後若移動驗證失敗，誠實標示 incomplete/blocked；修原 bug 所需額外補查要與一般延遲案例分開報告。
 
@@ -205,7 +213,7 @@ PLAYER_OOC 第一版不給工具。公開回答只用公開 context，授權自�
 
 Dispatch 前持久化 operation identity。本地 mutation 用同 connection：驗 operation/timeline/authority -> 讀最新 state -> domain mutation -> group/mirror diff + operation outcome + events -> commit -> 回結果、同步 caller。Random outcome 對外前保存，重試讀回。盤點一個工具多次保存的情況（含 resolved-check event），合併 transaction 或用穩定 child operations，parent 保持 partial。Transaction 內不等網路。
 
-私人／圖片意圖也要在 final narration 前持久化，填補「工具已提交、Narrator 未提交」的窗口。重啟核對 local prepared/committed，依已知 receipts 只恢復 narration/delivery；不盲重播不明外部操作。沿用既有 check、purchase、correction identities。
+私人／圖片意圖也要在 final narration 前持久化，填補「工具已提交、Narrator 未提交」的窗口。重啟核對 local prepared/committed，依已知 receipts 及獨立 RecoveryMode 只恢復無工具 render/delivery（詳 §12.2）；不盲重播不明外部操作。沿用既有 check、purchase、correction identities。
 
 ### 即時且可恢復的輸出（F3/F8-B）
 
@@ -242,8 +250,8 @@ Shadow 只計算假想邊界，既有 Executor 照常繼續；預設不額外執
 | 工作包 | 範圍 | 相依 | 完成門檻 |
 | --- | --- | --- | --- |
 | S0 | Baseline fixtures、request/interaction trace | 既有 observability | 正確任務基線及 bug 反例可重現 |
-| S1 | F2-A/P8 partial facts、最終安全順序、worker hold | S0 | 錯誤保留真實結果；成功路徑不加 LLM |
-| S2 | F4/F1 mode、純 movement proposal、共用 commit | S0；整合 S1 outcomes | ordinary/sudo/no-map/check 都涵蓋；不加常態玩家操作 |
+| S1 | F2-A/P8 partial facts、最終輸出契約、所有入口 worker hold（R3/R4） | S0 | 錯誤保留真實結果；成功路徑不加 LLM |
+| S2 | F4/F1 mode、到達依賴、共用 commit、mixed 分段（R1/R5） | S0；整合 S1 outcomes | ordinary/sudo/no-map/check 都涵蓋；不加常態玩家操作 |
 | S3 | F6-A 精確鏡像、commit 後 caller sync | S0 | 無全表掃描；log-only mirror writes=0；commit failure 測試 |
 | S4 | P1/F5/P2 權威注入、路由、證據重用 | S1/S2 | 機制／保密相同；少重複 requests 或已證明本地收益 |
 | S5 | P3/P4/F7 分組、history 重用、stage projection | S1；保留 PR #94 | 精確選取／排名及敘事品質驗證 |
@@ -291,3 +299,152 @@ S7/S8 實作前，需定案各入口 transport identity、durable payload retent
 ### 程式碼導覽
 
 以上查核位置：[router](../../../app/commands/router.py)、[移動 parser](../../../app/intent_parser.py)、[legacy adapters](../../../app/legacy_commands.py)、[Supervisor](../../../app/agents/supervisor.py)、[Executor](../../../app/agents/executor.py)、[tool gateway](../../../app/agents/tool_gateway.py)、[intent router](../../../app/agents/intent_router.py)、[Narrator](../../../app/agents/narrator.py)、[resolution](../../../app/services/turn_resolution.py)、[prompt policy](../../../app/services/prompt_config.py)、[group repository](../../../app/repositories/group_state.py)、[DB](../../../app/db.py)、[Keeper services](../../../app/keeper.py)、[RAG](../../../app/scenario_rag.py)、[v4 retrieval](../../../app/scenario_retrieval.py)、[history selection](../../../app/services/input_budget.py)、[embedding cache](../../../app/embedding_cache.py)。連結指向工作分支程式；前述 baseline commit 固定本次審查的歷史意義。
+
+## 12. 2026-09-27 Review 補強決策（R1–R6）
+
+已閱讀 `turn_safety_and_latency_spec_review.md`（SHA-256：`22e00d613e144f40da08e0857932d8fd947f749b87cfbcaf98c6f62ca8baa6b4`），並對照最新 `main_v2` `e03d5dc`。原審查固定的規格版本為 `8de40eb`；本節是後續設計修訂，仍待核准，沒有新增 runtime 實作或宣稱 SR 測試通過。#95／#96 修改整備檔案與匯入辨識，未更改本節核對的 Supervisor／Narrator／gateway／spoiler 核心。原先 940 測試為歷史基線；匯入修正的 987 測試也不能冒充本 refactor 的新驗收。
+
+| Review | 決定 | 必須完成的工作包 |
+| --- | --- | --- |
+| R1 移動因果與證據入口 | 採納；限制 final-response commit，新增到達依賴契約 | S2 |
+| R2 恢復能力 | 採納；RecoveryMode 與 turn_kind 分開，render-only 雙層禁用工具 | S7/S8；S1 不自動重啟帶工具模型 |
+| R3 共用 mutation admission | 採納；hold ownership 與 effect class 是執行政策 | S1，S6/S7 延伸 |
+| R4 最終輸出仍可操作 | 採納；server delivery envelope 與有限 fallback | S1 |
+| R5 混合 IC/OOC | 調整後採納；模型候選與 server 投影使用不同型別 | S2 |
+| R6 逐入口請求帳本 | 採納；結構 trace 與真實模型分布分開驗收 | S0，後續各包 |
+
+本節具體化第 4–10 節；若原簡圖可能被解讀為「任何移動都在所有工具之後」或「恢復一律呼叫原 Narrator」，以以下限制為準。原則、正常遊戲能力與 early-stop 關閉政策不變。
+
+### 12.1 R1：先有有效到達，才可執行依賴到達的效果
+
+「進書房，拿桌上的信」必須先驗證並提交到達，才能取得室內信件；「吃手上的乾糧，再試著進書房」則允許先保留已完成的吃乾糧效果。不能將全部工具按名稱排序，也不能因最後移動失敗而回滾所有先前合法效果。
+
+- 到達依賴須引用 server 核定的當前位置或同一 action 的 committed arrival event。`MovementProposal`、RAG 命中、模型的 `requires_arrival=false` 都不是授權。依賴適用於物品、旗標、線索、檢定、資源及輸出意圖；只要求與該效果實際相關的到達，不把既有背包操作一律綁到新位置。
+- 需要到達後繼續機制時，移動在既有 Executor 的工具序列內經共用 service 提交，更新完整 state，再執行依賴效果。所需 check/Luck 未定就停在原有玩家選擇點。保留原本必要的模型接續，不增設固定的「確認已移動」請求。
+- Final-response movement commit 僅適用於**沒有未執行的到達依賴機制**，且目前合法反應點所需依據與條件已核定的情況；之後可直接進原 Narrator。若發現尚有必要工具，不得把這條捷徑當 early stop，也不能叫無工具 Narrator 補做。
+- 共用 `MutationAdmission` 覆蓋 ordinary、sudo、明確 map 指令、final-response service、resolved-check follow-up。檢查 authority、timeline、actor/subject、origin/source、correction/recovery hold 及本動作 required-evidence completeness。不能只在 gateway 外層檢查，也不能用「版本相同」取代「依據已完整」。
+- 移動續接綁 `action_id`、proposal/check/decision IDs、actor/subject、origin/path/source version 與核准結果條件。偵查成功不等於開鎖成功；Luck 未定不是 final result。既有骰值不能重擲；來源／路徑改變須重新裁定必要部分。
+- 第一版要列出會受位置約束的 domain mutators 及其資料來源。模型提供的 dependency metadata 只作候選；對無法判定的劇情前置條件，沿既有檢索／裁定或保留未完成，不能聲稱 Python 已能理解所有自由敘事。無地圖劇本照常使用有來源支持的位置，不強迫建圖。
+- 每次位置／arrival event 與相應 effect 各有明確 transaction 邊界，不跨 LLM 等待持有 DB transaction。
+
+```text
+「進書房，再拿信」
+  -> MovementProposal（不改位置）
+  -> 既有 Executor：查所需條件
+       +-> check / Luck 未定：保存等待，不拿信
+       `-> 共用 admission -> 移動 + arrival event 提交
+             -> 更新 state -> 驗證拿信的到達依賴 -> item event
+  -> resolution -> 原 Narrator
+
+「移動後只需敘事」
+  -> Executor final 候選 -> 同一 admission / evidence 驗證
+  -> move + arrival event -> resolution -> 原 Narrator
+```
+
+驗收沿用 review 的 **SR-M01–M07**：鎖門不拿信、final 入口不能繞過依據、move event 先於 item event、乾糧效果保留、Luck 等待、偵查不能授權穿門、無地圖合法移動不增加例行確認。
+
+### 12.2 R2：恢復模式獨立於原回合類型
+
+| 模式 | 模型／工具能力 | 行為 |
+| --- | --- | --- |
+| 正常 ordinary Narrator | 原有無工具敘事 | 不受恢復限制影響 |
+| 正常 resolved/opening Narrator | 原有受限工具 | 合法後續照常處理 |
+| `delivery_only` | 0 生成請求、0 遊戲工具 | claim 並補送已封存 payload |
+| `render_only` | 必要時一次既有敘事階段，強制 `tools=[]`；callback 同時拒絕全部遊戲工具 | 只根據已驗證且有收件權限的 events/receipts 敘事 |
+| `reconcile_required` | 不重新派整個 Executor／帶工具 Narrator | 先核對哪些效果完成、未執行或不確定 |
+
+`RecoveryMode` 由 server 決定，優先於 `turn_kind`，不能因原回合是 resolved check 再啟用傷害或 advance 工具。只在 ledger 已有可信 action/step identity、缺失步驟明確且仍被授權的固定流程內，才允許有針對性的恢復。一般自由敘事沒有此證明時保留 partial，告知已完成與未決部分。
+
+Operation retry 讀回原結果。重新生成的 call ID 不能自行認領已完成 logical step；也不能用 tool name + input hash 全局去重，否則兩次合法同參數攻擊會被吞掉。固定流程的 step identity 要區分合法重複效果。第一批程序內 observations 不提供跨重啟自動恢復承諾。
+
+驗收 **SR-R01–R06**：已扣血／advance 不再執行、必要步驟缺漏仍 partial、有封存輸出補送不呼叫模型、正常 follow-up 工具維持、不同 call ID 不重做同一已完成 logical step。
+
+### 12.3 R3：所有變更入口共用 hold，且只有擁有者可解除
+
+`MutationAdmission` 的消費端清單必須列出 Executor、restricted Narrator、check/Luck callbacks、sudo、購買確認、map、角色切換，以及 newgame/rollback。S1 完成前需逐入口標註實際呼叫點與測試；不能只測 gateway。
+
+Hold 至少帶 conversation、timeline、受影響 scope、task/operation identity、generation/owner token。取消路徑須在釋放相關 gameplay admission 前使 hold 可見；在寫入 transaction 或緊鄰權威鎖邊界重新檢查。只有相同 owner/generation 的確認完成、拒絕或 reconciliation 才能解除；舊 task 的 finally 不得清除新 hold。結果不明不能憑逾時解除。
+
+第一版 scope 無法可靠切分時，保守 hold 同團 mutation；已核對的純讀及其他團仍可執行。Timeline 切換必須等待舊 worker 安全結案，或在實際寫入前核對其原始 expected timeline；禁止舊 worker 重新讀新 timeline 後套用舊效果。維護／背景 writer 也須受 timeline、revision 與提交所有權約束。
+
+| Effect class | 執行政策 |
+| --- | --- |
+| Pure read | 僅獨立快照，無共享 state 刷新；可停止等待，但持有並觀測 task |
+| Random outcome | 已定結果必須保留；未知結果核對，不重新擲骰假裝同操作 |
+| State mutation | commit 未知時保留 ownership/hold，不放行衝突寫入 |
+| Output intent | 穩定 logical key 與收件人；重用已有意圖，不因取消丟失或重建關鍵輸出 |
+
+多效果工具必須套用所有相關約束；有 shared-state refresh 或隨機結果就不能僅因位於 `READ_ONLY_TOOL_NAMES` 而走 pure-read 取消／重試政策。裝飾圖的慢發送不構成無限全團 hold，S8/S9 另以 output dependency/barrier 管理。
+
+以 Event 阻塞 worker，逐入口嘗試衝突變更；驗證純讀可回應、其他團可行動、舊 owner 不能解除新 hold、已知骰不重擲、shutdown 不假稱 worker 已停止。明確區分程序內安全與 S7 之後的持久化恢復。
+
+### 12.4 R4：最終安全檢查後仍保留合法結果與有效操作
+
+由 Python 建立 `DeliveryEnvelope`：`output_id`、audience/recipient、已允許的 fact/event refs、narrative、mechanical feedback、interaction refs 及 canonical policy。即使 S1 尚未改成結構化模型回覆，也可把既有文字包進 server envelope；不為此改所有 provider 或再叫一次模型。
+
+```text
+候選敘事 + server 投影的 facts / controls
+  -> 機制一致性 -> 原有條件式 Guard -> 最後收件／防雷
+  -> validate_delivery_contract（只核對，不改文）
+       +-> 通過：保存／發送
+       `-> 失敗：一次 deterministic、已投影 facts / controls fallback
+             -> 相同安全及契約檢查
+                  +-> 通過：保存／發送
+                  `-> 仍失敗：標記 blocked，保留既有 pending／結果，走安全通知／核對
+```
+
+契約檢查核對本次應交付且對此收件人可見的硬資訊和 controls；不以文字關鍵字證明全部敘事語意。按鈕繼續使用原 check/decision ID、owner、timeline，不重建 pending，也不重複發第二組操作。私人 pending 由私人輸出滿足，不為公開訊息的完整性暴露秘密。所有 fallback 均經同一安全檢查，無固定 LLM repair、無無上限改寫；原敘事通過時保持風格。S1 記錄 delivery contract 結果，S8 才保證 outbox 持久化補送。
+
+驗收包括秘密片段與合法 pending 同時存在、private pending、Guard 改文、fallback 仍不安全，以及無錯誤的敘事維持原樣。不能把「未洩漏但玩家已無法操作」視為成功。
+
+### 12.5 R5：模型候選分段與 server 輸出投影分開
+
+不讓同一個模型可填 schema 同時包含可寫 `server_output_projection`。採用兩個責任明確的型別：
+
+```text
+ModelReplySegments（僅 mixed 模式；模型候選）
+  schema_version
+  segments[]: text, source_request_span_refs, proposed_mode, proposed_event_refs
+
+DeliveryEnvelope（Python 核定；模型不可寫）
+  request_id / turn_id / output_id
+  audience / recipient
+  verified facts / interaction refs
+  final text / canonical policy
+```
+
+混合回覆由**既有排定的最終 Narrator 回應**產生分段；Executor 保留機制／resolution 職責，沒有第二個 OOC Agent。普通模式維持原字串介面，由 server adapter 包裝。tool-enabled follow-up 的最終回應如需混合內容也沿同一既有回應，不新加敘事階段。
+
+Speaker role、工具能力、context 可見性、收件人及 canonical policy 都由 server 決定。輸入 OOC assertions 在 context／行動交接時就不能當成已成立事實；不能等到 final commit 才處理「我早就有鑰匙」。輸入／輸出 spans、event refs 都須驗存在、範圍、適用與權限，沒有證據時不得把整段升為正典；這些檢查仍不宣稱可完整證明自然語言的語意。
+
+Canonical projection 與 delivery projection 分別計算。一則 request 可產生公開 IC 和僅自身可見的 OOC 回覆；不強迫玩家拆句，也不強迫所有輸出併成公開文字。Context 先依權限過濾；不能只靠模型自行分欄防止洩密。
+
+Malformed／覆蓋不明時，沿 R4 保留已驗證效果與安全未決說明，不把整份原文或模型回覆直接寫入 canon、不重播工具、不加固定 JSON repair。確實無法裁定的歧義才要求釐清，並納入品質／玩家操作成本，不能一律回問以逃避解析。
+
+驗收：同訊息問規則＋移動、OOC 宣稱持有鑰匙、私人 OOC＋公開行動、模型偽造 role/recipient/canonical、損壞或漏段回覆。必須檢查輸入紀錄、assistant log、summary、memory 各自的正典投影，不能只測畫面分段。
+
+### 12.6 R6：每個入口都有請求與體驗帳本
+
+S0 為每個固定 fixture 記錄 route、input/state/scenario/model/reasoning、generation requests、provider attempts/retries、Executor／Narrator tool-response rounds、embedding/search、queue、Guard/repair/wrap-up、有效按鈕、骰值與完整必要敘事時間，以及玩家必需決策數。
+
+下表是基本形態，**不是固定上限或可刪工作清單**。原有條件式 Guard、retry、wrap-up 另列並計入總量；特殊 gameplay 所需請求按 fixture 的正確完整行為核定。
+
+| 路徑 | 基本生成形態 | 約束 |
+| --- | --- | --- |
+| 已核定純讀 status/sheet | 0 | 不引入模型 |
+| ACK／純角色扮演 | 1 Narrator | 保留合宜回覆 |
+| gameplay 無工具 | 1 Executor + 1 Narrator | 不新增固定分類／審核 |
+| gameplay 有工具 | b+1 Executor + 1 Narrator | b 為工具回應輪數；不能無故多一輪確認 |
+| resolved-check／Luck | k+1 限定 Narrator | k 為後續工具回應輪數；不再串第二套 Agent |
+| opening fallback | k+1 限定 Narrator | 有現成開場白時仍直接沿用 |
+| delivery_only | 0 | 補送已封存內容，不重新生成 |
+
+Mixed/OOC 以既有實際路徑及新的正確性需求建立專屬 fixture，不能憑新 route 名稱宣稱省了請求。Fake provider 驗證 deterministic trace；live API 比較按 route 的分布、續接／fallback／repair 率及預先訂好的非劣界線，不能保證每次模型選擇完全相同。
+
+報告按 route 列樣本數、success/partial/timeout/fallback、generation/attempts、足量樣本下的 p50/p95 與信賴區間。修正 bug 必須增加的工作單列原錯誤與正確流程、原因及玩家成本，不能把正常退步都稱為 bug 修復。失敗、不完整敘事、人工處理和按鈕有效時間都計入。未有量測前不承諾秒數或百分比，也未授權此輪呼叫真實 API。
+
+### 12.7 更新的工作順序與討論重點
+
+先 S0；S1 要完整包含 R3/R4，S3 可獨立處理。S2 必須先落定 R1/R5 的移動依賴與分段提交契約。S4–S6 再逐項量測；S7/S8 依 R2 能力矩陣實作持久化恢復，S9 再拆發送順序。Early-stop 仍關閉。
+
+建議第一個可 review 的實作範圍為 S0 基線與 S1 的部分成功／安全輸出；hold 的所有入口驗收不可因拆 PR 就省略。若拆分 S1，應明確標示哪些只是 partial facts，哪些已完成 mutation admission，不能先宣稱整個 S1 完成。後續再接 S3 與 S2，避免一次混合所有 schema 與行為改造。

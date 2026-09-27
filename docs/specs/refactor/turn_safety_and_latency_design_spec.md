@@ -4,7 +4,7 @@
 
 ## 1. Status, provenance and decision
 
-Category: `refactor` with bug-fix and performance work packages. Status: **proposed; awaiting design approval**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Branch: `refactor/turn-safety-and-latency`.
+Category: `refactor` with bug-fix and performance work packages. Status: **proposed; awaiting design approval**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Subsequently aligned with `main_v2` `e03d5dc`; review R1–R6 contracts are in section 12. Branch: `refactor/turn-safety-and-latency`.
 
 This specification adopts selected recommendations from two user-supplied ChatGPT documents after reading both documents and checking the current source. It does not adopt their older source baselines as current facts. No application implementation, production migration, deployment or live API benchmark is part of this documentation change.
 
@@ -100,21 +100,26 @@ Transport(message/interaction ID, actor) -> early defer if applicable
        +-> ACK/roleplay -> minimal sufficient context -> existing Narrator
        `-> RetrievalPlan -> authorized evidence [Scenario || Memory]
             +-> ordinary: MovementProposal [no write]
-            |    -> Executor <-> sequential gateway/tools [individual commits]
-            |    -> validate/commit proposed movement if applicable
+            |    -> Executor <-> gateway/tools [shared admission; arrival before dependent effects]
+            |    -> final movement commit only without remaining arrival dependencies (§12.1)
             |    -> refreshed state + validated resolution/requirements
             |    -> ordinary Narrator [no tools]
             +-> resolved: authoritative check + final Luck result
-            |    -> validate/commit linked movement if applicable
+            |    -> shared admission validates/commits movement bound to this check
             |    -> restricted Narrator <-> permitted follow-up tools
             `-> opening fallback: restricted Narrator <-> opening tools
                     |
                     v
             reconcile actual outcomes, pending and execution health
-            -> mechanic consistency -> Guard -> recheck changed text
-            -> final audience safety -> final commit [canon/outcome/outputs]
+            -> Python DeliveryEnvelope [facts / narrative / controls / audience]
+            -> mechanic consistency -> Guard -> recheck changed text -> final audience safety
+            -> delivery contract [one safe fallback/recheck on failure; still invalid -> blocked]
+            -> final commit [canon/outcome/outputs]
             -> immediate delivery claim -> transport -> receipts
-                 `-> retry/reconcile delivery only, never replay gameplay
+                 `-> server RecoveryMode
+                      +-> delivery_only: sealed payload, zero model calls
+                      +-> render_only: tools=[] and rejecting callback
+                      `-> reconcile_required: account for unresolved effects, no whole-turn replay
 ```
 
 In the resolved-check route, any movement commit must occur after final Luck/result validation and before the restricted Narrator consumes the outcome. If the Narrator performs permitted follow-up tools, collect those outcomes and apply the same final checks/commit; do not add another ordinary Narrator. Opening first keeps the extracted opening path; only the existing fallback is model-generated.
@@ -126,6 +131,9 @@ In the resolved-check route, any movement commit must occur after final Luck/res
 | Context | `context_builder.build_context` | Pure base projection then `RetrievalPlan` enrichment; immutable worker input |
 | Movement | `intent_parser`, `scene_map`, map handlers | `MovementProposal`/shared service; no pre-Supervisor commit |
 | Execution | `executor.run_executor`, gateway, `keeper._execute_tool` | `ToolExecutionContext`, observed outcomes; same domain mutators |
+| Admission | Every mutator/timeline-switch entry | Shared `MutationAdmission`; hold owner, authority, evidence and pre-write revalidation |
+| Output contract | Existing Narrator response, renderer/commit | Candidate mixed segments -> server `DeliveryEnvelope`; separate canon and recipient projections |
+| Recovery mode | Existing task ownership; later ledger/outbox | Server `RecoveryMode` overrides turn_kind; rendering recovery cannot offer tools |
 | Checks | check/Luck callbacks, `_finalize_check_result` | Existing identity/result + optional proposal/evidence refs |
 | Resolution | `turn_resolution.validate_resolution` | Validate proposed move against its committed event; disposition stays distinct from execution health |
 | Narration | ordinary/restricted `narrator`, `prompt_config` | Stage sections and scoped requirements; no unavailable tools |
@@ -151,7 +159,7 @@ For mixed input, the existing model response may return separate IC/OOC text fie
 - No-map scenarios continue through normal scenario adjudication. Do not create map nodes merely to satisfy the new interface. Record narrative location only when scenario/play evidence supports it.
 - Use known legal multi-edge paths without forcing one message per room. Stop at actual choices, checks and scenario reactions. Unknown necessary conditions stay with the existing Executor.
 - Commit once after current timeline, active character, origin, source version, action authorization and applicable final check/Luck outcome are verified. Another actor's independent pending is not a blanket prohibition.
-- A final Executor response can carry a movement proposal decision when no tool continuation is needed. It is untrusted until validated; local commit produces the event before resolution is marked completed and before Narrator. Do not execute malformed/incomplete JSON or invent a new fixed completion call.
+- A final Executor response can carry a movement proposal decision only without remaining arrival-dependent mechanisms and with the reaction point conditions/evidence verified (section 12.1). It is untrusted until validated; local commit produces the event before resolution is marked completed and before Narrator. Do not execute malformed/incomplete JSON or invent a new fixed completion call.
 - Refresh the entire caller snapshot from the committed state. An unrelated summary revision may trigger revalidation, not overwrite or an automatic second move. Sudo carries the real actor and subject separately.
 - A failed post-completion move validation produces a truthful incomplete/blocked result; any extra lookup required to fix old incorrect behavior is reported separately from ordinary latency comparisons.
 
@@ -205,7 +213,7 @@ A reused operation ID with different input is rejected. Two distinct calls with 
 
 Persist operation identity before dispatch. For local mutation, use a same-connection transaction: verify operation/timeline/authority -> load latest -> domain mutation -> group/mirror diff + operation outcome + events -> commit -> publish result/synchronize caller. Random outcomes are persisted before exposure and reused on retry. Audit tools with multiple saves (including resolved-check event writes); combine their transactions or represent stable child operations with partial parent status. No network await within the transaction.
 
-Private/image intentions also need durable events before final narration, closing the “tool committed, Narrator not yet committed” gap. On restart, reconcile local prepared/committed states; resume narration/delivery only from known receipts. Unknown external operations are not blindly replayed. Reuse existing check, purchase and correction identities.
+Private/image intentions also need durable events before final narration, closing the “tool committed, Narrator not yet committed” gap. On restart, reconcile local prepared/committed states; resume tool-free rendering/delivery only from known receipts under an independent RecoveryMode (section 12.2). Unknown external operations are not blindly replayed. Reuse existing check, purchase and correction identities.
 
 ### Immediate recoverable delivery (F3/F8-B)
 
@@ -242,8 +250,8 @@ Shadow mode only computes the hypothetical boundary while the existing Executor 
 | Package | Scope | Depends on | Exit gate |
 | --- | --- | --- | --- |
 | S0 | Baseline fixtures, request/interaction trace | Existing observability | Reproducible correct-task baseline and bug counterexamples |
-| S1 | F2-A/P8 partial facts + final safety order + worker hold | S0 | Failure preserves real outcomes; no extra success-path LLM |
-| S2 | F4/F1 mode, pure movement proposal, shared commit | S0; integrates S1 outcomes | Ordinary/sudo/no-map/check routes covered; no routine extra input |
+| S1 | F2-A/P8 partial facts + final output contract + all-entry worker hold (R3/R4) | S0 | Failure preserves real outcomes; no extra success-path LLM |
+| S2 | F4/F1 mode, arrival dependencies, shared commit and mixed segments (R1/R5) | S0; integrates S1 outcomes | Ordinary/sudo/no-map/check routes covered; no routine extra input |
 | S3 | F6-A exact-key mirrors + post-commit caller sync | S0 | No whole-character scan; log-only mirror writes zero; commit-failure tests |
 | S4 | P1/F5/P2 known authority, routing and evidence reuse | S1/S2 | Same mechanics/privacy; fewer redundant requests or demonstrated local benefit |
 | S5 | P3/P4/F7 grouping, history reuse, stage projection | S1; retain PR #94 | Exact selection/ranking and narrative-quality gates |
@@ -291,3 +299,152 @@ Related contracts: [unified turns](unified_keeper_turn_flow_design_spec.md), [tu
 ### Source navigation
 
 The findings above were checked in [router](../../../app/commands/router.py), [movement parser](../../../app/intent_parser.py), [legacy adapters](../../../app/legacy_commands.py), [Supervisor](../../../app/agents/supervisor.py), [Executor](../../../app/agents/executor.py), [tool gateway](../../../app/agents/tool_gateway.py), [intent router](../../../app/agents/intent_router.py), [Narrator](../../../app/agents/narrator.py), [resolution](../../../app/services/turn_resolution.py), [prompt policy](../../../app/services/prompt_config.py), [group repository](../../../app/repositories/group_state.py), [DB](../../../app/db.py), [Keeper services](../../../app/keeper.py), [RAG](../../../app/scenario_rag.py), [v4 retrieval](../../../app/scenario_retrieval.py), [history selection](../../../app/services/input_budget.py) and [embedding cache](../../../app/embedding_cache.py). Paths point to the checked-out source; the baseline commit above fixes the review's historical meaning.
+
+## 12. Review decisions, 2026-09-27 (R1–R6)
+
+Reviewed `turn_safety_and_latency_spec_review.md` (SHA-256: `22e00d613e144f40da08e0857932d8fd947f749b87cfbcaf98c6f62ca8baa6b4`) against latest `main_v2` `e03d5dc`. The review fixed the spec at `8de40eb`; this section is a subsequent design revision, still awaiting approval. It implements no runtime behavior and claims no new SR tests passed. PRs #95/#96 changed authoring files/import recognition, not the Supervisor/Narrator/gateway/spoiler core checked here. The original 940-test result is historical; the import fix's 987 tests are not acceptance evidence for this refactor.
+
+| Review | Decision | Required package |
+| --- | --- | --- |
+| R1 Movement causality and evidence entry | Adopt; restrict final-response commits and define arrival dependencies | S2 |
+| R2 Recovery capabilities | Adopt; separate RecoveryMode from turn_kind; disable render-only tools at two boundaries | S7/S8; no automatic tool-enabled model restart in S1 |
+| R3 Shared mutation admission | Adopt; hold ownership and effect class govern execution | S1, extended by S6/S7 |
+| R4 Operable final output | Adopt; server delivery envelope and bounded fallback | S1 |
+| R5 Mixed IC/OOC | Adopt with separate types for model candidates and server projections | S2 |
+| R6 Per-route request ledger | Adopt; deterministic traces and real-model distributions have separate gates | S0 and every subsequent package |
+
+These clauses make sections 4–10 concrete. Where a simplified diagram could imply that all movement follows every tool or recovery always calls the original Narrator, the restrictions below take precedence. Normal gameplay capabilities and the disabled early-stop policy remain unchanged.
+
+### 12.1 R1: valid arrival precedes arrival-dependent effects
+
+“Enter the study and take the letter” requires validated, committed arrival before acquiring the indoor item. “Eat carried rations, then try entering the study” may preserve the independently completed consumption. Do not globally reorder by tool name or roll back every earlier legitimate effect when movement fails.
+
+- Arrival dependencies reference server-verified current location or a committed arrival event for the same action. A MovementProposal, RAG match or model-provided `requires_arrival=false` is not authorization. Apply this to relevant item, flag, clue, check, resource and output effects without binding every carried-item operation to a new destination.
+- When mechanisms must follow arrival, commit movement through the shared service inside the existing Executor tool sequence, refresh full state, then execute dependent effects. Unresolved check/Luck stops at the existing player choice. Preserve necessary model continuation; do not introduce a fixed “confirm movement” request.
+- Final-response movement commit is only available when **no arrival-dependent mechanism remains unexecuted** and all conditions/evidence at the current legal reaction point are verified. The existing Narrator may then proceed. Required remaining tools invalidate this shortcut; it must not become early stopping or delegate mechanics to the tool-free Narrator.
+- Shared `MutationAdmission` covers ordinary, sudo, explicit map commands, final-response services and resolved-check follow-up. Validate authority, timeline, actor/subject, origin/source, correction/recovery holds and action-scoped required evidence. Checking only the outer gateway is insufficient; matching versions do not prove complete evidence.
+- Bind continuations to action/proposal/check/decision IDs, actor/subject, origin/path/source version and approved outcome conditions. Spot Hidden success is not lock-opening success; unresolved Luck is not final. Never reroll known dice; changed source/path requires adjudicating the necessary changed prerequisites.
+- Inventory the location-sensitive domain mutators and their prerequisite sources in the first implementation. Model dependency metadata is a proposal. Unknown narrative prerequisites retain existing retrieval/adjudication or incomplete status; Python cannot claim universal understanding of free-form story causality. Mapless scenarios use supported narrative locations without mandatory graph creation.
+- Location/arrival events and dependent effects have explicit transaction boundaries; no DB transaction spans an LLM wait.
+
+```text
+"Enter the study, then take the letter"
+  -> MovementProposal (no location write)
+  -> existing Executor retrieves conditions
+       +-> unresolved check / Luck: preserve waiting; no indoor item
+       `-> shared admission -> commit movement + arrival event
+             -> refresh state -> validate item arrival dependency -> item event
+  -> resolution -> existing Narrator
+
+"Move, then narration only"
+  -> Executor final candidate -> same admission / evidence validation
+  -> movement + arrival event -> resolution -> existing Narrator
+```
+
+Acceptance uses **SR-M01–M07**: locked door blocks indoor acquisition; final entry cannot bypass evidence; move event precedes dependent item event; rations remain consumed; Luck waits; observation does not authorize entry; valid mapless movement adds no routine confirmation.
+
+### 12.2 R2: recovery mode is independent of the original turn kind
+
+| Mode | Model/tool capabilities | Behavior |
+| --- | --- | --- |
+| Normal ordinary Narrator | Existing tool-free narration | Unaffected by recovery restrictions |
+| Normal resolved/opening Narrator | Existing restricted tools | Legitimate follow-up remains available |
+| `delivery_only` | Zero generation requests and gameplay tools | Claim/send sealed payload |
+| `render_only` | At most the necessary existing narration stage; force `tools=[]` and reject all gameplay tools in callback | Render verified events/receipts projected for the recipient |
+| `reconcile_required` | No whole Executor or tool-enabled Narrator restart | Determine committed, unexecuted and uncertain effects first |
+
+Server-owned `RecoveryMode` takes precedence over `turn_kind`; an original resolved-check route cannot reopen damage or advance tools during rendering recovery. Targeted resumption is allowed only for registered workflows with durable trusted action/step identity, a proven missing step and current authorization. Unsupported free-form recovery remains partial with completed and unresolved facts.
+
+Operation retry returns its saved result. A newly generated call ID cannot claim an already completed logical step. Global tool-name/input-hash deduplication is also invalid: two legitimate same-input attacks are distinct effects. Fixed-workflow step identity must distinguish such repetition. First-tranche process-local observations do not promise automatic restart recovery.
+
+Acceptance **SR-R01–R06** covers no repeat damage/advance, missing necessary steps remaining partial, sealed output requiring no model, unchanged normal follow-up capabilities, and a new call ID not replaying a completed logical step.
+
+### 12.3 R3: every mutation entry consumes the hold; only its owner releases it
+
+The MutationAdmission consumer inventory includes Executor, restricted Narrator, check/Luck callbacks, sudo, purchase confirmation, map changes, character switching, and newgame/rollback. S1 requires actual call sites and tests per entry, not just gateway coverage.
+
+Holds carry conversation, timeline, affected scope, task/operation identity and generation/owner token. Cancellation makes the hold visible before releasing relevant gameplay admission; recheck at the transaction or authoritative lock boundary. Only matching owner/generation completion, rejection or reconciliation releases it; an old task's finally cannot clear a newer hold. Timeout is not evidence of completion.
+
+If independence cannot be established, initially hold conversation mutations conservatively; audited pure reads and other groups remain available. Timeline switching waits for safe worker settlement or validates the worker's original expected timeline immediately before writing. An old worker must not reload the new timeline and apply its obsolete effect. Maintenance/background writers also obey timeline, revision and commit ownership.
+
+| Effect class | Execution policy |
+| --- | --- |
+| Pure read | Independent snapshot with no shared-state refresh; waiting may stop but task remains owned/observed |
+| Random outcome | Preserve known results; reconcile uncertainty rather than rerolling the same operation |
+| State mutation | Retain ownership/hold while commit is uncertain; reject conflicting writes |
+| Output intent | Stable logical key and recipient; reuse intentions rather than lose/recreate critical output on cancellation |
+
+Multi-effect tools obey all applicable constraints. Shared-state refresh or random output prevents a tool from inheriting pure-read cancellation/retry semantics merely because it belongs to READ_ONLY_TOOL_NAMES. Slow decorative delivery does not create an unbounded conversation hold; S8/S9 manage output dependencies/barriers separately.
+
+Block workers with Events and attempt conflicting mutations through each entry. Test responsive reads/other groups, stale owners unable to clear newer holds, no known-dice rerolls, and shutdown not falsely claiming workers stopped. Distinguish process-local safety from S7 durable recovery.
+
+### 12.4 R4: final safety preserves legitimate results and effective controls
+
+Python builds a `DeliveryEnvelope`: output ID, audience/recipient, authorized fact/event references, narrative, mechanical feedback, interaction references and canonical policy. S1 can wrap existing string responses without changing every provider or adding a model request.
+
+```text
+Candidate narrative + server-projected facts / controls
+  -> mechanism consistency -> existing conditional Guard -> final audience/spoiler check
+  -> validate_delivery_contract (validation only; no rewriting)
+       +-> pass: persist / send
+       `-> fail: one deterministic projected facts / controls fallback
+             -> identical safety and contract checks
+                  +-> pass: persist / send
+                  `-> fail: blocked; preserve pending/results; safe notice/reconciliation
+```
+
+The contract checks required recipient-visible hard facts and controls, not full narrative semantics through keywords. Buttons retain original check/decision IDs, owner and timeline; do not recreate pending state or duplicate controls. Private pending requirements belong to private outputs rather than forcing public disclosure. Every fallback passes the same safety checks, without fixed LLM repair or unbounded rewriting. Passing narrative retains its style. S1 records delivery-contract outcomes; only S8 supplies durable outbox recovery.
+
+Test protected text plus legitimate pending, private pending, Guard rewrites, an unsafe fallback, and unchanged valid narration. “No disclosure but no usable next step” is not success.
+
+### 12.5 R5: separate model candidate segments from server output projection
+
+Do not expose writable server_output_projection inside a model-populated schema. Use distinct types:
+
+```text
+ModelReplySegments (mixed mode only; model candidates)
+  schema_version
+  segments[]: text, source_request_span_refs, proposed_mode, proposed_event_refs
+
+DeliveryEnvelope (Python-owned; not model-writable)
+  request_id / turn_id / output_id
+  audience / recipient
+  verified facts / interaction refs
+  final text / canonical policy
+```
+
+Mixed segmentation comes from the **already scheduled final Narrator response**. Executor retains mechanisms/resolution responsibility; there is no second OOC agent. Ordinary mode preserves the string interface through a server adapter. Tool-enabled follow-up, where mixed content applies, uses its existing final response without a second narration stage.
+
+Server policy determines speaker role, capabilities, context visibility, recipients and canon. OOC assertions cannot become established facts during input/context/action handoff; handling “I already have the key” only at final commit is too late. Validate input/output span and event references for existence, range, applicability and permission. Without support, never canonize the entire segment. These structural checks do not prove complete natural-language semantics.
+
+Compute canonical and delivery projections separately. One request may yield public IC and self-private OOC outputs without asking the player to split the message or forcing all text into public output. Filter context before generation; model segmentation alone cannot ensure confidentiality.
+
+Malformed/uncertain coverage uses R4 verified outcomes and safe unresolved information. Do not commit the entire raw input/reply into canon, replay tools, or add fixed JSON repair. Clarify genuine unresolved ambiguity only, accounting for quality/player-action cost rather than asking routinely to avoid parsing.
+
+Test mixed rules-plus-movement, OOC ownership assertions, private OOC/public action, forged role/recipient/canonical fields, and malformed/missing segments. Check user log, assistant log, summary and memory projections separately, not just visible rendering.
+
+### 12.6 R6: request and experience accounting per entry
+
+For each fixed fixture, S0 records route, input/state/scenario/model/reasoning, generation requests, provider attempts/retries, Executor/Narrator tool-response rounds, embedding/search, queue, Guard/repair/wrap-up, effective buttons, dice/full-required-narrative timing and required player decisions.
+
+These are basic shapes, **not hard caps or permission to omit work**. Existing conditional Guard, retries and wrap-up are itemized and included in totals; special gameplay uses the fixture's correct complete behavior as its baseline.
+
+| Route | Basic generation shape | Constraint |
+| --- | --- | --- |
+| Audited pure-read status/sheet | 0 | No model introduced |
+| ACK / pure roleplay | 1 Narrator | Preserve an appropriate reply |
+| Gameplay without tools | 1 Executor + 1 Narrator | No fixed classifier/judge |
+| Gameplay with tools | b+1 Executor + 1 Narrator | b counts tool-response rounds; no unnecessary confirmation round |
+| Resolved check / Luck | k+1 restricted Narrator | k counts follow-up tool-response rounds; no second agent chain |
+| Opening fallback | k+1 restricted Narrator | Still reuse an existing opening directly |
+| delivery_only | 0 | Send sealed content without regeneration |
+
+Mixed/OOC gets dedicated fixtures based on the actual existing route and corrected behavior; a renamed route is not proof of fewer requests. Fake providers verify deterministic traces; live trials compare per-route distributions, continuation/fallback/repair rates and predeclared non-inferiority margins. Identical model choices on every run cannot be guaranteed.
+
+Report per-route sample counts, success/partial/timeout/fallback, generation/attempts, p50/p95 where sample sizes support them and confidence intervals. Bug-fix work must explain the original incorrect and corrected flows plus player cost; it is not a blanket exception for ordinary regressions. Count failures, incomplete narration, manual intervention and effective button time. Do not promise seconds/percentages without measurements; this review authorizes no live API calls.
+
+### 12.7 Revised sequencing and discussion points
+
+Start with S0; S1 includes R3/R4 completely, while S3 can proceed independently. S2 requires R1/R5 movement dependencies and segmented commit contracts first. Measure S4–S6 separately; S7/S8 implement durable recovery using R2's capability matrix, then S9 separates delivery streams. Early stopping remains disabled.
+
+The first reviewable implementation scope should be S0 baselines plus S1 partial-success/safe-output work. Splitting PRs must not omit hold entry coverage. If S1 is split, label which changes provide partial facts and which finish mutation admission; do not claim all of S1 complete early. S3 and S2 can follow without bundling every schema and behavioral change into one patch.
