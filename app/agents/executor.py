@@ -227,6 +227,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         before_actor=before_actor, before_gameplay=before_gameplay,
     )
     observability.event("executor.resolution", disposition=resolution.disposition,
+                        blocker_code=resolution.blocker_code,
                         evidence_count=len(resolution.evidence_refs),
                         validation_code=resolution.validation_code, tool_event_count=len(tool_events))
     return MechanicResult(

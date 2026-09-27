@@ -48,6 +48,8 @@ Missing requirement -> blocked/incomplete + blocker_code
 
 Test offline with the real Executor/tool/state path and mocked provider output: lamp plus two kerosene bottles at Credit Rating 20, no-map arrival, bounded blockers and malicious free-text reasons, unknown-code rejection, pending mechanics, cash confirmation and duplicate prevention. Prompt tests cover the same exception in shared canon and retrieval instructions. These tests cannot prove live-model compliance; no paid replay or production-state repair is included.
 
+Implemented on `bug/actionable-purchase-blockers` from `main_v2` `edd2fd6`. Verification: 1,157 passed, 1 skipped, 41 subtests passed; Ruff, mypy (86 source files), and `git diff --check` passed. No new fixed model call is introduced. Availability and affordability remain AI adjudications, not semantic guarantees provided by the Python receipt validator.
+
 ```text
 Arrival/stock adjudication -> purchase_items
   Lifestyle -> affordability decision -> atomic items + receipt

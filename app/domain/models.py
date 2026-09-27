@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+TURN_BLOCKER_CODES = frozenset({
+    "purchase_source_unconfirmed", "purchase_arrival_unconfirmed",
+    "purchase_price_unconfirmed", "purchase_funds_unconfirmed",
+})
+
 
 @dataclass
 class StateDelta:
@@ -34,6 +39,7 @@ class TurnResolution:
     reason: str = ""
     evidence_refs: list[str] = field(default_factory=list)
     validation_code: str = ""
+    blocker_code: str = ""
 
 
 @dataclass
