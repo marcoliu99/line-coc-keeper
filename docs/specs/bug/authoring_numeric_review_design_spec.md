@@ -149,3 +149,32 @@ coordinate evidence supports a 15-page layout repair candidate; the corrupt die
 is separated from the decorative glyph without changing its value. No real-source
 publication or approval was performed: map labels, raster cards/reference rules
 and final page reading still require review. No paid APIs were called.
+
+## Revision: external AI checks the original PDF (2026-09-27)
+
+The user chooses web Gemini/ChatGPT with both the exported MD workbooks and the
+original PDF. The export message and each workbook must explicitly request both
+attachments and require the external AI to compare the physical PDF pages with
+the extraction and translation. Check columns, footers/decorative glyphs, tables,
+map labels, character cards, reference rules, dice, percentages, dates, prices,
+limits and conditions. Blank Luck stays blank. Missing/unreadable PDF evidence
+must be reported; the model must not claim to have checked unavailable pages.
+
+This replaces human page-by-page checking as the requested authoring workflow.
+It does not add an application-side AI review stage or require a human KP login.
+The existing administrator source-repair CLI remains available, but is not a
+required authoring step. Its earlier manual instructions describe that optional
+utility, not the user's preferred workflow.
+
+For this prompt-only revision the import schema remains unchanged. Correct
+translations where the immutable source supports the correction. For extraction
+errors, report unit ID, physical PDF page, exact extracted text, proposed correct
+text, reason and unresolved evidence outside the import JSON; do not fabricate
+source quotes, change IDs or pad prose with OCR noise. Affected units remain
+unfinished. Applying those external source corrections and rebinding their
+translations still requires a separate implementation; this prompt does not
+make correction reports directly importable or waive numeric validation.
+
+Verification: exercise the real export and private command/help reply tests to
+confirm both outputs carry the PDF requirement; retain the normal numeric
+validation and export/import round-trip coverage.
