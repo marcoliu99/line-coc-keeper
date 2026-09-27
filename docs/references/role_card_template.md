@@ -1,37 +1,64 @@
-# 角色卡上傳範本（role_ 檔案專用格式）
+# Role-card authoring template for `role_` uploads
 
-這份範本是給 GM／玩家填寫後，用「`role_`」開頭的檔名（例如 `role_卡特.txt` 或
-`role_卡特.md`）上傳給守密人機器人用的——機器人（`app/pregen_extractor.py` 的
-`parse_role_sheet_text`）會照這份範本的格式解析，**不是**通用的角色卡格式。
+Use this format for deterministic `.txt` / `.md` import. Section headings in Chinese
+are parser keys: keep the `【...】` spelling. Save one investigator per file, such as
+`role_investigator.md`. Upload it, inspect `/coc pregens`, then claim with
+`/coc usepregen NUMBER`. This is not the scenario-template records JSON format.
 
-技能百分比已經照 CoC 7e 官方預設值（跟 `app/models.py` 的 `BASE_SKILLS` 一致，
-2026-09-17 已改用官方術語對照表統一譯名）先幫你填好，只要把角色實際的數值改掉
-就好；沒有特別加點的技能，維持官方預設值即可，不用整份都自己重新算一次。
+## Fields and source fidelity
 
-## 使用方式
+Reviewed against the user-provided *Doors to Darkness Pre-Generated Characters*
+(11 PDF pages: cover plus ten investigators). Physical appearance, traits, ideology,
+relationships, places, treasured possessions and backstory are open prose. A blank
+entry in the source is an invitation for the player to personalize it, not permission
+for extraction to invent content.
 
-1. 複製這份檔案內容（下面「分隔線以下」的部分），另存新檔，檔名開頭一定要是
-   `role_`（例如 `role_卡特.txt`）。
-2. 填入角色資料，技能／屬性數值改成實際的值，武器與裝備照範例格式填寫。
-3. 傳給守密人機器人（上傳附件）即可。
-4. 玩家想選用抽出來的角色，用「/coc pregens」查看、「/coc usepregen 編號」認領。
+- Attribute/skill lines use `label: number`; skill hard/extreme values need not be
+  entered as separate skills. A blank Luck value remains blank for the existing
+  player Luck workflow. Preserve actual printed values rather than guessing.
+- Identity fields beyond name/occupation are descriptive notes. Age, gender and
+  birthplace are not fixed enumerations; copying them does not implement automatic
+  aging adjustments. Keep original names and translated names distinguishable.
+- Every descriptive section accepts paragraphs, lists, punctuation, numbers and
+  mixed-language names. Do not turn sentences into booleans, enum values or scores.
+  Repeated names/relationships do not authorize inventing a new NPC.
+- Blank descriptive sections are preserved as empty strings in `extra_fields`;
+  an absent section remains absent. Neither means the character has no beliefs,
+  relationships or possessions. Non-empty custom sections are also preserved.
+- `【關鍵背景連結】` is the explicit starred connection only. Do not automatically
+  promote a treasured possession or significant person into this mechanical role.
+- Descriptive extras and background may be displayed on the public sheet. Put private
+  character motivation in `【角色扮演動機】`, following the existing privacy policy;
+  do not assume ordinary `【玩家筆記】` is private. KP/system access still applies.
+- `【財務原文備註】` preserves statements such as cash on hand, debts, assets or uncertain
+  currency as prose. It does not create a transaction or cash ledger balance. In PR91's
+  accounting flow, a KP separately confirms currency and balance before exact debit.
+- `【原卡衍生數值備註】` retains printed HP/MP/SAN/MOV/DB/Build for review. It is descriptive
+  evidence, not an override: this manual parser still derives initial mechanics from
+  base attributes. Resolve a mismatch before play; do not assume notes changed state.
+- Weapon blocks keep their complete original description in `extra_fields`, in addition
+  to existing weapon/ammo classification. Damage, range, special effects and restrictions
+  must not vanish when ammo is extracted. This does not add automatic special-ability
+  resolution. Equipment uses one item per line; leave unprovided equipment blank.
 
-## 填寫注意事項
+Skill defaults below match the existing base-skill template. For a pre-generated card,
+replace values with its explicit values, including Dodge and language specializations.
+Use a distinct skill name for each specialty (for example Photography or Geology).
 
-- **不要更動【】區塊標題**跟每一行的「欄位：數值」寫法，否則系統辨識不出來。
-- 【屬性】：9 大屬性各填 15～90 之間的數值；HP/MP/SAN/MOV/DB/Build 這些衍生
-  數值系統會自動算，不用自己填。
-- 【技能】：閃避、母語兩項系統會自動算「DEX/2」「＝EDU」，留白讓系統算，或自己
-  填一個數字覆蓋掉都可以；其餘技能後面已經是官方預設值，只要改有加點的項目。
-- 【武器】：每把武器一個區塊、區塊之間空一行；沒寫彈容量的槍，系統會依角色卡
-  設定的年代（`/coc era`，預設 1920s）自動查表補上常見的預設彈藥量；近戰武器
-  不用寫彈容量那行；徒手不用另外列，系統本來就內建。
-- 【裝備】：隨身攜帶、沒有彈藥可追蹤的道具，一行一個。
-- 【角色背景】／【角色扮演動機】：自由文字，不會被拆解，原封不動存進對應欄位；
-  角色扮演動機只有這位玩家自己看得到。
+Example weapon syntax (replace with the actual source, do not grant it by default):
 
-下面「分隔線以下」開始才是要複製走的實際範本內容，**不要把上面這幾段說明也複製
-進去**。
+```text
+【武器】
+Weapon name
+技能：source skill and percentage
+傷害：source damage expression
+彈容量：source capacity, if specified
+射程與限制：complete descriptive conditions
+```
+
+Copy only the template below. Empty descriptive sections may be retained for player
+completion or omitted when absent from the source. Never fill unknown facts merely
+because a field exists.
 
 ---
 
@@ -39,6 +66,13 @@
 姓名：
 玩家：
 職業：
+原文姓名：
+年齡：
+性別／自我描述：
+出生地：
+居住地：
+來源劇本與版本：
+PDF 頁碼／印刷頁碼：
 
 【屬性】
 力量 STR：
@@ -102,18 +136,34 @@
 科學（物理）：1
 
 【武器】
-.38 左輪手槍
-技能：射擊（手槍） 50
-傷害：1D10
-彈容量：6
 
 【裝備】
-手電筒
-急救箱
-筆記本
+
+【外觀描述】
+
+【性格特徵】
+
+【思想與信念】
+
+【重要之人】
+
+【重要地點】
+
+【珍藏物品】
+
+【關鍵背景連結】
 
 【角色背景】
 
+【財務原文備註】
+
+【傷疤與身心狀況】
+
+【特殊能力與限制】
+
+【原卡衍生數值備註】
+
+【玩家筆記】
 
 【角色扮演動機】
 

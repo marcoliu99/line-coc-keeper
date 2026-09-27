@@ -15,6 +15,7 @@ class HelpActionPlanTests(unittest.TestCase):
     def test_every_registered_entry_has_a_unique_executable_plan(self):
         paths = {entry.path for entry in _entries()}
         self.assertIn(("other", "correct"), paths)
+        self.assertIn(("scenario", "template_export"), paths)
         help_actions.validate_coverage(paths)
         self.assertEqual(len(help_actions.BY_KEY), len(help_actions.ACTIONS))
         self.assertTrue(all(action.command and action.key for action in help_actions.ACTIONS))

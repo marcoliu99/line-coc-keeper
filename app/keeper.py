@@ -32,6 +32,7 @@ from app import (
     scenario_index,
     scenario_library,
     scenario_rag,
+    scenario_templates,
     scene_digest,
     spoiler_policy,
 )
@@ -845,6 +846,8 @@ _SEARCH_SCENARIO_TOOL = {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "要查詢的關鍵字或名詞，例如「卡西迪」「地下室」「儀式」"},
+            "source": {"type": "string", "enum": ["auto", "original"],
+                       "description": "預設 auto 中文優先；中文有命中但缺少裁決依據時用 original 補查原稿。查詢可含原文名稱及缺少的護甲、特殊能力、觸發條件、代價、每輪/每戰限制；命中不代表完整，未查到不等於不存在。"},
         },
         "required": ["query"],
     },
@@ -3034,9 +3037,11 @@ def _execute_tool(
             with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K,
                                     embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                                     embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
-                index = scenario_rag.get_index(state.group_id, state.scenario_text)
-                results = scenario_rag.search(index, scenario_query, top_k=SCENARIO_RAG_TOP_K)
+                index, results = scenario_templates.search_for_state(state, scenario_query, top_k=SCENARIO_RAG_TOP_K, metrics=scenario_metrics,
+                                                                    source=tool_input.get("source", "auto"))
                 scenario_metrics.update(
+                    evidence_chars=sum(len(row["text"]) for row in results),
+                    budget_omitted=sum(row.get("budget_omitted", 0) for row in results),
                     candidate_count=len(getattr(index, "chunks", ())),
                     result_count=len(results),
                     has_embeddings=getattr(index, "has_embeddings", None),
