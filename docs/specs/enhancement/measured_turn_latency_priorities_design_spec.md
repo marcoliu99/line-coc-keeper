@@ -406,3 +406,14 @@ WP2, WP3 and WP4 touch different files and may be reviewed separately. Within WP
 - The two sessions differ in content as well as code. The latency rise is consistent with the tool-call composition, but a same-scenario comparison was not run.
 - WP2 rests on an inference about where the provider's cached prefix begins, drawn from cached-token totals exceeding `instructions + tools`. It is consistent with the data and not confirmed against provider documentation, which is why WP2 is flag-reversible and measured rather than assumed.
 - This document does not review rule correctness in `combat.py`, `dice.py` or `luck.py`, the PDF ingestion path, or the Discord UI layer.
+
+## 8. PR #109 review corrections
+
+Goal: preserve current-turn evidence and message admission order while retaining prompt caching and retrieval outside the conversation lock. This patch changes no persisted schema, combat rules, or purchase policy.
+
+1. **Response-chain fallback.** Build the initial request input and invalid-chain retry from one helper. Both include the current dynamic developer block exactly once when `OPENAI_DYNAMIC_PROMPT_AFTER_INPUT` is enabled. The token reservation must count the rebuilt input exactly once.
+2. **Prefetch validity.** Bind scenario results to the active chapter window and scenario text revision. Bind memory results to a revision that changes when memory maintenance commits. A changed binding discards the prefetch and performs the ordinary retrieval under the lock. Tests advance a chapter and append memory while a turn waits.
+3. **Admission order.** Register an ordinary turn in the conversation's ordering queue before awaiting its prefetch. Retrieval may run while it waits, but a later completed prefetch cannot pass an earlier message. The configured KP Assistant retains priority over waiting players. Cancellation removes its ticket.
+4. **Queue position.** Count waiters at both the KP priority gate and the conversation lock, without double-counting a turn that has crossed from the gate to the lock. The notice and `turn.queue` use the same snapshot and update as turns finish.
+
+Acceptance: targeted regression tests for invalid response chains, chapter and memory changes, intentionally delayed prefetches with FIFO/KP priority, cancellation, and gate queue counts; then the isolated full suite, Ruff, mypy, and `git diff --check`. No additional model request or synchronous review stage is introduced.
