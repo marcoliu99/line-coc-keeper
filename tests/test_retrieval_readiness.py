@@ -1,7 +1,10 @@
 """Offline coverage for missing tokenization and hidden gate rejections."""
 import asyncio
+import json
 import sys
 from unittest.mock import Mock, patch
+
+import pytest
 
 from app import scenario_retrieval
 from app.agents.tool_gateway import make_tool_executor
@@ -209,3 +212,96 @@ def test_ranked_alternatives_do_not_become_required_dependencies():
         assert row['root_record_ids'] == ['unrelated']
     finally:
         scenario_retrieval.BUDGET.reset(token)
+
+
+@pytest.mark.parametrize('capacity', [1500, 1800, 3000])
+@pytest.mark.parametrize('model', ['unknown', 'named-fallback', 'named-tokenizer'])
+def test_ranked_candidate_metadata_fits_final_budget(monkeypatch, capacity, model):
+    monkeypatch.setattr(input_budget, '_encoding',
+                        lambda _: _FakeEncoding() if model == 'named-tokenizer' else None)
+    records = {str(i): {
+        'page': i + 1, 'name': '房屋地下室與閣樓中的詳細線索資訊' * 3 if i else 'intro',
+        'visibility': 'kp_only', 'type': 'source_unit',
+        'kp_text': 'key' if i == 0 else 'hidden' * 3000,
+        'public_text': '', 'related_record_ids': [],
+    } for i in range(9)}
+    budget = scenario_retrieval.BUDGET.set(capacity)
+    model_token = scenario_retrieval.MODEL.set(model)
+    try:
+        row = scenario_retrieval.project_ranked(records, list(records), 'keys')[0]
+        scenario_retrieval.bind_continuation([row], ['test'])
+        assert row['complete_for_action']
+        assert row['root_record_ids'] == ['0']
+        assert '[0｜PDF 1] intro\nkey' in row['text']
+        assert row['deferred_candidate_count'] == 8
+        assert row['completeness_scope'] == 'selected_records_and_required_dependencies'
+        actual_cost = scenario_retrieval._cost(json.dumps(row, ensure_ascii=False))
+        assert actual_cost <= row['projection_tokens_estimate'] <= capacity
+        if model != 'named-tokenizer' and capacity == 1500:
+            assert len(row['deferred_candidates']) < 8
+    finally:
+        scenario_retrieval.BUDGET.reset(budget)
+        scenario_retrieval.MODEL.reset(model_token)
+
+
+@pytest.mark.parametrize('capacity', [0, 100, 1000])
+def test_ranked_control_envelope_overflow_is_explicit(capacity):
+    records = {'intro': {
+        'page': 1, 'name': 'Intro', 'visibility': 'kp_only', 'type': 'scene',
+        'kp_text': 'key', 'public_text': '', 'related_record_ids': [],
+    }}
+    budget = scenario_retrieval.BUDGET.set(capacity)
+    model = scenario_retrieval.MODEL.set('unknown')
+    try:
+        row = scenario_retrieval.project_ranked(records, ['intro'], 'key')[0]
+        assert not row['complete_for_action']
+        assert row['budget_exceeded']
+        assert row['projection_reason'] == 'retrieval_budget_exceeded'
+        assert row['projection_tokens_estimate'] > row['budget_tokens'] == capacity
+        assert '【依據尚未完整】' in row['text']
+    finally:
+        scenario_retrieval.BUDGET.reset(budget)
+        scenario_retrieval.MODEL.reset(model)
+
+
+def test_evidence_status_tracks_remaining_roots_and_narrator_reason():
+    from app.domain.models import MechanicResult, StateDelta, TurnResolution
+    from app.services.prompt_config import enforce_mechanic_check_consistency
+
+    async def run():
+        status, calls = {}, []
+        execute = make_tool_executor(GroupState(group_id='g'), [], [], 'player', [], status)
+
+        def tool(state, name, data, *args):
+            calls.append(name)
+            return {'ok': True, **data}
+
+        with patch('app.agents.tool_gateway.keeper._execute_tool', side_effect=tool):
+            await execute('search_scenario', {'complete_for_action': False, 'evidence_record_ids': ['intro', 'rules']})
+            for receipt in (
+                {'complete_for_action': True, 'evidence_record_ids': ['unrelated']},
+                {'complete_for_action': True, 'evidence_record_ids': ['intro']},
+                {'complete_for_action': None, 'evidence_record_ids': ['rules']},
+                {'ok': False, 'complete_for_action': True, 'evidence_record_ids': ['rules']},
+            ):
+                await execute('search_scenario', receipt)
+                assert status['scenario_evidence_blocked'] is True
+                assert (await execute('add_carried_item', {}))['error'] == 'required_scenario_evidence_missing'
+            assert 'add_carried_item' not in calls
+            await execute('search_scenario', {'complete_for_action': True, 'evidence_record_ids': ['rules']})
+            assert status['scenario_evidence_blocked'] is False
+            # Retrieval recovered, but the subsequent purchase fails for a
+            # different reason. Narrator must not resurrect the old evidence hold.
+            assert not (await execute('purchase_items', {'ok': False, 'error': 'insufficient_funds'}))['ok']
+            for disposition in ('blocked', 'incomplete'):
+                result = MechanicResult(success=False, action_type='purchase', narrative_facts=[],
+                                        state_delta=StateDelta(), check_status=status,
+                                        turn_resolution=TurnResolution(disposition=disposition))
+                text = enforce_mechanic_check_consistency('purchase failed', result)
+                assert '劇本依據' not in text
+            assert (await execute('add_carried_item', {}))['ok']
+            # A later new incomplete root must close the gate again.
+            await execute('search_scenario', {'complete_for_action': False, 'evidence_record_ids': ['door']})
+            assert status['scenario_evidence_blocked'] is True
+            assert not (await execute('add_carried_item', {}))['ok']
+    asyncio.run(run())

@@ -186,7 +186,7 @@ def project_ranked(records: dict[str, dict], candidates: list[str], query: str,
     """
     if not candidates:
         return []
-    capacity = BUDGET.get()
+    capacity = max(0, min(BUDGET.get(), config.SCENARIO_RETRIEVAL_TOKEN_BUDGET))
     # Reserve bounded discovery metadata without increasing the caller's budget.
     token = BUDGET.set(max(0, capacity - 300))
     try:
@@ -207,12 +207,37 @@ def project_ranked(records: dict[str, dict], candidates: list[str], query: str,
     row['deferred_candidates'] = [
         {'record_id': rid, 'page': records[rid]['page'], 'name': records[rid]['name'][:40]}
         for rid in deferred[:8] if rid in records and (internal or records[rid]['visibility'] != 'kp_only')]
+    row['deferred_candidate_count'] = sum(
+        rid in records and (internal or records[rid]['visibility'] != 'kp_only') for rid in deferred)
     row['completeness_scope'] = 'selected_records_and_required_dependencies'
     row['text'] += ('\n【搜尋範圍】完整性僅涵蓋已選紀錄及必要關聯，不代表行動所需事實已全部找到。'
                     '未選候選另列；若仍缺護甲、能力、限制或其他裁決事實，請聚焦補查，不能推定不存在。')
     row['budget_tokens'] = capacity
-    row['projection_tokens_estimate'] = _cost(json.dumps({k: v for k, v in row.items() if not k.startswith('_')}, ensure_ascii=False))
+    # The initial reservation is only a heuristic. Measure the final scope
+    # notice and metadata too; CJK names can cost much more in byte fallback.
+    # Candidate descriptions are discovery hints, never required evidence.
+    while _measure_projection(row) > capacity and row['deferred_candidates']:
+        row['deferred_candidates'].pop()
+    if _measure_projection(row) > capacity:
+        # Even the evidence/control envelope may exceed a tiny budget. Report
+        # that honestly instead of certifying completeness or deleting facts.
+        row['complete_for_action'] = False
+        row['projection_reason'] = 'retrieval_budget_exceeded'
+        row['budget_exceeded'] = True
+        if '【依據尚未完整】' not in row['text']:
+            row['text'] += '\n【依據尚未完整】取用預算不足；請聚焦查詢，暫緩機制。'
+        _measure_projection(row)
     return [row]
+
+
+def _measure_projection(row: dict) -> int:
+    """Include the estimate field itself, excluding private cursor bookkeeping."""
+    row['projection_tokens_estimate'] = 0
+    while True:
+        measured = _cost(json.dumps({k: v for k, v in row.items() if not k.startswith('_')}, ensure_ascii=False))
+        if measured <= row['projection_tokens_estimate']:
+            return row['projection_tokens_estimate']
+        row['projection_tokens_estimate'] = measured
 
 
 def bind_continuation(rows: list[dict], binding: Any, offset: int = 0) -> None:

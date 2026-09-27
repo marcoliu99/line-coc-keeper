@@ -78,3 +78,13 @@ Resolve tokenizers through an explicit cache instead. Keep a success for the pro
 This narrows the window, it does not remove the fallback: estimates inside a retry window are still bytes, and a persistently missing dependency still degrades. Treating a zero budget under a byte fallback as an infrastructure fault rather than missing scenario evidence remains open.
 
 Latching verification: 1,049 passed, 33 subtests passed; ruff, mypy and compileall pass. Two new offline tests cover a transient failure that recovers after the retry window without a reload inside it, and a resolved tokenizer that is cached without re-loading or emitting an incident event. No model or embedding API calls were made.
+
+## PR review: final projection budget and recovered evidence status
+
+The ranked projection's 300-unit reservation is a heuristic, not an admission guarantee. Measure the final public row, including the scope notice and the estimate field itself. Clamp the advertised capacity to the configured retrieval ceiling. Remove optional deferred-candidate descriptions until the row fits; retain their visible total count and the scope warning so omitted hints do not imply missing locations or rules do not exist. Never delete mandatory evidence to preserve a complete flag. If the evidence/control envelope itself exceeds the available capacity, mark it incomplete with `retrieval_budget_exceeded` and `budget_exceeded: true`, retaining its honest measured size. This control response can exceed an extremely small or zero budget; it must not certify executable evidence.
+
+When successful, explicitly complete retrieval removes the final blocked root, synchronize `scenario_evidence_blocked` with the mutation gate. Unrelated hits, partial completion, failed searches and unknown-completeness original hits must not clear an outstanding root. Subsequent incomplete evidence closes the gate again. This prevents an unrelated later purchase failure from being narrated as missing scenario evidence, while retaining the existing deterministic failure guard.
+
+Regression coverage includes long Chinese candidate names at 1,500/1,800/3,000-unit budgets with unknown-model bytes, named-model byte fallback and a deterministic token encoder; zero/tiny-budget overflow; and a multi-search recovery followed by an insufficient-funds failure through the real gateway and narration guard. These are offline tests and do not replay live purchases or call model APIs.
+
+Review verification after merging current main_v2: 1,135 passed, 1 skipped, 33 subtests passed. Ruff, mypy (86 source files), and `git diff --check` passed.

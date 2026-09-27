@@ -163,6 +163,8 @@ def make_tool_executor(
             elif result.get("complete_for_action") is True:
                 blocked_evidence.difference_update(result.get("evidence_record_ids", []))
                 evidence_incomplete = bool(blocked_evidence)
+                if check_status is not None:
+                    check_status["scenario_evidence_blocked"] = evidence_incomplete
         facts.append(_describe_tool_call(tool_name, result))
         if check_status is not None:
             _record_check_status(check_status, tool_name, result)
