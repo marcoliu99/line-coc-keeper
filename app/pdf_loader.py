@@ -377,6 +377,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 text, method = native, "native"
                 selected_warnings.append("layout_pair_mismatch")
             if any(p["status"] in {"source_pair_unresolved", "candidate_pair_unverified"} for p in pair_checks):
+                text, method = native, "native"
                 selected_warnings.append("numeric_pair_review")
             warnings.extend(selected_warnings)
             text, repairs = _repair_local_regions(page, evidence, pairs, text, local_budget)

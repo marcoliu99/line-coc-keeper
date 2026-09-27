@@ -83,3 +83,17 @@ def test_local_repair_preserves_intact_numbers_and_words():
     assert not pdf_quality.accept_region('Dam\ufffdage 2d6', 'Damage 2d6 plus 50', [])
     assert not pdf_quality.accept_region('Dam\ufffdage 2d6 after failure', 'Damage 2d6', [])
     assert not pdf_quality.accept_region('Normal text 2d6', 'Different text 2d6', [])
+
+
+def test_prose_stat_mentions_are_not_unresolved_fields():
+    data = evidence([(40, 100, 'Alice must make a STR roll.'),
+                     (40, 140, 'Make a DEX or STR roll.'), (40, 180, 'STR rolls apply here.')])
+    assert pdf_quality.numeric_pairs(data) == []
+
+
+def test_short_pages_preserve_native_wording():
+    for native, layout in [('Do not open the cellar door.', 'Cellar'),
+                           ('No entry', 'Entry'), ('Clue', 'Unrelated')]:
+        text, method, warnings = pdf_quality.select_text(native, layout)
+        assert text == native and method == 'native' and 'layout_text_loss' in warnings
+    assert pdf_quality.select_text('A short handout.', '**A short handout.**')[1] == 'layout'

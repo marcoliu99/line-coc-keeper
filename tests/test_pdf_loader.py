@@ -55,7 +55,7 @@ class PdfLoaderImagePersistenceTests(unittest.TestCase):
     def test_pymupdf4llm_page_chunks_are_used_for_layout_and_text(self):
         document = pymupdf.open()
         page = document.new_page()
-        page.insert_text((40, 60), "fallback text")
+        page.insert_text((40, 60), "layout-aware handout text")
         pdf_bytes = document.tobytes()
         document.close()
 
@@ -277,3 +277,27 @@ class PdfQualityRegressionTests(unittest.TestCase):
         with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None):
             text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), local_ocr_limit=0, ai_repair_limit=0)
         self.assertIn('[PDF_UNRESOLVED_FIELDS: STR]', text)
+
+
+    def test_unverified_layout_value_never_becomes_source(self):
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'Alice STR 60'}}):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), quality_report=report,
+                                                       local_ocr_limit=0, ai_repair_limit=0)
+        self.assertNotIn('60', text)
+        self.assertIn('PDF_UNRESOLVED_FIELDS: STR', text)
+        self.assertEqual(report['pages'][0]['method'], 'native')
+
+    def test_prose_does_not_delete_valid_pregen_attribute(self):
+        from unittest.mock import Mock
+
+        from app import pdf_ai_repair, pregen_extractor
+        provider = types.SimpleNamespace(analyze_image=Mock())
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+             patch.dict(pdf_ai_repair._PROVIDERS, {pdf_ai_repair.LLM_PROVIDER: provider}):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR 60\nAlice must make a STR roll.']))
+        provider.analyze_image.assert_not_called()
+        self.assertNotIn('PDF_UNRESOLVED_FIELDS', text)
+        pregen = {'name': 'Alice', 'str_': 60}
+        pregen_extractor._apply_pdf_unknowns(pregen, {1: text})
+        self.assertEqual(pregen['str_'], 60)

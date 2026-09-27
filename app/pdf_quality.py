@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'ai-import-repair-v4'
+VERSION = 'ai-import-repair-v5'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 
@@ -43,7 +43,7 @@ def select_text(native: str, layout: str) -> tuple[str, str, list[str]]:
     words = Counter(_WORD.findall(native.casefold()))
     count = sum(words.values())
     coverage = sum((words & Counter(_WORD.findall(layout.casefold()))).values()) / max(1, count)
-    if count >= 20 and coverage < .85:
+    if count and coverage < .85:
         warnings.append('layout_text_loss')
     if warnings:
         return native, 'native', warnings
@@ -106,6 +106,17 @@ def numeric_pairs(evidence: dict) -> list[dict]:
             if not tied:
                 pair.update(value=value['text'].casefold(), value_bbox=value['bbox'],
                             value_block=value['block'], status='same_row_candidate')
+        if pair['status'] == 'unresolved':
+            # A stat mention inside a sentence is not a blank character field.
+            row = sorted([w for w in words if w['block'] == label['block']
+                          and w['line'] == label['line']], key=lambda w: w['bbox'][0])
+            tokens = [w['text'].strip(':：|') for w in row]
+            field_row = all(t.upper() in _STAT_LABELS or _VALUE.fullmatch(t) or not t
+                            for t in tokens)
+            named_blank = (len(row) == 2 and row[-1] is label
+                           and tokens[0].istitle())
+            if not field_row and not named_blank:
+                continue
         pairs.append(pair)
     _vertical_pairs(pairs, words)
     pairs.extend(_skill_pairs(words))

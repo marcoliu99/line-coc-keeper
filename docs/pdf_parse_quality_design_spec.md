@@ -204,3 +204,13 @@ Coverage includes provider failure/budget exhaustion, readable/blank/unreadable
 responses, blank Luck, contradictory additions, duplicate responses, import-to-source
 integration, constructor-default prevention and repeated manual reconciliation.
 No live vision quality benchmark was performed in this phase.
+
+## Review hardening (2026-09-27)
+
+Unresolved stat detection is restricted to field-shaped rows (isolated labels, stat
+header grids, or a short name followed by an empty field), excluding prose mentions
+such as STR rolls. Layout candidates with any unresolved or unverified numeric pair
+fall back to native evidence; only validated image repair may supply missing values.
+Apply text coverage checks to all nonempty native pages, including short handouts.
+Regression tests exercise prose beside valid character stats, fabricated layout
+values, short-page loss, and faithful short-page formatting.
