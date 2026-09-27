@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from app import (
     scenario_intro,
     scenario_library,
     scenario_rag,  # noqa: F401 - retained for existing command integration mocks
+    scenario_source_authoring,
     scenario_templates,
     scene_digest,
     scene_map,
@@ -252,6 +254,59 @@ async def handle_system_command(
     if sub == "scenario":
         action = parts[2].casefold() if len(parts) > 2 else "list"
         state = load_state(conversation_id)
+        if action == "source":
+            if not (is_keeper or state.kp_assistant_user_id == user_id):
+                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以管理英文來源。")
+                return
+            if len(parts) < 5:
+                await reply("用法：/coc scenario source export|import|status 劇本ID [檔名或匯出ID]")
+                return
+            operation, scenario_id = parts[3].casefold(), parts[4]
+            try:
+                ready_id = ""
+                if operation == "export" and len(parts) == 5:
+                    path = await asyncio.to_thread(scenario_source_authoring.export_source, scenario_id)
+                    await send_dm(user_id, scenario_source_authoring.export_message(scenario_id, path))
+                elif operation == "status" and len(parts) in (5, 6):
+                    infos = await asyncio.to_thread(scenario_source_authoring.status, scenario_id,
+                                                   parts[5] if len(parts) == 6 else "")
+                    await send_dm(user_id, "\n\n".join(scenario_source_authoring.progress_message(x) for x in infos)
+                                  or "尚未匯出英文整備工作檔。")
+                    _, problems = await asyncio.to_thread(scenario_source_authoring.inspect_results, scenario_id)
+                    if problems:
+                        await send_dm(user_id, "未列入英文匯入選單的檔案：\n" + "\n".join(problems))
+                    if len(infos) == 1:
+                        ready_id = infos[0]["published_id"]
+                elif operation == "import" and len(parts) >= 6:
+                    arguments = parts[5:]
+                    expected = ""
+                    if len(arguments) >= 3 and arguments[-2] == "--sha256":
+                        expected = arguments[-1]
+                        arguments = arguments[:-2]
+                    info = await asyncio.to_thread(scenario_source_authoring.import_source, scenario_id,
+                                                   " ".join(arguments), imported_by=user_id, expected_sha256=expected)
+                    await send_dm(user_id, scenario_source_authoring.progress_message(info))
+                    ready_id = info["published_id"]
+                else:
+                    await reply("用法：/coc scenario source export|import|status 劇本ID [檔名或匯出ID]")
+                    return
+                if ready_id:
+                    await reply(scenario_source_authoring.SourceReadyMessage(ready_id, user_id))
+                else:
+                    await reply("英文整備已處理，檔案位置、提示詞或進度已私訊 KP；目前遊戲版本不變。")
+            except (OSError, ValueError, KeyError) as exc:
+                try:
+                    await send_dm(user_id, f"英文來源無法處理：{exc}\n請將疑點交回外部 AI，連同原 PDF 修正後再匯入。")
+                except Exception:
+                    logging.getLogger(__name__).exception("English preparation diagnostic DM failed")
+                    await reply("英文整備私訊未送達，請開啟私訊後重試；詳細資料不會公開。")
+                else:
+                    await reply("英文整備未完成，詳細原因已私訊 KP；目前遊戲版本不變。")
+            except Exception:
+                # Discord DM failures must never fall back to posting source data.
+                await reply("英文整備未完成或私訊未送達，請開啟私訊後重試或查看伺服器紀錄。")
+                logging.getLogger(__name__).exception("English preparation or private delivery failed")
+            return
         if action == "template":
             if not (is_keeper or state.kp_assistant_user_id == user_id):
                 await reply("只有 KP 可以管理中文劇本模板。")
@@ -369,7 +424,9 @@ async def handle_system_command(
             for item in entries:
                 marker = "（目前使用）" if item["id"] == state.scenario_library_id else ""
                 chapters = "、".join(c["title"] for c in item.get("chapters", []) if c.get("kind") == "playable")
-                lines.append(f"・{item['id']}《{item.get('title', '')}》{marker}" + (f"\n  章節：{chapters}" if chapters else ""))
+                parent = item.get("source_review", {}).get("parent_scenario_id", "")
+                lines.append(f"・{item['id']}《{item.get('title', '')}》{marker}" + (f"\n  章節：{chapters}" if chapters else "")
+                             + (f"\n  原來源：{parent}" if parent else ""))
             await reply("\n".join(lines))
             return
         if action == "reparse":
@@ -444,8 +501,8 @@ async def handle_system_command(
             await reply("已放棄本次上傳，既有劇本不受影響。")
             return
         if action == "use":
-            if state.kp_assistant_user_id != user_id:
-                await reply("只有目前登記的 KP Assistant 可以選擇劇本。")
+            if not (is_keeper or state.kp_assistant_user_id == user_id):
+                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以選擇劇本。")
                 return
             if state.pending_pregen_luck:
                 await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。")
