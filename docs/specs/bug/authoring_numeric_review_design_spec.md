@@ -26,6 +26,10 @@ introduced. Private scenario text and correction drafts are not committed.
 * All independent field mismatches are collected. Approval recalculates every
   record and emits a private report including missing tokens and source contexts.
   The full report retains all issues; only the exception preview is bounded.
+* Percent-only notation disagreements (identical values and counts after removing
+  percent signs) persist as explicit review-required draft warnings, so corrections
+  across packages can proceed. Approval rejects every such warning. Actual value
+  or count mismatches still reject import; no numeric waiver is introduced.
 * Import success remains distinct from approval. First submissions do not contain
   replacement IDs. Corrections name only existing IDs in that specific batch.
 
@@ -71,3 +75,17 @@ Chinese words/adjacency, extra page references, metadata exclusion, layout noise
 more than three records, full diagnostics beyond the preview cap, and first versus
 replacement imports. Local r1-r19 audit compares the actual draft to its immutable
 registry and original PDF; unresolved items must be reported explicitly.
+
+## Implementation verification (2026-09-27)
+
+* Full isolated suite: 1008 passed, 1 skipped, 33 subtests passed.
+* `python3 -m ruff check app tests`: passed.
+* `python3 -m mypy app`: passed (84 source files).
+* The private 19-record audit produced 13 source-grounded translation corrections
+  in three replacement packages. All three imported into a copy of the saved draft.
+  Final approval correctly remained blocked by 21 source/visual review issues.
+* The original PDF is available. Layout repair, map/image verification and omitted
+  character-card reference rules still require a reviewed source candidate and a
+  new export. No production source, draft, approval or existing export was changed.
+* Existing approved variants are not automatically migrated/revoked. This change
+  revalidates when approval is requested; it adds no gameplay review request.

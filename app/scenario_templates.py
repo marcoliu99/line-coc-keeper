@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 import tempfile
-from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ from app import (
     db,
     scenario_authoring,
     scenario_library,
+    scenario_numbers,
     scenario_projection,
     scenario_rag,
 )
@@ -30,7 +30,6 @@ _V4_COMPILER = "zh-gameplay-v4"
 BUDGET_VERSION = "token-v1"
 _RULE_FIELDS = ("trigger", "check", "success", "failure", "exceptions")
 _SAFE_VARIANT = re.compile(r"zh-TW-[a-f0-9]{12}")
-_NUMBER = re.compile(r"(?i)\b\d+d\d+(?:[+-]\d+)?\b|\b\d+(?:\.\d+)?%?\b")
 _NEGATIVE = re.compile(r"\b(?:not|never|without|cannot|no)\b", re.IGNORECASE)
 
 
@@ -180,6 +179,76 @@ def _record_source(record: dict[str, Any], source: str) -> str:
     return "\n".join(_source_parts(record, source))
 
 
+def _percentage_format_only(expected: dict[str, int], actual: dict[str, int]) -> bool:
+    # Preserve an unresolved draft when ONLY percent notation differs, so legacy
+    # records in separate packages can be corrected incrementally. Approval still
+    # rejects this discrepancy; no value or occurrence difference is deferred.
+    def without_percent(values: dict[str, int]) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for token, count in values.items():
+            key = token.removesuffix('%')
+            result[key] = result.get(key, 0) + count
+        return result
+    return without_percent(expected) == without_percent(actual)
+
+
+def _rule_numeric_issue(record_id: str, index: int, field: str, value: dict,
+                        expected: Any, actual: Any) -> dict:
+    item = scenario_authoring.issue('RULE_NUMERIC_MISMATCH', record_id, f'rules[{index}].{field}', expected, actual)
+    item.update(expected_counts=dict(expected), actual_counts=dict(actual),
+                missing_counts=dict(expected-actual), extra_counts=dict(actual-expected),
+                source_quote=value['source_quote'], translated_text=value['text'],
+                message=f'{record_id} rules[{index}].{field} 數值或百分號表示待校對')
+    return item
+
+
+def _review_issues(record: dict, original: str) -> list[dict]:
+    translated = scenario_projection.body(record, "public") + "\n" + scenario_projection.body(record, "kp_only")
+    rid = record['id']
+    issues = []
+    for index, rule in enumerate(record['rules']):
+        for field, value in rule.items():
+            expected = scenario_numbers.counts(value['source_quote'])
+            actual = scenario_numbers.counts(value['text'])
+            if expected != actual and _percentage_format_only(expected, actual):
+                issues.append(_rule_numeric_issue(rid, index, field, value, expected, actual))
+    absent = scenario_numbers.missing(original, translated)
+    if absent:
+        item = scenario_authoring.issue('SOURCE_NUMERIC_COVERAGE', rid, 'translation',
+                                        'all meaningful source numbers in this record', absent)
+        item.update(message=f"{rid} 數值未對齊：{', '.join(absent)}", missing_tokens=absent,
+                    source_contexts=scenario_numbers.contexts(original, absent),
+                    source_id=record['source_id'], source_spans=record['source_spans'],
+                    source_pages=record['source_pages'],
+                    suggestion='Translate meaningful passages; inspect PDF for layout/OCR artifacts. '
+                               'Never pad gameplay or self-authorize exclusions. Source repair requires a new export.')
+        issues.append(item)
+    if _NEGATIVE.search(original) and not re.search(r"不|無|未|非|禁止|不能", translated):
+        item = scenario_authoring.issue('NEGATION_REVIEW', rid, 'translation', 'preserve negative conditions', '')
+        item['message'] = f'{rid} 否定條件待校對'
+        issues.append(item)
+    if record['uncertainty'].strip():
+        item = scenario_authoring.issue('TRANSLATION_UNCERTAINTY', rid, 'uncertainty', 'resolved source review', record['uncertainty'])
+        item['message'] = f'{rid} 有待釐清翻譯'
+        issues.append(item)
+    return issues
+
+
+def _write_diagnostics(exc: scenario_authoring.Diagnostics, **context: Any) -> None:
+    IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    report = IMPORT_DIR / ("template-report-" + uuid4().hex + ".md")
+    fd = os.open(report, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write("# KP-only template diagnostics / 私密模板校對報告\n\n")
+        stream.write("Source repair worksheet / 來源修復工作表：record source hash, source ID/span, "
+                     "exact extracted quote, physical PDF page/crop, proposed correction, reason, reviewer and date. "
+                     "保留原文與來源 hash；記錄 PDF 實體頁／裁圖、修正前後、理由、校對者與日期。 "
+                     "This report grants no numeric waiver. 不可把雜訊填進劇情，也不能自行豁免檢查。\n\n")
+        stream.write(json.dumps({**context, "total": exc.total, "omitted": exc.total-len(exc.full_issues),
+                                 "issues": exc.full_issues}, ensure_ascii=False, indent=2))
+    exc.report_path = report
+
+
 def _validate(scenario_id: str, records: list[dict[str, Any]], *, version: int = 3, partial: bool = False,
               source_data: tuple[dict, dict] | None = None) -> tuple[str, str, list[str]]:
     if source_data is None:
@@ -191,7 +260,7 @@ def _validate(scenario_id: str, records: list[dict[str, Any]], *, version: int =
         raise ValueError(f"模板須有 1 至 {scenario_authoring.MAX_RECORDS if version == 4 else 5000} 筆完整記錄")
     grouped: dict[str, list[dict[str, Any]]] = {}
     seen: set[str] = set()
-    issues = []
+    issues: list[str] = []
     for record in records:
         if not isinstance(record, dict):
             raise ValueError("模板記錄格式錯誤")  # noqa: TRY004
@@ -235,18 +304,14 @@ def _validate(scenario_id: str, records: list[dict[str, Any]], *, version: int =
                 quote = evidence.get("source_quote")
                 if not isinstance(quote, str) or not quote.strip() or not any(quote in part for part in parts):
                     raise ValueError("規則引述不在此記錄的來源範圍")
-                if Counter(x.casefold() for x in _NUMBER.findall(quote)) != Counter(x.casefold() for x in _NUMBER.findall(evidence["text"])):
+                expected = scenario_numbers.counts(quote)
+                actual = scenario_numbers.counts(evidence["text"])
+                if expected != actual and not _percentage_format_only(expected, actual):
                     raise ValueError("規則欄位數值與原文不符")
         translated = scenario_projection.body(record, "public") + "\n" + scenario_projection.body(record, "kp_only")
         if not translated.strip():
             raise ValueError("模板記錄缺少中文內容")
-        absent = {x.casefold() for x in _NUMBER.findall(original)} - {x.casefold() for x in _NUMBER.findall(translated)}
-        if absent:
-            issues.append(f"{record_id} 數值未對齊：{', '.join(sorted(absent)[:10])}")
-        if _NEGATIVE.search(original) and not re.search(r"不|無|未|非|禁止|不能", translated):
-            issues.append(f"{record_id} 否定條件待校對")
-        if record["uncertainty"].strip():
-            issues.append(f"{record_id} 有待釐清翻譯")
+        issues.extend(item['message'] for item in _review_issues(record, original))
         grouped.setdefault(source_id, []).append(record)
     for record in ([] if partial else records):
         if any(ref not in seen for ref in record["related_record_ids"]):
@@ -399,6 +464,7 @@ def import_progress(scenario_id: str, filename: str) -> str:
 
 def _diagnose_records(scenario_id: str, records: list, *, version: int) -> list[str]:
     errors: list[dict[str, Any]] = []
+    review_issues: list[dict[str, Any]] = []
     manifest, source = _source(scenario_id)
     blocks = {b['id']: b for b in _blocks(manifest, source)}
     for record in records:
@@ -423,6 +489,17 @@ def _diagnose_records(scenario_id: str, records: list, *, version: int) -> list[
                         for field, value in rule.items():
                             if not isinstance(value, dict) or not value.get('source_quote'):
                                 errors.append(scenario_authoring.issue('RULE_EVIDENCE_MISSING', rid, f'rules[{i}].{field}', 'text + source_quote', value))
+                            elif isinstance(value.get('text'), str) and isinstance(value['source_quote'], str):
+                                expected = scenario_numbers.counts(value['source_quote'])
+                                actual = scenario_numbers.counts(value['text'])
+                                if expected != actual and not _percentage_format_only(expected, actual):
+                                    errors.append(_rule_numeric_issue(rid, i, field, value, expected, actual))
+        # Numeric field errors must not hide other records' coverage/uncertainty.
+        if isinstance(record, dict) and block:
+            try:
+                review_issues.extend(_review_issues(record, _record_source(record, block['text'])))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                pass  # Structural validation below reports malformed records.
         if previous != len(errors):
             continue
         try:
@@ -431,7 +508,7 @@ def _diagnose_records(scenario_id: str, records: list, *, version: int) -> list[
             rid = record.get('id', '') if isinstance(record, dict) else ''
             errors.append(scenario_authoring.issue('INVALID_RECORD', rid, 'record', 'valid source-bound record', str(exc)))
     if errors:
-        raise scenario_authoring.Diagnostics(errors)
+        raise scenario_authoring.Diagnostics(errors + review_issues)
     try:
         return _validate(scenario_id, records, version=version, source_data=(manifest, blocks))[2]
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
@@ -465,9 +542,18 @@ def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], li
 
 def approve(scenario_id: str, variant_id: str, *, reviewer_id: str) -> None:
     variant, records = _read_variant(scenario_id, variant_id)
-    _, _, issues = _validate(scenario_id, records, version=variant["schema_version"])
-    if issues:
-        raise ValueError("尚有翻譯疑點：" + "；".join(issues[:3]))
+    try:
+        warnings = _diagnose_records(scenario_id, records, version=variant["schema_version"])
+        if warnings:
+            manifest, text = _source(scenario_id)
+            blocks = {b['id']: b for b in _blocks(manifest, text)}
+            issues = [item for record in records
+                      for item in _review_issues(record, _record_source(record, blocks[record['source_id']]['text']))]
+            raise scenario_authoring.Diagnostics(issues)
+    except scenario_authoring.Diagnostics as exc:
+        _write_diagnostics(exc, scenario_id=scenario_id, variant_id=variant_id,
+                           source_hash=variant['source_hash'], chapter_hash=variant['chapter_hash'])
+        raise
     if not reviewer_id:
         raise ValueError("核准必須記錄校對者")
     variant["review_status"] = "approved"
@@ -512,13 +598,7 @@ def import_markdown(scenario_id: str, filename: str) -> str:
             record["source_excerpt"] = _record_source(record, source_blocks[record["source_id"]]["text"])
         return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="manual")
     except scenario_authoring.Diagnostics as exc:
-        report = IMPORT_DIR / ("template-report-" + uuid4().hex + ".md")
-        fd = os.open(report, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write("# KP-only import diagnostics / 匯入校對報告\n\n")
-            stream.write(json.dumps({"total": exc.total, "omitted": exc.total-len(exc.issues),
-                                    "issues": exc.issues}, ensure_ascii=False, indent=2))
-        exc.report_path = report
+        _write_diagnostics(exc, scenario_id=scenario_id, filename=filename)
         raise
 
 

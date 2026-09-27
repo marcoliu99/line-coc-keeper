@@ -18,8 +18,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app import scenario_numbers
+
 PROMPT = ('請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。\n'
           '請實際產生並提供可下載的 .md 檔案。若分次完成，每次都請提供包含本次已完成內容、可直接匯入的 .md 檔，並在回覆中列出尚未完成的 batch_id／unit_id。\n'
+          '逐欄比對規則中文與 source_quote 的數值及次數，完整譯文亦須涵蓋每個來源單元的數值；疑似頁碼／OCR 雜訊請回報校對，勿塞入劇情。首次匯入不填 replace_record_ids，更正已匯入紀錄才填。\n'
           '檔名請以劇本名為前綴，格式為「劇本名_01.md」，分次回傳時數字依序累加。')
 VERSION = 2
 SEGMENTATION = 'paragraph-v1'
@@ -59,6 +62,48 @@ visibility 只可 public 或 kp_only；後者 public_text 留空。
 先回報單元清單與分批計畫。回傳一個 authoring JSON 區塊的 Markdown 檔。
 完成後下載至伺服器 imports，再用 Help 選檔匯入；網頁 AI 不能直接操作 bot。
 
+Numeric self-check / 數值自查（匯入成功不等於核准）：
+1. EACH rule field compares numeric tokens AND occurrence counts in text against
+   its own source_quote. Armor 2, cost 2 requires two occurrences of 2, not one.
+   A quote such as Handout 2 (page 30) requires BOTH 2 and 30 in that field's text.
+   Choose a complete, faithful, unique exact quote; never trim away a condition.
+2. EACH complete source unit's numbers must also appear in that record's
+   public_text, kp_text or structured rule text. Name, aliases, keywords, quotes,
+   uncertainty and neighboring records do NOT count as translated coverage.
+3. Use Arabic digits for source digits: 五 does not match 5. Dice case and horizontal
+   modifier spacing are equivalent: 1D6 + 2 and 1D6+2 match; 1D6 alone does not.
+   Percentages, decimals and repeated rule values must be preserved.
+4. Literal inventories may contain PDF page numbers, decorative glyphs, corrupt
+   dice or interleaved columns. Do NOT pad narrative with meaningless numbers or
+   claim permission to ignore them. Preserve meaningful reference pages in context.
+   Report the exact source unit/quote and uncertainty for PDF/manual source review.
+   Do not edit source IDs or repair immutable source text inside an upload.
+
+1. 每個規則欄位的 text 與自己的 source_quote，數值及重複次數須逐項匹配。
+   Armor 2, cost 2 須保留兩次 2；Handout 2 (page 30) 須同時翻譯 2 與 30。
+   引述須精確且在該單元只出現一次；不得為了過關裁掉條件或任意猜配。
+2. 每筆完整譯文也須涵蓋其來源的數值，放在 public_text、kp_text 或規則中文；
+   名稱、別名、關鍵字、英文引述、uncertainty、相鄰紀錄都不算覆蓋。
+3. 原文阿拉伯數字須保留；五不等於 5。1D6 + 2 與 1D6+2 視為同一骰式，
+   單獨 1D6 不相同。百分比、小數及規則中重複的數值不可省略。
+4. 字面清單可能含頁碼、裝飾字形、損壞骰式或雙欄混排。不要塞裸數字進劇情，
+   也不要自行忽略。正文參考頁碼須連同意義翻譯。疑點以單元／原句及 uncertainty
+   回報，等待 PDF／人工來源校對；不能在上傳檔偽造或修改不可變來源。
+
+First import versus correction / 首次匯入與更正：
+First import: return the complete package when finished, with replace_record_ids
+omitted or empty. Resuming unfinished work may submit complete units/batches only;
+list unfinished IDs outside the JSON. Never mark a partially translated unit done.
+Correction: inspect saved progress first. Use batch.replace_record_ids ONLY for IDs
+already saved in THAT batch and include the complete corrected records. Omitted
+saved records remain unchanged. A new export starts a new draft; IDs from an older
+export do not authorize replacement. Successful import still requires approval.
+首次完成時提交完整包，replace_record_ids 省略或留空。分次完成可提交完整單元／
+批次，未完成清單放 JSON 外；不要提交半譯單元。更正前先確認已儲存進度，只將
+該批次已存在且本次提交完整修正文的 ID 放進 batch.replace_record_ids。
+未提交的舊紀錄會保留；新匯出是新草稿，不能沿用舊匯出的 replacement IDs。
+匯入成功後仍需另行校對核准。
+
 Dependencies / dependencies 欄位：
 [{{"record_id":"target ID", "kind":"required_for_adjudication", "condition":"", "source_quote":"exact source"}}]
 kind: required_for_adjudication / conditional / background.
@@ -94,6 +139,7 @@ def read_json(path: Path) -> Any:
 
 class Diagnostics(ValueError):
     def __init__(self, issues: list[dict], total: int | None = None):
+        self.full_issues = issues
         self.issues = issues[:MAX_ISSUES]
         self.total = total or len(issues)
         self.report_path: Path | None = None
@@ -194,6 +240,11 @@ def _source_section(unit: dict, units: list[dict], pos: int) -> str:
     stream = io.StringIO()
     stream.write(f"\n## SOURCE {unit['id']} (private / 私密)\n")
     stream.write('\n'.join('    ' + line for line in unit['text'].splitlines()) + '\n')
+    inventory = scenario_numbers.counts(unit['text'])
+    stream.write('\nLiteral numeric inventory / 字面數值清單（token: count）：\n')
+    stream.write(json.dumps(dict(sorted(inventory.items())), ensure_ascii=False) + '\n')
+    stream.write('May include layout/OCR noise; not a list to paste into gameplay. '
+                 '可能含版面／OCR 雜訊，不可直接貼進劇情；疑點須對照 PDF 校對。\n')
     for neighbor in (pos - 1, pos + 1):
         if 0 <= neighbor < len(units) and units[neighbor]['chapter_id'] == unit['chapter_id']:
             other = units[neighbor]
@@ -267,6 +318,8 @@ def _export(root: Path, import_dir: Path, source_hash: str, chapter_hash: str,
             "Source files and translation outputs have separate numbering. Output numbers continue across packages/replies, including 100 and above; never restart for each package.\n"
             "來源與成果分開編號；同一 export 的所有檔案包／分次回覆共用成果流水號，不重設。\n"
             "Keep authoring_version=2, export_id, package_id, batch_id and unit IDs. One top-level JSON block per output.\n"
+            "First complete import: use the full package below without replacement IDs. Correction examples apply only after those IDs have been saved.\n"
+            "首次完整匯入使用下方完整包，不填 replacement IDs；更正範例只適用於已儲存的 IDs。\n"
             "Return only completed records inside batches; omit unfinished records/batches and list missing batch_id/unit_id outside JSON. Translate every assigned unit completely.\n"
             "保留版本及全部 IDs；只回傳已完成 records，不附未完成空白筆；JSON 外列未完成 IDs。每個已列單元須完整翻譯。\n"
             "Continue with new records in the same batch; saved records are merged. To change an existing record, put its ID in that batch's replace_record_ids list and include the replacement. Omitted saved records remain.\n"
