@@ -4,9 +4,9 @@
 
 ## 1. 狀態、來源與結論
 
-分類：`refactor`，包含 bug 修正與效能工作包。狀態：**S0／S1 已核准並在本分支實作；S3 獨立進行，S2 等待**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。後續已對齊 `main_v2` `e03d5dc`，Review R1–R6 補強見第 12 節。分支：`refactor/turn-safety-and-latency`。
+分類：`refactor`，包含 bug 修正與效能工作包。狀態：**S0／S1／S2 已在本分支實作；S3 獨立進行**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。後續已對齊 `main_v2` `e03d5dc`，Review R1–R6 補強見第 12 節。分支：`refactor/turn-safety-and-latency`。
 
-本規格完整閱讀使用者提供的兩份 ChatGPT 文件，並對照目前程式後，選擇採納其中建議。不將文件較舊的程式基準直接當成目前事實。原提案僅含文件；本分支 S0／S1 實作證據見第 13 節，未遷移正式資料、部署或進行真實 API 測試。
+本規格完整閱讀使用者提供的兩份 ChatGPT 文件，並對照目前程式後，選擇採納其中建議。不將文件較舊的程式基準直接當成目前事實。原提案僅含文件；本分支 S0／S1 實作證據見第 13 節，S2 見第 14 節，未遷移正式資料、部署或進行真實 API 測試。
 
 | 輸入文件 | 原審查基準 | 原檔 SHA-256 |
 | --- | --- | --- |
@@ -452,7 +452,7 @@ Mixed/OOC 以既有實際路徑及新的正確性需求建立專屬 fixture，�
 
 ## 13. 已核准的 S0／S1 實作證據（2026-09-27）
 
-分支：`refactor/turn-safety-s0-s1`，從已審閱的 `36fb67d` 開始，已對齊 `main_v2` `e03d5dc`。S3 在 `refactor/state-mirror-s3` 獨立進行。**S2 尚未開始**；移動／抵達依賴及 IC／OOC 混合訊息留待後續。S4–S9 與提早結束 Executor 仍未實作。
+分支：`refactor/turn-safety-s0-s1`，從已審閱的 `36fb67d` 開始，已對齊 `main_v2` `e03d5dc`。S3 在 `refactor/state-mirror-s3` 獨立進行。**歷史檢查點：**S0／S1 提交時尚未開始 S2；後續實作見第 14 節。S4–S9 與提早結束 Executor 仍未實作。
 
 ### 13.1 S0 可重現基線與追蹤
 
@@ -503,7 +503,7 @@ Python 建立 `DeliveryEnvelope`，包含輸出 ID、對象／收件人、允許
 | 受限 Narrator、開場、檢定後續／原玩家 | Narrator、Supervisor、共用 gateway | 可用工具白名單不變；共用 worker／寫入 gate | 工具後失敗；各 turn kind 在 context 前受阻 |
 | 檢定／Luck 按鈕與指令／持久化決定的擁有者 | callback、conversation lock、legacy handler、確定性 resolver | 骰子前拒絕，再保留 ID／owner／timeline 驗證 | 入口矩陣、callback hold、原 ID |
 | 確認購買／買家或授權 sudo 對象 | purchase handler | mutate/save 與 DB gate | 直接購買入口、router 矩陣及原購買測試 |
-| 地圖變更／目前玩家 | map handler、map transaction | 狀態鎖內、移動判定前 admission | map 入口矩陣；S2 移動重構尚未開始 |
+| 地圖變更／目前玩家 | map handler、map transaction | 狀態鎖內、移動判定前 admission | S1 歷史入口矩陣；S2 已改為共用提交（第 14 節） |
 | 換角／角色擁有者 | character handler | save_state 與 DB gate | 直接換角與 router 矩陣 |
 | newgame／既有指令授權 | system handler、conversation lock | 刻意換 revision 也不能跳過 hold | newgame 與 repository 矩陣 |
 | rollback／既有 KP 權限 | system handler、checkpoint rollback | checkpoint 交易前 admission，DB 寫入／刪除再次確認 | rollback 入口矩陣 |
@@ -519,6 +519,102 @@ Python 建立 `DeliveryEnvelope`，包含輸出 ID、對象／收件人、允許
 
 隔離完整測試：**1044 passed、1 skipped、33 subtests**；Ruff 通過；mypy **86 個來源檔通過**；`git diff --check` 通過。原基線為 987 passed、1 skipped。既有機制、按鈕識別、購買、更正與 provider 測試均保留。未增加固定模型階段、執行真實 API、修改正式遊戲資料或部署。
 
+
+## 14. S2 實作契約（已核准接續）
+
+分支：`refactor/turn-routing-and-movement-s2`，接續 S0/S1（PR #97）。
+S3 維持獨立（PR #98）。S2 已實作；S4–S9 仍未實作。
+
+- 先分流再檢索。明確 OOC 片段不進 Executor、檢索查詢或正典玩家記錄。
+  括號本身不代表場外訊息；混合回覆沿用既有 Narrator 的最後一次回應分段。
+- 公開／混合敘事在生成前只取得公開投影，角色秘密不進此投影；
+  自己角色的私人場外資訊可以私訊交付，不提供工具或寫入正典。
+- 移除 Supervisor 前的位置寫入。移動候選保留來源子句及實際操作者／代操角色。
+  共用服務在既有工具循環內驗證最新狀態與依據，提交抵達並刷新完整狀態。
+  第一版不啟用最後 JSON 的移動捷徑，避免單凭文字認定後續機制已完成。
+- 依據引用必須來自提供的劇本或遊戲資料；拓樸本身不授權通行。
+  Python 驗證來源、路徑、身分與待處理結果；自由文字通行條件的語意仍由
+  原本的 Executor 裁決，不能宣稱程式已理解所有劇情。
+- 要前往新地點的行動中，取得物品、購買、線索／事實、場景輸出及效果須先抵達。
+  入門前消耗既有隨身物品可獨立完成。進入所需檢定綁定移動提案，僅在對應
+  結果與 Luck 最終確認後接續，保留既有受限後續敘事流程。
+- 明確 enter／leavemap 指令也走相同裁決及提交，不直接修改字典瞬移。
+- 有界移動記錄與敘事地點隨狀態儲存；分段稽核依時間線／收件人隔離且有上限，
+  不供正典摘要或記憶使用。本階段不宣稱具備跨重啟的工作流帳本。
+
+```text
+可信入口 -> 分流／片段 -> IC 上下文 -> 既有 Executor
+                                  -> 提案／依據 -> 提交抵達 -> 後續工具
+         -> 既有 Narrator（混合／OOC 先投影公開上下文）
+         -> 驗證候選片段 -> 分開交付與正典投影
+```
+
+驗證涵蓋六個原始移動反例、SR-M01–M07、OOC／混合隱私與正典投影、偽造欄位、
+缺漏片段、一般／代操／地圖／檢定入口，以及不使用真實 API 的呼叫次數回歸。
+
+
+### 14.1 已實作的介面與邊界
+
+| 入口／介面 | 實作及權威依據 |
+| --- | --- |
+| 一般／代操／enter-leavemap | Router 傳遞原始 IC 行動；代操分開攜帶可信操作者與角色。地圖指令經 Supervisor 裁決，裁決前不改位置字典。 |
+| RouteDecision／RequestSpan | `agents/intent_router.py`；辨識明確 OOC 與高可信規則／自己角色卡片段，括號本身不代表 OOC。未知語句交既有 Executor 解讀。 |
+| MovementProposal／MovementSession | `services/movement.py`；固定身分、起點、面向及來源候選。既有工具循環呼叫 `commit_movement`；本地未辨識的說法可引用精確 IC 子句提出候選。 |
+| 效果准入 | worker 入口與 `_mutate_and_save_state` 均驗證 session。已辨識移動行動中的非查詢效果預設須抵達；入口檢定及明確在前的隨身物品消耗除外。模型的 `requires_arrival=false` 無法豁免。 |
+| 檢定／Luck 接續 | 儲存提案、完整 IC 要求、路徑、來源引用、檢定及 Luck 決策身分。確定性結算入口補回 action_context；接續 worker 使用共用 gateway，取消時保留 S1 hold。 |
+| 檢定後抵達 | 先提交再進受限 Narrator。只有已驗證抵達才開放原行動的物品、線索、輸出及新場景獨立檢定；原進入技能／情境不能重骰，此路徑不開放通用百分骰工具。 |
+| ModelReplySegments | 既有 Narrator 最後 JSON；驗證片段、模式、事件引用、完整涵蓋與偽造權威欄位。不增加 JSON 修復呼叫。 |
+| 交付／正典 | 公開 IC 經 S1 最終交付驗證及正典提交；公開 OOC 之後才附加，自身資訊私訊。正典 log、摘要及記憶不讀稽核欄位。 |
+| 儲存 | 敘事位置、最近 40 筆抵達事件、各玩家目前移動接續、最近 20 筆分段稽核（每筆最多 16,000 字元），含群組／時間線／收件人。換劇本一併清除；現金報價也核對敘事位置。 |
+
+依賴抵達的預設範圍涵蓋物品取得、購買、線索／事實、角色／資源／狀態變更、
+戰鬥與場景效果、私訊資訊及圖片。抵達前僅開放劇本／記憶／角色卡／戰鬥／圖片
+查詢、入口技能／選擇檢定、取消 pending 及移動本身；前置消耗須確認角色確實
+攜帶該物品，且原句位於移動之前。未知劇情因果仍須裁決。
+
+```text
+一般／sudo act／enter／leavemap
+  -> Supervisor：可信角色 + 片段
+       |-- PLAYER_OOC -> 既有 Narrator，無工具／檢索
+       |                 -> 公開或本人私訊 -> 僅寫隔離稽核
+       `-- IC／混合 -> 僅用 IC 檢索 -> Executor
+                       -> 共用 worker gateway
+                            |-- 入口檢定 -> pending -> 玩家檢定／Luck
+                            |                         -> 精確綁定接續
+                            `-- commit_movement -> 鎖內提交
+                                                   -> 完整刷新狀態
+                                                   -> 抵達後工具
+                       -> 驗證裁決 -> 既有 Narrator
+                            |-- 一般字串 -> S1 最終交付
+                            `-- 混合候選 -> 驗證 IC／OOC 投影
+                       -> IC 正典 log -> 摘要／記憶
+                       -> 公開 OOC 後附；自身資訊私訊
+```
+
+### 14.2 驗證與限制
+
+- 隔離測試：**1,113 通過、1 跳過、33 個 subtests 通過**。指令：
+  `python3 /private/tmp/run_review_suite.py s2-release /private/tmp/line-coc-turn-s2`。
+  Ruff 通過、mypy 88 個來源檔通過、`git diff --check` 通過。
+- `tests/test_turn_routing_and_movement.py` 涵蓋六個原始反例、SR-M01–M07、
+  不連通／反向路徑、完整狀態刷新、接續取消的 hold、操作者／起點／面向／來源／
+  時間線、先吃口糧與其他玩家 pending、偵查不能開鎖、檢定／Luck 身分、真正檢定
+  後續入口先抵達再加物品、ACK、地圖指令、未辨識說法，以及混合隱私／正典與壞 JSON。
+- `tests/test_task_trace.py` 用假 SDK 驅動真正 OpenAI adapter：純玩家 OOC **1 次**
+  生成；無工具混合行動 **2 次**（Executor + Narrator），案例中無 Guard／修復／
+  工具回合。既有一般、代操、檢定與開場追蹤仍通過。工具流程測的是一次既有
+  provider conversation，不能將它誤稱為底層 API 只呼叫一次。
+- 以上屬結構與回歸量測，**不是實際模型準確度或延遲實測**；未使用正式資料、金鑰或 API。
+- 引用檢查證明來源，不能證明自由文字的語意完整。原本 Executor 仍裁定通行條件
+  與未知 IC 子句；必要依據或條件未齊時保持未完成，不發明地圖節點或以拓樸代替通行許可。
+- 公開混合／OOC 生成只接收明確公開事實與已驗證公開結果，不接收原劇本、他人角色卡、
+  歷史摘要或記憶。混合訊息中的自身角色卡用程式格式化後私訊，不把私人解說混入公開生成。
+- 最後回應的移動捷徑仍關閉；修正原本過早移動後，必要時會有工具提交與模型接續，
+  不宣稱所有回合變快。沒有持久化工作流帳本、outbox、自動重播、背景翻譯或固定新 LLM 階段。
+
+## PR #99 review correction
+
+指定房名與方向移動都必須綁定玩家要求的候選，拒絕未到候選的空路徑、偷換目的地及無地圖繞過。方向候選須為第一步；指定地點須實際走到，再往後走須有原請求後續明確移動目的地，保留合法多段路徑。拒絕後不得改儲存位置、到達事件或解鎖目的地效果。
 ## PR #97 review corrections
 
 保留檢定可見性與真實擁有者，涵蓋結算、Luck、連鎖檢定、事件／上下文與輸出。即使從公開指令進入，私密結果與圖片仍只送本人；私訊失敗不能轉公開。保底輸出保留經過濾的 damage_combatant 傷害／治療，不洩漏敵人 HP。測試檢定、Luck、SAN／INT 串接、分段／完整輸出及工具提交後故障。

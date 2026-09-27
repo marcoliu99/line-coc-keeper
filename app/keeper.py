@@ -1395,6 +1395,13 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
         mutation_admission.assert_admitted(state.group_id, timeline_id=latest_state.timeline_id)
         if state.timeline_id and latest_state.timeline_id and state.timeline_id != latest_state.timeline_id:
             raise mutation_admission.MutationHeld("stale tool timeline")
+        from app.services import movement
+        movement_session = movement.CURRENT.get()
+        operation = movement.OPERATION.get()
+        if movement_session is not None and operation is not None:
+            error = movement_session.guard(latest_state, *operation)
+            if error:
+                raise ValueError(error)
         result = mutator(latest_state)
         should_save = True
         if isinstance(result, _StateMutation):
@@ -1526,6 +1533,7 @@ def _commit_turn_result(
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
     start_game: bool = False,
+    segment_audit: dict[str, Any] | None = None,
 ) -> bool:
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -1545,6 +1553,10 @@ def _commit_turn_result(
             _sync_state_snapshot(state, latest_state)
             return False
         latest_state.log.extend(log_entries)
+        if segment_audit is not None:
+            latest_state.request_segment_audit.append({**segment_audit, "timeline_id": current_timeline_id,
+                                                        "conversation_id": state.group_id})
+            del latest_state.request_segment_audit[:-20]
         if start_game:
             latest_state.game_started = True
         if invalidate_openai_response_chain:
@@ -1920,6 +1932,14 @@ def _execute_tool(
     speaker_role: str = "player",
 ) -> dict:
     mutation_admission.assert_admitted(state.group_id, timeline_id=state.timeline_id)
+    from app.services import movement
+    session = movement.CURRENT.get()
+    if session is not None:
+        movement_error = session.guard(state, name, tool_input)
+        if movement_error:
+            return {"ok": False, "error": movement_error}
+    if name == "commit_movement":
+        return session.commit(state, tool_input) if session else {"ok": False, "error": "no_movement_session"}
     try:
         if speaker_role == "kp_assistant" and name == "roll_dice":
             error = _validate_kp_roll_dice_context(tool_input)

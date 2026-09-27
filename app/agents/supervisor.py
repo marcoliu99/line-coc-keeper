@@ -14,10 +14,15 @@ from app.agents import (
     narrator,
     state_reducer,
 )
-from app.domain.models import MechanicResult
+from app.domain.models import AgentMessage, MechanicResult
 from app.models import GroupState
 from app.providers.turn_budget import with_turn_deadline
-from app.services import mutation_admission, prompt_config, turn_delivery
+from app.services import (
+    mutation_admission,
+    prompt_config,
+    reply_segments,
+    turn_delivery,
+)
 
 _logger = logging.getLogger(__name__)
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
@@ -33,6 +38,8 @@ async def run_turn(
     speaker_role: str,
     conversation_id: str,
     *,
+    actor_user_id: str | None = None,
+    actor_is_keeper: bool = False,
     turn_kind: PlayerTurnKind = "player_action",
     resolved_check_context: dict[str, Any] | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
@@ -54,21 +61,70 @@ async def run_turn(
     if correction_block:
         return correction_block, [], []
 
-    # 1. Build Context
+    route = intent_router.route_request(text, speaker_role, turn_kind)
+    action_text = route.ic_text if route.message_mode == "mixed" else text
+    # Pure OOC never retrieves private scenario/memory or enters the gameplay
+    # prompt builder. Role remains server-owned even when text claims otherwise.
+    if route.intent == "PLAYER_OOC":
+        message = AgentMessage({"state": state, "user_id": user_id,
+            "display_name": display_name, "speaker_role": speaker_role,
+            "text": text, "route_decision": route, "intent": route.intent,
+            "turn_kind": turn_kind, "conversation_id": conversation_id})
+        observability.event("turn.route", route="player_ooc", turn_kind=turn_kind)
+        reply_text, _, _ = await narrator.run_narrator(message)
+        committed = keeper._commit_turn_result(state, [], timeline_id=turn_timeline_id,
+            segment_audit=reply_segments.audit(route, text, user_id))
+        if not committed:
+            return "時間線已更新，這次場外回覆未送出。", [], []
+        # No canonical log entries: summary/memory consume only log.
+        if route.audience == "player_private":
+            return "場外說明已私訊給你。", [(user_id, reply_text)], []
+        from app import spoiler_policy
+        safe = spoiler_policy.sanitize_public_text(reply_text, spoiler_policy.collect_protected_terms(state))
+        return reply_text if safe.is_safe else (safe.fallback_text or reply_segments.UNRESOLVED), [], []
+
+    # 1. Build Context from IC input only.
     message = await context_builder.build_context(
         state=state,
         user_id=user_id,
         display_name=display_name,
-        text=text,
+        text=action_text,
         resolved_location=resolved_location,
         speaker_role=speaker_role,
         conversation_id=conversation_id,
     )
+    message.payload["actor_user_id"] = actor_user_id or user_id
+    message.payload["actor_is_keeper"] = actor_is_keeper
+    message.payload["route_decision"] = route
     message.payload["turn_kind"] = turn_kind
     if turn_kind == "resolved_check_followup":
         if not resolved_check_context:
             raise ValueError("resolved_check_followup requires an authoritative result")
         message.payload["resolved_check_context"] = resolved_check_context
+        from app.agents.tool_gateway import make_tool_executor
+        from app.services import movement
+        continuation = state.movement_continuations.get(user_id)
+        arrival_result = None
+        if continuation and continuation.get("check_id") == resolved_check_context.get("check_id"):
+            def resume_entry() -> dict:
+                return movement.resume(state, user_id, resolved_check_context) or {"ok": False, "error": "no_matching_movement"}
+            gateway = make_tool_executor(state, [], [], "player", [],
+                observed_outcomes=message.payload.setdefault("observed_outcomes", []), internal_operation=resume_entry)
+            arrival_result = await gateway("commit_movement", {})
+        if continuation and arrival_result is not None:
+            data = dict(continuation["proposal"])
+            data["origin"] = tuple(data["origin"])
+            move_session = movement.MovementSession(movement.MovementProposal(**data), data["original_span"], continuation["sources"])
+            if arrival_result and arrival_result.get("arrival"):
+                move_session.arrived = True
+                move_session.committed_position = movement.position(state, user_id)
+            move_session._final_skill = continuation.get("skill", "")
+            message.payload["movement_session"] = move_session
+            message.payload["movement_request_text"] = continuation.get("request_text", data["original_span"])
+        if arrival_result is not None:
+            message.payload["movement_resume_result"] = arrival_result
+            if arrival_result.get("arrival"):
+                message.payload["resolved_location"] = {"room_name": arrival_result["arrival"]["destination"]}
 
     # 2. Intent Routing (Fast Path vs Slow Path)
     intent = (
@@ -224,6 +280,18 @@ async def run_turn(
             candidate = prompt_config.enforce_mechanic_check_consistency(candidate, public_result)
         return candidate
 
+    ooc_reply = ""
+    if route.message_mode == "mixed":
+        segments = reply_segments.project(reply_text, route, user_id, {
+            o.evidence_ref for o in message.payload.get("observed_outcomes", [])
+            if o.success and o.audience == "public"
+        })
+        reply_text, ooc_reply = segments.canonical, segments.public_ooc
+        message.payload["segments_valid"] = segments.valid
+        for span in route.spans:
+            if span.audience == "player_private":
+                # Do not feed private context into the public mixed generation.
+                private_messages.append((user_id, "你的角色資料：\n" + reply_segments.self_context(state, user_id)))
     reply_text = consistent(reply_text)
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
     reply_text = consistent(reply_text)
@@ -243,14 +311,22 @@ async def run_turn(
         committed = keeper._commit_turn_result(
             state,
             [
-                {"role": "user", "content": f"{speaker_role} {display_name}: {text}"},
+                {"role": "user", "content": f"{speaker_role} {display_name}: {action_text}"},
                 {"role": "assistant", "content": reply_text},
             ],
             timeline_id=turn_timeline_id,
             start_game=(turn_kind == "opening_fallback"),
             invalidate_openai_response_chain=True,
+            segment_audit=reply_segments.audit(route, text, user_id) if route.message_mode == "mixed" else None,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
 
+    if ooc_reply:
+        # OOC never participates in the canonical commit above.
+        from app import spoiler_policy
+        if spoiler_policy.sanitize_public_text(ooc_reply, spoiler_policy.collect_protected_terms(state)).is_safe:
+            reply_text += "\n\n【場外】" + ooc_reply
+        else:
+            reply_text += "\n\n【場外】" + reply_segments.UNRESOLVED
     return reply_text, private_messages, image_requests

@@ -113,6 +113,7 @@ def prepare(state: GroupState, data: dict, turn_key: str) -> dict:
         "arrival_basis": arrival, "source": source, "mode": mode, "currency": currency,
         "items": normalized_items, "credit_rating": credit, "affordability": rationale,
         "total_minor": sum(i["quantity"] * (i["unit_price_minor"] or 0) for i in normalized_items) if mode == "cash" else None,
+        "narrative_location": state.narrative_locations.get(char.owner_id, ""),
         "status": "quoted", "map_position": [state.current_map_page.get(char.owner_id), state.current_room_id.get(char.owner_id)],
     }
     state.commerce.setdefault("transactions", {})[quote_id] = receipt
@@ -149,7 +150,7 @@ def confirm(state: GroupState, owner: str, quote_id: str) -> dict:
         raise ValueError("沒有屬於目前角色與時間線的報價。")
     if receipt["status"] == "purchased":
         return {"ok": True, "duplicate": True, "purchase": deepcopy(receipt)}
-    if receipt["status"] != "quoted" or receipt["map_position"] != [state.current_map_page.get(owner), state.current_room_id.get(owner)]:
+    if receipt.get("narrative_location", "") != state.narrative_locations.get(owner, "") or receipt["status"] != "quoted" or receipt["map_position"] != [state.current_map_page.get(owner), state.current_room_id.get(owner)]:
         raise ValueError("報價情境已過期，請重新確認到店與交易。")
     _settle(state, receipt)
     return {"ok": True, "purchase": deepcopy(receipt)}
