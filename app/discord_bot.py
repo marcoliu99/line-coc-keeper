@@ -311,12 +311,28 @@ def _log_reply_text(text: str) -> None:
 
 
 def _make_reply(channel: discord.abc.Messageable) -> Reply:
+    async def send_recorded(chunk: str) -> None:
+        state = None
+        channel_id = getattr(channel, "id", None)
+        if isinstance(channel_id, int):
+            try:
+                state = await asyncio.to_thread(load_group_state, _conversation_id(channel_id))
+            except Exception:
+                _logger.exception("Unable to capture correction target timeline")
+        sent = await _discord_operation(channel.send(chunk))
+        if state is not None and isinstance(getattr(sent, "id", None), int):
+            from app.services.narrative_corrections import record_message
+            try:
+                await asyncio.to_thread(record_message, state, str(sent.id), chunk)
+            except Exception:
+                _logger.exception("Unable to persist correction target receipt; message already sent")
+
     async def reply(text: str) -> None:
         _log_reply_text(text)
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
-                await _discord_operation(channel.send(chunk))
+                await send_recorded(chunk)
             return
         reply_metrics = {
             "reply_message_count": 0,
@@ -334,7 +350,7 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
             # app/observability.py:span's **fields unpacking).
             observability.increment_metric("reply_edit_count", 0)
             for chunk in chunks:
-                await _discord_operation(channel.send(chunk))
+                await send_recorded(chunk)
                 _record_sent_chunk(reply_metrics, chunk)
 
     return reply
@@ -2217,6 +2233,15 @@ async def _handle_message(message: discord.Message) -> None:
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
                 format_mention, is_keeper, post_turn_hook=claim_after_locked_turn,
+                referenced_message_id=(
+                    str(message.reference.message_id)
+                    if command_parts[0].casefold() == "/coc"
+                    and len(command_parts) > 1
+                    and command_parts[1].casefold() == "correct"
+                    and message.reference is not None
+                    and message.reference.message_id is not None
+                    else None
+                ),
             )
         finally:
             # Always attempt this, even if handle_text_message raised partway
