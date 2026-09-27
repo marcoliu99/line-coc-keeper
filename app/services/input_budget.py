@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 
 from app import observability
@@ -15,8 +16,15 @@ def _encoding(model: str):
             return tiktoken.encoding_for_model(model)
         except KeyError:
             return tiktoken.get_encoding('o200k_base')
-    except Exception:  # noqa: BLE001 - no encoding must not prevent a player turn
+    except Exception as exc:  # noqa: BLE001 - no encoding must not prevent a player turn
+        observability.event("llm.tokenizer.unavailable", level=logging.WARNING,
+                            tokenizer="utf8_bytes_fallback", error_type=type(exc).__name__,
+                            remediation="install_declared_tiktoken_dependency_and_check_encoding_cache")
         return None
+
+
+def tokenizer_method(model: str) -> str:
+    return "tokenizer_estimate" if _encoding(model) is not None else "utf8_bytes_fallback"
 
 
 def estimate(value, model: str) -> int:

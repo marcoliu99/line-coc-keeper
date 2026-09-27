@@ -54,6 +54,7 @@ deferred（尚未輪到／等待別人，動作尚未執行，沒有自動排隊
 resolved_without_check（有劇本或真實工具依據的免檢定完成）、cancelled、blocked、incomplete。
 actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指其他真正持有待處理項目的角色。
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
+失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。
 工具回傳 current_turn_state 是更新後的權威資料；以最新一份為準。查詢不到依據就保留未知／補查。
 交接／製作物品、結束戰鬥等不用擲骰的工具完成，使用 resolved_without_check，引用所有相關變更工具。
 既有其他行動的檢定不因物品交接而取消；交接完成與仍待擲的舊檢定要分開敘述。
@@ -337,6 +338,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+            if status.get("scenario_evidence_blocked"):
+                return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
             return f"{warning}請先確認目前狀態或更正原本的行動。"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")

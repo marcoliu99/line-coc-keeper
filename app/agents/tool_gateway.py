@@ -83,16 +83,25 @@ def make_tool_executor(
 
     blocked_evidence = set(required_evidence_ids or ())
 
+    def rejection(tool_name: str, error: str, message: str) -> dict[str, Any]:
+        result = {"ok": False, "error": error, "message": message}
+        facts.append(_describe_tool_call(tool_name, result))
+        observability.event("llm.tool.rejected", tool_name=observability.tool_name(tool_name),
+                            status="blocked", error_type=error)
+        if check_status is not None and error == "required_scenario_evidence_missing":
+            check_status["scenario_evidence_blocked"] = True
+        return result
+
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         nonlocal evidence_incomplete
         if evidence_incomplete and tool_name not in (keeper.READ_ONLY_TOOL_NAMES - {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"}):
-            return {"ok": False, "error": "required_scenario_evidence_missing",
-                    "message": "必要劇本依據未齊；請續取完整依據，或暫緩並聚焦行動。不得以截短摘要執行機制。"}
+            return rejection(tool_name, "required_scenario_evidence_missing",
+                             "必要劇本依據未齊；請續取完整依據，或暫緩並聚焦行動。不得以截短摘要執行機制。")
         from app.services.narrative_corrections import blocking_reply
         if tool_name not in keeper.READ_ONLY_TOOL_NAMES:
             blocked = blocking_reply(state, tool_input)
             if blocked:
-                return {"ok": False, "error": "narrative_correction_hold", "message": blocked}
+                return rejection(tool_name, "narrative_correction_hold", blocked)
         observability.increment_metric("tool_call_count")
         with observability.span(
             "llm.tool",

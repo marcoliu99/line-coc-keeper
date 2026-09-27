@@ -1,6 +1,6 @@
 # Scenario retrieval tokenizer readiness
 
-Status: implementation in progress. Base: main_v2. Branch: bug/scenario-retrieval-tokenizer-readiness.
+Status: implemented. Base: main_v2. Branch: bug/scenario-retrieval-tokenizer-readiness.
 
 ## Incident and evidence
 
@@ -39,3 +39,10 @@ No schema changes, fixed additional LLM calls, fabricated addresses, automatic o
 ## Limits
 
 Offline replay validates retrieval, gating, state mutation and handoff, not the real model's next chosen tools. No specific street number is supported by the retrieved handout. Restart is required for the existing bot process to discard its cached unavailable tokenizer; the user controls restart.
+
+## Results
+
+- Declared tiktoken dependency installed in the main_v2 virtual environment; o200k_base loaded successfully.
+- Incident root set r21/r2/r22/r9/r18: 6,000 retrieval budget, 3,459 required tokens, 3,824 projected tokens including metadata, all five fragments complete. Previous-turn roots also complete (5,268 projected tokens).
+- Isolated full suite: 1,039 passed, 1 skipped, 33 subtests passed. Ruff and mypy pass.
+- No live API replay or game state mutation. PR #101 is preserved separately when integrating the test worktree.

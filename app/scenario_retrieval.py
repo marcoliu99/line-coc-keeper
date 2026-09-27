@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import threading
 from collections import deque
 from contextvars import ContextVar
 from typing import Any
 
-from app import config, scenario_projection
+from app import config, observability, scenario_projection
 from app.services import input_budget
 
 BUDGET = ContextVar('scenario_retrieval_budget', default=6000)
@@ -22,9 +23,15 @@ _lock = threading.RLock()
 def remaining_budget(context: Any, model: str) -> int:
     # Deployment ceiling is conservative and configurable; it is not a claim
     # about a provider's advertised context window.
-    available = config.SCENARIO_CONTEXT_TOKEN_CEILING - input_budget.estimate(context, model)
-    available -= config.SCENARIO_OUTPUT_TOKEN_RESERVE + config.SCENARIO_CONTEXT_SAFETY_TOKENS
-    return max(0, min(config.SCENARIO_RETRIEVAL_TOKEN_BUDGET, available))
+    context_cost = input_budget.estimate(context, model)
+    reserve = config.SCENARIO_OUTPUT_TOKEN_RESERVE + config.SCENARIO_CONTEXT_SAFETY_TOKENS
+    available = config.SCENARIO_CONTEXT_TOKEN_CEILING - context_cost - reserve
+    budget = max(0, min(config.SCENARIO_RETRIEVAL_TOKEN_BUDGET, available))
+    observability.event("rag.retrieval.budget", level=logging.WARNING if budget == 0 else logging.INFO,
+                        context_tokens_estimate=context_cost, reserve_tokens=reserve,
+                        context_ceiling=config.SCENARIO_CONTEXT_TOKEN_CEILING, budget_tokens=budget,
+                        token_estimate_method=input_budget.tokenizer_method(model))
+    return budget
 
 
 def request_budget(context: list, history: list[dict], model: str, provider: str) -> int:
@@ -127,7 +134,7 @@ def project(records: dict[str, dict], roots: list[str], query: str,
            'missing_required_ids': missing[:16], 'missing_required_count': len(missing),
            'deferred_optional_ids': optional[:16], 'deferred_optional_count': len(optional), 'blocked_dependency_count': blocked,
            'complete_for_action': complete, 'traversal_limited': limited,
-           'budget_tokens': capacity, 'token_estimate_method': 'utf8_bytes' if MODEL.get() == 'unknown' else 'tokenizer_estimate',
+           'budget_tokens': capacity, 'token_estimate_method': 'utf8_bytes' if MODEL.get() == 'unknown' else input_budget.tokenizer_method(MODEL.get()),
            'required_tokens_estimate': required_cost, 'continuation_token': '',
            'projection_reason': 'complete' if complete else 'required_evidence_unavailable'}
     # Metadata is part of the input too. Remove optional prose first; never

@@ -658,3 +658,47 @@ def test_truncated_continuation_keeps_successful_private_output_queues(state, mo
     assert msg.payload['private_messages'] == [('b', 'private clue')]
     assert msg.payload['image_requests'] == [('b', 2)]
     assert create.await_count == 2
+
+
+@pytest.mark.parametrize('complete', [False, True])
+def test_cash_and_keys_evidence_gate_and_real_inventory_handoff(state, complete):
+    """Search results are mocked; acquisition, persistence and validation are real."""
+    original_tool = keeper._execute_tool
+    def tool(s, name, data, *args):
+        if name == 'search_scenario':
+            return {'ok': True, 'results': '房東提供二十美元預付款與鑰匙。',
+                    'complete_for_action': True if complete else None,
+                    'evidence_record_ids': ['intro'] if complete else []}
+        return original_tool(s, name, data, *args)
+
+    async def provider(*args, **kwargs):
+        callback = args[5]
+        await callback('search_scenario', {'query': '房東 鑰匙 預付款'})
+        for item in ('房屋鑰匙', '房東預付現金 20 美元'):
+            receipt = await callback('add_carried_item', {'investigator': 'Marco', 'item': item})
+            assert receipt['ok'] is complete
+        return decision(state, 'resolved_without_check' if complete else 'incomplete',
+                        evidence_refs=['tool:1', 'tool:2', 'tool:3'] if complete else ['state'])
+
+    payload = message(state)
+    payload.payload.update(text='拿走錢 跟鑰匙 並看一下地址', rag_context=(
+        '【依據尚未完整】【取用完整性】[{"complete_for_action":false,"root_record_ids":["intro"]}]'))
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(keeper, '_execute_tool', side_effect=tool), \
+            patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+            patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(payload))
+    stored = group_state.load_state(state.group_id).get_active_character('a')
+    assert ('房屋鑰匙' in stored.carried_items) is complete
+    assert ('房東預付現金 20 美元' in stored.carried_items) is complete
+    assert result.turn_resolution.disposition == ('resolved_without_check' if complete else 'incomplete')
+    assert fake.await_count == 1
+    if not complete:
+        assert sum('失敗' in fact for fact in result.narrative_facts) == 2
+        reply = prompt_config.enforce_mechanic_check_consistency('你已取得鑰匙。', result)
+        assert '劇本依據' in reply and '更正原本' not in reply and '你已取得' not in reply
+        result.check_status.update(state_changed=True, dice_rolled=True)
+        reply = prompt_config.enforce_mechanic_check_consistency('', result)
+        assert '已記錄的變更會保留' in reply and '不要重擲' in reply
+        result.check_status['pending'] = {'investigator': 'Marco', 'skill': '偵查'}
+        assert '/coc check' in prompt_config.enforce_mechanic_check_consistency('', result)
