@@ -49,3 +49,37 @@ def test_artifact_retains_unrecognized_prose_and_source_coordinates():
     pair = pdf_quality.numeric_pairs(data)[0]
     assert pair['label'] == 'AGE' and pair['value'] == '25'
     assert len(pair['label_bbox']) == len(pair['value_bbox']) == 4
+
+
+def test_vertical_columns_require_alignment_and_unique_cells():
+    data = evidence([(40, 100, 'STR'), (140, 100, 'DEX'), (40, 125, '50'), (140, 125, '70')])
+    pairs = pdf_quality.numeric_pairs(data)
+    assert [(p['label'], p['value'], p['status']) for p in pairs] == [
+        ('STR', '50', 'vertical_candidate'), ('DEX', '70', 'vertical_candidate')]
+    table = '| STR | DEX |\n| --- | --- |\n| 50 | 70 |'
+    assert all(p['status'] == 'matched' for p in pdf_quality.check_pairs(pairs, table))
+    assert all(p['status'] == 'pair_mismatch' for p in pdf_quality.check_pairs(pairs, table.replace('50 | 70', '70 | 50')))
+
+
+def test_vertical_intervening_words_prevent_guessing():
+    data = evidence([(40, 100, 'STR'), (140, 100, 'DEX'), (40, 119, 'note'),
+                     (40, 145, '50'), (140, 145, '70')])
+    assert all(p['status'] == 'unresolved' for p in pdf_quality.numeric_pairs(data))
+
+
+def test_open_skill_labels_preserve_specialization_and_percent():
+    data = evidence([(40, 100, 'Art/Craft (Photography) 50%'),
+                     (40, 140, 'Unusual Cosmic Navigation 35%')])
+    pairs = pdf_quality.numeric_pairs(data)
+    assert [p['label'] for p in pairs] == ['ART/CRAFT (PHOTOGRAPHY)', 'UNUSUAL COSMIC NAVIGATION']
+    assert all(p['status'] == 'skill_candidate' for p in pairs)
+    checks = pdf_quality.check_pairs(pairs, 'Art/Craft (Photography) 35%\nUnusual Cosmic Navigation 50%')
+    assert all(p['status'] == 'pair_mismatch' for p in checks)
+
+
+def test_local_repair_preserves_intact_numbers_and_words():
+    assert pdf_quality.accept_region('Dam\ufffdage 2d6', 'Damage 2d6', [])
+    assert not pdf_quality.accept_region('Dam\ufffdage 2d6', 'Damage 3d6', [])
+    assert not pdf_quality.accept_region('Dam\ufffdage 2d6', 'Damage 2d6 plus 50', [])
+    assert not pdf_quality.accept_region('Dam\ufffdage 2d6 after failure', 'Damage 2d6', [])
+    assert not pdf_quality.accept_region('Normal text 2d6', 'Different text 2d6', [])

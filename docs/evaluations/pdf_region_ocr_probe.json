@@ -1,0 +1,63 @@
+{
+  "version": "region-repair-v3",
+  "mode": "native geometry probe plus one synthetic local Tesseract repair; no paid calls",
+  "synthetic_repair": {
+    "case": "synthetic damaged text layer with correct visible source",
+    "result": "Header\nDamage 2d6 after failure\nFooter",
+    "attempts": [
+      {
+        "block": 0,
+        "bbox": [
+          50.0,
+          78.5,
+          270.0999755859375,
+          105.9800033569336
+        ],
+        "original": "Dam�age 2d6 after failure",
+        "ocr_text": "Damage 2d6 after failure",
+        "status": "accepted",
+        "crop_bbox": [
+          48.0,
+          76.5,
+          272.0999755859375,
+          107.9800033569336
+        ],
+        "pair_checks": []
+      }
+    ]
+  },
+  "native_pdf_counts": [
+    {
+      "file": "The_Haunting_Scenario_trimmed.pdf",
+      "pairs": {
+        "unresolved": 36,
+        "skill_candidate": 6,
+        "same_row_candidate": 18
+      }
+    },
+    {
+      "file": "Dead Boarder.pdf",
+      "pairs": {
+        "unresolved": 37,
+        "same_row_candidate": 36,
+        "skill_candidate": 8
+      }
+    },
+    {
+      "file": "The Lightless Beacon - Call of Cthulhu.pdf",
+      "pairs": {
+        "unresolved": 45,
+        "skill_candidate": 5,
+        "same_row_candidate": 24
+      }
+    },
+    {
+      "file": "Doors to Darkness Pre-Generated Characters.pdf",
+      "pairs": {
+        "same_row_candidate": 140,
+        "skill_candidate": 127
+      }
+    }
+  ],
+  "limitations": "Candidate counts do not measure accuracy. The synthetic OCR case alters extracted text, not the rendered source. Real document repair accuracy has not been established."
+}

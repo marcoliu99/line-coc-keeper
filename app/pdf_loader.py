@@ -307,7 +307,45 @@ def _pymupdf4llm_page_text(chunk: dict | None) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
+def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
+                          text: str, budget: list[int]) -> tuple[str, list[dict]]:
+    """Crop only suspect native blocks; keep every attempt in the audit artifact."""
+    suspect = {p["block"] for p in pairs if p["status"] == "unresolved"}
+    attempts = []
+    for block in evidence["blocks"]:
+        original = pdf_quality.normalize("\n".join(line["text"] for line in block["lines"]))
+        if block["id"] not in suspect and "\ufffd" not in original:
+            continue
+        attempt = {"block": block["id"], "bbox": block["bbox"], "original": original,
+                   "ocr_text": "", "status": "review_required"}
+        attempts.append(attempt)
+        if page.rotation:
+            attempt["status"] = "rotation_requires_review"
+            continue
+        if budget[0] <= 0:
+            attempt["status"] = "budget_exhausted"
+            continue
+        budget[0] -= 1
+        rect = (pymupdf.Rect(block["bbox"]) + (-2, -2, 2, 2)) & page.rect
+        attempt["crop_bbox"] = list(rect)
+        try:
+            png = page.get_pixmap(clip=rect, dpi=300).tobytes("png")
+            candidate = pdf_quality.normalize(_ocr_image(png))
+        except Exception:  # noqa: BLE001 - local optional OCR never discards source.
+            attempt["status"] = "ocr_failed"
+            continue
+        attempt["ocr_text"] = candidate
+        local_pairs = [p for p in pairs if p["block"] == block["id"]]
+        attempt["pair_checks"] = pdf_quality.check_pairs(local_pairs, candidate)
+        if not candidate:
+            attempt["status"] = "ocr_empty"
+        elif text.count(original) == 1 and pdf_quality.accept_region(original, candidate, local_pairs):
+            text = text.replace(original, candidate, 1)
+            attempt["status"] = "accepted"
+    return text, attempts
+
+
+def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
     """Return complete source, review pages, legacy truncation flag, images, maps.
 
     The source is never cut to a prompt budget. The optional report distinguishes
@@ -316,6 +354,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
     report = quality_report if quality_report is not None else {}
     report.update(version=pdf_quality.VERSION, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
                   pages=[], continuations=[], derived_descriptions={})
+    local_budget = [max(0, local_ocr_limit)]
     layout_pages = _pymupdf4llm_page_chunks(pdf_bytes)
     texts: list[str] = []
     images: dict[int, bytes] = {}
@@ -339,6 +378,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
             if any(p["status"] in {"source_pair_unresolved", "candidate_pair_unverified"} for p in pair_checks):
                 selected_warnings.append("numeric_pair_review")
             warnings.extend(selected_warnings)
+            text, repairs = _repair_local_regions(page, evidence, pairs, text, local_budget)
+            if repairs:
+                warnings.append("local_ocr_review" if any(r["status"] != "accepted" for r in repairs) else "local_ocr_repaired")
+                if any(r["status"] == "accepted" for r in repairs):
+                    method += "+local_ocr"
             graphic = _page_has_graphic_content(page) or _pymupdf4llm_has_graphic_evidence(chunk)
             if graphic:
                 images[number] = _render_page_png(page)
@@ -349,7 +393,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
             texts.append(text)
             report["pages"].append({"page": number, "method": method, "native_chars": len(native),
                                     "warnings": warnings, "evidence": evidence,
-                                    "numeric_pairs": pairs, "layout_pair_checks": pair_checks,
+                                    "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": repairs,
                                     "candidates": {"native": native, "layout": layout_text}})
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
@@ -422,6 +466,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
     full_text = "\n\n".join(f"--- 第 {i + 1} 頁 ---\n{t}" for i, t in enumerate(texts)).strip()
     report["review_pages"] = review
     report["source_chars"] = len(full_text)
+    report["local_ocr_attempts"] = max(0, local_ocr_limit) - local_budget[0]
     return full_text, review, False, images, maps
 
 

@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'block-pairing-v2'
+VERSION = 'region-repair-v3'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 
@@ -62,7 +62,7 @@ def continuation(previous: str, current: str) -> bool:
                 and re.match(r'^[a-z]', after[0]))
 
 
-# Deliberately bounded vocabulary. Unknown labels stay in the raw block artifact.
+# Stat vocabulary anchors vertical tables; open skill labels are extracted separately.
 _STAT_LABELS = {'STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'HP', 'MP',
                 'SAN', 'LUCK', 'MOV', 'BUILD', 'AGE', 'ARMOR', 'DB',
                 '年齡', '年紀', '護甲', '幸運'}
@@ -107,18 +107,86 @@ def numeric_pairs(evidence: dict) -> list[dict]:
                 pair.update(value=value['text'].casefold(), value_bbox=value['bbox'],
                             value_block=value['block'], status='same_row_candidate')
         pairs.append(pair)
+    _vertical_pairs(pairs, words)
+    pairs.extend(_skill_pairs(words))
     return pairs
 
 
+def _vertical_pairs(pairs: list[dict], words: list[dict]) -> None:
+    proposed = []
+    for pair in pairs:
+        if pair['status'] != 'unresolved':
+            continue
+        box = pair['label_bbox']
+        peers = [p for p in pairs if p is not pair and abs(p['label_bbox'][1] - box[1]) < 3]
+        if not peers:
+            continue
+        below = [w for w in words if 0 <= w['bbox'][1] - box[3] <= 35
+                 and box[0] - 3 <= (w['bbox'][0] + w['bbox'][2]) / 2 <= box[2] + 3]
+        below.sort(key=lambda w: w['bbox'][1])
+        if not below or not _VALUE.fullmatch(below[0]['text']):
+            continue
+        value = below[0]
+        if any(abs(w['bbox'][1] - value['bbox'][1]) < 3 for w in below[1:]):
+            continue
+        proposed.append((pair, value))
+    for pair, value in proposed:
+        aligned = [(p, v) for p, v in proposed if abs(p['label_bbox'][1] - pair['label_bbox'][1]) < 3
+                   and abs(v['bbox'][1] - value['bbox'][1]) < 3]
+        if len(aligned) < 2 or sum(v['bbox'] == value['bbox'] for _, v in proposed) != 1:
+            continue
+        pair.update(value=value['text'].casefold(), value_bbox=value['bbox'],
+                    value_block=value['block'], status='vertical_candidate')
+
+
+def _skill_pairs(words: list[dict]) -> list[dict]:
+    rows: dict[tuple, list[dict]] = {}
+    for word in words:
+        rows.setdefault((word['block'], word['line']), []).append(word)
+    result = []
+    for row in rows.values():
+        label_words: list[dict] = []
+        for word in sorted(row, key=lambda w: w['bbox'][0]):
+            raw = word['text'].strip(',;，；')
+            if re.fullmatch(r'\d{1,3}%', raw):
+                label = ' '.join(w['text'] for w in label_words).strip(' :：,;')
+                if (label and len(label_words) <= 8 and not re.search(r'\d|[.!?。！？]', label)
+                        and label.upper() not in _STAT_LABELS):
+                    bbox = [min(w['bbox'][0] for w in label_words), min(w['bbox'][1] for w in label_words),
+                            max(w['bbox'][2] for w in label_words), max(w['bbox'][3] for w in label_words)]
+                    result.append({'label': label.upper(), 'value': raw, 'label_bbox': bbox,
+                                   'value_bbox': word['bbox'], 'block': word['block'],
+                                   'value_block': word['block'], 'status': 'skill_candidate'})
+                label_words = []
+            elif re.search(r'\d', raw) or raw in {',', ';', '|'}:
+                label_words = []
+            else:
+                label_words.append(word)
+                if word['text'].endswith((',', ';', '，', '；')):
+                    label_words = []
+    return result
+
+
 def check_pairs(pairs: list[dict], candidate: str) -> list[dict]:
-    """Compare explicit textual pairs, without guessing a Markdown table layout."""
+    """Compare explicit pairs and header/value tables; do not guess ambiguous grids."""
     cleaned = re.sub(r'[*_`]', '', candidate)
-    labels = '|'.join(re.escape(s) for s in sorted(_STAT_LABELS, key=len, reverse=True))
+    labels = '|'.join(re.escape(s) for s in sorted(_STAT_LABELS | {p['label'] for p in pairs}, key=len, reverse=True))
     pattern = re.compile(r'(?<!\w)(' + labels + r')(?!\w)[ \t:：|]*([+-]?\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?(?:/\d+)*)(?!\w)', re.IGNORECASE)
     found = Counter((m.group(1).upper(), m.group(2).casefold()) for m in pattern.finditer(cleaned))
+    # Explicit Markdown columns: a header row, divider, then numeric cells.
+    lines = cleaned.splitlines()
+    for i in range(len(lines) - 2):
+        headers = [c.strip().upper() for c in lines[i].strip().strip('|').split('|')]
+        divider = [c.strip() for c in lines[i + 1].strip().strip('|').split('|')]
+        cells = [c.strip().casefold() for c in lines[i + 2].strip().strip('|').split('|')]
+        if (len(headers) >= 2 and len(headers) == len(divider) == len(cells)
+                and all(re.fullmatch(r':?-+:?', c) for c in divider)):
+            for label, value in zip(headers, cells, strict=True):
+                if _VALUE.fullmatch(value):
+                    found[(label, value)] += 1
     result = []
     for pair in pairs:
-        if pair['status'] != 'same_row_candidate':
+        if pair['status'] not in {'same_row_candidate', 'vertical_candidate', 'skill_candidate'}:
             result.append({'label': pair['label'], 'status': 'source_pair_unresolved', 'block': pair['block']})
             continue
         key = (pair['label'], pair['value'])
@@ -131,3 +199,19 @@ def check_pairs(pairs: list[dict], candidate: str) -> list[dict]:
             status = 'candidate_pair_unverified'
         result.append({'label': pair['label'], 'value': pair['value'], 'block': pair['block'], 'status': status})
     return result
+
+
+def accept_region(original: str, candidate: str, pairs: list[dict]) -> bool:
+    """Only fix observable text corruption; uncertain numbers stay for review."""
+    if '\ufffd' not in original or not candidate.strip() or '\ufffd' in candidate:
+        return False
+    # Ignore only the damaged token, not intact surrounding evidence.
+    intact = re.sub(r'\S*\ufffd\S*', '', original)
+    required = Counter(_WORD.findall(intact.casefold()))
+    available = Counter(_WORD.findall(candidate.casefold()))
+    if required - available:
+        return False
+    if Counter(n.casefold() for n in _NUMBER.findall(original)) != Counter(n.casefold() for n in _NUMBER.findall(candidate)):
+        return False
+    resolved = [p for p in pairs if p['status'] != 'unresolved']
+    return all(p['status'] == 'matched' for p in check_pairs(resolved, candidate))

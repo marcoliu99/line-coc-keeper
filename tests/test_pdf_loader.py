@@ -236,3 +236,29 @@ class PdfQualityRegressionTests(unittest.TestCase):
         self.assertEqual(len(report['pdf_sha256']), 64)
         self.assertEqual(len(row['selected_sha256']), 64)
         self.assertIn(1, review)
+
+    def test_region_repair_changes_only_unique_damaged_block(self):
+        from app import pdf_quality
+        with pymupdf.open(stream=self.pdf(['Damage 2d6']), filetype='pdf') as doc:
+            evidence = pdf_quality.block_evidence(doc[0])
+            evidence['blocks'][0]['lines'][0]['text'] = 'Dam\ufffdage 2d6'
+            with patch.object(pdf_loader, '_ocr_image', return_value='Damage 2d6') as ocr:
+                result, attempts = pdf_loader._repair_local_regions(
+                    doc[0], evidence, [], 'Unchanged header\nDam\ufffdage 2d6\nUnchanged footer', [1])
+        self.assertEqual(result, 'Unchanged header\nDamage 2d6\nUnchanged footer')
+        self.assertEqual(attempts[0]['status'], 'accepted')
+        ocr.assert_called_once()
+
+    def test_region_budget_and_duplicate_text_do_not_overwrite_source(self):
+        from app import pdf_quality
+        with pymupdf.open(stream=self.pdf(['Damage 2d6']), filetype='pdf') as doc:
+            evidence = pdf_quality.block_evidence(doc[0])
+            evidence['blocks'][0]['lines'][0]['text'] = 'Dam\ufffdage 2d6'
+            with patch.object(pdf_loader, '_ocr_image', return_value='Damage 2d6') as ocr:
+                source = 'Dam\ufffdage 2d6\nDam\ufffdage 2d6'
+                result, attempts = pdf_loader._repair_local_regions(doc[0], evidence, [], source, [0])
+                self.assertEqual(attempts[0]['status'], 'budget_exhausted')
+                ocr.assert_not_called()
+                result, attempts = pdf_loader._repair_local_regions(doc[0], evidence, [], source, [1])
+        self.assertEqual(result, source)
+        self.assertEqual(attempts[0]['status'], 'review_required')

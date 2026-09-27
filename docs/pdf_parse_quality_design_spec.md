@@ -113,3 +113,46 @@ Changed-file Ruff checks pass. Numeric pairing currently covers explicitly suppo
 single-token stat labels. Arbitrary skill names, vertical table reconstruction and
 same-label entity disambiguation are not certified. Provenance is retained for those
 cases so later local repair can use the original coordinates.
+
+## Phase 3: vertical tables, open skill labels and local OCR repair
+
+- Pair supported labels with values below them only when at least two aligned
+  columns establish a table. Require a unique nearby value per column and reject
+  intervening text/competing cells. Vertical means header-over-value tables, not
+  rotated vertical writing.
+- Extract arbitrary multiword skill labels immediately preceding percentage values
+  from native word rows, preserving label/value boxes. These are evidence candidates,
+  not an assertion that every percentage in prose is a skill.
+- Parse explicit Markdown header/value tables when checking candidate pairings.
+- Crop suspicious native blocks for local Tesseract only. Limit attempts per document
+  (default eight) and record skipped regions; retain each crop's coordinates, original
+  text, OCR text and decision. No new paid region calls.
+- Accept a replacement only if its labels/numbers/word coverage are preserved, all
+  available resolved pairs match, it removes an observed corruption marker, and the
+  original block occurs uniquely in the selected page. Otherwise keep a review
+  candidate. Never replace a whole page with a crop or guess unsupported OCR values.
+- Image-only pages retain the existing page OCR path. Rotated/ambiguous blocks and
+  exhausted budgets are explicit review outcomes, not silent successes.
+
+### Phase 3 verification and limits
+
+Full suite: 788 passed, one skipped, 15 subtests passed. Mypy checks 74 source
+files and changed-file Ruff checks pass. Synthetic regressions cover vertical
+header/value alignment, swapped Markdown cells, intervening text, open skill names,
+percentage swaps, bounded crops, ambiguous replacement targets and numeric retention.
+
+A real local Tesseract call repaired a deliberately damaged synthetic text layer
+while preserving the visible source, intact numbers, header and footer. Native
+geometry probes on the supplied PDFs found 127 open skill-label candidates on the
+pregen cards in addition to the previous 140 stat candidates. No vertical-table
+candidates were found on those four PDFs; vertical support is verified by synthetic
+fixtures rather than claimed as a measured improvement on those documents.
+See [local evaluation](evaluations/pdf_region_ocr_probe.json).
+
+Open skill extraction requires explicit percentage values and word-separated labels;
+it does not infer every number in narrative prose as a skill. Vertical recognition
+requires a supported stat-label grid, unique aligned cells and no intervening text.
+Automatic crop replacement is restricted to observable replacement-character damage
+with intact surrounding evidence; numeric corrections and uncertain table repairs
+remain inspectable candidates. This intentionally avoids silently overwriting
+source with unverified OCR. Image-only pages use the existing page OCR path.
