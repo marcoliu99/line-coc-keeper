@@ -1,5 +1,26 @@
 # 中文劇本外部製作模板（schema v3）
 
+## 目前預設：外部整備 v1
+
+[完整設計與限制](../specs/enhancement/external_template_authoring_design_spec_zh.md)
+
+1. 在 Help 選擇劇本並匯出，或使用 `/coc scenario template export 劇本ID`。限 KP／Keeper；完成私訊列出各批 MD 路徑及可複製提示詞。
+2. 將 MD 上傳網頁 AI，貼上：
+
+   > 請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
+
+3. 保留 `authoring_version: 1`、`export_id`、`batch_id` 與單元 ID。頁碼、hash、字元位置由程式重建；不要自行補成舊 schema v3。
+4. 將完成的 MD 放進伺服器 `imports`，使用 Help 選檔，或 `/coc scenario template import 劇本ID 檔名.md`。
+5. 部分單元先保存草稿；需修改已提交批次時，JSON 加上 `replace_batch: true`。校對失敗的詳細報告路徑會私訊 KP，可連同原工作檔交回 AI 修正。
+6. 全部來源完成後產生待校閱 v4 版本，透過 preview、approve，再用 `/coc scenario use 劇本ID 版本ID` 選用。
+
+完整翻譯不受舊 6,000／12,000 字元投影門檻限制。遊戲取用依 token 預算，必要規則不足時須續取或暫緩。不要為了通過格式驗證而填假引述或把 uncertainty 無條件清空。
+
+## 舊 schema v3 手動整備參考
+
+以下內容與範例只供既有 v3 檔案維護；新匯出請使用上面的整備 v1 流程。舊 v3 匯入仍保留原有來源位置與大小驗證，不自動轉成 v4。
+
+
 [English](scenario_zh_external_preparation.md)
 
 這份文件可以直接交給外部翻譯工具或人工譯者使用。它是**工作指令模板**，

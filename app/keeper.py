@@ -849,6 +849,7 @@ _SEARCH_SCENARIO_TOOL = {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "要查詢的關鍵字或名詞，例如「卡西迪」「地下室」「儀式」"},
+            "continuation": {"type": "string", "description": "同一查詢的續取識別；缺少必要依據時續取。complete_for_action=false 時不得據此執行機制。"},
             "source": {"type": "string", "enum": ["auto", "original"],
                        "description": "預設 auto 中文優先；中文有命中但缺少裁決依據時用 original 補查原稿。查詢可含原文名稱及缺少的護甲、特殊能力、觸發條件、代價、每輪/每戰限制；命中不代表完整，未查到不等於不存在。"},
         },
@@ -3049,7 +3050,9 @@ def _execute_tool(
                                     embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                                     embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
                 index, results = scenario_templates.search_for_state(state, scenario_query, top_k=SCENARIO_RAG_TOP_K, metrics=scenario_metrics,
-                                                                    source=tool_input.get("source", "auto"))
+                                                                    source=tool_input.get("source", "auto"),
+                                                                    continuation=tool_input.get("continuation", ""),
+                                                                    principal=f"{speaker_role}:{tool_input.get('_retrieval_principal', state.kp_assistant_user_id or '')}")
                 scenario_metrics.update(
                     evidence_chars=sum(len(row["text"]) for row in results),
                     budget_omitted=sum(row.get("budget_omitted", 0) for row in results),
@@ -3058,7 +3061,12 @@ def _execute_tool(
                     has_embeddings=getattr(index, "has_embeddings", None),
                     index_cache=getattr(index, "index_cache", "unknown"),
                 )
-            return {"ok": True, "results": scenario_rag.format_results(results)}
+            completeness = [row for row in results if 'complete_for_action' in row]
+            return {"ok": True, "results": scenario_rag.format_results(results),
+                    "complete_for_action": all(row['complete_for_action'] for row in completeness) if completeness else None,
+                    "evidence_record_ids": list({rid for row in completeness for rid in row.get("root_record_ids", [])}),
+                    "continuation_tokens": [row['continuation_token'] for row in completeness if row.get('continuation_token')]}
+
 
         if name == "search_memory":
             memory_query = tool_input.get("query", "")

@@ -113,7 +113,7 @@ def prepared(tmp_path, monkeypatch):
     root.mkdir(parents=True)
     (root / 'manifest.json').write_text(json.dumps(MANIFEST))
     (root / 'scenario.txt').write_text(SOURCE)
-    exported = templates.export_template('sample')
+    exported = templates.export_legacy_template('sample')
     payload = json.loads(re.search(r'```json\s*(\{.*?\})\s*```', exported.read_text(), re.DOTALL).group(1))
     payload['records'] = [record()]
     exported.write_text('```json\n' + json.dumps(payload) + '\n```')

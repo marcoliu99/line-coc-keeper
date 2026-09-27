@@ -55,3 +55,7 @@ The linked implementation and existing regression tests are the audit evidence. 
 The immutable original retains the incident narrative, migration chronology, draft examples and historical measurements. Those sections may describe superseded behavior; the current contract above takes precedence.
 
 [Original source](https://github.com/marcoliu99/line-coc-keeper/blob/afe8aced2614e6d1ba845727e42277436838cf0f/docs/scenario_templates_design_spec.md)
+
+## Subsequent authoring v1 / runtime v4
+
+The v3 contract above is tied to its stated baseline and remains applicable to legacy imports. See [external AI authoring](external_template_authoring_design_spec.md) for new exports, campaign retrieval and diagnostics. The new format does not reject complete content using old projection thresholds and retains original-source fallback and review requirements.

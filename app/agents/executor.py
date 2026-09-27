@@ -8,7 +8,7 @@ from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
-from app import keeper, observability
+from app import keeper, observability, scenario_retrieval
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
 from app.domain.models import (
@@ -72,7 +72,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         "resolved": None,
     }
     execute_tool = make_tool_executor(
-        state, private_messages, image_requests, speaker_role, facts, check_status
+        state, private_messages, image_requests, speaker_role, facts, check_status,
+        evidence_incomplete=bool(scenario_retrieval.incomplete_roots(rag_context)),
+        required_evidence_ids=scenario_retrieval.incomplete_roots(rag_context),
     )
     combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
@@ -126,6 +128,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 nonlocal scenario_search_count
                 if name == "search_scenario":
                     scenario_search_count += 1
+                    tool_input = {**tool_input, "_retrieval_principal": user_id}
                 inventory_before = {c.name: list(c.carried_items) for c in state.active_characters()}
                 combat_active_before = state.combat.active
                 actor_before_tool = turn_resolution.actor_snapshot(state, user_id)
@@ -135,7 +138,17 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 if name == "add_carried_item" and re.search(r"買|买|\b(?:buy|purchase)\b", text, re.IGNORECASE):
                     result: dict[str, Any] = {"ok": False, "error": "本回合提到購買，不能直接加物品。請先裁定到店，使用 purchase_items 結算；非購買取得請另行明確宣告。"}
                 else:
-                    result = await execute_tool(name, tool_input)
+                    model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", "unknown")
+                    remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
+                        [static_system, dynamic_system, tools, new_message, tool_events], state.log, model, LLM_PROVIDER)
+                        if name == "search_scenario" else scenario_retrieval.BUDGET.get())
+                    budget_token = scenario_retrieval.BUDGET.set(remaining)
+                    model_token = scenario_retrieval.MODEL.set(model)
+                    try:
+                        result = await execute_tool(name, tool_input)
+                    finally:
+                        scenario_retrieval.MODEL.reset(model_token)
+                        scenario_retrieval.BUDGET.reset(budget_token)
                 if name == "purchase_items" and result.get("ok"):
                     inventory_events.append(GameEvent("purchase", deepcopy(result["purchase"])))
                 if result.get("ok") and (name in {"add_carried_item", "remove_carried_item"}
