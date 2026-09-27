@@ -42,6 +42,9 @@ Executor early stopping, dynamic tool scoping, a new reviewer model or another a
 
 ## 3. Source-bound external authoring (schema v3)
 
+Ready-to-use authoring instructions: [external Chinese preparation template](references/scenario_zh_external_preparation.md).
+Copy its Chinese prompt together with an exported workbook and the original PDF.
+
     English PDF/OCR + page images
       -> deterministic source-bound export (no model)
       -> external Chinese translation / semantic grouping / human review

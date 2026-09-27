@@ -44,6 +44,10 @@ complete commercial campaign texts. Accessed 2026-09-27.
 
 ## Authoring contract
 
+Use the [copyable external preparation template](references/scenario_zh_external_preparation.md)
+with the exported workbook. It includes the translation prompt, a synthetic rule
+example, short-scenario checks and a campaign preparation worksheet.
+
     original source + page images
       -> externally checked reading order / complete source units
       -> source-bound editable template
