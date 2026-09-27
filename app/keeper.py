@@ -2045,7 +2045,7 @@ def _execute_tool(
                                     "penalty_dice": penalty,
                                     "difficulty": difficulty,
                                     "note": "已經有相同的待處理檢定（防重複）。",
-                                    "opposed": existing.get('opposed'),
+                                    "opposed_pending": bool(existing.get('opposed')),
                                 },
                                 should_save=False,
                             )
@@ -2073,7 +2073,7 @@ def _execute_tool(
                             "penalty_dice": penalty,
                             "difficulty": difficulty,
                             "note": "等待玩家自己用 /coc check 或按鈕擲骰；在結果回來前不要自行判定成敗。",
-                            "opposed": new_check.get('opposed'),
+                            "opposed_pending": bool(new_check.get('opposed')),
                         },
                         should_save=True,
                     )
@@ -2130,7 +2130,7 @@ def _execute_tool(
                     "action_context": metadata["action_context"],
                     "player_declaration": metadata['player_declaration'],
                     "action_basis": metadata['action_basis'],
-                    "opposed_outcome": opposed_outcome,
+                    "opposed_outcome": opposed_checks.public_outcome(opposed_outcome),
                     "note": (
                         "Keeper 已由 deterministic dice engine 擲完這次檢定；請直接依照結果敘事，不要再要求玩家擲攻擊骰或技能骰。"
                         if target_state.autoroll_checks
@@ -3446,6 +3446,8 @@ def _build_dynamic_prompt(
     user_id: str,
     resolved_location: dict | None = None,
     speaker_role: str = "player",
+    *,
+    include_private_checks: bool = True,
 ) -> str:
     """Combat status + each character's *dynamic* state (HP/SAN/Luck/ammo/
     carried items — see Character.dynamic_state_text; the static attributes/
@@ -3461,7 +3463,7 @@ def _build_dynamic_prompt(
     from app.services import turn_context
 
     digest_block = turn_context.digest_history(state, digest)
-    authority = turn_context.authority_block(state)
+    authority = turn_context.authority_block(state, include_private_checks=include_private_checks)
 
     location_block = ""
     if resolved_location:

@@ -70,3 +70,10 @@ def public_text(outcome: dict | None) -> str:
         return ''
     return {'player': '對抗結果：你勝出。', 'opponent': '對抗結果：對手勝出。',
             'neither': '對抗結果：雙方均未勝出，尚未達成目的。'}[outcome['winner']]
+
+
+def public_outcome(outcome: dict | None) -> dict | None:
+    """Only the adjudicated branch may cross into narration/tool summaries."""
+    if not outcome:
+        return None
+    return {'winner': outcome['winner'], 'applicable_consequence': outcome['applicable_consequence']}

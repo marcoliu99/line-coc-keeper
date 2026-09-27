@@ -50,8 +50,13 @@ def current_state(state: GroupState) -> dict[str, Any]:
     }
 
 
-def authority_block(state: GroupState) -> str:
+def authority_block(state: GroupState, *, include_private_checks: bool = True) -> str:
     evidence = current_state(state)
+    if not include_private_checks:
+        for collection in ('pending_checks', 'pending_luck_decisions'):
+            for check in evidence[collection]:
+                check.pop('opposed', None)
+                check.pop('action_basis', None)
     evidence["keeper_only_combat"] = state.combat.to_dict()
     return (
         "【目前機制權威資料（state）】\n"

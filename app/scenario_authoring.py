@@ -171,6 +171,16 @@ kind: required_for_adjudication / conditional / background.
 Do not downgrade mechanical dependencies to background. Conditional dependencies
 are conservatively included; background still needs source evidence and review.
 A missing record in another batch is allowed only while the aggregate is a draft.
+Every unresolved named reference blocks final import. If the PDF confirms a
+reference points outside this scenario (for example to the core rulebook), put
+its exact parenthetical source_quote in external_references with kind
+external_rulebook or non_adjudicative and a concrete reason. Verify against
+the original PDF before classifying; do not label a missing local rule external
+just to pass validation. "see above/below" alone is not a named section.
+外部引用須在 external_references 逐項填入精確 source_quote、kind 和原因，並連同
+原 PDF 核對。劇本內的觸發、例外或後果若找不到目標，不可標成外部引用蒙混過關；
+完整匯入會阻擋未解決的具名引用。
+[{{"source_quote":"(see Fighting Maneuvers)","kind":"external_rulebook","reason":"Core rulebook section outside this scenario"}}]
 
 Synthetic example only (not real source IDs; do not copy into your records):
 Source: "Armor 2." / 原文範例："Armor 2."
@@ -254,7 +264,7 @@ def blank_record(unit_id: str, index: int) -> dict:
     return {'id': f'r{index}', 'unit_ids': [unit_id], 'type': 'source_unit',
             'name': unit_id, 'aliases': [], 'keywords': [], 'visibility': 'kp_only',
             'public_text': '', 'kp_text': '', 'rules': [], 'related_record_ids': [],
-            'dependencies': [], 'uncertainty': '尚未翻譯與校對'}
+            'dependencies': [], 'external_references': [], 'uncertainty': '尚未翻譯與校對'}
 
 
 def filename_prefix(title: str) -> str:
@@ -531,6 +541,18 @@ def compile_records(records: list, registry: dict, allowed_units: set[str], *, c
                     output[field] = {'text': value['text'], 'source_quote': quotes[0]}
             rules.append(output)
         dependencies = raw.get('dependencies', [])
+        external_references = raw.get('external_references', [])
+        if not isinstance(external_references, list) or len(external_references) > 100:
+            errors.append(issue('INVALID_EXTERNAL_REFERENCE', rid, 'external_references', 'bounded list', external_references))
+            external_references = []
+        for ref in external_references:
+            if (not isinstance(ref, dict) or set(ref) != {'source_quote', 'kind', 'reason'}
+                    or ref.get('kind') not in ('external_rulebook', 'non_adjudicative')
+                    or not isinstance(ref.get('source_quote'), str) or not ref['source_quote'].strip()
+                    or not any(ref['source_quote'] in units[u]['text'] for u in ids)
+                    or not isinstance(ref.get('reason'), str) or not 1 <= len(ref['reason'].strip()) <= 400):
+                errors.append(issue('INVALID_EXTERNAL_REFERENCE', rid, 'external_references',
+                                    'exact source quote, permitted kind and reason', ref))
         related = list(raw['related_record_ids'])
         for dep in dependencies:
             if (not isinstance(dep, dict) or not isinstance(dep.get('record_id'), str)
@@ -546,7 +568,8 @@ def compile_records(records: list, registry: dict, allowed_units: set[str], *, c
                          'source_excerpt': '\n'.join(units[u]['text'] for u in ids),
                          'page': unit['page'], 'source_pages': unit['source_pages'], 'chapter_id': unit['chapter_id'],
                          'source_spans': [units[u]['span'] for u in ids], 'rule_text': '', 'rules': rules,
-                         'related_record_ids': list(dict.fromkeys(related)), 'dependencies': dependencies})
+                         'related_record_ids': list(dict.fromkeys(related)), 'dependencies': dependencies,
+                         'external_references': external_references})
     if complete:
         from app import scenario_references
         compiled, reference_diagnostics = scenario_references.link_records(compiled)
@@ -556,6 +579,9 @@ def compile_records(records: list, registry: dict, allowed_units: set[str], *, c
             if diagnostic['code'] == 'ambiguous_named_reference':
                 errors.append(issue('AMBIGUOUS_DEPENDENCY', diagnostic['record_id'], 'dependencies',
                                     'uniquely identified source heading', diagnostic['reference']))
+            elif diagnostic['code'] == 'unresolved_named_reference':
+                errors.append(issue('UNRESOLVED_DEPENDENCY', diagnostic['record_id'], 'dependencies',
+                                    'local target or source-verified external classification', diagnostic['reference']))
         missing = allowed_units - coverage
         if missing:
             errors.append(issue('COVERAGE_GAP', '', 'unit_ids', 'all source units', sorted(missing)))

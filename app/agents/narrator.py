@@ -48,7 +48,8 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         ) if tool_enabled else prompt_config.build_narrator_static_prompt(keeper._build_static_prompt(state))
     )
     dynamic_system = prompt_config.build_dynamic_prompt_with_context(
-        keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
+        keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role,
+                                     include_private_checks=False), rag_context, memory_context
     )
     character = state.get_active_character(user_id)
     if character:

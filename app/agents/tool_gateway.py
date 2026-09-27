@@ -226,6 +226,9 @@ def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[st
                 )
                 if key in result
             }
+            opposed = result.get('opposed_outcome')
+            if isinstance(opposed, dict) and opposed.get('winner') in {'player', 'opponent', 'neither'}:
+                status['resolved']['opposed_winner'] = opposed['winner']
     elif tool_name == "clear_pending_check" and result.get("ok") and result.get("cleared"):
         status["tool_called"] = True
         status["pending"] = None
@@ -238,5 +241,13 @@ def _describe_tool_call(tool_name: str, result: dict[str, Any]) -> str:
         return f"{tool_name} 失敗：{result.get('error', '未知錯誤')}"
     # Keep this a plain, factual line (not prose) — the Narrator agent turns
     # facts into narrative text; this just needs to state what happened.
-    details = ", ".join(f"{k}={v}" for k, v in result.items() if k not in ("ok", "note"))
+    # The tool result is for the Executor. Narrative facts are a separate
+    # public-facing handoff and must never copy a private opposed receipt.
+    private_check_fields = {"opposed", "opposed_outcome", "action_basis"} if tool_name == "skill_check" else set()
+    details = ", ".join(f"{k}={v}" for k, v in result.items()
+                        if k not in {"ok", "note"} | private_check_fields)
+    if tool_name == "skill_check" and isinstance(result.get('opposed_outcome'), dict):
+        winner = result['opposed_outcome'].get('winner')
+        if winner in {'player', 'opponent', 'neither'}:
+            details += f", opposed_winner={winner}"
     return f"{tool_name} 成功：{details}" if details else f"{tool_name} 成功。"

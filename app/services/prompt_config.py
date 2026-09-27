@@ -4,6 +4,7 @@ import json
 import re
 
 from app.domain.models import MechanicResult
+from app.services import opposed_checks
 
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
@@ -290,11 +291,14 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
     resolved = status.get("resolved")
     if resolved:
         outcome = "成功" if resolved.get("success") else "失敗"
+        opposed_winner = resolved.get('opposed_winner')
         lines.extend([
             "【已結算檢定：結果權威且不得重擲】",
             f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {resolved.get('difficulty', 'regular')}，等級 {resolved.get('tier', '未知')}，結果 {outcome}。",
             "這筆檢定已結算。不得改成尚未結算、因先攻延後同一擲骰結果、要求再擲一次，或從檢定結果自行推導未提供的傷害、破壞或戰鬥。",
         ])
+        if opposed_winner:
+            lines.append(f"劇本對抗勝方：{opposed_winner}；此結果優先於單方技能等級。")
     if not status.get("pending") and not pending_luck and not resolved:
         lines.append(
             "【檢定狀態：沒有待處理／新建立檢定，也沒有本回合已結算結果】不得指示玩家擲骰、按檢定按鈕或輸入 /coc check；"
@@ -314,8 +318,8 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         f"難度：{result.get('difficulty', 'regular')}；最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
         '【行動及對抗交接；來源與對手數值不得公開】\n'
-        f"{json.dumps({key: result.get(key) for key in ('player_declaration', 'action_basis', 'opposed_outcome')}, ensure_ascii=False)}\n"
-        'player_declaration 是原始宣告，action_basis 是模型的規則解讀，不會自行建立新事實。'
+        f"{json.dumps({'player_declaration': result.get('player_declaration'), 'opposed_outcome': opposed_checks.public_outcome(result.get('opposed_outcome'))}, ensure_ascii=False)}\n"
+        'player_declaration 是原始宣告，不會自行建立新事實。'
         'opposed_outcome.winner 是程式已比較的最終勝方，優先於單方技能成功；不得重新比較或重擲。'
         'applicable_consequence 只是後果分支，傷害、物品與資源尚須對應工具才能生效。\n'
         "這次檢定已由系統擲骰並定案。只敘述這個結果允許的後果；不得重擲或改判、"

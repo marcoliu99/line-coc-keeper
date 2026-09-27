@@ -4,12 +4,14 @@ from unittest.mock import patch
 
 import pytest
 
-from app import keeper, legacy_commands
+from app import keeper, legacy_commands, scenario_authoring
 from app.agents.supervisor import _unchanged_pending_reply
+from app.agents.tool_gateway import _describe_tool_call
 from app.domain.models import MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
 from app.scenario_references import link_records
-from app.services import opposed_checks
+from app.services import opposed_checks, turn_context
+from app.services.prompt_config import build_resolved_check_outcome_block
 
 REQUEST = {
     'opponent_skill': 'POW', 'opponent_value': 90, 'tie_winner': 'opponent',
@@ -65,7 +67,9 @@ def test_manual_check_persists_one_opponent_roll_and_its_final_outcome():
         first_receipt = deepcopy(saved['state'].pending_checks['u1']['opposed'])
         assert first_receipt['opponent_roll'] == 30
         duplicate = keeper._execute_tool(state, 'skill_check', tool_input, [], [], speaker_role='player')
-        assert duplicate['ok'] and duplicate['opposed'] == first_receipt
+        assert duplicate['ok'] and duplicate['opposed_pending'] is True
+        assert 'opposed' not in duplicate and 'opposed' not in result
+        assert saved['state'].pending_checks['u1']['opposed'] == first_receipt
         assert dice_roll.call_count == 1
         resolved = legacy_commands._resolve_check_deterministically('scenario-check-test', 'u1', '/coc check')
 
@@ -98,6 +102,8 @@ def test_autoroll_success_field_reflects_opposed_loss():
     assert result['player_check_success'] is True
     assert result['opposed_outcome']['winner'] == 'opponent'
     assert result['success'] is False
+    assert 'opponent_roll' not in str(result)
+    assert 'opponent_value' not in str(result)
 
 
 @pytest.mark.parametrize(('choice', 'winner'), [('skip', 'opponent'), ('extreme', 'player')])
@@ -158,6 +164,88 @@ def test_ambiguous_heading_requires_explicit_target():
     linked, diagnostics = link_records(records)
     assert linked[0]['dependencies'][0]['kind'] == 'required_for_adjudication'
     assert not any(item['code'] == 'ambiguous_named_reference' for item in diagnostics)
+
+
+def test_private_opposed_receipt_never_enters_narrator_handoff():
+    state = _state()
+    state.pending_checks['u1'] = {
+        'type': 'skill', 'check_id': 'check-1', 'action_basis': 'Private source page 11',
+        'opposed': {**REQUEST, 'opponent_roll': 30, 'opponent_tier': 'hard'},
+    }
+    private_authority = turn_context.authority_block(state)
+    narrator_authority = turn_context.authority_block(state, include_private_checks=False)
+    assert 'opponent_roll' in private_authority
+    assert 'opponent_roll' not in narrator_authority
+    assert 'Private source page 11' not in narrator_authority
+    narrator_prompt = keeper._build_dynamic_prompt(state, 'u1', include_private_checks=False)
+    assert 'opponent_roll' not in narrator_prompt
+    assert 'Private source page 11' not in narrator_prompt
+    result = {'ok': True, 'pending': True, 'opposed': state.pending_checks['u1']['opposed'],
+              'action_basis': 'Private source page 11'}
+    fact = _describe_tool_call('skill_check', result)
+    assert 'opponent_roll' not in fact and 'Private source page 11' not in fact
+    resolved_fact = _describe_tool_call('skill_check', {
+        'ok': True, 'resolved': True,
+        'opposed_outcome': {'winner': 'opponent', 'applicable_consequence': 'The knife escapes'},
+    })
+    assert 'opposed_winner=opponent' in resolved_fact
+    assert 'The knife escapes' not in resolved_fact
+    resolved = build_resolved_check_outcome_block({
+        'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'roll': 40,
+        'player_declaration': '抓住飛來的刀', 'action_basis': 'Private source page 11',
+        'opposed_outcome': opposed_checks.resolve(state.pending_checks['u1']['opposed'], 'regular'),
+    })
+    assert 'opponent_roll' not in resolved and 'Private source page 11' not in resolved
+    assert '"winner": "opponent"' in resolved
+
+
+def _authoring_registry(text: str) -> dict:
+    return {'units': [{'id': 'u1', 'source_id': 'source-u1', 'span': [0, len(text)],
+                       'page': 1, 'source_pages': [1], 'chapter_id': 'c1', 'text': text}]}
+
+
+def test_unresolved_named_reference_blocks_complete_authoring():
+    source = 'The knife moves (see Missing Section).'
+    record = scenario_authoring.blank_record('u1', 1)
+    record.update(name='Knife', kp_text='刀開始移動，參見缺失的章節。', uncertainty='')
+    registry = _authoring_registry(source)
+    scenario_authoring.compile_records([record], registry, {'u1'}, complete=False)
+    with pytest.raises(scenario_authoring.Diagnostics) as caught:
+        scenario_authoring.compile_records([record], registry, {'u1'}, complete=True)
+    assert any(issue['code'] == 'UNRESOLVED_DEPENDENCY' for issue in caught.value.issues)
+
+
+def test_source_verified_external_rule_reference_can_be_classified():
+    source = 'Resolve it (see Fighting Maneuvers).'
+    record = scenario_authoring.blank_record('u1', 1)
+    record.update(name='Fight', kp_text='依格鬥動作規則處理。', uncertainty='',
+                  external_references=[{'source_quote': '(see Fighting Maneuvers)',
+                                        'kind': 'external_rulebook',
+                                        'reason': 'Core rulebook section outside this scenario'}])
+    compiled = scenario_authoring.compile_records([record], _authoring_registry(source), {'u1'}, complete=True)
+    assert compiled[0]['cross_reference_diagnostics'][0]['code'] == 'classified_external_reference'
+    record['external_references'][0]['source_quote'] = '(see Missing Section)'
+    with pytest.raises(scenario_authoring.Diagnostics) as caught:
+        scenario_authoring.compile_records([record], _authoring_registry(source), {'u1'}, complete=True)
+    assert {'INVALID_EXTERNAL_REFERENCE', 'UNRESOLVED_DEPENDENCY'} <= {i['code'] for i in caught.value.issues}
+
+
+def test_exact_explicit_dependency_resolves_reference_without_detectable_heading():
+    source = 'The knife moves (see Knife Reaction).'
+    target = 'The wielder may use Brawl against POW.'
+    registry = _authoring_registry(source)
+    registry['units'].append({'id': 'u2', 'source_id': 'source-u2', 'span': [0, len(target)],
+                              'page': 2, 'source_pages': [2], 'chapter_id': 'c1', 'text': target})
+    first = scenario_authoring.blank_record('u1', 1)
+    first.update(name='Knife', kp_text='刀開始移動。', uncertainty='',
+                 dependencies=[{'record_id': 'r2', 'kind': 'required_for_adjudication',
+                                'condition': '', 'source_quote': '(see Knife Reaction)'}])
+    second = scenario_authoring.blank_record('u2', 2)
+    second.update(name='Reaction', kp_text='持有者可使用格鬥對抗意志。', uncertainty='')
+    compiled = scenario_authoring.compile_records([first, second], registry, {'u1', 'u2'}, complete=True)
+    assert compiled[0]['related_record_ids'] == ['r2']
+    assert not any(item['code'] == 'unresolved_named_reference'
+                   for item in compiled[0]['cross_reference_diagnostics'])
 
 
 def test_unchanged_pending_check_uses_reminder_only_for_same_validated_wait():
