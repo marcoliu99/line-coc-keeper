@@ -1,5 +1,7 @@
 # Documentation
 
+Source repair guide: [English](guides/scenario_source_review.md) / [繁體中文](guides/scenario_source_review_zh.md)
+
 [繁體中文](README_zh.md)
 
 Current specifications audited against `main_v2` at `afe8ace`. Every spec has an English and Traditional Chinese edition. Historical proposals and measurements remain linked to their immutable source revisions.

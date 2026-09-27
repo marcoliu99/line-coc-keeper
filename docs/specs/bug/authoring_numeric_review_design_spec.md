@@ -128,3 +128,24 @@ not player actions or automatic background translation. No paid APIs are used.
       -> publish(reviewer, digest) -> new scenario + immutable audit
       -> rebind(old export) -> fresh workbooks + reusable result drafts + report
       -> normal import -> full numeric review -> explicit template approval
+
+### Source repair implementation verification
+
+Implemented `app/scenario_source_review.py` and the bilingual
+[operator guide](../../guides/scenario_source_review.md). Reviewed source exports
+now retain physical-page boundaries; legacy source blocks/registries are unchanged.
+Evidence-image hashes are checked as well as source/PDF/manifest/proposal identity.
+
+Full isolated command:
+`python3 /private/tmp/run_review_suite.py source-review-final2 /private/tmp/line-coc-turn-safety-spec`
+
+Result: **1030 passed, 1 skipped, 33 subtests passed**. Ruff passed; mypy passed
+for 85 source files. The synthetic end-to-end tests exercise separate source
+publication, audit persistence, idempotent retries and quote/ID rebinding. Fault
+injection verifies cleanup and rejection if the source changes during rendering.
+
+A private copy of the supplied 27-page PDF was prepared and checked. Font and
+coordinate evidence supports a 15-page layout repair candidate; the corrupt die
+is separated from the decorative glyph without changing its value. No real-source
+publication or approval was performed: map labels, raster cards/reference rules
+and final page reading still require review. No paid APIs were called.

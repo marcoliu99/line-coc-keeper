@@ -102,4 +102,21 @@
       -> 逐頁對照 PDF -> check + digest
       -> publish(校對者, digest) -> 新劇本 + 稽核
       -> rebind(舊匯出) -> 新工作檔 + 可重用成果草稿 + 報告
-      -> 正常匯入 -> 完整数值校對 -> 明確核准模板
+      -> 正常匯入 -> 完整數值校對 -> 明確核准模板
+
+### 來源修復實作驗證
+
+已實作 `app/scenario_source_review.py` 及[中英文操作指南](../../guides/scenario_source_review_zh.md)。
+經校對來源的匯出按實體頁分段；舊來源區塊與登錄不變。除了來源／PDF／manifest／
+提案，亦驗證證據圖片的 hash。
+
+完整隔離測試命令：
+`python3 /private/tmp/run_review_suite.py source-review-final2 /private/tmp/line-coc-turn-safety-spec`
+
+結果：**1030 passed、1 skipped、33 subtests passed**；Ruff 通過、Mypy 通過
+（85 個來源檔）。合成案例走完新來源發布、稽核儲存、重試、引述與 ID 重新綁定；
+注入錯誤驗證失敗清理，以及渲染途中來源變更會被拒絕。
+
+已對提供的 27 頁 PDF 副本 prepare／check，以字型與座標證據產出 15 頁版面
+修復候選，將黏合骰式與裝飾字形分開，不改正確數值。未發布或核准正式來源；
+地圖標籤、點陣角色卡／速查與最終逐頁閱讀仍需校對。沒有呼叫付費 API。
