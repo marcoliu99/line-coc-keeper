@@ -70,6 +70,20 @@ The export must provide the following copyable instruction in both languages. It
 
 Include an actual valid synthetic example with every required record field and one quoted rule, plus explicit statements that example IDs are not real source IDs. Explain that the downloaded file must be placed in the server IMPORT_DIR before using Help; a web AI cannot directly call the bot's import command. No browser product-specific capabilities or output-length guarantees are assumed.
 
+### Show the copyable prompt in the export completion message
+
+After a successful export, both Help and text-command flows must show the following copyable prompt directly in the completion message that provides the MD attachment or existing download mechanism. It must not be available only inside the MD, logs, button descriptions or a separate help page:
+
+```text
+請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
+```
+
+The Chinese text above is the required user-facing literal. It asks the external AI to follow the attached authoring instructions, return importable Traditional Chinese Markdown and list unfinished parts if batching is necessary.
+
+Message order: export success and filename; an instruction to upload the MD to web Gemini/ChatGPT and paste the prompt; the prompt as a text block; then instructions to download the result, place it in imports and select it through Help import. The prompt must be selectable text that does not require opening the attachment first. Multiple batches still show the prompt once in the completion reply, along with the batch inventory and progress.
+
+Keep KP export authorization and private attachment delivery. Public messages must not attach the full scenario or expose private server paths. If the platform sends attachments and text separately, the authorized user's completion reply must still show the prompt directly. Failed exports must not show success or invalid download links.
+
 ## 6. Validation report and user flow
 
 Collect independent failures rather than stopping after the first record. Bound the report (proposed cap: 100 issues, with total/omitted counts) and skip dependent checks when prerequisites are invalid. Malformed JSON gets line/column information; invalid record shapes must not crash deeper validators.
@@ -109,7 +123,7 @@ Required tests:
 5. Partial batches, idempotent replay, conflicting replacement, failed atomic save and preservation of active variants.
 6. Report bounds, authorization and no private excerpts in public replies.
 7. Legacy v3 import/approval and existing Chinese/original retrieval regression suites.
-8. Prompt/example schema validation so shipped examples cannot drift from the importer.
+8. Prompt/example schema validation so shipped examples cannot drift from the importer. Also test that successful Help/text-command export replies directly contain the exact prompt above and a valid attachment/download entry point; cover multiple batches, failure replies and private delivery so finding the prompt never requires opening the MD.
 9. Store synthetic campaigns of 300+ pages, recurring cross-chapter NPCs, 20,000-character records and dependencies over 12,000 characters intact; old projection limits do not reject import.
 10. Huge/cyclic dependency graphs, mandatory rules over budget, unknown conditions and permission/version changes during continuation neither reveal blocked chapters nor claim completeness incorrectly.
 11. Compare short scenarios and campaigns on input tokens, tool/LLM calls, retrieval latency, full-turn latency, required-rule recall and adjudication accuracy. Explicitly check armor, abilities, triggers, costs and use limits, not just NPC-name hits.
