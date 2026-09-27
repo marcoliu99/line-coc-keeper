@@ -230,3 +230,21 @@ files or stale versions must not dispatch from an old selection.
 This removes manual command arguments; it does not add Discord attachment ingestion.
 Workbooks must still be placed in IMPORT_DIR. Test picker filtering, source mismatch,
 review pages, approved-only activation and command construction.
+
+## 9. Per-query original-source fallback
+
+Both proactive and explicit scenario search share one search wrapper. If a valid
+selected Chinese index returns no relevance-gated results for a nonempty query,
+search the current scenario_text (the existing permitted chapter window) once using
+the same query. Reuse existing embedding/query caches; do not translate the query or
+add a generative model call. A successful Chinese search performs no original search.
+Original-mode/invalid-variant fallback must not search the same original twice.
+
+Record query_fallback, Chinese hit count and final effective source separately from
+variant validity. Return the final index with results so embedding/cache diagnostics
+and proactive gating refer to the source actually used. Tag original fallback results
+for the Keeper. An empty result from both sources means evidence is unconfirmed, not
+that a location or rule does not exist. This does not guarantee that a Chinese query
+will match English BM25 when semantic embeddings are unavailable.
+
+Per-query fallback verification: full isolated suite 800 passed, one skipped, 15 subtests passed.

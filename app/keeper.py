@@ -3035,8 +3035,7 @@ def _execute_tool(
             with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K,
                                     embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                                     embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
-                index = scenario_templates.index_for_state(state, scenario_metrics)
-                results = scenario_rag.search(index, scenario_query, top_k=SCENARIO_RAG_TOP_K, metrics=scenario_metrics)
+                index, results = scenario_templates.search_for_state(state, scenario_query, top_k=SCENARIO_RAG_TOP_K, metrics=scenario_metrics)
                 scenario_metrics.update(
                     evidence_chars=sum(len(row["text"]) for row in results),
                     budget_omitted=sum(row.get("budget_omitted", 0) for row in results),

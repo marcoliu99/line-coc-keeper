@@ -510,3 +510,23 @@ def clean_scenario(scenario_id: str) -> None:
                 db.delete_json("scenario_template_preferences", key)
         except (ValueError, IndexError, TypeError):
             continue
+
+
+def search_for_state(state: Any, query: str, top_k: int = 5,
+                     metrics: dict[str, Any] | None = None) -> tuple[scenario_rag.ScenarioIndex, list[dict]]:
+    """Internal Keeper search: Chinese first, then one current-window source search."""
+    diagnostics = metrics if metrics is not None else {}
+    index = index_for_state(state, diagnostics)
+    results = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
+    diagnostics['query_fallback'] = 'none'
+    if (results or not query.strip()
+            or diagnostics.get('effective_variant', 'original') == 'original'):
+        return index, results
+    diagnostics['chinese_result_count'] = 0
+    diagnostics['chinese_query_embedding_status'] = diagnostics.get('query_embedding_status', 'unknown')
+    # scenario_text is the same authorized chapter window used by original mode;
+    # never load the entire library PDF or expand access because a query missed.
+    original_index = scenario_rag.get_index(state.group_id, state.scenario_text)
+    results = scenario_rag.search(original_index, query, top_k=top_k, metrics=diagnostics)
+    diagnostics.update(query_fallback='chinese_no_match', effective_variant='original')
+    return original_index, [dict(row, retrieval_source='original_fallback') for row in results]
