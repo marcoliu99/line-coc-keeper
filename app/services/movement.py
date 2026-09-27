@@ -279,8 +279,13 @@ class MovementSession:
             return fail('invalid_movement_path')
         current_page, current_room, _ = p.origin
         facing = state.party_facing.get(p.subject_id, 'N')
+        if p.candidate_room and not page:
+            return fail('movement_destination_mismatch')
+        visited: list[tuple[str, str]] = []
         if page:
-            if p.candidate_room and intent_parser.parse_movement_intent(p.original_span) and path:
+            if p.candidate_room and intent_parser.parse_movement_intent(p.original_span):
+                if not path:
+                    return fail('movement_direction_mismatch')
                 first_page, first_room = path[0].split(':', 1) if ':' in path[0] else (current_page, path[0])
                 if (first_page, first_room) != (p.candidate_page, p.candidate_room):
                     return fail('movement_direction_mismatch')
@@ -290,6 +295,7 @@ class MovementSession:
                 current_page, current_room = page, state.scene_maps[page].get('entry_room_id', '')
                 if not path or path[0] not in {current_room, f'{page}:{current_room}'}:
                     return fail('map_entry_required')
+                visited.append((current_page, current_room))
                 path = path[1:]
             for step in path:
                 next_page, next_room = step.split(':', 1) if ':' in step else (current_page, step)
@@ -306,6 +312,26 @@ class MovementSession:
                     return fail('movement_reaction_point_unresolved')
                 facing = edge.get('compass', facing) if edge.get('compass') not in {'U', 'D'} else facing
                 current_page, current_room = next_page, next_room
+                visited.append((current_page, current_room))
+            if p.candidate_room:
+                candidate = (p.candidate_page, p.candidate_room)
+                if candidate not in visited:
+                    return fail('movement_destination_mismatch')
+                expected = candidate
+                # Preserve explicitly requested onward travel, not model-selected detours.
+                clauses = intent_parser.movement_clauses(self.request_text)
+                later = clauses[clauses.index(p.original_span) + 1:] if p.original_span in clauses else []
+                for clause in later:
+                    if not (intent_parser.has_movement_verb(clause) or re.match(r'^(?:我(?:們)?)?(?:再)?(?:到|經)', clause)):
+                        continue
+                    matches = [(clause.rfind(r['name']), key, r['id'])
+                               for key, m in state.scene_maps.items() for r in m.get('rooms', [])
+                               if r.get('name') and r['name'] in clause]
+                    if matches:
+                        _, target_page, target_room = max(matches)
+                        expected = (target_page, target_room)
+                if (current_page, current_room) != expected:
+                    return fail('movement_destination_mismatch')
             room_data = scene_map.get_room(state.scene_maps.get(current_page, {}), current_room)
             if current_page != page or not room_data or destination not in {current_room, room_data.get('name')}:
                 return fail('movement_destination_mismatch')

@@ -634,3 +634,7 @@ ordinary / sudo act / enter / leavemap
   premature move for a necessary tool commit and continuation where applicable;
   no claim of an across-the-board speedup is made. No durable workflow ledger,
   outbox, automatic replay, background translation or new fixed LLM stage.
+
+## PR #99 review correction
+
+Bind arrival to the requested candidate for both named and directional moves. Reject empty paths that never reach the candidate, substituted destinations and mapless bypasses. Directional candidates must be the first step. Named candidates must be reached; further travel requires a later explicit movement destination in the request, preserving legal multi-edge routes. Rejections must leave persisted position, arrival events and destination effects unchanged.

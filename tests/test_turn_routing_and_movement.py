@@ -549,3 +549,33 @@ def test_destination_check_cannot_be_registered_before_arrival(state):
                   {'investigator': 'A', 'skill': '偵查', 'action_context': '在書房內搜查信件'})
     assert result['error'] == 'arrival_required_before_destination_check'
     assert not state.pending_checks
+
+
+@pytest.mark.parametrize('action_text,parameters', [
+    ('我去密室', {}),
+    ('我去密室', {'destination': '走廊', 'path': []}),
+    ('向左走', {'destination': '走廊', 'path': []}),
+    ('我去書房', {'destination': '閣樓', 'path': ['B', 'D', 'E']}),
+    ('我去書房，看到閣樓', {'destination': '閣樓', 'path': ['B', 'D', 'E']}),
+    ('我去密室', {'destination': '屋外', 'page': '', 'path': []}),
+])
+def test_arrival_must_reach_requested_candidate_before_unlocking_effects(state, action_text, parameters):
+    scope = session(state, action_text)
+    before = group_state.load_state(state.group_id).to_dict()
+    result = scope.commit(state, args(**parameters))
+    assert not result['ok'] and not scope.arrived
+    assert group_state.load_state(state.group_id).to_dict() == before
+    assert not call(state, scope, 'add_carried_item', {'investigator': 'A', 'item': '信件'})['ok']
+    assert group_state.load_state(state.group_id).to_dict() == before
+
+
+def test_named_destination_can_be_reached_over_multiple_edges(state):
+    scope = session(state, '我去閣樓')
+    assert scope.commit(state, args(destination='閣樓', path=['B', 'D', 'E']))['ok']
+    assert state.current_room_id['u'] == 'E'
+
+
+def test_onward_travel_cannot_skip_first_named_destination(state):
+    scope = session(state, '進入書房，經樓梯到閣樓')
+    assert not scope.commit(state, args(destination='閣樓', path=['D', 'E']))['ok']
+    assert state.current_room_id['u'] == 'A'
