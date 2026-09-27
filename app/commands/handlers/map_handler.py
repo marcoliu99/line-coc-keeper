@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 from app import scene_map as scene_map_engine
-from app.legacy_commands import Reply, SendImage
-from app.repositories.group_state import load_page_image, load_state, save_state
+from app.legacy_commands import Reply, SendDM, SendDMImage, SendImage
+from app.repositories.group_state import load_page_image, load_state
+from app.services import mutation_admission
 
 
+@mutation_admission.guard_async_entry
 async def handle_map_command(
     conversation_id: str,
     user_id: str,
     reply: Reply,
     send_image: SendImage,
     parts: list[str],
+    *,
+    send_dm: SendDM | None = None,
+    send_dm_image: SendDMImage | None = None,
+    actor_user_id: str | None = None,
+    actor_is_keeper: bool = False,
 ) -> bool:
     sub = parts[1].casefold() if len(parts) > 1 else ""
 
@@ -34,12 +41,14 @@ async def handle_map_command(
         state = load_state(conversation_id)
         current_page = state.current_map_page.get(user_id, "")
         if not current_page:
-            await reply("目前不在任何有地圖的地點裡（或這份劇本沒有偵測到平面圖）。")
+            location = state.narrative_locations.get(user_id)
+            await reply(f"目前在「{location}」（劇情位置，沒有平面圖）。" if location
+                        else "目前不在任何有地圖的地點裡（或這份劇本沒有偵測到平面圖）。")
             return False
         scene_map = state.scene_maps.get(current_page)
         room = scene_map_engine.get_room(scene_map, state.current_room_id.get(user_id, "")) if scene_map else None
         if not room:
-            await reply("地圖資料異常，目前所在房間找不到對應資料，可以用「/coc leavemap」重置。")
+            await reply("地圖資料異常，目前所在房間找不到對應資料，請確認地圖資料或更正目前位置。")
             return False
         exits = room.get("exits", [])
         exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
@@ -59,22 +68,31 @@ async def handle_map_command(
             available = "、".join(sorted(state.scene_maps.keys())) or "（沒有偵測到任何平面圖）"
             await reply(f"第 {page_key} 頁沒有偵測到平面圖。有地圖資料的頁碼：{available}")
             return False
-        state.current_map_page[user_id] = page_key
-        state.current_room_id[user_id] = scene_map.get("entry_room_id", "")
-        state.party_facing[user_id] = "N"
-        save_state(state)
-        room = scene_map_engine.get_room(scene_map, state.current_room_id[user_id])
-        await reply(f"已進入第 {page_key} 頁的地圖，目前在「{room.get('name', '') if room else '未知位置'}」。")
-        return True
-
-    if sub == "leavemap":
+        room = scene_map_engine.get_room(scene_map, scene_map.get("entry_room_id", ""))
+        action = f"進入{scene_map.get('location_name') or (room or {}).get('name', '')}（地圖 {page_key} 的入口）"
+    elif sub == "leavemap":
         state = load_state(conversation_id)
-        state.current_map_page.pop(user_id, None)
-        state.current_room_id.pop(user_id, None)
-        state.party_facing.pop(user_id, None)
-        save_state(state)
-        await reply("已離開目前的地圖追蹤，移動改回完全由守密人自己判斷。")
-        return True
+        action = "離開目前地點，前往劇本記載的出口外"
+    else:
+        await reply(f"未知的地圖指令：{sub}")
+        return False
 
-    await reply(f"未知的地圖指令：{sub}")
-    return False
+    character = state.get_active_character(user_id)
+    if not state.active or not state.game_started or character is None:
+        await reply("請先開始遊戲並使用有效角色，才能移動。")
+        return False
+    from app import locks
+    from app.agents import supervisor
+    from app.legacy_commands import _run_post_turn_maintenance_after_output
+
+    async with locks.get_keeper_turn_lock(conversation_id):
+        public, private, images = await supervisor.run_turn(
+            state, user_id, character.name, action, None, "player", conversation_id,
+            actor_user_id=actor_user_id or user_id, actor_is_keeper=actor_is_keeper,
+        )
+    if send_dm is not None and send_dm_image is not None:
+        await _run_post_turn_maintenance_after_output(
+            conversation_id, reply, public, send_dm, send_image, send_dm_image, private, images)
+    else:
+        await reply(public)
+    return True

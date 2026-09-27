@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from app import config, observability
+from app.services import mutation_admission
 
 # Legacy conversation lock: used by the current coarse-grained flow and kept
 # unchanged while callers are migrated incrementally.
@@ -110,8 +111,9 @@ class _ObservableConversationLock(asyncio.Lock):
     progress from its entry snapshot instead.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, conversation_id: str) -> None:
         super().__init__()
+        self.conversation_id = conversation_id
         self.blocked = 0
         self.completed = 0
 
@@ -136,6 +138,13 @@ class _ObservableConversationLock(asyncio.Lock):
                 slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
             ):
                 await super().acquire()
+                try:
+                    mutation_admission.check_conversation_entry(self.conversation_id)
+                except mutation_admission.MutationHeld:
+                    # Released through the override, not super(), so a waiter's
+                    # countdown still sees this turn leave the queue.
+                    self.release()
+                    raise
                 return True
         finally:
             self.blocked -= 1
@@ -148,7 +157,7 @@ class _ObservableConversationLock(asyncio.Lock):
 def get_conversation_lock(conversation_id: str) -> _ObservableConversationLock:
     lock = _locks.get(conversation_id)
     if lock is None:
-        lock = _ObservableConversationLock()
+        lock = _ObservableConversationLock(conversation_id)
         _locks[conversation_id] = lock
     return lock
 

@@ -13,7 +13,6 @@ from app.commands.handlers import character as character_handler
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import map_handler
-from app.commands.handlers import purchase as purchase_handler
 from app.commands.handlers import system as system_handler
 from app.legacy_commands import (
     FormatMention,
@@ -22,7 +21,6 @@ from app.legacy_commands import (
     SendDM,
     SendDMImage,
     SendImage,
-    _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
     _set_character_away_state,
     _skill_names_match,
@@ -32,6 +30,7 @@ from app.legacy_commands import (
     handle_roll_command,
 )
 from app.repositories.group_state import load_state
+from app.services import mutation_admission
 
 _logger = logging.getLogger(__name__)
 PostTurnHook = Callable[[], Awaitable[None]]
@@ -166,6 +165,7 @@ async def _run_sudo_act_locked(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
+    *, actor_is_keeper: bool = False,
 ) -> str:
     subject_user_id = acting_context.subject_user_id
     character = state.get_active_character(subject_user_id)
@@ -175,17 +175,15 @@ async def _run_sudo_act_locked(
         raise _SudoDenied("game_not_started")
 
     action_text = " ".join(parsed.args).strip()
-    resolved_location = await asyncio.to_thread(
-        _resolve_map_action_transaction, conversation_id, subject_user_id, action_text
-    )
-    canonical_text = f"[KP Assistant 代操作 {character.name}] {action_text}"
+    resolved_location = None
     async with locks.get_keeper_turn_lock(conversation_id):
         with observability.context(turn_id=observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,
                 user_id=subject_user_id,
                 display_name=character.name,
-                text=canonical_text,
+                text=action_text,
+                actor_user_id=acting_context.actor_user_id, actor_is_keeper=actor_is_keeper,
                 resolved_location=resolved_location,
                 speaker_role="player",
                 conversation_id=conversation_id,
@@ -252,7 +250,7 @@ async def _dispatch_sudo_locked(
         if parsed.command == "act":
             return await _run_sudo_act_locked(
                 conversation_id, acting_context, parsed, state,
-                marker_reply, send_dm, marker_image, send_dm_image,
+                marker_reply, send_dm, marker_image, send_dm_image, actor_is_keeper=is_keeper,
             )
 
         if parsed.command == "check":
@@ -320,7 +318,8 @@ async def _dispatch_sudo_locked(
             return "success" if result else "rejected"
         if parsed.command in {"showpage", "where", "enter", "leavemap"}:
             result = await map_handler.handle_map_command(
-                conversation_id, acting_context.subject_user_id, marker_reply, marker_image, player_parts
+                conversation_id, acting_context.subject_user_id, marker_reply, marker_image, player_parts,
+                send_dm=send_dm, send_dm_image=send_dm_image, actor_user_id=acting_context.actor_user_id, actor_is_keeper=is_keeper,
             )
             return "success" if result else "rejected"
         raise _SudoDenied("forbidden_command")
@@ -403,7 +402,7 @@ async def _handle_sudo_command(
 def is_known_coc_command(subcommand: str) -> bool:
     """Return whether Discord should route this `/coc` subcommand to a handler."""
     normalized = subcommand.casefold()
-    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck", "sudo", "correct", "funds", "purchase", "purchases"}
+    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck", "sudo", "correct"}
 
 
 async def handle_text_message(
@@ -423,12 +422,19 @@ async def handle_text_message(
     expected_revision: int | None = None,
     referenced_message_id: str | None = None,
 ) -> None:
-    with observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
-        await _handle_text_message_impl(
-            conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-            send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
-            post_turn_hook, expected_revision, referenced_message_id,
-        )
+    observability.event("turn.entry", entry="sudo" if text.startswith("/coc sudo ") else "command" if text.startswith("/coc ") else "ordinary")
+    if mutation_admission.is_held(conversation_id) and not mutation_admission.command_is_read_only(text):
+        await reply(mutation_admission.NOTICE)
+        return
+    try:
+        with mutation_admission.command_scope(text), observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
+            await _handle_text_message_impl(
+                conversation_id, user_id, get_display_name, reply, send_dm, send_image,
+                send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
+                post_turn_hook, expected_revision, referenced_message_id,
+            )
+    except mutation_admission.MutationHeld:
+        await reply(mutation_admission.NOTICE)
 
 
 _QUEUE_ACK_DELAY_SECONDS = 10.0
@@ -680,15 +686,6 @@ async def _handle_text_message_impl(
             parts[1] = parts[1].casefold()
         sub = parts[1] if len(parts) > 1 else "help"
 
-        if sub in {"funds", "purchase", "purchases"}:
-            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
-                                              route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
-                if not await _help_revision_matches(conversation_id, expected_revision, reply):
-                    return
-                await purchase_handler.handle(conversation_id, user_id, reply, parts, is_keeper)
-            return
-
         if sub == "combat":
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
@@ -743,7 +740,8 @@ async def _handle_text_message_impl(
                                               speaker_role="keeper" if is_keeper else "player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
-                await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts)
+                await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts,
+                                                     send_dm=send_dm, send_dm_image=send_dm_image)
             return
 
         async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
@@ -819,7 +817,7 @@ async def _handle_ordinary_text_message_locked(
             return
         display_name = active_character.name
         speaker_role = "player"
-        resolved_location = await asyncio.to_thread(_resolve_map_action_transaction, conversation_id, user_id, text)
+        resolved_location = None
 
     async with locks.get_keeper_turn_lock(conversation_id):
         with observability.context(turn_id=observability.new_id("turn")):

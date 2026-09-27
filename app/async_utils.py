@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from app import observability
+from app.services import mutation_admission
 
 _logger = logging.getLogger(__name__)
 _background_tasks: dict[asyncio.AbstractEventLoop, set[asyncio.Future[Any]]] = {}
@@ -58,18 +59,23 @@ async def wait_for_background_tasks(timeout: float) -> None:
     exception; this shutdown hook additionally gives those workers a bounded
     chance to finish before the event loop is closed.
     """
-    registry = _background_tasks.get(asyncio.get_running_loop())
-    if not registry:
-        return
+    registry = _background_tasks.get(asyncio.get_running_loop(), set())
     tasks = tuple(task for task in registry if not task.done())
-    if not tasks:
-        return
-    _, pending = await asyncio.wait(tasks, timeout=timeout)
-    if pending:
+    started = asyncio.get_running_loop().time()
+    pending: set[asyncio.Future[Any]] = set()
+    if tasks:
+        _, pending = await asyncio.wait(tasks, timeout=timeout)
+    # A Task may already be cancelled while its thread is still running.
+    # Give actual owners the remainder of the same bounded shutdown budget.
+    while mutation_admission.outstanding_workers() and asyncio.get_running_loop().time() - started < timeout:
+        await asyncio.sleep(min(0.01, max(0, timeout - (asyncio.get_running_loop().time() - started))))
+    workers = mutation_admission.outstanding_workers()
+    if pending or workers:
         observability.event(
             "async.background_task.shutdown_degraded",
             level=logging.ERROR,
             status="timeout",
             pending_count=len(pending),
+            running_worker_count=workers,
             timeout_ms=timeout * 1000,
         )

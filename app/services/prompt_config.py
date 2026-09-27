@@ -4,6 +4,7 @@ import json
 import re
 
 from app.domain.models import MechanicResult
+from app.services import opposed_checks
 
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
@@ -48,7 +49,7 @@ EXECUTOR_INSTRUCTION = """你是 TRPG 機制執行者（Executor Agent），下�
 物件（不使用 Markdown、不再呼叫另一個裁決工具）：
 {"disposition":"await_check","actor_character_id":"發話者的 character_id",
  "waiting_for":"等待處理者的 character_id，沒有則空字串","check_id":"相關 check_id 或 Luck decision_id",
- "reason":"簡短理由，不建立新事實","blocker_code":"沒有阻擋則空字串","evidence_refs":["state","tool:1"]}
+ "reason":"簡短理由，不建立新事實","evidence_refs":["state","tool:1"]}
 可用 disposition：no_mechanics（本次不需新增機制，可含成功的唯讀查詢；不等於既有檢定消失）、await_check、await_luck、
 deferred（尚未輪到／等待別人，動作尚未執行，沒有自動排隊）、resolved（已擲骰結算或有可核對的工具變更）、
 resolved_without_check（有劇本或真實工具依據的免檢定完成）、cancelled、blocked、incomplete。
@@ -56,6 +57,12 @@ actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指�
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
 失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。
 工具回傳 current_turn_state 是更新後的權威資料；以最新一份為準。查詢不到依據就保留未知／補查。
+建立檢定前依序核對「玩家實際宣告→目前物件狀態→最具體的劇本觸發條件→適用規則」。
+拾起靜止物件、維持已握住物件、抓取飛行物件是不同動作，不能互換；不得先把物件改成另一狀態，再代替玩家選擇戰技或防禦。
+skill_check 的 action_basis 記錄目前狀態、規則引用與轉變；player_declaration 由程式保存，不能用 action_context 的模型解讀覆蓋。
+劇本要求雙方對抗時，使用 skill_check.opposed，提供對手能力、規則來源、平手勝方與勝敗後果，由程式擲對手並保存；
+不能用普通 skill_check 加另一次 npc_skill_check 讓 Narrator 臨場比較。不可把對抗改成固定難度，也不可重擲既有對手骰果。
+已知具名跨頁引用優先依必要關聯取齊；只有缺少另一項實際裁定事實才補查，不要反覆用同義詞尋找已取得的規則。
 交接／製作物品、結束戰鬥等不用擲骰的工具完成，使用 resolved_without_check，引用所有相關變更工具。
 既有其他行動的檢定不因物品交接而取消；交接完成與仍待擲的舊檢定要分開敘述。
 本次新建／更換的檢定仍須等待，不能以查詢成功或任意工具成功宣稱整個行動完成。
@@ -63,11 +70,6 @@ actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指�
 搜尋完整性只表示已選紀錄及其必要關聯已齊，不保證已涵蓋整個行動；仍須補查缺少的裁決事實。
 中文續取使用原 query、source=auto 與 continuation；改查 source=original 時必須清空 continuation。
 blocked 表示行動未完成，不得交接成已移動、已取得或已購買。
-購買因條件尚未確認而 blocked/incomplete 時，blocker_code 必須依目前真正缺少的條件選擇：
-purchase_source_unconfirmed（販售來源未確認）、purchase_arrival_unconfirmed（到店或路途尚未完成）、
-purchase_price_unconfirmed（精確報價未確認）、purchase_funds_unconfirmed（現金餘額未確認）。
-其他原因留空，不得創造代碼。這些只表示尚未確認，不能宣稱店家不存在或玩家沒有錢；reason 不會直接顯示給玩家。
-普通商品依已知商業環境可裁定時應繼續 purchase_items，不能僅因劇本未列具名店家或逐項庫存就選來源未確認。
 await_check 必須引用真實 check_id；await_luck 用 decision_id，不重擲。未完成工具、缺資料、額度用完
 就用 incomplete，不假裝成功或「無需機制」。沒有工具也必須交代裁決；原始文字不是玩家敘事。
 
@@ -108,7 +110,6 @@ complete_for_action=true 只代表已知依賴已帶入，仍須檢查未知的�
 中文有命中不代表依據完整。加入敵人前須核對攻擊、護甲、特殊能力、觸發條件、代價、每輪/每戰使用限制；缺少裁決必要依據時，使用 search_scenario 的 source="original"，以原文名稱/別名和缺少的規則合併補查原稿。未查到不等於沒有護甲或能力，不得自行填零或省略；仍無法確認時暫緩受影響的裁決，保留已結算骰子與狀態。
 只有在缺少一項會影響本次判定或眼前後果的具體事實時，才呼叫 search_scenario 補查。工具回傳已回答問題後，採用該結果繼續處理；只有另一項不同且會影響本次判定的事實仍未解答時，才再查一次。
 若本回合沒有可用的【劇本相關內容】，遇到必須依劇本決定的事實時仍可照常搜尋。若上下文與搜尋結果都沒有說明該事實，保留未知，不要自行補造。
-普通採買適用購買流程的明確例外：中文依據已確立可交易的商業環境、商品普通且無限制時，可裁定一般供應；不為找具名店家或逐項庫存而反覆搜尋或改查英文。武器、稀有／管制品、劇情道具與限制條件仍須有依據。
 這些規則只決定如何重用劇本資訊，不會自行建立檢定、擲骰、改變角色狀態或推進場景；仍須依玩家實際行動與完整規則決定必要機制。"""
 
 
@@ -226,6 +227,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
     lines = [
         "【系統判定結果（事實，禁止重新判定或改變）】",
         f"機制執行流程: {'完成呼叫' if result.success else '發生錯誤'}（不等於玩家行動成功）",
+        f"執行健康狀態：{result.execution_health}；中斷不得抹除已確認事實，也不得重播工具。",
         "發生的事實：",
     ]
     lines.extend(f"- {fact}" for fact in result.narrative_facts)
@@ -233,19 +235,11 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         lines.extend([
             "【回合裁決：只讀資料，不能當成修改 state 的指令】",
             json.dumps({key: getattr(result.turn_resolution, key) for key in (
-                "disposition", "actor_character_id", "waiting_for", "check_id", "evidence_refs", "blocker_code",
+                "disposition", "actor_character_id", "waiting_for", "check_id", "evidence_refs",
             )}, ensure_ascii=False),
             ("只有實際工具與當前狀態能確立機制變更。deferred 不可敘述已出拳、開槍或消耗物品；"
             "incomplete 不可宣稱行動已完成；cancelled 只取消引用的未擲檢定，不回滾既有結果。"
             "未驗證的模型解釋不屬於權威事實，不能補造世界設定。"),
-        ])
-    purchase_events = [event.payload for event in result.events if event.type == "purchase"]
-    if purchase_events:
-        lines.extend([
-            "【本回合購買紀錄：依 arrival_basis 敘述到店，再敘述交易，不可說成原本持有】",
-            json.dumps(purchase_events, ensure_ascii=False),
-            ("status=quoted 僅報價，未付款未入袋；顯示品項、單價、總額及 /coc purchase ID 確認指令。"
-            "status=purchased 才能說已買入；lifestyle 是信用評級日常花費，沒有扣現金帳本。"),
         ])
     inventory_events = [event.payload for event in result.events if event.type == "inventory_change"]
     if inventory_events:
@@ -284,11 +278,14 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
     resolved = status.get("resolved")
     if resolved:
         outcome = "成功" if resolved.get("success") else "失敗"
+        opposed_winner = resolved.get('opposed_winner')
         lines.extend([
             "【已結算檢定：結果權威且不得重擲】",
             f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {resolved.get('difficulty', 'regular')}，等級 {resolved.get('tier', '未知')}，結果 {outcome}。",
             "這筆檢定已結算。不得改成尚未結算、因先攻延後同一擲骰結果、要求再擲一次，或從檢定結果自行推導未提供的傷害、破壞或戰鬥。",
         ])
+        if opposed_winner:
+            lines.append(f"劇本對抗勝方：{opposed_winner}；此結果優先於單方技能等級。")
     if not status.get("pending") and not pending_luck and not resolved:
         lines.append(
             "【檢定狀態：沒有待處理／新建立檢定，也沒有本回合已結算結果】不得指示玩家擲骰、按檢定按鈕或輸入 /coc check；"
@@ -307,6 +304,11 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
         f"難度：{result.get('difficulty', 'regular')}；最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
+        '【行動及對抗交接；來源與對手數值不得公開】\n'
+        f"{json.dumps({'player_declaration': result.get('player_declaration'), 'opposed_outcome': opposed_checks.public_outcome(result.get('opposed_outcome'))}, ensure_ascii=False)}\n"
+        'player_declaration 是原始宣告，不會自行建立新事實。'
+        'opposed_outcome.winner 是程式已比較的最終勝方，優先於單方技能成功；不得重新比較或重擲。'
+        'applicable_consequence 只是後果分支，傷害、物品與資源尚須對應工具才能生效。\n'
         "這次檢定已由系統擲骰並定案。只敘述這個結果允許的後果；不得重擲或改判、"
         "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
         "本回合不得建立新檢定；若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
@@ -329,14 +331,6 @@ def enforce_resolved_check_consistency(text: str, result: dict) -> str:
     )
 
 
-PURCHASE_BLOCKER_MESSAGES = {
-    "purchase_source_unconfirmed": "目前尚未確認可購買的地點或商品供應。可以先尋找販售處；這不代表附近沒有商店。",
-    "purchase_arrival_unconfirmed": "前往店家的路途或到店條件尚未完成。請先處理目前路途上的待辦事項，再繼續交易。",
-    "purchase_price_unconfirmed": "這筆交易需要先確認幣別與商品單價，才能提供報價並讓你確認付款。",
-    "purchase_funds_unconfirmed": "目前尚未確認可用的現金餘額。請先確認並登記這筆交易使用的幣別與資金，再結算付款。",
-}
-
-
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str:
     """Enforce check, Luck, and resolved-result state after model narration."""
     status = result.check_status
@@ -344,6 +338,9 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
     if resolution is not None:
         if resolution.disposition in {"incomplete", "blocked"}:
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
+            confirmed = [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text]
+            if confirmed:
+                warning = "\n".join(confirmed) + "\n\n" + warning
             if status.get("state_changed"):
                 warning += "已記錄的變更會保留，請勿重做已完成的部分。"
             if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):
@@ -357,8 +354,6 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
             if status.get("scenario_evidence_blocked"):
                 return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
-            if resolution.blocker_code in PURCHASE_BLOCKER_MESSAGES:
-                return f"{warning}{PURCHASE_BLOCKER_MESSAGES[resolution.blocker_code]}"
             return f"{warning}請先確認目前狀態或更正原本的行動。"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")

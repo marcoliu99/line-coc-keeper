@@ -208,8 +208,6 @@ class Character:
                 f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
                 for name, w in self.weapons.items()
             ))
-        if self.cash_balances:
-            lines.append("現金：" + "、".join(f"{currency} {amount // 100}.{amount % 100:02d}" for currency, amount in self.cash_balances.items()))
         if self.carried_items:
             lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:
@@ -921,6 +919,10 @@ class GroupState:
     current_map_page: dict[str, str] = field(default_factory=dict)  # owner_id -> page key
     current_room_id: dict[str, str] = field(default_factory=dict)  # owner_id -> room id
     party_facing: dict[str, str] = field(default_factory=dict)  # owner_id -> compass, default "N" when absent
+    request_segment_audit: list[dict[str, Any]] = field(default_factory=list)
+    narrative_locations: dict[str, str] = field(default_factory=dict)
+    arrival_events: list[dict[str, Any]] = field(default_factory=list)
+    movement_continuations: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # A pending player-owned check requested by Keeper. In the default mode the
     # player resolves it with /coc check or a Discord button; autoroll mode
@@ -1153,6 +1155,10 @@ class GroupState:
             "current_map_page": self.current_map_page,
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
+            "request_segment_audit": self.request_segment_audit,
+            "narrative_locations": self.narrative_locations,
+            "arrival_events": self.arrival_events,
+            "movement_continuations": self.movement_continuations,
             "pending_checks": self.pending_checks,
             "resolved_check_events": self.resolved_check_events,
             "autoroll_checks": self.autoroll_checks,
@@ -1243,6 +1249,10 @@ class GroupState:
             current_map_page=data["current_map_page"] if isinstance(data.get("current_map_page"), dict) else {},
             current_room_id=data["current_room_id"] if isinstance(data.get("current_room_id"), dict) else {},
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
+            request_segment_audit=[e for e in data.get("request_segment_audit", [])[-20:] if isinstance(e, dict)] if isinstance(data.get("request_segment_audit", []), list) else [],
+            narrative_locations=data.get("narrative_locations", {}) if isinstance(data.get("narrative_locations", {}), dict) else {},
+            arrival_events=[e for e in data.get("arrival_events", [])[-40:] if isinstance(e, dict)] if isinstance(data.get("arrival_events", []), list) else [],
+            movement_continuations=data.get("movement_continuations", {}) if isinstance(data.get("movement_continuations", {}), dict) else {},
             pending_checks=data.get("pending_checks", {}),
             resolved_check_events=(
                 [dict(item) for item in data.get("resolved_check_events", [])[-20:] if isinstance(item, dict)]

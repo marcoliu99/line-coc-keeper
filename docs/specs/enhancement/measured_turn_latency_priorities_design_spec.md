@@ -322,15 +322,24 @@ Before the Executor, for the acting player only:
 | another player's turn | unchanged; the decision is per-user |
 | KP or sudo | unchanged in this work package |
 
-### 5.4 Pure roleplay passes through
+### 5.4 The router decides what is blocked, not this work package
 
-This was raised as a decision needing sign-off, on the assumption that blocking in-character speech would be a real cost to play. Reading the classifier closes it instead.
+This was raised as a decision needing sign-off, on the assumption that blocking in-character speech would cost play. Two things closed it.
 
-`intent_router` returns `PURE_ROLEPLAY` for exactly three inputs: an empty message, one of nine exact confirmations (`好`, `ok`, `嗯`, `知道`, `了解`, `收到`, `沒問題`, `是的`, `對`), or a message wholly wrapped in parentheses. Everything else falls through to `GAMEPLAY_ACTION`, which is the default. Prose a player would recognise as in-character speech is classified as a gameplay action and is blocked either way.
+First, the classifier it was reasoned about no longer exists. #99 replaced it with `route_request`, which returns a `RouteDecision` and adds `PLAYER_OOC` alongside `PURE_ROLEPLAY` and `GAMEPLAY_ACTION`. The gate now reuses the decision the Supervisor already computes rather than a helper of its own, and only fires on `GAMEPLAY_ACTION`:
 
-Across all 17 recorded logs, 206 classifications, `PURE_ROLEPLAY` occurs **0 times**: 199 `GAMEPLAY_ACTION` and 7 `RESOLVED_CHECK_FOLLOWUP`. The branch is close to unreachable in practice.
+```text
+我往樓梯走過去        GAMEPLAY_ACTION   answered from state
+好                    PURE_ROLEPLAY     ordinary turn
+（等我想一下）        GAMEPLAY_ACTION   answered from state — bare parentheses are IC
+(ooc: 等我想一下)     PLAYER_OOC        ordinary turn, on #99's OOC path
+為什麼要擲骰          PLAYER_OOC        ordinary turn — a rules question gets an answer
+我的角色卡有什麼技能  PLAYER_OOC        ordinary turn
+```
 
-It is still gated on the classifier, because answering `（等我想一下）` with a Luck prompt would be a wrong reply, and because `classify_text` is rule-based and costs nothing. No sign-off is needed; the two options differ on inputs that have never been observed.
+That is a better outcome than the version this document first specified: a player asking why they must roll now receives an answer instead of a Luck prompt.
+
+Second, on the old classifier the question was close to moot anyway — across 17 recorded logs and 206 classifications, `PURE_ROLEPLAY` occurred zero times. Those logs predate #99, so they say nothing about how often `PLAYER_OOC` will fire; that is worth re-measuring with WP1's script once #99 has run in play.
 
 ### 5.5 Acceptance
 

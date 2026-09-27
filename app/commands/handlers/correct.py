@@ -15,6 +15,7 @@ from app import db
 from app.legacy_commands import Reply
 from app.models import GroupState
 from app.repositories.group_state import load_state, save_state
+from app.services import mutation_admission
 from app.services.narrative_corrections import target_receipt
 
 _MESSAGE_URL = re.compile(r"^https://(?:canary\.|ptb\.)?discord\.com/channels/\d+/\d+/(\d+)$")
@@ -64,6 +65,7 @@ def _save(state: GroupState) -> None:
     save_state(state, reason="narrative_correction", mutate_tx=archive)
 
 
+@mutation_admission.guard_async_entry
 async def handle_correct_command(
     conversation_id: str,
     user_id: str,

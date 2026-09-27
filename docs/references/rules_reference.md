@@ -18,6 +18,6 @@ DEX order, distinct NPC cards, armor, attacks, abilities, turn/round effects, da
 
 No fully general paired-player opposed-check coordinator, combined-skill single-roll tool, grapple/disarm Build engine, or complete automatic surprise/outnumbered rules engine is claimed. Difficulty selection, investigation pacing and many availability judgments still depend on Keeper interpretation. Supported special abilities do not imply every published spell is implemented.
 
-## Possessions and money
+## Possessions and acquisition
 
-Mundane personal items may be permitted by narrative policy. Important acquisitions need evidence. Purchases now support lifestyle receipts or confirmed cash quotes with atomic debit/acquisition; this is not a general economic simulation or automatic asset-sale system.
+Mundane personal items may be permitted by narrative policy. Important acquisitions need scenario or established-scene evidence. Travel, availability, provenance and legality remain Keeper judgments. Credit Rating, lifestyle, price and cash do not gate acquisition; there is no active quote, debit or purchase receipt system.

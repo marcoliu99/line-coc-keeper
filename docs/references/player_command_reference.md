@@ -68,20 +68,6 @@ Examples:
 
 Visibility: only when a scenario is loaded.
 
-### Confirm purchase
-
-Settle payment and acquisition according to the displayed quote.
-
-Usage:
-- `/coc purchase 報價ID`
-
-### View purchases
-
-View cash, pending quotes and recent purchases.
-
-Usage:
-- `/coc purchases`
-
 ### Release active character
 
 Remove the active character binding while retaining historical character data.
@@ -514,13 +500,6 @@ Usage:
 
 Notes:
 - Requires the current KP Assistant or Discord Keeper role.
-
-### Register cash balance **[KP-only]**
-
-Record confirmed currency and balance; never infer cash from Credit Rating.
-
-Usage:
-- `/coc funds 角色名稱 幣別 餘額`
 
 ### Register KP Assistant
 

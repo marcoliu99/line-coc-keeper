@@ -1,5 +1,7 @@
 # 原子敘事購買與取得來源
 
+狀態：歷史紀錄；已由 `revert/pr91` 回退。參見[回退規格](revert_pr91_purchase_turn_design_spec_zh.md)。
+
 [English](purchase_turn_provenance_design_spec.md) | [文件索引](../../README_zh.md)
 
 ## 狀態與範圍

@@ -157,10 +157,30 @@ def transaction() -> Iterator[sqlite3.Connection]:
         yield conn
 
 
-def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> None:
+def _admit_group_write(conn, table: str, key: str, value: Any = None, *, validate_source: bool = True) -> None:
+    group_id = key if table in {"group_states", "memory_chunks"} else (
+        value.get("group_id") or value.get("conversation_id")
+        if table in {"scene_digests", "state_checkpoints", "characters"} and isinstance(value, dict) else None
+    )
+    if group_id:
+        from app.services import mutation_admission
+        key = group_id
+        row = conn.execute("SELECT data FROM group_states WHERE key = ?", (key,)).fetchone()
+        current = json.loads(row[0]) if row else None
+        timeline = current.get("timeline_id", "") if current else ""
+        mutation_admission.assert_admitted(key, timeline_id=timeline)
+        if validate_source and table == "scene_digests" and current is not None and (
+            value.get("timeline_id") != (timeline or f"legacy-{key}")
+            or value.get("state_revision", 0) != current.get("state_revision", 0)
+        ):
+            raise mutation_admission.MutationHeld("derived snapshot source changed before commit")
+
+
+def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> int:
     """Same upsert as set_json, but writes through an already-open
     connection (from transaction() above) instead of opening/closing its
     own — for batching several writes into one transaction."""
+    _admit_group_write(conn, table, key, value)
     table = _validate_table(table)
     payload = json.dumps(value, ensure_ascii=False)
     conn.execute(
@@ -168,6 +188,7 @@ def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> N
         "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
         (key, payload),
     )
+    return len(payload.encode("utf-8")) if table == "group_states" else 0
 
 
 def get_json(table: str, key: str) -> Any | None:
@@ -187,6 +208,7 @@ def set_json(table: str, key: str, value: Any) -> None:
         table = _validate_table(table)
         payload = json.dumps(value, ensure_ascii=False)
         with _connect() as conn:
+            _admit_group_write(conn, table, key, value)
             conn.execute(
                 f"INSERT INTO {table} (key, data, updated_at) VALUES (?, ?, datetime('now')) "  # nosec B608
                 "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
@@ -197,6 +219,7 @@ def set_json(table: str, key: str, value: Any) -> None:
 def delete_json(table: str, key: str) -> None:
     table = _validate_table(table)
     with _connect() as conn:
+        _admit_delete(conn, table, key)
         conn.execute(f"DELETE FROM {table} WHERE key = ?", (key,))  # nosec B608
 
 
@@ -220,8 +243,15 @@ def list_json(table: str, *, prefix: str | None = None) -> list[tuple[str, Any]]
     return [(key, json.loads(data)) for key, data in rows]
 
 
+def _admit_delete(conn, table: str, key: str) -> None:
+    if table in {"group_states", "memory_chunks", "characters", "scene_digests", "state_checkpoints"}:
+        row = conn.execute(f"SELECT data FROM {table} WHERE key = ?", (key,)).fetchone()  # nosec B608
+        _admit_group_write(conn, table, key, json.loads(row[0]) if row else None, validate_source=False)
+
+
 def delete_json_tx(conn: sqlite3.Connection, table: str, key: str) -> None:
     table = _validate_table(table)
+    _admit_delete(conn, table, key)
     conn.execute(f"DELETE FROM {table} WHERE key = ?", (key,))  # nosec B608
 
 

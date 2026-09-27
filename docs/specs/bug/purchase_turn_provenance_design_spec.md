@@ -1,5 +1,7 @@
 # Atomic narrative purchases and acquisition provenance
 
+Status: historical; reverted by `revert/pr91`. See [rollback design](revert_pr91_purchase_turn_design_spec.md).
+
 [繁體中文](purchase_turn_provenance_design_spec_zh.md) | [Docs index](../../README.md)
 
 ## Status and scope

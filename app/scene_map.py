@@ -12,7 +12,7 @@ passages as edges carrying an absolute compass direction — so "what's through
 the door to the player's right" becomes a dict lookup the code performs
 *before* ever calling the LLM, not a re-derivation the LLM has to get right
 from paragraphs of text on every turn. The Keeper is then handed the already-
-resolved destination and told not to override it (see app/keeper.py's
+candidate destination for adjudication; graph lookup does not commit arrival (see app/keeper.py's
 `resolved_location` prompt block and app/commands.py's use of resolve_move).
 
 Deliberately out of scope for this first pass: non-compass exits like
@@ -277,8 +277,7 @@ def import_node_graph(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     terrain) are folded into the exit's label text rather than silently
     dropped. `adjacent` entries carry no direction at all, so they can't
     become a traversable exit — folded into the room's description as a
-    "鄰近地點" line instead; still reachable in play via find_room_by_text's
-    name-based fallback, just not via directional movement.
+    "鄰近地點" line instead; available as name candidates; they do not authorize teleportation or prove passage.
 
     Returns (scene_map, warnings) — warnings for anything skipped (an
     unrecognized direction word, a malformed connection), never a hard

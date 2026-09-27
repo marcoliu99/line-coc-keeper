@@ -79,13 +79,29 @@ class PendingLuckShortCircuitTests(unittest.TestCase):
             _run(_state(luck={"u1": LUCK}, checks={"u2": {"check_id": "c2"}}))
         self.assertEqual(str(caught.exception), "build_context ran")
 
-    def test_pure_roleplay_is_not_answered_from_state(self):
-        # "好" and parenthesised text are the classifier's only non-gameplay
-        # inputs; answering them with a Luck prompt would be a wrong reply.
-        for text in ("好", "（等我想一下）"):
-            with self.subTest(text=text), self.assertRaises(AssertionError) as caught:
-                _run(_state(luck={"u1": LUCK}), text=text)
-            self.assertEqual(str(caught.exception), "build_context ran")
+    def test_non_gameplay_input_is_not_answered_from_state(self):
+        """Answering a rules question or an acknowledgement with a Luck prompt
+        would be a wrong reply, so the gate only fires on GAMEPLAY_ACTION.
+
+        Which inputs those are is `intent_router`'s call, not this module's:
+        a bare parenthesis is IC and does get blocked, while `ooc:` and
+        rules/self questions route to PLAYER_OOC and keep their own path.
+        """
+        for text in ("好", "為什麼要擲骰", "我的角色卡有什麼技能", "(ooc: 等我想一下)"):
+            with self.subTest(text=text):
+                # Every stage past the gate raises, so reaching any of them
+                # proves the turn was not answered from state.
+                with self.assertRaises(AssertionError) as caught:
+                    _run(_state(luck={"u1": LUCK}), text=text)
+                self.assertIn(str(caught.exception), {"build_context ran", "narrator ran"})
+
+    def test_short_circuit_follows_the_router_not_a_local_rule(self):
+        from app.agents import intent_router
+
+        blocked = intent_router.route_request("我往樓梯走過去", "player").intent
+        allowed = intent_router.route_request("為什麼要擲骰", "player").intent
+        self.assertEqual(blocked, "GAMEPLAY_ACTION")
+        self.assertNotEqual(allowed, "GAMEPLAY_ACTION")
 
     def test_kp_assistant_is_not_answered_from_state(self):
         with self.assertRaises(AssertionError) as caught:

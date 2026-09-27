@@ -16,7 +16,7 @@ Keep a consistent persona and focus on one actionable scene beat. Respect initia
 
 ## Corrections and purchases
 
-Use /coc correct for out-of-game reports. Allegations remain lower-trust data until authorized adjudication. Purchases require supported arrival/stock; lifestyle receipts or confirmed cash settlement establish acquisition. New inventory is not evidence that the item was owned earlier.
+Use /coc correct for out-of-game reports. Allegations remain lower-trust data until authorized adjudication. Purchases require supported arrival and available goods; Credit Rating and cash do not gate them. Register an established lasting possession with `add_carried_item`. New inventory is not evidence that the item was owned earlier.
 
 ## Runtime authority
 
