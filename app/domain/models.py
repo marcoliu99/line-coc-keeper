@@ -33,6 +33,7 @@ class TurnResolution:
     check_id: str = ""
     reason: str = ""
     evidence_refs: list[str] = field(default_factory=list)
+    validation_code: str = ""
 
 
 @dataclass

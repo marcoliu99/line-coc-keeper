@@ -91,7 +91,10 @@ _ATTR_ALIASES = {
     "LUCK": "luck", "幸運": "luck",
 }
 
+from app.services import purchases
+
 TOOLS = [
+    purchases.TOOL,
     {
         "name": "roll_dice",
         "description": (
@@ -1921,6 +1924,14 @@ def _execute_tool(
                 "error": "KP Assistant turn 只能使用已允許的查詢與主持流程工具，不能直接修改角色 deterministic state 或執行尚未開放的 administrative mutation。",
             }
 
+        if name == "purchase_items":
+            if tool_input.get("_owner_id") != getattr(find_character(state, tool_input.get("investigator", "")), "owner_id", None):
+                return {"ok": False, "error": "只能替目前行動角色購買。"}
+            def _purchase(latest):
+                result = purchases.prepare(latest, tool_input, tool_input.get("_turn_key", ""))
+                return _StateMutation(result, should_save=not result.get("duplicate", False))
+            return _mutate_and_save_state(state, _purchase)
+
         if name == "roll_dice":
             roll_result = dice.roll_expression(tool_input["expression"])
             return {
@@ -3339,13 +3350,22 @@ def _build_static_prompt(state: GroupState) -> str:
 - 正式戰鬥中的 NPC 隊友（用 add_npc_to_combat 加入、is_ally 設 true）跟敵人一樣照先攻順位輪流行動，
   即使當下鏡頭焦點在玩家角色身上，也不能讓隊友原地發呆不做事——輪到他們時照樣要有動作、擲骰、反應。
 
+# 購買流程
+- 玩家說「前往購買」不是已持有物品。先依劇本／已確立劇情裁定路途及到店，再決定商品是否可取得；查不到店家不代表能創造店家。
+- 不需要地圖或房間 ID，也不強迫多一回合：已能確認抵達及費用時，一次 purchase_items 提交到店依據、商品、信用評級負擔理由，原子結算入袋。
+- 尚未抵達、有未完成路途事件／檢定、無法確認販售來源時先停下，不得憑購買意圖假造抵達。
+- 購買只能使用 purchase_items，不能用 add_carried_item 分開入袋；後者只用於非購買取得物品。
+- lifestyle 表示費用納入可負擔的日常花費，不可敘述扣了精確現金。cash 提供幣別及逐項單價，報價尚未成交；請玩家用 /coc purchase 報價ID 確認。
+- 缺少現金餘額需 KP 用 /coc funds 登記，不可猜測；價格不明先詢問／查劇本。
+- Narrator 必須按到店→交易→取得敘事，新買入不是原本已持有。報價不等於扣款或入袋。
+
 # 攜帶物合理性審查
 - 這是一致性與代入感的審查，不是記帳——只審查**貴重／稀有／管制或違法／跟戰鬥相關**的物品；角色生活水準內的日常小物
   （筆記本、小刀、火柴、一般衣物、零錢）一律直接放行，不要為了瑣碎小事就搬出下面這套規則變成規則說教。
 - 落在審查範圍內的物品，用下面四項檢查：(1) **年代／科技**——這個時代/地區真的買得到嗎（1920 年代劇本不該有半自動
   武器、無線電、抗生素這類還沒發明或還不普及的東西）；(2) **來源**——角色的職業、背景、執照，或先前劇情要能解釋
   他為什麼有這個東西（醫生帶醫藥包合理，一般職員突然有一把衝鋒槍不合理）；(3) **負擔能力**——大致對照角色的
-  「信用評級」技能值判斷買不買得起，不用真的記帳算現金；(4) **合法性／地域**——管制或違法物品需要合法來源、
+  「信用評級」技能值判斷買不買得起，日常費用用生活水準裁定，需要精確扣款則使用已確認的現金帳本；(4) **合法性／地域**——管制或違法物品需要合法來源、
   黑市門路，或劇本設定的地點真的買得到。四項都過才允許；有一項不過，就用劇情擋下來、換成合理的替代品，
   或標成「需要在劇情中取得」變成一個小目標，不要直接沒收或直接說教式拒絕。
 - 玩家說「我掏出我的 X」「我包包裡有 Y」時：角色卡（攜帶物品欄位）已經登記過的，直接算他有，繼續劇情；沒登記過但

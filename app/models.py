@@ -162,6 +162,7 @@ class Character:
     # see docs/references/carry_audit.md for that (still unimplemented);
     # this is just "what's the current list", added/removed via keeper.py's
     # add_carried_item/remove_carried_item tools.
+    cash_balances: dict[str, int] = field(default_factory=dict)  # integer hundredths, never inferred
     carried_items: list[str] = field(default_factory=list)
     notes: str = ""
     key_connection: str = ""  # "關鍵背景連結★" — a person/place/object this character
@@ -207,6 +208,8 @@ class Character:
                 f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
                 for name, w in self.weapons.items()
             ))
+        if self.cash_balances:
+            lines.append("現金：" + "、".join(f"{currency} {amount // 100}.{amount % 100:02d}" for currency, amount in self.cash_balances.items()))
         if self.carried_items:
             lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:
@@ -986,6 +989,7 @@ class GroupState:
     staged_pdf_parts: list[dict[str, str]] = field(default_factory=list)
     established_facts: list[dict[str, Any]] = field(default_factory=list)
     known_clues: list[dict[str, Any]] = field(default_factory=list)
+    commerce: dict[str, Any] = field(default_factory=dict)
     consumed_or_removed_items: list[dict[str, Any]] = field(default_factory=list)
     # Durable audit markers for a state-changing tool whose caller was
     # cancelled after the grace period expired. The mutation may have
@@ -1162,6 +1166,7 @@ class GroupState:
             "staged_pdf_parts": self.staged_pdf_parts,
             "established_facts": self.established_facts,
             "known_clues": self.known_clues,
+            "commerce": self.commerce,
             "consumed_or_removed_items": self.consumed_or_removed_items,
             "tool_recovery_markers": self.tool_recovery_markers,
         }
@@ -1259,6 +1264,7 @@ class GroupState:
             staged_pdf_parts=data.get("staged_pdf_parts", []),
             established_facts=data.get("established_facts", []),
             known_clues=data.get("known_clues", []),
+            commerce=data.get("commerce", {}),
             consumed_or_removed_items=data.get("consumed_or_removed_items", []),
             tool_recovery_markers=data.get("tool_recovery_markers", []),
         )

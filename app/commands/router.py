@@ -12,6 +12,7 @@ from app.commands.handlers import character as character_handler
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import map_handler
+from app.commands.handlers import purchase as purchase_handler
 from app.commands.handlers import system as system_handler
 from app.legacy_commands import (
     FormatMention,
@@ -401,7 +402,7 @@ async def _handle_sudo_command(
 def is_known_coc_command(subcommand: str) -> bool:
     """Return whether Discord should route this `/coc` subcommand to a handler."""
     normalized = subcommand.casefold()
-    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck", "sudo", "correct"}
+    return normalized in _CHARACTER_COMMANDS | _SYSTEM_COMMANDS | _MAP_COMMANDS | {"combat", "check", "luck", "sudo", "correct", "funds", "purchase", "purchases"}
 
 
 async def handle_text_message(
@@ -618,6 +619,13 @@ async def _handle_text_message_impl(
         if len(parts) > 1:
             parts[1] = parts[1].casefold()
         sub = parts[1] if len(parts) > 1 else "help"
+
+        if sub in {"funds", "purchase", "purchases"}:
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                    return
+                await purchase_handler.handle(conversation_id, user_id, reply, parts, is_keeper)
+            return
 
         if sub == "combat":
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):

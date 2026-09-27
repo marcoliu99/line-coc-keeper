@@ -49,7 +49,7 @@ EXECUTOR_INSTRUCTION = """你是 TRPG 機制執行者（Executor Agent），下�
 {"disposition":"await_check","actor_character_id":"發話者的 character_id",
  "waiting_for":"等待處理者的 character_id，沒有則空字串","check_id":"相關 check_id 或 Luck decision_id",
  "reason":"簡短理由，不建立新事實","evidence_refs":["state","tool:1"]}
-可用 disposition：no_mechanics（本次不需新增機制，不等於既有檢定消失）、await_check、await_luck、
+可用 disposition：no_mechanics（本次不需新增機制，可含成功的唯讀查詢；不等於既有檢定消失）、await_check、await_luck、
 deferred（尚未輪到／等待別人，動作尚未執行，沒有自動排隊）、resolved（已擲骰結算或有可核對的工具變更）、
 resolved_without_check（有劇本或真實工具依據的免檢定完成）、cancelled、blocked、incomplete。
 actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指其他真正持有待處理項目的角色。
@@ -224,6 +224,23 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
             "incomplete 不可宣稱行動已完成；cancelled 只取消引用的未擲檢定，不回滾既有結果。"
             "未驗證的模型解釋不屬於權威事實，不能補造世界設定。"),
         ])
+    purchase_events = [event.payload for event in result.events if event.type == "purchase"]
+    if purchase_events:
+        lines.extend([
+            "【本回合購買紀錄：依 arrival_basis 敘述到店，再敘述交易，不可說成原本持有】",
+            json.dumps(purchase_events, ensure_ascii=False),
+            ("status=quoted 僅報價，未付款未入袋；顯示品項、單價、總額及 /coc purchase ID 確認指令。"
+            "status=purchased 才能說已買入；lifestyle 是信用評級日常花費，沒有扣現金帳本。"),
+        ])
+    inventory_events = [event.payload for event in result.events if event.type == "inventory_change"]
+    if inventory_events:
+        lines.extend([
+            "【本回合物品變更：工具前後差異，不是回合開始前的背包】",
+            json.dumps(inventory_events, ensure_ascii=False),
+            ("added 是這次工具操作才新增的物品，不能敘述成一直持有、早已在包裡或不必再買。"
+            "目前完整背包只證明現在持有，不證明原本持有，也不證明支付過價金。"
+            "玩家要購買時，必須交代取得過程及費用的裁定依據；沒有付款紀錄不能宣稱已扣款。"),
+        ])
     status = result.check_status
     if status.get("pending"):
         pending = status["pending"]
@@ -303,7 +320,11 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
     resolution = result.turn_resolution
     if resolution is not None:
         if resolution.disposition == "incomplete":
-            warning = "這次行動尚未完整處理，已記錄的變更會保留；不要重擲已結算的骰。"
+            warning = "這次行動尚未完整處理。"
+            if status.get("state_changed"):
+                warning += "已記錄的變更會保留，請勿重做已完成的部分。"
+            if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):
+                warning += "不要重擲已結算的骰。"
             if status.get("pending_luck"):
                 return f"{warning}\n\n{_pending_luck_fallback(status['pending_luck'])}"
             if status.get("pending"):

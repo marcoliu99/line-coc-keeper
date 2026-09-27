@@ -2,15 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from collections import Counter
 from copy import deepcopy
 from typing import Any
+from uuid import uuid4
 
 from app import keeper, observability
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
-from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
+from app.domain.models import (
+    AgentMessage,
+    GameEvent,
+    MechanicResult,
+    StateDelta,
+    TurnResolution,
+)
 from app.providers import anthropic_provider, gemini_provider, openai_provider
-from app.services import prompt_config, turn_context, turn_resolution
+from app.services import prompt_config, purchases, turn_context, turn_resolution
 
 _logger = logging.getLogger(__name__)
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
@@ -38,6 +47,16 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     rag_context = message.payload.get("rag_context", "")
     memory_context = message.payload.get("memory_context", "")
 
+    turn_key = uuid4().hex
+    # A new narrative action supersedes an unconfirmed shopping scene. Pure
+    # purchase confirmation commands bypass Executor, so they keep the quote.
+    if any(r.get("owner_id") == user_id and r.get("status") == "quoted"
+           for r in state.commerce.get("transactions", {}).values()):
+        def expire(latest):
+            changed = purchases.expire_quotes(latest, user_id)
+            return keeper._StateMutation(None, should_save=changed)
+        await asyncio.to_thread(keeper._mutate_and_save_state, state, expire)
+
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
     # Attach the same queues before awaiting anything: prior successful outputs
@@ -45,6 +64,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     message.payload["private_messages"] = private_messages
     message.payload["image_requests"] = image_requests
     facts: list[str] = []
+    inventory_events: list[GameEvent] = []
     check_status: dict[str, Any] = {
         "tool_called": False,
         "pending": None,
@@ -110,7 +130,25 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 combat_active_before = state.combat.active
                 actor_before_tool = turn_resolution.actor_snapshot(state, user_id)
                 gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
-                result = await execute_tool(name, tool_input)
+                if name == "purchase_items":
+                    tool_input = {**tool_input, "_turn_key": turn_key, "_owner_id": user_id}
+                if name == "add_carried_item" and re.search(r"買|买|\b(?:buy|purchase)\b", text, re.IGNORECASE):
+                    result: dict[str, Any] = {"ok": False, "error": "本回合提到購買，不能直接加物品。請先裁定到店，使用 purchase_items 結算；非購買取得請另行明確宣告。"}
+                else:
+                    result = await execute_tool(name, tool_input)
+                if name == "purchase_items" and result.get("ok"):
+                    inventory_events.append(GameEvent("purchase", deepcopy(result["purchase"])))
+                if result.get("ok") and (name in {"add_carried_item", "remove_carried_item"}
+                        or (name == "purchase_items" and result["purchase"]["status"] == "purchased" and not result.get("duplicate"))):
+                    owner = result.get("investigator")
+                    before_items = inventory_before.get(owner, [])
+                    after_items = result.get("carried_items", [])
+                    inventory_events.append(GameEvent("inventory_change", {
+                        "investigator": owner, "operation": name,
+                        "added": list((Counter(after_items) - Counter(before_items)).elements()),
+                        "removed": list((Counter(before_items) - Counter(after_items)).elements()),
+                        "evidence_ref": f"tool:{len(tool_events) + 1}",
+                    }))
                 if LLM_PROVIDER == "openai":
                     combat_status_gate.observe_tool_result(name, result)
                 tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
@@ -145,7 +183,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             action_type="error",
             narrative_facts=["機制執行時發生錯誤，請視為純敘事處理，不要假設任何判定結果"],
             state_delta=StateDelta(),
-            check_status=check_status,
+            check_status={**check_status, "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
+                          "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
+            events=inventory_events,
             turn_resolution=TurnResolution(reason="機制流程發生錯誤；不重播已提交的變更"),
         )
     finally:
@@ -160,7 +200,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         before_actor=before_actor, before_gameplay=before_gameplay,
     )
     observability.event("executor.resolution", disposition=resolution.disposition,
-                        evidence_count=len(resolution.evidence_refs))
+                        evidence_count=len(resolution.evidence_refs),
+                        validation_code=resolution.validation_code, tool_event_count=len(tool_events))
     return MechanicResult(
         success=True,
         action_type="tool_calls" if facts else "none",
@@ -170,6 +211,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # empty (see state_reducer.apply_mechanic_result's docstring for why
         # it must not try to re-apply anything on top of that).
         state_delta=StateDelta(),
-        check_status=check_status,
+        check_status={**check_status, "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
+                      "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
+        events=inventory_events,
         turn_resolution=resolution,
     )

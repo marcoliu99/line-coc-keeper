@@ -134,11 +134,12 @@ class HelpNavigationTests(unittest.TestCase):
             ("kp", "digest"),
             ("kp", "digests"),
             ("kp", "sudo"),
+            ("kp", "funds"),
         }
         page = get_help_page(("kp",), HelpContext())
         self.assertEqual(
             {action.path for action in page.actions if len(action.path) == 2 and action.path != ("kp", "kp")},
-            {("kp", "checkpoint"), ("kp", "checkpoints"), ("kp", "rollback"), ("kp", "digest"), ("kp", "digests"), ("kp", "sudo")},
+            {("kp", "checkpoint"), ("kp", "checkpoints"), ("kp", "rollback"), ("kp", "digest"), ("kp", "digests"), ("kp", "sudo"), ("kp", "funds")},
         )
         for path in expected:
             self.assertIn("KP-only", get_help_page(path, HelpContext()).text)
