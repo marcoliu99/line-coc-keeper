@@ -518,3 +518,47 @@ Audited read commands (`help`, `status`, `characters`, `purchases`) and other co
 ### 13.4 Verification
 
 Isolated complete suite: **1044 passed, 1 skipped, 33 subtests**. Ruff passed; mypy **86 source files passed**; `git diff --check` passed. Baseline was 987 passed, 1 skipped. Existing mechanism, button identity, purchase, correction and provider tests remain enabled. No new fixed model stage, live API run, production data mutation, or deployment was performed.
+
+
+## 14. S2 implementation contract (approved continuation)
+
+Branch: `refactor/turn-routing-and-movement-s2`, stacked on S0/S1 (PR #97).
+S3 remains independent (PR #98). S2 is in progress.
+
+- Route before retrieval. Explicit OOC spans are excluded from Executor input,
+  retrieval queries and canonical user history. Parentheses alone do not classify
+  an action as OOC. One existing Narrator completion supplies mixed segments.
+- Public/mixed narration receives a public projection before generation; private
+  character details never enter that projection. Self-only OOC can be delivered
+  privately without granting tools or changing canonical history.
+- Remove pre-Supervisor position writes. Movement candidates preserve source
+  clauses and actor/subject identity. A shared service commits arrival inside
+  the existing tool loop, validates current state/evidence, then refreshes the
+  entire caller snapshot. No final-JSON movement shortcut is enabled initially:
+  this avoids claiming all downstream mechanisms are complete from prose alone.
+- Evidence quotes must refer to supplied scenario/play material; topology alone
+  does not authorize passage. Python validates provenance, graph continuity,
+  identities and pending outcomes; semantic interpretation of free-form passage
+  conditions remains the existing Executor's adjudication responsibility.
+- Location-sensitive inventory acquisition, purchase, clue/fact recording,
+  scene output and scene effects require arrival when an action requests a new
+  location. Carried-item consumption before entry remains independent. Checks
+  needed for entry are bound to that proposal and may resume only after the
+  exact final result, including Luck. Existing restricted follow-up is retained.
+- Explicit map enter/leave requests use the same adjudication and commit path;
+  they do not teleport by changing tracking dictionaries directly.
+- New bounded movement records and narrative locations serialize with state;
+  request segmentation audit is bounded and timeline/recipient scoped, and never
+  feeds canonical summaries or memory. No restart-safe workflow ledger is claimed.
+
+```text
+trusted entry -> route/spans -> IC context -> existing Executor
+                                         -> proposal/evidence -> arrival commit
+                                                              -> dependent tools
+              -> existing Narrator (public projection for mixed/OOC)
+              -> validate candidate segments -> delivery / canonical projections
+```
+
+Verification must cover original six movement counterexamples, SR-M01–M07,
+OOC/mixed canonical and privacy projections, forged metadata, missing coverage,
+ordinary/sudo/map/check entry wiring, and unchanged call counts without live API.
