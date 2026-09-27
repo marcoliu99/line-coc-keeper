@@ -985,3 +985,41 @@ def test_percentage_review_can_be_corrected_across_packages(library, monkeypatch
                 templates.approve('sample', variant, reviewer_id='kp')
             assert any(i['record_id'] == 'r2' and i['code'] == 'RULE_NUMERIC_MISMATCH' for i in caught.value.issues)
     templates.approve('sample', variant, reviewer_id='kp')
+
+
+def test_cosmetic_cleanup_guidance_in_workbook_and_visible_export_message(library):
+    path, _ = library('Tell 2 players. . Keep quiet.')
+    content = path.read_text()
+    message = templates.export_message('sample', path)
+    for output in (content, message):
+        assert 'players. .' in output
+        assert '不必因此將單元留為未完成' in output
+        assert 'source_quote 仍須逐字匹配匯出 MD' in output
+        assert '小數點、正負號、骰式、否定詞、條件、限制與缺文' in output
+    assert 'Cosmetic cleanup versus source errors' in content
+    assert 'For substantive or ambiguous errors' in content
+    assert 'do not normalize evidence strings' in content
+
+
+@pytest.mark.parametrize('damage', ['', 'quote', 'number'])
+def test_cosmetic_translation_roundtrip_preserves_quote_and_numeric_guards(library, damage):
+    original = 'Tell 2 players. . Keep quiet.'
+    path, payload = library(original)
+    translated = '告知 2 位玩家。保持安靜。'
+    fill(payload, translated)
+    record = payload['batches'][0]['records'][0]
+    quote = original if damage != 'quote' else 'Tell 2 players. Keep quiet.'
+    record['rules'] = [{'check': {'text': translated if damage != 'number' else '告知 3 位玩家。保持安靜。',
+                                 'evidence': [{'unit_id': 'u1', 'source_quote': quote}]}}]
+    write(path, payload)
+    if damage:
+        with pytest.raises(authoring.Diagnostics):
+            variant = templates.import_markdown('sample', relative(path))
+            templates.approve('sample', variant, reviewer_id='kp')
+    else:
+        variant = templates.import_markdown('sample', relative(path))
+        templates.approve('sample', variant, reviewer_id='kp')
+        _, records = templates._read_variant('sample', variant)
+        assert records[0]['kp_text'] == translated
+        assert records[0]['rules'][0]['check']['source_quote'] == original
+        assert templates._source('sample')[1] == original

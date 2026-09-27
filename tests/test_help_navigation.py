@@ -199,3 +199,85 @@ class HelpNavigationTests(unittest.TestCase):
         self.assertIn("[KP-only]", document)
         reference = Path("docs/references/player_command_reference_zh.md").read_text(encoding="utf-8")
         self.assertEqual(reference, document)
+
+
+class HelpPaginationRegressionTests(unittest.TestCase):
+    def setUp(self):
+        reset_registry_for_tests()
+
+    def tearDown(self):
+        reset_registry_for_tests()
+
+    def test_every_visible_command_is_reachable_in_all_contexts(self):
+        from itertools import product
+
+        from app.discord_bot import _help_view
+        from app.help_registry import all_entries, lookup_help
+
+        for policy in (False, True):
+            with patch.object(config, 'SCENARIO_LIFECYCLE_KP_ONLY', policy):
+                reset_registry_for_tests()
+                for flags in product((False, True), repeat=4):
+                    context = HelpContext(*flags)
+                    queue, visited, commands = [()], set(), set()
+                    while queue:
+                        path = queue.pop()
+                        if path in visited:
+                            continue
+                        visited.add(path)
+                        page = get_help_page(path, context)
+                        self.assertNotEqual(page.title, '找不到 Help 頁面', (policy, flags, path))
+                        view = _help_view('discord-channel-123', page)
+                        self.assertLessEqual(len(view.children), 25, (policy, flags, path))
+                        self.assertLessEqual(len(page.text), 2000)
+                        self.assertTrue(all(len(item.item.custom_id) <= 100 for item in view.children))
+                        for action in page.actions:
+                            queue.append(action.path)
+                            if action.kind == 'entry':
+                                commands.add(action.path)
+                    expected = {entry.path for entry in all_entries() if lookup_help(entry.path, context)}
+                    self.assertEqual(commands, expected, (policy, flags))
+
+    def test_middle_page_reserves_navigation_and_detail_returns_to_its_page(self):
+        from app.discord_bot import _help_view
+
+        get_help_page()
+        register_help_category(HelpCategory('large', 'Large'))
+        for number in range(70):
+            register_help(HelpEntry(('large', f'cmd{number:02d}'), 'large', f'Command {number}', 'Test', ('/coc test',)))
+        first = get_help_page(('large',))
+        next_action = next(a for a in first.actions if a.label == '下一頁 ▶')
+        middle = get_help_page(next_action.path)
+        self.assertEqual(len(_help_view('discord-channel-123', middle).children), 25)
+        self.assertIn('2/4', middle.text)
+        previous = next(a for a in middle.actions if a.label == '◀ 上一頁')
+        self.assertEqual(previous.path, ('large',))
+        entry = next(a for a in middle.actions if a.kind == 'entry')
+        detail = get_help_page(entry.path)
+        self.assertEqual(detail.actions[0].path, middle.path)
+        stale = get_help_page(('large', 'page-999999'))
+        self.assertIn('4/4', stale.text)
+        self.assertFalse(any(a.label == '下一頁 ▶' for a in stale.actions))
+        with self.assertRaises(ValueError):
+            register_help(HelpEntry(('large', 'page-2'), 'large', 'Bad', 'Bad', ('/coc test',)))
+
+    def test_actual_scenario_button_and_persistent_next_page_callback(self):
+        import re
+
+        from app.discord_bot import _HELP_BUTTON_ID_TEMPLATE, HelpButton
+        from app.help_registry import HelpAction
+
+        state = GroupState(group_id='discord-channel-123', scenario_title='Loaded scenario')
+        interaction = SimpleNamespace(channel=SimpleNamespace(id=123), user=SimpleNamespace(id=42),
+                                      response=SimpleNamespace(edit_message=AsyncMock()))
+        button = HelpButton(state.group_id, HelpAction('劇本', ('scenario',), 'category'))
+        with patch('app.discord_bot.load_group_state', return_value=state):
+            asyncio.run(button.callback(interaction))
+            view = interaction.response.edit_message.call_args.kwargs['view']
+            next_button = next(item for item in view.children if item.item.label == '下一頁 ▶')
+            match = re.fullmatch(_HELP_BUTTON_ID_TEMPLATE, next_button.item.custom_id)
+            restored = asyncio.run(HelpButton.from_custom_id(interaction, next_button.item, match))
+            asyncio.run(restored.callback(interaction))
+        content = interaction.response.edit_message.call_args.kwargs['content']
+        self.assertIn('2/2', content)
+        self.assertLessEqual(len(interaction.response.edit_message.call_args.kwargs['view'].children), 25)

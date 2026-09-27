@@ -68,6 +68,8 @@ _categories: dict[str, HelpCategory] = {}
 _entries: dict[tuple[str, ...], HelpEntry] = {}
 _initialized = False
 _PATH_TOKEN_RE = re.compile(r"^[a-z0-9_-]+$")
+_PAGE_TOKEN_RE = re.compile(r"page-([1-9][0-9]{0,5})")
+_CATEGORY_PAGE_SIZE = 22  # Reserve previous, next and home within 25 components.
 _VALID_VISIBILITIES = {
     "always",
     "when_scenario_loaded",
@@ -97,6 +99,8 @@ def register_help(entry: HelpEntry) -> None:
         raise ValueError("help entry path must contain exactly two tokens: category and command")
     if any(not _PATH_TOKEN_RE.fullmatch(token) for token in entry.path):
         raise ValueError(f"help path tokens must match [a-z0-9_-]+: {entry.path!r}")
+    if _PAGE_TOKEN_RE.fullmatch(entry.path[1]) or any(_PAGE_TOKEN_RE.fullmatch(a) for a in entry.aliases):
+        raise ValueError("page-N help paths are reserved for category pagination")
     if entry.category not in _categories:
         raise ValueError(f"unknown help category: {entry.category!r}")
     if entry.path[0] != entry.category:
@@ -194,12 +198,12 @@ def _page_actions(path: tuple[str, ...], context: HelpContext) -> tuple[HelpActi
             if _sorted_entries(category.key, context):
                 actions.append(HelpAction(category.title, (category.key,), "category"))
         return _limit_actions(actions, path)
-    if len(path) == 1:
-        for entry in _sorted_entries(path[0], context):
-            actions.append(HelpAction(entry.title, entry.path, "entry"))
-        actions.append(HelpAction("🏠 Help 首頁", (), "home"))
-        return _limit_actions(actions, path)
-    actions.append(HelpAction("⬅️ 上一層", path[:1], "back"))
+    entries = _sorted_entries(path[0], context)
+    parent = path[:1]
+    if len(entries) > 24:
+        index = next((i for i, entry in enumerate(entries) if entry.path == path), 0)
+        parent = _category_path(path[0], index // _CATEGORY_PAGE_SIZE + 1)
+    actions.append(HelpAction("⬅️ 上一層", parent, "back"))
     actions.append(HelpAction("🏠 Help 首頁", (), "home"))
     return _limit_actions(actions, path)
 
@@ -221,6 +225,10 @@ def _root_page(context: HelpContext) -> HelpPage:
     return HelpPage((), "Help 首頁", "\n".join(lines), _page_actions((), context))
 
 
+def _category_path(category: str, number: int) -> tuple[str, ...]:
+    return (category,) if number == 1 else (category, f"page-{number}")
+
+
 def _category_page(path: tuple[str, ...], context: HelpContext) -> HelpPage | None:
     category = _categories.get(path[0])
     if category is None:
@@ -228,13 +236,28 @@ def _category_page(path: tuple[str, ...], context: HelpContext) -> HelpPage | No
     entries = _sorted_entries(category.key, context)
     if not entries:
         return None
-    lines = [f"【{category.title}】"]
+    page_count = (len(entries) + _CATEGORY_PAGE_SIZE - 1) // _CATEGORY_PAGE_SIZE if len(entries) > 24 else 1
+    requested = int(path[1].split('-')[1]) if len(path) == 2 else 1
+    number = min(requested, page_count)
+    path = _category_path(category.key, number)
+    if page_count > 1:
+        start = (number - 1) * _CATEGORY_PAGE_SIZE
+        entries = entries[start:start + _CATEGORY_PAGE_SIZE]
+    suffix = f"（{number}/{page_count}）" if page_count > 1 else ""
+    lines = [f"【{category.title}】{suffix}"]
     if category.description:
         lines.append(category.description)
+    actions = []
     for entry in entries:
         label = " [KP-only]" if entry.kp_only else ""
         lines.append(f"・{entry.title}{label}：{entry.summary}")
-    return HelpPage(path, category.title, "\n".join(lines), _page_actions(path, context))
+        actions.append(HelpAction(entry.title, entry.path, "entry"))
+    if number > 1:
+        actions.append(HelpAction("◀ 上一頁", _category_path(category.key, number - 1), "category"))
+    if number < page_count:
+        actions.append(HelpAction("下一頁 ▶", _category_path(category.key, number + 1), "category"))
+    actions.append(HelpAction("🏠 Help 首頁", (), "home"))
+    return HelpPage(path, category.title, "\n".join(lines), _limit_actions(actions, path))
 
 
 def _detail_page(path: tuple[str, ...], entry: HelpEntry, context: HelpContext) -> HelpPage:
@@ -258,7 +281,7 @@ def get_help_page(path: tuple[str, ...] = (), context: HelpContext | None = None
     context = context or HelpContext()
     if not path:
         return _root_page(context)
-    if len(path) == 1:
+    if len(path) == 1 or (len(path) == 2 and _PAGE_TOKEN_RE.fullmatch(path[1])):
         page = _category_page(path, context)
         if page:
             return page
