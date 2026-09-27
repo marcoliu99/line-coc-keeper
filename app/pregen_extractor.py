@@ -250,7 +250,7 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         "譯名。用 report_pregens 工具回報結果。"
         "若角色卡原文有 LUCK/幸運 數值，除了 luck，必須回報 luck_source_page，"
         "以及從同一張角色卡逐字複製、同時包含 LUCK/幸運 標籤與數值的 luck_source_excerpt；"
-        "空白欄位不得填 luck。",
+        "空白欄位不得填 luck。遇到 PDF_UNRESOLVED_FIELDS 標記，不得猜測所列屬性，請省略該欄位。",
     )
     pregens = (result or {}).get("pregens", []) or []
     pages = _scenario_pages(scenario_text)
@@ -265,6 +265,7 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
                 pregen["luck"] = verified
         pregen.pop("luck_source_page", None)
         pregen.pop("luck_source_excerpt", None)
+        _apply_pdf_unknowns(pregen, pages)
         _preserve_extra_fields(pregen)
         # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above —
         # see that function's own comment for why reconciliation needs this.
@@ -272,6 +273,27 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         _learn_translations_from_pregen(pregen)
         pregen["skills"] = _translate_skill_names(pregen.get("skills") or {})
     return pregens
+
+
+_PDF_FIELD_KEYS = {"STR": "str_", "CON": "con", "SIZ": "siz", "DEX": "dex", "APP": "app",
+                   "INT": "int_", "POW": "pow_", "EDU": "edu"}
+
+
+def _apply_pdf_unknowns(pregen: dict[str, Any], pages: dict[int, str]) -> None:
+    """An unresolved source field must not become a guessed/default attribute."""
+    name = str(pregen.get("name") or "").strip().casefold()
+    unresolved = set()
+    for text in pages.values():
+        if not name or name not in text.casefold():
+            continue
+        for match in re.finditer(r"\[PDF_UNRESOLVED_FIELDS: ([^\]]+)\]", text):
+            for label in match.group(1).split(","):
+                key = _PDF_FIELD_KEYS.get(label.strip().upper())
+                if key:
+                    unresolved.add(key)
+                    pregen.pop(key, None)
+    if unresolved:
+        pregen["pdf_unresolved_fields"] = sorted(unresolved)
 
 
 def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
@@ -665,6 +687,10 @@ def pregen_to_character(
     supplies verified sheet Luck when present, or a temporary zero while
     the player-owned Luck roll is pending.
     """
+    unresolved = pregen.get("pdf_unresolved_fields") or []
+    if unresolved:
+        raise ValueError("此角色的原圖仍無法確認屬性：" + ", ".join(unresolved)
+                         + "；AI 已嘗試補辨識，不能用預設值代替。可選其他角色或提供較清晰的角色卡。")
     str_ = _int_or(pregen.get("str_"), 50)
     con = _int_or(pregen.get("con"), 50)
     siz = _int_or(pregen.get("siz"), 50)
@@ -793,6 +819,15 @@ def _merge_pregens(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, A
     merged_skills = dict(llm.get("skills") or {})
     merged_skills.update(manual.get("skills") or {})
     merged["skills"] = merged_skills
+    unresolved = set(existing.get("pdf_unresolved_fields") or []) | set(new.get("pdf_unresolved_fields") or [])
+    verified_manual = set(manual.get("manual_verified_fields") or [])
+    if manual.get("source") == "manual":
+        verified_manual |= {key for key in _PDF_FIELD_KEYS.values() if key in manual}
+    unresolved -= verified_manual
+    if verified_manual:
+        merged["manual_verified_fields"] = sorted(verified_manual)
+    if unresolved:
+        merged["pdf_unresolved_fields"] = sorted(unresolved)
 
     # Weapons/carried_items: same "manual wins presence" pattern as
     # attributes — these are specific, player-authored details a generic

@@ -1,0 +1,180 @@
+{
+  "mode": "local layout/native probe; MarkItDown and whole-page model fallback disabled",
+  "packages": {
+    "pymupdf": "1.28.2",
+    "pymupdf4llm": "1.28.2"
+  },
+  "results": [
+    {
+      "file": "The_Haunting_Scenario_trimmed.pdf",
+      "pages": 27,
+      "chars": 76144,
+      "truncated": false,
+      "methods": {
+        "layout": 26,
+        "native": 1
+      },
+      "warnings": {
+        "native_two_columns": 14,
+        "layout_numeric_loss": 1,
+        "low_text": 1
+      },
+      "review_pages": [
+        16,
+        17
+      ],
+      "continuations": [
+        {
+          "from_page": 4,
+          "to_page": 5,
+          "status": "candidate"
+        }
+      ],
+      "seconds": 19.11
+    },
+    {
+      "file": "Dead Boarder.pdf",
+      "pages": 32,
+      "chars": 76289,
+      "truncated": false,
+      "methods": {
+        "layout": 29,
+        "native": 3
+      },
+      "warnings": {
+        "low_text": 5,
+        "ambiguous_columns": 2,
+        "native_two_columns": 17,
+        "layout_numeric_loss": 2,
+        "layout_text_loss": 1
+      },
+      "review_pages": [
+        1,
+        5,
+        12,
+        19,
+        20,
+        23,
+        27,
+        29
+      ],
+      "continuations": [],
+      "seconds": 19.42
+    },
+    {
+      "file": "The Lightless Beacon - Call of Cthulhu.pdf",
+      "pages": 43,
+      "chars": 84312,
+      "truncated": false,
+      "methods": {
+        "layout": 35,
+        "native": 8
+      },
+      "warnings": {
+        "low_text": 9,
+        "ambiguous_columns": 2,
+        "layout_unavailable": 1,
+        "empty_page": 1,
+        "native_two_columns": 15,
+        "layout_numeric_loss": 7
+      },
+      "review_pages": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        13,
+        17,
+        18,
+        19,
+        27,
+        28,
+        29,
+        30
+      ],
+      "continuations": [
+        {
+          "from_page": 9,
+          "to_page": 10,
+          "status": "candidate"
+        },
+        {
+          "from_page": 16,
+          "to_page": 17,
+          "status": "candidate"
+        },
+        {
+          "from_page": 19,
+          "to_page": 20,
+          "status": "candidate"
+        },
+        {
+          "from_page": 21,
+          "to_page": 22,
+          "status": "candidate"
+        },
+        {
+          "from_page": 23,
+          "to_page": 24,
+          "status": "candidate"
+        }
+      ],
+      "seconds": 39.85
+    },
+    {
+      "file": "Doors to Darkness Pre-Generated Characters.pdf",
+      "pages": 11,
+      "chars": 20742,
+      "truncated": false,
+      "methods": {
+        "layout": 1,
+        "native": 10
+      },
+      "warnings": {
+        "layout_numeric_loss": 10
+      },
+      "review_pages": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "continuations": [
+        {
+          "from_page": 3,
+          "to_page": 4,
+          "status": "candidate"
+        },
+        {
+          "from_page": 5,
+          "to_page": 6,
+          "status": "candidate"
+        },
+        {
+          "from_page": 7,
+          "to_page": 8,
+          "status": "candidate"
+        },
+        {
+          "from_page": 9,
+          "to_page": 10,
+          "status": "candidate"
+        }
+      ],
+      "seconds": 6.57
+    }
+  ],
+  "limitations": [
+    "No paid OCR evaluation or semantic accuracy score.",
+    "Review warnings include covers and character sheets; they are not confirmed error counts.",
+    "Continuation links are candidates only, including false positives on consecutive character sheets.",
+    "Timers measure this local run, not comparative benchmarks."
+  ]
+}

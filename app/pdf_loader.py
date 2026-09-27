@@ -1,38 +1,15 @@
-"""Extract plain text from an uploaded scenario PDF.
+"""Source-preserving PDF extraction with per-page quality diagnostics.
 
-COC7e scenario PDFs are rarely plain text — they usually mix body copy with maps,
-handouts, and stat-block graphics on the same page ("文圖並茂"). PyMuPDF4LLM is
-the layout-aware page parser when installed: it preserves per-page Markdown,
-picture/table/graphic evidence, and reading order. MarkItDown (+ the
-markitdown-ocr plugin, see app/markitdown_shim.py) remains the embedded-image
-OCR and compatibility fallback. PyMuPDF (fitz) stays in the loop for rendering
-the whole page and as the final text fallback. The semantic labels (map,
-handout, character sheet, illustration) still come from structural evidence,
-OCR text, and Vision; PyMuPDF4LLM supplies the evidence rather than guessing
-those labels by itself.
-
-Floor plans and maps are a specific, real failure mode of plain text extraction:
-room-name labels are positioned in 2D on the page, but a text-layer reader can
-only emit them as a flat 1D sequence, so "the room to the right of the entrance"
-routinely comes out as an unordered list of room names with no spatial relationship
-between them — a Keeper reading that will genuinely guess wrong about which room
-is where (confirmed in play: a player entering a door expected the bedroom on the
-right, the Keeper — reading only the scrambled label order — placed the kitchen
-there instead). This is exactly why the graphic-page fallback below still renders
-the *whole page* to an image and asks Claude to describe spatial layout directly,
-rather than relying on markitdown-ocr's embedded-image detection alone: a
-vector-drawn floor plan (lines/rectangles, not a raster image object) has no
-"image" for markitdown-ocr's pdfplumber-based detection to find, so it would
-silently fall through untouched — this fallback is what actually catches it,
-and stays wired to a whole-page-render regardless of what the text layer found.
-Vision description (_analyze_graphic_page) is the fix: handing the actual page
-image to a vision-capable Claude call and asking it to describe spatial layout
-directly solves this, whereas OCR (_ocr_image) only recovers text that isn't
-already selectable and still loses the spatial arrangement.
+Prefer checked layout text over native text, and invoke OCR only for pages lacking
+usable text. Preserve the full library source and original page markers. Uncertain
+layout, missing numeric evidence and possible continuations remain reviewable rather
+than being silently guessed. Map interpretation remains explicitly identified as
+model-derived evidence, distinct from verbatim source transcription.
 """
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import io
 import logging
 import re
@@ -44,7 +21,7 @@ from typing import Any, cast
 
 import pymupdf
 
-from app.config import MAX_SCENARIO_CHARS
+from app import pdf_ai_repair, pdf_quality
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
 
@@ -93,19 +70,13 @@ _MAX_CONCURRENT_PAGE_CALLS = 12
 # classification (map / character sheet / other) for consistency, even
 # though only the text half is usable here.
 _VISION_PROMPT = (
-    "這是一份 COC7e 桌上角色扮演遊戲劇本 PDF 裡的一頁圖片，請判斷它屬於下面三種情況的哪一種：\n\n"
-    "1. 如果是平面圖或地圖：詳細描述空間佈局與相對位置關係（例如：從正門進入後，右手邊第一個房間是"
-    "什麼、左手邊是什麼、走廊盡頭是什麼、樓上/樓下有哪些房間），盡量具體、按方位描述，方便之後主持人"
-    "依此正確描述場景給玩家，不要弄錯房間的相對位置。\n\n"
-    "2. 如果是調查員角色卡／數值卡（有 STR/DEX/CON/APP/POW/SIZ/EDU/INT 等屬性欄位、HP/MP/SAN、"
-    "或一排排技能名稱與百分比數字）：**逐一列出每一個看得到數字的欄位**，屬性、HP/MP/SAN/Luck、每一項"
-    "技能的名稱與百分比都要完整列出來，不要只說「列出了完整技能」卻不寫出實際數字，這種摘要方式完全"
-    "沒用；同時也要抄錄卡片上手寫或印刷填好的個人背景欄位，特別是角色姓名、職業、個人特質、信念、"
-    "重要他人、珍藏物品，以及任何「角色扮演鉤子／秘密目標／Your goal」之類只屬於這個角色自己的動機"
-    "段落，一字不漏抄下來；欄位是空白的就不用提。\n\n"
-    "3. 如果只是插圖、封面、人物肖像等跟上面兩種都無關的內容：簡短描述畫面內容就好（一兩句話）。\n\n"
-    "只描述圖片裡實際看到的內容，不要編造或推測沒看到的細節。"
+    "請忠實轉錄圖片中的所有文字，保留原文語言、標題、段落、表格欄列、數字與骰式。"
+    "這是劇本來源擷取，不是翻譯、摘要或故事解讀。正文、手稿、規則與角色背景不可省略。"
+    "角色卡保留年齡、所有屬性技能、背景欄位及空白欄位的標籤；空值標為未填，不能猜值。"
+    "雙欄按左欄到右欄閱讀；表格維持標籤與值對應。看不清楚處標示 [無法辨識]。"
+    "地圖只抄錄標籤，不推測通道或空間關係；無文字圖片回傳空字串。"
 )
+
 
 
 def _page_has_graphic_content(page: pymupdf.Page) -> bool:
@@ -188,7 +159,7 @@ def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
 _MARKITDOWN_PAGE_RE = re.compile(r"^##\s*Page\s+(\d+)\s*$", re.MULTILINE)
 
 
-def _markitdown_page_texts(pdf_bytes: bytes) -> dict[int, str] | None:
+def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = None) -> dict[int, str] | None:
     """Best-effort: convert the whole PDF via MarkItDown (+ markitdown-ocr,
     see app/markitdown_shim.py — its PDF converter emits a "## Page N" header
     before every page's content, which is what this splits back apart into a
@@ -202,6 +173,13 @@ def _markitdown_page_texts(pdf_bytes: bytes) -> dict[int, str] | None:
     page markers to align against actual page numbers) — callers must fall
     back to PyMuPDF's own text layer per page in that case, exactly as this
     module worked before MarkItDown was wired in."""
+    if page_numbers is not None:
+        if not page_numbers:
+            return None
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as original, pymupdf.open() as subset:
+            for number in page_numbers:
+                subset.insert_pdf(original, from_page=number - 1, to_page=number - 1)
+            pdf_bytes = subset.tobytes()
     md = build_markitdown(_VISION_PROMPT)
     if md is None:
         return None
@@ -227,6 +205,10 @@ def _markitdown_page_texts(pdf_bytes: bytes) -> dict[int, str] | None:
         page_text = text[m.end() : end].strip()
         page_text = re.sub(r"[ \t]+", " ", page_text)
         page_text = re.sub(r"\n{3,}", "\n\n", page_text)
+        if page_numbers is not None:
+            if not 1 <= page_num <= len(page_numbers):
+                continue
+            page_num = page_numbers[page_num - 1]
         pages[page_num] = page_text
     return pages
 
@@ -325,95 +307,185 @@ def _pymupdf4llm_page_text(chunk: dict | None) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def extract_text(pdf_bytes: bytes) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
-    """Extract scenario text.
+def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
+                          text: str, budget: list[int]) -> tuple[str, list[dict]]:
+    """Crop only suspect native blocks; keep every attempt in the audit artifact."""
+    suspect = {p["block"] for p in pairs if p["status"] == "unresolved"}
+    attempts = []
+    for block in evidence["blocks"]:
+        original = pdf_quality.normalize("\n".join(line["text"] for line in block["lines"]))
+        if block["id"] not in suspect and "\ufffd" not in original:
+            continue
+        attempt = {"block": block["id"], "bbox": block["bbox"], "original": original,
+                   "ocr_text": "", "status": "review_required"}
+        attempts.append(attempt)
+        if page.rotation:
+            attempt["status"] = "rotation_requires_review"
+            continue
+        if budget[0] <= 0:
+            attempt["status"] = "budget_exhausted"
+            continue
+        budget[0] -= 1
+        rect = (pymupdf.Rect(block["bbox"]) + (-2, -2, 2, 2)) & page.rect
+        attempt["crop_bbox"] = list(rect)
+        try:
+            png = page.get_pixmap(clip=rect, dpi=300).tobytes("png")
+            candidate = pdf_quality.normalize(_ocr_image(png))
+        except Exception:  # noqa: BLE001 - local optional OCR never discards source.
+            attempt["status"] = "ocr_failed"
+            continue
+        attempt["ocr_text"] = candidate
+        local_pairs = [p for p in pairs if p["block"] == block["id"]]
+        attempt["pair_checks"] = pdf_quality.check_pairs(local_pairs, candidate)
+        if not candidate:
+            attempt["status"] = "ocr_empty"
+        elif text.count(original) == 1 and pdf_quality.accept_region(original, candidate, local_pairs):
+            text = text.replace(original, candidate, 1)
+            attempt["status"] = "accepted"
+    return text, attempts
 
-    Returns (full_text, low_text_pages, truncated, page_images, page_maps):
-    - low_text_pages: 1-indexed pages that had little extractable text despite
-      containing images — likely a handout, map, or heavily-styled page whose
-      content may not be fully captured.
-    - truncated: True if the scenario exceeded MAX_SCENARIO_CHARS and everything
-      past that cut-off point was dropped.
-    - page_images: 1-indexed page number -> rendered PNG bytes, for every page
-      with graphic content (including pages whose OCR/MarkItDown text is long).
-      This is deliberately independent from low_text_pages: callers can show
-      the actual map/handout/character sheet even when OCR already supplied a
-      lot of text — see /coc showpage and show_scenario_image.
-    - page_maps: 1-indexed page number -> structured room-graph dict (see
-      app/scene_map.py), for whichever low_text_pages turned out to actually be
-      a floor plan/map (most won't be — character sheets and illustrations are
-      also low-text pages, scene_map.analyze_page_image returns None for those
-      and they're just not in this dict). Comes from the same single vision
-      call as the prose description below (see analyze_page_image's own
-      docstring on why this used to be two separate calls per low-text page).
-    Callers should surface low_text_pages/truncated to the uploader so nothing
-    silently goes missing.
+
+def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8, ai_repair_limit: int = 8) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
+    """Return complete source, review pages, legacy truncation flag, images, maps.
+
+    The source is never cut to a prompt budget. The optional report distinguishes
+    extraction methods, uncertain pages and derived visual descriptions.
     """
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    report = quality_report if quality_report is not None else {}
+    report.update(version=pdf_quality.VERSION, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+                  pages=[], continuations=[], derived_descriptions={})
+    local_budget = [max(0, local_ocr_limit)]
+    ai_budget = [max(0, ai_repair_limit)]
     layout_pages = _pymupdf4llm_page_chunks(pdf_bytes)
-    markitdown_pages = _markitdown_page_texts(pdf_bytes)  # dict[int, str] or None — see that function's docstring
-
-    page_texts: list[str] = []
-    low_text_pages: list[int] = []
-    page_images: dict[int, bytes] = {}
-    vision_pending: dict[int, bytes] = {}  # page index -> low-text PNG for Vision/OCR
-
-    for i, page in enumerate(cast(Iterable[Any], doc)):
-        page_number = i + 1
-        layout_text = _pymupdf4llm_page_text(layout_pages.get(page_number) if layout_pages else None)
-        if markitdown_pages is not None and page_number in markitdown_pages:
-            text = markitdown_pages[page_number]
-        elif layout_text:
-            text = layout_text
-        else:
-            text = page.get_text("text") or ""
-            text = re.sub(r"[ \t]+", " ", text)
-            text = re.sub(r"\n{3,}", "\n\n", text).strip()
-
-        # Image persistence and whole-page Vision are separate decisions.
-        # MarkItDown/OCR can make a character sheet exceed the text threshold;
-        # that must skip the redundant Vision call, not discard the image.
-        has_graphic_content = _page_has_graphic_content(page) or _pymupdf4llm_has_graphic_evidence(
-            layout_pages.get(page_number) if layout_pages else None
-        )
-        if has_graphic_content:
-            png_bytes = _render_page_png(page)
-            page_images[page_number] = png_bytes
+    texts: list[str] = []
+    images: dict[int, bytes] = {}
+    pending: dict[int, bytes] = {}
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+        report["page_count"] = doc.page_count
+        for i, page in enumerate(doc):
+            number = i + 1
+            native, warnings = pdf_quality.native_text(page)
+            chunk = layout_pages.get(number) if layout_pages else None
+            layout_text = _pymupdf4llm_page_text(chunk)
+            evidence = pdf_quality.block_evidence(page)
+            pairs = pdf_quality.numeric_pairs(evidence)
+            if any(p["status"] == "unresolved" for p in pairs):
+                warnings.append("source_pair_unresolved")
+            text, method, selected_warnings = pdf_quality.select_text(native, layout_text)
+            pair_checks = pdf_quality.check_pairs(pairs, layout_text) if layout_text else []
+            if any(p["status"] == "pair_mismatch" for p in pair_checks):
+                text, method = native, "native"
+                selected_warnings.append("layout_pair_mismatch")
+            if any(p["status"] in {"source_pair_unresolved", "candidate_pair_unverified"} for p in pair_checks):
+                text, method = native, "native"
+                selected_warnings.append("numeric_pair_review")
+            warnings.extend(selected_warnings)
+            text, repairs = _repair_local_regions(page, evidence, pairs, text, local_budget)
+            if repairs:
+                warnings.append("local_ocr_review" if any(r["status"] != "accepted" for r in repairs) else "local_ocr_repaired")
+                if any(r["status"] == "accepted" for r in repairs):
+                    method += "+local_ocr"
+            graphic = _page_has_graphic_content(page) or _pymupdf4llm_has_graphic_evidence(chunk)
+            if graphic:
+                images[number] = _render_page_png(page)
             if len(text) < _LOW_TEXT_THRESHOLD:
-                low_text_pages.append(page_number)
-                vision_pending[i] = png_bytes
+                warnings.append("low_text")
+                if graphic:
+                    pending[number] = images[number]
+            texts.append(text)
+            report["pages"].append({"page": number, "method": method, "native_chars": len(native),
+                                    "warnings": warnings, "evidence": evidence,
+                                    "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": repairs,
+                                    "candidates": {"native": native, "layout": layout_text}})
+        # Only pages lacking usable text go through the potentially paid OCR
+        # adapter. Already readable layout pages never trigger whole-book OCR.
+        alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None
+        for number in list(pending):
+            extra = (alternate or {}).get(number, "").strip()
+            if extra:
+                row = report["pages"][number - 1]
+                row["candidates"]["markitdown"] = extra
+                checks = pdf_quality.check_pairs(row["numeric_pairs"], extra)
+                row["ocr_pair_checks"] = checks
+                if any(p["status"] != "matched" for p in checks):
+                    row["warnings"].append("ocr_pair_review")
+                chosen, method, warnings = pdf_quality.select_text(texts[number - 1], extra)
+                if any(p["status"] == "pair_mismatch" for p in checks):
+                    method = "native"
+                    row["warnings"].append("ocr_pair_mismatch")
+                if method == "layout":
+                    texts[number - 1] = chosen
+                    report["pages"][number - 1]["method"] = "markitdown"
+                else:
+                    report["pages"][number - 1]["warnings"].append("ocr_evidence_loss")
+                if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD:
+                    pending.pop(number)
 
-        page_texts.append(text)
+        # Repair only remaining numeric/corrupted blocks, before extraction consumers.
+        for i, row in enumerate(report["pages"]):
+            texts[i], ai_result = pdf_ai_repair.repair_page(doc[i], row, texts[i], ai_budget)
+            row["ai_repair"] = ai_result
+            if any(r["status"] == "accepted" for r in ai_result["regions"]):
+                row["method"] += "+ai_repair"
+                if len(texts[i]) >= _LOW_TEXT_THRESHOLD:
+                    pending.pop(i + 1, None)
+            if ai_result["unresolved_labels"]:
+                row["warnings"].append("ai_fields_unresolved")
 
-    page_maps: dict[int, dict] = {}
+        maps: dict[int, dict] = {}
+        if pending:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))) as executor:
+                futures = {executor.submit(_analyze_graphic_page, png): number for number, png in pending.items()}
+                for future in concurrent.futures.as_completed(futures):
+                    number = futures[future]
+                    row = report["pages"][number - 1]
+                    try:
+                        extra, scene_map = future.result()
+                    except Exception:  # noqa: BLE001 - retain other pages and record this failed fallback.
+                        row["warnings"].append("vision_failed")
+                        continue
+                    if extra:
+                        row["candidates"]["vision"] = extra
+                        checks = pdf_quality.check_pairs(row["numeric_pairs"], extra)
+                        row["vision_pair_checks"] = checks
+                        if any(p["status"] != "matched" for p in checks):
+                            row["warnings"].append("vision_pair_review")
+                        if any(p["status"] == "pair_mismatch" for p in checks):
+                            row["warnings"].append("vision_pair_mismatch")
+                            continue
+                        if scene_map:
+                            report["derived_descriptions"][str(number)] = extra
+                            # A labeled derived section is not a verbatim quote.
+                            texts[number - 1] += "\n[地圖視覺解讀，非原文轉錄]\n" + extra
+                        else:
+                            texts[number - 1] = (texts[number - 1] + "\n[影像轉錄／描述]\n" + extra).strip()
+                        row["warnings"].append("vision_review_required")
+                    if scene_map:
+                        maps[number] = scene_map
 
-    if vision_pending:
-        workers = min(_MAX_CONCURRENT_PAGE_CALLS, len(vision_pending))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            analyze_futures = {
-                executor.submit(_analyze_graphic_page, png_bytes): idx
-                for idx, png_bytes in vision_pending.items()
-            }
-            for future in concurrent.futures.as_completed(analyze_futures):
-                idx = analyze_futures[future]
-                extra, scene_map = future.result()
-                if extra:
-                    page_texts[idx] = f"{page_texts[idx]}\n{extra}".strip() if page_texts[idx] else extra
-                if scene_map:
-                    page_maps[idx + 1] = scene_map
-
-    parts = [f"--- 第 {i + 1} 頁 ---\n{t}" for i, t in enumerate(page_texts) if t]
-    full_text = "\n\n".join(parts).strip()
-    if not full_text:
-        raise ValueError(
-            "這份 PDF 抽不出任何文字內容（可能整份都是掃描圖片，且沒有安裝 OCR，"
-            "或本機沒有裝 tesseract）"
-        )
-    truncated = len(full_text) > MAX_SCENARIO_CHARS
-    if truncated:
-        full_text = full_text[:MAX_SCENARIO_CHARS] + "\n\n[...劇本內容過長，已截斷...]"
-
-    return full_text, low_text_pages, truncated, page_images, page_maps
+    review = []
+    for i, text in enumerate(texts):
+        row = report["pages"][i]
+        unresolved = row["ai_repair"]["unresolved_labels"]
+        if unresolved:
+            text += "\n[PDF_UNRESOLVED_FIELDS: " + ",".join(unresolved) + "]"
+            texts[i] = text
+        row["extracted_chars"] = len(text)
+        row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if not text.strip():
+            row["warnings"].append("empty_page")
+        if any(w not in {"native_two_columns", "layout_unavailable"} for w in row["warnings"]):
+            review.append(i + 1)
+        if i and pdf_quality.continuation(texts[i - 1], text):
+            report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})
+    if not any(t.strip() for t in texts):
+        raise ValueError("這份 PDF 抽不出任何文字內容；請確認 OCR 是否可用並檢查原稿。")
+    full_text = "\n\n".join(f"--- 第 {i + 1} 頁 ---\n{t}" for i, t in enumerate(texts)).strip()
+    report["review_pages"] = review
+    report["source_chars"] = len(full_text)
+    report["ai_repair_requests"] = max(0, ai_repair_limit) - ai_budget[0]
+    report["local_ocr_attempts"] = max(0, local_ocr_limit) - local_budget[0]
+    return full_text, review, False, images, maps
 
 
 _PAGE_MARKER_RE = re.compile(r"^-*\s*第\s*\d+\s*頁\s*-*$")

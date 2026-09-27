@@ -55,7 +55,7 @@ class PdfLoaderImagePersistenceTests(unittest.TestCase):
     def test_pymupdf4llm_page_chunks_are_used_for_layout_and_text(self):
         document = pymupdf.open()
         page = document.new_page()
-        page.insert_text((40, 60), "fallback text")
+        page.insert_text((40, 60), "layout-aware handout text")
         pdf_bytes = document.tobytes()
         document.close()
 
@@ -116,3 +116,188 @@ class PdfLoaderImagePersistenceTests(unittest.TestCase):
         self.assertTrue(page_images[1].startswith(b"\x89PNG"))
         self.assertEqual(page_maps, {})
         analyze.assert_not_called()
+
+
+class PdfQualityRegressionTests(unittest.TestCase):
+    def pdf(self, lines):
+        with pymupdf.open() as doc:
+            for text in lines:
+                page = doc.new_page()
+                page.insert_textbox(pymupdf.Rect(40, 40, 550, 790), text)
+            return doc.tobytes()
+
+    def test_layout_wins_and_readable_pages_do_not_request_paid_fallback(self):
+        payload = self.pdf(['A faithful rule without any numbers. ' * 20])
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={
+            1: {'text': 'A faithful rule without any numbers. ' * 20}
+        }), patch.object(pdf_loader, '_markitdown_page_texts', return_value={1: ''}) as alternate:
+            text, _, truncated, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+        alternate.assert_not_called()
+        self.assertIn('faithful rule', text)
+        self.assertEqual(report['pages'][0]['method'], 'layout')
+        self.assertFalse(truncated)
+
+    def test_dropped_dice_uses_native_source_and_records_warning(self):
+        payload = self.pdf(['Failure causes 2d6 damage.'])
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'Failure causes damage.'}}):
+            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+        self.assertIn('2d6', text)
+        self.assertIn(1, review)
+        self.assertIn('layout_numeric_loss', report['pages'][0]['warnings'])
+
+    def test_complete_source_is_not_cut_at_old_limit(self):
+        # Every page fits, but the complete source exceeds the former 240K cap.
+        payload = self.pdf(['Rule and consequence remain together. ' * 40] * 180)
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None):
+            text, _, truncated, _, _ = pdf_loader.extract_text(payload)
+        self.assertGreater(len(text), 240000)
+        self.assertIn('--- 第 180 頁 ---', text)
+        self.assertFalse(truncated)
+
+    def test_continuation_report_preserves_original_page_boundaries(self):
+        payload = self.pdf(['The poison causes', 'blurred vision for 1d6 rounds.'])
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None):
+            text, _, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+        self.assertEqual(report['continuations'], [{'from_page': 1, 'to_page': 2, 'status': 'candidate'}])
+        self.assertIn('--- 第 2 頁 ---', text)
+
+    def test_column_reordering_requires_clear_gutter(self):
+        from app import pdf_quality
+        with pymupdf.open() as doc:
+            page = doc.new_page()
+            for i in range(3):
+                page.insert_text((40, 100 + 100 * i), f'Left {i}')
+                page.insert_text((350, 110 + 100 * i), f'Right {i}')
+            text, warnings = pdf_quality.native_text(page)
+        self.assertIn('native_two_columns', warnings)
+        self.assertLess(text.index('Left 2'), text.index('Right 0'))
+
+    def test_fallback_subset_maps_back_to_original_page(self):
+        payload = self.pdf(['first', 'second', 'third'])
+        seen = []
+        def convert(stream, **kwargs):
+            with pymupdf.open(stream=stream.read(), filetype='pdf') as doc:
+                seen.append(doc.page_count)
+            return types.SimpleNamespace(text_content='## Page 1\nthird transcribed')
+        converter = types.SimpleNamespace(convert=convert)
+        with patch.object(pdf_loader, 'build_markitdown', return_value=converter), \
+             patch.dict(sys.modules, {'markitdown': types.SimpleNamespace(StreamInfo=lambda **kwargs: None)}):
+            result = pdf_loader._markitdown_page_texts(payload, [3])
+        self.assertEqual(seen, [1])
+        self.assertEqual(result, {3: 'third transcribed'})
+
+    def test_page_failure_does_not_discard_other_source(self):
+        with pymupdf.open() as doc:
+            page = doc.new_page()
+            page.insert_image(pymupdf.Rect(20, 20, 80, 80), stream=_ONE_PIXEL_PNG)
+            page = doc.new_page()
+            page.insert_text((40, 100), 'Preserved source with 2d6 damage.')
+            payload = doc.tobytes()
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+             patch.object(pdf_loader, '_markitdown_page_texts', return_value=None), \
+             patch.object(pdf_loader, '_analyze_graphic_page', side_effect=RuntimeError('offline')):
+            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+        self.assertIn('Preserved source with 2d6', text)
+        self.assertIn('vision_failed', report['pages'][0]['warnings'])
+        self.assertIn(1, review)
+
+    def test_quality_report_persisted_with_full_library_source(self):
+        import json
+        import tempfile
+
+        from app import scenario_library
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(scenario_library, 'SCENARIO_LIBRARY_DIR', Path(directory)):
+            report = {'version': 'test', 'review_pages': [1]}
+            scenario_id = scenario_library.save_scenario(
+                self.pdf(['source']), title='Quality test', filename='test.pdf', preview='source',
+                text='--- 第 1 頁 ---\nsource', indexes={}, pregens=[], page_maps={}, page_images={},
+                parse_quality=report,
+            )
+            saved = json.loads((Path(directory) / scenario_id / 'parse_quality.json').read_text())
+        self.assertEqual(saved, report)
+
+    def test_swapped_pairs_fall_back_without_losing_candidate_evidence(self):
+        payload = self.pdf(['STR 50 DEX 70'])
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'STR 70 DEX 50'}}):
+            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+        self.assertIn('STR 50 DEX 70', text)
+        self.assertNotIn('STR 70 DEX 50', text)
+        row = report['pages'][0]
+        self.assertEqual(row['candidates']['layout'], 'STR 70 DEX 50')
+        self.assertEqual(row['method'], 'native')
+        self.assertIn('layout_pair_mismatch', row['warnings'])
+        self.assertTrue(row['evidence']['blocks'])
+        self.assertEqual(len(report['pdf_sha256']), 64)
+        self.assertEqual(len(row['selected_sha256']), 64)
+        self.assertIn(1, review)
+
+    def test_region_repair_changes_only_unique_damaged_block(self):
+        from app import pdf_quality
+        with pymupdf.open(stream=self.pdf(['Damage 2d6']), filetype='pdf') as doc:
+            evidence = pdf_quality.block_evidence(doc[0])
+            evidence['blocks'][0]['lines'][0]['text'] = 'Dam\ufffdage 2d6'
+            with patch.object(pdf_loader, '_ocr_image', return_value='Damage 2d6') as ocr:
+                result, attempts = pdf_loader._repair_local_regions(
+                    doc[0], evidence, [], 'Unchanged header\nDam\ufffdage 2d6\nUnchanged footer', [1])
+        self.assertEqual(result, 'Unchanged header\nDamage 2d6\nUnchanged footer')
+        self.assertEqual(attempts[0]['status'], 'accepted')
+        ocr.assert_called_once()
+
+    def test_region_budget_and_duplicate_text_do_not_overwrite_source(self):
+        from app import pdf_quality
+        with pymupdf.open(stream=self.pdf(['Damage 2d6']), filetype='pdf') as doc:
+            evidence = pdf_quality.block_evidence(doc[0])
+            evidence['blocks'][0]['lines'][0]['text'] = 'Dam\ufffdage 2d6'
+            with patch.object(pdf_loader, '_ocr_image', return_value='Damage 2d6') as ocr:
+                source = 'Dam\ufffdage 2d6\nDam\ufffdage 2d6'
+                result, attempts = pdf_loader._repair_local_regions(doc[0], evidence, [], source, [0])
+                self.assertEqual(attempts[0]['status'], 'budget_exhausted')
+                ocr.assert_not_called()
+                result, attempts = pdf_loader._repair_local_regions(doc[0], evidence, [], source, [1])
+        self.assertEqual(result, source)
+        self.assertEqual(attempts[0]['status'], 'review_required')
+
+    def test_import_pipeline_reuses_ai_transcription_and_marks_failures(self):
+        from app import pdf_ai_repair
+        provider = types.SimpleNamespace(analyze_image=lambda *args: {
+            'regions': [{'block_id': 0, 'status': 'readable', 'text': 'Alice STR: 60'}]})
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+             patch.dict(pdf_ai_repair._PROVIDERS, {pdf_ai_repair.LLM_PROVIDER: provider}):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), quality_report=report, local_ocr_limit=0)
+        self.assertIn('Alice STR: 60', text)
+        self.assertNotIn('PDF_UNRESOLVED_FIELDS', text)
+        self.assertEqual(report['ai_repair_requests'], 1)
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), local_ocr_limit=0, ai_repair_limit=0)
+        self.assertIn('[PDF_UNRESOLVED_FIELDS: STR]', text)
+
+
+    def test_unverified_layout_value_never_becomes_source(self):
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'Alice STR 60'}}):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), quality_report=report,
+                                                       local_ocr_limit=0, ai_repair_limit=0)
+        self.assertNotIn('60', text)
+        self.assertIn('PDF_UNRESOLVED_FIELDS: STR', text)
+        self.assertEqual(report['pages'][0]['method'], 'native')
+
+    def test_prose_does_not_delete_valid_pregen_attribute(self):
+        from unittest.mock import Mock
+
+        from app import pdf_ai_repair, pregen_extractor
+        provider = types.SimpleNamespace(analyze_image=Mock())
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+             patch.dict(pdf_ai_repair._PROVIDERS, {pdf_ai_repair.LLM_PROVIDER: provider}):
+            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR 60\nAlice must make a STR roll.']))
+        provider.analyze_image.assert_not_called()
+        self.assertNotIn('PDF_UNRESOLVED_FIELDS', text)
+        pregen = {'name': 'Alice', 'str_': 60}
+        pregen_extractor._apply_pdf_unknowns(pregen, {1: text})
+        self.assertEqual(pregen['str_'], 60)

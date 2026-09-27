@@ -1,0 +1,42 @@
+{
+  "mode": "native geometry only; no OCR or model calls",
+  "version": "block-pairing-v2",
+  "results": [
+    {
+      "file": "The_Haunting_Scenario_trimmed.pdf",
+      "pages": 27,
+      "native_blocks": 293,
+      "pairs": {
+        "unresolved": 36,
+        "same_row_candidate": 18
+      }
+    },
+    {
+      "file": "Dead Boarder.pdf",
+      "pages": 32,
+      "native_blocks": 526,
+      "pairs": {
+        "unresolved": 37,
+        "same_row_candidate": 36
+      }
+    },
+    {
+      "file": "The Lightless Beacon - Call of Cthulhu.pdf",
+      "pages": 43,
+      "native_blocks": 369,
+      "pairs": {
+        "unresolved": 45,
+        "same_row_candidate": 24
+      }
+    },
+    {
+      "file": "Doors to Darkness Pre-Generated Characters.pdf",
+      "pages": 11,
+      "native_blocks": 154,
+      "pairs": {
+        "same_row_candidate": 140
+      }
+    }
+  ],
+  "limitations": "Counts describe geometric candidates, not verified stat accuracy. Only supported labels and unambiguous horizontal rows are paired."
+}

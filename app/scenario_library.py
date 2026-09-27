@@ -197,7 +197,7 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
     return SequenceMatcher(None, text[:20000], existing_text[:20000]).ratio() >= threshold
 
 
-def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None) -> str:
+def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None, parse_quality: dict | None = None) -> str:
     with _LIBRARY_LOCK:
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -222,6 +222,7 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             (temporary / "source.pdf").write_bytes(pdf_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")
             (temporary / "scenario.txt").write_text(text, encoding="utf-8")
+            (temporary / "parse_quality.json").write_text(json.dumps(parse_quality or {}, ensure_ascii=False, indent=2), encoding="utf-8")
             (temporary / "indexes.json").write_text(json.dumps(indexes, ensure_ascii=False), encoding="utf-8")
             (temporary / "pregens.json").write_text(json.dumps(pregens, ensure_ascii=False), encoding="utf-8")
             (temporary / "scene_maps.json").write_text(json.dumps(page_maps, ensure_ascii=False), encoding="utf-8")
