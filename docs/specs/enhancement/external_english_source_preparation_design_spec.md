@@ -341,3 +341,21 @@ full suite using the deployment virtualenv passed: **1,085 passed, 1 skipped,
 33 subtests passed**. Navigation is traversed across 32 visibility/policy combinations,
 rendering actual Discord Views and checking command reachability and size limits.
 Ruff and mypy also pass.
+
+
+### Cosmetic translation cleanup (2026-09-27)
+
+Both the visible copyable prompt and bilingual workbook instructions distinguish
+PDF-verified cosmetic punctuation/spacing/layout from substantive or ambiguous
+source errors. `players. .` alone may be rendered with one Chinese full stop;
+a complete translation with no remaining issues has empty `uncertainty`, without
+re-exporting English. Source IDs and verbatim `source_quote` remain immutable.
+Decimal points, signs, dice operators, negation, conditions, limits, missing text
+and uncertain changes must not use this exception. Numeric and quote validators
+are unchanged. Previously downloaded workbooks need this supplemental instruction;
+new exports include it without modifying any existing source registry or draft.
+
+Validation: 1,089 tests passed, 1 skipped, 33 subtests passed using the deployment
+virtualenv. New cases verify exported guidance and a successful cosmetic cleanup
+round trip, while altered quotes and numeric mismatches remain rejected. Ruff and
+mypy pass.
