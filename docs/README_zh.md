@@ -8,6 +8,7 @@
 
 | 規格 | 狀態 | 語言 |
 | --- | --- | --- |
+| [外部整備數值校對](specs/bug/authoring_numeric_review_design_spec_zh.md) | 已實作；來源仍需校對 | [English](specs/bug/authoring_numeric_review_design_spec.md) |
 | [待處理檢定的所有權與重複防護](specs/bug/bugfix_duplicate_pending_checks_zh.md) | 已實作 | [English](specs/bug/bugfix_duplicate_pending_checks.md) |
 | [劇本生命週期 review 修正](specs/bug/project_review_fixes_design_spec_zh.md) | 已實作 | [English](specs/bug/project_review_fixes_design_spec.md) |
 | [檢定敘事與權威狀態一致](specs/bug/wood_wall_check_state_design_spec_zh.md) | 已實作 | [English](specs/bug/wood_wall_check_state_design_spec.md) |

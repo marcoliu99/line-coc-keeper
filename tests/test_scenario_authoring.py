@@ -814,3 +814,168 @@ def test_plain_json_does_not_bypass_source_and_evidence_validation(library, monk
     if damage == 'source':
         source.write_text(original_source)
     assert not templates.status('sample')['variants']
+
+
+def test_numeric_contract_is_in_actual_export_and_inventory(library):
+    path, _ = library('Armor 2, cost 2. Damage 1D6 + 2. Handout 2 (page 30).')
+    content = path.read_text()
+    for required in ('EACH rule field', 'occurrence counts', '五不等於 5',
+                     '1D6 + 2', '1D6+2', 'Handout 2 (page 30)',
+                     'First import:', 'already saved in THAT batch',
+                     'literal', 'PDF', '不可直接貼進劇情'):
+        assert required.casefold() in content.casefold()
+    assert '"1d6+2": 1' in content
+    assert '"2": 3' in content
+    assert '"30": 1' in content
+
+
+@pytest.mark.parametrize(('quote', 'translation', 'valid'), [
+    ('Damage 1D6 + 2', '傷害1D6+2', True),
+    ('Damage 1D6+2', '傷害 1d6 + 2', True),
+    ('Damage 1D6+2', '傷害 1D6', False),
+    ('Armor 5', '護甲五', False),
+    ('Armor 5', '護甲5點', True),
+    ('Armor 2, cost 2', '護甲 2', False),
+    ('Armor 2, cost 2', '護甲2，花費2', True),
+    ('Handout 2 (page 30)', '玩家文件 2', False),
+    ('Handout 2 (page 30)', '玩家文件2（第30頁）', True),
+    ('Chance 50%', '機率50', False),
+    ('Gain 2%', '技能增加2個百分點', False),
+    ('Gain 2%', '技能增加2點', False),
+    ('Gain 2% twice: 2%', '技能增加2個百分點', False),
+    ('Bonus 1D40', '加值 1D4', False),
+    ('Value 2.5', '數值25', False),
+])
+def test_rule_numeric_counts_and_dice_format(library, quote, translation, valid):
+    path, payload = library(quote)
+    fill(payload, translation)
+    record = payload['batches'][0]['records'][0]
+    record['rules'] = [{'check': {'text': translation, 'evidence': [
+        {'unit_id': 'u1', 'source_quote': quote}]}}]
+    write(path, payload)
+    if valid:
+        variant = templates.import_markdown('sample', relative(path))
+        templates.approve('sample', variant, reviewer_id='kp')
+    else:
+        with pytest.raises(authoring.Diagnostics) as caught:
+            variant = templates.import_markdown('sample', relative(path))
+            # Percent notation can remain a review-required draft, never approved.
+            templates.approve('sample', variant, reviewer_id='kp')
+        issue = next(i for i in caught.value.issues if i['code'] == 'RULE_NUMERIC_MISMATCH')
+        assert issue['field'] == 'rules[0].check'
+        assert issue['missing_counts'] or issue['extra_counts']
+
+
+def test_reports_all_rule_fields_not_only_first(library):
+    path, payload = library('Armor 2. Cost 3. Damage 1D6.')
+    fill(payload, '護甲 2，花費 3，傷害 1D6。')
+    record = payload['batches'][0]['records'][0]
+    record['rules'] = [{field: {'text': '錯誤 99', 'evidence': [
+        {'unit_id': 'u1', 'source_quote': quote}]} for field, quote in
+        [('check', 'Armor 2'), ('success', 'Cost 3'), ('failure', 'Damage 1D6')]}]
+    write(path, payload)
+    with pytest.raises(authoring.Diagnostics) as caught:
+        templates.import_markdown('sample', relative(path))
+    assert {i['field'] for i in caught.value.issues} == {'rules[0].check', 'rules[0].success', 'rules[0].failure'}
+
+
+def test_approval_full_report_all_records_and_layout_noise(library, monkeypatch):
+    source = '\n'.join(f'# Room {i}\nReward {100+i}.\n999' for i in range(1, 20))
+    path, payload = library(source)
+    fill(payload, '房間有酬金，等待來源校對。')
+    for batch in payload['batches']:
+        for r in batch['records']:
+            # These fields cannot be used as a back door for numeric coverage.
+            r.update(name='999', aliases=['999'], keywords=['999'])
+    write(path, payload)
+    variant = templates.import_markdown('sample', relative(path))
+    monkeypatch.setattr(authoring, 'MAX_ISSUES', 3)
+    with pytest.raises(authoring.Diagnostics) as caught:
+        templates.approve('sample', variant, reviewer_id='kp')
+    exc = caught.value
+    assert len(exc.issues) == 3 and exc.total == 19
+    assert len(exc.full_issues) == 19
+    assert exc.report_path.stat().st_mode & 0o077 == 0
+    content = exc.report_path.read_text()
+    report = json.loads(content[content.index('{'):])
+    assert report['omitted'] == 0 and report['total'] == 19
+    assert {i['record_id'] for i in report['issues']} == {f'r{i}' for i in range(1, 20)}
+    assert all('999' in i['missing_tokens'] for i in report['issues'])
+    assert all(i['source_contexts'] and i['source_spans'] for i in report['issues'])
+    assert report['source_hash']
+    assert templates._read_variant('sample', variant)[0]['review_status'] == 'review_required'
+
+
+def test_first_import_rejects_replacements_then_explicit_correction(library):
+    path, payload = library('Reward 5.')
+    fill(payload, '酬金五。')
+    batch = payload['batches'][0]
+    rid = batch['records'][0]['id']
+    batch['replace_record_ids'] = [rid]
+    write(path, payload)
+    with pytest.raises(authoring.Diagnostics) as caught:
+        templates.import_markdown('sample', relative(path))
+    assert any(i['code'] == 'INVALID_REPLACEMENT' for i in caught.value.issues)
+    batch.pop('replace_record_ids')
+    write(path, payload)
+    first = templates.import_markdown('sample', relative(path))
+    with pytest.raises(authoring.Diagnostics):
+        templates.approve('sample', first, reviewer_id='kp')
+    fill(payload, '酬金5。')
+    write(path, payload)
+    with pytest.raises(authoring.Diagnostics) as caught:
+        templates.import_markdown('sample', relative(path))
+    assert any(i['code'] == 'RECORD_CONFLICT' for i in caught.value.issues)
+    batch['replace_record_ids'] = [rid]
+    write(path, payload)
+    corrected = templates.import_markdown('sample', relative(path))
+    templates.approve('sample', corrected, reviewer_id='kp')
+    assert corrected != first
+
+
+def test_rule_failure_does_not_hide_other_records_review(library):
+    path, payload = library('# First\nArmor 2.\n# Second\nReward 50.')
+    fill(payload, '等待校對。')
+    record = payload['batches'][0]['records'][0]
+    record['rules'] = [{'check': {'text': '護甲 99', 'evidence': [
+        {'unit_id': 'u1', 'source_quote': 'Armor 2'}]}}]
+    write(path, payload)
+    with pytest.raises(authoring.Diagnostics) as caught:
+        templates.import_markdown('sample', relative(path))
+    assert any(i['code'] == 'RULE_NUMERIC_MISMATCH' for i in caught.value.full_issues)
+    coverage = [i for i in caught.value.full_issues if i['code'] == 'SOURCE_NUMERIC_COVERAGE']
+    assert {i['record_id'] for i in coverage} == {'r1', 'r2'}
+
+
+def test_percentage_review_can_be_corrected_across_packages(library, monkeypatch):
+    monkeypatch.setattr(authoring, 'BATCH_CHARS', 10)
+    first, _ = library('# A\nGain 2%.\n# B\nGain 5%.')
+    saved = []
+    for source in sorted((first.parent.parent / 'source').glob('*.md')):
+        path = result_copy(source)
+        payload = authoring.parse_markdown(path.read_text())
+        batch = payload['batches'][0]
+        record = batch['records'][0]
+        value = '2' if record['id'] == 'r1' else '5'
+        fill(payload, f'神話技能增加 {value} 個百分點。')
+        record['rules'] = [{'success': {'text': record['kp_text'], 'evidence': [
+            {'unit_id': record['unit_ids'][0], 'source_quote': f'Gain {value}%'}]}}]
+        write(path, payload)
+        variant = templates.import_markdown('sample', relative(path))
+        saved.append((path, payload, value))
+    assert len(saved) == 2
+    with pytest.raises(authoring.Diagnostics):
+        templates.approve('sample', variant, reviewer_id='kp')
+    for index, (path, payload, value) in enumerate(saved):
+        batch = payload['batches'][0]
+        record = batch['records'][0]
+        record['kp_text'] = f'神話技能增加 {value}%。'
+        record['rules'][0]['success']['text'] = record['kp_text']
+        batch['replace_record_ids'] = [record['id']]
+        write(path, payload)
+        variant = templates.import_markdown('sample', relative(path))
+        if index == 0:
+            with pytest.raises(authoring.Diagnostics) as caught:
+                templates.approve('sample', variant, reviewer_id='kp')
+            assert any(i['record_id'] == 'r2' and i['code'] == 'RULE_NUMERIC_MISMATCH' for i in caught.value.issues)
+    templates.approve('sample', variant, reviewer_id='kp')
