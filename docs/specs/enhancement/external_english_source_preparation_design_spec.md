@@ -359,3 +359,21 @@ Validation: 1,089 tests passed, 1 skipped, 33 subtests passed using the deployme
 virtualenv. New cases verify exported guidance and a successful cosmetic cleanup
 round trip, while altered quotes and numeric mismatches remain rejected. Ruff and
 mypy pass.
+
+
+### External AI continuation instructions (2026-09-27)
+
+English preparation defaults to completing all physical pages in one downloadable
+result, without arbitrary five-page batches or plan-only replies. Actual output
+limits may require partial results. Such results contain only completed pages or
+pages inspected against the PDF with specific unresolved evidence; untouched pages
+and template placeholders are omitted, with pending IDs outside JSON. Omitted
+saved pages remain intact, and prior completed pages must not be resent as unresolved
+backlog. Complex layout requires reconstruction rather than deferral to a human.
+The copyable prompt and bilingual workbook carry these instructions. Draft replacement
+semantics and structural validation remain unchanged; this does not claim to enforce
+external-model behavior or automatically certify unprocessed pages.
+
+Verification: deployment-virtualenv suite passed with 1,091 passed, 1 skipped,
+33 subtests passed; Ruff and mypy passed. Regression coverage checks guidance in
+the actual workbook/message and disjoint partial imports retaining completed pages.

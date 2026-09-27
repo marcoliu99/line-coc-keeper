@@ -554,3 +554,32 @@ async def test_keeper_can_select_corrected_english_explicitly_without_enrollment
     assert state.scenario_library_id == target and state.scenario_variant_id == 'original'
     assert state.scenario_text.endswith('Armor +1D4.') and state.kp_assistant_user_id == ''
     assert selected_variants == [('g', target, 'original')]
+
+
+def test_export_prompt_prefers_full_delivery_and_omits_backlog_placeholders(prepared):
+    sid, path, _, _ = prepared()
+    for content in (path.read_text(), source.export_message(sid, path)):
+        assert '預設一次完成全部實體頁' in content
+        assert '每批 5 頁' in content
+        assert '待處理清單寫在 JSON 外' in content
+        assert '不能用 unresolved 佔位' in content
+        assert '不要將先前完成頁面重送為 unresolved' in content
+    assert 'not attempted is not unresolved' in path.read_text()
+    assert 'remove untouched placeholders from partial replies' in path.read_text()
+
+
+def test_disjoint_partial_results_retain_completed_pages_without_unresolved_backlog(prepared):
+    sid, _, path, payload = prepared(tuple(f'Page {i}.' for i in range(1, 16)))
+    first = {**payload, 'pages': deepcopy(payload['pages'][:5])}
+    finish(first, [f'Corrected page {i}.' for i in range(1, 6)])
+    info = run(sid, path, first)
+    assert len(info['completed']) == 5 and len(info['pending']) == 10
+    assert info['unresolved'] == []
+    second = {**payload, 'pages': deepcopy(payload['pages'][5:10])}
+    finish(second, [f'Corrected page {i}.' for i in range(6, 11)])
+    info = run(sid, path.with_name('Real_Scenario_02.md'), second)
+    assert len(info['completed']) == 10 and len(info['pending']) == 5
+    assert info['unresolved'] == [] and not info['published_id']
+    draft = json.loads((source._root(sid, payload['export_id']) / 'draft.json').read_text())
+    for row in first['pages']:
+        assert draft['pages'][row['page_id']] == row
