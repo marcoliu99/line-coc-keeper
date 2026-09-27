@@ -358,6 +358,20 @@ async def _create_response_async(_client=None, *, _log_iteration: int | None = N
         return response
 
 
+def _prompt_cache_key() -> str:
+    """Route requests that share a prompt prefix to one cache node.
+
+    Implicit prefix caching already covers the tool loop inside a turn, where
+    previous_response_id keeps the chain on a single node. A new turn opens a
+    new chain, so the unchanged static prefix is re-sent without affinity. The
+    bound conversation id is stable across a game's turns, distinct between
+    games, and already hashed by observability, so it groups exactly the
+    requests that share a prefix. A turn or request id would change every turn
+    and group nothing.
+    """
+    return observability.current_context().get("conversation_id", "")
+
+
 async def run_conversation(
     static_system: str,
     dynamic_system: str,
@@ -419,6 +433,7 @@ async def run_conversation(
     # wants it.
     reasoning_kwargs = {"reasoning": {"effort": KEEPER_REASONING_EFFORT}} if KEEPER_REASONING_EFFORT else {}
 
+    prompt_cache_key = _prompt_cache_key()
     final_text = "守密人一時無法完成回覆。已提交的變更會保留，請查看目前狀態，不要重做剛才的行動。"
     iteration = -1
     for iteration in range(max_iterations):
@@ -436,6 +451,9 @@ async def run_conversation(
             request_kwargs["max_output_tokens"] = output_limit
         if active_previous_response_id:
             request_kwargs["previous_response_id"] = active_previous_response_id
+        # Omitted, never empty: a blank or shared key would pool unrelated games.
+        if prompt_cache_key:
+            request_kwargs["prompt_cache_key"] = prompt_cache_key
         new_input_tokens = input_budget.estimate(input_items, OPENAI_MODEL)
         tools_tokens = input_budget.estimate(openai_tools, OPENAI_MODEL)
         estimated_input = (
