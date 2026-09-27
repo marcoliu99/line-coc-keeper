@@ -132,3 +132,14 @@ Apply the accepted **at-most-three physical package** policy with small internal
 - Verification: isolated full pytest suite **964 passed, 1 skipped, 33 subtests passed**; Ruff on changed Python files; `python3 -m mypy app` (83 files). No live translation/API requests or production state writes.
 
 Resource limits are unchanged. File count is bounded, not translation reply count. Automated validation cannot certify translation fidelity, and external web attachment availability still depends on the chosen AI website. New files still require the existing human review/approval workflow before gameplay selection.
+
+
+## Compatibility fix: AI saves plain JSON as MD (2026-09-27)
+
+Real result files were placed in the correct results directory with matching export/package IDs, but the web AI saved the entire JSON object directly as `.md`, omitting the Markdown json fence. The shared Help/import parser required exactly one fenced JSON block, so the picker omitted all results.
+
+Contract: continue requesting Markdown with one json fence, and additionally accept `.md` whose entire document is one complete JSON object, allowing a UTF-8 BOM and surrounding whitespace. Parse the complete document; do not extract guessed brace ranges from prose. Multiple objects, trailing prose, malformed JSON, top-level arrays and multiple json fences remain rejected. Help and direct import share the parser; registry, package, unit, quotation and review validation remain unchanged.
+
+Tests cover v1/v2/v3 envelopes in both wrappers, plain-JSON Help selection and real imports, BOM/whitespace, rejection of multiple blocks/objects, and stale-source/incorrect-package validation. Copy the user's three actual results and source registry into a temporary directory for verification; do not modify or activate production game data.
+
+Verification: isolated full suite 987 passed, 1 skipped, 33 subtests passed; Ruff and mypy (83 files) passed. The three real plain-JSON results changed from zero to three Help choices. Importing copies reported 7/13/14 quotation or dependency diagnostics at the first invalid batch of each file; no draft or playable variant was created. These are translation-evidence review issues and are not bypassed by the wrapper compatibility fix. Original files and production game data were not modified.
