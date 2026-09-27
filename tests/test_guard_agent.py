@@ -9,7 +9,7 @@ from app.domain.models import AgentMessage
 
 
 class EnforceNarrativeSafetyTests(unittest.TestCase):
-    """docs/specs/enhancement-guard-agent.md: GUARD_ENABLED switch semantics
+    """docs/specs/enhancement/enhancement-guard-agent.md: GUARD_ENABLED switch semantics
     and the fail-closed fix for the repair loop's original bug (it used to
     exit after MAX_REPAIR_ATTEMPTS without re-validating the last repair
     attempt, so a still-invalid narrative could slip through unnoticed)."""

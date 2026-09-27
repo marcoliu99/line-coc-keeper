@@ -1,0 +1,1072 @@
+{
+  "baseline": "afe8aced2614e6d1ba845727e42277436838cf0f",
+  "reviewed_date": "2026-09-27",
+  "specs": [
+    {
+      "title": "Pending-check ownership and duplicate protection",
+      "zh": "待處理檢定的所有權與重複防護",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/check_identity.py",
+        "app/legacy_commands.py",
+        "tests/test_luck_buyup_gate.py",
+        "tests/test_state_loss_amnesia.py"
+      ],
+      "path": "docs/specs/bug/bugfix_duplicate_pending_checks.md",
+      "zh_path": "docs/specs/bug/bugfix_duplicate_pending_checks_zh.md",
+      "previous_path": "docs/bugfix_duplicate_pending_checks.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Single dispatch branch for each combat tool",
+      "zh": "每個戰鬥工具只有一個分派分支",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "tests/test_execute_tool_no_duplicate_branches.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/refactor/dead_combat_tool_branches_design_spec.md",
+      "zh_path": "docs/specs/refactor/dead_combat_tool_branches_design_spec_zh.md",
+      "previous_path": "docs/dead_combat_tool_branches_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Scenario lifecycle review fixes",
+      "zh": "劇本生命週期 review 修正",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/legacy_commands.py",
+        "app/commands/router.py",
+        "app/discord_bot.py",
+        "app/config.py",
+        "tests/test_scenario_library.py",
+        "tests/test_bot_lifecycle_scripts.py"
+      ],
+      "path": "docs/specs/bug/project_review_fixes_design_spec.md",
+      "zh_path": "docs/specs/bug/project_review_fixes_design_spec_zh.md",
+      "previous_path": "docs/project_review_fixes_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Keep check narration consistent with authoritative state",
+      "zh": "檢定敘事與權威狀態一致",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/prompt_config.py",
+        "app/services/turn_resolution.py",
+        "app/agents/supervisor.py",
+        "tests/test_narrator_check_consistency.py",
+        "tests/test_unified_keeper_turn_flow.py"
+      ],
+      "path": "docs/specs/bug/wood_wall_check_state_design_spec.md",
+      "zh_path": "docs/specs/bug/wood_wall_check_state_design_spec_zh.md",
+      "previous_path": "docs/wood_wall_check_state_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Defensive combat-card parsing",
+      "zh": "戰鬥卡欄位的防禦式解析",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/models.py",
+        "app/keeper.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/bug/bug-add-npc-to-combat-armor-schema-crash.md",
+      "zh_path": "docs/specs/bug/bug-add-npc-to-combat-armor-schema-crash_zh.md",
+      "previous_path": "docs/specs/bug-add-npc-to-combat-armor-schema-crash.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Defensive effect and combatant deserialization",
+      "zh": "效果與參戰者的防禦式反序列化",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/models.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/bug/bug-effectstate-combatant-missing-defensive-parsing.md",
+      "zh_path": "docs/specs/bug/bug-effectstate-combatant-missing-defensive-parsing_zh.md",
+      "previous_path": "docs/specs/bug-effectstate-combatant-missing-defensive-parsing.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Distinct NPC instances and bounded tool conversations",
+      "zh": "區分 NPC 個體與限制工具對話",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "app/keeper.py",
+        "app/providers/openai_provider.py",
+        "tests/test_combat_cards.py",
+        "tests/test_llm_turn_wrapup.py"
+      ],
+      "path": "docs/specs/bug/bug-add-npc-to-combat-duplicate-name-guard.md",
+      "zh_path": "docs/specs/bug/bug-add-npc-to-combat-duplicate-name-guard_zh.md",
+      "previous_path": "docs/specs/bug-add-npc-to-combat-duplicate-name-guard.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Truthful major-wound check status",
+      "zh": "如實回報重傷檢定狀態",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/combat.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/bug/bug-adjust-character-false-major-wound-check.md",
+      "zh_path": "docs/specs/bug/bug-adjust-character-false-major-wound-check_zh.md",
+      "previous_path": "docs/specs/bug-adjust-character-false-major-wound-check.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Combat entry and damage-tool contracts",
+      "zh": "進入戰鬥與傷害工具契約",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/combat.py",
+        "app/dice.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity.md",
+      "zh_path": "docs/specs/bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity_zh.md",
+      "previous_path": "docs/specs/bug-combat-trigger-prompt-and-damage-tool-ambiguity.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Keep continuing-effect damage separate from Luck",
+      "zh": "持續效果傷害與幸運數值隔離",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/combat.py",
+        "app/models.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/bug/bug-continuing-damage-rolls-corrupt-luck-stat.md",
+      "zh_path": "docs/specs/bug/bug-continuing-damage-rolls-corrupt-luck-stat_zh.md",
+      "previous_path": "docs/specs/bug-continuing-damage-rolls-corrupt-luck-stat.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Unambiguous combatant targeting",
+      "zh": "無歧義的參戰者定位",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/bug/bug-find-combatant-substring-collision.md",
+      "zh_path": "docs/specs/bug/bug-find-combatant-substring-collision_zh.md",
+      "previous_path": "docs/specs/bug-find-combatant-substring-collision.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Pending Luck blocks conflicting manual checks",
+      "zh": "待處理 Luck 阻擋衝突的手動檢定",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/luck.py",
+        "tests/test_luck_buyup_gate.py"
+      ],
+      "path": "docs/specs/bug/bug-luck-decision-not-checked-non-autoroll.md",
+      "zh_path": "docs/specs/bug/bug-luck-decision-not-checked-non-autoroll_zh.md",
+      "previous_path": "docs/specs/bug-luck-decision-not-checked-non-autoroll.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "RAG-aware role-specific Executor tools",
+      "zh": "依 RAG 與角色提供 Executor 工具",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/executor.py",
+        "app/agents/tool_gateway.py",
+        "app/keeper.py",
+        "tests/test_tool_gateway_speaker_role.py",
+        "tests/test_executor_rag_reuse_prompt.py"
+      ],
+      "path": "docs/specs/bug/bug-executor-tool-list-missing-search-scenario.md",
+      "zh_path": "docs/specs/bug/bug-executor-tool-list-missing-search-scenario_zh.md",
+      "previous_path": "docs/specs/bug-executor-tool-list-missing-search-scenario.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Output protection after removal of the legacy Keeper loop",
+      "zh": "移除舊 Keeper 迴圈後的輸出保護",
+      "category": "bug",
+      "status": "superseded",
+      "evidence": [
+        "app/agents/supervisor.py",
+        "app/agents/assistant.py",
+        "app/agents/guard.py",
+        "tests/test_unified_keeper_turn_flow.py",
+        "tests/test_guard_agent.py"
+      ],
+      "path": "docs/specs/bug/bug-legacy-run-turn-missing-guard.md",
+      "zh_path": "docs/specs/bug/bug-legacy-run-turn-missing-guard_zh.md",
+      "previous_path": "docs/specs/bug-legacy-run-turn-missing-guard.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Malformed provider calls and partial-failure handling",
+      "zh": "Provider 格式錯誤與部分失敗處理",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/openai_provider.py",
+        "app/agents/executor.py",
+        "app/agents/assistant.py",
+        "tests/test_async_provider_contract.py",
+        "tests/test_turn_consistency_handoff.py"
+      ],
+      "path": "docs/specs/bug/bug-provider-tool-call-unhandled-exceptions.md",
+      "zh_path": "docs/specs/bug/bug-provider-tool-call-unhandled-exceptions_zh.md",
+      "previous_path": "docs/specs/bug-provider-tool-call-unhandled-exceptions.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Remove the unused legacy command dispatcher",
+      "zh": "移除未使用的舊指令分派器",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/commands/router.py",
+        "app/legacy_commands.py",
+        "tests/test_unified_keeper_turn_flow.py",
+        "tests/test_kp_assistant_v2.py"
+      ],
+      "path": "docs/specs/refactor/bug-remove-dead-legacy-coc-command-handler.md",
+      "zh_path": "docs/specs/refactor/bug-remove-dead-legacy-coc-command-handler_zh.md",
+      "previous_path": "docs/specs/bug-remove-dead-legacy-coc-command-handler.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Idempotent check and Luck button delivery",
+      "zh": "檢定與 Luck 按鈕的冪等交付",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/discord_bot.py",
+        "app/check_identity.py",
+        "tests/test_logging_completion.py",
+        "tests/test_pending_button_latency.py"
+      ],
+      "path": "docs/specs/bug/bug-duplicate-luck-button-prompt.md",
+      "zh_path": "docs/specs/bug/bug-duplicate-luck-button-prompt_zh.md",
+      "previous_path": "docs/specs/bug-duplicate-luck-button-prompt.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Narrator instructions must match check state",
+      "zh": "Narrator 指示必須符合檢定狀態",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/prompt_config.py",
+        "app/agents/narrator.py",
+        "app/agents/supervisor.py",
+        "tests/test_narrator_check_consistency.py"
+      ],
+      "path": "docs/specs/bug/bug-narrator-mechanic-check-consistency.md",
+      "zh_path": "docs/specs/bug/bug-narrator-mechanic-check-consistency_zh.md",
+      "previous_path": "docs/specs/bug-narrator-mechanic-check-consistency.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Durable resolved-check outcome context",
+      "zh": "持久化已結算檢定脈絡",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/legacy_commands.py",
+        "app/services/turn_context.py",
+        "app/agents/context_builder.py",
+        "tests/test_resolved_check_events.py",
+        "tests/test_turn_consistency_handoff.py"
+      ],
+      "path": "docs/specs/bug/bug-resolved-check-outcome-context-design-spec.md",
+      "zh_path": "docs/specs/bug/bug-resolved-check-outcome-context-design-spec_zh.md",
+      "previous_path": "docs/specs/bug-resolved-check-outcome-context-design-spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Search for a complete current event",
+      "zh": "以目前事件完整搜尋劇本",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/scenario_templates.py",
+        "tests/test_executor_rag_reuse_prompt.py",
+        "tests/test_scenario_query_fallback.py"
+      ],
+      "path": "docs/specs/bug/bug-search-scenario-fragmented-queries.md",
+      "zh_path": "docs/specs/bug/bug-search-scenario-fragmented-queries_zh.md",
+      "previous_path": "docs/specs/bug-search-scenario-fragmented-queries.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Explicit cancellation of an incorrectly registered check",
+      "zh": "明確取消登記錯誤的檢定",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/services/turn_resolution.py",
+        "tests/test_turn_consistency_handoff.py",
+        "tests/test_luck_buyup_gate.py"
+      ],
+      "path": "docs/specs/bug/bug-self-corrected-check-leaves-stale-pending.md",
+      "zh_path": "docs/specs/bug/bug-self-corrected-check-leaves-stale-pending_zh.md",
+      "previous_path": "docs/specs/bug-self-corrected-check-leaves-stale-pending.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Melee defense and ranged attack resolution",
+      "zh": "近戰防禦與遠程攻擊結算",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/dice.py",
+        "app/keeper.py",
+        "app/legacy_commands.py",
+        "app/discord_bot.py",
+        "tests/test_dice_resolve_opposed.py",
+        "tests/test_discord_defense_hint.py",
+        "tests/test_npc_attack_latency.py"
+      ],
+      "path": "docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md",
+      "zh_path": "docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics_zh.md",
+      "previous_path": "docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "State revision and timeline isolation",
+      "zh": "狀態版本與時間線隔離",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/repositories/group_state.py",
+        "app/checkpoints.py",
+        "app/keeper.py",
+        "app/check_identity.py",
+        "tests/test_state_loss_amnesia.py",
+        "tests/test_state_persistence.py"
+      ],
+      "path": "docs/specs/bug/state-loss-amnesia-hardening_design_spec.md",
+      "zh_path": "docs/specs/bug/state-loss-amnesia-hardening_design_spec_zh.md",
+      "previous_path": "docs/state-loss-amnesia-hardening_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Authoritative turn-state handoffs",
+      "zh": "權威回合狀態交接",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_context.py",
+        "app/services/turn_resolution.py",
+        "app/agents/executor.py",
+        "app/agents/narrator.py",
+        "tests/test_turn_consistency_handoff.py",
+        "tests/test_retry_diagnostics.py"
+      ],
+      "path": "docs/specs/bug/log_backed_turn_consistency_design_spec.md",
+      "zh_path": "docs/specs/bug/log_backed_turn_consistency_design_spec_zh.md",
+      "previous_path": "docs/log_backed_turn_consistency_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Player-owned deterministic checks",
+      "zh": "玩家擁有的確定性檢定",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/legacy_commands.py",
+        "app/luck.py",
+        "app/check_identity.py",
+        "tests/test_luck_buyup_gate.py",
+        "tests/test_unified_keeper_turn_flow.py"
+      ],
+      "path": "docs/specs/feature/keeper-deterministic-check-resolution_design_spec.md",
+      "zh_path": "docs/specs/feature/keeper-deterministic-check-resolution_design_spec_zh.md",
+      "previous_path": "docs/keeper-deterministic-check-resolution_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Pregenerated-character Luck ownership",
+      "zh": "預製角色幸運值所有權",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/pregen_extractor.py",
+        "app/legacy_commands.py",
+        "app/skill_aliases.py",
+        "tests/test_pregen_and_creation.py",
+        "tests/test_pregen_extra_fields.py"
+      ],
+      "path": "docs/specs/feature/pregen_luck_roll_design_spec.md",
+      "zh_path": "docs/specs/feature/pregen_luck_roll_design_spec_zh.md",
+      "previous_path": "docs/pregen_luck_roll_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Verified Luck from the final merged role card",
+      "zh": "使用最終合併角色卡的可驗證 Luck",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/pregen_extractor.py",
+        "app/legacy_commands.py",
+        "tests/test_pregen_and_creation.py",
+        "tests/test_pregen_extra_fields.py"
+      ],
+      "path": "docs/specs/enhancement/pregen_sheet_luck_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pregen_sheet_luck_design_spec_zh.md",
+      "previous_path": "docs/pregen_sheet_luck_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Manual role cards across games",
+      "zh": "跨遊戲保存手動角色卡",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/repositories/manual_pregens.py",
+        "app/legacy_commands.py",
+        "app/db.py",
+        "tests/test_manual_pregen_persistence.py"
+      ],
+      "path": "docs/specs/feature/manual_pregen_persistence_design_spec.md",
+      "zh_path": "docs/specs/feature/manual_pregen_persistence_design_spec_zh.md",
+      "previous_path": "docs/manual_pregen_persistence_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Executable Help controls",
+      "zh": "可執行的 Help 控制項",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/help_actions.py",
+        "app/help_registration.py",
+        "app/help_service.py",
+        "app/help_docs.py",
+        "app/discord_bot.py",
+        "tests/test_help_actions.py",
+        "tests/test_help_reparse_recovery.py"
+      ],
+      "path": "docs/specs/enhancement/actionable_help_buttons_design_spec.md",
+      "zh_path": "docs/specs/enhancement/actionable_help_buttons_design_spec_zh.md",
+      "previous_path": "docs/actionable_help_buttons_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Categorized Help navigation",
+      "zh": "分類 Help 導覽",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/help_registry.py",
+        "app/help_service.py",
+        "app/help_docs.py",
+        "app/help_registration.py",
+        "tests/test_help_navigation.py",
+        "tests/test_help_text.py"
+      ],
+      "path": "docs/specs/enhancement/enhanced_help_navigation_design_spec.md",
+      "zh_path": "docs/specs/enhancement/enhanced_help_navigation_design_spec_zh.md",
+      "previous_path": "docs/enhanced_help_navigation_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Reuse sufficient proactive scenario evidence",
+      "zh": "重用足夠的主動劇本依據",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/context_builder.py",
+        "app/services/prompt_config.py",
+        "app/agents/executor.py",
+        "tests/test_executor_rag_reuse_prompt.py",
+        "tests/test_scenario_query_fallback.py"
+      ],
+      "path": "docs/specs/enhancement/executor_reuse_existing_rag_design_spec.md",
+      "zh_path": "docs/specs/enhancement/executor_reuse_existing_rag_design_spec_zh.md",
+      "previous_path": "docs/executor_reuse_existing_rag_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Combat snapshot reuse and proposed batch search",
+      "zh": "戰鬥快照重用與批次搜尋提案",
+      "category": "enhancement",
+      "status": "partial",
+      "evidence": [
+        "app/keeper.py",
+        "app/agents/executor.py",
+        "app/providers/openai_provider.py",
+        "tests/test_combat_status_tool_gate.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-batch-scenario-search-and-combat-snapshot.md",
+      "zh_path": "docs/specs/enhancement/enhancement-batch-scenario-search-and-combat-snapshot_zh.md",
+      "previous_path": "docs/specs/enhancement-batch-scenario-search-and-combat-snapshot.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Conversation queuing and bounded tool iteration",
+      "zh": "對話排隊與受限工具迭代",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/locks.py",
+        "app/commands/router.py",
+        "app/discord_bot.py",
+        "app/providers/openai_provider.py",
+        "app/config.py",
+        "tests/test_conversation_lock_with_notice.py",
+        "tests/test_llm_turn_wrapup.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-conversation-lock-and-tool-loop-latency.md",
+      "zh_path": "docs/specs/enhancement/enhancement-conversation-lock-and-tool-loop-latency_zh.md",
+      "previous_path": "docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Logging delivered Discord replies",
+      "zh": "記錄實際交付的 Discord 回覆",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/discord_bot.py",
+        "app/logging_config.py",
+        "tests/test_discord_reply_text_log.py",
+        "tests/test_logging_completion.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-discord-reply-text-logging.md",
+      "zh_path": "docs/specs/enhancement/enhancement-discord-reply-text-logging_zh.md",
+      "previous_path": "docs/specs/enhancement-discord-reply-text-logging.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Optional narrative repair with deterministic validation",
+      "zh": "確定性驗證與可選敘事修復",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/guard.py",
+        "app/agents/rule_validator.py",
+        "app/config.py",
+        "tests/test_guard_agent.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-guard-agent.md",
+      "zh_path": "docs/specs/enhancement/enhancement-guard-agent_zh.md",
+      "previous_path": "docs/specs/enhancement-guard-agent.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Shared retry and request admission",
+      "zh": "共用重試與請求准入",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/retry.py",
+        "app/providers/admission.py",
+        "app/providers/turn_budget.py",
+        "app/config.py",
+        "tests/test_llm_retry.py",
+        "tests/test_adaptive_admission.py",
+        "tests/test_retry_diagnostics.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-llm-rate-limit-and-turn-latency.md",
+      "zh_path": "docs/specs/enhancement/enhancement-llm-rate-limit-and-turn-latency_zh.md",
+      "previous_path": "docs/specs/enhancement-llm-rate-limit-and-turn-latency.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Offer every legal useful Luck upgrade",
+      "zh": "提供所有合法且有效的 Luck 升級",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/luck.py",
+        "app/keeper.py",
+        "app/legacy_commands.py",
+        "app/discord_bot.py",
+        "tests/test_luck_buyup_gate.py",
+        "tests/test_npc_attack_latency.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-luck-buyup-always-offered.md",
+      "zh_path": "docs/specs/enhancement/enhancement-luck-buyup-always-offered_zh.md",
+      "previous_path": "docs/specs/enhancement-luck-buyup-always-offered.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Archive logs and profiles after stopping the bot",
+      "zh": "停止 Bot 後封存 log 與 profile",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "scripts/stop_bot.sh",
+        "scripts/start_bot.sh",
+        "tests/test_bot_lifecycle_scripts.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-archive-log-on-stop.md",
+      "zh_path": "docs/specs/enhancement/enhancement-archive-log-on-stop_zh.md",
+      "previous_path": "docs/specs/enhancement-archive-log-on-stop.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Historical Executor tiering and deferred tool scoping",
+      "zh": "歷史 Executor 分級與延後工具範圍設計",
+      "category": "enhancement",
+      "status": "superseded",
+      "evidence": [
+        "app/agents/executor.py",
+        "app/config.py",
+        "app/providers/openai_provider.py",
+        "tests/test_config_defaults.py",
+        "tests/test_combat_status_tool_gate.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-executor-model-tiering-and-tool-scoping.md",
+      "zh_path": "docs/specs/enhancement/enhancement-executor-model-tiering-and-tool-scoping_zh.md",
+      "previous_path": "docs/specs/enhancement-executor-model-tiering-and-tool-scoping.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Input budgets, adaptive admission and truncation",
+      "zh": "輸入預算、自適應准入與截斷",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/input_budget.py",
+        "app/providers/admission.py",
+        "app/providers/turn_budget.py",
+        "app/providers/openai_provider.py",
+        "app/config.py",
+        "tests/test_token_admission_experiment.py",
+        "tests/test_adaptive_admission.py",
+        "tests/test_retry_diagnostics.py"
+      ],
+      "path": "docs/specs/enhancement/token_admission_evaluation_design_spec.md",
+      "zh_path": "docs/specs/enhancement/token_admission_evaluation_design_spec_zh.md",
+      "previous_path": "docs/token_admission_evaluation_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "NPC attack latency and deterministic consequences",
+      "zh": "NPC 攻擊延遲與確定性後果",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/agents/context_builder.py",
+        "app/legacy_commands.py",
+        "app/dice.py",
+        "tests/test_npc_attack_latency.py"
+      ],
+      "path": "docs/specs/enhancement/npc_attack_latency_design_spec.md",
+      "zh_path": "docs/specs/enhancement/npc_attack_latency_design_spec_zh.md",
+      "previous_path": "docs/npc_attack_latency_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Unified player-turn flow and independent KP Assistant",
+      "zh": "統一玩家回合流程與獨立 KP Assistant",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/supervisor.py",
+        "app/agents/executor.py",
+        "app/agents/narrator.py",
+        "app/agents/assistant.py",
+        "app/legacy_commands.py",
+        "app/commands/handlers/system.py",
+        "tests/test_unified_keeper_turn_flow.py"
+      ],
+      "path": "docs/specs/refactor/unified_keeper_turn_flow_design_spec.md",
+      "zh_path": "docs/specs/refactor/unified_keeper_turn_flow_design_spec_zh.md",
+      "previous_path": "docs/unified_keeper_turn_flow_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Agentic Keeper architecture",
+      "zh": "Agentic Keeper 架構",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/supervisor.py",
+        "app/agents/context_builder.py",
+        "app/agents/intent_router.py",
+        "app/agents/state_reducer.py",
+        "app/agents/tool_gateway.py",
+        "app/domain/models.py",
+        "tests/test_agentic_pipeline.py"
+      ],
+      "path": "docs/specs/refactor/agentic_keeper_design_spec.md",
+      "zh_path": "docs/specs/refactor/agentic_keeper_design_spec_zh.md",
+      "previous_path": "docs/agentic_keeper_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Native asynchronous provider and I/O contracts",
+      "zh": "原生非同步 provider 與 I/O 契約",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/openai_provider.py",
+        "app/providers/anthropic_provider.py",
+        "app/providers/gemini_provider.py",
+        "app/providers/retry.py",
+        "app/providers/client_lifecycle.py",
+        "app/async_utils.py",
+        "tests/test_async_provider_contract.py",
+        "tests/test_embedding_timeout.py"
+      ],
+      "path": "docs/specs/refactor/async_provider_performance_design_spec.md",
+      "zh_path": "docs/specs/refactor/async_provider_performance_design_spec_zh.md",
+      "previous_path": "docs/async_provider_performance_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Local Discord bot lifecycle",
+      "zh": "本地 Discord Bot 生命週期",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "scripts/start_bot.sh",
+        "scripts/stop_bot.sh",
+        "scripts/bot_status.sh",
+        "tests/test_bot_lifecycle_scripts.py"
+      ],
+      "path": "docs/specs/feature/bot_lifecycle_scripts_design_spec.md",
+      "zh_path": "docs/specs/feature/bot_lifecycle_scripts_design_spec_zh.md",
+      "previous_path": "docs/bot_lifecycle_scripts_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Character imports, reconciliation and dictionary",
+      "zh": "角色匯入、協調與字典",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/pregen_extractor.py",
+        "app/character_matcher.py",
+        "app/dictionary.py",
+        "app/skill_aliases.py",
+        "app/legacy_commands.py",
+        "app/discord_bot.py",
+        "tests/test_pregen_and_creation.py",
+        "tests/test_pregen_extra_fields.py",
+        "tests/test_manual_pregen_persistence.py"
+      ],
+      "path": "docs/specs/feature/character_and_dictionary_system_spec.md",
+      "zh_path": "docs/specs/feature/character_and_dictionary_system_spec_zh.md",
+      "previous_path": "docs/character_and_dictionary_system_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Combat cards, effects and authoritative damage",
+      "zh": "戰鬥卡、效果與權威傷害",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "app/models.py",
+        "app/keeper.py",
+        "app/dice.py",
+        "tests/test_combat_cards.py",
+        "tests/test_dice_resolve_opposed.py",
+        "tests/test_npc_attack_latency.py"
+      ],
+      "path": "docs/specs/feature/combat_design_spec.md",
+      "zh_path": "docs/specs/feature/combat_design_spec_zh.md",
+      "previous_path": "docs/combat_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "KP Assistant delegated player actions",
+      "zh": "KP Assistant 代玩家操作",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/commands/router.py",
+        "app/agents/assistant.py",
+        "app/keeper.py",
+        "tests/test_kp_sudo.py",
+        "tests/test_kp_assistant_v2.py"
+      ],
+      "path": "docs/specs/feature/kp_assistant_sudo_control_design_spec.md",
+      "zh_path": "docs/specs/feature/kp_assistant_sudo_control_design_spec_zh.md",
+      "previous_path": "docs/kp_assistant_sudo_control_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Historical post-v1.0 integration ledger",
+      "zh": "歷史 v1.0 後整合紀錄",
+      "category": "refactor",
+      "status": "historical",
+      "evidence": [
+        "app/commands/router.py",
+        "app/agents/supervisor.py",
+        "app/discord_bot.py",
+        "tests/test_unified_keeper_turn_flow.py"
+      ],
+      "path": "docs/specs/refactor/main_post_v1.0_into_main_v2_design_spec.md",
+      "zh_path": "docs/specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md",
+      "previous_path": "docs/main_post_v1.0_into_main_v2_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Scenario canon boundaries and durable corrections",
+      "zh": "劇本正典邊界與持久更正",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "app/services/narrative_corrections.py",
+        "app/commands/handlers/correct.py",
+        "app/agents/tool_gateway.py",
+        "tests/test_narrative_boundary_prompts.py",
+        "tests/test_narrative_correction_lifecycle.py",
+        "tests/test_narrative_correction_command.py"
+      ],
+      "path": "docs/specs/enhancement/narrative_boundaries_design_spec.md",
+      "zh_path": "docs/specs/enhancement/narrative_boundaries_design_spec_zh.md",
+      "previous_path": "docs/narrative_boundaries_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Evidence-preserving PDF extraction and targeted repair",
+      "zh": "保留證據的 PDF 解析與局部修復",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_loader.py",
+        "app/pdf_quality.py",
+        "app/pdf_ai_repair.py",
+        "app/pregen_extractor.py",
+        "tests/test_pdf_loader.py",
+        "tests/test_pdf_numeric_pairs.py",
+        "tests/test_pdf_ai_repair.py"
+      ],
+      "path": "docs/specs/enhancement/pdf_parse_quality_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pdf_parse_quality_design_spec_zh.md",
+      "previous_path": "docs/pdf_parse_quality_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Atomic narrative purchases and acquisition provenance",
+      "zh": "原子敘事購買與取得來源",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/purchases.py",
+        "app/commands/handlers/purchase.py",
+        "app/agents/executor.py",
+        "app/services/turn_resolution.py",
+        "app/models.py",
+        "tests/test_purchase_flow.py"
+      ],
+      "path": "docs/specs/bug/purchase_turn_provenance_design_spec.md",
+      "zh_path": "docs/specs/bug/purchase_turn_provenance_design_spec_zh.md",
+      "previous_path": "docs/purchase_turn_provenance_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Reusable scenario library and chapter context",
+      "zh": "可重用劇本庫與章節脈絡",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_library.py",
+        "app/pdf_loader.py",
+        "app/legacy_commands.py",
+        "app/commands/handlers/system.py",
+        "app/scene_map.py",
+        "tests/test_scenario_library.py",
+        "tests/test_spoiler_policy.py"
+      ],
+      "path": "docs/specs/feature/scenario_library_design_spec.md",
+      "zh_path": "docs/specs/feature/scenario_library_design_spec_zh.md",
+      "previous_path": "docs/scenario_library_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Externally prepared Chinese-first retrieval",
+      "zh": "外部預製中文優先檢索",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_templates.py",
+        "app/scenario_projection.py",
+        "app/scenario_rag.py",
+        "app/help_actions.py",
+        "tests/test_scenario_template_v3.py",
+        "tests/test_scenario_template_units.py",
+        "tests/test_scenario_query_fallback.py",
+        "tests/test_scenario_template_review_fixes.py"
+      ],
+      "path": "docs/specs/enhancement/scenario_templates_design_spec.md",
+      "zh_path": "docs/specs/enhancement/scenario_templates_design_spec_zh.md",
+      "previous_path": "docs/scenario_templates_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Independent spoiler and privacy policy",
+      "zh": "獨立劇透與隱私政策",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/spoiler_policy.py",
+        "app/keeper.py",
+        "app/agents/supervisor.py",
+        "app/agents/assistant.py",
+        "app/scenario_library.py",
+        "tests/test_spoiler_policy.py"
+      ],
+      "path": "docs/specs/enhancement/spoiler-protection-hardening_design_spec.md",
+      "zh_path": "docs/specs/enhancement/spoiler-protection-hardening_design_spec_zh.md",
+      "previous_path": "docs/spoiler-protection-hardening_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Durable state, checkpoints and scoped memory",
+      "zh": "持久狀態、checkpoint 與範圍記憶",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/db.py",
+        "app/repositories/group_state.py",
+        "app/checkpoints.py",
+        "app/scene_digest.py",
+        "app/memory_rag.py",
+        "tests/test_state_persistence.py",
+        "tests/test_state_loss_amnesia.py"
+      ],
+      "path": "docs/specs/feature/state_persistence_design_spec.md",
+      "zh_path": "docs/specs/feature/state_persistence_design_spec_zh.md",
+      "previous_path": "docs/state_persistence_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Structured request and turn observability",
+      "zh": "結構化請求與回合可觀測性",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/observability.py",
+        "app/logging_config.py",
+        "app/providers/retry.py",
+        "app/agents/executor.py",
+        "app/discord_bot.py",
+        "tests/test_observability.py",
+        "tests/test_logging_completion.py",
+        "tests/test_retry_diagnostics.py"
+      ],
+      "path": "docs/specs/feature/structured_performance_logging_design_spec.md",
+      "zh_path": "docs/specs/feature/structured_performance_logging_design_spec_zh.md",
+      "previous_path": "docs/structured_performance_logging_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Pending-button delivery and scenario retrieval latency",
+      "zh": "待處理按鈕交付與劇本檢索延遲",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/discord_bot.py",
+        "app/locks.py",
+        "app/scenario_templates.py",
+        "app/agents/context_builder.py",
+        "tests/test_pending_button_latency.py",
+        "tests/test_scenario_query_fallback.py"
+      ],
+      "path": "docs/specs/enhancement/turn_latency_design_spec.md",
+      "zh_path": "docs/specs/enhancement/turn_latency_design_spec_zh.md",
+      "previous_path": "docs/turn_latency_design_spec.md",
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+    },
+    {
+      "title": "Bilingual specification alignment",
+      "zh": "雙語規格對齊與分類",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "README.md",
+        "README_zh.md",
+        "docs/README.md",
+        "docs/README_zh.md"
+      ],
+      "path": "docs/specs/maintenance/documentation_alignment_design_spec.md",
+      "zh_path": "docs/specs/maintenance/documentation_alignment_design_spec_zh.md",
+      "previous_path": "docs/documentation_alignment_design_spec.md",
+      "source_revision": "dfd4838"
+    },
+    {
+      "title": "Dynamic Executor tool scoping",
+      "zh": "Executor 動態工具範圍",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "app/agents/executor.py",
+        "app/keeper.py",
+        "app/providers/openai_provider.py",
+        "tests/test_combat_status_tool_gate.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-executor-dynamic-tool-scoping.md",
+      "zh_path": "docs/specs/enhancement/enhancement-executor-dynamic-tool-scoping_zh.md",
+      "previous_path": "docs/specs/enhancement-executor-dynamic-tool-scoping.md",
+      "source_revision": "b50b2385c4219cd7b92ffe8c18a8be0bd4690f00"
+    },
+    {
+      "title": "Proposed batch combat initialization",
+      "zh": "批次戰鬥初始化提案",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "app/combat.py",
+        "app/keeper.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool.md",
+      "zh_path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md",
+      "previous_path": "docs/specs/enhancement-macro-combat-initialization-tool.md",
+      "source_revision": "c9c1930ee206c30db067f7dca425b57112f4414d"
+    },
+    {
+      "title": "Proposed reasoning policy for ongoing combat effects",
+      "zh": "持續戰鬥效果的推理設定提案",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "app/config.py",
+        "app/agents/executor.py",
+        "app/combat.py",
+        "tests/test_config_defaults.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md",
+      "zh_path": "docs/specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md",
+      "previous_path": "docs/specs/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md",
+      "source_revision": "0a448e157da82d1ae97355b9399106e8991f4060"
+    }
+  ]
+}

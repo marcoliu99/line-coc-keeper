@@ -497,7 +497,7 @@ _TIER_ORDER = sorted(dice.TIER_RANK, key=lambda t: dice.TIER_RANK[t])
 
 def _tier_percentage_hint(tier: str, skill_value: int) -> str:
     """The %-under-skill-value a player needs to roll to land a given tier
-    — see docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.2.
+    — see docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md
     Delegates the actual threshold to dice.tier_upper_bound() (the same
     formula skill_check() resolves a roll against) rather than
     re-hardcoding skill_value//5 etc. here — code review flagged that a
@@ -517,7 +517,7 @@ def _defense_choice_hint(check: dict) -> str:
     """Builds the "you need at least tier X (<=Y%)" hint for a pending melee
     Dodge/Fight Back choice, so the button doesn't just show a bare skill %
     that looks like an ordinary (non-opposed) check — see
-    docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.
+    docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md
 
     Only applies once attacker_tier is already known, which is true for
     melee (rolled up front) but never true for a ranged choice at this
@@ -1025,7 +1025,7 @@ def _luck_button_matches_pending(
 class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_BUTTON_ID_TEMPLATE):  # type: ignore[call-arg]
     """A "花 N 點 Luck → 一般成功" (or "維持目前結果") button posted whenever
     there's at least one tier-improving option the player can afford — not
-    just a near-miss, see docs/specs/enhancement-luck-buyup-always-offered.md
+    just a near-miss, see docs/specs/enhancement/enhancement-luck-buyup-always-offered.md
     — via app/legacy_commands.py's handle_check_command (which decides
     whether to prompt at all) and handle_luck_decision (what clicking one of
     these actually resolves to). Same discord.ui.DynamicItem + timeout=None

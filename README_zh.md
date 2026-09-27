@@ -1,14 +1,14 @@
 # COC7e 守密人 Bot（Discord）
 
-[English](README.md) | **繁體中文**
+[English](README_zh.md) | **繁體中文**
 
-在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）、Gemini（Google）、OpenAI 之間切換，見 [docs/setup.md](docs/setup.md)。
+在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）、Gemini（Google）、OpenAI 之間切換，見 [docs/setup.md](docs/guides/setup_zh.md)。
 
 ## 快速開始
 
 ### 還沒把 Bot 架起來？
 
-完整安裝教學（申請 Discord 憑證、設定 `.env`、本機啟動）都搬到 **[docs/setup.md](docs/setup.md)**，跟著那份文件從頭做一次即可。
+完整安裝教學（申請 Discord 憑證、設定 `.env`、本機啟動）都搬到 **[docs/setup.md](docs/guides/setup_zh.md)**，跟著那份文件從頭做一次即可。
 
 ### Bot 已經跑起來、已經加進群組/伺服器？
 
@@ -17,9 +17,9 @@
    ```
    /coc pc 角色名 職業
    ```
-   例如 `/coc pc 陳月 記者`。想用更符合規則的建角流程或劇本內建的預製角色，見 **[docs/gameplay.md](docs/gameplay.md)** 的完整說明。
+   例如 `/coc pc 陳月 記者`。想用更符合規則的建角流程或劇本內建的預製角色，見 **[docs/gameplay.md](docs/guides/gameplay_zh.md)** 的完整說明。
 3. **開始玩**：至少一位角色建好後，先輸入 `/coc start` 開始劇情；成功開場後，直接在群組/頻道裡打字描述你的角色要做什麼（不用加任何指令），守密人就會接手敘事、要求擲骰、更新 HP/SAN。
-4. 隨時可以 `/coc help` 看 Discord 分類式指令列表、`/coc status` 看目前進度、`/coc sheet` 看自己的角色卡。需要手動複製指令時，請看 **[docs/player_command_reference.md](docs/player_command_reference.md)**；完整玩法細節見 **[docs/gameplay.md](docs/gameplay.md)**。
+4. 隨時可以 `/coc help` 看 Discord 分類式指令列表、`/coc status` 看目前進度、`/coc sheet` 看自己的角色卡。需要手動複製指令時，請看 **[docs/player_command_reference.md](docs/references/player_command_reference_zh.md)**；完整玩法細節見 **[docs/gameplay.md](docs/guides/gameplay_zh.md)**。
 
 ## 架構
 
@@ -64,7 +64,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/services/prompt_config.py`：Executor／Narrator／Guard 三個真的會呼叫 LLM 的階段共用的提示詞組裝，包在 `keeper._build_static_prompt`／`_build_dynamic_prompt`（既有、持續在維護的內容）外面
 - `app/domain/models.py`：流水線內部傳遞用的 `AgentMessage`／`MechanicResult`／`StateDelta`／`TurnResolution` 資料結構
 
-目前入口與流程見 **[統一 Keeper 流程](docs/unified_keeper_turn_flow_design_spec.md)**；權威狀態交接見 **[回合一致性規格](docs/log_backed_turn_consistency_design_spec.md)**。原始設計脈絡、已知落差與踩過的坑，見 **[docs/agentic_keeper_design_spec.md](docs/agentic_keeper_design_spec.md)**。
+目前入口與流程見 **[統一 Keeper 流程](docs/specs/refactor/unified_keeper_turn_flow_design_spec_zh.md)**；權威狀態交接見 **[回合一致性規格](docs/specs/bug/log_backed_turn_consistency_design_spec_zh.md)**。原始設計脈絡、已知落差與踩過的坑，見 **[docs/agentic_keeper_design_spec.md](docs/specs/refactor/agentic_keeper_design_spec_zh.md)**。
 
 **核心遊戲邏輯（不分走哪條路由都會用到）**
 - `app/keeper.py`：守密人的系統提示詞組裝、工具定義（擲骰／檢定／戰鬥／角色數值／劇本庫圖片與章節推進等）、工具執行，不綁定特定 LLM
@@ -79,7 +79,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/scenario_rag.py`：BM25 與可選 embeddings 混合檢索（`SCENARIO_RAG_ENABLED=true` 時啟用），取代「整份劇本塞進 system prompt」，改成 Keeper 用 `search_scenario` 工具按需查詢
 - `app/memory_rag.py`：對已裁切掉的舊對話做語意檢索，補足 `campaign_summary` 滾動摘要「越壓越抽象」的細節遺失
 - `app/scenario_index.py`：抽取劇本的 NPC／怪物與地點數值索引（`/coc index`，上傳劇本時也會自動跑一次），給 Keeper 一份固定對照表，避免同一隻怪物前後講出不同數值
-- `app/scenario_library.py`：可重用的劇本 PDF 庫（`data/scenarios/<劇本ID>/`）——同一份劇本不用每個聊天室各自重新解析一次，支援章節切分與「目前章＋下一章」滑動 Context 視窗、圖片資產搜尋、KP 專用的 `/coc scenario list／use／clean／reparse／cancel`。完整設計見 **[docs/scenario_library_design_spec.md](docs/scenario_library_design_spec.md)**
+- `app/scenario_library.py`：可重用的劇本 PDF 庫（`data/scenarios/<劇本ID>/`）——同一份劇本不用每個聊天室各自重新解析一次，支援章節切分與「目前章＋下一章」滑動 Context 視窗、圖片資產搜尋、KP 專用的 `/coc scenario list／use／clean／reparse／cancel`。完整設計見 **[docs/scenario_library_design_spec.md](docs/specs/feature/scenario_library_design_spec_zh.md)**
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
 - `app/models.py`：角色卡／聊天室狀態資料結構與快速生成（3d6 法）
 - `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（文字層改用 MarkItDown + markitdown-ocr 預處理，PyMuPDF 負責頁面轉圖片與備援文字層；圖片偏多的頁面會用視覺理解／OCR 備援，並保留這些頁面的實際圖片供之後展示；平面圖頁面會額外呼叫 `app/scene_map.py` 拆出結構化房間圖）；另有低成本的 `extract_preview()`，供劇本庫上傳去重使用
@@ -93,7 +93,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 
 OpenAI 路徑量測輸入組成、套用可配置的歷史預算，並依 response headers 推估請求／Token 配額與共用冷卻。回合期限涵蓋 LLM 准入、API、重試及敘事；各階段可配置輸出上限，預設省略。
 
-截斷回應中的工具不會執行；先前已提交的變更與私訊／圖片佇列會保留，不自動重播工具。詳見 **[Token 准入規格](docs/token_admission_evaluation_design_spec.md)**。
+截斷回應中的工具不會執行；先前已提交的變更與私訊／圖片佇列會保留，不自動重播工具。詳見 **[Token 准入規格](docs/specs/enhancement/token_admission_evaluation_design_spec_zh.md)**。
 
 ### 效能分析 profiler
 
@@ -122,14 +122,17 @@ Bot 並產生 SVG flame graph；兩者的 artifact 都會放在 `.runtime/bots/`
 
 | 想知道... | 看這份 |
 |---|---|
-| 怎麼申請 Discord 憑證、設定 `.env`、本機啟動 | **[docs/setup.md](docs/setup.md)** |
-| 有哪些指令、怎麼玩、各項機制怎麼操作 | **[docs/gameplay.md](docs/gameplay.md)** |
-| 為什麼有這個限制、目前怎麼做的、實測過什麼、之後想擴充要改哪裡（逐功能的開發紀錄） | **[docs/changelog.md](docs/changelog.md)** |
-| Keeper 的系統提示詞規則（`_build_static_prompt()` 的可讀版本） | [docs/keeper_skill.md](docs/keeper_skill.md) |
-| Agentic Keeper 多代理流水線的完整設計、已知落差與踩過的坑 | **[docs/agentic_keeper_design_spec.md](docs/agentic_keeper_design_spec.md)** |
-| 可重用劇本 PDF 庫（章節切分、滑動 Context 視窗、圖片資產、`/coc scenario` 系列指令）的完整設計 | **[docs/scenario_library_design_spec.md](docs/scenario_library_design_spec.md)** |
-| HTTP 端點、聊天指令、PDF 上傳生命週期、Provider／劇本庫內部介面的參考手冊 | [docs/API.md](docs/API.md) |
-| NPC 隊友設計與資訊流控制的完整版 | [docs/references/gameplay_style.md](docs/references/gameplay_style.md) |
-| COC7e 規則 vs. 目前程式碼實作的落差清單 | [docs/references/rules_reference.md](docs/references/rules_reference.md) |
-| 攜帶物合理性審查的設計規格與實作狀態 | [docs/references/carry_audit.md](docs/references/carry_audit.md) |
-| 跟手動檔案式備團工作流（[coc-kp-host](https://github.com/SumanasJ/coc-kp-host)）的對應表 | [docs/references/prep_persistence.md](docs/references/prep_persistence.md) |
+| 怎麼申請 Discord 憑證、設定 `.env`、本機啟動 | **[docs/setup.md](docs/guides/setup_zh.md)** |
+| 有哪些指令、怎麼玩、各項機制怎麼操作 | **[docs/gameplay.md](docs/guides/gameplay_zh.md)** |
+| 為什麼有這個限制、目前怎麼做的、實測過什麼、之後想擴充要改哪裡（逐功能的開發紀錄） | **[docs/changelog.md](docs/changelog_zh.md)** |
+| Keeper 的系統提示詞規則（`_build_static_prompt()` 的可讀版本） | [docs/keeper_skill.md](docs/references/keeper_skill_zh.md) |
+| Agentic Keeper 多代理流水線的完整設計、已知落差與踩過的坑 | **[docs/agentic_keeper_design_spec.md](docs/specs/refactor/agentic_keeper_design_spec_zh.md)** |
+| 可重用劇本 PDF 庫（章節切分、滑動 Context 視窗、圖片資產、`/coc scenario` 系列指令）的完整設計 | **[docs/scenario_library_design_spec.md](docs/specs/feature/scenario_library_design_spec_zh.md)** |
+| HTTP 端點、聊天指令、PDF 上傳生命週期、Provider／劇本庫內部介面的參考手冊 | [docs/API.md](docs/references/API_zh.md) |
+| NPC 隊友設計與資訊流控制的完整版 | [docs/references/gameplay_style.md](docs/references/gameplay_style_zh.md) |
+| COC7e 規則 vs. 目前程式碼實作的落差清單 | [docs/references/rules_reference.md](docs/references/rules_reference_zh.md) |
+| 攜帶物合理性審查的設計規格與實作狀態 | [docs/references/carry_audit.md](docs/references/carry_audit_zh.md) |
+| 跟手動檔案式備團工作流（[coc-kp-host](https://github.com/SumanasJ/coc-kp-host)）的對應表 | [docs/references/prep_persistence.md](docs/references/prep_persistence_zh.md) |
+
+
+所有規格均提供英文與繁體中文版本，分類與實作狀態見[文件索引](docs/README_zh.md)。

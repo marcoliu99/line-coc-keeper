@@ -1,4 +1,4 @@
-"""Tests for docs/specs/enhancement-luck-buyup-always-offered.md: the
+"""Tests for docs/specs/enhancement/enhancement-luck-buyup-always-offered.md: the
 proactive Luck buy-up decision (app/keeper.py's skill_check tool handler,
 and app/legacy_commands.py's _resolve_check_deterministically) must now be
 offered whenever there's at least one affordable tier-improving option,

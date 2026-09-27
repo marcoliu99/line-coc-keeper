@@ -1,5 +1,7 @@
 # Role-card authoring template for `role_` uploads
 
+[繁體中文](role_card_template_zh.md)
+
 Use this format for deterministic `.txt` / `.md` import. Section headings in Chinese
 are parser keys: keep the `【...】` spelling. Save one investigator per file, such as
 `role_investigator.md`. Upload it, inspect `/coc pregens`, then claim with

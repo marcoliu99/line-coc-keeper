@@ -391,7 +391,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         # Exercises the real /coc kp, /coc end, /coc newgame dispatch path
         # (app.commands.handlers.system.handle_system_command) rather than the
         # orphaned app.legacy_commands._handle_coc_command it used to call —
-        # see docs/specs/bug-remove-dead-legacy-coc-command-handler.md.
+        # see docs/specs/refactor/bug-remove-dead-legacy-coc-command-handler.md.
         async def noop_dm(*args):
             raise AssertionError("DM should not be called")
 

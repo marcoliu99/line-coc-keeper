@@ -1,5 +1,4 @@
-"""Self-learning bilingual dictionary (see docs/character_and_dictionary_system_spec.md's
-Module 5) — app/models.py's BASE_SKILLS gives this project a closed, known set
+"""Self-learning bilingual dictionary (see docs/specs/feature/character_and_dictionary_system_spec.md) — app/models.py's BASE_SKILLS gives this project a closed, known set
 of 46 official skill names, but an English scenario calls each of them
 something else ("Spot Hidden" for 偵查, "Firearms (Handgun)" for 射擊（手槍）...).
 Rather than re-translating at LLM-extraction time on every single upload (or

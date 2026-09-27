@@ -5,7 +5,7 @@ from app import dice
 
 
 class ResolveOpposedTieRuleTests(unittest.TestCase):
-    """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §1: a tied
+    """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md: a tied
     Fight Back favors the attacker, but a tied Dodge favors the DEFENDER —
     verified against RAW (Chaosium's own combat Q&A + community rules
     breakdowns). The previous implementation always resolved ties in the

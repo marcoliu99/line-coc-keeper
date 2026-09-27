@@ -39,7 +39,7 @@ def _tool_name_branches(func: ast.FunctionDef) -> list[str]:
 
 class ExecuteToolNoDuplicateBranchesTests(unittest.TestCase):
     """Regression guard for the dead-code duplication cleaned up in
-    docs/dead_combat_tool_branches_design_spec.md — a merge/rebase that
+    docs/specs/refactor/dead_combat_tool_branches_design_spec.md — a merge/rebase that
     keeps both sides of a conflict on a `if name == "X":` branch is a silent
     dead-code bug (the first copy always wins), so this fails loudly instead.
     """

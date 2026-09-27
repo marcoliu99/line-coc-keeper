@@ -70,7 +70,7 @@ async def build_context(
     # order, combatant HP, enemy abilities — that combat narration actually
     # needs, so proactive scenario/memory RAG's marginal narrative value is
     # low there, while its embeddings-API round trip (2-5s, see
-    # docs/npc_attack_latency_design_spec.md) is a real, unconditional cost
+    # docs/specs/enhancement/npc_attack_latency_design_spec.md) is a real, unconditional cost
     # on every combat turn regardless of whether anyone asked a
     # scenario/memory-dependent question. Not a correctness change outside
     # combat: state.combat.active is False for every turn this behaved

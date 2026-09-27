@@ -212,7 +212,7 @@ async def run_turn(
         return reply_text, [], []
 
     # 6. Rule Validator & Guard Agent (Repair Loop) — see
-    # docs/specs/enhancement-guard-agent.md for the GUARD_ENABLED switch and
+    # docs/specs/enhancement/enhancement-guard-agent.md for the GUARD_ENABLED switch and
     # the fail-closed fallback this delegates to.
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
     if turn_kind == "resolved_check_followup":

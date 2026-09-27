@@ -37,7 +37,7 @@ from app.providers.admission import Admission
 T = TypeVar("T")
 
 # Per-provider admission gate limiting concurrent in-flight API attempts for
-# this process (see docs/specs/enhancement-llm-rate-limit-and-turn-latency.md
+# this process (see docs/specs/enhancement/enhancement-llm-rate-limit-and-turn-latency.md
 # 3.1). Only OpenAI is gated today — no confirmed evidence Anthropic/Gemini
 # need one, so they stay ungated rather than picking an arbitrary cap for
 # them too. Built lazily, inside async_call_with_retry (i.e. only once an

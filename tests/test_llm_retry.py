@@ -293,7 +293,7 @@ class JitterAndSafeErrorFieldTests(unittest.TestCase):
 
 
 class AdmissionGateTests(unittest.TestCase):
-    """Spec: docs/specs/enhancement-llm-rate-limit-and-turn-latency.md 3.1 —
+    """Spec: docs/specs/enhancement/enhancement-llm-rate-limit-and-turn-latency.md —
     a manually-sized, OpenAI-only admission gate; no auto-tuning."""
 
     def setUp(self):

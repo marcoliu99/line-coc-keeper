@@ -357,7 +357,7 @@ def _high_iteration_event(mock_event) -> dict | None:
 
 
 class OpenAIHighIterationWatermarkTests(unittest.TestCase):
-    """docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md
+    """docs/specs/enhancement/enhancement-conversation-lock-and-tool-loop-latency.md
     item 3: a turn using >= HIGH_ITERATION_WATERMARK (default 4) iterations
     must emit a warning event, independent of whether it hit PR #55's
     wrap-up path — this is a separate, earlier signal for deciding whether

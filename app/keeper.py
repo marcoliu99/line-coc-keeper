@@ -2239,7 +2239,7 @@ def _execute_tool(
         if name == "offer_npc_attack_defense_choice":
             # Merges what used to be two sequential tool calls (npc_skill_check
             # then offer_check_choice with attacker_tier filled in from its
-            # result) into one — see docs/npc_attack_latency_design_spec.md.
+            # result) into one — see docs/specs/enhancement/npc_attack_latency_design_spec.md.
             # offer_check_choice's attacker_tier field structurally depended on
             # npc_skill_check's return value, forcing the model to make two
             # separate round-trips (see the result, then decide the next call)

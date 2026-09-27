@@ -99,7 +99,7 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
     if len(levels) == 1:
         # A flat bookmark list (every non-asset entry at the same level) has
         # no structural signal separating "chapter" from "scene" — see the
-        # Lightless Beacon sample in docs/scenario_library_design_spec.md,
+        # Lightless Beacon sample in docs/specs/feature/scenario_library_design_spec.md,
         # whose 9 same-level bookmarks (Introduction, Background, Start:
         # Choppy Waters, Dead Beacon, ...) must stay inside one playable
         # chapter-01 with those entries as `sections`. Splitting each one

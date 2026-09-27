@@ -197,5 +197,5 @@ class HelpNavigationTests(unittest.TestCase):
         self.assertIn("/coc pc 角色名 [職業]", document)
         self.assertIn("只有劇本沒有預設角色時顯示", document)
         self.assertIn("[KP-only]", document)
-        reference = Path("docs/player_command_reference.md").read_text(encoding="utf-8")
+        reference = Path("docs/references/player_command_reference_zh.md").read_text(encoding="utf-8")
         self.assertEqual(reference, document)
