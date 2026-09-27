@@ -26,6 +26,7 @@ from uuid import uuid4
 from app import config, db, locks, observability
 from app.config import DATA_DIR
 from app.models import GroupState
+from app.services import mutation_admission
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 _logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ def _save_state_impl(
             # IMMEDIATE transaction. The Python RLock protects threads in this
             # process; BEGIN IMMEDIATE also serializes competing processes using
             # the same SQLite database.
+            mutation_admission.assert_admitted(state.group_id)
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT data FROM group_states WHERE key = ?", (state.group_id,)

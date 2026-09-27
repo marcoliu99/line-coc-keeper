@@ -67,6 +67,7 @@ from app.models import GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import StateRevisionConflict
 from app.repositories.group_state import load_state as load_group_state
+from app.services import mutation_admission, turn_delivery
 
 _logger = logging.getLogger(__name__)
 _backup_task: asyncio.Task | None = None
@@ -369,12 +370,15 @@ def _observed_interaction(callback):
         with observability.request_context(
             conversation_id=conversation_id,
         ):
+            observability.event("turn.entry", entry="button")
             observed = config.LOG_ENABLED
             started = time.perf_counter() if observed else 0.0
             if observed:
                 observability.event("request.started", platform="discord", message_kind="button")
             try:
                 await callback(self, interaction)
+            except mutation_admission.MutationHeld:
+                await _send_interaction_message(interaction, mutation_admission.NOTICE, ephemeral=True)
             except Exception as exc:
                 if observed:
                     observability.event(
@@ -901,6 +905,12 @@ async def _send_check_button(
     timeline_id: str,
     public_marker: str | None,
 ) -> None:
+    if turn_delivery.is_private(check):
+        recipient = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
+        if recipient is None:
+            raise ValueError("private decision recipient is unavailable")
+        channel = recipient
+        public_marker = None
     view = discord.ui.View(timeout=None)
     full_check_id = effective_check_id(owner_id, check, timeline_id)
     check_id = compact_identity_token("check", owner_id, full_check_id, timeline_id)
@@ -1152,6 +1162,12 @@ async def _send_luck_button(
     timeline_id: str,
     public_marker: str | None,
 ) -> None:
+    if turn_delivery.is_private(decision):
+        recipient = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
+        if recipient is None:
+            raise ValueError("private decision recipient is unavailable")
+        channel = recipient
+        public_marker = None
     view = discord.ui.View(timeout=None)
     full_decision_id = effective_decision_id(owner_id, decision, timeline_id)
     decision_id = compact_identity_token("decision", owner_id, full_decision_id, timeline_id)

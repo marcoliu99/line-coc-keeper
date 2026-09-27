@@ -45,6 +45,7 @@ from app.repositories.group_state import (
     save_state,
     scenario_users,
 )
+from app.services import mutation_admission
 
 
 async def _handle_local_import(
@@ -134,6 +135,7 @@ def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) 
             state.party_facing.pop(owner_id, None)
 
 
+@mutation_admission.guard_async_entry
 async def handle_system_command(
     conversation_id: str,
     user_id: str,

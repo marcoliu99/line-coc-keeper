@@ -8,7 +8,7 @@ from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
 from app.providers import anthropic_provider, gemini_provider, openai_provider
-from app.services import prompt_config
+from app.services import mutation_admission, prompt_config
 
 _logger = logging.getLogger(__name__)
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
@@ -30,6 +30,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     provider = _PROVIDERS[LLM_PROVIDER]
 
     state = message.payload["state"]
+    mutation_admission.assert_admitted(state.group_id)
     user_id = message.payload.get("user_id", "")
     text = message.payload.get("text", "")
     display_name = message.payload.get("display_name", "玩家")
@@ -97,7 +98,8 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         offered_names = {tool["name"] for tool in tools}
         facts: list[str] = []
         gateway = make_tool_executor(
-            state, private_messages, image_requests, "player", facts
+            state, private_messages, image_requests, "player", facts,
+            observed_outcomes=message.payload.setdefault("observed_outcomes", []),
         )
         combat_status_gate = (
             keeper._CombatStatusToolGate(state) if LLM_PROVIDER == "openai" else None

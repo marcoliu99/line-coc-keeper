@@ -488,6 +488,7 @@ async def run_conversation(
                 on_response_id(response.id)
             break
 
+        observability.event("llm.tool_round")
         next_input_items: list[dict] = []
         for fc in function_calls:
             try:
@@ -532,6 +533,7 @@ async def run_conversation(
         # app/keeper.py's legacy run_turn path (its own single combined
         # tool+narration call, no separate Narrator) actually needs this.
         if enable_wrapup:
+            observability.event("llm.wrapup")
             wrapup_kwargs: dict[str, Any] = {
                 "model": OPENAI_MODEL,
                 "instructions": (

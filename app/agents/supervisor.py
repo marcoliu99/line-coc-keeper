@@ -4,7 +4,7 @@ import logging
 from copy import deepcopy
 from typing import Any, Literal
 
-from app import keeper, observability, spoiler_policy
+from app import keeper, observability
 from app.agents import (
     assistant,
     context_builder,
@@ -17,7 +17,7 @@ from app.agents import (
 from app.domain.models import MechanicResult
 from app.models import GroupState
 from app.providers.turn_budget import with_turn_deadline
-from app.services import prompt_config
+from app.services import mutation_admission, prompt_config, turn_delivery
 
 _logger = logging.getLogger(__name__)
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
@@ -41,6 +41,7 @@ async def run_turn(
     Orchestrates the asynchronous pipeline of Agents to produce a response.
     Returns: (reply_text, private_messages, image_requests)
     """
+    mutation_admission.assert_admitted(state.group_id)
     _logger.info(f"Supervisor starting turn for {display_name} ({user_id})")
     # Capture one authoritative timeline before any agent await.  Executor
     # tools may initialize or persist timeline-bound state; without this
@@ -75,6 +76,7 @@ async def run_turn(
         if turn_kind == "player_action" else turn_kind.upper()
     )
     message.payload["intent"] = intent
+    observability.event("turn.route", route=intent.lower(), turn_kind=turn_kind)
     
     _logger.info(f"Intent classified as: {intent}")
 
@@ -211,31 +213,22 @@ async def run_turn(
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
 
-    # 6. Rule Validator & Guard Agent (Repair Loop) — see
-    # docs/specs/enhancement/enhancement-guard-agent.md for the GUARD_ENABLED switch and
-    # the fail-closed fallback this delegates to.
+    # Consistency precedes Guard; any Guard rewrite is checked again. The
+    # deterministic delivery contract is the final writer and safety boundary.
+    public_result = turn_delivery.public_mechanic(mechanic_result, state)
+
+    def consistent(candidate: str) -> str:
+        if turn_kind == "resolved_check_followup":
+            candidate = prompt_config.enforce_resolved_check_consistency(candidate, resolved_check_context or {})
+        if public_result is not None:
+            candidate = prompt_config.enforce_mechanic_check_consistency(candidate, public_result)
+        return candidate
+
+    reply_text = consistent(reply_text)
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
-    if turn_kind == "resolved_check_followup":
-        reply_text = prompt_config.enforce_resolved_check_consistency(
-            reply_text, resolved_check_context or {}
-        )
-
-    # 7. Spoiler output guard (§6 of the spoiler-protection-hardening spec) —
-    # separate from the Rule Validator/Guard Agent loop above, which only
-    # checks for system leaks/formatting. This is a deterministic scan for
-    # kp_only facts/clues and secret goals; a hit gets a fixed neutral
-    # fallback rather than another LLM repair attempt (see spoiler_policy).
-    spoiler_check = spoiler_policy.sanitize_public_text(
-        reply_text, spoiler_policy.collect_protected_terms(state)
-    )
-    if not spoiler_check.is_safe:
-        reply_text = spoiler_check.fallback_text or reply_text
-
-    if intent == "GAMEPLAY_ACTION" and mechanic_result is not None:
-        checked_reply = prompt_config.enforce_mechanic_check_consistency(reply_text, mechanic_result)
-        if checked_reply != reply_text:
-            observability.event("narrator.check_consistency.corrected", status="corrected")
-            reply_text = checked_reply
+    reply_text = consistent(reply_text)
+    reply_text, private_controls = turn_delivery.finalize(message, reply_text)
+    private_messages.extend(item for item in private_controls if item not in private_messages)
 
     # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
     # pending_checks/combat/etc.) already happened inside the Executor's

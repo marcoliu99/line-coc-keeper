@@ -4,9 +4,9 @@
 
 ## 1. Status, provenance and decision
 
-Category: `refactor` with bug-fix and performance work packages. Status: **proposed; awaiting design approval**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Subsequently aligned with `main_v2` `e03d5dc`; review R1–R6 contracts are in section 12. Branch: `refactor/turn-safety-and-latency`.
+Category: `refactor` with bug-fix and performance work packages. Status: **S0/S1 approved and implemented on this branch; S3 independent, S2 deferred**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Subsequently aligned with `main_v2` `e03d5dc`; review R1–R6 contracts are in section 12. Branch: `refactor/turn-safety-and-latency`.
 
-This specification adopts selected recommendations from two user-supplied ChatGPT documents after reading both documents and checking the current source. It does not adopt their older source baselines as current facts. No application implementation, production migration, deployment or live API benchmark is part of this documentation change.
+This specification adopts selected recommendations from two user-supplied ChatGPT documents after reading both documents and checking the current source. It does not adopt their older source baselines as current facts. The original proposal was documentation only; this branch implements S0/S1 as recorded in section 13. No production migration, deployment or live API benchmark was performed.
 
 | Input document | Its source baseline | SHA-256 of supplied file |
 | --- | --- | --- |
@@ -448,3 +448,73 @@ Report per-route sample counts, success/partial/timeout/fallback, generation/att
 Start with S0; S1 includes R3/R4 completely, while S3 can proceed independently. S2 requires R1/R5 movement dependencies and segmented commit contracts first. Measure S4–S6 separately; S7/S8 implement durable recovery using R2's capability matrix, then S9 separates delivery streams. Early stopping remains disabled.
 
 The first reviewable implementation scope should be S0 baselines plus S1 partial-success/safe-output work. Splitting PRs must not omit hold entry coverage. If S1 is split, label which changes provide partial facts and which finish mutation admission; do not claim all of S1 complete early. S3 and S2 can follow without bundling every schema and behavioral change into one patch.
+
+
+## 13. Approved S0/S1 implementation evidence (2026-09-27)
+
+Branch: `refactor/turn-safety-s0-s1`, based on reviewed design `36fb67d` aligned with `main_v2` `e03d5dc`. S3 proceeds independently on `refactor/state-mirror-s3`. **S2 has not started**; movement/arrival dependencies and mixed IC/OOC changes remain deferred. S4–S9 and early stopping remain deferred.
+
+### 13.1 S0 reproducible baseline and trace
+
+`tests/test_task_trace.py` fixes the input, one-character state, timeline and SDK responses; scenario/retrieval is intentionally absent. It executes real provider adapter loops with an in-memory SDK double. Intent is controlled to isolate each path. Ordinary and sudo cases also execute the command router. Provider keys are fake, the DB is temporary, and the production `.env`, files and APIs are not used.
+
+| Fixture | Generation requests / attempts | Tool-response rounds | Fixed extra Guard/review/wrap-up |
+| --- | --- | --- | --- |
+| Roleplay | 1 / 1 | 0 | 0 |
+| Gameplay: obtain item, complete, narrate | 3 / 3 | Executor 1 | 0 |
+| Ordinary router: same gameplay | 3 / 3 | Executor 1 | 0 |
+| Sudo router: same gameplay | 3 / 3 | Executor 1 | 0 |
+| Opening fallback, supplied context | 1 / 1 | 0 | 0 |
+| Resolved-check narration, no additional tool required | 1 / 1 | 0 | 0 |
+
+A retry fixture distinguishes one logical generation request from two provider attempts. Fault fixtures separately cover successful Executor tool + failed continuation, restricted Narrator tool + failed narration, pending check/Luck preservation, stale identities, private controls and running-thread cancellation.
+
+`task.trace` aggregates request/interaction events: entry and route, provider/model/reasoning, logical requests, attempts/retries, tool rounds by stage, embedding/retrieval, queue wait, Guard/wrap-up, confirmed dice readiness, narration readiness, fallback readiness, controls actually sent, pending decision count and request elapsed time. A fallback is not recorded as full narration readiness. IDs/prompt/user text are not added to the trace. Mechanical accuracy and manual intervention are explicitly unknown at runtime; they require fixture assertions or a live evaluation. SDK fixtures prove structure and deterministic mechanism outcomes, **not real-model accuracy, latency, or narrative quality**. Visible-button timing is measured on successful Discord sends; it does not prove a player clicked it.
+
+### 13.2 Partial success and final delivery
+
+`ObservedOutcome` records tool evidence before worker settlement. `MechanicResult.execution_health` is separate from validated action disposition. Both successful and failed Executor continuations use the same result builder; actual facts, check/Luck status and inventory events survive. A snapshot difference alone never manufactures an outcome, and no tool is replayed to repair narration. Restricted Narrator tools append to the same evidence collection.
+
+Python creates a `DeliveryEnvelope` with output identity, audience/recipient, authorized outcomes, original check/decision identities and canonical policy. Public fallback uses allowlisted result projections; raw RAG, errors, private messages and enemy sheets are not dumped. Known results and pending interactions remain intact. Private controls go to the owner and retain the original button identity. Valid narration is retained with server-projected mechanical feedback where required.
+
+```text
+entry -> admission + existing actor/subject authorization
+  -> current Executor / restricted Narrator tools
+       -> owner(original timeline, generation) -> actual worker
+       -> committed tool evidence -> ObservedOutcome (no replay)
+  -> existing Narrator
+  -> mechanism consistency -> existing conditional Guard -> consistency recheck
+  -> server facts + original pending controls
+  -> final spoiler/audience check -> validate_delivery_contract
+       pass -> normal commit/delivery
+       fail -> one deterministic projection -> same safety/contract checks
+                 pass -> projected fallback
+                 fail -> blocked notice; preserve real results and pending state
+```
+
+### 13.3 Admission entry coverage
+
+The hold is conversation-scoped until independence can be proven. Existing actor authorization, subject binding, correction holds and action-evidence checks remain in their original handlers. `MutationAdmission` adds lifecycle ownership, not new permissions. All guarded entries recheck at the authoritative write boundary; only the actual worker settles its own generation. A cancelled Task cannot settle a running thread. Queued work proven not to have started is rejected and cannot start later.
+
+| Entry / trusted principal | Admission call site | Pre-write / release rule | Regression evidence |
+| --- | --- | --- | --- |
+| Ordinary and sudo / actual sender + authorized subject | `router.handle_text_message`, conversation lock, `supervisor.run_turn` | Existing sudo authorization; group/timeline gate before write | router mutation matrix; real adapter ordinary/sudo baselines |
+| Executor / trusted speaker role + tool target | `run_executor`, `tool_gateway.make_tool_executor`, `keeper._execute_tool` | `_mutate_and_save_state` checks original timeline before mutator; owner generation settles in worker finally | tool success then API failure; blocked dice; stale worker timeline |
+| Restricted Narrator, opening, resolved follow-up / original player | `run_narrator`, Supervisor, same gateway | Offered-tool allowlist unchanged; same worker/write gate | restricted-tool failure; all turn kinds held before context |
+| Check/Luck button or command / persisted decision owner | observed callback + conversation lock; guarded legacy handlers; deterministic resolver | Reject before dice, then normal identity/owner/timeline checks | authoritative entry matrix; callback hold; original check/Luck IDs |
+| Purchase confirmation / authenticated buyer or authorized sudo subject | guarded purchase handler | `_mutate_and_save_state`, then group DB gate | direct purchase entry + router matrix; existing purchase tests |
+| Map change / current player | guarded map handler; `_resolve_map_action_transaction` | State lock admission before resolving movement | direct map + deterministic entry matrix; S2 movement redesign deferred |
+| Character switching / character owner | guarded character handler | `save_state` and DB admission | direct switch entry + router matrix |
+| Newgame / existing command authorization | guarded system handler + conversation lock | Hold checked even when revision replacement is intentional | direct newgame and repository matrix |
+| Rollback / existing KP authorization | system handler + `checkpoints.rollback` | Admission before checkpoint transaction; scoped DB writes/deletes recheck | rollback entry matrix |
+| Correction and uploads / existing handler principal | guarded correction/PDF/map/role handlers | Conversation lock and scoped persistence gate | direct correction/upload matrix |
+| Memory and digest maintenance / original source snapshot | `_persist_memory_maintenance_state`, `run_scene_digest_maintenance`, `create_digest` | Hold + existing timeline/summary/log guards; digest source revision/timeline checked before write | maintenance hold, stale digest rejection, old digest cleanup |
+| Direct persistence / internal caller | `save_state`, scoped `db.set_json[_tx]` and deletes | Recheck conversation hold and owner timeline, including mirror/checkpoint/memory writes | repository newgame hold; maintenance tests |
+
+Audited read commands (`help`, `status`, `characters`, `purchases`) and other conversations remain usable. The read command scope cannot bypass DB write admission. Query timeout remains bounded but retains ownership if its thread is alive; dice are not classified as retryable reads. A hold becomes visible before cancellation releases conversation admission. Late worker evidence is retained in the existing marker list when persistence succeeds, without replay. Shutdown reports actual outstanding worker ownership even if asyncio Tasks have already ended.
+
+**Limits:** holds are process-local, not a durable operation ledger. A stopped worker with an unknown result requires state inspection; there is no automatic tool-enabled recovery or guaranteed re-delivery of late private/output intents. Persistence failure in late evidence recording is logged. S7/S8 remain necessary for restart-safe reconciliation and a durable outbox. These limits are not reported as completed recovery support.
+
+### 13.4 Verification
+
+Isolated complete suite: **1044 passed, 1 skipped, 33 subtests**. Ruff passed; mypy **86 source files passed**; `git diff --check` passed. Baseline was 987 passed, 1 skipped. Existing mechanism, button identity, purchase, correction and provider tests remain enabled. No new fixed model stage, live API run, production data mutation, or deployment was performed.

@@ -4,9 +4,9 @@
 
 ## 1. 狀態、來源與結論
 
-分類：`refactor`，包含 bug 修正與效能工作包。狀態：**proposed；等待設計核准**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。後續已對齊 `main_v2` `e03d5dc`，Review R1–R6 補強見第 12 節。分支：`refactor/turn-safety-and-latency`。
+分類：`refactor`，包含 bug 修正與效能工作包。狀態：**S0／S1 已核准並在本分支實作；S3 獨立進行，S2 等待**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。後續已對齊 `main_v2` `e03d5dc`，Review R1–R6 補強見第 12 節。分支：`refactor/turn-safety-and-latency`。
 
-本規格完整閱讀使用者提供的兩份 ChatGPT 文件，並對照目前程式後，選擇採納其中建議。不將文件較舊的程式基準直接當成目前事實。本次只有文件，沒有實作應用程式、遷移正式資料、部署或進行真實 API 效能測試。
+本規格完整閱讀使用者提供的兩份 ChatGPT 文件，並對照目前程式後，選擇採納其中建議。不將文件較舊的程式基準直接當成目前事實。原提案僅含文件；本分支 S0／S1 實作證據見第 13 節，未遷移正式資料、部署或進行真實 API 測試。
 
 | 輸入文件 | 原審查基準 | 原檔 SHA-256 |
 | --- | --- | --- |
@@ -448,3 +448,73 @@ Mixed/OOC 以既有實際路徑及新的正確性需求建立專屬 fixture，�
 先 S0；S1 要完整包含 R3/R4，S3 可獨立處理。S2 必須先落定 R1/R5 的移動依賴與分段提交契約。S4–S6 再逐項量測；S7/S8 依 R2 能力矩陣實作持久化恢復，S9 再拆發送順序。Early-stop 仍關閉。
 
 建議第一個可 review 的實作範圍為 S0 基線與 S1 的部分成功／安全輸出；hold 的所有入口驗收不可因拆 PR 就省略。若拆分 S1，應明確標示哪些只是 partial facts，哪些已完成 mutation admission，不能先宣稱整個 S1 完成。後續再接 S3 與 S2，避免一次混合所有 schema 與行為改造。
+
+
+## 13. 已核准的 S0／S1 實作證據（2026-09-27）
+
+分支：`refactor/turn-safety-s0-s1`，從已審閱的 `36fb67d` 開始，已對齊 `main_v2` `e03d5dc`。S3 在 `refactor/state-mirror-s3` 獨立進行。**S2 尚未開始**；移動／抵達依賴及 IC／OOC 混合訊息留待後續。S4–S9 與提早結束 Executor 仍未實作。
+
+### 13.1 S0 可重現基線與追蹤
+
+`tests/test_task_trace.py` 固定輸入、單角色狀態、時間線與 SDK 回應；刻意不含劇本／檢索。使用記憶體假 SDK，執行真正的 provider adapter 迴圈；固定 intent 以隔離各路徑。一般訊息與 sudo 案例也通過真正的 router。金鑰是假值、DB 是暫存資料，不使用正式 `.env`、檔案或 API。
+
+| 案例 | 生成請求／實際嘗試 | 工具回應輪數 | 固定新增 Guard／審稿／wrap-up |
+| --- | --- | --- | --- |
+| 純角色扮演 | 1／1 | 0 | 0 |
+| 機制：取得物品、確認完成、敘事 | 3／3 | Executor 1 | 0 |
+| 一般訊息 router：同一機制案例 | 3／3 | Executor 1 | 0 |
+| sudo router：同一機制案例 | 3／3 | Executor 1 | 0 |
+| 開場後備、已有 context | 1／1 | 0 | 0 |
+| 檢定後敘事、不需額外工具 | 1／1 | 0 | 0 |
+
+重試案例區分「1 個邏輯請求」與「2 次 provider 嘗試」。故障案例另涵蓋 Executor 工具成功後 API 中斷、受限 Narrator 工具成功後敘事失敗、檢定／Luck 保留、過期識別、私密控制項及背景執行緒取消。
+
+`task.trace` 彙整訊息／互動事件：入口與路徑、provider／model／reasoning、邏輯請求、嘗試／重試、各階段工具輪數、embedding／檢索、排隊、Guard／wrap-up、骰子就緒、敘事就緒、fallback 就緒、實際送出控制項、待玩家決定數及請求耗時。fallback 不當成完整敘事就緒。追蹤不新增玩家識別、prompt 或原始訊息內容。執行時的機制正確率與人工介入數明確標為未知，需要測試斷言或真實評測。假 SDK 證明呼叫結構及確定性機制結果，**不能證明真實模型準確率、速度或敘事品質**。按鈕時間以 Discord 成功送出為準，不代表玩家已點擊。
+
+### 13.2 部分成功與最終輸出
+
+`ObservedOutcome` 在 worker 結束前記錄工具證據；`MechanicResult.execution_health` 與經驗證的行動裁決分開。Executor 正常／失敗延續共用結果建構，保留實際事實、檢定／Luck 狀態與物品事件。單靠 snapshot 差異不會生成因果結果，也不重跑工具來補敘事。受限 Narrator 的工具共用證據集合。
+
+Python 建立 `DeliveryEnvelope`，包含輸出 ID、對象／收件人、允許的結果、原檢定／Luck ID 與正典政策。公開 fallback 只投影允許的工具結果，不傾倒 RAG、內部錯誤、私密訊息或敵方完整資料。已知結果與待處理操作仍保留；私密控制項送到原角色擁有者，按鈕 ID 不變。合格敘事保留原文，必要時附上系統提供的機制回饋。
+
+```text
+入口 -> admission 與既有操作者／代操作對象權限
+  -> 現有 Executor／受限 Narrator 工具
+       -> owner（原時間線、generation）-> 真正 worker
+       -> 已提交工具證據 -> ObservedOutcome（不重播）
+  -> 現有 Narrator
+  -> 機制一致性 -> 既有條件式 Guard -> 再檢查一致性
+  -> 系統事實 + 原待處理控制項
+  -> 最終劇透／對象檢查 -> validate_delivery_contract
+       通過 -> 正常提交／傳送
+       失敗 -> 一次確定性投影 -> 相同安全與契約檢查
+                 通過 -> 投影 fallback
+                 失敗 -> 暫停輸出通知；保留真實結果與 pending
+```
+
+### 13.3 admission 入口覆蓋
+
+在無法證明彼此獨立時，hold 保守涵蓋同一團的變更。既有操作者權限、代操作對象綁定、更正 hold 與行動證據檢查仍由原 handler 執行。`MutationAdmission` 增加執行生命週期的歸屬，不授予新權限。寫入邊界再次檢查；只有真正 worker 可以結束自己的 generation。asyncio Task 取消不能代表執行緒已停止；確定尚未開始的排隊工作可拒絕，且之後不能偷偷執行。
+
+| 入口／可信身分 | Admission 位置 | 寫入／解除規則 | 回歸證據 |
+| --- | --- | --- | --- |
+| 一般訊息、sudo／實際發話者及授權對象 | router、conversation lock、Supervisor | 保留 sudo 權限；寫入前團／時間線 gate | router 矩陣；一般／sudo 真 adapter 基線 |
+| Executor／可信 speaker role 與工具目標 | Executor、tool gateway、`keeper._execute_tool` | `_mutate_and_save_state` 在 mutator 前查原時間線；worker finally 結束自己的 generation | 工具成功後 API 失敗、阻擋重骰、過期 worker |
+| 受限 Narrator、開場、檢定後續／原玩家 | Narrator、Supervisor、共用 gateway | 可用工具白名單不變；共用 worker／寫入 gate | 工具後失敗；各 turn kind 在 context 前受阻 |
+| 檢定／Luck 按鈕與指令／持久化決定的擁有者 | callback、conversation lock、legacy handler、確定性 resolver | 骰子前拒絕，再保留 ID／owner／timeline 驗證 | 入口矩陣、callback hold、原 ID |
+| 確認購買／買家或授權 sudo 對象 | purchase handler | mutate/save 與 DB gate | 直接購買入口、router 矩陣及原購買測試 |
+| 地圖變更／目前玩家 | map handler、map transaction | 狀態鎖內、移動判定前 admission | map 入口矩陣；S2 移動重構尚未開始 |
+| 換角／角色擁有者 | character handler | save_state 與 DB gate | 直接換角與 router 矩陣 |
+| newgame／既有指令授權 | system handler、conversation lock | 刻意換 revision 也不能跳過 hold | newgame 與 repository 矩陣 |
+| rollback／既有 KP 權限 | system handler、checkpoint rollback | checkpoint 交易前 admission，DB 寫入／刪除再次確認 | rollback 入口矩陣 |
+| 更正與上傳／原 handler 身分 | correction／PDF／map／role handler | conversation lock 與持久化 gate | 直接更正／上傳矩陣 |
+| 記憶／摘要維護／原始來源 snapshot | memory maintenance、digest maintenance、create_digest | hold 與原時間線／摘要／log 驗證；digest 寫入前驗來源版本 | 維護 hold、過期摘要拒絕、舊摘要可清理 |
+| 直接持久化／內部呼叫端 | save_state、DB set_json[_tx] 及刪除 | 再查團 hold 與 owner 原時間線，涵蓋鏡像、checkpoint、memory | repository newgame hold、維護測試 |
+
+已檢查的讀取指令（help、status、characters、purchases）及其他團仍可使用。讀取 scope 無法跳過 DB 寫入 admission。查詢仍有 timeout，但執行緒還活著就保留 ownership；骰子不當成可重試讀取。取消釋放 conversation admission 之前，hold 已可見。晚完成結果在持久化成功時寫入既有 marker 清單，不重播工具。關閉流程即使看到 asyncio Task 已結束，也會報告尚未停止的真正 worker。
+
+**限制：** hold 僅限目前行程，不是持久化 operation ledger。worker 已停止但結果不明時仍需查看真實狀態；沒有自動帶工具恢復，也不保證晚完成的私訊／輸出意圖重新傳送。晚完成證據寫入失敗會記錄錯誤。重啟後安全恢復與持久化 outbox 仍屬 S7／S8，沒有宣稱此次已完成。
+
+### 13.4 驗證
+
+隔離完整測試：**1044 passed、1 skipped、33 subtests**；Ruff 通過；mypy **86 個來源檔通過**；`git diff --check` 通過。原基線為 987 passed、1 skipped。既有機制、按鈕識別、購買、更正與 provider 測試均保留。未增加固定模型階段、執行真實 API、修改正式遊戲資料或部署。

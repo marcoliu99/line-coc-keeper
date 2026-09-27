@@ -13,8 +13,10 @@ from app.legacy_commands import (
 )
 from app.models import OCCUPATIONS, generate_investigator
 from app.repositories.group_state import load_state, save_state
+from app.services import mutation_admission
 
 
+@mutation_admission.guard_async_entry
 async def handle_character_command(
     conversation_id: str,
     user_id: str,

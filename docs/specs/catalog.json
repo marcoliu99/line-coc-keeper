@@ -1111,20 +1111,25 @@
       "title": "Turn safety, recoverable results and measured latency",
       "zh": "回合正確性、結果恢復與延遲量測",
       "category": "refactor",
-      "status": "proposed",
+      "status": "partial",
       "evidence": [
         "app/commands/router.py",
         "app/intent_parser.py",
         "app/agents/executor.py",
         "app/agents/supervisor.py",
         "app/repositories/group_state.py",
-        "app/scenario_retrieval.py"
+        "app/scenario_retrieval.py",
+        "app/services/mutation_admission.py",
+        "app/services/turn_delivery.py",
+        "app/services/task_trace.py",
+        "tests/test_turn_safety.py",
+        "tests/test_task_trace.py"
       ],
       "path": "docs/specs/refactor/turn_safety_and_latency_design_spec.md",
       "zh_path": "docs/specs/refactor/turn_safety_and_latency_design_spec_zh.md",
       "source_revision": "e03d5dc5508e6bf0e483705a5032df07d4d66b62",
       "limitations": [
-        "Design only; awaiting approval. Review R1-R6 integrated; new acceptance tests and live API evaluation have not been run. Original probes remain historical baseline evidence."
+        "S0/S1 implemented with isolated SDK fixtures on this branch; S3 is independent. S2 is deferred. Process-local admission is not a durable ledger/outbox. Live API accuracy and latency remain unmeasured."
       ]
     }
   ]

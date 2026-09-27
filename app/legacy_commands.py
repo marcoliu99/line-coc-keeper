@@ -69,6 +69,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
+from app.services import mutation_admission
 
 _logger = logging.getLogger(__name__)
 
@@ -326,6 +327,7 @@ def _pdf_upload_confirmation_text(
     )
 
 
+@mutation_admission.guard_async_entry
 async def handle_pdf_upload(
     conversation_id: str,
     reply: Reply,
@@ -598,6 +600,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
         context["scene_maps"], extracted_index, len(state.pregens),
     ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "")
 
+@mutation_admission.guard_async_entry
 async def resolve_pdf_upload_choice(
     conversation_id: str,
     choice: str,
@@ -621,6 +624,7 @@ async def resolve_pdf_upload_choice(
     await push(text)
 
 
+@mutation_admission.guard_async_entry
 async def handle_map_upload(
     conversation_id: str,
     reply: Reply,
@@ -670,6 +674,7 @@ async def handle_map_upload(
     )
 
 
+@mutation_admission.guard_async_entry
 async def handle_scenario_compare_upload(
     conversation_id: str,
     reply: Reply,
@@ -696,6 +701,7 @@ async def handle_scenario_compare_upload(
     await push(f"比對完成，發現 {len(discrepancies)} 處可能的落差：\n" + "\n".join(lines))
 
 
+@mutation_admission.guard_async_entry
 async def handle_role_sheet_upload(
     conversation_id: str,
     reply: Reply,
@@ -1361,6 +1367,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
     Keeper narration stays in handle_check_command's async tail.
     """
     with locks.get_state_lock(conversation_id):
+        mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
         if not state.active:
             return _CheckResolution(reply_text="目前沒有進行中的遊戲。")
@@ -1718,6 +1725,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         )
 
 
+@mutation_admission.guard_async_entry
 async def handle_check_command(
     conversation_id: str,
     user_id: str,
@@ -1754,6 +1762,7 @@ async def handle_check_command(
     return True
 
 
+@mutation_admission.guard_async_entry
 async def handle_luck_decision(
     conversation_id: str,
     user_id: str,
@@ -1792,6 +1801,7 @@ def _resolve_luck_decision_deterministically(
     conversation_id: str, user_id: str, choice: str
 ) -> _CheckResolution:
     with locks.get_state_lock(conversation_id):
+        mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
         pending = state.pending_luck_decisions.pop(user_id, None)
         if not pending:
@@ -1953,6 +1963,7 @@ def _save_if_map_position_changed(state: GroupState, user_id: str, before: tuple
 
 def _resolve_map_action_transaction(conversation_id: str, user_id: str, text: str) -> dict | None:
     with locks.get_state_lock(conversation_id):
+        mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
         before = _map_position_snapshot(state, user_id)
         result = _resolve_map_action_core(state, user_id, text, allow_rag=False)
@@ -2152,6 +2163,7 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
     return char
 
 
+@mutation_admission.guard_async_entry
 async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Reply) -> None:
     """Resolve the player's explicit LUCK roll for a newly claimed pregen."""
     state = load_state(conversation_id)
@@ -2179,6 +2191,7 @@ def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
 
 def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
     with locks.get_state_lock(conversation_id):
+        mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
         char = state.get_active_character(user_id)
         if not char:

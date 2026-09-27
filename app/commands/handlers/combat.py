@@ -1,8 +1,10 @@
 from app import checkpoints, combat, keeper
 from app.legacy_commands import Reply
 from app.repositories.group_state import load_state, save_state
+from app.services import mutation_admission
 
 
+@mutation_admission.guard_async_entry
 async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[str]) -> None:
     action = parts[2].casefold() if len(parts) > 2 else None
     state = load_state(conversation_id)

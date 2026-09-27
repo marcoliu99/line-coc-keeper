@@ -31,6 +31,7 @@ from app.legacy_commands import (
     handle_roll_command,
 )
 from app.repositories.group_state import load_state
+from app.services import mutation_admission
 
 _logger = logging.getLogger(__name__)
 PostTurnHook = Callable[[], Awaitable[None]]
@@ -422,12 +423,19 @@ async def handle_text_message(
     expected_revision: int | None = None,
     referenced_message_id: str | None = None,
 ) -> None:
-    with observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
-        await _handle_text_message_impl(
-            conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-            send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
-            post_turn_hook, expected_revision, referenced_message_id,
-        )
+    observability.event("turn.entry", entry="sudo" if text.startswith("/coc sudo ") else "command" if text.startswith("/coc ") else "ordinary")
+    if mutation_admission.is_held(conversation_id) and not mutation_admission.command_is_read_only(text):
+        await reply(mutation_admission.NOTICE)
+        return
+    try:
+        with mutation_admission.command_scope(text), observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
+            await _handle_text_message_impl(
+                conversation_id, user_id, get_display_name, reply, send_dm, send_image,
+                send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
+                post_turn_hook, expected_revision, referenced_message_id,
+            )
+    except mutation_admission.MutationHeld:
+        await reply(mutation_admission.NOTICE)
 
 
 _QUEUE_ACK_DELAY_SECONDS = 10.0
