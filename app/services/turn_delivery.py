@@ -38,8 +38,14 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
         elif name in {"skill_check", "sanity_check"} and result.get("resolved"):
             text = (f"{result.get('investigator', '調查員')} 的檢定已結算："
                     f"骰值 {result.get('roll')}，等級 {result.get('tier')}。")
-        elif name in {"apply_combat_damage", "apply_final_combat_damage"} and "final_damage" in result:
+        elif name in {"apply_combat_damage", "apply_final_combat_damage", "damage_combatant"} and "final_damage" in result:
             text = f"{result.get('name', result.get('target', '目標'))} 已結算傷害 {result['final_damage']}。"
+        elif name == "damage_combatant":
+            # Enemy HP may already have been removed by the public tool projection.
+            if "hp" in result and "hp_before" in result:
+                text = f"{result.get('name', '目標')} 已結算治療，HP {result['hp_before']} → {result['hp']}。"
+            else:
+                text = f"{result.get('name', '目標')} 的治療已結算。"
         elif name == "adjust_ammo":
             text = f"{result.get('investigator')} 的 {result.get('weapon')} 彈藥已更新為 {result.get('ammo')}。"
         elif name == "adjust_character":

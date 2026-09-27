@@ -638,3 +638,6 @@ ordinary / sudo act / enter / leavemap
 ## PR #99 review correction
 
 Bind arrival to the requested candidate for both named and directional moves. Reject empty paths that never reach the candidate, substituted destinations and mapless bypasses. Directional candidates must be the first step. Named candidates must be reached; further travel requires a later explicit movement destination in the request, preserving legal multi-edge routes. Rejections must leave persisted position, arrival events and destination effects unchanged.
+## PR #97 review corrections
+
+Preserve check visibility and the authoritative owner through resolution, Luck, chained checks, event/context construction and delivery. Route private feedback and images to that owner even when invoked from a public command; DM failures must not fall back to public output. Preserve filtered damage_combatant injury/healing results in recovery without exposing enemy HP. Test deterministic check/Luck resolution, chained SAN/INT checks, split and combined delivery, and failures after combat tool commits.
