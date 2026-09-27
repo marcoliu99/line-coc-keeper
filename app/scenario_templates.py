@@ -692,6 +692,7 @@ def _selection_stamp(scenario_id: str, variant_id: str) -> tuple:
 
 
 def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenario_rag.ScenarioIndex:
+    from app import scenario_references
     scenario_id = state.scenario_library_id
     variant_id = state.scenario_variant_id
     diagnostics = metrics if metrics is not None else {}
@@ -699,7 +700,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                        projection_version=scenario_projection.VERSION, variant_fallback="not_selected")
     if scenario_id and variant_id and variant_id != "original":
         try:
-            key = (scenario_id, variant_id, tuple(state.context_chapter_ids), SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER)
+            key = (scenario_id, variant_id, tuple(state.context_chapter_ids), SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER, scenario_references.VERSION)
             stamp = _selection_stamp(scenario_id, variant_id)
             cached = _selection_cache.get(key)
             if cached is not None and cached[0] == stamp:
@@ -709,6 +710,8 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                 return cached[1]
             diagnostics["template_cache"] = "miss"
             variant, records = _read_variant(scenario_id, variant_id)
+            records, reference_diagnostics = scenario_references.link_records(records)
+            diagnostics['cross_reference_diagnostic_count'] = len(reference_diagnostics)
             diagnostics["projection_version"] = variant["compiler_version"]
             diagnostics["variant_fallback"] = "unapproved"
             if variant.get("review_status") == "approved":
@@ -718,7 +721,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                 if selected:
                     digest = hashlib.sha256(json.dumps(
                         [scenario_id, variant["source_hash"], variant["chapter_hash"],
-                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER],
+                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER, scenario_references.VERSION],
                         ensure_ascii=False).encode("utf-8")).hexdigest()
                     index = scenario_rag.get_record_index(f"template:{scenario_id}:{digest}", selected)
                     if _selection_stamp(scenario_id, variant_id) != stamp:

@@ -36,6 +36,17 @@ class TurnResolution:
     validation_code: str = ""
 
 
+@dataclass(frozen=True)
+class ObservedOutcome:
+    """Tool evidence, never inferred causal outcomes from a snapshot difference."""
+    evidence_ref: str
+    tool_name: str
+    success: bool
+    public_text: str = ""
+    audience: str = "internal"
+    recipient_id: str = ""
+
+
 @dataclass
 class MechanicResult:
     success: bool
@@ -45,6 +56,8 @@ class MechanicResult:
     events: list[GameEvent] = field(default_factory=list)
     check_status: dict[str, Any] = field(default_factory=dict)
     turn_resolution: TurnResolution | None = None
+    execution_health: str = "completed"
+    observed_outcomes: list[ObservedOutcome] = field(default_factory=list)
 
 
 @dataclass

@@ -57,6 +57,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
+from app.services import mutation_admission, opposed_checks
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
@@ -191,6 +192,8 @@ TOOLS = [
                     "type": "string",
                     "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事；不要放完整劇本或 prompt。",
                 },
+                "opposed": opposed_checks.SCHEMA,
+                "action_basis": {"type": "string", "description": "目前物件狀態、適用規則引用與觸發轉變；不改寫玩家宣告。對抗檢定必填，最多 600 字。"},
             },
             "required": ["investigator", "skill"],
         },
@@ -794,9 +797,9 @@ TOOLS = [
     },
 ]
 
-# These tools do not mutate persisted GroupState. They may still perform
-# read-side indexing or randomness, but a partial timeout result is safe;
-# state-changing tools use the graceful cancellation path below.
+# Capability list for tools that do not directly persist GroupState. Random
+# output and shared-snapshot refresh still require worker ownership; the
+# gateway applies separate timeout/cancellation policies for those effects.
 READ_ONLY_TOOL_NAMES = frozenset({
     "roll_dice",
     "roll_impaling_damage",
@@ -1062,6 +1065,8 @@ def _pending_check_metadata(target_state: GroupState, owner_id: str, tool_input:
         "origin_turn_id": str(current_context.get("turn_id", "")),
         "origin_request_id": str(current_context.get("request_id", "")),
         "action_context": context,
+        "player_declaration": str(tool_input.get("_player_action", ""))[:1000],
+        "action_basis": str(tool_input.get("action_basis", ""))[:600],
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
@@ -1135,7 +1140,9 @@ def _is_identical_pending_check(existing: dict, new_check_dict: dict) -> bool:
             existing.get("bonus_dice") == new_check_dict.get("bonus_dice") and
             existing.get("penalty_dice") == new_check_dict.get("penalty_dice") and
             existing.get("difficulty") == new_check_dict.get("difficulty") and
-            existing.get("pushed") == new_check_dict.get("pushed")
+            existing.get("pushed") == new_check_dict.get("pushed") and
+            opposed_checks.request_part(existing.get("opposed")) == opposed_checks.request_part(new_check_dict.get("opposed")) and
+            existing.get("action_basis", "") == new_check_dict.get("action_basis", "")
         )
     elif existing.get("type") == "sanity":
         # 比較理智檢定
@@ -1388,6 +1395,16 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
     """
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
+        mutation_admission.assert_admitted(state.group_id, timeline_id=latest_state.timeline_id)
+        if state.timeline_id and latest_state.timeline_id and state.timeline_id != latest_state.timeline_id:
+            raise mutation_admission.MutationHeld("stale tool timeline")
+        from app.services import movement
+        movement_session = movement.CURRENT.get()
+        operation = movement.OPERATION.get()
+        if movement_session is not None and operation is not None:
+            error = movement_session.guard(latest_state, *operation)
+            if error:
+                raise ValueError(error)
         result = mutator(latest_state)
         should_save = True
         if isinstance(result, _StateMutation):
@@ -1519,6 +1536,7 @@ def _commit_turn_result(
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
     start_game: bool = False,
+    segment_audit: dict[str, Any] | None = None,
 ) -> bool:
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -1538,6 +1556,10 @@ def _commit_turn_result(
             _sync_state_snapshot(state, latest_state)
             return False
         latest_state.log.extend(log_entries)
+        if segment_audit is not None:
+            latest_state.request_segment_audit.append({**segment_audit, "timeline_id": current_timeline_id,
+                                                        "conversation_id": state.group_id})
+            del latest_state.request_segment_audit[:-20]
         if start_game:
             latest_state.game_started = True
         if invalidate_openai_response_chain:
@@ -1672,6 +1694,7 @@ def _persist_memory_maintenance_state(
         idempotency_key_hash=idempotency_hash,
     )
     with locks.get_state_lock(group_id), db.transaction() as conn:
+        mutation_admission.assert_admitted(group_id)
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT data FROM group_states WHERE key = ?", (group_id,)).fetchone()
         if row is None:
@@ -1766,16 +1789,17 @@ def _persist_memory_maintenance_state(
             source_revision=source_revision,
             embedding=embedding,
         )
-        _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
-        observability.event(
-            "maintenance.commit_completed", source_revision=source_revision,
-            committed_revision=latest_state.state_revision,
-            memory_appended=memory_appended,
-            requested_timeline_id=timeline_id,
-            current_timeline_id=latest_timeline_id,
-            idempotency_key_hash=idempotency_hash,
-        )
-        return "committed"
+        committed = _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
+    committed.apply(latest_state)
+    observability.event(
+        "maintenance.commit_completed", source_revision=source_revision,
+        committed_revision=latest_state.state_revision,
+        memory_appended=memory_appended,
+        requested_timeline_id=timeline_id,
+        current_timeline_id=latest_timeline_id,
+        idempotency_key_hash=idempotency_hash,
+    )
+    return "committed"
 
 
 # Guards against more than one run_post_turn_maintenance pass running
@@ -1785,6 +1809,7 @@ _maintenance_in_flight: set[str] = set()
 
 def run_scene_digest_maintenance(group_id: str) -> None:
     with locks.get_state_lock(group_id):
+        mutation_admission.assert_admitted(group_id)
         state = load_state(group_id)
         latest = scene_digest.latest_digest(group_id, state.timeline_id)
         chapter_changed = latest is None or latest.get("scene_label") != (state.active_chapter_id or state.scenario_title or "目前場景")
@@ -1910,6 +1935,15 @@ def _execute_tool(
     image_requests: list[tuple[str | None, int]],
     speaker_role: str = "player",
 ) -> dict:
+    mutation_admission.assert_admitted(state.group_id, timeline_id=state.timeline_id)
+    from app.services import movement
+    session = movement.CURRENT.get()
+    if session is not None:
+        movement_error = session.guard(state, name, tool_input)
+        if movement_error:
+            return {"ok": False, "error": movement_error}
+    if name == "commit_movement":
+        return session.commit(state, tool_input) if session else {"ok": False, "error": "no_movement_session"}
     try:
         if speaker_role == "kp_assistant" and name == "roll_dice":
             error = _validate_kp_roll_dice_context(tool_input)
@@ -1980,6 +2014,12 @@ def _execute_tool(
             def _roll_skill_check(target_state: GroupState) -> _StateMutation[dict]:
                 nonlocal resolved_event_seed
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
+                opposed_request = opposed_checks.contract(tool_input.get("opposed"))
+                if opposed_request and (not isinstance(tool_input.get("action_basis"), str)
+                                        or not tool_input['action_basis'].strip() or len(tool_input['action_basis']) > 600):
+                    raise ValueError('對抗檢定須先說明物件狀態、適用規則及觸發轉變。')
+                if opposed_request and (tool_input.get('pushed') or tool_input.get('difficulty', 'regular') != 'regular'):
+                    raise ValueError('對抗檢定以雙方等級比較，不可強推或用固定難度替代。')
                 if not target_state.autoroll_checks:
                     value = resolve_skill_value(target_char, tool_input["skill"])
                     bonus = int(tool_input.get("bonus_dice") or 0)
@@ -1997,6 +2037,8 @@ def _execute_tool(
                         "pushed": bool(tool_input.get("pushed", False)),
                     }
                     new_check.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
+                    if opposed_request:
+                        new_check['opposed'] = opposed_request
                     if target_char.owner_id in target_state.pending_luck_decisions:
                         return _StateMutation(
                             {
@@ -2019,6 +2061,7 @@ def _execute_tool(
                                     "penalty_dice": penalty,
                                     "difficulty": difficulty,
                                     "note": "已經有相同的待處理檢定（防重複）。",
+                                    "opposed_pending": bool(existing.get('opposed')),
                                 },
                                 should_save=False,
                             )
@@ -2032,6 +2075,8 @@ def _execute_tool(
                             },
                             should_save=False,
                         )
+                    if opposed_request:
+                        new_check['opposed'] = opposed_checks.roll_opponent(opposed_request)
                     target_state.pending_checks[target_char.owner_id] = new_check
                     return _StateMutation(
                         {
@@ -2044,6 +2089,7 @@ def _execute_tool(
                             "penalty_dice": penalty,
                             "difficulty": difficulty,
                             "note": "等待玩家自己用 /coc check 或按鈕擲骰；在結果回來前不要自行判定成敗。",
+                            "opposed_pending": bool(new_check.get('opposed')),
                         },
                         should_save=True,
                     )
@@ -2077,7 +2123,9 @@ def _execute_tool(
                     difficulty = "regular"
                 pushed = bool(tool_input.get("pushed", False))
                 state_before = _character_attribute_snapshot(target_char)
+                opposed_receipt = opposed_checks.roll_opponent(opposed_request)
                 roll = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
+                opposed_outcome = opposed_checks.resolve(opposed_receipt, roll.tier)
                 metadata = _pending_check_metadata(target_state, target_char.owner_id, tool_input)
                 result: dict[str, Any] = {
                     "ok": True,
@@ -2091,10 +2139,14 @@ def _execute_tool(
                     "roll": roll.roll,
                     "tier": roll.tier,
                     "required_tier": roll.required_tier,
-                    "success": roll.success,
+                    "success": (opposed_outcome['winner'] == 'player') if opposed_outcome else roll.success,
+                    "player_check_success": roll.success,
                     "check_id": metadata["check_id"],
                     "timeline_id": metadata["timeline_id"],
                     "action_context": metadata["action_context"],
+                    "player_declaration": metadata['player_declaration'],
+                    "action_basis": metadata['action_basis'],
+                    "opposed_outcome": opposed_checks.public_outcome(opposed_outcome),
                     "note": (
                         "Keeper 已由 deterministic dice engine 擲完這次檢定；請直接依照結果敘事，不要再要求玩家擲攻擊骰或技能骰。"
                         if target_state.autoroll_checks
@@ -2132,10 +2184,15 @@ def _execute_tool(
                         "difficulty": difficulty,
                         "options": [{"tier": item.tier, "cost": item.cost} for item in luck_options],
                         "major_wound_trigger": False,
+                        "opposed": opposed_receipt,
+                        "player_declaration": metadata['player_declaration'],
+                        "action_basis": metadata['action_basis'],
                     }
                     target_state.pending_luck_decisions[target_char.owner_id] = decision
                     result.update({
                         "pending_luck": True,
+                        "opposed_outcome": None,
+                        "success": None if opposed_receipt else result['success'],
                         "decision_id": decision["decision_id"],
                         "luck_options": decision["options"],
                         "note": (
@@ -2155,7 +2212,11 @@ def _execute_tool(
                         "skill_value": value,
                         "roll": roll.roll,
                         "difficulty": difficulty,
-                        "outcome": f"{roll.tier} {'成功' if roll.success else '失敗'}",
+                        "outcome": f"{roll.tier} {'成功' if roll.success else '失敗'}" +
+                        (f"；對抗勝方={opposed_outcome['winner']}" if opposed_outcome else ''),
+                        "opposed_outcome": opposed_outcome,
+                        "player_declaration": metadata['player_declaration'],
+                        "action_basis": metadata['action_basis'],
                         "state_before": state_before,
                     }
                 _remember_check_result(target_state, cache_key, result)
@@ -3388,6 +3449,8 @@ def _build_dynamic_prompt(
     user_id: str,
     resolved_location: dict | None = None,
     speaker_role: str = "player",
+    *,
+    include_private_checks: bool = True,
 ) -> str:
     """Combat status + each character's *dynamic* state (HP/SAN/Luck/ammo/
     carried items — see Character.dynamic_state_text; the static attributes/
@@ -3403,7 +3466,7 @@ def _build_dynamic_prompt(
     from app.services import turn_context
 
     digest_block = turn_context.digest_history(state, digest)
-    authority = turn_context.authority_block(state)
+    authority = turn_context.authority_block(state, include_private_checks=include_private_checks)
 
     location_block = ""
     if resolved_location:

@@ -4,6 +4,7 @@ import json
 import re
 
 from app.domain.models import MechanicResult
+from app.services import opposed_checks
 
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
@@ -56,6 +57,12 @@ actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指�
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
 失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。
 工具回傳 current_turn_state 是更新後的權威資料；以最新一份為準。查詢不到依據就保留未知／補查。
+建立檢定前依序核對「玩家實際宣告→目前物件狀態→最具體的劇本觸發條件→適用規則」。
+拾起靜止物件、維持已握住物件、抓取飛行物件是不同動作，不能互換；不得先把物件改成另一狀態，再代替玩家選擇戰技或防禦。
+skill_check 的 action_basis 記錄目前狀態、規則引用與轉變；player_declaration 由程式保存，不能用 action_context 的模型解讀覆蓋。
+劇本要求雙方對抗時，使用 skill_check.opposed，提供對手能力、規則來源、平手勝方與勝敗後果，由程式擲對手並保存；
+不能用普通 skill_check 加另一次 npc_skill_check 讓 Narrator 臨場比較。不可把對抗改成固定難度，也不可重擲既有對手骰果。
+已知具名跨頁引用優先依必要關聯取齊；只有缺少另一項實際裁定事實才補查，不要反覆用同義詞尋找已取得的規則。
 交接／製作物品、結束戰鬥等不用擲骰的工具完成，使用 resolved_without_check，引用所有相關變更工具。
 既有其他行動的檢定不因物品交接而取消；交接完成與仍待擲的舊檢定要分開敘述。
 本次新建／更換的檢定仍須等待，不能以查詢成功或任意工具成功宣稱整個行動完成。
@@ -220,6 +227,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
     lines = [
         "【系統判定結果（事實，禁止重新判定或改變）】",
         f"機制執行流程: {'完成呼叫' if result.success else '發生錯誤'}（不等於玩家行動成功）",
+        f"執行健康狀態：{result.execution_health}；中斷不得抹除已確認事實，也不得重播工具。",
         "發生的事實：",
     ]
     lines.extend(f"- {fact}" for fact in result.narrative_facts)
@@ -270,11 +278,14 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
     resolved = status.get("resolved")
     if resolved:
         outcome = "成功" if resolved.get("success") else "失敗"
+        opposed_winner = resolved.get('opposed_winner')
         lines.extend([
             "【已結算檢定：結果權威且不得重擲】",
             f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {resolved.get('difficulty', 'regular')}，等級 {resolved.get('tier', '未知')}，結果 {outcome}。",
             "這筆檢定已結算。不得改成尚未結算、因先攻延後同一擲骰結果、要求再擲一次，或從檢定結果自行推導未提供的傷害、破壞或戰鬥。",
         ])
+        if opposed_winner:
+            lines.append(f"劇本對抗勝方：{opposed_winner}；此結果優先於單方技能等級。")
     if not status.get("pending") and not pending_luck and not resolved:
         lines.append(
             "【檢定狀態：沒有待處理／新建立檢定，也沒有本回合已結算結果】不得指示玩家擲骰、按檢定按鈕或輸入 /coc check；"
@@ -293,6 +304,11 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
         f"難度：{result.get('difficulty', 'regular')}；最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
+        '【行動及對抗交接；來源與對手數值不得公開】\n'
+        f"{json.dumps({'player_declaration': result.get('player_declaration'), 'opposed_outcome': opposed_checks.public_outcome(result.get('opposed_outcome'))}, ensure_ascii=False)}\n"
+        'player_declaration 是原始宣告，不會自行建立新事實。'
+        'opposed_outcome.winner 是程式已比較的最終勝方，優先於單方技能成功；不得重新比較或重擲。'
+        'applicable_consequence 只是後果分支，傷害、物品與資源尚須對應工具才能生效。\n'
         "這次檢定已由系統擲骰並定案。只敘述這個結果允許的後果；不得重擲或改判、"
         "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
         "本回合不得建立新檢定；若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
@@ -322,6 +338,9 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
     if resolution is not None:
         if resolution.disposition in {"incomplete", "blocked"}:
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
+            confirmed = [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text]
+            if confirmed:
+                warning = "\n".join(confirmed) + "\n\n" + warning
             if status.get("state_changed"):
                 warning += "已記錄的變更會保留，請勿重做已完成的部分。"
             if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):

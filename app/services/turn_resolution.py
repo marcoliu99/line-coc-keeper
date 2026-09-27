@@ -34,6 +34,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     inventory = []
     latest = {}
     ended = False
+    movement_effect = False
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
         if (name in {'add_carried_item', 'remove_carried_item', 'end_combat'}
@@ -47,6 +48,15 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 return False, False
             inventory.append(event)
             latest[owner] = after
+        if name == "commit_movement":
+            arrival = result.get("arrival")
+            actor = next((c for c in state.active_characters() if c.name == actor_name), None)
+            movement_effect = movement_effect or bool(result.get("ok") and arrival and actor and arrival in state.arrival_events
+                and f"tool:{i}" in refs and arrival.get("timeline_id") == state.timeline_id
+                and arrival.get("subject_id") == actor.owner_id and arrival.get("character_id") == actor.character_id
+                and state.current_map_page.get(actor.owner_id, "") == arrival.get("page")
+                and state.current_room_id.get(actor.owner_id, "") == arrival.get("room")
+                and state.narrative_locations.get(actor.owner_id) == arrival.get("destination"))
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
@@ -72,7 +82,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     transfer = transfer and all(e['name'] in {
         'add_carried_item', 'remove_carried_item', 'search_scenario', 'get_character_sheet',
     } for e in events)
-    return bool(ended or (inventory and actor_involved)), transfer
+    return bool(ended or movement_effect or (inventory and actor_involved)), transfer
 
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
@@ -204,7 +214,7 @@ def actor_snapshot(state: GroupState, user_id: str) -> dict[str, Any]:
 # Diagnostic/provider bookkeeping does not constitute a game action. All other
 # persisted fields (including every character and enemy card) are compared.
 _NON_GAMEPLAY_FIELDS = {
-    "state_revision", "log", "kp_ooc_log", "campaign_summary",
+    "state_revision", "log", "kp_ooc_log", "campaign_summary", "request_segment_audit",
     "openai_previous_response_id", "openai_previous_response_timeline_id",
 }
 

@@ -6,6 +6,21 @@ from pathlib import Path
 from app import config
 
 
+class DeploymentEnvIsolationTests(unittest.TestCase):
+    def test_a_checkout_env_file_cannot_reach_config(self):
+        import dotenv
+
+        # Restoring the real loader here would let the deployment .env decide
+        # what "default" means for every test that asserts one.
+        self.assertEqual(dotenv.load_dotenv.__name__, "_load_dotenv_disabled")
+
+    def test_config_reports_code_defaults_not_deployment_values(self):
+        # These two are overridden in the deployment .env (12 and 7), so they
+        # fail in the checkout the bot runs from unless dotenv is neutralized.
+        self.assertEqual(config.MAX_TOOL_ITERATIONS, 5)
+        self.assertEqual(config.HIGH_ITERATION_WATERMARK, 4)
+
+
 class StorageSandboxTests(unittest.TestCase):
     def paths(self):
         return {
