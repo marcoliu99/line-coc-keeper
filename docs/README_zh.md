@@ -1,5 +1,7 @@
 # 文件索引
 
+來源修復操作指南：[繁體中文](guides/scenario_source_review_zh.md) / [English](guides/scenario_source_review.md)
+
 [English](README.md)
 
 現行規格已對照 `main_v2` 的 `afe8ace`；每份 spec 均有英文與繁中版本。歷史提案與量測以不可變來源版本連結保留。

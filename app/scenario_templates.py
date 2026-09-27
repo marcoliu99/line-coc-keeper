@@ -81,6 +81,12 @@ def _blocks(manifest: dict[str, Any], text: str) -> list[dict[str, Any]]:
         for page, body in pages:
             if not chapter["start_page"] <= page <= chapter["end_page"]:
                 continue
+            # Reviewed sources have verified physical pages. Keep those boundaries
+            # so newly exported units do not assign an entire chapter's page range
+            # to a single card/paragraph. Existing exports remain unchanged.
+            if manifest.get("source_review"):
+                flush(lines, source_pages, heading, chapter["id"])
+                heading = chapter.get("title", chapter["id"])
             for line in body.splitlines():
                 if re.match(r"^#{1,2}\s+\S", line):
                     flush(lines, source_pages, heading, chapter["id"])
