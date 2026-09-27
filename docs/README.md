@@ -39,6 +39,7 @@ Current specifications audited against `main_v2` at `afe8ace`. Every spec has an
 
 | Spec | Status | Language |
 | --- | --- | --- |
+| [External AI preparation of English scenario sources](specs/enhancement/external_english_source_preparation_design_spec.md) | proposed; awaiting review | [繁體中文](specs/enhancement/external_english_source_preparation_design_spec_zh.md) |
 | [Verified Luck from the final merged role card](specs/enhancement/pregen_sheet_luck_design_spec.md) | implemented | [繁體中文](specs/enhancement/pregen_sheet_luck_design_spec_zh.md) |
 | [Executable Help controls](specs/enhancement/actionable_help_buttons_design_spec.md) | implemented | [繁體中文](specs/enhancement/actionable_help_buttons_design_spec_zh.md) |
 | [Categorized Help navigation](specs/enhancement/enhanced_help_navigation_design_spec.md) | implemented | [繁體中文](specs/enhancement/enhanced_help_navigation_design_spec_zh.md) |

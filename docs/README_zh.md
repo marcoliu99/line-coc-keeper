@@ -40,6 +40,7 @@
 
 | 規格 | 狀態 | 語言 |
 | --- | --- | --- |
+| [外部 AI 英文劇本來源整備](specs/enhancement/external_english_source_preparation_design_spec_zh.md) | 提案；等待確認 | [English](specs/enhancement/external_english_source_preparation_design_spec.md) |
 | [使用最終合併角色卡的可驗證 Luck](specs/enhancement/pregen_sheet_luck_design_spec_zh.md) | 已實作 | [English](specs/enhancement/pregen_sheet_luck_design_spec.md) |
 | [可執行的 Help 控制項](specs/enhancement/actionable_help_buttons_design_spec_zh.md) | 已實作 | [English](specs/enhancement/actionable_help_buttons_design_spec.md) |
 | [分類 Help 導覽](specs/enhancement/enhanced_help_navigation_design_spec_zh.md) | 已實作 | [English](specs/enhancement/enhanced_help_navigation_design_spec.md) |
