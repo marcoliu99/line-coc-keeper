@@ -513,7 +513,7 @@ async def _stop_queue_notice_task(notify_task: asyncio.Task[None]) -> None:
 async def _conversation_lock_with_notice(
     conversation_id: str, reply: Reply, post_turn_hook: PostTurnHook | None = None,
     *, route: str = "text", speaker_role: str = "",
-) -> AsyncIterator[None]:
+) -> AsyncIterator[locks.TurnHandoff]:
     """Acquires the per-conversation lock, but doesn't leave a queued
     message waiting in silence: if the lock is already held, a background
     task sends a queued-notice reply only if the wait is *still* ongoing
@@ -549,13 +549,17 @@ async def _conversation_lock_with_notice(
         finally:
             await _stop_queue_notice_task(notify_task)
             _emit_turn_queue(started, ahead, route, speaker_role)
+    handoff = locks.TurnHandoff(conversation_id, lock)
     try:
-        yield
+        # Yielded so a turn can hand the mutation lock on once its state is
+        # committed. A caller that ignores it keeps the lock to the end, which
+        # is what close() then releases.
+        yield handoff
     finally:
         try:
             await _run_post_turn_hook(post_turn_hook)
         finally:
-            lock.release()
+            handoff.close()
 
 
 @asynccontextmanager
@@ -563,7 +567,7 @@ async def _keeper_priority_gate_and_lock_with_notice(
     conversation_id: str, *, is_kp: bool, reply: Reply,
     post_turn_hook: PostTurnHook | None = None,
     route: str = "text", speaker_role: str = "",
-) -> AsyncIterator[None]:
+) -> AsyncIterator[locks.TurnHandoff]:
     """Notify after a long wait for either Keeper scheduling gate.
 
     Start the timer before the priority gate because that gate serializes
@@ -588,16 +592,18 @@ async def _keeper_priority_gate_and_lock_with_notice(
         reply, turns_ahead))
     started = time.monotonic()
     try:
-        async with (
-            locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp),
-            lock,
-        ):
+        async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp):
+            await lock.acquire()
             await _stop_queue_notice_task(notify_task)
             _emit_turn_queue(started, ahead, route, speaker_role)
+            handoff = locks.TurnHandoff(conversation_id, lock)
             try:
-                yield
+                yield handoff
             finally:
-                await _run_post_turn_hook(post_turn_hook)
+                try:
+                    await _run_post_turn_hook(post_turn_hook)
+                finally:
+                    handoff.close()
     finally:
         if not notify_task.done():
             await _stop_queue_notice_task(notify_task)
@@ -784,11 +790,11 @@ async def _handle_text_message_impl(
         if not scheduling_state.kp_assistant_user_id:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                                   route=coc_subcommand or "text",
-                                                  speaker_role="keeper" if is_keeper else "player"):
+                                                  speaker_role="keeper" if is_keeper else "player") as handoff:
                 prefetched = await prefetch_task if prefetch_task else None
                 await _handle_ordinary_text_message_locked(
                     conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-                    send_dm_image, text, prefetched,
+                    send_dm_image, text, prefetched, handoff,
                 )
             return
 
@@ -797,11 +803,11 @@ async def _handle_text_message_impl(
             conversation_id, is_kp=is_kp_priority, reply=reply,
             post_turn_hook=post_turn_hook, route="text",
             speaker_role="kp_assistant" if is_kp_priority else ("keeper" if is_keeper else "player"),
-        ):
+        ) as handoff:
             prefetched = await prefetch_task if prefetch_task else None
             await _handle_ordinary_text_message_locked(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-                send_dm_image, text, prefetched,
+                send_dm_image, text, prefetched, handoff,
             )
     finally:
         if prefetch_task is not None and not prefetch_task.done():
@@ -822,6 +828,7 @@ async def _handle_ordinary_text_message_locked(
     send_dm_image: SendDMImage,
     text: str,
     prefetched: context_builder.RetrievalPrefetch | None = None,
+    handoff: locks.TurnHandoff | None = None,
 ) -> None:
     """Handle an ordinary non-command text message via the Keeper Supervisor.
 
@@ -865,6 +872,7 @@ async def _handle_ordinary_text_message_locked(
                 speaker_role=speaker_role,
                 conversation_id=conversation_id,
                 prefetched_retrieval=prefetched,
+                handoff=handoff,
             )
         await _run_post_turn_maintenance_after_output(
             conversation_id,

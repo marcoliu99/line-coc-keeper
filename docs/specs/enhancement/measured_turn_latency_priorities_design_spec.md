@@ -2,7 +2,7 @@
 
 [繁體中文](measured_turn_latency_priorities_design_spec_zh.md)
 
-Status: **WP1, WP2, WP3.2, WP3.3, WP3.4 and WP5 implemented; WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
+Status: **WP1, WP2, WP3.2–WP3.5 and WP5 implemented (WP3.5 behind a default-off flag); WP4 proposed**. Base: `main_v2` at `5961f2b`.
 
 ## 0. Why this document exists
 
@@ -259,7 +259,26 @@ The failure interleaving is also not new. Today B's Executor already resolves ag
 
 The conversation lock is taken in `router.py` around `_handle_ordinary_text_message_locked`, which spans `run_turn` and the post-turn maintenance that posts the reply. Releasing before narration means releasing from inside `run_turn`, which has eleven return paths, and making that release idempotent against the router's own `async with`. The existing code already carries a warning about this exact hazard: a conversation lock leaked by an exception escaping the cleanup "permanently leaks a lock that *was* successfully acquired and deadlocking every future command in that conversation until the process restarts."
 
-That is a channel-wide deadlock as the failure mode, against a measured gain of the Narrator's median 5.0 s out of a ~21.7 s hold. The design above is sound and the blockers are addressable, but it needs the router/supervisor lock boundary restructured deliberately rather than threaded through as an extra argument, and concurrency behaviour that this document has no way to exercise in a test. It stays specified and unimplemented pending that decision.
+That is a channel-wide deadlock as the failure mode, against a measured gain of the Narrator's median 5.0 s out of a ~21.7 s hold.
+
+#### Implemented behind `NARRATION_OUTSIDE_MUTATION_LOCK`, default off
+
+The posting ticket in the original sketch is unnecessary. Both locks are FIFO and the mutation lock already serializes the Executors, so a turn reaches narration in the order it reached mutation and a plain second lock preserves message order:
+
+```text
+mutation lock (FIFO) -> Executor -> release -> narration lock (FIFO) -> Narrator, commit, post
+                                       ^ the next player's Executor starts here
+```
+
+`locks.TurnHandoff` owns which locks a turn still holds, and the router's context managers yield one and `close()` it in their `finally`. `close()` releases exactly what is still held, so the eleven return paths inside `run_turn` need no per-path handling: a turn that never handed off is released as before, and one that did releases narration instead. `to_narration()` is idempotent.
+
+`run_turn` hands off in one place, after the reducer, and only for `turn_kind == "player_action"`. `resolved_check_followup` and `opening_fallback` keep the mutation lock to the end because `narrator.py:44` gives them a restricted tool set and #99 commits arrivals inside it.
+
+The flag defaults off because the gain is seconds and the failure mode is a channel that stops until restart. What is verified is the lock accounting — every test asserts which locks are free afterwards, across handing off or not, closing twice, handing off twice, and an exception after handoff — plus that the next turn's Executor overlaps this turn's narration without reordering the posts. What is not verified is behaviour under real concurrent load.
+
+One hazard worth recording: with the narration lock leaked, the ordering test **hung rather than failed**, because the next turn waited forever. It now waits with a bound, so a leak fails in seconds. The same shape bit twice elsewhere — `FakeSupervisorRunner` pinned `run_turn`'s keyword signature, so a new argument raised inside the turn, the blocking event was never set, and the suite hung; it now tolerates added arguments.
+
+With the KP priority gate in play the gate is still held across narration, so a conversation that has a KP assistant does not get the overlap. That is left as is.
 
 ### 3.6 Acceptance
 

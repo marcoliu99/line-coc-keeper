@@ -2,7 +2,7 @@
 
 [English](measured_turn_latency_priorities_design_spec.md)
 
-狀態：**WP1、WP2、WP3.2、WP3.3、WP3.4、WP5 已實作；WP3.5、WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
+狀態：**WP1、WP2、WP3.2–WP3.5、WP5 已實作（WP3.5 以預設關閉的旗標控制）；WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
 
 ## 0. 這份文件為什麼存在
 
@@ -259,7 +259,26 @@ posting ticket   進入時依到達順序領號；貼文前依號序等待
 
 對話鎖是在 `router.py` 取得的，包住 `_handle_ordinary_text_message_locked`，而那涵蓋 `run_turn` 以及負責貼出回覆的 post-turn maintenance。要在敘事前釋放，就得**從 `run_turn` 內部釋放**——那裡有十一條 return 路徑——並讓該釋放對 router 自己的 `async with` 具備冪等性。既有程式碼本身就帶著針對這個危害的警告：例外逃出清理程序而洩漏已取得的對話鎖，會「**永久洩漏該鎖，並讓該對話之後的每一個指令死鎖，直到行程重啟**」。
 
-失敗模式是**整個頻道死鎖**，而收益是 Narrator 中位 5.0 秒（約 21.7 秒持有時間的一部分）。上述設計是成立的、阻擋因素也是可解的，但它需要**刻意重構 router／supervisor 的鎖邊界**，而不是用多傳一個參數的方式穿過去；而且它的併發行為，本文件沒有辦法用測試涵蓋。因此維持「已規格化、未實作」，等待該決定。
+失敗模式是**整個頻道死鎖**，而收益是 Narrator 中位 5.0 秒（約 21.7 秒持有時間的一部分）。
+
+#### 已實作，以 `NARRATION_OUTSIDE_MUTATION_LOCK` 控制，預設關閉
+
+原本草案裡的 posting ticket **不需要**。兩把鎖都是 FIFO，而 mutation 鎖本來就序列化了 Executor，因此回合抵達敘事階段的順序等於它抵達 mutation 的順序——一把普通的第二把鎖就能保住訊息順序：
+
+```text
+mutation 鎖(FIFO) -> Executor -> 釋放 -> narration 鎖(FIFO) -> Narrator、提交、貼文
+                                    ^ 下一位玩家的 Executor 從這裡開始
+```
+
+`locks.TurnHandoff` 負責記住這個回合還持有哪些鎖，router 的兩個 context manager 各 yield 一個，並在 `finally` 呼叫 `close()`。`close()` 只釋放「仍然持有的」，因此 `run_turn` 裡的十一條 return 路徑**不需要逐條處理**：沒交接的回合照舊釋放 mutation，交接過的則釋放 narration。`to_narration()` 具冪等性。
+
+`run_turn` 只在一個地方交接——reducer 之後——且僅限 `turn_kind == "player_action"`。`resolved_check_followup` 與 `opening_fallback` 保留 mutation 鎖到最後，因為 `narrator.py:44` 給它們受限工具集，而 #99 在該迴圈內提交到達。
+
+**旗標預設關閉**，因為收益以秒計，而失敗模式是頻道停擺到重啟為止。已驗證的是**鎖的帳目**——每個測試最後都斷言哪些鎖已釋放，涵蓋交接與不交接、close 兩次、交接兩次、以及交接後拋例外——外加「下一回合的 Executor 與本回合敘事重疊但貼文順序不變」。**未驗證的是真實併發負載下的行為。**
+
+有一個值得記錄的危害：在 narration 鎖被洩漏的變異下，排序測試是**卡死而不是失敗**，因為下一個回合永遠在等。現在它以有上限的時間等待，外洩會在數秒內失敗。同樣形狀在別處咬了兩次——`FakeSupervisorRunner` 固定了 `run_turn` 的關鍵字簽名，新參數在回合內拋錯、阻塞事件從未設定、整個套件卡住；它現在容忍新增參數。
+
+KP 優先 gate 在作用時，gate 仍然跨越敘事期被持有，因此有 KP 助手的對話不會得到重疊效果。這一點維持現狀。
 
 ### 3.6 驗收
 

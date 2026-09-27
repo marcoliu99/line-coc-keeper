@@ -215,6 +215,66 @@ def get_state_lock(conversation_id: str) -> threading.RLock:
     return lock
 
 
+# Narration holds no mutation: an ordinary turn's Narrator runs with tools=[].
+# Once a turn's state is committed it can hand off to here, freeing the next
+# turn's Executor to start. Ordering survives because both locks are FIFO and
+# the mutation lock already serialized the Executors: a turn reaches narration
+# in the order it reached mutation.
+_narration_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_narration_lock(conversation_id: str) -> asyncio.Lock:
+    lock = _narration_locks.get(conversation_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _narration_locks[conversation_id] = lock
+    return lock
+
+
+class TurnHandoff:
+    """Moves one turn from the mutation phase to the narration phase.
+
+    `close` is what the caller's `finally` runs, and it is exact about which
+    locks this turn still holds. A conversation lock released twice raises,
+    and one never released deadlocks the channel until the process restarts,
+    so neither may depend on which branch the turn took.
+    """
+
+    def __init__(self, conversation_id: str, mutation_lock: asyncio.Lock) -> None:
+        self.conversation_id = conversation_id
+        self._mutation_lock = mutation_lock
+        self._holds_mutation = True
+        self._holds_narration = False
+
+    @property
+    def narrating(self) -> bool:
+        return self._holds_narration
+
+    async def to_narration(self) -> None:
+        """Release the mutation lock and queue for this conversation's narration.
+
+        Idempotent: a turn that already handed off, or never held the mutation
+        lock, is a no-op rather than an error.
+        """
+        if not self._holds_mutation:
+            return
+        self._holds_mutation = False
+        self._mutation_lock.release()
+        # Cancelled while queueing leaves this turn holding neither lock, which
+        # is exactly what close then sees: _holds_narration is set only after
+        # the acquire returns.
+        await get_narration_lock(self.conversation_id).acquire()
+        self._holds_narration = True
+
+    def close(self) -> None:
+        if self._holds_mutation:
+            self._holds_mutation = False
+            self._mutation_lock.release()
+        if self._holds_narration:
+            self._holds_narration = False
+            get_narration_lock(self.conversation_id).release()
+
+
 def get_keeper_turn_lock(conversation_id: str) -> asyncio.Lock:
     lock = _keeper_turn_locks.get(conversation_id)
     if lock is None:
