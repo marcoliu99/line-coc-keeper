@@ -1769,16 +1769,17 @@ def _persist_memory_maintenance_state(
             source_revision=source_revision,
             embedding=embedding,
         )
-        _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
-        observability.event(
-            "maintenance.commit_completed", source_revision=source_revision,
-            committed_revision=latest_state.state_revision,
-            memory_appended=memory_appended,
-            requested_timeline_id=timeline_id,
-            current_timeline_id=latest_timeline_id,
-            idempotency_key_hash=idempotency_hash,
-        )
-        return "committed"
+        committed = _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
+    committed.apply(latest_state)
+    observability.event(
+        "maintenance.commit_completed", source_revision=source_revision,
+        committed_revision=latest_state.state_revision,
+        memory_appended=memory_appended,
+        requested_timeline_id=timeline_id,
+        current_timeline_id=latest_timeline_id,
+        idempotency_key_hash=idempotency_hash,
+    )
+    return "committed"
 
 
 # Guards against more than one run_post_turn_maintenance pass running

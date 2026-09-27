@@ -4,9 +4,9 @@
 
 ## 1. Status, provenance and decision
 
-Category: `refactor` with bug-fix and performance work packages. Status: **proposed; awaiting design approval**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Subsequently aligned with `main_v2` `e03d5dc`; review R1–R6 contracts are in section 12. Branch: `refactor/turn-safety-and-latency`.
+Category: `refactor` with bug-fix and performance work packages. Status: **S0/S1 and independent S3 approved; S3 implemented on this branch**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Subsequently aligned with `main_v2` `e03d5dc`; review R1–R6 contracts are in section 12. Branch: `refactor/turn-safety-and-latency`.
 
-This specification adopts selected recommendations from two user-supplied ChatGPT documents after reading both documents and checking the current source. It does not adopt their older source baselines as current facts. No application implementation, production migration, deployment or live API benchmark is part of this documentation change.
+This specification adopts selected recommendations from two user-supplied ChatGPT documents after reading both documents and checking the current source. It does not adopt their older source baselines as current facts. The original proposal was documentation only. This branch implements S3 as recorded in section 13; no production migration, deployment or live API benchmark was performed.
 
 | Input document | Its source baseline | SHA-256 of supplied file |
 | --- | --- | --- |
@@ -448,3 +448,23 @@ Report per-route sample counts, success/partial/timeout/fallback, generation/att
 Start with S0; S1 includes R3/R4 completely, while S3 can proceed independently. S2 requires R1/R5 movement dependencies and segmented commit contracts first. Measure S4–S6 separately; S7/S8 implement durable recovery using R2's capability matrix, then S9 separates delivery streams. Early stopping remains disabled.
 
 The first reviewable implementation scope should be S0 baselines plus S1 partial-success/safe-output work. Splitting PRs must not omit hold entry coverage. If S1 is split, label which changes provide partial facts and which finish mutation admission; do not claim all of S1 complete early. S3 and S2 can follow without bundling every schema and behavioral change into one patch.
+
+
+## 13. S3 implementation evidence (2026-09-27)
+
+Branch: `refactor/state-mirror-s3`. S0/S1 use a separate branch; S2 waits for S0/S1. The approval does not extend to S4–S9 or early stopping.
+
+`character_mirror_projection` derives exact owner/character aliases from serialized group payloads, retaining retired/manual cards and existing ordering. The transaction reads only the union of old/new keys in bounded `IN` batches. It compares the actual rows, so missing mirrors are repaired even when the character data did not change. Unchanged rows retain `updated_at`. A foreign ownership collision rejects the transaction; unknown historical orphans are preserved for an explicit audited migration, not deleted by prefix.
+
+`StateCommit` publishes revision/timeline and success logging only after the outer transaction commits. Normal save, memory maintenance and checkpoint rollback use it; group/mirror/pre-rollback changes remain atomic. Metric-only duplicate group serialization was removed. No schema or production migration was run.
+
+```text
+state lock -> BEGIN IMMEDIATE -> old group + exact old/new keys
+  -> read matching mirrors -> write changed/missing; delete proven stale
+  -> group write -> outer COMMIT -> publish StateCommit to caller
+       failure: rollback; caller revision/timeline unchanged
+```
+
+Verification: isolated full suite **993 passed, 1 skipped, 33 subtests**; Ruff passed; mypy **83 files passed**. Added commit failure, mirror failure/atomicity, missing-alias repair, unchanged timestamps, retired aliases, key collision and bounded-read tests. Existing maintenance/checkpoint tests remain enabled.
+
+Run `python3 scripts/benchmark_state_mirrors.py` for an isolated synthetic probe (20 fixed-size log-only saves per size). Measured 1/10/100/1000 conversations: **2 mirror rows read, 0 written, 0 deleted** at every size; median local transaction times **0.529/0.504/0.523/0.538 ms**. These are local observations, not live API or end-to-end latency claims.
