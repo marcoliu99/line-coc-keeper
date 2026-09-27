@@ -20,7 +20,7 @@ Combat uses DEX initiative, separate enemy instances and formal damage/effects. 
 
 ## Purchases and corrections
 
-Travel to a supported shop before buying; the Keeper adjudicates what is available and affordable from the scenario and established scene. `/coc correct` reports a Keeper message outside the game; reports need current-timeline receipts and do not themselves impose a mechanical hold. KP adjudication can approve, reject or scope a hold.
+Travel to a supported shop before buying; the Keeper adjudicates arrival, availability and provenance from the scenario and established scene. Credit Rating, lifestyle, price and cash do not gate acquisition or trigger a recorded debit. `/coc correct` reports a Keeper message outside the game; reports need current-timeline receipts and do not themselves impose a mechanical hold. KP adjudication can approve, reject or scope a hold.
 
 ## Help and administration
 

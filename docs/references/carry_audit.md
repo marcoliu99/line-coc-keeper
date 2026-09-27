@@ -8,11 +8,11 @@
 
 ## Judgment boundaries
 
-Permit reasonable mundane personal items without turning play into an audit. Plot-significant, combat-relevant, rare, regulated or expensive objects need scenario/canonical support. Consider era, location, occupation/source and affordability. Do not use blanket historical claims such as all radios or all semiautomatic weapons being unavailable in the 1920s; availability depends on the actual item and setting.
+Permit reasonable mundane personal items without turning play into an audit. Plot-significant, combat-relevant, rare or regulated objects need scenario/canonical support. Consider era, location, occupation/source and legality. Do not use blanket historical claims such as all radios or all semiautomatic weapons being unavailable in the 1920s; availability depends on the actual item and setting.
 
 ## Purchase sequence
 
-Resolve travel and establish a plausible seller and available goods before acquisition. The Keeper adjudicates affordability from Credit Rating and the character's circumstances, without calculating a cash debit. When the purchase is established in play, register a lasting possession through `add_carried_item`. There is no quote, payment confirmation, or atomic transaction tool.
+Resolve travel and establish a plausible seller and available goods before acquisition. Credit Rating, lifestyle, price and cash do not determine whether an item can be acquired. When the acquisition is established in play, register a lasting possession through `add_carried_item`. There is no quote, payment confirmation, cash debit or atomic transaction tool.
 
 ## Narration and limitations
 

@@ -27,4 +27,8 @@ Run focused purchase/turn tests, full isolated suite, Ruff, mypy, and diff check
 
 ## Review corrections
 
-Restore the pre-ledger Credit Rating affordability rule in the Keeper prompt; it must not require a cash balance that players can no longer register or confirm. Align both possession references with the active Keeper adjudication and `add_carried_item` path, and remove obsolete quote, debit and receipt claims.
+The first review restored the pre-ledger Credit Rating affordability rule in the Keeper prompt and aligned both possession references with `add_carried_item`, removing obsolete quote, debit and receipt claims. The Credit Rating portion was superseded by the subsequent user instruction below.
+
+## Subsequent scope change
+
+The user then requested removing Credit Rating from purchase judgments as well. Acquisition depends on supported travel, availability, provenance and legality, without a Credit Rating, lifestyle, price or cash gate. The Credit Rating skill still exists on character sheets for other game uses. Update the current guides and references to this rule; historical purchase specs remain marked as historical.
