@@ -21,6 +21,7 @@ from app.domain.models import (
 )
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.services import (
+    movement,
     mutation_admission,
     prompt_config,
     purchases,
@@ -91,7 +92,11 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     # Computed fresh per turn, not a module-level constant — see tool_
     # gateway.tools_for_speaker_role's own docstring for why (RAG-aware
     # search_scenario inclusion, kp_assistant-specific filtering/patching).
-    tools = tools_for_speaker_role(speaker_role)
+    tools = list(tools_for_speaker_role(speaker_role))
+    move_session = movement.session_for(state, message.payload.get("actor_user_id", user_id),
+                                        user_id, text, rag_context, actor_is_keeper=bool(message.payload.get("actor_is_keeper")))
+    message.payload["movement_session"] = move_session
+    tools.append(movement.TOOL)
 
     # Prompt text lives in app/services/prompt_config.py — see that module's
     # header for why it reuses keeper._build_static_prompt/_build_dynamic_
@@ -101,6 +106,12 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     dynamic_system = prompt_config.build_executor_dynamic_prompt_with_context(
         keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
     )
+    dynamic_system += movement.PROMPT
+    if move_session.proposal:
+        import json
+        from dataclasses import asdict
+        dynamic_system += "\n" + json.dumps(asdict(move_session.proposal), ensure_ascii=False)
+    dynamic_system += "\nAvailable movement sources: " + ", ".join(move_session.sources)
     character = state.get_active_character(user_id)
     if character:
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
@@ -156,10 +167,17 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     budget_token = scenario_retrieval.BUDGET.set(remaining)
                     model_token = scenario_retrieval.MODEL.set(model)
                     try:
-                        result = await execute_tool(name, tool_input)
+                        move_token = movement.CURRENT.set(move_session)
+                        try:
+                            result = await execute_tool(name, tool_input)
+                        finally:
+                            movement.CURRENT.reset(move_token)
                     finally:
                         scenario_retrieval.MODEL.reset(model_token)
                         scenario_retrieval.BUDGET.reset(budget_token)
+                move_session.accept_source(name, result, f"tool:{len(tool_events) + 1}")
+                if name == "commit_movement" and result.get("arrival"):
+                    message.payload["resolved_location"] = {"room_name": result["arrival"]["destination"]}
                 if name == "purchase_items" and result.get("ok"):
                     inventory_events.append(GameEvent("purchase", deepcopy(result["purchase"])))
                 if result.get("ok") and (name in {"add_carried_item", "remove_carried_item"}
@@ -216,6 +234,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
             before_actor=before_actor, before_gameplay=before_gameplay,
         )
+    if move_session.proposal and not move_session.arrived and resolution.disposition in {"resolved", "resolved_without_check", "no_mechanics"}:
+        resolution = TurnResolution(actor_character_id=resolution.actor_character_id,
+                                    reason="移動尚未提交；不可描述已抵達或取得目的地物品", validation_code="arrival_not_committed")
     observability.event("executor.resolution", disposition=resolution.disposition,
                         evidence_count=len(resolution.evidence_refs),
                         validation_code=resolution.validation_code, tool_event_count=len(tool_events))

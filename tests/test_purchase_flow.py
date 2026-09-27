@@ -142,7 +142,7 @@ def test_stale_quote_cannot_be_used(state, change):
         purchases.confirm(state, "a", quote["id"])
 
 
-def run_executor(state, provider, text="前往購買煤油"):
+def run_executor(state, provider, text="購買煤油"):
     fake = AsyncMock(side_effect=provider)
     with patch.object(executor, "LLM_PROVIDER", "openai"), patch.object(executor, "_PROVIDERS", {"openai": SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(AgentMessage({"state": state, "user_id": "a", "text": text, "display_name": "Marco", "speaker_role": "player"})))
@@ -254,3 +254,13 @@ def test_dice_provenance_requires_success(state, tool, provider_fails, ok):
     assert bool(result.check_status["dice_rolled"]) is ok
     reply = prompt_config.enforce_mechanic_check_consistency("", result)
     assert ("重擲" in reply) is ok
+
+
+def test_cash_quote_expires_when_mapless_narrative_location_changes(state):
+    state.narrative_locations['a'] = '雜貨店'
+    group_state.save_state(state)
+    quote = cash_quote(state)
+    state.narrative_locations['a'] = '報社'
+    group_state.save_state(state)
+    with pytest.raises(ValueError, match='報價情境已過期'):
+        purchases.confirm(state, 'a', quote['id'])

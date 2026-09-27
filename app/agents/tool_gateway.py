@@ -75,6 +75,7 @@ def make_tool_executor(
     evidence_incomplete: bool = False,
     required_evidence_ids: set[str] | None = None,
     observed_outcomes: list[ObservedOutcome] | None = None,
+    internal_operation: Callable[[], dict[str, Any]] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -119,9 +120,17 @@ def make_tool_executor(
                 with mutation_admission.bind(owner):
                     result = None
                     try:
-                        result = keeper._execute_tool(
-                            state, tool_name, tool_input, private_messages, image_requests, speaker_role
-                        )
+                        from app.services import movement
+                        operation_token = movement.OPERATION.set((tool_name, tool_input))
+                        try:
+                            # Internal continuations use the same worker ownership,
+                            # cancellation hold and observation path. A callback is
+                            # supplied only by Python, never by tool arguments.
+                            result = (internal_operation() if internal_operation is not None else keeper._execute_tool(
+                                state, tool_name, tool_input, private_messages, image_requests, speaker_role
+                            ))
+                        finally:
+                            movement.OPERATION.reset(operation_token)
                         observability.event("turn.observed", tool_name=tool_name,
                                             dice_rolled=bool(result.get("ok") and (result.get("resolved") or result.get("pending_luck") or tool_name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"})))
                         # Record before settlement, including late/cancelled awaiters.

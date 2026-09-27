@@ -25,7 +25,9 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
     text = ""
     args = arguments or {}
     if result.get("ok"):
-        if name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} and "total" in result:
+        if name == "commit_movement" and result.get("arrival"):
+            text = f"已抵達「{result['arrival']['destination']}」。"
+        elif name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} and "total" in result:
             text = f"骰子已結算：{result.get('expression', '傷害骰')}，總值 {result.get('total')}。"
         elif name in {"add_carried_item", "remove_carried_item"} and args.get("item"):
             item = args["item"].strip()
