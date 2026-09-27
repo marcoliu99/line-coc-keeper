@@ -107,11 +107,18 @@ def issue(code: str, record: Any, field: str, expected: Any, actual: Any) -> dic
 
 
 def parse_markdown(content: str) -> dict:
-    matches = re.findall(r'^```json[ \t]*\r?\n(.*?)^```[ \t]*$', content, re.DOTALL | re.MULTILINE)
-    if len(matches) != 1:
-        raise Diagnostics([issue('JSON_BLOCK_COUNT', '', 'document', 'exactly one JSON block', len(matches))])
+    # External AI download artifacts sometimes contain the JSON object itself,
+    # despite the .md suffix. Parse the entire document, never a guessed excerpt.
+    document = content.lstrip('\ufeff').strip()
+    if document.startswith(('{', '[')):
+        encoded = document
+    else:
+        matches = re.findall(r'^```json[ \t]*\r?\n(.*?)^```[ \t]*$', document, re.DOTALL | re.MULTILINE)
+        if len(matches) != 1:
+            raise Diagnostics([issue('JSON_BLOCK_COUNT', '', 'document', 'one JSON block or a complete JSON object', len(matches))])
+        encoded = matches[0]
     try:
-        payload = json.loads(matches[0])
+        payload = json.loads(encoded)
     except json.JSONDecodeError as exc:
         raise Diagnostics([issue('INVALID_JSON', '', 'document', 'valid JSON', f'line {exc.lineno}, column {exc.colno}')]) from exc
     if not isinstance(payload, dict):

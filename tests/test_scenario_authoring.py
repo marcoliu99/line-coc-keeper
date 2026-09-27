@@ -743,3 +743,74 @@ def test_full_coverage_still_validates_dependencies_and_requires_review(library)
     assert templates.status('sample')['variants'][0]['review_status'] == 'review_required'
     with pytest.raises(ValueError):
         templates.approve('sample', variant, reviewer_id='kp')
+
+
+@pytest.mark.parametrize('payload', [
+    {'authoring_version': 1, 'export_id': 'export-original', 'batch_id': 'b1', 'records': []},
+    {'authoring_version': 2, 'export_id': 'export-original', 'package_id': 'p1', 'batches': []},
+    {'schema_version': 3, 'source_hash': 'source', 'chapter_hash': 'chapter', 'records': []},
+])
+@pytest.mark.parametrize('wrapper', ['raw', 'bom', 'fenced', 'fenced_bom'])
+def test_document_wrappers_share_one_strict_payload_parser(payload, wrapper):
+    encoded = json.dumps(payload, ensure_ascii=False)
+    document = '\n```json\n' + encoded + '\n```\n' if 'fenced' in wrapper else '\n' + encoded + '\n'
+    if 'bom' in wrapper:
+        document = '\ufeff' + document
+    assert authoring.parse_markdown(document) == payload
+
+
+@pytest.mark.parametrize('content,code', [
+    ('{}\n{}', 'INVALID_JSON'),
+    ('{}\nTranslation complete.', 'INVALID_JSON'),
+    ('{"authoring_version":2,}', 'INVALID_JSON'),
+    ('[{}]', 'INVALID_JSON'),
+    ('Here is JSON: {}', 'JSON_BLOCK_COUNT'),
+    ('```json\n{}\n```\n```json\n{}\n```', 'JSON_BLOCK_COUNT'),
+    ('{broken\n```json\n{}\n```', 'INVALID_JSON'),
+])
+def test_raw_json_does_not_salvage_ambiguous_or_malformed_documents(content, code):
+    with pytest.raises(authoring.Diagnostics) as caught:
+        authoring.parse_markdown(content)
+    assert caught.value.issues[0]['code'] == code
+
+
+def test_plain_json_result_is_visible_in_help_and_imports(library, monkeypatch):
+    from app import help_actions
+    path, payload = library()
+    fill(payload)
+    path.write_text('\ufeff' + json.dumps(payload, ensure_ascii=False))
+    monkeypatch.setattr(scenario_library, 'list_scenarios', lambda: [{'id': 'sample', 'title': 'Test'}])
+    options = help_actions._template_options('template_import')
+    assert [value for _, value in options] == ['sample ' + relative(path)]
+    variant_id = templates.import_markdown('sample', relative(path))
+    manifest, records = templates._read_variant('sample', variant_id)
+    assert manifest['schema_version'] == 4
+    assert manifest['review_status'] == 'review_required'
+    assert records[0]['kp_text'] == payload['batches'][0]['records'][0]['kp_text']
+    assert templates.import_markdown('sample', relative(path)) == variant_id
+
+
+@pytest.mark.parametrize('damage', ['source', 'package', 'quote'])
+def test_plain_json_does_not_bypass_source_and_evidence_validation(library, monkeypatch, damage):
+    from app import help_actions
+    path, payload = library()
+    fill(payload)
+    monkeypatch.setattr(scenario_library, 'list_scenarios', lambda: [{'id': 'sample'}])
+    if damage == 'source':
+        source = scenario_library._path('sample') / 'scenario.txt'
+        original_source = source.read_text()
+        source.write_text('changed source')
+        assert help_actions._template_options('template_import') == []
+    elif damage == 'package':
+        payload['package_id'] = 'p99'
+    else:
+        payload['batches'][0]['records'][0]['rules'] = [{'check': {'text': '護甲 2', 'evidence': [
+            {'unit_id': 'u1', 'source_quote': 'not in the source'}]}}]
+    path.write_text(json.dumps(payload, ensure_ascii=False))
+    with pytest.raises(ValueError):
+        templates.import_markdown('sample', relative(path))
+    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    assert not (directory / 'draft.json').exists()
+    if damage == 'source':
+        source.write_text(original_source)
+    assert not templates.status('sample')['variants']
