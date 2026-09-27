@@ -1087,6 +1087,23 @@
       "limitations": [
         "Web-AI and live API trials pending; see implementation notes."
       ]
+    },
+    {
+      "title": "At most three scenario authoring files",
+      "zh": "劇本整備最多匯出三個檔案",
+      "category": "enhancement",
+      "status": "proposed",
+      "evidence": [
+        "app/scenario_authoring.py",
+        "app/scenario_templates.py",
+        "tests/test_scenario_authoring.py"
+      ],
+      "path": "docs/specs/enhancement/three_file_scenario_export_design_spec.md",
+      "zh_path": "docs/specs/enhancement/three_file_scenario_export_design_spec_zh.md",
+      "source_revision": "8e32683a3e3a3c0159153b3d96d9c6911ec04071",
+      "limitations": [
+        "Packaging policy confirmed; implementation and new behavior tests pending."
+      ]
     }
   ]
 }

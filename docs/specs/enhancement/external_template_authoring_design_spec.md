@@ -161,3 +161,7 @@ The design was approved and runtime implementation is complete. The existing mal
 ### PR #94 review corrections
 
 Retrieval admission and OpenAI requests share history selection, so discarded persisted history does not consume the retrieval allowance. Other providers retain their full history. Continuations certify only a contiguous prefix actually delivered after metadata budgeting; later pages accumulate that evidence and release the same-root action hold when all required fragments are present. Cursors retain the original roots and are bound to the history and result count as well as the existing authorization/version/query scope. An oversized mandatory fragment cannot be skipped or certified by later fragments.
+
+## Proposed follow-up: at most three exported files
+
+[Three-file packaging and resumable v2 import](three_file_scenario_export_design_spec.md) is a separate proposed change. The current implementation still exports one file per logical batch; existing exports remain valid.
