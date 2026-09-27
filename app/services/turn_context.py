@@ -11,6 +11,7 @@ _CHECK_FIELDS = (
     "type", "skill", "skill_value", "difficulty", "bonus_dice", "penalty_dice",
     "options", "check_id", "decision_id", "timeline_id", "action_context",
     "skill_name", "value", "roll", "original_tier", "attacker_name", "is_ranged",
+    "player_declaration", "action_basis", "opposed",
 )
 
 
@@ -52,8 +53,13 @@ def current_state(state: GroupState) -> dict[str, Any]:
     }
 
 
-def authority_block(state: GroupState) -> str:
+def authority_block(state: GroupState, *, include_private_checks: bool = True) -> str:
     evidence = current_state(state)
+    if not include_private_checks:
+        for collection in ('pending_checks', 'pending_luck_decisions'):
+            for check in evidence[collection]:
+                check.pop('opposed', None)
+                check.pop('action_basis', None)
     evidence["keeper_only_combat"] = state.combat.to_dict()
     return (
         "【目前機制權威資料（state）】\n"

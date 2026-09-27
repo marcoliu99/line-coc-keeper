@@ -66,7 +66,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
-from app.services import mutation_admission, turn_delivery
+from app.services import mutation_admission, opposed_checks, turn_delivery
 
 _logger = logging.getLogger(__name__)
 
@@ -984,6 +984,7 @@ def _resolved_check_event_seed(
     *, check_id: str, timeline_id: str, owner_id: str, character_id: str, investigator: str,
     skill: str, skill_value: int, roll: int, difficulty: str, outcome: str,
     before: dict[str, int], tracked_roll_fields: tuple[str, ...] = (),
+    check_context: dict | None = None, opposed_outcome: dict | None = None,
 ) -> dict:
     return {
         "event_id": check_id or new_check_id(),
@@ -999,6 +1000,9 @@ def _resolved_check_event_seed(
         "outcome": outcome,
         "state_before": dict(before),
         "tracked_roll_fields": list(tracked_roll_fields),
+        "opposed_outcome": opposed_outcome,
+        "player_declaration": (check_context or {}).get('player_declaration', ''),
+        "action_basis": (check_context or {}).get('action_basis', ''),
     }
 
 
@@ -1337,7 +1341,9 @@ async def _finalize_check_result(
                     key: resolved_event[key]
                     for key in (
                         "investigator", "skill", "skill_value", "roll", "difficulty",
-                        "outcome", "action_context", "check_id", "timeline_id", "visibility", "recipient_id",
+                        "outcome", "action_context", "check_id", "timeline_id",
+                        "opposed_outcome", "player_declaration", "action_basis",
+                        "visibility", "recipient_id",
                     )
                     if key in resolved_event
                 }
@@ -1706,6 +1712,9 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "options": [{"tier": o.tier, "cost": o.cost} for o in luck_options],
                 "major_wound_trigger": major_wound_trigger,
                 "ranged_attacker": ranged_attacker,
+                "opposed": (pending_entry or {}).get('opposed'),
+                "player_declaration": (pending_entry or {}).get('player_declaration', ''),
+                "action_basis": (pending_entry or {}).get('action_basis', ''),
             }
             continuation = state.movement_continuations.get(user_id)
             if continuation and continuation.get("check_id") == check_id:
@@ -1742,6 +1751,11 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             opposed_text = _describe_opposed_outcome(char.name, is_counter, skill_result.tier, attacker_tier)
         elif ranged_opposed_text:
             opposed_text = ranged_opposed_text
+        scenario_opposed = opposed_checks.resolve((pending_entry or {}).get('opposed'), skill_result.tier)
+        if scenario_opposed:
+            opposed_text = opposed_checks.public_text(scenario_opposed)
+            roll_line += '\n' + opposed_text
+            keeper_message += '\n' + opposed_text
         roll_feedback_text, keeper_header = _build_split_check_feedback(
             char.name, display_label or skill_name, str(value), skill_result.roll, _tier_zh_for_result(skill_result), opposed_text
         )
@@ -1755,8 +1769,10 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 character_id=char.character_id,
                 investigator=char.name, skill=skill_name, skill_value=value,
                 roll=skill_result.roll, difficulty=difficulty,
-                outcome=f"{skill_result.tier} {'成功' if skill_result.success else '失敗'}",
+                outcome=f"{skill_result.tier} {'成功' if skill_result.success else '失敗'}" +
+                (f"；對抗勝方={scenario_opposed['winner']}" if scenario_opposed else ''),
                 before=attributes_before,
+                check_context=pending_entry, opposed_outcome=scenario_opposed,
             ),
         )
 
@@ -1952,6 +1968,11 @@ def _resolve_luck_decision_deterministically(
             opposed_text = _describe_opposed_outcome(char.name, pending_is_counter, tier, pending_attacker_tier)
         elif ranged_opposed_text:
             opposed_text = ranged_opposed_text
+        scenario_opposed = opposed_checks.resolve(pending.get('opposed'), tier)
+        if scenario_opposed:
+            opposed_text = opposed_checks.public_text(scenario_opposed)
+            roll_line += '\n' + opposed_text
+            keeper_message += '\n' + opposed_text
         roll_feedback_text, keeper_header = _build_split_check_feedback(
             char.name,
             pending["display_label"] or pending["skill_name"],
@@ -1972,8 +1993,11 @@ def _resolve_luck_decision_deterministically(
                 investigator=char.name, skill=pending["skill_name"],
                 skill_value=pending["value"], roll=pending["roll"],
                 difficulty=required_tier,
-                outcome=f"{r.tier} {'成功' if r.success else '失敗'}" + (f"；花費 Luck {luck_spent}" if luck_spent else ""),
+                outcome=f"{r.tier} {'成功' if r.success else '失敗'}" +
+                (f"；對抗勝方={scenario_opposed['winner']}" if scenario_opposed else '') +
+                (f"；花費 Luck {luck_spent}" if luck_spent else ""),
                 before=attributes_before, tracked_roll_fields=(("luck",) if luck_spent else ()),
+                check_context=pending, opposed_outcome=scenario_opposed,
             ),
         )
 
