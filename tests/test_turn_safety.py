@@ -15,7 +15,6 @@ from app.commands.handlers import (
     combat,
     correct,
     map_handler,
-    purchase,
     system,
 )
 from app.domain.models import (
@@ -173,7 +172,7 @@ def test_valid_narrative_is_preserved(state):
 
 
 @pytest.mark.parametrize("text", ["我攻擊", "/coc check", "/coc luck skip", "/coc sudo u act attack",
-                                  "/coc purchase quote", "/coc go hallway", "/coc switch other",
+                                  "/coc go hallway", "/coc switch other",
                                   "/coc newgame", "/coc rollback saved", "/coc correct issue"])
 def test_router_mutation_entry_matrix_is_held_before_dispatch(state, held, text):
     reply = AsyncMock()
@@ -191,7 +190,6 @@ def test_router_mutation_entry_matrix_is_held_before_dispatch(state, held, text)
     (legacy_commands.handle_map_upload, {"push": None, "yaml_bytes": b"", "file_name": "map.yaml"}),
     (legacy_commands.handle_pdf_upload, {"push": None, "pdf_bytes": b"", "file_name": "scenario.pdf"}),
     (combat.handle_combat_command, {"parts": ["/coc", "combat", "next"]}),
-    (purchase.handle, {"parts": ["/coc", "purchase", "quote"], "user_id": "u"}),
     (map_handler.handle_map_command, {"parts": ["/coc", "go", "room"], "user_id": "u", "send_image": None}),
     (system.handle_system_command, {"parts": ["/coc", "newgame"], "user_id": "u", "send_dm": None,
                                     "send_image": None, "send_dm_image": None}),

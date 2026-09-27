@@ -12,7 +12,6 @@ from uuid import uuid4
 from app import observability, spoiler_policy
 from app.domain.models import MechanicResult, ObservedOutcome
 from app.models import GroupState
-from app.services import purchases
 
 BLOCKED_NOTICE = "回覆需要核對後才能安全顯示。已結算的結果與待處理選擇仍保留；請查看目前狀態，勿重做這次行動。"
 
@@ -33,8 +32,6 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             item = args["item"].strip()
             present = item in result.get("carried_items", [])
             text = f"{result.get('investigator', '調查員')} 的背包已確認{'包含' if present else '不含'}「{item}」。"
-        elif name == "purchase_items" and result.get("purchase"):
-            text = purchases.describe(result["purchase"])
         elif name in {"skill_check", "sanity_check"} and result.get("resolved"):
             text = (f"{result.get('investigator', '調查員')} 的檢定已結算："
                     f"骰值 {result.get('roll')}，等級 {result.get('tier')}。")

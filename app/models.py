@@ -208,8 +208,6 @@ class Character:
                 f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
                 for name, w in self.weapons.items()
             ))
-        if self.cash_balances:
-            lines.append("現金：" + "、".join(f"{currency} {amount // 100}.{amount % 100:02d}" for currency, amount in self.cash_balances.items()))
         if self.carried_items:
             lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:

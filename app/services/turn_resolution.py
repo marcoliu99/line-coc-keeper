@@ -11,7 +11,7 @@ from copy import deepcopy
 from typing import Any
 
 from app import observability
-from app.domain.models import TURN_BLOCKER_CODES, TurnResolution
+from app.domain.models import TurnResolution
 from app.models import GroupState
 from app.services.turn_context import character_id
 
@@ -34,7 +34,6 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     inventory = []
     latest = {}
     ended = False
-    purchase_effect = False
     movement_effect = False
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
@@ -58,22 +57,6 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 and state.current_map_page.get(actor.owner_id, "") == arrival.get("page")
                 and state.current_room_id.get(actor.owner_id, "") == arrival.get("room")
                 and state.narrative_locations.get(actor.owner_id) == arrival.get("destination"))
-        if name == "purchase_items":
-            receipt = result.get("purchase", {})
-            stored = state.commerce.get("transactions", {}).get(receipt.get("id"))
-            if not result.get("ok") or f"tool:{i}" not in refs or not stored or stored != receipt or receipt.get("investigator") != actor_name:
-                return False, False
-            purchase_effect = True
-            if receipt.get("status") == "purchased" and not result.get("duplicate"):
-                owner = receipt["investigator"]
-                before = event.get("inventory_before", {}).get(owner)
-                after = result.get("carried_items")
-                added: Counter[str] = Counter()
-                for item in receipt["items"]:
-                    added[item["name"]] += item["quantity"]
-                if before is None or not isinstance(after, list) or Counter(after) != Counter(before) + added:
-                    return False, False
-                latest[owner] = after
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
@@ -99,7 +82,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     transfer = transfer and all(e['name'] in {
         'add_carried_item', 'remove_carried_item', 'search_scenario', 'get_character_sheet',
     } for e in events)
-    return bool(ended or purchase_effect or movement_effect or (inventory and actor_involved)), transfer
+    return bool(ended or movement_effect or (inventory and actor_involved)), transfer
 
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
@@ -123,9 +106,6 @@ def validate_resolution(
     for key in ("waiting_for", "check_id", "reason"):
         if not isinstance(data.get(key, ""), str) or len(data.get(key, "")) > 600:
             return incomplete("裁決欄位不正確", "invalid_fields")
-    blocker = data.get("blocker_code", "")
-    if not isinstance(blocker, str) or (blocker and blocker not in TURN_BLOCKER_CODES):
-        return incomplete("裁決阻擋分類不正確", "invalid_blocker_code")
     refs = data.get("evidence_refs", [])
     if not isinstance(refs, list) or len(refs) > 20 or not all(isinstance(x, str) for x in refs):
         return incomplete("裁決依據格式不正確", "invalid_evidence_format")
@@ -185,7 +165,7 @@ def validate_resolution(
     elif disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
         mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
         if disposition in {"resolved", "resolved_without_check"}:
-            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'end_combat', 'purchase_items'} for e in tool_events) and not mutation:
+            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'end_combat'} for e in tool_events) and not mutation:
                 return incomplete("物品或戰鬥變更缺少完整且可核對的工具證據", "inventory_or_combat_not_verified")
             # A newly created/replaced check for any participant is still work.
             changed_wait = any(before_pending.get(owner) != record for owner, record in state.pending_checks.items())
@@ -217,7 +197,6 @@ def validate_resolution(
         disposition=disposition, actor_character_id=actor_id, waiting_for=waiting,
         check_id=check_id, reason=data.get("reason", "")[:600], evidence_refs=list(refs),
         validation_code="model_incomplete" if disposition == "incomplete" else "validated",
-        blocker_code=blocker if disposition in {"blocked", "incomplete"} else "",
     )
 
 

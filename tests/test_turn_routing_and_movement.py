@@ -234,7 +234,7 @@ def test_sudo_carries_real_actor_subject_and_rechecks_authority(state):
     ('record_clue', {'clue': '信件'}), ('record_established_fact', {'fact': '已到達'}),
     ('adjust_character', {'investigator': 'A', 'field': 'HP', 'delta': -1}),
     ('send_private_info', {'investigator': 'A', 'message': 'inside secret'}),
-    ('show_scenario_image', {'page': 1}), ('purchase_items', {'requires_arrival': False}),
+    ('show_scenario_image', {'page': 1}),
     ('start_combat', {}), ('add_status_tag', {'investigator': 'A', 'tag': 'blessed'}),
 ])
 def test_location_sensitive_effect_inventory_fails_closed(state, tool, parameters):
