@@ -751,3 +751,14 @@ def test_followup_search_reuses_delivered_evidence_and_budgets_wire_receipts(sta
     assert '鑰匙' in group_state.load_state(state.group_id).get_active_character('a').carried_items
     assert len(seen_budgets) == 2
     assert not scenario_retrieval.DELIVERED_FRAGMENTS.get()
+
+
+def test_blocked_travel_cannot_be_narrated_as_arrival_or_acquisition():
+    result = MechanicResult(True, 'none', [], StateDelta(),
+                            turn_resolution=TurnResolution(disposition='blocked'))
+    bad = '你已到科比特宅門前，手中的鑰匙抵著鎖孔。'
+    reply = prompt_config.enforce_mechanic_check_consistency(bad, result)
+    assert '目前無法繼續' in reply and '鎖孔' not in reply and '你已到' not in reply
+    result.check_status.update(state_changed=True, pending={'investigator': 'Marco', 'skill': '偵查'})
+    reply = prompt_config.enforce_mechanic_check_consistency(bad, result)
+    assert '已記錄的變更會保留' in reply and '/coc check' in reply

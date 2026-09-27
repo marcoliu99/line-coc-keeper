@@ -60,6 +60,9 @@ actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指�
 既有其他行動的檢定不因物品交接而取消；交接完成與仍待擲的舊檢定要分開敘述。
 本次新建／更換的檢定仍須等待，不能以查詢成功或任意工具成功宣稱整個行動完成。
 先判斷更正是否真的撤回原 action_context；接受取消時必須 clear_pending_check，不能只回 cancelled。
+搜尋完整性只表示已選紀錄及其必要關聯已齊，不保證已涵蓋整個行動；仍須補查缺少的裁決事實。
+中文續取使用原 query、source=auto 與 continuation；改查 source=original 時必須清空 continuation。
+blocked 表示行動未完成，不得交接成已移動、已取得或已購買。
 await_check 必須引用真實 check_id；await_luck 用 decision_id，不重擲。未完成工具、缺資料、額度用完
 就用 incomplete，不假裝成功或「無需機制」。沒有工具也必須交代裁決；原始文字不是玩家敘事。
 
@@ -325,8 +328,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
     status = result.check_status
     resolution = result.turn_resolution
     if resolution is not None:
-        if resolution.disposition == "incomplete":
-            warning = "這次行動尚未完整處理。"
+        if resolution.disposition in {"incomplete", "blocked"}:
+            warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
             if status.get("state_changed"):
                 warning += "已記錄的變更會保留，請勿重做已完成的部分。"
             if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):

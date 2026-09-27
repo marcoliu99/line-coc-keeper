@@ -177,6 +177,44 @@ def project(records: dict[str, dict], roots: list[str], query: str,
     return [row]
 
 
+def project_ranked(records: dict[str, dict], candidates: list[str], query: str,
+                   scopes: set[str] | None = None) -> list[dict]:
+    """Ranking is discovery, not a declaration of mandatory dependencies.
+
+    The highest-ranked closure is never skipped to claim artificial completeness.
+    Explicit required/conditional edges are still traversed atomically by project.
+    """
+    if not candidates:
+        return []
+    capacity = BUDGET.get()
+    # Reserve bounded discovery metadata without increasing the caller's budget.
+    token = BUDGET.set(max(0, capacity - 300))
+    try:
+        selected = [candidates[0]]
+        row = project(records, selected, query, scopes)[0]
+        deferred = []
+        for rid in candidates[1:]:
+            if row['complete_for_action']:
+                trial = project(records, [*selected, rid], query, scopes)[0]
+                if trial['complete_for_action']:
+                    selected.append(rid)
+                    row = trial
+                    continue
+            deferred.append(rid)
+    finally:
+        BUDGET.reset(token)
+    internal = scopes is None or 'kp_only' in scopes
+    row['deferred_candidates'] = [
+        {'record_id': rid, 'page': records[rid]['page'], 'name': records[rid]['name'][:40]}
+        for rid in deferred[:8] if rid in records and (internal or records[rid]['visibility'] != 'kp_only')]
+    row['completeness_scope'] = 'selected_records_and_required_dependencies'
+    row['text'] += ('\n【搜尋範圍】完整性僅涵蓋已選紀錄及必要關聯，不代表行動所需事實已全部找到。'
+                    '未選候選另列；若仍缺護甲、能力、限制或其他裁決事實，請聚焦補查，不能推定不存在。')
+    row['budget_tokens'] = capacity
+    row['projection_tokens_estimate'] = _cost(json.dumps({k: v for k, v in row.items() if not k.startswith('_')}, ensure_ascii=False))
+    return [row]
+
+
 def bind_continuation(rows: list[dict], binding: Any, offset: int = 0) -> None:
     signature = hashlib.sha256(json.dumps(binding, sort_keys=True, default=str).encode()).hexdigest()
     for row in rows:

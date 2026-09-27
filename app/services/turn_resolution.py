@@ -10,6 +10,7 @@ from collections import Counter
 from copy import deepcopy
 from typing import Any
 
+from app import observability
 from app.domain.models import TurnResolution
 from app.models import GroupState
 from app.services.turn_context import character_id
@@ -120,6 +121,10 @@ def validate_resolution(
         valid_refs.add("scenario_context")
     valid_refs.update(f"tool:{i}" for i, e in enumerate(tool_events, 1) if e['result'].get('ok'))
     if not refs or not set(refs) <= valid_refs:
+        observability.event("executor.resolution.invalid_evidence", reference_count=len(refs),
+                            invalid_reference_count=len(set(refs) - valid_refs),
+                            available_tool_count=len(tool_events),
+                            has_scenario_context=has_scenario)
         return incomplete("裁決引用了不存在或失敗的依據", "invalid_evidence_reference")
     waiting = data.get("waiting_for", "")
     check_id = data.get("check_id", "")

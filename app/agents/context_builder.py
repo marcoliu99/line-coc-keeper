@@ -100,7 +100,7 @@ async def build_context(
                     budget = scenario_retrieval.request_budget(
                         [keeper._build_static_prompt(state), keeper._build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
                          keeper._tools_for_speaker_role(speaker_role), text], state.log, model, config.LLM_PROVIDER)
-                    budget_token = scenario_retrieval.BUDGET.set(budget)
+                    budget_token = scenario_retrieval.BUDGET.set(min(budget, config.SCENARIO_PROACTIVE_TOKEN_BUDGET))
                     model_token = scenario_retrieval.MODEL.set(model)
                     try:
                         index, results = scenario_templates.search_for_state(state, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics,

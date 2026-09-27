@@ -109,3 +109,28 @@ def test_continuation_never_skips_unseen_middle_fragment():
     finally:
         scenario_retrieval.DELIVERED_FRAGMENTS.reset(token)
         scenario_retrieval.BUDGET.reset(budget)
+
+
+def test_ranked_alternatives_do_not_become_required_dependencies():
+    records = {name: {'page': i+1, 'name': name, 'visibility': 'kp_only', 'type': 'source_unit',
+                     'kp_text': name * size, 'public_text': '', 'related_record_ids': []}
+               for i, (name, size) in enumerate((('intro', 10), ('unrelated', 3000)))}
+    token = scenario_retrieval.BUDGET.set(3000)
+    try:
+        row = scenario_retrieval.project_ranked(records, ['intro', 'unrelated'], 'keys')[0]
+        assert row['complete_for_action']
+        assert row['root_record_ids'] == ['intro']
+        assert not row['missing_required_ids']
+        assert row['deferred_candidates'][0]['record_id'] == 'unrelated'
+        assert row['projection_tokens_estimate'] <= 3000
+        # Making the same record an explicit dependency must block this action.
+        records['intro']['related_record_ids'] = ['unrelated']
+        row = scenario_retrieval.project_ranked(records, ['intro', 'unrelated'], 'keys')[0]
+        assert not row['complete_for_action']
+        assert 'unrelated#kp_only' in row['missing_required_ids']
+        # Never skip an oversized highest-ranked result in favour of easy hits.
+        row = scenario_retrieval.project_ranked(records, ['unrelated', 'intro'], 'keys')[0]
+        assert not row['complete_for_action']
+        assert row['root_record_ids'] == ['unrelated']
+    finally:
+        scenario_retrieval.BUDGET.reset(token)
