@@ -377,3 +377,28 @@ external-model behavior or automatically certify unprocessed pages.
 Verification: deployment-virtualenv suite passed with 1,091 passed, 1 skipped,
 33 subtests passed; Ruff and mypy passed. Regression coverage checks guidance in
 the actual workbook/message and disjoint partial imports retaining completed pages.
+
+### PR #101 review corrections
+
+Scenario cleanup removes English preparation registries, drafts, revision receipts,
+publication receipts, export workbooks/results and root import Markdown files whose
+validated payload identifies an owned export. Unrelated exports/files and independently
+published derived scenarios remain intact. A stable per-scenario process lock serializes
+export/import/cleanup; lock order is preparation then library. Lock files contain no
+source data and remain outside deleted artifact directories to avoid inode replacement
+races. Cleanup validates export ownership before deleting anything and does not follow
+symlinks outside the owned directories.
+
+Before atomic publication, persist an export-side receipt containing the candidate ID,
+digest, publication timestamp and byte hashes for the full manifest and audit. Retries
+must validate that receipt and both immutable documents before returning an existing ID.
+A crash after sealing but before rename can recreate the same timestamp/metadata and
+retry; a failed receipt write must not expose a published directory. Existing published
+versions without a receipt remain usable but cannot be certified by exact-import retry;
+return an actionable re-export error rather than silently trusting current metadata.
+
+Tests cover multiple owned exports, unrelated files, standalone results, recreation,
+publication-receipt write failure, crash-before-rename recovery, metadata/audit tampering,
+missing receipts and unchanged import retries. No live library cleanup is performed.
+
+Review-fix verification: 1,107 passed, 1 skipped, 33 subtests passed in the isolated deployment-virtualenv suite. Ruff and mypy passed. Cleanup/publication concurrency, exact retries and 9 metadata tampering cases are covered.

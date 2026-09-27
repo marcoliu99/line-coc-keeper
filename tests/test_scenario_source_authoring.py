@@ -583,3 +583,154 @@ def test_disjoint_partial_results_retain_completed_pages_without_unresolved_back
     draft = json.loads((source._root(sid, payload['export_id']) / 'draft.json').read_text())
     for row in first['pages']:
         assert draft['pages'][row['page_id']] == row
+
+
+def test_clean_removes_only_owned_preparation_and_allows_same_id_recreation(prepared):
+    sid, workbook, path, payload = prepared(('Armor 2.',))
+    finish(payload, ['Armor 2.'])
+    published = run(sid, path, payload)['published_id']
+    second = source.export_source(sid)
+    standalone = templates.IMPORT_DIR / 'returned.md'
+    write(standalone, payload)
+    other_sid, other_workbook, _, _ = prepared(('Unrelated original.',))
+    unrelated = templates.IMPORT_DIR / 'unrelated.md'
+    unrelated.write_text('Unrelated notes')
+    owned_exports = [workbook.parent.parent, second.parent.parent]
+    pdf = (library._path(sid) / 'source.pdf').read_bytes()
+    text = (library._path(sid) / 'scenario.txt').read_text()
+    library.clean_scenario(sid)
+    templates.clean_scenario(sid)
+    assert not library._path(sid).exists()
+    assert not (library.SCENARIO_LIBRARY_DIR / '.source-authoring' / sid).exists()
+    assert all(not path.exists() for path in owned_exports)
+    assert not standalone.exists()
+    assert unrelated.read_text() == 'Unrelated notes'
+    assert other_workbook.exists() and library._path(other_sid).exists()
+    assert library._path(published).exists()  # A separate published scenario.
+    library.save_scenario(pdf, title='Recreated', filename='source.pdf', preview='test', text=text,
+                          indexes={}, pregens=[], page_maps={}, page_images={}, scenario_id=sid)
+    assert source.status(sid) == []
+
+
+def test_clean_validates_ownership_before_deleting_anything(prepared):
+    sid, workbook, _, payload = prepared(('Armor 2.',))
+    registry_path = source._root(sid, payload['export_id']) / 'registry.json'
+    registry = json.loads(registry_path.read_text())
+    registry['scenario_id'] = 'another-scenario'
+    authoring.atomic_json(registry_path, registry)
+    with pytest.raises(ValueError, match='ownership'):
+        library.clean_scenario(sid)
+    assert workbook.exists() and library._path(sid).exists()
+
+
+def test_clean_does_not_follow_import_directory_symlink(prepared, tmp_path):
+    import shutil
+    sid, workbook, _, _ = prepared(('Armor 2.',))
+    output = workbook.parent.parent
+    shutil.rmtree(output)
+    outside = tmp_path / 'unrelated'
+    outside.mkdir()
+    (outside / 'keep.txt').write_text('keep')
+    output.symlink_to(outside, target_is_directory=True)
+    library.clean_scenario(sid)
+    assert not output.is_symlink()
+    assert (outside / 'keep.txt').read_text() == 'keep'
+
+
+@pytest.mark.parametrize('asset,field', [
+    ('manifest', 'chapters'), ('manifest', 'title'), ('manifest', 'created_at'),
+    ('manifest', 'source_review'), ('source_review', 'imported_by'),
+    ('source_review', 'imported_at'), ('source_review', 'changes'),
+    ('source_review', 'revision_receipts'), ('source_review', 'image_sha256'),
+])
+def test_published_retry_rejects_all_modified_metadata(prepared, asset, field):
+    sid, _, path, payload = prepared(('Armor 2.',))
+    finish(payload, ['Armor 2.'])
+    target = run(sid, path, payload)['published_id']
+    file = library._path(target) / (asset + '.json')
+    metadata = json.loads(file.read_text())
+    if field == 'chapters':
+        metadata[field][0]['start_page'] += 1
+    else:
+        metadata[field] = 'modified'
+    authoring.atomic_json(file, metadata)
+    with pytest.raises(ValueError, match='immutable metadata changed'):
+        run(sid, path, payload)
+    assert len(library.list_scenarios()) == 2
+
+
+def test_published_retry_without_receipt_fails_closed(prepared):
+    sid, _, path, payload = prepared(('Armor 2.',))
+    finish(payload, ['Armor 2.'])
+    target = run(sid, path, payload)['published_id']
+    (source._root(sid, payload['export_id']) / 'publication.json').unlink()
+    with pytest.raises(ValueError, match='metadata receipt missing'):
+        run(sid, path, payload)
+    assert library.load_context(target)['text']  # Still usable for gameplay.
+
+
+def test_publication_receipt_failure_does_not_publish(prepared, monkeypatch):
+    sid, _, path, payload = prepared(('Armor 2.',))
+    finish(payload, ['Armor 2.'])
+    atomic = authoring.atomic_json
+    def fail(path, value):
+        if path.name == 'publication.json':
+            raise OSError('seal failed')
+        atomic(path, value)
+    monkeypatch.setattr(authoring, 'atomic_json', fail)
+    with pytest.raises(OSError, match='seal failed'):
+        run(sid, path, payload)
+    assert len(library.list_scenarios()) == 1
+    monkeypatch.setattr(authoring, 'atomic_json', atomic)
+    assert run(sid, path, payload)['published_id']
+
+
+def test_crash_after_seal_before_rename_reuses_metadata(prepared, monkeypatch):
+    from pathlib import Path
+    sid, _, path, payload = prepared(('Armor 2.',))
+    finish(payload, ['Armor 2.'])
+    rename = Path.rename
+    def fail(self, target):
+        if self.name.startswith('.source-ai-'):
+            raise OSError('rename failed')
+        return rename(self, target)
+    monkeypatch.setattr(Path, 'rename', fail)
+    with pytest.raises(OSError, match='rename failed'):
+        run(sid, path, payload)
+    receipt = source._root(sid, payload['export_id']) / 'publication.json'
+    sealed = receipt.read_bytes()
+    assert len(library.list_scenarios()) == 1
+    monkeypatch.setattr(Path, 'rename', rename)
+    result = run(sid, path, payload)
+    assert result['published_id'] and receipt.read_bytes() == sealed
+    assert run(sid, path, payload)['published_id'] == result['published_id']
+
+
+def test_clean_waits_for_inflight_publication_and_preserves_published_child(prepared, monkeypatch):
+    import threading
+    sid, _, path, payload = prepared(('Armor 2.',))
+    finish(payload, ['Armor 2.'])
+    entered, release, cleaning = threading.Event(), threading.Event(), threading.Event()
+    publish = source._publish
+    def held(registry, draft):
+        entered.set()
+        assert release.wait(5)
+        return publish(registry, draft)
+    def clean():
+        cleaning.set()
+        library.clean_scenario(sid)
+    monkeypatch.setattr(source, '_publish', held)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        publishing = workers.submit(run, sid, path, payload)
+        try:
+            assert entered.wait(5)
+            removing = workers.submit(clean)
+            assert cleaning.wait(5)
+            assert not removing.done() and library._path(sid).exists()
+        finally:
+            release.set()
+        result = publishing.result(timeout=5)
+        removing.result(timeout=5)
+    assert library._path(result['published_id']).exists()
+    assert not library._path(sid).exists()
+    assert not source._root(sid, payload['export_id']).exists()

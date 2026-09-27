@@ -106,18 +106,72 @@ def _root(sid: str, eid: str) -> Path:
 
 
 @contextmanager
-def _locked(sid: str, eid: str) -> Iterator[None]:
-    root = _root(sid, eid)
-    if not root.is_dir():
-        raise ValueError('Unknown English export')
+def _scenario_locked(sid: str) -> Iterator[None]:
+    library._path(sid)
+    directory = library.SCENARIO_LIBRARY_DIR / '.source-authoring-locks'
     with _LOCK:
-        fd = os.open(root / '.lock', os.O_CREAT | os.O_RDWR, 0o600)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(directory / (sid + '.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, 'a') as stream:
             fcntl.flock(stream, fcntl.LOCK_EX)
             try:
                 yield
             finally:
                 fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _locked(sid: str, eid: str) -> Iterator[None]:
+    with _scenario_locked(sid):
+        root = _root(sid, eid)
+        if not root.is_dir():
+            raise ValueError('Unknown English export')
+        fd = os.open(root / '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'a') as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def _clean_preparation(sid: str) -> None:
+    """Called with the scenario lifecycle and library locks already held."""
+    base = library.SCENARIO_LIBRARY_DIR / '.source-authoring' / sid
+    if base.is_symlink() or base.parent.is_symlink():
+        raise ValueError('Invalid preparation cleanup path')
+    owned = set()
+    for root in base.glob('source-export-*'):
+        if not _EXPORT.fullmatch(root.name) or root.is_symlink() or not root.is_dir():
+            raise ValueError('Invalid preparation export directory')
+        registry = _read(root / 'registry.json')
+        identity = _read(root / 'identity.json')
+        if (registry.get('scenario_id') != sid or registry.get('export_id') != root.name
+                or authoring.digest(registry) != identity.get('sha256')):
+            raise ValueError('Preparation cleanup ownership could not be verified')
+        owned.add(root.name)
+    # Validate all ownership before deletion; only structured English results
+    # matching an owned export are removed from the shared imports root.
+    standalone = []
+    for path in templates.IMPORT_DIR.glob('*.md'):
+        if path.is_symlink():
+            continue
+        try:
+            payload = _payload(path.name, '')
+        except (ValueError, OSError):
+            continue
+        if payload.get('export_id') in owned:
+            standalone.append(path)
+    for eid in sorted(owned):
+        output = templates.IMPORT_DIR / eid
+        if output.is_symlink():
+            output.unlink()  # Remove the entry, never the linked destination.
+        elif output.exists():
+            shutil.rmtree(output)
+    for path in standalone:
+        path.unlink(missing_ok=True)
+    if base.exists():
+        shutil.rmtree(base)
 
 
 def _json(value: object) -> bytes:
@@ -155,6 +209,11 @@ def _capacity(root: Path, extra: int) -> None:
 
 
 def export_source(sid: str) -> Path:
+    with _scenario_locked(sid):
+        return _export_source(sid)
+
+
+def _export_source(sid: str) -> Path:
     manifest, text = templates._source(sid)
     pdf_path = library._path(sid) / 'source.pdf'
     pdf = pdf_path.read_bytes()
@@ -378,9 +437,18 @@ def _publish(registry: dict, draft: dict) -> str:
     target_id = sid[:38].rstrip('-') + '-ai-' + digest[:16]
     target = library._path(target_id)
     text_hash = review._sha(text.encode())
+    receipt_path = _root(sid, eid) / 'publication.json'
     with library._LIBRARY_LOCK:
         _load(sid, eid)
+        receipt = _read(receipt_path) if receipt_path.exists() else None
+        if receipt is not None and (receipt.get('target_id') != target_id or receipt.get('candidate_digest') != digest):
+            raise ValueError('Published English receipt changed')
         if target.exists():
+            if receipt is None:
+                raise ValueError('Published English metadata receipt missing; export a new preparation to certify changes')
+            for name in ('manifest', 'source_review'):
+                if review._sha((target / f'{name}.json').read_bytes()) != receipt.get(name + '_sha256'):
+                    raise ValueError('Published English immutable metadata changed')
             audit = _read(target / 'source_review.json')
             manifest, current = templates._source(target_id)
             if (audit.get('candidate_digest') != digest or current != text
@@ -416,7 +484,7 @@ def _publish(registry: dict, draft: dict) -> str:
                                 'published_text': review._published_page_text(page), 'status': row['status'],
                                 'removed_counts': dict(old-new), 'added_counts': dict(new-old),
                                 'ai_changes': row['changes']})
-            now = datetime.now(timezone.utc).isoformat()
+            now = receipt['published_at'] if receipt is not None else datetime.now(timezone.utc).isoformat()
             metadata = {'origin': 'external_ai', 'export_id': eid, 'candidate_digest': digest,
                         'parent_scenario_id': sid, 'imported_by': draft['imported_by']}
             audit = {**metadata, 'imported_at': now, 'source_hash_before': registry['manifest']['content_hash'],
@@ -444,6 +512,13 @@ def _publish(registry: dict, draft: dict) -> str:
                 if file.is_file():
                     file.chmod(0o600)
             _load(sid, eid)
+            sealed = {'target_id': target_id, 'candidate_digest': digest, 'published_at': now,
+                      **{name + '_sha256': review._sha((stage / f'{name}.json').read_bytes())
+                         for name in ('manifest', 'source_review')}}
+            if receipt is not None and receipt != sealed:
+                raise ValueError('Published English metadata no longer matches its receipt')
+            if receipt is None:
+                authoring.atomic_json(receipt_path, sealed)
             stage.rename(target)
         finally:
             if stage.exists():
