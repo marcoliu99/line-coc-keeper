@@ -70,6 +70,8 @@ async def _run_assistant_turn(
     dynamic_prompt = keeper._build_dynamic_prompt(state, user_id, resolved_location, _ROLE)
     manual_canon, effective_text = keeper._parse_kp_manual_canon_trigger(_ROLE, message_text)
     turn_message = keeper._format_turn_message(display_name, effective_text, _ROLE)
+    correction_context = keeper._correction_context_message(state)
+    provider_message = turn_message + correction_context
     tools = tool_gateway.tools_for_speaker_role(_ROLE)
     allowed_tools = {tool["name"] for tool in tools}
     private_messages: list[tuple[str, str]] = []
@@ -99,7 +101,7 @@ async def _run_assistant_turn(
 
     openai_response_id: str | None = None
     if keeper.LLM_PROVIDER == "openai":
-        previous_response_id: str | None = state.openai_previous_response_id
+        previous_response_id: str | None = (None if correction_context else state.openai_previous_response_id)
         chain_timeline_id = state.openai_previous_response_timeline_id
         if previous_response_id and chain_timeline_id != turn_timeline_id:
             observability.event(
@@ -119,7 +121,7 @@ async def _run_assistant_turn(
 
         try:
             final_text = await provider.run_conversation(
-                static_prompt, dynamic_prompt, tools, state.log, turn_message,
+                static_prompt, dynamic_prompt, tools, state.log, provider_message,
                 execute_assistant_tool, MAX_TOOL_ITERATIONS,
                 previous_response_id=previous_response_id,
                 on_response_id=remember_openai_response_id,
@@ -131,7 +133,7 @@ async def _run_assistant_turn(
     else:
         try:
             final_text = await provider.run_conversation(
-                static_prompt, dynamic_prompt, tools, state.log, turn_message,
+                static_prompt, dynamic_prompt, tools, state.log, provider_message,
                 execute_assistant_tool, MAX_TOOL_ITERATIONS,
             )
         except Exception:

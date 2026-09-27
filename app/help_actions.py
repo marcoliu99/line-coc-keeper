@@ -43,6 +43,13 @@ DESCRIPTION = Field("描述", paragraph=True)
 
 
 ACTIONS: tuple[HelpExecution, ...] = (
+    _a("correct_report", "other/correct", "提報敘事疑點", "form", "/coc correct", Field("訊息 ID 或連結"), DESCRIPTION),
+    _a("correct_list", "other/correct", "查看異議與更正", "direct", "/coc correct list"),
+    _a("correct_approve", "other/correct", "核准更正", "form", "/coc correct approve", INDEX, DESCRIPTION, confirm=True),
+    _a("correct_reject", "other/correct", "駁回異議", "form", "/coc correct reject", INDEX, confirm=True),
+    _a("correct_withdraw", "other/correct", "撤回異議", "form", "/coc correct withdraw", INDEX),
+    _a("correct_hold", "other/correct", "標記核對範圍", "form", "/coc correct hold", INDEX, Field("實體名稱或別名，以 | 分隔"), confirm=True),
+    _a("correct_supersede", "other/correct", "整併更正", "form", "/coc correct supersede", Field("舊更正編號"), Field("取代它的核准編號"), confirm=True),
     _a("template_status", "scenario/template_status", "查看模板", "select", "/coc scenario template status", source="scenario"),
     _a("template_export", "scenario/template_export", "匯出空白模板", "select", "/coc scenario template export", source="scenario"),
     _a("template_preview", "scenario/template_preview", "預覽模板", "select", "/coc scenario template preview", source="template_preview"),

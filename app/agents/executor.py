@@ -80,7 +80,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             },
         )
 
-    new_message = f"{display_name}：{text}"
+    new_message = f"{display_name}：{text}" + message.payload.get("correction_context", keeper._correction_context_message(state))
     before_pending = deepcopy(state.pending_checks)
     before_luck = deepcopy(state.pending_luck_decisions)
     before_actor = turn_resolution.actor_snapshot(state, user_id)

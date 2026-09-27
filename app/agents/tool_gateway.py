@@ -80,6 +80,11 @@ def make_tool_executor(
     """
 
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        from app.services.narrative_corrections import blocking_reply
+        if tool_name not in keeper.READ_ONLY_TOOL_NAMES:
+            blocked = blocking_reply(state, tool_input)
+            if blocked:
+                return {"ok": False, "error": "narrative_correction_hold", "message": blocked}
         observability.increment_metric("tool_call_count")
         with observability.span(
             "llm.tool",
