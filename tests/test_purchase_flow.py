@@ -254,3 +254,49 @@ def test_dice_provenance_requires_success(state, tool, provider_fails, ok):
     assert bool(result.check_status["dice_rolled"]) is ok
     reply = prompt_config.enforce_mechanic_check_consistency("", result)
     assert ("重擲" in reply) is ok
+
+
+@pytest.mark.parametrize("arrived", [True, False])
+def test_purchase_after_repeated_search_reuses_evidence_without_bypassing_arrival(state, arrived):
+    from app import scenario_rag, scenario_retrieval
+    from app.services import input_budget
+    records = {'shop': {'page': 1, 'name': 'Shop', 'visibility': 'kp_only', 'type': 'scene',
+                        'kp_text': 'An established shop sells ordinary lighting supplies. ' * 50,
+                        'public_text': '', 'related_record_ids': []}}
+    token = scenario_retrieval.BUDGET.set(10000)
+    try:
+        context = scenario_rag.format_results(scenario_retrieval.project(records, ['shop'], 'shop'))
+    finally:
+        scenario_retrieval.BUDGET.reset(token)
+    original_tool = keeper._execute_tool
+    def tool(s, name, data, *args):
+        if name == 'search_scenario':
+            rows = scenario_retrieval.project(records, ['shop'], data['query'])
+            assert rows[0]['complete_for_action'] and rows[0]['reused_fragment_ids']
+            return {'ok': True, 'results': scenario_rag.format_results(rows),
+                    'complete_for_action': True, 'evidence_record_ids': ['shop']}
+        return original_tool(s, name, data, *args)
+    async def provider(*args, **kwargs):
+        callback = args[5]
+        await callback('search_scenario', {'query': '店家'})
+        await callback('search_scenario', {'query': '照明用品'})
+        result = await callback('purchase_items', request(arrived=arrived, items=[
+            {'name': '油燈', 'quantity': 1}, {'name': '玻璃瓶煤油', 'quantity': 2},
+            {'name': '斧頭', 'quantity': 1}]))
+        assert result['ok'] is arrived
+        return decision(state, 'resolved_without_check' if arrived else 'incomplete',
+                        ['tool:1', 'tool:2', 'tool:3'] if arrived else ['state'])
+    payload = AgentMessage({'state': state, 'text': '走去買油燈、煤油與斧頭', 'user_id': 'a',
+                            'display_name': 'Marco', 'speaker_role': 'player', 'rag_context': context})
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(keeper, '_execute_tool', side_effect=tool), \
+            patch.object(input_budget, '_encoding', return_value=None), \
+            patch.object(scenario_retrieval, 'request_budget', return_value=1500), \
+            patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+            patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(payload))
+    items = group_state.load_state(state.group_id).get_active_character('a').carried_items
+    assert items == (['筆記本', '油燈', '玻璃瓶煤油', '玻璃瓶煤油', '斧頭'] if arrived else ['筆記本'])
+    assert result.check_status['state_changed'] is arrived
+    assert result.turn_resolution.disposition == ('resolved_without_check' if arrived else 'incomplete')
+    assert not result.check_status.get('scenario_evidence_blocked')

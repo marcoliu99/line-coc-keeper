@@ -54,11 +54,15 @@ deferred（尚未輪到／等待別人，動作尚未執行，沒有自動排隊
 resolved_without_check（有劇本或真實工具依據的免檢定完成）、cancelled、blocked、incomplete。
 actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指其他真正持有待處理項目的角色。
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
+失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。
 工具回傳 current_turn_state 是更新後的權威資料；以最新一份為準。查詢不到依據就保留未知／補查。
 交接／製作物品、結束戰鬥等不用擲骰的工具完成，使用 resolved_without_check，引用所有相關變更工具。
 既有其他行動的檢定不因物品交接而取消；交接完成與仍待擲的舊檢定要分開敘述。
 本次新建／更換的檢定仍須等待，不能以查詢成功或任意工具成功宣稱整個行動完成。
 先判斷更正是否真的撤回原 action_context；接受取消時必須 clear_pending_check，不能只回 cancelled。
+搜尋完整性只表示已選紀錄及其必要關聯已齊，不保證已涵蓋整個行動；仍須補查缺少的裁決事實。
+中文續取使用原 query、source=auto 與 continuation；改查 source=original 時必須清空 continuation。
+blocked 表示行動未完成，不得交接成已移動、已取得或已購買。
 await_check 必須引用真實 check_id；await_luck 用 decision_id，不重擲。未完成工具、缺資料、額度用完
 就用 incomplete，不假裝成功或「無需機制」。沒有工具也必須交代裁決；原始文字不是玩家敘事。
 
@@ -324,8 +328,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
     status = result.check_status
     resolution = result.turn_resolution
     if resolution is not None:
-        if resolution.disposition == "incomplete":
-            warning = "這次行動尚未完整處理。"
+        if resolution.disposition in {"incomplete", "blocked"}:
+            warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
             if status.get("state_changed"):
                 warning += "已記錄的變更會保留，請勿重做已完成的部分。"
             if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):
@@ -337,6 +341,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+            if status.get("scenario_evidence_blocked"):
+                return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
             return f"{warning}請先確認目前狀態或更正原本的行動。"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")
