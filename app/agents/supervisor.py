@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from copy import deepcopy
 from typing import Any, Literal
@@ -52,6 +53,40 @@ def _unchanged_pending_reply(state: GroupState, user_id: str, result: MechanicRe
     return ''
 
 
+async def prefetch_retrieval(
+    state: GroupState, user_id: str, text: str, speaker_role: str, conversation_id: str,
+) -> context_builder.RetrievalPrefetch | None:
+    """Run a turn's retrieval before its caller queues for the conversation lock.
+
+    The query derivation lives here rather than in the router so it cannot
+    drift from what run_turn feeds build_context: a mixed IC/OOC message
+    retrieves on its IC span only.
+
+    Returns None whenever the turn would not retrieve anyway — an OOC route
+    answers without the gameplay context, and a speaker holding a Luck
+    decision is usually answered from state. A None simply means the search
+    happens inside the lock as before.
+    """
+    route = intent_router.route_request(text, speaker_role, "player_action")
+    if route.intent in {"PLAYER_OOC", "OOC_ASSISTANT"}:
+        return None
+    if user_id in state.pending_luck_decisions:
+        return None
+    action_text = route.ic_text if route.message_mode == "mixed" else text
+    try:
+        return await context_builder.prefetch_retrieval(
+            state=state, user_id=user_id, display_name="", text=action_text,
+            resolved_location=None, speaker_role=speaker_role,
+            conversation_id=conversation_id,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # a missed prefetch costs a second, never a turn
+        observability.event("rag.prefetch.failed", level=logging.WARNING)
+        _logger.exception("Retrieval prefetch failed; the turn will search under the lock")
+        return None
+
+
 @with_turn_deadline
 async def run_turn(
     state: GroupState,
@@ -66,6 +101,7 @@ async def run_turn(
     actor_is_keeper: bool = False,
     turn_kind: PlayerTurnKind = "player_action",
     resolved_check_context: dict[str, Any] | None = None,
+    prefetched_retrieval: context_builder.RetrievalPrefetch | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
@@ -147,6 +183,7 @@ async def run_turn(
         resolved_location=resolved_location,
         speaker_role=speaker_role,
         conversation_id=conversation_id,
+        prefetched=prefetched_retrieval,
     )
     message.payload["actor_user_id"] = actor_user_id or user_id
     message.payload["actor_is_keeper"] = actor_is_keeper

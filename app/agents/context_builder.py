@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from app import async_utils, memory_rag, observability, scenario_rag, scenario_templates
@@ -32,6 +33,58 @@ def _resolved_events_for_character(
     ]
 
 
+@dataclass(frozen=True)
+class RetrievalPrefetch:
+    """Proactive scenario/memory retrieval carried across the conversation lock.
+
+    Only the retrieval travels. Everything else build_context assembles —
+    state, character, resolved events, correction projection — is derived from
+    mutable state and must be rebuilt from the snapshot read under the lock.
+
+    `binding` is what the searches actually depended on. If any of it moved
+    while the caller waited for the lock, the prefetch is discarded and the
+    search runs again rather than answering from a stale scenario.
+    """
+
+    rag_context: str
+    memory_context: str
+    rag_status: str
+    memory_status: str
+    binding: tuple
+
+
+def retrieval_binding(state: GroupState, user_id: str) -> tuple:
+    char = state.get_active_character(user_id)
+    return (
+        state.scenario_variant_id, state.scenario_title, state.timeline_id,
+        state.combat.active, char.character_id if char else None,
+    )
+
+
+async def prefetch_retrieval(
+    state: GroupState, user_id: str, display_name: str, text: str,
+    resolved_location: dict[str, Any] | None, speaker_role: str, conversation_id: str,
+) -> RetrievalPrefetch:
+    """Run this turn's retrieval before the conversation lock is taken.
+
+    Runs the same code path as an ordinary turn and keeps only its retrieval,
+    so the two cannot drift apart. Building the discarded payload costs well
+    under a millisecond; the searches are the ~1s this moves off the lock.
+    """
+    message = await build_context(
+        state=state, user_id=user_id, display_name=display_name, text=text,
+        resolved_location=resolved_location, speaker_role=speaker_role,
+        conversation_id=conversation_id,
+    )
+    return RetrievalPrefetch(
+        rag_context=message.payload["rag_context"],
+        memory_context=message.payload["memory_context"],
+        rag_status=message.payload["rag_status"],
+        memory_status=message.payload["memory_status"],
+        binding=retrieval_binding(state, user_id),
+    )
+
+
 async def build_context(
     state: GroupState,
     user_id: str,
@@ -40,6 +93,7 @@ async def build_context(
     resolved_location: dict[str, Any] | None,
     speaker_role: str,
     conversation_id: str,
+    prefetched: RetrievalPrefetch | None = None,
 ) -> AgentMessage:
     """
     Gathers all necessary state, history, RAG, and Memory context for the
@@ -75,8 +129,15 @@ async def build_context(
     # scenario/memory-dependent question. Not a correctness change outside
     # combat: state.combat.active is False for every turn this behaved
     # identically before.
+    if prefetched is not None and prefetched.binding != retrieval_binding(state, user_id):
+        # The scenario, timeline, combat state or active character moved while
+        # the caller queued. Search again rather than narrate from stale
+        # evidence; correctness outranks the second this was meant to save.
+        observability.event("rag.prefetch.discarded", level=logging.INFO)
+        prefetched = None
+
     rag_task = None
-    if SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title and not state.combat.active:
+    if prefetched is None and SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title and not state.combat.active:
         def _run_scenario_rag() -> tuple[str, str]:
             # See app/keeper.py's search_scenario tool for why this is a
             # plain _logger call, not a structured event field. This site
@@ -139,7 +200,7 @@ async def build_context(
     # runs on essentially every player turn with a bound character
     # (unconditional on SCENARIO_RAG_ENABLED), not just when that flag is on.
     memory_task = None
-    if char and not state.combat.active:
+    if prefetched is None and char and not state.combat.active:
         def _run_memory_rag() -> tuple[str, str]:
             # See _run_scenario_rag's comment above — this one runs on
             # essentially every player turn with a bound character
@@ -212,10 +273,10 @@ async def build_context(
     # start before gather, so scenario and memory search/embedding can overlap;
     # return_exceptions=True keeps one optional source from discarding the
     # other.  Cancellation is handled by _collect_rag_source and propagated.
-    rag_context = ""
-    memory_context = ""
-    rag_status = "disabled"
-    memory_status = "disabled"
+    rag_context = prefetched.rag_context if prefetched else ""
+    memory_context = prefetched.memory_context if prefetched else ""
+    rag_status = prefetched.rag_status if prefetched else "disabled"
+    memory_status = prefetched.memory_status if prefetched else "disabled"
     tasks = [task for task in (rag_task, memory_task) if task is not None]
     if tasks:
         collected = await asyncio.gather(

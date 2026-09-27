@@ -2,7 +2,7 @@
 
 [繁體中文](measured_turn_latency_priorities_design_spec_zh.md)
 
-Status: **WP1, WP2, WP3.2, WP3.3 and WP5 implemented; WP3.4, WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
+Status: **WP1, WP2, WP3.2, WP3.3, WP3.4 and WP5 implemented; WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
 
 ## 0. Why this document exists
 
@@ -215,6 +215,12 @@ Fix independently of any lock change: per-key singleflight on `get_index` and `g
 - The state snapshot it read is re-read after the lock is acquired, and only the retrieval results are carried forward. Those key on scenario version rather than `state_revision`, so they remain valid across the gap; anything derived from mutable state must not be.
 
 Removes roughly 1 s, about 5% of the hold. This was initially assessed as a pure read reordering; it is not, and the reassessment is why 3.3 exists.
+
+**Implemented, and narrower than the heading suggests.** `build_context`'s payload carries `state`, `character`, `resolved_check_events` and the correction projection — all derived from mutable state, all stale if built before the lock. Only the retrieval travels: `context_builder.prefetch_retrieval` runs the ordinary code path and keeps its `rag_context`/`memory_context` plus a binding of what those searches depended on (scenario variant, title, timeline, combat state, active character). `build_context` re-checks that binding under the lock and searches again if any of it moved, so a rolled-back timeline or a switched investigator cannot narrate from stale evidence.
+
+`supervisor.prefetch_retrieval` owns the decision, not the router, so the query cannot drift from what `run_turn` feeds `build_context`: a mixed IC/OOC message prefetches on its IC span only. It returns `None` — leaving the search inside the lock, exactly as before — for an OOC route, for a speaker holding a Luck decision that WP5 will answer from state, and for any failure, which is logged and swallowed because a missed prefetch costs a second and never a turn.
+
+One existing test hung rather than failed: `FakeSupervisorRunner` in `test_keeper_priority_integration` pins `run_turn`'s keyword signature, so the new argument raised inside the turn, the blocking event was never set, and the scenario waited forever. The fake now accepts it.
 
 ### 3.5 Deferred: release the lock before narration
 

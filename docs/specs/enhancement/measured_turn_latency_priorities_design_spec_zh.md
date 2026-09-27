@@ -2,7 +2,7 @@
 
 [English](measured_turn_latency_priorities_design_spec.md)
 
-狀態：**WP1、WP2、WP3.2、WP3.3、WP5 已實作；WP3.4、WP3.5、WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
+狀態：**WP1、WP2、WP3.2、WP3.3、WP3.4、WP5 已實作；WP3.5、WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
 
 ## 0. 這份文件為什麼存在
 
@@ -215,6 +215,12 @@ build_context ~1 s + Executor 15.7 s + Narrator 5.0 s + Guard/防雷 ~0 + commit
 - 它讀到的 state 快照必須在取得鎖之後重新讀取，只有檢索結果可以沿用。那些結果綁的是劇本版本而非 `state_revision`，因此在空隙期間仍然有效；任何從可變狀態衍生的東西都不得沿用。
 
 可減少約 1 秒，約持有時間的 5%。這一項最初被評估為純讀重排，實際上不是，而該次重新評估正是 3.3 存在的原因。
+
+**已實作，而且範圍比標題窄。** `build_context` 的 payload 帶有 `state`、`character`、`resolved_check_events` 與更正投影——全都是可變狀態衍生的，在鎖前建構就會過期。**只有檢索會跨過鎖**：`context_builder.prefetch_retrieval` 走一般路徑，只保留 `rag_context`／`memory_context`，外加一份「這些搜尋依賴了什麼」的 binding（劇本變體、標題、timeline、戰鬥狀態、當前角色）。`build_context` 在鎖內重新核對該 binding，只要有任何一項移動就重新搜尋，因此被回滾的 timeline 或切換過的調查員不可能用過期依據敘事。
+
+決定權在 `supervisor.prefetch_retrieval` 而非 router，這樣查詢就不會和 `run_turn` 餵給 `build_context` 的內容分歧：IC/OOC 混合訊息只對它的 IC 片段預取。以下情況回傳 `None`，讓搜尋留在鎖內、與改動前完全相同：OOC 路由、發話者持有 WP5 會從 state 回答的 Luck 決定、以及任何失敗——失敗會被記錄並吞掉，因為漏掉一次預取的代價是一秒，永遠不是一個回合。
+
+**有一個既有測試是「卡住」而不是「失敗」**：`test_keeper_priority_integration` 的 `FakeSupervisorRunner` 固定了 `run_turn` 的關鍵字簽名，新參數在回合內拋出 TypeError，阻塞事件因此從未被設定，情境就無限等待。該假物件已更新簽名。
 
 ### 3.5 延後：在敘事之前釋放鎖
 
