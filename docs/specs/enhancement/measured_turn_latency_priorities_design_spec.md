@@ -2,7 +2,7 @@
 
 [繁體中文](measured_turn_latency_priorities_design_spec_zh.md)
 
-Status: **WP1, WP3.2 and WP3.3 implemented; WP2, WP3.4, WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
+Status: **WP1, WP2, WP3.2 and WP3.3 implemented; WP3.4, WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
 
 ## 0. Why this document exists
 
@@ -77,48 +77,76 @@ Acceptance: the script reproduces every figure in §0.2 from the two sessions na
 
 **Implemented.** `scripts/analyze_turn_latency.py` reproduces §0.2 exactly for the post session and accepts a directory for the pre corpus. Running it over all 59 logs at once shows the queueing problem is worse than the two isolated sessions suggested: n=542, p90 38,103 ms, **p99 105,950 ms, max 131,189 ms**, 177 acquisitions over 1 s. Those aggregate across runs of differing code and include test harness logs, so §0.2's per-session figures remain the comparison baseline; the corpus figure bounds how bad a queue has actually been observed to get.
 
-## 2. WP2 — Move dynamic data past the cache boundary
+## 2. WP2 — Put the per-turn block after everything that does not change
 
-### 2.1 The post session upgraded this from hypothesis to finding
+### 2.1 What the post session established, and what it did not
 
-Before `edd2fd6` the first request of each turn cached 4.6%, and routing was a plausible explanation: without `prompt_cache_key`, requests land on arbitrary cache nodes and only `previous_response_id` keeps a turn's own chain together.
+Before `edd2fd6` the first request of each turn cached 4.6%, and routing was a plausible explanation: without `prompt_cache_key`, requests land on arbitrary cache nodes.
 
-`prompt_cache_key` shipped in #103 and is now live. Within a turn the hit rate rose to 77.3% and 79.0%. **The first request of a turn fell to 0.0% — 19 requests, 387,171 input tokens, nothing reused.** Routing is therefore not the obstacle. The boundary is structural.
+`prompt_cache_key` shipped in #103 and is now live. Within a turn the hit rate rose to 77.3% and 79.0%. **The first request of a turn fell to 0.0% — 19 requests, 387,171 input tokens, nothing reused.** Routing is not the obstacle; the boundary is structural.
 
-`app/providers/openai_provider.py` composes `instructions = f"{static_system}\n\n{dynamic_system}"`, and `dynamic_system` carries HP/SAN, location and retrieval context, so it differs on every turn. The prefix match must break where it begins, and nothing after it — including the 9,527-token tool schema — can be reused across turns.
+The original version of this work package concluded from that the fix was to move `dynamic_system` out of `instructions`. **That was wrong, and a live A/B refuted it before it was implemented.**
 
-That the cached prefix begins with `instructions` is supported by the pre session, where requests after the first cached a median of 19,810 tokens, exceeding `static + dynamic + tools` (7,972 + 1,284 + 9,527 = 18,783) and therefore reaching past the tool definitions into the input items.
+### 2.2 Measured against the real API
 
-### 2.2 Change
+`scripts/experiments/ab_prompt_cache_boundary.py` replays recorded player messages against real state and the real tool schema, one request per turn, with the dynamic block made distinct on every turn — real play never repeats one, which is why a turn's first request caches 0.0% in the recorded sessions.
 
-Send `instructions` as `static_system` alone. Carry `dynamic_system` as the first input item.
+Over 50 turns, 47 of which reported usage and all 47 carrying a distinct dynamic block:
+
+| arm | request shape | cached |
+|---|---|---|
+| A — today | `instructions = static + dynamic`, `tools`, `[user]` | **2.2%** |
+| B — this document's first proposal | `instructions = static`, `tools`, `[dynamic, user]` | **0.0%** |
+| C — diagnostic, block dropped | `instructions = static`, `tools`, `[user]` | 83.2% |
+| D — adopted | `instructions = static`, `tools`, `[user, dynamic]` | **92.9%** |
+
+Arm B was measured over its own 30-turn run and was worse than doing nothing. Leaving `instructions` is therefore not what matters; what matters is that the block sits after the player's message, so every byte that does not change per turn precedes every byte that does. Arm C shows the developer role itself is not the obstacle.
+
+Uncached input over the 50-turn run falls from 829,642 tokens to 61,194, a 92.6% reduction. The stable cached prefix measures 17,089 tokens against a local estimate of `static 8,560 + tools 9,690`.
+
+**Why arm B collapsed to 0.0% rather than still caching `instructions + tools` is not explained here.** The data says it did; the mechanism was not established, and no explanation is offered in its place.
+
+### 2.3 Change
 
 ```text
-before  [static 7,972 + dynamic 1,284][tools 9,527][input]
-                          ^ changes every turn; everything after is uncacheable
+before  [instructions: static + dynamic][tools][history][user]
+                              ^ changes every turn; everything after it is uncacheable
 
-after   [static 7,972][tools 9,527][dynamic 1,284][user]
-                                    ^ boundary moves here
+after   [instructions: static][tools][history][user][dynamic]
+                                                     ^ moved behind every stable byte
 ```
 
-Cross-turn cacheable ceiling rises from 7,972 to 17,499 tokens.
+Delivered in both input shapes. The chained shape — used when the caller passes `previous_response_id` — sends only the new user message and relies on `instructions` to carry current state, so the block must be appended there too. Later iterations of one turn inherit it through the response chain along with the rest of that turn's items.
 
-### 2.3 Constraint that makes this non-trivial
-
-`run_conversation` has two input shapes. Without `previous_response_id` it sends the selected history plus the user message. With `previous_response_id` it sends only `[{"role": "user", "content": new_message}]` and relies on `instructions` to carry current state.
-
-Moving `dynamic_system` out of `instructions` removes that guarantee. The chained branch must deliver the dynamic block as an input item on the first request of a turn and inherit it through the chain; `_commit_turn_result` already invalidates the response chain between turns, so a new turn re-sends it. **An implementation that moves the block without covering the chained branch leaves the model reading stale HP/SAN — a correctness failure, not a performance regression.**
+`OPENAI_DYNAMIC_PROMPT_AFTER_INPUT` restores the previous composition without touching prompt content.
 
 ### 2.4 Out of scope for this work package
 
-Reordering `build_executor_static_prompt` / `build_narrator_static_prompt` from `INSTRUCTION + keeper_static_prompt` to `keeper_static_prompt + INSTRUCTION`, so the Narrator can reuse the 7,131-token block the Executor just warmed, is a separate and smaller change. It became more attractive in the post session — Narrator-shaped requests fell from 18.3% to 5.1% — but it is deferred so the two effects remain attributable, and because it moves a role instruction behind 7,131 tokens of content, which is a behavioural change requiring its own evaluation.
+Reordering `build_executor_static_prompt` / `build_narrator_static_prompt` from `INSTRUCTION + keeper_static_prompt` to `keeper_static_prompt + INSTRUCTION`, so the Narrator can reuse the 7,131-token block the Executor just warmed, is a separate and smaller change. Narrator-shaped requests cached 5.1% in the post session. It is deferred so the two effects remain attributable, and because it moves a role instruction behind 7,131 tokens of content, which is a behavioural change requiring its own evaluation.
 
 ### 2.5 Acceptance
 
-- Offline: the dynamic block reaches the model in both input shapes, including every request of a chained turn; a fake provider asserts the composed request, not a helper's return value.
-- Measured: WP1's script against a post-change session, read against §0.2's post column.
-- Correctness: current HP/SAN/location present in every request that previously carried them. A cache improvement that loses state is a failure.
-- Reversible: a single flag restores the previous composition.
+- Offline: the block reaches the model in both input shapes, including the chained one, and sits after the player's message; a fake provider asserts the composed request. **Met.**
+- The composition event does not count the block twice now that it rides in input. **Met.**
+- The flag restores the previous composition exactly. **Met.**
+- Measured: 2.2% to 92.9% over 50 turns with distinct dynamic blocks. **Met.**
+- Correctness: current HP/SAN/location present in every request that previously carried them. **Met offline**; a live session has not yet been played on this branch.
+
+### 2.6 What this does not buy
+
+Latency did not improve: arm A's median was 5.44 s against arm D's 5.71 s over the 50-turn run, a difference inside the run-to-run spread already visible between earlier arms. This is a token and cost result.
+
+Whether cache-hit input still counts fully toward the rate limits that constrain this deployment was not established, so no rate-limit benefit is claimed.
+
+The harness measures one request per turn with tools offered but never executed, so it isolates cross-turn reuse and says nothing about the within-turn tool loop, which already cached 77–79%.
+
+### 2.7 Two harness faults found while measuring
+
+Both produced a wrong answer before being caught, and both are now reported by the script itself.
+
+A first run of arms C and D used only the leading recorded turns, which come from a state with no active character. The per-turn perturbation therefore did nothing, the dynamic block was constant, and arm D read as 93% — a number that proved nothing. The script now counts distinct dynamic blocks per arm and says so when there are fewer than two.
+
+A first 50-turn run perturbed HP and SAN cyclically, so the block repeated every 35 turns and a later turn could match an earlier turn's prefix. Arm A read as 88.7% under that fault, against 2.2% once each turn was made distinct. The script now reports distinct blocks against usable requests and flags repeats.
 
 ## 3. WP3 — Bound and measure conversation queueing
 

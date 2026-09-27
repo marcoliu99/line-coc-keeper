@@ -414,7 +414,20 @@ async def run_conversation(
         "executor": config.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS,
         "narrator": config.OPENAI_NARRATOR_MAX_OUTPUT_TOKENS,
     }.get(response_stage, config.OPENAI_DEFAULT_MAX_OUTPUT_TOKENS)
-    instructions = f"{static_system}\n\n{dynamic_system}"
+    # The cached prefix ends at the first byte that differs between requests,
+    # so anything that changes every turn must sit after everything that does
+    # not. dynamic_system carries HP/SAN, location and retrieval context, so
+    # holding it inside instructions puts it ahead of the tool schema and
+    # makes both uncacheable across turns. Measured over 10 turns whose
+    # dynamic block genuinely varied, against the real API: 12.5% cached with
+    # it inside instructions, 82.5% with it placed after the player's message.
+    # Moving it to the *front* of the input list instead measured 0.0%, worse
+    # than today, so its position relative to new_message is what matters and
+    # not merely leaving instructions — see
+    # docs/specs/enhancement/measured_turn_latency_priorities_design_spec.md
+    # and scripts/experiments/ab_prompt_cache_boundary.py.
+    dynamic_after_input = config.OPENAI_DYNAMIC_PROMPT_AFTER_INPUT
+    instructions = static_system if dynamic_after_input else f"{static_system}\n\n{dynamic_system}"
     inherited_tokens: int | None = None
     static_tokens = input_budget.estimate(static_system, OPENAI_MODEL)
     dynamic_tokens = input_budget.estimate(dynamic_system, OPENAI_MODEL)
@@ -426,6 +439,13 @@ async def run_conversation(
         input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
         input_items.append({"role": "user", "content": new_message})
         active_previous_response_id = None
+    if dynamic_after_input:
+        # Appended in both shapes. The chained shape relies on instructions to
+        # carry current state today, so omitting it there would leave the model
+        # reading a stale sheet — a correctness failure, not a slower turn.
+        # Later iterations inherit it through previous_response_id along with
+        # the rest of this turn's items.
+        input_items.append({"role": "developer", "content": dynamic_system})
 
     # Omitted entirely (not sent as an empty/None value) when
     # KEEPER_REASONING_EFFORT is "" — that's the escape hatch back to the
@@ -459,7 +479,8 @@ async def run_conversation(
         estimated_input = (
             inherited_tokens + new_input_tokens if active_previous_response_id and inherited_tokens is not None
             else None if active_previous_response_id
-            else static_tokens + dynamic_tokens + tools_tokens + new_input_tokens
+            else static_tokens + tools_tokens + new_input_tokens
+            + (0 if dynamic_after_input else dynamic_tokens)
         )
         observability.event('llm.input.composition', stage=response_stage,
                             static_tokens_estimate=static_tokens, dynamic_tokens_estimate=dynamic_tokens,

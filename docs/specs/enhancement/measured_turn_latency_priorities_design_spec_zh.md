@@ -2,7 +2,7 @@
 
 [English](measured_turn_latency_priorities_design_spec.md)
 
-狀態：**WP1、WP3.2、WP3.3 已實作；WP2、WP3.4、WP3.5、WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
+狀態：**WP1、WP2、WP3.2、WP3.3 已實作；WP3.4、WP3.5、WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
 
 ## 0. 這份文件為什麼存在
 
@@ -77,48 +77,76 @@ state.to_dict() + json.dumps       0.14 ms
 
 **已實作。** `scripts/analyze_turn_latency.py` 對改動後的 session 精確重現 §0.2，也接受目錄以處理改動前的全集。一次讀入全部 59 份 log 顯示排隊問題比兩個單一 session 呈現的更糟：n=542、p90 38,103 ms、**p99 105,950 ms、max 131,189 ms**、177 次取得超過 1 秒。那是跨不同版本程式碼的彙總，也包含測試用的 log，因此 §0.2 的單一 session 數字仍是比較基準；全集數字界定的是「實際觀測到最糟的排隊有多糟」。
 
-## 2. WP2 —— 把動態資料移到快取邊界之後
+## 2. WP2 —— 把每回合變動的區塊放到所有不變內容之後
 
-### 2.1 改動後的 session 把這一項從假設升級為結論
+### 2.1 改動後的 session 確立了什麼，又沒有確立什麼
 
-在 `edd2fd6` 之前，每回合第一次請求的命中率是 4.6%，而「路由散掉」是合理的解釋：沒有 `prompt_cache_key` 時，請求會落在任意快取節點，只有 `previous_response_id` 把同一回合的鏈綁在一起。
+在 `edd2fd6` 之前，每回合第一次請求的命中率是 4.6%，而「路由散掉」是合理的解釋：沒有 `prompt_cache_key` 時，請求會落在任意快取節點。
 
-`prompt_cache_key` 已隨 #103 上線。回合**內**命中率因此升到 77.3% 與 79.0%。**但每回合第一次請求降到 0.0% —— 19 筆請求、387,171 input tokens，一個也沒有重用。** 因此路由不是障礙，邊界是結構性的。
+`prompt_cache_key` 已隨 #103 上線。回合內命中率因此升到 77.3% 與 79.0%。**但每回合第一次請求降到 0.0% —— 19 筆請求、387,171 input tokens，一個也沒有重用。** 路由不是障礙，邊界是結構性的。
 
-`app/providers/openai_provider.py` 組成 `instructions = f"{static_system}\n\n{dynamic_system}"`，而 `dynamic_system` 帶有 HP/SAN、位置與檢索 context，每回合都不同。前綴比對必然在它開始處中斷，其後的一切——包含 9,527 tokens 的工具 schema——都無法跨回合重用。
+本工作包的初版據此推論「把 `dynamic_system` 移出 `instructions`」即可。**那是錯的，而且在實作之前就被真實 API 的 A/B 否證。**
 
-「快取前綴始於 `instructions`」這點由改動前的 session 支持：當時第一次之後的請求快取量中位為 19,810 tokens，超過 `static + dynamic + tools`（7,972 + 1,284 + 9,527 = 18,783），因此已延伸到工具定義之後的 input items。
+### 2.2 對真實 API 的實測
 
-### 2.2 改動
+`scripts/experiments/ab_prompt_cache_boundary.py` 以真實 state、真實工具 schema 重放紀錄中的玩家訊息，每回合一次請求，並讓 dynamic 區塊**每輪都不同** —— 真實遊戲不會重複，這正是紀錄中回合第一次請求命中 0.0% 的原因。
 
-`instructions` 只放 `static_system`，`dynamic_system` 改為第一則 input item。
+50 輪中有 47 筆回報 usage，且 47 筆的 dynamic 區塊全部相異：
+
+| 組別 | 請求形狀 | 命中率 |
+|---|---|---|
+| A —— 現況 | `instructions = static + dynamic`、`tools`、`[user]` | **2.2%** |
+| B —— 本文件初版提案 | `instructions = static`、`tools`、`[dynamic, user]` | **0.0%** |
+| C —— 診斷，拿掉區塊 | `instructions = static`、`tools`、`[user]` | 83.2% |
+| D —— 採用 | `instructions = static`、`tools`、`[user, dynamic]` | **92.9%** |
+
+B 組以自己的 30 輪量測，結果比什麼都不做還糟。因此「離開 `instructions`」不是關鍵；關鍵是**區塊必須位於玩家訊息之後**，讓所有每回合不變的位元組都排在所有會變的位元組之前。C 組顯示 developer role 本身不是障礙。
+
+50 輪中未命中的 input 從 829,642 tokens 降到 61,194，減少 92.6%。穩定的快取前綴實測為 17,089 tokens，對照本地估算的 `static 8,560 + tools 9,690`。
+
+**B 組為何是 0.0% 而不是仍然快取 `instructions + tools`，本文件沒有解釋。** 資料顯示它就是如此；機制未能確立，也不以任何猜測代替。
+
+### 2.3 改動
 
 ```text
-改前  [static 7,972 + dynamic 1,284][tools 9,527][input]
-                          ^ 每回合改變，其後全部無法快取
+改前  [instructions: static + dynamic][tools][history][user]
+                              ^ 每回合改變，其後全部無法快取
 
-改後  [static 7,972][tools 9,527][dynamic 1,284][user]
-                                    ^ 邊界移到這裡
+改後  [instructions: static][tools][history][user][dynamic]
+                                                   ^ 移到所有穩定位元組之後
 ```
 
-跨回合可快取上限從 7,972 提高到 17,499 tokens。
+兩種 input 形態都要送達。鏈式形態——呼叫端傳入 `previous_response_id` 時——只送新的使用者訊息、靠 `instructions` 帶當前狀態，因此該分支也必須附加此區塊。同一回合的後續迭代會與該回合其他項目一起沿 response chain 繼承。
 
-### 2.3 讓這件事不只是搬字的限制
-
-`run_conversation` 有兩種 input 形態。沒有 `previous_response_id` 時送出選取後的 history 加使用者訊息；有 `previous_response_id` 時只送 `[{"role": "user", "content": new_message}]`，靠 `instructions` 帶當前狀態。
-
-把 `dynamic_system` 移出 `instructions` 就拿掉了這個保證。鏈式分支必須一併修改，讓動態區塊在回合第一次請求時以 input item 送出並沿鏈繼承；`_commit_turn_result` 本來就會在回合之間讓 response chain 失效，所以新回合會重新送出。**只搬動區塊而沒有處理鏈式分支的實作，會讓模型讀到過期的 HP/SAN —— 那是正確性失敗，不是效能退步。**
+`OPENAI_DYNAMIC_PROMPT_AFTER_INPUT` 可在不更動提示詞內容的情況下還原原本的組成。
 
 ### 2.4 本工作包排除的項目
 
-把 `build_executor_static_prompt` / `build_narrator_static_prompt` 從 `INSTRUCTION + keeper_static_prompt` 改為 `keeper_static_prompt + INSTRUCTION`，讓 Narrator 能重用 Executor 剛暖好的 7,131 tokens 區塊，是另一個更小的改動。改動後的 session 讓它更有吸引力——Narrator 型請求從 18.3% 掉到 5.1%——但仍刻意延後，一是讓兩個效果維持可歸因，二是它把角色指令移到 7,131 tokens 的內容之後，屬於行為改動，需要自己的評估。
+把 `build_executor_static_prompt` / `build_narrator_static_prompt` 從 `INSTRUCTION + keeper_static_prompt` 改為 `keeper_static_prompt + INSTRUCTION`，讓 Narrator 能重用 Executor 剛暖好的 7,131 tokens 區塊，是另一個更小的改動。改動後的 session 中 Narrator 型請求命中 5.1%。仍刻意延後，一是讓兩個效果維持可歸因，二是它把角色指令移到 7,131 tokens 的內容之後，屬於行為改動，需要自己的評估。
 
 ### 2.5 驗收
 
-- 離線：動態區塊在兩種 input 形態下都確實送達模型，包含鏈式回合的每一次請求；以假 provider 斷言組成後的請求，而非某個 helper 的回傳值。
-- 量測：以 WP1 的腳本對改動後的實際遊戲執行，對照 §0.2 的「改動後」欄。
-- 正確性：先前帶有當前 HP/SAN/位置的每一次請求，改動後都必須仍然帶有。**丟失狀態的快取改善是失敗。**
-- 可還原：以單一旗標即可回到原本的組成方式。
+- 離線：區塊在兩種 input 形態下都送達模型（含鏈式），且位於玩家訊息之後；以假 provider 斷言組成後的請求。**已達成。**
+- 組成事件不因區塊改走 input 而重複計算。**已達成。**
+- 旗標能完全還原原本的組成。**已達成。**
+- 量測：50 輪、dynamic 每輪相異，2.2% → 92.9%。**已達成。**
+- 正確性：先前帶有當前 HP/SAN/位置的每一次請求，改動後都仍然帶有。**離線已達成**；此分支尚未實際遊玩驗證。
+
+### 2.6 這項改動買不到什麼
+
+延遲沒有改善：50 輪中 A 組中位 5.44 秒、D 組 5.71 秒，差距落在先前各組之間已可見的執行間波動內。**這是 token 與成本的結果，不是延遲的結果。**
+
+快取命中的 input 是否仍全額計入限制本部署的 rate limit，並未確立，因此不宣稱任何 rate-limit 效益。
+
+harness 每回合只發一次請求、提供工具但不執行，因此它隔離的是跨回合重用，對回合內的工具迴圈（本來就已命中 77–79%）沒有任何說明力。
+
+### 2.7 量測過程中發現的兩個 harness 缺陷
+
+兩者都曾產生錯誤答案才被抓到，現在腳本會自己回報。
+
+第一次跑 C 與 D 組時只用了開頭幾輪，而那些輪次來自沒有 active character 的 state。每輪擾動因此完全沒作用、dynamic 區塊固定不變，arm D 讀出 93% —— 一個什麼都證明不了的數字。腳本現在會統計每組的相異 dynamic 區塊數，並在少於兩個時明講。
+
+第一次跑 50 輪時以 HP 與 SAN 做週期性擾動，區塊每 35 輪重複一次，於是後面的輪次可以命中前面輪次的前綴。在該缺陷下 arm A 讀出 88.7%，而讓每輪唯一之後是 2.2%。腳本現在會回報相異區塊數對可用請求數，並標示重複。
 
 ## 3. WP3 —— 界定並量測回合排隊
 
