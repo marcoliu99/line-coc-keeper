@@ -1,0 +1,65 @@
+{
+  "provenance": "Preserved from /private/tmp/coc_proactive_rag_small_trial_results.json; historical 2026-09-26 pilot, not rerun for this review.",
+  "records": [
+    {
+      "trial": 1,
+      "condition": "raw",
+      "elapsed_s": 5.73,
+      "api_calls": 3,
+      "searches": 1,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 2,
+      "condition": "aligned",
+      "elapsed_s": 5.44,
+      "api_calls": 2,
+      "searches": 0,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 3,
+      "condition": "aligned",
+      "elapsed_s": 4.83,
+      "api_calls": 2,
+      "searches": 0,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 4,
+      "condition": "raw",
+      "elapsed_s": 7.45,
+      "api_calls": 3,
+      "searches": 1,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 5,
+      "condition": "raw",
+      "elapsed_s": 6.32,
+      "api_calls": 3,
+      "searches": 1,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    },
+    {
+      "trial": 6,
+      "condition": "aligned",
+      "elapsed_s": 4.69,
+      "api_calls": 2,
+      "searches": 0,
+      "checks": 1,
+      "check_difficulty": "regular",
+      "error": null
+    }
+  ]
+}
