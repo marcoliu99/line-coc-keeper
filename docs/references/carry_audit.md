@@ -12,8 +12,8 @@ Permit reasonable mundane personal items without turning play into an audit. Plo
 
 ## Purchase sequence
 
-Travel must be resolved and a supported shop/stock established before acquisition. Lifestyle mode records the Credit Rating affordability judgment and receipt; cash mode requires confirmed currency/funds and explicit quote confirmation. Debit, inventory and receipt settle atomically. Map coordinates are optional. The backend checks identity/consistency; the AI still adjudicates narrative arrival and stock.
+Resolve travel and establish a plausible seller and available goods before acquisition. The Keeper adjudicates affordability from Credit Rating and the character's circumstances, without calculating a cash debit. When the purchase is established in play, register a lasting possession through `add_carried_item`. There is no quote, payment confirmation, or atomic transaction tool.
 
 ## Narration and limitations
 
-Describe current purchases as bought now; final inventory alone does not prove prior ownership. A quote is not payment. Do not silently give a weapon because a player says they have always carried it. General structured legality/era validation and automatic asset liquidation are not implemented.
+Describe current purchases as bought now; final inventory alone does not prove prior ownership or payment. Do not silently give a weapon because a player says they have always carried it. General structured legality/era validation, cash accounting and automatic asset liquidation are not implemented.

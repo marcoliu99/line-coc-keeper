@@ -24,3 +24,7 @@ main_v2 with PR #91 and #106
 ## Verification and tradeoffs
 
 Run focused purchase/turn tests, full isolated suite, Ruff, mypy, and diff checks. Update tests that assert removed purchase commands/tools; retain tests for unrelated turn resolution. This intentionally removes atomic payment and transaction receipts. Existing game state is left untouched. No bot restart or live migration is included.
+
+## Review corrections
+
+Restore the pre-ledger Credit Rating affordability rule in the Keeper prompt; it must not require a cash balance that players can no longer register or confirm. Align both possession references with the active Keeper adjudication and `add_carried_item` path, and remove obsolete quote, debit and receipt claims.
