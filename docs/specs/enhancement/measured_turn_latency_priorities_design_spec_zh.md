@@ -2,7 +2,7 @@
 
 [English](measured_turn_latency_priorities_design_spec.md)
 
-狀態：**提案中，等待設計審查**。基底：`main_v2` 的 `5961f2b`。
+狀態：**WP1、WP3.2、WP3.3 已實作；WP2、WP3.4、WP3.5、WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
 
 ## 0. 這份文件為什麼存在
 
@@ -74,6 +74,8 @@ state.to_dict() + json.dumps       0.14 ms
 不需要任何 runtime 改動：`observability.usage_fields` 已在記錄 `cached_input_tokens`，`lock.wait` span 也已帶有耗時。這加的是讀取器，不是觀測點。
 
 驗收：該腳本能從 §0.1 指名的兩次 session 重現 §0.2 的每一個數字，兩次皆可，且不需手動編輯。
+
+**已實作。** `scripts/analyze_turn_latency.py` 對改動後的 session 精確重現 §0.2，也接受目錄以處理改動前的全集。一次讀入全部 59 份 log 顯示排隊問題比兩個單一 session 呈現的更糟：n=542、p90 38,103 ms、**p99 105,950 ms、max 131,189 ms**、177 次取得超過 1 秒。那是跨不同版本程式碼的彙總，也包含測試用的 log，因此 §0.2 的單一 session 數字仍是比較基準；全集數字界定的是「實際觀測到最糟的排隊有多糟」。
 
 ## 2. WP2 —— 把動態資料移到快取邊界之後
 
@@ -148,6 +150,8 @@ build_context ~1 s + Executor 15.7 s + Narrator 5.0 s + Guard/防雷 ~0 + commit
 
 不縮小任何鎖、不平行化任何回合、不更動任何狀態契約。
 
+**已實作。** 測試時發現一項必須修正的地方：等待者無法自己重新計算位置，因為純計數器分不出「比我早到」和「比我晚到」，而第一版實作因此把自己也算進去。位置現在改成「進入時的快照」扣掉 `completed` 計數的進度，於是每完成一個回合就剛好減一，排在我後面的回合也不會把數字撐大。
+
 ### 3.3 前置缺陷：RAG 索引快取沒有 singleflight
 
 `app/scenario_rag.py` 的 `_index_cache` 是模組層級的裸 dict，沒有任何鎖。`get_index()` 在記憶體命中或磁碟命中時直接回傳，但 miss 時會呼叫 `build_index()`——一次 embeddings 往返——接著透過 `_save_index_to_disk()` 寫入 `scenario_indexes`（`db.set_json`，`app/scenario_rag.py:677`）。`get_record_index()` 結構相同。
@@ -155,6 +159,8 @@ build_context ~1 s + Executor 15.7 s + Narrator 5.0 s + Guard/防雷 ~0 + commit
 因此同一個 key 的兩個並發 miss 會各自付一次 embeddings 呼叫、各自寫入一次。同一個 `group_id` 的 payload 內容相同，所以後寫贏是無害的，但 API 成本翻倍。這件事**今天就已經存在**，因為 conversation lock 只序列化單一對話內部；列在這裡是因為 3.4 會把競爭窗口擴大到同一對話的兩個回合。
 
 與任何鎖改動獨立修正：對 `get_index` 與 `get_record_index` 加上 per-key singleflight，讓第二個呼叫者等待第一次建構完成，而不是自己再建一次。這正是 addendum 那條註記的具體案例——`lru_cache` 式的快取是 thread-safe 但不保證只執行一次，昂貴工作需要明確的 singleflight。
+
+**已實作。** 每個 cache key 一把 `threading.Lock`，只在 miss 時取得，讓記憶體與磁碟路徑維持無鎖；等到鎖的呼叫者會在鎖內重新檢查快取。以四個執行緒競爭同一 key 驗證：一次 `build_index`、一次寫入；移除實作後則是各四次。
 
 ### 3.4 把 context 建構移出鎖，在 3.3 之後
 

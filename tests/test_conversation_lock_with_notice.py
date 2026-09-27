@@ -53,7 +53,10 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
             replies = asyncio.run(scenario())
 
         self.assertEqual(len(replies), 1)
-        self.assertIn("排入佇列", replies[0])
+        # WP3.2 replaced the bare acknowledgement with the caller's position,
+        # which here is the one turn holding the lock — not two, which is what
+        # recounting the queue after joining it would have reported.
+        self.assertIn("前面還有 1 個動作", replies[0])
 
     def test_no_notice_when_lock_frees_before_the_delay_elapses(self):
         with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.2):

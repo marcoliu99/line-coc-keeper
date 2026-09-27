@@ -2,7 +2,7 @@
 
 [繁體中文](measured_turn_latency_priorities_design_spec_zh.md)
 
-Status: **proposed; awaiting design approval**. Base: `main_v2` at `5961f2b`.
+Status: **WP1, WP3.2 and WP3.3 implemented; WP2, WP3.4, WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
 
 ## 0. Why this document exists
 
@@ -74,6 +74,8 @@ Deliverable: `scripts/analyze_turn_latency.py`, read-only over a runtime log dir
 No runtime change: `observability.usage_fields` already records `cached_input_tokens` and `lock.wait` spans already carry durations. This adds a reader, not instrumentation.
 
 Acceptance: the script reproduces every figure in §0.2 from the two sessions named in §0.1, for both, without hand-editing.
+
+**Implemented.** `scripts/analyze_turn_latency.py` reproduces §0.2 exactly for the post session and accepts a directory for the pre corpus. Running it over all 59 logs at once shows the queueing problem is worse than the two isolated sessions suggested: n=542, p90 38,103 ms, **p99 105,950 ms, max 131,189 ms**, 177 acquisitions over 1 s. Those aggregate across runs of differing code and include test harness logs, so §0.2's per-session figures remain the comparison baseline; the corpus figure bounds how bad a queue has actually been observed to get.
 
 ## 2. WP2 — Move dynamic data past the cache boundary
 
@@ -148,6 +150,8 @@ Neither the existing spec nor the three planning documents targets this. `enhanc
 
 No lock is narrowed, no turn is parallelised, no state contract changes.
 
+**Implemented.** One correction found while testing: a waiter cannot recount its own position, because a plain counter cannot distinguish turns that arrived before it from turns that arrived after, and the first implementation therefore included the waiter itself. Position is now an entry-time snapshot reduced by a `completed` counter, so each finished turn removes exactly one and a turn arriving behind does not inflate it.
+
 ### 3.3 Prerequisite defect: the RAG index caches have no singleflight
 
 `app/scenario_rag.py`'s `_index_cache` is a bare module-level dict with no lock. `get_index()` returns on a memory hit or a disk hit, but on a miss it calls `build_index()` — an embeddings round trip — then writes `scenario_indexes` through `_save_index_to_disk()` (`db.set_json`, `app/scenario_rag.py:677`). `get_record_index()` has the same shape.
@@ -155,6 +159,8 @@ No lock is narrowed, no turn is parallelised, no state contract changes.
 Two concurrent misses for one key therefore each pay the embeddings call and each write. For one `group_id` the payload is identical so the last write is harmless, but the API cost doubles. This is already true today between conversations, because the conversation lock only serializes within one conversation; it is listed here because 3.4 widens the window to two turns of the same conversation.
 
 Fix independently of any lock change: per-key singleflight on `get_index` and `get_record_index`, so a second caller waits for the first build rather than starting its own. This is the concrete instance of the addendum's note that `lru_cache`-style caching is thread-safe without being once-only and that expensive work needs an explicit singleflight.
+
+**Implemented.** A `threading.Lock` per cache key, taken only on a miss so the memory and disk paths stay lock-free, with the cache re-checked inside the lock for the caller that waited. Verified with four threads racing one key: one `build_index` call and one write, against four of each without it.
 
 ### 3.4 Hoist context building out of the lock, after 3.3
 

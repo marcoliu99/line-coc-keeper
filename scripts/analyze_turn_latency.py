@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Reproduce the turn latency baseline from structured runtime logs.
+
+Read-only. Every metric here already exists in the logs — `observability.
+usage_fields` records cached_input_tokens, `lock.wait` spans carry durations,
+`turn.queue` carries queue depth — so this is a reader, not instrumentation.
+
+The numbers this prints are what docs/specs/enhancement/
+measured_turn_latency_priorities_design_spec.md bases its ordering on. Run it
+before and after a change so a comparison is repeatable rather than derived by
+hand.
+
+    scripts/analyze_turn_latency.py ~/coc_v2_log
+    scripts/analyze_turn_latency.py ~/coc_v2_log/20260927-132223-807874_runtime_profile-async.log
+    scripts/analyze_turn_latency.py ~/coc_v2_log --since 2026-09-27T13:00
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+# A request id groups one player message; model usage arrives per model call.
+Key = tuple[str, str]
+
+
+def _iter_events(paths: list[Path], since: str | None) -> Any:
+    for path in paths:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue  # plain-text log lines are not structured events
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if since and str(event.get("timestamp", "")) < since:
+                    continue
+                yield path.name, event
+
+
+def _pct(values: list[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))]
+
+
+def _rate(cached: int, total: int) -> str:
+    return f"{100 * cached / total:5.1f}%" if total else "    --"
+
+
+def collect(paths: list[Path], since: str | None) -> dict[str, Any]:
+    usage: dict[Key, list[tuple[str, int, int]]] = collections.defaultdict(list)
+    lock_waits: list[float] = []
+    queue: list[tuple[float, int, str, str]] = []
+    agents: dict[str, list[float]] = collections.defaultdict(list)
+    tools: collections.Counter[str] = collections.Counter()
+    tool_rounds: collections.Counter[int] = collections.Counter()
+    resolutions: collections.Counter[tuple[str, str]] = collections.Counter()
+    projections: list[tuple[Any, Any, Any]] = []
+    tokenizer: collections.Counter[str] = collections.Counter()
+
+    for name, event in _iter_events(paths, since):
+        kind = event.get("event", "")
+        key: Key = (name, str(event.get("request_id")))
+        if event.get("input_tokens") is not None:
+            usage[key].append((
+                str(event.get("timestamp")), int(event["input_tokens"]),
+                int(event.get("cached_input_tokens") or 0),
+            ))
+        if kind == "lock.wait.completed" and event.get("lock_name") == "conversation":
+            lock_waits.append(float(event.get("duration_ms") or 0))
+        if kind == "turn.queue":
+            queue.append((
+                float(event.get("queue_wait_ms") or 0), int(event.get("turns_ahead") or 0),
+                str(event.get("route") or "?"), str(event.get("speaker_role") or "?"),
+            ))
+        if kind == "llm.turn.completed":
+            agents[str(event.get("agent"))].append(float(event.get("duration_ms") or 0) / 1000)
+            if event.get("agent") == "executor":
+                tool_rounds[int(event.get("tool_call_count") or 0)] += 1
+        if kind == "llm.tool.completed":
+            tools[str(event.get("tool_name"))] += 1
+        if kind == "executor.resolution":
+            resolutions[(str(event.get("disposition")), str(event.get("validation_code")))] += 1
+        if kind == "llm.history.selected":
+            tokenizer[str(event.get("tokenizer"))] += 1
+        message = str(event.get("message", ""))
+        if "取用完整性" in message:
+            # The projection metadata is embedded in a reducer log line.
+            for blob in re.findall(r'\[\{"record_id".*?\}\]', message):
+                try:
+                    parsed = json.loads(blob)
+                except ValueError:
+                    continue
+                for row in parsed:
+                    projections.append((
+                        row.get("budget_tokens"), row.get("complete_for_action"),
+                        row.get("projection_reason"),
+                    ))
+    return {
+        "usage": usage, "lock_waits": lock_waits, "queue": queue, "agents": agents,
+        "tools": tools, "tool_rounds": tool_rounds, "resolutions": resolutions,
+        "projections": projections, "tokenizer": tokenizer,
+    }
+
+
+def report(data: dict[str, Any]) -> None:
+    usage = data["usage"]
+
+    print("== cache hit rate by request position in a turn ==")
+    by_position: dict[str, list[int]] = collections.defaultdict(lambda: [0, 0, 0])
+    for calls in usage.values():
+        for index, (_, tokens, cached) in enumerate(sorted(calls)):
+            label = "first" if index == 0 else ("second" if index == 1 else "third+")
+            bucket = by_position[label]
+            bucket[0] += tokens
+            bucket[1] += cached
+            bucket[2] += 1
+    for label in ("first", "second", "third+"):
+        tokens, cached, count = by_position[label]
+        if count:
+            print(f"  {label:<8} n={count:<4} input={tokens:>9,} cached={cached:>9,} {_rate(cached, tokens)}")
+
+    print("\n== cache hit rate by stage ==")
+    # The Narrator's single request is much smaller than an Executor request,
+    # which is the only stage marker the usage events carry.
+    by_stage: dict[str, list[int]] = collections.defaultdict(lambda: [0, 0, 0])
+    for calls in usage.values():
+        for _, tokens, cached in calls:
+            bucket = by_stage["narrator-shaped (<17k)" if tokens < 17000 else "executor-shaped (>=17k)"]
+            bucket[0] += tokens
+            bucket[1] += cached
+            bucket[2] += 1
+    total_in = total_cached = 0
+    for label, (tokens, cached, count) in sorted(by_stage.items()):
+        total_in += tokens
+        total_cached += cached
+        print(f"  {label:<24} n={count:<4} input={tokens:>9,} cached={cached:>9,} {_rate(cached, tokens)}")
+    print(f"  {'overall':<24}           input={total_in:>9,} cached={total_cached:>9,} {_rate(total_cached, total_in)}")
+
+    print("\n== conversation lock wait (lock.wait spans) ==")
+    waits = data["lock_waits"]
+    if waits:
+        print(f"  n={len(waits)}  median {_pct(waits, .5):.0f}ms  p90 {_pct(waits, .9):.0f}ms"
+              f"  p99 {_pct(waits, .99):.0f}ms  max {max(waits):.0f}ms"
+              f"  over 1s: {sum(1 for w in waits if w > 1000)}")
+    else:
+        print("  none recorded")
+
+    print("\n== turn queue (turn.queue events) ==")
+    queue = data["queue"]
+    if not queue:
+        print("  none recorded — pre-WP3.2 logs do not carry this event")
+    else:
+        for field, index in (("route", 2), ("speaker_role", 3)):
+            print(f"  by {field}:")
+            grouped: dict[str, list[float]] = collections.defaultdict(list)
+            for row in queue:
+                grouped[row[index]].append(row[0])
+            for label, values in sorted(grouped.items()):
+                print(f"    {label:<14} n={len(values):<4} median {_pct(values, .5):>7.0f}ms"
+                      f"  p90 {_pct(values, .9):>7.0f}ms  max {max(values):>7.0f}ms")
+        depths = collections.Counter(row[1] for row in queue)
+        print(f"  turns ahead: {dict(sorted(depths.items()))}")
+
+    print("\n== per-agent duration ==")
+    for agent, values in sorted(data["agents"].items()):
+        print(f"  {agent:<10} n={len(values):<4} median {_pct(values, .5):5.1f}s"
+              f"  p90 {_pct(values, .9):5.1f}s  max {max(values):5.1f}s")
+
+    print("\n== model requests and input tokens per turn ==")
+    turns = [calls for calls in usage.values() if len(calls) >= 2]
+    if turns:
+        counts = [len(calls) for calls in turns]
+        totals = [sum(tokens for _, tokens, _ in calls) for calls in turns]
+        print(f"  multi-request turns n={len(turns)}  requests median {_pct(counts, .5):.0f} max {max(counts)}")
+        print(f"  input tokens median {_pct(totals, .5):,.0f}  max {max(totals):,}")
+
+    print("\n== tool composition ==")
+    tools = data["tools"]
+    total_tools = sum(tools.values())
+    for name, count in tools.most_common():
+        print(f"  {name:<24} {count:>4}  {_rate(count, total_tools)}")
+    if data["tool_rounds"]:
+        print(f"  executor tool rounds per turn: {dict(sorted(data['tool_rounds'].items()))}")
+
+    print("\n== executor resolutions ==")
+    resolutions = data["resolutions"]
+    total_res = sum(resolutions.values())
+    incomplete = sum(v for (disposition, _), v in resolutions.items() if disposition == "incomplete")
+    for (disposition, code), count in resolutions.most_common():
+        print(f"  {count:>3}  {disposition} / {code}")
+    if total_res:
+        print(f"  incomplete: {incomplete}/{total_res} ({100 * incomplete / total_res:.0f}%)")
+
+    print("\n== scenario projection completeness ==")
+    projections = data["projections"]
+    if projections:
+        complete = sum(1 for _, flag, _ in projections if flag)
+        budgets = [b for b, _, _ in projections if b is not None]
+        print(f"  complete_for_action: {complete}/{len(projections)}")
+        if budgets:
+            print(f"  budget_tokens median {_pct(budgets, .5):.0f}  min {min(budgets)}  max {max(budgets)}")
+        print(f"  projection_reason: {dict(collections.Counter(r for _, _, r in projections))}")
+    else:
+        print("  none recorded")
+
+    print("\n== tokenizer ==")
+    print(f"  {dict(data['tokenizer']) or 'no llm.history.selected events'}")
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("target", type=Path, help="a runtime log file, or a directory of them")
+    parser.add_argument("--since", help="ISO timestamp prefix; drop events at or before it")
+    parser.add_argument("--glob", default="*_runtime_*.log",
+                        help="pattern used when target is a directory")
+    args = parser.parse_args(argv)
+
+    if args.target.is_dir():
+        paths = sorted(args.target.glob(args.glob))
+    elif args.target.is_file():
+        paths = [args.target]
+    else:
+        print(f"no such log file or directory: {args.target}", file=sys.stderr)
+        return 2
+    if not paths:
+        print(f"no logs matching {args.glob!r} under {args.target}", file=sys.stderr)
+        return 2
+
+    print(f"logs: {len(paths)} file(s)" + (f", since {args.since}" if args.since else ""))
+    report(collect(paths, args.since))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

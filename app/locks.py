@@ -31,7 +31,7 @@ from app import config, observability
 
 # Legacy conversation lock: used by the current coarse-grained flow and kept
 # unchanged while callers are migrated incrementally.
-_locks: dict[str, asyncio.Lock] = {}
+_locks: dict[str, _ObservableConversationLock] = {}
 
 # State lock: future per-conversation synchronous state transactions around
 # load_state -> mutate -> save_state. It is a threading.RLock so Keeper worker
@@ -95,20 +95,57 @@ _keeper_priority_gates: dict[str, _KeeperPriorityGate] = {}
 
 
 class _ObservableConversationLock(asyncio.Lock):
-    """Conversation lock that measures queue wait without changing semantics."""
+    """Conversation lock that measures queue wait without changing semantics.
+
+    Two counters, both maintained here rather than read from asyncio's private
+    _waiters so they stay correct if that internal changes:
+
+    `blocked` counts callers currently inside acquire(). Read *before* a caller
+    enters the queue it gives how many turns are already ahead of it, because
+    asyncio.Lock hands the lock over in arrival order.
+
+    `completed` counts turns that have finished holding the lock. A waiter
+    cannot recount its own position later — a plain counter cannot tell who
+    arrived before it from who arrived after — so it subtracts this counter's
+    progress from its entry snapshot instead.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocked = 0
+        self.completed = 0
+
+    def turns_ahead(self) -> int:
+        """Turns already queued: the holder plus anyone waiting.
+
+        Only meaningful before the calling turn enters the queue itself.
+        """
+        return (1 + self.blocked) if self.locked() else 0
+
+    def remaining_ahead(self, entry_ahead: int, entry_completed: int) -> int:
+        """How much of an entry-time queue is left, for a waiter's own position."""
+        return max(0, entry_ahead - (self.completed - entry_completed))
 
     async def acquire(self) -> Literal[True]:
-        with observability.span(
-            "lock.wait",
-            lock_name="conversation",
-            lock_threshold_ms=config.LOG_SLOW_OPERATION_MS,
-            slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
-        ):
-            await super().acquire()
-            return True
+        self.blocked += 1
+        try:
+            with observability.span(
+                "lock.wait",
+                lock_name="conversation",
+                lock_threshold_ms=config.LOG_SLOW_OPERATION_MS,
+                slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
+            ):
+                await super().acquire()
+                return True
+        finally:
+            self.blocked -= 1
+
+    def release(self) -> None:
+        self.completed += 1
+        super().release()
 
 
-def get_conversation_lock(conversation_id: str) -> asyncio.Lock:
+def get_conversation_lock(conversation_id: str) -> _ObservableConversationLock:
     lock = _locks.get(conversation_id)
     if lock is None:
         lock = _ObservableConversationLock()
