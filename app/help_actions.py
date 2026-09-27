@@ -267,27 +267,10 @@ def build_command(action: HelpExecution, selected: str = "", field_values: tuple
 
 def _template_options(source: str) -> list[tuple[str, str]]:
     """List valid source-bound choices; handlers still validate at execution."""
-    import json
-    import re
-
     from app import scenario_library, scenario_templates
 
     options = []
-    workbooks = []
-    if source == "template_import":
-        directory = scenario_templates.IMPORT_DIR
-        if directory.is_dir():
-            for path in sorted(directory.iterdir()):
-                if (path.is_symlink() or not path.is_file() or path.suffix.lower() != ".md"
-                        or any(c in path.name for c in "\r\n\t")):
-                    continue
-                try:
-                    match = re.search(r"```json\s*(\{.*?\})\s*```", path.read_text(encoding="utf-8"), re.DOTALL)
-                    data = json.loads(match.group(1)) if match else None
-                    if isinstance(data, dict) and data.get("schema_version") == scenario_templates._VERSION:
-                        workbooks.append((path.name, data))
-                except (OSError, ValueError):
-                    continue
+    workbooks = scenario_templates.import_candidates() if source == "template_import" else []
     for scenario in scenario_library.list_scenarios():
         scenario_id = scenario.get("id")
         if not isinstance(scenario_id, str):
@@ -296,10 +279,21 @@ def _template_options(source: str) -> list[tuple[str, str]]:
         try:
             if source == "template_import":
                 manifest, _ = scenario_templates._source(scenario_id)
+                matches: dict[tuple[int, str], bool] = {}
                 for filename, data in workbooks:
-                    if (data.get("source_hash") == manifest["content_hash"]
-                            and data.get("chapter_hash") == scenario_templates._chapter_hash(manifest)):
-                        options.append((f"{title} · {filename}", f"{scenario_id} {filename}"))
+                    version, export_id = data.get('authoring_version'), data.get('export_id')
+                    key = (version, export_id) if type(version) is int and isinstance(export_id, str) else None
+                    if key is not None and key in matches:
+                        matched = matches[key]
+                    else:
+                        matched = scenario_templates.import_matches(scenario_id, data, manifest=manifest)
+                        if key is not None:
+                            matches[key] = matched
+                    if matched:
+                        parts = filename.split('/')
+                        display = f"{parts[0][7:15]} · {parts[-1]}" if len(parts) == 3 else filename
+                        label = f"{display} · {title}" if len(parts) == 3 else f"{title} · {filename}"
+                        options.append((label, f"{scenario_id} {filename}"))
                 continue
             for variant in scenario_templates.status(scenario_id)["variants"]:
                 if not variant["current"]:

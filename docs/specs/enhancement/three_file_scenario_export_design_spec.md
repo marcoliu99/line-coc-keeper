@@ -4,13 +4,13 @@
 
 ## Status and goal
 
-Category: `enhancement`. Status: **proposed; packaging policy confirmed, implementation pending**. Baseline: `main_v2` at `8e32683` (PR #94 merged). Branch: `enhancement/three-file-scenario-export`.
+Category: `enhancement`. Status: **implemented; local verification complete, not yet merged**. Baseline: `main_v2` at `8e32683` (PR #94 merged). Branch: `enhancement/three-file-scenario-export`.
 
-The current exporter couples an approximately 8,000-source-character translation batch to one physical MD. The reviewed Haunting export has 19 units and 10 batches, so it produces 10 files. The user requests no more than three files, including long campaigns.
+Before this change, the exporter coupled an approximately 8,000-source-character translation batch to one physical MD. The reviewed Haunting export has 19 units and 10 batches, so it produced 10 files. The user requests no more than three files, including long campaigns.
 
 Recommended contract: **one to three exported MD files per export**, never extra empty files. Long scenarios that fit the supported resource envelope also use at most three. Preserve all source units, rules and provenance. Three files does not promise three web-AI replies or three translated result files: translation can require several continuations, which import incrementally without losing prior work.
 
-This change is separate from the turn-safety/latency refactor. No gameplay projection budget or source fidelity rule changes. This document is design only.
+This change is separate from the turn-safety/latency refactor. No gameplay projection budget or source fidelity rule changes. The implementation and verification notes below record the delivered behavior.
 
 ## Design decision: separate packages from work batches
 
@@ -46,7 +46,7 @@ Use `<scenario_title>_<NN>.md`, starting at `01`; pad to at least two digits (`9
 
 Use the library's display title as the prefix, with the stable scenario slug as fallback. Preserve Chinese characters; replace whitespace with underscores and filesystem separators/control characters with safe underscores. Bound filename length without removing the numeric suffix. Registry package IDs remain `p1`/`p2`/`p3`; filenames are display/storage names, never authorization or import identity.
 
-Create each export in its own server-controlled directory under `imports`, preserving the basename while preventing collisions across repeated exports or identical sanitized titles. File listing/Help must support these controlled relative paths, retain root/symlink containment checks and distinguish export instances privately. Do not overwrite an existing export or add random characters to the requested basename. Users place AI results in a separate result location for that export, so a translated `The_Haunting_01.md` cannot overwrite its source workbook. The import UI must clearly distinguish source and returned files. A later implementation must test directory-aware selection and source/result separation; changing only `mkstemp` prefixes is insufficient.
+Create each export in its own server-controlled directory under `imports`, preserving the basename while preventing collisions across repeated exports or identical sanitized titles. File listing/Help must support these controlled relative paths, retain root/symlink containment checks and distinguish export instances privately. Do not overwrite an existing export or add random characters to the requested basename. Users place AI results in a separate result location for that export, so a translated `The_Haunting_01.md` cannot overwrite its source workbook. The import UI must clearly distinguish source and returned files. The implementation tests directory-aware selection and source/result separation; changing only `mkstemp` prefixes is insufficient.
 
 The supplied AI instructions must explicitly request these names and continuation numbering. Completion responses tell the user the next output number to request if continuing in a new chat. Numbers are an organizational aid; validated export/package/batch/unit IDs determine actual coverage and replay behavior.
 
@@ -114,8 +114,21 @@ The web AI is instructed to preserve package/export/batch/unit IDs, source quota
 
 Required tests: scenario-title filenames, Chinese titles, sanitized separators, repeated-title/export collisions, separate source/result locations, numbering across packages and beyond 99, controlled subdirectory Help/import selection; 1/2/3/10/hundreds of logical batches produce at most three files; exact source concatenation/hashes preserved; nonempty contiguous assignments; stable partitioning including multibyte text; oversized unit/whole input preflight; no fourth file on failure; export interruption exposes no ready partial set; file-list UI contains at most three paths and the visible prompt; package spoofing and cross-batch units rejected; several partial imports within the same package accumulate without replacement; identical replay is a no-op; conflict/explicit replacement; one invalid submitted batch changes nothing; out-of-order packages/dependencies; full coverage alone does not bypass uncertainty/review; v1/v3 imports and v4 retrieval still pass; identical content imported in different orders converges; candidate-save interruption remains idempotent.
 
-The Haunting fixture should move from ten source workbooks to three, retaining all 19 units. Also use a long synthetic scenario with hundreds of logical batches; verify file count and complete source coverage, not just a mocked batch count. Tests use temporary libraries/import directories without live API calls. After approval, run existing authoring/template/help and full regression suites. No new runtime behavior has been implemented or claimed tested in this spec change.
+The Haunting fixture should move from ten source workbooks to three, retaining all 19 units. Also use a long synthetic scenario with hundreds of logical batches; verify file count and complete source coverage, not just a mocked batch count. Tests use temporary libraries/import directories without live API calls. After approval, run existing authoring/template/help and full regression suites. See implementation verification below.
 
-## Review recommendation
+## Accepted decision
 
-Approve the **at-most-three physical package** policy with small internal batches and resumable v2 import. Keep resource failures explicit and leave old exports usable. The implementation must include importer and prompt changes together; changing only the file-count calculation would make large-package continuation fragile.
+Apply the accepted **at-most-three physical package** policy with small internal batches and resumable v2 import. Keep resource failures explicit and leave old exports usable. The implementation must include importer and prompt changes together; changing only the file-count calculation would make large-package continuation fragile.
+
+
+## Implementation verification (2026-09-27)
+
+- New exports use authoring v2 and a checksum-bound package registry. Units remain 4,000 characters and logical batches 8,000; ordered byte balancing yields at most three source files. Source filenames use the actual library title (scenario ID fallback), Unicode-safe 120-byte prefixes, and numeric suffixes.
+- Files live in `imports/export-<id>/source/`; users save AI responses in that export's `results/`. Publication stages both directories and registry, with rollback on write/publication failure. The ready registry gates Help selection. The import picker also retains flat legacy uploads and rejects source paths, traversal and symlink ancestors.
+- V2 imports merge complete records within batches and validate the whole candidate before one draft write. Explicit `replace_record_ids` protects saved translations; deterministic order and variant identity preserve replay safety. V1 `replace_batch` and legacy v3 imports remain supported.
+- Both workbook and export DM explicitly request downloadable UTF-8 `.md` files. Workbooks include continuation/replacement examples. The import DM reports unit and package progress, missing batch/unit IDs and the next result filename. Long missing lists are capped in the DM, with the full private `progress.json` path supplied. Next numbering follows the highest correctly named result file in that export's results directory; users continuing in another web chat should supply that number.
+- The real local Haunting source was read without modifying the game library and exported into a temporary directory: **19 units / 10 batches / 3 files**, with exact source reconstruction. Files: `The_Haunting_Scenario_trimmed_01.md` through `_03.md`, 44,521 / 45,449 / 55,372 bytes. The title comes from the manifest, not a hardcoded Chinese example.
+- Synthetic cases cover 1, 2, 3, 10 and **201 logical batches**, multibyte source preservation, title sanitization/collisions, numbering beyond 99, partial-unit accumulation, reordered packages/dependencies, full-coverage validation, compatibility, Help/command privacy, resource rejection and interrupted publication/save.
+- Verification: isolated full pytest suite **964 passed, 1 skipped, 33 subtests passed**; Ruff on changed Python files; `python3 -m mypy app` (83 files). No live translation/API requests or production state writes.
+
+Resource limits are unchanged. File count is bounded, not translation reply count. Automated validation cannot certify translation fidelity, and external web attachment availability still depends on the chosen AI website. New files still require the existing human review/approval workflow before gameplay selection.

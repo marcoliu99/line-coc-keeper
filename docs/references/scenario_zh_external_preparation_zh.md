@@ -1,24 +1,41 @@
-# 中文劇本外部製作模板（schema v3）
+# 中文劇本外部製作指南
 
-## 目前預設：外部整備 v1
+[English](scenario_zh_external_preparation.md)
 
-[完整設計與限制](../specs/enhancement/external_template_authoring_design_spec_zh.md)
+## 目前預設：外部整備 v2（最多三個來源檔）
 
-1. 在 Help 選擇劇本並匯出，或使用 `/coc scenario template export 劇本ID`。限 KP／Keeper；完成私訊列出各批 MD 路徑及可複製提示詞。
-2. 將 MD 上傳網頁 AI，貼上：
+[三檔設計與限制](../specs/enhancement/three_file_scenario_export_design_spec_zh.md) · [來源依據與遊戲檢索](../specs/enhancement/external_template_authoring_design_spec_zh.md)
+
+1. 在 Help 選劇本並匯出，或使用 `/coc scenario template export 劇本ID`。限 KP／Keeper；私訊列出一至三個 MD 路徑及下方提示詞。支援容量內的長劇本也保留完整來源。
+2. 將來源 MD 上傳網頁 AI，貼上：
 
    > 請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
+   > 請實際產生並提供可下載的 .md 檔案。若分次完成，每次都請提供包含本次已完成內容、可直接匯入的 .md 檔，並在回覆中列出尚未完成的 batch_id／unit_id。
+   > 檔名請以劇本名為前綴，格式為「劇本名_01.md」，分次回傳時數字依序累加。
 
-3. 保留 `authoring_version: 1`、`export_id`、`batch_id` 與單元 ID。頁碼、hash、字元位置由程式重建；不要自行補成舊 schema v3。
-4. 將完成的 MD 放進伺服器 `imports`，使用 Help 選檔，或 `/coc scenario template import 劇本ID 檔名.md`。
-5. 部分單元先保存草稿；需修改已提交批次時，JSON 加上 `replace_batch: true`。校對失敗的詳細報告路徑會私訊 KP，可連同原工作檔交回 AI 修正。
-6. 全部來源完成後產生待校閱 v4 版本，透過 preview、approve，再用 `/coc scenario use 劇本ID 版本ID` 選用。
+   完整或部分成果每次都要提供實際可下載的 MD，另列未完成 IDs。檔名取實際劇本名，沒有固定成「陰宅」。
+3. 保留 `authoring_version: 2`、`export_id`、`package_id`、`batches[].batch_id` 與單元 ID。每檔恰好一個 authoring JSON 區塊。程式重建頁碼、hash、位置；不要自行補舊 v3 的來源欄位。
+4. 只提交已完整翻譯的記錄。刪除尚未完成的空白 records／batches，未完成 IDs 列在 JSON 外。一個來源檔可以分多次回覆；不要為了三次內做完而摘要。保留機制引句、數字、例外與依賴。
+5. 來源在 `imports/export-<id>/source/`，AI 成果下載至同一 export 的 `results/`，再用 Help 選成果匯入。文字指令等價為 `/coc scenario template import 劇本ID export-<id>/results/實際劇本名_01.md`。新完成單元會追加至同一草稿，同一 batch 也能分次完成。來源與成果分開編號；所有 package／回覆共用成果流水號 `_01.md`、`_02.md`，可到 `_100.md`。私訊進度會提供下一個建議檔名。
+6. 更正已存記錄時，在該 batch 的 `replace_record_ids` 放該 ID，並附完整替換記錄；未附舊筆會保留。相同重送安全；本次任何一批有錯，都不改舊草稿。需更正時，把私人診斷報告連同來源工作檔交回 AI。
+7. 匯入私訊列各 package 完成單元及未完成 batch/unit IDs；過長清單另有完整私人報告路徑。全來源完成並通過驗證後產生待校閱 runtime v4，再 preview、approve，最後用 `/coc scenario use 劇本ID 版本ID` 選用。
 
-完整翻譯不受舊 6,000／12,000 字元投影門檻限制。遊戲取用依 token 預算，必要規則不足時須續取或暫緩。不要為了通過格式驗證而填假引述或把 uncertainty 無條件清空。
+以下只有封套示意；字串佔位須換成完整翻譯記錄物件。實際匯出檔已包含可填記錄：
+
+```text
+{"authoring_version":2,"export_id":"export-<原始 ID>","package_id":"p1",
+ "batches":[{"batch_id":"b1","records":["完整記錄物件"]}]}
+```
+
+完整翻譯不受舊 6,000／12,000 字元投影門檻限制。遊戲依 token 預算取用，必要規則不足時須續取或暫緩。不要填假引句或無條件清空 uncertainty 以通過驗證；來源覆蓋與格式驗證不能證明翻譯忠實度。
+
+## 既有 authoring v1 匯出
+
+舊匯出仍有效，包括來源超過三檔的既有 export。保留原始 `authoring_version: 1`、`export_id`、`batch_id`、`records` 封套；依舊規則用 `replace_batch: true` 明確替換整批。成果放伺服器 imports 根目錄並從 Help 選取。重新匯出會產生獨立 v2 export，不會自動搬移 v1 草稿進度。
 
 ## 舊 schema v3 手動整備參考
 
-以下內容與範例只供既有 v3 檔案維護；新匯出請使用上面的整備 v1 流程。舊 v3 匯入仍保留原有來源位置與大小驗證，不自動轉成 v4。
+以下內容與範例只供既有 v3 檔案維護；新匯出請使用上面的整備 v2 流程。舊 v3 匯入仍保留原有來源位置與大小驗證，不自動轉成 v4。
 
 
 [English](scenario_zh_external_preparation.md)

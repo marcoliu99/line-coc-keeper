@@ -4,13 +4,13 @@
 
 ## 狀態與目標
 
-分類：`enhancement`。狀態：**proposed；檔案政策已確認，待實作核准**。基準：`main_v2` 的 `8e32683`（PR #94 已合併）。分支：`enhancement/three-file-scenario-export`。
+分類：`enhancement`。狀態：**implemented；已實作並完成本機驗證，尚未合併**。基準：`main_v2` 的 `8e32683`（PR #94 已合併）。分支：`enhancement/three-file-scenario-export`。
 
-目前匯出器把每約 8,000 字來源的翻譯批次，各存成一個 MD。先前核對的 Haunting 有 19 個單元、10 個批次，因此產生 10 個檔案。使用者希望減為最多三個，長期劇本也一樣。
+本次修改前，匯出器把每約 8,000 字來源的翻譯批次，各存成一個 MD。先前核對的 Haunting 有 19 個單元、10 個批次，因此產生 10 個檔案。使用者希望減為最多三個，長期劇本也一樣。
 
 建議契約：**每次匯出一至三個 MD**，不產生空檔案。符合支援資源範圍的長劇本也最多三個；保留全部來源、規則與依據。三個檔案不保證外部 AI 三次回覆或三個翻譯結果檔就完成；必要時分次回傳，匯入累積進度，不洗掉先前成果。
 
-本調整與回合正確性／延遲重構分開，不改遊戲檢索預算或來源忠實度規則。本次只有設計。
+本調整與回合正確性／延遲重構分開，不改遊戲檢索預算或來源忠實度規則。下方實作與驗證紀錄說明已交付行為。
 
 ## 設計：檔案包與工作批次分開
 
@@ -114,8 +114,21 @@ Help 與文字指令共用 message builder，最多列 **三個檔名**、packag
 
 必測：劇本名前綴、中文名、分隔符清理、重複劇本名／export 碰撞、來源／成果隔離、跨 package 及超過 99 的編號、受控子目錄 Help／匯入選檔；1/2/3/10/數百批都不超過三檔；原文串接及 hashes 完整；非空連續分配；含多位元文字的穩定分包；過大 unit/全來源 preflight；失敗不產第四檔；中斷不暴露 ready 半套；UI 最多三路徑及可見提示詞；偽造 package、跨 batch unit 拒絕；同 package 多次部分匯入不需 replacement 就累積；相同重送 no-op；衝突／明確替換；本次一批錯誤不改任何舊資料；亂序 packages／dependencies；全覆蓋不跳過 uncertainty/review；v1/v3 匯入與 v4 retrieval 仍通過；同內容不同順序結果一致；candidate save 中斷保持冪等。
 
-Haunting fixture 應由十來源檔變三檔，19 units 全保留。另外用數百邏輯批次的合成長劇本，驗實際檔案數及來源完整覆蓋，不只 mock 批次數。測試使用暫存 library/imports，不呼叫真實 API。核准實作後執行 authoring/template/help 及完整 regression suites。本次 spec 沒有實作或宣稱測試新 runtime 行為。
+Haunting fixture 應由十來源檔變三檔，19 units 全保留。另外用數百邏輯批次的合成長劇本，驗實際檔案數及來源完整覆蓋，不只 mock 批次數。測試使用暫存 library/imports，不呼叫真實 API。核准實作後執行 authoring/template/help 及完整 regression suites。驗證結果見下方實作紀錄。
 
-## 審查建議
+## 已接受的決策
 
 建議採 **最多三個實體檔案包**，保留內部小批次與可續做的 v2 import。資源失敗明確說明，舊 export 繼續可用。實作需一起改 importer／提示詞，不能只改檔案數，否則大檔續做容易覆蓋先前成果。
+
+
+## 實作驗證（2026-09-27）
+
+- 新匯出使用 authoring v2，package 對應納入 registry checksum。來源單元維持 4,000 字、邏輯批次 8,000 字，依序按位元組分配至最多三檔。檔名前綴取實際劇本顯示名稱（缺少時使用劇本 ID），保留中文、安全截至 120 bytes，再加流水號。
+- 來源位於 `imports/export-<id>/source/`；AI 成果放同一 export 的 `results/`。檔案與 registry 先暫存，寫入／發布失敗時清除未完成內容；Help 只辨識已有 ready registry 的匯出。仍支援 imports 根目錄的舊成果；拒絕 source 路徑、目錄跳脫與符號連結祖先。
+- V2 可在同批次追加完整記錄，整份候選驗證成功後才一次寫入草稿。`replace_record_ids` 明確保護已存翻譯；固定排序與版本識別使重送保持冪等。保留 v1 的 `replace_batch` 與舊 v3 匯入。
+- 工作檔與匯出私訊都要求提供實際可下載 UTF-8 `.md`，工作檔附續做／更正示意。匯入私訊列出單元／package 進度、未完成 batch/unit IDs、下一個成果檔名；過長清單在私訊截短，另提供完整私人 `progress.json` 路徑。下一個數字取該 results 目錄中符合命名的最大流水號加一；換網頁對話續做時，將此數字告訴 AI。
+- 唯讀使用現有 Haunting 來源，在暫存目錄匯出：**19 單元／10 批次／3 檔**，逐段重建原文完全一致。檔名為 `The_Haunting_Scenario_trimmed_01.md` 至 `_03.md`，大小 44,521／45,449／55,372 bytes；名稱來自 manifest，沒有寫死「陰宅」。
+- 合成案例涵蓋 1、2、3、10、**201 邏輯批次**、多位元原文完整性、檔名清理與碰撞、超過 99 的編號、同批分次累積、亂序檔案／依賴、全覆蓋驗證、相容匯入、Help／指令保密、容量拒絕及發布／儲存中斷。
+- 驗證：隔離完整 pytest **964 passed、1 skipped、33 subtests passed**；變更 Python 檔通過 Ruff；`python3 -m mypy app` 通過 83 檔。沒有呼叫真實翻譯／API，也沒有寫入正式遊戲資料。
+
+資源上限維持原值；限制來源檔數，不限制翻譯回覆次數。自動驗證不能認證翻譯忠實度，網頁能否提供下載附件仍取決於所用 AI 網站。新成果仍須經既有校閱／核准流程，才能選為遊玩版本。
