@@ -6,7 +6,7 @@
 
 Category: `enhancement`. Status: **implemented; web-AI usability and live API performance trials pending**. Baseline: `main_v2` at `c05e152` (2026-09-27). This proposal extends PR #83 while retaining original-source evidence, chapter isolation and approval before activation, and adds complete storage and demand-driven retrieval for long campaigns.
 
-This branch implements authoring v1, runtime v4 and legacy v3 import compatibility. Section 10 records concrete behavior and limitations of the design decisions below.
+PR #94 implemented authoring v1, runtime v4 and legacy v3 import compatibility; the subsequent three-file enhancement switches new exports to v2 while retaining v1 imports. Section 10 records concrete behavior and limitations of the design decisions below.
 
 ## 1. Observed failure and cause
 
@@ -140,7 +140,7 @@ The design was approved and runtime implementation is complete. The existing mal
 
 ## 10. Implementation results and operating limits
 
-- `export_template` now exports authoring v1; `export_legacy_template` remains the v3 compatibility-test entry point. New workbooks do not ask the external AI to supply pages, hashes or offsets.
+- `export_template` originally exported authoring v1 in PR #94; the subsequent three-file enhancement now exports v2; `export_legacy_template` remains the v3 compatibility-test entry point. New workbooks do not ask the external AI to supply pages, hashes or offsets.
 - Source units are capped at 4,000 characters, preferring paragraph/newline boundaries; batches target 8,000 source characters. These are provenance units, not proof of semantic completeness. Neighbor context is reference-only; cross-unit conditions still require complete translation and explicit links.
 - Registries and batch drafts live under the scenario variants directory at `exports/<export_id>/`. Resource ceilings are 20 MB per file/aggregate draft, 20,000 records, and 100 exports or 200 MB of export data per scenario. Exceeding limits reports an error. Drafts do not expire automatically; administrators archive unused exports. Scenario cleanup removes them.
 - Records may combine up to 100 unit_ids from one source parent. Cross-parent content requires separate linked records. Each rule field currently accepts one unique exact quotation; multiple evidence entries report RULE_REPRESENTATION and require complete subrules rather than guessed offsets.
@@ -161,3 +161,7 @@ The design was approved and runtime implementation is complete. The existing mal
 ### PR #94 review corrections
 
 Retrieval admission and OpenAI requests share history selection, so discarded persisted history does not consume the retrieval allowance. Other providers retain their full history. Continuations certify only a contiguous prefix actually delivered after metadata budgeting; later pages accumulate that evidence and release the same-root action hold when all required fragments are present. Cursors retain the original roots and are bound to the history and result count as well as the existing authorization/version/query scope. An oversized mandatory fragment cannot be skipped or certified by later fragments.
+
+## Proposed follow-up: at most three exported files
+
+[Three-file packaging and resumable v2 import](three_file_scenario_export_design_spec.md) is implemented: new exports contain at most three source files with small logical batches and incremental complete-unit imports; existing v1 exports remain valid. Section 10 retains the original PR #94 implementation record; the three-file spec governs current packaging, filenames, incremental merge and progress.
