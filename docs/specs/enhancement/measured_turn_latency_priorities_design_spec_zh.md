@@ -2,7 +2,7 @@
 
 [English](measured_turn_latency_priorities_design_spec.md)
 
-狀態：**WP1、WP2、WP3.2、WP3.3 已實作；WP3.4、WP3.5、WP4 提案中**。基底：`main_v2` 的 `5961f2b`。
+狀態：**WP1、WP2、WP3.2、WP3.3 已實作；WP3.4、WP3.5、WP4、WP5 提案中**。基底：`main_v2` 的 `5961f2b`。
 
 ## 0. 這份文件為什麼存在
 
@@ -277,7 +277,67 @@ executor 每回合 tool_call_count：  0:4  1:2  2:3  3:3  5:1  7:1  8:1
 - WP1 的腳本能逐回合輸出送出的搜尋查詢、回傳的 record ids，以及同一回合內連續搜尋之間的重疊。
 - 在指定任何改動之前，至少再用一次 session 把上述三類量化。
 
-## 5. 執行順序
+## 5. WP5 —— 待決 Luck 時不必花模型請求就能回覆
+
+### 5.1 實測問題
+
+一次 20 輪的實跑顯示了待決 Luck 的代價。**決定本身很便宜**：`/coc check` 與 `/coc luck` 由 router 交給 `handle_check_command` 與 `handle_luck_decision`，確定性處理，完全不進 Executor。貴的是玩家在決定待處理期間送出的**其他每一則訊息**。那些都是普通回合，而從訊息進來到 Executor 之間，沒有任何地方查看 `state.pending_luck_decisions` —— 最早的引用在 `supervisor.py:93`，那時回合已經在跑了。
+
+其中一個回合的時間軸：
+
+```text
+15:12:15.478  回合開始
+15:12:15.714  Executor 啟動
+15:12:17.819  模型回應 #1   in=22,940     已計費
+15:12:17.820  工具 clear_pending_check
+15:12:21.017  模型回應 #2   in=23,390     已計費
+15:12:21.018  executor.resolution = await_luck  <- 裁定在這裡才產生
+15:12:25.265  模型回應 #3   in=13,670     裁定之後仍然計費
+```
+
+裁定不是 pipeline 事先檢查的前提條件，而是 `turn_resolution.validate_resolution()` **拿 Executor 的輸出**推導出來的結論，所以 Executor 必須先跑。接著 Narrator 照樣執行，最後由 `prompt_config.enforce_mechanic_check_consistency` 把 Narrator 寫的東西丟掉，換成 `_pending_luck_fallback` 的確定性文字——而那段文字在回合開始前就已經可用。
+
+整場 20 輪中有 16 輪裁定為 `await_luck`，每輪耗費 2–4 次模型請求、36,000–86,000 input tokens、10–18 秒，且全程握著對話鎖。
+
+另外值得注意：該回合中模型呼叫了 `clear_pending_check`，試圖取消那個待處理檢定，被 `luck_takes_precedence` 正確擋下。提前擋回除了省下成本，也一併避免了這類無效嘗試。
+
+### 5.2 為什麼只做 Luck、不做待處理檢定
+
+**Luck 決定是封閉狀態。** 骰子已經擲出，而 `turn_resolution.py:148` 本來就寫死了沒有任何東西能排在它前面：`if disposition == "await_check" and owner in state.pending_luck_decisions: return incomplete(..., "luck_takes_precedence")`。在玩家做出決定之前，他說什麼都不能改變結果，因此確定性回覆不會拿掉任何模型本來能做的判斷。
+
+**待處理檢定不是封閉狀態。** 它還沒擲骰，玩家可以合法撤回——`turn_resolution` 有完整的 `cancelled` 路徑，會驗證 `clear_pending_check` 確實執行過、且沒有動到其他狀態。**若對待處理檢定也擋下訊息，就會破壞取消功能**，因此本工作包不碰它。
+
+### 5.3 範圍
+
+在 Executor 之前，僅針對行動中的該名玩家：
+
+| 情況 | 行為 |
+|---|---|
+| 該玩家持有待決 Luck 且送出新的遊戲行動 | 以 `_pending_luck_fallback` 回覆，零模型請求 |
+| `/coc luck hard` / `skip`、`/coc check` | 不變；本來就是確定性處理 |
+| status、sheet、help | 不變；本來就不進 Executor |
+| 其他玩家的回合 | 不變；決定是 per-user |
+| KP 或 sudo | 本工作包不改動 |
+
+### 5.4 待決定的設計問題
+
+**純角色扮演與 OOC 是否放行。** 擋住它們會讓玩家在等待決定期間連角色台詞都不能說，對遊戲體驗是實質損失；放行則需要先跑 `intent_router`，那是純規則、零成本。**建議放行**，但此項需要在實作前確認，因為它改變了玩家在決定待處理期間能做什麼。
+
+### 5.5 驗收
+
+- 持有待決 Luck 的玩家送出新遊戲行動時，產生確定性回覆且**沒有任何模型請求**，以「provider 從未被呼叫」斷言之。
+- 同樣狀態下，**其他玩家**的訊息仍走正常 pipeline。
+- 只有待處理檢定、沒有 Luck 決定時，仍然進入 Executor，且取消功能仍然可用。
+- `/coc luck` 與 `/coc check` 不受影響。
+- 確定性回覆的情況下，鎖只被持有該回覆所需的時間。
+
+### 5.6 限制
+
+16 輪的數字**高估了發生頻率**：harness 會解算待處理檢定但不解算 Luck 決定，因此模擬的是一個永遠不作答的玩家。真實遊戲會在一到三輪內作答。不過**每輪的單價相同**，而且鎖在整段期間都被握著。
+
+這只量測了單一 session、單一劇本。本文件不宣稱待決 Luck 在一般遊玩中出現的頻率。
+
+## 6. 執行順序
 
 ```text
 WP1   可重現的基準          -> 無 runtime 改動
@@ -287,11 +347,12 @@ WP3.2 排隊可觀測性          -> 與其他一切獨立
 WP3.4 移出 context 建構     -> 在 3.3 之後
 WP3.5 敘事前釋放鎖          -> 在 #97 與 #99 之後
 WP4   檢索往返              -> 在分類量出來之前只做調查
+WP5   待決 Luck             -> 直接消滅請求；需先決定 §5.4
 ```
 
 WP2、WP3、WP4 動到不同檔案，可分開審查。WP3 內部：3.2 與 3.3 彼此獨立、也與 WP2 獨立；3.4 只依賴 3.3；3.5 依賴本文件之外的工作。
 
-## 6. 限制
+## 7. 限制
 
 - 改動後的 session 只有 15 個 executor 回合、77 筆帶 usage 的請求、22 次鎖取得，涵蓋一場遊戲的 18 分鐘。p99 分位數建立在少數幾個觀測值上，`complete_for_action` 的 1/2 樣本太小，不足以稱為趨勢。
 - 兩次 session 的內容與程式碼都不同。延遲上升與工具呼叫組成一致，但未執行同劇本對照。

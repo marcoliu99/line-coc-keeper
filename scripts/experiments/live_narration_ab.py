@@ -39,6 +39,7 @@ load_dotenv(ROOT / ".env", override=False)
 
 from app import config, logging_config
 from app.agents import supervisor
+from app.legacy_commands import handle_check_command
 from app.repositories.group_state import load_state
 
 # Structured logging is started by discord_bot.main(), which this never calls,
@@ -47,11 +48,25 @@ logging_config.configure_logging(force=True)
 
 TURNS = [
     "我仔細看看這個房間有什麼不對勁的地方",
-    "我走到窗邊，把窗簾拉開",
     "我檢查一下自己身上還有什麼東西",
     "我想聽聽樓上有沒有聲音",
+    "我把油燈舉高，照一照牆角",
+    "我敲敲那面木板牆，聽聽是不是空心的",
     "我往樓梯走過去",
+    "我沿著樓梯慢慢往上走",
+    "我停在樓梯口，先觀察一下四周",
     "我推開最近的那扇門",
+    "我進去之後先環顧整個房間",
+    "我走到書桌旁邊，看看桌上有什麼",
+    "我拉開書桌的抽屜",
+    "我翻一翻抽屜裡的紙張",
+    "我把找到的東西收進背包",
+    "我走到窗邊，把窗簾拉開",
+    "我往窗外看出去",
+    "我回頭看看房間裡還有沒有別的出口",
+    "我仔細聞聞這個房間的氣味",
+    "我蹲下來檢查地板有沒有痕跡",
+    "我拿出筆記本把看到的記下來",
 ]
 
 
@@ -61,6 +76,31 @@ def restore(pristine: Path) -> None:
         if target.exists():
             target.unlink()
     shutil.copy2(pristine, os.environ["DB_PATH"])
+
+
+async def resolve_pending(group_id: str, owner: str) -> str:
+    """Roll an outstanding check the way a player pressing the button would.
+
+    Without this a long session stalls: every later turn is refused because an
+    earlier check is still waiting, and the run measures the refusal path
+    instead of ordinary play.
+    """
+    state = load_state(group_id)
+    if owner not in state.pending_checks:
+        return ""
+    lines: list[str] = []
+
+    async def reply(message: str) -> None:
+        lines.append(message)
+
+    async def noop(*_args, **_kwargs) -> None:
+        return None
+
+    try:
+        await handle_check_command(group_id, owner, reply, noop, noop, noop, "/coc check")
+    except Exception as exc:  # noqa: BLE001 - a failed roll is a result too
+        lines.append(f"[check raised {type(exc).__name__}: {exc}]")
+    return "\n".join(lines)
 
 
 async def play(group_id: str, turns: list[str], after_input: bool) -> list[dict]:
@@ -80,13 +120,15 @@ async def play(group_id: str, turns: list[str], after_input: bool) -> list[dict]
                 state, owner, name, text, None, "player", group_id)
         except Exception as exc:  # noqa: BLE001 - a failed turn is a result too
             reply, private, images = f"[turn raised {type(exc).__name__}: {exc}]", [], []
+        check = await resolve_pending(group_id, owner)
         results.append({
-            "turn": index, "text": text, "reply": reply,
+            "turn": index, "text": text, "reply": reply, "check": check,
             "private": len(private), "images": len(images),
             "seconds": time.monotonic() - started,
             "hp": getattr(character, "hp", None), "san": getattr(character, "san", None),
         })
-        print(f"  turn {index} ({results[-1]['seconds']:.1f}s): {reply[:90]}...", flush=True)
+        print(f"  turn {index} ({results[-1]['seconds']:.1f}s): {reply[:80]}"
+              + (f"  [check: {check[:50]}]" if check else ""), flush=True)
     return results
 
 
@@ -97,6 +139,8 @@ def show(label: str, records: list[dict]) -> None:
               f"private={record['private']}, images={record['images']}) ---")
         print(f"> {record['text']}")
         print(record["reply"])
+        if record.get("check"):
+            print(f"[check] {record['check']}")
 
 
 async def main() -> int:
@@ -106,6 +150,8 @@ async def main() -> int:
                         default=Path.home() / "workspace/line-coc-keeper-main-v2/data/coc_bot.db")
     parser.add_argument("--group", default="discord-channel-1550744273060765719")
     parser.add_argument("--turns", type=int, default=len(TURNS))
+    parser.add_argument("--only-wp2", action="store_true",
+                        help="run the shipping composition alone, for a longer session")
     args = parser.parse_args()
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -117,9 +163,10 @@ async def main() -> int:
     turns = TURNS[:args.turns]
     print(f"sandbox {SANDBOX}\ngroup {args.group}\nturns {len(turns)}\n")
 
+    arms = [("after_input=True (WP2)", True)] if args.only_wp2 else [
+        ("after_input=False (today)", False), ("after_input=True (WP2)", True)]
     outcomes = {}
-    for label, after_input in (("after_input=False (today)", False),
-                               ("after_input=True (WP2)", True)):
+    for label, after_input in arms:
         print(f"arm {label}")
         restore(pristine)
         outcomes[label] = await play(args.group, turns, after_input)
@@ -132,7 +179,10 @@ async def main() -> int:
         lengths = [len(r["reply"]) for r in records]
         seconds = [r["seconds"] for r in records]
         failed = sum(1 for r in records if r["reply"].startswith("[turn raised"))
+        incomplete = sum(1 for r in records if "尚未完整處理" in r["reply"] or "無法繼續" in r["reply"])
+        rolled = sum(1 for r in records if r.get("check"))
         print(f"  {label:<28} replies={len(records)} failed={failed} "
+              f"incomplete={incomplete} checks_rolled={rolled} "
               f"chars median={sorted(lengths)[len(lengths) // 2]} "
               f"seconds median={sorted(seconds)[len(seconds) // 2]:.1f}")
     print(f"\nsandbox left at {SANDBOX} for inspection; live data untouched")

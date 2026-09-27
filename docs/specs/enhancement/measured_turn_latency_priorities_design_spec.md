@@ -2,7 +2,7 @@
 
 [繁體中文](measured_turn_latency_priorities_design_spec_zh.md)
 
-Status: **WP1, WP2, WP3.2 and WP3.3 implemented; WP3.4, WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
+Status: **WP1, WP2, WP3.2 and WP3.3 implemented; WP3.4, WP3.5, WP4 and WP5 proposed**. Base: `main_v2` at `5961f2b`.
 
 ## 0. Why this document exists
 
@@ -277,7 +277,67 @@ No change is proposed here until that split is measured. Reducing searches witho
 - WP1's script reports, per turn, the search queries issued, the record ids returned, and the overlap between successive searches within one turn.
 - The three buckets above are quantified over at least one further session before any change is specified.
 
-## 5. Sequencing
+## 5. WP5 — Answer a held Luck decision without a model request
+
+### 5.1 Measured problem
+
+A 20-turn live session shows what an outstanding Luck decision costs. The decision itself is cheap: `/coc check` and `/coc luck` are routed to `handle_check_command` and `handle_luck_decision`, which resolve deterministically and never reach the Executor. What costs is every *other* message the player sends while the decision waits. Each is an ordinary turn, and nothing between the message and the Executor looks at `state.pending_luck_decisions` — the earliest reference is `supervisor.py:93`, by which point the turn is already running.
+
+One such turn, timestamped:
+
+```text
+15:12:15.478  turn starts
+15:12:15.714  Executor starts
+15:12:17.819  model response #1   in=22,940     billed
+15:12:17.820  tool clear_pending_check
+15:12:21.017  model response #2   in=23,390     billed
+15:12:21.018  executor.resolution = await_luck  <- the verdict lands here
+15:12:25.265  model response #3   in=13,670     billed after the verdict
+```
+
+The verdict is not a precondition the pipeline checks; it is what `turn_resolution.validate_resolution()` concludes *from* the Executor's output, so the Executor must run first. The Narrator then runs anyway, and `prompt_config.enforce_mechanic_check_consistency` discards what it wrote and substitutes the deterministic text from `_pending_luck_fallback`, which was available before the turn began.
+
+Across the session, 16 of 20 turns resolved `await_luck`, each costing 2–4 model requests, 36,000–86,000 input tokens and 10–18 seconds, and holding the conversation lock throughout.
+
+Note also that the model called `clear_pending_check` in that turn: it was trying to cancel the outstanding check, which `luck_takes_precedence` correctly refused. Blocking earlier removes the attempt as well as the cost.
+
+### 5.2 Why Luck and not a pending check
+
+A Luck decision is a closed state. The dice are already rolled and `turn_resolution.py:148` already encodes that nothing may precede it: `if disposition == "await_check" and owner in state.pending_luck_decisions: return incomplete(..., "luck_takes_precedence")`. Until the player decides, nothing they say can change the outcome, so answering deterministically removes no judgement the model could have made.
+
+A pending check is not closed. It has not been rolled, and a player may legitimately withdraw it — `turn_resolution` has a whole `cancelled` path that verifies `clear_pending_check` actually ran and that no other state moved. **Blocking messages on a pending check would break cancellation**, so this work package does not touch it.
+
+### 5.3 Scope
+
+Before the Executor, for the acting player only:
+
+| situation | behaviour |
+|---|---|
+| that player holds a pending Luck decision and sends a new gameplay action | answer from `_pending_luck_fallback`, zero model requests |
+| `/coc luck hard` / `skip`, `/coc check` | unchanged; already deterministic |
+| status, sheet, help | unchanged; these never reached the Executor |
+| another player's turn | unchanged; the decision is per-user |
+| KP or sudo | unchanged in this work package |
+
+### 5.4 Open decision
+
+**Whether pure roleplay and OOC should pass through.** Blocking them stops a player from speaking in character while a decision waits, which is a real cost to play; letting them through means running `intent_router` first, which is rule-based and free. The recommendation is to let them through, and this needs sign-off before implementation because it changes what a player can do mid-decision.
+
+### 5.5 Acceptance
+
+- A held Luck decision plus a new gameplay action from its owner produces the deterministic reply with no model request, verified by asserting the provider was never called.
+- The same state with a message from a *different* player runs the ordinary pipeline.
+- A pending check without a Luck decision still reaches the Executor, and cancellation still works.
+- `/coc luck` and `/coc check` are unaffected.
+- The lock is held for the duration of a deterministic reply only.
+
+### 5.6 Limits
+
+The 16-turn run overstates the frequency: the harness resolved pending checks but not Luck decisions, so it simulated a player who never answers. Real play answers in one to three turns. The per-turn cost is the same either way, and the lock is held for all of it.
+
+This measures one session on one scenario. No claim is made about how often a Luck decision is outstanding in general play.
+
+## 6. Sequencing
 
 ```text
 WP1   reproducible baseline   -> no runtime change
@@ -287,11 +347,12 @@ WP3.2 queue observability     -> independent of everything else
 WP3.4 hoist context building  -> after 3.3
 WP3.5 release before narration-> after #97 and #99
 WP4   retrieval round trips   -> investigation only until the split is measured
+WP5   held Luck decision      -> removes requests outright; needs the §5.4 decision
 ```
 
 WP2, WP3 and WP4 touch different files and may be reviewed separately. Within WP3, 3.2 and 3.3 are independent of each other and of WP2; 3.4 depends only on 3.3; 3.5 depends on work outside this document.
 
-## 6. Limits
+## 7. Limits
 
 - The post session is 15 executor turns, 77 usage-bearing requests and 22 lock acquisitions over 18 minutes of one game. Percentiles at p99 rest on a handful of observations, and `complete_for_action` at 1 of 2 is too small to call a trend.
 - The two sessions differ in content as well as code. The latency rise is consistent with the tool-call composition, but a same-scenario comparison was not run.
