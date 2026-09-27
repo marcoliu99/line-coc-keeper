@@ -1,322 +1,210 @@
-# Source-linked Chinese scenario templates
+# Chinese-first scenario retrieval: PR83 redesign
 
-## Current direction: external preparation by default
+## 1. Objective and measured motivation
 
-The user has selected external preparation with source-bound templates. The latest
-implementation adds `template export`, removes translation queueing from PDF import,
-and pauses old unfinished translation jobs on startup. Explicit `template generate`
-is still available only on request. The earlier automatic lifecycle described below
-is historical and superseded by this paragraph and the
-[reference review / authoring contract](scenario_template_reference_review.md).
+Make a Chinese player action retrieve complete Chinese adjudication evidence on the
+first pass. Reduce supplementary searches and model round trips without removing
+mechanics, source fidelity, chapter boundaries or PR89's validated handoff.
 
-Four user-provided PDFs and official long-campaign materials inform that contract.
-The role-card template now preserves open descriptive fields and age; prose does not
-implicitly authorize a mechanical state change.
+The historical one-page pilot measured median RAG + Executor time of **7.26 s** for
+original English material versus **4.22 s** for a Chinese-localized page. Each arm had
+only three scored runs; API calls were 3 versus 2, explicit searches 1 versus 0, and
+complete target-marker coverage 0/3 versus 3/3. Warm RAG itself took about 0.03 s in
+both arms. The observed saving was principally one downstream model/search round,
+not faster database work. Raw metadata is preserved in
+[evaluations/pr83_chinese_page_pilot.json](evaluations/pr83_chinese_page_pilot.json).
 
-## 1. Why this exists: remove repeated cross-language work from gameplay
+A separate aligned-context pilot reduced Executor median 6.32 s to 4.83 s, but an
+English query rewrite cost a reported median 3.35 s. The illustrative sum including
+retrieval was 8.42 s, not a paired end-to-end result. Original retrieval does not
+always call a translator: it queries directly with Chinese text. Poor evidence can
+cause the model to formulate another search. We must not add a mandatory per-turn
+translation call to solve that problem.
 
-The primary goal of PR #83 is faster, correct Chinese-language play against an
-English-language scenario. Chinese templates are the reusable retrieval material
-that enables this; generating a nicely formatted translation is not the acceptance
-criterion. Move translation/normalization to scenario preparation, reuse it across
-turns and games, and reduce missing-evidence searches inside Executor.
+These pilots used one action, a fixed check and stubbed mechanics; they exclude
+Narrator and Discord. They do not validate this redesigned implementation or establish
+production latency/quality. See [historical analysis](turn_latency_design_spec.md).
 
-The original path does **not** contain a mandatory per-turn translation API. Chinese
-player text is sent directly to hybrid BM25/embedding retrieval. An embedding call
-is not a generative translation call. The observed cross-language penalty was poor
-initial evidence selection, followed by an additional Executor search/model round.
-Models also read English evidence and answer in Chinese, but the existing timings do
-not isolate the time spent internally understanding or translating that evidence.
+## 2. What changes from the previous PR
 
-A separately tested alternative rewrote the Chinese query into English with a model
-before retrieval. It improved retrieval but added a model call. PR #83 deliberately
-avoids that fixed per-turn rewrite. Its objective is to improve first-pass evidence
-so the existing context-reuse policy can skip redundant searches safely.
-
-### 1.1 Historical measurements and what they establish
-
-Historical source: [turn latency investigation](turn_latency_design_spec.md#small-scale-verification-2026-09-26).
-The original numerical result files are now preserved in this repository:
-[Chinese-page pilot](evaluations/pr83_chinese_page_pilot.json) and
-[aligned-context pilot](evaluations/pr83_aligned_context_pilot.json).
-They contain timing/count/marker metadata, not source scenario text or credentials.
-No paid API trial was rerun during this documentation review.
-
-| Historical comparison | Original/raw Chinese query | Candidate | Interpretation |
-| --- | --- | --- | --- |
-| Chinese action against original English vs one Chinese-localized page; 3 scored runs per arm | RAG + Executor median **7.26 s** | **4.22 s** | Observed median difference **3.04 s (~41.9%)**; one scene, not production speedup |
-| Same trial: generative API requests | 3 each run | 2 each run | One additional Executor search round avoided |
-| Same trial: explicit `search_scenario` calls | 1 each run | 0 each run | Initial context supplied the needed evidence in the localized case |
-| Same trial: all four rule markers in proactive top five | 0/3 | 3/3 | Chinese page included stairs, Push, fall and 1D6; original results did not contain the complete set |
-| Same trial: warmed retrieval median | ~0.03 s | ~0.03 s | Most observed savings came after retrieval, not faster local vector/BM25 search |
-| English-aligned proactive context, excluding rewrite/retrieval; 3 runs per arm | Executor median **6.32 s** | **4.83 s** | Better evidence alone shortened the narrow Executor loop |
-
-The old investigation separately records median query rewrite **3.35 s** and
-retrieval **0.24 s**. The illustrative sum 3.35 + 0.24 + 4.83 = **8.42 s** can exceed
-the raw-context Executor median 6.32 s. These are unpaired medians with differing
-boundaries, not a measured end-to-end comparison; they explain why a fixed rewrite
-was rejected, not a statistically established slowdown. Those component figures are
-preserved in the historical report, not in the two copied result arrays.
-
-Limits of the Chinese-page pilot:
-
-- It localized page 10 only; the other 26 pages were unchanged. It did not exercise
-  PR #83's automatic translator, schema-v2 generator, approval or record index.
-- The translation was manually cleaned. A cleaned-English control still missed the
-  target page for the same Chinese query, as recorded in the original investigation.
-- Warm retrieval repeated the same deterministic query. Three model runs do not
-  establish broad recall, confidence intervals, p95 or statistical significance.
-- A DEX check was prescribed and `skill_check` was stubbed. Both arms issued one
-  check in every run, but this does not prove correct spontaneous difficulty,
-  consequences, state mutation or final Narrator output.
-- The 2.33 s one-time embedding/index build reported in the investigation excludes
-  manual translation time. It is not the cost of translating a whole scenario.
-- RAG + Executor excludes Narrator, Discord delivery and button latency. Do not
-  compare this number directly with full-turn measurements from PR89/PR90.
-
-### 1.2 Current, rejected and intended paths
-
-    Existing original-source path
-    Chinese action -> Chinese query -> English BM25/embedding index
-      -> possibly incomplete evidence -> Executor supplements scenario search
-      -> next model request -> tools / validated handoff -> Narrator
-
-    Rejected as a fixed per-turn optimization
-    Chinese action -> LLM English query rewrite -> English retrieval
-      -> Executor -> validated handoff -> Narrator
-                       ^ saved searches may not repay the rewrite request
-
-    Preparation, paid once per immutable source/version
-    English PDF/OCR -> complete source units -> faithful Chinese translation
-      + canonical terms/aliases + complete mechanics + original references
-      -> structural validation -> KP correction/approval -> reusable variant/index
-
-    Intended steady-state gameplay
-    Chinese action -> Chinese query -> approved Chinese variant index
-      -> complete permitted Chinese evidence -> Executor reuses supplied evidence
-      -> only missing decision-critical facts trigger supplementary search
-      -> PR89 validated handoff -> Narrator -> player
-
-## 2. Source review against the latency objective
-
-Reviewed branch implementation: `8294801` (runtime unchanged in this documentation
-revision). Both proactive and explicit retrieval use the same variant selector.
-
-| Interface | Current implementation | Why it matters / remaining review finding |
-| --- | --- | --- |
-| `context_builder.build_context` -> `index_for_state` -> `scenario_rag.search` | Player text is queried directly, with no model rewrite | Correct steady-state boundary; proactive retrieval is skipped during combat, so the benefit is not universal |
-| `keeper._execute_tool(search_scenario)` -> `index_for_state` | Supplementary queries use the selected variant too | Prevents proactive Chinese retrieval followed by accidental English-only tool retrieval |
-| `prompt_config` context-reuse instruction | Reuse sufficient supplied facts; search only for concrete missing facts | Already present; translation still cannot guarantee the model avoids every redundant search |
-| `scenario_templates._generate` | One translation per complete source unit, persisted checkpoints | Preparation cost amortizes across turns; successful checkpoint reuse avoids retranslating completed work |
-| `scenario_templates.index_for_state` | Only approved/current selected variants; original-source fallback | Correct fallback, but a benchmark must record effective variant/fallback and not label an original fallback as a Chinese-template run |
-| `scenario_rag.get_record_index` | Searchable Chinese child chunks; complete parent evidence and linked units returned | Protects mechanics from fragmentation; returned evidence size can outweigh saved calls |
-| `get_record_index` rule evidence | Full `source_excerpt`, translated rule text, structured rules and source quotes can coexist | **Open performance concern:** substantial original English and duplicated rules still reach the model. Current implementation reduces query mismatch; it does not eliminate repeated English reading or prove a smaller prompt |
-| `_generate` glossary | Accumulates record aliases mapped to record names, sends the first 1,500 serialized characters | **Open terminology concern:** not a complete typed entity/skill glossary; one record per source unit can conflate entity aliases with unit names and later terms may be omitted |
-
-The implementation is directionally aligned with the pilot, but the pilot's 41.9%
-median difference must not be advertised as measured PR #83 performance. Schema-v2
-complete-parent retrieval and dependency expansion change input size considerably.
-
-### 2.1 Recommended follow-up order
-
-1. Measure the current approved-variant implementation unchanged using the protocol
-   below. Keep model, reasoning effort, tool scope and PR89/PR90 settings fixed.
-2. Compare original English, English with reviewed Chinese aliases, and full Chinese
-   variant. This separates better lexical matching from translation and restructuring.
-3. Measure original-excerpt bytes/tokens, repeated rule fields and expanded dependency
-   size. If they dominate, prototype a Chinese gameplay projection while preserving
-   complete original material in the audit/review artifact. Include bounded exact
-   source quotes for decisive mechanics; fetch full source only for ambiguity. Do not
-   truncate away triggers, exceptions or consequences merely to fit a token budget.
-4. Replace alias-to-unit-name accumulation with a reviewed typed glossary if multi-scene
-   tests reveal inconsistent names or entity collisions. Version it with the variant;
-   retrieve relevant terms during preparation instead of silently truncating JSON.
-
-Items 3 and 4 are review recommendations, not changes implemented by this revision.
-Do not add a runtime translation/review stage or weaken source-fidelity checks to claim
-speed. The user's existing scenario/RAG prompts and PR89 adjudication handoff remain.
-
-## 3. Evaluation contract: show where the saving comes from
-
-### Arms and controls
-
-- A: original English source/index, unchanged Chinese player actions.
-- B: original source with reviewed Chinese name/skill/location aliases; no full prose
-  translation. This experimental arm is not an implemented selectable variant yet.
-- C: approved PR #83 Chinese template, including current source evidence expansion.
-- Optional D: explicit per-turn English rewrite, measured including its own request,
-  tokens and time. It is an experimental comparator, not a proposed default.
-
-Use the same scenario versions, legal chapter windows, starting states, conversation
-histories, action list, model/reasoning, retrieval settings and PR89/PR90 admission.
-Use at least the two pilot candidates (Corbitt and Lightless Beacon), covering scene
-movement, clues, NPC aliases, checks, Push/failure consequences, combat exceptions,
-unknown locations and cross-unit rules. Freeze expected source evidence and mechanical
-outcomes before running. Restore isolated state per paired case; never share live
-campaign state. Counterbalance arm order and separate warm-cache and cold-start runs.
-A concrete first expanded comparison is 50 cases per arm for A/B/C (150 turns), pending
-an explicit API run request; this document does not start that paid experiment.
-
-### Required observations
-
-| Layer | Record separately |
+| Previous implementation | Redesign |
 | --- | --- |
-| Preparation | translation wall time, API requests/tokens/cost, checkpoint reuse, KP review effort, embedding build time |
-| Effective retrieval | requested/effective variant, source/version/window, fallback reason, index cache, query language, expected rule coverage, rank, complete mechanics, permitted visibility |
-| Prompt | Chinese evidence tokens, original-source tokens, rule duplication, dependency expansion, total/cached input and output/reasoning tokens |
-| Provider | actual requests per agent, explicit searches, query rewrites, retries/429, admission queue, retry waits, provider duration |
-| Player-visible result | RAG + Executor, Narrator, text-ready and button-ready timing, complete turn wall time, completion/timeout rate |
-| Correctness | exact required tools/arguments, pending/Luck state, HP/SAN/inventory effects, source fidelity, invented content and spoiler leakage |
+| Internal translation generator, job state, retry and priority infrastructure | External authoring only; remove generator commands, startup jobs and provider/retry additions from this PR |
+| One source unit equals one retrieval record | One source unit may contain multiple externally authored semantic records, each with explicit source spans; complete coverage is validated |
+| Original English + Chinese narrative + summary + JSON rules in every result | Audit artifact retains original text/quotes; compiled runtime projection contains Chinese narrative and rule text once, with concise provenance |
+| Expand potentially unbounded linked units | Record-ID dependencies, cycle deduplication and complete-bundle size validation; links do not override chapter/visibility boundaries |
+| Silent fallback indistinguishable from Chinese retrieval | Effective variant and fallback reason reported in retrieval diagnostics |
+| Large selected context accepted regardless of cost | Reject oversized complete bundles for external re-editing; apply a response budget between complete records, never mid-rule |
 
-Use actual provider telemetry for new comparisons, not an estimate based solely on tool
-count. End-to-end elapsed time must be measured directly: overlapping async work cannot
-be added as if all spans were serial. Report raw latency including retries, plus a
-breakdown; never silently discard failed or rate-limited cases. PR90 input/admission
-instrumentation helps with attribution but does not yet provide every template-specific
-field above. The evaluation harness must fill those gaps and persist its configuration.
+Preserve source PDFs, scenario identity, assets, current scenario/RAG instructions,
+context-reuse policy, manual role-card improvements and PR89 handoff. Do not add
+Executor early stopping, dynamic tool scoping, a new reviewer model or another agent.
 
-### Decision criteria
+## 3. Source-bound external authoring (schema v3)
 
-First pass correctness: no new critical source omissions, spoiler leakage, invented
-mechanics, rerolls or invalid state mutations in labeled cases. Inspect every mismatch;
-check count alone is insufficient. Then compare paired latency differences (with 95%
-bootstrap intervals), p50/p95, completion rate, requests and input volume. If a difference
-interval includes zero, report no demonstrated stable speed gain. An alias-only arm
-matching full-translation performance at lower build/input cost is a valid outcome.
-Do not force full translation to win.
+    English PDF/OCR + page images
+      -> deterministic source-bound export (no model)
+      -> external Chinese translation / semantic grouping / human review
+      -> import: schema + source spans + quotes + numbers + dependencies
+      -> compile Chinese-only gameplay projection + size checks
+      -> KP review and approval
+      -> activate immutable version / prewarm existing index
 
-Amortization is explicit: if measured per-turn saving is positive, approximate build
-wall-time break-even as `one-time automated preparation seconds / seconds saved per
-turn`, reporting human review separately; compare monetary build cost with monetary
-per-turn savings independently. With no saving, there is no finite break-even claim.
+A source unit preserves original heading, source ID, chapter and PDF page positions.
+Export provides one empty record per unit. The editor may split it into complete
+scene, rule, NPC, clue or handout records. Do not split a trigger from its consequence;
+use explicit record dependencies for inseparable related evidence.
 
-## 4. External preparation option (design review)
+Each record contains:
 
-The user clarified that translation need not happen inside the bot. Prefer an
-external preparation workflow when a reviewed Chinese artifact is available. The
-performance objective concerns the material used at retrieval time, not which tool
-produced its translation. Automatic generation is a convenience, not a prerequisite.
+- `id`, `source_id`, `chapter_id`, `page`, `source_pages`, `type`, `name`;
+- `source_spans`: nonempty `[start, end)` offsets into that unit's exported Unicode
+  text (Python string/code-point offsets, not UTF-8 bytes); overlapping spans permit
+  shared context, but their union must cover every source character across records;
+- `aliases`, `keywords`: reviewed Chinese/common English names for this record;
+  never infer that every entity mentioned in a scene is an alias of the scene;
+- `public_text`, `kp_text`: full faithful Chinese prose, visibility-separated;
+- `rules`: ordered rule blocks with optional trigger/check/success/failure/exceptions;
+  each field holds Chinese `text` and exact `source_quote` for audit;
+- `related_record_ids`: complete-evidence dependencies, distinct from merely mentioning
+  a lead to a distant chapter;
+- `uncertainty`: unresolved translation notes; nonempty notes prevent approval.
 
-    original PDF/OCR + stable source-unit IDs
-      -> external translation with scenario-wide terminology
-      -> human review of full Chinese text and complete rule blocks
-      -> import adapter / deterministic source and format validation
-      -> approved Chinese retrieval artifact + separate original audit artifact
-      -> existing RAG -> Executor -> validated handoff -> Narrator
+`rule_text` remains an editable compatibility field, but does not duplicate structured
+rules in gameplay. If populated, structured rules are required. Runtime renders each
+structured rule field once; costs, uses-per-round/encounter, timing, exceptions and
+special abilities must be retained in those fields. Blank source information stays
+unknown. No inferred armor, spell effect, room, item or person is permitted.
 
-Recommended externally authored material:
+V2 variants require re-export/review; no silent reinterpretation. Exported workbooks
+include schema version, source hash and chapter hash. Imported exact source excerpts
+are reconstructed from spans; user-edited copies cannot override original evidence.
 
-1. Faithful Chinese scene text, preserving chapter/source IDs and original page
-   references. Keep English proper names as aliases, not duplicated full paragraphs
-   in every gameplay result. Do not summarize away clues or atmosphere.
-2. Explicit mechanics blocks: trigger, check/difficulty, success, failure, Push,
-   consequences, exceptions, limits and dependencies. Include only what the source
-   establishes; unresolved translation remains flagged, never guessed.
-3. Public/KP visibility labels and a scenario-wide glossary mapping distinct entities
-   and skills to stable names and Chinese/English aliases. Scene headings must not
-   absorb all aliases of the NPCs/items mentioned within that scene.
-4. A separate audit mapping to original excerpts. Runtime retrieval should default
-   to complete Chinese mechanics and concise provenance; full English is available
-   for review or actual ambiguity. This narrower runtime projection is a proposed
-   optimization, not what the current record index already implements.
+### Authoring limitations
 
-### Existing import capability versus proposed authoring experience
+The program checks structural coverage, not semantic equivalence of a translation.
+A Chinese paraphrase that omits meaning can still pass numeric checks; human review
+remains required. OCR reading order must be checked against page images, especially
+for two columns, stat tables and cross-page abilities. Large source units are not
+silently cut by the exporter. External editors decide semantic boundaries and spans.
 
-`scenario_templates.import_markdown` already accepts an externally prepared `.md`
-file, but only when it embeds the required records JSON block and matching source /
-chapter hashes. It applies the same validation and stores a manual variant. It does
-not parse arbitrary Chinese prose or infer source IDs from page headings. Current
-validation requires one record per existing source unit, plus structured quote-backed
-rule fields. Ordinary translated Markdown cannot be promised as a drop-in input.
+The existing `.md` import contains records JSON; arbitrary prose-only Markdown is not
+accepted. Export writes a private file under IMPORT_DIR and privately reports its
+server path. A friendly authoring UI and direct Discord attachment delivery are out
+of scope. The provided role-card format remains a separate `role_` upload format.
 
-Implemented in this revision: export a source-bound editable skeleton for external
-preparation, then import and validate it without any translation API call. Human-
-friendly Markdown sections can compile deterministically to the internal records;
-keep machine IDs/version metadata managed by the export/import tooling. Specify the
-format before adding its parser. Ambiguous/missing mappings fail for correction.
+## 4. Audit storage versus runtime evidence
 
-Automatic post-parse generation is now removed. Explicit generation remains an
-optional command and is labeled as an API operation in Help. Startup does not resume
-old paid jobs.
+Audit records preserve full source slices, exact source quotes, review notes, reviewer
+identity/time and content/source versions. These are available to the KP's paginated
+private preview. Runtime indexing never embeds full original excerpts or source-quote
+JSON. Proper-name aliases may legitimately remain English.
 
-For evaluation, a reviewed externally translated scenario can exercise the Chinese
-retrieval arm immediately through the existing records import format. Measure its
-preparation/review effort separately, and do not require the background generator to
-be implemented or benchmarked before testing the gameplay latency hypothesis.
+    approved audit record
+      -> pure deterministic projection
+           public: Chinese public prose
+           KP: Chinese KP prose + ordered Chinese rule fields
+           metadata: record/source IDs and PDF pages
+      -> Chinese searchable child chunks (~500 characters)
+      -> rank record IDs, return complete permitted evidence bundle
 
-## 5. Implementation contract
-## Revised template implementation contract (2026-09-27)
+Use one shared projection compiler for validation and runtime indexing so approval
+checks the same payload that gameplay will receive. A record's combined public/KP
+projection must fit 6,000 characters; its complete dependency closure must fit 12,000.
+These are explicit deterministic payload bounds, not token-count equivalences.
+Oversized content fails validation with an edit requirement. Never silently truncate
+rules. Source/audit content has no corresponding runtime projection size requirement.
 
-This section supersedes the paragraph-based generation and schema-v1 details.
-The earlier button-claim latency work is independent and already integrated;
-Candidate A (early stop) and Candidate B remain unimplemented. PR89's validated
-handoff is mandatory for any later early-stop experiment. PR90 now supplies the
-input/admission instrumentation previously proposed in Candidate C.
+Return up to top-k records with a combined 18,000-character evidence budget, stopping
+between complete records and signaling omissions. Chapter filtering precedes expansion;
+visibility filtering applies to every dependency. A dependency outside the allowed
+window is reported as unavailable, not silently treated as complete or unlocked.
+Public retrieval must not reveal KP dependency text or forbidden chapter identities.
 
-### Source units and schema v2
+Rules-mode alternatives (standard CoC versus Pulp), scenario dates and optional scenes
+must stay explicit in authored content. A reference link is not an instruction to
+advance the campaign or disclose a future chapter. Full nonlinear campaign navigation
+is not implemented by this PR.
 
-Build source units before translation. Level-1/2 Markdown headings delimit units;
-paragraphs, subordinate headings, and page continuations stay together inside the
-same playable chapter. Preserve heading, all source pages, and source ID. A source
-unit maps to exactly one translated record. Unstructured units larger than 16,000
-characters fail with a request for manual preparation/import; never silently slice
-a rule's consequence off its trigger.
+## 5. Gameplay interfaces and fallback
 
-Keep faithful public/KP translation separate from rule summaries. Structured rule
-fields (trigger/check/success/failure/exceptions) carry both translated text and an
-exact source quote. Validate references, source quote containment, per-field numeric
-multisets, whole-unit coverage, and explicit source links. These are structural and
-mechanical consistency checks, not proof of semantic equivalence. A KP still reviews
-translation fidelity, negation, omissions and visibility before activation. Approval
-records reviewer ID and time. Private preview accepts a page number and exposes all
-translation/source fields across pages. The source PDF and extracted text stay intact.
+    player Chinese action
+      -> context_builder -> index_for_state -> shared Chinese record index
+      -> search -> complete, bounded Chinese evidence + selection diagnostics
+      -> Executor (reuse supplied evidence)
+          -> if concrete evidence missing: search_scenario through same selector
+          -> real mechanics tools -> PR89 validated adjudication
+      -> Narrator -> player
 
-Retrieve/rank record IDs rather than spending top-k slots separately on public and
-KP chunks. Reconstruct all allowed scopes of a matched record, including explicit
-linked units within the selected chapter window. Cycles are deduplicated; a link does
-not grant access to a future chapter or a forbidden visibility scope. Rules carry
-their complete source unit rather than a fixed prefix unrelated to the matched rule.
-Schema/generator version mismatches make old variants unavailable for activation.
+No fixed query translation, no background translation and no fixed model audit.
+Supplementary search remains available; never cap it merely to improve benchmark
+numbers. Query embeddings are ordinary retrieval calls, not generative translation.
 
-### Background lifecycle and admission
+`index_for_state` accepts a diagnostics map that records requested/effective variant,
+fallback reason and projection version. Both proactive RAG and explicit search log
+these fields. Invalid/stale/unapproved variants fall back to the original scenario;
+the fallback is observable and a failed Chinese arm cannot be counted as Chinese
+success. Cache identity includes source/chapter/variant/window/embedding model and
+projection version. A source change must not serve an old variant under a new key. A bounded in-memory
+selection cache checks inode, size, modification and change times for source, records
+and manifests before reuse; unchanged turns avoid rereading full bilingual artifacts.
+Cold loads verify source and record SHA-256 hashes. Approval or file changes invalidate
+the cache; edited approved records require re-import/review. The glossary stores aliases
+per record so identical names in different scenes do not overwrite one another.
 
-Persist each structurally valid translated unit as a checkpoint keyed by scenario,
-source hash, chapter hash, generator version, and source-unit ID. Explicit retry reuses
-completed units, reconstructs the glossary, and resumes missing work. Startup pauses
-old unfinished jobs and never initiates translation requests. Source changes
-are checked before requests, checkpoints and final publication; clean removes jobs,
-checkpoints, variants and indexes. `/coc scenario template generate <id>` explicitly
-retries a failed build. Post-parse automatic generation has been removed; explicit generation remains optional.
+The original source is retained for KP audit and original-mode fallback. This change
+does not create an always-on second English search path. Specific unresolved source
+questions require correction/review; the model must not invent an answer because the
+Chinese record is incomplete.
 
-OpenAI preprocessing uses the same async request helper, admission controller,
-429 cooldown, and request semaphore as gameplay. Background requests wait while
-foreground requests are queued/running, including backoff. An already-running request
-is not preempted. Each source unit has a 300-second deadline and a 12,000-token output
-cap; input plus output reservation is estimated before admission. Incomplete responses
-are rejected without saving their content. Native async retry diagnostics record calls,
-usage and waits; the job records total build time. Anthropic/Gemini keep their existing
-single-worker synchronous adapters; no shared RPM/TPM guarantee is claimed for them.
+## 6. Safety and stability gates
 
-### Flow and verification
+- Schema/type/bounds validation before writing an immutable draft.
+- Complete source-span coverage, no out-of-range spans, unique IDs, valid dependencies.
+- Exact quote containment within the record's source slices; per-field number/dice
+  checks; missing numeric/negation evidence becomes a review issue.
+- No automatic approval; pending uncertainty blocks activation.
+- Same projection and size limits at import/approval/indexing; deterministic failure
+  does not trigger automatic paid repair.
+- Cycles terminate; complete evidence is not recursively duplicated within a bundle.
+- No source-quote leakage into ordinary gameplay text; scope boundaries retained.
+- No mutation of live campaign state during import or benchmarks.
 
-    source PDF -> chapter/heading source units -> versioned unit checkpoints
-    -> translation + quoted rule fields -> validation -> KP review/approval
-    -> selected variant/window -> rank record -> expand permitted dependencies
-    -> Executor -> PR89 validation -> Narrator
+## 7. Verification and performance evaluation
 
-    background OpenAI request -> wait for foreground -> shared admission
-    -> common retry/cooldown -> completed response -> checkpoint
+Deterministic tests must cover split-unit source coverage, missing spans, malformed
+records, wrong quotes/numbers, lost consequences, projection without English source,
+complete linked rules, scope/window isolation, cycles, payload bounds, response-budget
+notices, effective fallback diagnostics, export/import/approve/restart, and unchanged
+role-card prose/age behavior. All tests use isolated state; no test invokes paid models.
 
-Regression tests cover multi-page rules, swapped success/failure numeric effects,
-invalid source quotes, one-slot retrieval of mechanics, visibility/chapter isolation,
-cyclic links, restart after partial failure, foreground priority, and incomplete API
-responses. Existing provider/retry tests still run. No production latency improvement
-is claimed from these deterministic tests. The original/alias-only/full-translation
-live comparison remains an explicit future evaluation, not a completed benchmark.
+A local structural comparison may report evidence characters/tokens and coverage on
+fixtures. It cannot establish real model speed or ruling correctness. The historical
+7.26/4.22 s numbers remain historical.
 
-### External preparation / open role fields verification
+For the next explicitly requested API evaluation, pair the same scenarios/actions/state
+under: A original English; B English with reviewed Chinese aliases (experimental
+harness arm); C externally reviewed Chinese v3. Keep model/reasoning, tool exposure,
+PR89/PR90 settings, chapter access and cache conditions identical. Use 50 cases per
+arm as an initial expanded plan, counterbalance order and include the supplied short
+scenarios plus long-campaign-like revisits, timed events and entity aliases. No API run
+is authorized solely by this specification.
 
-Full isolated suite after the external-export and role-template revision: 782 passed,
-1 skipped, 15 subtests passed. Mypy checked 74 files. No paid model or embedding calls
-were used; the supplied PDFs were inspected locally and official campaign references
-were browsed for design evidence. The live game's records were not modified.
+Measure actual provider calls, search count, first-pass expected-rule coverage, complete
+mechanics/tool correctness, input/cached/output/reasoning tokens, retrieval time,
+queue/retry/429 time, Executor, Narrator, text/button-ready and full-turn wall time.
+Measure directly rather than summing overlapping spans. Include failures and retries;
+separate cold-start builds from warmed gameplay. Report paired 95% intervals and
+p50/p95; an interval spanning zero does not demonstrate a stable speedup. Translation
+and human-review costs are preparation costs, separately amortized over turns.
+
+Reference inspection: [scenario_template_reference_review.md](scenario_template_reference_review.md).
+
+### Implementation verification (2026-09-27)
+
+The redesigned isolated suite passes 794 tests and 15 subtests, with one skipped test.
+Ruff passes and mypy checks 75 source files. Regression tests include real temporary
+export/import/approval artifacts, in-memory and persisted-index reuse, source/record/
+approval invalidation, split-source coverage, scope-preserving dependency closure and
+whole-record response-budget handling. These are deterministic correctness checks,
+not a new API latency benchmark.

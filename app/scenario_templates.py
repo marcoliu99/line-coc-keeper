@@ -4,58 +4,25 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import logging
 import re
 import shutil
 import tempfile
-import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app import db, scenario_library, scenario_rag
-from app.config import IMPORT_DIR, LLM_PROVIDER, SCENARIO_RAG_EMBEDDING_MODEL
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app import db, scenario_library, scenario_projection, scenario_rag
+from app.config import IMPORT_DIR, SCENARIO_RAG_EMBEDDING_MODEL
 
-_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
 _LOCALE = "zh-TW"
-_VERSION = 2
-_GENERATOR_VERSION = "source-units-v2"
+_VERSION = 3
+_COMPILER_VERSION = scenario_projection.VERSION
 _RULE_FIELDS = ("trigger", "check", "success", "failure", "exceptions")
 _SAFE_VARIANT = re.compile(r"zh-TW-[a-f0-9]{12}")
 _NUMBER = re.compile(r"(?i)\b\d+d\d+(?:[+-]\d+)?\b|\b\d+(?:\.\d+)?%?\b")
 _NEGATIVE = re.compile(r"\b(?:not|never|without|cannot|no)\b", re.IGNORECASE)
-_TOOL = {
-    "name": "report_chinese_scenario_records",
-    "description": "將來源劇本區塊忠實翻成繁體中文結構化記錄，所有規則、條件與數值原樣保留。",
-    "input_schema": {
-        "type": "object",
-        "properties": {"records": {"type": "array", "items": {
-            "type": "object", "properties": {
-                "type": {"type": "string"},
-                "name": {"type": "string"},
-                "aliases": {"type": "array", "items": {"type": "string"}},
-                "public_text": {"type": "string"},
-                "kp_text": {"type": "string"},
-                "rule_text": {"type": "string"},
-                "keywords": {"type": "array", "items": {"type": "string"}},
-                "uncertainty": {"type": "string"},
-                "rules": {"type": "array", "items": {"type": "object", "properties": {
-                    field: {"type": "object", "properties": {"text": {"type": "string"}, "source_quote": {"type": "string"}}, "required": ["text", "source_quote"]}
-                    for field in _RULE_FIELDS
-                }}},
-                "related_source_ids": {"type": "array", "items": {"type": "string"}},
-            }, "required": ["type", "name", "aliases", "public_text",
-                            "kp_text", "rule_text", "keywords", "uncertainty", "rules", "related_source_ids"],
-        }}},
-        "required": ["records"],
-    },
-}
-_tasks: dict[str, asyncio.Task[None]] = {}
-_gate = asyncio.Semaphore(1)
-_logger = logging.getLogger(__name__)
 
 
 def _root() -> Path:
@@ -136,7 +103,7 @@ def _all_variants(scenario_id: str) -> list[dict[str, Any]]:
 
 def _records_text(records: list[dict[str, Any]], source_hash: str, chapter_hash: str) -> str:
     lines = ["# 中文劇本模板", "", "請編輯下方 JSON 區塊後用 /coc scenario template import 匯入。", "", "```json"]
-    lines.append(json.dumps({"source_hash": source_hash, "chapter_hash": chapter_hash,
+    lines.append(json.dumps({"schema_version": _VERSION, "source_hash": source_hash, "chapter_hash": chapter_hash,
                              "records": records}, ensure_ascii=False, indent=2))
     lines.extend(["```", ""])
     return "\n".join(lines)
@@ -152,9 +119,10 @@ def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
         manifest = {"scenario_id": scenario_id, "variant_id": variant_id,
                     "source_hash": source_hash, "chapter_hash": chapter_hash,
                     "locale": _LOCALE, "schema_version": _VERSION,
-                    "generator_version": _GENERATOR_VERSION,
+                    "compiler_version": _COMPILER_VERSION,
                     "origin": origin, "review_status": "review_required",
-                    "record_count": len(records), "issues": issues}
+                    "record_count": len(records), "issues": issues,
+                    "records_hash": hashlib.sha256(json.dumps(records, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
         (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         (temporary / "records.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
         source_ids = sorted({str(record["source_id"]) for record in records})
@@ -162,8 +130,8 @@ def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
             "source_block_count": len(_blocks(*_source(scenario_id))),
             "covered_source_ids": source_ids, "unresolved": issues,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
-        glossary = {alias: record["name"] for record in records
-                    for alias in record.get("aliases", []) if isinstance(alias, str)}
+        glossary = [{"record_id": record["id"], "name": record["name"],
+                     "aliases": record["aliases"]} for record in records]
         (temporary / "glossary.json").write_text(json.dumps(glossary, ensure_ascii=False, indent=2), encoding="utf-8")
         (temporary / "template.md").write_text(
             _records_text(records, source_hash, chapter_hash), encoding="utf-8")
@@ -177,197 +145,102 @@ def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
     return variant_id
 
 
-def _validate(scenario_id: str, records: list[dict[str, Any]], *, partial: bool = False) -> tuple[str, str, list[str]]:
+def _source_parts(record: dict[str, Any], source: str) -> list[str]:
+    spans = record.get("source_spans")
+    if not isinstance(spans, list) or not spans or len(spans) > 100:
+        raise ValueError("每筆記錄須提供 source_spans")
+    parts = []
+    for span in spans:
+        if (not isinstance(span, list) or len(span) != 2
+                or any(type(x) is not int for x in span)
+                or not 0 <= span[0] < span[1] <= len(source)):
+            raise ValueError("來源範圍無效；使用原文 Unicode 字元的 [start,end)")
+        parts.append(source[span[0]:span[1]])
+    return parts
+
+
+def _record_source(record: dict[str, Any], source: str) -> str:
+    return "\n".join(_source_parts(record, source))
+
+
+def _validate(scenario_id: str, records: list[dict[str, Any]]) -> tuple[str, str, list[str]]:
     manifest, text = _source(scenario_id)
-    source_blocks = {b["id"]: b for b in _blocks(manifest, text)}
+    blocks = {b["id"]: b for b in _blocks(manifest, text)}
+    if not isinstance(records, list) or not records or len(records) > 5000:
+        raise ValueError("模板須有 1 至 5000 筆完整記錄")
     grouped: dict[str, list[dict[str, Any]]] = {}
     seen: set[str] = set()
+    issues = []
     for record in records:
         if not isinstance(record, dict):
-            raise ValueError("模板記錄格式錯誤")  # noqa: TRY004 - user input validation
-        record_id = record.get("id")
-        source_id = record.get("source_id")
-        if not isinstance(record_id, str) or record_id in seen or not isinstance(source_id, str) or source_id not in source_blocks:
-            raise ValueError("模板記錄 ID 重複或來源不存在")
+            raise ValueError("模板記錄格式錯誤")  # noqa: TRY004
+        record_id, source_id = record.get("id"), record.get("source_id")
+        if (not isinstance(record_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", record_id)
+                or record_id in seen or not isinstance(source_id, str) or source_id not in blocks):
+            raise ValueError("模板 ID 重複、格式錯誤或來源不存在")
         seen.add(record_id)
-        block = source_blocks[source_id]
-        if record.get("page") != block["page"] or record.get("chapter_id") != block["chapter_id"]:
+        block = blocks[source_id]
+        if (record.get("page") != block["page"] or record.get("chapter_id") != block["chapter_id"]
+                or record.get("source_pages") != block["pages"]):
             raise ValueError("模板頁碼或章節與來源不符")
+        parts = _source_parts(record, block["text"])
+        original = "\n".join(parts)
         if record.get("visibility") not in ("public", "kp_only"):
             raise ValueError("模板可見範圍無效")
-        if record.get("visibility") == "kp_only" and str(record.get("public_text", "")).strip():
+        for key in ("name", "type"):
+            if not isinstance(record.get(key), str) or not record[key].strip() or len(record[key]) > 200:
+                raise ValueError(f"模板缺少有效 {key}")
+        for key in ("aliases", "keywords", "related_record_ids"):
+            values = record.get(key)
+            if not isinstance(values, list) or len(values) > 100 or any(not isinstance(v, str) or not v.strip() or len(v) > 200 for v in values):
+                raise ValueError(f"模板 {key} 格式錯誤")
+        for key in ("public_text", "kp_text", "rule_text", "uncertainty"):
+            if not isinstance(record.get(key), str):
+                raise ValueError(f"模板 {key} 必須為文字")  # noqa: TRY004
+        if record["visibility"] == "kp_only" and record["public_text"].strip():
             raise ValueError("KP 專用記錄不可含公開內容")
-        if not str(record.get("name", "")).strip():
-            raise ValueError("模板記錄缺少名稱")
-        if not isinstance(record.get("aliases"), list) or not all(isinstance(x, str) for x in record["aliases"]):
-            raise ValueError("模板別名格式錯誤")
-        if not isinstance(record.get("keywords"), list) or not all(isinstance(x, str) for x in record["keywords"]):
-            raise ValueError("模板關鍵字格式錯誤")
-        if not isinstance(record.get("type"), str) or not record["type"].strip():
-            raise ValueError("模板記錄缺少類型")
-        for field in ("public_text", "kp_text", "rule_text", "uncertainty"):
-            if not isinstance(record.get(field), str):
-                raise ValueError(f"模板 {field} 格式錯誤")  # noqa: TRY004 - user input validation
-        if not any(str(record.get(k, "")).strip() for k in ("public_text", "kp_text", "rule_text")):
-            raise ValueError("模板記錄缺少中文內容")
-        if not isinstance(record.get("related_source_ids"), list) or any(
-            ref not in source_blocks for ref in record["related_source_ids"]
-        ):
-            raise ValueError("模板關聯來源不存在")
         rules = record.get("rules")
-        if not isinstance(rules, list):
-            raise ValueError("模板缺少結構化規則")  # noqa: TRY004 - user import validation
+        if not isinstance(rules, list) or len(rules) > 100:
+            raise ValueError("模板規則格式錯誤")
         if record["rule_text"].strip() and not rules:
-            raise ValueError("規則摘要必須附上欄位與逐項原文引述")
+            raise ValueError("規則摘要必須附結構化規則；摘要不進入遊戲輸入")
         for rule in rules:
             if not isinstance(rule, dict) or not rule or set(rule) - set(_RULE_FIELDS):
                 raise ValueError("規則欄位無效")
             for evidence in rule.values():
-                if not isinstance(evidence, dict) or not isinstance(evidence.get("text"), str) or not evidence["text"].strip():
-                    raise ValueError("規則缺少翻譯文字")
+                if (not isinstance(evidence, dict) or not isinstance(evidence.get("text"), str)
+                        or not evidence["text"].strip()):
+                    raise ValueError("規則缺少中文文字")
                 quote = evidence.get("source_quote")
-                if not isinstance(quote, str) or not quote.strip() or quote not in block["text"]:
-                    raise ValueError("規則原文引述無法定位")
-                numbers = lambda text: Counter(x.casefold() for x in _NUMBER.findall(text))
-                if numbers(quote) != numbers(evidence["text"]):
-                    raise ValueError("規則欄位數值與其原文引述不符")
-        grouped.setdefault(source_id, []).append(record)
-    missing = set(source_blocks) - set(grouped)
-    if missing and not partial:
-        raise ValueError(f"模板漏掉 {len(missing)} 個來源區塊")
-    if any(len(items) != 1 for items in grouped.values()):
-        raise ValueError("每個來源單元必須完整對應一筆記錄")
-    issues: list[str] = []
-    for source_id, block in source_blocks.items():
-        if source_id not in grouped:
-            continue
-        translated = " ".join(str(r.get(k, "")) for r in grouped[source_id]
-                              for k in ("public_text", "kp_text", "rule_text"))
-        absent = {n.casefold() for n in _NUMBER.findall(block["text"])} - {n.casefold() for n in _NUMBER.findall(translated)}
+                if not isinstance(quote, str) or not quote.strip() or not any(quote in part for part in parts):
+                    raise ValueError("規則引述不在此記錄的來源範圍")
+                if Counter(x.casefold() for x in _NUMBER.findall(quote)) != Counter(x.casefold() for x in _NUMBER.findall(evidence["text"])):
+                    raise ValueError("規則欄位數值與原文不符")
+        translated = scenario_projection.body(record, "public") + "\n" + scenario_projection.body(record, "kp_only")
+        if not translated.strip():
+            raise ValueError("模板記錄缺少中文內容")
+        absent = {x.casefold() for x in _NUMBER.findall(original)} - {x.casefold() for x in _NUMBER.findall(translated)}
         if absent:
-            issues.append(f"{source_id} 數值未對齊：{', '.join(sorted(absent)[:10])}")
-        if _NEGATIVE.search(block["text"]) and not re.search(r"不|無|未|非|禁止|不能", translated):
-            issues.append(f"{source_id} 否定條件待核對")
-        if any(str(r.get("uncertainty", "")).strip() for r in grouped[source_id]):
-            issues.append(f"{source_id} 有待釐清翻譯")
+            issues.append(f"{record_id} 數值未對齊：{', '.join(sorted(absent)[:10])}")
+        if _NEGATIVE.search(original) and not re.search(r"不|無|未|非|禁止|不能", translated):
+            issues.append(f"{record_id} 否定條件待校對")
+        if record["uncertainty"].strip():
+            issues.append(f"{record_id} 有待釐清翻譯")
+        grouped.setdefault(source_id, []).append(record)
+    for record in records:
+        if any(ref not in seen for ref in record["related_record_ids"]):
+            raise ValueError("關聯記錄不存在")
+    for source_id, block in blocks.items():
+        intervals = sorted(span for record in grouped.get(source_id, []) for span in record["source_spans"])
+        covered = 0
+        for start, end in intervals:
+            if start > covered:
+                raise ValueError(f"{source_id} 來源覆蓋有缺口")
+            covered = max(covered, end)
+        if covered != len(block["text"]):
+            raise ValueError(f"{source_id} 來源覆蓋不完整")
+    scenario_projection.bundles(records)
     return manifest["content_hash"], _chapter_hash(manifest), issues
-
-
-async def _generate(scenario_id: str, source_hash: str, chapter_hash: str) -> str:
-    provider = _PROVIDERS.get(LLM_PROVIDER)
-    if provider is None:
-        raise RuntimeError("未設定可用的 LLM_PROVIDER")
-    manifest, text = _source(scenario_id)
-    if manifest["content_hash"] != source_hash or _chapter_hash(manifest) != chapter_hash:
-        raise ValueError("劇本已重新解析，請重新排程")
-    records: list[dict[str, Any]] = []
-    units = _blocks(manifest, text)
-    glossary: dict[str, str] = {}
-    for block in units:
-        current, _ = _source(scenario_id)
-        if current["content_hash"] != source_hash or _chapter_hash(current) != chapter_hash:
-            raise ValueError("來源已變更；停止舊版生成")
-        if len(block["text"]) > 16000:
-            raise ValueError(f"{block['id']} 超出完整單元預算；請 KP 整理標題或手動匯入，不自動切斷規則")
-        checkpoint_key = json.dumps([scenario_id, source_hash, chapter_hash, _GENERATOR_VERSION, block["id"]])
-        saved = db.get_json("scenario_template_checkpoints", checkpoint_key)
-        if saved is not None:
-            _validate(scenario_id, [saved], partial=True)
-            records.append(saved)
-            for alias in saved.get("aliases", []):
-                glossary.setdefault(alias, saved["name"])
-            continue
-        prompt = (
-            "把整個來源單元忠實翻為繁體中文，records 必須恰好一筆。保留所有段落、條件、否定、數值與例外。"
-            "public_text 僅含可公開內容；kp_text 含完整秘密翻譯；rule_text 為規則摘要。"
-            "rules 每個非空 trigger/check/success/failure/exceptions 欄位都需 text 翻譯及逐字 source_quote。"
-            "原文沒寫的欄位省略，不推導規則。related_source_ids 只填已知的來源 ID，未知則留空。"
-            f"來源 {block['id']}，標題 {block['heading']}，頁碼 {block['pages']}。"
-            f"同章來源目錄：{json.dumps([{'id': u['id'], 'heading': u['heading']} for u in units if u['chapter_id'] == block['chapter_id']], ensure_ascii=False)}"
-            f"已確認術語：{json.dumps(glossary, ensure_ascii=False)[:1500]}"
-        )
-        if LLM_PROVIDER == "openai":
-            response = await openai_provider.analyze_text_background(block["text"], _TOOL, prompt)
-        else:
-            response = await asyncio.to_thread(provider.analyze_text, block["text"], _TOOL, prompt)
-        items = (response or {}).get("records")
-        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
-            raise ValueError(f"{block['id']} 必須產生一筆完整記錄")
-        item = items[0]
-        record = {**item, "id": f"{block['id']}-r1", "source_id": block["id"],
-                  "page": block["page"], "source_pages": block["pages"], "chapter_id": block["chapter_id"],
-                  "visibility": "kp_only" if not str(item.get("public_text", "")).strip() else "public",
-                  "source_excerpt": block["text"], "source_heading": block["heading"]}
-        _validate(scenario_id, [record], partial=True)
-        current, _ = _source(scenario_id)
-        if current["content_hash"] != source_hash or _chapter_hash(current) != chapter_hash:
-            raise ValueError("來源已變更；不保存舊版 checkpoint")
-        records.append(record)
-        db.set_json("scenario_template_checkpoints", checkpoint_key, record)
-        for alias in record.get("aliases", []):
-            if isinstance(alias, str):
-                glossary.setdefault(alias, str(record.get("name", "")))
-    _, _, issues = _validate(scenario_id, records)
-    return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="generated")
-
-
-async def _run_job(scenario_id: str, source_hash: str, chapter_hash: str) -> None:
-    current_task = asyncio.current_task()
-    try:
-        async with _gate:
-            if _tasks.get(scenario_id) is not current_task:
-                return
-            db.set_json("scenario_template_jobs", scenario_id,
-                        {"status": "processing", "source_hash": source_hash, "chapter_hash": chapter_hash})
-            try:
-                started = time.monotonic()
-                variant_id = await _generate(scenario_id, source_hash, chapter_hash)
-            except Exception as exc:  # noqa: BLE001 - background job must record provider failures
-                if _tasks.get(scenario_id) is current_task:
-                    db.set_json("scenario_template_jobs", scenario_id,
-                                {"status": "failed", "source_hash": source_hash,
-                                 "chapter_hash": chapter_hash, "error": str(exc)[:300]})
-            else:
-                if _tasks.get(scenario_id) is current_task:
-                    db.set_json("scenario_template_jobs", scenario_id,
-                                {"status": "review_required", "source_hash": source_hash,
-                                 "chapter_hash": chapter_hash, "variant_id": variant_id,
-                                 "duration_seconds": time.monotonic() - started})
-    finally:
-        if _tasks.get(scenario_id) is current_task:
-            _tasks.pop(scenario_id, None)
-
-
-def queue_generation(scenario_id: str) -> bool:
-    manifest, _ = _source(scenario_id)
-    source_hash, chapter_hash = manifest["content_hash"], _chapter_hash(manifest)
-    existing = db.get_json("scenario_template_jobs", scenario_id) or {}
-    if (existing.get("source_hash") == source_hash and
-            existing.get("chapter_hash") == chapter_hash and
-            existing.get("status") in ("queued", "processing", "review_required") and
-            scenario_id in _tasks and not _tasks[scenario_id].done()):
-        return False
-    if any(v.get("source_hash") == source_hash and v.get("chapter_hash") == chapter_hash
-           and v.get("schema_version") == _VERSION
-           and v.get("generator_version") == _GENERATOR_VERSION
-           and v.get("review_status") in ("review_required", "approved")
-           for v in _all_variants(scenario_id)):
-        return False
-    db.set_json("scenario_template_jobs", scenario_id,
-                {"status": "queued", "source_hash": source_hash, "chapter_hash": chapter_hash})
-    _tasks[scenario_id] = asyncio.create_task(_run_job(scenario_id, source_hash, chapter_hash))
-    return True
-
-
-def pause_pending_jobs() -> None:
-    """Startup must not restart paid translation, including old automatic jobs."""
-    for scenario_id in db.list_keys("scenario_template_jobs"):
-        active = _tasks.get(scenario_id)
-        if active is not None and not active.done():
-            continue  # Discord reconnect must not relabel a manually started live job.
-        job = db.get_json("scenario_template_jobs", scenario_id) or {}
-        if job.get("status") in ("queued", "processing"):
-            db.set_json("scenario_template_jobs", scenario_id, {**job, "status": "paused"})
 
 
 def export_template(scenario_id: str) -> Path:
@@ -383,10 +256,10 @@ def export_template(scenario_id: str) -> Path:
             "id": f"{block['id']}-r1", "source_id": block["id"],
             "page": block["page"], "source_pages": block["pages"],
             "chapter_id": block["chapter_id"], "source_heading": block["heading"],
-            "source_excerpt": block["text"], "type": "source_unit",
+            "source_excerpt": block["text"], "source_spans": [[0, len(block["text"])]], "type": "source_unit",
             "name": block["heading"], "aliases": [], "keywords": [],
             "visibility": "kp_only", "public_text": "", "kp_text": "", "rule_text": "",
-            "rules": [], "related_source_ids": [], "uncertainty": "尚未翻譯與校對",
+            "rules": [], "related_record_ids": [], "uncertainty": "尚未翻譯與校對",
         })
     root = IMPORT_DIR.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -398,13 +271,13 @@ def export_template(scenario_id: str) -> Path:
         stream.write(
             "# External Chinese scenario preparation\n\n"
             "Private Keeper workbook: contains unredacted source material.\n"
-            "Keep IDs, hashes, chapter and source page fields unchanged. Translate complete units; "
+            "Keep hashes, chapter and source page fields unchanged. Split complete semantic records with unique IDs and source_spans [start,end) covering the full source text; offsets are Unicode code points. Translate complete units; "
             "do not infer missing rules. Preserve triggers, success/failure, Push, costs, limits and exceptions. "
             "Put rule translations and exact original quotes in rules fields "
             "trigger/check/success/failure/exceptions. Mark public versus KP content explicitly. "
             "Keep unresolved text in uncertainty; clear it only after review. "
             "source_pages are PDF positions, not printed page labels. "
-            "Use related_source_ids for dependencies; links do not unlock other chapters.\n\n"
+            "Use related_record_ids for dependencies; links do not unlock other chapters.\n\n"
         )
         stream.write(_records_text(records, manifest["content_hash"], _chapter_hash(manifest)))
     return Path(filename)
@@ -412,15 +285,11 @@ def export_template(scenario_id: str) -> Path:
 
 def status(scenario_id: str) -> dict[str, Any]:
     manifest, _ = _source(scenario_id)
-    job = db.get_json("scenario_template_jobs", scenario_id) or {}
-    if job and (job.get("source_hash") != manifest["content_hash"] or
-                job.get("chapter_hash") != _chapter_hash(manifest)):
-        job = {**job, "status": "stale"}
-    return {"job": job,
+    return {
             "variants": [{**v, "current": v.get("source_hash") == manifest["content_hash"]
                           and v.get("chapter_hash") == _chapter_hash(manifest)
                           and v.get("schema_version") == _VERSION
-                          and v.get("generator_version") == _GENERATOR_VERSION}
+                          and v.get("compiler_version") == _COMPILER_VERSION}
                          for v in _all_variants(scenario_id)]}
 
 
@@ -431,8 +300,10 @@ def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], li
     records = scenario_library._read_json(path / "records.json", None)
     if not isinstance(variant, dict) or not isinstance(records, list):
         raise FileNotFoundError(variant_id)
-    if variant.get("schema_version") != _VERSION or variant.get("generator_version") != _GENERATOR_VERSION:
+    if variant.get("schema_version") != _VERSION or variant.get("compiler_version") != _COMPILER_VERSION:
         raise ValueError("模板結構版本已過期，請重新產生或匯入校對")
+    if variant.get("records_hash") != hashlib.sha256(json.dumps(records, sort_keys=True, ensure_ascii=False).encode()).hexdigest():
+        raise ValueError("模板內容已變更，請重新匯入校對")
     if variant.get("chapter_hash") != _chapter_hash(manifest):
         raise ValueError("中文模板章節版本已過期")
     return variant, records
@@ -452,9 +323,6 @@ def approve(scenario_id: str, variant_id: str, *, reviewer_id: str) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(variant, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
-    job = db.get_json("scenario_template_jobs", scenario_id) or {}
-    if job.get("variant_id") == variant_id:
-        db.set_json("scenario_template_jobs", scenario_id, {**job, "status": "approved"})
 
 
 def import_markdown(scenario_id: str, filename: str) -> str:
@@ -471,6 +339,8 @@ def import_markdown(scenario_id: str, filename: str) -> str:
     if not match:
         raise ValueError("Markdown 需要包含 records JSON 區塊")
     payload = json.loads(match.group(1))
+    if not isinstance(payload, dict) or payload.get("schema_version") != _VERSION:
+        raise ValueError("模板版本已更新，請重新匯出 schema v3")
     records = payload.get("records")
     if not isinstance(records, list):
         raise ValueError("模板缺少 records")  # noqa: TRY004 - user input validation
@@ -479,7 +349,7 @@ def import_markdown(scenario_id: str, filename: str) -> str:
         raise ValueError("匯入模板的來源或章節版本已過期")
     source_blocks = {b["id"]: b for b in _blocks(*_source(scenario_id))}
     for record in records:
-        record["source_excerpt"] = source_blocks[record["source_id"]]["text"]
+        record["source_excerpt"] = _record_source(record, source_blocks[record["source_id"]]["text"])
     return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="manual")
 
 
@@ -542,23 +412,59 @@ def preference_notice(group_id: str, scenario_id: str) -> str:
     return ""
 
 
-def index_for_state(state: Any) -> scenario_rag.ScenarioIndex:
+# Small bounded hot-path cache: avoid reading/serializing the full bilingual audit
+# file on every turn. Source, record and approval file changes invalidate it.
+_selection_cache: dict[tuple, tuple[tuple, scenario_rag.ScenarioIndex]] = {}
+
+
+def _selection_stamp(scenario_id: str, variant_id: str) -> tuple:
+    root = scenario_library._path(scenario_id)
+    manifest = scenario_library._read_json(root / "manifest.json", {})
+    if not isinstance(manifest, dict):
+        raise ValueError("劇本 manifest 格式錯誤")  # noqa: TRY004 - invalid persisted document
+    variant = _variant_dir(scenario_id, manifest.get("content_hash", ""), variant_id)
+    paths = [root / "manifest.json", root / "scenario.txt", variant / "manifest.json", variant / "records.json"]
+    return tuple((str(path), stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+                 for path in paths for stat in [path.stat()])
+
+
+def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenario_rag.ScenarioIndex:
     scenario_id = state.scenario_library_id
     variant_id = state.scenario_variant_id
+    diagnostics = metrics if metrics is not None else {}
+    diagnostics.update(requested_variant=variant_id, effective_variant="original",
+                       projection_version=scenario_projection.VERSION, variant_fallback="not_selected")
     if scenario_id and variant_id and variant_id != "original":
         try:
+            key = (scenario_id, variant_id, tuple(state.context_chapter_ids), SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION)
+            stamp = _selection_stamp(scenario_id, variant_id)
+            cached = _selection_cache.get(key)
+            if cached is not None and cached[0] == stamp:
+                diagnostics.update(effective_variant=variant_id, variant_fallback="none", template_cache="memory")
+                cached[1].index_cache = "memory"
+                return cached[1]
+            diagnostics["template_cache"] = "miss"
             variant, records = _read_variant(scenario_id, variant_id)
+            diagnostics["variant_fallback"] = "unapproved"
             if variant.get("review_status") == "approved":
+                diagnostics["variant_fallback"] = "empty_window"
                 window = tuple(state.context_chapter_ids)
                 selected = [r for r in records if r.get("chapter_id") in window]
                 if selected:
                     digest = hashlib.sha256(json.dumps(
                         [scenario_id, variant["source_hash"], variant["chapter_hash"],
-                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, "record-v2"],
+                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION],
                         ensure_ascii=False).encode("utf-8")).hexdigest()
-                    return scenario_rag.get_record_index(f"template:{scenario_id}:{digest}", selected)
+                    index = scenario_rag.get_record_index(f"template:{scenario_id}:{digest}", selected)
+                    if _selection_stamp(scenario_id, variant_id) != stamp:
+                        raise ValueError("模板來源在建立索引時改變")
+                    if len(_selection_cache) >= 32:
+                        _selection_cache.pop(next(iter(_selection_cache)))
+                    _selection_cache[key] = (stamp, index)
+                    diagnostics.update(effective_variant=variant_id, variant_fallback="none")
+                    return index
         except (FileNotFoundError, ValueError):
-            pass
+            diagnostics["variant_fallback"] = "invalid_or_stale"
     return scenario_rag.get_index(state.group_id, state.scenario_text)
 
 
@@ -578,9 +484,9 @@ def schedule_index_prewarm(state: Any) -> asyncio.Task[None] | None:
 
 def clean_scenario(scenario_id: str) -> None:
     scenario_library._path(scenario_id)
-    task = _tasks.pop(scenario_id, None)
-    if task is not None:
-        task.cancel()
+    for selection_key in list(_selection_cache):
+        if selection_key[0] == scenario_id:
+            _selection_cache.pop(selection_key, None)
     shutil.rmtree(_root() / scenario_id, ignore_errors=True)
     db.delete_json("scenario_template_jobs", scenario_id)
     for key in db.list_keys("scenario_template_checkpoints"):

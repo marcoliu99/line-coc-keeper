@@ -65,7 +65,7 @@ round/encounter and follow-up effects in these complete text fields. Multiple re
 rules can be separate entries in `rules`; do not reduce a creature to HP alone.
 Additional normalized numeric ability fields are not introduced in this revision.
 
-`related_source_ids` preserves explicit dependencies, but does not grant chapter
+`related_record_ids` preserves explicit dependencies, but does not grant chapter
 access. Long-campaign graphs need separate visibility/unlock policy: a discovered
 lead to another country does not make every secret in that chapter public. The current
 selected chapter-window policy is unchanged; this review does not claim full arbitrary
@@ -86,10 +86,11 @@ variants. Do not modify IDs/hashes to force an out-of-date translation to import
 Exporting again creates a new file and never overwrites partially completed work.
 
 Current source segmentation uses extracted Markdown headings. If extraction produces
-one huge unstructured chapter, export keeps that unit intact. An externally translated
-large unit can be imported, but retrieval may return too much text. Source-unit curation
-and support for multiple semantic records per source unit remain follow-ups; do not
-pretend a PDF page splitter or this exporter solves those issues automatically.
+one huge unstructured chapter, export keeps that unit intact. Schema v3 allows external editors to split a unit into multiple complete semantic
+records, using Unicode `source_spans` whose union covers the original unit.
+Approval checks the shared runtime projection: 6,000 characters per record, 12,000
+per dependency bundle. Oversized records must be regrouped externally; rules are
+never truncated to fit. Source-unit curation still requires human judgment.
 
 ### Role cards: open prose and actual mechanics
 
@@ -114,10 +115,9 @@ this format is separate from scenario records JSON.
 ## Lifecycle changes in this revision
 
 - PDF import no longer queues Chinese translation.
-- Bot startup marks old queued/processing jobs paused rather than restarting them.
+- Translation generation, jobs and startup scheduling have been removed.
 - `template export/import/preview/approve` is the primary preparation workflow.
-- Existing `template generate` remains an explicitly requested optional API operation;
-  it is labeled as such in Help. No automatic generation or restart resumes it.
+- `template generate` is removed; translation is prepared externally.
 - Original PDFs and existing source extraction/pregen extraction are unchanged.
   Removing automatic *template translation* does not remove the existing PDF/OCR or
   pregen extraction stages.
@@ -125,7 +125,8 @@ this format is separate from scenario records JSON.
 ## Tests
 
 Synthetic source fixtures test export/import compatibility, private file permissions,
-unique filenames, blank-template rejection and startup pause without generation.
+unique filenames, blank-template rejection, source-span coverage, bounded Chinese
+projections and cache invalidation. There is no translation startup job.
 Role-card tests cover multiline prose, intentional blanks, approximate age, explicit
 key connections, retained weapon restrictions and descriptive cash text. The copyrighted
 PDFs are local reference material, not test dependencies.
