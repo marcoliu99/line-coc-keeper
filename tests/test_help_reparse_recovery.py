@@ -33,7 +33,7 @@ def reparse(state):
 
 def test_guarded_reparse_preserves_source_and_can_retry(staged):
     state, key = staged
-    def extract(_):
+    def extract(_, **kwargs):
         current = load_state(state.group_id)
         current.keeper_persona = 'concurrent change'
         save_state(current)

@@ -46,3 +46,34 @@ Synthetic regression tests exercise precedence, empty alternates, lost numeric f
 column order, full-source retention, continuation reporting and persistent diagnostics.
 Run a local no-API probe of the supplied scenarios and role cards, report coverage and
 warnings without claiming human-level parsing accuracy. Paid OCR is mocked in tests.
+
+## Local verification (2026-09-27)
+
+| Supplied document | Pages retained | Layout/native selected pages | Review pages | Source characters |
+| --- | ---: | --- | ---: | ---: |
+| The Haunting, trimmed | 27 | 26 / 1 | 2 | 76,144 |
+| Dead Boarder | 32 | 29 / 3 | 8 | 76,289 |
+| The Lightless Beacon | 43 | 35 / 8 | 13 | 84,312 |
+| Doors to Darkness pregens | 11 | 1 / 10 | 10 | 20,742 |
+
+No source was truncated. The Beacon 23 -> 24 continuation was identified as a
+candidate. All ten pregen pages triggered numeric-evidence warnings and retained
+native text instead of silently accepting layout output. This does not certify
+label/value correspondence in the native text. Character-sheet page transitions
+also produce false-positive continuation candidates; candidates never alter text.
+
+The probe disabled MarkItDown and whole-page model calls. PyMuPDF4LLM used local
+Tesseract where necessary. Raw PDFs and extracted source text remain outside git.
+Counts, package versions and limitations: [local report](evaluations/pdf_parse_quality_local.json).
+
+Full isolated suite: 775 passed, one skipped, 15 subtests passed. Mypy: 74 source
+files. Ruff passes for all changed files; a pre-existing SIM114 in untouched
+app/pregen_extractor.py remains outside this change.
+
+### Remaining limits
+
+Numeric/text coverage checks detect omissions, not swapped table labels or semantic
+errors. Complex spanning tables and ambiguous columns are retained with warnings.
+Human review remains necessary; automatic region-level table reconstruction and
+verified paragraph joins are not claimed by this revision. Large-source preparation
+models may still need batching; source storage and prompt limits are now separate.

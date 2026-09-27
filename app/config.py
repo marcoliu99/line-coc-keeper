@@ -89,6 +89,7 @@ SCENE_DIGEST_TURN_INTERVAL = max(1, int(os.environ.get("SCENE_DIGEST_TURN_INTERV
 # tune them down if you're on a model with a smaller context window than Claude
 # Sonnet's ~200K tokens, or up if you've checked your model comfortably fits more.
 #
+# PDF library sources are stored complete; this bounds prompt/comparison input.
 # MAX_SCENARIO_CHARS: raised from the original 90K after a real 43-page scenario
 # PDF (~78K chars after OCR) came uncomfortably close to that cap — a longer
 # campaign book would have silently lost its later chapters. 240K chars is

@@ -269,9 +269,8 @@ def _pdf_upload_confirmation_text(
     if low_text_pages:
         pages_str = "、".join(str(p) for p in low_text_pages)
         warning += (
-            f"\n\n⚠️ 第 {pages_str} 頁偵測到文字內容偏少（可能是地圖、手卡或圖片化的內容），"
-            "已嘗試自動辨識，但仍建議你人工核對一下；如果有遺漏的重要線索，"
-            "之後可以直接把那頁的文字內容貼在群組訊息裡讓守密人知道。"
+            f"\n\n⚠️ 第 {pages_str} 頁有解析品質待核對項目（文字不足、版面歧義或辨識結果），"
+            "請對照原稿確認，尤其是表格數值與跨頁規則；如有缺漏，請修正來源後重新解析。"
         )
     if truncated:
         warning += (
@@ -424,9 +423,10 @@ async def handle_pdf_upload(
 
     await reply("收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...")
 
+    parse_quality: dict = {}
     try:
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
-            pdf_loader.extract_text, pdf_bytes
+            pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality
         )
     except ValueError as exc:
         await push(f"讀取 PDF 失敗：{exc}")
@@ -462,6 +462,7 @@ async def handle_pdf_upload(
         scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
         preview=preview, text=text, indexes=extracted_index, pregens=pregens,
         page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
+        parse_quality=parse_quality,
     )
     library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
     text = library_context["text"]

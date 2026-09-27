@@ -11,7 +11,7 @@ sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None)
 sys.modules.setdefault(
     "app.pdf_loader",
     types.SimpleNamespace(
-        extract_text=lambda pdf_bytes: ("", [], False, {}, {}),
+        extract_text=lambda pdf_bytes, **kwargs: ("", [], False, {}, {}),
         guess_title=lambda text, file_name="": file_name or "Untitled",
         extract_preview=lambda pdf_bytes: "",
     ),
@@ -459,7 +459,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             state = GroupState(group_id="g")
             state.kp_ooc_log = [{"role": "kp_assistant", "content": "old scenario note"}]
             store.put(state)
-            commands.pdf_loader.extract_text = lambda pdf_bytes: ("new scenario text", [], False, {}, {})
+            commands.pdf_loader.extract_text = lambda pdf_bytes, **kwargs: ("new scenario text", [], False, {}, {})
             commands.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
             commands.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
             commands.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
@@ -477,7 +477,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 saved.kp_ooc_log = [{"role": "kp_assistant", "content": "must survive failed parse"}]
                 store.put(saved)
 
-                def fail_extract(pdf_bytes):
+                def fail_extract(pdf_bytes, **kwargs):
                     raise ValueError("bad pdf")
 
                 commands.pdf_loader.extract_text = fail_extract
