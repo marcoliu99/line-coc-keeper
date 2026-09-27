@@ -353,7 +353,7 @@ def import_markdown(scenario_id: str, filename: str) -> str:
     return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="manual")
 
 
-def preview(scenario_id: str, variant_id: str, limit: int = 1700, page: int = 1) -> str:
+def _preview_content(scenario_id: str, variant_id: str) -> str:
     variant, records = _read_variant(scenario_id, variant_id)
     lines = [f"模板 {variant_id}（{variant['review_status']}）"]
     if variant.get("issues"):
@@ -367,7 +367,15 @@ def preview(scenario_id: str, variant_id: str, limit: int = 1700, page: int = 1)
                      f"[{record['visibility']}]\n" + json.dumps({k: record.get(k) for k in ('public_text', 'kp_text', 'rules', 'rule_text', 'source_excerpt')}, ensure_ascii=False))
         if record.get("uncertainty"):
             lines.append(f"待釐清：{record['uncertainty']}")
-    content = "\n".join(lines)
+    return "\n".join(lines)
+
+
+def preview_page_count(scenario_id: str, variant_id: str, limit: int = 1700) -> int:
+    return max(1, (len(_preview_content(scenario_id, variant_id)) + limit - 1) // limit)
+
+
+def preview(scenario_id: str, variant_id: str, limit: int = 1700, page: int = 1) -> str:
+    content = _preview_content(scenario_id, variant_id)
     pages = max(1, (len(content) + limit - 1) // limit)
     if page < 1 or page > pages:
         raise ValueError(f"預覽頁碼應為 1–{pages}")

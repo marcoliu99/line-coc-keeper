@@ -284,7 +284,7 @@ async def handle_system_command(
                     scenario_templates.approve(scenario_id, parts[5], reviewer_id=user_id)
                     await reply(f"中文模板 {parts[5]} 已通過校對，可用 /coc scenario use {scenario_id} {parts[5]} 啟用。")
                 elif operation == "import" and len(parts) >= 6:
-                    variant_id = await asyncio.to_thread(scenario_templates.import_markdown, scenario_id, parts[5])
+                    variant_id = await asyncio.to_thread(scenario_templates.import_markdown, scenario_id, " ".join(parts[5:]))
                     await reply(f"已匯入中文模板 {variant_id}；請先 status、preview 與 approve。")
                 else:
                     await reply("用法：/coc scenario template status|export|preview|approve|import 劇本ID [版本或檔名]")

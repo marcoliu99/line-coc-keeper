@@ -192,3 +192,44 @@ def test_private_dependency_path_retains_public_prerequisites_internally():
     private_views = projection.bundles([bridge, clue])['secret']
     assert private_views['public'] == ''
     assert '必要線索' in private_views['kp_only']
+
+
+def test_template_button_choices_use_files_versions_and_review_pages(prepared):
+    from app import help_actions
+
+    state, _, _ = prepared
+    with patch.object(scenario_library, 'list_scenarios', return_value=[{'id': 'sample', 'title': '範例'}]):
+        imports = help_actions.options_for('template_import', state, 'keeper')
+        assert len(imports) == 1
+        command = help_actions.build_command(help_actions.BY_KEY['template_import'], imports[0][1])
+        assert command.startswith('/coc scenario template import sample scenario-template-')
+        previews = help_actions.options_for('template_preview', state, 'keeper')
+        assert len(previews) == templates.preview_page_count('sample', state.scenario_variant_id)
+        assert previews[0][1] == f'sample {state.scenario_variant_id} 1'
+        assert help_actions.options_for('template_use', state, 'keeper') == []
+        templates.approve('sample', state.scenario_variant_id, reviewer_id='keeper')
+        selected = help_actions.options_for('template_use', state, 'keeper')[0][1]
+        assert help_actions.build_command(help_actions.BY_KEY['template_use'], selected) == (
+            f'/coc scenario use sample {state.scenario_variant_id}')
+        for key in ['template_import', 'template_preview', 'template_approve', 'template_use']:
+            assert help_actions.BY_KEY[key].fields == ()
+        assert help_actions.BY_KEY['template_approve'].confirm
+        assert help_actions.BY_KEY['template_use'].confirm
+
+
+def test_template_import_picker_ignores_invalid_stale_and_symlink_files(prepared):
+    from app import help_actions
+
+    state, _, _ = prepared
+    directory = templates.IMPORT_DIR
+    original = next(directory.glob('*.md'))
+    (directory / 'bad.md').write_text('not json')
+    (directory / 'old.md').write_text(original.read_text().replace(MANIFEST['content_hash'], '0' * 64))
+    (directory / 'link.md').symlink_to(original)
+    renamed = directory / 'reviewed template.md'
+    original.rename(renamed)
+    with patch.object(scenario_library, 'list_scenarios', return_value=[{'id': 'sample'}]):
+        assert help_actions.options_for('template_import', state, 'keeper') == [
+            ('sample · reviewed template.md', 'sample reviewed template.md')]
+        renamed.unlink()
+        assert help_actions.options_for('template_import', state, 'keeper') == []

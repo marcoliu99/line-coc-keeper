@@ -211,3 +211,22 @@ export/import/approval artifacts, in-memory and persisted-index reuse, source/re
 approval invalidation, split-source coverage, scope-preserving dependency closure and
 whole-record response-budget handling. These are deterministic correctness checks,
 not a new API latency benchmark.
+
+## 8. Button-driven template management
+
+Help actions select complete scenario/file or scenario/version pairs instead of asking
+for IDs in a modal. Import options are local non-symlink Markdown workbooks matching
+the current source/chapter hashes and schema. Preview options include every review
+page; approval and activation use explicit confirmation. Activation lists only current
+approved versions. Option values are server-held indices, and the existing Help
+dispatch reloads available options, permissions and revision before calling the same
+command router. Import validation remains authoritative. Missing/deleted/changed
+files or stale versions must not dispatch from an old selection.
+
+    Help -> template action -> select scenario + file/version/page
+      -> confirmation when required -> fresh option/revision/permission checks
+      -> existing command handler -> validation / private preview / activation
+
+This removes manual command arguments; it does not add Discord attachment ingestion.
+Workbooks must still be placed in IMPORT_DIR. Test picker filtering, source mismatch,
+review pages, approved-only activation and command construction.

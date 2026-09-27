@@ -45,9 +45,10 @@ DESCRIPTION = Field("描述", paragraph=True)
 ACTIONS: tuple[HelpExecution, ...] = (
     _a("template_status", "scenario/template_status", "查看模板", "select", "/coc scenario template status", source="scenario"),
     _a("template_export", "scenario/template_export", "匯出空白模板", "select", "/coc scenario template export", source="scenario"),
-    _a("template_preview", "scenario/template_preview", "預覽模板", "select", "/coc scenario template preview", Field("模板版本"), source="scenario"),
-    _a("template_approve", "scenario/template_approve", "核准模板", "select", "/coc scenario template approve", Field("模板版本"), source="scenario", confirm=True),
-    _a("template_import", "scenario/template_import", "匯入模板", "select", "/coc scenario template import", Field("Markdown 檔名"), source="scenario", confirm=True),
+    _a("template_preview", "scenario/template_preview", "預覽模板", "select", "/coc scenario template preview", source="template_preview"),
+    _a("template_approve", "scenario/template_approve", "核准模板", "select", "/coc scenario template approve", source="template_approve", confirm=True),
+    _a("template_import", "scenario/template_import", "匯入模板", "select", "/coc scenario template import", source="template_import", confirm=True),
+    _a("template_use", "scenario/use", "選用中文模板", "select", "/coc scenario use", source="template_use", confirm=True),
     # Characters
     _a("pc", "character/pc", "建立角色", "form", "/coc pc", NAME, OCCUPATION),
     _a("create", "character/create", "開始建角", "form", "/coc create", NAME, OCCUPATION),
@@ -172,6 +173,8 @@ def validate_coverage(paths: set[tuple[str, ...]]) -> None:
 
 def options_for(source: str, state: GroupState, user_id: str) -> list[tuple[str, str]]:
     """Return fresh (label, command argument) options for a Help picker."""
+    if source.startswith("template_"):
+        return _template_options(source)
     if source == "pregen":
         return [(f"{i}. {item.get('name') or '未命名'}", str(i))
                 for i, item in enumerate(state.pregens, 1)]
@@ -250,3 +253,60 @@ def build_command(action: HelpExecution, selected: str = "", field_values: tuple
     if any(char in selected for char in "\r\n\t"):
         raise ValueError("選項包含不合法字元。")
     return " ".join((action.command, *values))
+
+
+def _template_options(source: str) -> list[tuple[str, str]]:
+    """List valid source-bound choices; handlers still validate at execution."""
+    import json
+    import re
+
+    from app import scenario_library, scenario_templates
+
+    options = []
+    workbooks = []
+    if source == "template_import":
+        directory = scenario_templates.IMPORT_DIR
+        if directory.is_dir():
+            for path in sorted(directory.iterdir()):
+                if (path.is_symlink() or not path.is_file() or path.suffix.lower() != ".md"
+                        or any(c in path.name for c in "\r\n\t")):
+                    continue
+                try:
+                    match = re.search(r"```json\s*(\{.*?\})\s*```", path.read_text(encoding="utf-8"), re.DOTALL)
+                    data = json.loads(match.group(1)) if match else None
+                    if isinstance(data, dict) and data.get("schema_version") == scenario_templates._VERSION:
+                        workbooks.append((path.name, data))
+                except (OSError, ValueError):
+                    continue
+    for scenario in scenario_library.list_scenarios():
+        scenario_id = scenario.get("id")
+        if not isinstance(scenario_id, str):
+            continue
+        title = scenario.get("title") or scenario_id
+        try:
+            if source == "template_import":
+                manifest, _ = scenario_templates._source(scenario_id)
+                for filename, data in workbooks:
+                    if (data.get("source_hash") == manifest["content_hash"]
+                            and data.get("chapter_hash") == scenario_templates._chapter_hash(manifest)):
+                        options.append((f"{title} · {filename}", f"{scenario_id} {filename}"))
+                continue
+            for variant in scenario_templates.status(scenario_id)["variants"]:
+                if not variant["current"]:
+                    continue
+                variant_id = variant["variant_id"]
+                if source == "template_use" and variant["review_status"] != "approved":
+                    continue
+                # Recheck record integrity, not only the small status manifest.
+                scenario_templates._read_variant(scenario_id, variant_id)
+                if source == "template_preview":
+                    pages = scenario_templates.preview_page_count(scenario_id, variant_id)
+                    for page in range(1, pages + 1):
+                        options.append((f"{title} · {variant_id} · {page}/{pages}",
+                                        f"{scenario_id} {variant_id} {page}"))
+                else:
+                    options.append((f"{title} · {variant_id} · {variant['review_status']}",
+                                    f"{scenario_id} {variant_id}"))
+        except (OSError, ValueError, KeyError):
+            continue
+    return options

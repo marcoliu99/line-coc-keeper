@@ -398,7 +398,7 @@
 
 ### 匯入中文模板 **[KP-only]**
 
-從 IMPORT_DIR 匯入校對後的 Markdown 模板。
+選取對應劇本的 Markdown 檔案並匯入；檔案須先放進伺服器匯入目錄。
 
 用法：
 - `/coc scenario template import 劇本ID 檔名.md`
