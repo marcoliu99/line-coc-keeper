@@ -4,9 +4,9 @@
 
 ## Status and scope
 
-Category: `enhancement`. Status: **proposed — not implemented**. Baseline: `main_v2` at `c05e152` (2026-09-27). This proposal extends PR #83 while retaining original-source evidence, chapter isolation and approval before activation, and adds complete storage and demand-driven retrieval for long campaigns.
+Category: `enhancement`. Status: **implemented; web-AI usability and live API performance trials pending**. Baseline: `main_v2` at `c05e152` (2026-09-27). This proposal extends PR #83 while retaining original-source evidence, chapter isolation and approval before activation, and adds complete storage and demand-driven retrieval for long campaigns.
 
-This branch contains design documents only. Existing schema v3 remains the live import format until implementation and migration tests are complete.
+This branch implements authoring v1, runtime v4 and legacy v3 import compatibility. Section 10 records concrete behavior and limitations of the design decisions below.
 
 ## 1. Observed failure and cause
 
@@ -134,6 +134,26 @@ Use small synthetic fixtures shaped like the reported failure; do not commit the
 
 Recommended direction: separate authoring v1 from runtime v4, with a legacy v3 compatibility path and keep authoritative metadata server-side. Review batch sizing and draft retention policy before implementation. Exact quotation is intentionally conservative; repeated or broken excerpts need explicit correction rather than permissive matching. Automatic segmentation cannot certify complete semantic dependencies, so unresolved boundaries must stay visible.
 
-Approval of the design is required before runtime implementation. The existing malformed translation is useful as a draft, but reconstructing and reviewing it is a separate content task.
+The design was approved and runtime implementation is complete. The existing malformed translation is useful as a draft, but reconstructing and reviewing it is a separate content task.
 
 [Existing template specification](scenario_templates_design_spec.md) | [Authoring reference](../../references/scenario_zh_external_preparation.md)
+
+## 10. Implementation results and operating limits
+
+- `export_template` now exports authoring v1; `export_legacy_template` remains the v3 compatibility-test entry point. New workbooks do not ask the external AI to supply pages, hashes or offsets.
+- Source units are capped at 4,000 characters, preferring paragraph/newline boundaries; batches target 8,000 source characters. These are provenance units, not proof of semantic completeness. Neighbor context is reference-only; cross-unit conditions still require complete translation and explicit links.
+- Registries and batch drafts live under the scenario variants directory at `exports/<export_id>/`. Resource ceilings are 20 MB per file/aggregate draft, 20,000 records, and 100 exports or 200 MB of export data per scenario. Exceeding limits reports an error. Drafts do not expire automatically; administrators archive unused exports. Scenario cleanup removes them.
+- Records may combine up to 100 unit_ids from one source parent. Cross-parent content requires separate linked records. Each rule field currently accepts one unique exact quotation; multiple evidence entries report RULE_REPRESENTATION and require complete subrules rather than guessed offsets.
+- Identical batch replay does not create another variant. Changes to submitted batches require explicit `replace_batch: true`. Missing units save only a draft; complete source/rule validation produces a review-required v4 variant. Uncertainty and numeric/negation issues still block approval.
+- v4 cold startup reads a resource-bounded records file once and builds an index; hot paths reuse caches. Storage is not per-record database streaming and remains subject to the resource ceilings above. Retrieval expands necessary dependencies of matching roots only, up to 128 nodes, without materializing the complete graph for every root.
+- Conditional dependencies are conservatively required; the model does not infer them inapplicable. Non-background records without structured rules treat their prose as mandatory. Records with rules prioritize complete rules, then relevant prose fragments. KP review must verify that mechanics were fully structured.
+- `SCENARIO_RETRIEVAL_TOKEN_BUDGET=6000` is a token budget; `SCENARIO_CONTEXT_TOKEN_CEILING=32000` is a conservative deployment setting, not a model specification. Output reserve is 4096 and safety margin is 2048; configure these for the deployed model. Executor search accounts for actual prompts, tools, history, input and accumulated tool results. Existing provider admission still runs.
+- Legacy v3 keeps its projection behavior. A v4 Chinese miss still searches the currently authorized original text. Known incomplete necessary evidence is explicitly marked; Executor can request original lookup. Neither an unrelated successful search nor an original hit alone clears a known evidence hold. The same tool executor conservatively blocks mutations and dice until complete evidence for the same roots is retrieved or the turn defers.
+- Continuation identities live in a bounded process-local cache (128 entries), bound to group, timeline, actor/role, variant, chapters, index and query; restart invalidates them. Paging never accumulates a false complete flag. An indivisible rule that still cannot fit requires narrowing/review, not endless continuation.
+- Help and text exports share a handler. The completion DM shows the exact requested prompt and all file paths. Delivery retains local-server files; no general Discord file-attachment API was added. Detailed diagnostic reports are private MD files under imports, with paths sent only to KP. Public replies contain neither source text nor server paths. Template management explicitly requires KP/Keeper even when general scenario administration is open.
+
+### Verification record
+
+- Full isolated tests: 936 passed, 1 skipped, 33 subtests passed. Ruff, mypy (83 source files) and diff checks passed. Regression cases live in `tests/test_scenario_authoring.py`; legacy v3 coverage is retained.
+- The reported original The Haunting data exported into 19 source units / 10 batches in a temporary directory. The old Gemini output produced 39 diagnostics covering source mappings, missing fields, privacy conflicts, visibility and rule evidence.
+- Production imports, scenarios, player state and active variants were untouched; no translation API was called. Web-AI completion rates, real LLM round trips and campaign adjudication accuracy still require later trials; synthetic regressions do not establish those outcomes.

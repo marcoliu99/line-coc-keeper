@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -13,12 +14,20 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app import db, scenario_library, scenario_projection, scenario_rag
+from app import (
+    db,
+    scenario_authoring,
+    scenario_library,
+    scenario_projection,
+    scenario_rag,
+)
 from app.config import IMPORT_DIR, SCENARIO_RAG_EMBEDDING_MODEL
 
 _LOCALE = "zh-TW"
 _VERSION = 3
 _COMPILER_VERSION = scenario_projection.VERSION
+_V4_COMPILER = "zh-gameplay-v4"
+BUDGET_VERSION = "token-v1"
 _RULE_FIELDS = ("trigger", "check", "success", "failure", "exceptions")
 _SAFE_VARIANT = re.compile(r"zh-TW-[a-f0-9]{12}")
 _NUMBER = re.compile(r"(?i)\b\d+d\d+(?:[+-]\d+)?\b|\b\d+(?:\.\d+)?%?\b")
@@ -101,25 +110,33 @@ def _all_variants(scenario_id: str) -> list[dict[str, Any]]:
             if isinstance((data := scenario_library._read_json(path, None)), dict)]
 
 
-def _records_text(records: list[dict[str, Any]], source_hash: str, chapter_hash: str) -> str:
+def _records_text(records: list[dict[str, Any]], source_hash: str, chapter_hash: str, *, version: int = 3) -> str:
     lines = ["# 中文劇本模板", "", "請編輯下方 JSON 區塊後用 /coc scenario template import 匯入。", "", "```json"]
-    lines.append(json.dumps({"schema_version": _VERSION, "source_hash": source_hash, "chapter_hash": chapter_hash,
+    lines.append(json.dumps({"schema_version": version, "source_hash": source_hash, "chapter_hash": chapter_hash,
                              "records": records}, ensure_ascii=False, indent=2))
     lines.extend(["```", ""])
     return "\n".join(lines)
 
 
 def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
-                  records: list[dict[str, Any]], issues: list[str], *, origin: str) -> str:
-    variant_id = f"zh-TW-{uuid4().hex[:12]}"
+                  records: list[dict[str, Any]], issues: list[str], *, origin: str, version: int = 3, variant_id: str | None = None) -> str:
+    variant_id = variant_id or f"zh-TW-{uuid4().hex[:12]}"
     target = _variant_dir(scenario_id, source_hash, variant_id)
+    if target.exists():
+        previous = scenario_library._read_json(target / "manifest.json", {})
+        saved = scenario_library._read_json(target / "records.json", None)
+        if (saved == records and previous.get("records_hash") == scenario_authoring.digest(records)
+                and previous.get("source_hash") == source_hash and previous.get("chapter_hash") == chapter_hash
+                and previous.get("schema_version") == version):
+            return variant_id
+        raise ValueError("候選版本識別衝突或已被修改，請重新匯出校閱")
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".building-", dir=target.parent))
     try:
         manifest = {"scenario_id": scenario_id, "variant_id": variant_id,
                     "source_hash": source_hash, "chapter_hash": chapter_hash,
-                    "locale": _LOCALE, "schema_version": _VERSION,
-                    "compiler_version": _COMPILER_VERSION,
+                    "locale": _LOCALE, "schema_version": version,
+                    "compiler_version": _V4_COMPILER if version == 4 else _COMPILER_VERSION,
                     "origin": origin, "review_status": "review_required",
                     "record_count": len(records), "issues": issues,
                     "records_hash": hashlib.sha256(json.dumps(records, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
@@ -134,7 +151,7 @@ def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
                      "aliases": record["aliases"]} for record in records]
         (temporary / "glossary.json").write_text(json.dumps(glossary, ensure_ascii=False, indent=2), encoding="utf-8")
         (temporary / "template.md").write_text(
-            _records_text(records, source_hash, chapter_hash), encoding="utf-8")
+            _records_text(records, source_hash, chapter_hash, version=version), encoding="utf-8")
         current, _ = _source(scenario_id)
         if current["content_hash"] != source_hash or _chapter_hash(current) != chapter_hash:
             raise ValueError("劇本已重新解析，模板已過期")
@@ -163,11 +180,15 @@ def _record_source(record: dict[str, Any], source: str) -> str:
     return "\n".join(_source_parts(record, source))
 
 
-def _validate(scenario_id: str, records: list[dict[str, Any]]) -> tuple[str, str, list[str]]:
-    manifest, text = _source(scenario_id)
-    blocks = {b["id"]: b for b in _blocks(manifest, text)}
-    if not isinstance(records, list) or not records or len(records) > 5000:
-        raise ValueError("模板須有 1 至 5000 筆完整記錄")
+def _validate(scenario_id: str, records: list[dict[str, Any]], *, version: int = 3, partial: bool = False,
+              source_data: tuple[dict, dict] | None = None) -> tuple[str, str, list[str]]:
+    if source_data is None:
+        manifest, text = _source(scenario_id)
+        blocks = {b["id"]: b for b in _blocks(manifest, text)}
+    else:
+        manifest, blocks = source_data
+    if not isinstance(records, list) or not records or len(records) > (scenario_authoring.MAX_RECORDS if version == 4 else 5000):
+        raise ValueError(f"模板須有 1 至 {scenario_authoring.MAX_RECORDS if version == 4 else 5000} 筆完整記錄")
     grouped: dict[str, list[dict[str, Any]]] = {}
     seen: set[str] = set()
     issues = []
@@ -227,10 +248,10 @@ def _validate(scenario_id: str, records: list[dict[str, Any]]) -> tuple[str, str
         if record["uncertainty"].strip():
             issues.append(f"{record_id} 有待釐清翻譯")
         grouped.setdefault(source_id, []).append(record)
-    for record in records:
+    for record in ([] if partial else records):
         if any(ref not in seen for ref in record["related_record_ids"]):
             raise ValueError("關聯記錄不存在")
-    for source_id, block in blocks.items():
+    for source_id, block in ([] if partial else blocks.items()):
         intervals = sorted(span for record in grouped.get(source_id, []) for span in record["source_spans"])
         covered = 0
         for start, end in intervals:
@@ -239,11 +260,12 @@ def _validate(scenario_id: str, records: list[dict[str, Any]]) -> tuple[str, str
             covered = max(covered, end)
         if covered != len(block["text"]):
             raise ValueError(f"{source_id} 來源覆蓋不完整")
-    scenario_projection.bundles(records)
+    if version == 3 and not partial:
+        scenario_projection.bundles(records)
     return manifest["content_hash"], _chapter_hash(manifest), issues
 
 
-def export_template(scenario_id: str) -> Path:
+def export_legacy_template(scenario_id: str) -> Path:
     """Export a source-bound blank workbook without any model or embedding call.
 
     Full original units stay in this private preparation file. Empty translated
@@ -283,13 +305,71 @@ def export_template(scenario_id: str) -> Path:
     return Path(filename)
 
 
+def export_template(scenario_id: str) -> Path:
+    manifest, text = _source(scenario_id)
+    return scenario_authoring.export(_root() / scenario_id / "exports", IMPORT_DIR.resolve(),
+                                     manifest["content_hash"], _chapter_hash(manifest), _blocks(manifest, text))
+
+
+def export_message(scenario_id: str, exported: Path) -> str:
+    payload = scenario_authoring.parse_markdown(exported.read_text(encoding="utf-8"))
+    directory = _root() / scenario_id / "exports" / payload["export_id"]
+    files = scenario_authoring.read_json(directory / "files.json")
+    return ("已匯出外部中文整備工作檔（含 KP 原文，請勿公開）。\n"
+            + "\n".join(str(IMPORT_DIR / f) for f in files)
+            + "\n將 MD 上傳至網頁版 Gemini／ChatGPT，並貼上以下提示詞：\n```text\n"
+            + scenario_authoring.PROMPT + "\n```\n"
+            + f"共 {len(files)} 批，翻譯進度 0/{len(files)}。完成後下載 MD、放入 imports，再透過 Help 選檔匯入；"
+            + "所有批次完整且校閱核准後才能啟用。修改已提交批次時，JSON 加入 replace_batch: true。")
+
+
+def _diagnose_records(scenario_id: str, records: list, *, version: int) -> list[str]:
+    errors: list[dict[str, Any]] = []
+    manifest, source = _source(scenario_id)
+    blocks = {b['id']: b for b in _blocks(manifest, source)}
+    for record in records:
+        previous = len(errors)
+        if isinstance(record, dict):
+            rid = record.get('id', '')
+            block = blocks.get(record.get('source_id')) if isinstance(record.get('source_id'), str) else None
+            if block:
+                for field, expected in [('page', block['page']), ('source_pages', block['pages']), ('chapter_id', block['chapter_id'])]:
+                    if record.get(field) != expected:
+                        errors.append(scenario_authoring.issue('SOURCE_METADATA_MISMATCH', rid, field, expected, record.get(field)))
+            for field in ('type', 'name', 'source_spans'):
+                if not record.get(field):
+                    errors.append(scenario_authoring.issue('MISSING_FIELD', rid, field, 'required field', record.get(field)))
+            if record.get('visibility') not in ('public', 'kp_only'):
+                errors.append(scenario_authoring.issue('INVALID_VISIBILITY', rid, 'visibility', 'public / kp_only', record.get('visibility')))
+            if record.get('visibility') == 'kp_only' and record.get('public_text'):
+                errors.append(scenario_authoring.issue('PRIVATE_PUBLIC_CONFLICT', rid, 'public_text', 'empty', 'nonempty'))
+            if isinstance(record.get('rules'), list):
+                for i, rule in enumerate(record['rules']):
+                    if isinstance(rule, dict):
+                        for field, value in rule.items():
+                            if not isinstance(value, dict) or not value.get('source_quote'):
+                                errors.append(scenario_authoring.issue('RULE_EVIDENCE_MISSING', rid, f'rules[{i}].{field}', 'text + source_quote', value))
+        if previous != len(errors):
+            continue
+        try:
+            _validate(scenario_id, [record], version=version, partial=True, source_data=(manifest, blocks))
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            rid = record.get('id', '') if isinstance(record, dict) else ''
+            errors.append(scenario_authoring.issue('INVALID_RECORD', rid, 'record', 'valid source-bound record', str(exc)))
+    if errors:
+        raise scenario_authoring.Diagnostics(errors)
+    try:
+        return _validate(scenario_id, records, version=version, source_data=(manifest, blocks))[2]
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise scenario_authoring.Diagnostics([scenario_authoring.issue('COVERAGE_OR_DEPENDENCY', '', 'records', 'complete source coverage and valid dependencies', str(exc))]) from exc
+
+
 def status(scenario_id: str) -> dict[str, Any]:
     manifest, _ = _source(scenario_id)
     return {
             "variants": [{**v, "current": v.get("source_hash") == manifest["content_hash"]
                           and v.get("chapter_hash") == _chapter_hash(manifest)
-                          and v.get("schema_version") == _VERSION
-                          and v.get("compiler_version") == _COMPILER_VERSION}
+                          and (v.get("schema_version"), v.get("compiler_version")) in {(3, _COMPILER_VERSION), (4, _V4_COMPILER)}}
                          for v in _all_variants(scenario_id)]}
 
 
@@ -300,7 +380,7 @@ def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], li
     records = scenario_library._read_json(path / "records.json", None)
     if not isinstance(variant, dict) or not isinstance(records, list):
         raise FileNotFoundError(variant_id)
-    if variant.get("schema_version") != _VERSION or variant.get("compiler_version") != _COMPILER_VERSION:
+    if (variant.get("schema_version"), variant.get("compiler_version")) not in {(3, _COMPILER_VERSION), (4, _V4_COMPILER)}:
         raise ValueError("模板結構版本已過期，請重新產生或匯入校對")
     if variant.get("records_hash") != hashlib.sha256(json.dumps(records, sort_keys=True, ensure_ascii=False).encode()).hexdigest():
         raise ValueError("模板內容已變更，請重新匯入校對")
@@ -311,7 +391,7 @@ def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], li
 
 def approve(scenario_id: str, variant_id: str, *, reviewer_id: str) -> None:
     variant, records = _read_variant(scenario_id, variant_id)
-    _, _, issues = _validate(scenario_id, records)
+    _, _, issues = _validate(scenario_id, records, version=variant["schema_version"])
     if issues:
         raise ValueError("尚有翻譯疑點：" + "；".join(issues[:3]))
     if not reviewer_id:
@@ -334,23 +414,45 @@ def import_markdown(scenario_id: str, filename: str) -> str:
     path = raw_path.resolve()
     if raw_path.is_symlink() or path.parent != root or not path.is_file():
         raise FileNotFoundError(name)
-    content = path.read_text(encoding="utf-8")
-    match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
-    if not match:
-        raise ValueError("Markdown 需要包含 records JSON 區塊")
-    payload = json.loads(match.group(1))
-    if not isinstance(payload, dict) or payload.get("schema_version") != _VERSION:
-        raise ValueError("模板版本已更新，請重新匯出 schema v3")
-    records = payload.get("records")
-    if not isinstance(records, list):
-        raise ValueError("模板缺少 records")  # noqa: TRY004 - user input validation
-    source_hash, chapter_hash, issues = _validate(scenario_id, records)
-    if payload.get("source_hash") != source_hash or payload.get("chapter_hash") != chapter_hash:
-        raise ValueError("匯入模板的來源或章節版本已過期")
-    source_blocks = {b["id"]: b for b in _blocks(*_source(scenario_id))}
-    for record in records:
-        record["source_excerpt"] = _record_source(record, source_blocks[record["source_id"]]["text"])
-    return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="manual")
+    if path.stat().st_size > scenario_authoring.MAX_FILE_BYTES:
+        raise ValueError("RESOURCE_LIMIT：匯入檔超過 20 MB")
+    try:
+        payload = scenario_authoring.parse_markdown(path.read_text(encoding="utf-8"))
+        manifest, text = _source(scenario_id)
+        source_hash, chapter_hash = manifest["content_hash"], _chapter_hash(manifest)
+        if "authoring_version" in payload:
+            def validate(records):
+                return _diagnose_records(scenario_id, records, version=4)
+            def save(records, issues):
+                blocks = {b['id']: b for b in _blocks(manifest, text)}
+                for record in records:
+                    record['source_excerpt'] = _record_source(record, blocks[record['source_id']]['text'])
+                return _save_variant(scenario_id, source_hash, chapter_hash, records, issues,
+                                     origin="external-authoring", version=4,
+                                     variant_id="zh-TW-" + scenario_authoring.digest([payload["export_id"], records])[:12])
+            return scenario_authoring.import_batch(_root() / scenario_id / "exports", payload,
+                                                   source_hash, chapter_hash, validate, save)
+        if payload.get("schema_version") != 3:
+            raise ValueError("模板版本不支援；請重新匯出整備工作檔")
+        records = payload.get("records")
+        if not isinstance(records, list) or not records or len(records) > 5000:
+            raise ValueError("模板須有 1 至 5000 筆完整記錄")
+        if payload.get("source_hash") != source_hash or payload.get("chapter_hash") != chapter_hash:
+            raise ValueError("匯入模板的來源或章節版本已過期")
+        issues = _diagnose_records(scenario_id, records, version=3)
+        source_blocks = {b["id"]: b for b in _blocks(manifest, text)}
+        for record in records:
+            record["source_excerpt"] = _record_source(record, source_blocks[record["source_id"]]["text"])
+        return _save_variant(scenario_id, source_hash, chapter_hash, records, issues, origin="manual")
+    except scenario_authoring.Diagnostics as exc:
+        report = IMPORT_DIR / ("template-report-" + uuid4().hex + ".md")
+        fd = os.open(report, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write("# KP-only import diagnostics / 匯入校對報告\n\n")
+            stream.write(json.dumps({"total": exc.total, "omitted": exc.total-len(exc.issues),
+                                    "issues": exc.issues}, ensure_ascii=False, indent=2))
+        exc.report_path = report
+        raise
 
 
 def _preview_content(scenario_id: str, variant_id: str) -> str:
@@ -444,15 +546,17 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                        projection_version=scenario_projection.VERSION, variant_fallback="not_selected")
     if scenario_id and variant_id and variant_id != "original":
         try:
-            key = (scenario_id, variant_id, tuple(state.context_chapter_ids), SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION)
+            key = (scenario_id, variant_id, tuple(state.context_chapter_ids), SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER)
             stamp = _selection_stamp(scenario_id, variant_id)
             cached = _selection_cache.get(key)
             if cached is not None and cached[0] == stamp:
                 diagnostics.update(effective_variant=variant_id, variant_fallback="none", template_cache="memory")
+                diagnostics["projection_version"] = _V4_COMPILER if cached[1].record_store is not None else scenario_projection.VERSION
                 cached[1].index_cache = "memory"
                 return cached[1]
             diagnostics["template_cache"] = "miss"
             variant, records = _read_variant(scenario_id, variant_id)
+            diagnostics["projection_version"] = variant["compiler_version"]
             diagnostics["variant_fallback"] = "unapproved"
             if variant.get("review_status") == "approved":
                 diagnostics["variant_fallback"] = "empty_window"
@@ -461,7 +565,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                 if selected:
                     digest = hashlib.sha256(json.dumps(
                         [scenario_id, variant["source_hash"], variant["chapter_hash"],
-                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION],
+                         variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER],
                         ensure_ascii=False).encode("utf-8")).hexdigest()
                     index = scenario_rag.get_record_index(f"template:{scenario_id}:{digest}", selected)
                     if _selection_stamp(scenario_id, variant_id) != stamp:
@@ -514,19 +618,40 @@ def clean_scenario(scenario_id: str) -> None:
 
 def search_for_state(state: Any, query: str, top_k: int = 5,
                      metrics: dict[str, Any] | None = None, *,
-                     source: str = "auto") -> tuple[scenario_rag.ScenarioIndex, list[dict]]:
+                     source: str = "auto", continuation: str = "", principal: str = "") -> tuple[scenario_rag.ScenarioIndex, list[dict]]:
     """Search authorized evidence; retrieval success never certifies completeness."""
     if source not in {"auto", "original"}:
         raise ValueError("source must be auto or original")
     diagnostics = metrics if metrics is not None else {}
     diagnostics['query_fallback'] = 'none'
+    if source == "original" and continuation:
+        raise ValueError("原文補查請不要帶中文續取識別")
     if source == "original":
         index = scenario_rag.get_index(state.group_id, state.scenario_text)
         results = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
         diagnostics.update(query_fallback='explicit_original', effective_variant='original')
         return index, [dict(row, retrieval_source='original_explicit') for row in results]
     index = index_for_state(state, diagnostics)
-    results = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
+    from app import scenario_retrieval
+    binding = [state.group_id, getattr(state, "timeline_id", ""), principal, state.scenario_library_id,
+               state.scenario_variant_id, list(state.context_chapter_ids), index.text_hash, query,
+               BUDGET_VERSION] if getattr(index, "record_store", None) is not None else []
+    if continuation:
+        offset = scenario_retrieval.continuation_offset(continuation, binding)
+        if getattr(index, "record_store", None) is None:
+            raise ValueError("續取版本已失效")
+        ranked = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
+        roots = ranked[0].get('root_record_ids', []) if ranked else []
+        assert index.record_store is not None
+        results = scenario_retrieval.project(index.record_store, roots, query, offset=offset)
+    else:
+        offset = 0
+        results = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
+    if getattr(index, "record_store", None) is not None and results:
+        scenario_retrieval.bind_continuation(results, binding, offset)
+        # Known required evidence cannot be certified by unrelated original hits.
+        # Return explicit incompleteness; Executor can request source=original.
+        return index, results
     incomplete = any(row.get('budget_omitted') or '【依據尚未完整】' in row.get('text', '')
                      for row in results)
     if ((results and not incomplete) or not query.strip()

@@ -1,5 +1,26 @@
 # External Chinese scenario preparation template (schema v3)
 
+## Current default: external authoring v1
+
+[Full design and limitations](../specs/enhancement/external_template_authoring_design_spec.md)
+
+1. Select a scenario and export through Help, or use `/coc scenario template export SCENARIO_ID`. KP/Keeper only; the completion DM lists all batch MD paths and the copyable prompt.
+2. Upload the MD to the web AI and paste this required user-facing prompt:
+
+   > 請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
+
+3. Preserve `authoring_version: 1`, `export_id`, `batch_id` and unit IDs. The program reconstructs pages, hashes and character offsets; do not convert the workbook into legacy schema v3 yourself.
+4. Place the completed MD in the server `imports` directory and select it through Help, or use `/coc scenario template import SCENARIO_ID FILENAME.md`.
+5. Partial units save drafts. To change a submitted batch, explicitly add `replace_batch: true` to the JSON. Validation failures send the detailed report path privately to KP; return it to the AI with the original workbook.
+6. Complete coverage produces a review-required v4 variant. Preview, approve, then select with `/coc scenario use SCENARIO_ID VARIANT_ID`.
+
+Complete translations are not rejected by the old 6,000/12,000-character projection thresholds. Gameplay retrieval uses token budgets; missing mandatory rules require continuation or deferral. Never invent quotations or blindly clear uncertainty merely to pass validation.
+
+## Legacy schema v3 manual preparation reference
+
+The material and examples below maintain existing v3 files. Use the authoring v1 workflow above for new exports. Legacy v3 imports retain their source-offset and size validation; they are not automatically converted to v4.
+
+
 [繁體中文](scenario_zh_external_preparation_zh.md)
 
 Use this guide with an exported source workbook and the original PDF. Chinese localization

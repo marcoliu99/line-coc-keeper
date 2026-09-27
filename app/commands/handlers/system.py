@@ -10,6 +10,7 @@ from app import (
     keeper,
     locks,
     observability,
+    scenario_authoring,
     scenario_index,
     scenario_intro,
     scenario_library,
@@ -252,7 +253,7 @@ async def handle_system_command(
         action = parts[2].casefold() if len(parts) > 2 else "list"
         state = load_state(conversation_id)
         if action == "template":
-            if not _is_kp_or_keeper(state, user_id, is_keeper):
+            if not (is_keeper or state.kp_assistant_user_id == user_id):
                 await reply("只有 KP 可以管理中文劇本模板。")
                 return
             if len(parts) < 5:
@@ -262,8 +263,8 @@ async def handle_system_command(
             try:
                 if operation == "export":
                     exported = await asyncio.to_thread(scenario_templates.export_template, scenario_id)
-                    await send_dm(user_id, f"已匯出外部中文化模板（含 KP 原文，請勿公開）：{exported}\n填寫後使用 /coc scenario template import {scenario_id} {exported.name} 匯入；再 preview、approve。")
-                    await reply("模板已匯出至伺服器匯入目錄，檔案位置已私訊 KP。未呼叫翻譯 API。")
+                    await send_dm(user_id, scenario_templates.export_message(scenario_id, exported))
+                    await reply("模板已匯出；檔案位置與可複製提示詞已私訊 KP。未呼叫翻譯 API。")
                 elif operation == "status":
                     info = scenario_templates.status(scenario_id)
                     variants = info["variants"]
@@ -285,9 +286,16 @@ async def handle_system_command(
                     await reply(f"中文模板 {parts[5]} 已通過校對，可用 /coc scenario use {scenario_id} {parts[5]} 啟用。")
                 elif operation == "import" and len(parts) >= 6:
                     variant_id = await asyncio.to_thread(scenario_templates.import_markdown, scenario_id, " ".join(parts[5:]))
-                    await reply(f"已匯入中文模板 {variant_id}；請先 status、preview 與 approve。")
+                    if variant_id.startswith("draft:"):
+                        await send_dm(user_id, f"已保存部分翻譯草稿 {variant_id}；請匯入其餘單元。尚未建立可啟用版本。")
+                        await reply("部分翻譯草稿已保存，進度已私訊 KP；目前遊玩版本不變。")
+                    else:
+                        await reply(f"已匯入中文模板 {variant_id}；請先 status、preview 與 approve。")
                 else:
                     await reply("用法：/coc scenario template status|export|preview|approve|import 劇本ID [版本或檔名]")
+            except scenario_authoring.Diagnostics as exc:
+                await send_dm(user_id, f"{exc}\n報告：{exc.report_path}\n請將報告與原匯出工作檔交回網頁 AI 修正。")
+                await reply("中文模板校對未通過，詳細報告已私訊 KP；目前遊玩版本不變。")
             except (FileNotFoundError, ValueError, KeyError) as exc:
                 await reply(f"中文模板無法處理：{exc}")
             return

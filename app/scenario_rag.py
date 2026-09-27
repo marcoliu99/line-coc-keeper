@@ -239,6 +239,7 @@ class ScenarioIndex:
     text_hash: str
     has_embeddings: bool = False
     index_cache: str = "rebuilt"
+    record_store: dict[str, dict] | None = None
 
 
 def _tokenize(text: str) -> list[str]:
@@ -527,6 +528,17 @@ def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int,
     return rows
 
 
+def _ranked_rows(index: ScenarioIndex, scored: list, top_k: int, eligible: list, query: str,
+                 scopes: set[str] | None) -> list[dict]:
+    if index.record_store is None:
+        return _result_rows(scored, top_k, eligible)
+    from app import scenario_retrieval
+    roots = list(dict.fromkeys(c.record_id for _, c in scored))[:top_k]
+    if not roots:
+        return []
+    return scenario_retrieval.project(index.record_store, roots, query, scopes)
+
+
 def search(
     index: ScenarioIndex,
     query: str,
@@ -578,7 +590,7 @@ def search(
         if metrics is not None:
             metrics["query_embedding_status"] = "not_used"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = _result_rows(scored, top_k, eligible)
+        results = _ranked_rows(index, scored, top_k, eligible, query, allowed_visibility)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -595,7 +607,7 @@ def search(
         if metrics is not None:
             metrics["query_embedding_status"] = "fallback"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = _result_rows(scored, top_k, eligible)
+        results = _ranked_rows(index, scored, top_k, eligible, query, allowed_visibility)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -625,7 +637,7 @@ def search(
         score = weight * cos + (1 - weight) * bm25_norm
         combined.append((score, c))
     combined.sort(key=lambda sc: -sc[0])
-    results = _result_rows(combined, top_k, eligible)
+    results = _ranked_rows(index, combined, top_k, eligible, query, allowed_visibility)
     if metrics is not None:
         metrics["result_count"] = len(results)
     return results
@@ -641,6 +653,10 @@ def format_results(results: list[dict]) -> str:
         rendered += "\n【原稿補查未命中】保留中文依據；缺少的事實仍未確認，不可視為不存在。"
     if any(r.get("budget_omitted") for r in results):
         rendered += "\n【檢索預算】部分完整記錄尚未回傳；若缺少裁決必要事實，請針對該事實補查，不可假設不存在。"
+    metadata = [{k: v for k, v in row.items() if k not in {"text", "score", "page"} and not k.startswith("_")}
+                for row in results if "complete_for_action" in row]
+    if metadata:
+        rendered += "\n【取用完整性】" + json.dumps(metadata, ensure_ascii=False)
     return rendered
 
 
@@ -737,33 +753,37 @@ def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
 
 def get_record_index(cache_key: str, records: list[dict]) -> ScenarioIndex:
     """Index validated template records once per immutable variant/window."""
+    v4 = bool(records) and all(r.get("schema_version") == 4 for r in records)
+    store = {r["id"]: r for r in records} if v4 else None
     serialized = json.dumps(records, ensure_ascii=False, sort_keys=True)
     text_hash = hashlib.md5(serialized.encode("utf-8"), usedforsecurity=False).hexdigest()
     cached = _index_cache.get(cache_key)
     if cached is not None and cached.text_hash == text_hash:
+        cached.record_store = store
         cached.index_cache = "memory"
         return cached
     disk = _load_index_from_disk(cache_key)
     if disk is not None and disk.text_hash == text_hash:
+        disk.record_store = store
         disk.index_cache = "disk"
         _index_cache[cache_key] = disk
         return disk
     chunks: list[_Chunk] = []
-    projections = scenario_projection.bundles(records)
+    projections = {} if v4 else scenario_projection.bundles(records)
     for record in records:
         prefix = " ".join([record["name"], *record["aliases"], *record["keywords"]])
         for scope in ("public", "kp_only"):
-            content = projections[record["id"]][scope]
+            content = scenario_projection.body(record, scope) if v4 else projections[record["id"]][scope]
             if not content:
                 continue
             own = scenario_projection.body(record, scope)
             # A link-only scope still needs a sibling so its complete evidence
             # reaches the internal result when another scope matches.
-            searchable = own or record["name"]
+            searchable = ((prefix + "\n" + own) if v4 else own) or record["name"]
             for start in range(0, len(searchable), 500):
                 chunks.append(_Chunk(
-                    page=int(record["page"]), text=f"{prefix} {searchable[start:start + 500]}",
-                    result_text=content, record_id=record["id"], visibility=scope,
+                    page=int(record["page"]), text=f"{record['name'] if v4 else prefix} {searchable[start:start + 500]}",
+                    result_text="" if v4 else content, record_id=record["id"], visibility=scope,
                 ))
     stats, average = _compute_bm25_stats(chunks)
     embeddings = _embed_texts([c.text for c in chunks], rag_kind="scenario")
@@ -771,7 +791,7 @@ def get_record_index(cache_key: str, records: list[dict]) -> ScenarioIndex:
         for chunk, vector in zip(chunks, embeddings, strict=True):
             chunk.embedding, chunk.norm = vector, _vector_norm(vector)
     index = ScenarioIndex(chunks=chunks, doc_freq=stats, avg_length=average,
-                          text_hash=text_hash, has_embeddings=embeddings is not None)
+                          text_hash=text_hash, has_embeddings=embeddings is not None, record_store=store)
     _index_cache[cache_key] = index
     _save_index_to_disk(cache_key, index)
     return index

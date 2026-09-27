@@ -1072,15 +1072,21 @@
       "title": "External AI template authoring and import diagnostics",
       "zh": "外部 AI 中文模板整備與匯入診斷",
       "category": "enhancement",
-      "status": "proposed",
+      "status": "implemented",
       "baseline": "c05e152",
       "evidence": [
         "app/scenario_templates.py",
         "app/scenario_projection.py",
-        "app/help_actions.py"
+        "app/help_actions.py",
+        "app/scenario_authoring.py",
+        "app/scenario_retrieval.py",
+        "tests/test_scenario_authoring.py"
       ],
       "path": "docs/specs/enhancement/external_template_authoring_design_spec.md",
-      "zh_path": "docs/specs/enhancement/external_template_authoring_design_spec_zh.md"
+      "zh_path": "docs/specs/enhancement/external_template_authoring_design_spec_zh.md",
+      "limitations": [
+        "Web-AI and live API trials pending; see implementation notes."
+      ]
     }
   ]
 }

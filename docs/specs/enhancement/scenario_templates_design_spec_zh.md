@@ -55,3 +55,7 @@
 不可變原版本保留事故敘述、遷移歷程、草稿範例與歷史量測；其中可能描述已取代行為，現況以本文件上方契約為準。
 
 [Original source / 原始版本](https://github.com/marcoliu99/line-coc-keeper/blob/afe8aced2614e6d1ba845727e42277436838cf0f/docs/scenario_templates_design_spec.md)
+
+## 後續整備 v1／執行期 v4
+
+上述為已註明基準版本的 v3 契約，舊匯入仍適用。新版匯出、長期團取用及診斷見[外部 AI 整備規格](external_template_authoring_design_spec_zh.md)。新格式不以舊投影門檻拒收完整內容，且保留原文後備與校閱要求。

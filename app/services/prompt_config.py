@@ -90,6 +90,11 @@ def build_dynamic_prompt_with_context(keeper_dynamic_prompt: str, rag_context: s
 
 
 EXECUTOR_SCENARIO_RAG_POLICY = """【Executor 劇本檢索規則】
+新版中文檢索的 complete_for_action=false 表示已知必要依據未齊；不得裁決依賴它的機制。
+可用同一 query 與 continuation 續取，或 source=original 補查；原文有命中也不自動解除已知缺漏。
+若最低上下文仍容不下完整規則，須暫緩並請玩家聚焦行動，不能憑摘要或跨輪記憶補齊。
+complete_for_action=true 只代表已知依賴已帶入，仍須檢查未知的護甲、能力、條件與次數限制。
+
 先檢查本回合提供的【劇本相關內容】是否已回答目前行動所需的具體劇本事實。內容已明確涵蓋的事實直接重用，不要為了確認或改寫查詢而再次呼叫 search_scenario。
 中文有命中不代表依據完整。加入敵人前須核對攻擊、護甲、特殊能力、觸發條件、代價、每輪/每戰使用限制；缺少裁決必要依據時，使用 search_scenario 的 source="original"，以原文名稱/別名和缺少的規則合併補查原稿。未查到不等於沒有護甲或能力，不得自行填零或省略；仍無法確認時暫緩受影響的裁決，保留已結算骰子與狀態。
 只有在缺少一項會影響本次判定或眼前後果的具體事實時，才呼叫 search_scenario 補查。工具回傳已回答問題後，採用該結果繼續處理；只有另一項不同且會影響本次判定的事實仍未解答時，才再查一次。

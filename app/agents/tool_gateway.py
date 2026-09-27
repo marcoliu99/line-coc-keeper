@@ -66,6 +66,8 @@ def make_tool_executor(
     speaker_role: str,
     facts: list[str],
     check_status: dict[str, Any] | None = None,
+    evidence_incomplete: bool = False,
+    required_evidence_ids: set[str] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -79,7 +81,13 @@ def make_tool_executor(
     narrate from without re-deriving what happened itself.
     """
 
+    blocked_evidence = set(required_evidence_ids or ())
+
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        nonlocal evidence_incomplete
+        if evidence_incomplete and tool_name not in (keeper.READ_ONLY_TOOL_NAMES - {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"}):
+            return {"ok": False, "error": "required_scenario_evidence_missing",
+                    "message": "必要劇本依據未齊；請續取完整依據，或暫緩並聚焦行動。不得以截短摘要執行機制。"}
         from app.services.narrative_corrections import blocking_reply
         if tool_name not in keeper.READ_ONLY_TOOL_NAMES:
             blocked = blocking_reply(state, tool_input)
@@ -137,6 +145,13 @@ def make_tool_executor(
                         status="partial",
                     )
                 raise
+        if tool_name == "search_scenario" and result.get("ok"):
+            if result.get("complete_for_action") is False:
+                evidence_incomplete = True
+                blocked_evidence.update(result.get("evidence_record_ids", []))
+            elif result.get("complete_for_action") is True:
+                blocked_evidence.difference_update(result.get("evidence_record_ids", []))
+                evidence_incomplete = bool(blocked_evidence)
         facts.append(_describe_tool_call(tool_name, result))
         if check_status is not None:
             _record_check_status(check_status, tool_name, result)

@@ -58,7 +58,7 @@ Current specifications audited against `main_v2` at `afe8ace`. Every spec has an
 | [Dynamic Executor tool scoping](specs/enhancement/enhancement-executor-dynamic-tool-scoping.md) | backlog | [繁體中文](specs/enhancement/enhancement-executor-dynamic-tool-scoping_zh.md) |
 | [Proposed batch combat initialization](specs/enhancement/enhancement-macro-combat-initialization-tool.md) | backlog | [繁體中文](specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md) |
 | [Proposed reasoning policy for ongoing combat effects](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md) | backlog | [繁體中文](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md) |
-| [External AI template authoring and import diagnostics](specs/enhancement/external_template_authoring_design_spec.md) | proposed | [繁體中文](specs/enhancement/external_template_authoring_design_spec_zh.md) |
+| [External AI template authoring and import diagnostics](specs/enhancement/external_template_authoring_design_spec.md) | implemented; live trials pending | [繁體中文](specs/enhancement/external_template_authoring_design_spec_zh.md) |
 
 ## feature
 

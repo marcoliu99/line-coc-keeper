@@ -84,8 +84,8 @@ def test_external_export_is_source_bound_private_and_never_translates(tmp_path, 
     monkeypatch.setattr(templates, 'IMPORT_DIR', tmp_path)
     monkeypatch.setattr(templates, '_source', lambda _: (MANIFEST, SOURCE))
     with patch.object(scenario_rag, '_embed_texts') as embeddings:
-        first = templates.export_template('scenario')
-        second = templates.export_template('scenario')
+        first = templates.export_legacy_template('scenario')
+        second = templates.export_legacy_template('scenario')
     embeddings.assert_not_called()
     assert first != second and first.parent == tmp_path
     assert first.stat().st_mode & 0o077 == 0
@@ -96,7 +96,7 @@ def test_external_export_is_source_bound_private_and_never_translates(tmp_path, 
     blank = payload['records'][0]
     assert blank['source_id'] == 'c1-u1'
     assert blank['source_excerpt'] == SOURCE and blank['source_pages'] == [1]
-    with pytest.raises(ValueError, match='中文內容'):
+    with pytest.raises(ValueError, match='校對'):
         templates.import_markdown('scenario', first.name)
     # External editor fills the existing schema without needing another API.
     payload['records'][0].update(item())

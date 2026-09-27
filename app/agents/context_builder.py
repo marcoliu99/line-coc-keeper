@@ -94,7 +94,22 @@ async def build_context(
                 embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT,
                 metrics=metrics,
             ):
-                index, results = scenario_templates.search_for_state(state, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics)
+                if state.scenario_variant_id and state.scenario_variant_id != "original":
+                    from app import config, keeper, scenario_retrieval
+                    model = getattr(config, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
+                    budget = scenario_retrieval.remaining_budget(
+                        [keeper._build_static_prompt(state), keeper._build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
+                         keeper._tools_for_speaker_role(speaker_role), state.log, text], model)
+                    budget_token = scenario_retrieval.BUDGET.set(budget)
+                    model_token = scenario_retrieval.MODEL.set(model)
+                    try:
+                        index, results = scenario_templates.search_for_state(state, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics,
+                                                                             principal=f"{speaker_role}:{user_id}")
+                    finally:
+                        scenario_retrieval.MODEL.reset(model_token)
+                        scenario_retrieval.BUDGET.reset(budget_token)
+                else:
+                    index, results = scenario_templates.search_for_state(state, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics)
                 metrics.update(
                     evidence_chars=sum(len(row["text"]) for row in results),
                     budget_omitted=sum(row.get("budget_omitted", 0) for row in results),
