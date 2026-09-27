@@ -15,6 +15,7 @@ from app.services import input_budget
 
 BUDGET = ContextVar('scenario_retrieval_budget', default=6000)
 MODEL = ContextVar('scenario_retrieval_model', default='unknown')
+DELIVERED_FRAGMENTS: ContextVar[frozenset[str]] = ContextVar('scenario_delivered_fragments', default=frozenset())
 MAX_NODES = 128
 _tokens: dict[str, tuple[str, int, list[str]]] = {}
 _lock = threading.RLock()
@@ -109,9 +110,11 @@ def project(records: dict[str, dict], roots: list[str], query: str,
     included = []
     contents = []
     missing: list[str] = []
-    required_cost = sum(_cost(text) for _, text in required)
+    delivered = DELIVERED_FRAGMENTS.get()
+    reused = [fid for fid, _ in required + background if fid in delivered]
+    required_cost = sum(_cost(text) for fid, text in required if fid not in delivered)
     for i, (fid, text) in enumerate(required):
-        if i < offset:
+        if i < offset or fid in delivered:
             continue  # Trusted cursor certifies this contiguous prefix was delivered.
         if missing or used + _cost(text) > usable:
             missing.append(fid)
@@ -120,17 +123,20 @@ def project(records: dict[str, dict], roots: list[str], query: str,
         contents.append(text)
         used += _cost(text)
     for fid, text in background:
+        if fid in delivered:
+            continue
         if used + _cost(text) <= usable:
             included.append(fid)
             contents.append(text)
             used += _cost(text)
         else:
             optional.append(fid)
-    complete = bool(contents) and not missing and not blocked and not limited
+    complete = bool(contents or reused) and not missing and not blocked and not limited
     text = '\n\n'.join(contents)
     row: dict[str, Any] = {'page': records[roots[0]]['page'] if roots else 1, 'text': text,
            'record_id': roots[0] if roots else '', 'root_record_ids': roots, 'record_ids': sorted(seen)[:16], 'record_count': len(seen),
            'included_fragment_ids': included[:16], 'included_fragment_count': len(included),
+           'reused_fragment_ids': reused[:16], 'reused_fragment_count': len(reused),
            'missing_required_ids': missing[:16], 'missing_required_count': len(missing),
            'deferred_optional_ids': optional[:16], 'deferred_optional_count': len(optional), 'blocked_dependency_count': blocked,
            'complete_for_action': complete, 'traversal_limited': limited,
@@ -152,15 +158,21 @@ def project(records: dict[str, dict], roots: list[str], query: str,
                    included_fragment_count=len(included), missing_required_ids=missing[:16],
                    missing_required_count=len(missing), deferred_optional_ids=optional[:16],
                    deferred_optional_count=len(optional))
-    if not contents:
+    if not contents and not reused:
         row['complete_for_action'] = False
+    if row['complete_for_action'] and not contents:
+        row['text'] = '必要依據已於本回合提供，請沿用前述完整片段；本次沒有新增劇本事實。'
     if not row['complete_for_action']:
         row['text'] += '\n【依據尚未完整】必要依據未齊；請續取、補查或聚焦行動，暫緩機制。'
         row['projection_reason'] = 'required_evidence_unavailable'
     row['projection_tokens_estimate'] = _cost(json.dumps(row, ensure_ascii=False))
     # An atomic rule larger than the request budget requires narrowing/review;
     # repeating a cursor cannot make it fit. Do not advertise endless paging.
-    row['_next_offset'] = offset + len([fid for fid in included if fid in required_ids])
+    next_offset = offset
+    available_ids = set(included) | set(reused)
+    while next_offset < len(required) and required[next_offset][0] in available_ids:
+        next_offset += 1
+    row['_next_offset'] = next_offset
     row['_required_count'] = len(required)
     return [row]
 
@@ -204,3 +216,20 @@ def incomplete_roots(context: str) -> set[str]:
         return roots or {'__unknown_incomplete__'}
     except (ValueError, IndexError, TypeError, AttributeError):
         return {'__unknown_incomplete__'}
+
+
+def delivered_fragments(context: str) -> set[str]:
+    """Read only internal formatted retrieval metadata, never a model assertion."""
+    if not isinstance(context, str) or '【取用完整性】' not in context:
+        return set()
+    try:
+        rows = json.loads(context.rsplit('【取用完整性】', 1)[1])
+        return {fid for row in rows for fid in row.get('included_fragment_ids', [])
+                if isinstance(fid, str)}
+    except (ValueError, TypeError, AttributeError):
+        return set()
+
+
+def source_binding(state: Any) -> tuple:
+    return (state.group_id, state.timeline_id, state.scenario_library_id, state.scenario_variant_id,
+            tuple(state.context_chapter_ids), hashlib.sha256(state.scenario_text.encode()).hexdigest())

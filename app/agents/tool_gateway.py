@@ -157,6 +157,8 @@ def make_tool_executor(
         if tool_name == "search_scenario" and result.get("ok"):
             if result.get("complete_for_action") is False:
                 evidence_incomplete = True
+                if check_status is not None:
+                    check_status["scenario_evidence_blocked"] = True
                 blocked_evidence.update(result.get("evidence_record_ids", []))
             elif result.get("complete_for_action") is True:
                 blocked_evidence.difference_update(result.get("evidence_record_ids", []))

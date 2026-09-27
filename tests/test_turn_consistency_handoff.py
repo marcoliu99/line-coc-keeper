@@ -702,3 +702,52 @@ def test_cash_and_keys_evidence_gate_and_real_inventory_handoff(state, complete)
         assert '已記錄的變更會保留' in reply and '不要重擲' in reply
         result.check_status['pending'] = {'investigator': 'Marco', 'skill': '偵查'}
         assert '/coc check' in prompt_config.enforce_mechanic_check_consistency('', result)
+
+
+def test_followup_search_reuses_delivered_evidence_and_budgets_wire_receipts(state):
+    from app import scenario_rag, scenario_retrieval
+    from app.services import input_budget
+    records = {name: {'page': 1, 'name': name, 'visibility': 'kp_only', 'type': 'scene',
+                     'kp_text': name * 500, 'public_text': '', 'related_record_ids': []}
+               for name in ('intro', 'address')}
+    records['address']['kp_text'] = 'Address unspecified.'
+    initial_budget = scenario_retrieval.BUDGET.set(10000)
+    try:
+        initial = scenario_retrieval.project(records, ['intro'], 'keys')
+    finally:
+        scenario_retrieval.BUDGET.reset(initial_budget)
+    original_tool = keeper._execute_tool
+    seen_budgets = []
+    def budget(context, *args):
+        seen_budgets.append(context)
+        assert 'gameplay_before' not in str(context)
+        assert 'gameplay_after' not in str(context)
+        if len(seen_budgets) > 1:
+            assert 'current_turn_state' in str(context)
+        return 1800
+    def tool(s, name, data, *args):
+        if name == 'search_scenario':
+            rows = scenario_retrieval.project(records, ['intro', 'address'], data['query'])
+            assert rows[0]['complete_for_action']
+            assert 'intro#kp_only' in rows[0]['reused_fragment_ids']
+            return {'ok': True, 'results': scenario_rag.format_results(rows),
+                    'complete_for_action': True, 'evidence_record_ids': ['intro', 'address']}
+        return original_tool(s, name, data, *args)
+    async def provider(*args, **kwargs):
+        for query in ('address', 'address again'):
+            await args[5]('search_scenario', {'query': query})
+        await args[5]('add_carried_item', {'investigator': 'Marco', 'item': '鑰匙'})
+        return decision(state, 'resolved_without_check', evidence_refs=['tool:1', 'tool:2', 'tool:3'])
+    payload = message(state)
+    payload.payload.update(text='拿走鑰匙並查看地址', rag_context=scenario_rag.format_results(initial))
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(keeper, '_execute_tool', side_effect=tool), \
+            patch.object(input_budget, '_encoding', return_value=None), \
+            patch.object(scenario_retrieval, 'request_budget', side_effect=budget), \
+            patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+            patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(payload))
+    assert result.turn_resolution.disposition == 'resolved_without_check'
+    assert '鑰匙' in group_state.load_state(state.group_id).get_active_character('a').carried_items
+    assert len(seen_budgets) == 2
+    assert not scenario_retrieval.DELIVERED_FRAGMENTS.get()

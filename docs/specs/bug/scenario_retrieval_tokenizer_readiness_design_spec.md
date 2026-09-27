@@ -46,3 +46,13 @@ Offline replay validates retrieval, gating, state mutation and handoff, not the 
 - Incident root set r21/r2/r22/r9/r18: 6,000 retrieval budget, 3,459 required tokens, 3,824 projected tokens including metadata, all five fragments complete. Previous-turn roots also complete (5,268 projected tokens).
 - Isolated full suite: 1,039 passed, 1 skipped, 33 subtests passed. Ruff and mypy pass.
 - No live API replay or game state mutation. PR #101 is preserved separately when integrating the test worktree.
+
+## Follow-up: repeated searches in the same turn
+
+The 19:04–19:05 logs demonstrate that tokenizer installation alone was insufficient. Proactive retrieval had a 6,000-token budget, but the address follow-up had only 1,317 remaining. It attempted to send already-delivered required records again and blocked acquisition. A later search estimated 71,123 tokens because Executor passed internal before/after gameplay snapshots to retrieval admission, although those snapshots are not sent to the provider.
+
+Maintain a turn-local set of fragments actually delivered in proactive context or successful search results. Reuse only those fragments, under the same source/timeline/chapter binding; still traverse dependencies and require every unseen mandatory fragment. Emit explicit reused-fragment metadata. Never reuse across turns or certify original hits as complete. Continuation offsets must reflect a contiguous delivered prefix.
+
+Compute follow-up request budget from actual returned tool receipts and arguments, including current_turn_state, excluding internal validation snapshots. Preserve existing state validation snapshots for adjudication. Search incompleteness itself must remain visible in the final failure explanation even if the model never attempts a mutation. Add multi-search Executor integration and projection tests, including unseen dependencies and turn isolation.
+
+Follow-up verification: 1,044 passed, 1 skipped, 33 subtests passed; Ruff and mypy pass. Added repeated-search acquisition and purchase flows, including an arrival denial and unseen mandatory dependencies. Providers are mocked; live player purchases were not replayed.

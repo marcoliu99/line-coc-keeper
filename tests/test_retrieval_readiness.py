@@ -74,3 +74,38 @@ def test_correction_rejection_is_also_recorded():
         assert result['error'] == 'narrative_correction_hold'
         assert facts == ['add_carried_item 失敗：narrative_correction_hold']
     asyncio.run(run())
+
+
+def test_reuse_does_not_hide_unseen_dependencies_or_leak_across_turns():
+    def record(name, related=()):
+        return {'page': 1, 'name': name, 'visibility': 'kp_only', 'type': 'scene',
+                'kp_text': name * 500, 'public_text': '', 'related_record_ids': list(related)}
+    records = {'intro': record('intro', ['rule']), 'rule': record('rule')}
+    token = scenario_retrieval.DELIVERED_FRAGMENTS.set(frozenset({'intro#kp_only'}))
+    budget = scenario_retrieval.BUDGET.set(1000)
+    try:
+        row = scenario_retrieval.project(records, ['intro'], 'keys')[0]
+        assert not row['complete_for_action']
+        assert row['missing_required_ids'] == ['rule#kp_only']
+        assert row['reused_fragment_ids'] == ['intro#kp_only']
+        assert row['_next_offset'] == 1
+    finally:
+        scenario_retrieval.DELIVERED_FRAGMENTS.reset(token)
+        scenario_retrieval.BUDGET.reset(budget)
+    assert not scenario_retrieval.DELIVERED_FRAGMENTS.get()
+    assert not scenario_retrieval.project(records, ['intro'], 'keys')[0]['reused_fragment_ids']
+
+
+def test_continuation_never_skips_unseen_middle_fragment():
+    records = {name: {'page': 1, 'name': name, 'visibility': 'kp_only', 'type': 'scene',
+                     'kp_text': name * 500, 'public_text': '', 'related_record_ids': []}
+               for name in ('first', 'middle', 'last')}
+    token = scenario_retrieval.DELIVERED_FRAGMENTS.set(frozenset({'first#kp_only', 'last#kp_only'}))
+    budget = scenario_retrieval.BUDGET.set(1000)
+    try:
+        row = scenario_retrieval.project(records, list(records), 'keys')[0]
+        assert row['missing_required_ids'] == ['middle#kp_only']
+        assert row['_next_offset'] == 1
+    finally:
+        scenario_retrieval.DELIVERED_FRAGMENTS.reset(token)
+        scenario_retrieval.BUDGET.reset(budget)
