@@ -1,5 +1,7 @@
 # Documentation
 
+Source repair guide: [English](guides/scenario_source_review.md) / [繁體中文](guides/scenario_source_review_zh.md)
+
 [繁體中文](README_zh.md)
 
 Current specifications audited against `main_v2` at `afe8ace`. Every spec has an English and Traditional Chinese edition. Historical proposals and measurements remain linked to their immutable source revisions.
@@ -8,6 +10,7 @@ Current specifications audited against `main_v2` at `afe8ace`. Every spec has an
 
 | Spec | Status | Language |
 | --- | --- | --- |
+| [External authoring numeric review](specs/bug/authoring_numeric_review_design_spec.md) | implemented; source review required | [繁體中文](specs/bug/authoring_numeric_review_design_spec_zh.md) |
 | [Pending-check ownership and duplicate protection](specs/bug/bugfix_duplicate_pending_checks.md) | implemented | [繁體中文](specs/bug/bugfix_duplicate_pending_checks_zh.md) |
 | [Scenario lifecycle review fixes](specs/bug/project_review_fixes_design_spec.md) | implemented | [繁體中文](specs/bug/project_review_fixes_design_spec_zh.md) |
 | [Keep check narration consistent with authoritative state](specs/bug/wood_wall_check_state_design_spec.md) | implemented | [繁體中文](specs/bug/wood_wall_check_state_design_spec_zh.md) |
