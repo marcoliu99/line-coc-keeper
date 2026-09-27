@@ -2,7 +2,7 @@
 
 [繁體中文](measured_turn_latency_priorities_design_spec_zh.md)
 
-Status: **WP1, WP2, WP3.2 and WP3.3 implemented; WP3.4, WP3.5, WP4 and WP5 proposed**. Base: `main_v2` at `5961f2b`.
+Status: **WP1, WP2, WP3.2, WP3.3 and WP5 implemented; WP3.4, WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
 
 ## 0. Why this document exists
 
@@ -303,7 +303,9 @@ Note also that the model called `clear_pending_check` in that turn: it was tryin
 
 ### 5.2 Why Luck and not a pending check
 
-A Luck decision is a closed state. The dice are already rolled and `turn_resolution.py:148` already encodes that nothing may precede it: `if disposition == "await_check" and owner in state.pending_luck_decisions: return incomplete(..., "luck_takes_precedence")`. Until the player decides, nothing they say can change the outcome, so answering deterministically removes no judgement the model could have made.
+A Luck decision is a closed state for its own holder: the dice are already rolled, so until they decide, nothing they say can change that outcome, and answering deterministically removes no judgement the model could have made.
+
+**It is not closed for the table.** An earlier draft of this section claimed `turn_resolution.py:148` encodes that nothing may precede a Luck decision. Re-reading it, `luck_takes_precedence` keys on the **waited-for** party, not the speaker, so a player who holds a decision may still legitimately defer to another player's outstanding check. An existing test, `test_referenced_check_not_overridden_by_other_players_luck`, covers exactly that and failed against the first implementation. The gate is therefore skipped whenever anyone else holds a pending check or decision.
 
 A pending check is not closed. It has not been rolled, and a player may legitimately withdraw it — `turn_resolution` has a whole `cancelled` path that verifies `clear_pending_check` actually ran and that no other state moved. **Blocking messages on a pending check would break cancellation**, so this work package does not touch it.
 
@@ -313,23 +315,36 @@ Before the Executor, for the acting player only:
 
 | situation | behaviour |
 |---|---|
-| that player holds a pending Luck decision and sends a new gameplay action | answer from `_pending_luck_fallback`, zero model requests |
+| that player holds a pending Luck decision, nobody else is waiting, and they send a new gameplay action | answer from `pending_luck_reply`, zero model requests |
+| anyone else holds a pending check or decision | unchanged; deferring to another player must stay possible |
 | `/coc luck hard` / `skip`, `/coc check` | unchanged; already deterministic |
 | status, sheet, help | unchanged; these never reached the Executor |
 | another player's turn | unchanged; the decision is per-user |
 | KP or sudo | unchanged in this work package |
 
-### 5.4 Open decision
+### 5.4 Pure roleplay passes through
 
-**Whether pure roleplay and OOC should pass through.** Blocking them stops a player from speaking in character while a decision waits, which is a real cost to play; letting them through means running `intent_router` first, which is rule-based and free. The recommendation is to let them through, and this needs sign-off before implementation because it changes what a player can do mid-decision.
+This was raised as a decision needing sign-off, on the assumption that blocking in-character speech would be a real cost to play. Reading the classifier closes it instead.
+
+`intent_router` returns `PURE_ROLEPLAY` for exactly three inputs: an empty message, one of nine exact confirmations (`好`, `ok`, `嗯`, `知道`, `了解`, `收到`, `沒問題`, `是的`, `對`), or a message wholly wrapped in parentheses. Everything else falls through to `GAMEPLAY_ACTION`, which is the default. Prose a player would recognise as in-character speech is classified as a gameplay action and is blocked either way.
+
+Across all 17 recorded logs, 206 classifications, `PURE_ROLEPLAY` occurs **0 times**: 199 `GAMEPLAY_ACTION` and 7 `RESOLVED_CHECK_FOLLOWUP`. The branch is close to unreachable in practice.
+
+It is still gated on the classifier, because answering `（等我想一下）` with a Luck prompt would be a wrong reply, and because `classify_text` is rule-based and costs nothing. No sign-off is needed; the two options differ on inputs that have never been observed.
 
 ### 5.5 Acceptance
 
-- A held Luck decision plus a new gameplay action from its owner produces the deterministic reply with no model request, verified by asserting the provider was never called.
-- The same state with a message from a *different* player runs the ordinary pipeline.
-- A pending check without a Luck decision still reaches the Executor, and cancellation still works.
-- `/coc luck` and `/coc check` are unaffected.
-- The lock is held for the duration of a deterministic reply only.
+Implemented. `tests/test_pending_luck_short_circuit.py` fails every stage downstream of the gate, so a test passes only if none of them ran — not even `build_context`, which would otherwise spend a retrieval round trip before the turn is refused.
+
+- A held decision plus a gameplay action from its owner is answered with no model request and no context build. **Met.**
+- A different player acting, a pending check with no decision, a resolved-check follow-up, a KP assistant turn, and pure roleplay all still run the ordinary pipeline. **Met.**
+- Anyone else holding a pending check or decision keeps the full pipeline. **Met**, and covered by the pre-existing multi-player test that refuted the first implementation.
+- `turn.short_circuit` is emitted once, with a reason. **Met.**
+- `/coc luck` and `/coc check` are unaffected: neither reached the Executor before this change.
+
+Mutation-checked: removing the gate fails 2 tests, removing the multi-player narrowing fails 2 including the pre-existing one, and removing the classifier condition fails the pure-roleplay test.
+
+One existing test had to change. `test_supervisor_passes_existing_pending_luck_and_suppresses_new_roll` set up a pre-existing decision, which is now answered from state; its assertions still passed while `run_narrator` was never entered at all. It now creates the decision mid-turn, which is the path that still reaches the Narrator and the one worth covering.
 
 ### 5.6 Limits
 

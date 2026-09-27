@@ -53,6 +53,34 @@ async def run_turn(
     if correction_block:
         return correction_block, [], []
 
+    # An unresolved Luck decision of the speaker's own is a closed state: the
+    # dice are already rolled and the reply is the same text prompt_config
+    # substitutes afterwards anyway. Running the turn to discover that costs
+    # 2-4 model requests, 36k-86k input tokens and 10-18 seconds while the
+    # conversation lock is held — measured over a 20-turn session, see
+    # docs/specs/enhancement/measured_turn_latency_priorities_design_spec.md.
+    #
+    # Only when nobody else is mid-decision. luck_takes_precedence in
+    # turn_resolution keys on the *waited-for* party, not the speaker, so a
+    # player holding a Luck decision may still legitimately defer to another
+    # player's outstanding check; answering from state would silence that.
+    #
+    # A pending *check* is deliberately never handled here: it has not been
+    # rolled, and a player may still withdraw it through the cancelled path.
+    held_luck = state.pending_luck_decisions.get(user_id)
+    others_waiting = any(
+        owner != user_id
+        for owner in (*state.pending_checks, *state.pending_luck_decisions)
+    )
+    if (turn_kind == "player_action" and held_luck and not others_waiting
+            and intent_router.classify_text(text, speaker_role) == "GAMEPLAY_ACTION"):
+        actor = state.get_active_character(user_id)
+        observability.event("turn.short_circuit", reason="pending_luck",
+                            model_requests_avoided=True)
+        _logger.info("Supervisor answered %s from state: Luck decision outstanding", display_name)
+        return prompt_config.pending_luck_reply(
+            held_luck, actor.name if actor else ""), [], []
+
     # 1. Build Context
     message = await context_builder.build_context(
         state=state,

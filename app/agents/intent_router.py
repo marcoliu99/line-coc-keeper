@@ -11,6 +11,21 @@ _PURE_ROLEPLAY_EXACT = {"好", "ok", "嗯", "知道", "了解", "收到", "沒�
 _OOC_RE = re.compile(r"^\(.*\)$|^（.*）$")
 
 
+def classify_text(text: str, speaker_role: str) -> IntentType:
+    """Classify without an AgentMessage, so a caller can decide before the
+    turn's context (and its retrieval round trip) has been built."""
+    if speaker_role == "kp_assistant":
+        return "OOC_ASSISTANT"
+    text = (text or "").strip()
+    if not text:
+        return "PURE_ROLEPLAY"
+    if text.lower() in _PURE_ROLEPLAY_EXACT:
+        return "PURE_ROLEPLAY"
+    if _OOC_RE.match(text):
+        return "PURE_ROLEPLAY"
+    return "GAMEPLAY_ACTION"
+
+
 def classify_intent(message: AgentMessage) -> IntentType:
     """
     Classifies the user's input into OOC_ASSISTANT（KP 助手場外討論，Phase 10）、
@@ -23,20 +38,5 @@ def classify_intent(message: AgentMessage) -> IntentType:
     # user_id 才會是 "kp_assistant"），這裡直接信任它、強制走 OOC 快車道——
     # KP 助手的發言本來就不是角色扮演也不是遊戲內行動，不應該經過 Executor／
     # Narrator 那套機制判定與故事生成流程，見 app/agents/assistant.py。
-    if message.payload.get("speaker_role") == "kp_assistant":
-        return "OOC_ASSISTANT"
-
-    text = message.payload.get("text", "").strip()
-    if not text:
-        return "PURE_ROLEPLAY"
-
-    # Simple confirmations
-    if text.lower() in _PURE_ROLEPLAY_EXACT:
-        return "PURE_ROLEPLAY"
-
-    # Pure OOC (Out of Character) messages wrapped in parentheses
-    if _OOC_RE.match(text):
-        return "PURE_ROLEPLAY"
-
-    # Default to gameplay action to be safe (will trigger Executor)
-    return "GAMEPLAY_ACTION"
+    return classify_text(message.payload.get("text", ""),
+                         str(message.payload.get("speaker_role", "")))
