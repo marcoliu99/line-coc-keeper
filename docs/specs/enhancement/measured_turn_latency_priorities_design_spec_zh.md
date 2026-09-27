@@ -130,28 +130,69 @@ state.to_dict() + json.dumps       0.14 ms
 | max | 63,343 ms | 56,948 ms |
 | 超過 1 秒 | 175 次中 11 次 | 22 次中 6 次 |
 
-鎖從收到訊息一路握到 Executor、Narrator、Guard、防雷掃描與 log 提交結束，兩次模型往返都包含在內。`_conversation_lock_with_notice` 在 10 秒後送一次通知，之後就沒有了，所以在 p99 的情況下，玩家還要再坐 45 秒，沒有任何後續訊號，也不知道自己是第一個還是第三個。改動後的 session 實際上讓情況更糟，因為 Executor 中位升到 15.7 秒、p90 升到 35.3 秒，而那正是下一位玩家排隊的時間。
+鎖從收到訊息一路握到 Executor、Narrator、Guard、防雷掃描與 log 提交結束，兩次模型往返都包含在內。以改動後的中位數計，持有時間的組成為：
+
+```text
+build_context ~1 s + Executor 15.7 s + Narrator 5.0 s + Guard/防雷 ~0 + commit ~0
+                                                              ≈ 21.7 s
+```
+
+`_conversation_lock_with_notice` 在 10 秒後送一次通知，之後就沒有了，所以在 p99 的情況下，玩家還要再坐 45 秒，沒有任何後續訊號，也不知道自己是第一個還是第三個。改動後的 session 實際上讓情況更糟，因為 Executor 中位升到 15.7 秒、p90 升到 35.3 秒，而那正是下一位玩家排隊的時間。
 
 現有 spec 與三份規劃文件都沒有針對這件事。`enhancement-conversation-lock-and-tool-loop-latency.md` 刻意不縮小鎖範圍。v1 F8.1 維持同團 gameplay 序列化、只把唯讀指令移出，碰不到這個發生在 gameplay 回合之間的等待。v2 UX.4 定義了 `T_turn_queue`、UX.5 要求量測 player starvation；兩者都沒有實作。
 
-### 3.2 本工作包要做的事
+### 3.2 觀測與訊息，現在就能安全進行
 
 1. 發出 `turn.queue` 事件，帶上實測等待時間、前方等待者數量、route 與 speaker role。這實作了 v2 的 `T_turn_queue`，並讓 starvation 可以按玩家而非按對話量化。
 2. 在 `_ObservableConversationLock` 追蹤等待者深度，把位置帶進排隊通知，並以有上限的間隔更新，而不是在 p99 等待的其餘時間完全沉默。
 
-只有觀測與訊息。不縮小任何鎖、不平行化任何回合、不更動任何狀態契約。
+不縮小任何鎖、不平行化任何回合、不更動任何狀態契約。
 
-### 3.3 本工作包不做什麼，以及為什麼
+### 3.3 前置缺陷：RAG 索引快取沒有 singleflight
 
-在 Executor 提交後釋放 conversation lock，讓 Narrator 中位 5.0 秒的時間落在鎖外，是顯而易見的結構性收益，本文件**暫不提案**。一般回合的 Narrator 是 `tools=[]`，不會有變更逃出鎖外；`_commit_turn_result` 也本來就會在 state lock 下重新載入並拒絕過期 timeline。真正的阻擋風險是**順序**而非變更：下一位玩家的 Executor 會對著「敘事尚未貼出」的狀態裁決，於是玩家可能讀到一個引用了他還沒被告知的事件的結果。
+`app/scenario_rag.py` 的 `_index_cache` 是模組層級的裸 dict，沒有任何鎖。`get_index()` 在記憶體命中或磁碟命中時直接回傳，但 miss 時會呼叫 `build_index()`——一次 embeddings 往返——接著透過 `_save_index_to_disk()` 寫入 `scenario_indexes`（`db.set_json`，`app/scenario_rag.py:677`）。`get_record_index()` 結構相同。
 
-這個風險正是 #97 的 mutation admission 與 #99 的 delivery envelope 要界定的範圍。因此本工作包只記錄提案與前提，等那兩者落地、且 WP1 的排隊指標能顯示是否有幫助之後再做。
+因此同一個 key 的兩個並發 miss 會各自付一次 embeddings 呼叫、各自寫入一次。同一個 `group_id` 的 payload 內容相同，所以後寫贏是無害的，但 API 成本翻倍。這件事**今天就已經存在**，因為 conversation lock 只序列化單一對話內部；列在這裡是因為 3.4 會把競爭窗口擴大到同一對話的兩個回合。
 
-### 3.4 驗收
+與任何鎖改動獨立修正：對 `get_index` 與 `get_record_index` 加上 per-key singleflight，讓第二個呼叫者等待第一次建構完成，而不是自己再建一次。這正是 addendum 那條註記的具體案例——`lru_cache` 式的快取是 thread-safe 但不保證只執行一次，昂貴工作需要明確的 singleflight。
+
+### 3.4 把 context 建構移出鎖，在 3.3 之後
+
+`app/agents/context_builder.py` 的 `build_context` 本身沒有任何寫入——沒有 `save_state`、`set_json`、`db.` 呼叫，也沒有對 state 屬性賦值。它的成本是劇本與記憶 RAG 的往返，約 1 秒，可以在取得鎖之前執行，但有兩個條件：
+
+- 3.3 必須先落地，因為 `build_context` 會走到 `get_index`，因此可能觸發那條未受保護的重建路徑。
+- 它讀到的 state 快照必須在取得鎖之後重新讀取，只有檢索結果可以沿用。那些結果綁的是劇本版本而非 `state_revision`，因此在空隙期間仍然有效；任何從可變狀態衍生的東西都不得沿用。
+
+可減少約 1 秒，約持有時間的 5%。這一項最初被評估為純讀重排，實際上不是，而該次重新評估正是 3.3 存在的原因。
+
+### 3.5 延後：在敘事之前釋放鎖
+
+目前這一把鎖同時保護三件不同的事：
+
+| | 必須序列化 | 一般回合的 Narrator 需要嗎 |
+|---|---|---|
+| 狀態變更順序 | 是 | **不需要** —— Narrator 是 `tools=[]` |
+| 訊息貼出順序 | 是 | 需要 |
+| 回合隔離 | 是 | 需要 |
+
+Narrator 需要後兩者，不需要第一項。因此拆法是：
+
+```text
+mutation lock    收訊息 -> build_context -> Executor -> 狀態提交 -> 釋放
+posting ticket   進入時依到達順序領號；貼文前依號序等待
+```
+
+敘事因此能與下一位玩家的 Executor 重疊，而訊息順序由 ticket 保持不變。與 3.4 合計，持有時間中位可從 ~21.7 秒降到 ~15.7 秒，p90 從 ~47 秒降到 ~35 秒。
+
+**順序不是阻擋因素**——ticket 保住了它，而且在前一回合執行期間就打字的玩家，本來就是在沒看到結果的情況下宣告；改動只讓他的行動被裁決的時點提前。阻擋因素是**失敗**：若 A 回合的 Narrator 失敗並走 fallback，而 B 回合的 Executor 已經對著 A 已提交的狀態裁決完畢，界定這個結果的契約是 #97 的 mutation admission 與 #99 的 delivery envelope。因此本工作包只記錄設計，等那兩者落地、且 WP1 的排隊指標能顯示是否有幫助之後再實作。
+
+### 3.6 驗收
 
 - 每個有等待的排隊回合都出現 `turn.queue`，帶有等待時間、深度與 route；無爭用的取得則完全不出現。
 - 通知回報位置並以有上限的間隔更新；在第一次通知前就解除的等待仍然不送任何訊息。
 - 通知送出失敗仍然不能影響鎖的釋放——既有實作已防住，本次不得退步。
+- 同一個索引 key 的並發 miss 只產生一次 `build_index` 與一次寫入，且驗證時不使用真實 embeddings 後端。
+- 移出鎖的 context 建構會在鎖內重新讀取 state，並有測試證明落在空隙期間的變更會被觀察到而非被覆寫。
 - WP1 的腳本能依 route 與 speaker role 分別輸出排隊等待分位數。
 
 ## 4. WP4 —— 交代修正新增的檢索往返
@@ -188,13 +229,16 @@ executor 每回合 tool_call_count：  0:4  1:2  2:3  3:3  5:1  7:1  8:1
 ## 5. 執行順序
 
 ```text
-WP1  可重現的基準      -> 無 runtime 改動
-WP2  快取邊界          -> 證據最強；可用旗標還原
-WP3  排隊可見度        -> 與 WP2 獨立；縮小鎖範圍維持延後
-WP4  檢索往返          -> 在分類量出來之前只做調查
+WP1   可重現的基準          -> 無 runtime 改動
+WP2   快取邊界              -> 證據最強；可用旗標還原
+WP3.3 索引 singleflight     -> 獨立缺陷；不動鎖；須在 3.4 之前
+WP3.2 排隊可觀測性          -> 與其他一切獨立
+WP3.4 移出 context 建構     -> 在 3.3 之後
+WP3.5 敘事前釋放鎖          -> 在 #97 與 #99 之後
+WP4   檢索往返              -> 在分類量出來之前只做調查
 ```
 
-WP2、WP3、WP4 動到不同檔案，可分開審查。
+WP2、WP3、WP4 動到不同檔案，可分開審查。WP3 內部：3.2 與 3.3 彼此獨立、也與 WP2 獨立；3.4 只依賴 3.3；3.5 依賴本文件之外的工作。
 
 ## 6. 限制
 

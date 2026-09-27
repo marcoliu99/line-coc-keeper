@@ -130,28 +130,69 @@ Reordering `build_executor_static_prompt` / `build_narrator_static_prompt` from 
 | max | 63,343 ms | 56,948 ms |
 | over 1 s | 11 of 175 | 6 of 22 |
 
-The lock is held from message receipt through Executor, Narrator, Guard, spoiler scan and log commit — both model round trips included. `_conversation_lock_with_notice` sends one notice after 10 s and then nothing, so at p99 a player sits for another 45 seconds with no further signal and no idea whether they are first or third in line. The post session made this worse in practice, because the Executor's median rose to 15.7 s and its p90 to 35.3 s, which is exactly the time the next player spends queued.
+The lock is held from message receipt through Executor, Narrator, Guard, spoiler scan and log commit — both model round trips included. At post-session medians the hold decomposes as:
+
+```text
+build_context ~1 s + Executor 15.7 s + Narrator 5.0 s + Guard/spoiler ~0 + commit ~0
+                                                              ~21.7 s
+```
+
+`_conversation_lock_with_notice` sends one notice after 10 s and then nothing, so at p99 a player sits for another 45 seconds with no further signal and no idea whether they are first or third in line. The post session made this worse in practice, because the Executor's median rose to 15.7 s and its p90 to 35.3 s, which is exactly the time the next player spends queued.
 
 Neither the existing spec nor the three planning documents targets this. `enhancement-conversation-lock-and-tool-loop-latency.md` deliberately does not narrow the lock. v1 F8.1 keeps per-conversation gameplay serialized and moves only read-only commands out, which does not touch a wait measured between gameplay turns. v2 UX.4 defines a `T_turn_queue` metric and UX.5 asks for player-starvation measurement; nothing implements either.
 
-### 3.2 What this work package does
+### 3.2 Observation and messaging, safe now
 
 1. Emit a `turn.queue` event carrying the measured wait, the number of waiters ahead, the route and the speaker role. This implements v2's `T_turn_queue` and makes starvation quantifiable per player rather than per conversation.
 2. Track waiter depth on `_ObservableConversationLock` and include position in the queued notice, refreshing it at a bounded interval instead of going silent for the rest of a p99 wait.
 
-Observation and messaging only. No lock is narrowed, no turn is parallelised, no state contract changes.
+No lock is narrowed, no turn is parallelised, no state contract changes.
 
-### 3.3 What this work package does not do, and why
+### 3.3 Prerequisite defect: the RAG index caches have no singleflight
 
-Releasing the conversation lock after the Executor commits — so the Narrator's median 5.0 s runs outside it — is the obvious structural win, and this document does not propose it yet. For an ordinary turn the Narrator holds `tools=[]`, so no mutation would escape the lock, and `_commit_turn_result` already reloads under the state lock and rejects a stale timeline. The blocking risk is ordering, not mutation: the next player's Executor would resolve against state whose narration has not yet been posted, so a player could read an outcome referencing an event they have not been told about.
+`app/scenario_rag.py`'s `_index_cache` is a bare module-level dict with no lock. `get_index()` returns on a memory hit or a disk hit, but on a miss it calls `build_index()` — an embeddings round trip — then writes `scenario_indexes` through `_save_index_to_disk()` (`db.set_json`, `app/scenario_rag.py:677`). `get_record_index()` has the same shape.
 
-That risk is what #97's mutation admission and #99's delivery envelopes exist to bound. This work package records the proposal and its preconditions and defers the change until those land and WP1's queue metric can show whether it helps.
+Two concurrent misses for one key therefore each pay the embeddings call and each write. For one `group_id` the payload is identical so the last write is harmless, but the API cost doubles. This is already true today between conversations, because the conversation lock only serializes within one conversation; it is listed here because 3.4 widens the window to two turns of the same conversation.
 
-### 3.4 Acceptance
+Fix independently of any lock change: per-key singleflight on `get_index` and `get_record_index`, so a second caller waits for the first build rather than starting its own. This is the concrete instance of the addendum's note that `lru_cache`-style caching is thread-safe without being once-only and that expensive work needs an explicit singleflight.
+
+### 3.4 Hoist context building out of the lock, after 3.3
+
+`app/agents/context_builder.py`'s `build_context` performs no writes of its own — no `save_state`, `set_json`, `db.` call or state attribute assignment. Its cost is the scenario and memory RAG round trip, roughly 1 s, and it may run before the lock is acquired, subject to two conditions:
+
+- 3.3 lands first, because `build_context` reaches `get_index` and can therefore trigger the unprotected rebuild path.
+- The state snapshot it read is re-read after the lock is acquired, and only the retrieval results are carried forward. Those key on scenario version rather than `state_revision`, so they remain valid across the gap; anything derived from mutable state must not be.
+
+Removes roughly 1 s, about 5% of the hold. This was initially assessed as a pure read reordering; it is not, and the reassessment is why 3.3 exists.
+
+### 3.5 Deferred: release the lock before narration
+
+The single lock currently protects three separate things:
+
+| | must serialize | ordinary-turn Narrator needs it |
+|---|---|---|
+| mutation ordering | yes | **no** — the Narrator holds `tools=[]` |
+| reply ordering | yes | yes |
+| turn isolation | yes | yes |
+
+The Narrator needs the second and third, not the first. The split that follows is:
+
+```text
+mutation lock    receipt -> build_context -> Executor -> state commit -> release
+posting ticket   taken in arrival order on entry; awaited before posting
+```
+
+Narration then overlaps the next player's Executor while message order is preserved by the ticket. Together with 3.4 this would take the median hold from ~21.7 s to ~15.7 s, and p90 from ~47 s to ~35 s.
+
+Ordering is not the blocker — the ticket preserves it, and a player who typed while the previous turn was running already declared without seeing its result; only the moment their action is adjudicated moves earlier. The blocker is failure: if turn A's Narrator fails and falls back after turn B's Executor has already resolved against A's committed state, the contract that bounds the outcome is #97's mutation admission and #99's delivery envelopes. This work package therefore records the design and implements it after those land, once WP1's queue metric can show whether it helps.
+
+### 3.6 Acceptance
 
 - `turn.queue` appears for every queued turn with a wait, a depth and a route, and never for an uncontended acquire.
 - The notice reports position and refreshes at a bounded interval; a wait resolving before the first notice still sends nothing.
 - Notice delivery failure still cannot affect lock release, which the existing implementation guards and this must not regress.
+- Concurrent misses for one index key produce one `build_index` call and one write, verified without a live embeddings backend.
+- Hoisted context building re-reads state under the lock, and a test shows a mutation landing in the gap is observed rather than overwritten.
 - WP1's script reports queue-wait percentiles split by route and by speaker role.
 
 ## 4. WP4 — Account for the retrieval round trips the fixes added
@@ -188,13 +229,16 @@ No change is proposed here until that split is measured. Reducing searches witho
 ## 5. Sequencing
 
 ```text
-WP1  reproducible baseline  -> no runtime change
-WP2  cache boundary         -> evidence strongest; flag-reversible
-WP3  queue visibility       -> independent of WP2; lock narrowing stays deferred
-WP4  retrieval round trips  -> investigation only until the split is measured
+WP1   reproducible baseline   -> no runtime change
+WP2   cache boundary          -> evidence strongest; flag-reversible
+WP3.3 index singleflight      -> independent defect; no lock change; do before 3.4
+WP3.2 queue observability     -> independent of everything else
+WP3.4 hoist context building  -> after 3.3
+WP3.5 release before narration-> after #97 and #99
+WP4   retrieval round trips   -> investigation only until the split is measured
 ```
 
-WP2, WP3 and WP4 touch different files and may be reviewed separately.
+WP2, WP3 and WP4 touch different files and may be reviewed separately. Within WP3, 3.2 and 3.3 are independent of each other and of WP2; 3.4 depends only on 3.3; 3.5 depends on work outside this document.
 
 ## 6. Limits
 
