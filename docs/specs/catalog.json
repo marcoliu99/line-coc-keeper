@@ -1067,6 +1067,20 @@
       "zh_path": "docs/specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md",
       "previous_path": "docs/specs/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md",
       "source_revision": "0a448e157da82d1ae97355b9399106e8991f4060"
+    },
+    {
+      "title": "External AI template authoring and import diagnostics",
+      "zh": "外部 AI 中文模板整備與匯入診斷",
+      "category": "enhancement",
+      "status": "proposed",
+      "baseline": "c05e152",
+      "evidence": [
+        "app/scenario_templates.py",
+        "app/scenario_projection.py",
+        "app/help_actions.py"
+      ],
+      "path": "docs/specs/enhancement/external_template_authoring_design_spec.md",
+      "zh_path": "docs/specs/enhancement/external_template_authoring_design_spec_zh.md"
     }
   ]
 }
