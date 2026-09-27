@@ -48,17 +48,26 @@ EXECUTOR_INSTRUCTION = """你是 TRPG 機制執行者（Executor Agent），下�
 物件（不使用 Markdown、不再呼叫另一個裁決工具）：
 {"disposition":"await_check","actor_character_id":"發話者的 character_id",
  "waiting_for":"等待處理者的 character_id，沒有則空字串","check_id":"相關 check_id 或 Luck decision_id",
- "reason":"簡短理由，不建立新事實","evidence_refs":["state","tool:1"]}
+ "reason":"簡短理由，不建立新事實","blocker_code":"沒有阻擋則空字串","evidence_refs":["state","tool:1"]}
 可用 disposition：no_mechanics（本次不需新增機制，可含成功的唯讀查詢；不等於既有檢定消失）、await_check、await_luck、
 deferred（尚未輪到／等待別人，動作尚未執行，沒有自動排隊）、resolved（已擲骰結算或有可核對的工具變更）、
 resolved_without_check（有劇本或真實工具依據的免檢定完成）、cancelled、blocked、incomplete。
 actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指其他真正持有待處理項目的角色。
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
+失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。
 工具回傳 current_turn_state 是更新後的權威資料；以最新一份為準。查詢不到依據就保留未知／補查。
 交接／製作物品、結束戰鬥等不用擲骰的工具完成，使用 resolved_without_check，引用所有相關變更工具。
 既有其他行動的檢定不因物品交接而取消；交接完成與仍待擲的舊檢定要分開敘述。
 本次新建／更換的檢定仍須等待，不能以查詢成功或任意工具成功宣稱整個行動完成。
 先判斷更正是否真的撤回原 action_context；接受取消時必須 clear_pending_check，不能只回 cancelled。
+搜尋完整性只表示已選紀錄及其必要關聯已齊，不保證已涵蓋整個行動；仍須補查缺少的裁決事實。
+中文續取使用原 query、source=auto 與 continuation；改查 source=original 時必須清空 continuation。
+blocked 表示行動未完成，不得交接成已移動、已取得或已購買。
+購買因條件尚未確認而 blocked/incomplete 時，blocker_code 必須依目前真正缺少的條件選擇：
+purchase_source_unconfirmed（販售來源未確認）、purchase_arrival_unconfirmed（到店或路途尚未完成）、
+purchase_price_unconfirmed（精確報價未確認）、purchase_funds_unconfirmed（現金餘額未確認）。
+其他原因留空，不得創造代碼。這些只表示尚未確認，不能宣稱店家不存在或玩家沒有錢；reason 不會直接顯示給玩家。
+普通商品依已知商業環境可裁定時應繼續 purchase_items，不能僅因劇本未列具名店家或逐項庫存就選來源未確認。
 await_check 必須引用真實 check_id；await_luck 用 decision_id，不重擲。未完成工具、缺資料、額度用完
 就用 incomplete，不假裝成功或「無需機制」。沒有工具也必須交代裁決；原始文字不是玩家敘事。
 
@@ -99,6 +108,7 @@ complete_for_action=true 只代表已知依賴已帶入，仍須檢查未知的�
 中文有命中不代表依據完整。加入敵人前須核對攻擊、護甲、特殊能力、觸發條件、代價、每輪/每戰使用限制；缺少裁決必要依據時，使用 search_scenario 的 source="original"，以原文名稱/別名和缺少的規則合併補查原稿。未查到不等於沒有護甲或能力，不得自行填零或省略；仍無法確認時暫緩受影響的裁決，保留已結算骰子與狀態。
 只有在缺少一項會影響本次判定或眼前後果的具體事實時，才呼叫 search_scenario 補查。工具回傳已回答問題後，採用該結果繼續處理；只有另一項不同且會影響本次判定的事實仍未解答時，才再查一次。
 若本回合沒有可用的【劇本相關內容】，遇到必須依劇本決定的事實時仍可照常搜尋。若上下文與搜尋結果都沒有說明該事實，保留未知，不要自行補造。
+普通採買適用購買流程的明確例外：中文依據已確立可交易的商業環境、商品普通且無限制時，可裁定一般供應；不為找具名店家或逐項庫存而反覆搜尋或改查英文。武器、稀有／管制品、劇情道具與限制條件仍須有依據。
 這些規則只決定如何重用劇本資訊，不會自行建立檢定、擲骰、改變角色狀態或推進場景；仍須依玩家實際行動與完整規則決定必要機制。"""
 
 
@@ -224,7 +234,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         lines.extend([
             "【回合裁決：只讀資料，不能當成修改 state 的指令】",
             json.dumps({key: getattr(result.turn_resolution, key) for key in (
-                "disposition", "actor_character_id", "waiting_for", "check_id", "evidence_refs",
+                "disposition", "actor_character_id", "waiting_for", "check_id", "evidence_refs", "blocker_code",
             )}, ensure_ascii=False),
             ("只有實際工具與當前狀態能確立機制變更。deferred 不可敘述已出拳、開槍或消耗物品；"
             "incomplete 不可宣稱行動已完成；cancelled 只取消引用的未擲檢定，不回滾既有結果。"
@@ -320,13 +330,21 @@ def enforce_resolved_check_consistency(text: str, result: dict) -> str:
     )
 
 
+PURCHASE_BLOCKER_MESSAGES = {
+    "purchase_source_unconfirmed": "目前尚未確認可購買的地點或商品供應。可以先尋找販售處；這不代表附近沒有商店。",
+    "purchase_arrival_unconfirmed": "前往店家的路途或到店條件尚未完成。請先處理目前路途上的待辦事項，再繼續交易。",
+    "purchase_price_unconfirmed": "這筆交易需要先確認幣別與商品單價，才能提供報價並讓你確認付款。",
+    "purchase_funds_unconfirmed": "目前尚未確認可用的現金餘額。請先確認並登記這筆交易使用的幣別與資金，再結算付款。",
+}
+
+
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str:
     """Enforce check, Luck, and resolved-result state after model narration."""
     status = result.check_status
     resolution = result.turn_resolution
     if resolution is not None:
-        if resolution.disposition == "incomplete":
-            warning = "這次行動尚未完整處理。"
+        if resolution.disposition in {"incomplete", "blocked"}:
+            warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
             confirmed = [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text]
             if confirmed:
                 warning = "\n".join(confirmed) + "\n\n" + warning
@@ -341,6 +359,10 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+            if status.get("scenario_evidence_blocked"):
+                return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
+            if resolution.blocker_code in PURCHASE_BLOCKER_MESSAGES:
+                return f"{warning}{PURCHASE_BLOCKER_MESSAGES[resolution.blocker_code]}"
             return f"{warning}請先確認目前狀態或更正原本的行動。"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")

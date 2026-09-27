@@ -290,10 +290,12 @@ def copy_context_images(scenario_id: str, pages: set[int], save_image: Callable[
 
 
 def clean_scenario(scenario_id: str) -> None:
-    with _LIBRARY_LOCK:
+    from app import scenario_source_authoring
+    with scenario_source_authoring._scenario_locked(scenario_id), _LIBRARY_LOCK:
         target = _path(scenario_id)
         if not target.exists():
             raise FileNotFoundError(scenario_id)
+        scenario_source_authoring._clean_preparation(scenario_id)
         shutil.rmtree(target)
 
 

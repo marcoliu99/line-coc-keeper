@@ -48,8 +48,10 @@ def source_version(state: GroupState) -> str:
 
 def propose(state: GroupState, actor: str, subject: str, text: str) -> MovementProposal | None:
     clauses = intent_parser.movement_clauses(text)
-    movement_text = next((c for c in clauses if intent_parser.has_movement_verb(c)
-                          or re.search(r'\b(?:go|enter|walk|move|leave)\b', c, re.IGNORECASE)), '')
+    movement_text = next((c for c in clauses
+                          if (intent_parser.has_movement_verb(c)
+                              or re.search(r'\b(?:go|enter|walk|move|leave)\b', c, re.IGNORECASE))
+                          and not re.match(r'^(?:我(?:們)?)?(?:走去|去)買', c)), '')
     if not movement_text:
         return None
     char = state.get_active_character(subject)

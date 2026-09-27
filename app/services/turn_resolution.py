@@ -10,7 +10,8 @@ from collections import Counter
 from copy import deepcopy
 from typing import Any
 
-from app.domain.models import TurnResolution
+from app import observability
+from app.domain.models import TURN_BLOCKER_CODES, TurnResolution
 from app.models import GroupState
 from app.services.turn_context import character_id
 
@@ -122,6 +123,9 @@ def validate_resolution(
     for key in ("waiting_for", "check_id", "reason"):
         if not isinstance(data.get(key, ""), str) or len(data.get(key, "")) > 600:
             return incomplete("裁決欄位不正確", "invalid_fields")
+    blocker = data.get("blocker_code", "")
+    if not isinstance(blocker, str) or (blocker and blocker not in TURN_BLOCKER_CODES):
+        return incomplete("裁決阻擋分類不正確", "invalid_blocker_code")
     refs = data.get("evidence_refs", [])
     if not isinstance(refs, list) or len(refs) > 20 or not all(isinstance(x, str) for x in refs):
         return incomplete("裁決依據格式不正確", "invalid_evidence_format")
@@ -130,6 +134,10 @@ def validate_resolution(
         valid_refs.add("scenario_context")
     valid_refs.update(f"tool:{i}" for i, e in enumerate(tool_events, 1) if e['result'].get('ok'))
     if not refs or not set(refs) <= valid_refs:
+        observability.event("executor.resolution.invalid_evidence", reference_count=len(refs),
+                            invalid_reference_count=len(set(refs) - valid_refs),
+                            available_tool_count=len(tool_events),
+                            has_scenario_context=has_scenario)
         return incomplete("裁決引用了不存在或失敗的依據", "invalid_evidence_reference")
     waiting = data.get("waiting_for", "")
     check_id = data.get("check_id", "")
@@ -209,6 +217,7 @@ def validate_resolution(
         disposition=disposition, actor_character_id=actor_id, waiting_for=waiting,
         check_id=check_id, reason=data.get("reason", "")[:600], evidence_refs=list(refs),
         validation_code="model_incomplete" if disposition == "incomplete" else "validated",
+        blocker_code=blocker if disposition in {"blocked", "incomplete"} else "",
     )
 
 

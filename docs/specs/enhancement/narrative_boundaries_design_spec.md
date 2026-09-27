@@ -28,6 +28,10 @@ This edition describes the current contract. Proposed work is explicitly identif
 
 ## Flow and interfaces
 
+### Ordinary procurement exception (2026-09-27)
+
+The player approved ordinary legal purchases based on an established commercial environment without requiring a named shop or an itemized scenario catalog. AI must still adjudicate arrival and affordability, record the basis, and settle through `purchase_items`. Small quantities of lamps and bottled kerosene for lighting qualify for consideration. Weapons, rare/controlled goods, clues and scenario-critical resources do not qualify; scenario restrictions, scarcity and outstanding mechanics override convenience. This exception does not authorize shopkeeper backstories or arbitrary new locations. See the [purchase contract](../bug/purchase_turn_provenance_design_spec.md) for the actionable blocker handoff and cash/lifestyle distinction.
+
 ```text
 Player action/hypothesis -> scenario evidence -> mechanics -> narration
 /coc correct -> verified message receipt -> pending allegation -> KP adjudication -> durable projection
