@@ -91,6 +91,38 @@ def test_published_version_preserves_originals_and_audits_numeric_repair(source)
     assert library.load_context(new_id)['text'] == text
 
 
+@pytest.mark.parametrize('texts', [
+    ('  Armor 2.', 'Damage 1D4.  '),
+    ('\n\tArmor 2.\n\n', '\nDamage 1D4.\t\n'),
+    ('\u3000Armor 2.\n', 'Damage 1D4.\u3000'),
+])
+def test_published_page_bytes_match_checked_audit_and_quality_hashes(source, texts):
+    _, path, payload = source()
+    for row, text in zip(payload['pages'], texts, strict=True):
+        row['text'] = text
+    finish(path, payload)
+    checked = review.check(path)
+    sid = publish(path)
+    root = library._path(sid)
+    expected = '\n\n'.join(f'--- 第 {number} 頁 ---\n{text}'
+                             for number, text in enumerate(texts, 1)).encode()
+    assert (root / 'scenario.txt').read_bytes() == expected
+    audit = json.loads((root / 'source_review.json').read_text())
+    quality = json.loads((root / 'parse_quality.json').read_text())
+    manifest = json.loads((root / 'manifest.json').read_text())
+    assert audit['changes'] == checked['changes']
+    assert audit['candidate_digest'] == checked['candidate_digest']
+    assert audit['source_hash_after'] == manifest['content_hash'] == hashlib.sha256(expected).hexdigest()
+    for change, page, text in zip(audit['changes'], quality['pages'], texts, strict=True):
+        assert change['after'] == change['published_text'] == text
+        assert page['selected_sha256'] == hashlib.sha256(text.encode()).hexdigest()
+    assert publish(path) == sid
+    payload['pages'][0]['text'] += ' '
+    write(path, payload)
+    with pytest.raises(ValueError, match='Candidate changed'):
+        review.publish(path, reviewer='operator', expected_digest=checked['candidate_digest'])
+
+
 @pytest.mark.parametrize('change', ['proposal', 'source', 'pdf', 'chapters', 'registry', 'image'])
 def test_changed_inputs_fail_closed(source, change):
     sid, path, payload = source()
@@ -153,7 +185,14 @@ def test_image_only_preserves_physical_image_and_requires_explicit_review(source
     finish(path, p)
     sid = publish(path)
     _, text = templates._source(sid)
-    assert '[SOURCE_IMAGE page_1.png' in text
+    marker = '[SOURCE_IMAGE page_1.png: reviewed image-only page]'
+    assert text == '--- 第 1 頁 ---\n' + marker
+    audit = json.loads((library._path(sid) / 'source_review.json').read_text())
+    quality = json.loads((library._path(sid) / 'parse_quality.json').read_text())
+    assert audit['changes'] == review.check(path)['changes']
+    assert audit['changes'][0]['after'] == ''
+    assert audit['changes'][0]['published_text'] == marker
+    assert quality['pages'][0]['selected_sha256'] == hashlib.sha256(marker.encode()).hexdigest()
     assert (library._path(sid) / 'images/page_1.png').is_file()
 
 

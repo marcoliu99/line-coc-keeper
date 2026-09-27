@@ -178,6 +178,7 @@ def _validate_proposal(proposal: dict, registry: dict) -> tuple[list[dict], list
         old_counts = scenario_numbers.counts(original['original'])
         new_counts = scenario_numbers.counts(row['text'])
         changes.append({'page': number, 'before': original['original'], 'after': row['text'],
+                        'published_text': _published_page_text(row),
                         'review_note': row['review_note'], 'image_only': row['image_only'], 'evidence': evidence,
                         'before_counts': dict(old_counts), 'after_counts': dict(new_counts),
                         'removed_counts': dict(old_counts-new_counts), 'added_counts': dict(new_counts-old_counts)})
@@ -193,10 +194,15 @@ def check(path: Path) -> dict:
             'changes': changes}
 
 
+def _published_page_text(page: dict) -> str:
+    """Serialize once for publication, audit and hashing; preserve reviewed whitespace."""
+    if page['image_only']:
+        return f"[SOURCE_IMAGE page_{page['page']}.png: reviewed image-only page]"
+    return str(page['text'])
+
+
 def _candidate_text(pages: list[dict]) -> str:
-    return '\n\n'.join(f"--- 第 {p['page']} 頁 ---\n" +
-                       (f"[SOURCE_IMAGE page_{p['page']}.png: reviewed image-only page]"
-                        if p['image_only'] else p['text'].strip()) for p in pages)
+    return '\n\n'.join(f"--- 第 {p['page']} 頁 ---\n" + _published_page_text(p) for p in pages)
 
 
 def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
@@ -257,7 +263,7 @@ def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
             quality = {'version': 'source-review-v1', 'source_chars': len(text), 'review_pages': [],
                        'source_review': manifest['source_review'], 'pdf_sha256': registry['pdf_sha256'],
                        'pages': [{'page': row['page'], 'method': 'operator-reviewed', 'warnings': [],
-                                  'selected_sha256': _sha(row['text'].encode())} for row in proposal['pages']]}
+                                  'selected_sha256': _sha(_published_page_text(row).encode())} for row in proposal['pages']]}
             for name, value in [('manifest', manifest), ('source_review', audit), ('parse_quality', quality),
                                 ('indexes', {}), ('pregens', []), ('scene_maps', {})]:
                 authoring.atomic_json(stage / f'{name}.json', value)

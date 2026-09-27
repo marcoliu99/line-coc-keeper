@@ -178,3 +178,14 @@ make correction reports directly importable or waive numeric validation.
 Verification: exercise the real export and private command/help reply tests to
 confirm both outputs carry the PDF requirement; retain the normal numeric
 validation and export/import round-trip coverage.
+
+## PR #100 review correction: exact published page provenance
+
+Preserve reviewed text verbatim, including leading/trailing whitespace. A shared
+page serializer supplies the published body and the quality hash. The check and
+audit retain the submitted transcription in `after` and record `published_text`
+explicitly, including the generated reference for image-only pages. Proposal
+digests still bind the raw proposal; even a whitespace change after checking
+requires a new check. Regression tests compare actual UTF-8 source bytes, audit
+text, per-page hashes and whole-source hashes for multiple pages, whitespace,
+image-only pages and repeat publication.
