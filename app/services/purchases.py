@@ -19,7 +19,7 @@ TOOL: dict[str, Any] = {
             "shop": {"type": "string"},
             "arrived": {"type": "boolean", "description": "行程已完成且確實可交易；僅想前往不算抵達"},
             "arrival_basis": {"type": "string", "description": "依目前劇情裁定抵達的過程；尚待檢定時不可標示抵達"},
-            "source": {"type": "string", "description": "劇本／已確立事件支持店家存在及商品可取得的依據；檢索未找到就是未知"},
+            "source": {"type": "string", "description": "劇本／已確立事件的來源依據。普通合法商品可依已知商業環境裁定供應，記錄環境依據及裁定理由，不需逐項庫存；武器、稀有／管制品、劇情道具仍須明確來源，遵守匱乏或封鎖等限制"},
             "mode": {"type": "string", "enum": ["lifestyle", "cash"]},
             "affordability": {"type": "string", "description": "根據角色實際信用評級、年代、物品性質裁定為一般可負擔花費的理由；昂貴、稀有、武器不可草率放行"},
             "currency": {"type": "string", "description": "cash 模式的幣別，例如 USD；不做匯率換算"},
@@ -113,6 +113,7 @@ def prepare(state: GroupState, data: dict, turn_key: str) -> dict:
         "arrival_basis": arrival, "source": source, "mode": mode, "currency": currency,
         "items": normalized_items, "credit_rating": credit, "affordability": rationale,
         "total_minor": sum(i["quantity"] * (i["unit_price_minor"] or 0) for i in normalized_items) if mode == "cash" else None,
+        "narrative_location": state.narrative_locations.get(char.owner_id, ""),
         "status": "quoted", "map_position": [state.current_map_page.get(char.owner_id), state.current_room_id.get(char.owner_id)],
     }
     state.commerce.setdefault("transactions", {})[quote_id] = receipt
@@ -149,7 +150,7 @@ def confirm(state: GroupState, owner: str, quote_id: str) -> dict:
         raise ValueError("沒有屬於目前角色與時間線的報價。")
     if receipt["status"] == "purchased":
         return {"ok": True, "duplicate": True, "purchase": deepcopy(receipt)}
-    if receipt["status"] != "quoted" or receipt["map_position"] != [state.current_map_page.get(owner), state.current_room_id.get(owner)]:
+    if receipt.get("narrative_location", "") != state.narrative_locations.get(owner, "") or receipt["status"] != "quoted" or receipt["map_position"] != [state.current_map_page.get(owner), state.current_room_id.get(owner)]:
         raise ValueError("報價情境已過期，請重新確認到店與交易。")
     _settle(state, receipt)
     return {"ok": True, "purchase": deepcopy(receipt)}

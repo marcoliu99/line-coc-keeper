@@ -12,6 +12,7 @@ from uuid import uuid4
 from app import db, locks, observability
 from app.models import GroupState
 from app.repositories.group_state import _save_state_unlocked
+from app.services import mutation_admission
 
 _logger = logging.getLogger(__name__)
 
@@ -213,6 +214,7 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
         # lock also coordinates with background maintenance and Keeper worker
         # threads that do not hold the asyncio conversation lock.
         with locks.get_state_lock(group_id), db.transaction() as conn:
+            mutation_admission.assert_admitted(group_id)
             checkpoint = _get_checkpoint_tx(conn, group_id, identifier)
             if checkpoint.get("group_id") != group_id:
                 raise ValueError("checkpoint belongs to another group")

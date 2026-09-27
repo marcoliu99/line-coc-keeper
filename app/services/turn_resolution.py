@@ -10,7 +10,8 @@ from collections import Counter
 from copy import deepcopy
 from typing import Any
 
-from app.domain.models import TurnResolution
+from app import observability
+from app.domain.models import TURN_BLOCKER_CODES, TurnResolution
 from app.models import GroupState
 from app.services.turn_context import character_id
 
@@ -34,6 +35,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     latest = {}
     ended = False
     purchase_effect = False
+    movement_effect = False
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
         if (name in {'add_carried_item', 'remove_carried_item', 'end_combat'}
@@ -47,6 +49,15 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 return False, False
             inventory.append(event)
             latest[owner] = after
+        if name == "commit_movement":
+            arrival = result.get("arrival")
+            actor = next((c for c in state.active_characters() if c.name == actor_name), None)
+            movement_effect = movement_effect or bool(result.get("ok") and arrival and actor and arrival in state.arrival_events
+                and f"tool:{i}" in refs and arrival.get("timeline_id") == state.timeline_id
+                and arrival.get("subject_id") == actor.owner_id and arrival.get("character_id") == actor.character_id
+                and state.current_map_page.get(actor.owner_id, "") == arrival.get("page")
+                and state.current_room_id.get(actor.owner_id, "") == arrival.get("room")
+                and state.narrative_locations.get(actor.owner_id) == arrival.get("destination"))
         if name == "purchase_items":
             receipt = result.get("purchase", {})
             stored = state.commerce.get("transactions", {}).get(receipt.get("id"))
@@ -88,7 +99,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     transfer = transfer and all(e['name'] in {
         'add_carried_item', 'remove_carried_item', 'search_scenario', 'get_character_sheet',
     } for e in events)
-    return bool(ended or purchase_effect or (inventory and actor_involved)), transfer
+    return bool(ended or purchase_effect or movement_effect or (inventory and actor_involved)), transfer
 
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
@@ -112,6 +123,9 @@ def validate_resolution(
     for key in ("waiting_for", "check_id", "reason"):
         if not isinstance(data.get(key, ""), str) or len(data.get(key, "")) > 600:
             return incomplete("裁決欄位不正確", "invalid_fields")
+    blocker = data.get("blocker_code", "")
+    if not isinstance(blocker, str) or (blocker and blocker not in TURN_BLOCKER_CODES):
+        return incomplete("裁決阻擋分類不正確", "invalid_blocker_code")
     refs = data.get("evidence_refs", [])
     if not isinstance(refs, list) or len(refs) > 20 or not all(isinstance(x, str) for x in refs):
         return incomplete("裁決依據格式不正確", "invalid_evidence_format")
@@ -120,6 +134,10 @@ def validate_resolution(
         valid_refs.add("scenario_context")
     valid_refs.update(f"tool:{i}" for i, e in enumerate(tool_events, 1) if e['result'].get('ok'))
     if not refs or not set(refs) <= valid_refs:
+        observability.event("executor.resolution.invalid_evidence", reference_count=len(refs),
+                            invalid_reference_count=len(set(refs) - valid_refs),
+                            available_tool_count=len(tool_events),
+                            has_scenario_context=has_scenario)
         return incomplete("裁決引用了不存在或失敗的依據", "invalid_evidence_reference")
     waiting = data.get("waiting_for", "")
     check_id = data.get("check_id", "")
@@ -199,6 +217,7 @@ def validate_resolution(
         disposition=disposition, actor_character_id=actor_id, waiting_for=waiting,
         check_id=check_id, reason=data.get("reason", "")[:600], evidence_refs=list(refs),
         validation_code="model_incomplete" if disposition == "incomplete" else "validated",
+        blocker_code=blocker if disposition in {"blocked", "incomplete"} else "",
     )
 
 
@@ -216,7 +235,7 @@ def actor_snapshot(state: GroupState, user_id: str) -> dict[str, Any]:
 # Diagnostic/provider bookkeeping does not constitute a game action. All other
 # persisted fields (including every character and enemy card) are compared.
 _NON_GAMEPLAY_FIELDS = {
-    "state_revision", "log", "kp_ooc_log", "campaign_summary",
+    "state_revision", "log", "kp_ooc_log", "campaign_summary", "request_segment_audit",
     "openai_previous_response_id", "openai_previous_response_timeline_id",
 }
 

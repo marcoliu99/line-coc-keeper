@@ -67,6 +67,8 @@ from app.models import GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import StateRevisionConflict
 from app.repositories.group_state import load_state as load_group_state
+from app.scenario_source_authoring import SourceReadyMessage
+from app.services import mutation_admission, turn_delivery
 
 _logger = logging.getLogger(__name__)
 _backup_task: asyncio.Task | None = None
@@ -328,6 +330,10 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
                 _logger.exception("Unable to persist correction target receipt; message already sent")
 
     async def reply(text: str) -> None:
+        channel_id = getattr(channel, "id", None)
+        if isinstance(text, SourceReadyMessage) and isinstance(channel_id, int):
+            await _discord_operation(channel.send(str(text), view=SourceReadyView(_conversation_id(channel_id), text)))
+            return
         _log_reply_text(text)
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
@@ -369,12 +375,15 @@ def _observed_interaction(callback):
         with observability.request_context(
             conversation_id=conversation_id,
         ):
+            observability.event("turn.entry", entry="button")
             observed = config.LOG_ENABLED
             started = time.perf_counter() if observed else 0.0
             if observed:
                 observability.event("request.started", platform="discord", message_kind="button")
             try:
                 await callback(self, interaction)
+            except mutation_admission.MutationHeld:
+                await _send_interaction_message(interaction, mutation_admission.NOTICE, ephemeral=True)
             except Exception as exc:
                 if observed:
                     observability.event(
@@ -462,6 +471,11 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     # Used only after the initial interaction response has been consumed
     # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:
+        if isinstance(text, SourceReadyMessage) and interaction.channel is not None:
+            await _discord_operation(interaction.followup.send(
+                str(text), ephemeral=True,
+                view=SourceReadyView(_conversation_id(interaction.channel.id), text)))
+            return
         _log_reply_text(text)
         chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
@@ -901,6 +915,12 @@ async def _send_check_button(
     timeline_id: str,
     public_marker: str | None,
 ) -> None:
+    if turn_delivery.is_private(check):
+        recipient = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
+        if recipient is None:
+            raise ValueError("private decision recipient is unavailable")
+        channel = recipient
+        public_marker = None
     view = discord.ui.View(timeout=None)
     full_check_id = effective_check_id(owner_id, check, timeline_id)
     check_id = compact_identity_token("check", owner_id, full_check_id, timeline_id)
@@ -1152,6 +1172,12 @@ async def _send_luck_button(
     timeline_id: str,
     public_marker: str | None,
 ) -> None:
+    if turn_delivery.is_private(decision):
+        recipient = client.get_user(int(owner_id)) or await _discord_operation(client.fetch_user(int(owner_id)))
+        if recipient is None:
+            raise ValueError("private decision recipient is unavailable")
+        channel = recipient
+        public_marker = None
     view = discord.ui.View(timeout=None)
     full_decision_id = effective_decision_id(owner_id, decision, timeline_id)
     decision_id = compact_identity_token("decision", owner_id, full_decision_id, timeline_id)
@@ -1472,6 +1498,31 @@ class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTO
         await _edit_interaction_message(
             interaction, content, view=_help_view(self.conversation_id, page)
         )
+
+
+class SourceReadyView(discord.ui.View):
+    """Short-lived, owner-bound links into existing confirmed Help actions."""
+
+    def __init__(self, conversation_id: str, result: SourceReadyMessage):
+        super().__init__(timeout=300)
+        for key, label in (("template_export", "匯出中文模板"), ("source_use", "選用新版英文")):
+            self.add_item(SourceReadyButton(conversation_id, result, key, label))
+
+
+class SourceReadyButton(discord.ui.Button):
+    def __init__(self, conversation_id: str, result: SourceReadyMessage, key: str, label: str):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+        self.conversation_id, self.result, self.key = conversation_id, result, key
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not await _help_interaction_is_valid(interaction, self.conversation_id, self.result.owner_id):
+            return
+        state = await asyncio.to_thread(load_group_state, self.conversation_id)
+        if not (_is_keeper_member(interaction.user) or state.kp_assistant_user_id == str(interaction.user.id)):
+            await _send_interaction_message(interaction, "只有 KP 可以使用英文來源操作。", ephemeral=True)
+            return
+        selected = self.result.scenario_id + (" original" if self.key == "source_use" else "")
+        await _finish_help_action(interaction, help_actions.BY_KEY[self.key], selected=selected)
 
 
 _HELP_EXECUTE_ID_TEMPLATE = r"coc_help_run:(?P<conversation_id>discord-channel-\d+):(?P<key>[a-z0-9_]+)"

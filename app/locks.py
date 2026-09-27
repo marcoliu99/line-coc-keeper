@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from app import config, observability
+from app.services import mutation_admission
 
 # Legacy conversation lock: used by the current coarse-grained flow and kept
 # unchanged while callers are migrated incrementally.
@@ -97,6 +98,10 @@ _keeper_priority_gates: dict[str, _KeeperPriorityGate] = {}
 class _ObservableConversationLock(asyncio.Lock):
     """Conversation lock that measures queue wait without changing semantics."""
 
+    def __init__(self, conversation_id: str):
+        super().__init__()
+        self.conversation_id = conversation_id
+
     async def acquire(self) -> Literal[True]:
         with observability.span(
             "lock.wait",
@@ -105,13 +110,18 @@ class _ObservableConversationLock(asyncio.Lock):
             slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
         ):
             await super().acquire()
+            try:
+                mutation_admission.check_conversation_entry(self.conversation_id)
+            except mutation_admission.MutationHeld:
+                super().release()
+                raise
             return True
 
 
 def get_conversation_lock(conversation_id: str) -> asyncio.Lock:
     lock = _locks.get(conversation_id)
     if lock is None:
-        lock = _ObservableConversationLock()
+        lock = _ObservableConversationLock(conversation_id)
         _locks[conversation_id] = lock
     return lock
 

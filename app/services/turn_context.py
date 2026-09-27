@@ -27,6 +27,9 @@ def current_state(state: GroupState) -> dict[str, Any]:
             "owner_id": char.owner_id, "character_id": character_id(state, char.owner_id),
             "name": char.name, "carried_items": list(char.carried_items),
             "cash_balances": dict(char.cash_balances),
+            "position": {"map": state.current_map_page.get(char.owner_id, ""),
+                         "room": state.current_room_id.get(char.owner_id, ""),
+                         "narrative_location": state.narrative_locations.get(char.owner_id, "")},
         })
     def checks(collection: dict) -> list[dict]:
         return [{

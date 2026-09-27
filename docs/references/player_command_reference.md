@@ -261,6 +261,32 @@ Usage:
 
 ## Scenarios
 
+### Prepare English source **[KP-only]**
+
+Export one full Markdown workbook and send it with the original PDF to external AI.
+Return corrected English as downloadable Markdown; partial result imports accumulate.
+
+Usage:
+- `/coc scenario source export SCENARIO_ID`
+
+### Import English source **[KP-only]**
+
+Select a matching result in Help, or use the command. Complete page coverage creates
+an independent English version automatically; the active game remains unchanged.
+
+Usage:
+- `/coc scenario source import SCENARIO_ID FILE.md`
+
+### English preparation progress **[KP-only]**
+
+Privately list complete/pending/unresolved pages, the new version and omitted-file
+errors. On completion, buttons export a fresh Chinese template or select the new
+English version using the existing scenario-switch confirmation.
+
+Usage:
+- `/coc scenario source status SCENARIO_ID [EXPORT_ID]`
+
+
 ### Mark away
 
 Mark yourself away; combat skips your turns.

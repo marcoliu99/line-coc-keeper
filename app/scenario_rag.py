@@ -536,7 +536,7 @@ def _ranked_rows(index: ScenarioIndex, scored: list, top_k: int, eligible: list,
     roots = list(dict.fromkeys(c.record_id for _, c in scored))[:top_k]
     if not roots:
         return []
-    return scenario_retrieval.project(index.record_store, roots, query, scopes)
+    return scenario_retrieval.project_ranked(index.record_store, roots, query, scopes)
 
 
 def search(

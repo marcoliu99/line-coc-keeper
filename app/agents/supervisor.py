@@ -4,7 +4,7 @@ import logging
 from copy import deepcopy
 from typing import Any, Literal
 
-from app import keeper, observability, spoiler_policy
+from app import keeper, observability
 from app.agents import (
     assistant,
     context_builder,
@@ -14,10 +14,15 @@ from app.agents import (
     narrator,
     state_reducer,
 )
-from app.domain.models import MechanicResult
+from app.domain.models import AgentMessage, MechanicResult
 from app.models import GroupState
 from app.providers.turn_budget import with_turn_deadline
-from app.services import prompt_config
+from app.services import (
+    mutation_admission,
+    prompt_config,
+    reply_segments,
+    turn_delivery,
+)
 
 _logger = logging.getLogger(__name__)
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
@@ -33,6 +38,8 @@ async def run_turn(
     speaker_role: str,
     conversation_id: str,
     *,
+    actor_user_id: str | None = None,
+    actor_is_keeper: bool = False,
     turn_kind: PlayerTurnKind = "player_action",
     resolved_check_context: dict[str, Any] | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
@@ -41,6 +48,7 @@ async def run_turn(
     Orchestrates the asynchronous pipeline of Agents to produce a response.
     Returns: (reply_text, private_messages, image_requests)
     """
+    mutation_admission.assert_admitted(state.group_id)
     _logger.info(f"Supervisor starting turn for {display_name} ({user_id})")
     # Capture one authoritative timeline before any agent await.  Executor
     # tools may initialize or persist timeline-bound state; without this
@@ -53,21 +61,70 @@ async def run_turn(
     if correction_block:
         return correction_block, [], []
 
-    # 1. Build Context
+    route = intent_router.route_request(text, speaker_role, turn_kind)
+    action_text = route.ic_text if route.message_mode == "mixed" else text
+    # Pure OOC never retrieves private scenario/memory or enters the gameplay
+    # prompt builder. Role remains server-owned even when text claims otherwise.
+    if route.intent == "PLAYER_OOC":
+        message = AgentMessage({"state": state, "user_id": user_id,
+            "display_name": display_name, "speaker_role": speaker_role,
+            "text": text, "route_decision": route, "intent": route.intent,
+            "turn_kind": turn_kind, "conversation_id": conversation_id})
+        observability.event("turn.route", route="player_ooc", turn_kind=turn_kind)
+        reply_text, _, _ = await narrator.run_narrator(message)
+        committed = keeper._commit_turn_result(state, [], timeline_id=turn_timeline_id,
+            segment_audit=reply_segments.audit(route, text, user_id))
+        if not committed:
+            return "時間線已更新，這次場外回覆未送出。", [], []
+        # No canonical log entries: summary/memory consume only log.
+        if route.audience == "player_private":
+            return "場外說明已私訊給你。", [(user_id, reply_text)], []
+        from app import spoiler_policy
+        safe = spoiler_policy.sanitize_public_text(reply_text, spoiler_policy.collect_protected_terms(state))
+        return reply_text if safe.is_safe else (safe.fallback_text or reply_segments.UNRESOLVED), [], []
+
+    # 1. Build Context from IC input only.
     message = await context_builder.build_context(
         state=state,
         user_id=user_id,
         display_name=display_name,
-        text=text,
+        text=action_text,
         resolved_location=resolved_location,
         speaker_role=speaker_role,
         conversation_id=conversation_id,
     )
+    message.payload["actor_user_id"] = actor_user_id or user_id
+    message.payload["actor_is_keeper"] = actor_is_keeper
+    message.payload["route_decision"] = route
     message.payload["turn_kind"] = turn_kind
     if turn_kind == "resolved_check_followup":
         if not resolved_check_context:
             raise ValueError("resolved_check_followup requires an authoritative result")
         message.payload["resolved_check_context"] = resolved_check_context
+        from app.agents.tool_gateway import make_tool_executor
+        from app.services import movement
+        continuation = state.movement_continuations.get(user_id)
+        arrival_result = None
+        if continuation and continuation.get("check_id") == resolved_check_context.get("check_id"):
+            def resume_entry() -> dict:
+                return movement.resume(state, user_id, resolved_check_context) or {"ok": False, "error": "no_matching_movement"}
+            gateway = make_tool_executor(state, [], [], "player", [],
+                observed_outcomes=message.payload.setdefault("observed_outcomes", []), internal_operation=resume_entry)
+            arrival_result = await gateway("commit_movement", {})
+        if continuation and arrival_result is not None:
+            data = dict(continuation["proposal"])
+            data["origin"] = tuple(data["origin"])
+            move_session = movement.MovementSession(movement.MovementProposal(**data), data["original_span"], continuation["sources"])
+            if arrival_result and arrival_result.get("arrival"):
+                move_session.arrived = True
+                move_session.committed_position = movement.position(state, user_id)
+            move_session._final_skill = continuation.get("skill", "")
+            message.payload["movement_session"] = move_session
+            message.payload["movement_request_text"] = continuation.get("request_text", data["original_span"])
+        if arrival_result is not None:
+            message.payload["movement_resume_result"] = arrival_result
+            if arrival_result.get("arrival"):
+                message.payload["resolved_location"] = {"room_name": arrival_result["arrival"]["destination"]}
 
     # 2. Intent Routing (Fast Path vs Slow Path)
     intent = (
@@ -75,6 +132,7 @@ async def run_turn(
         if turn_kind == "player_action" else turn_kind.upper()
     )
     message.payload["intent"] = intent
+    observability.event("turn.route", route=intent.lower(), turn_kind=turn_kind)
     
     _logger.info(f"Intent classified as: {intent}")
 
@@ -211,31 +269,34 @@ async def run_turn(
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
 
-    # 6. Rule Validator & Guard Agent (Repair Loop) — see
-    # docs/specs/enhancement/enhancement-guard-agent.md for the GUARD_ENABLED switch and
-    # the fail-closed fallback this delegates to.
+    # Consistency precedes Guard; any Guard rewrite is checked again. The
+    # deterministic delivery contract is the final writer and safety boundary.
+    public_result = turn_delivery.public_mechanic(mechanic_result, state)
+
+    def consistent(candidate: str) -> str:
+        if turn_kind == "resolved_check_followup":
+            candidate = prompt_config.enforce_resolved_check_consistency(candidate, resolved_check_context or {})
+        if public_result is not None:
+            candidate = prompt_config.enforce_mechanic_check_consistency(candidate, public_result)
+        return candidate
+
+    ooc_reply = ""
+    if route.message_mode == "mixed":
+        segments = reply_segments.project(reply_text, route, user_id, {
+            o.evidence_ref for o in message.payload.get("observed_outcomes", [])
+            if o.success and o.audience == "public"
+        })
+        reply_text, ooc_reply = segments.canonical, segments.public_ooc
+        message.payload["segments_valid"] = segments.valid
+        for span in route.spans:
+            if span.audience == "player_private":
+                # Do not feed private context into the public mixed generation.
+                private_messages.append((user_id, "你的角色資料：\n" + reply_segments.self_context(state, user_id)))
+    reply_text = consistent(reply_text)
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
-    if turn_kind == "resolved_check_followup":
-        reply_text = prompt_config.enforce_resolved_check_consistency(
-            reply_text, resolved_check_context or {}
-        )
-
-    # 7. Spoiler output guard (§6 of the spoiler-protection-hardening spec) —
-    # separate from the Rule Validator/Guard Agent loop above, which only
-    # checks for system leaks/formatting. This is a deterministic scan for
-    # kp_only facts/clues and secret goals; a hit gets a fixed neutral
-    # fallback rather than another LLM repair attempt (see spoiler_policy).
-    spoiler_check = spoiler_policy.sanitize_public_text(
-        reply_text, spoiler_policy.collect_protected_terms(state)
-    )
-    if not spoiler_check.is_safe:
-        reply_text = spoiler_check.fallback_text or reply_text
-
-    if intent == "GAMEPLAY_ACTION" and mechanic_result is not None:
-        checked_reply = prompt_config.enforce_mechanic_check_consistency(reply_text, mechanic_result)
-        if checked_reply != reply_text:
-            observability.event("narrator.check_consistency.corrected", status="corrected")
-            reply_text = checked_reply
+    reply_text = consistent(reply_text)
+    reply_text, private_controls = turn_delivery.finalize(message, reply_text)
+    private_messages.extend(item for item in private_controls if item not in private_messages)
 
     # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
     # pending_checks/combat/etc.) already happened inside the Executor's
@@ -250,14 +311,22 @@ async def run_turn(
         committed = keeper._commit_turn_result(
             state,
             [
-                {"role": "user", "content": f"{speaker_role} {display_name}: {text}"},
+                {"role": "user", "content": f"{speaker_role} {display_name}: {action_text}"},
                 {"role": "assistant", "content": reply_text},
             ],
             timeline_id=turn_timeline_id,
             start_game=(turn_kind == "opening_fallback"),
             invalidate_openai_response_chain=True,
+            segment_audit=reply_segments.audit(route, text, user_id) if route.message_mode == "mixed" else None,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
 
+    if ooc_reply:
+        # OOC never participates in the canonical commit above.
+        from app import spoiler_policy
+        if spoiler_policy.sanitize_public_text(ooc_reply, spoiler_policy.collect_protected_terms(state)).is_safe:
+            reply_text += "\n\n【場外】" + ooc_reply
+        else:
+            reply_text += "\n\n【場外】" + reply_segments.UNRESOLVED
     return reply_text, private_messages, image_requests

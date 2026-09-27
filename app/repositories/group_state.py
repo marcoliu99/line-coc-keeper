@@ -28,6 +28,7 @@ from uuid import uuid4
 from app import config, db, locks, observability
 from app.config import DATA_DIR
 from app.models import GroupState
+from app.services import mutation_admission
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 _logger = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ def _save_state_impl(
     started = time.monotonic()
     try:
         with locks.get_state_lock(state.group_id):
+            mutation_admission.assert_admitted(state.group_id)
             with db.transaction() as conn:
                 # Keep the optimistic check and the complete snapshot write in one
                 # IMMEDIATE transaction. The Python RLock protects threads in this

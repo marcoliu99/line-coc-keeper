@@ -41,6 +41,7 @@
 
 | 規格 | 狀態 | 語言 |
 | --- | --- | --- |
+| [外部 AI 英文劇本來源整備](specs/enhancement/external_english_source_preparation_design_spec_zh.md) | 已於功能分支實作 | [English](specs/enhancement/external_english_source_preparation_design_spec.md) |
 | [使用最終合併角色卡的可驗證 Luck](specs/enhancement/pregen_sheet_luck_design_spec_zh.md) | 已實作 | [English](specs/enhancement/pregen_sheet_luck_design_spec.md) |
 | [可執行的 Help 控制項](specs/enhancement/actionable_help_buttons_design_spec_zh.md) | 已實作 | [English](specs/enhancement/actionable_help_buttons_design_spec.md) |
 | [分類 Help 導覽](specs/enhancement/enhanced_help_navigation_design_spec_zh.md) | 已實作 | [English](specs/enhancement/enhanced_help_navigation_design_spec.md) |
@@ -90,7 +91,7 @@
 | [Agentic Keeper 架構](specs/refactor/agentic_keeper_design_spec_zh.md) | 已實作 | [English](specs/refactor/agentic_keeper_design_spec.md) |
 | [原生非同步 provider 與 I/O 契約](specs/refactor/async_provider_performance_design_spec_zh.md) | 已實作 | [English](specs/refactor/async_provider_performance_design_spec.md) |
 | [歷史 v1.0 後整合紀錄](specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md) | 歷史紀錄 | [English](specs/refactor/main_post_v1.0_into_main_v2_design_spec.md) |
-| [回合正確性、結果恢復與延遲量測](specs/refactor/turn_safety_and_latency_design_spec_zh.md) | 部分完成；S3 已實作 | [English](specs/refactor/turn_safety_and_latency_design_spec.md) |
+| [回合正確性、結果恢復與延遲量測](specs/refactor/turn_safety_and_latency_design_spec_zh.md) | 部分完成；S0／S1／S2／S3 已實作 | [English](specs/refactor/turn_safety_and_latency_design_spec.md) |
 
 ## 維護
 

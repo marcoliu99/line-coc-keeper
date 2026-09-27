@@ -33,7 +33,6 @@ import yaml
 from app import (
     config,
     dice,
-    intent_parser,
     keeper,
     locks,
     luck,
@@ -43,7 +42,6 @@ from app import (
     scenario_compare,
     scenario_index,
     scenario_library,
-    scenario_rag,
     scenario_templates,
 )
 from app import scene_map as scene_map_engine
@@ -54,7 +52,6 @@ from app.check_identity import (
     new_check_id,
     new_decision_id,
 )
-from app.config import SCENARIO_RAG_ENABLED
 from app.models import (
     BASE_SKILLS,
     OCCUPATIONS,
@@ -69,6 +66,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
+from app.services import mutation_admission, turn_delivery
 
 _logger = logging.getLogger(__name__)
 
@@ -194,6 +192,10 @@ def _apply_new_scenario(
     state.current_map_page = {}
     state.current_room_id = {}
     state.party_facing = {}
+    state.request_segment_audit = []
+    state.narrative_locations = {}
+    state.arrival_events = []
+    state.movement_continuations = {}
     # New scenario: replace the scenario-owned candidate pool. Live
     # investigators remain in state.characters, but unclaimed candidates from
     # the previous PDF must not leak into /coc pregens.
@@ -326,6 +328,7 @@ def _pdf_upload_confirmation_text(
     )
 
 
+@mutation_admission.guard_async_entry
 async def handle_pdf_upload(
     conversation_id: str,
     reply: Reply,
@@ -598,6 +601,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
         context["scene_maps"], extracted_index, len(state.pregens),
     ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "")
 
+@mutation_admission.guard_async_entry
 async def resolve_pdf_upload_choice(
     conversation_id: str,
     choice: str,
@@ -621,6 +625,7 @@ async def resolve_pdf_upload_choice(
     await push(text)
 
 
+@mutation_admission.guard_async_entry
 async def handle_map_upload(
     conversation_id: str,
     reply: Reply,
@@ -670,6 +675,7 @@ async def handle_map_upload(
     )
 
 
+@mutation_admission.guard_async_entry
 async def handle_scenario_compare_upload(
     conversation_id: str,
     reply: Reply,
@@ -696,6 +702,7 @@ async def handle_scenario_compare_upload(
     await push(f"比對完成，發現 {len(discrepancies)} 處可能的落差：\n" + "\n".join(lines))
 
 
+@mutation_admission.guard_async_entry
 async def handle_role_sheet_upload(
     conversation_id: str,
     reply: Reply,
@@ -948,6 +955,22 @@ class _CheckResolution:
     timeline_id: str = ""
     action_context: str = ""
     resolved_event: dict | None = None
+    visibility: str = "public"
+    recipient_id: str = ""
+
+
+def _check_audience(owner_id: str, entry: dict | None) -> dict[str, str]:
+    private = turn_delivery.is_private(entry or {})
+    return {"visibility": "player_private" if private else "public",
+            "recipient_id": owner_id if private else ""}
+
+
+def _audienced_check_resolution(owner_id: str, entry: dict | None, **kwargs) -> _CheckResolution:
+    audience = _check_audience(owner_id, entry)
+    resolution = _CheckResolution(**kwargs, visibility=audience["visibility"], recipient_id=audience["recipient_id"])
+    if resolution.resolved_event is not None:
+        resolution.resolved_event.update(audience)
+    return resolution
 
 
 _CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
@@ -1223,8 +1246,19 @@ async def _finalize_check_result(
     """Shared tail for every resolved check (sanity, choice, plain skill, and
     a Luck-spend decision) — hands the already-determined result to the
     Keeper for narration and delivers whatever it queued."""
+    private_result = turn_delivery.is_private(resolved_event or {})
+    if private_result:
+        # Route by persisted audience, never by whichever channel invoked /coc check.
+        async def private_reply(text: str) -> None:
+            await send_dm(user_id, text)
+
+        async def private_image(png: bytes, group_id: str, page: int) -> None:
+            await send_dm_image(user_id, png, group_id, page)
+
+        reply = private_reply
+        send_image = private_image
     if split_roll_feedback:
-        await reply(roll_feedback_text or roll_line)
+        await reply(roll_line if private_result else (roll_feedback_text or roll_line))
 
     async def run_keeper_phase() -> None:
         # Deliberately NOT running keeper_message through _resolve_map_action:
@@ -1303,7 +1337,7 @@ async def _finalize_check_result(
                     key: resolved_event[key]
                     for key in (
                         "investigator", "skill", "skill_value", "roll", "difficulty",
-                        "outcome", "action_context", "check_id", "timeline_id",
+                        "outcome", "action_context", "check_id", "timeline_id", "visibility", "recipient_id",
                     )
                     if key in resolved_event
                 }
@@ -1316,6 +1350,8 @@ async def _finalize_check_result(
                     "outcome": roll_line,
                     "action_context": context_note,
                 }
+            resolved_check_context.update({"decision_id": decision_id, "action_context": context_note,
+                                           "check_id": check_id, "timeline_id": current_timeline_id})
             keeper_reply, private_messages, image_requests = await supervisor.run_turn(
                 state=fresh_state,
                 user_id=user_id,
@@ -1361,12 +1397,14 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
     Keeper narration stays in handle_check_command's async tail.
     """
     with locks.get_state_lock(conversation_id):
+        mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
+        audience_entry = dict(state.pending_checks.get(user_id) or {})
         if not state.active:
-            return _CheckResolution(reply_text="目前沒有進行中的遊戲。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="目前沒有進行中的遊戲。")
         char = state.get_active_character(user_id)
         if not char:
-            return _CheckResolution(reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
         attributes_before = _character_attribute_snapshot(char)
 
         parts = text.split()
@@ -1388,7 +1426,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     owner_id_hash=observability.safe_identifier(user_id),
                 )
                 save_state(state)
-                return _CheckResolution(reply_text="這個檢定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text="這個檢定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
         # Keep the original entry separate from `pending`: a valid choice
         # consumes the pending entry into the selected option, but its
         # identity and action context must still follow that same persisted
@@ -1420,7 +1458,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             if skill_arg is None:
                 state.pending_checks[user_id] = pending
                 options_text = "、".join(f"{o['label']}（{o['skill']} {o['skill_value']}%）" for o in pending["options"])
-                return _CheckResolution(reply_text=f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}")
             matched = next(
                 (o for o in pending["options"]
                  if _skill_names_match(o["label"], skill_arg) or _skill_names_match(o["skill"], skill_arg)),
@@ -1429,7 +1467,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             if not matched:
                 state.pending_checks[user_id] = pending
                 options_text = "、".join(o["label"] for o in pending["options"])
-                return _CheckResolution(reply_text=f"沒有「{skill_arg}」這個選項，可選：{options_text}")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"沒有「{skill_arg}」這個選項，可選：{options_text}")
             choice_skill_name, choice_display_label = matched["skill"], matched["label"]
             choice_value = int(matched["skill_value"])
             choice_bonus = int(matched["bonus_dice"])
@@ -1445,7 +1483,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             pending = None
         elif skill_arg is None:
             if not pending:
-                return _CheckResolution(
+                return _audienced_check_resolution(user_id, audience_entry,
                     reply_text=(
                         "目前沒有待處理的選擇。請先讓 Keeper 建立檢定；玩家用 /coc check 或按鈕擲骰，"
                         "不要在沒有待處理請求時重複送出。"
@@ -1453,11 +1491,11 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 )
         elif pending and pending.get("type") == "sanity":
             state.pending_checks[user_id] = pending
-            return _CheckResolution(reply_text="目前等待的是理智檢定，請不要自行指定技能；這筆舊版檢定會由系統處理。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="目前等待的是理智檢定，請不要自行指定技能；這筆舊版檢定會由系統處理。")
         elif not (pending and pending.get("type") == "skill" and _skill_names_match(pending.get("skill", ""), skill_arg)):
             if pending:
                 state.pending_checks[user_id] = pending
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 reply_text=(
                     "沒有這個待處理的選擇。請使用正確的選項名稱；角色檢定由玩家用 /coc check 或按鈕擲骰。"
                 )
@@ -1495,6 +1533,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     chained_context = chained_context[:237] + "..."
                 origin_context = observability.current_context()
                 state.pending_checks[user_id] = {
+                    **_check_audience(user_id, audience_entry),
                     "type": "skill", "skill": "INT", "skill_value": int_value,
                     "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
                     "madness_trigger": True, "madness_realtime": True,
@@ -1545,7 +1584,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 char.name, "理智檢定", f"SAN {san_before}", sanity_result.check.roll, outcome
             )
             save_state(state)
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
                 check_id=check_id, timeline_id=timeline_id, action_context=action_context,
@@ -1586,7 +1625,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 madness_realtime = bool(pending.get("madness_realtime", True))
                 major_wound_trigger = bool(pending.get("major_wound_trigger", False))
             else:
-                return _CheckResolution(
+                return _audienced_check_resolution(user_id, audience_entry,
                     reply_text=(
                         "目前沒有待處理的檢定。請先描述行動讓 Keeper 建立檢定，再用 /coc check 或按鈕擲骰。"
                     )
@@ -1628,7 +1667,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 char.name, "INT", str(value), skill_result.roll, tier_zh
             )
             save_state(state)
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
                 check_id=check_id, timeline_id=timeline_id, action_context=action_context,
@@ -1654,6 +1693,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         if luck_options:
             origin_context = observability.current_context()
             state.pending_luck_decisions[user_id] = {
+                **_check_audience(user_id, audience_entry),
                 "decision_id": new_decision_id(), "check_id": check_id, "timeline_id": timeline_id,
                 "origin_revision": state.state_revision + 1,
                 "origin_turn_id": str(origin_context.get("turn_id", "")),
@@ -1667,12 +1707,15 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "major_wound_trigger": major_wound_trigger,
                 "ranged_attacker": ranged_attacker,
             }
+            continuation = state.movement_continuations.get(user_id)
+            if continuation and continuation.get("check_id") == check_id:
+                continuation["decision_id"] = state.pending_luck_decisions[user_id]["decision_id"]
             save_state(state)
             options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
             dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
             check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
             attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 reply_text=(
                     f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {skill_result.roll} → {_tier_zh_for_result(skill_result)}{attacker_note}\n"
                     f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
@@ -1703,7 +1746,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             char.name, display_label or skill_name, str(value), skill_result.roll, _tier_zh_for_result(skill_result), opposed_text
         )
         save_state(state)
-        return _CheckResolution(
+        return _audienced_check_resolution(user_id, audience_entry,
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
             roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
             check_id=check_id, timeline_id=timeline_id, action_context=action_context,
@@ -1718,6 +1761,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         )
 
 
+@mutation_admission.guard_async_entry
 async def handle_check_command(
     conversation_id: str,
     user_id: str,
@@ -1738,7 +1782,10 @@ async def handle_check_command(
     """
     resolution = await asyncio.to_thread(_resolve_check_deterministically, conversation_id, user_id, text)
     if resolution.reply_text:
-        await reply(resolution.reply_text)
+        if resolution.visibility != "public":
+            await send_dm(user_id, resolution.reply_text)
+        else:
+            await reply(resolution.reply_text)
         return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
         return False
@@ -1754,6 +1801,7 @@ async def handle_check_command(
     return True
 
 
+@mutation_admission.guard_async_entry
 async def handle_luck_decision(
     conversation_id: str,
     user_id: str,
@@ -1772,7 +1820,10 @@ async def handle_luck_decision(
     Keeper exactly like a normal check."""
     resolution = await asyncio.to_thread(_resolve_luck_decision_deterministically, conversation_id, user_id, choice)
     if resolution.reply_text:
-        await reply(resolution.reply_text)
+        if resolution.visibility != "public":
+            await send_dm(user_id, resolution.reply_text)
+        else:
+            await reply(resolution.reply_text)
         return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
         return False
@@ -1792,13 +1843,15 @@ def _resolve_luck_decision_deterministically(
     conversation_id: str, user_id: str, choice: str
 ) -> _CheckResolution:
     with locks.get_state_lock(conversation_id):
+        mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
+        audience_entry = dict(state.pending_luck_decisions.get(user_id) or {})
         pending = state.pending_luck_decisions.pop(user_id, None)
         if not pending:
-            return _CheckResolution(reply_text="目前沒有待決定的 Luck 花費。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="目前沒有待決定的 Luck 花費。")
         char = state.get_active_character(user_id)
         if not char:
-            return _CheckResolution(reply_text="找不到你的角色。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="找不到你的角色。")
         attributes_before = _character_attribute_snapshot(char)
 
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
@@ -1813,7 +1866,7 @@ def _resolve_luck_decision_deterministically(
                 owner_id_hash=observability.safe_identifier(user_id),
             )
             save_state(state)
-            return _CheckResolution(reply_text="這個 Luck 決定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="這個 Luck 決定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
         decision_id = effective_decision_id(user_id, pending, timeline_id)
         # Keep the narration/result identity aligned with the persisted
         # pending check.  Older Luck entries may not have check_id, so use the
@@ -1840,12 +1893,12 @@ def _resolve_luck_decision_deterministically(
                 state.pending_luck_decisions[user_id] = pending  # not a valid option — put it back
                 save_state(state)
                 options_text = "、".join(f"{o['tier']}（{o['cost']} 點）" for o in pending["options"])
-                return _CheckResolution(reply_text=f"這不是有效的選項，可選：{options_text}、skip")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"這不是有效的選項，可選：{options_text}、skip")
             luck_spent = option["cost"]
             if char.luck < luck_spent:
                 state.pending_luck_decisions[user_id] = pending
                 save_state(state)
-                return _CheckResolution(reply_text=f"目前 Luck 只有 {char.luck} 點，不足以花費 {luck_spent} 點。")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"目前 Luck 只有 {char.luck} 點，不足以花費 {luck_spent} 點。")
             char.luck -= luck_spent
             tier = choice
 
@@ -1908,7 +1961,7 @@ def _resolve_luck_decision_deterministically(
             opposed_text,
             result_line=result_line,
         )
-        return _CheckResolution(
+        return _audienced_check_resolution(user_id, audience_entry,
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
             roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
             check_id=check_id, decision_id=decision_id, timeline_id=timeline_id,
@@ -1925,175 +1978,21 @@ def _resolve_luck_decision_deterministically(
         )
 
 
-def _find_scene_map_by_location(state: GroupState, candidate: str) -> tuple[str, dict] | None:
-    """Fuzzy match a raw "entering X" text candidate against the location_name
-    of any map extracted from this scenario (see app/scene_map.py)."""
-    norm = candidate.strip().lower()
-    if not norm:
-        return None
-    for page_key, scene_map in state.scene_maps.items():
-        name = str(scene_map.get("location_name", "")).strip().lower()
-        if name and (norm == name or norm in name or name in norm):
-            return page_key, scene_map
-    return None
-
-
-def _map_position_snapshot(state: GroupState, user_id: str) -> tuple[str, str, str]:
-    return (
-        state.current_map_page.get(user_id, ""),
-        state.current_room_id.get(user_id, ""),
-        state.party_facing.get(user_id, "N"),
-    )
-
-
-def _save_if_map_position_changed(state: GroupState, user_id: str, before: tuple[str, str, str]) -> None:
-    if _map_position_snapshot(state, user_id) != before:
-        save_state(state)
-
-
 def _resolve_map_action_transaction(conversation_id: str, user_id: str, text: str) -> dict | None:
+    """Compatibility candidate lookup. Never commits movement or performs RAG."""
     with locks.get_state_lock(conversation_id):
-        state = load_state(conversation_id)
-        before = _map_position_snapshot(state, user_id)
-        result = _resolve_map_action_core(state, user_id, text, allow_rag=False)
-        if not result.needs_rag:
-            _save_if_map_position_changed(state, user_id, before)
-            return result.context
-
-        rag_page = state.current_map_page.get(user_id, "")
-        rag_map = state.scene_maps.get(rag_page) if rag_page else None
-        rag_text = state.scenario_text
-
-    rag_room_id = None
-    if rag_map and rag_text:
-        rag_room = _find_room_via_rag(conversation_id, rag_text, rag_map, text)
-        rag_room_id = rag_room.get("id") if rag_room else None
-
-    with locks.get_state_lock(conversation_id):
-        state = load_state(conversation_id)
-        before = _map_position_snapshot(state, user_id)
-        result = _resolve_map_action_core(state, user_id, text, allow_rag=False)
-        if result.needs_rag and rag_room_id and state.current_map_page.get(user_id, "") == rag_page:
-            active_map = state.scene_maps.get(rag_page)
-            rag_room = scene_map_engine.get_room(active_map, rag_room_id) if active_map else None
-            if rag_room is not None:
-                result = _resolve_map_action_core(state, user_id, text, allow_rag=False, rag_target_room=rag_room)
-        _save_if_map_position_changed(state, user_id, before)
-        return result.context
+        mutation_admission.assert_admitted(conversation_id)
+        return _resolve_map_action_core(load_state(conversation_id), user_id, text).context
 
 
-def _resolve_map_action_core(
-    state: GroupState,
-    user_id: str,
-    text: str,
-    *,
-    allow_rag: bool = True,
-    rag_target_room: dict | None = None,
-) -> _MapActionResolution:
-    """Runs the Map/Scene Engine (app/scene_map.py) against a player's raw
-    message *before* any LLM call, exactly per this feature's whole point:
-    the destination room is computed deterministically in code, not guessed
-    by the Keeper from prose. Mutates state.current_map_page/current_room_id/
-    party_facing **for this one user_id only** — see GroupState's own
-    comment on why position tracking is per-character rather than a single
-    shared party location: a scenario might split the group in ways this
-    project has no reason to assume in advance, so each character just
-    tracks their own position, and "the group" is whatever set of
-    characters happens to share a (page, room) right now.
-
-    Returns a small dict for the Keeper prompt (app/keeper.py's
-    `resolved_location`), or None if the message didn't trigger a resolvable
-    map action (no map loaded, no direction detected, or no matching exit) —
-    callers should fall back to letting the Keeper narrate movement itself,
-    exactly like before this feature existed."""
-    resolved_room: dict | None = None
-    current_page = state.current_map_page.get(user_id, "")
-    current_room = state.current_room_id.get(user_id, "")
-    facing = state.party_facing.get(user_id, "N")
-    needs_rag = False
-
-    location_candidate = intent_parser.extract_entered_location(text)
-    if location_candidate:
-        found = _find_scene_map_by_location(state, location_candidate)
-        if found:
-            page_key, scene_map = found
-            if page_key != current_page:
-                current_page = page_key
-                facing = "N"
-                current_room = scene_map.get("entry_room_id", "")
-                state.current_map_page[user_id] = current_page
-                state.current_room_id[user_id] = current_room
-                state.party_facing[user_id] = facing
-                resolved_room = scene_map_engine.get_room(scene_map, current_room)
-
-    active_map = state.scene_maps.get(current_page) if current_page else None
-    if active_map:
-        movement = intent_parser.parse_movement_intent(text)
-        if movement:
-            result = scene_map_engine.resolve_move(
-                state.scene_maps, current_page, current_room, facing, movement["relative_direction"], movement["order"],
-            )
-            if result["ok"]:
-                if "map_key" in result:  # crossed into a different map — see scene_map.py's module docstring
-                    state.current_map_page[user_id] = result["map_key"]
-                state.current_room_id[user_id] = result["room"]["id"]
-                state.party_facing[user_id] = result["facing"]
-                resolved_room = result["room"]
-            # result["ok"] is False (no matching exit): deliberately not
-            # returned as an error here — let the Keeper's own dynamic prompt
-            # (see _build_dynamic_prompt) decide how to narrate a blocked or
-            # ambiguous direction instead of the engine flatly refusing it.
-        elif intent_parser.has_movement_verb(text):
-            # No relative-direction word matched, but this still reads as a
-            # movement attempt — most often the player named the destination
-            # room directly ("我去廚房看看") instead of describing it by
-            # direction. Try a free local match against the current map's own
-            # room names first (no API call); only fall back to Scenario RAG
-            # (a real embeddings call when configured — see scenario_rag.py)
-            # if that comes up empty. This is deliberately best-effort: a miss
-            # here just falls through to the Keeper narrating movement itself,
-            # exactly like before this fallback existed.
-            target_room = rag_target_room or scene_map_engine.find_room_by_text(active_map, text)
-            if target_room is None and SCENARIO_RAG_ENABLED and state.scenario_text:
-                if allow_rag:
-                    target_room = _find_room_via_rag(state.group_id, state.scenario_text, active_map, text)
-                else:
-                    needs_rag = True
-            if target_room is not None:
-                state.current_room_id[user_id] = target_room["id"]
-                state.party_facing[user_id] = "N"  # arbitrary jump, no direction to carry forward
-                resolved_room = target_room
-
-    if resolved_room is None:
-        return _MapActionResolution(needs_rag=needs_rag)
-    char = state.get_active_character(user_id)
-    return _MapActionResolution(
-        context={
-            "character_name": char.name if char else "",
-            "room_name": resolved_room.get("name", ""),
-            "room_description": resolved_room.get("description", ""),
-        },
-        needs_rag=needs_rag,
-    )
-
-
-def _find_room_via_rag(group_id: str, scenario_text: str, scene_map: dict, text: str) -> dict | None:
-    """Scenario RAG fallback for room-name resolution (see
-    _resolve_map_action above) — RAG has no concept of room IDs, so the
-    connection is made by searching the scenario text for the player's raw
-    phrase and checking whether any of the current map's room names appear
-    in whichever page(s) came back as relevant. This is genuinely a second
-    real API call on top of the Keeper's own turn when embeddings are
-    configured (see scenario_rag.py), so it's only reached after the free
-    local name match in _resolve_map_action has already failed."""
-    _logger.info("_find_room_via_rag query=%r", text)  # see app/keeper.py's search_scenario for why
-    index = scenario_rag.get_index(group_id, scenario_text)
-    results = scenario_rag.search(index, text, top_k=3)
-    for result in results:
-        room = scene_map_engine.find_room_by_text(scene_map, result["text"])
-        if room:
-            return room
-    return None
+def _resolve_map_action_core(state: GroupState, user_id: str, text: str, *,
+                             allow_rag: bool = True, rag_target_room: dict | None = None) -> _MapActionResolution:
+    from app.services import movement
+    proposal = movement.propose(state, user_id, user_id, text)
+    if proposal is None:
+        return _MapActionResolution()
+    from dataclasses import asdict
+    return _MapActionResolution(context={"movement_candidate": asdict(proposal), "committed": False})
 
 
 def _blocked_by_existing_character(state: GroupState, user_id: str) -> str | None:
@@ -2152,6 +2051,7 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
     return char
 
 
+@mutation_admission.guard_async_entry
 async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Reply) -> None:
     """Resolve the player's explicit LUCK roll for a newly claimed pregen."""
     state = load_state(conversation_id)
@@ -2179,6 +2079,7 @@ def _blocked_by_kp_assistant(state: GroupState, user_id: str) -> str | None:
 
 def _set_character_away_state(conversation_id: str, user_id: str, away: bool) -> _AwayStateResult:
     with locks.get_state_lock(conversation_id):
+        mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
         char = state.get_active_character(user_id)
         if not char:

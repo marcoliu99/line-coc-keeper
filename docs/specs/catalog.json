@@ -1120,13 +1120,21 @@
         "app/repositories/group_state.py",
         "app/scenario_retrieval.py",
         "tests/test_state_persistence.py",
-        "scripts/benchmark_state_mirrors.py"
+        "scripts/benchmark_state_mirrors.py",
+        "app/services/mutation_admission.py",
+        "app/services/turn_delivery.py",
+        "app/services/task_trace.py",
+        "tests/test_turn_safety.py",
+        "tests/test_task_trace.py",
+        "app/services/movement.py",
+        "app/services/reply_segments.py",
+        "tests/test_turn_routing_and_movement.py"
       ],
       "path": "docs/specs/refactor/turn_safety_and_latency_design_spec.md",
       "zh_path": "docs/specs/refactor/turn_safety_and_latency_design_spec_zh.md",
       "source_revision": "e03d5dc5508e6bf0e483705a5032df07d4d66b62",
       "limitations": [
-        "S3 implemented and tested on this branch. S0/S1 are independent; S2 waits for S0/S1. S4-S9 and live API evaluation are deferred."
+        "S0/S1/S2/S3 implemented with isolated SDK and state fixtures. Free-form story semantics still require Executor adjudication. Final-response movement shortcuts are disabled. Process-local admission is not a durable ledger/outbox. S4-S9 and live API accuracy and latency evaluation remain deferred."
       ]
     }
   ]
