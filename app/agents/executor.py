@@ -119,6 +119,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     before_actor = turn_resolution.actor_snapshot(state, user_id)
     before_gameplay = turn_resolution.gameplay_snapshot(state)
     tool_events: list[dict[str, Any]] = []
+    # Only wire-visible receipts belong in the model's retrieval input budget.
+    tool_context: list[dict[str, Any]] = []
+    delivered_fragments = scenario_retrieval.delivered_fragments(rag_context)
+    source_binding = scenario_retrieval.source_binding(state)
     completion = ""
     scenario_search_count = 0
     turn_status = "success"
@@ -136,7 +140,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             metrics=turn_metrics,
         ):
             async def execute_turn_tool(name: str, tool_input: dict) -> dict:
-                nonlocal scenario_search_count
+                nonlocal scenario_search_count, source_binding
                 if name == "search_scenario":
                     scenario_search_count += 1
                     tool_input = {**tool_input, "_retrieval_principal": user_id}
@@ -151,13 +155,19 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 else:
                     model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", "unknown")
                     remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
-                        [static_system, dynamic_system, tools, new_message, tool_events], state.log, model, LLM_PROVIDER)
+                        [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], state.log, model, LLM_PROVIDER)
                         if name == "search_scenario" else scenario_retrieval.BUDGET.get())
+                    current_binding = scenario_retrieval.source_binding(state)
+                    if current_binding != source_binding:
+                        delivered_fragments.clear()
+                        source_binding = current_binding
+                    fragments_token = scenario_retrieval.DELIVERED_FRAGMENTS.set(frozenset(delivered_fragments))
                     budget_token = scenario_retrieval.BUDGET.set(remaining)
                     model_token = scenario_retrieval.MODEL.set(model)
                     try:
                         result = await execute_tool(name, tool_input)
                     finally:
+                        scenario_retrieval.DELIVERED_FRAGMENTS.reset(fragments_token)
                         scenario_retrieval.MODEL.reset(model_token)
                         scenario_retrieval.BUDGET.reset(budget_token)
                 if name == "purchase_items" and result.get("ok"):
@@ -181,8 +191,12 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                                     "gameplay_before": gameplay_before_tool,
                                     "gameplay_after": turn_resolution.gameplay_snapshot(state),
                                     "actor_changed": actor_before_tool != turn_resolution.actor_snapshot(state, user_id)})
-                return {**result, "evidence_ref": f"tool:{len(tool_events)}",
-                        "current_turn_state": turn_context.current_state(state)}
+                receipt = {**result, "evidence_ref": f"tool:{len(tool_events)}",
+                           "current_turn_state": turn_context.current_state(state)}
+                tool_context.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(receipt)})
+                if name == "search_scenario" and result.get("ok"):
+                    delivered_fragments.update(scenario_retrieval.delivered_fragments(result.get("results", "")))
+                return receipt
 
             provider_options = (
                 {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools), "response_stage": "executor"}
@@ -217,6 +231,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             before_actor=before_actor, before_gameplay=before_gameplay,
         )
     observability.event("executor.resolution", disposition=resolution.disposition,
+                        blocker_code=resolution.blocker_code,
                         evidence_count=len(resolution.evidence_refs),
                         validation_code=resolution.validation_code, tool_event_count=len(tool_events))
     state_changed = turn_resolution.gameplay_snapshot(state) != before_gameplay

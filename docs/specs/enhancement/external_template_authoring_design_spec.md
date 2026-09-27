@@ -165,3 +165,7 @@ Retrieval admission and OpenAI requests share history selection, so discarded pe
 ## Proposed follow-up: at most three exported files
 
 [Three-file packaging and resumable v2 import](three_file_scenario_export_design_spec.md) is implemented: new exports contain at most three source files with small logical batches and incremental complete-unit imports; existing v1 exports remain valid. Section 10 retains the original PR #94 implementation record; the three-file spec governs current packaging, filenames, incremental merge and progress.
+
+### Ranked candidate admission correction
+
+See [retrieval readiness incident](../bug/scenario_retrieval_tokenizer_readiness_design_spec.md). Ranked alternatives are separate from required dependencies. Proactive evidence is capped at 3,000 tokens; targeted follow-up retains the 6,000 retrieval ceiling. Selected closures remain complete or explicitly blocked; deferred candidates are discoverable and do not certify action sufficiency.
