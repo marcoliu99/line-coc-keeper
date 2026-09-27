@@ -237,7 +237,7 @@ Both proactive and explicit scenario search share one search wrapper. If a valid
 selected Chinese index returns no relevance-gated results for a nonempty query,
 search the current scenario_text (the existing permitted chapter window) once using
 the same query. Reuse existing embedding/query caches; do not translate the query or
-add a generative model call. A successful Chinese search performs no original search.
+add a generative model call. A Chinese search with no known completeness warning performs no original search.
 Original-mode/invalid-variant fallback must not search the same original twice.
 
 Record query_fallback, Chinese hit count and final effective source separately from
@@ -248,3 +248,33 @@ that a location or rule does not exist. This does not guarantee that a Chinese q
 will match English BM25 when semantic embeddings are unavailable.
 
 Per-query fallback verification: full isolated suite 800 passed, one skipped, 15 subtests passed.
+
+### 9.1 Nonempty results are not proof of completeness
+
+Known dependency warnings and response-budget omissions trigger one bounded original
+search even when Chinese retrieval hits. Preserve Chinese evidence alongside original
+supplementation; an original miss must not erase useful Chinese facts. Neither a hit
+nor a completed fallback certifies semantic completeness. Explicit tool callers may
+select `source=original` to bypass the Chinese index when required facts are missing,
+using source names/aliases and the missing rules in one query. Invalid source values
+are rejected. The original search uses only the current authorized scenario_text.
+
+Before adding an enemy, the Executor must verify attacks, armor, abilities, triggers,
+costs and per-round/per-combat limits together. Missing facts require original lookup;
+unknown values must not silently become zero armor or absent abilities. If still
+unresolved, defer the affected ruling, without rerolling settled dice or inventing rules.
+No fixed translation or LLM review stage is introduced.
+
+    Chinese search -> no hits / known incomplete evidence -> original supplement
+                   -> other hits -> Executor checks facts required for current ruling
+                                      -> missing facts -> source=original tool query
+                                      -> sufficient facts -> apply mechanics
+    Still unresolved -> preserve evidence and defer only the affected ruling
+
+Tests cover partial hits, original misses retaining Chinese evidence, explicit source
+routing, invalid source rejection, chapter scoping and complete-hit fast path.
+
+Partial-evidence fallback verification: 804 passed, one skipped, 15 subtests passed;
+Ruff and mypy passed. Tests use isolated local data and mocked retrieval, not a paid
+API accuracy benchmark. Semantic omissions without compiler warnings still depend on
+the Executor recognizing missing required facts; retrieval cannot prove completeness.

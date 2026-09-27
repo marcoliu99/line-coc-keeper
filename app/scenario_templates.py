@@ -513,20 +513,36 @@ def clean_scenario(scenario_id: str) -> None:
 
 
 def search_for_state(state: Any, query: str, top_k: int = 5,
-                     metrics: dict[str, Any] | None = None) -> tuple[scenario_rag.ScenarioIndex, list[dict]]:
-    """Internal Keeper search: Chinese first, then one current-window source search."""
+                     metrics: dict[str, Any] | None = None, *,
+                     source: str = "auto") -> tuple[scenario_rag.ScenarioIndex, list[dict]]:
+    """Search authorized evidence; retrieval success never certifies completeness."""
+    if source not in {"auto", "original"}:
+        raise ValueError("source must be auto or original")
     diagnostics = metrics if metrics is not None else {}
+    diagnostics['query_fallback'] = 'none'
+    if source == "original":
+        index = scenario_rag.get_index(state.group_id, state.scenario_text)
+        results = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
+        diagnostics.update(query_fallback='explicit_original', effective_variant='original')
+        return index, [dict(row, retrieval_source='original_explicit') for row in results]
     index = index_for_state(state, diagnostics)
     results = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
-    diagnostics['query_fallback'] = 'none'
-    if (results or not query.strip()
+    incomplete = any(row.get('budget_omitted') or '【依據尚未完整】' in row.get('text', '')
+                     for row in results)
+    if ((results and not incomplete) or not query.strip()
             or diagnostics.get('effective_variant', 'original') == 'original'):
         return index, results
-    diagnostics['chinese_result_count'] = 0
+    chinese_variant = diagnostics.get('effective_variant', 'original')
+    diagnostics['chinese_result_count'] = len(results)
     diagnostics['chinese_query_embedding_status'] = diagnostics.get('query_embedding_status', 'unknown')
-    # scenario_text is the same authorized chapter window used by original mode;
-    # never load the entire library PDF or expand access because a query missed.
+    # Never expand the authorized chapter window to fill a missing dependency.
     original_index = scenario_rag.get_index(state.group_id, state.scenario_text)
-    results = scenario_rag.search(original_index, query, top_k=top_k, metrics=diagnostics)
-    diagnostics.update(query_fallback='chinese_no_match', effective_variant='original')
-    return original_index, [dict(row, retrieval_source='original_fallback') for row in results]
+    originals = scenario_rag.search(original_index, query, top_k=top_k, metrics=diagnostics)
+    diagnostics.update(query_fallback='chinese_incomplete' if incomplete else 'chinese_no_match',
+                       original_result_count=len(originals),
+                       effective_variant='mixed' if results and originals else 'original')
+    if results and not originals:
+        diagnostics['effective_variant'] = chinese_variant
+        diagnostics['query_embedding_status'] = diagnostics['chinese_query_embedding_status']
+        return index, [dict(row, original_supplement_missing=True) for row in results]
+    return original_index, [*results, *[dict(row, retrieval_source='original_fallback') for row in originals]]

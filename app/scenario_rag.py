@@ -634,9 +634,11 @@ def search(
 def format_results(results: list[dict]) -> str:
     if not results:
         return "（沒有找到相關內容）"
-    rendered = "\n\n".join(f"--- 第 {r['page']} 頁 ---\n{r['text']}" for r in results)
-    if any(r.get("retrieval_source") == "original_fallback" for r in results):
-        rendered = "【中文檢索未命中，以下為目前允許章節的原稿補查結果】\n" + rendered
+    rendered = "\n\n".join(f"--- {'原稿補查 · ' if r.get('retrieval_source', '').startswith('original_') else ''}第 {r['page']} 頁 ---\n{r['text']}" for r in results)
+    if any(r.get("retrieval_source", "").startswith("original_") for r in results):
+        rendered = "【含目前允許章節的原稿補查結果；命中不保證裁決依據完整】\n" + rendered
+    if any(r.get("original_supplement_missing") for r in results):
+        rendered += "\n【原稿補查未命中】保留中文依據；缺少的事實仍未確認，不可視為不存在。"
     if any(r.get("budget_omitted") for r in results):
         rendered += "\n【檢索預算】部分完整記錄尚未回傳；若缺少裁決必要事實，請針對該事實補查，不可假設不存在。"
     return rendered
