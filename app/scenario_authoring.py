@@ -158,6 +158,14 @@ export do not authorize replacement. Successful import still requires approval.
 匯入成功後仍需另行校對核准。
 
 Dependencies / dependencies 欄位：
+For every "see <section>" reference that supplies a trigger, opposed roll,
+cost, exception or consequence, locate the target record across pages/batches
+and add its exact record ID below. Preserve the source quote containing the
+reference. Do not leave links empty merely because the full paragraph was
+translated. Distinguish pickup, holding and airborne-catching conditions.
+逐筆核對「見某節」跨頁／跨批次引用，找出提供觸發條件、對抗規則、代價、例外或
+後果的目標紀錄，填入明確 ID 與來源引述；全文已翻譯不代表關聯完整。無法唯一
+定位時在 uncertainty 說明並列出待處理引用，不猜目標，也不以相鄰頁代替。
 [{{"record_id":"target ID", "kind":"required_for_adjudication", "condition":"", "source_quote":"exact source"}}]
 kind: required_for_adjudication / conditional / background.
 Do not downgrade mechanical dependencies to background. Conditional dependencies
@@ -535,10 +543,19 @@ def compile_records(records: list, registry: dict, allowed_units: set[str], *, c
                 related.append(dep['record_id'])
         unit = units[ids[0]]
         compiled.append({**raw, 'schema_version': 4, 'source_id': unit['source_id'],
+                         'source_excerpt': '\n'.join(units[u]['text'] for u in ids),
                          'page': unit['page'], 'source_pages': unit['source_pages'], 'chapter_id': unit['chapter_id'],
                          'source_spans': [units[u]['span'] for u in ids], 'rule_text': '', 'rules': rules,
                          'related_record_ids': list(dict.fromkeys(related)), 'dependencies': dependencies})
     if complete:
+        from app import scenario_references
+        compiled, reference_diagnostics = scenario_references.link_records(compiled)
+        for record in compiled:
+            record['cross_reference_diagnostics'] = [d for d in reference_diagnostics if d['record_id'] == record['id']]
+        for diagnostic in reference_diagnostics:
+            if diagnostic['code'] == 'ambiguous_named_reference':
+                errors.append(issue('AMBIGUOUS_DEPENDENCY', diagnostic['record_id'], 'dependencies',
+                                    'uniquely identified source heading', diagnostic['reference']))
         missing = allowed_units - coverage
         if missing:
             errors.append(issue('COVERAGE_GAP', '', 'unit_ids', 'all source units', sorted(missing)))

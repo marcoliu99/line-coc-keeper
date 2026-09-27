@@ -23,6 +23,30 @@ _logger = logging.getLogger(__name__)
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
 
 
+def _unchanged_pending_reply(state: GroupState, user_id: str, result: MechanicResult,
+                             before_checks: dict, before_luck: dict, payload: dict) -> str:
+    resolution = result.turn_resolution
+    if (resolution is None or resolution.validation_code != 'validated'
+            or result.check_status.get('tool_event_count') != 0
+            or result.check_status.get('state_changed') or result.events
+            or payload.get('private_messages') or payload.get('image_requests')):
+        return ''
+    char = state.get_active_character(user_id)
+    if char is None or (resolution.waiting_for or resolution.actor_character_id) != (char.character_id or f'legacy-user:{user_id}'):
+        return ''
+    if resolution.disposition == 'await_check' and not state.pending_luck_decisions.get(user_id):
+        pending = state.pending_checks.get(user_id)
+        if (pending and pending == before_checks.get(user_id) and pending.get('timeline_id') == state.timeline_id
+                and pending.get('check_id') == resolution.check_id):
+            return '上一筆檢定仍在等待你擲骰；請使用檢定按鈕或 /coc check。本次沒有建立新檢定。'
+    if resolution.disposition == 'await_luck':
+        pending = state.pending_luck_decisions.get(user_id)
+        if (pending and pending == before_luck.get(user_id) and pending.get('timeline_id') == state.timeline_id
+                and pending.get('decision_id') == resolution.check_id):
+            return '上一筆骰子已擲出，仍在等待你的 Luck 決定；請使用 Luck 按鈕，或 /coc luck skip 保留原骰果，不要重擲。'
+    return ''
+
+
 @with_turn_deadline
 async def run_turn(
     state: GroupState,
@@ -87,6 +111,7 @@ async def run_turn(
 
     # 3. Route to Executor (Slow Path) or Skip to Narrator (Fast Path)
     mechanic_result: MechanicResult | None = None
+    pending_reply = ''
     if intent == "GAMEPLAY_ACTION":
         _logger.info("Routing to ExecutorAgent (Slow Path)")
         pending_checks_before = deepcopy(state.pending_checks)
@@ -132,6 +157,7 @@ async def run_turn(
                 for key in (
                     "investigator", "skill", "skill_value", "difficulty", "options",
                     "check_id", "timeline_id", "action_context",
+                    "player_declaration", "action_basis", "opposed",
                 )
                 if key in pending_check
             }
@@ -164,6 +190,7 @@ async def run_turn(
                     "skill_name", "display_label", "value", "roll", "original_tier",
                     "difficulty", "options", "decision_id", "check_id", "timeline_id",
                     "action_context",
+                    "player_declaration", "action_basis", "opposed",
                 )
                 if key in pending_luck
             }
@@ -202,11 +229,19 @@ async def run_turn(
 
         # 4. State Reducer (Pure Python)
         state_reducer.apply_mechanic_result(message, mechanic_result)
+        pending_reply = _unchanged_pending_reply(state, user_id, mechanic_result,
+                                                pending_checks_before, pending_luck_before, message.payload)
     else:
         _logger.info("Routing directly to NarratorAgent (Fast Path)")
 
     # 5. Narrator Agent generates the final text
-    reply_text, private_messages, image_requests = await narrator.run_narrator(message)
+    if pending_reply:
+        reply_text = pending_reply
+        private_messages: list[tuple[str, str]] = []
+        image_requests: list[tuple[str | None, int]] = []
+        observability.event('narrator.pending_reused', status='skipped')
+    else:
+        reply_text, private_messages, image_requests = await narrator.run_narrator(message)
     if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []

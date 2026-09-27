@@ -139,6 +139,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
                 if name == "purchase_items":
                     tool_input = {**tool_input, "_turn_key": turn_key, "_owner_id": user_id}
+                if name in {'skill_check', 'offer_check_choice', 'offer_npc_attack_defense_choice', 'sanity_check'}:
+                    tool_input = {**tool_input, '_player_action': text}
                 if name == "add_carried_item" and re.search(r"買|买|\b(?:buy|purchase)\b", text, re.IGNORECASE):
                     result: dict[str, Any] = {"ok": False, "error": "本回合提到購買，不能直接加物品。請先裁定到店，使用 purchase_items 結算；非購買取得請另行明確宣告。"}
                 else:
@@ -239,7 +241,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # empty (see state_reducer.apply_mechanic_result's docstring for why
         # it must not try to re-apply anything on top of that).
         state_delta=StateDelta(),
-        check_status={**check_status, "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
+        check_status={**check_status, "tool_event_count": len(tool_events),
+                      "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
                       "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
         events=inventory_events,
         turn_resolution=resolution,

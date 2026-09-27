@@ -11,6 +11,7 @@ _CHECK_FIELDS = (
     "type", "skill", "skill_value", "difficulty", "bonus_dice", "penalty_dice",
     "options", "check_id", "decision_id", "timeline_id", "action_context",
     "skill_name", "value", "roll", "original_tier", "attacker_name", "is_ranged",
+    "player_declaration", "action_basis", "opposed",
 )
 
 

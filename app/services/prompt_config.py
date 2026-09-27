@@ -56,6 +56,12 @@ actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指�
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
 失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。
 工具回傳 current_turn_state 是更新後的權威資料；以最新一份為準。查詢不到依據就保留未知／補查。
+建立檢定前依序核對「玩家實際宣告→目前物件狀態→最具體的劇本觸發條件→適用規則」。
+拾起靜止物件、維持已握住物件、抓取飛行物件是不同動作，不能互換；不得先把物件改成另一狀態，再代替玩家選擇戰技或防禦。
+skill_check 的 action_basis 記錄目前狀態、規則引用與轉變；player_declaration 由程式保存，不能用 action_context 的模型解讀覆蓋。
+劇本要求雙方對抗時，使用 skill_check.opposed，提供對手能力、規則來源、平手勝方與勝敗後果，由程式擲對手並保存；
+不能用普通 skill_check 加另一次 npc_skill_check 讓 Narrator 臨場比較。不可把對抗改成固定難度，也不可重擲既有對手骰果。
+已知具名跨頁引用優先依必要關聯取齊；只有缺少另一項實際裁定事實才補查，不要反覆用同義詞尋找已取得的規則。
 交接／製作物品、結束戰鬥等不用擲骰的工具完成，使用 resolved_without_check，引用所有相關變更工具。
 既有其他行動的檢定不因物品交接而取消；交接完成與仍待擲的舊檢定要分開敘述。
 本次新建／更換的檢定仍須等待，不能以查詢成功或任意工具成功宣稱整個行動完成。
@@ -307,6 +313,11 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
         f"難度：{result.get('difficulty', 'regular')}；最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
+        '【行動及對抗交接；來源與對手數值不得公開】\n'
+        f"{json.dumps({key: result.get(key) for key in ('player_declaration', 'action_basis', 'opposed_outcome')}, ensure_ascii=False)}\n"
+        'player_declaration 是原始宣告，action_basis 是模型的規則解讀，不會自行建立新事實。'
+        'opposed_outcome.winner 是程式已比較的最終勝方，優先於單方技能成功；不得重新比較或重擲。'
+        'applicable_consequence 只是後果分支，傷害、物品與資源尚須對應工具才能生效。\n'
         "這次檢定已由系統擲骰並定案。只敘述這個結果允許的後果；不得重擲或改判、"
         "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
         "本回合不得建立新檢定；若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
