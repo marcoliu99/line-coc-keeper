@@ -132,3 +132,12 @@ Haunting fixture 應由十來源檔變三檔，19 units 全保留。另外用數
 - 驗證：隔離完整 pytest **964 passed、1 skipped、33 subtests passed**；變更 Python 檔通過 Ruff；`python3 -m mypy app` 通過 83 檔。沒有呼叫真實翻譯／API，也沒有寫入正式遊戲資料。
 
 資源上限維持原值；限制來源檔數，不限制翻譯回覆次數。自動驗證不能認證翻譯忠實度，網頁能否提供下載附件仍取決於所用 AI 網站。新成果仍須經既有校閱／核准流程，才能選為遊玩版本。
+
+
+## 相容修正：AI 將純 JSON 存為 MD（2026-09-27）
+
+實際結果檔位於正確的 results 目錄，export/package IDs 也正確，但網頁 AI 直接把完整 JSON 物件存成 `.md`，省略 Markdown 的 json fence。原本 Help 與匯入共用的解析器要求恰好一個 json 區塊，導致選單略過所有結果。
+
+修正契約：繼續要求 AI 交付單一 json 區塊的 Markdown；同時相容「整份檔案就是一個完整 JSON 物件」的 `.md`，允許 UTF-8 BOM 與前後空白。使用完整 JSON 解析，不從任意文字中猜取大括號；多物件、尾隨說明、損壞 JSON、陣列頂層及多個 json 區塊仍拒絕。Help 與直接匯入共用解析器，後續 registry、package、unit、引述、校閱檢查不變。
+
+測試涵蓋 v1/v2/v3 兩種包裝、純 JSON 的 Help 選檔與真實匯入、BOM／空白、多區塊／多物件拒絕，以及過期來源與錯誤 package 不得繞過檢查。另將使用者的三個實際成果與來源 registry 複製到暫存目錄驗證；不修改或啟用正式遊戲資料。

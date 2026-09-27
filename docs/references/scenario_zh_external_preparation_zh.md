@@ -14,7 +14,7 @@
    > 檔名請以劇本名為前綴，格式為「劇本名_01.md」，分次回傳時數字依序累加。
 
    完整或部分成果每次都要提供實際可下載的 MD，另列未完成 IDs。檔名取實際劇本名，沒有固定成「陰宅」。
-3. 保留 `authoring_version: 2`、`export_id`、`package_id`、`batches[].batch_id` 與單元 ID。每檔恰好一個 authoring JSON 區塊。程式重建頁碼、hash、位置；不要自行補舊 v3 的來源欄位。
+3. 保留 `authoring_version: 2`、`export_id`、`package_id`、`batches[].batch_id` 與單元 ID。每檔恰好一個 authoring JSON 區塊。 若 AI 將整份完整 JSON 物件直接存成 `.md`，也可匯入（含 UTF-8 BOM）；純 JSON 檔後面不可附說明文字，進度請另放網頁回覆。程式重建頁碼、hash、位置；不要自行補舊 v3 的來源欄位。
 4. 只提交已完整翻譯的記錄。刪除尚未完成的空白 records／batches，未完成 IDs 列在 JSON 外。一個來源檔可以分多次回覆；不要為了三次內做完而摘要。保留機制引句、數字、例外與依賴。
 5. 來源在 `imports/export-<id>/source/`，AI 成果下載至同一 export 的 `results/`，再用 Help 選成果匯入。文字指令等價為 `/coc scenario template import 劇本ID export-<id>/results/實際劇本名_01.md`。新完成單元會追加至同一草稿，同一 batch 也能分次完成。來源與成果分開編號；所有 package／回覆共用成果流水號 `_01.md`、`_02.md`，可到 `_100.md`。私訊進度會提供下一個建議檔名。
 6. 更正已存記錄時，在該 batch 的 `replace_record_ids` 放該 ID，並附完整替換記錄；未附舊筆會保留。相同重送安全；本次任何一批有錯，都不改舊草稿。需更正時，把私人診斷報告連同來源工作檔交回 AI。
