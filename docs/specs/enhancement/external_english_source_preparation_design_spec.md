@@ -323,3 +323,21 @@ matching original PDF. This feature does not add an application-side AI reviewer
   inherit a previously selected Chinese preference. Scenario selection now accepts
   the trusted Keeper role as well as KP Assistant; ordinary players remain denied.
 - No paid API calls, real Discord deliveries or production-data mutations were used.
+
+
+### Help navigation regression (2026-09-27)
+
+Runtime testing found that opening Scenario Help with a loaded scenario exceeded
+the 25-component limit after the new entries were added. Existing tests rendered
+only the unloaded scenario context. Fix category navigation with persistent
+`category/page-N` paths: keep up to 24 entries on a single page; otherwise use
+22 entries plus previous/next/home (at most 25 buttons). Render matching text slices,
+keep every command reachable, return details to their containing page and clamp
+stale page numbers to the current last page. Test the real Discord callback and
+all visibility/policy combinations, including a category with a middle page.
+
+Verification: the three new regressions failed before the fix. After the fix, the
+full suite using the deployment virtualenv passed: **1,085 passed, 1 skipped,
+33 subtests passed**. Navigation is traversed across 32 visibility/policy combinations,
+rendering actual Discord Views and checking command reachability and size limits.
+Ruff and mypy also pass.
