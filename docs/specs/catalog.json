@@ -1089,6 +1089,25 @@
       ]
     },
     {
+      "title": "At most three scenario authoring files",
+      "zh": "劇本整備最多匯出三個檔案",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_authoring.py",
+        "app/scenario_templates.py",
+        "tests/test_scenario_authoring.py",
+        "app/help_actions.py",
+        "app/commands/handlers/system.py"
+      ],
+      "path": "docs/specs/enhancement/three_file_scenario_export_design_spec.md",
+      "zh_path": "docs/specs/enhancement/three_file_scenario_export_design_spec_zh.md",
+      "source_revision": "8e32683a3e3a3c0159153b3d96d9c6911ec04071",
+      "limitations": [
+        "Existing resource limits remain; web-AI downloadable artifact support and translation fidelity require external verification."
+      ]
+    },
+    {
       "title": "Turn safety, recoverable results and measured latency",
       "zh": "回合正確性、結果恢復與延遲量測",
       "category": "refactor",

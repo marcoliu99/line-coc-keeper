@@ -308,19 +308,93 @@ def export_legacy_template(scenario_id: str) -> Path:
 def export_template(scenario_id: str) -> Path:
     manifest, text = _source(scenario_id)
     return scenario_authoring.export(_root() / scenario_id / "exports", IMPORT_DIR.resolve(),
-                                     manifest["content_hash"], _chapter_hash(manifest), _blocks(manifest, text))
+                                     manifest["content_hash"], _chapter_hash(manifest), _blocks(manifest, text),
+                                     title=manifest.get("title") or scenario_id)
 
 
 def export_message(scenario_id: str, exported: Path) -> str:
     payload = scenario_authoring.parse_markdown(exported.read_text(encoding="utf-8"))
     directory = _root() / scenario_id / "exports" / payload["export_id"]
     files = scenario_authoring.read_json(directory / "files.json")
+    registry = scenario_authoring.read_json(directory / "registry.json")
+    prefix = registry.get('filename_prefix', 'scenario')
     return ("已匯出外部中文整備工作檔（含 KP 原文，請勿公開）。\n"
             + "\n".join(str(IMPORT_DIR / f) for f in files)
             + "\n將 MD 上傳至網頁版 Gemini／ChatGPT，並貼上以下提示詞：\n```text\n"
             + scenario_authoring.PROMPT + "\n```\n"
-            + f"共 {len(files)} 批，翻譯進度 0/{len(files)}。完成後下載 MD、放入 imports，再透過 Help 選檔匯入；"
-            + "所有批次完整且校閱核准後才能啟用。修改已提交批次時，JSON 加入 replace_batch: true。")
+            + f"共 {len(files)} 個來源檔、{len(registry['batches'])} 個邏輯批次、{len(registry['units'])} 個單元；進度 0/{len(registry['units'])}。"
+            + f"成果檔名：{prefix}_01.md、{prefix}_02.md，後續依序累加；所有來源檔共用成果流水號。\n"
+            + f"下載成果請放入 {IMPORT_DIR / payload['export_id'] / 'results'}，再透過 Help 選檔匯入。"
+            + "可分次提交完整單元；來源最多三檔，成果檔數不限。所有單元完整且校閱核准後才能啟用。"
+            + "更正已存記錄時，在該批 JSON 加入 replace_record_ids 並附完整替換筆。")
+
+
+def import_path(filename: str) -> Path:
+    """Only flat legacy uploads or export-ID/results/name.md, never source workbooks."""
+    parts = filename.split('/')
+    valid = (len(parts) == 1 or (len(parts) == 3
+             and re.fullmatch(r'export-[a-f0-9]{32}', parts[0]) and parts[1] == 'results'))
+    if (not valid or any(p in ('', '.', '..') for p in parts) or '\\' in filename
+            or any(c in filename for c in '\r\n\t') or not parts[-1].lower().endswith('.md')):
+        raise ValueError('檔名必須是 imports 下的 .md 或 export-ID/results/檔名.md')
+    root = IMPORT_DIR.resolve()
+    path = root
+    for part in parts:
+        path = path / part
+        if path.is_symlink():
+            raise ValueError('匯入路徑不可包含符號連結')
+    if not path.is_file() or not path.resolve().is_relative_to(root):
+        raise FileNotFoundError('找不到匯入檔案')
+    if path.stat().st_size > scenario_authoring.MAX_FILE_BYTES:
+        raise ValueError('RESOURCE_LIMIT：匯入檔超過 20 MB')
+    return path
+
+
+def import_candidates() -> list[tuple[str, dict]]:
+    if not IMPORT_DIR.is_dir():
+        return []
+    paths = list(IMPORT_DIR.iterdir())
+    for directory in IMPORT_DIR.glob('export-*'):
+        results = directory / 'results'
+        if not directory.is_symlink() and not results.is_symlink() and results.is_dir():
+            paths.extend(results.iterdir())
+    candidates = []
+    for path in sorted(paths):
+        if path.suffix.lower() != '.md':
+            continue
+        filename = path.relative_to(IMPORT_DIR).as_posix()
+        try:
+            payload = scenario_authoring.parse_markdown(import_path(filename).read_text(encoding='utf-8'))
+            if '/' in filename and payload.get('export_id') != filename.split('/')[0]:
+                continue
+            if payload.get('authoring_version') in (1, 2) or payload.get('schema_version') == 3:
+                candidates.append((filename, payload))
+        except (OSError, ValueError):
+            continue
+    return candidates
+
+
+def import_matches(scenario_id: str, payload: dict, *, manifest: dict | None = None) -> bool:
+    if manifest is None:
+        manifest, _ = _source(scenario_id)
+    if 'authoring_version' in payload:
+        try:
+            _, registry = scenario_authoring.registry_for(_root() / scenario_id / 'exports', payload,
+                                                          manifest['content_hash'], _chapter_hash(manifest))
+            return type(payload['authoring_version']) is int and payload['authoring_version'] == registry.get('authoring_version', 1)
+        except (OSError, ValueError):
+            return False
+    return (payload.get('source_hash') == manifest['content_hash']
+            and payload.get('chapter_hash') == _chapter_hash(manifest))
+
+
+def import_progress(scenario_id: str, filename: str) -> str:
+    payload = scenario_authoring.parse_markdown(import_path(filename).read_text(encoding='utf-8'))
+    if 'authoring_version' not in payload:
+        return ''
+    manifest, _ = _source(scenario_id)
+    return scenario_authoring.progress(_root() / scenario_id / 'exports', payload,
+                                       manifest['content_hash'], _chapter_hash(manifest), IMPORT_DIR)
 
 
 def _diagnose_records(scenario_id: str, records: list, *, version: int) -> list[str]:
@@ -406,18 +480,11 @@ def approve(scenario_id: str, variant_id: str, *, reviewer_id: str) -> None:
 
 
 def import_markdown(scenario_id: str, filename: str) -> str:
-    name = Path(filename).name
-    if name != filename or not name.lower().endswith(".md"):
-        raise ValueError("檔名必須是匯入目錄中的 .md")
-    root = IMPORT_DIR.resolve()
-    raw_path = root / name
-    path = raw_path.resolve()
-    if raw_path.is_symlink() or path.parent != root or not path.is_file():
-        raise FileNotFoundError(name)
-    if path.stat().st_size > scenario_authoring.MAX_FILE_BYTES:
-        raise ValueError("RESOURCE_LIMIT：匯入檔超過 20 MB")
+    path = import_path(filename)
     try:
         payload = scenario_authoring.parse_markdown(path.read_text(encoding="utf-8"))
+        if '/' in filename and payload.get('export_id') != filename.split('/')[0]:
+            raise ValueError('成果目錄與 export_id 不符')
         manifest, text = _source(scenario_id)
         source_hash, chapter_hash = manifest["content_hash"], _chapter_hash(manifest)
         if "authoring_version" in payload:

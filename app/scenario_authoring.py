@@ -6,17 +6,22 @@ can supply runtime source metadata; uploaded metadata is never authoritative.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-PROMPT = '請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。'
-VERSION = 1
+PROMPT = ('請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。\n'
+          '請實際產生並提供可下載的 .md 檔案。若分次完成，每次都請提供包含本次已完成內容、可直接匯入的 .md 檔，並在回覆中列出尚未完成的 batch_id／unit_id。\n'
+          '檔名請以劇本名為前綴，格式為「劇本名_01.md」，分次回傳時數字依序累加。')
+VERSION = 2
 SEGMENTATION = 'paragraph-v1'
 MAX_FILE_BYTES = 20_000_000
 MAX_RECORDS = 20000
@@ -102,11 +107,18 @@ def issue(code: str, record: Any, field: str, expected: Any, actual: Any) -> dic
 
 
 def parse_markdown(content: str) -> dict:
-    matches = re.findall(r'^```json[ \t]*\r?\n(.*?)^```[ \t]*$', content, re.DOTALL | re.MULTILINE)
-    if len(matches) != 1:
-        raise Diagnostics([issue('JSON_BLOCK_COUNT', '', 'document', 'exactly one JSON block', len(matches))])
+    # External AI download artifacts sometimes contain the JSON object itself,
+    # despite the .md suffix. Parse the entire document, never a guessed excerpt.
+    document = content.lstrip('\ufeff').strip()
+    if document.startswith(('{', '[')):
+        encoded = document
+    else:
+        matches = re.findall(r'^```json[ \t]*\r?\n(.*?)^```[ \t]*$', document, re.DOTALL | re.MULTILINE)
+        if len(matches) != 1:
+            raise Diagnostics([issue('JSON_BLOCK_COUNT', '', 'document', 'one JSON block or a complete JSON object', len(matches))])
+        encoded = matches[0]
     try:
-        payload = json.loads(matches[0])
+        payload = json.loads(encoded)
     except json.JSONDecodeError as exc:
         raise Diagnostics([issue('INVALID_JSON', '', 'document', 'valid JSON', f'line {exc.lineno}, column {exc.colno}')]) from exc
     if not isinstance(payload, dict):
@@ -138,13 +150,76 @@ def blank_record(unit_id: str, index: int) -> dict:
             'dependencies': [], 'uncertainty': '尚未翻譯與校對'}
 
 
+def filename_prefix(title: str) -> str:
+    """A display title is never a path; preserve Unicode within a byte bound."""
+    value = ''.join('_' if c.isspace() or c in '/\\:*?"<>|`' or unicodedata.category(c).startswith('C')
+                    else c for c in title)
+    value = re.sub('_+', '_', value).strip(' ._')
+    value = value.encode('utf-8')[:120].decode('utf-8', errors='ignore').rstrip(' ._')
+    return value or 'scenario'
+
+
+def result_filename(prefix: str, number: int) -> str:
+    return f'{prefix}_{number:02d}.md'
+
+
+def _json_bytes(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, indent=2).encode('utf-8')
+
+
+def package_ranges(weights: list[int], chapters: list[str]) -> list[tuple[int, int]]:
+    """Contiguous balanced packages; every remaining package retains one batch."""
+    if not weights:
+        return []
+    count = min(3, len(weights))
+    prefixes = [0]
+    for weight in weights:
+        prefixes.append(prefixes[-1] + weight)
+    ranges = []
+    start = 0
+    for remaining in range(count, 0, -1):
+        if remaining == 1:
+            end = len(weights)
+        else:
+            target = (prefixes[-1] - prefixes[start]) / remaining
+            end = min(range(start + 1, len(weights) - remaining + 2),
+                      key=lambda end: (abs(prefixes[end] - prefixes[start] - target),
+                                       chapters[end - 1] == chapters[end], end))
+        ranges.append((start, end))
+        start = end
+    return ranges
+
+
+def _source_section(unit: dict, units: list[dict], pos: int) -> str:
+    stream = io.StringIO()
+    stream.write(f"\n## SOURCE {unit['id']} (private / 私密)\n")
+    stream.write('\n'.join('    ' + line for line in unit['text'].splitlines()) + '\n')
+    for neighbor in (pos - 1, pos + 1):
+        if 0 <= neighbor < len(units) and units[neighbor]['chapter_id'] == unit['chapter_id']:
+            other = units[neighbor]
+            stream.write(f"\nContext only / 僅上下文 {other['id']}（必要依賴請另讀該單元完整批次）\n")
+            excerpt = other['text'][-500:] if neighbor < pos else other['text'][:500]
+            stream.write('\n'.join('    ' + line for line in excerpt.splitlines()) + '\n')
+    return stream.getvalue()
+
+
 def export(root: Path, import_dir: Path, source_hash: str, chapter_hash: str,
-           blocks: list[dict]) -> Path:
-    if root.exists():
-        exports = list(root.glob('export-*'))
-        storage = sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
-        if len(exports) >= 100 or storage > 200_000_000:
-            raise ValueError('RESOURCE_LIMIT：匯出草稿已達 100 組或 200 MB，請先封存不再使用的工作檔')
+           blocks: list[dict], *, title: str = 'scenario') -> Path:
+    # Serialize publication/retention checks within this process, like draft writes.
+    with _lock:
+        return _export(root, import_dir, source_hash, chapter_hash, blocks, title)
+
+
+def _export(root: Path, import_dir: Path, source_hash: str, chapter_hash: str,
+            blocks: list[dict], title: str) -> Path:
+    exports = list(root.glob('export-*')) if root.exists() else []
+    storage = sum(p.stat().st_size for p in root.rglob('*') if p.is_file()) if root.exists() else 0
+    for directory in exports:
+        source_dir = import_dir / directory.name / 'source'
+        if source_dir.is_dir() and not source_dir.is_symlink():
+            storage += sum(p.stat().st_size for p in source_dir.iterdir() if p.is_file())
+    if len(exports) >= 100 or storage >= 200_000_000:
+        raise ValueError('RESOURCE_LIMIT：匯出草稿已達 100 組或 200 MB，請先封存不再使用的工作檔')
     export_id = 'export-' + uuid4().hex
     units: list[dict[str, Any]] = []
     for block in blocks:
@@ -153,48 +228,106 @@ def export(root: Path, import_dir: Path, source_hash: str, chapter_hash: str,
             units.append({'id': f'u{len(units)+1}', 'source_id': block['id'],
                           'span': [start, end], 'page': block['page'], 'source_pages': block['pages'],
                           'chapter_id': block['chapter_id'], 'text': text, 'hash': digest(text)})
-    if len(units) > MAX_RECORDS or sum(len(u['text'].encode()) for u in units) > MAX_FILE_BYTES // 2:
-        raise ValueError('RESOURCE_LIMIT：請先將來源分成可管理的章節匯出')
+    if not units or len(units) > MAX_RECORDS or sum(len(u['text'].encode()) for u in units) > MAX_FILE_BYTES // 2:
+        raise ValueError('RESOURCE_LIMIT：來源為空或超過容量，請先將來源分成可管理的章節匯出')
     batches: list[list[dict]] = []
+    batch_chars = 0
     for unit in units:
-        if not batches or sum(len(u['text']) for u in batches[-1]) + len(unit['text']) > BATCH_CHARS:
+        if not batches or batch_chars + len(unit['text']) > BATCH_CHARS:
             batches.append([])
+            batch_chars = 0
         batches[-1].append(unit)
+        batch_chars += len(unit['text'])
+    prefix = filename_prefix(title)
+    positions = {u['id']: i for i, u in enumerate(units)}
+    entries: list[dict[str, Any]] = [{'batch_id': f'b{i+1}', 'records': [blank_record(u['id'], positions[u['id']]+1) for u in batch]}
+               for i, batch in enumerate(batches)]
+    sections = [''.join(_source_section(u, units, positions[u['id']]) for u in batch) for batch in batches]
+    weights = [len(section.encode()) + len(_json_bytes(entry)) for section, entry in zip(sections, entries, strict=True)]
+    ranges = package_ranges(weights, [batch[0]['chapter_id'] for batch in batches])
     registry = {'export_id': export_id, 'source_hash': source_hash, 'chapter_hash': chapter_hash,
-                'authoring_version': VERSION, 'segmentation': SEGMENTATION, 'units': units,
-                'batches': {f'b{i+1}': [u['id'] for u in batch] for i, batch in enumerate(batches)}}
-    directory = root / export_id
-    atomic_json(directory / 'registry.json', registry)
-    atomic_json(directory / 'registry.sha256.json', digest(registry))
-    import_dir.mkdir(parents=True, exist_ok=True)
-    filenames = []
+                'authoring_version': VERSION, 'packaging_version': 1, 'segmentation': SEGMENTATION,
+                'filename_prefix': prefix, 'units': units,
+                'batches': {entry['batch_id']: [u['id'] for u in batch] for entry, batch in zip(entries, batches, strict=True)},
+                'packages': {f'p{i+1}': [entry['batch_id'] for entry in entries[start:end]]
+                             for i, (start, end) in enumerate(ranges)}}
     example = blank_record('example-unit', 0)
     example.update(name='護甲', kp_text='護甲 2。', uncertainty='', rules=[{'check': {
         'text': '護甲 2', 'evidence': [{'unit_id': 'example-unit', 'source_quote': 'Armor 2'}]}}])
-    unit_positions = {unit["id"]: i for i, unit in enumerate(units)}
-    for i, batch in enumerate(batches):
-        payload = {'authoring_version': VERSION, 'export_id': export_id, 'batch_id': f'b{i+1}',
-                   'records': [blank_record(u['id'], unit_positions[u["id"]]+1) for u in batch]}
-        fd, filename = tempfile.mkstemp(prefix=f'scenario-authoring-{export_id[-8:]}-b{i+1}-', suffix='.md', dir=import_dir)
-        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-            stream.write(INSTRUCTIONS.format(prompt=PROMPT))
-            stream.write('\n```text\n'+json.dumps(example, ensure_ascii=False, indent=2)+'\n```\n')
-            stream.write(f'\nBatch / 批次 {i+1}/{len(batches)}；units / 單元：'+', '.join(u['id'] for u in batch)+'\n')
-            stream.write('\n```json\n'+json.dumps(payload, ensure_ascii=False, indent=2)+'\n```\n')
-            for unit in batch:
-                stream.write(f"\n## SOURCE {unit['id']} (private / 私密)\n")
-                # Four-space indentation prevents source text becoming workbook directives.
-                stream.write('\n'.join('    '+line for line in unit['text'].splitlines())+'\n')
-                pos = unit_positions[unit["id"]]
-                for neighbor in (pos-1, pos+1):
-                    if 0 <= neighbor < len(units) and units[neighbor]['chapter_id'] == unit['chapter_id']:
-                        other = units[neighbor]
-                        stream.write(f"\nContext only / 僅上下文 {other['id']}（必要依賴請另讀該單元完整批次）\n")
-                        excerpt = other['text'][-500:] if neighbor < pos else other['text'][:500]
-                        stream.write('\n'.join('    '+line for line in excerpt.splitlines())+'\n')
-        filenames.append(Path(filename).name)
-    atomic_json(directory / 'files.json', filenames)
-    return import_dir / filenames[0]
+    rendered = []
+    files = []
+    for i, (start, end) in enumerate(ranges):
+        payload = {'authoring_version': VERSION, 'export_id': export_id, 'package_id': f'p{i+1}',
+                   'batches': entries[start:end]}
+        instructions = (
+            f"\nPackage / 檔案包 {i+1}/{len(ranges)}；logical batches / 邏輯批次 {start+1}–{end}/{len(batches)}\n"
+            f"Source filename / 來源檔名：{result_filename(prefix, i+1)}\n"
+            f"Return actual downloadable UTF-8 .md files / 請產生可下載的 UTF-8 .md 檔："
+            f"{result_filename(prefix, 1)}, {result_filename(prefix, 2)}, ...\n"
+            "Source files and translation outputs have separate numbering. Output numbers continue across packages/replies, including 100 and above; never restart for each package.\n"
+            "來源與成果分開編號；同一 export 的所有檔案包／分次回覆共用成果流水號，不重設。\n"
+            "Keep authoring_version=2, export_id, package_id, batch_id and unit IDs. One top-level JSON block per output.\n"
+            "Return only completed records inside batches; omit unfinished records/batches and list missing batch_id/unit_id outside JSON. Translate every assigned unit completely.\n"
+            "保留版本及全部 IDs；只回傳已完成 records，不附未完成空白筆；JSON 外列未完成 IDs。每個已列單元須完整翻譯。\n"
+            "Continue with new records in the same batch; saved records are merged. To change an existing record, put its ID in that batch's replace_record_ids list and include the replacement. Omitted saved records remain.\n"
+            "同批可分次追加；更正已存記錄時，在該批加入 replace_record_ids 並附完整替換筆；沒附的舊筆會保留。\n"
+            f"Save downloaded results to imports/{export_id}/results/ and select through Help. Keep source/ unchanged.\n"
+            f"下載成果請放 imports/{export_id}/results/，再用 Help 匯入，不覆寫 source/ 原檔。\n"
+            "At most three source files does not limit translation replies; never summarize to finish in three replies.\n"
+            "來源最多三檔不限制翻譯回覆次數；不得為湊三次而摘要、刪規則。\n"
+        )
+        continuation_example = {'authoring_version': VERSION, 'export_id': export_id, 'package_id': f'p{i+1}',
+                                'batches': [{'batch_id': entries[start]['batch_id'],
+                                             'records': ['complete translated record object(s) only / 僅已完成的完整記錄物件']}]}
+        replacement_example = {'batch_id': entries[start]['batch_id'],
+                               'replace_record_ids': [entries[start]['records'][0]['id']],
+                               'records': ['complete replacement object with that existing ID / 該既有 ID 的完整替換物件']}
+        instructions += ('\nEnvelope examples only; replace the illustrative strings with complete record objects. Do not copy examples as data.\n'
+                         '續做／更正封套示意；以下字串佔位須換成完整記錄物件，不可當資料提交。\n```text\n'
+                         + json.dumps(continuation_example, ensure_ascii=False, indent=2)
+                         + '\n```\nReplacement batch / 更正已存批次：\n```text\n'
+                         + json.dumps(replacement_example, ensure_ascii=False, indent=2) + '\n```\n')
+        body = (INSTRUCTIONS.format(prompt=PROMPT) + '\n```text\n' + json.dumps(example, ensure_ascii=False, indent=2)
+                + '\n```\n' + instructions + '\n```json\n' + json.dumps(payload, ensure_ascii=False, indent=2)
+                + '\n```\n' + ''.join(sections[start:end]))
+        rendered.append(body.encode('utf-8'))
+        files.append(f'{export_id}/source/{result_filename(prefix, i+1)}')
+    metadata = {'registry.json': registry, 'registry.sha256.json': digest(registry), 'files.json': files}
+    sizes = [len(_json_bytes(value)) for value in metadata.values()] + [len(data) for data in rendered]
+    if max(sizes) > MAX_FILE_BYTES or storage + sum(sizes) > 200_000_000:
+        raise ValueError('RESOURCE_LIMIT：完整三檔匯出超過檔案或儲存容量；未截斷來源或產生第四檔')
+    root.mkdir(parents=True, exist_ok=True)
+    import_dir.mkdir(parents=True, exist_ok=True)
+    registry_stage = Path(tempfile.mkdtemp(prefix='.building-', dir=root))
+    try:
+        file_stage = Path(tempfile.mkdtemp(prefix='.building-', dir=import_dir))
+    except BaseException:
+        shutil.rmtree(registry_stage, ignore_errors=True)
+        raise
+    directory, file_directory = root / export_id, import_dir / export_id
+    published_files = False
+    try:
+        (file_stage / 'source').mkdir(mode=0o700)
+        (file_stage / 'results').mkdir(mode=0o700)
+        for filename, data in zip(files, rendered, strict=True):
+            with (file_stage / 'source' / Path(filename).name).open('xb') as stream:
+                os.chmod(stream.name, 0o600)
+                stream.write(data)
+        for name, value in metadata.items():
+            atomic_json(registry_stage / name, value)
+        file_stage.rename(file_directory)
+        published_files = True
+        # Registry publication is the ready marker. Orphan file directories from
+        # a process crash before here are not offered by Help or import.
+        registry_stage.rename(directory)
+    except BaseException:
+        if published_files:
+            shutil.rmtree(file_directory, ignore_errors=True)
+        raise
+    finally:
+        shutil.rmtree(registry_stage, ignore_errors=True)
+        shutil.rmtree(file_stage, ignore_errors=True)
+    return import_dir / files[0]
 
 
 def registry_for(root: Path, payload: dict, source_hash: str, chapter_hash: str) -> tuple[Path, dict]:
@@ -312,38 +445,121 @@ def compile_records(records: list, registry: dict, allowed_units: set[str], *, c
     return compiled
 
 
+def _submitted_batches(payload: dict, registry: dict) -> list[dict]:
+    version = payload['authoring_version']
+    if version != registry.get('authoring_version', 1):
+        raise Diagnostics([issue('AUTHORING_VERSION', '', 'authoring_version', registry.get('authoring_version', 1), version)])
+    if version == 1:
+        return [payload]
+    package_id = payload.get('package_id')
+    if not isinstance(package_id, str) or package_id not in registry['packages']:
+        raise Diagnostics([issue('UNKNOWN_PACKAGE', '', 'package_id', 'exported package', package_id)])
+    batches = payload.get('batches')
+    if not isinstance(batches, list) or not batches or len(batches) > len(registry['packages'][package_id]):
+        raise Diagnostics([issue('INVALID_BATCHES', '', 'batches', 'nonempty subset of package batches', type(batches).__name__)])
+    seen = set()
+    for batch in batches:
+        bid = batch.get('batch_id') if isinstance(batch, dict) else None
+        if not isinstance(bid, str) or bid not in registry['packages'][package_id] or bid in seen:
+            raise Diagnostics([issue('UNKNOWN_BATCH', '', 'batch_id', 'unique batch in this package', bid)])
+        seen.add(bid)
+    return batches
+
+
 def import_batch(root: Path, payload: dict, source_hash: str, chapter_hash: str,
                  validate: Any, save: Any) -> str:
-    if type(payload.get('authoring_version')) is not int or payload.get('authoring_version') != VERSION:
-        raise Diagnostics([issue('AUTHORING_VERSION', '', 'authoring_version', VERSION, payload.get('authoring_version'))])
+    version = payload.get('authoring_version')
+    if type(version) is not int or version not in (1, 2):
+        raise Diagnostics([issue('AUTHORING_VERSION', '', 'authoring_version', '1 or 2', version)])
     with _lock:
         directory, registry = registry_for(root, payload, source_hash, chapter_hash)
-        batch_id = payload.get('batch_id')
-        if not isinstance(batch_id, str) or batch_id not in registry['batches']:
-            raise Diagnostics([issue('UNKNOWN_BATCH', '', 'batch_id', 'exported batch', batch_id)])
-        records = payload.get('records')
-        if not isinstance(records, list) or not records or len(records) > MAX_RECORDS:
-            raise Diagnostics([issue('INVALID_RECORDS', '', 'records', 'nonempty bounded list', type(records).__name__)])
-        compile_records(records, registry, set(registry['batches'][batch_id]), complete=False)
+        submitted = _submitted_batches(payload, registry)
         draft_path = directory / 'draft.json'
         draft = read_json(draft_path) if draft_path.exists() else {'batches': {}}
-        previous = draft['batches'].get(batch_id)
-        if previous is not None and previous != records and payload.get('replace_batch') is not True:
-            raise Diagnostics([issue('BATCH_CONFLICT', '', 'replace_batch', 'true for explicit replacement', False)])
-        candidate = {**draft['batches'], batch_id: records}
+        candidate = dict(draft['batches'])
+        # Validate and merge entirely in memory. No partial writes on any error.
+        for batch in submitted:
+            batch_id = batch.get('batch_id')
+            if not isinstance(batch_id, str) or batch_id not in registry['batches']:
+                raise Diagnostics([issue('UNKNOWN_BATCH', '', 'batch_id', 'exported batch', batch_id)])
+            records = batch.get('records')
+            if not isinstance(records, list) or not records or len(records) > MAX_RECORDS:
+                raise Diagnostics([issue('INVALID_RECORDS', '', 'records', 'nonempty bounded list', type(records).__name__)])
+            compile_records(records, registry, set(registry['batches'][batch_id]), complete=False)
+            previous = candidate.get(batch_id)
+            if version == 1:
+                if previous is not None and previous != records and payload.get('replace_batch') is not True:
+                    raise Diagnostics([issue('BATCH_CONFLICT', '', 'replace_batch', 'true for explicit replacement', False)])
+                candidate[batch_id] = records
+                continue
+            merged = {r['id']: r for r in previous or []}
+            replacements = batch.get('replace_record_ids', [])
+            incoming = {r['id'] for r in records}
+            if (not isinstance(replacements, list) or any(not isinstance(r, str) for r in replacements)
+                    or len(replacements) != len(set(replacements))
+                    or not set(replacements) <= merged.keys() & incoming):
+                raise Diagnostics([issue('INVALID_REPLACEMENT', '', 'replace_record_ids', 'unique existing IDs included in this submission', replacements)])
+            for record in records:
+                rid = record['id']
+                if rid in merged and merged[rid] != record and rid not in replacements:
+                    raise Diagnostics([issue('RECORD_CONFLICT', rid, 'replace_record_ids', 'explicit replacement ID', rid)])
+                merged[rid] = record
+            candidate[batch_id] = list(merged.values())
+        if version == 2:
+            # Stable candidate identity regardless of batch or unit arrival order.
+            positions = {u['id']: i for i, u in enumerate(registry['units'])}
+            candidate = {bid: sorted(candidate[bid], key=lambda r: (min(positions[u] for u in r['unit_ids']), r['id']))
+                         for bid in registry['batches'] if bid in candidate}
         all_records = [r for batch in candidate.values() for r in batch]
-        if len(all_records) > MAX_RECORDS or len(json.dumps(candidate, ensure_ascii=False).encode()) > MAX_FILE_BYTES:
+        draft_value = {'batches': candidate}
+        if len(all_records) > MAX_RECORDS or len(_json_bytes(draft_value)) + 512 > MAX_FILE_BYTES:
             raise Diagnostics([issue('RESOURCE_LIMIT', '', 'batches', 'at most 20000 records / 20 MB', len(all_records))])
-        compiled = compile_records(all_records, registry, {u['id'] for u in registry['units']}, complete=False)
+        all_units = {u['id'] for u in registry['units']}
+        compile_records(all_records, registry, all_units, complete=False)
         covered = {u for r in all_records for u in r['unit_ids']}
-        if covered != {u['id'] for u in registry['units']}:
-            atomic_json(draft_path, {'batches': candidate})
-            return f'draft:{payload["export_id"]}:{len(covered)}/{len(registry["units"])}'
+        if covered != all_units:
+            atomic_json(draft_path, draft_value)
+            return f'draft:{payload["export_id"]}:{len(covered)}/{len(all_units)}'
         compiled = compile_records(all_records, registry, covered, complete=True)
         issues = validate(compiled)
         checksum = digest(all_records)
         if draft.get('complete_hash') == checksum and draft.get('variant_id'):
             return draft['variant_id']
         variant_id = save(compiled, issues)
-        atomic_json(draft_path, {'batches': candidate, 'complete_hash': checksum, 'variant_id': variant_id})
+        atomic_json(draft_path, {**draft_value, 'complete_hash': checksum, 'variant_id': variant_id})
         return variant_id
+
+
+def progress(root: Path, payload: dict, source_hash: str, chapter_hash: str, import_dir: Path) -> str:
+    with _lock:
+        directory, registry = registry_for(root, payload, source_hash, chapter_hash)
+        draft_path = directory / 'draft.json'
+        draft = read_json(draft_path) if draft_path.exists() else {'batches': {}}
+        covered = {u for batch in draft['batches'].values() for r in batch for u in r['unit_ids']}
+        lines = [f"翻譯進度：{len(covered)}/{len(registry['units'])} 單元。"]
+        for pid, bids in registry.get('packages', {'legacy': list(registry['batches'])}).items():
+            ids = [u for bid in bids for u in registry['batches'][bid]]
+            lines.append(f"{pid}：{sum(u in covered for u in ids)}/{len(ids)} 單元")
+        missing = []
+        for bid, ids in registry['batches'].items():
+            absent = [u for u in ids if u not in covered]
+            if absent:
+                missing.append(f"{bid}: {', '.join(absent)}")
+        if missing:
+            # Full inventory stays in a private file; Discord DM is bounded.
+            report = directory / 'progress.json'
+            atomic_json(report, {'missing': missing})
+            lines.append('尚未完成：' + '; '.join(missing)[:700])
+            lines.append(f'完整未完成清單：{report}')
+        if registry.get('authoring_version') == 2:
+            prefix = registry['filename_prefix']
+            results = import_dir / payload['export_id'] / 'results'
+            numbers = []
+            if results.is_dir() and not results.is_symlink():
+                for file in results.iterdir():
+                    match = re.fullmatch(re.escape(prefix) + r'_([0-9]{2,})\.md', file.name)
+                    if match and file.is_file() and not file.is_symlink():
+                        numbers.append(int(match[1]))
+            lines.append(f"下一個成果檔名：{result_filename(prefix, max(numbers, default=0)+1)}")
+            lines.append(f'成果目錄：{results}')
+        return '\n'.join(lines)

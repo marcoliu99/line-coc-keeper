@@ -1,24 +1,41 @@
-# External Chinese scenario preparation template (schema v3)
+# External Chinese scenario preparation
 
-## Current default: external authoring v1
+[繁體中文](scenario_zh_external_preparation_zh.md)
 
-[Full design and limitations](../specs/enhancement/external_template_authoring_design_spec.md)
+## Current default: external authoring v2 (at most three source files)
 
-1. Select a scenario and export through Help, or use `/coc scenario template export SCENARIO_ID`. KP/Keeper only; the completion DM lists all batch MD paths and the copyable prompt.
-2. Upload the MD to the web AI and paste this required user-facing prompt:
+[Three-file design and limits](../specs/enhancement/three_file_scenario_export_design_spec.md) · [Source evidence and gameplay retrieval](../specs/enhancement/external_template_authoring_design_spec.md)
+
+1. Select a scenario and export through Help, or use `/coc scenario template export SCENARIO_ID`. KP/Keeper only; the DM lists one to three source MD paths and the copyable prompt below. Long scenarios retain all source units within the documented resource limits.
+2. Upload the source MD to the web AI and paste:
 
    > 請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
+   > 請實際產生並提供可下載的 .md 檔案。若分次完成，每次都請提供包含本次已完成內容、可直接匯入的 .md 檔，並在回覆中列出尚未完成的 batch_id／unit_id。
+   > 檔名請以劇本名為前綴，格式為「劇本名_01.md」，分次回傳時數字依序累加。
 
-3. Preserve `authoring_version: 1`, `export_id`, `batch_id` and unit IDs. The program reconstructs pages, hashes and character offsets; do not convert the workbook into legacy schema v3 yourself.
-4. Place the completed MD in the server `imports` directory and select it through Help, or use `/coc scenario template import SCENARIO_ID FILENAME.md`.
-5. Partial units save drafts. To change a submitted batch, explicitly add `replace_batch: true` to the JSON. Validation failures send the detailed report path privately to KP; return it to the AI with the original workbook.
-6. Complete coverage produces a review-required v4 variant. Preview, approve, then select with `/coc scenario use SCENARIO_ID VARIANT_ID`.
+   This requests an actual downloadable MD for every complete or partial response, with unfinished IDs listed separately. Use the actual scenario title, not a fixed example title.
+3. Preserve `authoring_version: 2`, `export_id`, `package_id`, `batches[].batch_id` and all unit IDs. Each MD has exactly one authoring JSON block. A `.md` containing only one complete JSON object is also accepted, including a UTF-8 BOM; put progress notes in the web reply instead of appending prose to a plain-JSON file. The program reconstructs pages, hashes and offsets; do not manufacture legacy v3 source metadata.
+4. Only return complete translated records. Omit unfinished blank records and batches, and list their IDs outside JSON. A package can require many responses; never summarize to finish in three responses. Keep mechanical quotations, numbers, exceptions and dependencies intact.
+5. Source packages live in `imports/export-<id>/source/`. Download AI results into that export's `results/`, then use Help to select the result. Text equivalent: `/coc scenario template import SCENARIO_ID export-<id>/results/The_Haunting_01.md`. New complete units append to the same draft, including within one batch. Source and result filenames have separate numbering; results continue across packages/responses as `_01.md`, `_02.md`, ..., `_100.md`. The next suggested filename appears in the private progress message.
+6. To correct an existing record, add its ID to that batch's `replace_record_ids` and include the full replacement record. Omitted saved records remain. Identical replay is safe; one invalid batch rejects the whole submission without changing the previous draft. Return private diagnostic reports to the AI with the source workbook if correction is needed.
+7. Import progress reports completed units per package and remaining batch/unit IDs privately. Long lists have a complete private report path. Full coverage and validation create a review-required runtime v4 variant; preview, approve, then select with `/coc scenario use SCENARIO_ID VARIANT_ID`.
 
-Complete translations are not rejected by the old 6,000/12,000-character projection thresholds. Gameplay retrieval uses token budgets; missing mandatory rules require continuation or deferral. Never invent quotations or blindly clear uncertainty merely to pass validation.
+Envelope illustration only (replace the string placeholder with complete translated record objects; exported workbooks contain the real editable records):
+
+```text
+{"authoring_version":2,"export_id":"export-<original ID>","package_id":"p1",
+ "batches":[{"batch_id":"b1","records":["complete record objects"]}]}
+```
+
+Complete translations are not rejected by the old 6,000/12,000-character projection thresholds. Gameplay retrieval uses token budgets; missing mandatory rules require continuation or deferral. Do not invent quotations or clear uncertainty blindly to pass validation. Source completeness and format validation do not prove translation fidelity.
+
+## Existing authoring v1 exports
+
+Previously exported files remain valid, including exports with more than three source files. Preserve the original `authoring_version: 1`, `export_id`, `batch_id`, `records` envelope. Use `replace_batch: true` for an explicit whole-batch replacement under the original rules. Put these results in the flat server `imports` directory and select through Help. Re-exporting creates a separate v2 export; saved v1 progress is not silently migrated.
 
 ## Legacy schema v3 manual preparation reference
 
-The material and examples below maintain existing v3 files. Use the authoring v1 workflow above for new exports. Legacy v3 imports retain their source-offset and size validation; they are not automatically converted to v4.
+The material and examples below maintain existing v3 files. Use the authoring v2 workflow above for new exports. Legacy v3 imports retain their source-offset and size validation; they are not automatically converted to v4.
 
 
 [繁體中文](scenario_zh_external_preparation_zh.md)

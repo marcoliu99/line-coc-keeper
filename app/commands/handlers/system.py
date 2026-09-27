@@ -286,6 +286,12 @@ async def handle_system_command(
                     await reply(f"中文模板 {parts[5]} 已通過校對，可用 /coc scenario use {scenario_id} {parts[5]} 啟用。")
                 elif operation == "import" and len(parts) >= 6:
                     variant_id = await asyncio.to_thread(scenario_templates.import_markdown, scenario_id, " ".join(parts[5:]))
+                    try:
+                        progress = await asyncio.to_thread(scenario_templates.import_progress, scenario_id, " ".join(parts[5:]))
+                    except (OSError, ValueError):
+                        progress = "匯入已保存；本次無法讀取進度報告，可重新匯入相同成果查看。"
+                    if progress:
+                        await send_dm(user_id, progress)
                     if variant_id.startswith("draft:"):
                         await send_dm(user_id, f"已保存部分翻譯草稿 {variant_id}；請匯入其餘單元。尚未建立可啟用版本。")
                         await reply("部分翻譯草稿已保存，進度已私訊 KP；目前遊玩版本不變。")

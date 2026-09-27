@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 from copy import deepcopy
 from itertools import pairwise
 from types import SimpleNamespace
@@ -29,9 +30,19 @@ def library(tmp_path, monkeypatch):
             {'id': 'c1', 'title': 'House', 'kind': 'playable', 'start_page': 1, 'end_page': 999}]}
         (root / 'manifest.json').write_text(json.dumps(manifest))
         (root / 'scenario.txt').write_text(text)
-        path = templates.export_template('sample')
+        path = result_copy(templates.export_template('sample'))
         return path, authoring.parse_markdown(path.read_text())
     return create
+
+
+def result_copy(source):
+    target = source.parent.parent / 'results' / source.name
+    shutil.copy2(source, target)
+    return target
+
+
+def relative(path):
+    return path.relative_to(templates.IMPORT_DIR).as_posix()
 
 
 def write(path, payload):
@@ -39,31 +50,31 @@ def write(path, payload):
 
 
 def fill(payload, text='護甲 2。攻擊 1d6。不能再次攻擊。'):
-    for record in payload['records']:
+    for record in [r for b in payload['batches'] for r in b['records']]:
         record.update(kp_text=text, uncertainty='')
     return payload
 
 
 def test_workbook_prompt_complete_example_source_mapping_and_round_trip(library):
     path, payload = library()
-    assert payload['authoring_version'] == 1 and 'schema_version' not in payload
+    assert payload['authoring_version'] == 2 and 'schema_version' not in payload
     assert authoring.PROMPT in path.read_text()
     assert path.stat().st_mode & 0o077 == 0
     message = templates.export_message('sample', path)
     assert authoring.PROMPT in message and path.name in message and 'imports' in message
-    assert 'source_spans' not in payload['records'][0]
+    assert 'source_spans' not in payload['batches'][0]['records'][0]
     fill(payload)
-    payload['records'][0]['rules'] = [{'check': {'text': '護甲 2', 'evidence': [
+    payload['batches'][0]['records'][0]['rules'] = [{'check': {'text': '護甲 2', 'evidence': [
         {'unit_id': 'u1', 'source_quote': 'Armor 2'}]}}]
     write(path, payload)
-    variant_id = templates.import_markdown('sample', path.name)
+    variant_id = templates.import_markdown('sample', relative(path))
     variant, records = templates._read_variant('sample', variant_id)
     assert variant['schema_version'] == 4
     assert records[0]['source_spans'] == [[0, len('Armor 2.\n\nAttack 1d6.\n\nNo second attack.')]]
     assert records[0]['rules'][0]['check']['source_quote'] == 'Armor 2'
     assert records[0]['source_pages'] == [1]
     templates.approve('sample', variant_id, reviewer_id='kp')
-    assert templates.import_markdown('sample', path.name) == variant_id
+    assert templates.import_markdown('sample', relative(path)) == variant_id
     state = SimpleNamespace(group_id='g', timeline_id='t1', scenario_library_id='sample',
                             scenario_variant_id=variant_id, context_chapter_ids=['c1'], scenario_text='source')
     index, rows = templates.search_for_state(state, '護甲')
@@ -78,13 +89,13 @@ def test_workbook_prompt_complete_example_source_mapping_and_round_trip(library)
 
 def test_multiple_independent_diagnostics_and_no_variant_on_failure(library):
     path, payload = library()
-    row = payload['records'][0]
+    row = payload['batches'][0]['records'][0]
     row.pop('type')
     row['visibility'] = 'all'
     row.pop('name')
     write(path, payload)
     with pytest.raises(authoring.Diagnostics) as caught:
-        templates.import_markdown('sample', path.name)
+        templates.import_markdown('sample', relative(path))
     codes = {v['code'] for v in caught.value.issues}
     assert {'MISSING_FIELD', 'INVALID_VISIBILITY', 'EMPTY_TRANSLATION'} <= codes
     report = caught.value.report_path
@@ -95,7 +106,7 @@ def test_multiple_independent_diagnostics_and_no_variant_on_failure(library):
 
 def test_unheaded_long_source_batches_preserve_all_unicode_ranges(library):
     source = ('A room. 😀\n\n' * 3000)
-    path, payload = library(source)
+    _path, payload = library(source)
     directory = templates._root() / 'sample' / 'exports' / payload['export_id']
     registry = authoring.read_json(directory / 'registry.json')
     units = registry['units']
@@ -107,11 +118,11 @@ def test_unheaded_long_source_batches_preserve_all_unicode_ranges(library):
     files = authoring.read_json(directory / 'files.json')
     variant = ''
     for filename in files:
-        file = path.parent / filename
+        file = result_copy(templates.IMPORT_DIR / filename)
         batch = authoring.parse_markdown(file.read_text())
         fill(batch, '一間房。' * 2500)  # intentionally over 6000 characters per record
         write(file, batch)
-        variant = templates.import_markdown('sample', filename)
+        variant = templates.import_markdown('sample', relative(file))
         if filename != files[-1]:
             assert variant.startswith('draft:')
             assert templates.status('sample')['variants'] == []
@@ -125,24 +136,24 @@ def test_partial_replay_and_explicit_replacement(library):
     path, payload = library('First room.\n\n' * 1400)
     fill(payload, '房間。')
     write(path, payload)
-    first = templates.import_markdown('sample', path.name)
+    first = templates.import_markdown('sample', relative(path))
     assert first.startswith('draft:')
-    assert templates.import_markdown('sample', path.name) == first
-    payload['records'][0]['kp_text'] = '另一個翻譯。'
+    assert templates.import_markdown('sample', relative(path)) == first
+    payload['batches'][0]['records'][0]['kp_text'] = '另一個翻譯。'
     write(path, payload)
     with pytest.raises(authoring.Diagnostics) as caught:
-        templates.import_markdown('sample', path.name)
-    assert caught.value.issues[0]['code'] == 'BATCH_CONFLICT'
-    payload['replace_batch'] = True
+        templates.import_markdown('sample', relative(path))
+    assert caught.value.issues[0]['code'] == 'RECORD_CONFLICT'
+    payload['batches'][0]['replace_record_ids'] = [payload['batches'][0]['records'][0]['id']]
     write(path, payload)
-    assert templates.import_markdown('sample', path.name).startswith('draft:')
+    assert templates.import_markdown('sample', relative(path)).startswith('draft:')
 
 
 @pytest.mark.parametrize('damage', ['hash', 'missing', 'quote', 'number', 'privacy', 'json'])
 def test_stale_exports_and_bad_rules_fail_closed(library, damage):
     path, payload = library('Armor 2. Armor 2.')
     fill(payload, '護甲 2。')
-    record = payload['records'][0]
+    record = payload['batches'][0]['records'][0]
     if damage in {'quote', 'number'}:
         record['rules'] = [{'check': {'text': '護甲 9' if damage == 'number' else '護甲 2',
                                      'evidence': [{'unit_id': 'u1', 'source_quote': 'Armor 2' if damage == 'quote' else 'Armor 2. Armor 2.'}]}}]
@@ -159,7 +170,7 @@ def test_stale_exports_and_bad_rules_fail_closed(library, damage):
     if damage == 'json':
         path.write_text('```json\n{"authoring_version": }\n```')
     with pytest.raises(authoring.Diagnostics):
-        templates.import_markdown('sample', path.name)
+        templates.import_markdown('sample', relative(path))
     assert templates.status('sample')['variants'] == []
 
 
@@ -283,7 +294,7 @@ def test_atomic_save_failure_does_not_publish_candidate(library, monkeypatch):
         raise OSError('disk unavailable')
     monkeypatch.setattr(templates, '_save_variant', fail)
     with pytest.raises(OSError):
-        templates.import_markdown('sample', path.name)
+        templates.import_markdown('sample', relative(path))
     directory = templates._root() / 'sample' / 'exports' / payload['export_id']
     assert not (directory / 'draft.json').exists()
     assert templates.status('sample')['variants'] == []
@@ -293,7 +304,7 @@ def test_v4_empty_search_keeps_original_fallback(library, monkeypatch):
     path, payload = library('Unknown prose.')
     fill(payload, '室內陳設。')
     write(path, payload)
-    variant = templates.import_markdown('sample', path.name)
+    variant = templates.import_markdown('sample', relative(path))
     templates.approve('sample', variant, reviewer_id='kp')
     state = SimpleNamespace(group_id='empty-fallback', timeline_id='t1', scenario_library_id='sample',
                             scenario_variant_id=variant, context_chapter_ids=['c1'], scenario_text='a unique-library clue')
@@ -325,7 +336,7 @@ def test_many_chapters_and_large_dependency_groups_do_not_reject_storage(library
 def test_exported_example_is_valid_authoring_and_source_json_is_not_payload(library):
     import re
     path, payload = library('Source example:\n```json\n{"not": "a workbook"}\n```\nArmor 2.')
-    assert payload['records']
+    assert payload['batches'][0]['records']
     sample = json.loads(re.search(r'```text\n(.*?)\n```', path.read_text(), re.DOTALL).group(1))
     registry = {'units': [{'id': 'example-unit', 'source_id': 'c1-u1', 'span': [0, 8],
                            'page': 1, 'source_pages': [1], 'chapter_id': 'c1', 'text': 'Armor 2.'}]}
@@ -373,11 +384,11 @@ def test_crash_after_variant_save_remains_idempotent(library, monkeypatch):
         return real_write(path, value)
     monkeypatch.setattr(authoring, 'atomic_json', interrupt_draft)
     with pytest.raises(OSError):
-        templates.import_markdown('sample', path.name)
+        templates.import_markdown('sample', relative(path))
     created = templates.status('sample')['variants']
     assert len(created) == 1 and created[0]['review_status'] == 'review_required'
     monkeypatch.setattr(authoring, 'atomic_json', real_write)
-    replay = templates.import_markdown('sample', path.name)
+    replay = templates.import_markdown('sample', relative(path))
     assert replay == created[0]['variant_id']
     assert len(templates.status('sample')['variants']) == 1
 
@@ -462,3 +473,344 @@ def test_search_continuation_keeps_roots_without_reranking_and_rejects_new_histo
     state.log.append({'role': 'user', 'content': 'next action'})
     with pytest.raises(ValueError, match='失效'):
         templates.search_for_state(state, 'action', continuation=token, principal='player:p')
+
+
+@pytest.mark.parametrize('count', [1, 2, 3, 10, 201])
+def test_packages_preserve_full_source_at_all_scales(tmp_path, count):
+    source = ('門😀A' * 2666 + 'XY') * count  # exactly 8000 characters per logical batch
+    block = {'id': 'c1-u1', 'text': source, 'page': 1, 'pages': [1], 'chapter_id': 'c1'}
+    imports, root = tmp_path / 'imports', tmp_path / 'exports'
+    path = authoring.export(root, imports, 'source', 'chapters', [block], title='燈塔')
+    payload = authoring.parse_markdown(path.read_text())
+    directory = root / payload['export_id']
+    registry = authoring.read_json(directory / 'registry.json')
+    files = authoring.read_json(directory / 'files.json')
+    assert len(registry['batches']) == count
+    assert len(files) == min(3, count)
+    assert ''.join(u['text'] for u in registry['units']) == source
+    assigned = []
+    for index, filename in enumerate(files, 1):
+        file = imports / filename
+        assert file.name == f'燈塔_{index:02d}.md'
+        package = authoring.parse_markdown(file.read_text())
+        assert registry['packages'][package['package_id']] == [b['batch_id'] for b in package['batches']]
+        assert '可下載的 UTF-8 .md' in file.read_text()
+        assigned.extend(u for b in package['batches'] for r in b['records'] for u in r['unit_ids'])
+    assert assigned == [u['id'] for u in registry['units']]
+    assert len(set(assigned)) == len(assigned)
+
+
+def test_filenames_use_real_title_safely_and_exports_do_not_collide(library):
+    library()
+    manifest_path = scenario_library._path('sample') / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    manifest['title'] = '另一個劇本 / The: Beacon\\夜\n'
+    manifest_path.write_text(json.dumps(manifest))
+    first, second = templates.export_template('sample'), templates.export_template('sample')
+    assert first.name == second.name == '另一個劇本_The_Beacon_夜_01.md'
+    assert first.parent != second.parent and first.exists()
+    assert '另一個劇本_The_Beacon_夜_02.md' in templates.export_message('sample', first)
+    assert authoring.filename_prefix('.../\\\n') == 'scenario'
+    assert len(authoring.filename_prefix('測' * 200).encode()) <= 120
+    assert authoring.result_filename('夜', 100) == '夜_100.md'
+
+
+def test_partial_units_append_and_progress_continues_beyond_99(library):
+    path, full = library('A' * 8000)
+    fill(full)
+    assert len(full['batches'][0]['records']) == 2
+    payload = deepcopy(full)
+    payload['batches'][0]['records'] = full['batches'][0]['records'][1:]
+    write(path, payload)
+    assert templates.import_markdown('sample', relative(path)).endswith(':1/2')
+    payload['batches'][0]['records'] = full['batches'][0]['records'][:1]
+    next_path = path.with_name('sample_100.md')
+    write(next_path, payload)
+    variant = templates.import_markdown('sample', relative(next_path))
+    assert not variant.startswith('draft:')
+    _, records = templates._read_variant('sample', variant)
+    assert [r['id'] for r in records] == ['r1', 'r2']
+    progress = templates.import_progress('sample', relative(next_path))
+    assert '2/2' in progress and 'sample_101.md' in progress
+    templates.approve('sample', variant, reviewer_id='kp')
+    assert templates.import_markdown('sample', relative(next_path)) == variant
+    assert templates.status('sample')['variants'][0]['review_status'] == 'approved'
+
+
+@pytest.mark.parametrize('damage', ['cross_package', 'cross_unit', 'duplicate_batch', 'duplicate_id', 'overlap', 'replacement', 'invalid_later'])
+def test_v2_invalid_submission_never_changes_saved_draft(library, damage):
+    path, full = library('A' * 80000)
+    fill(full, '描述')
+    assert len(full['batches']) >= 2
+    payload = deepcopy(full)
+    payload['batches'] = [deepcopy(full['batches'][0])]
+    write(path, payload)
+    templates.import_markdown('sample', relative(path))
+    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    before = (directory / 'draft.json').read_bytes()
+    registry = authoring.read_json(directory / 'registry.json')
+    payload = deepcopy(full)
+    if damage == 'cross_package':
+        payload['batches'][1]['batch_id'] = registry['packages']['p2'][0]
+    elif damage == 'cross_unit':
+        payload['batches'][1]['records'][0]['unit_ids'] = full['batches'][0]['records'][0]['unit_ids']
+    elif damage == 'duplicate_batch':
+        payload['batches'][1]['batch_id'] = payload['batches'][0]['batch_id']
+    elif damage == 'duplicate_id':
+        payload['batches'][1]['records'][0]['id'] = payload['batches'][0]['records'][0]['id']
+    elif damage == 'overlap':
+        record = deepcopy(payload['batches'][0]['records'][0])
+        record['id'] = 'overlap'
+        payload['batches'][0]['records'] = [record]
+    elif damage == 'replacement':
+        payload['batches'][0]['replace_record_ids'] = ['unknown']
+    else:
+        payload['batches'][1]['records'][0]['kp_text'] = ''
+    write(path, payload)
+    with pytest.raises(authoring.Diagnostics):
+        templates.import_markdown('sample', relative(path))
+    assert (directory / 'draft.json').read_bytes() == before
+    assert not templates.status('sample')['variants']
+
+
+def test_candidate_identity_is_independent_of_arrival_order(library):
+    path, _ = library('A' * 80000)
+    first = authoring.parse_markdown(path.read_text())
+    directory = templates._root() / 'sample' / 'exports' / first['export_id']
+    files = authoring.read_json(directory / 'files.json')
+    outputs = []
+    for filename in files:
+        file = result_copy(templates.IMPORT_DIR / filename)
+        payload = fill(authoring.parse_markdown(file.read_text()), '描述')
+        outputs.append((file, payload))
+    # Forward dependency across packages remains legal in a draft.
+    outputs[0][1]['batches'][0]['records'][0]['related_record_ids'] = [outputs[-1][1]['batches'][-1]['records'][-1]['id']]
+    for file, payload in outputs:
+        write(file, payload)
+        expected = templates.import_markdown('sample', relative(file))
+    before = (directory / 'draft.json').read_bytes()
+    (directory / 'draft.json').unlink()  # Simulate the same export started in reverse order.
+    for file, payload in reversed(outputs):
+        payload['batches'].reverse()
+        for batch in payload['batches']:
+            batch['records'].reverse()
+        write(file, payload)
+        actual = templates.import_markdown('sample', relative(file))
+    assert actual == expected
+    assert (directory / 'draft.json').read_bytes() == before
+    assert len(templates.status('sample')['variants']) == 1
+
+
+def test_legacy_authoring_v1_registry_and_batch_replacement_still_import(library):
+    path, package = library('A' * 16000)
+    directory = templates._root() / 'sample' / 'exports' / package['export_id']
+    registry = authoring.read_json(directory / 'registry.json')
+    for key in ('authoring_version', 'packaging_version', 'packages', 'filename_prefix'):
+        registry.pop(key)
+    authoring.atomic_json(directory / 'registry.json', registry)
+    authoring.atomic_json(directory / 'registry.sha256.json', authoring.digest(registry))
+    path = templates.IMPORT_DIR / 'old-authoring.md'
+    payload = {'authoring_version': 1, 'export_id': package['export_id'], **package['batches'][0]}
+    for record in payload['records']:
+        record.update(kp_text='描述', uncertainty='')
+    write(path, payload)
+    assert templates.import_markdown('sample', path.name).startswith('draft:')
+    payload['records'][0]['kp_text'] = '更新'
+    write(path, payload)
+    with pytest.raises(authoring.Diagnostics, match='校對'):
+        templates.import_markdown('sample', path.name)
+    payload['replace_batch'] = True
+    write(path, payload)
+    assert templates.import_markdown('sample', path.name).startswith('draft:')
+    for bid, units in list(registry['batches'].items())[1:]:
+        payload['batch_id'] = bid
+        payload['records'] = [authoring.blank_record(u, i + 100) for i, u in enumerate(units)]
+        for record in payload['records']:
+            record.update(kp_text='描述', uncertainty='')
+        write(path, payload)
+        result = templates.import_markdown('sample', path.name)
+    assert not result.startswith('draft:')
+
+
+def test_help_lists_results_and_legacy_only_with_safe_export_paths(library, monkeypatch):
+    from app import help_actions
+    path, payload = library()
+    monkeypatch.setattr(scenario_library, 'list_scenarios', lambda: [{'id': 'sample', 'title': '測試'}])
+    fill(payload)
+    write(path, payload)
+    options = help_actions._template_options('template_import')
+    assert [value for _, value in options] == ['sample ' + relative(path)]
+    source = path.parent.parent / 'source' / path.name
+    for invalid in (relative(source), '../outside.md', str(path), relative(path).replace('/results/', '/results/../results/')):
+        with pytest.raises(ValueError):
+            templates.import_markdown('sample', invalid)
+    link = path.parent / 'link.md'
+    link.symlink_to(path)
+    with pytest.raises(ValueError):
+        templates.import_markdown('sample', relative(link))
+    original_results = path.parent.rename(path.parent.with_name('original_results'))
+    path.parent.symlink_to(original_results, target_is_directory=True)
+    assert help_actions._template_options('template_import') == []
+    with pytest.raises(ValueError):
+        templates.import_markdown('sample', relative(path))
+
+
+def test_export_preflight_and_interruption_leave_no_ready_files(tmp_path, monkeypatch):
+    imports, root = tmp_path / 'imports', tmp_path / 'exports'
+    block = {'id': 'c1-u1', 'text': 'A' * 8000, 'page': 1, 'pages': [1], 'chapter_id': 'c1'}
+    monkeypatch.setattr(authoring, 'MAX_FILE_BYTES', 100)
+    with pytest.raises(ValueError, match='RESOURCE_LIMIT'):
+        authoring.export(root, imports, 's', 'c', [block])
+    assert not root.exists() and not imports.exists()
+    monkeypatch.setattr(authoring, 'MAX_FILE_BYTES', 20_000_000)
+    real_write = authoring.atomic_json
+    def fail(path, value):
+        if path.name == 'files.json':
+            raise OSError('disk failed')
+        real_write(path, value)
+    monkeypatch.setattr(authoring, 'atomic_json', fail)
+    with pytest.raises(OSError):
+        authoring.export(root, imports, 's', 'c', [block])
+    assert list(root.iterdir()) == list(imports.iterdir()) == []
+
+
+def test_partial_import_command_sends_private_progress(library, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app import help_actions
+    from app.commands.handlers import system
+    from app.models import GroupState
+    path, payload = library('A' * 16000)
+    fill(payload)
+    write(path, payload)
+    monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g'))
+    command = help_actions.build_command(help_actions.BY_KEY['template_import'], 'sample ' + relative(path))
+    async def exercise():
+        reply, dm = AsyncMock(), AsyncMock()
+        await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), command.split(), is_keeper=True)
+        messages = '\n'.join(call.args[1] for call in dm.call_args_list)
+        assert '翻譯進度：2/4' in messages and '尚未完成：b2' in messages
+        assert 'sample_02.md' in messages
+        assert 'u3' not in reply.call_args.args[0] and str(path.parent) not in reply.call_args.args[0]
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('failure', ['render_size', 'unit_limit', 'publish_registry', 'second_staging'])
+def test_export_resource_and_publication_boundaries(tmp_path, monkeypatch, failure):
+    from pathlib import Path
+
+    imports, root = tmp_path / 'imports', tmp_path / 'exports'
+    block = {'id': 'c1-u1', 'text': 'A' * 8000, 'page': 1, 'pages': [1], 'chapter_id': 'c1'}
+    if failure == 'render_size':
+        block['text'] = 'hello'
+        monkeypatch.setattr(authoring, 'MAX_FILE_BYTES', 1000)
+    elif failure == 'unit_limit':
+        monkeypatch.setattr(authoring, 'MAX_RECORDS', 1)
+    elif failure == 'publish_registry':
+        rename = Path.rename
+        def fail_rename(self, target):
+            if self.parent == root and self.name.startswith('.building-'):
+                raise OSError('registry publication failed')
+            return rename(self, target)
+        monkeypatch.setattr(Path, 'rename', fail_rename)
+    else:
+        mkdtemp = authoring.tempfile.mkdtemp
+        def fail_staging(*args, **kwargs):
+            if kwargs.get('dir') == imports:
+                raise OSError('staging creation failed')
+            return mkdtemp(*args, **kwargs)
+        monkeypatch.setattr(authoring.tempfile, 'mkdtemp', fail_staging)
+    with pytest.raises((ValueError, OSError)):
+        authoring.export(root, imports, 's', 'c', [block])
+    assert not root.exists() or list(root.iterdir()) == []
+    assert not imports.exists() or list(imports.iterdir()) == []
+
+
+def test_full_coverage_still_validates_dependencies_and_requires_review(library):
+    path, payload = library()
+    fill(payload)
+    record = payload['batches'][0]['records'][0]
+    record['related_record_ids'] = ['missing']
+    write(path, payload)
+    with pytest.raises(authoring.Diagnostics) as caught:
+        templates.import_markdown('sample', relative(path))
+    assert any(e['code'] == 'UNKNOWN_DEPENDENCY' for e in caught.value.issues)
+    assert not templates.status('sample')['variants']
+    record['related_record_ids'] = []
+    record['uncertainty'] = '仍須核對原文'
+    write(path, payload)
+    variant = templates.import_markdown('sample', relative(path))
+    assert templates.status('sample')['variants'][0]['review_status'] == 'review_required'
+    with pytest.raises(ValueError):
+        templates.approve('sample', variant, reviewer_id='kp')
+
+
+@pytest.mark.parametrize('payload', [
+    {'authoring_version': 1, 'export_id': 'export-original', 'batch_id': 'b1', 'records': []},
+    {'authoring_version': 2, 'export_id': 'export-original', 'package_id': 'p1', 'batches': []},
+    {'schema_version': 3, 'source_hash': 'source', 'chapter_hash': 'chapter', 'records': []},
+])
+@pytest.mark.parametrize('wrapper', ['raw', 'bom', 'fenced', 'fenced_bom'])
+def test_document_wrappers_share_one_strict_payload_parser(payload, wrapper):
+    encoded = json.dumps(payload, ensure_ascii=False)
+    document = '\n```json\n' + encoded + '\n```\n' if 'fenced' in wrapper else '\n' + encoded + '\n'
+    if 'bom' in wrapper:
+        document = '\ufeff' + document
+    assert authoring.parse_markdown(document) == payload
+
+
+@pytest.mark.parametrize('content,code', [
+    ('{}\n{}', 'INVALID_JSON'),
+    ('{}\nTranslation complete.', 'INVALID_JSON'),
+    ('{"authoring_version":2,}', 'INVALID_JSON'),
+    ('[{}]', 'INVALID_JSON'),
+    ('Here is JSON: {}', 'JSON_BLOCK_COUNT'),
+    ('```json\n{}\n```\n```json\n{}\n```', 'JSON_BLOCK_COUNT'),
+    ('{broken\n```json\n{}\n```', 'INVALID_JSON'),
+])
+def test_raw_json_does_not_salvage_ambiguous_or_malformed_documents(content, code):
+    with pytest.raises(authoring.Diagnostics) as caught:
+        authoring.parse_markdown(content)
+    assert caught.value.issues[0]['code'] == code
+
+
+def test_plain_json_result_is_visible_in_help_and_imports(library, monkeypatch):
+    from app import help_actions
+    path, payload = library()
+    fill(payload)
+    path.write_text('\ufeff' + json.dumps(payload, ensure_ascii=False))
+    monkeypatch.setattr(scenario_library, 'list_scenarios', lambda: [{'id': 'sample', 'title': 'Test'}])
+    options = help_actions._template_options('template_import')
+    assert [value for _, value in options] == ['sample ' + relative(path)]
+    variant_id = templates.import_markdown('sample', relative(path))
+    manifest, records = templates._read_variant('sample', variant_id)
+    assert manifest['schema_version'] == 4
+    assert manifest['review_status'] == 'review_required'
+    assert records[0]['kp_text'] == payload['batches'][0]['records'][0]['kp_text']
+    assert templates.import_markdown('sample', relative(path)) == variant_id
+
+
+@pytest.mark.parametrize('damage', ['source', 'package', 'quote'])
+def test_plain_json_does_not_bypass_source_and_evidence_validation(library, monkeypatch, damage):
+    from app import help_actions
+    path, payload = library()
+    fill(payload)
+    monkeypatch.setattr(scenario_library, 'list_scenarios', lambda: [{'id': 'sample'}])
+    if damage == 'source':
+        source = scenario_library._path('sample') / 'scenario.txt'
+        original_source = source.read_text()
+        source.write_text('changed source')
+        assert help_actions._template_options('template_import') == []
+    elif damage == 'package':
+        payload['package_id'] = 'p99'
+    else:
+        payload['batches'][0]['records'][0]['rules'] = [{'check': {'text': '護甲 2', 'evidence': [
+            {'unit_id': 'u1', 'source_quote': 'not in the source'}]}}]
+    path.write_text(json.dumps(payload, ensure_ascii=False))
+    with pytest.raises(ValueError):
+        templates.import_markdown('sample', relative(path))
+    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    assert not (directory / 'draft.json').exists()
+    if damage == 'source':
+        source.write_text(original_source)
+    assert not templates.status('sample')['variants']
