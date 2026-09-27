@@ -9,6 +9,7 @@ model-derived evidence, distinct from verbatim source transcription.
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import io
 import logging
 import re
@@ -313,7 +314,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
     extraction methods, uncertain pages and derived visual descriptions.
     """
     report = quality_report if quality_report is not None else {}
-    report.update(version=pdf_quality.VERSION, pages=[], continuations=[], derived_descriptions={})
+    report.update(version=pdf_quality.VERSION, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+                  pages=[], continuations=[], derived_descriptions={})
     layout_pages = _pymupdf4llm_page_chunks(pdf_bytes)
     texts: list[str] = []
     images: dict[int, bytes] = {}
@@ -324,7 +326,18 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
             number = i + 1
             native, warnings = pdf_quality.native_text(page)
             chunk = layout_pages.get(number) if layout_pages else None
-            text, method, selected_warnings = pdf_quality.select_text(native, _pymupdf4llm_page_text(chunk))
+            layout_text = _pymupdf4llm_page_text(chunk)
+            evidence = pdf_quality.block_evidence(page)
+            pairs = pdf_quality.numeric_pairs(evidence)
+            if any(p["status"] == "unresolved" for p in pairs):
+                warnings.append("source_pair_unresolved")
+            text, method, selected_warnings = pdf_quality.select_text(native, layout_text)
+            pair_checks = pdf_quality.check_pairs(pairs, layout_text) if layout_text else []
+            if any(p["status"] == "pair_mismatch" for p in pair_checks):
+                text, method = native, "native"
+                selected_warnings.append("layout_pair_mismatch")
+            if any(p["status"] in {"source_pair_unresolved", "candidate_pair_unverified"} for p in pair_checks):
+                selected_warnings.append("numeric_pair_review")
             warnings.extend(selected_warnings)
             graphic = _page_has_graphic_content(page) or _pymupdf4llm_has_graphic_evidence(chunk)
             if graphic:
@@ -335,14 +348,25 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
                     pending[number] = images[number]
             texts.append(text)
             report["pages"].append({"page": number, "method": method, "native_chars": len(native),
-                                    "warnings": warnings})
+                                    "warnings": warnings, "evidence": evidence,
+                                    "numeric_pairs": pairs, "layout_pair_checks": pair_checks,
+                                    "candidates": {"native": native, "layout": layout_text}})
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None
         for number in list(pending):
             extra = (alternate or {}).get(number, "").strip()
             if extra:
+                row = report["pages"][number - 1]
+                row["candidates"]["markitdown"] = extra
+                checks = pdf_quality.check_pairs(row["numeric_pairs"], extra)
+                row["ocr_pair_checks"] = checks
+                if any(p["status"] != "matched" for p in checks):
+                    row["warnings"].append("ocr_pair_review")
                 chosen, method, warnings = pdf_quality.select_text(texts[number - 1], extra)
+                if any(p["status"] == "pair_mismatch" for p in checks):
+                    method = "native"
+                    row["warnings"].append("ocr_pair_mismatch")
                 if method == "layout":
                     texts[number - 1] = chosen
                     report["pages"][number - 1]["method"] = "markitdown"
@@ -364,6 +388,14 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
                         row["warnings"].append("vision_failed")
                         continue
                     if extra:
+                        row["candidates"]["vision"] = extra
+                        checks = pdf_quality.check_pairs(row["numeric_pairs"], extra)
+                        row["vision_pair_checks"] = checks
+                        if any(p["status"] != "matched" for p in checks):
+                            row["warnings"].append("vision_pair_review")
+                        if any(p["status"] == "pair_mismatch" for p in checks):
+                            row["warnings"].append("vision_pair_mismatch")
+                            continue
                         if scene_map:
                             report["derived_descriptions"][str(number)] = extra
                             # A labeled derived section is not a verbatim quote.
@@ -378,6 +410,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None) -> tup
     for i, text in enumerate(texts):
         row = report["pages"][i]
         row["extracted_chars"] = len(text)
+        row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if not text.strip():
             row["warnings"].append("empty_page")
         if any(w not in {"native_two_columns", "layout_unavailable"} for w in row["warnings"]):

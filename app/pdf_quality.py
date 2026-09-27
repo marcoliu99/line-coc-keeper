@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'source-preserving-v1'
+VERSION = 'block-pairing-v2'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 
@@ -60,3 +60,74 @@ def continuation(previous: str, current: str) -> bool:
         after.pop(0)
     return bool(before and after and re.search(r'[a-z,;–-]$', before[-1])
                 and re.match(r'^[a-z]', after[0]))
+
+
+# Deliberately bounded vocabulary. Unknown labels stay in the raw block artifact.
+_STAT_LABELS = {'STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'HP', 'MP',
+                'SAN', 'LUCK', 'MOV', 'BUILD', 'AGE', 'ARMOR', 'DB',
+                '年齡', '年紀', '護甲', '幸運'}
+_VALUE = re.compile(r'^[+-]?\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?(?:/\d+)*$')
+
+
+def block_evidence(page: Any) -> dict:
+    """Keep native coordinates independently of whichever text parser wins."""
+    blocks = []
+    for block in page.get_text('dict', flags=0)['blocks']:
+        if block.get('type') != 0:
+            continue
+        lines = [{'bbox': list(line['bbox']), 'text': ''.join(span['text'] for span in line['spans'])}
+                 for line in block.get('lines', [])]
+        blocks.append({'id': block['number'], 'bbox': list(block['bbox']), 'lines': lines})
+    words = [{'bbox': list(w[:4]), 'text': w[4], 'block': w[5], 'line': w[6], 'word': w[7]}
+             for w in page.get_text('words')]
+    return {'width': page.cropbox.width, 'height': page.cropbox.height, 'rotation': page.rotation,
+            'coordinate_space': 'unrotated PyMuPDF page coordinates', 'blocks': blocks, 'words': words}
+
+
+def numeric_pairs(evidence: dict) -> list[dict]:
+    pairs = []
+    words = evidence['words']
+    for label in words:
+        name = label['text'].strip(':：').upper()
+        if name not in _STAT_LABELS:
+            continue
+        _x0, y0, x1, y1 = label['bbox']
+        same_row = sorted([w for w in words if w is not label
+                           and w['bbox'][0] >= x1 - 1
+                           and w['bbox'][0] - x1 <= 80
+                           and abs((w['bbox'][1] + w['bbox'][3] - y0 - y1) / 2) <= (y1 - y0) * .35],
+                          key=lambda w: w['bbox'][0])
+        # Stop at the first visible token; never cross another label or word.
+        value = same_row[0] if same_row else None
+        pair = {'label': name, 'label_bbox': label['bbox'], 'block': label['block'],
+                'status': 'unresolved'}
+        if value is not None and _VALUE.fullmatch(value['text']):
+            tied = [w for w in same_row[1:] if abs(w['bbox'][0] - value['bbox'][0]) < 1]
+            if not tied:
+                pair.update(value=value['text'].casefold(), value_bbox=value['bbox'],
+                            value_block=value['block'], status='same_row_candidate')
+        pairs.append(pair)
+    return pairs
+
+
+def check_pairs(pairs: list[dict], candidate: str) -> list[dict]:
+    """Compare explicit textual pairs, without guessing a Markdown table layout."""
+    cleaned = re.sub(r'[*_`]', '', candidate)
+    labels = '|'.join(re.escape(s) for s in sorted(_STAT_LABELS, key=len, reverse=True))
+    pattern = re.compile(r'(?<!\w)(' + labels + r')(?!\w)[ \t:：|]*([+-]?\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?(?:/\d+)*)(?!\w)', re.IGNORECASE)
+    found = Counter((m.group(1).upper(), m.group(2).casefold()) for m in pattern.finditer(cleaned))
+    result = []
+    for pair in pairs:
+        if pair['status'] != 'same_row_candidate':
+            result.append({'label': pair['label'], 'status': 'source_pair_unresolved', 'block': pair['block']})
+            continue
+        key = (pair['label'], pair['value'])
+        status = 'matched'
+        if found[key]:
+            found[key] -= 1
+        elif any(label == pair['label'] and count for (label, _), count in found.items()):
+            status = 'pair_mismatch'
+        else:
+            status = 'candidate_pair_unverified'
+        result.append({'label': pair['label'], 'value': pair['value'], 'block': pair['block'], 'status': status})
+    return result

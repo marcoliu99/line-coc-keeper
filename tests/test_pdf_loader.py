@@ -220,3 +220,19 @@ class PdfQualityRegressionTests(unittest.TestCase):
             )
             saved = json.loads((Path(directory) / scenario_id / 'parse_quality.json').read_text())
         self.assertEqual(saved, report)
+
+    def test_swapped_pairs_fall_back_without_losing_candidate_evidence(self):
+        payload = self.pdf(['STR 50 DEX 70'])
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'STR 70 DEX 50'}}):
+            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+        self.assertIn('STR 50 DEX 70', text)
+        self.assertNotIn('STR 70 DEX 50', text)
+        row = report['pages'][0]
+        self.assertEqual(row['candidates']['layout'], 'STR 70 DEX 50')
+        self.assertEqual(row['method'], 'native')
+        self.assertIn('layout_pair_mismatch', row['warnings'])
+        self.assertTrue(row['evidence']['blocks'])
+        self.assertEqual(len(report['pdf_sha256']), 64)
+        self.assertEqual(len(row['selected_sha256']), 64)
+        self.assertIn(1, review)

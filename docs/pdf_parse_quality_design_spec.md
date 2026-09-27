@@ -77,3 +77,39 @@ errors. Complex spanning tables and ambiguous columns are retained with warnings
 Human review remains necessary; automatic region-level table reconstruction and
 verified paragraph joins are not claimed by this revision. Large-source preparation
 models may still need batching; source storage and prompt limits are now separate.
+
+## Phase 2: block provenance and numeric pairing
+
+Persist page dimensions, rotation, native block/line/word bounding boxes and every
+candidate text (native, layout, OCR, vision) in the private parse-quality artifact.
+Bind evidence to the PDF SHA-256 and parser version. The gameplay source retains
+only the chosen text; alternate candidates are never concatenated into the prompt.
+
+For explicitly recognized stat labels, find an unambiguous nearby numeric word on
+the same visual row, stopping at intervening labels/text. Save label/value boxes and
+block IDs. No automatic vertical-table guesses or broad nearest-number association.
+Compare these source pairs with explicit label/value pairs in candidate text. A
+contradicting pair rejects that candidate even when its numeric multiset is unchanged.
+Missing/ambiguous pairs remain review warnings, not fabricated values or proof of
+correctness. Repeated-label identity and arbitrary skill tables remain limitations.
+
+Tests: same-number swaps, intervening labels, ambiguous/vertical layouts, repeated
+labels, empty candidates, complete artifact persistence and no candidate leakage.
+This phase prepares targeted OCR with inspectable regions; it does not add paid
+region repair or a page-editing UI.
+
+### Phase 2 verification
+
+Native geometry probes on the four supplied PDFs retained 293, 526, 369 and 154
+text blocks respectively. The pregen PDF yielded 140 same-row stat candidates
+across ten cards. A visual spot-check of PDF page 2 matched all 14 detected fields,
+including age 25, STR 90, DEX 65 and HP 16. This is a single-card spot-check, not a
+140-field accuracy claim. Other PDFs include unresolved labels in prose and complex
+layouts; these are not auto-assigned. Aggregate results contain no source text:
+[evaluation](evaluations/pdf_numeric_pair_probe.json).
+
+Phase 2 full suite: 782 passed, one skipped, 15 subtests passed; mypy checks 74 files.
+Changed-file Ruff checks pass. Numeric pairing currently covers explicitly supported
+single-token stat labels. Arbitrary skill names, vertical table reconstruction and
+same-label entity disambiguation are not certified. Provenance is retained for those
+cases so later local repair can use the original coordinates.
