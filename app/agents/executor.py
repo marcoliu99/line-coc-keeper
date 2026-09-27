@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections import Counter
 from copy import deepcopy
 from typing import Any
-from uuid import uuid4
 
 from app import keeper, observability, scenario_retrieval
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
@@ -19,7 +17,7 @@ from app.domain.models import (
     TurnResolution,
 )
 from app.providers import anthropic_provider, gemini_provider, openai_provider
-from app.services import prompt_config, purchases, turn_context, turn_resolution
+from app.services import prompt_config, turn_context, turn_resolution
 
 _logger = logging.getLogger(__name__)
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
@@ -46,16 +44,6 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     resolved_location = message.payload.get("resolved_location")
     rag_context = message.payload.get("rag_context", "")
     memory_context = message.payload.get("memory_context", "")
-
-    turn_key = uuid4().hex
-    # A new narrative action supersedes an unconfirmed shopping scene. Pure
-    # purchase confirmation commands bypass Executor, so they keep the quote.
-    if any(r.get("owner_id") == user_id and r.get("status") == "quoted"
-           for r in state.commerce.get("transactions", {}).values()):
-        def expire(latest):
-            changed = purchases.expire_quotes(latest, user_id)
-            return keeper._StateMutation(None, should_save=changed)
-        await asyncio.to_thread(keeper._mutate_and_save_state, state, expire)
 
     private_messages: list[tuple[str, str]] = []
     image_requests: list[tuple[str | None, int]] = []
@@ -137,32 +125,24 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 combat_active_before = state.combat.active
                 actor_before_tool = turn_resolution.actor_snapshot(state, user_id)
                 gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
-                if name == "purchase_items":
-                    tool_input = {**tool_input, "_turn_key": turn_key, "_owner_id": user_id}
-                if name == "add_carried_item" and re.search(r"買|买|\b(?:buy|purchase)\b", text, re.IGNORECASE):
-                    result: dict[str, Any] = {"ok": False, "error": "本回合提到購買，不能直接加物品。請先裁定到店，使用 purchase_items 結算；非購買取得請另行明確宣告。"}
-                else:
-                    model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", "unknown")
-                    remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
-                        [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], state.log, model, LLM_PROVIDER)
-                        if name == "search_scenario" else scenario_retrieval.BUDGET.get())
-                    current_binding = scenario_retrieval.source_binding(state)
-                    if current_binding != source_binding:
-                        delivered_fragments.clear()
-                        source_binding = current_binding
-                    fragments_token = scenario_retrieval.DELIVERED_FRAGMENTS.set(frozenset(delivered_fragments))
-                    budget_token = scenario_retrieval.BUDGET.set(remaining)
-                    model_token = scenario_retrieval.MODEL.set(model)
-                    try:
-                        result = await execute_tool(name, tool_input)
-                    finally:
-                        scenario_retrieval.DELIVERED_FRAGMENTS.reset(fragments_token)
-                        scenario_retrieval.MODEL.reset(model_token)
-                        scenario_retrieval.BUDGET.reset(budget_token)
-                if name == "purchase_items" and result.get("ok"):
-                    inventory_events.append(GameEvent("purchase", deepcopy(result["purchase"])))
-                if result.get("ok") and (name in {"add_carried_item", "remove_carried_item"}
-                        or (name == "purchase_items" and result["purchase"]["status"] == "purchased" and not result.get("duplicate"))):
+                model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", "unknown")
+                remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
+                    [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], state.log, model, LLM_PROVIDER)
+                    if name == "search_scenario" else scenario_retrieval.BUDGET.get())
+                current_binding = scenario_retrieval.source_binding(state)
+                if current_binding != source_binding:
+                    delivered_fragments.clear()
+                    source_binding = current_binding
+                fragments_token = scenario_retrieval.DELIVERED_FRAGMENTS.set(frozenset(delivered_fragments))
+                budget_token = scenario_retrieval.BUDGET.set(remaining)
+                model_token = scenario_retrieval.MODEL.set(model)
+                try:
+                    result = await execute_tool(name, tool_input)
+                finally:
+                    scenario_retrieval.DELIVERED_FRAGMENTS.reset(fragments_token)
+                    scenario_retrieval.MODEL.reset(model_token)
+                    scenario_retrieval.BUDGET.reset(budget_token)
+                if result.get("ok") and name in {"add_carried_item", "remove_carried_item"}:
                     owner = result.get("investigator")
                     before_items = inventory_before.get(owner, [])
                     after_items = result.get("carried_items", [])
@@ -227,7 +207,6 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         before_actor=before_actor, before_gameplay=before_gameplay,
     )
     observability.event("executor.resolution", disposition=resolution.disposition,
-                        blocker_code=resolution.blocker_code,
                         evidence_count=len(resolution.evidence_refs),
                         validation_code=resolution.validation_code, tool_event_count=len(tool_events))
     return MechanicResult(

@@ -4,7 +4,7 @@
 
 ## Current implementation
 
-`Character.carried_items` and weapons/ammunition record established possessions. `Character.cash_balances` and `GroupState.commerce` now implement confirmed balances, quotes and purchase receipts. The old statement that purchases are entirely prompt-only and no cash ledger exists is obsolete.
+`Character.carried_items` and weapons/ammunition record established possessions. Legacy `Character.cash_balances` and `GroupState.commerce` remain readable in old saves after the PR #91 rollback, but there is no active cash ledger, quote or purchase receipt workflow.
 
 ## Judgment boundaries
 

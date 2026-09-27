@@ -43,9 +43,6 @@ DESCRIPTION = Field("描述", paragraph=True)
 
 
 ACTIONS: tuple[HelpExecution, ...] = (
-    _a("purchases", "character/purchases", "查看購買紀錄", "direct", "/coc purchases"),
-    _a("purchase", "character/purchase", "確認購買", "form", "/coc purchase", Field("報價 ID"), confirm=True),
-    _a("funds", "kp/funds", "登記現金", "form", "/coc funds", NAME, Field("幣別"), Field("餘額"), confirm=True),
     _a("correct_report", "other/correct", "提報敘事疑點", "form", "/coc correct", Field("訊息 ID 或連結"), DESCRIPTION),
     _a("correct_list", "other/correct", "查看異議與更正", "direct", "/coc correct list"),
     _a("correct_approve", "other/correct", "核准更正", "form", "/coc correct approve", INDEX, DESCRIPTION, confirm=True),

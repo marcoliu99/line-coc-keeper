@@ -35,24 +35,6 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
                 self.assertPolicy(prompt, "不是新劇本內容的共同作者")
                 self.assertEqual(prompt.count("# 劇本正典邊界｜最高優先"), 1)
 
-    def test_ordinary_commerce_exception_is_consistent_across_keeper_paths(self):
-        from app.domain.models import TURN_BLOCKER_CODES
-        from app.services import purchases
-        for path, prompt in self._prompts(rag_enabled=True).items():
-            with self.subTest(path=path):
-                boundary = prompt.split('# 劇本正典邊界｜最高優先', 1)[1].split('# ', 1)[0]
-                self.assertIn('普通採買是明確例外', boundary)
-                self.assertIn('可交易的商業環境', boundary)
-                self.assertIn('兩瓶玻璃瓶煤油', prompt)
-                self.assertIn('武器、稀有／管制品、劇情道具不適用', prompt)
-                self.assertIn('與世隔絕、停業、匱乏、封鎖', prompt)
-                self.assertNotIn('查不到店家不代表能創造店家', prompt)
-        self.assertIn('不為找具名店家或逐項庫存而反覆搜尋或改查英文', prompt_config.EXECUTOR_SCENARIO_RAG_POLICY)
-        self.assertIn('普通合法商品可依已知商業環境裁定供應', purchases.TOOL['input_schema']['properties']['source']['description'])
-        self.assertEqual(TURN_BLOCKER_CODES, set(prompt_config.PURCHASE_BLOCKER_MESSAGES))
-        for code in TURN_BLOCKER_CODES:
-            self.assertIn(code, prompt_config.EXECUTOR_INSTRUCTION)
-
     def test_player_hypotheses_and_failed_rolls_cannot_create_world_elements(self):
         for path, prompt in self._prompts().items():
             with self.subTest(path=path):

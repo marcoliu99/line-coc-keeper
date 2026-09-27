@@ -290,14 +290,14 @@ def test_evidence_status_tracks_remaining_roots_and_narrator_reason():
             assert 'add_carried_item' not in calls
             await execute('search_scenario', {'complete_for_action': True, 'evidence_record_ids': ['rules']})
             assert status['scenario_evidence_blocked'] is False
-            # Retrieval recovered, but the subsequent purchase fails for a
-            # different reason. Narrator must not resurrect the old evidence hold.
-            assert not (await execute('purchase_items', {'ok': False, 'error': 'insufficient_funds'}))['ok']
+            # Retrieval recovered, but a later mutation fails for a different
+            # reason. Narrator must not resurrect the old evidence hold.
+            assert not (await execute('adjust_character', {'ok': False, 'error': 'invalid_adjustment'}))['ok']
             for disposition in ('blocked', 'incomplete'):
-                result = MechanicResult(success=False, action_type='purchase', narrative_facts=[],
+                result = MechanicResult(success=False, action_type='mutation', narrative_facts=[],
                                         state_delta=StateDelta(), check_status=status,
                                         turn_resolution=TurnResolution(disposition=disposition))
-                text = enforce_mechanic_check_consistency('purchase failed', result)
+                text = enforce_mechanic_check_consistency('mutation failed', result)
                 assert '劇本依據' not in text
             assert (await execute('add_carried_item', {}))['ok']
             # A later new incomplete root must close the gate again.

@@ -26,7 +26,6 @@ def current_state(state: GroupState) -> dict[str, Any]:
         characters.append({
             "owner_id": char.owner_id, "character_id": character_id(state, char.owner_id),
             "name": char.name, "carried_items": list(char.carried_items),
-            "cash_balances": dict(char.cash_balances),
         })
     def checks(collection: dict) -> list[dict]:
         return [{

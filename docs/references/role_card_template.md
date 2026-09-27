@@ -33,8 +33,7 @@ for extraction to invent content.
   character motivation in `【角色扮演動機】`, following the existing privacy policy;
   do not assume ordinary `【玩家筆記】` is private. KP/system access still applies.
 - `【財務原文備註】` preserves statements such as cash on hand, debts, assets or uncertain
-  currency as prose. It does not create a transaction or cash ledger balance. In PR91's
-  accounting flow, a KP separately confirms currency and balance before exact debit.
+  currency as prose. It does not create a transaction or an active cash ledger balance.
 - `【原卡衍生數值備註】` retains printed HP/MP/SAN/MOV/DB/Build for review. It is descriptive
   evidence, not an override: this manual parser still derives initial mechanics from
   base attributes. Resolve a mismatch before play; do not assume notes changed state.
@@ -168,4 +167,3 @@ PDF 頁碼／印刷頁碼：
 【玩家筆記】
 
 【角色扮演動機】
-
