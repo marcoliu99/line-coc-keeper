@@ -69,7 +69,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
-from app.services import mutation_admission
+from app.services import mutation_admission, turn_delivery
 
 _logger = logging.getLogger(__name__)
 
@@ -954,6 +954,22 @@ class _CheckResolution:
     timeline_id: str = ""
     action_context: str = ""
     resolved_event: dict | None = None
+    visibility: str = "public"
+    recipient_id: str = ""
+
+
+def _check_audience(owner_id: str, entry: dict | None) -> dict[str, str]:
+    private = turn_delivery.is_private(entry or {})
+    return {"visibility": "player_private" if private else "public",
+            "recipient_id": owner_id if private else ""}
+
+
+def _audienced_check_resolution(owner_id: str, entry: dict | None, **kwargs) -> _CheckResolution:
+    audience = _check_audience(owner_id, entry)
+    resolution = _CheckResolution(**kwargs, visibility=audience["visibility"], recipient_id=audience["recipient_id"])
+    if resolution.resolved_event is not None:
+        resolution.resolved_event.update(audience)
+    return resolution
 
 
 _CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
@@ -1229,8 +1245,19 @@ async def _finalize_check_result(
     """Shared tail for every resolved check (sanity, choice, plain skill, and
     a Luck-spend decision) — hands the already-determined result to the
     Keeper for narration and delivers whatever it queued."""
+    private_result = turn_delivery.is_private(resolved_event or {})
+    if private_result:
+        # Route by persisted audience, never by whichever channel invoked /coc check.
+        async def private_reply(text: str) -> None:
+            await send_dm(user_id, text)
+
+        async def private_image(png: bytes, group_id: str, page: int) -> None:
+            await send_dm_image(user_id, png, group_id, page)
+
+        reply = private_reply
+        send_image = private_image
     if split_roll_feedback:
-        await reply(roll_feedback_text or roll_line)
+        await reply(roll_line if private_result else (roll_feedback_text or roll_line))
 
     async def run_keeper_phase() -> None:
         # Deliberately NOT running keeper_message through _resolve_map_action:
@@ -1309,7 +1336,7 @@ async def _finalize_check_result(
                     key: resolved_event[key]
                     for key in (
                         "investigator", "skill", "skill_value", "roll", "difficulty",
-                        "outcome", "action_context", "check_id", "timeline_id",
+                        "outcome", "action_context", "check_id", "timeline_id", "visibility", "recipient_id",
                     )
                     if key in resolved_event
                 }
@@ -1369,11 +1396,12 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
     with locks.get_state_lock(conversation_id):
         mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
+        audience_entry = dict(state.pending_checks.get(user_id) or {})
         if not state.active:
-            return _CheckResolution(reply_text="目前沒有進行中的遊戲。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="目前沒有進行中的遊戲。")
         char = state.get_active_character(user_id)
         if not char:
-            return _CheckResolution(reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
         attributes_before = _character_attribute_snapshot(char)
 
         parts = text.split()
@@ -1395,7 +1423,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     owner_id_hash=observability.safe_identifier(user_id),
                 )
                 save_state(state)
-                return _CheckResolution(reply_text="這個檢定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text="這個檢定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
         # Keep the original entry separate from `pending`: a valid choice
         # consumes the pending entry into the selected option, but its
         # identity and action context must still follow that same persisted
@@ -1427,7 +1455,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             if skill_arg is None:
                 state.pending_checks[user_id] = pending
                 options_text = "、".join(f"{o['label']}（{o['skill']} {o['skill_value']}%）" for o in pending["options"])
-                return _CheckResolution(reply_text=f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}")
             matched = next(
                 (o for o in pending["options"]
                  if _skill_names_match(o["label"], skill_arg) or _skill_names_match(o["skill"], skill_arg)),
@@ -1436,7 +1464,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             if not matched:
                 state.pending_checks[user_id] = pending
                 options_text = "、".join(o["label"] for o in pending["options"])
-                return _CheckResolution(reply_text=f"沒有「{skill_arg}」這個選項，可選：{options_text}")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"沒有「{skill_arg}」這個選項，可選：{options_text}")
             choice_skill_name, choice_display_label = matched["skill"], matched["label"]
             choice_value = int(matched["skill_value"])
             choice_bonus = int(matched["bonus_dice"])
@@ -1452,7 +1480,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             pending = None
         elif skill_arg is None:
             if not pending:
-                return _CheckResolution(
+                return _audienced_check_resolution(user_id, audience_entry,
                     reply_text=(
                         "目前沒有待處理的選擇。請先讓 Keeper 建立檢定；玩家用 /coc check 或按鈕擲骰，"
                         "不要在沒有待處理請求時重複送出。"
@@ -1460,11 +1488,11 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 )
         elif pending and pending.get("type") == "sanity":
             state.pending_checks[user_id] = pending
-            return _CheckResolution(reply_text="目前等待的是理智檢定，請不要自行指定技能；這筆舊版檢定會由系統處理。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="目前等待的是理智檢定，請不要自行指定技能；這筆舊版檢定會由系統處理。")
         elif not (pending and pending.get("type") == "skill" and _skill_names_match(pending.get("skill", ""), skill_arg)):
             if pending:
                 state.pending_checks[user_id] = pending
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 reply_text=(
                     "沒有這個待處理的選擇。請使用正確的選項名稱；角色檢定由玩家用 /coc check 或按鈕擲骰。"
                 )
@@ -1502,6 +1530,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     chained_context = chained_context[:237] + "..."
                 origin_context = observability.current_context()
                 state.pending_checks[user_id] = {
+                    **_check_audience(user_id, audience_entry),
                     "type": "skill", "skill": "INT", "skill_value": int_value,
                     "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
                     "madness_trigger": True, "madness_realtime": True,
@@ -1552,7 +1581,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 char.name, "理智檢定", f"SAN {san_before}", sanity_result.check.roll, outcome
             )
             save_state(state)
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
                 check_id=check_id, timeline_id=timeline_id, action_context=action_context,
@@ -1593,7 +1622,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 madness_realtime = bool(pending.get("madness_realtime", True))
                 major_wound_trigger = bool(pending.get("major_wound_trigger", False))
             else:
-                return _CheckResolution(
+                return _audienced_check_resolution(user_id, audience_entry,
                     reply_text=(
                         "目前沒有待處理的檢定。請先描述行動讓 Keeper 建立檢定，再用 /coc check 或按鈕擲骰。"
                     )
@@ -1635,7 +1664,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 char.name, "INT", str(value), skill_result.roll, tier_zh
             )
             save_state(state)
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
                 check_id=check_id, timeline_id=timeline_id, action_context=action_context,
@@ -1661,6 +1690,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         if luck_options:
             origin_context = observability.current_context()
             state.pending_luck_decisions[user_id] = {
+                **_check_audience(user_id, audience_entry),
                 "decision_id": new_decision_id(), "check_id": check_id, "timeline_id": timeline_id,
                 "origin_revision": state.state_revision + 1,
                 "origin_turn_id": str(origin_context.get("turn_id", "")),
@@ -1679,7 +1709,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
             check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
             attacker_note = f"\n⚔️ 攻擊方擲出 → {_CHECK_TIER_ZH[attacker_tier]}" if attacker_tier is not None else ""
-            return _CheckResolution(
+            return _audienced_check_resolution(user_id, audience_entry,
                 reply_text=(
                     f"🎲 {char.name} 的{check_label}檢定：{value}%{dice_note}，擲出 {skill_result.roll} → {_tier_zh_for_result(skill_result)}{attacker_note}\n"
                     f"目前 Luck {char.luck} 點，要花 Luck 買到更好的結果嗎？可選：{options_text}\n"
@@ -1710,7 +1740,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             char.name, display_label or skill_name, str(value), skill_result.roll, _tier_zh_for_result(skill_result), opposed_text
         )
         save_state(state)
-        return _CheckResolution(
+        return _audienced_check_resolution(user_id, audience_entry,
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
             roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
             check_id=check_id, timeline_id=timeline_id, action_context=action_context,
@@ -1746,7 +1776,10 @@ async def handle_check_command(
     """
     resolution = await asyncio.to_thread(_resolve_check_deterministically, conversation_id, user_id, text)
     if resolution.reply_text:
-        await reply(resolution.reply_text)
+        if resolution.visibility != "public":
+            await send_dm(user_id, resolution.reply_text)
+        else:
+            await reply(resolution.reply_text)
         return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
         return False
@@ -1781,7 +1814,10 @@ async def handle_luck_decision(
     Keeper exactly like a normal check."""
     resolution = await asyncio.to_thread(_resolve_luck_decision_deterministically, conversation_id, user_id, choice)
     if resolution.reply_text:
-        await reply(resolution.reply_text)
+        if resolution.visibility != "public":
+            await send_dm(user_id, resolution.reply_text)
+        else:
+            await reply(resolution.reply_text)
         return False
     if not resolution.should_finalize or resolution.state is None or resolution.char is None:
         return False
@@ -1803,12 +1839,13 @@ def _resolve_luck_decision_deterministically(
     with locks.get_state_lock(conversation_id):
         mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
+        audience_entry = dict(state.pending_luck_decisions.get(user_id) or {})
         pending = state.pending_luck_decisions.pop(user_id, None)
         if not pending:
-            return _CheckResolution(reply_text="目前沒有待決定的 Luck 花費。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="目前沒有待決定的 Luck 花費。")
         char = state.get_active_character(user_id)
         if not char:
-            return _CheckResolution(reply_text="找不到你的角色。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="找不到你的角色。")
         attributes_before = _character_attribute_snapshot(char)
 
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
@@ -1823,7 +1860,7 @@ def _resolve_luck_decision_deterministically(
                 owner_id_hash=observability.safe_identifier(user_id),
             )
             save_state(state)
-            return _CheckResolution(reply_text="這個 Luck 決定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
+            return _audienced_check_resolution(user_id, audience_entry, reply_text="這個 Luck 決定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
         decision_id = effective_decision_id(user_id, pending, timeline_id)
         # Keep the narration/result identity aligned with the persisted
         # pending check.  Older Luck entries may not have check_id, so use the
@@ -1850,12 +1887,12 @@ def _resolve_luck_decision_deterministically(
                 state.pending_luck_decisions[user_id] = pending  # not a valid option — put it back
                 save_state(state)
                 options_text = "、".join(f"{o['tier']}（{o['cost']} 點）" for o in pending["options"])
-                return _CheckResolution(reply_text=f"這不是有效的選項，可選：{options_text}、skip")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"這不是有效的選項，可選：{options_text}、skip")
             luck_spent = option["cost"]
             if char.luck < luck_spent:
                 state.pending_luck_decisions[user_id] = pending
                 save_state(state)
-                return _CheckResolution(reply_text=f"目前 Luck 只有 {char.luck} 點，不足以花費 {luck_spent} 點。")
+                return _audienced_check_resolution(user_id, audience_entry, reply_text=f"目前 Luck 只有 {char.luck} 點，不足以花費 {luck_spent} 點。")
             char.luck -= luck_spent
             tier = choice
 
@@ -1918,7 +1955,7 @@ def _resolve_luck_decision_deterministically(
             opposed_text,
             result_line=result_line,
         )
-        return _CheckResolution(
+        return _audienced_check_resolution(user_id, audience_entry,
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
             roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
             check_id=check_id, decision_id=decision_id, timeline_id=timeline_id,

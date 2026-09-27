@@ -518,3 +518,7 @@ Python 建立 `DeliveryEnvelope`，包含輸出 ID、對象／收件人、允許
 ### 13.4 驗證
 
 隔離完整測試：**1044 passed、1 skipped、33 subtests**；Ruff 通過；mypy **86 個來源檔通過**；`git diff --check` 通過。原基線為 987 passed、1 skipped。既有機制、按鈕識別、購買、更正與 provider 測試均保留。未增加固定模型階段、執行真實 API、修改正式遊戲資料或部署。
+
+## PR #97 review corrections
+
+保留檢定可見性與真實擁有者，涵蓋結算、Luck、連鎖檢定、事件／上下文與輸出。即使從公開指令進入，私密結果與圖片仍只送本人；私訊失敗不能轉公開。保底輸出保留經過濾的 damage_combatant 傷害／治療，不洩漏敵人 HP。測試檢定、Luck、SAN／INT 串接、分段／完整輸出及工具提交後故障。

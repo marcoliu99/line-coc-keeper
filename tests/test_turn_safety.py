@@ -439,3 +439,147 @@ def test_private_resolved_check_never_promotes_model_prose_to_public(state):
     assert public == "請查看你的私訊。"
     assert len(private) == 1 and private[0][0] == "u"
     assert "68" in private[0][1] and "秘密結果" in private[0][1]
+
+
+@pytest.mark.parametrize('kind', ['skill', 'choice', 'sanity'])
+@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize('visibility', ['public', 'player_private'])
+def test_check_resolution_keeps_audience_through_delivery_and_event(state, kind, split, visibility):
+    state.active = True
+    from app import dice
+    char = state.get_active_character('u')
+    char.luck = 0
+    char.san = 50
+    state.pending_checks['u'] = {
+        'type': kind, 'skill': '偵查', 'skill_value': 50, 'bonus_dice': 0, 'penalty_dice': 0,
+        'check_id': 'private-check', 'timeline_id': state.timeline_id,
+        'visibility': visibility, 'recipient_id': 'wrong-user', 'action_context': '秘密行動',
+        'options': [{'label': '偵查', 'skill': '偵查', 'skill_value': 50, 'bonus_dice': 0, 'penalty_dice': 0}],
+    }
+    save_state(state)
+    roll = dice.SkillCheckResult(50, 42, 0, 0, 'regular', True)
+    san = dice.SanityCheckResult(roll, 50, 48, 2, '2', False)
+    reply, dm, image, dm_image = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
+    followup = AsyncMock(return_value=('結果敘事', [], [(None, 1)]))
+    with patch.object(dice, 'skill_check', return_value=roll), \
+         patch.object(dice, 'sanity_check', return_value=san), \
+         patch.object(supervisor, 'run_turn', followup), \
+         patch.object(legacy_commands, 'load_page_image', return_value=b'png'), \
+         patch.object(legacy_commands, '_spawn_post_turn_maintenance'):
+        assert asyncio.run(legacy_commands.handle_check_command(
+            state.group_id, 'u', reply, dm, image, dm_image,
+            '/coc check 偵查' if kind == 'choice' else '/coc check', split_roll_feedback=split))
+    context = followup.call_args.kwargs['resolved_check_context']
+    assert context['visibility'] == visibility
+    assert context['recipient_id'] == ('u' if visibility != 'public' else '')
+    event = load_state(state.group_id).resolved_check_events[-1]
+    assert event['visibility'] == visibility and event['recipient_id'] == context['recipient_id']
+    if visibility != 'public':
+        reply.assert_not_awaited()
+        image.assert_not_awaited()
+        assert all(c.args[0] == 'u' for c in dm.await_args_list)
+        assert '42' in '\n'.join(c.args[1] for c in dm.await_args_list)
+        if kind == 'sanity':
+            assert '損失 2 點理智' in '\n'.join(c.args[1] for c in dm.await_args_list)
+        dm_image.assert_awaited_once_with('u', b'png', state.group_id, 1)
+    else:
+        dm.assert_not_awaited()
+        dm_image.assert_not_awaited()
+        image.assert_awaited_once()
+        assert reply.await_count >= 1
+
+
+@pytest.mark.parametrize('choice', ['skip', 'regular'])
+def test_private_luck_offer_and_resolution_keep_audience(state, choice):
+    state.active = True
+    from app import dice
+    char = state.get_active_character('u')
+    char.luck = 60
+    state.pending_checks['u'] = {'type': 'skill', 'skill': '偵查', 'skill_value': 50,
+        'bonus_dice': 0, 'penalty_dice': 0, 'visibility': 'player_private',
+        'check_id': 'private-luck', 'timeline_id': state.timeline_id}
+    save_state(state)
+    reply, dm, image, dm_image = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
+    roll = dice.SkillCheckResult(50, 55, 0, 0, 'fail', False)
+    with patch.object(dice, 'skill_check', return_value=roll):
+        assert not asyncio.run(legacy_commands.handle_check_command(
+            state.group_id, 'u', reply, dm, image, dm_image, '/coc check'))
+    pending = load_state(state.group_id).pending_luck_decisions['u']
+    assert pending['visibility'] == 'player_private' and pending['recipient_id'] == 'u'
+    assert '55' in dm.await_args.args[1]
+    followup = AsyncMock(return_value=('結果敘事', [], []))
+    with patch.object(supervisor, 'run_turn', followup), patch.object(legacy_commands, '_spawn_post_turn_maintenance'):
+        assert asyncio.run(legacy_commands.handle_luck_decision(
+            state.group_id, 'u', choice, reply, dm, image, dm_image, split_roll_feedback=True))
+    reply.assert_not_awaited()
+    assert followup.call_args.kwargs['resolved_check_context']['visibility'] == 'player_private'
+    latest = load_state(state.group_id)
+    assert latest.get_active_character('u').luck == (60 if choice == 'skip' else 55)
+    assert latest.resolved_check_events[-1]['visibility'] == 'player_private'
+
+
+def test_private_sanity_chained_int_and_errors_remain_private(state):
+    state.active = True
+    from app import dice
+    state.pending_checks['u'] = {'type': 'sanity', 'visibility': 'player_private', 'check_id': 'san',
+                                'timeline_id': state.timeline_id, 'action_context': '秘密恐懼'}
+    state.autoroll_checks = False
+    save_state(state)
+    roll = dice.SkillCheckResult(50, 55, 0, 0, 'fail', False)
+    with patch.object(dice, 'sanity_check', return_value=dice.SanityCheckResult(roll, 50, 45, 5, '5', True)):
+        resolved = legacy_commands._resolve_check_deterministically(state.group_id, 'u', '/coc check')
+    assert resolved.resolved_event['visibility'] == 'player_private'
+    pending = load_state(state.group_id).pending_checks['u']
+    assert pending['skill'] == 'INT' and pending['visibility'] == 'player_private'
+    reply, dm = AsyncMock(), AsyncMock()
+    asyncio.run(legacy_commands.handle_check_command(state.group_id, 'u', reply, dm,
+        AsyncMock(), AsyncMock(), '/coc check WRONG'))
+    reply.assert_not_awaited()
+    assert dm.await_args.args[0] == 'u'
+    with patch.object(dice, 'skill_check', return_value=roll):
+        chained = legacy_commands._resolve_check_deterministically(state.group_id, 'u', '/coc check INT')
+    assert chained.resolved_event['visibility'] == 'player_private'
+
+
+def test_private_dm_failure_never_falls_back_to_public_result(state):
+    state.active = True
+    from app import dice
+    state.get_active_character('u').luck = 0
+    state.pending_checks['u'] = {'type': 'skill', 'skill': '偵查', 'skill_value': 50,
+        'bonus_dice': 0, 'penalty_dice': 0, 'visibility': 'player_private'}
+    save_state(state)
+    reply, dm = AsyncMock(), AsyncMock(side_effect=RuntimeError('DM unavailable'))
+    with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(50, 42, 0, 0, 'regular', True)), \
+         pytest.raises(RuntimeError, match='DM unavailable'):
+        asyncio.run(legacy_commands.handle_check_command(state.group_id, 'u', reply, dm,
+            AsyncMock(), AsyncMock(), '/coc check', split_roll_feedback=True))
+    reply.assert_not_awaited()
+    assert 'u' not in load_state(state.group_id).pending_checks
+
+
+@pytest.mark.parametrize('delta', [-2, 2])
+def test_damage_combatant_commit_survives_provider_failure(state, delta):
+    state.get_active_character('u').hp = 6
+    state.combat.active = True
+    state.combat.order = [Combatant('Ada', 50, 6, 10, is_pc=True)]
+    save_state(state)
+    msg = message(state)
+    async def provider(*args, **kwargs):
+        assert (await args[5]('damage_combatant', {'name': 'Ada', 'delta': delta}))['ok']
+        raise RuntimeError('provider failed after committed damage/healing')
+    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
+         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=AsyncMock(side_effect=provider))}):
+        asyncio.run(executor.run_executor(msg))
+    reply, _ = turn_delivery.finalize(msg, '行動未完成')
+    assert 'Ada' in reply and ('已結算傷害 2' if delta < 0 else 'HP 6 → 8') in reply
+    assert load_state(state.group_id).get_active_character('u').hp == 6 + delta
+
+
+def test_enemy_damage_combatant_recovery_uses_only_filtered_result():
+    for result in ({'ok': True, 'name': 'Enemy', 'side': 'enemy', 'final_damage': 2, 'hp': 71, 'hp_before': 73},
+                   {'ok': True, 'name': 'Enemy', 'side': 'enemy', 'hp': 73, 'hp_before': 71}):
+        with patch.object(spoiler_policy, 'is_privacy_isolation_enabled', return_value=True):
+            public = keeper._filter_public_combat_damage_result(result, 'player')
+        fact = turn_delivery.observe_tool('damage_combatant', public, 1)
+        assert fact.public_text and 'Enemy' in fact.public_text
+        assert '71' not in fact.public_text and '73' not in fact.public_text

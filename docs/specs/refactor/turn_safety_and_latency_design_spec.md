@@ -518,3 +518,7 @@ Audited read commands (`help`, `status`, `characters`, `purchases`) and other co
 ### 13.4 Verification
 
 Isolated complete suite: **1044 passed, 1 skipped, 33 subtests**. Ruff passed; mypy **86 source files passed**; `git diff --check` passed. Baseline was 987 passed, 1 skipped. Existing mechanism, button identity, purchase, correction and provider tests remain enabled. No new fixed model stage, live API run, production data mutation, or deployment was performed.
+
+## PR #97 review corrections
+
+Preserve check visibility and the authoritative owner through resolution, Luck, chained checks, event/context construction and delivery. Route private feedback and images to that owner even when invoked from a public command; DM failures must not fall back to public output. Preserve filtered damage_combatant injury/healing results in recovery without exposing enemy HP. Test deterministic check/Luck resolution, chained SAN/INT checks, split and combined delivery, and failures after combat tool commits.
