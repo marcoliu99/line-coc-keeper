@@ -53,6 +53,10 @@ ACTIONS: tuple[HelpExecution, ...] = (
     _a("correct_withdraw", "other/correct", "撤回異議", "form", "/coc correct withdraw", INDEX),
     _a("correct_hold", "other/correct", "標記核對範圍", "form", "/coc correct hold", INDEX, Field("實體名稱或別名，以 | 分隔"), confirm=True),
     _a("correct_supersede", "other/correct", "整併更正", "form", "/coc correct supersede", Field("舊更正編號"), Field("取代它的核准編號"), confirm=True),
+    _a("source_export", "scenario/source_export", "整備英文來源", "select", "/coc scenario source export", source="scenario"),
+    _a("source_import", "scenario/source_import", "匯入英文來源", "select", "/coc scenario source import", source="source_import"),
+    _a("source_use", "scenario/use", "選用新版英文", "select", "/coc scenario use", source="source_use", confirm=True),
+    _a("source_status", "scenario/source_status", "英文整備進度", "select", "/coc scenario source status", source="source_status"),
     _a("template_status", "scenario/template_status", "查看模板", "select", "/coc scenario template status", source="scenario"),
     _a("template_export", "scenario/template_export", "匯出空白模板", "select", "/coc scenario template export", source="scenario"),
     _a("template_preview", "scenario/template_preview", "預覽模板", "select", "/coc scenario template preview", source="template_preview"),
@@ -183,6 +187,9 @@ def validate_coverage(paths: set[tuple[str, ...]]) -> None:
 
 def options_for(source: str, state: GroupState, user_id: str) -> list[tuple[str, str]]:
     """Return fresh (label, command argument) options for a Help picker."""
+    if source.startswith("source_"):
+        from app import scenario_source_authoring
+        return scenario_source_authoring.options(source)
     if source.startswith("template_"):
         return _template_options(source)
     if source == "pregen":
@@ -198,7 +205,8 @@ def options_for(source: str, state: GroupState, user_id: str) -> list[tuple[str,
         return [(key, key) for key in sorted(state.scene_maps)]
     if source == "scenario":
         from app import scenario_library
-        return [(f"{item.get('title') or '未命名'} ({item['id']})", str(item["id"]))
+        from app.scenario_source_authoring import scenario_label
+        return [(scenario_label(item), str(item["id"]))
                 for item in scenario_library.list_scenarios() if item.get("id")]
     if source == "import_pdf":
         from pathlib import Path

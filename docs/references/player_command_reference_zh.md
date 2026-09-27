@@ -377,6 +377,27 @@
 - `/coc setpersona 文字`
 - `/coc setpersona reset`
 
+### 整備英文來源 **[KP-only]**
+
+匯出單一 MD，連同原 PDF 交給外部 AI 修復英文。
+
+用法：
+- `/coc scenario source export 劇本ID`
+
+### 匯入英文來源 **[KP-only]**
+
+選擇外部 AI 成果；可分次，全部完成後自動建立新版。
+
+用法：
+- `/coc scenario source import 劇本ID 檔名.md`
+
+### 英文整備進度 **[KP-only]**
+
+私訊已完成、待補頁面與新版英文。
+
+用法：
+- `/coc scenario source status 劇本ID [匯出ID]`
+
 ### 開始劇情
 
 角色準備好後，產生劇本開場白。

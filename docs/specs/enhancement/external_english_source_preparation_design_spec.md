@@ -2,7 +2,7 @@
 
 [繁體中文](external_english_source_preparation_design_spec_zh.md)
 
-Status: proposed; awaiting specification review. No runtime implementation yet.
+Status: implemented on the feature branch; automated verification recorded below.
 Branch: `enhancement/external-english-source-preparation`.
 Baseline: `main_v2` at `45c03c2` (includes PR #100).
 
@@ -15,7 +15,7 @@ incorrect extraction. PR #100 improves diagnostics and provides a local source
 repair CLI, but its proposal workflow is not the requested web-AI round trip.
 
 Add English-source export/import before Chinese translation. The user supplies
-exported MD files and the matching original PDF to external web AI. That AI
+the exported MD file and the matching original PDF to external web AI. That AI
 reconstructs the English source. A complete, structurally valid import becomes a
 new authoritative English source for subsequent authoring and source retrieval.
 No mandatory human page review, operator-entered evidence rectangles, reviewer
@@ -30,7 +30,7 @@ missing content. Structural validation cannot prove the AI read the PDF correctl
 
 ## 2. Scope
 
-Included: buttons and matching commands; at most three English workbooks; matching
+Included: buttons and matching commands; one English workbook; matching
 original PDF path/delivery guidance; English correction prompt; resumable result
 imports; automatic publication on full completion; immutable source audit; use by
 English retrieval and fresh Chinese authoring exports; bilingual documentation.
@@ -47,7 +47,7 @@ and can still use the configured API.
 ```text
 Help / Scenario library
   -> Prepare English source -> select scenario (library list)
-  -> source export -> private MD paths + matching PDF path + visible prompt
+  -> source export -> private MD path + matching PDF path + visible prompt
   -> web AI receives MD + PDF, checks pages and returns corrected English MD
   -> download to results/ -> Import English source -> select matching file
   -> source import -> provenance + schema + page coverage checks
@@ -60,7 +60,7 @@ Help / Scenario library
 
 | Command | Help control | Result |
 | --- | --- | --- |
-| `/coc scenario source export SCENARIO_ID` | Prepare English source, scenario list | 1-3 workbooks plus original PDF location and prompt |
+| `/coc scenario source export SCENARIO_ID` | Prepare English source, scenario list | One workbook plus original PDF location and prompt |
 | `/coc scenario source import SCENARIO_ID FILE.md` | Import English source, matched result file list | Draft progress or published new source ID |
 | `/coc scenario source status SCENARIO_ID [EXPORT_ID]` | English preparation progress, export list | Completed/pending/unresolved pages and published version |
 
@@ -82,8 +82,7 @@ selecting a source for an active group keeps existing scenario-switch safeguards
 ## 4. Export identity, pages and packaging
 
 Introduce `app/scenario_source_authoring.py` for this distinct payload type. Reuse
-safe paths, private file handling, filename sanitization, diagnostics and balanced
-packaging helpers where compatible. Do not reuse Chinese numeric compilation or
+safe paths, private file handling, filename sanitization and diagnostics helpers where compatible. Do not reuse Chinese numeric compilation or
 require matching old `source_quote` strings to approve changed English.
 
 A server-owned registry binds export ID, scenario ID, exact source text/hash,
@@ -101,12 +100,12 @@ and report this fallback, retaining the original full extraction in the audit.
 Do not falsely assign unlocated old text to an invented page. No AI call or giant
 set of per-page PNG attachments is needed; the user supplies the original PDF.
 
-Produce at most three MD workbooks for all supported lengths. Balance contiguous
-physical-page records by size; include chapter labels and adjacent-page context
-where needed. Do not truncate rules to achieve three files. Each workbook contains
-instructions, the full assigned source candidates and a return schema. Filenames
-use the actual scenario title: `ScenarioTitle_01.md`, `_02.md`, `_03.md`; not a
-hard-coded sample title. PDF is one additional input, not one of the three MDs.
+Produce exactly one MD workbook containing every physical page, for short and long
+sources alike (user decision on 2026-09-27). Include chapter labels, the complete
+ordered page candidates and return schema. Do not truncate rules or omit pages.
+The actual scenario title supplies `ScenarioTitle_01.md`; this is not a fixed sample
+name. The original PDF is a separate attachment. The external AI may return any
+number of result MD files with increasing numbers; all share package ID `p1`.
 
 Paths are separate from Chinese preparation:
 
@@ -118,9 +117,9 @@ a library draft/progress file and immutable result revision receipts
 ```
 
 All result replies share increasing filename numbers, regardless of workbook.
-Three source MDs do not limit the number of AI replies. Support bounded inputs
+The single source MD does not limit the number of AI replies. Support bounded inputs
 with explicit resource errors: reuse the 20 MB per-file limit and a documented
-200 MB preparation storage limit; never emit a fourth source workbook or silently
+200 MB preparation storage limit; never split into additional source workbooks or silently
 lose content when a limit is exceeded. Validate actual output sizes, not just text
 estimates. Counts and limits are preparation concerns, not gameplay prompt limits.
 
@@ -244,7 +243,7 @@ AI-prepared English during indexing or export.
 Export reply and every MD contain an English and Traditional Chinese instruction.
 The copyable instruction shown to the user is:
 
-> Upload these English preparation MD files AND the matching original PDF. Compare
+> Upload this English preparation MD file AND the matching original PDF. Compare
 > every assigned physical PDF page with the extracted text and return complete,
 > corrected English, not a Chinese translation or summary. Repair column order,
 > tables, OCR words/numbers, decorative footer noise and missing visible text.
@@ -267,7 +266,7 @@ remain meaningful text even though metadata uses physical PDF pages.
   and removal of decorative digits without prose padding.
 - Complete a 27-page-style fixture with text pages, map labels, raster cards, blank
   Luck, custom skills, ages and reference-rule backs; no missing-page auto-approval.
-- Long sources preserve every page across at most three workbooks, actual-title
+- Long sources preserve every page in one workbook, actual-title
   filenames and arbitrarily many bounded result replies; capacity errors are explicit.
 - Replace a saved page with another AI revision, retry identical results, omit saved
   pages, send duplicate IDs, stale exports, unknown pages and wrong package IDs.
@@ -284,12 +283,43 @@ remain meaningful text even though metadata uses physical PDF pages.
   tests, Ruff and mypy once implemented. Live model quality is a separate optional
   evaluation, not a mandatory automated semantic approval gate.
 
-## 10. Decisions for this review
+## 10. Accepted decisions and implementation
 
-Proposed defaults: English repair is a distinct step before Chinese translation;
+Accepted behavior: English repair is a distinct step before Chinese translation;
 AI corrected content is authoritative; complete imports automatically create a new
 version; active games are never silently switched; continuation is page-based with
 no replacement-ID bookkeeping. Truly unreadable content stays pending with external
 AI. This specification does not promise to reconstruct missing original evidence.
 
-Implementation has not started. No paid API calls or production mutations were made.
+Implemented in `scenario_source_authoring.py`, system commands, Help actions and
+Discord controls. Result pickers bind a locally computed file fingerprint and
+revalidate it at execution. Missing/invalid result reasons are privately available
+through source status. Follow-up buttons carry the actual newly published ID,
+recheck user/channel/permission, and use existing scenario-switch confirmation.
+A per-export thread lock plus `flock` serializes draft updates across processes.
+UTF-8 result text normalizes CRLF/CR to LF once at validation; all remaining
+whitespace is retained and audit hashes describe the actual published bytes.
+A fully saved candidate is immutable during publication retries, even if a crash
+occurred before the publication receipt. Source images remain Keeper-only.
+
+No paid API calls or production mutations were made. Structural tests verify the
+round trip; correctness of external AI transcription still depends on reading the
+matching original PDF. This feature does not add an application-side AI reviewer.
+
+
+### Verification (2026-09-27)
+
+- Isolated full suite: `python3 /private/tmp/run_review_suite.py english-source /private/tmp/line-coc-external-english-source`
+  (runs `python3 -m pytest -o addopts= -q --tb=short` with temporary data directories,
+  dotenv disabled and provider credentials cleared): **1,082 passed, 1 skipped,
+  33 subtests passed**. The 49 new cases use synthetic PDFs and local result fixtures.
+- `python3 -m ruff check app tests`: passed.
+- `python3 -m mypy app`: passed (86 source files).
+- `git diff --check`: passed. Branch includes current `origin/main_v2` (`45c03c2`).
+- Coverage includes two independent processes completing one export, crash recovery,
+  replaced result fingerprints, malformed payloads, storage limits, altered published
+  images/PDF/text, real raster-page candidates and a 27-page completed source.
+- Explicit English selection passes `original` for the **new** scenario ID and cannot
+  inherit a previously selected Chinese preference. Scenario selection now accepts
+  the trusted Keeper role as well as KP Assistant; ordinary players remain denied.
+- No paid API calls, real Discord deliveries or production-data mutations were used.

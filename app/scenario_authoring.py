@@ -97,7 +97,10 @@ Numeric self-check / 數值自查（匯入成功不等於核准）：
    report unit_id, physical PDF page, exact extracted text, proposed correction,
    reason and anything still unreadable. Source correction reports are NOT an
    accepted import schema: leave affected units unfinished until the source is
-   repaired and re-exported. Do not edit source IDs or fabricate source_quote to
+   repaired and re-exported. Use Help > Prepare English source (scenario source export),
+   upload that workbook AND the PDF to external AI, then import its English result
+   with scenario source import. Export a fresh Chinese workbook from the new source.
+   Do not edit source IDs or fabricate source_quote to
    match the PDF; uploaded quotes must still match the immutable exported source.
 
 1. 每個規則欄位的 text 與自己的 source_quote，數值及重複次數須逐項匹配。
@@ -111,7 +114,8 @@ Numeric self-check / 數值自查（匯入成功不等於核准）：
    也不要自行忽略。正文參考頁碼須連同意義翻譯。請自行對照附件 PDF，於匯入
    JSON 外列 unit_id、PDF 實體頁碼、擷取原句、建議修正文、原因及仍不可讀之處。
    來源修正報告目前不是可接受的匯入格式；受影響單元列為未完成，待來源修復
-   並重新匯出。不能修改來源 ID，亦不能為配合 PDF 偽造 source_quote；上傳引述
+   並重新匯出。請用 Help「整備英文來源」匯出英文工作檔，連同 PDF 交給外部 AI，
+   再以「匯入英文來源」建立新版，從新版重新匯出中文模板。不能修改來源 ID，亦不能為配合 PDF 偽造 source_quote；上傳引述
    仍須匹配不可變的匯出來源。
 
 First import versus correction / 首次匯入與更正：
