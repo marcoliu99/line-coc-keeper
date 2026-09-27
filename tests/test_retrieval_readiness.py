@@ -10,7 +10,7 @@ from app.services import input_budget
 
 
 def test_unavailable_tokenizer_is_conservative_and_diagnostic(monkeypatch):
-    input_budget._encoding.cache_clear()
+    input_budget.reset_encoding_cache()
     monkeypatch.setitem(sys.modules, 'tiktoken', None)
     try:
         with patch.object(input_budget.observability, 'event') as event:
@@ -21,7 +21,82 @@ def test_unavailable_tokenizer_is_conservative_and_diagnostic(monkeypatch):
         assert event.call_args.kwargs['error_type'] == 'ModuleNotFoundError'
         assert '中文' not in str(event.call_args)
     finally:
-        input_budget._encoding.cache_clear()
+        input_budget.reset_encoding_cache()
+
+
+class _FakeEncoding:
+    name = 'o200k_base'
+
+    def encode(self, text, disallowed_special=()):
+        return [0] * len(text)
+
+
+class _FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+
+def test_transient_tokenizer_failure_is_retried_instead_of_latched(monkeypatch):
+    """One cold-cache failure must not pin the process to the byte fallback."""
+    input_budget.reset_encoding_cache()
+    clock = _FakeClock()
+    monkeypatch.setattr(input_budget, 'time', clock)
+    attempts = []
+
+    def loader(model):
+        attempts.append(model)
+        if len(attempts) == 1:
+            raise OSError('cold BPE cache download failed')
+        return _FakeEncoding()
+
+    monkeypatch.setattr(input_budget, '_load_encoding', loader)
+    try:
+        with patch.object(input_budget.observability, 'event') as event:
+            assert input_budget.estimate('中文', 'gpt-test') == 6
+            assert event.call_count == 1
+            assert event.call_args.args == ('llm.tokenizer.unavailable',)
+            assert event.call_args.kwargs['failed_attempts'] == 1
+            assert event.call_args.kwargs['retry_after_seconds'] == input_budget.ENCODING_RETRY_SECONDS
+
+            # Inside the retry window the fallback is reused without reloading.
+            clock.now += input_budget.ENCODING_RETRY_SECONDS - 1
+            assert input_budget.tokenizer_method('gpt-test') == 'utf8_bytes_fallback'
+            assert attempts == ['gpt-test']
+            assert event.call_count == 1
+
+            # Once the window elapses the tokenizer is retried and recovers.
+            clock.now += 2
+            assert input_budget.estimate('中文', 'gpt-test') == 2
+            assert input_budget.tokenizer_method('gpt-test') == 'tokenizer_estimate'
+            assert attempts == ['gpt-test', 'gpt-test']
+            assert event.call_args.args == ('llm.tokenizer.recovered',)
+            assert event.call_args.kwargs['failed_attempts'] == 1
+    finally:
+        input_budget.reset_encoding_cache()
+
+
+def test_resolved_tokenizer_is_cached_without_reloading(monkeypatch):
+    input_budget.reset_encoding_cache()
+    attempts = []
+
+    def loader(model):
+        attempts.append(model)
+        return _FakeEncoding()
+
+    monkeypatch.setattr(input_budget, '_load_encoding', loader)
+    try:
+        with patch.object(input_budget.observability, 'event') as event:
+            assert input_budget.estimate('中文', 'gpt-test') == 2
+            assert input_budget.estimate('中文', 'gpt-test') == 2
+            assert input_budget.tokenizer_method('gpt-test') == 'tokenizer_estimate'
+        assert attempts == ['gpt-test']
+        # A first success is not an incident; it must stay off the warning path.
+        assert event.call_count == 0
+    finally:
+        input_budget.reset_encoding_cache()
 
 
 def test_named_model_byte_fallback_reports_zero_budget_honestly(monkeypatch):
