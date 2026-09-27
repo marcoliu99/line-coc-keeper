@@ -3,8 +3,10 @@ from __future__ import annotations
 from app import scene_map as scene_map_engine
 from app.legacy_commands import Reply, SendImage
 from app.repositories.group_state import load_page_image, load_state, save_state
+from app.services import mutation_admission
 
 
+@mutation_admission.guard_async_entry
 async def handle_map_command(
     conversation_id: str,
     user_id: str,

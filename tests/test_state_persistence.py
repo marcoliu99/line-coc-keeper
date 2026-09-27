@@ -761,11 +761,14 @@ class StatePersistenceTests(unittest.TestCase):
         first = scene_digest.create_digest(state, scene_label="old")
         state.current_map_page["u1"] = "12"
         state.current_room_id["u1"] = "library"
+        group_state.save_state(state)
         digest = scene_digest.create_digest(state, scene_label="with-location")
         self.assertEqual(digest["public"]["locations"]["u1"]["room_id"], "library")
         self.assertIn("recent_checkpoints", digest)
         state.timeline_id = "timeline-new"
-        state.state_revision += 1
+        # Publish the new source before deriving its digest; do not simulate
+        # persistence by editing the caller revision alone.
+        group_state.save_state(state)
         second = scene_digest.create_digest(state, scene_label="new")
         self.assertEqual(scene_digest.latest_digest(state.group_id, "timeline-new")["digest_id"], second["digest_id"])
         self.assertEqual(scene_digest.get_digest(state.group_id, first["digest_id"])["scene_label"], "old")

@@ -158,6 +158,7 @@ async def run_conversation(
             final_text = "".join(b.text for b in response.content if b.type == "text").strip() or final_text
             break
 
+        observability.event("llm.tool_round")
         tool_results = []
         for tu in tool_uses:
             result = await execute_tool(tu.name, tu.input)
@@ -183,6 +184,7 @@ async def run_conversation(
         # by the player. Only app/keeper.py's legacy run_turn path (no
         # separate Narrator) actually needs it.
         if enable_wrapup:
+            observability.event("llm.wrapup")
             wrapup_system = system_blocks + [{
                 "type": "text",
                 "text": (

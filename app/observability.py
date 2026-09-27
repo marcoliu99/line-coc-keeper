@@ -18,6 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import config
+from app.services import task_trace
 
 _logger = logging.getLogger(__name__)
 _CONTEXT: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
@@ -142,7 +143,7 @@ def request_context(
         yield {}
         return
     metrics_token = _METRICS.set({})
-    with context(
+    with task_trace.capture() as trace, context(
         request_id=request_id or _new_id("req"),
         turn_id=turn_id,
         maintenance_id=maintenance_id,
@@ -151,6 +152,7 @@ def request_context(
         try:
             yield bound
         finally:
+            event("task.trace", **trace.summary())
             _METRICS.reset(metrics_token)
 
 
@@ -166,6 +168,7 @@ def event(
     **fields: Any,
 ) -> None:
     """Emit one structured event, doing no work when the channel is disabled."""
+    task_trace.record(name, fields)
     if not config.LOG_ENABLED or not _logger.isEnabledFor(level):
         return
     payload: dict[str, Any] = {"event": name, **_record_context()}
@@ -197,7 +200,7 @@ def span(
         _logger.isEnabledFor(level)
         or (slow_threshold_ms is not None and _logger.isEnabledFor(logging.WARNING))
     )
-    if not enabled:
+    if not enabled and not task_trace.active():
         yield
         return
 

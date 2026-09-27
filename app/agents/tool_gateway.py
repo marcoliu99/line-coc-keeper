@@ -11,9 +11,15 @@ from app.config import (
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
     TOOL_EXECUTION_TIMEOUT_SECONDS,
 )
+from app.domain.models import ObservedOutcome
 from app.models import GroupState
+from app.services import mutation_admission, turn_delivery
 
 _logger = logging.getLogger(__name__)
+
+# Query timeouts retain worker ownership too: some queries refresh the shared
+# snapshot or derived indexes. Dice never inherit query retry semantics.
+BOUNDED_QUERY_TOOLS = keeper.READ_ONLY_TOOL_NAMES - {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"}
 
 # The design spec originally called for a condensed set of ~5 high-level
 # tools (mechanic_action/character_action/inventory_action/combat_action/
@@ -68,6 +74,7 @@ def make_tool_executor(
     check_status: dict[str, Any] | None = None,
     evidence_incomplete: bool = False,
     required_evidence_ids: set[str] | None = None,
+    observed_outcomes: list[ObservedOutcome] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -94,6 +101,7 @@ def make_tool_executor(
 
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         nonlocal evidence_incomplete
+        mutation_admission.assert_admitted(state.group_id)
         if evidence_incomplete and tool_name not in (keeper.READ_ONLY_TOOL_NAMES - {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"}):
             return rejection(tool_name, "required_scenario_evidence_missing",
                              "必要劇本依據未齊；請續取完整依據，或暫緩並聚焦行動。不得以截短摘要執行機制。")
@@ -112,23 +120,60 @@ def make_tool_executor(
             # Keep it off the event loop, but do not abandon the worker thread
             # if the awaiting provider request is cancelled: a mutation must
             # finish before the caller releases the conversation lifecycle.
-            task = asyncio.create_task(asyncio.to_thread(
-                keeper._execute_tool,
-                state,
-                tool_name,
-                tool_input,
-                private_messages,
-                image_requests,
-                speaker_role,
-            ))
+            owner = mutation_admission.start_worker(state.group_id, state.timeline_id, tool_name)
+
+            def run_owned_tool():
+                if not mutation_admission.mark_started(owner):
+                    raise mutation_admission.MutationHeld("queued worker was cancelled before starting")
+                with mutation_admission.bind(owner):
+                    result = None
+                    try:
+                        result = keeper._execute_tool(
+                            state, tool_name, tool_input, private_messages, image_requests, speaker_role
+                        )
+                        observability.event("turn.observed", tool_name=tool_name,
+                                            dice_rolled=bool(result.get("ok") and (result.get("resolved") or result.get("pending_luck") or tool_name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"})))
+                        # Record before settlement, including late/cancelled awaiters.
+                        facts.append(_describe_tool_call(tool_name, result))
+                        if check_status is not None:
+                            _record_check_status(check_status, tool_name, result)
+                        if observed_outcomes is not None:
+                            observed_outcomes.append(turn_delivery.observe_tool(
+                                tool_name, result, len(observed_outcomes) + 1, tool_input
+                            ))
+                        return result
+                    finally:
+                        # Reconcile only after the synchronous worker really
+                        # stopped. Persist evidence on cancellation, never replay.
+                        try:
+                            if mutation_admission.is_detached(owner):
+                                outcome = turn_delivery.observe_tool(tool_name, result or {}, 1, tool_input)
+                                def record_settlement(latest):
+                                    latest.tool_recovery_markers.append({
+                                        "marker_id": owner.generation,
+                                        "tool_name": tool_name,
+                                        "timeline_id": owner.timeline_id,
+                                        "status": "settled" if result is not None else "stopped_result_unknown",
+                                        "public_result": outcome.public_text,
+                                    })
+                                    del latest.tool_recovery_markers[:-100]
+                                keeper._mutate_and_save_state(state, record_settlement)
+                        except Exception:
+                            _logger.exception("Could not persist stopped worker evidence")
+                        finally:
+                            mutation_admission.settle(owner)
+
+            task = asyncio.create_task(asyncio.to_thread(run_owned_tool))
+            task.add_done_callback(lambda done: mutation_admission.reject_unstarted(owner) if done.cancelled() else None)
             try:
-                if tool_name in keeper.READ_ONLY_TOOL_NAMES:
+                if tool_name in BOUNDED_QUERY_TOOLS:
                     result = await asyncio.wait_for(
                         asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
                     )
                 else:
                     result = await asyncio.shield(task)
             except asyncio.TimeoutError:
+                mutation_admission.detach(owner)
                 observability.event(
                     "llm.tool.timeout", level=logging.WARNING,
                     tool_name=observability.tool_name(tool_name), status="timeout",
@@ -137,22 +182,22 @@ def make_tool_executor(
                 async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
                 result = {"ok": False, "error": "timeout", "partial": True}
             except asyncio.CancelledError:
-                if tool_name in keeper.READ_ONLY_TOOL_NAMES:
-                    async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
-                    raise
+                mutation_admission.detach(owner)
+                async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
                 try:
                     result = await asyncio.wait_for(
                         asyncio.shield(task), PROVIDER_SHUTDOWN_GRACE_SECONDS
                     )
                 except asyncio.TimeoutError:
                     async_utils.observe_background_task(task, operation=f"llm.tool:{tool_name}")
-                    await keeper.record_tool_recovery_marker_bounded(state, tool_name, tool_input)
                     observability.event(
                         "llm.tool.recovery_required",
                         level=logging.ERROR,
                         tool_name=observability.tool_name(tool_name),
                         status="partial",
                     )
+                except Exception:
+                    _logger.exception("Worker failed while its caller was being cancelled")
                 raise
         if tool_name == "search_scenario" and result.get("ok"):
             if result.get("complete_for_action") is False:
@@ -165,9 +210,6 @@ def make_tool_executor(
                 evidence_incomplete = bool(blocked_evidence)
                 if check_status is not None:
                     check_status["scenario_evidence_blocked"] = evidence_incomplete
-        facts.append(_describe_tool_call(tool_name, result))
-        if check_status is not None:
-            _record_check_status(check_status, tool_name, result)
         return result
 
     return execute

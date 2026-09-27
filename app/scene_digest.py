@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app import db, locks, spoiler_policy
 from app.models import GroupState
+from app.services import mutation_admission
 
 _logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ def _public_state(state: GroupState) -> dict:
 def create_digest(state: GroupState, *, scene_label: str = "") -> dict:
     started = time.monotonic()
     with locks.get_state_lock(state.group_id):
+        mutation_admission.assert_admitted(state.group_id, timeline_id=state.timeline_id)
         digest_id = _id()
         from app import checkpoints
 

@@ -15,11 +15,18 @@ from app.domain.models import (
     AgentMessage,
     GameEvent,
     MechanicResult,
+    ObservedOutcome,
     StateDelta,
     TurnResolution,
 )
 from app.providers import anthropic_provider, gemini_provider, openai_provider
-from app.services import prompt_config, purchases, turn_context, turn_resolution
+from app.services import (
+    mutation_admission,
+    prompt_config,
+    purchases,
+    turn_context,
+    turn_resolution,
+)
 
 _logger = logging.getLogger(__name__)
 _PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
@@ -39,6 +46,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     provider = _PROVIDERS[LLM_PROVIDER]
 
     state = message.payload["state"]
+    mutation_admission.assert_admitted(state.group_id)
     text = message.payload["text"]
     user_id = message.payload["user_id"]
     display_name = message.payload["display_name"]
@@ -64,6 +72,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     message.payload["private_messages"] = private_messages
     message.payload["image_requests"] = image_requests
     facts: list[str] = []
+    observed: list[ObservedOutcome] = []
+    message.payload["observed_outcomes"] = observed
     inventory_events: list[GameEvent] = []
     check_status: dict[str, Any] = {
         "tool_called": False,
@@ -75,6 +85,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         state, private_messages, image_requests, speaker_role, facts, check_status,
         evidence_incomplete=bool(scenario_retrieval.incomplete_roots(rag_context)),
         required_evidence_ids=scenario_retrieval.incomplete_roots(rag_context),
+        observed_outcomes=observed,
     )
     combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
@@ -205,33 +216,32 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         turn_status = "error"
         observability.event("llm.failed", level=logging.ERROR, agent="executor", status="error")
         _logger.exception("Executor LLM call failed")
-        return MechanicResult(
-            success=False,
-            action_type="error",
-            narrative_facts=["機制執行時發生錯誤，請視為純敘事處理，不要假設任何判定結果"],
-            state_delta=StateDelta(),
-            check_status={**check_status, "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
-                          "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
-            events=inventory_events,
-            turn_resolution=TurnResolution(reason="機制流程發生錯誤；不重播已提交的變更"),
-        )
     finally:
         observability.event(
             "executor.scenario_search.summary", count=scenario_search_count, status=turn_status,
         )
 
-    resolution = turn_resolution.validate_resolution(
-        completion, state=state, user_id=user_id, before_pending=before_pending,
-        before_luck=before_luck, tool_events=tool_events,
-        has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
-        before_actor=before_actor, before_gameplay=before_gameplay,
-    )
+    if turn_status == "error":
+        resolution = TurnResolution(reason="機制流程中斷；保留已確認結果，不重播工具")
+    else:
+        resolution = turn_resolution.validate_resolution(
+            completion, state=state, user_id=user_id, before_pending=before_pending,
+            before_luck=before_luck, tool_events=tool_events,
+            has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
+            before_actor=before_actor, before_gameplay=before_gameplay,
+        )
     observability.event("executor.resolution", disposition=resolution.disposition,
                         blocker_code=resolution.blocker_code,
                         evidence_count=len(resolution.evidence_refs),
                         validation_code=resolution.validation_code, tool_event_count=len(tool_events))
+    state_changed = turn_resolution.gameplay_snapshot(state) != before_gameplay
+    execution_health = "completed"
+    if turn_status == "error":
+        execution_health = "partial" if any(o.success for o in observed) else "recovery_required" if state_changed else "failed"
     return MechanicResult(
-        success=True,
+        success=turn_status != "error",
+        execution_health=execution_health,
+        observed_outcomes=observed,
         action_type="tool_calls" if facts else "none",
         narrative_facts=facts or ["本回合沒有工具操作；是否完成行動以裁決狀態為準"],
         # Real state changes already happened above via execute_tool's calls
@@ -239,7 +249,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # empty (see state_reducer.apply_mechanic_result's docstring for why
         # it must not try to re-apply anything on top of that).
         state_delta=StateDelta(),
-        check_status={**check_status, "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
+        check_status={**check_status, "state_changed": state_changed,
                       "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
         events=inventory_events,
         turn_resolution=resolution,
