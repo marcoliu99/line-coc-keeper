@@ -241,7 +241,25 @@ posting ticket   進入時依到達順序領號；貼文前依號序等待
 
 敘事因此能與下一位玩家的 Executor 重疊，而訊息順序由 ticket 保持不變。與 3.4 合計，持有時間中位可從 ~21.7 秒降到 ~15.7 秒，p90 從 ~47 秒降到 ~35 秒。
 
-**順序不是阻擋因素**——ticket 保住了它，而且在前一回合執行期間就打字的玩家，本來就是在沒看到結果的情況下宣告；改動只讓他的行動被裁決的時點提前。阻擋因素是**失敗**：若 A 回合的 Narrator 失敗並走 fallback，而 B 回合的 Executor 已經對著 A 已提交的狀態裁決完畢，界定這個結果的契約是 #97 的 mutation admission 與 #99 的 delivery envelope。因此本工作包只記錄設計，等那兩者落地、且 WP1 的排隊指標能顯示是否有幫助之後再實作。
+#### 重讀合併後的程式碼改變了什麼
+
+本節先前延後的理由是：失敗情境——A 回合的 Narrator 在 B 回合的 Executor 已對 A 已提交狀態裁決之後失敗——會由 #97 的 mutation admission 與 #99 的 delivery envelope 界定。**兩者都已合併，而且都沒有界定它。**
+
+`mutation_admission` 的 hold 由 `detach` 設置，而 `detach` 只在 `tool_gateway` 中工具 worker 逾時或被取消時被呼叫。**Narrator 失敗不會留下任何 hold**：Executor 的 worker 早就 settle 了。這套機制涵蓋的是「被放棄的工具 worker」，不是「失敗的敘事」。
+
+而且那個失敗交錯**本來就存在**。今天 B 的 Executor 一樣是對著 A 已提交的狀態裁決，因為 A 在自己的 Executor 階段就提交了；B 只是開始得比較晚。Narrator 失敗今天也已經會在「狀態已提交但沒對任何人描述」的情況下回傳 fallback 文字。提早釋放改變的是 **B 何時開始**，不是 **B 看到什麼**。
+
+#### 兩個真正的阻擋因素
+
+**帶工具的 Narrator 會改狀態。** `narrator.py:44` 對 `resolved_check_followup` 與 `opening_fallback` 設定 `tool_enabled`，而 #99 還在那個迴圈裡加了到達提交。因此提早釋放**只對 Narrator 為 `tools=[]` 的一般 `player_action` 回合成立**。
+
+**log 提交發生在敘事之後。** `_commit_turn_result` 在 Narrator 之後執行，把本回合的玩家訊息與回覆附加到 `state.log`，而那正是後續提示詞會讀的歷史。若 B 先於 A 提交，歷史順序就錯了。因此 posting ticket 必須涵蓋**提交與貼文兩者**，不能只涵蓋貼文。
+
+#### 為什麼本次不實作
+
+對話鎖是在 `router.py` 取得的，包住 `_handle_ordinary_text_message_locked`，而那涵蓋 `run_turn` 以及負責貼出回覆的 post-turn maintenance。要在敘事前釋放，就得**從 `run_turn` 內部釋放**——那裡有十一條 return 路徑——並讓該釋放對 router 自己的 `async with` 具備冪等性。既有程式碼本身就帶著針對這個危害的警告：例外逃出清理程序而洩漏已取得的對話鎖，會「**永久洩漏該鎖，並讓該對話之後的每一個指令死鎖，直到行程重啟**」。
+
+失敗模式是**整個頻道死鎖**，而收益是 Narrator 中位 5.0 秒（約 21.7 秒持有時間的一部分）。上述設計是成立的、阻擋因素也是可解的，但它需要**刻意重構 router／supervisor 的鎖邊界**，而不是用多傳一個參數的方式穿過去；而且它的併發行為，本文件沒有辦法用測試涵蓋。因此維持「已規格化、未實作」，等待該決定。
 
 ### 3.6 驗收
 

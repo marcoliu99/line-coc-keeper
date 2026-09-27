@@ -241,7 +241,25 @@ posting ticket   taken in arrival order on entry; awaited before posting
 
 Narration then overlaps the next player's Executor while message order is preserved by the ticket. Together with 3.4 this would take the median hold from ~21.7 s to ~15.7 s, and p90 from ~47 s to ~35 s.
 
-Ordering is not the blocker — the ticket preserves it, and a player who typed while the previous turn was running already declared without seeing its result; only the moment their action is adjudicated moves earlier. The blocker is failure: if turn A's Narrator fails and falls back after turn B's Executor has already resolved against A's committed state, the contract that bounds the outcome is #97's mutation admission and #99's delivery envelopes. This work package therefore records the design and implements it after those land, once WP1's queue metric can show whether it helps.
+#### What re-reading the merged work changed
+
+This section previously deferred on the grounds that the failure case — turn A's Narrator failing after turn B's Executor has already resolved against A's committed state — would be bounded by #97's mutation admission and #99's delivery envelopes. **Both have merged, and neither bounds it.**
+
+`mutation_admission`'s holds are placed by `detach`, called only from `tool_gateway` when a tool worker times out or is cancelled. A Narrator failure leaves no hold: the Executor's workers have already settled. The machinery covers an abandoned tool worker, not a failed narration.
+
+The failure interleaving is also not new. Today B's Executor already resolves against A's committed state, because A committed during its own Executor phase; B simply starts later. A Narrator failure already returns fallback text over state that was committed and described to nobody. Releasing earlier moves when B starts, not what B sees.
+
+#### Two blockers that are real
+
+**A tool-enabled Narrator mutates.** `narrator.py:44` sets `tool_enabled` for `resolved_check_followup` and `opening_fallback`, and #99 added arrival commits inside that loop. Early release is therefore only sound for an ordinary `player_action` turn whose Narrator holds `tools=[]`.
+
+**The log commit follows narration.** `_commit_turn_result` runs after the Narrator and appends this turn's user message and reply to `state.log`, which is the history later prompts read. If B commits before A, the history is out of order. The posting ticket must therefore cover commit *and* post, not post alone.
+
+#### Why this is not implemented here
+
+The conversation lock is taken in `router.py` around `_handle_ordinary_text_message_locked`, which spans `run_turn` and the post-turn maintenance that posts the reply. Releasing before narration means releasing from inside `run_turn`, which has eleven return paths, and making that release idempotent against the router's own `async with`. The existing code already carries a warning about this exact hazard: a conversation lock leaked by an exception escaping the cleanup "permanently leaks a lock that *was* successfully acquired and deadlocking every future command in that conversation until the process restarts."
+
+That is a channel-wide deadlock as the failure mode, against a measured gain of the Narrator's median 5.0 s out of a ~21.7 s hold. The design above is sound and the blockers are addressable, but it needs the router/supervisor lock boundary restructured deliberately rather than threaded through as an extra argument, and concurrency behaviour that this document has no way to exercise in a test. It stays specified and unimplemented pending that decision.
 
 ### 3.6 Acceptance
 
