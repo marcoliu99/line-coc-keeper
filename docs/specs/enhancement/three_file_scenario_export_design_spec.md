@@ -78,13 +78,16 @@ Report completed/total units, per-package status and remaining batch/unit IDs pr
 
 ## Export message and web-AI instructions
 
-Both Help and text export use the same message builder. List **at most three filenames**, package number, logical batch count and progress. Keep the existing visible copyable prompt unchanged:
+Both Help and text export use the same message builder. List **at most three filenames**, package number, logical batch count and progress. Retain the original prompt sentence and append the explicit downloadable-file requirement. The entire block must be directly copyable in the export message:
 
 ```text
 請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
+請實際產生並提供可下載的 .md 檔案。若分次完成，每次都請提供包含本次已完成內容、可直接匯入的 .md 檔，並在回覆中列出尚未完成的 batch_id／unit_id。
 ```
 
 Add a short explanation: “At most three source files; a long scenario can require several AI responses. Each file contains numbered work batches. Return completed units and continue with the listed unfinished IDs.” Put detailed v2 shape and continuation/replacement examples inside each workbook, not only in bot documentation. Preserve the existing private file-delivery mechanism; this scope adds no browser automation or new platform attachment service.
+
+Every exported workbook must also explicitly request an actual downloadable UTF-8 `.md` file, rather than leaving the artifact instruction only in the bot message. Complete and partial results use the same importable shape with exactly one authoring JSON block per file. Suggest preserving the source filename with `_zh_partNN.md`; identity remains governed by content and the registry. Progress notes belong outside the JSON. Acceptance tests must check the download, `.md` and incremental file-delivery requirements in both Help/text completion messages and actual workbook instructions. These tests verify the bot instructions, not a guarantee of external website attachment capabilities.
 
 The web AI is instructed to preserve package/export/batch/unit IDs, source quotations, mechanics and privacy; never summarize to fit a reply. Subsequent outputs keep the same export/package identity and contain only new completed records or explicit replacements. The user should not need to hand-edit JSON or split the source files.
 
