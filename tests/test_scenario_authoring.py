@@ -380,3 +380,85 @@ def test_crash_after_variant_save_remains_idempotent(library, monkeypatch):
     replay = templates.import_markdown('sample', path.name)
     assert replay == created[0]['variant_id']
     assert len(templates.status('sample')['variants']) == 1
+
+
+def test_long_history_budget_matches_provider_selection(monkeypatch):
+    from app.services import input_budget
+    monkeypatch.setattr(input_budget, '_encoding', lambda _: None)
+    monkeypatch.setattr(scenario_retrieval.config, 'OPENAI_HISTORY_TOKEN_BUDGET', 1000)
+    monkeypatch.setattr(scenario_retrieval.config, 'OPENAI_HISTORY_MIN_TURNS', 2)
+    history = [{'role': 'user', 'content': 'old' * 2000} for _ in range(20)]
+    history += [{'role': 'user', 'content': 'recent action'} for _ in range(2)]
+    original = deepcopy(history)
+    selected = input_budget.provider_history(history, 'unknown', 'openai')
+    assert len(selected) == 2
+    assert scenario_retrieval.remaining_budget([history], 'unknown') == 0
+    assert scenario_retrieval.request_budget(['prompt'], history, 'unknown', 'openai') == scenario_retrieval.remaining_budget(['prompt', selected], 'unknown') > 0
+    assert scenario_retrieval.request_budget(['prompt'], history, 'unknown', 'anthropic') == 0
+    assert history == original
+
+
+def test_continuation_accumulates_evidence_and_releases_tool_gate(monkeypatch):
+    from app import keeper
+    from app.agents.tool_gateway import make_tool_executor
+    from app.models import GroupState
+    records = {str(i): v4_record(str(i), rules=[], kp_text=str(i) * 3000) for i in range(4)}
+    binding = ['same-turn']
+    delivered = []
+    async def exercise():
+        monkeypatch.setattr(keeper, '_execute_tool', lambda state, name, data, *args: {'ok': True, **data})
+        execute = make_tool_executor(GroupState(group_id='g'), [], [], 'player', [],
+                                     evidence_incomplete=True, required_evidence_ids=set(records))
+        offset = 0
+        for page in range(4):
+            row = scenario_retrieval.project(records, list(records), 'action', offset=offset)[0]
+            delivered.extend(row['included_fragment_ids'])
+            scenario_retrieval.bind_continuation([row], binding, offset)
+            await execute('search_scenario', {'complete_for_action': row['complete_for_action'],
+                                             'evidence_record_ids': row['root_record_ids']})
+            if page < 3:
+                assert not row['complete_for_action']
+                assert (await execute('roll_dice', {}))['error'] == 'required_scenario_evidence_missing'
+                token = row['continuation_token']
+                assert scenario_retrieval.continuation_roots(token, binding) == list(records)
+                offset = scenario_retrieval.continuation_offset(token, binding)
+            else:
+                assert row['complete_for_action'] and not row['continuation_token']
+                assert row['missing_required_count'] == 0
+                assert (await execute('roll_dice', {}))['ok']
+    asyncio.run(exercise())
+    assert delivered == [rid + '#kp_only' for rid in records]
+
+
+def test_oversized_middle_fragment_cannot_be_skipped_by_cursor():
+    records = {str(i): v4_record(str(i), rules=[], kp_text='x' * size)
+               for i, size in enumerate([2000, 9000, 100])}
+    row = scenario_retrieval.project(records, list(records), 'action')[0]
+    scenario_retrieval.bind_continuation([row], ['binding'])
+    offset = scenario_retrieval.continuation_offset(row['continuation_token'], ['binding'])
+    assert offset == 1
+    row = scenario_retrieval.project(records, list(records), 'action', offset=offset)[0]
+    scenario_retrieval.bind_continuation([row], ['binding'], offset)
+    assert not row['complete_for_action'] and not row['continuation_token']
+    assert row['missing_required_ids'] == ['1#kp_only', '2#kp_only']
+
+
+def test_search_continuation_keeps_roots_without_reranking_and_rejects_new_history(monkeypatch):
+    records = {str(i): v4_record(str(i), rules=[], kp_text=str(i) * 3000) for i in range(2)}
+    index = SimpleNamespace(record_store=records, text_hash='fixed-version')
+    state = SimpleNamespace(group_id='g', timeline_id='t', scenario_library_id='s',
+                            scenario_variant_id='v', context_chapter_ids=['c1'], log=[])
+    monkeypatch.setattr(templates, 'index_for_state', lambda *args: index)
+    calls = []
+    def search(*args, **kwargs):
+        calls.append(True)
+        return scenario_retrieval.project(records, list(records), 'action')
+    monkeypatch.setattr(templates.scenario_rag, 'search', search)
+    _, first = templates.search_for_state(state, 'action', principal='player:p')
+    token = first[0]['continuation_token']
+    _, last = templates.search_for_state(state, 'action', continuation=token, principal='player:p')
+    assert last[0]['complete_for_action']
+    assert len(calls) == 1
+    state.log.append({'role': 'user', 'content': 'next action'})
+    with pytest.raises(ValueError, match='失效'):
+        templates.search_for_state(state, 'action', continuation=token, principal='player:p')

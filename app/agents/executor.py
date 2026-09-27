@@ -139,8 +139,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     result: dict[str, Any] = {"ok": False, "error": "本回合提到購買，不能直接加物品。請先裁定到店，使用 purchase_items 結算；非購買取得請另行明確宣告。"}
                 else:
                     model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", "unknown")
-                    remaining = (await asyncio.to_thread(scenario_retrieval.remaining_budget,
-                        [static_system, dynamic_system, tools, state.log, new_message, tool_events], model)
+                    remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
+                        [static_system, dynamic_system, tools, new_message, tool_events], state.log, model, LLM_PROVIDER)
                         if name == "search_scenario" else scenario_retrieval.BUDGET.get())
                     budget_token = scenario_retrieval.BUDGET.set(remaining)
                     model_token = scenario_retrieval.MODEL.set(model)

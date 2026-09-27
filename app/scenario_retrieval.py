@@ -15,8 +15,8 @@ from app.services import input_budget
 BUDGET = ContextVar('scenario_retrieval_budget', default=6000)
 MODEL = ContextVar('scenario_retrieval_model', default='unknown')
 MAX_NODES = 128
-_tokens: dict[str, tuple[str, int]] = {}
-_lock = threading.Lock()
+_tokens: dict[str, tuple[str, int, list[str]]] = {}
+_lock = threading.RLock()
 
 
 def remaining_budget(context: Any, model: str) -> int:
@@ -25,6 +25,10 @@ def remaining_budget(context: Any, model: str) -> int:
     available = config.SCENARIO_CONTEXT_TOKEN_CEILING - input_budget.estimate(context, model)
     available -= config.SCENARIO_OUTPUT_TOKEN_RESERVE + config.SCENARIO_CONTEXT_SAFETY_TOKENS
     return max(0, min(config.SCENARIO_RETRIEVAL_TOKEN_BUDGET, available))
+
+
+def request_budget(context: list, history: list[dict], model: str, provider: str) -> int:
+    return remaining_budget([*context, input_budget.provider_history(history, model, provider)], model)
 
 
 def _cost(text: str) -> int:
@@ -97,10 +101,12 @@ def project(records: dict[str, dict], roots: list[str], query: str,
     used = 0
     included = []
     contents = []
-    missing = []
+    missing: list[str] = []
     required_cost = sum(_cost(text) for _, text in required)
     for i, (fid, text) in enumerate(required):
-        if i < offset or used + _cost(text) > usable:
+        if i < offset:
+            continue  # Trusted cursor certifies this contiguous prefix was delivered.
+        if missing or used + _cost(text) > usable:
             missing.append(fid)
             continue
         included.append(fid)
@@ -113,7 +119,7 @@ def project(records: dict[str, dict], roots: list[str], query: str,
             used += _cost(text)
         else:
             optional.append(fid)
-    complete = bool(contents) and not missing and not blocked and not limited and required_cost <= usable
+    complete = bool(contents) and not missing and not blocked and not limited
     text = '\n\n'.join(contents)
     row: dict[str, Any] = {'page': records[roots[0]]['page'] if roots else 1, 'text': text,
            'record_id': roots[0] if roots else '', 'root_record_ids': roots, 'record_ids': sorted(seen)[:16], 'record_count': len(seen),
@@ -162,7 +168,7 @@ def bind_continuation(rows: list[dict], binding: Any, offset: int = 0) -> None:
             with _lock:
                 if len(_tokens) >= 128:
                     _tokens.pop(next(iter(_tokens)))
-                _tokens[token] = (signature, next_offset)
+                _tokens[token] = (signature, next_offset, list(row["root_record_ids"]))
             row['continuation_token'] = token
 
 
@@ -173,6 +179,12 @@ def continuation_offset(token: str, binding: Any) -> int:
     if saved is None or saved[0] != signature:
         raise ValueError('續取識別已失效；請依目前劇本、權限與查詢重新搜尋')
     return saved[1]
+
+
+def continuation_roots(token: str, binding: Any) -> list[str]:
+    with _lock:
+        continuation_offset(token, binding)
+        return list(_tokens[token][2])
 
 
 def incomplete_roots(context: str) -> set[str]:

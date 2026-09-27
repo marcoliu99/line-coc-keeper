@@ -635,13 +635,12 @@ def search_for_state(state: Any, query: str, top_k: int = 5,
     from app import scenario_retrieval
     binding = [state.group_id, getattr(state, "timeline_id", ""), principal, state.scenario_library_id,
                state.scenario_variant_id, list(state.context_chapter_ids), index.text_hash, query,
-               BUDGET_VERSION] if getattr(index, "record_store", None) is not None else []
+               BUDGET_VERSION, top_k, hashlib.sha256(json.dumps(getattr(state, "log", []), ensure_ascii=False, default=str).encode()).hexdigest()] if getattr(index, "record_store", None) is not None else []
     if continuation:
         offset = scenario_retrieval.continuation_offset(continuation, binding)
         if getattr(index, "record_store", None) is None:
             raise ValueError("續取版本已失效")
-        ranked = scenario_rag.search(index, query, top_k=top_k, metrics=diagnostics)
-        roots = ranked[0].get('root_record_ids', []) if ranked else []
+        roots = scenario_retrieval.continuation_roots(continuation, binding)
         assert index.record_store is not None
         results = scenario_retrieval.project(index.record_store, roots, query, offset=offset)
     else:

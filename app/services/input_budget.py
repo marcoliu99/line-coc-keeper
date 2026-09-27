@@ -50,3 +50,12 @@ def select_history(history: list[dict], model: str, budget: int, keep_turns: int
                         budget_exceeded=after > budget,
                         tokenizer=getattr(encoding, 'name', 'utf8_bytes_fallback'))
     return selected
+
+
+def provider_history(history: list[dict], model: str, provider: str) -> list[dict]:
+    """Share the provider's history selection with retrieval admission checks."""
+    if provider == 'openai':
+        from app import config
+        return select_history(history, model, config.OPENAI_HISTORY_TOKEN_BUDGET,
+                              config.OPENAI_HISTORY_MIN_TURNS)
+    return list(history)

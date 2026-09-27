@@ -97,9 +97,9 @@ async def build_context(
                 if state.scenario_variant_id and state.scenario_variant_id != "original":
                     from app import config, keeper, scenario_retrieval
                     model = getattr(config, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
-                    budget = scenario_retrieval.remaining_budget(
+                    budget = scenario_retrieval.request_budget(
                         [keeper._build_static_prompt(state), keeper._build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
-                         keeper._tools_for_speaker_role(speaker_role), state.log, text], model)
+                         keeper._tools_for_speaker_role(speaker_role), text], state.log, model, config.LLM_PROVIDER)
                     budget_token = scenario_retrieval.BUDGET.set(budget)
                     model_token = scenario_retrieval.MODEL.set(model)
                     try:

@@ -394,8 +394,7 @@ async def run_conversation(
     # unlike the Chat Completions provider, this doesn't need a "system" role
     # message mixed into the input list.
     history = await asyncio.to_thread(
-        input_budget.select_history, history, OPENAI_MODEL,
-        config.OPENAI_HISTORY_TOKEN_BUDGET, config.OPENAI_HISTORY_MIN_TURNS,
+        input_budget.provider_history, history, OPENAI_MODEL, "openai",
     )
     output_limit = {
         "executor": config.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS,

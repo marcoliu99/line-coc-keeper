@@ -157,3 +157,7 @@ The design was approved and runtime implementation is complete. The existing mal
 - Full isolated tests: 936 passed, 1 skipped, 33 subtests passed. Ruff, mypy (83 source files) and diff checks passed. Regression cases live in `tests/test_scenario_authoring.py`; legacy v3 coverage is retained.
 - The reported original The Haunting data exported into 19 source units / 10 batches in a temporary directory. The old Gemini output produced 39 diagnostics covering source mappings, missing fields, privacy conflicts, visibility and rule evidence.
 - Production imports, scenarios, player state and active variants were untouched; no translation API was called. Web-AI completion rates, real LLM round trips and campaign adjudication accuracy still require later trials; synthetic regressions do not establish those outcomes.
+
+### PR #94 review corrections
+
+Retrieval admission and OpenAI requests share history selection, so discarded persisted history does not consume the retrieval allowance. Other providers retain their full history. Continuations certify only a contiguous prefix actually delivered after metadata budgeting; later pages accumulate that evidence and release the same-root action hold when all required fragments are present. Cursors retain the original roots and are bound to the history and result count as well as the existing authorization/version/query scope. An oversized mandatory fragment cannot be skipped or certified by later fragments.
