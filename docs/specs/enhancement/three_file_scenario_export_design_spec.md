@@ -18,7 +18,7 @@ Keep paragraph source units and the approximately 8,000-character logical batche
 
 ```text
 Complete scenario -> trusted source units -> small logical batches
-  -> contiguous packaging -> p1.md / p2.md / p3.md (at most)
+  -> contiguous packaging -> Scenario_01.md / Scenario_02.md / Scenario_03.md (at most)
   -> user uploads package(s) to external AI
   -> AI returns completed units/batches in one importable MD per response
   -> validate and merge into the same export draft
@@ -39,6 +39,16 @@ The limit applies to source workbook files listed by export. It does not count e
 6. Publish package files and immutable registry as one ready export from the user's perspective. An interrupted build has no success message; stage files are cleaned up or marked incomplete. `files.json` lists only ready packages.
 
 Short input with one batch yields one file; two batches yield two; ten or hundreds of batches yield three when resource checks pass. Old ten-file exports remain importable; re-exporting creates a new independent export ID, with no silent progress migration.
+
+## Filenames
+
+Use `<scenario_title>_<NN>.md`, starting at `01`; pad to at least two digits (`99`, `100`, ...). Source packages are numbered in package order and stop at at most `03`. Translation outputs have a separate sequence starting at `01`, increasing across all packages and continuation responses of the same export; they may exceed `03` when translation requires more replies. Do not restart the output number for each package. The visible export message and workbook instructions must show actual example names derived from that scenario, not generic `scenario-authoring` names, random export suffixes, `_zh` or `_part` suffixes.
+
+Use the library's display title as the prefix, with the stable scenario slug as fallback. Preserve Chinese characters; replace whitespace with underscores and filesystem separators/control characters with safe underscores. Bound filename length without removing the numeric suffix. Registry package IDs remain `p1`/`p2`/`p3`; filenames are display/storage names, never authorization or import identity.
+
+Create each export in its own server-controlled directory under `imports`, preserving the basename while preventing collisions across repeated exports or identical sanitized titles. File listing/Help must support these controlled relative paths, retain root/symlink containment checks and distinguish export instances privately. Do not overwrite an existing export or add random characters to the requested basename. Users place AI results in a separate result location for that export, so a translated `The_Haunting_01.md` cannot overwrite its source workbook. The import UI must clearly distinguish source and returned files. A later implementation must test directory-aware selection and source/result separation; changing only `mkstemp` prefixes is insufficient.
+
+The supplied AI instructions must explicitly request these names and continuation numbering. Completion responses tell the user the next output number to request if continuing in a new chat. Numbers are an organizational aid; validated export/package/batch/unit IDs determine actual coverage and replay behavior.
 
 ## Authoring v2 and backward compatibility
 
@@ -83,11 +93,12 @@ Both Help and text export use the same message builder. List **at most three fil
 ```text
 請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
 請實際產生並提供可下載的 .md 檔案。若分次完成，每次都請提供包含本次已完成內容、可直接匯入的 .md 檔，並在回覆中列出尚未完成的 batch_id／unit_id。
+檔名請以劇本名為前綴，格式為「劇本名_01.md」，分次回傳時數字依序累加。
 ```
 
 Add a short explanation: “At most three source files; a long scenario can require several AI responses. Each file contains numbered work batches. Return completed units and continue with the listed unfinished IDs.” Put detailed v2 shape and continuation/replacement examples inside each workbook, not only in bot documentation. Preserve the existing private file-delivery mechanism; this scope adds no browser automation or new platform attachment service.
 
-Every exported workbook must also explicitly request an actual downloadable UTF-8 `.md` file, rather than leaving the artifact instruction only in the bot message. Complete and partial results use the same importable shape with exactly one authoring JSON block per file. Suggest preserving the source filename with `_zh_partNN.md`; identity remains governed by content and the registry. Progress notes belong outside the JSON. Acceptance tests must check the download, `.md` and incremental file-delivery requirements in both Help/text completion messages and actual workbook instructions. These tests verify the bot instructions, not a guarantee of external website attachment capabilities.
+Every exported workbook must also explicitly request an actual downloadable UTF-8 `.md` file, rather than leaving the artifact instruction only in the bot message. Complete and partial results use the same importable shape with exactly one authoring JSON block per file. Use the scenario title as the filename prefix followed only by an incrementing number: `The_Haunting_01.md`, `The_Haunting_02.md`, `The_Haunting_03.md`. AI translation outputs follow the same naming rule, continuing the output sequence across responses. Identity remains governed by content and the registry. Progress notes belong outside the JSON. Acceptance tests must check the download, `.md` and incremental file-delivery requirements in both Help/text completion messages and actual workbook instructions. These tests verify the bot instructions, not a guarantee of external website attachment capabilities.
 
 The web AI is instructed to preserve package/export/batch/unit IDs, source quotations, mechanics and privacy; never summarize to fit a reply. Subsequent outputs keep the same export/package identity and contain only new completed records or explicit replacements. The user should not need to hand-edit JSON or split the source files.
 
@@ -101,7 +112,7 @@ The web AI is instructed to preserve package/export/batch/unit IDs, source quota
 | `tests/test_scenario_authoring.py` | Packaging, partial merge, compatibility, fault and completeness regressions |
 | External preparation references/spec | Update EN/ZH v2 examples and retain labeled v1 guidance |
 
-Required tests: 1/2/3/10/hundreds of logical batches produce at most three files; exact source concatenation/hashes preserved; nonempty contiguous assignments; stable partitioning including multibyte text; oversized unit/whole input preflight; no fourth file on failure; export interruption exposes no ready partial set; file-list UI contains at most three paths and the visible prompt; package spoofing and cross-batch units rejected; several partial imports within the same package accumulate without replacement; identical replay is a no-op; conflict/explicit replacement; one invalid submitted batch changes nothing; out-of-order packages/dependencies; full coverage alone does not bypass uncertainty/review; v1/v3 imports and v4 retrieval still pass; identical content imported in different orders converges; candidate-save interruption remains idempotent.
+Required tests: scenario-title filenames, Chinese titles, sanitized separators, repeated-title/export collisions, separate source/result locations, numbering across packages and beyond 99, controlled subdirectory Help/import selection; 1/2/3/10/hundreds of logical batches produce at most three files; exact source concatenation/hashes preserved; nonempty contiguous assignments; stable partitioning including multibyte text; oversized unit/whole input preflight; no fourth file on failure; export interruption exposes no ready partial set; file-list UI contains at most three paths and the visible prompt; package spoofing and cross-batch units rejected; several partial imports within the same package accumulate without replacement; identical replay is a no-op; conflict/explicit replacement; one invalid submitted batch changes nothing; out-of-order packages/dependencies; full coverage alone does not bypass uncertainty/review; v1/v3 imports and v4 retrieval still pass; identical content imported in different orders converges; candidate-save interruption remains idempotent.
 
 The Haunting fixture should move from ten source workbooks to three, retaining all 19 units. Also use a long synthetic scenario with hundreds of logical batches; verify file count and complete source coverage, not just a mocked batch count. Tests use temporary libraries/import directories without live API calls. After approval, run existing authoring/template/help and full regression suites. No new runtime behavior has been implemented or claimed tested in this spec change.
 

@@ -18,7 +18,7 @@
 
 ```text
 完整劇本 -> 可信來源單元 -> 小型邏輯批次
-  -> 依序打包 -> p1.md / p2.md / p3.md（最多）
+  -> 依序打包 -> 劇本名_01.md / 劇本名_02.md / 劇本名_03.md（最多）
   -> 使用者將檔案交給外部 AI
   -> AI 每次回傳一個 MD，包含已完成單元/批次
   -> 驗證並合併同一份 export draft
@@ -39,6 +39,16 @@
 6. 從使用者角度，package files 與 immutable registry 必須全部 ready 才發布。中斷不發成功訊息，staging 檔清理或標記未完成；`files.json` 只列 ready packages。
 
 一批短文一檔，兩批兩檔，十批或數百批在資源檢查通過時三檔。舊十檔 export 繼續可匯入；重新匯出產生獨立 export ID，不偷偷搬移舊進度。
+
+## 檔名
+
+使用 `<劇本名>_<NN>.md`，從 `01` 開始，至少補足兩位數（`99` 後為 `100`，依此類推）。來源檔依 package 順序編號，最多到 `03`。翻譯成果另有從 `01` 開始的序列，在同一 export 的所有 packages、分次回覆間持續累加；需要多次翻譯時可超過 `03`，不能每個 package 重新從 01 編。匯出訊息及檔內指引須顯示實際劇本名的範例，不再使用通用 `scenario-authoring`、隨機 export 尾碼、`_zh` 或 `_part` 後綴。
+
+前綴取劇本庫的顯示名稱，缺少時用穩定 scenario slug。保留中文字，空白轉底線，路徑分隔符／控制字元轉安全底線；限制檔名長度時保留數字後綴。Registry 的 package ID 仍用 `p1`／`p2`／`p3`；檔名只是顯示／儲存名稱，不是權限或匯入 identity。
+
+每份 export 放在 `imports` 下由伺服器控制的獨立目錄，保留檔名，同時避免重複匯出、清理後同名劇本互相覆蓋。檔案清單／Help 要支援受控相對路徑，保留 root/symlink 範圍驗證，並在私人介面區分不同 export。不覆寫舊來源，也不在指定檔名加隨機字元。AI 成果放在同 export 的獨立結果位置，避免翻譯後的 `陰宅_01.md` 蓋掉來源檔；匯入 UI 須區分來源與成果。實作時必測目錄選檔及來源／成果隔離，不能只改 `mkstemp` 前綴。
+
+提供給 AI 的指引須明確要求這套檔名及續編方式。匯入完成訊息提示下一個成果編號，方便換新對話時接續要求。數字只幫助整理，實際覆蓋與重送行為仍依驗證後的 export/package/batch/unit IDs 判定。
 
 ## Authoring v2 與向後相容
 
@@ -83,11 +93,12 @@ Help 與文字指令共用 message builder，最多列 **三個檔名**、packag
 ```text
 請依附件內的整備指引完成繁體中文翻譯，回傳可匯入的 Markdown 檔；若需分批，請列出尚未完成的部分。
 請實際產生並提供可下載的 .md 檔案。若分次完成，每次都請提供包含本次已完成內容、可直接匯入的 .md 檔，並在回覆中列出尚未完成的 batch_id／unit_id。
+檔名請以劇本名為前綴，格式為「劇本名_01.md」，分次回傳時數字依序累加。
 ```
 
 加一句：「來源最多三檔；長劇本可能需 AI 分次回覆。每檔內有編號批次，可先回傳已完成單元，再依未完成 IDs 繼續。」V2 格式、續做／替換範例放進每份 workbook，不只藏在 bot 文件。沿用現有私人檔案交付，本範圍不新增瀏覽器自動化或平台附件服務。
 
-每份匯出 MD 內的整備指引也要明確要求「產生可下載的 UTF-8 `.md` 檔案」，不能只在匯出訊息提醒。完整或部分成果均使用同一可匯入格式，每檔恰好一個 authoring JSON 區塊；檔名建議保留來源檔名並加 `_zh_partNN.md`，ID 仍以內容與 registry 為準。回覆中的進度說明放在 JSON 外。驗收需同時檢查 Help／文字指令訊息與實際匯出檔內的下載、`.md`、分次交付要求；此測試驗證 bot 的指引，不代表能保證外部網站提供附件。
+每份匯出 MD 內的整備指引也要明確要求「產生可下載的 UTF-8 `.md` 檔案」，不能只在匯出訊息提醒。完整或部分成果均使用同一可匯入格式，每檔恰好一個 authoring JSON 區塊；檔名使用劇本名當前綴，後面只接累加數字，例如 `陰宅_01.md`、`陰宅_02.md`、`陰宅_03.md`；AI 翻譯成果沿用同一命名規則，分次回覆時接續成果編號。ID 仍以內容與 registry 為準。回覆中的進度說明放在 JSON 外。驗收需同時檢查 Help／文字指令訊息與實際匯出檔內的下載、`.md`、分次交付要求；此測試驗證 bot 的指引，不代表能保證外部網站提供附件。
 
 指引要求保留 package/export/batch/unit IDs、原文引句、機制及保密，不為單次回覆容量摘要。後續結果沿用 export/package，只附新完成 records 或明確 replacements；使用者不需要自己改 JSON 或拆來源檔案。
 
@@ -101,7 +112,7 @@ Help 與文字指令共用 message builder，最多列 **三個檔名**、packag
 | `tests/test_scenario_authoring.py` | 打包、增量合併、相容、故障、完整性回歸 |
 | 外部整備 references/spec | 更新中英 v2 範例，保留明確標記的 v1 指引 |
 
-必測：1/2/3/10/數百批都不超過三檔；原文串接及 hashes 完整；非空連續分配；含多位元文字的穩定分包；過大 unit/全來源 preflight；失敗不產第四檔；中斷不暴露 ready 半套；UI 最多三路徑及可見提示詞；偽造 package、跨 batch unit 拒絕；同 package 多次部分匯入不需 replacement 就累積；相同重送 no-op；衝突／明確替換；本次一批錯誤不改任何舊資料；亂序 packages／dependencies；全覆蓋不跳過 uncertainty/review；v1/v3 匯入與 v4 retrieval 仍通過；同內容不同順序結果一致；candidate save 中斷保持冪等。
+必測：劇本名前綴、中文名、分隔符清理、重複劇本名／export 碰撞、來源／成果隔離、跨 package 及超過 99 的編號、受控子目錄 Help／匯入選檔；1/2/3/10/數百批都不超過三檔；原文串接及 hashes 完整；非空連續分配；含多位元文字的穩定分包；過大 unit/全來源 preflight；失敗不產第四檔；中斷不暴露 ready 半套；UI 最多三路徑及可見提示詞；偽造 package、跨 batch unit 拒絕；同 package 多次部分匯入不需 replacement 就累積；相同重送 no-op；衝突／明確替換；本次一批錯誤不改任何舊資料；亂序 packages／dependencies；全覆蓋不跳過 uncertainty/review；v1/v3 匯入與 v4 retrieval 仍通過；同內容不同順序結果一致；candidate save 中斷保持冪等。
 
 Haunting fixture 應由十來源檔變三檔，19 units 全保留。另外用數百邏輯批次的合成長劇本，驗實際檔案數及來源完整覆蓋，不只 mock 批次數。測試使用暫存 library/imports，不呼叫真實 API。核准實作後執行 authoring/template/help 及完整 regression suites。本次 spec 沒有實作或宣稱測試新 runtime 行為。
 
