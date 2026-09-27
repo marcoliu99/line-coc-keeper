@@ -5,9 +5,10 @@ import asyncio
 
 from app import keeper
 from app.repositories.group_state import load_state
-from app.services import purchases
+from app.services import mutation_admission, purchases
 
 
+@mutation_admission.guard_async_entry
 async def handle(conversation_id, user_id, reply, parts, is_keeper=False):
     state = load_state(conversation_id)
     try:

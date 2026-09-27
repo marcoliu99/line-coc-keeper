@@ -5,6 +5,7 @@
 [English](README.md)
 
 現行規格已對照 `main_v2` 的 `afe8ace`；每份 spec 均有英文與繁中版本。歷史提案與量測以不可變來源版本連結保留。
+後續新增項目各自標示來源版本；回合正確性與延遲提案對照 PR #94 後的 `8e32683`。
 
 ## 缺陷修正
 
@@ -90,6 +91,7 @@
 | [Agentic Keeper 架構](specs/refactor/agentic_keeper_design_spec_zh.md) | 已實作 | [English](specs/refactor/agentic_keeper_design_spec.md) |
 | [原生非同步 provider 與 I/O 契約](specs/refactor/async_provider_performance_design_spec_zh.md) | 已實作 | [English](specs/refactor/async_provider_performance_design_spec.md) |
 | [歷史 v1.0 後整合紀錄](specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md) | 歷史紀錄 | [English](specs/refactor/main_post_v1.0_into_main_v2_design_spec.md) |
+| [回合正確性、結果恢復與延遲量測](specs/refactor/turn_safety_and_latency_design_spec_zh.md) | 部分完成；S0／S1／S2／S3 已實作 | [English](specs/refactor/turn_safety_and_latency_design_spec.md) |
 
 ## 維護
 

@@ -57,7 +57,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
-from app.services import opposed_checks
+from app.services import mutation_admission, opposed_checks
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
@@ -800,9 +800,9 @@ TOOLS = [
     },
 ]
 
-# These tools do not mutate persisted GroupState. They may still perform
-# read-side indexing or randomness, but a partial timeout result is safe;
-# state-changing tools use the graceful cancellation path below.
+# Capability list for tools that do not directly persist GroupState. Random
+# output and shared-snapshot refresh still require worker ownership; the
+# gateway applies separate timeout/cancellation policies for those effects.
 READ_ONLY_TOOL_NAMES = frozenset({
     "roll_dice",
     "roll_impaling_damage",
@@ -1398,6 +1398,16 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
     """
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
+        mutation_admission.assert_admitted(state.group_id, timeline_id=latest_state.timeline_id)
+        if state.timeline_id and latest_state.timeline_id and state.timeline_id != latest_state.timeline_id:
+            raise mutation_admission.MutationHeld("stale tool timeline")
+        from app.services import movement
+        movement_session = movement.CURRENT.get()
+        operation = movement.OPERATION.get()
+        if movement_session is not None and operation is not None:
+            error = movement_session.guard(latest_state, *operation)
+            if error:
+                raise ValueError(error)
         result = mutator(latest_state)
         should_save = True
         if isinstance(result, _StateMutation):
@@ -1529,6 +1539,7 @@ def _commit_turn_result(
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
     start_game: bool = False,
+    segment_audit: dict[str, Any] | None = None,
 ) -> bool:
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -1548,6 +1559,10 @@ def _commit_turn_result(
             _sync_state_snapshot(state, latest_state)
             return False
         latest_state.log.extend(log_entries)
+        if segment_audit is not None:
+            latest_state.request_segment_audit.append({**segment_audit, "timeline_id": current_timeline_id,
+                                                        "conversation_id": state.group_id})
+            del latest_state.request_segment_audit[:-20]
         if start_game:
             latest_state.game_started = True
         if invalidate_openai_response_chain:
@@ -1682,6 +1697,7 @@ def _persist_memory_maintenance_state(
         idempotency_key_hash=idempotency_hash,
     )
     with locks.get_state_lock(group_id), db.transaction() as conn:
+        mutation_admission.assert_admitted(group_id)
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT data FROM group_states WHERE key = ?", (group_id,)).fetchone()
         if row is None:
@@ -1776,16 +1792,17 @@ def _persist_memory_maintenance_state(
             source_revision=source_revision,
             embedding=embedding,
         )
-        _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
-        observability.event(
-            "maintenance.commit_completed", source_revision=source_revision,
-            committed_revision=latest_state.state_revision,
-            memory_appended=memory_appended,
-            requested_timeline_id=timeline_id,
-            current_timeline_id=latest_timeline_id,
-            idempotency_key_hash=idempotency_hash,
-        )
-        return "committed"
+        committed = _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
+    committed.apply(latest_state)
+    observability.event(
+        "maintenance.commit_completed", source_revision=source_revision,
+        committed_revision=latest_state.state_revision,
+        memory_appended=memory_appended,
+        requested_timeline_id=timeline_id,
+        current_timeline_id=latest_timeline_id,
+        idempotency_key_hash=idempotency_hash,
+    )
+    return "committed"
 
 
 # Guards against more than one run_post_turn_maintenance pass running
@@ -1795,6 +1812,7 @@ _maintenance_in_flight: set[str] = set()
 
 def run_scene_digest_maintenance(group_id: str) -> None:
     with locks.get_state_lock(group_id):
+        mutation_admission.assert_admitted(group_id)
         state = load_state(group_id)
         latest = scene_digest.latest_digest(group_id, state.timeline_id)
         chapter_changed = latest is None or latest.get("scene_label") != (state.active_chapter_id or state.scenario_title or "目前場景")
@@ -1920,6 +1938,15 @@ def _execute_tool(
     image_requests: list[tuple[str | None, int]],
     speaker_role: str = "player",
 ) -> dict:
+    mutation_admission.assert_admitted(state.group_id, timeline_id=state.timeline_id)
+    from app.services import movement
+    session = movement.CURRENT.get()
+    if session is not None:
+        movement_error = session.guard(state, name, tool_input)
+        if movement_error:
+            return {"ok": False, "error": movement_error}
+    if name == "commit_movement":
+        return session.commit(state, tool_input) if session else {"ok": False, "error": "no_movement_session"}
     try:
         if speaker_role == "kp_assistant" and name == "roll_dice":
             error = _validate_kp_roll_dice_context(tool_input)
