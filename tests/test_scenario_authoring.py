@@ -59,9 +59,15 @@ def test_workbook_prompt_complete_example_source_mapping_and_round_trip(library)
     path, payload = library()
     assert payload['authoring_version'] == 2 and 'schema_version' not in payload
     assert authoring.PROMPT in path.read_text()
+    assert '原 PDF 一起上傳' in authoring.PROMPT
+    assert 'PDF 實體頁面核對' in authoring.PROMPT
+    assert 'Luck 原本空白就留白' in authoring.PROMPT
+    assert 'Source correction reports are NOT an' in path.read_text()
+    assert 'PDF/manual source review' not in path.read_text()
     assert path.stat().st_mode & 0o077 == 0
     message = templates.export_message('sample', path)
     assert authoring.PROMPT in message and path.name in message and 'imports' in message
+    assert '將 MD 與同一版本的原 PDF 一起上傳' in message
     assert 'source_spans' not in payload['batches'][0]['records'][0]
     fill(payload)
     payload['batches'][0]['records'][0]['rules'] = [{'check': {'text': '護甲 2', 'evidence': [

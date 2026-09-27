@@ -391,7 +391,7 @@ def export_message(scenario_id: str, exported: Path) -> str:
     prefix = registry.get('filename_prefix', 'scenario')
     return ("已匯出外部中文整備工作檔（含 KP 原文，請勿公開）。\n"
             + "\n".join(str(IMPORT_DIR / f) for f in files)
-            + "\n將 MD 上傳至網頁版 Gemini／ChatGPT，並貼上以下提示詞：\n```text\n"
+            + "\n將 MD 與同一版本的原 PDF 一起上傳至網頁版 Gemini／ChatGPT，並貼上以下提示詞：\n```text\n"
             + scenario_authoring.PROMPT + "\n```\n"
             + f"共 {len(files)} 個來源檔、{len(registry['batches'])} 個邏輯批次、{len(registry['units'])} 個單元；進度 0/{len(registry['units'])}。"
             + f"成果檔名：{prefix}_01.md、{prefix}_02.md，後續依序累加；所有來源檔共用成果流水號。\n"
