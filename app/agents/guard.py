@@ -62,7 +62,7 @@ async def enforce_narrative_safety(message: AgentMessage, reply_text: str) -> st
     invalid once attempts are exhausted, fails closed to
     spoiler_policy.NEUTRAL_FALLBACK_TEXT (shared with the spoiler-leak
     fallback — see its definition) rather than returning the last (still
-    invalid) repair attempt — see docs/specs/enhancement-guard-agent.md §1
+    invalid) repair attempt — see docs/specs/enhancement/enhancement-guard-agent.md
     for the bug this replaced: the previous loop exited without a final
     check and could silently send content still flagged as a system leak or
     broken Markdown."""

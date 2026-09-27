@@ -19,7 +19,7 @@ from app.domain.models import MechanicResult
 #   context_builder（收集 RAG／記憶上下文，不呼叫 LLM）
 #     → intent_router（規則式分類 PURE_ROLEPLAY／GAMEPLAY_ACTION，不呼叫 LLM——
 #       刻意維持規則判斷，省下純角色扮演時多打一次 LLM 的成本，這是這個架構設計
-#       本身要的效能目標，見 docs/agentic_keeper_design_spec.md）
+#       本身要的效能目標，見 docs/specs/refactor/agentic_keeper_design_spec.md）
 #     → executor（GAMEPLAY_ACTION 才會走到；呼叫 LLM＋工具，透過
 #       app/keeper.py._execute_tool 真的擲骰、真的改狀態並落庫）
 #     → state_reducer（純記錄，不呼叫 LLM，也不套用任何狀態變更——真正的變更已經

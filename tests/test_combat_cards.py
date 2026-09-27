@@ -262,7 +262,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(card.abilities[0].usage["used_this_round"], 1)
 
     def test_armor_entry_with_an_unexpected_key_does_not_crash(self):
-        """docs/specs/bug-add-npc-to-combat-armor-schema-crash.md: a real
+        """docs/specs/bug/bug-add-npc-to-combat-armor-schema-crash.md: a real
         production incident had the LLM use `name` instead of `label` in
         an armor entry, crashing ArmorRule.__init__() with an unexpected
         keyword argument and silently failing to add the enemy at all."""
@@ -302,7 +302,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(card.abilities[0].name, "咒術")
 
     def test_ability_with_a_string_trigger_instead_of_a_dict_is_coerced_to_empty(self):
-        """docs/specs/bug-add-npc-to-combat-armor-schema-crash.md: trigger/
+        """docs/specs/bug/bug-add-npc-to-combat-armor-schema-crash.md: trigger/
         check/effect/usage/reveal_policy are typed as dict but nothing
         validated the LLM actually provided one -- a plain string (a
         plausible mistake, e.g. "任何時候" instead of a structured

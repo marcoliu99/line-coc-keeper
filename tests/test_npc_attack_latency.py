@@ -1,4 +1,4 @@
-"""Tests for docs/npc_attack_latency_design_spec.md's two optimizations:
+"""Tests for docs/specs/enhancement/npc_attack_latency_design_spec.md's two optimizations:
 
 - app/keeper.py's new offer_npc_attack_defense_choice tool, which merges
   what used to be two sequential tool calls (npc_skill_check, then
@@ -176,7 +176,7 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertEqual(saved_state.pending_checks["u1"]["options"], result["options"])
 
     def test_is_ranged_defers_the_attacker_roll_entirely(self):
-        """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §2: a
+        """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md: a
         ranged attack is never an opposed roll, so the attacker must NOT be
         rolled at registration time — only after the defender's own dive-
         for-cover result is known (see legacy_commands._resolve_ranged_defense_outcome).
@@ -328,7 +328,7 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         self.assertEqual(result["attacker_tier"], "regular")
 
     def test_critical_attacker_filters_out_fight_back_option(self):
-        """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.2: no
+        """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md: no
         tier beats Critical, so offering Fight Back against it is an option
         that can never win — it must be filtered out server-side (not just
         hidden in the Discord button), since a Dodge tie still favors the
@@ -503,7 +503,7 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
 
 
 class RangedDefenseEndToEndTests(unittest.TestCase):
-    """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §2 end-to-end:
+    """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md end-to-end:
     a ranged offer_npc_attack_defense_choice all the way through /coc check's
     resolution. Ranged combat is never dice.resolve_opposed — the attacker's
     shot is a standalone check, deferred until the defender's own

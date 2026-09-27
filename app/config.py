@@ -60,7 +60,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
 
 # Caps how many OpenAI conversation requests this process has in flight at
-# once (see docs/specs/enhancement-llm-rate-limit-and-turn-latency.md 3.1).
+# once (see docs/specs/enhancement/enhancement-llm-rate-limit-and-turn-latency.md).
 # Deliberately a manually-tuned fixed value, not an auto-adjusting one — pick
 # it by watching real 429 rates/turn latency in the structured logs, not by
 # guessing. 3 is a conservative starting point for a single-developer,
@@ -119,7 +119,7 @@ MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", "40"))
 # tools-disabled wrap-up call) rather than the old silent placeholder, so
 # this can stay low without turning "cut off early" into "goes silent" —
 # lowered from 8 to 5 once that safety net existed. See
-# docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md for the
+# docs/specs/enhancement/enhancement-conversation-lock-and-tool-loop-latency.md for the
 # full tradeoff discussion and HIGH_ITERATION_WATERMARK below for the
 # separate, lower observability alarm used to decide whether to go further.
 MAX_TOOL_ITERATIONS = _env_int("MAX_TOOL_ITERATIONS", 5, minimum=1)
@@ -165,7 +165,7 @@ SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEI
 # forced single-tool-call extraction and stay at each provider's default so
 # structured output doesn't get noisier). Lower than each provider's own
 # default (usually ~1.0) on purpose: the cold-observer persona in
-# docs/keeper_skill.md needs the Keeper to hold a consistent tone and not
+# docs/references/keeper_skill.md needs the Keeper to hold a consistent tone and not
 # drift off it turn to turn, and dice/rule outcomes it restates (rolls,
 # tiers, damage) shouldn't get creative embellishment. 0.5-0.7 is the
 # requested range; 0.6 sits in the middle.
@@ -239,7 +239,7 @@ LOG_SLOW_OPERATION_MS = _env_int("LOG_SLOW_OPERATION_MS", 1000)
 LOG_HASH_IDENTIFIERS = _env_bool("LOG_HASH_IDENTIFIERS", True)
 LOG_INCLUDE_USAGE = _env_bool("LOG_INCLUDE_USAGE", True)
 
-# Spoiler protection hardening (docs/spoiler-protection-hardening_design_spec.md)
+# Spoiler protection hardening (docs/specs/enhancement/spoiler-protection-hardening_design_spec.md)
 # — two independent switches. SPOILER_PROTECTION_ENABLED gates "劇情揭露節奏"
 # mechanisms (chapter gating, KP-only/public digest split, NPC/Narrator/scenario
 # spoiler prompt rules, the public-reply output guard, /coc index, /coc pregen);
@@ -250,7 +250,7 @@ LOG_INCLUDE_USAGE = _env_bool("LOG_INCLUDE_USAGE", True)
 SPOILER_PROTECTION_ENABLED = _env_bool("SPOILER_PROTECTION_ENABLED", True)
 PRIVACY_ISOLATION_ENABLED = _env_bool("PRIVACY_ISOLATION_ENABLED", True)
 
-# Guard Agent (docs/specs/enhancement-guard-agent.md) — controls whether a
+# Guard Agent (docs/specs/enhancement/enhancement-guard-agent.md) — controls whether a
 # narrative that fails app/agents/rule_validator.py's system-leak/format
 # check gets sent to an LLM for repair. The validator check itself always
 # runs regardless of this switch (it's a cheap regex scan); this only gates

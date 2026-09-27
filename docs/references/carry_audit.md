@@ -1,71 +1,19 @@
-# 攜帶物與購買合理性審查
+# Possessions, purchases and narrative plausibility
 
-**狀態：已實作**（動態審查部分——玩家宣稱攜帶什麼東西時的四項合理性檢查）。這份文件原本是照 [coc-kp-host/references/carry_audit.md](https://github.com/SumanasJ/coc-kp-host/blob/main/references/carry_audit.md) 改編的設計規格，記錄「如果之後要做，應該怎麼做」；下面「如果之後要實作」一節列的最小可行版本（純提示詞規則，不用新工具/新指令）現在已經照那個規格加進 `app/keeper.py` 的 `_build_static_prompt`（可讀版本見 `docs/keeper_skill.md` 的「攜帶物合理性審查」一節），實測過會擋下不合理的裝備宣稱（例如圖書館員宣稱身上有一把湯普森衝鋒槍），也確認日常小物不會被誤擋。
+[繁體中文](carry_audit_zh.md)
 
-**建角時的靜態審查也做了一部分**：`/coc pc`（`generate_investigator`）跟 `/coc create`（`creation.finalize`）現在會依職業自動帶入 `app/models.py` 的 `OCCUPATION_EQUIPMENT` 預設隨身物品清單（例如警察帶警徽/警棍/手銬，記者帶記者證/筆記本/相機），不用玩家自己宣告，這些物品已經預先審查過符合四項檢查（年代/來源/負擔能力/合法性），不需要再走一次動態審查。
+## Current implementation
 
-**劇本／角色卡的內容永遠優先，這份通用清單只在完全沒有劇本資訊可用時才補位**——不是額外規則，是現有資料流本來就這樣分層：
-- `/coc usepregen`（劇本自己的預製角色）完全不會碰到 `OCCUPATION_EQUIPMENT`，走的是 `pregen_extractor.pregen_to_character`，裝備以劇本角色卡自己寫的（`weapons`／`notes`）為準。
-- `/coc pc` 帶 `occupation_skills`（劇本抽出的職業技能加成，例如「這份劇本裡的海洋生物學家技能是這樣」）時，`generate_investigator` 也完全不會套用這份清單——只有沒有任何劇本職業資料、純粹通用建角（`occupation_skills` 沒給、`occupation` 剛好對到下面 `OCCUPATIONS` 裡的通用職業）時才會用上。
-- `/coc create` 是完全由玩家手動分配技能點數的建角流程，目前設計上就沒有介面能帶入劇本資料，所以只要玩家輸入的職業字串跟 `OCCUPATION_EQUIPMENT` 的 key 完全相符就會套用（自訂職業字串則不會）。
+`Character.carried_items` and weapons/ammunition record established possessions. `Character.cash_balances` and `GroupState.commerce` now implement confirmed balances, quotes and purchase receipts. The old statement that purchases are entirely prompt-only and no cash ledger exists is obsolete.
 
-（附帶一提：`generate_investigator` 的 `occupation_skills` 參數是在早於「劇本有預製角色時 `/coc pc` 直接整個被擋下」這個規則之前設計的，目前程式碼裡已經沒有任何地方真的傳入這個參數了——`/coc pc` 只要劇本有 `pregens` 就直接拒絕，不會走到這條路。這是既有的、跟這次改動無關的死路徑，這次沒有動它，僅供之後想清理程式碼時參考。）
+## Judgment boundaries
 
-（`Character` 現在確實有兩個相關但範圍窄很多的欄位，跟這份文件講的「審查」是兩回事，不要搞混：`weapons` 追蹤**已經確定持有**的槍械目前剩餘彈數（`role_` 角色卡上傳時從【武器】區塊的「彈容量」解析，開槍呼叫 `adjust_ammo` 扣彈）；`carried_items` 是一個純粹的自由文字清單，記錄角色撿到/拿到的東西（`add_carried_item`/`remove_carried_item`），單純「有沒有記住這個東西存在」，沒有做任何年代/來源/負擔能力/合法性的判斷——Keeper 判斷「這樣東西合不合理」還是完全靠系統提示詞的自由心證，不是這份文件講的結構化四項審查。）
+Permit reasonable mundane personal items without turning play into an audit. Plot-significant, combat-relevant, rare, regulated or expensive objects need scenario/canonical support. Consider era, location, occupation/source and affordability. Do not use blanket historical claims such as all radios or all semiautomatic weapons being unavailable in the 1920s; availability depends on the actual item and setting.
 
-## 目標
+## Purchase sequence
 
-一致性與代入感，不是記帳。只審查**貴重／稀有／管制或違法／跟戰鬥相關**的物品，角色生活水準內的日常小物（筆記本、小刀、火柴、一般衣物、零錢）一律放行，不要做成規則說教。
+Travel must be resolved and a supported shop/stock established before acquisition. Lifestyle mode records the Credit Rating affordability judgment and receipt; cash mode requires confirmed currency/funds and explicit quote confirmation. Debit, inventory and receipt settle atomically. Map coordinates are optional. The backend checks identity/consistency; the AI still adjudicates narrative arrival and stock.
 
-COC7e 規則依據：信用評級（Credit Rating）決定生活水準、起始現金與資產；日常花費在額度內不用特別記；大筆花費會扣現金，可能得慢慢變賣其他資產湊錢。不常見的裝備需要幸運檢定，有些東西在特定地點/年代根本買不到。
+## Narration and limitations
 
-## 四項合理性檢查
-
-物品落在審查範圍內時，四項都要過；有一項不過，就拿掉、換成合理的替代品、或標成「需在劇情中取得」。
-
-1. **年代／科技**：物品必須存在於劇本設定的年代與地區可以取得。1920 年代劇本不該有半自動武器、無線電、抗生素或還沒發明的工具。
-2. **來源**：角色的職業、背景、執照，或先前劇情要能解釋他為什麼有這個東西。醫生帶醫藥包合理，職員突然有一把湯普森衝鋒槍不合理。
-3. **負擔能力**：花費要符合角色的信用評級／現金（目前存在 `Character.skills["信用評級"]`，沒有獨立欄位）。大筆物品（載具、槍械、珍本、精密儀器）超過日常額度就要真的扣現金；現金不夠就得變賣其他資產，這在劇情裡要花時間。
-4. **合法性／地域**：管制或違法物品（軍用武器、管制藥物、機密文件）需要合法來源或黑市場景，而且劇本設定的地點要真的買得到（例如邊境小鎮「不會有」某些東西；時間壓力可能排除掉一趟採購行程）。
-
-## 建角時的靜態審查
-
-建角流程（`/coc pc` 快速生成 / `/coc create` 互動建角 / `/coc usepregen` 預製角色）目前都沒有隨身物品欄位，如果之後要加：
-
-- 合理的日常／職業用品：直接保留
-- 邊緣情況（非軍警角色想要一把手槍）：只有在信用評級、年代、地域都允許合法購買時才保留，否則要註明怎麼取得，或直接拿掉
-- 不合理／不合年代／買不起：換成合適的替代品，或標成 `需在劇情中取得`，變成一個遊戲目標而不是白送的東西
-
-審查過的大件／武器／管制物品要記進遊戲紀錄（`state.log` 或角色的 `notes` 欄位），後續場景才會一致。
-
-## 遊戲中的動態審查
-
-玩家說「我掏出我的 X」「我包包裡有 Y」時，Keeper 應該（目前這條完全沒寫進 `app/keeper.py` 的系統提示詞）：
-
-- **角色卡上已經有** → 直接算他有，繼續劇情
-- **沒記錄但合理**（小型、符合年代、符合角色生活）→ 允許，可以順便來一次幸運或相關檢定（「你剛好帶了嗎？」），瑣碎物品直接放行就好
-- **審查範圍內且沒有建立過** → 不能悄悄給他——用劇情解決：身上沒帶（「你翻遍口袋，並沒有帶那把槍」）、需要先去拿／去買、或需要一次幸運/取得場景
-
-不要讓「我一直都帶槍」這種說法回溯武裝一個本來沒武裝的角色。如果角色真的理應有這個東西，允許並補記到角色卡；否則就擋下來。
-
-## 場景中購買／取得裝備
-
-- 生活水準內的日常購買：允許，只有超過日常額度才扣現金
-- 大筆花費：扣現金；現金不夠就變賣其他資產，Keeper 自訂需要花的時間
-- **稀有／不常見物品**：需要一次幸運檢定，失敗代表這裡此刻買不到
-- **管制／違法物品**：需要合法管道、黑市門路、或一整段取得場景——比照一般行動判定存取難度、NPC 反應、時間與風險
-- 尊重地域與時間壓力：有些東西在這個地點或期限前買不到，用劇情講清楚，不要用系統訊息講
-
-## 風格
-
-- 審查要隱形、要快——在敘事裡解決，不要變成規則旁白
-- 整個戰役裡要一致：一旦角色有（或沒有）某個東西，就一直保持這個事實
-- 不要拿這套規則來刁難玩家或任意沒收有用的工具；只審查上面列的範圍，維持這個 skill 一貫「重視推進劇情，不重視記帳」的傾向
-
-## 如果之後要實作
-
-最小可行版本：
-
-1. ~~`Character` 加一個 `notes` 之外的 `carried_items: list[str]` 欄位（或沿用 `notes`），建角流程不用特別問，先留空。~~ 已做：`Character.carried_items` 這個欄位現在存在，`add_carried_item`/`remove_carried_item` 工具維護。
-2. ~~`docs/keeper_skill.md` 加一節「攜帶物審查」，濃縮成幾句提示詞規則塞進 `app/keeper.py` 的系統提示詞（不用真的做成獨立工具，這是敘事判斷，跟「條件式旁白」規則一樣靠 Keeper 自己在敘述裡處理）。~~ 已做：見 `docs/keeper_skill.md`「攜帶物合理性審查」一節，`app/keeper.py` `_build_static_prompt` 新增對應的行為準則段落。
-3. ~~不需要新工具或新指令——這整套完全可以純靠系統提示詞的行為規則達成，跟這個專案其他「敘事層面的規則」（敘事節奏、NPC 隊友）走同一套模式。~~ 確認：實作時也的確沒有加任何新工具/新指令，純粹是系統提示詞的行為規則，跟原設計一致。
+Describe current purchases as bought now; final inventory alone does not prove prior ownership. A quote is not payment. Do not silently give a weapon because a player says they have always carried it. General structured legality/era validation and automatic asset liquidation are not implemented.

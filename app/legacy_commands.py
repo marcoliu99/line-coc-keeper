@@ -208,7 +208,7 @@ def _apply_scenario_correction(
     current_room_id/party_facing/openai_previous_response_id/game_started
     untouched. That's exactly what "protect the party's existing position
     and progress" means when the scenario hasn't actually restarted — see
-    docs/character_and_dictionary_system_spec.md's Module 1. pregens is NOT
+    docs/specs/feature/character_and_dictionary_system_spec.md's Module 1. pregens is NOT
     in that protected list — a corrected PDF's own re-extracted cast is
     reconciled in (see _merge_extracted_pregens), the same as _apply_new_
     scenario, since fixing e.g. a garbled stat in an embedded pregen is
@@ -1064,7 +1064,7 @@ def _describe_opposed_outcome(defender_name: str, is_counter: bool, defender_tie
 def _resolve_ranged_defense_outcome(defender_name: str, dive_success: bool, ranged_attacker: dict[str, int]) -> str:
     """COC7e ranged-attack resolution — deliberately NOT dice.resolve_opposed
     (that function is for melee Dodge/Fight Back only; verified against RAW,
-    see docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §2). A ranged
+    see docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md). A ranged
     attack is never an opposed roll: the defender's only option is diving for
     cover, an independent Dodge check that — if successful — gives the
     attacker's shot one penalty die but does not by itself stop the shot.
@@ -1645,7 +1645,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         # Luck-spend: always offered whenever there's at least one tier-
         # improving option the player can afford (buyable_options already
         # filters to cost <= luck available) — no cost cap on top of that;
-        # see docs/specs/enhancement-luck-buyup-always-offered.md for why
+        # see docs/specs/enhancement/enhancement-luck-buyup-always-offered.md for why
         # the previous "<=7" near-miss-only gate was removed. Sanity checks
         # are excluded (handled above, already finalized by this point),
         # and so is a Pushed Roll (COC7e optional rule: a pushed reroll's
@@ -2235,7 +2235,7 @@ def _pregen_full_sheet_text(pregen: dict, index: int) -> str:
 
 def _heal_character(char: Character) -> list[str]:
     """Run once per bound character right before /coc start actually opens
-    the game (see docs/character_and_dictionary_system_spec.md's Module 7) —
+    the game (see docs/specs/feature/character_and_dictionary_system_spec.md's Module 7) —
     Character creation today (generate_investigator / pregen_to_character)
     always produces complete derived stats and the full BASE_SKILLS set, so
     a character built through either of those paths should never actually
@@ -2294,7 +2294,7 @@ def _build_readiness_roster(
     state: GroupState, healed_notes: dict[str, list[str]], format_mention: FormatMention = lambda owner_id: owner_id
 ) -> str:
     """The "全團調查員集結就緒名冊" /coc start announces before the opening
-    narration — see docs/character_and_dictionary_system_spec.md's Module 7's
+    narration — see docs/specs/feature/character_and_dictionary_system_spec.md's Module 7's
     own "範例二" for the format this follows (HP/SAN/weapons/items per
     character, not just name/occupation — a GM glancing at this should be
     able to tell at a glance whether everyone's actually equipped, not just

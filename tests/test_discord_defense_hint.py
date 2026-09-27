@@ -18,7 +18,7 @@ from app import dice, discord_bot
 
 
 class TierPercentageHintTests(unittest.TestCase):
-    """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4.2: the
+    """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md: the
     %-threshold shown to the player must match COC7e's actual floor-division
     tier thresholds (dice.py's own skill_check uses the same formulas)."""
 
@@ -55,7 +55,7 @@ class TierPercentageHintTests(unittest.TestCase):
 
 
 class DefenseChoiceHintTests(unittest.TestCase):
-    """docs/specs/bug-dodge-counter-tie-and-ranged-mechanics.md §4: Dodge and
+    """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md: Dodge and
     Fight Back need DIFFERENT thresholds against the same attacker_tier — a
     tied Dodge favors the defender (§1), so Dodge only needs to match
     attacker_tier, while a tied Fight Back favors the attacker, so Fight Back

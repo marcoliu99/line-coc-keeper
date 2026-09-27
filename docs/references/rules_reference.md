@@ -1,86 +1,23 @@
-# COC7e 規則速查：目前實作 vs. RAW 落差清單
+# Implemented mechanics and remaining rule gaps
 
-改編自 [coc-kp-host/references/rules_reference.md](https://github.com/SumanasJ/coc-kp-host/blob/main/references/rules_reference.md)，但那份文件是寫給「LLM 自己心算判定」用的（沒有骰子引擎，靠 KP 自己記得規則）。我們的規則判定幾乎全部是程式碼（`app/dice.py`、`app/combat.py`），所以這份文件重點是**逐條標註「這條 RAW 規則，我們的程式碼實作了沒有」**，方便之後要擴充規則引擎時知道從哪裡下手，而不是重複一份給 LLM 背的規則手冊。
+[繁體中文](rules_reference_zh.md)
 
-## 已經是程式碼判定的部分
+## Authority and scope
 
-- **d100 技能/屬性檢定**：`dice.skill_check(skill_value, bonus_dice, penalty_dice)`，含大失敗/失敗/成功/困難/極難/大成功六級判定，`skill_value < 50 and roll >= 96` 才算大失敗（符合 RAW：50% 以上的技能大失敗門檻是 100 而不是 96-100）。
-- **獎勵骰/懲罰骰**：`dice.roll_percentile_with_dice_pool`，多顆骰取消規則（一顆獎勵抵一顆懲罰）有做，但**沒有**限制「正常最多一顆、極端狀況最多兩顆」這個軟上限——目前呼叫端（Keeper 的工具呼叫）想給幾顆就給幾顆，全靠提示詞自律。
-- **理智檢定**：`dice.sanity_check(current_san, loss_success, loss_failure)`，roll ≤ current_san 才算成功，這點是對的（跟一般技能檢定一樣，只是拿 SAN 值本身當門檻）。
-- **角色檢定所有權**：`skill_check`/`sanity_check` 預設只建立 pending，玩家用 `/coc check` 或 Discord 按鈕明確觸發後，程式才擲骰、判定並回傳 authoritative 結果。任何玩家可用 `/coc autoroll on|off` 選擇讓新的角色檢定由系統立即代擲；預設 off。預製角色卡 LUCK 空白時，建角 `/coc luck roll` 仍只由玩家本人觸發；卡面有值則沿用。
+This is an implementation reference for the repository, not a new verification of the complete CoC rulebooks. Code in `app/dice.py`, `app/combat.py`, `app/luck.py` and their regression tests defines supported mechanics; the scenario defines its own content.
 
-## RAW 有寫、我們完全沒做的部分（落差清單）
+## Checks and Luck
 
-### 對抗檢定（對抗检定）
+Supported: d100 tiers, bonus/penalty dice, regular/hard/extreme required difficulty, SAN loss expressions, owner-triggered pending checks and optional group autoroll. Difficulty must be met, not merely some success tier. Luck upgrades are offered whenever legal, useful and affordable; SAN is excluded. Blank pregen Luck remains an explicit owner roll.
 
-RAW：雙方各自宣告互斥目標，各自擲骰，**成功等級高者贏**（大成功 > 極難 > 困難 > 常規 > 失敗/大失敗），等級相同比技能值高低（我們簡化成「平手時攻擊方獲勝」，沒有再比技能值），再相同才真的算平手。**對抗檢定不能孤注一擲。**
+## Combat
 
-**已修正（限「玩家 vs NPC」的情境，例如近戰閃避/反擊）**：`app/dice.py` 的 `resolve_opposed(defender_tier, attacker_tier)` 依 `TIER_RANK` 比較雙方成功等級，回傳 `defender_wins`／`tie_attacker_wins`／`attacker_wins`／`both_miss`。流程：`offer_npc_attack_defense_choice` 會先由程式替攻擊方擲骰，連同閃避/反擊選項交給玩家；玩家只選一個選項，按鈕或 `/coc check <選項名稱>` 會讓程式替防守方擲骰，`app/commands.py` 的 `_describe_opposed_outcome` 自動算出結果。反擊使用正常技能值，不把技能值減半。
+DEX order, distinct NPC cards, armor, attacks, abilities, turn/round effects, damage bonus and impaling calculations are supported. Dodge wins an equal successful melee tier; Fight Back needs a better one. Ranged defenses have their own rules. Raw versus final damage tools avoid double armor reduction. Major-wound checks respect pending/autoroll ownership.
 
-**還沒做的部分**：只有「玩家 vs NPC」的閃避/反擊走這套機制；**玩家 vs 玩家**的對抗檢定（需要同時保存雙方待解析的行動並比較結果）完全沒做——`GroupState.pending_checks` 目前一個玩家一筆，沒有「這筆檢定在等另一筆」的關聯欄位，要做的話這是主要要補的資料結構；平手時我們簡化成「攻擊方直接贏」，沒有像 RAW 那樣再比雙方技能值高低、真的相同才算平手。
+## Remaining gaps
 
-### 難度等級（难度等级）（已修正）
+No fully general paired-player opposed-check coordinator, combined-skill single-roll tool, grapple/disarm Build engine, or complete automatic surprise/outnumbered rules engine is claimed. Difficulty selection, investigation pacing and many availability judgments still depend on Keeper interpretation. Supported special abilities do not imply every published spell is implemented.
 
-RAW：常規 roll ≤ 值；困難 roll ≤ 值/2；極難 roll ≤ 值/5。`dice.skill_check` 內部**已經**算出這三級（`tier` 欄位）；~~只是目前工具介面沒有讓 Keeper 直接「指定這次要用困難/極難門檻」——Keeper 只能靠敘事判斷要不要加懲罰骰來模擬難度提升，不是真的改變比較門檻。跟活人對手比難度（< 50 → 常規；≥ 50 → 困難；≥ 90 → 極難）這條完全沒有程式碼支援，純靠 `docs/keeper_skill.md` 那條提示詞規則。~~
+## Possessions and money
 
-**已修正**：`dice.skill_check` 新增 `required_tier` 參數（`"regular"`／`"hard"`／`"extreme"`），`skill_check` 這次擲骰要達到那個等級（含）以上才算 `success`，不是只要有擲出任何成功等級就算過——這才是 RAW 真正的規則：困難任務下擲出「一般成功」根本不算成功，不是打折扣的部分成功。`app/keeper.py` 的 `skill_check` 工具新增對應的 `difficulty` 參數，工具描述跟系統提示詞都寫了 RAW 的判斷依據（對手技能/屬性 ≥50 或任務很困難 → `hard`；≥90 或接近人類極限 → `extreme`）。
-
-顯示層也一併修正：`app/commands.py` 新增 `_tier_zh_for_result`，一個「達到成功門檻但沒達到這次判定要求的門檻」的擲骰結果，會正確顯示成「失敗（擲骰達到「成功」，但這次判定需要至少「困難成功」）」，不會誤顯示成單純的「成功」；Luck 花費機制（`app/luck.py`）也改成難度感知——只列出真的會讓這次判定翻盤成功的等級可以花 Luck 買（例如判定需要 `hard`，玩家擲出「失敗」，系統不會列出「花 Luck 買到 regular」這種花了錢還是不算過的無意義選項，只會列出 `hard`／`extreme`）。
-
-實測過（真的 LLM 呼叫）：`dice.py`／`luck.py` 用固定擲骰值做過所有邊界情境的單元測試（一般门槛擲出成功但不夠困難、困難门槛擲出困難成功剛好過、大成功無視門檻永遠過、非法 `required_tier` 值優雅退回 `regular`）；完整跑過一次 `/coc check` → 顯示「失敗（達到成功但門檻更高）」→ 觸發 Luck 花費提示（只列 `hard`／`extreme`，沒有 `regular`）→ 玩家花 5 點 Luck 買到 `hard` → 最終正確顯示「困難成功」並正常扣除 Luck、交給 Keeper 敘事。也測過 Keeper 自己在完整對話裡的判斷：劇本明確寫「這名殺手潛行 80%」時，強化提示詞（加入具體數字對照的範例）後連續 5 次都正確帶出 `difficulty='hard'`。**還沒完全可靠的部分**：同樣的判斷邏輯套用在「任務本身很困難」（而非對抗某個有技能數字的角色/物件，例如一道抽象描述成「異常精密」的鎖）時，還沒像「對抗角色」那個分支一樣測出穩定結果——系統提示詞裡舉的具體範例目前只涵蓋「對手技能數字」這一種情境，之後可以考慮也補一個「任務本身困難」的具體範例來加強。跟這個專案其他語氣/風格類規則一樣，這整條完全靠 Keeper 自己判斷呼叫時機，沒有程式碼強制檢查它是不是每次都設對了 `difficulty`。
-
-### 組合技能檢定（组合技能检定）
-
-RAW：一個任務同時需要兩個技能時，**只骰一次**，拿同一個結果分別比對兩個技能值，Keeper 事先決定是「全過」還是「任一過」。
-
-我們的實作：**沒有**——`skill_check` 工具一次只吃一個 `skill` 參數。目前如果 Keeper 想模擬組合檢定，只能自己在敘事上處理，沒有工具支援，而且很容易被 LLM 誤用成「骰兩次」（機率會算錯，這正是他們文件裡特別強調的坑）。
-
-### 技能等級參考表
-
-| 技能值 | 水平 | 含義 |
-|---|---|---|
-| 01-05% | 新手 | 完全外行 |
-| 06-19% | 初學者 | 少量知識 |
-| 20-49% | 業餘 | 興趣愛好水平 |
-| 50-74% | 職業 | 可憑此謀生，相當於學士 |
-| 75-89% | 專家 | 碩士/博士水平 |
-| 90%+ | 大師 | 該領域世界頂尖 |
-
-純參考表，跟角色建立的技能點數分配（`app/creation.py`）沒有直接關聯，但判斷「這個技能值對這個角色設定合不合理」時可以用——例如玩家想把一個剛出社會的角色某項技能點到 95%，可以用這張表跟他確認是不是真的想要「世界頂尖大師」等級。
-
-### 戰鬥
-
-RAW 完整流程：先攻意外攻擊 → DEX 順位輪流行動 → 攻擊方擲 Fighting/Firearms，近戰由**防守方選擇閃避或反擊**（對抗檢定）→ 命中後骰傷害 + 傷害加值 → 單次傷害 ≥ 目標當前 HP 上限一半觸發重傷（CON 檢定，失敗昏迷/倒地）→ HP 到 0 進入瀕死。
-
-我們的實作（`app/combat.py`）：
-
-- ✅ DEX 排先攻順位、輪流行動、`advance_combat_turn` 推進、自動跳過已倒下/暫離的人——這部分程式碼管得很嚴謹（見 `docs/keeper_skill.md` 的「戰鬥規則」一節，DEX 不同必須依序敘述是這個專案特別修過、驗證過的規則）。
-- ✅ `damage_combatant` 直接調整 HP，玩家和 NPC 都適用。
-- ✅ 閃避/反擊的對抗檢定機制——見上面「對抗檢定」一節，`npc_skill_check` + `offer_check_choice` 的 `attacker_tier` + `dice.resolve_opposed`，玩家 vs NPC 的情境已經是真正比較雙方成功等級，不是純敘事判斷。
-- ✅ **極限成功的加成傷害（穿刺武器 vs 非穿刺武器）**：`dice.calculate_impaling_damage` + `app/keeper.py` 的 `roll_impaling_damage` 工具——攻擊擲骰達到極限成功時（反擊不適用），武器傷害＋傷害加值都算到最大值；穿刺武器（刀劍、長矛、大多數槍械子彈）在最大值之上再額外重擲一次武器本身的傷害骰，非穿刺武器（棍棒、拳頭）只算最大值不重骰——經官方《守密人手冊》原文核對過公式。用真實 LLM 對話測過：極限成功＋穿刺武器（獵刀 1d4+2、DB +1d4）時 Keeper 正確呼叫這個工具，敘述的傷害數字跟工具實際算出來的一致；極限成功＋非穿刺武器（拳頭 1d3、DB +1d4）時正確不重骰，傷害等於最大值 7。
-- ~~沒有傷害加值（DB）自動套用到一般（非極限成功）的武器傷害~~ 已修正：`dice.roll_weapon_damage` + `app/keeper.py` 的 `roll_weapon_damage` 工具——一般命中只要給角色名稱跟武器傷害骰，系統自動查 `Character.damage_bonus` 加進去並正確加總（DB 是骰子表示式時分開擲兩顆骰再相加，是固定數字時直接加），不用 Keeper 自己手動拼字串（`roll_dice` 本來就無法解析「武器骰+DB骰」這種混合表示式）。用真實 LLM 對話測過：DB 是骰子表示式（`+1d4`）跟 DB 是固定值（`0`）兩種角色，Keeper 都正確呼叫這個工具，敘述的傷害數字跟工具實際算出來的一致。
-- **重傷判定**：`app/keeper.py` 的 `adjust_character` 與 `app/combat.py` 的 `apply_combat_damage` 都在單次傷害達角色最大 HP 一半、且角色仍存活時建立 CON pending；玩家用 `/coc check CON` 或按鈕觸發後才擲骰，失敗會自動加上「昏迷」「倒地」狀態標籤。只有 `/coc autoroll on` 時才立即由系統完成 CON 檢定並放入 `major_wound_check`；HP 直接降到 0 時不另觸發重傷檢定。
-- ❌ **沒有**戰技（擒抱、繳械、擊倒，比較 Build/體格）——`Character.build` 有存這個值，沒有對應的工具。
-- ❌ **沒有**「先攻意外攻擊」（偷襲者應該在正式輪次開始前就先打一下，不是排在 DEX 順位最後）。
-- ❌ **沒有**被多人圍攻時的獎勵骰規則（一輪內已經閃避/反擊過一次後，同輪再被攻擊要吃獎勵骰）。
-
-這些落差在 README「已知限制」的「正式的戰鬥輪次系統」一節也有記錄過，是同一批東西——這裡列出來是給之後想擴充規則引擎的人一個具體的施工清單，不是重複抱怨。
-
-### 幸運檢定與線索（不要卡劇本主線）
-
-RAW／coc-kp-host 的原則：結果取決於環境/運氣而不是角色行動時用幸運檢定，不要用技能；**絕對不要把推進劇情用的關鍵線索綁在檢定後面**——核心線索直接給看得到的人，檢定只用來拿額外細節或隱藏加分。
-
-我們沒有程式碼層面的保護機制防止 Keeper 誤把核心線索卡在檢定後面——這完全是提示詞層面的自律，目前 `docs/keeper_skill.md`／`app/keeper.py` 都還沒有把這條寫進去，值得補一句類似「絕對不要把推進主線必須的線索藏在檢定成敗後面，檢定只用來拿額外情報」的規則。
-
-### 理智與瘋狂（臨時性瘋狂已修正，不定性瘋狂還沒做）
-
-RAW：損失 5+ SAN 觸發臨時性瘋狂（INT 檢定，這裡**通過**才是壞結果——代表角色真的理解了恐怖之處）；一天內損失達當前 SAN 的 1/5 觸發不定性瘋狂；SAN 歸零永久瘋狂退出遊戲；瘋狂發作有「即時症狀」（1D10 戰鬥輪，查表Ⅶ）跟「總結症狀」（1D10 小時，查表Ⅷ）兩種跑法。
-
-**已修正（臨時性瘋狂）**：`app/dice.py` 新增 `MADNESS_TABLE_REALTIME`／`MADNESS_TABLE_SUMMARY` 與 `roll_madness()`；`dice.SanityCheckResult.risk_of_madness`（`loss >= 5`）在角色 SAN 檢定結算後建立 INT 檢定。預設由玩家用 `/coc check INT` 或按鈕觸發，`/coc autoroll on` 時才由系統立即完成；INT 成功才擲症狀表、失敗則不觸發。舊快照若仍有 pending SAN，`app/legacy_commands.py` 也會用相同規則相容處理。
-- 目前一律只用「即時症狀表Ⅶ」，因為這個 bot 完全沒有在追蹤「現在算不算戰鬥中/即時場景，還是正在跑一段摘要時間」這種概念，`roll_madness` 函式跟表格本身都保留了 `realtime` 參數／`MADNESS_TABLE_SUMMARY` 常數，之後真的需要區分的話架構都已經在了。
-- **不定性瘋狂**（一天內損失達當前 SAN 的 1/5）**還沒做**——這個 bot 完全沒有「遊戲內天數」的概念，沒有一個現成的時間軸可以拿來判斷「這幾次理智損失是不是在同一個遊戲日之內發生」，要做這個需要先決定怎麼定義/追蹤遊戲內的時間流逝，是比臨時性瘋狂更大的一塊，先跳過。
-- **永久瘋狂**（SAN 歸零）維持原樣，純靠 Keeper 敘事處理，沒有對應的查表機制——RAW 對永久瘋狂本身沒有規定要查症狀表（只代表角色退出遊戲），所以這部分不算落差。
-
-## 安全與同意（跟規則無關，但原文有寫）
-
-即使照 RAW 硬性跑瘋狂發作，還是要遵守 `docs/keeper_skill.md` 沒特別寫但應該預設遵守的底線：性暴力/凌虐場面淡出處理，不強迫玩家角色做不可逆的傷害而不給檢定或明確同意的機會。這條純粹是敘事紀律，不需要程式碼支援。
+Mundane personal items may be permitted by narrative policy. Important acquisitions need evidence. Purchases now support lifestyle receipts or confirmed cash quotes with atomic debit/acquisition; this is not a general economic simulation or automatic asset-sale system.

@@ -4,13 +4,13 @@
 
 Upload a *Call of Cthulhu, Seventh Edition* (COC7e) scenario PDF to a Discord channel and let an LLM act as the Keeper. Players describe their actions in chat; the Keeper reads the scenario, narrates events, and decides when checks are needed. Python code handles dice rolls, skill checks, sanity, character resources, and combat state.
 
-The bot supports Anthropic Claude, Google Gemini, and OpenAI. See the [setup guide](docs/setup.md) for provider configuration. The detailed guides and many in-game messages are currently in Traditional Chinese.
+The bot supports Anthropic Claude, Google Gemini, and OpenAI. See the [setup guide](docs/guides/setup.md) for provider configuration. The detailed guides and many in-game messages are currently in Traditional Chinese.
 
 ## Quick start
 
 ### Setting up the bot
 
-Follow [Installation and setup](docs/setup.md) to create a Discord application, configure permissions and `.env`, and start the bot locally.
+Follow [Installation and setup](docs/guides/setup.md) to create a Discord application, configure permissions and `.env`, and start the bot locally.
 
 ### Playing with an existing bot
 
@@ -21,10 +21,10 @@ Follow [Installation and setup](docs/setup.md) to create a Discord application, 
    /coc pc Alex
    ```
 
-   The command also accepts an optional occupation: `/coc pc <name> [occupation]`. Use the occupation labels shown by the bot. For interactive character creation or a scenario's pregenerated investigators, see the [gameplay guide](docs/gameplay.md).
+   The command also accepts an optional occupation: `/coc pc <name> [occupation]`. Use the occupation labels shown by the bot. For interactive character creation or a scenario's pregenerated investigators, see the [gameplay guide](docs/guides/gameplay.md).
 3. **Start the game.** Once at least one investigator is ready, use `/coc start`. The bot uses the scenario's read-aloud opening when available; otherwise, it generates an opening grounded in the scenario. Ordinary chat does not advance the story before the game starts.
 4. **Describe your actions.** Write what your character does in ordinary channel messages. The Keeper narrates, requests checks, and updates game state through tools.
-5. **Check commands and progress.** Use `/coc help` for categorized help, `/coc status` for session progress, and `/coc sheet` for your character sheet. See the [player command reference](docs/player_command_reference.md) for commands to copy, and the [gameplay guide](docs/gameplay.md) for detailed rules and workflows.
+5. **Check commands and progress.** Use `/coc help` for categorized help, `/coc status` for session progress, and `/coc sheet` for your character sheet. See the [player command reference](docs/references/player_command_reference.md) for commands to copy, and the [gameplay guide](docs/guides/gameplay.md) for detailed rules and workflows.
 
 ## Architecture
 
@@ -93,7 +93,7 @@ Persistence:
 - **`app/services/prompt_config.py`** builds stage-specific prompts around the shared Keeper instructions and enforces consistent next-action instructions.
 - **`app/domain/models.py`** defines internal messages and results, including `AgentMessage`, `MechanicResult`, `StateDelta`, and `TurnResolution`.
 
-See the [unified Keeper turn-flow specification](docs/unified_keeper_turn_flow_design_spec.md) for the current entry points, the [turn-consistency specification](docs/log_backed_turn_consistency_design_spec.md) for authoritative handoffs, and the [original Agentic Keeper design](docs/agentic_keeper_design_spec.md) for the design history.
+See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_keeper_turn_flow_design_spec.md) for the current entry points, the [turn-consistency specification](docs/specs/bug/log_backed_turn_consistency_design_spec.md) for authoritative handoffs, and the [original Agentic Keeper design](docs/specs/refactor/agentic_keeper_design_spec.md) for the design history.
 
 ### Shared game logic and infrastructure
 
@@ -108,7 +108,7 @@ See the [unified Keeper turn-flow specification](docs/unified_keeper_turn_flow_d
 - **`app/scenario_rag.py`** retrieves relevant scenario passages with BM25 and optional embedding-based scoring. When `SCENARIO_RAG_ENABLED=true`, the Keeper can use `search_scenario` instead of receiving the entire scenario text in its prompt.
 - **`app/memory_rag.py`** retrieves older conversation chunks that have been trimmed from the live history, preserving details beyond the rolling `campaign_summary`.
 - **`app/scenario_index.py`** extracts NPC/monster and location indexes on upload or through `/coc index`, giving the Keeper a consistent reference for scenario statistics.
-- **`app/scenario_library.py`** stores reusable PDF extraction results under `data/scenarios/<scenario-id>/`. It supports chapters, a current-and-next-chapter context window, image lookup, and the `/coc scenario` commands. See the [scenario-library specification](docs/scenario_library_design_spec.md).
+- **`app/scenario_library.py`** stores reusable PDF extraction results under `data/scenarios/<scenario-id>/`. It supports chapters, a current-and-next-chapter context window, image lookup, and the `/coc scenario` commands. See the [scenario-library specification](docs/specs/feature/scenario_library_design_spec.md).
 - **`app/dice.py`** implements COC7e dice and check calculations, including d100 rolls, bonus/penalty dice, success tiers, and sanity.
 - **`app/models.py`** defines character/session models and quick investigator generation.
 - **`app/pdf_loader.py`** extracts PDF text using MarkItDown and OCR preprocessing, with PyMuPDF for page rendering and text fallback. Vision/OCR handles image-heavy pages; extracted images remain available for display, and map pages can be converted into structured room graphs. `extract_preview()` supports inexpensive upload matching.
@@ -122,7 +122,7 @@ Only the Discord bot entry point needs to run. Discord receives image attachment
 
 The OpenAI path measures input composition, applies a configurable history budget, and uses response headers to estimate request/token admission budgets with a shared process-level cooldown. A turn deadline covers LLM admission, calls, retries, and narration. Output limits can be configured per stage; they are omitted by default.
 
-Incomplete responses do not execute their tool calls. Earlier committed effects and queued private/image outputs are retained without automatically replaying tools. See the [token-admission specification](docs/token_admission_evaluation_design_spec.md) for defaults, experiments, and limitations.
+Incomplete responses do not execute their tool calls. Earlier committed effects and queued private/image outputs are retained without automatically replaying tools. See the [token-admission specification](docs/specs/enhancement/token_admission_evaluation_design_spec.md) for defaults, experiments, and limitations.
 
 ### Performance profiling
 
@@ -145,21 +145,21 @@ Supported values are `off`, `pyinstrument`, and `py-spy`. Run `./scripts/start_b
 
 ## Documentation
 
-This README is an introduction. Detailed guides are maintained separately; most are currently in Traditional Chinese.
+This README is an introduction. Detailed guides and all specifications are available in English and Traditional Chinese. See the [documentation index](docs/README.md).
 
 | Topic | Document |
 |---|---|
-| Discord credentials, `.env`, and local startup | [Installation and setup](docs/setup.md) |
-| Commands, gameplay, and mechanics | [Gameplay guide](docs/gameplay.md) |
-| Commands to copy | [Player command reference](docs/player_command_reference.md) |
+| Discord credentials, `.env`, and local startup | [Installation and setup](docs/guides/setup.md) |
+| Commands, gameplay, and mechanics | [Gameplay guide](docs/guides/gameplay.md) |
+| Commands to copy | [Player command reference](docs/references/player_command_reference.md) |
 | Feature history, design decisions, experiments, and known limitations | [Changelog](docs/changelog.md) |
-| Keeper system-prompt rules | [Keeper instructions](docs/keeper_skill.md) |
-| Original multi-agent pipeline design and history | [Agentic Keeper specification](docs/agentic_keeper_design_spec.md) |
-| Unified player-turn entry points and independent KP Assistant | [Unified Keeper turn flow](docs/unified_keeper_turn_flow_design_spec.md) |
-| Authoritative state and validated handoffs | [Turn-consistency specification](docs/log_backed_turn_consistency_design_spec.md) |
-| History budgets, adaptive admission, and truncation handling | [Token-admission specification](docs/token_admission_evaluation_design_spec.md) |
-| Reusable scenarios, chapters, context windows, and image assets | [Scenario-library specification](docs/scenario_library_design_spec.md) |
-| HTTP endpoints, chat commands, PDF lifecycle, and internal interfaces | [API reference](docs/API.md) |
+| Keeper system-prompt rules | [Keeper instructions](docs/references/keeper_skill.md) |
+| Original multi-agent pipeline design and history | [Agentic Keeper specification](docs/specs/refactor/agentic_keeper_design_spec.md) |
+| Unified player-turn entry points and independent KP Assistant | [Unified Keeper turn flow](docs/specs/refactor/unified_keeper_turn_flow_design_spec.md) |
+| Authoritative state and validated handoffs | [Turn-consistency specification](docs/specs/bug/log_backed_turn_consistency_design_spec.md) |
+| History budgets, adaptive admission, and truncation handling | [Token-admission specification](docs/specs/enhancement/token_admission_evaluation_design_spec.md) |
+| Reusable scenarios, chapters, context windows, and image assets | [Scenario-library specification](docs/specs/feature/scenario_library_design_spec.md) |
+| HTTP endpoints, chat commands, PDF lifecycle, and internal interfaces | [API reference](docs/references/API.md) |
 | NPC allies and information-flow controls | [Gameplay style](docs/references/gameplay_style.md) |
 | COC7e rules versus the current implementation | [Rules reference](docs/references/rules_reference.md) |
 | Carried-item plausibility checks | [Carry-audit specification](docs/references/carry_audit.md) |

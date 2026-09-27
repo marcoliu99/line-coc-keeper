@@ -881,7 +881,7 @@ def reconcile_pregen_into_pool(
       it).
 
     Matching only considers pool entries that are NOT yet claimed by anyone
-    (see docs/character_and_dictionary_system_spec.md's Module 4 note: this
+    (see docs/specs/feature/character_and_dictionary_system_spec.md's Module 4 note: this
     reconciliation exists to de-duplicate the unclaimed pick list, not to
     hot-patch a character a player has already claimed) — an already-claimed
     entry is left untouched even if it would otherwise match, so a later

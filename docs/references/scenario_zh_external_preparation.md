@@ -1,126 +1,131 @@
-# 中文劇本外部製作模板（schema v3）
+# External Chinese scenario preparation template (schema v3)
 
-這份文件可以直接交給外部翻譯工具或人工譯者使用。它是**工作指令模板**，
-需要搭配系統匯出的來源工作簿；不是可直接匯入的空白劇本。
-角色卡請另用 [角色卡模板](role_card_template.md)，包含年齡與開放式文字欄位。
+[繁體中文](scenario_zh_external_preparation_zh.md)
 
-## 1. 準備與交付流程
+Use this guide with an exported source workbook and the original PDF. Chinese localization
+is prepared externally and reused during play; the bot does not automatically translate
+in the background. Poor reading order or missing source text must be fixed before translation.
 
-Discord 可從 `/coc help` →「劇本與遊戲」的中文模板項目操作：
+## 1. Export, import and activate
 
-- **匯入模板**：下拉選擇「劇本＋對應檔案」，確認後匯入。
-- **預覽模板**：下拉選擇「劇本＋版本＋頁碼」，內容私訊給 KP。
-- **核准模板**：選版本後確認核准。
-- 「選用劇本」內的 **選用中文模板**：只列目前有效且已核准的版本，確認後載入。
+Use `/coc help` → scenario actions:
 
-不用手打劇本 ID、版本或檔名。清單每頁最多 25 項，可按上一頁／下一頁。
-完成檔仍須先放進伺服器 `IMPORT_DIR`；按鈕尚不接收 Discord 附件。
-以下文字指令保留作為替代操作：
+1. **Export localization workbook**: select the scenario and obtain its source-bound workbook.
+2. Prepare the complete Chinese workbook externally and put the completed file in `IMPORT_DIR`.
+3. **Import Chinese template**: select the matching scenario/file pair.
+4. **Preview Chinese template**: select a version and review every private preview page.
+5. **Approve Chinese template**: confirm the reviewed version.
+6. **Select Chinese template**: choose a current approved version and confirm activation.
+
+No manual scenario/version IDs or filenames are required by these buttons. Lists paginate
+at 25 options per page. Files must already be in the server import directory; these buttons
+do not ingest Discord attachments. Equivalent manual commands remain available:
 
 ```text
-原稿 PDF + 已確認閱讀順序的劇本文字
-  → /coc scenario template export 劇本ID
-  → KP 收到伺服器上的 .md 工作簿路徑
-  → 把工作簿、原稿與下方工作指令交給外部工具／譯者
-  → 分批翻譯、核對跨頁內容、統一術語
-  → 合併為一份完整工作簿（所有來源單元都要涵蓋）
-  → 將完成檔放回伺服器 IMPORT_DIR
-  → /coc scenario template import 劇本ID 完成檔.md
-  → /coc scenario template preview 劇本ID 版本ID [頁碼]
-  → /coc scenario template approve 劇本ID 版本ID
-  → /coc scenario use 劇本ID 版本ID
+Original PDF + text with verified reading order
+  -> /coc scenario template export SCENARIO_ID
+  -> KP receives server-side .md workbook path
+  -> external translator receives workbook, source and instructions below
+  -> translate in batches, reconcile cross-page content and terminology
+  -> merge into one complete workbook covering every source unit
+  -> put completed file in IMPORT_DIR
+  -> /coc scenario template import SCENARIO_ID FILE.md
+  -> /coc scenario template preview SCENARIO_ID VERSION_ID [PAGE]
+  -> /coc scenario template approve SCENARIO_ID VERSION_ID
+  -> /coc scenario use SCENARIO_ID VERSION_ID
 ```
 
-最後的 `use` 會選用／載入劇本；請在準備開團或確定要切換劇本時執行。
-匯出與匯入本身不執行翻譯。外部工作可以分批，現有匯入器需要完整合併檔。
-原稿或章節重解析後必須重新匯出，不要自行替換 hash 強行沿用舊版。
+`use` selects/loads the scenario, so run it when preparing a game or intentionally switching.
+Export/import do not translate. External work may be batched, but import requires the complete
+merged file. Re-export after source/chapter reparse; never replace hashes to force an old file through.
 
-## 2. 可直接複製的外部工作指令
+## 2. Copyable external work instructions
 
-將以下整段連同匯出的工作簿交給外部工具。若工具看不到 PDF 圖片，請保留
-相關疑點，不能聲稱已完成版面校對。
-
----
-
-你是 Call of Cthulhu 第七版劇本的繁體中文翻譯與資料整理者。
-目標是讓中文玩家行動一次檢索就能取得完整裁決依據，減少遊戲中的補查。
-你只能使用我提供的原稿、頁面圖片與來源工作簿；不要新增劇情或規則。
-
-### 輸入與輸出
-
-1. 讀取附上的 schema v3 工作簿，保留 `schema_version`、`source_hash`、
-   `chapter_hash`。不要計算或猜測替代 hash。
-2. 交付一份 `.md`，內含**唯一一個** JSON 區塊，頂層是上述三個欄位與
-   `records`。JSON 必須可解析：無註解、無尾逗號、不用省略號。
-3. 不要把聊天解釋、製作報告或另一份 JSON 範例混入交付檔。
-   校對報告另存檔案。未解決問題寫在對應記錄的 `uncertainty`。
-4. 全部來源都要處理。若本次只能完成一批，清楚標示「分批草稿」；
-   不得宣稱可直接匯入。最終合併時檢查所有來源單元的覆蓋。
-
-### 來源對應與分組
-
-5. 保留每筆來源的 `source_id`、`chapter_id`、`page`、`source_pages`。
-   PDF 頁序與印刷頁碼可能不同；不得互換。分割來源單元的子記錄沿用
-   匯出器給的來源頁碼集合，不要自行縮成猜測的單頁。
-6. 一個來源單元可以拆成多筆：場景、NPC、線索、規則、物品或手稿。
-   每筆 `id` 唯一，只用英數字、底線、連字號，最長 100 字元。
-7. `source_spans` 是相對於該來源單元原始全文的 `[start,end)` Unicode
-   字元位置；不是 PDF 座標、UTF-8 bytes 或 JavaScript UTF-16 單位。
-   若不拆分，原樣保留匯出值。拆分時用字串工具計算，不要心算猜位置。
-8. 同一 `source_id` 所有 spans 的聯集必須覆蓋原始全文，含段落間換行；
-   可重疊，不可遺漏。不以更改 `source_excerpt` 掩蓋缺漏。
-   匯入器會依原稿和 spans 重建這個欄位。
-9. 不要把觸發與後果拆散。跨頁能力、怪物防禦、共用規則可另建記錄，
-   用 `related_record_ids` 連到**裁決必需**的依據。不要把所有提及、
-   前往別國的線索或整章都列成必要依賴。
-
-### 中文內容與可見範圍
-
-10. `name` 是本記錄的中文名稱；`aliases` 只放同一實體的中文別名、
-    英文原名及常見稱呼。場景提到的 NPC 不是場景的別名。
-    `keywords` 放玩家可能使用的查詢詞，不新增世界事實。
-11. `public_text` 放可向玩家描述的內容，`kp_text` 放秘密及裁決背景。
-    `visibility` 只能是 `public` 或 `kp_only`。
-    `kp_only` 的 `public_text` 必須留空。公開記錄仍可有私密 KP 規則。
-12. 可見範圍不代表目前角色已發現線索。發現條件、時間、前置事件與
-    誤導性表象必須寫清楚；有條件才公開的答案留在 KP 內容。
-13. 忠實翻譯完整段落，不只摘要。不得補出房間、敵人、物品、價格、
-    護甲、能力或成功條件。原文未指定就是未指定。
-
-### 結構化規則
-
-14. 每個 `rules` 項目只能使用下列五個欄位；沒有依據的欄位不要硬填：
-    - `trigger`：前提、觸發時點、適用對象、事件或行動。
-    - `check`：技能／屬性、難度、對抗、獎懲骰、是否能孤注一擲。
-    - `success`：成功後果、資訊、狀態及後續步驟。
-    - `failure`：失敗後果；一般失敗與孤注一擲失敗要明確區別。
-    - `exceptions`：例外、護甲適用、免疫、使用次數、成本、持續與重置條件。
-15. 每個欄位都是 `{"text":"完整中文","source_quote":"對應原文逐字引述"}`。
-    引述必須是本筆某個 span 內連續的原文，不可自行接成不存在的句子。
-    如果證據分散，拆成有明確條件的多個規則項，或用記錄依賴連接。
-16. 每個欄位的數字／骰式須與自己的引述一致。保留 `1d6`、`50%`、
-    次數與時間值，不把 50% 改成「一半」，不交換成功與失敗數值。
-17. 保留攻擊、護甲、特殊能力、抵抗、每輪／每戰限制、觸發與例外。
-    遇到多隻敵人保留數量與縮放條件，不把種類資料誤寫成固定一隻。
-18. `rule_text` 建議留空；若填，只作校對摘要，且仍必須填 `rules`。
-    遊戲輸入不會使用摘要代替規則。重要內容不能只留在原文引述中。
-19. `uncertainty` 只在問題確實解決後清空。數字對齊不代表語義正確；
-    不因通過格式檢查就宣稱完成 KP 核准。
-
-### 分量與最後檢查
-
-20. 單筆中文遊戲輸入上限 6,000 字元，含必要關聯的完整組合上限
-    12,000 字元，兩者都含來源標記。請預留標記空間。超過時重新分組，
-    不刪例外、失敗後果或機制文字。完整回應的 18,000 字元預算由系統處理。
-21. 檢查 ID 唯一、關聯存在、來源無缺口、公開內容無秘密、同名不同人
-    沒有合併，以及所有裁決事實都在中文欄位中。輸出待 KP 校對的工作簿。
+Supply this entire section with the exported workbook. If the external tool cannot inspect
+PDF images, retain layout uncertainties and do not claim visual proofreading is complete.
 
 ---
 
-## 3. 欄位填寫範例（虛構片段，不能直接匯入）
+You translate and organize Call of Cthulhu seventh-edition scenarios into Traditional Chinese.
+The goal is complete adjudication evidence from a Chinese player query with fewer followup
+lookups. Use only the supplied original, page images and source workbook. Add no plot or rules.
 
-此例只示範 `rules` 的寫法；正式交付仍須使用匯出工作簿的完整欄位與 hash。
-假設原稿逐字寫著：
+### Input and output
+
+1. Read the schema v3 workbook. Preserve `schema_version`, `source_hash` and `chapter_hash`;
+   do not calculate or guess replacement hashes.
+2. Deliver one `.md` containing exactly one JSON block with these top-level fields and `records`.
+   JSON must parse: no comments, trailing commas or ellipses.
+3. Do not mix chat explanations, a production report or a second example JSON into the deliverable.
+   Keep proofreading reports separate; put unresolved issues in the record's `uncertainty`.
+4. Process all source material. Mark partial batches as drafts, not import-ready output.
+   Verify coverage of every source unit when merging.
+
+### Source alignment and grouping
+
+5. Preserve `source_id`, `chapter_id`, `page` and `source_pages`. PDF page order and printed page
+   numbers differ; do not interchange them. Child records inherit the exporter's source-page set;
+   do not shrink it to a guessed single page.
+6. A source unit may be divided into scenes, NPCs, clues, rules, items or handouts. Each `id`
+   must be unique, at most 100 characters, and contain only alphanumerics, underscores or hyphens.
+7. `source_spans` are `[start,end)` Unicode character offsets into the original source unit,
+   not PDF coordinates, UTF-8 bytes or JavaScript UTF-16 units. Preserve offsets if not splitting;
+   compute them with string tools when splitting, never by guessing.
+8. The union of spans for each `source_id` must cover the entire source including paragraph
+   newlines. Overlap is allowed; omission is not. Do not alter `source_excerpt` to hide gaps;
+   import reconstructs it from source and spans.
+9. Keep triggers with consequences. Cross-page abilities, defenses and shared rules may be
+   separate records linked through necessary `related_record_ids`. Do not treat every mention,
+   a clue pointing to another country or an entire chapter as a required dependency.
+
+### Chinese text and visibility
+
+10. `name` is the Chinese record name. `aliases` contains names for the same entity, including
+    its original English name; an NPC mentioned in a scene is not a scene alias. `keywords`
+    contains likely player query terms and must not invent world facts.
+11. Put player-describable text in `public_text`, secrets/adjudication context in `kp_text`.
+    `visibility` is `public` or `kp_only`; `kp_only` records require empty `public_text`.
+    Public records can still contain private KP rules.
+12. Visibility does not mean the current investigator discovered a clue. State discovery conditions,
+    timing, prerequisites and misleading appearances; conditional answers remain in KP content.
+13. Translate complete paragraphs faithfully, not just summaries. Do not supply missing rooms,
+    enemies, items, prices, armor, abilities or success conditions. Unspecified remains unspecified.
+
+### Structured rules
+
+14. Each `rules` item uses only the following fields, filled only where supported:
+    - `trigger`: prerequisite, timing, subject, event or action.
+    - `check`: skill/attribute, difficulty, opposition, bonus/penalty dice and push eligibility.
+    - `success`: consequences, information, state and followup steps.
+    - `failure`: consequences, clearly distinguishing ordinary failure from pushed failure.
+    - `exceptions`: exceptions, armor applicability, immunity, use limits, costs, duration and resets.
+15. Each field is `{"text":"complete Chinese text","source_quote":"exact corresponding source"}`.
+    Quotes must be contiguous text inside one of this record's spans, not stitched sentences.
+    Split distributed evidence into clearly conditioned rules or link dependent records.
+16. Numbers/dice in each field must match its own quote. Preserve `1d6`, `50%`, counts and times;
+    do not turn 50% into “half” or swap success/failure values.
+17. Preserve attacks, armor, abilities, resistance, per-round/per-combat limits, triggers and
+    exceptions. Preserve enemy counts and scaling; species statistics do not establish one fixed enemy.
+18. Prefer empty `rule_text`. If present it is a proofreading summary and does not replace `rules`.
+    Runtime does not substitute the summary for rules; essential facts cannot remain only in English quotes.
+19. Clear `uncertainty` only after resolving the issue. Numeric alignment does not prove semantic
+    fidelity, and passing format validation is not KP approval.
+
+### Size and final review
+
+20. A record's Chinese gameplay projection is limited to 6,000 characters and its complete required
+    dependency bundle to 12,000, including source markers. Reserve space for markers. Regroup oversized
+    material without dropping exceptions, failure consequences or mechanics. The system manages the
+    18,000-character full-response budget.
+21. Verify unique IDs, existing links, complete source coverage, no public secrets, no merging
+    different same-name people, and every adjudication fact in Chinese fields. Deliver for KP review.
+
+---
+
+## 3. Field example (invented fragment; not importable)
+
+This illustrates `rules` only; a deliverable still needs the workbook's full fields and hashes.
+Assume the source says exactly:
 
 > If the door is forced, make a DEX roll. Failure causes 1d6 damage.
 
@@ -154,50 +159,51 @@ Discord 可從 `/coc help` →「劇本與遊戲」的中文模板項目操作�
 }
 ```
 
-這個例子不填成功獎勵、困難難度或孤注一擲後果，因為片段沒有提供。
-真正劇本若在別處提供那些規則，要補上來源與必要關聯。
+The Chinese values demonstrate the required localization output. Do not add a success reward,
+hard difficulty or pushed-failure consequence absent from this fragment. If another source passage
+provides them, include its evidence and necessary dependencies.
 
-## 4. 短劇本整理檢查表
+## 4. Short-scenario checklist
 
-以下是資料組織需求，並非完整劇本翻譯。
+These are organization requirements, not full scenario translations.
 
-| 參照資料 | 外部製作時特別檢查 |
+| Reference | External preparation checks |
 | --- | --- |
-| The Haunting | 場景搜尋與危險規則分清；樓梯的判定／失敗／孤注一擲後果完整；武器現象和生物防禦的相關段落用必要依賴相連 |
-| Dead Boarder | 物品表象、取得條件、線索與調查結果分清；戰術、攻擊和防禦例外不能只縮成 HP |
-| The Lightless Beacon | 跨頁能力不能斷在頁尾；觸發、抵抗、持續、限制和護甲例外完整；遭遇數量與玩家人數等縮放條件保留 |
+| The Haunting | Separate scene lookup from hazards; retain stair checks, failure and pushed-failure consequences; connect weapon phenomena and creature defenses through necessary dependencies. |
+| Dead Boarder | Separate item appearance, acquisition, clues and investigation results; do not reduce tactics, attacks and defensive exceptions to HP. |
+| The Lightless Beacon | Do not break abilities at page boundaries; preserve triggers, resistance, duration, limits, armor exceptions and encounter scaling. |
 
-多欄 PDF 可能把左右欄串錯。先對照頁面，再翻譯；引用字串存在不代表閱讀順序正確。
+Compare multi-column PDFs visually before translating. An existing quote does not prove reading order.
 
-## 5. 長期團補充工作表
+## 5. Long-campaign worksheet
 
-此表作為外部製作的管理清單，可另存檔案；它不是新匯入 schema。
-兩個長劇本的參照範圍為官方介紹／參考資料，沒有假設已讀完整原稿。
-實際製作需要你持有的完整來源。
+This management checklist is separate from the import schema. Long-campaign references were official
+introductions/reference materials, not complete commercial manuscripts. Actual preparation requires
+the full source you possess.
 
-| 製作項目 | 要記錄的內容 | 放回目前 schema 的位置 |
+| Work item | Preserve | Current schema placement |
 | --- | --- | --- |
-| 地區／章節 | 地點、年代、重訪條件、進入前提 | 來源 chapter_id 不變；條件放 kp_text 或 rules |
-| 線索去向 | 從何處得知、何時有效、指向哪裡 | 有條件的結果放 rules；必要裁決依據才用 related_record_ids |
-| 時序事件 | 絕對日期或相對時間、觸發、取消／延後條件 | trigger + outcomes + exceptions |
-| 同名／化名 | 同一人別名、不同人的同名、地區限定稱呼 | 每個實體各自記錄；aliases 不跨實體合併 |
-| 規則模式 | CoC 標準／Pulp、不同能力或數值組 | 名稱與 kp_text 明示模式；規則不得混用 |
-| 可選章節 | 適用年代、啟用前提、主線關係 | kp_text / trigger；章節窗口仍由現有系統控制 |
-| 手稿／信件 | 物件身分、表面內容、真相、發現條件 | public_text 與 kp_text 分開；條件留 rules |
-| 共用敵人規則 | 基礎能力、地區例外、每次遭遇數量 | 完整規則記錄＋必要依賴，不能硬編成一個固定敵人 |
+| Regions/chapters | Place, era, revisits, entry prerequisites | Keep chapter_id; conditions in kp_text/rules |
+| Clue destinations | Origin, timing, destination | Conditional results in rules; only essential evidence in related_record_ids |
+| Timeline events | Absolute/relative time, triggers, cancellation/delay | trigger, outcomes, exceptions |
+| Same names/aliases | Identity, different people, regional names | Separate entities; aliases never merge unrelated entities |
+| Rule mode | Standard CoC/Pulp and alternative profiles | Explicit name/kp_text mode; no mixed profiles |
+| Optional chapters | Era, prerequisites, main-story relationship | kp_text/trigger; existing chapter window still applies |
+| Letters/handouts | Object identity, surface content, truth, discovery | Separate public_text/kp_text; rules for conditions |
+| Shared enemy rules | Base abilities, regional exceptions, encounter counts | Full rule records plus necessary dependencies |
 
-Masks of Nyarlathotep 類型需注意跨地區線索與玩家自選順序；
-Horror on the Orient Express 類型需注意旅程、時間與可選年代章節。
-這些關係必須保存在中文內容中，但目前匯入不會自動建立世界地圖、解鎖章節
-或執行時間表。`related_record_ids` 也不會繞過章節權限。
+Masks of Nyarlathotep-style organization needs cross-region clues and player-selected order.
+Horror on the Orient Express-style organization needs journeys, time and optional era chapters.
+Preserve these relationships in Chinese content; import does not build a world map, unlock chapters
+or execute a timetable. `related_record_ids` cannot bypass chapter authorization.
 
-## 6. 人工驗收
+## 6. Human acceptance review
 
-- 隨機挑中文玩家行動，找到的中文記錄能否完整裁決，不必返回原文猜後果？
-- 原文與中文逐條核對：條件、否定、失敗、孤注一擲、次數、例外有沒有漏？
-- 角色背景、玩家可自填欄位與未知資訊有沒有被擅自補值？
-- 公開／KP 內容與未發現線索有沒有混在一起？
-- 合併後有沒有漏來源、重複 ID、錯連同名 NPC 或混用規則模式？
-- 有疑問的記錄保留 uncertainty，修好再交由 KP approve。
+- Sample Chinese actions: can retrieved records adjudicate completely without guessing from English?
+- Compare conditions, negation, failure, pushing, counts and exceptions against the source.
+- Check background, player-fillable fields and unknown information were not invented.
+- Check public/KP content and undiscovered clues remain separate.
+- Check coverage, duplicate IDs, same-name NPC links and rule-mode mixing after merging.
+- Retain uncertainty until resolved, then submit for KP approval.
 
-對應規格：[scenario_templates_design_spec.md](../scenario_templates_design_spec.md)。
+See the [current retrieval specification](../specs/enhancement/scenario_templates_design_spec.md).

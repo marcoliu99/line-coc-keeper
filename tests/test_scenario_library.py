@@ -192,7 +192,7 @@ class ScenarioImportTests(unittest.TestCase):
 class ScenarioLibraryImageVisibilityTests(unittest.TestCase):
     """Regression tests for the review finding that image `visibility` was
     hardcoded to "public" regardless of type, so KP-only assets (see
-    docs/scenario_library_design_spec.md's "圖片資產與 KP Assistant" section)
+    docs/specs/feature/scenario_library_design_spec.md)
     had no actual access control."""
 
     def test_character_sheet_pages_default_to_kp_only_others_stay_public(self):

@@ -472,7 +472,7 @@ async def _conversation_lock_with_notice(
     (see app/discord_bot.py's on_message) is already running for the whole
     wait regardless, so this only needs to catch genuinely long waits
     instead of adding a second signal on top of typing() for short ones.
-    See docs/specs/enhancement-conversation-lock-and-tool-loop-latency.md
+    See docs/specs/enhancement/enhancement-conversation-lock-and-tool-loop-latency.md
     for the full design discussion (this deliberately does not narrow the
     lock itself — see that doc for why an OCC-style rewrite was rejected).
 

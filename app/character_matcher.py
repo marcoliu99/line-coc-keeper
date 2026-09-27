@@ -1,12 +1,13 @@
-"""Cross-lingual "is this the same investigator" matcher (see docs/
-character_and_dictionary_system_spec.md's Module 3) — used by app/commands.py's
-pregen reconciliation (Module 4) to tell whether a newly-parsed pregen dict
+"""Cross-lingual "is this the same investigator" matcher.
+
+See docs/specs/feature/character_and_dictionary_system_spec.md. Used by
+pregen reconciliation in app/legacy_commands.py to tell whether a newly-parsed pregen dict
 (from either app/pregen_extractor.py's parse_role_sheet_text or
 extract_pregens) describes the same character as one already sitting in
 state.pregens, even when one side is in English and the other in Chinese.
 
 Three independent gates, ANY of which passing counts as a match — matching
-docs/character_and_dictionary_system_spec.md's design exactly:
+docs/specs/feature/character_and_dictionary_system_spec.md's design exactly:
 
 1. Name: an exact/substring match between the two names (after stripping any
    "中文(English)" bracket-annotation into a separate alias to compare), OR a

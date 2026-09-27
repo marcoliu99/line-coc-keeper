@@ -1,4 +1,4 @@
-"""Centralized spoiler/privacy policy (docs/spoiler-protection-hardening_design_spec.md).
+"""Centralized spoiler/privacy policy (docs/specs/enhancement/spoiler-protection-hardening_design_spec.md).
 
 Two independent `.env` switches gate everything here (see app/config.py):
 
