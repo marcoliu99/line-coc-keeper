@@ -78,13 +78,15 @@ def save_state(
 ) -> None:
     metrics: dict[str, int | bool] = {}
     with observability.span("state.save", operation=reason, metrics=metrics):
-        _save_state_impl(state, reason=reason, mutate_tx=mutate_tx)
+        committed = _save_state_impl(state, reason=reason, mutate_tx=mutate_tx)
+        if config.LOG_ENABLED:
+            metrics["state_size_bytes"] = committed.state_size_bytes
 
 
 def _save_state_impl(
     state: GroupState, *, reason: str = "command",
     mutate_tx: Callable[[Connection], None] | None = None,
-) -> None:
+) -> StateCommit:
     """Persist one state snapshot under the authoritative per-group lock.
 
     The revision check turns a stale read-modify-write into an explicit
@@ -127,6 +129,8 @@ def _save_state_impl(
         )
         raise
 
+    return committed
+
 
 @dataclass(frozen=True)
 class StateCommit:
@@ -138,6 +142,7 @@ class StateCommit:
     mirror_reads: int
     mirror_writes: int
     mirror_deletes: int
+    state_size_bytes: int
 
     def apply(self, state: GroupState) -> None:
         state.state_revision = self.revision
@@ -231,8 +236,8 @@ def _save_state_unlocked(
         ):
             db.delete_json_tx(conn, "characters", key)
             deletes += 1
-    db.set_json_tx(conn, "group_states", state.group_id, payload)
-    return StateCommit(revision, timeline_id, reason, len(saved), writes, deletes)
+    state_size_bytes = db.set_json_tx(conn, "group_states", state.group_id, payload)
+    return StateCommit(revision, timeline_id, reason, len(saved), writes, deletes, state_size_bytes)
 
 
 def _images_dir(group_id: str) -> Path:

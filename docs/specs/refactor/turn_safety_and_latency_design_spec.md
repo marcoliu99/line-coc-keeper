@@ -456,7 +456,7 @@ Branch: `refactor/state-mirror-s3`. S0/S1 use a separate branch; S2 waits for S0
 
 `character_mirror_projection` derives exact owner/character aliases from serialized group payloads, retaining retired/manual cards and existing ordering. The transaction reads only the union of old/new keys in bounded `IN` batches. It compares the actual rows, so missing mirrors are repaired even when the character data did not change. Unchanged rows retain `updated_at`. A foreign ownership collision rejects the transaction; unknown historical orphans are preserved for an explicit audited migration, not deleted by prefix.
 
-`StateCommit` publishes revision/timeline and success logging only after the outer transaction commits. Normal save, memory maintenance and checkpoint rollback use it; group/mirror/pre-rollback changes remain atomic. Metric-only duplicate group serialization was removed. No schema or production migration was run.
+`StateCommit` publishes revision/timeline and success logging only after the outer transaction commits. Normal save, memory maintenance and checkpoint rollback use it; group/mirror/pre-rollback changes remain atomic. State-size metrics reuse the serialized group write; metric-only duplicate serialization was removed. No schema or production migration was run.
 
 ```text
 state lock -> BEGIN IMMEDIATE -> old group + exact old/new keys
@@ -465,6 +465,6 @@ state lock -> BEGIN IMMEDIATE -> old group + exact old/new keys
        failure: rollback; caller revision/timeline unchanged
 ```
 
-Verification: isolated full suite **993 passed, 1 skipped, 33 subtests**; Ruff passed; mypy **83 files passed**. Added commit failure, mirror failure/atomicity, missing-alias repair, unchanged timestamps, retired aliases, key collision and bounded-read tests. Existing maintenance/checkpoint tests remain enabled.
+Verification: isolated full suite **994 passed, 1 skipped, 33 subtests**; Ruff passed; mypy **83 files passed**. Added commit failure, mirror failure/atomicity, missing-alias repair, unchanged timestamps, retired aliases, key collision and bounded-read tests. Existing maintenance/checkpoint tests remain enabled.
 
-Run `python3 scripts/benchmark_state_mirrors.py` for an isolated synthetic probe (20 fixed-size log-only saves per size). Measured 1/10/100/1000 conversations: **2 mirror rows read, 0 written, 0 deleted** at every size; median local transaction times **0.529/0.504/0.523/0.538 ms**. These are local observations, not live API or end-to-end latency claims.
+Run `python3 scripts/benchmark_state_mirrors.py` for an isolated synthetic probe (20 fixed-size log-only saves per size). Measured 1/10/100/1000 conversations: **2 mirror rows read, 0 written, 0 deleted** at every size; median local transaction times **0.564/0.575/0.584/0.475 ms**. These are local observations, not live API or end-to-end latency claims.

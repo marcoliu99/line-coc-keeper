@@ -406,6 +406,30 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(state.timeline_id, original_timeline)
         self.assertIsNone(db.get_json("group_states", state.group_id))
 
+    def test_maintenance_commit_failure_never_publishes_receipt(self):
+        state = GroupState("maintenance-commit-failure", timeline_id="original")
+        state.log = [{"role": "user", "content": "old"}]
+        group_state.save_state(state)
+        original = db._connect
+
+        @contextmanager
+        def failing_commit():
+            with original() as conn:
+                yield conn
+                raise sqlite3.OperationalError("outer commit failed")
+
+        with patch.object(db, "_connect", failing_commit), patch.object(group_state.StateCommit, "apply") as publish, self.assertRaises(sqlite3.OperationalError):
+            keeper._persist_memory_maintenance_state(
+                state.group_id, "new summary", state.log, timeline_id=state.timeline_id,
+                base_summary="", source_revision=state.state_revision,
+                idempotency_key="failed-maintenance", embedding=[],
+            )
+        publish.assert_not_called()
+        stored = group_state.load_state(state.group_id)
+        self.assertEqual(stored.state_revision, 1)
+        self.assertEqual(stored.log, state.log)
+        self.assertIsNone(db.get_json("memory_chunks", state.group_id))
+
     def test_mirror_failure_rolls_back_group_and_all_aliases(self):
         state = GroupState("atomic-mirror")
         state.characters["u"] = Character("Ada", "u", character_id="char-a")

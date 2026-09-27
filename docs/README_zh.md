@@ -87,7 +87,7 @@
 | [Agentic Keeper 架構](specs/refactor/agentic_keeper_design_spec_zh.md) | 已實作 | [English](specs/refactor/agentic_keeper_design_spec.md) |
 | [原生非同步 provider 與 I/O 契約](specs/refactor/async_provider_performance_design_spec_zh.md) | 已實作 | [English](specs/refactor/async_provider_performance_design_spec.md) |
 | [歷史 v1.0 後整合紀錄](specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md) | 歷史紀錄 | [English](specs/refactor/main_post_v1.0_into_main_v2_design_spec.md) |
-| [回合正確性、結果恢復與延遲量測](specs/refactor/turn_safety_and_latency_design_spec_zh.md) | 提案；待核准 | [English](specs/refactor/turn_safety_and_latency_design_spec.md) |
+| [回合正確性、結果恢復與延遲量測](specs/refactor/turn_safety_and_latency_design_spec_zh.md) | 部分完成；S3 已實作 | [English](specs/refactor/turn_safety_and_latency_design_spec.md) |
 
 ## 維護
 
