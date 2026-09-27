@@ -4,7 +4,7 @@
 
 ## 1. 狀態、來源與結論
 
-分類：`refactor`，包含 bug 修正與效能工作包。狀態：**S0／S1／S2 已在本分支實作；S3 獨立進行**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。後續已對齊 `main_v2` `e03d5dc`，Review R1–R6 補強見第 12 節。分支：`refactor/turn-safety-and-latency`。
+分類：`refactor`，包含 bug 修正與效能工作包。狀態：**S0／S1／S2／S3 已實作**。基準：`main_v2` 的 `8e32683a3e3a3c0159153b3d96d9c6911ec04071`，包含 PR #94 及 review 修正。審查日期：2026-09-27。後續已對齊 `main_v2` `e03d5dc`，Review R1–R6 補強見第 12 節。分支：`refactor/turn-safety-and-latency`。
 
 本規格完整閱讀使用者提供的兩份 ChatGPT 文件，並對照目前程式後，選擇採納其中建議。不將文件較舊的程式基準直接當成目前事實。原提案僅含文件；本分支 S0／S1 實作證據見第 13 節，S2 見第 14 節，未遷移正式資料、部署或進行真實 API 測試。
 
@@ -452,7 +452,7 @@ Mixed/OOC 以既有實際路徑及新的正確性需求建立專屬 fixture，�
 
 ## 13. 已核准的 S0／S1 實作證據（2026-09-27）
 
-分支：`refactor/turn-safety-s0-s1`，從已審閱的 `36fb67d` 開始，已對齊 `main_v2` `e03d5dc`。S3 在 `refactor/state-mirror-s3` 獨立進行。**歷史檢查點：**S0／S1 提交時尚未開始 S2；後續實作見第 14 節。S4–S9 與提早結束 Executor 仍未實作。
+分支：`refactor/turn-safety-s0-s1`，從已審閱的 `36fb67d` 開始，已對齊 `main_v2` `e03d5dc`。S3 已由 `refactor/state-mirror-s3` 整合。**歷史檢查點：**S0／S1 提交時尚未開始 S2；後續實作見第 14 節。S4–S9 與提早結束 Executor 仍未實作。
 
 ### 13.1 S0 可重現基線與追蹤
 
@@ -618,3 +618,26 @@ S3 維持獨立（PR #98）。S2 已實作；S4–S9 仍未實作。
 ## PR #97 review corrections
 
 保留檢定可見性與真實擁有者，涵蓋結算、Luck、連鎖檢定、事件／上下文與輸出。即使從公開指令進入，私密結果與圖片仍只送本人；私訊失敗不能轉公開。保底輸出保留經過濾的 damage_combatant 傷害／治療，不洩漏敵人 HP。測試檢定、Luck、SAN／INT 串接、分段／完整輸出及工具提交後故障。
+
+## 15. S3 實作證據（2026-09-27）
+
+分支：`refactor/state-mirror-s3`。S0／S1 在另一分支；S2 等 S0／S1。此次核准不包含 S4–S9 或提早終止 Executor。
+
+`character_mirror_projection` 從序列化的團狀態取得 owner／character 精確別名，保留退役、手動角色及既有順序。交易只以分批 `IN` 查詢舊／新鍵值聯集，與實際資料比對，因此角色未改但鏡像遺失時仍會修補。未改的列保留 `updated_at`。撞到其他團擁有的鍵值會拒絕整筆交易；無法證明歸屬的歷史孤兒保留，交由獨立校對遷移，不靠前綴刪除。
+
+`StateCommit` 在外層交易成功提交後才同步 revision／timeline 並記成功紀錄。一般存檔、記憶維護、checkpoint rollback 都共用此路徑，團資料、鏡像、回溯前備份保持原子性。狀態大小量測重用寫入時的序列化結果，移除重複序列化整團的工作。未修改 schema，也未執行正式資料遷移。
+
+```text
+狀態鎖 -> BEGIN IMMEDIATE -> 舊團狀態與新舊精確鍵值
+  -> 查對應鏡像 -> 寫變更/遺失列；刪已證明過期的列
+  -> 寫團狀態 -> 外層 COMMIT -> StateCommit 同步呼叫端
+       失敗：回滾；呼叫端 revision/timeline 不變
+```
+
+驗證：隔離資料完整測試 **994 passed、1 skipped、33 subtests**；Ruff 通過；mypy **83 檔通過**。新增提交失敗、鏡像寫入失敗與原子性、遺失別名修補、時間戳不變、退役別名、鍵值碰撞及有界查詢測試。原有維護與回溯測試持續執行。
+
+`python3 scripts/benchmark_state_mirrors.py` 可重做隔離合成量測：每種規模 20 次、目標團固定大小且只改紀錄。1／10／100／1000 團時，均僅讀 **2 列鏡像、寫 0 列、刪 0 列**；本機交易中位數為 **0.564／0.575／0.584／0.475 ms**。這不是 API 或完整遊戲回合耗時保證。
+
+## PR #98 review correction
+
+非版本衝突的存檔例外須記錄 state_save_failure、群組雜湊、原因、耗時與 traceback，再原樣拋出。結構化 logging 關閉時仍保留文字診斷。注入鏡像寫入、伴隨交易及 commit 失敗，確認 rollback 與記憶體 revision 不變。

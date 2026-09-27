@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -333,17 +334,188 @@ class StatePersistenceTests(unittest.TestCase):
         group_state.save_state(first)
         group_state.save_state(second)
 
-        # A stale legacy row may lack conversation_id, but its group-prefixed
-        # key still makes ownership unambiguous.  An unscoped row without
-        # either signal must remain untouched for safety.
+        # Unknown historical orphans are preserved for an audited migration;
+        # group-prefix similarity alone does not prove ownership.
         db.set_json("characters", "group-a:retired-owner", {"sheet": {"name": "old"}})
         db.set_json("characters", "unscoped-legacy", {"sheet": {"name": "keep"}})
         group_state.save_state(first)
 
         self.assertEqual(db.get_json("characters", "group-a:same-user")["name"], "Ada A")
         self.assertEqual(db.get_json("characters", "group-b:same-user")["name"], "Ada B")
-        self.assertIsNone(db.get_json("characters", "group-a:retired-owner"))
+        self.assertIsNotNone(db.get_json("characters", "group-a:retired-owner"))
         self.assertIsNotNone(db.get_json("characters", "unscoped-legacy"))
+
+    def test_log_only_save_skips_mirror_writes_and_repairs_missing_alias(self):
+        state = GroupState("mirror-diff")
+        state.characters["u"] = Character("Ada", "u", character_id="char-a")
+        group_state.save_state(state)
+        with db.transaction() as conn:
+            conn.execute("UPDATE characters SET updated_at = 'sentinel'")
+        original = db.set_json_tx
+        state.log.append({"role": "user", "content": "hello"})
+        with patch.object(db, "set_json_tx", wraps=original) as write:
+            group_state.save_state(state)
+        self.assertEqual([call.args[1] for call in write.call_args_list], ["group_states"])
+        with db.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT updated_at FROM characters").fetchall(),
+                             [("sentinel",), ("sentinel",)])
+        db.delete_json("characters", "mirror-diff:char-a")
+        with patch.object(db, "set_json_tx", wraps=original) as write:
+            group_state.save_state(state)
+        self.assertEqual([call.args[2] for call in write.call_args_list],
+                         ["mirror-diff:char-a", "mirror-diff"])
+
+    def test_mirror_reads_are_bounded_and_newgame_deletes_exact_old_keys(self):
+        state = GroupState("a")
+        state.characters["u"] = Character("Ada", "u", character_id="char-a")
+        group_state.save_state(state)
+        for idx in range(50):
+            db.set_json("characters", f"a:neighbor:{idx}", {"conversation_id": "a:neighbor"})
+        queries = []
+        original = db._connect
+
+        @contextmanager
+        def traced():
+            with original() as conn:
+                conn.set_trace_callback(queries.append)
+                yield conn
+
+        with patch.object(db, "_connect", traced):
+            group_state.save_state(GroupState("a"), reason="newgame")
+        selects = [q for q in queries if q.startswith("SELECT key, data FROM characters WHERE key IN")]
+        self.assertEqual(len(selects), 1)
+        self.assertIn("WHERE key IN", selects[0])
+        self.assertIsNone(db.get_json("characters", "a:u"))
+        self.assertIsNone(db.get_json("characters", "a:char-a"))
+        self.assertEqual(len(db.list_keys("characters")), 50)
+
+    def test_outer_commit_failure_does_not_publish_revision_or_timeline(self):
+        state = GroupState("commit-failure")
+        original_timeline = state.timeline_id
+        original = db._connect
+
+        @contextmanager
+        def failing_commit():
+            with original() as conn:
+                yield conn
+                raise sqlite3.OperationalError("commit failed")
+
+        with patch.object(db, "_connect", failing_commit), self.assertRaisesRegex(sqlite3.OperationalError, "commit failed"):
+            group_state.save_state(state)
+        self.assertEqual(state.state_revision, 0)
+        self.assertEqual(state.timeline_id, original_timeline)
+        self.assertIsNone(db.get_json("group_states", state.group_id))
+
+    def test_all_save_failures_logged_without_structured_logging_and_rolled_back(self):
+        for failure in ("mirror", "companion", "commit"):
+            with self.subTest(failure=failure):
+                state = GroupState("private-save-" + failure)
+                state.characters["u"] = Character("Ada", "u", character_id="card")
+                group_state.save_state(state)
+                before = db.get_json("group_states", state.group_id)
+                mirrors = db.get_json("characters", state.group_id + ":u")
+                state.characters["u"].hp = 1
+                error = sqlite3.OperationalError("injected " + failure)
+                original_write, original_connect = db.set_json_tx, db._connect
+
+                def write(conn, table, key, value, failure=failure, error=error, original_write=original_write):
+                    if failure == "mirror" and table == "characters":
+                        raise error
+                    return original_write(conn, table, key, value)
+
+                def companion(conn, failure=failure, error=error, original_write=original_write):
+                    original_write(conn, "memory_chunks", "companion", {"new": True})
+                    if failure == "companion":
+                        raise error
+
+                @contextmanager
+                def connect(failure=failure, error=error, original_connect=original_connect):
+                    with original_connect() as conn:
+                        yield conn
+                        if failure == "commit":
+                            raise error
+
+                with patch.object(group_state.config, "LOG_ENABLED", False), \
+                     patch.object(db, "set_json_tx", side_effect=write), \
+                     patch.object(db, "_connect", connect), \
+                     self.assertLogs("app.repositories.group_state", level=logging.ERROR) as logs, \
+                     self.assertRaises(sqlite3.OperationalError) as raised:
+                    group_state.save_state(state, reason="review-test", mutate_tx=companion)
+                self.assertIs(raised.exception, error)
+                record = logs.records[0]
+                self.assertIn("state_save_failure", record.getMessage())
+                self.assertIn("reason=review-test", record.getMessage())
+                self.assertIn("duration_ms=", record.getMessage())
+                self.assertNotIn(state.group_id, record.getMessage())
+                self.assertIsNotNone(record.exc_info)
+                self.assertEqual(state.state_revision, before["state_revision"])
+                self.assertEqual(db.get_json("group_states", state.group_id), before)
+                self.assertEqual(db.get_json("characters", state.group_id + ":u"), mirrors)
+                self.assertIsNone(db.get_json("memory_chunks", "companion"))
+
+    def test_maintenance_commit_failure_never_publishes_receipt(self):
+        state = GroupState("maintenance-commit-failure", timeline_id="original")
+        state.log = [{"role": "user", "content": "old"}]
+        group_state.save_state(state)
+        original = db._connect
+
+        @contextmanager
+        def failing_commit():
+            with original() as conn:
+                yield conn
+                raise sqlite3.OperationalError("outer commit failed")
+
+        with patch.object(db, "_connect", failing_commit), patch.object(group_state.StateCommit, "apply") as publish, self.assertRaises(sqlite3.OperationalError):
+            keeper._persist_memory_maintenance_state(
+                state.group_id, "new summary", state.log, timeline_id=state.timeline_id,
+                base_summary="", source_revision=state.state_revision,
+                idempotency_key="failed-maintenance", embedding=[],
+            )
+        publish.assert_not_called()
+        stored = group_state.load_state(state.group_id)
+        self.assertEqual(stored.state_revision, 1)
+        self.assertEqual(stored.log, state.log)
+        self.assertIsNone(db.get_json("memory_chunks", state.group_id))
+
+    def test_mirror_failure_rolls_back_group_and_all_aliases(self):
+        state = GroupState("atomic-mirror")
+        state.characters["u"] = Character("Ada", "u", character_id="char-a")
+        group_state.save_state(state)
+        state.characters["u"].occupation = "new occupation"
+        original = db.set_json_tx
+
+        def fail(conn, table, key, value):
+            if key == "atomic-mirror:u":
+                raise sqlite3.OperationalError("mirror failed")
+            return original(conn, table, key, value)
+
+        with patch.object(db, "set_json_tx", side_effect=fail), self.assertRaises(sqlite3.OperationalError):
+            group_state.save_state(state)
+        self.assertEqual(state.state_revision, 1)
+        self.assertEqual(group_state.load_state(state.group_id).state_revision, 1)
+        self.assertNotEqual(db.get_json("characters", "atomic-mirror:char-a")["occupation"], "new occupation")
+
+    def test_mirror_projection_preserves_retired_cards_and_owner_alias(self):
+        state = GroupState("history")
+        active = Character("Active", "u", character_id="active")
+        retired = Character("Retired", "u", character_id="retired", active=False)
+        state.characters = {"u": active}
+        state.characters_by_id = {"active": active, "retired": retired}
+        before = state.to_dict()
+        projection = group_state.character_mirror_projection(before)
+        self.assertEqual(set(projection), {"history:u", "history:active", "history:retired"})
+        self.assertEqual(before, state.to_dict())
+        group_state.save_state(state)
+        self.assertFalse(db.get_json("characters", "history:retired")["sheet"]["active"])
+
+    def test_mirror_key_collision_does_not_overwrite_other_group(self):
+        db.set_json("characters", "a:b:c", {"conversation_id": "a:b", "name": "keep"})
+        state = GroupState("a")
+        state.characters["b:c"] = Character("Ada", "b:c")
+        with self.assertRaisesRegex(ValueError, "owned by another"):
+            group_state.save_state(state)
+        self.assertEqual(db.get_json("characters", "a:b:c")["name"], "keep")
+        self.assertIsNone(db.get_json("group_states", "a"))
 
     def test_scene_digest_keeps_same_named_active_characters_separate(self):
         state = GroupState("group-same-name")

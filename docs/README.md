@@ -91,7 +91,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Agentic Keeper architecture](specs/refactor/agentic_keeper_design_spec.md) | implemented | [繁體中文](specs/refactor/agentic_keeper_design_spec_zh.md) |
 | [Native asynchronous provider and I/O contracts](specs/refactor/async_provider_performance_design_spec.md) | implemented | [繁體中文](specs/refactor/async_provider_performance_design_spec_zh.md) |
 | [Historical post-v1.0 integration ledger](specs/refactor/main_post_v1.0_into_main_v2_design_spec.md) | historical | [繁體中文](specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md) |
-| [Turn safety, recoverable results and measured latency](specs/refactor/turn_safety_and_latency_design_spec.md) | partial; S0/S1/S2 implemented | [繁體中文](specs/refactor/turn_safety_and_latency_design_spec_zh.md) |
+| [Turn safety, recoverable results and measured latency](specs/refactor/turn_safety_and_latency_design_spec.md) | partial; S0/S1/S2/S3 implemented | [繁體中文](specs/refactor/turn_safety_and_latency_design_spec_zh.md) |
 
 ## maintenance
 

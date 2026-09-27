@@ -176,7 +176,7 @@ def _admit_group_write(conn, table: str, key: str, value: Any = None, *, validat
             raise mutation_admission.MutationHeld("derived snapshot source changed before commit")
 
 
-def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> None:
+def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> int:
     """Same upsert as set_json, but writes through an already-open
     connection (from transaction() above) instead of opening/closing its
     own — for batching several writes into one transaction."""
@@ -188,6 +188,7 @@ def set_json_tx(conn: sqlite3.Connection, table: str, key: str, value: Any) -> N
         "ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
         (key, payload),
     )
+    return len(payload.encode("utf-8")) if table == "group_states" else 0
 
 
 def get_json(table: str, key: str) -> Any | None:
