@@ -132,7 +132,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
                 if name == "purchase_items":
                     tool_input = {**tool_input, "_turn_key": turn_key, "_owner_id": user_id}
-                if name == "add_carried_item" and re.search(r"購買|買入|買些|買一|買個|買點|\b(?:buy|purchase)\b", text, re.IGNORECASE):
+                if name == "add_carried_item" and re.search(r"買|买|\b(?:buy|purchase)\b", text, re.IGNORECASE):
                     result: dict[str, Any] = {"ok": False, "error": "本回合提到購買，不能直接加物品。請先裁定到店，使用 purchase_items 結算；非購買取得請另行明確宣告。"}
                 else:
                     result = await execute_tool(name, tool_input)
@@ -184,7 +184,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             narrative_facts=["機制執行時發生錯誤，請視為純敘事處理，不要假設任何判定結果"],
             state_delta=StateDelta(),
             check_status={**check_status, "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
-                          "dice_rolled": any(e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved") for e in tool_events)},
+                          "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
             events=inventory_events,
             turn_resolution=TurnResolution(reason="機制流程發生錯誤；不重播已提交的變更"),
         )
@@ -212,7 +212,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # it must not try to re-apply anything on top of that).
         state_delta=StateDelta(),
         check_status={**check_status, "state_changed": turn_resolution.gameplay_snapshot(state) != before_gameplay,
-                      "dice_rolled": any(e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved") for e in tool_events)},
+                      "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
         events=inventory_events,
         turn_resolution=resolution,
     )

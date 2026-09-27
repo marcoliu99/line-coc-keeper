@@ -142,10 +142,10 @@ def test_stale_quote_cannot_be_used(state, change):
         purchases.confirm(state, "a", quote["id"])
 
 
-def run_executor(state, provider):
+def run_executor(state, provider, text="前往購買煤油"):
     fake = AsyncMock(side_effect=provider)
     with patch.object(executor, "LLM_PROVIDER", "openai"), patch.object(executor, "_PROVIDERS", {"openai": SimpleNamespace(run_conversation=fake)}):
-        result = asyncio.run(executor.run_executor(AgentMessage({"state": state, "user_id": "a", "text": "前往購買煤油", "display_name": "Marco", "speaker_role": "player"})))
+        result = asyncio.run(executor.run_executor(AgentMessage({"state": state, "user_id": "a", "text": text, "display_name": "Marco", "speaker_role": "player"})))
     assert fake.await_count == 1 and fake.call_args.kwargs["enable_wrapup"] is False
     return result
 
@@ -202,12 +202,13 @@ def test_legacy_save_has_no_invented_cash():
     assert GroupState.from_dict(GroupState(group_id="old").to_dict()).commerce == {}
 
 
-def test_generic_inventory_cannot_bypass_explicit_purchase(state):
+@pytest.mark.parametrize("text", ["前往購買煤油", "我去買煤油", "買煤油", "我要买煤油", "I buy kerosene"])
+def test_generic_inventory_cannot_bypass_explicit_purchase(state, text):
     async def provider(*args, **kwargs):
         result = await args[5]("add_carried_item", {"investigator": "Marco", "item": "煤油"})
         assert not result["ok"] and "purchase_items" in result["error"]
         return decision(state, "blocked", ["state"])
-    result = run_executor(state, provider)
+    result = run_executor(state, provider, text)
     assert result.turn_resolution.disposition == "blocked"
     assert state.get_active_character("a").carried_items == ["筆記本"]
 
@@ -237,3 +238,19 @@ def test_changed_retry_cannot_duplicate_a_purchase(state):
     assert call(state)["ok"]
     assert not call(state, arrival_basis="改述同一次抵達")["ok"]
     assert state.get_active_character("a").carried_items == ["筆記本", "煤油", "煤油"]
+
+
+@pytest.mark.parametrize("tool", ["roll_dice", "roll_weapon_damage", "roll_impaling_damage"])
+@pytest.mark.parametrize("provider_fails", [False, True])
+@pytest.mark.parametrize("ok", [False, True])
+def test_dice_provenance_requires_success(state, tool, provider_fails, ok):
+    async def provider(*args, **kwargs):
+        await args[5](tool, {"expression": "bad"})
+        if provider_fails:
+            raise RuntimeError("continuation failed")
+        return decision(state, "incomplete", ["state"])
+    with patch.object(keeper, "_execute_tool", return_value={"ok": ok}):
+        result = run_executor(state, provider)
+    assert bool(result.check_status["dice_rolled"]) is ok
+    reply = prompt_config.enforce_mechanic_check_consistency("", result)
+    assert ("重擲" in reply) is ok

@@ -106,3 +106,10 @@ calls, production bot restart or deployment is part of this change.
 - `python3 -m mypy app`: 75 source files passed.
 - Ruff on all changed Python files and `git diff --check`: passed.
 - Providers were mocked; real tools and isolated SQLite persistence were exercised.
+
+## Review hardening (2026-09-27)
+
+Recognize bare traditional/simplified Chinese purchase verbs in the inventory bypass
+guard. Dice provenance requires successful tool results in both normal and provider
+failure paths; rejected expressions must never produce a no-reroll instruction.
+Regression tests cover Chinese purchase phrasing and all three dice tools.
