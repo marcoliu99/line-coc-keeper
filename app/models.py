@@ -162,6 +162,7 @@ class Character:
     # see docs/references/carry_audit.md for that (still unimplemented);
     # this is just "what's the current list", added/removed via keeper.py's
     # add_carried_item/remove_carried_item tools.
+    cash_balances: dict[str, int] = field(default_factory=dict)  # integer hundredths, never inferred
     carried_items: list[str] = field(default_factory=list)
     notes: str = ""
     key_connection: str = ""  # "關鍵背景連結★" — a person/place/object this character
@@ -207,6 +208,8 @@ class Character:
                 f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
                 for name, w in self.weapons.items()
             ))
+        if self.cash_balances:
+            lines.append("現金：" + "、".join(f"{currency} {amount // 100}.{amount % 100:02d}" for currency, amount in self.cash_balances.items()))
         if self.carried_items:
             lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:
@@ -849,6 +852,7 @@ class GroupState:
     scenario_title: str = ""
     scenario_text: str = ""
     scenario_library_id: str = ""
+    scenario_variant_id: str = "original"
     active_chapter_id: str = ""
     context_chapter_ids: list[str] = field(default_factory=list)
     active: bool = False
@@ -875,6 +879,9 @@ class GroupState:
     # hold everything. Fed into the (cached) static prompt, not re-summarized
     # every turn — only updated on the rare turn where a trim actually fires.
     campaign_summary: str = ""
+    # Player reports remain allegations until a KP explicitly adjudicates them.
+    # Approved entries supersede conflicting old narration and summaries.
+    narrative_corrections: list[dict[str, Any]] = field(default_factory=list)
     openai_previous_response_id: str = ""
     # A provider-side conversation is valid only inside the timeline that
     # created it.  Empty means that no reusable chain is currently trusted.
@@ -982,6 +989,7 @@ class GroupState:
     staged_pdf_parts: list[dict[str, str]] = field(default_factory=list)
     established_facts: list[dict[str, Any]] = field(default_factory=list)
     known_clues: list[dict[str, Any]] = field(default_factory=list)
+    commerce: dict[str, Any] = field(default_factory=dict)
     consumed_or_removed_items: list[dict[str, Any]] = field(default_factory=list)
     # Durable audit markers for a state-changing tool whose caller was
     # cancelled after the grace period expired. The mutation may have
@@ -1116,6 +1124,7 @@ class GroupState:
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
             "scenario_library_id": self.scenario_library_id,
+            "scenario_variant_id": self.scenario_variant_id,
             "active_chapter_id": self.active_chapter_id,
             "context_chapter_ids": self.context_chapter_ids,
             "active": self.active,
@@ -1126,6 +1135,7 @@ class GroupState:
             "log": self.log,
             "kp_ooc_log": self.kp_ooc_log,
             "campaign_summary": self.campaign_summary,
+            "narrative_corrections": self.narrative_corrections,
             "openai_previous_response_id": self.openai_previous_response_id,
             # Do not infer trust for a legacy response ID while serializing.
             # Missing chain metadata is deliberately preserved as empty so the
@@ -1156,6 +1166,7 @@ class GroupState:
             "staged_pdf_parts": self.staged_pdf_parts,
             "established_facts": self.established_facts,
             "known_clues": self.known_clues,
+            "commerce": self.commerce,
             "consumed_or_removed_items": self.consumed_or_removed_items,
             "tool_recovery_markers": self.tool_recovery_markers,
         }
@@ -1197,6 +1208,7 @@ class GroupState:
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
             scenario_library_id=data.get("scenario_library_id", ""),
+            scenario_variant_id=data.get("scenario_variant_id", "original"),
             active_chapter_id=data.get("active_chapter_id", ""),
             context_chapter_ids=data.get("context_chapter_ids", []),
             active=data.get("active", False),
@@ -1207,6 +1219,11 @@ class GroupState:
             log=data.get("log", []),
             kp_ooc_log=data.get("kp_ooc_log", []),
             campaign_summary=data.get("campaign_summary", ""),
+            narrative_corrections=(
+                [dict(item) for item in data.get("narrative_corrections", []) if isinstance(item, dict)]
+                if isinstance(data.get("narrative_corrections", []), list)
+                else []
+            ),
             openai_previous_response_id=data.get("openai_previous_response_id", ""),
             openai_previous_response_timeline_id=data.get("openai_previous_response_timeline_id", ""),
             creation_sessions={
@@ -1247,6 +1264,7 @@ class GroupState:
             staged_pdf_parts=data.get("staged_pdf_parts", []),
             established_facts=data.get("established_facts", []),
             known_clues=data.get("known_clues", []),
+            commerce=data.get("commerce", {}),
             consumed_or_removed_items=data.get("consumed_or_removed_items", []),
             tool_recovery_markers=data.get("tool_recovery_markers", []),
         )

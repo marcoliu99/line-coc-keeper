@@ -44,6 +44,7 @@ from app import (
     scenario_index,
     scenario_library,
     scenario_rag,
+    scenario_templates,
 )
 from app import scene_map as scene_map_engine
 from app.agents import supervisor
@@ -233,6 +234,7 @@ def _install_library_context(
 ) -> None:
     """Copy the selected chapter window from an immutable library entry into state."""
     state.scenario_library_id = scenario_id
+    state.scenario_variant_id = scenario_templates.preferred_variant(state.group_id, scenario_id)
     state.scenario_title = context["manifest"]["title"]
     state.scenario_text = context["text"]
     state.active_chapter_id = context["active_chapter_id"]
@@ -529,9 +531,11 @@ async def handle_pdf_upload(
         )
         return True
 
+    variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
-    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
+    ) + (f"\n{variant_notice}" if variant_notice else "")
+      + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
     return True
 
 
@@ -588,10 +592,11 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
             bind_unassigned=(old_scenario_id is None), claimed=claimed,
         )
     save_state(state, mutate_tx=install_selected)
+    variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
         context["scene_maps"], extracted_index, len(state.pregens),
-    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "")
+    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "")
 
 async def resolve_pdf_upload_choice(
     conversation_id: str,
@@ -612,8 +617,7 @@ async def resolve_pdf_upload_choice(
             return
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
         state = load_state(conversation_id)
-        scenario_text = state.scenario_text
-    scenario_rag.schedule_index_prewarm(conversation_id, scenario_text)
+    scenario_templates.schedule_index_prewarm(state)
     await push(text)
 
 

@@ -28,6 +28,9 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         lifecycle_kp_only = config.SCENARIO_LIFECYCLE_KP_ONLY
     lifecycle_note = ("KP-only：需要目前 KP Assistant 或 Discord Keeper role。",) if lifecycle_kp_only else ()
     return [
+        HelpEntry(("character", "purchases"), "character", "查看購買紀錄", "查看現金、待確認報價與近期買入。", ("/coc purchases",), command=("purchases",)),
+        HelpEntry(("character", "purchase"), "character", "確認購買", "依已顯示的報價結算付款與物品入袋。", ("/coc purchase 報價ID",), command=("purchase",)),
+        HelpEntry(("kp", "funds"), "kp", "登記現金", "登記已確認的角色幣別與餘額，不從信用評級猜測現金。", ("/coc funds 角色名稱 幣別 餘額",), kp_only=True, command=("funds",)),
         HelpEntry(("character", "pc"), "character", "快速建立調查員", "建立一位自訂調查員。", ("/coc pc 角色名 [職業]",), ("/coc pc 小明 記者",), visibility="when_no_pregens", command=("pc",)),
         HelpEntry(("character", "create"), "character", "互動式建立調查員", "先擲屬性，再分配職業與興趣技能點數。", ("/coc create 角色名 [職業]", "/coc alloc occ|int 技能名 點數", "/coc create status|done|cancel"), ("/coc create 小明 記者",), visibility="when_no_pregens", command=("create",)),
         HelpEntry(("character", "pregens"), "character", "查看預設角色", "查看劇本附帶的預製調查員。", ("/coc pregens",), ("/coc pregens",), visibility="when_scenario_loaded", command=("pregens",)),
@@ -56,7 +59,12 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("map", "leavemap"), "map", "離開地圖追蹤", "離開目前地圖，移動改回由守密人判斷。", ("/coc leavemap",), command=("leavemap",)),
         HelpEntry(("scenario", "newgame"), "scenario", "開始新遊戲", "重置群組狀態並開始新的一局。", ("/coc newgame",), command=("newgame",)),
         HelpEntry(("scenario", "list"), "scenario", "列出劇本庫", "查看可用劇本與目前使用中的劇本。", ("/coc scenario list",), ("/coc scenario list",), command=("scenario", "list")),
-        HelpEntry(("scenario", "use"), "scenario", "選用劇本", "從劇本庫選擇目前要使用的劇本。", ("/coc scenario use 劇本ID",), ("/coc scenario use abc123",), notes=("KP-only：只有目前登記的 KP Assistant 可以執行。",), kp_only=True, command=("scenario", "use")),
+        HelpEntry(("scenario", "use"), "scenario", "選用劇本", "從劇本庫選擇劇本與已校對的中文模板版本。", ("/coc scenario use 劇本ID [模板版本]",), ("/coc scenario use abc123 zh-TW-123456789abc",), notes=("省略版本時沿用此群組對該劇本的選擇。",), kp_only=True, command=("scenario", "use")),
+        HelpEntry(("scenario", "template_export"), "scenario", "匯出中文化模板", "匯出來源 ID、頁碼與原文，供外部中文化；不呼叫翻譯 API。", ("/coc scenario template export 劇本ID",), kp_only=True, command=("scenario", "template", "export")),
+        HelpEntry(("scenario", "template_status"), "scenario", "查看中文模板", "查看匯入版本與待核對項目。", ("/coc scenario template status 劇本ID",), kp_only=True, command=("scenario", "template", "status")),
+        HelpEntry(("scenario", "template_preview"), "scenario", "預覽中文模板", "將模板的 KP 校對預覽傳送私訊。", ("/coc scenario template preview 劇本ID 模板版本",), kp_only=True, command=("scenario", "template", "preview")),
+        HelpEntry(("scenario", "template_approve"), "scenario", "核准中文模板", "檢查來源與規則後核准模板供 RAG 使用。", ("/coc scenario template approve 劇本ID 模板版本",), kp_only=True, command=("scenario", "template", "approve")),
+        HelpEntry(("scenario", "template_import"), "scenario", "匯入中文模板", "選取對應劇本的 Markdown 檔案並匯入；檔案須先放進伺服器匯入目錄。", ("/coc scenario template import 劇本ID 檔名.md",), kp_only=True, command=("scenario", "template", "import")),
         HelpEntry(("scenario", "cards"), "scenario", "管理手動角色卡", "列出或刪除這個群組在指定劇本保存的手動角色卡。", ("/coc scenario cards list 劇本ID", "/coc scenario cards delete 劇本ID 資產ID"), notes=("只有目前的 KP Assistant 或 Discord Keeper 可以執行。",), kp_only=True, command=("scenario", "cards")),
         HelpEntry(("scenario", "reparse"), "scenario", "重新解析劇本", "重新處理等待中的相似劇本 PDF。", ("/coc scenario reparse",), notes=lifecycle_note, command=("scenario", "reparse"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "cancel"), "scenario", "取消劇本處理", "放棄目前等待處理的相似劇本 PDF。", ("/coc scenario cancel",), notes=lifecycle_note, command=("scenario", "cancel"), kp_only=lifecycle_kp_only),
@@ -79,6 +87,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("kp", "rollback"), "kp", "回溯遊戲狀態", "將群組狀態恢復到指定回溯節點。", ("/coc rollback 節點ID或唯一名稱",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("rollback",)),
         HelpEntry(("kp", "digest"), "kp", "查看場景摘要", "查看目前或指定的場景摘要。", ("/coc digest", "/coc digest 摘要ID", "/coc digest clean 摘要ID"), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digest",)),
         HelpEntry(("kp", "digests"), "kp", "列出場景摘要", "列出目前群組的場景摘要歷史。", ("/coc digests",), notes=("需要目前 KP Assistant 或 Discord Keeper role。",), kp_only=True, command=("digests",)),
+        HelpEntry(("other", "correct"), "other", "提報敘事錯誤", "針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。", ("回覆 Keeper 訊息：/coc correct <疑點>", "/coc correct <訊息 ID／連結> <疑點>", "/coc correct list", "/coc correct withdraw <提報編號>"), notes=("KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。另可 hold <編號> <實體|別名> 暫停指定範圍，supersede <舊編號> <核准替代編號> 整併有效更正。目標須有本頻道目前時間線的訊息紀錄。",), command=("correct",)),
         HelpEntry(("other", "roll"), "other", "單純擲骰", "不經過守密人，直接擲骰。", ("/roll 1d100", "/roll 3d6+2"), ("/roll 1d100",), command=()),
     ]
 

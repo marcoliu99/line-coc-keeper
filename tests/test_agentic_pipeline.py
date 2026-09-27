@@ -121,7 +121,7 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
                 patch.object(scenario_rag, "get_index", return_value="fake-index") as mock_get_index, \
-                patch.object(scenario_rag, "search", return_value=["chunk"]) as mock_search, \
+                patch.object(scenario_rag, "search", return_value=[{"page": 1, "text": "chunk", "score": 1.0}]) as mock_search, \
                 patch.object(scenario_rag, "format_results", return_value="formatted rag context"), \
                 patch.object(memory_rag, "search_memory", return_value=[]):
             message = await context_builder.build_context(

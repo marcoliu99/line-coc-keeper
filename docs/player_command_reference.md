@@ -68,6 +68,20 @@
 
 顯示條件：只有已載入劇本時顯示
 
+### 確認購買
+
+依已顯示的報價結算付款與物品入袋。
+
+用法：
+- `/coc purchase 報價ID`
+
+### 查看購買紀錄
+
+查看現金、待確認報價與近期買入。
+
+用法：
+- `/coc purchases`
+
 ### 退出目前角色
 
 解除目前角色的 active binding，但保留角色歷史資料。
@@ -382,18 +396,53 @@
 用法：
 - `/coc status`
 
-### 選用劇本 **[KP-only]**
+### 核准中文模板 **[KP-only]**
 
-從劇本庫選擇目前要使用的劇本。
+檢查來源與規則後核准模板供 RAG 使用。
 
 用法：
-- `/coc scenario use 劇本ID`
+- `/coc scenario template approve 劇本ID 模板版本`
+
+### 匯出中文化模板 **[KP-only]**
+
+匯出來源 ID、頁碼與原文，供外部中文化；不呼叫翻譯 API。
+
+用法：
+- `/coc scenario template export 劇本ID`
+
+### 匯入中文模板 **[KP-only]**
+
+選取對應劇本的 Markdown 檔案並匯入；檔案須先放進伺服器匯入目錄。
+
+用法：
+- `/coc scenario template import 劇本ID 檔名.md`
+
+### 預覽中文模板 **[KP-only]**
+
+將模板的 KP 校對預覽傳送私訊。
+
+用法：
+- `/coc scenario template preview 劇本ID 模板版本`
+
+### 查看中文模板 **[KP-only]**
+
+查看匯入版本與待核對項目。
+
+用法：
+- `/coc scenario template status 劇本ID`
+
+### 選用劇本 **[KP-only]**
+
+從劇本庫選擇劇本與已校對的中文模板版本。
+
+用法：
+- `/coc scenario use 劇本ID [模板版本]`
 
 範例：
-- `/coc scenario use abc123`
+- `/coc scenario use abc123 zh-TW-123456789abc`
 
 注意：
-- KP-only：只有目前登記的 KP Assistant 可以執行。
+- 省略版本時沿用此群組對該劇本的選擇。
 
 ## KP 助手
 
@@ -440,6 +489,13 @@
 注意：
 - 需要目前 KP Assistant 或 Discord Keeper role。
 
+### 登記現金 **[KP-only]**
+
+登記已確認的角色幣別與餘額，不從信用評級猜測現金。
+
+用法：
+- `/coc funds 角色名稱 幣別 餘額`
+
 ### 登記 KP Assistant
 
 登記或解除本局的 KP Assistant 身分。
@@ -472,6 +528,19 @@
 - actor 必須先脫離自己的玩家角色／建角流程。
 
 ## 其他
+
+### 提報敘事錯誤
+
+針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。
+
+用法：
+- `回覆 Keeper 訊息：/coc correct <疑點>`
+- `/coc correct <訊息 ID／連結> <疑點>`
+- `/coc correct list`
+- `/coc correct withdraw <提報編號>`
+
+注意：
+- KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。另可 hold <編號> <實體|別名> 暫停指定範圍，supersede <舊編號> <核准替代編號> 整併有效更正。目標須有本頻道目前時間線的訊息紀錄。
 
 ### 單純擲骰
 

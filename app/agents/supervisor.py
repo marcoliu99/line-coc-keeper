@@ -48,6 +48,11 @@ async def run_turn(
     # ``legacy-*`` and the canonical log commit could reject the whole turn.
     turn_timeline_id = keeper._ensure_turn_timeline(state)
 
+    from app.services.narrative_corrections import blocking_reply
+    correction_block = blocking_reply(state, [text, resolved_location])
+    if correction_block:
+        return correction_block, [], []
+
     # 1. Build Context
     message = await context_builder.build_context(
         state=state,
