@@ -206,7 +206,10 @@ class StatePersistenceTests(unittest.TestCase):
                 ["/coc", "scenario", "use", "new-scenario"],
             ))
 
-        self.assertEqual(replies, ["KP 已選擇《New scenario》；目前 Context：chapter-1。"])
+        # The fixture's library item carries no floor plans, so the selection
+        # now also reports that — see tests/test_empty_location_index_notice.py.
+        self.assertEqual(len(replies), 1)
+        self.assertTrue(replies[0].startswith("KP 已選擇《New scenario》；目前 Context：chapter-1。"))
         self.assertNotEqual(state.timeline_id, "timeline-old")
         self.assertEqual(state.pending_checks, {})
         self.assertEqual(state.pending_luck_decisions, {})
