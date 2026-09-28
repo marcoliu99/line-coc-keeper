@@ -283,7 +283,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
             patch.object(system, "_heal_character", return_value=[]),
             patch.object(system, "_build_readiness_roster", return_value="名冊"),
             patch.object(system.scenario_intro, "extract_opening_narration", return_value={
-                "found": True, "text": "開場白", "opening_check": {"type": "skill", "skill": "偵查"},
+                "found": True, "text": "開場白", "opening_check": {"type": "skill", "skill": "自訂古語"},
             }),
         ):
             await system.handle_system_command(
@@ -292,6 +292,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
             )
         assert not state.game_started
         assert state.pending_checks == {}
+        assert all("自訂古語" not in char.skills for char in state.characters.values())
         assert state.pending_luck_decisions["second"]["decision_id"] == "old"
         assert any("Luck" in text for text in replies)
         save.assert_not_called()

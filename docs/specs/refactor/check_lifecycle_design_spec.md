@@ -23,9 +23,9 @@ The missing branch-local Luck check is a confirmed difference in source. Whether
 1. The registration module owns admission against the freshly loaded `GroupState`, pending identity, duplicate/no-op semantics, and the rule that no new dice or state mutation happens before admission. It returns an explicit registered / identical / blocked outcome with the effective persisted check identity and save requirement. Callers translate the outcome into their current tool payloads and player text.
 2. Migrate Keeper manual skill/SAN, choice and NPC attack-defense choice registrations; major-wound CON registrations from `adjust_character` and combat; and scripted opening checks. Keep check-specific construction, option filtering, dice, Luck offer calculation, damage, and SAN loss in their owning rule modules.
 3. Keep autoroll admission within the same transaction before any roll, including the existing request cache behavior. A cached result may be returned only after validating its current timeline and ownership contract; it never authorizes an unresolved different pending check or Luck decision.
-4. Duplicate requests preserve existing behavior: identical manual skill/choice requests reuse the pending entry without a save; ranged NPC attacks do not reuse a prior attacker roll; melee reuse requires matching raw options, attacker parameters and range. Incompatibilities are rejected with no write or roll.
+4. Duplicate requests preserve existing behavior: identical manual skill/choice requests reuse the pending entry without a save; ranged NPC attacks do not reuse a prior attacker roll; melee reuse requires matching the full raw options, attacker parameters and range. Older pending entries with only option labels cannot prove that match and are rejected without rerolling. Incompatibilities are rejected with no write or roll.
 5. All registration entry points use the existing state lock and fresh reload. The registration module never acquires a second lock or saves independently. Combat and opening registration stay atomic with their triggering mutation. The module must not silently drop a required CON or opening check when blocked: the owning operation must reject or expose an explicit blocked result before committing.
-6. Preserve persisted pending schema, legacy identity fallback, Discord button tokens, player ownership and timeline checks. No state/database migration is planned.
+6. Preserve existing pending fields, legacy identity fallback, Discord button tokens, player ownership and timeline checks. New NPC defense choices add an optional `raw_option_request` fingerprint for safe retry comparison; older entries remain readable but cannot claim identical-retry reuse from labels alone. No database migration is planned.
 
 ## Flow
 
@@ -59,5 +59,5 @@ Tool / combat / scripted opening
 ## Implementation decisions
 
 - The seam sits inside existing transaction owners so the registration module has no persistence adapter. This keeps atomic HP/check and opening/check commits, but integration tests remain necessary for the transaction contract.
-- Opening checks currently have no explicit check ID. The refactor should issue modern identities only for newly created opening checks; old persisted entries retain deterministic legacy IDs.
+- Opening checks currently have no explicit check ID. The refactor issues modern identities only for newly created opening checks; old persisted entries retain deterministic legacy IDs.
 - A multi-Investigator opening is all-or-nothing if any owner is blocked. A partial registration could announce a check to only some players after the opening has been committed; an explicit blocked result lets the opening owner decide how to present that condition.

@@ -1064,7 +1064,9 @@ def _remember_check_result(state: GroupState, cache_key: str, result: dict[str, 
         state.deterministic_check_results.pop(oldest, None)
 
 
-def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[dict]:
+def _resolve_defense_options(
+    char: Character, raw_options: list[dict], *, register_unknown: bool = True
+) -> list[dict]:
     """Expand offer_check_choice/offer_npc_attack_defense_choice's raw
     {label, skill, bonus_dice, penalty_dice} option list into one with
     each option's actual resolved skill_value baked in.
@@ -1080,7 +1082,7 @@ def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[d
     resolves skill_value, it doesn't validate or normalize kind."""
     options = []
     for opt in raw_options:
-        value = resolve_skill_value(char, opt["skill"])
+        value = resolve_skill_value(char, opt["skill"], register_unknown=register_unknown)
         resolved = {
             "label": opt["label"], "skill": opt["skill"], "skill_value": value,
             "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
@@ -1091,7 +1093,7 @@ def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[d
     return options
 
 
-def resolve_skill_value(char: Character, skill_name: str) -> int:
+def resolve_skill_value(char: Character, skill_name: str, *, register_unknown: bool = True) -> int:
     key = skill_name.strip()
     if key in char.skills:
         return char.skills[key]
@@ -1115,11 +1117,11 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
         if norm == kk or norm in kk or kk in norm:
             return v
 
-    # Unknown skill: register under its canonical name (not the raw LLM
-    # phrasing) so future lookups stay consistent, using the real COC7e base
-    # rate when we recognize it instead of always guessing a flat 20.
+    # Unknown skill: calculate its canonical base rate first. Registration
+    # callers defer writing the character card until check admission succeeds.
     default_value = BASE_SKILLS.get(canonical_query, 20)
-    char.skills[canonical_query] = default_value
+    if register_unknown:
+        char.skills[canonical_query] = default_value
     return default_value
 
 
@@ -1856,7 +1858,7 @@ def _execute_tool(
                 if opposed_request and (tool_input.get('pushed') or tool_input.get('difficulty', 'regular') != 'regular'):
                     raise ValueError('對抗檢定以雙方等級比較，不可強推或用固定難度替代。')
                 if not target_state.autoroll_checks:
-                    value = resolve_skill_value(target_char, tool_input["skill"])
+                    value = resolve_skill_value(target_char, tool_input["skill"], register_unknown=False)
                     bonus = int(tool_input.get("bonus_dice") or 0)
                     penalty = int(tool_input.get("penalty_dice") or 0)
                     difficulty = tool_input.get("difficulty") or "regular"
@@ -1896,6 +1898,7 @@ def _execute_tool(
                         )
                     registered = registration.pending
                     assert registered is not None
+                    resolve_skill_value(target_char, tool_input["skill"])
                     if opposed_request:
                         registered['opposed'] = opposed_checks.roll_opponent(opposed_request)
                     new_check = registered
@@ -2051,7 +2054,7 @@ def _execute_tool(
             attacker_tier = tool_input.get("attacker_tier")
             def _register_pending_choice(target_state: GroupState) -> _StateMutation[dict]:
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
-                options = _resolve_defense_options(target_char, raw_options)
+                options = _resolve_defense_options(target_char, raw_options, register_unknown=False)
                 # COC7e：攻擊方大成功時沒有任何等級贏得過它，「反擊」選項不成立——這是
                 # offer_npc_attack_defense_choice 已有的同一條規則，code review 發現這個
                 # 舊版兩步流程（npc_skill_check 先擲、這裡再註冊選項）從未套用，讓仍在用
@@ -2085,6 +2088,7 @@ def _execute_tool(
                     return _StateMutation(
                         _check_registration_error(target_char, decision.blocker), should_save=False
                     )
+                _resolve_defense_options(target_char, raw_options)
                 return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                     "note": "等待玩家選一個選項；選定後預設由玩家用 /coc check 或按鈕擲骰，只有 autoroll 開啟時才由系統代擲。",
@@ -2126,7 +2130,7 @@ def _execute_tool(
                 # freshly-loaded mutator that performs the roll and write. A
                 # rejected call therefore never rolls, and there is no gap
                 # between checking the pending entry and saving its result.
-                options = _resolve_defense_options(target_char, raw_options)
+                options = _resolve_defense_options(target_char, raw_options, register_unknown=False)
                 new_choice: dict[str, Any] = {
                     "type": "choice",
                     "options": options,
@@ -2134,17 +2138,13 @@ def _execute_tool(
                     "attacker_bonus_dice": attacker_bonus,
                     "attacker_penalty_dice": attacker_penalty,
                     "is_ranged": is_ranged,
-                    # Code review: the dedup/reuse comparison below must match
-                    # against what the CALLER asked for, not what ended up
-                    # persisted after server-side filtering (critical-tier
-                    # Fight Back removal, ranged Fight Back removal) — those
-                    # filters can shrink the saved "options" (e.g. to just
-                    # ["閃避"]) relative to the raw request (["閃避","反擊"]),
-                    # so comparing against saved "options" made a legitimate
-                    # identical retry fail to match and fall through to the
-                    # generic "already pending" rejection instead of reusing
-                    # the cached roll.
+                    # Check lifecycle compares the full raw request, because
+                    # server-side filtering may shrink persisted options.
                     "raw_option_labels": sorted(str(o.get("label", "")) for o in raw_options),
+                    "raw_option_request": sorted(
+                        json.dumps(option, ensure_ascii=False, sort_keys=True, default=str)
+                        for option in raw_options
+                    ),
                 }
                 decision = check_lifecycle.admit(
                     target_state, target_char.owner_id, new_choice, duplicate="npc_melee"
@@ -2192,6 +2192,7 @@ def _execute_tool(
                     # _build_check_narration ranged_attacker 分支）。這裡只登記選項跟
                     # 攻擊方的技能值/骰數修正，不寫 attacker_tier/attacker_roll。
                     check_lifecycle.register(target_state, target_char.owner_id, new_choice, source=tool_input)
+                    _resolve_defense_options(target_char, raw_options)
                     return _StateMutation({
                         "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                         "note": "遠程攻擊：這不是對抗檢定，不會預先擲攻擊方。等待玩家選擇「撲向掩體」並"
@@ -2224,6 +2225,7 @@ def _execute_tool(
                 new_choice["attacker_tier"] = npc_roll.tier
                 new_choice["attacker_roll"] = npc_roll.roll  # 保存掷骰結果供後續防重複檢查
                 check_lifecycle.register(target_state, target_char.owner_id, new_choice, source=tool_input)
+                _resolve_defense_options(target_char, raw_options)
                 return _StateMutation({
                     "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                     "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,

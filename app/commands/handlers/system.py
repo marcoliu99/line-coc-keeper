@@ -875,7 +875,7 @@ async def handle_system_command(
                         if opening_check["type"] == "skill":
                             candidates[owner_id] = {
                                 "type": "skill", "skill": opening_check["skill"],
-                                "skill_value": keeper.resolve_skill_value(char, opening_check["skill"]),
+                                "skill_value": keeper.resolve_skill_value(char, opening_check["skill"], register_unknown=False),
                                 "bonus_dice": 0, "penalty_dice": 0,
                                 "difficulty": "regular", "pushed": False,
                             }
@@ -900,6 +900,9 @@ async def handle_system_command(
                         else:
                             opening_blocker = f"{character.name} 尚有待處理的檢定，請先完成後再開始遊戲。"
                 if not opening_blocker:
+                    if opening_check and opening_check["type"] == "skill":
+                        for char in state.characters.values():
+                            keeper.resolve_skill_value(char, opening_check["skill"])
                     state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
                     state.log.append({"role": "assistant", "content": opening_text})
                     state.game_started = True

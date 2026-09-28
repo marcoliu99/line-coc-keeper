@@ -1050,6 +1050,34 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         assert saved.pending_checks == {}
         roll.assert_not_called()
 
+    def test_npc_melee_same_labels_with_changed_skill_parameters_does_not_reuse_roll(self):
+        state = _state_with_investigator()
+        options = [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}]
+        changed = [{"label": "閃避", "skill": "射擊"}, {"label": "反擊", "skill": "格鬥"}]
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=42, tier="hard")) as roll:
+                first = keeper._execute_tool(state, "offer_npc_attack_defense_choice", {
+                    "investigator": "小明", "options": options, "attacker_skill_value": 50,
+                }, [], [], speaker_role="player")
+                second = keeper._execute_tool(state, "offer_npc_attack_defense_choice", {
+                    "investigator": "小明", "options": changed, "attacker_skill_value": 50,
+                }, [], [], speaker_role="player")
+        assert first["ok"] and not second["ok"]
+        roll.assert_called_once()
+
+    def test_blocked_unknown_skill_does_not_change_character_card(self):
+        state = _state_with_investigator()
+        state.pending_luck_decisions["u1"] = {"decision_id": "old", "options": []}
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(state, "skill_check", {
+                "investigator": "小明", "skill": "自訂古語",
+            }, [], [], speaker_role="player")
+        assert not result["ok"]
+        assert "自訂古語" not in state.characters["u1"].skills
+        assert "自訂古語" not in store.store["g"].characters["u1"].skills
+
     def test_offer_npc_attack_defense_choice_rejects_and_does_not_reroll(self):
         state = _state_with_investigator()
         with StateStorePatch(keeper) as store:

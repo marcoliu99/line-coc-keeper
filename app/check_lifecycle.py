@@ -63,7 +63,8 @@ def _same_npc_melee(existing: dict[str, Any], candidate: dict[str, Any]) -> bool
     fields = ("attacker_skill_value", "attacker_bonus_dice", "attacker_penalty_dice", "is_ranged")
     return (
         all(existing.get(key, 0) == candidate.get(key, 0) for key in fields)
-        and existing.get("raw_option_labels") == candidate.get("raw_option_labels")
+        and existing.get("raw_option_request") is not None
+        and existing.get("raw_option_request") == candidate.get("raw_option_request")
     )
 
 
@@ -75,12 +76,17 @@ def admit(
     duplicate: DuplicatePolicy = "none",
 ) -> CheckRegistration:
     """Decide once against fresh state, before any roll or state mutation."""
+    if not owner_id or not state.characters_for_owner(owner_id):
+        raise ValueError(f"no investigator owns check for {owner_id!r}")
     timeline_id = state.timeline_id or f"legacy-{state.group_id}"
     # Luck takes precedence even if corrupt older state contains both entries.
     if owner_id in state.pending_luck_decisions:
         return CheckRegistration("blocked", blocker="pending_luck_decision", timeline_id=timeline_id)
     existing = state.pending_checks.get(owner_id)
     if existing is not None:
+        persisted_timeline = existing.get("timeline_id")
+        if persisted_timeline and persisted_timeline != state.timeline_id:
+            return CheckRegistration("blocked", blocker="pending_check", timeline_id=timeline_id)
         same = candidate is not None and (
             (duplicate == "identical" and _same_check(existing, candidate))
             or (duplicate == "npc_melee" and _same_npc_melee(existing, candidate))
