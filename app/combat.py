@@ -12,6 +12,8 @@ from __future__ import annotations
 import random
 import re
 import uuid
+from collections.abc import Callable
+from dataclasses import fields
 from datetime import datetime, timezone
 from typing import Any
 
@@ -366,6 +368,7 @@ def major_wound_blocked(
     return {
         "ok": False,
         "blocked_by": blocker,
+        "investigator": pc.name,
         "error": f"{pc.name} {reason}；為避免遺失重傷必須的 CON 檢定，本次傷害未套用。{next_step}",
     }
 
@@ -995,6 +998,10 @@ def _choose_target(state: GroupState, enemy_id: str) -> str:
 
 
 def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
+    return _all_or_nothing(state, lambda: _plan_enemy_turn(state, enemy_name))
+
+
+def _plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
@@ -1005,7 +1012,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
     if not card:
         return {"ok": False, "error": f"敵人「{combatant.display_name}」沒有戰鬥卡"}
 
-    process_timing(state, "turn_start", combatant.combatant_id)
+    _process_timing_or_stop(state, "turn_start", combatant.combatant_id)
     if _is_skippable(state, combatant):
         return {
             "ok": True,
@@ -1260,6 +1267,54 @@ def resolve_enemy_action(
     return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
 
 
+class _TimingBlocked(Exception):
+    """A fixed-timing effect was refused for a blocked major wound."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        super().__init__(result.get("error", ""))
+        self.result = result
+
+
+def _process_timing_or_stop(state: GroupState, timing: str, target_id: str = "") -> None:
+    """process_timing for automatic turn advancement: stop at a blocked hit."""
+    for result in process_timing(state, timing, target_id):
+        if result.get("blocked_by"):
+            raise _TimingBlocked(result)
+
+
+def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run a turn-advancing `step`, or leave `state` exactly as it was.
+
+    Advancing runs several timings in a row (turn_end, round_end,
+    round_start, turn_start). If one of them would give a major wound whose
+    CON check the player can't take yet, moving on anyway would silently
+    postpone the hit to the effect's next timing. Instead nothing advances,
+    and the caller is told to resolve the check and advance again.
+    """
+    snapshot = state.to_dict()
+    try:
+        return step()
+    except _TimingBlocked as blocked:
+        restored = GroupState.from_dict(snapshot)
+        for field in fields(GroupState):
+            setattr(state, field.name, getattr(restored, field.name))
+        result = blocked.result
+        name = result.get("investigator", "調查員")
+        if result["blocked_by"] == "pending_check":
+            reason, next_step = "已有待處理檢定", "請先完成現有檢定"
+        else:
+            reason, next_step = "仍在等待 Luck 決定", "請先處理 Luck 選項"
+        return {
+            "ok": False,
+            "blocked_by": result["blocked_by"],
+            "effect_id": result.get("effect_id"),
+            "error": (
+                f"持續效果這時會讓{name}受重傷，但{name}{reason}；為避免遺失重傷必須的 CON 檢定，"
+                f"回合沒有推進。{next_step}，再推進回合。"
+            ),
+        }
+
+
 def _move_to_next_available(state: GroupState) -> bool:
     combat = state.combat
     n = len(combat.order)
@@ -1268,10 +1323,10 @@ def _move_to_next_available(state: GroupState) -> bool:
         wrapped = next_index == 0
         combat.current_index = next_index
         if wrapped:
-            process_timing(state, "round_end")
+            _process_timing_or_stop(state, "round_end")
             combat.round_number += 1
             _reset_round_usage(state)
-            process_timing(state, "round_start")
+            _process_timing_or_stop(state, "round_start")
             _mark_round_start_abilities(state)
         if not _is_skippable(state, combat.order[combat.current_index]):
             return True
@@ -1279,6 +1334,10 @@ def _move_to_next_available(state: GroupState) -> bool:
 
 
 def advance_turn(state: GroupState) -> dict:
+    return _all_or_nothing(state, lambda: _advance_turn(state))
+
+
+def _advance_turn(state: GroupState) -> dict:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
@@ -1286,18 +1345,18 @@ def advance_turn(state: GroupState) -> dict:
         return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
-    process_timing(state, "turn_end", current.combatant_id)
+    _process_timing_or_stop(state, "turn_end", current.combatant_id)
 
     if not _move_to_next_available(state):
         return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
-    process_timing(state, "turn_start", current.combatant_id)
+    _process_timing_or_stop(state, "turn_start", current.combatant_id)
     while _is_skippable(state, current):
         if not _move_to_next_available(state):
             return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
         current = combat.order[combat.current_index]
-        process_timing(state, "turn_start", current.combatant_id)
+        _process_timing_or_stop(state, "turn_start", current.combatant_id)
     return {
         "ok": True,
         "round": combat.round_number,

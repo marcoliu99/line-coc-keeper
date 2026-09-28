@@ -59,6 +59,10 @@
 
 把 `app/keeper.py:2607` 的防護移進 `_apply_attribute_delta`，針對 `target_state`，改用步驟 1 的判斷。把無聲的 `elif` 換成 `_StateMutation(…, should_save=False)` 的拒絕。外層檢查可保留作為便宜的提早返回；如果只是和內層重複，就刪掉。
 
+### 5. 推進回合遇到被擋下的時點傷害時停下
+
+*PR #117 審查時新增。* `advance_turn` 會連續處理好幾個時點（目前戰鬥者的 `turn_end`、換輪時的 `round_end`／`round_start`、下一位的 `turn_start`），`plan_enemy_turn` 則會處理敵人的 `turn_start`。它們的呼叫端原本會丟掉 `process_timing` 的結果，所以在這裡被擋下的傷害會無聲延後到效果的下一個時點，先攻順序卻照樣往前推，可能改變戰局。現在兩者都是「全做或全不做」：只要任何一個時點會造成被擋下的重傷，整個呼叫就讓狀態保持原樣，並回傳 `blocked_by` 和「先處理檢定，再推進回合」的訊息。這時 Keeper 的 `advance_combat_turn` 和 `plan_enemy_turn` 工具會跳過存檔，`/coc combat next` 會回覆這則訊息。
+
 ## 測試
 
 除非另外註明，每個案例都在 autoroll **關閉**下執行，使用真實的 `GroupState` 和真實的變更路徑，只 patch 骰子。
@@ -69,9 +73,11 @@
 4. `adjust_character` 競態：外層 `state` 沒有待處理檢定，但 `target_state` 有 → 被拒絕，而不是無聲略過。
 5. 每次拒絕都剛好發出一個 `combat.major_wound.blocked` 事件，`blocked_by` 和 `entry_point` 正確。
 6. 迴歸：沒有阻擋時，重傷照舊登記 CON 檢定；autoroll 開啟時，CON 立即判定；非重傷的傷害不受待處理檢定影響。
+7. 推進回合：被擋下的 `turn_start` 或 `round_end` 傷害會讓 `advance_turn` 的狀態完全不變（順序位置、輪數、HP、已處理的時點），並回傳 `blocked_by`；擋下的原因解除後，同樣的推進只會造成一次傷害。`plan_enemy_turn` 會在規劃前以同樣方式被拒絕，Keeper 的 `advance_combat_turn` 工具會跳過存檔。
 
 ## 限制
 
 - 這個修正依賴 Keeper 在檢定解決後重新套用傷害。如果它沒有，傷害仍會遺失，但是是可見的遺失：模型和日誌都看得到錯誤，而不是無聲的 `None`。如果 `combat.major_wound.blocked` 事件顯示真的發生，上面的延後檢定佇列就是下一份規格。
 - `/coc combat damage` 管理指令走的是 `damage_combatant`，所以會以同樣方式被拒絕，並回覆同樣的訊息，不需要另外修改。
+- `finish_retired_current_turn`（戰鬥者在回合中被移出戰鬥時）仍然直接處理下一位戰鬥者的 `turn_start`。移出戰鬥這個動作無法拒絕，所以在這裡被擋下的傷害會保持未處理，等效果的下一個時點再重試；`combat.major_wound.blocked` 會記錄下來。
 - 不在範圍內：改變每位玩家能持有的待處理檢定數量。

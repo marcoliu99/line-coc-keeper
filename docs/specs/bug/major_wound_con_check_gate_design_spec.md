@@ -59,6 +59,10 @@ In `process_timing`, an `__all__` effect currently applies damage target by targ
 
 Move the guard at `app/keeper.py:2607` into `_apply_attribute_delta` against `target_state`, using the step-1 predicate. Replace the silent `elif` with a `_StateMutation(…, should_save=False)` rejection. Keep the outer check as a cheap early exit, or drop it if it only duplicates the inner one.
 
+### 5. Turn advancement stops at a blocked timed hit
+
+*Added in PR #117 review.* `advance_turn` runs several timings in a row (the current combatant's `turn_end`, then `round_end` / `round_start` when the round wraps, then the next combatant's `turn_start`), and `plan_enemy_turn` runs the enemy's `turn_start`. Their callers used to discard `process_timing`'s results, so a blocked hit there was silently postponed to the effect's next timing while initiative moved on, which could change how the fight goes. Both are now all-or-nothing: if any timing would give a blocked major wound, the whole call leaves the state exactly as it was and returns `blocked_by` with a message to resolve the check and advance again. The `advance_combat_turn` and `plan_enemy_turn` Keeper tools skip the save in that case, and `/coc combat next` replies with the message.
+
 ## Testing
 
 Every case runs with autoroll **off** unless stated otherwise. It uses a real `GroupState` and the real mutation path, and only dice are patched.
@@ -69,9 +73,11 @@ Every case runs with autoroll **off** unless stated otherwise. It uses a real `G
 4. `adjust_character` race: the outer `state` has no pending check, but `target_state` does → rejected, not silent.
 5. Each rejection emits exactly one `combat.major_wound.blocked` event with the right `blocked_by` and `entry_point`.
 6. Regressions: with no blocker, a major wound registers the CON check exactly as before. With autoroll on, CON resolves immediately. Non-major hits ignore pending checks.
+7. Turn advancement: a blocked `turn_start` or `round_end` hit leaves `advance_turn`'s state unchanged (index, round, HP, processed timings) and returns `blocked_by`; after the block clears the same advance applies the hit once. `plan_enemy_turn` is refused the same way before planning, and the Keeper `advance_combat_turn` tool skips the save.
 
 ## Limits
 
 - The fix depends on the Keeper re-applying the damage after the check resolves. If it doesn't, the damage is lost, but visibly, through an error the model and logs can see instead of a silent `None`. If the `combat.major_wound.blocked` events show that happening, the deferred-check queue above becomes the next spec.
 - The `/coc combat damage` operator command goes through `damage_combatant`, so it is refused the same way and replies with the same message; it needs no change of its own.
+- `finish_retired_current_turn` (a combatant removed from the fight mid-turn) still runs the next combatant's `turn_start` directly. Removal can't be refused, so a blocked hit there stays unprocessed and retries at that effect's next timing; `combat.major_wound.blocked` records it.
 - Out of scope: any change to how many pending checks a player can hold.

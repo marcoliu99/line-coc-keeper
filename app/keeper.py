@@ -2915,8 +2915,8 @@ def _execute_tool(
             return {"ok": True, "status": combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
         if name == "advance_combat_turn":
-            def _mutate_advance_turn(target_state: GroupState) -> dict:
-                return combat.advance_turn(target_state)
+            def _mutate_advance_turn(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(combat.advance_turn(target_state))
             return _mutate_and_save_state(state, _mutate_advance_turn)
 
         if name == "damage_combatant":
@@ -2928,8 +2928,8 @@ def _execute_tool(
             return _filter_public_combat_damage_result(result, speaker_role)
 
         if name == "plan_enemy_turn":
-            def _mutate_plan_enemy_turn(target_state: GroupState) -> dict:
-                return combat.plan_enemy_turn(target_state, tool_input.get("enemy", ""))
+            def _mutate_plan_enemy_turn(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(combat.plan_enemy_turn(target_state, tool_input.get("enemy", "")))
             return _mutate_and_save_state(state, _mutate_plan_enemy_turn)
 
         if name == "resolve_enemy_action":

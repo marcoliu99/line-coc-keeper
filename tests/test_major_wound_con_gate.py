@@ -140,6 +140,62 @@ class MultiTargetEffectTests(unittest.TestCase):
         self.assertEqual(state.characters["u1"].hp, 6)
 
 
+class TurnAdvancementTests(unittest.TestCase):
+    """PR #117 review: advancing must not move past a blocked timed hit."""
+
+    def _snapshot(self, state: GroupState) -> dict:
+        return state.to_dict()
+
+    def test_advance_turn_stays_put_until_the_check_resolves(self):
+        state = _combat_state("First", "Second")
+        combat.add_combat_effect(state, "all", "Collapsing Ceiling", timing="turn_start", damage="6")
+        state.pending_checks["u1"] = dict(SEARCH_CHECK)
+        before = self._snapshot(state)
+
+        result = combat.advance_turn(state)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["blocked_by"], "pending_check")
+        self.assertIn("回合沒有推進", result["error"])
+        self.assertIn("First", result["error"])
+        self.assertEqual(state.to_dict(), before)
+
+        del state.pending_checks["u1"]
+        result = combat.advance_turn(state)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(state.combat.current_index, 1)
+        self.assertEqual(state.characters["u1"].hp, 6)
+        self.assertEqual(state.characters["u2"].hp, 6)
+
+    def test_a_blocked_round_end_keeps_the_round(self):
+        state = _combat_state("First", "Second")
+        state.combat.current_index = 1
+        combat.add_combat_effect(state, "all", "Rising Water", timing="round_end", damage="6")
+        state.pending_luck_decisions["u2"] = dict(LUCK_DECISION)
+        before = self._snapshot(state)
+
+        result = combat.advance_turn(state)
+
+        self.assertEqual(result["blocked_by"], "pending_luck_decision")
+        self.assertIn("請先處理 Luck 選項", result["error"])
+        self.assertEqual(state.to_dict(), before)
+        self.assertEqual(state.combat.round_number, 1)
+
+    def test_plan_enemy_turn_is_refused_before_planning(self):
+        state = _combat_state("Mark")
+        combat.add_npc(state, "Attacker", 60, 14)
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Attacker")
+        combat.add_combat_effect(state, "all", "Miasma", timing="turn_start", damage="6")
+        state.pending_checks["u1"] = dict(SEARCH_CHECK)
+        before = self._snapshot(state)
+
+        result = combat.plan_enemy_turn(state)
+
+        self.assertEqual(result["blocked_by"], "pending_check")
+        self.assertEqual(state.to_dict(), before)
+
+
 class KeeperToolTests(unittest.TestCase):
     """Keeper tools run against the reloaded state inside _mutate_and_save_state."""
 
@@ -179,6 +235,14 @@ class KeeperToolTests(unittest.TestCase):
         stored = _combat_state("Mark")
         stored.pending_checks["u1"] = dict(SEARCH_CHECK)
         result, saves = self._run(stored, "apply_combat_damage", {"target": "Mark", "raw_damage": 6})
+        self.assertEqual(result["blocked_by"], "pending_check")
+        self.assertEqual(saves, [])
+
+    def test_advance_combat_turn_tool_skips_the_save_when_blocked(self):
+        stored = _combat_state("First", "Second")
+        combat.add_combat_effect(stored, "all", "Collapsing Ceiling", timing="turn_start", damage="6")
+        stored.pending_checks["u1"] = dict(SEARCH_CHECK)
+        result, saves = self._run(stored, "advance_combat_turn", {})
         self.assertEqual(result["blocked_by"], "pending_check")
         self.assertEqual(saves, [])
 
