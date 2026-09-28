@@ -70,4 +70,6 @@ class ToolCall:                            # 目前各分支共用、總是一�
 - **Schema 順序：** 供應商的 prompt 快取會把工具清單算進快取前綴，所以註冊表保留宣告順序，並用測試固定送給供應商的順序。
 - **排序：** 戰鬥家族的 PR 排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
 
-Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。`refactor/combat-start-in-combat-module` 尚未合入 `main_v2`，戰鬥處理函式家族因此仍待遷移。
+Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。戰鬥啟動與重傷檢定兩項前置改動已存在於 `main_v2`；遷移戰鬥處理函式時保留其行為。
+
+戰鬥家族（開始戰鬥、加入 NPC、狀態查詢、回合推進、傷害、敵人行動計畫、效果與結束戰鬥）遷到 `app/keeper_tools/combat.py`。規則仍由 `app/combat.py` 負責；狀態寫入、被重傷關卡阻擋時不儲存，以及公開傷害結果過濾，仍經 Keeper 的正式共用函式處理。此分支獨立於其他工具家族分支，不刪除尚在使用的舊串接。

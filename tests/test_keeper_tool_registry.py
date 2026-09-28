@@ -1,9 +1,11 @@
 """Pin the old tool lists while handlers migrate to the registry."""
+from collections.abc import Callable
 from unittest.mock import patch
 
 from app import keeper
 from app.agents import narrator, tool_gateway
 from app.keeper_tools import registry
+from app.models import GroupState
 from app.services import turn_context, turn_resolution
 
 PLAYER_TOOL_ORDER = (
@@ -100,3 +102,35 @@ def test_registry_covers_schemas_and_preserves_provider_order() -> None:
         assert [tool["name"] for tool in keeper._tools_for_speaker_role("kp_assistant")] == [
             name for name in (*PLAYER_TOOL_ORDER, "search_scenario") if name in KP_ALLOWED
         ]
+
+
+def test_combat_family_uses_registered_handlers_without_legacy_cascade() -> None:
+    combat_names = {
+        "start_combat", "add_npc_to_combat", "get_combat_status",
+        "advance_combat_turn", "damage_combatant", "plan_enemy_turn",
+        "resolve_enemy_action", "apply_combat_damage", "apply_final_combat_damage",
+        "add_combat_effect", "end_combat",
+    }
+    assert all(registry.REGISTRY[name].handler is not registry.legacy_handler
+               for name in combat_names)
+
+    state = GroupState(group_id="combat-family")
+
+    def mutate(current: GroupState, callback: Callable[[GroupState], object]) -> object:
+        result = callback(current)
+        return result.value if isinstance(result, keeper.ToolStateMutation) else result
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy combat dispatch")),
+          patch.object(keeper, "mutate_tool_state", side_effect=mutate),
+          patch.object(keeper, "refresh_tool_state")):
+        started = keeper._execute_tool(state, "start_combat", {}, [], [])
+        added = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "Cultist", "dex": 50, "hp": 10}, [], [],
+        )
+        status = keeper._execute_tool(state, "get_combat_status", {}, [], [])
+        ended = keeper._execute_tool(state, "end_combat", {}, [], [])
+
+    assert started["ok"] and added["ok"] and status["ok"] and ended["ok"]
+    assert "Cultist" in status["status"]
+    assert not state.combat.active
