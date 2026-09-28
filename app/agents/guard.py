@@ -4,13 +4,11 @@ import logging
 
 from app import config, observability, spoiler_policy
 from app.agents import rule_validator
-from app.config import LLM_PROVIDER
 from app.domain.models import AgentMessage
-from app.providers.registry import CONVERSATION_PROVIDERS
+from app.providers.registry import require_conversation_provider
 from app.services import prompt_config
 
 _logger = logging.getLogger(__name__)
-_PROVIDERS = CONVERSATION_PROVIDERS
 
 MAX_REPAIR_ATTEMPTS = 2
 
@@ -21,7 +19,7 @@ async def run_repair(message: AgentMessage, original_text: str, error_reason: st
     Falls back to the original text (rather than losing the reply entirely)
     if the repair call itself fails.
     """
-    provider = _PROVIDERS[LLM_PROVIDER]
+    provider = require_conversation_provider()
 
     dynamic_system = prompt_config.build_guard_dynamic_prompt(original_text, error_reason)
     new_message = "請修復並重新輸出這段敘述："
@@ -30,11 +28,11 @@ async def run_repair(message: AgentMessage, original_text: str, error_reason: st
         return {"ok": False, "error": "Guard agent has no tools"}
 
     metrics: dict[str, int] = {}
-    model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None)
+    model = getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", None)
     try:
         with observability.metrics_context(metrics), observability.span(
-            "llm.turn", provider=LLM_PROVIDER, model=model, agent="guard",
-            reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+            "llm.turn", provider=config.LLM_PROVIDER, model=model, agent="guard",
+            reasoning_effort=observability.llm_reasoning_effort(config.LLM_PROVIDER),
             metrics=metrics,
         ):
             repaired_text = await provider.run_conversation(

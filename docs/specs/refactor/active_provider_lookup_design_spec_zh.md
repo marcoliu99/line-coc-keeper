@@ -2,7 +2,7 @@
 
 [English](active_provider_lookup_design_spec.md)
 
-狀態：**backlog**（等待規格審查）。基準：`main_v2` 的 `a68df95`。
+狀態：**已實作**。基準：`main_v2` 的 `a68df95`。
 
 ## 問題
 
@@ -44,10 +44,20 @@ def analysis_provider() -> AnalysisProvider | None: ...           # config.ANALY
 
 ## 測試
 
-- 機械式改寫後，完整測試套件在**斷言完全不變**的情況下通過，證明這次重構沒有改變行為。
+- 改寫後完整測試套件通過。除了「實作說明」列出的三個測試之外，斷言都沒有改變。
 - 新增：名稱不存在時 `conversation_provider()`／`analysis_provider()` 回傳 `None`，且 `analysis_provider()` 永遠不會回傳 `codex`。
 - 新增：每個對話入口在 `LLM_PROVIDER` 設錯時都走設定錯誤的路徑，而不是 `KeyError`。
 - `git grep -n "_PROVIDERS\s*=" app` 只剩 `registry.py`。
+
+## 實作說明
+
+- 對話階段透過 `registry.require_conversation_provider()` 丟出設定錯誤；KP 助手則透過 `conversation_provider()`，保留它原本直接回覆設定錯誤的方式。
+- `app/markitdown_shim.py` 也用了 `ANALYSIS_PROVIDER as LLM_PROVIDER`，現在改用真名。它依供應商建立不同 client 的邏輯不是查詢，所以維持原樣。
+- **分析為什麼獨立，已經查證：** `codex_provider` 沒有 `analyze_text`／`analyze_image` adapter。Codex CLI（0.157.1）本身接受 `-i/--image` 和 `--output-schema`，transport 也已經在用後者，所以缺的是 adapter，已經規劃在 `enhancement/codex-analysis-provider` 分支。做好之後，只需要改 `registry.ANALYSIS_PROVIDERS`。
+- **不是每個測試都只是單純替換。** 有三個測試的改動不只是換掉 patch 的對象：
+  - `test_codex_capabilities.py`：兩個測試原本斷言各模組的別名表（`executor._PROVIDERS is ...`）。現在改成透過 registry，斷言那些別名原本要守住的規則：對話可以選 codex、分析永遠不會，而且每個分析模組都呼叫 `registry.analysis_provider`。
+  - `test_turn_consistency_handoff.py::test_supervisor_preserves_failed_executor_private_outputs` 原本給 executor 和 narrator 不同的假供應商。只剩一張表之後，改由單一假供應商依呼叫順序分派（executor 先）。
+- `app/agents/assistant.py` 仍留在 SLF001 待清理清單上：取用供應商的部分已經移除，但還有其他 11 處 `keeper._*` 存取。
 
 ## 限制
 

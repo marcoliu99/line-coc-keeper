@@ -2,7 +2,7 @@
 
 [繁體中文](active_provider_lookup_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review). Base: `main_v2` at `a68df95`.
+Status: **implemented**. Base: `main_v2` at `a68df95`.
 
 ## Problem
 
@@ -44,10 +44,20 @@ def analysis_provider() -> AnalysisProvider | None: ...           # config.ANALY
 
 ## Testing
 
-- The full suite passes after the mechanical rewrite with **no assertion changes**. That shows the refactor preserves behaviour.
+- The full suite passes after the rewrite. Assertions are unchanged except in the three tests listed under Implementation notes.
 - New: `conversation_provider()` / `analysis_provider()` return `None` for an unknown name, and `analysis_provider()` never returns `codex`.
 - New: each conversation entry point with an unknown `LLM_PROVIDER` produces the setup-error path, not a `KeyError`.
 - `git grep -n "_PROVIDERS\s*=" app` returns only `registry.py`.
+
+## Implementation notes
+
+- `registry.require_conversation_provider()` raises the setup error for the conversation stages; the KP Assistant keeps its inline setup-error reply through `conversation_provider()`.
+- `app/markitdown_shim.py` also imported `ANALYSIS_PROVIDER as LLM_PROVIDER`; it now uses the real name. Its provider-specific client construction is not a lookup, so it stays.
+- **Why analysis is separate, verified:** `codex_provider` has no `analyze_text` / `analyze_image` adapter. The Codex CLI (0.157.1) itself accepts `-i/--image` and `--output-schema`, and the transport already uses the latter, so the gap is the adapter, planned on `enhancement/codex-analysis-provider`. Once it exists, only `registry.ANALYSIS_PROVIDERS` changes.
+- **Not every test change was a pure substitution.** Three tests changed beyond renaming the patch target:
+  - `test_codex_capabilities.py`: two tests asserted the per-module alias tables (`executor._PROVIDERS is ...`). They now assert the rules those aliases encoded, through the registry: conversation can select codex, analysis never does, and every analysis module calls `registry.analysis_provider`.
+  - `test_turn_consistency_handoff.py::test_supervisor_preserves_failed_executor_private_outputs` gave the executor and the narrator different fakes. With one table, a single fake now dispatches to them in call order (executor first).
+- `app/agents/assistant.py` stays in the SLF001 debt list: its provider reach is gone, but eleven other `keeper._*` accesses remain.
 
 ## Limits
 

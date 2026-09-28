@@ -2,7 +2,7 @@
 
 Many published COC7e scenarios ship with ready-made pregens so a group can skip
 character creation entirely. This does a single forced tool-call (via whichever
-LLM_PROVIDER is configured — see app/providers/*.py's analyze_text) asking it to
+ANALYSIS_PROVIDER is configured — see app/providers/*.py's analyze_text) asking it to
 report only what's explicitly written in the text (never invent numbers), so
 `/coc pregens` can offer them instead of everyone rolling a fresh investigator.
 """
@@ -13,9 +13,8 @@ import re
 from typing import Any
 
 from app import character_matcher, dictionary
-from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
 from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
-from app.providers.registry import ANALYSIS_PROVIDERS
+from app.providers.registry import analysis_provider
 from app.skill_aliases import canonical_skill_name
 
 
@@ -23,7 +22,6 @@ def roll_player_luck() -> int:
     """Roll the LUCK result only after the player explicitly requests it."""
     return _roll(3, 6, 5)
 
-_PROVIDERS = ANALYSIS_PROVIDERS
 _logger = logging.getLogger(__name__)
 _PAGE_MARKER = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _LUCK_ON_SHEET = re.compile(r"(?i)(?:\bLUCK\b|幸運)\s*(?:\([^)]{0,20}\))?\s*[:：]?\s*(\d{1,3})(?!\d)")
@@ -229,13 +227,13 @@ def _verified_pdf_luck(pregen: dict[str, Any], pregens: list[dict[str, Any]], pa
 
 
 def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
-    """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text
+    """Dispatches through ANALYSIS_PROVIDER (see app/providers/*.py's analyze_text
     functions) rather than being hard-coded to Anthropic — this used to always
     call ANTHROPIC_API_KEY regardless of which provider was actually
     configured for the Keeper (the same class of bug app/scene_map.py's
     analyze_page_image docstring describes fixing there), so /coc pregens
-    could fail even with LLM_PROVIDER switched away from Anthropic."""
-    provider = _PROVIDERS.get(LLM_PROVIDER)
+    could fail even with ANALYSIS_PROVIDER switched away from Anthropic."""
+    provider = analysis_provider()
     if provider is None or not scenario_text.strip():
         return []
 

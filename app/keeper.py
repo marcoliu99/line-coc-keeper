@@ -42,8 +42,6 @@ from app.check_identity import (
     pending_check_blocker,
 )
 from app.config import (
-    ANALYSIS_PROVIDER,
-    LLM_PROVIDER,  # noqa: F401 - public setting used by KP Assistant
     MAX_LOG_TURNS,
     MAX_SCENARIO_CHARS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
@@ -54,7 +52,7 @@ from app.config import (
     SCENE_DIGEST_TURN_INTERVAL,
 )
 from app.models import BASE_SKILLS, Character, GroupState
-from app.providers.registry import ANALYSIS_PROVIDERS, CONVERSATION_PROVIDERS
+from app.providers.registry import analysis_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
     clear_page_images,
@@ -67,7 +65,6 @@ from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
 
-_PROVIDERS = CONVERSATION_PROVIDERS
 _T = TypeVar("_T")
 
 
@@ -3530,7 +3527,7 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
     returns nothing usable all fall back to returning current_summary
     unchanged (logged, not raised) — a failed summarization should never
     crash the turn or lose the existing summary, only leave it stale."""
-    provider = ANALYSIS_PROVIDERS.get(ANALYSIS_PROVIDER)
+    provider = analysis_provider()
     if provider is None:
         return current_summary
     try:

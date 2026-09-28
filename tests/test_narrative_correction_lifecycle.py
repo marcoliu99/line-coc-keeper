@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import db, keeper
+from app import config, db, keeper
 from app.agents import (
     assistant,
     context_builder,
@@ -12,6 +12,7 @@ from app.agents import (
 )
 from app.commands.handlers import correct
 from app.models import GroupState
+from app.providers import registry
 from app.repositories.group_state import load_state
 from app.services import narrative_corrections as corrections
 
@@ -55,17 +56,17 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         provider = AsyncMock()
         provider.OPENAI_MODEL = 'fake'
         provider.run_conversation.return_value = '{}'
-        with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.dict(executor._PROVIDERS, openai=provider):
+        with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, openai=provider):
             await executor.run_executor(message)
         self.assertIn('correction-0', provider.run_conversation.call_args.args[4])
         self.assertNotIn('correction-0', provider.run_conversation.call_args.args[0])
         for kind in ('player_action', 'opening_fallback', 'resolved_check_followup'):
             message.payload['turn_kind'] = kind
             message.payload['resolved_check_context'] = {'investigator': 'P', 'roll': 30, 'outcome': 'success'}
-            with patch.object(narrator, 'LLM_PROVIDER', 'openai'), patch.dict(narrator._PROVIDERS, openai=provider):
+            with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, openai=provider):
                 await narrator.run_narrator(message)
             self.assertIn('correction-0', provider.run_conversation.call_args.args[4])
-        with patch.object(keeper, 'LLM_PROVIDER', 'openai'), patch.dict(keeper._PROVIDERS, openai=provider), \
+        with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, openai=provider), \
                 patch.object(keeper, '_ensure_turn_timeline', return_value=state.timeline_id), \
                 patch.object(keeper, '_commit_kp_ooc_turn_result', return_value=True), \
                 patch.object(assistant.guard, 'enforce_narrative_safety', AsyncMock(return_value='ok')):
