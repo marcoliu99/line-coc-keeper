@@ -12,7 +12,7 @@ On our deployment the `keeper` role belongs to **the bot itself** (confirmed by 
 
 - **dead for its intended purpose:** no human is meant to hold it;
 - **a live superuser path:** anyone who can manage roles can grant any member full KP authority everywhere by naming a role `keeper`, by mistake or on purpose;
-- **misleading in the UI:** about 18 messages say 「只有目前的 KP Assistant 或 Discord Keeper 可以……」, implying a second kind of person who doesn't exist.
+- **misleading in the UI:** 24 occurrences in `app/` (messages, help text and comments) say 「只有目前的 KP Assistant 或 Discord Keeper 可以……」, implying a second kind of person who doesn't exist.
 
 ## What the flag grants today
 
@@ -108,4 +108,4 @@ Plus:
 ## Limits
 
 - Takeover covers a missing KP Assistant in one group at a time; there is still no standing "super KP" across every group. If that need appears, it should be an explicit, opt-in grant by **user or role ID** in configuration, off by default, and never a role name. That's a separate spec.
-- The Keeper holds the Keeper's adjudication authority in CoC terms (for example, ruling on a player's request to roll back), but it has no tool to exercise it today: no rollback, checkpoint, correction-approval or sudo tool. Giving it one is a separate feature spec, which must decide what it may do on its own and what still needs the KP Assistant.
+- The Keeper holds the Keeper's adjudication authority in CoC terms (for example, ruling on a player's request to roll back), but has no tool to exercise it today. **Correction approval in groups without a KP Assistant** is covered by `docs/specs/feature/keeper_adjudicates_corrections_design_spec.md`, which must ship **before or with** this change so a KP-less group keeps a working path to a ruling. Rollback, checkpoints and sudo by the Keeper remain a separate future spec.

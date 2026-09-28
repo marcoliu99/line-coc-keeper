@@ -20,7 +20,7 @@ Not every game has a KP Assistant, and the Keeper is the bot. In a group without
 
 The design's premise stays: **the reporter's text is never evidence.** It says what to check, not what is true. This is what stops a player from inventing a correction ("the Keeper said I found a gun") and having it become canon.
 
-1. **Trigger.** When a report is created in a group with no KP Assistant, a background adjudication starts after the report is saved and acknowledged. It also runs when a group's KP Assistant quits, or is replaced by a takeover with no new KP, while reports are still pending.
+1. **Trigger.** When a report is created in a group with no KP Assistant, a background adjudication starts after the report is saved and acknowledged. It also runs when the group's KP Assistant quits (`/coc kp quit`) while reports are pending. (`transfer` and `takeover` always seat a new KP, so they never trigger it.) Adjudication is **retryable**: in a group with no KP, a pending report that has no ruling yet is picked up again on the next new report or `/coc correct list`, so a restart mid-adjudication loses nothing.
 2. **Evidence packet.** Only system-held data:
    - the target receipt's excerpt, the Keeper message being disputed (`narrative_message_receipts`, up to 2,000 characters), with its `state_revision` and `turn_id`;
    - the current state facts the claim touches: character sheets, inventory, status, location, clues and established facts;
@@ -38,9 +38,11 @@ The design's premise stays: **the reporter's text is never evidence.** It says w
    - When the evidence is insufficient, the result is `undecided`, never a guess.
 5. **Outcome.**
    - `approve` / `reject`: stored exactly as a KP ruling would be, with `adjudicated_by: "keeper"` and the evidence summary, and posted publicly with the reasoning.
-   - `undecided`: the report stays pending, and the group is told the Keeper couldn't verify it; a KP Assistant can decide later, and `/coc kp takeover` can appoint one.
+   - `undecided`: the report moves to a new **`unverified`** status, and the group is told the Keeper couldn't verify it. `unverified` reports **don't count** toward the pending limits (12 per group, 3 per reporter), so a KP-less group never fills up and blocks everyone. They stay listed; a KP Assistant registered later can still rule on them, and the reporter can still withdraw them. To stop one player from cycling fabricated reports through the Keeper, **each reporter may hold at most 3 `unverified` reports**. Beyond that, their new reports are refused until they withdraw one or a KP rules. This blocks only that player, not the group. Decided with Marco.
    - Every ruling logs `correction.keeper_ruling` with the decision, report id and evidence kinds; no player text goes into the log.
 6. **Override.** A KP Assistant registered later can **supersede** any Keeper ruling, as with any approved correction.
+7. **Writing the ruling (no races).** The model call runs outside the lock. The ruling is written through the normal lock-protected state mutation, and only if the report is **still pending**, the timeline is unchanged, and the group **still has no KP Assistant**. If someone registered as KP, the reporter withdrew, or the game moved to another timeline meanwhile, the ruling is discarded and logged.
+8. **Publishing without spoilers.** Scenario passages and other players' private information are evidence for the ruling, never content of the public message. The public post contains the decision, the correction text (for approve), and a reason stated only in terms players can already see: the disputed narration and public state. It passes through `spoiler_policy.sanitize_public_text` with `collect_protected_terms(state)` before posting; if sanitising would change it, only the decision and a generic reason are posted. The full evidence stays in the internal record, not the channel.
 
 ## Out of scope
 
@@ -55,6 +57,10 @@ The design's premise stays: **the reporter's text is never evidence.** It says w
 - **Outcomes:** approve and reject are stored with `adjudicated_by: "keeper"` and posted; `undecided` stays pending with the notice; invalid model output counts as `undecided`.
 - **Override:** a later KP supersedes a Keeper ruling.
 - **Hold and supersede** remain KP-only.
+- **Races:** a KP registering, or the reporter withdrawing, while adjudication runs means the ruling is discarded and nothing is written; so does a timeline change.
+- **Retry:** a report left without a ruling (a simulated restart) is adjudicated on the next report or `/coc correct list`, exactly once.
+- **`unverified`:** such reports don't count toward the pending limits, remain listable and rulable by a later KP, and are withdrawable; a reporter's fourth `unverified` report blocks only their next report.
+- **No spoilers:** a ruling whose evidence includes an undisclosed scenario passage or another player's private message posts no protected term, verified with `collect_protected_terms`; if sanitising changes the text, the generic fallback is posted.
 - The provider is mocked in every automated test. A labelled set of real past reports is replayed once, as an opt-in evaluation, before enabling it in production.
 
 ## Order of shipping
