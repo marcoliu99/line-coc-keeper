@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from app import help_service, locks, observability
 from app.agents import context_builder, supervisor
 from app.commands import sudo as sudo_policy
+from app.commands.handlers import buttons as buttons_handler
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import correct as correct_handler
@@ -418,6 +419,24 @@ async def handle_uploads(
     observability.event("turn.entry", entry="upload")
     with observability.span("router", command_name="upload"):
         return await uploads_handler.handle_uploads(conversation_id, uploads, reply, post_pdf_buttons=post_pdf_buttons)
+
+
+async def handle_check_button(
+    conversation_id: str, clicker_id: str, owner_id: str, option: str, check_id: str, io: buttons_handler.ButtonIO,
+) -> None:
+    """A check button click enters here, as `/coc check` text does."""
+    observability.event("turn.entry", entry="check_button")
+    with observability.span("router", command_name="check_button"):
+        await buttons_handler.handle_check_button(conversation_id, clicker_id, owner_id, option, check_id, io)
+
+
+async def handle_luck_button(
+    conversation_id: str, clicker_id: str, owner_id: str, choice: str, decision_id: str, io: buttons_handler.ButtonIO,
+) -> None:
+    """A Luck button click enters here, as `/coc luck` text does."""
+    observability.event("turn.entry", entry="luck_button")
+    with observability.span("router", command_name="luck_button"):
+        await buttons_handler.handle_luck_button(conversation_id, clicker_id, owner_id, choice, decision_id, io)
 
 
 async def handle_unsupported_attachment(conversation_id: str, reply: Reply) -> None:

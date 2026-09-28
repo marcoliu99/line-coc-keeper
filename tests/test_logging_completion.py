@@ -10,9 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app import config, memory_rag, observability, scenario_rag
 from app.agents import assistant
+from app.commands.handlers import buttons
 from app.domain.models import AgentMessage
 from app.models import GroupState
 from app.providers import registry
+from app.services import pending_buttons
 
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
@@ -428,7 +430,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
-                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 patch("app.repositories.group_state.save_state", MagicMock()):
             await discord_bot._post_luck_buttons(
                 channel,
@@ -478,7 +480,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
-                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 patch("app.repositories.group_state.save_state", save):
             # Two overlapping callers, each with its own stale before-
             # snapshot captured before the decision existed — exactly what
@@ -513,7 +515,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "CheckButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
-                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 patch("app.repositories.group_state.save_state", save):
             await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
             await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
@@ -548,7 +550,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
-                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 patch("app.repositories.group_state.save_state", save):
             await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
 
@@ -590,7 +592,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "CheckButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
-                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 patch("app.repositories.group_state.save_state", save):
             await discord_bot._post_check_buttons(channel, conversation_id, state, {})
 
@@ -631,7 +633,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
-                patch.object(discord_bot, "load_group_state", return_value=state), \
+                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 patch("app.repositories.group_state.save_state", save):
             # First attempt: claim gets saved, then the send fails.
             await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})

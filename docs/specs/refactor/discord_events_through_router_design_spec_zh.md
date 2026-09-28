@@ -2,7 +2,7 @@
 
 [English](discord_events_through_router_design_spec.md)
 
-狀態：**partial**：第 1–2 步已完成，第 3–5 步尚未開始。基準：`main_v2` 的 `a68df95`。
+狀態：**partial**：第 1–3 步已完成，第 4–5 步尚未開始。基準：`main_v2` 的 `a68df95`。
 
 ## 問題
 
@@ -36,7 +36,7 @@ async def handle_luck_button(conversation_id, owner_id, decision: LuckChoice, io
 
 1. **先盤點，不改程式。** 針對上表每一列，記錄它目前實際得到哪些保護：對話鎖、Keeper 優先關卡、mutation admission、sudo，以及能否和 Keeper 回合交錯執行。結果補進這份規格。它決定每次遷移只是單純搬移，還是同時要修正；進入步驟 2 之前要再審查一次。
 2. **上傳**（風險最低）：新增 `router.handle_upload`，分派到 `handlers/uploads.py`，並把 PDF 分段暫存的狀態變更移出 `discord_bot.py`。一個 PR。*已完成：* `router.handle_uploads`／`handle_unsupported_attachment`、`handlers/uploads.py`（`Upload(filename, read)`），並修正盤點發現 2：暫存前先檢查佔用狀態，什麼都不寫；暫存途中才開始佔用時，只丟掉新暫存、且沒被引用的檔案，並回覆佔用通知。
-3. **按鈕：** 新增兩個按鈕入口，把認領和排序邏輯從 `discord_bot.py` 搬到 router，完全保留 `acquire_legacy_for_keeper` 的語意。一個 PR，以既有的按鈕／幸運值競態測試作為關卡。
+3. **按鈕：** 新增兩個按鈕入口，把認領和排序邏輯從 `discord_bot.py` 搬到 router，完全保留 `acquire_legacy_for_keeper` 的語意。一個 PR，以既有的按鈕／幸運值競態測試作為關卡。 *已完成：* `router.handle_check_button`／`handle_luck_button` 執行 `handlers/buttons.py`，順序和原本完全相同（擁有者、防重複送出、回應 Discord、在鎖內驗證並執行、解鎖前認領、解鎖後補貼按鈕）。認領和身分驗證搬到 `app/services/pending_buttons.py`，文字路徑也共用；`discord_bot.py` 只保留 Discord I/O，以 `ButtonIO` 傳入。競態測試的 **patch 對象**需要從 `discord_bot` 改到 `buttons`／`pending_buttons`，斷言不變。搬移時也發現一個靜默跳過：`test_state_loss_amnesia` 把 `ImportError` 當成「沒安裝 discord.py」，名稱不存在時身分測試會被跳過；現在直接從不依賴 discord 的 service 匯入，一定會執行。
 4. **權限：** 把 `_is_kp_or_keeper` 換成 router 或 `commands/sudo.py` 裡的公開函式，名稱依照術語表（`CONTEXT.md`）：真人是 **KP**，伺服器管理員是**主辦人**（Host），「Keeper」只指 AI。把 `_is_keeper_member`／`is_keeper` 改名為 `_is_host_member`／`is_host`，輔助函式改名為 `can_administer_group`（或 `_is_kp_or_host`），使用者看到的「KP Assistant 或 Discord Keeper」改成「KP 或主辦人」。Discord 身分組的**名稱**維持 `keeper`，已部署的伺服器不用改；身分組檢查旁加一行註解說明這點。
 5. 步驟 4 之後，`discord_bot.py` 從 `legacy_commands` 只匯入 `Reply`／`SendImage` 型別，並用測試斷言這一點。
 
