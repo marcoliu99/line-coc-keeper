@@ -14,11 +14,10 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import fields
-from datetime import datetime, timezone
 from typing import Any
 
-from app import checkpoints, dice, observability, spoiler_policy
-from app.check_identity import PendingCheckBlocker, new_check_id, pending_check_blocker
+from app import check_lifecycle, checkpoints, dice, observability, spoiler_policy
+from app.check_identity import PendingCheckBlocker
 from app.models import (
     ArmorRule,
     AttackRule,
@@ -507,7 +506,7 @@ def _major_wound_block_for(
     pc = _major_wound_pc(state, combatant, final, max(0, combatant.hp - final))
     if pc is None:
         return None
-    blocker = pending_check_blocker(state, pc.owner_id)
+    blocker = check_lifecycle.blocker(state, pc.owner_id)
     return (pc, blocker) if blocker else None
 
 
@@ -528,28 +527,20 @@ def _resolve_major_wound_check(
     if not state.autoroll_checks:
         # Callers refuse a blocked hit before mutating (_major_wound_block_for);
         # reaching here blocked is a bug, so say so rather than drop the check.
-        blocker = pending_check_blocker(state, pc.owner_id)
+        blocker = check_lifecycle.blocker(state, pc.owner_id)
         if blocker:
-            return {"pending": False, "blocked_by": blocker, "skill": "CON", "skill_value": pc.con}
-        if not state.timeline_id:
-            state.timeline_id = f"timeline-{uuid.uuid4().hex[:8]}"
-        origin_context = observability.current_context()
-        state.pending_checks[pc.owner_id] = {
-            "type": "skill",
-            "skill": "CON",
-            "skill_value": pc.con,
-            "bonus_dice": 0,
-            "penalty_dice": 0,
-            "difficulty": "regular",
-            "major_wound_trigger": True,
-            "check_id": new_check_id(),
-            "timeline_id": state.timeline_id,
-            "origin_revision": state.state_revision + 1,
-            "origin_turn_id": str(origin_context.get("turn_id", "")),
-            "origin_request_id": str(origin_context.get("request_id", "")),
-            "action_context": f"{pc.name} 因為重傷需要做 CON 檢定",
-            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }
+            raise RuntimeError(f"major-wound CON registration blocked: {blocker}")
+        decision = check_lifecycle.register(
+            state, pc.owner_id,
+            {
+                "type": "skill", "skill": "CON", "skill_value": pc.con,
+                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                "major_wound_trigger": True,
+            },
+            source={"action_context": f"{pc.name} 因為重傷需要做 CON 檢定"},
+        )
+        if decision.status != "admitted":
+            raise RuntimeError(f"major-wound CON registration blocked: {decision.blocker}")
         return {"pending": True, "skill": "CON", "skill_value": pc.con}
 
     con_result = dice.skill_check(pc.con)

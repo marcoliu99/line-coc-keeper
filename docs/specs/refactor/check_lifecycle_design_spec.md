@@ -4,7 +4,7 @@
 
 ## Status and goal
 
-Category: `refactor`. Status: **draft**. Based on `main_v2` at `83e0c54` (2026-09-28).
+Category: `refactor`. Status: **implemented**. Based on `main_v2` at `83e0c54` (2026-09-28).
 
 Registration of a player-owned check currently spans Keeper tool branches, combat damage, and scripted opening checks. Each caller must remember pending/Luck admission, duplicate identity, mutation ordering, and whether an existing roll may be reused. The goal is one deep registration module whose small interface makes those invariants local and testable. This refactor does not add a model call.
 
@@ -56,7 +56,7 @@ Tool / combat / scripted opening
 - NPC choices: repeated melee attack reuses its original attacker roll; ranged repetition and changed options cannot manufacture a new roll or bypass filtered options.
 - Run focused existing tests (`test_luck_buyup_gate.py`, `test_npc_attack_latency.py`, `test_scenario_action_check_handoff.py`, `test_combat_cards.py`, `test_state_persistence.py`) and then Ruff, mypy, and the full pytest suite.
 
-## Decisions and tradeoffs for review
+## Implementation decisions
 
 - The seam sits inside existing transaction owners so the registration module has no persistence adapter. This keeps atomic HP/check and opening/check commits, but integration tests remain necessary for the transaction contract.
 - Opening checks currently have no explicit check ID. The refactor should issue modern identities only for newly created opening checks; old persisted entries retain deterministic legacy IDs.

@@ -1193,7 +1193,7 @@
       "title": "Check registration lifecycle",
       "zh": "檢定註冊生命週期",
       "category": "refactor",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/keeper.py",
         "app/combat.py",

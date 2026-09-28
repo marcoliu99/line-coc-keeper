@@ -4,7 +4,7 @@
 
 ## 狀態與目標
 
-類別：`refactor`。狀態：**草案**。依據 2026-09-28 的 `main_v2` 版本 `83e0c54`。
+類別：`refactor`。狀態：**已實作**。依據 2026-09-28 的 `main_v2` 版本 `83e0c54`。
 
 玩家檢定的註冊分散在 Keeper 工具、戰鬥傷害及劇本開場。各呼叫端都必須自行記得 pending／Luck 准入、重複身分、狀態修改順序，以及何時可沿用既有擲骰。目標是以介面精簡、規則集中的註冊模組統一這些不變條件，方便直接測試；不增加 LLM 呼叫。
 
@@ -56,7 +56,7 @@
 - NPC 選擇：重複近戰沿用原攻擊骰；重複遠程與選項變更不得產生新骰或繞過過濾結果。
 - 執行相關既有測試 `test_luck_buyup_gate.py`、`test_npc_attack_latency.py`、`test_scenario_action_check_handoff.py`、`test_combat_cards.py`、`test_state_persistence.py`，再跑 Ruff、mypy 與完整 pytest。
 
-## 待審設計決定
+## 實作決定
 
 - 註冊介面位於既有交易內，不額外建立持久化 adapter。這保留 HP／檢定與開場／檢定的原子性；交易契約仍需整合測試。
 - 新建立的開場檢定補上新版身分；舊資料繼續使用穩定的舊版推導身分。
