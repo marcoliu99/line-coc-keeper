@@ -127,10 +127,8 @@ class PrefetchDecisionTests(unittest.TestCase):
     def _run(self, state, text, speaker_role="player"):
         return asyncio.run(supervisor.prefetch_retrieval(state, "u1", text, speaker_role, "g"))
 
-    def test_an_ooc_route_prefetches_nothing(self):
-        # PLAYER_OOC answers without the gameplay context, so a search here
-        # would be paid for and thrown away.
-        self.assertIsNone(self._run(_state(), "為什麼要擲骰"))
+    def test_a_legacy_pure_roleplay_route_prefetches_nothing(self):
+        self.assertIsNone(self._run(_state(), "（為什麼要擲骰）"))
 
     def test_a_held_luck_decision_prefetches_nothing(self):
         state = _state()
@@ -148,7 +146,7 @@ class PrefetchDecisionTests(unittest.TestCase):
             self.assertIsNotNone(self._run(_state(), "我推開門"))
         self.assertEqual(captured["text"], "我推開門")
 
-    def test_a_mixed_message_prefetches_on_its_in_character_span_only(self):
+    def test_a_mixed_message_prefetches_the_whole_legacy_input(self):
         captured = {}
 
         async def fake(**kwargs):
@@ -157,7 +155,7 @@ class PrefetchDecisionTests(unittest.TestCase):
 
         with patch.object(context_builder, "prefetch_retrieval", fake):
             self._run(_state(), "我推開門（ooc: 我的角色卡有什麼技能）")
-        self.assertNotIn("角色卡", captured["text"])
+        self.assertIn("角色卡", captured["text"])
         self.assertIn("我推開門", captured["text"])
 
     def test_a_failed_prefetch_leaves_the_turn_to_search_under_the_lock(self):

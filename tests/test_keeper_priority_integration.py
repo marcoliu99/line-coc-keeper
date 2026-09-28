@@ -164,17 +164,20 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def _run_with_patched_commands(self, state: GroupState, runner: FakeSupervisorRunner, scenario):
         original_run_turn = router.supervisor.run_turn
+        original_resolve = router._resolve_map_action_transaction
         original_spawn = commands._spawn_post_turn_maintenance
         original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
             router.load_state = commands.load_state
             router.supervisor.run_turn = runner
+            router._resolve_map_action_transaction = lambda *args: None
             commands._spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 return await scenario()
             finally:
                 router.supervisor.run_turn = original_run_turn
+                router._resolve_map_action_transaction = original_resolve
                 commands._spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 

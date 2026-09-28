@@ -1336,13 +1336,6 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
         mutation_admission.assert_admitted(state.group_id, timeline_id=latest_state.timeline_id)
         if state.timeline_id and latest_state.timeline_id and state.timeline_id != latest_state.timeline_id:
             raise mutation_admission.MutationHeld("stale tool timeline")
-        from app.services import movement
-        movement_session = movement.CURRENT.get()
-        operation = movement.OPERATION.get()
-        if movement_session is not None and operation is not None:
-            error = movement_session.guard(latest_state, *operation)
-            if error:
-                raise ValueError(error)
         result = mutator(latest_state)
         should_save = True
         if isinstance(result, _StateMutation):
@@ -1474,7 +1467,6 @@ def _commit_turn_result(
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
     start_game: bool = False,
-    segment_audit: dict[str, Any] | None = None,
 ) -> bool:
     with locks.get_state_lock(state.group_id):
         latest_state = load_state(state.group_id)
@@ -1494,10 +1486,6 @@ def _commit_turn_result(
             _sync_state_snapshot(state, latest_state)
             return False
         latest_state.log.extend(log_entries)
-        if segment_audit is not None:
-            latest_state.request_segment_audit.append({**segment_audit, "timeline_id": current_timeline_id,
-                                                        "conversation_id": state.group_id})
-            del latest_state.request_segment_audit[:-20]
         if start_game:
             latest_state.game_started = True
         if invalidate_openai_response_chain:
@@ -1867,14 +1855,6 @@ def _execute_tool(
     speaker_role: str = "player",
 ) -> dict:
     mutation_admission.assert_admitted(state.group_id, timeline_id=state.timeline_id)
-    from app.services import movement
-    session = movement.CURRENT.get()
-    if session is not None:
-        movement_error = session.guard(state, name, tool_input)
-        if movement_error:
-            return {"ok": False, "error": movement_error}
-    if name == "commit_movement":
-        return session.commit(state, tool_input) if session else {"ok": False, "error": "no_movement_session"}
     try:
         if speaker_role == "kp_assistant" and name == "roll_dice":
             error = _validate_kp_roll_dice_context(tool_input)
@@ -3409,16 +3389,11 @@ def _build_dynamic_prompt(
     if resolved_location:
         desc = resolved_location.get("room_description") or ""
         desc_part = f"（{desc}）" if desc else ""
-        travel_note = (
-            "這是玩家明確要求的跨地點移動；敘事要自然交代從原地前往目的地的過程，"
-            "不可寫成無過程瞬間跳轉，也不可添加沒有劇本依據的中途地點、人物或事件。"
-            if resolved_location.get("movement_kind") == "scene_transition" else ""
-        )
         location_block = f"""
 
-# 已提交的移動位置（這是程式根據玩家明確行動與本回合依據記錄的事實）
-調查員這次的移動已記錄抵達「{resolved_location.get('room_name', '')}」{desc_part}。
-照這個目的地敘事，不要自行改成別處。{travel_note}"""
+# 地圖引擎已解析出的位置（Map Engine，這是程式算出來的事實，不是你的判斷）
+調查員這次的移動已經由地圖引擎依房間圖算出結果：現在人在「{resolved_location.get('room_name', '')}」{desc_part}。
+照這個地點來描述場景，不要自己另外猜測或改成別的房間；地圖引擎沒解析出結果時（沒有這個區塊時），才照舊由你自己判斷移動去了哪裡。"""
 
     current_page = state.current_map_page.get(user_id, "")
     active_map = state.scene_maps.get(current_page) if current_page else None
@@ -3433,9 +3408,9 @@ def _build_dynamic_prompt(
             location_block = f"""
 
 # 目前所在房間（地圖引擎追蹤中，這次玩家的移動沒有被解析出新位置）
-調查員目前在「{current_room.get('name', '')}」，OCR 地圖記錄到的出口：{exits_text}。
-出口可協助定位；OCR 沒記錄某條路不代表那條路不存在。只有劇本或地圖明確標示的鎖、阻擋、檢定或反應點才構成障礙。
-玩家明確要求前往某地且當回合 RAG 命中該地時，可以提交移動並抵達；只有詢問或提到地點時不得改變位置。"""
+調查員目前在「{current_room.get('name', '')}」，這個房間記錄到的出口：{exits_text}。
+如果玩家這次是想移動到別的房間但地圖引擎沒解析出來，可能是講法比較模糊或那個方向真的沒有路，
+用劇情自然帶過或請他講清楚一點，不要憑空移動到地圖引擎沒驗證過的房間。"""
 
     combat_block = ""
     if state.combat.active:

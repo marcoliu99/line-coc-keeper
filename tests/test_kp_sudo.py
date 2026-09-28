@@ -413,8 +413,10 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
             await reply(public_message)
 
         original_run_turn = router.supervisor.run_turn
+        original_resolve = router._resolve_map_action_transaction
         original_maintenance = router._run_post_turn_maintenance_after_output
         router.supervisor.run_turn = fake_run_turn
+        router._resolve_map_action_transaction = lambda *args: None
         router._run_post_turn_maintenance_after_output = fake_maintenance
         try:
             with StateStorePatch(router, commands) as store:
@@ -427,12 +429,12 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
                 )
         finally:
             router.supervisor.run_turn = original_run_turn
+            router._resolve_map_action_transaction = original_resolve
             router._run_post_turn_maintenance_after_output = original_maintenance
 
         self.assertEqual(calls[0]["user_id"], "p1")
         self.assertEqual(calls[0]["speaker_role"], "player")
-        self.assertEqual(calls[0]["text"], "調查房間")
-        self.assertEqual(calls[0]["actor_user_id"], "kp")
+        self.assertTrue(calls[0]["text"].startswith("[KP Assistant 代操作 小明]"))
         self.assertEqual(reply.messages, ["【KP Assistant 代操作：小明】\n角色行動結果"])
 
     async def test_actor_with_player_role_cannot_sudo_and_luck_roll_is_unchanged(self):
