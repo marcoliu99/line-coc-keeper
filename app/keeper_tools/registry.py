@@ -13,6 +13,7 @@ from app.keeper_tools import character as character_handlers
 from app.keeper_tools import checks as check_handlers
 from app.keeper_tools import dice as dice_handlers
 from app.keeper_tools import inventory as inventory_handlers
+from app.keeper_tools import messaging as messaging_handlers
 from app.keeper_tools import scenario as scenario_handlers
 from app.models import GroupState
 from app.services import opposed_checks
@@ -840,6 +841,7 @@ _SPECS = (
                     "required": ["investigator", "message"],
                 },
             },
+        handler=messaging_handlers.send_private_info,
         opening=True,
     ),
     ToolSpec(

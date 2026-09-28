@@ -81,3 +81,5 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 背包／狀態家族（`adjust_ammo`、物品增減、狀態標籤增減）已移至 `app/keeper_tools/inventory.py`。這些處理函式仍透過 Keeper 的公開過渡介面使用同一個狀態更新邊界。
 
 劇本／搜尋家族（`record_established_fact`、`record_clue`、圖片搜尋與展示、章節切換、劇本搜尋和記憶搜尋）已移至 `app/keeper_tools/scenario.py`。章節切換與事實記錄仍透過 Keeper 的公開過渡介面使用同一個狀態更新邊界。
+
+訊息家族（`send_private_info`）已遷移至 `app/keeper_tools/messaging.py`。目前僅戰鬥家族仍沿用舊串接。

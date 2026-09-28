@@ -81,3 +81,5 @@ The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is
 The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single state mutation boundary through a public migration seam.
 
 The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) now lives in `app/keeper_tools/scenario.py`. The chapter-advance and fact-record handlers still use Keeper's single state mutation boundary through a public migration seam.
+
+The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`. Only the combat family remains on the legacy cascade.
