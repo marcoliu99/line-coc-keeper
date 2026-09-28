@@ -79,3 +79,5 @@ The dice family (`roll_dice`, `roll_impaling_damage`, `roll_weapon_damage`) is m
 The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Major-wound CON registration and state refresh still use Keeper's existing authoritative helpers via a public migration seam. This branch will need re-alignment when the separate check-lifecycle refactor lands.
 
 The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single state mutation boundary through a public migration seam.
+
+The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) now lives in `app/keeper_tools/scenario.py`. The chapter-advance and fact-record handlers still use Keeper's single state mutation boundary through a public migration seam.

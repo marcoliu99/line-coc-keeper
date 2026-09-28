@@ -79,3 +79,5 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 角色家族（`adjust_character`、`set_skill`、`get_character_sheet`）已移至 `app/keeper_tools/character.py`。重傷 CON 檢定建立與狀態刷新仍透過公開過渡介面使用 Keeper 原有的權威處理函式。檢定流程重構分支合入後，此分支仍須重新對齊。
 
 背包／狀態家族（`adjust_ammo`、物品增減、狀態標籤增減）已移至 `app/keeper_tools/inventory.py`。這些處理函式仍透過 Keeper 的公開過渡介面使用同一個狀態更新邊界。
+
+劇本／搜尋家族（`record_established_fact`、`record_clue`、圖片搜尋與展示、章節切換、劇本搜尋和記憶搜尋）已移至 `app/keeper_tools/scenario.py`。章節切換與事實記錄仍透過 Keeper 的公開過渡介面使用同一個狀態更新邊界。
