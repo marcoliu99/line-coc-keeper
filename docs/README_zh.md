@@ -35,6 +35,7 @@
 | [狀態版本與時間線隔離](specs/bug/state-loss-amnesia-hardening_design_spec_zh.md) | 已實作 | [English](specs/bug/state-loss-amnesia-hardening_design_spec.md) |
 | [權威回合狀態交接](specs/bug/log_backed_turn_consistency_design_spec_zh.md) | 已實作 | [English](specs/bug/log_backed_turn_consistency_design_spec.md) |
 | [原子敘事購買與取得來源](specs/bug/purchase_turn_provenance_design_spec_zh.md) | 已實作 | [English](specs/bug/purchase_turn_provenance_design_spec.md) |
+| [Codex OAuth 對話 Provider](specs/enhancement/codex_oauth_provider_design_spec_zh.md) | 提案 | [English](specs/enhancement/codex_oauth_provider_design_spec.md) |
 | [劇本整備最多匯出三個檔案](specs/enhancement/three_file_scenario_export_design_spec_zh.md) | 已實作 | [English](specs/enhancement/three_file_scenario_export_design_spec.md) |
 
 ## 功能強化
