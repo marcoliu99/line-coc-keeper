@@ -140,4 +140,3 @@ def remove_status_tag(call: ToolCall) -> dict[str, Any]:
         return keeper.ToolStateMutation((target_char.name, target_char.status_tags), should_save=changed)
     investigator, tags = keeper.mutate_tool_state(state, _mutate_remove_tag)
     return {"ok": True, "investigator": investigator, "status_tags": tags}
-
