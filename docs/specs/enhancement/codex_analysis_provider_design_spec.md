@@ -20,7 +20,7 @@ Current analysis consumers include scenario indexing and comparison, opening nar
 ## Scope
 
 - Add synchronous `codex_provider.analyze_text(text, tool, prompt_text)` and `codex_provider.analyze_image(png_bytes, tool, prompt_text)` functions.
-- Use the supplied `tool["input_schema"]` as the Codex structured output schema and validate the returned JSON with `jsonschema` before returning a dictionary.
+- Derive a Codex strict-output-schema projection from the supplied `tool["input_schema"]`, then validate returned JSON against the original schema with `jsonschema` before returning a dictionary. The projection must set `additionalProperties: false` on every object and satisfy Codex strict-mode required-property rules without widening the original schema.
 - Return `None` for handled CLI, timeout, parse, or schema failures. Do not route a failed request to another provider.
 - Add an optional PNG image argument to `ExecTransport.request`. Write bytes to a temporary `.png` file, pass its path with `-i`/`--image`, and remove it on success, failure, timeout, and cancellation.
 - Use the one-shot `ExecTransport` path for these analysis calls; this is the verified `codex exec` path for image input and `--output-schema`. Do not change conversation transport selection or the app-server protocol in this work.
@@ -46,8 +46,9 @@ existing worker-thread/process caller
   -> registry.analysis_provider()
   -> codex_provider.analyze_text / analyze_image
   -> asyncio.run(one-shot ExecTransport.request(...))
+  -> Codex strict-schema projection
   -> codex exec --output-schema [ -i temporary-page.png ]
-  -> strict JSON and caller-schema validation
+  -> strict JSON and original caller-schema validation
   -> dict, or None on a handled failure
 ```
 
@@ -80,6 +81,26 @@ Record:
 - Codex CLI version, selected model/reasoning setting, page image dimensions, schema, and whether calls were sequential or concurrent.
 
 The report must state whether one process launch per page is acceptable for a full scenario import. If latency or plan quota is unacceptable, revise the design before implementation (for example, investigate safe batching or a bounded persistent transport). Marco reviews the measurements and any resulting design change before implementation begins.
+
+### Initial real-PDF benchmark (2026-09-28)
+
+The first benchmark used `/Users/marcoliu/Downloads/PDF文件/The_Haunting_Scenario_trimmed.pdf` (27 pages). With `ANALYSIS_PROVIDER=codex`, MarkItDown's OCR adapter is unavailable, so the existing PDF flow leaves the 12 low-text graphic pages (7 and 17–27) for image analysis. Each page was rendered at 200 DPI (1650 × 2150 pixels) and sent in a separate, sequential Codex CLI process. CLI version was 0.157.1; model `gpt-6-luna`, reasoning effort `medium`.
+
+The first 12 calls passed the existing tool schema unchanged and were rejected before model execution with `invalid_json_schema`: Codex requires `additionalProperties: false` for every object. After deriving a strict schema projection (all object properties required, with empty strings/arrays for absent optional values), all 12 calls completed successfully. Preserve the original schema and validate against it after parsing; the strict projection is a transport constraint, not permission to change caller semantics.
+
+| Measure | Result |
+|---|---:|
+| Calls completed / errors after strict projection | 12 / 0 |
+| Total sequential wall time | 294.3 s (4 min 54 s) |
+| Per-call end-to-end latency | median 21.0 s; p90 29.1 s; p95/max 58.2 s; range 12.3–58.2 s |
+| CLI event usage across 12 calls | 236,756 input tokens (16,128 cached), 10,030 output tokens, 727 reasoning tokens |
+| Classification | 12/12 page types matched the visual reference |
+| Populated investigator sheet, page 18 | 25/26 sampled populated label/value pairs matched; age 36 was missed. Blank Drive Auto was correctly excluded from the expected populated values. This is a bounded field probe, not a full-page accuracy score. |
+| Map graph, pages 7 and 17 | 0/13 numbered room regions in `rooms` on each map; 0 structured exits. An extra page-17 run with an explicit room-graph instruction still returned an empty room list. `scene_map.analyze_page_image` therefore would not create either map. |
+
+One instrumented page-18 call reached the first CLI event at 0.70 s and completed at 29.21 s; most of that sample's latency was after process startup. The 12-page batch itself was sequential, while the importer may run up to 12 image requests concurrently; concurrent latency and rate-limit behavior remain unmeasured. The CLI exposes per-call token usage, but neither `codex login status` nor the JSON events exposed remaining ChatGPT plan quota, so no before/after quota balance can be reported. These token counts must not be presented as exact plan-capacity consumption.
+
+**Gate result: do not start implementation yet.** The real PDF confirms acceptable basic page classification and identifies a schema compatibility requirement, but the required map graph was absent on both map pages even with a targeted prompt. The current design needs a reviewed plan for making structured maps reliable (or an explicit decision that Codex analysis is not suitable for this consumer). The sequential full-scenario time and per-call token usage also need Marco's acceptance; this run does not predict concurrent import latency or remaining plan capacity.
 
 ## Failure and privacy behavior
 

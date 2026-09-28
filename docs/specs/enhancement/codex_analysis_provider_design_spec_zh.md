@@ -20,7 +20,7 @@
 ## 範圍
 
 - 新增同步函式 `codex_provider.analyze_text(text, tool, prompt_text)` 與 `codex_provider.analyze_image(png_bytes, tool, prompt_text)`。
-- 使用 `tool["input_schema"]` 作為 Codex 結構化輸出 schema，並以 `jsonschema` 驗證回傳 JSON；驗證成功才回傳字典。
+- 依 `tool["input_schema"]` 衍生 Codex strict-output-schema，再以 `jsonschema` 對照原始 schema 驗證回傳 JSON；驗證成功才回傳字典。衍生 schema 必須替每個 object 設定 `additionalProperties: false`，並符合 Codex strict mode 的 required 欄位規則，且不能放寬原始 schema。
 - CLI、逾時、解析或 schema 驗證等可處理的失敗回傳 `None`，不改送其他 Provider。
 - 為 `ExecTransport.request` 新增可選 PNG 圖片參數。將 bytes 寫入暫存 `.png`，以 `-i`／`--image` 傳入路徑，並在成功、失敗、逾時或取消時清除檔案。
 - 分析請求使用一次性的 `ExecTransport`；圖片輸入與 `--output-schema` 已在此 `codex exec` 路徑查證。此工作不改動對話 transport 選擇，也不改 app-server 協定。
@@ -46,8 +46,9 @@
   -> registry.analysis_provider()
   -> codex_provider.analyze_text / analyze_image
   -> asyncio.run(一次性 ExecTransport.request(...))
+  -> 衍生 Codex strict schema
   -> codex exec --output-schema [ -i 暫存頁面.png ]
-  -> 嚴格 JSON 與呼叫端 schema 驗證
+  -> 嚴格 JSON 與原始呼叫端 schema 驗證
   -> 回傳字典；可處理的失敗回傳 None
 ```
 
@@ -80,6 +81,26 @@ ANALYSIS_PROVIDER=codex
 - Codex CLI 版本、模型與 reasoning 設定、頁面圖片尺寸、schema，以及請求為循序或併發。
 
 量測報告必須說明「每頁啟動一次 CLI」用於整份劇本匯入是否可接受。若延遲或方案額度不理想，須先調整設計再實作，例如評估安全的批次處理或有上限的常駐 transport。Marco 審查量測結果與因此產生的設計修訂後，才開始實作。
+
+### 首次真實 PDF 測試（2026-09-28）
+
+測試使用 `/Users/marcoliu/Downloads/PDF文件/The_Haunting_Scenario_trimmed.pdf`，共 27 頁。設定 `ANALYSIS_PROVIDER=codex` 時，現有 MarkItDown OCR adapter 不支援 Codex，因此 PDF 流程會將 12 個低文字圖像頁（第 7、17–27 頁）送去圖片分析。每頁以 200 DPI（1650 × 2150 像素）輸出，循序啟動一個 Codex CLI 子程序。CLI 版本 0.157.1；模型 `gpt-6-luna`，reasoning effort `medium`。
+
+前 12 次呼叫原封不動傳入現有工具 schema，模型尚未執行就被 `invalid_json_schema` 拒絕：Codex 要求每個 object 都有 `additionalProperties: false`。改以 strict schema projection 衍生後（所有 object 屬性改為 required，缺省的選填欄位以空字串／空陣列表示），12 次呼叫全部成功。解析後仍須依原 schema 驗證；strict projection 只是 transport 限制，不代表可以改變呼叫端語意。
+
+| 量測項目 | 結果 |
+|---|---:|
+| strict projection 後完成／錯誤呼叫 | 12／0 |
+| 12 頁循序總耗時 | 294.3 秒（4 分 54 秒） |
+| 單頁端到端耗時 | 中位數 21.0 秒；p90 29.1 秒；p95／最大值 58.2 秒；範圍 12.3–58.2 秒 |
+| Codex CLI event 回報的 12 次用量 | 輸入 236,756 tokens（其中 cached 16,128），輸出 10,030 tokens，reasoning 727 tokens |
+| 頁面分類 | 12／12 符合目視參考 |
+| 第 18 頁已填角色卡 | 抽查 26 組已填標籤／數值，25 組配對成功；漏出年齡 36。Drive Auto 欄位原本空白，因此不列入預期已填值。這是有限欄位探測，不代表整頁準確率。 |
+| 第 7、17 頁地圖結構 | 每張地圖的 `rooms` 都沒有 13 個編號區域，結構化 exit 也為 0。第 17 頁另外加上明確 room-graph 指令重測，仍回傳空房間清單。因此 `scene_map.analyze_page_image` 不會建立這兩張地圖。 |
+
+另一次量測第 18 頁時，CLI 第一個 event 出現在 0.70 秒，完整呼叫於 29.21 秒完成；該樣本的大部分耗時在子程序啟動之後。這 12 頁測試採循序執行；匯入器可能同時執行最多 12 個圖片請求，因此併發延遲與限流行為仍未測量。CLI 提供每次呼叫的 token 用量，但 `codex login status` 與 JSON events 均沒有提供 ChatGPT 方案剩餘額度，因此無法報告測試前後額度餘額。不可把這些 token 數當成方案額度的精確消耗。
+
+**門檻結果：目前不應開始實作。** 真實劇本確認基本頁面分類可用，也發現 schema 相容性需求；但兩張地圖都沒有產生必要的結構化房間，即使加上針對地圖的指令仍然失敗。需先讓 Marco 審查地圖結構可靠性的處理方案，或明確決定 Codex 不適合此呼叫端。Marco 也需確認循序整本測試的耗時及每頁 token 用量是否可接受；本次測試無法預測併發匯入耗時或帳戶剩餘額度。
 
 ## 失敗與隱私行為
 
