@@ -70,7 +70,7 @@ KP 權限只有**一個**來源：成為群組登記的 KP 助手（`state.kp_as
   - 新的 KP 必須符合和 `/coc kp` 相同的互斥規則。正在玩調查員的管理者不能自己坐上這個位子；他會被拒絕，並收到改用指派的提示：`/coc kp takeover @成員`，指派一位沒有在玩的成員。已和 Marco 確認：KP 和調查員維持互斥，因為 KP 看得到劇本的私密資料，還能回溯和代替別人操作。接手不開例外，也不會替任何人改動他的調查員。
   - 如果群組裡每個成員都在玩，就必須先有人 `/coc retire`；接手不會繞過這一點。
 - 兩者都會在頻道發**公開**訊息，寫明原本和新的 KP 助手，並以雜湊後的 ID 記錄 `kp.transfer`／`kp.takeover`。
-- 權限在下指令的當下從 Discord 讀取。`discord_bot.py` 把它以一個布林值 `can_manage_server` 傳給 router，讓核心邏輯不依賴 Discord。私訊沒有伺服器，所以一律是 false。**它只用於 `takeover`，不用於其他任何事**；其他動作仍然需要 `permissions.is_kp`。
+- 權限在下指令的當下從 Discord 讀取。`discord_bot.py` 把它放在 `permissions.ServerFacts` 裡的布林值 `can_manage_server`（連同被提及的機器人 id）傳給 router，讓核心邏輯不依賴 Discord。私訊沒有伺服器，所以一律是 false。**它只用於 `takeover`，不用於其他任何事**；其他動作仍然需要 `permissions.is_kp`。
 - 和移除**放在同一個 PR** 上線，避免中間出現沒有逃生口的空窗期。
 
 ## 安全措施：這是在移除一條超級使用者路徑

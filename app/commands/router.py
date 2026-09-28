@@ -459,8 +459,7 @@ async def handle_text_message(
     format_mention: FormatMention = lambda owner_id: owner_id,
     allow_opaque_sudo_target: bool = False,
     *,
-    can_manage_server: bool = False,
-    bot_user_ids: frozenset[str] = frozenset(),
+    server: permissions.ServerFacts = permissions.NO_SERVER_FACTS,
     post_turn_hook: PostTurnHook | None = None,
     expected_revision: int | None = None,
     referenced_message_id: str | None = None,
@@ -475,7 +474,7 @@ async def handle_text_message(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image,
                 send_dm_image, text, format_mention, allow_opaque_sudo_target,
                 post_turn_hook, expected_revision, referenced_message_id,
-                can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
+                server=server,
             )
     except mutation_admission.MutationHeld:
         await reply(mutation_admission.NOTICE)
@@ -668,8 +667,7 @@ async def _handle_text_message_impl(
     expected_revision: int | None = None,
     referenced_message_id: str | None = None,
     *,
-    can_manage_server: bool = False,
-    bot_user_ids: frozenset[str] = frozenset(),
+    server: permissions.ServerFacts = permissions.NO_SERVER_FACTS,
 ) -> None:
     text = text.strip()
 
@@ -782,8 +780,7 @@ async def _handle_text_message_impl(
                         return
                 await system_handler.handle_system_command(
                     conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
-                    expected_revision=expected_revision,
-                    can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
+                    expected_revision=expected_revision, server=server,
                 )
             else:
                 async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
@@ -793,7 +790,7 @@ async def _handle_text_message_impl(
                         return
                     await system_handler.handle_system_command(
                         conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
-                        can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
+                        server=server,
                     )
             return
 

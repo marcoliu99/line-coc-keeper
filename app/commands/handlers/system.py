@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from app import (
@@ -50,7 +50,6 @@ from app.repositories.group_state import (
 from app.services import (
     correction_adjudication,
     mutation_admission,
-    narrative_corrections,
 )
 
 
@@ -60,7 +59,7 @@ async def _handle_local_import(
 ) -> None:
     state = load_state(conversation_id)
     if not permissions.is_kp(state, user_id):
-        await reply("只有目前的 KP 助手可以匯入伺服器上的 PDF。")
+        await reply(permissions.kp_only("匯入伺服器上的 PDF"))
         return
     filename_index = 3 if len(parts) > 1 and parts[1] == "scenario" else 2
     if len(parts) <= filename_index:
@@ -83,7 +82,7 @@ async def _handle_staged_merge(
 ) -> None:
     state = load_state(conversation_id)
     if not permissions.is_kp(state, user_id):
-        await reply("只有目前的 KP 助手可以合併 PDF。")
+        await reply(permissions.kp_only("合併 PDF"))
         return
     refs = parts[3:]
     if not refs:
@@ -153,15 +152,14 @@ async def handle_system_command(
     format_mention: FormatMention = lambda owner_id: owner_id,
     *,
     expected_revision: int | None = None,
-    can_manage_server: bool = False,
-    bot_user_ids: frozenset[str] = frozenset(),
+    server: permissions.ServerFacts = permissions.NO_SERVER_FACTS,
 ) -> None:
     sub = parts[1].casefold() if len(parts) > 1 else ""
 
     if sub in ("checkpoint", "checkpoints", "rollback"):
         state = load_state(conversation_id)
         if not permissions.is_kp(state, user_id):
-            await reply("只有目前的 KP 助手可以操作回溯節點。")
+            await reply(permissions.kp_only("操作回溯節點"))
             return
         if sub == "checkpoint":
             if len(parts) > 2 and parts[2].casefold() == "clean":
@@ -217,7 +215,7 @@ async def handle_system_command(
     if sub in ("digest", "digests"):
         state = load_state(conversation_id)
         if not permissions.is_kp(state, user_id):
-            await reply("只有目前的 KP 助手可以查看場景摘要。")
+            await reply(permissions.kp_only("查看場景摘要"))
             return
         if sub == "digests":
             entries = scene_digest.list_digests(conversation_id)
@@ -264,7 +262,7 @@ async def handle_system_command(
         state = load_state(conversation_id)
         if action == "source":
             if not permissions.is_kp(state, user_id):
-                await reply("只有目前的 KP 助手可以管理英文來源。")
+                await reply(permissions.kp_only("管理英文來源"))
                 return
             if len(parts) < 5:
                 await reply("用法：/coc scenario source export|import|status 劇本ID [檔名或匯出ID]")
@@ -317,7 +315,7 @@ async def handle_system_command(
             return
         if action == "template":
             if not permissions.is_kp(state, user_id):
-                await reply("只有目前的 KP 助手可以管理中文劇本模板。")
+                await reply(permissions.kp_only("管理中文劇本模板"))
                 return
             if len(parts) < 5:
                 await reply("用法：/coc scenario template status|export|preview|approve|import 劇本ID [版本或檔名]")
@@ -370,7 +368,7 @@ async def handle_system_command(
             return
         if action == "cards":
             if not permissions.is_kp(state, user_id):
-                await reply("只有目前的 KP 助手可以管理手動角色卡。")
+                await reply(permissions.kp_only("管理手動角色卡"))
                 return
             if len(parts) < 5 or parts[3] not in {"list", "delete"}:
                 await reply("用法：/coc scenario cards list 劇本ID | delete 劇本ID 資產ID")
@@ -439,7 +437,7 @@ async def handle_system_command(
             return
         if action == "reparse":
             if not permissions.may_manage_scenario_lifecycle(state, user_id):
-                await reply("只有目前的 KP 助手可以重新解析劇本。")
+                await reply(permissions.kp_only("重新解析劇本"))
                 return
             if state.pending_pregen_luck:
                 await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
@@ -452,7 +450,7 @@ async def handle_system_command(
                     await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
                     return
                 if not permissions.may_manage_scenario_lifecycle(state, user_id):
-                    await reply("只有目前的 KP 助手可以重新解析劇本。")
+                    await reply(permissions.kp_only("重新解析劇本"))
                     return
                 if state.pending_pregen_luck:
                     await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
@@ -497,7 +495,7 @@ async def handle_system_command(
             return
         if action == "cancel":
             if not permissions.may_manage_scenario_lifecycle(state, user_id):
-                await reply("只有目前的 KP 助手可以取消劇本處理。")
+                await reply(permissions.kp_only("取消劇本處理"))
                 return
             pending = state.pending_scenario_upload
             if pending is None:
@@ -510,7 +508,7 @@ async def handle_system_command(
             return
         if action == "use":
             if not permissions.is_kp(state, user_id):
-                await reply("只有目前的 KP 助手可以選擇劇本。")
+                await reply(permissions.kp_only("選擇劇本"))
                 return
             if state.pending_pregen_luck:
                 await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。")
@@ -609,7 +607,7 @@ async def handle_system_command(
             return
         if action == "clean":
             if not permissions.may_manage_scenario_lifecycle(state, user_id):
-                await reply("只有目前的 KP 助手可以清理劇本庫。")
+                await reply(permissions.kp_only("清理劇本庫"))
                 return
             if len(parts) < 4:
                 await reply("用法：/coc scenario clean 劇本ID")
@@ -651,7 +649,7 @@ async def handle_system_command(
     if sub == "pdf":
         state = load_state(conversation_id)
         if not permissions.may_manage_scenario_lifecycle(state, user_id):
-            await reply("只有目前的 KP 助手可以處理劇本 PDF。")
+            await reply(permissions.kp_only("處理劇本 PDF"))
             return
         choice_word = parts[2].casefold() if len(parts) > 2 else ""
         choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
@@ -674,14 +672,13 @@ async def handle_system_command(
             save_state(state)
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             # With the seat empty, the Keeper rules on what the KP left open.
-            if any(r.get("status") == "pending" for r in narrative_corrections.active(state)):
-                correction_adjudication.schedule(conversation_id, reply)
+            correction_adjudication.schedule(conversation_id, state, reply)
             return
 
         if kp_action in ("transfer", "takeover"):
             await _change_kp(
-                state, kp_action, user_id, parts[3] if len(parts) > 3 else None, reply, format_mention,
-                too_many_args=len(parts) > 4, can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
+                state, "transfer" if kp_action == "transfer" else "takeover", user_id, parts[3] if len(parts) > 3 else None, reply, format_mention,
+                too_many_args=len(parts) > 4, server=server,
             )
             return
 
@@ -695,11 +692,9 @@ async def handle_system_command(
         if state.kp_assistant_user_id:
             await reply("這局已經有一位 KP 助手，不能同時登記第二位。")
             return
-        if state.get_active_character(user_id) is not None:
-            await reply("KP 助手與調查員角色互斥；你已經有調查員角色，不能登記為 KP 助手。")
-            return
-        if user_id in state.creation_sessions:
-            await reply("KP 助手與建角流程互斥；你正在進行互動式建角，請先輸入「/coc create cancel」取消後再登記 KP 助手。")
+        blocker = permissions.kp_seat_blocker(state, user_id)
+        if blocker:
+            await reply(blocker)
             return
 
         state.kp_ooc_log = []
@@ -940,16 +935,15 @@ async def handle_system_command(
 
 
 async def _change_kp(
-    state,
-    action: str,
+    state: GroupState,
+    action: Literal["transfer", "takeover"],
     user_id: str,
     target_token: str | None,
     reply: Reply,
     format_mention: FormatMention,
     *,
     too_many_args: bool,
-    can_manage_server: bool,
-    bot_user_ids: frozenset[str],
+    server: permissions.ServerFacts,
 ) -> None:
     """`/coc kp transfer @member` and `/coc kp takeover [@member]`.
 
@@ -971,13 +965,13 @@ async def _change_kp(
     if action == "transfer" and not permissions.is_kp(state, user_id):
         await reply(permissions.kp_only("交接 KP 助手身分"))
         return
-    if action == "takeover" and not can_manage_server:
+    if action == "takeover" and not server.can_manage_server:
         await reply("只有在這個伺服器擁有「管理伺服器」權限的成員，才能接手或指派 KP 助手。")
         return
     if new_kp == state.kp_assistant_user_id:
         await reply("這位成員已經是這局的 KP 助手。")
         return
-    blocker = permissions.kp_seat_blocker(state, new_kp, is_bot=new_kp in bot_user_ids)
+    blocker = permissions.kp_seat_blocker(state, new_kp, is_bot=new_kp in server.bot_user_ids)
     if blocker:
         if action == "takeover" and new_kp == user_id:
             blocker += "你可以改用 /coc kp takeover @成員，指派一位沒有在玩的成員擔任 KP 助手。"

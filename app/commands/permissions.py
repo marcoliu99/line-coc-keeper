@@ -7,13 +7,30 @@ servers that role is the bot's own.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app import config
 
 _MENTION = re.compile(r"^<@!?(\d+)>$")
 
-KP_ONLY_MESSAGE = "只有目前的 KP 助手可以{action}。"
+_KP_ONLY_MESSAGE = "只有目前的 KP 助手可以{action}。"
+
+
+@dataclass(frozen=True)
+class ServerFacts:
+    """What the chat server says about a message, for seating a KP Assistant.
+
+    `can_manage_server` is Discord's Manage Server permission, the only thing
+    that lets a member take over the seat; `bot_user_ids` are the bots the
+    message mentions, who can never hold it.
+    """
+
+    can_manage_server: bool = False
+    bot_user_ids: frozenset[str] = frozenset()
+
+
+NO_SERVER_FACTS = ServerFacts()  # a DM, or a caller that isn't a chat server
 
 
 def is_kp(state: Any, user_id: str) -> bool:
@@ -28,7 +45,7 @@ def may_manage_scenario_lifecycle(state: Any, user_id: str) -> bool:
 
 def kp_only(action: str) -> str:
     """The refusal for an action only the KP Assistant may take."""
-    return KP_ONLY_MESSAGE.format(action=action)
+    return _KP_ONLY_MESSAGE.format(action=action)
 
 
 def mentioned_user_id(token: str) -> str | None:
@@ -46,7 +63,7 @@ def kp_seat_blocker(state: Any, user_id: str, *, is_bot: bool = False) -> str | 
     if is_bot:
         return "機器人不能擔任 KP 助手。"
     if state.get_active_character(user_id) is not None:
-        return "KP 助手與調查員角色互斥；這位成員已經有調查員角色。"
+        return "KP 助手與調查員角色互斥；已經有調查員角色的成員不能擔任 KP 助手。"
     if user_id in state.creation_sessions:
-        return "KP 助手與建角流程互斥；這位成員正在進行互動式建角，請先取消。"
+        return "KP 助手與建角流程互斥；正在互動式建角的成員要先輸入「/coc create cancel」取消。"
     return None

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from app import async_utils, locks, observability, scenario_templates, spoiler_policy
 from app.providers.registry import analysis_provider
@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 MAX_RESOLUTION_CHARS = 1000
 RECENT_LOG_ENTRIES = 8
+LOG_AROUND_TURN = 3
+
+Decision = Literal["approve", "reject", "undecided"]
+# Sheet values an approval may cite, by the names the model uses.
+_STATS = {"HP": "hp", "MP": "mp", "SAN": "san", "LUCK": "luck", "幸運": "luck"}
 
 _RULING_TOOL = {
     "name": "rule_on_correction",
@@ -39,13 +44,14 @@ _RULING_TOOL = {
             "resolution": {"type": "string", "description": "approve 時的公開更正內容，1–1000 字"},
             "claims": {
                 "type": "array",
-                "description": "更正內容所斷言的狀態事實",
+                "description": "更正內容所斷言的每一項狀態事實；approve 至少一項",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "kind": {"type": "string", "enum": ["item", "clue", "fact", "status"]},
-                        "name": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["item", "clue", "fact", "status", "skill", "stat"]},
+                        "name": {"type": "string", "description": "更正內容中出現的名稱；stat 用 HP、MP、SAN、LUCK"},
                         "investigator": {"type": "string"},
+                        "value": {"type": "integer", "description": "skill 或 stat 的數值"},
                     },
                     "required": ["kind", "name"],
                 },
@@ -58,7 +64,7 @@ _RULING_TOOL = {
 
 @dataclass(frozen=True)
 class Ruling:
-    decision: str  # approve | reject | undecided
+    decision: Decision
     reason: str = ""
     resolution: str = ""
     evidence: tuple[str, ...] = field(default=())
@@ -69,21 +75,40 @@ UNDECIDED = Ruling("undecided")
 
 def _evidence(state: Any, report: dict) -> dict[str, str]:
     """System-held evidence only, keyed by the ids the ruling must cite."""
-    items = {"narration": str((report.get("target_receipt") or {}).get("excerpt", ""))}
+    receipt = report.get("target_receipt") or {}
+    excerpt = str(receipt.get("excerpt", ""))
+    items = {"narration": (f"（第 {receipt.get('state_revision', '?')} 版狀態，回合 {receipt.get('turn_id') or '?'}）"
+                           f"{excerpt}")}
     for character in state.active_characters():
+        skills = "、".join(f"{k} {v}" for k, v in character.skills.items())
         items[f"sheet:{character.name}"] = (
-            f"{character.name}：HP {character.hp}/{character.hp_max}，SAN {character.san}，"
-            f"攜帶：{'、'.join(character.carried_items) or '（無）'}，狀態：{'、'.join(character.status_tags) or '（無）'}"
+            f"{character.name}：HP {character.hp}/{character.hp_max}，MP {character.mp}，SAN {character.san}，"
+            f"LUCK {character.luck}，地點：{state.narrative_locations.get(character.owner_id) or '（未記錄）'}，"
+            f"攜帶：{'、'.join(character.carried_items) or '（無）'}，狀態：{'、'.join(character.status_tags) or '（無）'}，"
+            f"技能：{skills or '（無）'}"
         )
     for n, text in enumerate(_public_texts(state.known_clues), 1):
         items[f"clue:{n}"] = text
     for n, text in enumerate(_public_texts(state.established_facts), 1):
         items[f"fact:{n}"] = text
-    for n, entry in enumerate(state.log[-RECENT_LOG_ENTRIES:], 1):
+    for n, entry in enumerate(_log_around(state.log, excerpt), 1):
         items[f"log:{n}"] = str(entry.get("content", ""))[:1000]
     for n, row in enumerate(_scenario_passages(state, report), 1):
         items[f"scenario:{n}"] = f"（第 {row.get('page', '?')} 頁）{row.get('text', '')}"
     return items
+
+
+def _log_around(log: list[dict], excerpt: str) -> list[dict]:
+    """The log entries around the disputed narration, else the most recent ones.
+
+    Log entries carry no turn id, so the narration is found by its text.
+    """
+    probe = excerpt.strip()[:200]
+    if probe:
+        for index in range(len(log) - 1, -1, -1):
+            if probe in str(log[index].get("content", "")):
+                return log[max(0, index - LOG_AROUND_TURN):index + LOG_AROUND_TURN + 1]
+    return log[-RECENT_LOG_ENTRIES:]
 
 
 def _scenario_passages(state: Any, report: dict) -> list[dict]:
@@ -114,6 +139,11 @@ def _claim_holds(state: Any, claim: Any) -> bool:
         return any(name in c.status_tags for c in characters)
     if kind in ("clue", "fact"):
         return name in _public_texts(state.known_clues if kind == "clue" else state.established_facts)
+    value = claim.get("value")
+    if kind == "skill":
+        return any(c.skills.get(name) == value for c in characters)
+    if kind == "stat" and name.upper() in _STATS:
+        return any(getattr(c, _STATS[name.upper()]) == value for c in characters)
     return False
 
 
@@ -130,25 +160,40 @@ def rule(state: Any, report: dict) -> Ruling:
     evidence = _evidence(state, report)
     text = "【證據】\n" + "\n".join(f"[{key}] {value}" for key, value in evidence.items())
     text += f"\n\n【未經證實的指控（不是證據）】\n{report.get('issue', '')}"
-    result = provider.analyze_text(text, _RULING_TOOL, "請用 rule_on_correction 工具裁定這則敘事異議。")
+    try:
+        result = provider.analyze_text(text, _RULING_TOOL, "請用 rule_on_correction 工具裁定這則敘事異議。")
+    except Exception:
+        logger.warning("correction.keeper_ruling_failed", exc_info=True)
+        return UNDECIDED
+    return _validated(state, evidence, result)
+
+
+def _validated(state: Any, evidence: dict[str, str], result: Any) -> Ruling:
+    """The model's ruling if it passes every check made in code, else UNDECIDED."""
     if not isinstance(result, dict):
         return UNDECIDED
     decision = result.get("decision")
-    if decision not in ("approve", "reject"):
-        return UNDECIDED
     cited = result.get("evidence")
-    if not isinstance(cited, list) or not cited or any(e not in evidence for e in cited):
+    if decision not in ("approve", "reject") or not isinstance(cited, list) or not cited:
+        return UNDECIDED
+    if not all(isinstance(e, str) and e in evidence for e in cited):
         return UNDECIDED
     resolution = str(result.get("resolution") or "").strip()
-    if decision == "approve":
-        if not 1 <= len(resolution) <= MAX_RESOLUTION_CHARS:
-            return UNDECIDED
-        if not all(_claim_holds(state, c) for c in result.get("claims") or []):
-            return UNDECIDED
-    return Ruling(
-        str(decision), reason=str(result.get("reason", "")), resolution=resolution,
-        evidence=tuple(str(e) for e in cited),
-    )
+    if decision == "approve" and not _approval_holds(state, cited, resolution, result.get("claims")):
+        return UNDECIDED
+    return Ruling(decision, reason=str(result.get("reason", "")), resolution=resolution, evidence=tuple(cited))
+
+
+def _approval_holds(state: Any, cited: list[str], resolution: str, claims: Any) -> bool:
+    """An approval must contradict the narration with other evidence, and every
+    state fact its text asserts must be declared as a claim that holds."""
+    if not 1 <= len(resolution) <= MAX_RESOLUTION_CHARS:
+        return False
+    if not any(e != "narration" for e in cited):
+        return False
+    if not isinstance(claims, list) or not claims:
+        return False
+    return all(_claim_holds(state, c) and str(c.get("name", "")).strip() in resolution for c in claims)
 
 
 async def adjudicate_pending(conversation_id: str, reply: Any) -> None:
@@ -160,9 +205,14 @@ async def adjudicate_pending(conversation_id: str, reply: Any) -> None:
     state = load_state(conversation_id)
     if state.kp_assistant_user_id:
         return
-    for report in narrative_corrections.active(state):
-        key = (conversation_id, str(report.get("id")))
-        if report.get("status") != "pending" or key in _in_flight:
+    for report_id in _pending_report_ids(state):
+        key = (conversation_id, report_id)
+        if key in _in_flight:
+            continue
+        # Another run may have ruled on it since this one started.
+        state = load_state(conversation_id)
+        report = _pending_report(state, report_id)
+        if state.kp_assistant_user_id or report is None:
             continue
         _in_flight.add(key)
         try:
@@ -182,21 +232,19 @@ async def _apply(conversation_id: str, timeline_id: str, report_id: str, ruling:
     try:
         async with locks.get_conversation_lock(conversation_id):
             state = load_state(conversation_id)
-            report = next((r for r in narrative_corrections.active(state) if r.get("id") == report_id), None)
-            if (state.kp_assistant_user_id or state.timeline_id != timeline_id
-                    or report is None or report.get("status") != "pending"):
+            report = _pending_report(state, report_id)
+            if state.kp_assistant_user_id or state.timeline_id != timeline_id or report is None:
                 observability.event("correction.keeper_ruling_discarded", report_id=report_id)
                 return ""
             if ruling.decision == "undecided":
-                report["status"] = "unverified"
-                report["adjudicated_by"] = "keeper"
+                narrative_corrections.record_unverified(report)
                 text = generic = (f"守秘人無法依現有證據證實敘事異議 #{report_id}；"
                                   "它會保留到 KP 裁定或提報者撤回。")
             else:
                 text = narrative_corrections.record_ruling(
-                    state, report, ruling.decision, "keeper", resolution=ruling.resolution, by_keeper=True)
-                report["evidence"] = list(ruling.evidence)
-                report["reason"] = ruling.reason
+                    state, report, ruling.decision, "keeper", resolution=ruling.resolution,
+                    keeper_basis=narrative_corrections.KeeperBasis(ruling.evidence, ruling.reason),
+                )
                 generic = (f"敘事異議 #{report_id} 經守秘人依證據核對後成立，已更正先前訊息 {report['target_message_id']}。"
                            if ruling.decision == "approve" else f"敘事異議 #{report_id} 經守秘人依證據核對後不成立。")
                 if ruling.reason:
@@ -213,7 +261,22 @@ async def _apply(conversation_id: str, timeline_id: str, report_id: str, ruling:
         return ""  # a rollback is in progress; the report stays pending and is retried later
 
 
-def schedule(conversation_id: str, reply: Any) -> None:
-    """Start adjudication in the background; the caller's reply has already gone out."""
+def _pending_report(state: Any, report_id: str) -> dict | None:
+    return next((r for r in narrative_corrections.active(state)
+                 if r.get("id") == report_id and r.get("status") == "pending"), None)
+
+
+def schedule(conversation_id: str, state: Any, reply: Any) -> None:
+    """Start adjudication in the background if the Keeper has anything to rule on.
+
+    The Keeper rules only while the group has no KP Assistant; the caller's
+    reply has already gone out.
+    """
+    if state.kp_assistant_user_id or not _pending_report_ids(state):
+        return
     task = asyncio.create_task(adjudicate_pending(conversation_id, reply))
     async_utils.observe_background_task(task, operation="correction.keeper_ruling")
+
+
+def _pending_report_ids(state: Any) -> list[str]:
+    return [str(r.get("id")) for r in narrative_corrections.active(state) if r.get("status") == "pending"]

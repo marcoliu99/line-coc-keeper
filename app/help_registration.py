@@ -80,7 +80,7 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("scenario", "index"), "scenario", "重建劇本索引", "手動重建 NPC／怪物與地點索引。", ("/coc index",), visibility="when_scenario_loaded", command=("index",)),
         HelpEntry(("scenario", "away"), "scenario", "暫離遊戲", "標記自己暫時離開；戰鬥中會跳過你的回合。", ("/coc away",), command=("away",)),
         HelpEntry(("scenario", "back"), "scenario", "回到遊戲", "取消暫離狀態並恢復正常參與。", ("/coc back",), command=("back",)),
-        HelpEntry(("kp", "kp"), "kp", "登記 KP Assistant", "登記或解除本局的 KP Assistant 身分。", ("/coc kp", "/coc kp quit", "/coc kp transfer @成員", "/coc kp takeover [@成員]"), notes=("transfer：現任 KP 助手交接給別人。takeover：擁有 Discord「管理伺服器」權限的成員接手或指派 KP 助手；KP 助手與調查員角色互斥。",), command=("kp",)),
+        HelpEntry(("kp", "kp"), "kp", "登記 KP 助手", "登記、解除、交接或接手本局的 KP 助手身分。", ("/coc kp", "/coc kp quit", "/coc kp transfer @成員", "/coc kp takeover [@成員]"), notes=("transfer：現任 KP 助手交接給別人。takeover：擁有 Discord「管理伺服器」權限的成員接手或指派 KP 助手；KP 助手與調查員角色互斥。",), command=("kp",)),
         HelpEntry(("kp", "sudo"), "kp", "代玩家操作", "玩家突然離線時，由已脫離自己角色的 KP Assistant 代替指定玩家執行允許的 player command。", ("/coc sudo <@玩家> <command> [參數...]", "/coc sudo <@玩家> away", "/coc sudo <@玩家> retire [角色名]"), notes=("KP-only：需要目前的 KP 助手；不能代替玩家擲 LUCK、建立或認領角色。", "actor 必須先脫離自己的玩家角色／建角流程。"), kp_only=True, command=("sudo",)),
         HelpEntry(("kp", "checkpoint"), "kp", "建立回溯節點", "保存目前完整遊戲狀態，供 KP 之後回溯。", ("/coc checkpoint [名稱]", "/coc checkpoint clean ID"), notes=("需要目前的 KP 助手。",), kp_only=True, command=("checkpoint",)),
         HelpEntry(("kp", "checkpoints"), "kp", "查看回溯節點", "列出目前群組可用的回溯節點。", ("/coc checkpoints",), notes=("需要目前的 KP 助手。",), kp_only=True, command=("checkpoints",)),

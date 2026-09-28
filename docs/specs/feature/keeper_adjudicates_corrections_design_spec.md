@@ -14,7 +14,7 @@ Not every game has a KP Assistant, and the Keeper is the bot. In a group without
 
 - **The group has a registered KP Assistant:** that KP Assistant (this group's `kp_assistant_user_id`) adjudicates, exactly as today. A KP Assistant in another group doesn't count; after `quit`, `transfer` or `takeover`, the new one does.
 - **The group has none:** the **Keeper** adjudicates approve / reject from evidence.
-- **Hold** and **supersede** stay with a KP Assistant. They pause tools and tidy approved corrections; they're management, not a factual ruling.
+- **Hold** and **supersede** stay with a KP Assistant; a KP registered later can hold an `unverified` report as well as a pending one. They pause tools and tidy approved corrections; they're management, not a factual ruling.
 
 ## How the Keeper decides
 
@@ -25,20 +25,22 @@ The design's premise stays: **the reporter's text is never evidence.** It says w
    - the target receipt's excerpt, the Keeper message being disputed (`narrative_message_receipts`, up to 2,000 characters), with its `state_revision` and `turn_id`;
    - the current state facts the claim touches: character sheets, inventory, status, location, clues and established facts;
    - the relevant scenario passages, found through the existing retrieval;
-   - the recent turn log around that turn.
+   - the recent turn log around that turn. Log entries carry no turn id, so the disputed narration is located by its text; if it isn't found, the most recent entries are used.
    The reporter's `issue` is included separately, **labelled as an unverified allegation**, after the evidence.
 3. **Structured ruling.** One forced tool call through `registry.analysis_provider()` returns:
    - `decision`: `approve` | `reject` | `undecided`;
    - `evidence`: the specific items relied on;
-   - `resolution`: for approve only, the public correction text, 1–1000 characters.
+   - `resolution`: for approve only, the public correction text, 1–1000 characters;
+   - `reason`: the public reason, stated only in terms of the disputed narration and public state;
+   - `claims`: for approve, every state fact the resolution asserts (item, status, clue, fact, skill value, or HP/MP/SAN/LUCK value), each naming what it refers to.
    The output is validated like other structured analysis; anything invalid counts as `undecided`.
 4. **Guardrails, checked in code, not only in the prompt:**
-   - Approve only when the evidence **contradicts** the disputed narration, for example narration naming an item the investigator doesn't hold, or a state or scenario fact stated wrongly.
-   - An approval may not add items, skills, HP/SAN/Luck, clues or facts that aren't already in the evidence; the resolution is rejected if it names state that doesn't exist.
+   - Approve only when the evidence **contradicts** the disputed narration, for example narration naming an item the investigator doesn't hold, or a state or scenario fact stated wrongly. In code: an approval must cite at least one evidence item besides the disputed narration.
+   - An approval may not add items, skills, HP/SAN/Luck, clues or facts that aren't already in the evidence; the resolution is rejected if it names state that doesn't exist. In code: an approval needs at least one claim; every claim must hold in the current state (public clues and facts only; skill and characteristic values must match the sheet) and must be named in the resolution text. Free text that names state without declaring it as a claim can't be detected mechanically; the prompt forbids it.
    - When the evidence is insufficient, the result is `undecided`, never a guess.
 5. **Outcome.**
    - `approve` / `reject`: stored exactly as a KP ruling would be, with `adjudicated_by: "keeper"` and the evidence summary, and posted publicly with the reasoning.
-   - `undecided`: the report moves to a new **`unverified`** status, and the group is told the Keeper couldn't verify it. `unverified` reports **don't count** toward the pending limits (12 per group, 3 per reporter), so a KP-less group never fills up and blocks everyone. They stay listed; a KP Assistant registered later can still rule on them, and the reporter can still withdraw them. To stop one player from cycling fabricated reports through the Keeper, **each reporter may hold at most 3 `unverified` reports**. Beyond that, their new reports are refused until they withdraw one or a KP rules. This blocks only that player, not the group. Decided with Marco.
+   - `undecided`: the report moves to a new **`unverified`** status, and the group is told the Keeper couldn't verify it. `unverified` reports **don't count** toward the pending limits (12 per group, 3 per reporter), so a KP-less group never fills up and blocks everyone. They stay listed; a KP Assistant registered later can still rule on them, and the reporter can still withdraw them. To stop one player from cycling fabricated reports through the Keeper, **each reporter may hold at most 3 `unverified` reports**. Beyond that, their new reports are refused until they withdraw one or a KP rules. A reporter who already holds an `unverified` report has their pending reports counted toward this cap too, since each may still become `unverified`. This blocks only that player, not the group. Decided with Marco.
    - Every ruling logs `correction.keeper_ruling` with the decision, report id and evidence kinds; no player text goes into the log.
 6. **Override.** A KP Assistant registered later can **supersede** any Keeper ruling, as with any approved correction.
 7. **Writing the ruling (no races).** The model call runs outside the lock. The ruling is written through the normal lock-protected state mutation, and only if the report is **still pending**, the timeline is unchanged, and the group **still has no KP Assistant**. If someone registered as KP, the reporter withdrew, or the game moved to another timeline meanwhile, the ruling is discarded and logged.
@@ -54,7 +56,7 @@ The design's premise stays: **the reporter's text is never evidence.** It says w
 - **Routing:** with a KP Assistant, no adjudication runs and the KP commands behave as today; without one, adjudication runs once per new report and when the seat empties with pending reports.
 - **Injection resistance:** a fabricated claim with no supporting evidence is never approved. Cases include claims of items, clues, or "the Keeper said…".
 - **Guardrail:** an approval whose resolution introduces state not present in the evidence is refused and becomes `undecided`.
-- **Outcomes:** approve and reject are stored with `adjudicated_by: "keeper"` and posted; `undecided` stays pending with the notice; invalid model output counts as `undecided`.
+- **Outcomes:** approve and reject are stored with `adjudicated_by: "keeper"` and posted; `undecided` moves the report to `unverified` with the notice; invalid model output counts as `undecided`.
 - **Override:** a later KP supersedes a Keeper ruling.
 - **Hold and supersede** remain KP-only.
 - **Races:** a KP registering, or the reporter withdrawing, while adjudication runs means the ruling is discarded and nothing is written; so does a timeline change.

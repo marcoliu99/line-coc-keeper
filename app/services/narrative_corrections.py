@@ -7,13 +7,25 @@ Player allegations alone never create a mechanical hold.
 from __future__ import annotations
 
 import json
-from typing import Any
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 MAX_CONTEXT_CHARS = 6000
 # A report still awaiting a ruling. `unverified` is one the Keeper couldn't
 # verify from evidence; it stays open for a KP but doesn't count toward the
 # pending limits (docs/specs/feature/keeper_adjudicates_corrections_design_spec.md).
-OPEN_STATUSES = ("pending", "unverified")
+ReportStatus = Literal["pending", "unverified", "approved", "rejected", "withdrawn", "superseded"]
+OPEN_STATUSES: tuple[ReportStatus, ...] = ("pending", "unverified")
+Verdict = Literal["approve", "reject"]
+
+
+@dataclass(frozen=True)
+class KeeperBasis:
+    """What a Keeper ruling rested on: the evidence ids it cited and its public reason."""
+
+    evidence: tuple[str, ...]
+    reason: str
 
 
 def active(state: Any) -> list[dict]:
@@ -26,7 +38,7 @@ def projection(state: Any) -> tuple[str, bool]:
                 if k in r}
                for r in active(state)
                if r.get("status") == "approved" or
-               (r.get("status") == "pending" and r.get("hold_scope"))]
+               (r.get("status") in OPEN_STATUSES and r.get("hold_scope"))]
     serialized = json.dumps(records, ensure_ascii=False)
     if len(serialized) > MAX_CONTEXT_CHARS:
         return "", True
@@ -47,7 +59,7 @@ def projection(state: Any) -> tuple[str, bool]:
 
 def hold_matches(state: Any, value: Any) -> bool:
     text = json.dumps(value, ensure_ascii=False).casefold()
-    return any(r.get("status") == "pending" and
+    return any(r.get("status") in OPEN_STATUSES and
                any(term.casefold() in text for term in r.get("hold_scope", []) if term)
                for r in active(state))
 
@@ -93,22 +105,32 @@ def save(state: Any) -> None:
     save_state(state, reason="narrative_correction", mutate_tx=archive)
 
 
+def mark_reviewed(report: dict, reviewer: str) -> None:
+    report["reviewed_by"] = reviewer
+    report["reviewed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def record_unverified(report: dict) -> None:
+    """The Keeper couldn't verify `report`; it stays open for a KP or the reporter."""
+    report["status"] = "unverified"
+
+
 def record_ruling(
-    state: Any, report: dict, decision: str, reviewer: str, *, resolution: str = "", by_keeper: bool = False,
+    state: Any, report: dict, decision: Verdict, reviewer: str, *, resolution: str = "",
+    keeper_basis: KeeperBasis | None = None,
 ) -> str:
     """Record an approve/reject ruling on `report` and return its public message.
 
     The KP Assistant and the Keeper both rule through here, so an approval has
     the same effect either way: it enters the log, and the provider
-    conversation is rebuilt from that corrected log.
+    conversation is rebuilt from that corrected log. A Keeper ruling carries
+    `keeper_basis`.
     """
-    from datetime import datetime, timezone
-
-    judge = "守秘人依證據" if by_keeper else " KP "
     if decision == "approve":
         report["status"] = "approved"
         report["resolution"] = resolution
-        message = f"【敘事更正 #{report['id']}】先前訊息 {report['target_message_id']} 已由{judge}更正：{resolution}"
+        judged = "已由守秘人依證據更正" if keeper_basis else "已由 KP 更正"
+        message = f"【敘事更正 #{report['id']}】先前訊息 {report['target_message_id']} {judged}：{resolution}"
         state.log.append({"role": "assistant", "content": message})
         # A cached provider conversation may still contain the uncorrected
         # narration. Rebuild the next turn from the corrected local log.
@@ -116,9 +138,11 @@ def record_ruling(
         state.openai_previous_response_timeline_id = ""
     else:
         report["status"] = "rejected"
-        message = f"敘事異議 #{report['id']} 經{judge}核對後不成立。"
-    report["reviewed_by"] = reviewer
-    report["reviewed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    if by_keeper:
+        judged = "經守秘人依證據核對後不成立" if keeper_basis else "經 KP 核對後不成立"
+        message = f"敘事異議 #{report['id']} {judged}。"
+    mark_reviewed(report, reviewer)
+    if keeper_basis:
         report["adjudicated_by"] = "keeper"
+        report["evidence"] = list(keeper_basis.evidence)
+        report["reason"] = keeper_basis.reason
     return message

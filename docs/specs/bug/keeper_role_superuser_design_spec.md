@@ -70,7 +70,7 @@ Today `/coc kp` registers the first caller when the seat is empty, only the KP c
   - The new KP must meet the same exclusivity rules as `/coc kp`. A manager who is playing an investigator can't take the seat themselves. They're refused with a hint to appoint someone instead, `/coc kp takeover @member`, naming a member who isn't playing. Decided with Marco: KP and investigator stay mutually exclusive, because the KP sees private scenario data and can roll back and act for others. No exception for takeover, and nobody's investigator is changed on their behalf.
   - If every member of the group is playing, someone has to `/coc retire` first; takeover doesn't bypass that.
 - Both post a **public** message in the channel naming the old and new KP Assistant, and log `kp.transfer` / `kp.takeover` with hashed ids.
-- The permission is read from Discord when the command is sent. `discord_bot.py` passes it to the router as one boolean, `can_manage_server`, so the core stays Discord-agnostic. DMs have no server, so there it is false. **It is used for `takeover` and nothing else.** Every other action still needs `permissions.is_kp`.
+- The permission is read from Discord when the command is sent. `discord_bot.py` passes it to the router as the boolean `can_manage_server` inside `permissions.ServerFacts` (with the ids of mentioned bots), so the core stays Discord-agnostic. DMs have no server, so there it is false. **It is used for `takeover` and nothing else.** Every other action still needs `permissions.is_kp`.
 - They ship **in the same PR** as the removal, so there's no window without an escape hatch.
 
 ## Safety: this removes a superuser path

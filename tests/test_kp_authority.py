@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app import discord_bot
 from app.commands import permissions, router
+from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import system as system_handler
 from app.models import Character, GroupState
 
@@ -81,7 +82,7 @@ class KpOnlyActionsTests(unittest.TestCase):
     def test_always_checked_actions_refuse_a_non_kp(self):
         for text in self.ALWAYS:
             with self.subTest(text=text):
-                replies, save = _run(_state(kp_assistant_user_id="kp"), "manager", text, can_manage_server=True)
+                replies, save = _run(_state(kp_assistant_user_id="kp"), "manager", text, server=permissions.ServerFacts(can_manage_server=True))
                 self.assertTrue(replies and KP_ONLY in replies[0], replies)
                 save.assert_not_called()
 
@@ -89,7 +90,7 @@ class KpOnlyActionsTests(unittest.TestCase):
         with patch.object(permissions.config, "SCENARIO_LIFECYCLE_KP_ONLY", True):
             for text in self.LIFECYCLE:
                 with self.subTest(text=text):
-                    replies, save = _run(_state(kp_assistant_user_id="kp"), "manager", text, can_manage_server=True)
+                    replies, save = _run(_state(kp_assistant_user_id="kp"), "manager", text, server=permissions.ServerFacts(can_manage_server=True))
                     self.assertTrue(replies and KP_ONLY in replies[0], replies)
                     save.assert_not_called()
 
@@ -98,7 +99,7 @@ class KpOnlyActionsTests(unittest.TestCase):
         with patch.object(router, "load_state", return_value=_state(kp_assistant_user_id="kp")):
             asyncio.run(router.handle_text_message(
                 "g", "manager", AsyncMock(), reply, AsyncMock(), AsyncMock(), AsyncMock(),
-                "/coc sudo <@444> act 開門", can_manage_server=True,
+                "/coc sudo <@444> act 開門", server=permissions.ServerFacts(can_manage_server=True),
             ))
         self.assertIn(KP_ONLY, reply.await_args.args[0])
 
@@ -108,6 +109,62 @@ class KpOnlyActionsTests(unittest.TestCase):
                 "g", "u", AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(), "/coc status",
                 is_keeper=True,
             ))
+
+
+class KpOnlyViewsAndButtonsTests(unittest.IsolatedAsyncioTestCase):
+    """The rest of the always-checked table: full index values, correction
+    approval, and the PDF-choice and source-ready buttons."""
+
+    async def test_full_index_values_are_for_the_kp_only(self):
+        index = {"npcs": [{"name": "食屍鬼首領", "hp": 13, "first_seen": True}], "locations": []}
+        seen = {}
+        for user_id in ("manager", "kp"):
+            state = _state(kp_assistant_user_id="kp", scenario_text="劇本")
+            with patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=index), \
+                    patch.object(system_handler.spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
+                replies, _ = await asyncio.to_thread(
+                    _run, state, user_id, "/coc index", server=permissions.ServerFacts(can_manage_server=True))
+            seen[user_id] = replies[0]
+        self.assertNotIn("HP 13", seen["manager"])
+        self.assertIn("HP 13", seen["kp"])
+
+    async def test_correction_approval_is_for_the_kp_only(self):
+        state = _state(kp_assistant_user_id="kp", timeline_id="t1")
+        state.narrative_corrections.append({"id": "r1", "target_message_id": "1", "issue": "x", "reporter_id": "p",
+                                            "status": "pending", "timeline_id": "t1"})
+        reply = AsyncMock()
+        with patch.object(correct_handler, "load_state", return_value=state):
+            await correct_handler.handle_correct_command("g", "manager", reply, ["/coc", "correct", "approve", "r1", "更正"])
+        self.assertIn("只有 KP", reply.await_args.args[0])
+        self.assertEqual(state.narrative_corrections[0]["status"], "pending")
+
+    def _interaction(self, conversation_id: str):
+        channel_id = int(conversation_id.rsplit("-", 1)[1])
+        return SimpleNamespace(
+            channel=SimpleNamespace(id=channel_id), user=SimpleNamespace(id=7, bot=False, roles=[]),
+        )
+
+    async def test_the_pdf_choice_button_is_for_the_kp_only_when_lifecycle_is_kp_only(self):
+        conversation_id = discord_bot._conversation_id(5)
+        button = discord_bot.PdfUploadChoiceButton(conversation_id, "new", "新劇本")
+        with patch.object(permissions.config, "SCENARIO_LIFECYCLE_KP_ONLY", True), \
+                patch.object(discord_bot, "load_group_state", return_value=_state(kp_assistant_user_id="kp")), \
+                patch.object(discord_bot, "_send_interaction_message", new_callable=AsyncMock) as sent, \
+                patch.object(discord_bot, "resolve_pdf_upload_choice", new_callable=AsyncMock) as resolve:
+            await button.callback(self._interaction(conversation_id))
+        self.assertIn(KP_ONLY, sent.await_args.args[1])
+        resolve.assert_not_awaited()
+
+    async def test_the_source_ready_button_is_for_the_kp_only(self):
+        conversation_id = discord_bot._conversation_id(5)
+        result = discord_bot.SourceReadyMessage("sid", "7")
+        button = discord_bot.SourceReadyButton(conversation_id, result, "source_use", "選用新版英文")
+        with patch.object(discord_bot, "load_group_state", return_value=_state(kp_assistant_user_id="kp")), \
+                patch.object(discord_bot, "_send_interaction_message", new_callable=AsyncMock) as sent, \
+                patch.object(discord_bot, "_finish_help_action", new_callable=AsyncMock) as finish:
+            await button.callback(self._interaction(conversation_id))
+        self.assertIn(KP_ONLY, sent.await_args.args[1])
+        finish.assert_not_awaited()
 
 
 class TransferTests(unittest.TestCase):
@@ -129,7 +186,7 @@ class TransferTests(unittest.TestCase):
         }
         for name, (state, bots, expected) in cases.items():
             with self.subTest(case=name):
-                replies, save = _run(state, "kp", "/coc kp transfer <@222>", bot_user_ids=bots)
+                replies, save = _run(state, "kp", "/coc kp transfer <@222>", server=permissions.ServerFacts(bot_user_ids=bots))
                 self.assertIn(expected, replies[0])
                 self.assertEqual(state.kp_assistant_user_id, "kp")
                 save.assert_not_called()
@@ -156,7 +213,7 @@ class TakeoverTests(unittest.TestCase):
     def test_a_manager_takes_the_seat_and_it_is_announced(self):
         state = _state(kp_assistant_user_id="gone")
         with patch.object(system_handler.observability, "event") as event:
-            replies, save = _run(state, "manager", "/coc kp takeover", can_manage_server=True)
+            replies, save = _run(state, "manager", "/coc kp takeover", server=permissions.ServerFacts(can_manage_server=True))
         self.assertEqual(state.kp_assistant_user_id, "manager")
         save.assert_called_once_with(state)
         self.assertIn("<@manager> 已接手成為這局的 KP 助手", replies[0])
@@ -165,14 +222,14 @@ class TakeoverTests(unittest.TestCase):
 
     def test_a_playing_manager_is_told_to_appoint_instead(self):
         state = _with_investigator(_state(kp_assistant_user_id="gone"), "manager")
-        replies, save = _run(state, "manager", "/coc kp takeover", can_manage_server=True)
+        replies, save = _run(state, "manager", "/coc kp takeover", server=permissions.ServerFacts(can_manage_server=True))
         self.assertIn("/coc kp takeover @成員", replies[0])
         self.assertEqual(state.kp_assistant_user_id, "gone")
         save.assert_not_called()
 
     def test_a_playing_manager_can_appoint_someone_eligible(self):
         state = _with_investigator(_state(kp_assistant_user_id="gone"), "manager")
-        replies, _ = _run(state, "manager", "/coc kp takeover <@333>", can_manage_server=True)
+        replies, _ = _run(state, "manager", "/coc kp takeover <@333>", server=permissions.ServerFacts(can_manage_server=True))
         self.assertEqual(state.kp_assistant_user_id, "333")
         self.assertIn("<@manager> 指派 <@333> 擔任這局的 KP 助手", replies[0])
 
@@ -186,7 +243,7 @@ class TakeoverTests(unittest.TestCase):
         }
         for name, (state, bots) in cases.items():
             with self.subTest(case=name):
-                _, save = _run(state, "manager", "/coc kp takeover <@333>", can_manage_server=True, bot_user_ids=bots)
+                _, save = _run(state, "manager", "/coc kp takeover <@333>", server=permissions.ServerFacts(can_manage_server=True, bot_user_ids=bots))
                 self.assertEqual(state.kp_assistant_user_id, "gone")
                 save.assert_not_called()
 
@@ -204,12 +261,30 @@ class TransportTests(unittest.TestCase):
         self.assertFalse(discord_bot._can_manage_server(SimpleNamespace(id=7)))  # a DM user has no server permissions
 
     def test_transition_log_fires_only_for_a_human_with_the_role(self):
+        state = _state(kp_assistant_user_id="kp")
         with patch.object(discord_bot.observability, "event") as event:
-            discord_bot._note_ignored_keeper_role(self._member(roles=("Keeper",)), "sudo")
-            discord_bot._note_ignored_keeper_role(self._member(roles=("keeper",), bot=True), "sudo")
-            discord_bot._note_ignored_keeper_role(self._member(roles=("player",)), "sudo")
+            discord_bot._note_ignored_keeper_role(self._member(roles=("Keeper",)), state, "sudo")
+            discord_bot._note_ignored_keeper_role(self._member(roles=("keeper",), bot=True), state, "sudo")
+            discord_bot._note_ignored_keeper_role(self._member(roles=("player",)), state, "sudo")
         self.assertEqual([c.args[0] for c in event.call_args_list], ["authz.keeper_role_ignored"])
         self.assertEqual(event.call_args.kwargs["action"], "sudo")
+
+    def test_transition_log_skips_the_kp_and_actions_the_role_never_unlocked(self):
+        holder = self._member(roles=("keeper",))
+        with patch.object(discord_bot.observability, "event") as event:
+            discord_bot._note_ignored_keeper_role(holder, _state(kp_assistant_user_id="7"), "sudo")
+            discord_bot._note_ignored_keeper_role(holder, _state(), None)
+        event.assert_not_called()
+
+    def test_only_commands_the_role_unlocked_are_named(self):
+        cases = {
+            "/coc sudo <@1> act 開門": "sudo", "/coc rollback x": "rollback", "/coc index": "index",
+            "/coc scenario use sid": "scenario use", "/coc correct approve r1 x": "correct approve",
+            "/coc status": None, "/coc correct 123 劇本沒有": None, "/coc scenario list": None, "開門": None,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(discord_bot._formerly_role_gated(text.split()), expected)
 
 
 class NoRoleAuthorityTests(unittest.TestCase):

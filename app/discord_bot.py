@@ -407,14 +407,39 @@ def _can_manage_server(member: discord.abc.User) -> bool:
     return bool(getattr(getattr(member, "guild_permissions", None), "manage_guild", False))
 
 
-def _note_ignored_keeper_role(member: discord.abc.User, action: str) -> None:
+# What a role named `keeper` used to unlock, by /coc subcommand; None means
+# every use of it (docs/specs/bug/keeper_role_superuser_design_spec.md).
+_FORMERLY_ROLE_GATED: dict[str, frozenset[str] | None] = {
+    "sudo": None, "checkpoint": None, "checkpoints": None, "rollback": None,
+    "digest": None, "digests": None, "index": None, "pdf": None,
+    "scenario": frozenset({"source", "template", "cards", "use", "reparse", "cancel", "clean"}),
+    "correct": frozenset({"approve", "reject", "hold", "supersede"}),
+}
+
+
+def _formerly_role_gated(parts: list[str]) -> str | None:
+    """The action named for the transition log if `parts` is a command the role used to unlock."""
+    if len(parts) < 2 or parts[0].casefold() != "/coc":
+        return None
+    sub = parts[1].casefold()
+    if sub not in _FORMERLY_ROLE_GATED:
+        return None
+    actions = _FORMERLY_ROLE_GATED[sub]
+    if actions is None:
+        return sub
+    second = parts[2].casefold() if len(parts) > 2 else ""
+    return f"{sub} {second}" if second in actions else None
+
+
+def _note_ignored_keeper_role(member: discord.abc.User, state: GroupState, action: str | None) -> None:
     """Transition log: a role named `keeper` no longer grants KP authority.
 
     That role is the bot's own; a human holding it used to be a hidden
     superuser (docs/specs/bug/keeper_role_superuser_design_spec.md). Log the
-    attempts for one release to see who is affected, then delete this.
+    attempts the role would have let through for one release, to see who is
+    affected, then delete this.
     """
-    if getattr(member, "bot", False):
+    if action is None or getattr(member, "bot", False) or permissions.is_kp(state, str(getattr(member, "id", ""))):
         return
     if any(getattr(role, "name", "").casefold() == "keeper" for role in getattr(member, "roles", ())):
         observability.event(
@@ -1160,8 +1185,8 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
-        _note_ignored_keeper_role(interaction.user, "pdf_choice")
         if not permissions.may_manage_scenario_lifecycle(state, str(interaction.user.id)):
+            _note_ignored_keeper_role(interaction.user, state, "pdf_choice")
             text = permissions.kp_only("處理劇本 PDF")
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
@@ -1272,8 +1297,8 @@ class SourceReadyButton(discord.ui.Button):
         if not await _help_interaction_is_valid(interaction, self.conversation_id, self.result.owner_id):
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
-        _note_ignored_keeper_role(interaction.user, "source_ready")
         if not permissions.is_kp(state, str(interaction.user.id)):
+            _note_ignored_keeper_role(interaction.user, state, "source_ready")
             await _send_interaction_message(interaction, permissions.kp_only("使用英文來源操作"), ephemeral=True)
             return
         selected = self.result.scenario_id + (" original" if self.key == "source_use" else "")
@@ -1344,13 +1369,13 @@ async def _dispatch_help_command(
             conversation_id, before_pending, before_luck, sudo_command=sudo_command,
         )
 
-    _note_ignored_keeper_role(interaction.user, "help_execute")
+    _note_ignored_keeper_role(interaction.user, state, _formerly_role_gated(parts))
     try:
         await command_router.handle_text_message(
             conversation_id, user_id, get_display_name, reply, _send_dm,
             _make_send_image(message_channel), _send_dm_image, command,
             lambda owner_id: f"<@{owner_id}>",
-            can_manage_server=_can_manage_server(interaction.user),
+            server=permissions.ServerFacts(can_manage_server=_can_manage_server(interaction.user)),
             post_turn_hook=claim_after_locked_turn,
             expected_revision=expected_revision,
         )
@@ -1955,13 +1980,14 @@ async def _handle_message(message: discord.Message) -> None:
             )
 
         try:
-            if command_parts[0].casefold() == "/coc" and len(command_parts) > 1:
-                _note_ignored_keeper_role(message.author, command_parts[1].casefold())
+            _note_ignored_keeper_role(message.author, state_before, _formerly_role_gated(command_parts))
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
                 format_mention, post_turn_hook=claim_after_locked_turn,
-                can_manage_server=_can_manage_server(message.author),
-                bot_user_ids=frozenset(str(u.id) for u in getattr(message, "mentions", ()) if u.bot),
+                server=permissions.ServerFacts(
+                    can_manage_server=_can_manage_server(message.author),
+                    bot_user_ids=frozenset(str(u.id) for u in getattr(message, "mentions", ()) if u.bot),
+                ),
                 referenced_message_id=(
                     str(message.reference.message_id)
                     if command_parts[0].casefold() == "/coc"

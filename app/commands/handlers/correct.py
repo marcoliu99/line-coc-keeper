@@ -89,7 +89,7 @@ async def handle_correct_command(
     if action == "hold":
         report = _find_report(state, parts[3]) if len(parts) >= 5 else None
         scope = [x.strip() for x in " ".join(parts[4:]).split("|") if x.strip()]
-        if not is_kp or report is None or report.get("status") != "pending" or not scope or len(scope) > 8 or any(len(x) < 2 or len(x) > 80 for x in scope):
+        if not is_kp or report is None or report.get("status") not in OPEN_STATUSES or not scope or len(scope) > 8 or any(len(x) < 2 or len(x) > 80 for x in scope):
             await reply("只有 KP 可標記待核對範圍：/coc correct hold <編號> <地點或實體名稱|別名>（每項 2–80 字，最多 8 項）")
             return
         report["hold_scope"] = scope
@@ -103,8 +103,7 @@ async def handle_correct_command(
             item for item in _active_reports(state)
             if item.get("status") in {*OPEN_STATUSES, "approved"} and (is_kp or item.get("reporter_id") == user_id)
         ]
-        if not state.kp_assistant_user_id:
-            correction_adjudication.schedule(conversation_id, reply)
+        correction_adjudication.schedule(conversation_id, state, reply)
         if not visible:
             await reply("目前沒有可查看的待核對敘事異議。")
             return
@@ -128,8 +127,7 @@ async def handle_correct_command(
                 await reply("只有提報者或 KP 可以撤回這筆異議。")
                 return
             report["status"] = "withdrawn"
-            report["reviewed_by"] = user_id
-            report["reviewed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            narrative_corrections.mark_reviewed(report, user_id)
             message = f"敘事異議 #{report['id']} 已撤回。"
         else:
             if not is_kp:
@@ -139,7 +137,8 @@ async def handle_correct_command(
             if action == "approve" and (not resolution or len(resolution) > _MAX_RESOLUTION_LENGTH):
                 await reply("請提供 1 到 1000 字的公開更正內容：/coc correct approve <提報編號> <更正內容>")
                 return
-            message = narrative_corrections.record_ruling(state, report, action, user_id, resolution=resolution)
+            verdict: narrative_corrections.Verdict = "approve" if action == "approve" else "reject"
+            message = narrative_corrections.record_ruling(state, report, verdict, user_id, resolution=resolution)
         _prune_adjudicated(state)
         narrative_corrections.save(state)
         await reply(message)
@@ -189,9 +188,13 @@ async def handle_correct_command(
         return
     # Unverified reports don't count above, so a KP-less group never fills up;
     # this cap stops one player cycling fabricated reports through the Keeper.
-    if sum(item.get("status") == "unverified" and item.get("reporter_id") == user_id
-           for item in _active_reports(state)) >= _MAX_UNVERIFIED_PER_REPORTER:
-        await reply("你有 3 筆守秘人未能證實的異議；請先撤回其中一筆，或等 KP 裁定後再提報。")
+    # Their pending reports count too, since each may still become unverified.
+    unverified = sum(item.get("status") == "unverified" and item.get("reporter_id") == user_id
+                     for item in _active_reports(state))
+    mine_pending = sum(item.get("reporter_id") == user_id for item in pending)
+    if unverified and unverified + mine_pending >= _MAX_UNVERIFIED_PER_REPORTER:
+        await reply(f"你有 {unverified} 筆守秘人未能證實的異議，加上待核對的已達 3 筆；"
+                    "請先撤回其中一筆，或等 KP 裁定後再提報。")
         return
 
     # The next report is the first write in this timeline; discard inactive
@@ -211,5 +214,4 @@ async def handle_correct_command(
     state.narrative_corrections.append(report)
     narrative_corrections.save(state)
     await reply(f"已收到敘事糾正提報 #{report['id']}，待核對。提報不會改寫劇情或觸發遊戲行動。")
-    if not state.kp_assistant_user_id:
-        correction_adjudication.schedule(conversation_id, reply)
+    correction_adjudication.schedule(conversation_id, state, reply)
