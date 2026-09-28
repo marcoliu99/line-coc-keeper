@@ -215,7 +215,7 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(state.pending_luck_decisions, {})
         self.assertEqual(state.deterministic_check_results, {})
 
-    def test_pdf_choice_requires_kp_or_keeper(self):
+    def test_pdf_choice_requires_kp(self):
         state = GroupState("discord-group-pdf-auth", kp_assistant_user_id="kp")
         state.pending_pdf_upload = {"scenario_id": "upload"}
         replies = []
@@ -224,7 +224,7 @@ class StatePersistenceTests(unittest.TestCase):
             replies.append(text)
 
         with patch.object(system_handler, "load_state", return_value=state), patch.object(
-            system_handler, "_is_kp_or_keeper", return_value=False
+            system_handler.permissions, "may_manage_scenario_lifecycle", return_value=False
         ), patch.object(
             system_handler, "_resolve_pdf_upload_choice_locked"
         ) as resolve:
@@ -233,19 +233,18 @@ class StatePersistenceTests(unittest.TestCase):
                 ["/coc", "pdf", "new"],
             ))
 
-        self.assertIn("KP Assistant", replies[0])
+        self.assertIn("KP 助手", replies[0])
         resolve.assert_not_called()
 
     def test_scenario_lifecycle_authorization_can_be_enabled_by_config(self):
-        from app import legacy_commands
+        from app.commands import permissions
 
         state = GroupState("discord-group-lifecycle-toggle", kp_assistant_user_id="kp")
-        with patch.object(legacy_commands.config, "SCENARIO_LIFECYCLE_KP_ONLY", True):
-            self.assertFalse(legacy_commands._is_kp_or_keeper(state, "player"))
-            self.assertTrue(legacy_commands._is_kp_or_keeper(state, "kp"))
-            self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player", True))
-        with patch.object(legacy_commands.config, "SCENARIO_LIFECYCLE_KP_ONLY", False):
-            self.assertTrue(legacy_commands._is_kp_or_keeper(state, "player"))
+        with patch.object(permissions.config, "SCENARIO_LIFECYCLE_KP_ONLY", True):
+            self.assertFalse(permissions.may_manage_scenario_lifecycle(state, "player"))
+            self.assertTrue(permissions.may_manage_scenario_lifecycle(state, "kp"))
+        with patch.object(permissions.config, "SCENARIO_LIFECYCLE_KP_ONLY", False):
+            self.assertTrue(permissions.may_manage_scenario_lifecycle(state, "player"))
 
     def test_autoroll_defaults_off_and_any_player_can_toggle(self):
         state = GroupState("autoroll-policy", kp_assistant_user_id="kp")
@@ -254,13 +253,13 @@ class StatePersistenceTests(unittest.TestCase):
         async def reply(text):
             replies.append(text)
 
-        async def run(parts, user_id, is_keeper=False):
+        async def run(parts, user_id):
             replies.clear()
             with patch.object(system_handler, "load_state", return_value=state), patch.object(
                 system_handler, "save_state"
             ) as save:
                 await system_handler.handle_system_command(
-                    state.group_id, user_id, reply, None, None, None, parts, is_keeper=is_keeper
+                    state.group_id, user_id, reply, None, None, None, parts
                 )
             return list(replies), save
 
@@ -274,7 +273,7 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertTrue(state.autoroll_checks)
         kp_save.assert_called_once_with(state)
 
-        keeper_replies, keeper_save = asyncio.run(run(["/coc", "autoroll", "off"], "keeper", True))
+        keeper_replies, keeper_save = asyncio.run(run(["/coc", "autoroll", "off"], "keeper"))
         self.assertIn("已關閉自動擲骰", keeper_replies[0])
         self.assertFalse(state.autoroll_checks)
         keeper_save.assert_called_once_with(state)

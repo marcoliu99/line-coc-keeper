@@ -238,19 +238,19 @@ def test_export_command_and_help_route_show_prompt_privately(library, monkeypatc
         from app.commands.handlers import system
         from app.models import GroupState
         path, _ = library()
-        monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g'))
+        monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g', kp_assistant_user_id='kp'))
         monkeypatch.setattr(templates, 'export_template', lambda _: path)
         command = help_actions.build_command(help_actions.BY_KEY['template_export'], 'sample')
         for parts in (command.split(), ['/coc', 'scenario', 'template', 'export', 'sample']):
             reply, dm = AsyncMock(), AsyncMock()
-            await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), parts, is_keeper=True)
+            await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), parts)
             assert authoring.PROMPT in dm.call_args.args[1]
             assert path.name in dm.call_args.args[1]
             assert str(path) not in reply.call_args.args[0]
         reply, dm = AsyncMock(), AsyncMock()
         await system.handle_system_command('g', 'player', reply, dm, AsyncMock(), AsyncMock(), command.split())
         dm.assert_not_called()
-        assert '只有 KP' in reply.call_args.args[0]
+        assert '只有目前的 KP 助手' in reply.call_args.args[0]
     asyncio.run(exercise())
 
 def test_export_failure_never_claims_success(library, monkeypatch):
@@ -259,13 +259,13 @@ def test_export_failure_never_claims_success(library, monkeypatch):
 
         from app.commands.handlers import system
         from app.models import GroupState
-        monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g'))
+        monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g', kp_assistant_user_id='kp'))
         def fail(_):
             raise ValueError('source invalid')
         monkeypatch.setattr(templates, 'export_template', fail)
         reply, dm = AsyncMock(), AsyncMock()
         await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(),
-                                           ['/coc', 'scenario', 'template', 'export', 'sample'], is_keeper=True)
+                                           ['/coc', 'scenario', 'template', 'export', 'sample'])
         dm.assert_not_called()
         assert '無法處理' in reply.call_args.args[0]
     asyncio.run(exercise())
@@ -689,11 +689,11 @@ def test_partial_import_command_sends_private_progress(library, monkeypatch):
     path, payload = library('A' * 16000)
     fill(payload)
     write(path, payload)
-    monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g'))
+    monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g', kp_assistant_user_id='kp'))
     command = help_actions.build_command(help_actions.BY_KEY['template_import'], 'sample ' + relative(path))
     async def exercise():
         reply, dm = AsyncMock(), AsyncMock()
-        await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), command.split(), is_keeper=True)
+        await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), command.split())
         messages = '\n'.join(call.args[1] for call in dm.call_args_list)
         assert '翻譯進度：2/4' in messages and '尚未完成：b2' in messages
         assert 'sample_02.md' in messages

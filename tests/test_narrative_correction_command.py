@@ -14,7 +14,7 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.state = GroupState(group_id="correction-test")
         load_patch = patch.object(router.correct_handler, "load_state", return_value=self.state)
-        save_patch = patch.object(router.correct_handler, "save_state", new_callable=Mock)
+        save_patch = patch("app.repositories.group_state.save_state", new_callable=Mock)
         load_patch.start()
         self.save_state = save_patch.start()
         self.addCleanup(load_patch.stop)
@@ -25,6 +25,11 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
         })
         receipt_patch.start()
         self.addCleanup(receipt_patch.stop)
+        # These groups have no KP; the Keeper's own ruling is covered in
+        # tests/test_keeper_adjudicates_corrections.py.
+        schedule_patch = patch.object(router.correct_handler.correction_adjudication, "schedule")
+        schedule_patch.start()
+        self.addCleanup(schedule_patch.stop)
 
     def test_correct_is_a_known_coc_command(self):
         self.assertTrue(router.is_known_coc_command("correct"))

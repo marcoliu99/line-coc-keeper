@@ -277,7 +277,7 @@
 - `/coc scenario cards delete 劇本ID 資產ID`
 
 注意：
-- 只有目前的 KP Assistant 或 Discord Keeper 可以執行。
+- 只有目前的 KP 助手可以執行。
 
 ### 清理劇本庫
 
@@ -462,7 +462,7 @@
 - `/coc checkpoint clean ID`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 查看回溯節點 **[KP-only]**
 
@@ -472,7 +472,7 @@
 - `/coc checkpoints`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 查看場景摘要 **[KP-only]**
 
@@ -484,7 +484,7 @@
 - `/coc digest clean 摘要ID`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 列出場景摘要 **[KP-only]**
 
@@ -494,15 +494,20 @@
 - `/coc digests`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
-### 登記 KP Assistant
+### 登記 KP 助手
 
-登記或解除本局的 KP Assistant 身分。
+登記、解除、交接或接手本局的 KP 助手身分。
 
 用法：
 - `/coc kp`
 - `/coc kp quit`
+- `/coc kp transfer @成員`
+- `/coc kp takeover [@成員]`
+
+注意：
+- transfer：現任 KP 助手交接給別人。takeover：擁有 Discord「管理伺服器」權限的成員接手或指派 KP 助手；KP 助手與調查員角色互斥。
 
 ### 回溯遊戲狀態 **[KP-only]**
 
@@ -512,7 +517,7 @@
 - `/coc rollback 節點ID或唯一名稱`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 代玩家操作 **[KP-only]**
 
@@ -524,14 +529,14 @@
 - `/coc sudo <@玩家> retire [角色名]`
 
 注意：
-- KP-only：需要目前 KP Assistant 或 Discord Keeper role；不能代替玩家擲 LUCK、建立或認領角色。
+- KP-only：需要目前的 KP 助手；不能代替玩家擲 LUCK、建立或認領角色。
 - actor 必須先脫離自己的玩家角色／建角流程。
 
 ## 其他
 
 ### 提報敘事錯誤
 
-針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。
+針對 Keeper 先前敘事提出異議，不會觸發遊戲行動。有 KP 助手時由 KP 裁定；沒有時由守秘人依系統證據裁定。
 
 用法：
 - `回覆 Keeper 訊息：/coc correct <疑點>`
@@ -540,7 +545,7 @@
 - `/coc correct withdraw <提報編號>`
 
 注意：
-- KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。另可 hold <編號> <實體|別名> 暫停指定範圍，supersede <舊編號> <核准替代編號> 整併有效更正。目標須有本頻道目前時間線的訊息紀錄。
+- 沒有 KP 助手時，守秘人只依系統紀錄（原敘事、角色卡、公開線索與事實、劇本段落）裁定；無法證實的異議標為 unverified，保留給之後的 KP，或由提報者撤回。每人最多 3 筆 unverified。KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。另可 hold <編號> <實體|別名> 暫停指定範圍，supersede <舊編號> <核准替代編號> 整併有效更正。目標須有本頻道目前時間線的訊息紀錄。
 
 ### 單純擲骰
 

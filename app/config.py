@@ -164,7 +164,7 @@ SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", "5"))
 # Scenario lifecycle authorization. Keep this off during the initial lobby so
 # a player who is also helping as KP can upload/reparse/cancel a scenario while
 # roles are still being arranged. Set SCENARIO_LIFECYCLE_KP_ONLY=true later to
-# require the current KP Assistant or Discord Keeper role for those commands.
+# require the current KP Assistant for those commands (no Discord role grants it).
 SCENARIO_LIFECYCLE_KP_ONLY = os.environ.get("SCENARIO_LIFECYCLE_KP_ONLY", "false").strip().lower() in (
     "1", "true", "yes",
 )

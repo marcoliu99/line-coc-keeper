@@ -26,6 +26,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import yaml
@@ -82,6 +83,8 @@ SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
 # conversation and page metadata are retained for state-aware image sends.
 SendImage = Callable[[bytes, str, int], Awaitable[None]]
 SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, png_bytes, conversation_id, page_number)
+# "new": the upload starts a fresh scenario; "fix": it corrects the current one.
+PdfChoice = Literal["new", "fix"]
 
 
 __all__ = [
@@ -103,14 +106,6 @@ __all__ = [
     "resolve_pdf_upload_choice",
 ]
 
-
-def _is_kp_or_keeper(state: GroupState, user_id: str, is_keeper: bool = False) -> bool:
-    """Return whether a user may perform group-level scenario administration."""
-    return (
-        not config.SCENARIO_LIFECYCLE_KP_ONLY
-        or is_keeper
-        or state.kp_assistant_user_id == user_id
-    )
 
 async def handle_unsupported_message(conversation_id: str, reply: Reply, label: str) -> None:
     """Called by an adapter when it receives a message type it can't hand text
@@ -550,7 +545,7 @@ async def handle_pdf_upload(
     return True
 
 
-def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
+def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -> str:
     """Resolve a pending upload while the caller holds the conversation lock."""
     state = load_state(conversation_id)
     pending = state.pending_pdf_upload
@@ -615,20 +610,22 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
 @mutation_admission.guard_async_entry
 async def resolve_pdf_upload_choice(
     conversation_id: str,
-    choice: str,
+    choice: PdfChoice,
     push: Reply,
     user_id: str = "",
-    is_keeper: bool = False,
 ) -> None:
     """Called by Discord's PdfUploadChoiceButton once the GM picks between the
     two options offered by handle_pdf_upload. `choice` must be "new" or "fix";
     the text command remains available as a manual fallback. The actor is
     checked again while holding the conversation lock so a button cannot
     mutate the scenario from an unauthorized account."""
+    # Imported here: app.commands imports this module at package import time.
+    from app.commands import permissions
+
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
-        if not _is_kp_or_keeper(state, user_id, is_keeper):
-            await push("只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。")
+        if not permissions.may_manage_scenario_lifecycle(state, user_id):
+            await push(permissions.kp_only("處理劇本 PDF"))
             return
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
         state = load_state(conversation_id)
