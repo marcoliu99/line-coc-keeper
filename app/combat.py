@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app import dice, observability, spoiler_policy
-from app.check_identity import new_check_id
+from app.check_identity import PendingCheckBlocker, new_check_id, pending_check_blocker
 from app.models import (
     ArmorRule,
     AttackRule,
@@ -327,6 +327,86 @@ def _pc_for_combatant(state: GroupState, combatant: Combatant):
     return state.get_character_by_name(combatant.name)
 
 
+def _major_wound_pc(
+    state: GroupState, combatant: Combatant, final_damage: int, hp_after: int
+) -> Character | None:
+    """The investigator this hit gives a major wound, if any.
+
+    A major wound is a single hit of at least half max HP that leaves the
+    investigator above 0 HP; dropping to 0 is already unconscious/dying.
+    """
+    pc = _pc_for_combatant(state, combatant)
+    if not pc or hp_after <= 0 or final_damage < pc.hp_max / 2:
+        return None
+    return pc
+
+
+def major_wound_blocked(
+    state: GroupState, pc: Character, blocker: PendingCheckBlocker, *, entry_point: str
+) -> dict[str, Any]:
+    """Reject a major-wound hit whose CON check the player can't take yet.
+
+    A player holds one pending check at a time and none during a Luck
+    decision, so the owed CON check has nowhere to go. The hit is refused
+    before any state changes and the Keeper re-applies it once the existing
+    check resolves (docs/specs/bug/major_wound_con_check_gate_design_spec.md).
+    """
+    existing = state.pending_checks.get(pc.owner_id) or state.pending_luck_decisions.get(pc.owner_id) or {}
+    observability.event(
+        "combat.major_wound.blocked",
+        blocked_by=blocker,
+        entry_point=entry_point,
+        check_id=existing.get("check_id") or existing.get("decision_id"),
+        owner_id_hash=observability.safe_identifier(pc.owner_id),
+    )
+    if blocker == "pending_check":
+        reason, next_step = "已有待處理檢定", "請先完成現有檢定，再重新套用傷害。"
+    else:
+        reason, next_step = "仍在等待 Luck 決定", "請先處理 Luck 選項，再重新套用傷害。"
+    return {
+        "ok": False,
+        "blocked_by": blocker,
+        "error": f"{pc.name} {reason}；為避免遺失重傷必須的 CON 檢定，本次傷害未套用。{next_step}",
+    }
+
+
+def _planned_damage(
+    state: GroupState,
+    combatant: Combatant,
+    raw_damage: int,
+    damage_type: str,
+    tags: list[str],
+    bypass_armor: bool,
+) -> tuple[int, str, int]:
+    """Armor, armor label and final damage for a hit, without applying it."""
+    card = _card_for(state, combatant)
+    armor, armor_label = (0, "") if bypass_armor else _armor_reduction(card, damage_type, tags)
+    return armor, armor_label, max(0, int(raw_damage) - armor)
+
+
+def _major_wound_block_for(
+    state: GroupState,
+    target_name: str,
+    raw_damage: int,
+    *,
+    damage_type: str = "physical",
+    tags: list[str] | None = None,
+    bypass_armor: bool = False,
+) -> tuple[Character, PendingCheckBlocker] | None:
+    """The investigator and reason a hit must be refused, before it is applied."""
+    if state.autoroll_checks:
+        return None
+    combatant = _find_combatant(state, target_name)
+    if not combatant:
+        return None
+    _, _, final = _planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
+    pc = _major_wound_pc(state, combatant, final, max(0, combatant.hp - final))
+    if pc is None:
+        return None
+    blocker = pending_check_blocker(state, pc.owner_id)
+    return (pc, blocker) if blocker else None
+
+
 def _resolve_major_wound_check(
     state: GroupState, combatant: Combatant, final_damage: int, hp_after: int
 ) -> dict[str, Any] | None:
@@ -337,15 +417,16 @@ def _resolve_major_wound_check(
     group-level exception. The HP mutation and pending registration remain in
     the same state mutation so a concurrent turn cannot lose either one.
     """
-    pc = _pc_for_combatant(state, combatant)
-    if not pc or hp_after <= 0:
-        return None
-    if final_damage < pc.hp_max / 2:
+    pc = _major_wound_pc(state, combatant, final_damage, hp_after)
+    if pc is None:
         return None
 
     if not state.autoroll_checks:
-        if pc.owner_id in state.pending_checks:
-            return None
+        # Callers refuse a blocked hit before mutating (_major_wound_block_for);
+        # reaching here blocked is a bug, so say so rather than drop the check.
+        blocker = pending_check_blocker(state, pc.owner_id)
+        if blocker:
+            return {"pending": False, "blocked_by": blocker, "skill": "CON", "skill_value": pc.con}
         if not state.timeline_id:
             state.timeline_id = f"timeline-{uuid.uuid4().hex[:8]}"
         origin_context = observability.current_context()
@@ -407,13 +488,18 @@ def apply_combat_damage(
     tags: list[str] | None = None,
     source_id: str = "",
     bypass_armor: bool = False,
+    entry_point: str = "apply_combat_damage",
 ) -> dict[str, Any]:
     combatant = _find_combatant(state, target_name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
+    blocked = _major_wound_block_for(
+        state, target_name, raw_damage, damage_type=damage_type, tags=tags, bypass_armor=bypass_armor
+    )
+    if blocked:
+        return major_wound_blocked(state, *blocked, entry_point=entry_point)
     card = _card_for(state, combatant)
-    armor, armor_label = (0, "") if bypass_armor else _armor_reduction(card, damage_type, tags or [])
-    final = max(0, int(raw_damage) - armor)
+    armor, armor_label, final = _planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
     before = combatant.hp
     after = max(0, before - final)
     combatant.hp = after
@@ -471,6 +557,7 @@ def apply_final_combat_damage(
         tags=tags,
         source_id=source_id,
         bypass_armor=True,
+        entry_point="apply_final_combat_damage",
     )
 
 
@@ -480,7 +567,7 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
         return {"ok": False, "error": f"戰鬥中找不到「{name}」"}
 
     if delta < 0:
-        return apply_combat_damage(state, name, -delta)
+        return apply_combat_damage(state, name, -delta, entry_point="damage_combatant")
 
     before = combatant.hp
     combatant.hp = max(0, min(combatant.hp_max, combatant.hp + delta))
@@ -765,21 +852,39 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                     if effect.target_id == "__all__"
                     else [effect.target_id]
                 )
-                applied = True
-                for target in targets:
-                    result = apply_combat_damage(
-                        state,
-                        target,
-                        raw,
-                        damage_type=effect.damage_type,
-                        tags=effect.tags,
-                        source_id=effect.source_id,
-                    )
-                    result["effect_id"] = effect.id
-                    results.append(result)
-                    if not result.get("ok"):
-                        applied = False
-                        timing_failed = True
+                # Check every target before damaging any: refusing the second
+                # of two targets after damaging the first would leave the
+                # effect unprocessed, and the retry would hit the first twice.
+                blocked = [
+                    (target, block)
+                    for target in targets
+                    if (block := _major_wound_block_for(
+                        state, target, raw, damage_type=effect.damage_type, tags=effect.tags
+                    ))
+                ]
+                if blocked:
+                    for target, block in blocked:
+                        result = major_wound_blocked(state, *block, entry_point="process_timing")
+                        result.update(effect_id=effect.id, target_id=target)
+                        results.append(result)
+                    timing_failed = True
+                else:
+                    applied = True
+                    for target in targets:
+                        result = apply_combat_damage(
+                            state,
+                            target,
+                            raw,
+                            damage_type=effect.damage_type,
+                            tags=effect.tags,
+                            source_id=effect.source_id,
+                            entry_point="process_timing",
+                        )
+                        result["effect_id"] = effect.id
+                        results.append(result)
+                        if not result.get("ok"):
+                            applied = False
+                            timing_failed = True
         elif applies:
             applied = True
         if applied:
@@ -1145,6 +1250,7 @@ def resolve_enemy_action(
                 damage_type=outcome.get("damage_type", "physical"),
                 tags=outcome.get("tags") or [],
                 source_id=attack.id,
+                entry_point="resolve_enemy_action",
             )
             if not effect_result.get("ok"):
                 return effect_result

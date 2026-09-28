@@ -2,7 +2,7 @@
 
 [繁體中文](major_wound_con_check_gate_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review). Base: `main_v2` at `a68df95`.
+Status: **implemented**. Base: `main_v2` at `a68df95`.
 
 ## Problem and evidence
 
@@ -73,4 +73,5 @@ Every case runs with autoroll **off** unless stated otherwise. It uses a real `G
 ## Limits
 
 - The fix depends on the Keeper re-applying the damage after the check resolves. If it doesn't, the damage is lost, but visibly, through an error the model and logs can see instead of a silent `None`. If the `combat.major_wound.blocked` events show that happening, the deferred-check queue above becomes the next spec.
-- Out of scope: any change to how many pending checks a player can hold. The `/coc combat` handler needs no change here: it adds no damage, and the router serialises it with Keeper turns under the same conversation lock.
+- The `/coc combat damage` operator command goes through `damage_combatant`, so it is refused the same way and replies with the same message; it needs no change of its own.
+- Out of scope: any change to how many pending checks a player can hold.

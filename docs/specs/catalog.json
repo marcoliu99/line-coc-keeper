@@ -1141,11 +1141,12 @@
       "title": "Major-wound CON checks are never dropped silently",
       "zh": "重傷 CON 檢定不再被無聲丟棄",
       "category": "bug",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/check_identity.py",
         "app/combat.py",
         "app/keeper.py",
+        "tests/test_major_wound_con_gate.py",
         "tests/test_combat_cards.py"
       ],
       "path": "docs/specs/bug/major_wound_con_check_gate_design_spec.md",

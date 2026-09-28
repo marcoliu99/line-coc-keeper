@@ -2,7 +2,7 @@
 
 [English](major_wound_con_check_gate_design_spec.md)
 
-狀態：**backlog**（等待規格審查）。基準：`main_v2` 的 `a68df95`。
+狀態：**已實作**。基準：`main_v2` 的 `a68df95`。
 
 ## 問題與證據
 
@@ -73,4 +73,5 @@
 ## 限制
 
 - 這個修正依賴 Keeper 在檢定解決後重新套用傷害。如果它沒有，傷害仍會遺失，但是是可見的遺失：模型和日誌都看得到錯誤，而不是無聲的 `None`。如果 `combat.major_wound.blocked` 事件顯示真的發生，上面的延後檢定佇列就是下一份規格。
-- 不在範圍內：改變每位玩家能持有的待處理檢定數量。`/coc combat` handler 這裡不需要改：它不造成傷害，而且 router 讓它和 Keeper 回合在同一把對話鎖下排隊執行。
+- `/coc combat damage` 管理指令走的是 `damage_combatant`，所以會以同樣方式被拒絕，並回覆同樣的訊息，不需要另外修改。
+- 不在範圍內：改變每位玩家能持有的待處理檢定數量。
