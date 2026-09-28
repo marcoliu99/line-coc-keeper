@@ -20,7 +20,7 @@ import logging
 from typing import Any
 
 from app import observability
-from app.providers.registry import analysis_provider
+from app.providers.registry import conversation_provider
 
 _REPORT_TOOL = {
     "name": "report_scenario_index",
@@ -91,14 +91,14 @@ _REPORT_TOOL = {
 
 
 def extract_scenario_index(scenario_text: str) -> dict[str, list[dict[str, Any]]]:
-    """Dispatches through ANALYSIS_PROVIDER (see app/providers/*.py's analyze_text),
+    """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text),
     same provider-agnostic pattern as app/pregen_extractor.py's
     extract_pregens — never hardcoded to a specific SDK regardless of which
     one is actually configured. Returns {"npcs": [...], "locations": [...]},
     both empty lists on any failure (no provider configured, empty scenario
     text, or the call itself failing) rather than raising — callers should
     treat that the same as "nothing extracted yet", not an error."""
-    provider = analysis_provider()
+    provider = conversation_provider()
     if provider is None or not scenario_text.strip():
         return {"npcs": [], "locations": []}
 

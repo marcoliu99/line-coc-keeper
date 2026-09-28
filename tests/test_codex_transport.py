@@ -45,7 +45,6 @@ class ExecTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(error=error), self.assertRaisesRegex(CodexError, error):
                 await self.run_fake(events)
 
-
 class AppServerTests(unittest.IsolatedAsyncioTestCase):
     def transport(self):
         transport = AppServerTransport()
