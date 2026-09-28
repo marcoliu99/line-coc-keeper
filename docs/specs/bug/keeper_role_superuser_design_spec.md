@@ -61,6 +61,16 @@ KP authority comes from **one** place: being the group's registered KP Assistant
 - `/coc help` notes, `docs/references/player_command_reference*.md`, and the `.env.example`, `config.py` and `models.py` comments drop "Discord Keeper". Historical specs and the changelog stay as written.
 - `CONTEXT.md`: remove the **Host** entry, which described a person who doesn't exist, and record that the server's `keeper` role is the bot's own and grants nothing.
 
+## Replacement: handing over and taking over the KP Assistant
+
+Today `/coc kp` registers the first caller when the seat is empty, only the KP can `/coc kp quit`, and there is no handover. If the KP Assistant disappears, the group is stuck: nobody can register, roll back, sudo or approve corrections. The `keeper` role was, in effect, the escape hatch for that. It goes, so this PR adds visible, deliberate ones:
+
+- **`/coc kp transfer @member`**: only the current KP Assistant. The new KP must meet the `/coc kp` rules: not a bot, no investigator, no creation session. `kp_ooc_log` is cleared, as on registration.
+- **`/coc kp takeover`**: for a member with Discord's **Manage Server** permission in this server (`guild_permissions.manage_guild`; Administrator implies it). It registers the caller, replacing any current KP Assistant, under the same exclusivity rules. Decided with Marco: Manage Server rather than the server owner only, so a takeover still works when the owner is away.
+- Both post a **public** message in the channel naming the old and new KP Assistant, and log `kp.transfer` / `kp.takeover` with hashed ids.
+- The permission is read from Discord when the command is sent. `discord_bot.py` passes it to the router as one boolean, `can_manage_server`, so the core stays Discord-agnostic. DMs have no server, so there it is false. **It is used for `takeover` and nothing else.** Every other action still needs `permissions.is_kp`.
+- They ship **in the same PR** as the removal, so there's no window without an escape hatch.
+
 ## Safety: this removes a superuser path
 
 1. **Observable transition.** For one release, when a **non-bot** member with a role named `keeper` attempts an action that the role used to allow, log `authz.keeper_role_ignored` (action, hashed user id; no role list, no message text), then deny as for anyone else. The detection helper lives only in the transport and is deleted in a follow-up once the logs are quiet.
@@ -83,9 +93,15 @@ Plus:
 - sudo: a non-KP member can't act as another player, and a KP-driven sudo turn can still move the subject's investigator (`movement.py`).
 - Movement: an actor who is neither the subject nor the KP is rejected with `movement_actor_not_authorized`.
 - The transition log fires for a role holder and never for the bot or for members without the role.
+- Handover and takeover:
+  - `transfer` by anyone but the KP is refused, and to a bot, a member with an investigator, or a member in a creation session is refused;
+  - `takeover` without Manage Server is refused, including in a DM, and with it replaces the KP and posts the public notice;
+  - `can_manage_server` unlocks no other action;
+  - **manual acceptance on a real server:** one account with Manage Server and one without each try `takeover`.
 - An AST check that no `app/` module references `is_keeper`, `actor_is_keeper` or `_is_keeper_member`, and no Discord role name appears in an authorization decision.
 - Existing tests that authorised a caller with `is_keeper=True` (`test_scenario_authoring.py`, `test_scenario_source_authoring.py`, `test_state_persistence.py`) switch to registering that caller as KP Assistant. Their assertions about the actions stay the same; `test_state_persistence.py:246` (`_is_kp_or_keeper(state, "player", True)` is true) inverts, because that grant is exactly what this spec removes.
 
 ## Limits
 
-- A server owner who wants a human "super KP" across every group has no replacement here. If that need appears, it should be an explicit, opt-in grant by **user or role ID** in configuration, off by default, and never a role name. That's a separate spec.
+- Takeover covers a missing KP Assistant in one group at a time; there is still no standing "super KP" across every group. If that need appears, it should be an explicit, opt-in grant by **user or role ID** in configuration, off by default, and never a role name. That's a separate spec.
+- The Keeper holds the Keeper's adjudication authority in CoC terms (for example, ruling on a player's request to roll back), but it has no tool to exercise it today: no rollback, checkpoint, correction-approval or sudo tool. Giving it one is a separate feature spec, which must decide what it may do on its own and what still needs the KP Assistant.
