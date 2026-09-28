@@ -331,6 +331,35 @@ def enforce_resolved_check_consistency(text: str, result: dict) -> str:
     )
 
 
+
+# A blocked turn used to end with one sentence whatever had gone wrong, so an
+# unrecognised verb, a page that is not on the map and missing scenario
+# evidence all read the same to the player and none of them said what to
+# change. These only change the wording — never the disposition, never a
+# mechanical result. An unmapped code keeps the original sentence.
+MOVEMENT_BLOCKED_ADVICE = {
+    "no_player_movement_authorization":
+        "沒有看懂你要移動到哪裡；請把移動單獨寫成一句（例如「前往商店，然後購買油燈」）。",
+    "unknown_map":
+        "目的地不在這份劇本現有的樓層圖上；請先說明你從哪個已知地點出發。",
+    "map_entry_required":
+        "你們還沒有進入這張樓層圖；請先描述從入口進入，再往裡面走。",
+    "movement_evidence_missing":
+        "這次移動還沒有劇本原文可以佐證；請先描述你在現場看到什麼，或換一個劇本提過的地點。",
+    "destination_not_supported_by_evidence":
+        "劇本裡找不到這個地點；請改用劇本提過的地點名稱。",
+    "known_map_location_requires_path":
+        "這個地點在樓層圖上，要沿著房間之間的路徑過去；請說明你經過哪些地方。",
+    "disconnected_movement_path":
+        "從目前位置沒辦法直接到那裡；請先說明中間會經過哪些地方。",
+    "passage_blocked":
+        "這條路目前不通。",
+    "movement_prerequisites_unresolved":
+        "還有尚未完成的檢定；請先完成它，再繼續移動。",
+    "movement_waits_for_final_luck":
+        "你還有一個幸運選擇沒有決定；請先決定，再繼續移動。",
+}
+
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str:
     """Enforce check, Luck, and resolved-result state after model narration."""
     status = result.check_status
@@ -354,6 +383,9 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
             if status.get("scenario_evidence_blocked"):
                 return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
+            movement_advice = MOVEMENT_BLOCKED_ADVICE.get(str(status.get("movement_blocked", "")))
+            if movement_advice:
+                return f"{warning}{movement_advice}"
             return f"{warning}請先確認目前狀態或更正原本的行動。"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")

@@ -8,13 +8,68 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from uuid import uuid4
 
-from app import intent_parser, scenario_retrieval, scene_map
+from app import intent_parser, observability, scenario_retrieval, scene_map
 from app.models import GroupState
+
+# Four characters: 「直奔商店」 is the shortest real case seen.
+_MIN_PREFIX_SPAN = 4
+
+
+def _authorized_span(span: str, request_text: str) -> bool:
+    """Is this quoted span an in-character movement the player actually wrote?
+
+    A whole clause is authorized, as it always was. So is the *opening* of one,
+    provided the opening reads as a movement by itself. 「直奔商店購買油燈跟煤油罐」
+    has no comma, so it is one clause, and quoting only 「直奔商店」 — the
+    reasonable thing for the Executor to do — was refused every time. Requiring
+    the whole clause meant quoting the purchase as part of the movement.
+
+    Deliberately additive: nothing that was authorized before stops being so.
+    A prefix must carry its own movement verb or direction, so a bare noun or a
+    truncation such as 「直」 is still refused, and a fragment from the middle
+    stays out — where one exists, a comma already split it into its own clause.
+    """
+    clauses = intent_parser.movement_clauses(request_text)
+    if span in clauses:
+        return True
+    if len(span) < _MIN_PREFIX_SPAN or not any(c.startswith(span) for c in clauses):
+        return False
+    return (intent_parser.has_movement_verb(span)
+            or intent_parser.parse_movement_intent(span) is not None)
+
+
+
+def _reject(code: str, state: GroupState, args: dict, span: str = '') -> dict:
+    """Refuse an arrival, and record what decided it.
+
+    The log used to carry the code alone, which is not enough to act on: an
+    `unknown_map` could not be told apart from a page the model invented,
+    because neither the page it sent nor the pages that exist were written
+    down anywhere. A `no_player_movement_authorization` was worse still — the
+    span it rejected was never recorded at all.
+
+    `source_span` and `destination` are player and scenario wording the log
+    already carries (the router's command_name, the reducer's facts), so this
+    adds no exposure that was not there.
+    """
+    path = args.get('path')
+    observability.event(
+        'movement.rejected',
+        level=logging.WARNING,
+        error_type=code,
+        page=str(args.get('page', ''))[:40],
+        destination=str(args.get('destination', ''))[:80],
+        path_length=len(path) if isinstance(path, list) else None,
+        source_span=str(span or args.get('source_span', ''))[:120],
+        scene_map_pages=sorted(state.scene_maps)[:20],
+    )
+    return {'ok': False, 'error': code}
 
 
 @dataclass(frozen=True)
@@ -46,12 +101,64 @@ def source_version(state: GroupState) -> str:
     return hashlib.sha256(json.dumps(material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+# Creatures and stand-ins a scenario names nowhere, so no index can list them.
+# Only ever consulted for the text *before* a movement verb.
+_THIRD_PARTY_SUBJECT_RE = re.compile(
+    r'怪物|生物|野獸|影子|黑影|人影|身影|敵人|對方|守衛|警衛|老鼠|那隻|那個東西|那東西|一群'
+)
+# The player referring to themselves outranks anything else in the prefix, so
+# 「我和怪物一起衝進地下室」 stays the player's movement.
+_FIRST_PERSON_RE = re.compile(r'我|咱|自己')
+
+
+def _other_actor_names(state: GroupState, subject: str) -> set[str]:
+    own = state.get_active_character(subject)
+    own_name = own.name if own else ''
+    names: set[str] = set()
+    for character in state.characters.values():
+        names.add(getattr(character, 'name', '') or '')
+    for combatant in state.combat.order:
+        if not getattr(combatant, 'is_pc', False):
+            names.add(getattr(combatant, 'name', '') or '')
+    for npc in state.scenario_npc_index:
+        names.add(str(npc.get('name') or ''))
+        names.update(str(alias) for alias in (npc.get('aliases') or []))
+    # Two characters minimum: a one-character "name" matches far too much.
+    return {name for name in names if len(name) >= 2 and name != own_name}
+
+
+def _third_party_clause(clause: str, state: GroupState, subject: str) -> bool:
+    """Does this clause describe someone other than the acting player moving?
+
+    `movement_clauses` drops a clause that *opens* with 他/她/牠/有人, but not
+    one with a named subject. 「怪物衝進地下室，我開槍」 kept 「怪物衝進地下室」,
+    and propose() would build a movement proposal for the player out of it. The
+    Executor then resolves only the gunshot, and executor.py:232 downgrades an
+    otherwise resolved turn to `arrival_not_committed` — because a move the
+    player never asked for never arrived.
+
+    A spurious proposal breaks the turn; a missing one does not, since the
+    Executor can still quote the span and commit_movement will adjudicate it.
+    So this rejects only on positive evidence: a prefix naming a known other
+    actor, or reading as a third party. A verb-initial clause (「直奔商店」) and
+    anything the player refers to themselves in are left alone.
+    """
+    start = intent_parser.movement_verb_start(clause)
+    prefix = clause[:start] if start else ''
+    if not prefix or _FIRST_PERSON_RE.search(prefix):
+        return False
+    if _THIRD_PARTY_SUBJECT_RE.search(prefix):
+        return True
+    return any(name in prefix for name in _other_actor_names(state, subject))
+
+
 def propose(state: GroupState, actor: str, subject: str, text: str) -> MovementProposal | None:
     clauses = intent_parser.movement_clauses(text)
     movement_text = next((c for c in clauses
                           if (intent_parser.has_movement_verb(c)
                               or re.search(r'\b(?:go|enter|walk|move|leave)\b', c, re.IGNORECASE))
-                          and not re.match(r'^(?:我(?:們)?)?(?:走去|去)買', c)), '')
+                          and not re.match(r'^(?:我(?:們)?)?(?:走去|去)買', c)
+                          and not _third_party_clause(c, state, subject)), '')
     if not movement_text:
         return None
     char = state.get_active_character(subject)
@@ -175,9 +282,10 @@ class MovementSession:
             # Executor; preserve an exact IC clause and reject known non-actions.
             char = state.get_active_character(self.subject_id)
             if (not isinstance(span, str) or not span or span not in self.request_text
-                    or span not in intent_parser.movement_clauses(self.request_text)
+                    or not _authorized_span(span, self.request_text)
                     or char is None):
-                return {'ok': False, 'error': 'no_player_movement_authorization'}
+                return _reject('no_player_movement_authorization', state, args,
+                               span if isinstance(span, str) else '')
             p = MovementProposal(uuid4().hex, state.timeline_id, self.actor_id, self.subject_id,
                 char.character_id, position(state, self.subject_id), source_version(state), span,
                 actor_is_keeper=self.actor_is_keeper, origin_facing=state.party_facing.get(self.subject_id, "N"))
@@ -187,12 +295,12 @@ class MovementSession:
             mutation_admission.assert_admitted(latest.group_id, timeline_id=p.timeline_id)
             from app.services.narrative_corrections import blocking_reply
             if blocking_reply(latest, [p.original_span, args]):
-                return keeper._StateMutation({'ok': False, 'error': 'narrative_correction_hold'}, should_save=False)
+                return keeper._StateMutation(_reject('narrative_correction_hold', latest, args, p.original_span), should_save=False)
             error = self.guard(latest, 'commit_movement', args)
             if error:
-                return keeper._StateMutation({'ok': False, 'error': error}, should_save=False)
+                return keeper._StateMutation(_reject(error, latest, args, p.original_span), should_save=False)
             if p.actor_id != p.subject_id and p.actor_id != latest.kp_assistant_user_id and not p.actor_is_keeper:
-                return keeper._StateMutation({'ok': False, 'error': 'movement_actor_not_authorized'}, should_save=False)
+                return keeper._StateMutation(_reject('movement_actor_not_authorized', latest, args, p.original_span), should_save=False)
             existing = next((e for e in latest.arrival_events if e.get('proposal_id') == p.proposal_id
                              and e.get('timeline_id') == p.timeline_id), None)
             if existing:
@@ -242,7 +350,7 @@ class MovementSession:
         p = self.proposal
         assert p is not None
         def fail(code: str) -> dict:
-            return {'ok': False, 'error': code}
+            return _reject(code, state, args, p.original_span)
         evidence = args.get('evidence')
         if (not isinstance(evidence, list) or not evidence or len(evidence) > 20
                 or not all(isinstance(e, dict) and isinstance(e.get('quote'), str) and isinstance(e.get('source'), str)
@@ -383,9 +491,9 @@ def resume(state: GroupState, subject: str, context: dict) -> dict | None:
             or context.get('action_context') != p.original_span or context.get('skill') != saved['skill']
             or state.pending_luck_decisions.get(subject)
             or saved.get('decision_id', '') != context.get('decision_id', '')):
-        return {'ok': False, 'error': 'movement_continuation_identity_mismatch'}
+        return _reject('movement_continuation_identity_mismatch', state, saved.get('arguments', {}), p.original_span)
     if not re.search(r'成功|success', str(context.get('outcome', '')), re.IGNORECASE) or re.search(r'失敗|fail', str(context.get('outcome', '')), re.IGNORECASE):
-        return {'ok': False, 'error': 'movement_check_failed'}
+        return _reject('movement_check_failed', state, saved.get('arguments', {}), p.original_span)
     session = MovementSession(p, p.original_span, saved['sources'])
     session._final_check_id = saved['check_id']
     session._final_skill = saved['skill']
