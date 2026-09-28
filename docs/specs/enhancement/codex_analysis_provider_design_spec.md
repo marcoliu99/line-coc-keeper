@@ -96,7 +96,7 @@ The first 12 calls passed the existing tool schema unchanged and were rejected b
 | CLI event usage across 12 calls | 236,756 input tokens (16,128 cached), 10,030 output tokens, 727 reasoning tokens |
 | Classification | 12/12 page types matched the visual reference |
 | Populated investigator sheet, page 18 | 25/26 sampled populated label/value pairs matched; age 36 was missed. Blank Drive Auto was correctly excluded from the expected populated values. This is a bounded field probe, not a full-page accuracy score. |
-| Map graph, pages 7 and 17 | 0/13 numbered room regions in `rooms` on each map; 0 structured exits. An extra page-17 run with an explicit room-graph instruction still returned an empty room list. `scene_map.analyze_page_image` therefore would not create either map. |
+| Map graph, pages 7 and 17 | 0/13 actual rooms in `rooms` on each map; 0 structured exits. The basement's separately labeled wall-space area is not counted as a room. An extra page-17 run with an explicit room-graph instruction still returned an empty room list. `scene_map.analyze_page_image` therefore would not create either map. |
 
 One instrumented page-18 call reached the first CLI event at 0.70 s and completed at 29.21 s; most of that sample's latency was after process startup. The 12-page batch itself was sequential, while the importer may run up to 12 image requests concurrently; concurrent latency and rate-limit behavior remain unmeasured. The CLI exposes per-call token usage, but neither `codex login status` nor the JSON events exposed remaining ChatGPT plan quota, so no before/after quota balance can be reported. These token counts must not be presented as exact plan-capacity consumption.
 

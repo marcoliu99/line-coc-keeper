@@ -96,7 +96,7 @@ ANALYSIS_PROVIDER=codex
 | Codex CLI event 回報的 12 次用量 | 輸入 236,756 tokens（其中 cached 16,128），輸出 10,030 tokens，reasoning 727 tokens |
 | 頁面分類 | 12／12 符合目視參考 |
 | 第 18 頁已填角色卡 | 抽查 26 組已填標籤／數值，25 組配對成功；漏出年齡 36。Drive Auto 欄位原本空白，因此不列入預期已填值。這是有限欄位探測，不代表整頁準確率。 |
-| 第 7、17 頁地圖結構 | 每張地圖的 `rooms` 都沒有 13 個編號區域，結構化 exit 也為 0。第 17 頁另外加上明確 room-graph 指令重測，仍回傳空房間清單。因此 `scene_map.analyze_page_image` 不會建立這兩張地圖。 |
+| 第 7、17 頁地圖結構 | 每張地圖的 `rooms` 都沒有擷取到 13 個實際房間，結構化 exit 也為 0。地下室另有標成 wall space 的區域，不計為房間。第 17 頁另外加上明確 room-graph 指令重測，仍回傳空房間清單。因此 `scene_map.analyze_page_image` 不會建立這兩張地圖。 |
 
 另一次量測第 18 頁時，CLI 第一個 event 出現在 0.70 秒，完整呼叫於 29.21 秒完成；該樣本的大部分耗時在子程序啟動之後。這 12 頁測試採循序執行；匯入器可能同時執行最多 12 個圖片請求，因此併發延遲與限流行為仍未測量。CLI 提供每次呼叫的 token 用量，但 `codex login status` 與 JSON events 均沒有提供 ChatGPT 方案剩餘額度，因此無法報告測試前後額度餘額。不可把這些 token 數當成方案額度的精確消耗。
 
