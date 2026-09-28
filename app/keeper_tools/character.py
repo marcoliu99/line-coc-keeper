@@ -135,4 +135,3 @@ def get_character_sheet(call: ToolCall) -> dict[str, Any]:
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     return {"ok": True, "sheet": char.to_dict()}
-
