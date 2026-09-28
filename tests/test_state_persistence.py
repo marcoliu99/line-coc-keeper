@@ -702,9 +702,12 @@ class StatePersistenceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertNotIn("note", result)
-        enemy_count = sum(1 for c in state.combat.order if c.side == "enemy")
-        self.assertEqual(enemy_count, 2)
+        # Still added, but the Keeper is asked whether it is really a new one
+        # (docs/specs/bug/defeated_enemy_readd_design_spec.md).
+        self.assertIn("先前已在這場戰鬥中被打倒", result["note"])
+        self.assertEqual(
+            [c.display_name for c in state.combat.order if c.side == "enemy"], ["柯比特", "柯比特 2"],
+        )
 
     def test_add_npc_to_combat_allows_two_different_named_enemies(self):
         state = GroupState("discord-group-two-enemies")

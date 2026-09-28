@@ -4,7 +4,7 @@
 
 Upload a *Call of Cthulhu, Seventh Edition* (COC7e) scenario PDF to a Discord channel and let an LLM act as the Keeper. Players describe their actions in chat; the Keeper reads the scenario, narrates events, and decides when checks are needed. Python code handles dice rolls, skill checks, sanity, character resources, and combat state.
 
-The bot supports Anthropic Claude, Google Gemini, and OpenAI. See the [setup guide](docs/guides/setup.md) for provider configuration. The detailed guides and many in-game messages are currently in Traditional Chinese.
+The bot supports Anthropic Claude, Google Gemini, OpenAI, and the authenticated Codex CLI. Conversation and document-analysis providers can be selected independently. Codex handles conversation and general text analysis; PDF/image/OCR and pre-generated character-card analysis require an API provider because Codex's measured extraction accuracy was insufficient. See the [setup guide](docs/guides/setup.md) and [Codex OAuth guide](docs/guides/codex_oauth_testing.md).
 
 ## Quick start
 
@@ -64,7 +64,7 @@ Shared services:
   app/services/turn_resolution.py  Deterministic handoff validation
   app/scenario_rag.py            Scenario retrieval
   app/memory_rag.py              Retrieval of older conversation history
-  app/providers/*_provider.py    Anthropic / Gemini / OpenAI adapters
+  app/providers/*_provider.py    Anthropic / Gemini / OpenAI / Codex adapters
 
 Persistence:
   data/coc_bot.db                Session state, character indexes, RAG caches
@@ -98,7 +98,7 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 ### Shared game logic and infrastructure
 
 - **`app/keeper.py`** provides provider-independent system-prompt assembly, tool definitions, and tool execution for dice, checks, combat, character resources, scenario images, and chapter progression.
-- **`app/providers/anthropic_provider.py`** adapts the Anthropic Messages API, including prompt caching. **`gemini_provider.py`** and **`openai_provider.py`** provide the Google GenAI and OpenAI integrations. `LLM_PROVIDER` selects the backend.
+- **`app/providers/anthropic_provider.py`** adapts the Anthropic Messages API, including prompt caching. **`gemini_provider.py`** and **`openai_provider.py`** provide the Google GenAI and OpenAI integrations; **`codex_provider.py`** uses the authenticated Codex CLI for conversation and general text analysis. `ANALYSIS_PROVIDER` selects PDF/image/OCR and pre-generated character-card analysis from API providers; Codex is intentionally excluded because measured extraction accuracy was insufficient.
 - **`app/locks.py`** provides per-conversation locking to prevent overlapping messages from overwriting saved state, with priority handling for KP Assistant messages.
 - **`app/combat.py`** manages initiative, rounds, combatant HP, effects, and enemy mechanics.
 - **`app/creation.py`** implements interactive character creation, including rolled attributes and occupation/personal-interest skill allocation.

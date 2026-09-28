@@ -112,16 +112,12 @@ async def _stage_pdf_parts(conversation_id: str, pdfs: list[Upload], reply: Repl
         staged.append({"key": key, "file_name": upload.filename})
     async with locks.get_conversation_lock(conversation_id):
         state = await asyncio.to_thread(load_state, conversation_id)
-        referenced = {part.get("key") for part in state.staged_pdf_parts}
         state.staged_pdf_parts.extend(staged)
         try:
             save_state(state)
         except mutation_admission.MutationHeld:
-            # The hold began after the check above. Staging is content-
-            # addressed, so only drop files no recorded part still needs.
-            for item in staged:
-                if item["key"] not in referenced:
-                    scenario_library.discard_staged_upload(item["key"])
+            # A content-addressed key may already be referenced by another
+            # conversation or a pending similarity decision. Keep the bytes.
             await reply(mutation_admission.NOTICE)
             return
     await reply(

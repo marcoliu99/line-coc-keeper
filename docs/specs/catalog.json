@@ -1190,6 +1190,23 @@
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
     },
     {
+      "title": "Codex structured text analysis provider",
+      "zh": "Codex 結構化文字分析 Provider",
+      "category": "enhancement",
+      "status": "partial",
+      "evidence": [
+        "app/providers/codex_provider.py",
+        "app/providers/codex_transport.py",
+        "app/providers/registry.py",
+        "app/config.py",
+        "tests/test_codex_provider.py",
+        "tests/test_codex_transport.py",
+        "tests/test_codex_analysis_smoke.py"
+      ],
+      "path": "docs/specs/enhancement/codex_analysis_provider_design_spec.md",
+      "zh_path": "docs/specs/enhancement/codex_analysis_provider_design_spec_zh.md"
+    },
+    {
       "title": "Keeper tools as a registry",
       "zh": "Keeper 工具改為註冊表",
       "category": "refactor",
@@ -1225,6 +1242,22 @@
       "path": "docs/specs/refactor/discord_events_through_router_design_spec.md",
       "zh_path": "docs/specs/refactor/discord_events_through_router_design_spec_zh.md",
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "Re-adding a defeated enemy's name: confirm it, and keep the two apart",
+      "zh": "再次加入已倒下敵人的名字：提醒確認，並把兩者區分開",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "app/keeper.py",
+        "app/commands/handlers/combat.py",
+        "tests/test_defeated_enemy_readd.py",
+        "tests/test_state_persistence.py"
+      ],
+      "path": "docs/specs/bug/defeated_enemy_readd_design_spec.md",
+      "zh_path": "docs/specs/bug/defeated_enemy_readd_design_spec_zh.md",
+      "source_revision": "1a169a3dec2873f3d1af465f1528b06978821ea9"
     },
     {
       "title": "A Discord role named keeper is a hidden superuser",
