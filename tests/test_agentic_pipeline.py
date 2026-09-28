@@ -4,8 +4,10 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app import config
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.models import Character, GroupState
+from app.providers import registry
 
 
 class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
@@ -30,8 +32,8 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
         })
 
         fake_run_conversation = AsyncMock(return_value="ignored")
-        with patch.object(executor, "_PROVIDERS", {"openai": type("P", (), {"run_conversation": fake_run_conversation})()}), \
-                patch.object(executor, "LLM_PROVIDER", "openai"):
+        with patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": type("P", (), {"run_conversation": fake_run_conversation})()}), \
+                patch.object(config, "LLM_PROVIDER", "openai"):
             await executor.run_executor(message)
 
         self.assertFalse(fake_run_conversation.call_args.kwargs.get("enable_wrapup", True))
@@ -54,9 +56,9 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
             "speaker_role": "player",
         })
         fake_run_conversation = AsyncMock(return_value="ignored")
-        with patch.object(executor, "_PROVIDERS", {
+        with patch.dict(registry.CONVERSATION_PROVIDERS, {
             "openai": type("P", (), {"run_conversation": fake_run_conversation})()
-        }), patch.object(executor, "LLM_PROVIDER", "openai"):
+        }), patch.object(config, "LLM_PROVIDER", "openai"):
             await executor.run_executor(message)
 
         tools_for_request = fake_run_conversation.call_args.kwargs["tools_for_request"]
@@ -75,9 +77,9 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
             "speaker_role": "player",
         })
         fake_run_conversation = AsyncMock(return_value="ignored")
-        with patch.object(executor, "_PROVIDERS", {
+        with patch.dict(registry.CONVERSATION_PROVIDERS, {
             "openai": type("P", (), {"run_conversation": fake_run_conversation})()
-        }), patch.object(executor, "LLM_PROVIDER", "openai"):
+        }), patch.object(config, "LLM_PROVIDER", "openai"):
             await executor.run_executor(message)
 
         tools_for_request = fake_run_conversation.call_args.kwargs["tools_for_request"]

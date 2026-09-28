@@ -8,6 +8,9 @@ from unittest.mock import patch
 
 import pymupdf
 
+from app import config
+from app.providers import registry
+
 _MODULE_SPEC = importlib.util.spec_from_file_location(
     "app._pdf_loader_test_impl", Path(__file__).parents[1] / "app" / "pdf_loader.py"
 )
@@ -264,12 +267,11 @@ class PdfQualityRegressionTests(unittest.TestCase):
         self.assertEqual(attempts[0]['status'], 'review_required')
 
     def test_import_pipeline_reuses_ai_transcription_and_marks_failures(self):
-        from app import pdf_ai_repair
         provider = types.SimpleNamespace(analyze_image=lambda *args: {
             'regions': [{'block_id': 0, 'status': 'readable', 'text': 'Alice STR: 60'}]})
         report = {}
         with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
-             patch.dict(pdf_ai_repair._PROVIDERS, {pdf_ai_repair.LLM_PROVIDER: provider}):
+             patch.dict(registry.ANALYSIS_PROVIDERS, {config.ANALYSIS_PROVIDER: provider}):
             text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), quality_report=report, local_ocr_limit=0)
         self.assertIn('Alice STR: 60', text)
         self.assertNotIn('PDF_UNRESOLVED_FIELDS', text)
@@ -291,10 +293,10 @@ class PdfQualityRegressionTests(unittest.TestCase):
     def test_prose_does_not_delete_valid_pregen_attribute(self):
         from unittest.mock import Mock
 
-        from app import pdf_ai_repair, pregen_extractor
+        from app import pregen_extractor
         provider = types.SimpleNamespace(analyze_image=Mock())
         with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
-             patch.dict(pdf_ai_repair._PROVIDERS, {pdf_ai_repair.LLM_PROVIDER: provider}):
+             patch.dict(registry.ANALYSIS_PROVIDERS, {config.ANALYSIS_PROVIDER: provider}):
             text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR 60\nAlice must make a STR roll.']))
         provider.analyze_image.assert_not_called()
         self.assertNotIn('PDF_UNRESOLVED_FIELDS', text)

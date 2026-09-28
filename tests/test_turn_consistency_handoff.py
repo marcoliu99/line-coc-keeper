@@ -6,10 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import combat, db, keeper
+from app import combat, config, db, keeper
 from app.agents import executor, supervisor
 from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
+from app.providers import registry
 from app.repositories import group_state
 from app.services import prompt_config, turn_context, turn_resolution
 
@@ -89,7 +90,7 @@ def test_real_cancellation_reaches_narrator_without_extra_provider_call(state):
         seen.append(result)
         return decision(state, "cancelled", check_id="old", evidence_refs=["tool:1"])
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, "LLM_PROVIDER", "openai"), patch.object(executor, "_PROVIDERS", {"openai": SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert fake.await_count == 1 and fake.call_args.kwargs["enable_wrapup"] is False
     assert result.turn_resolution.disposition == "cancelled"
@@ -103,7 +104,7 @@ def test_real_cancellation_reaches_narrator_without_extra_provider_call(state):
 def test_claimed_cancellation_does_not_clear_real_pending(state):
     state.pending_checks["a"] = pending()
     fake = AsyncMock(return_value=decision(state, "cancelled", check_id="old"))
-    with patch.object(executor, "LLM_PROVIDER", "openai"), patch.object(executor, "_PROVIDERS", {"openai": SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == "incomplete"
     assert "a" in state.pending_checks
@@ -117,7 +118,7 @@ def test_off_turn_attack_is_deferred_end_to_end(state):
     fake = AsyncMock(return_value=decision(state, "deferred", waiting_for=waiting, reason="還沒輪到 Marco"))
     async def context(**kwargs):
         return AgentMessage(kwargs)
-    with patch.object(executor, "LLM_PROVIDER", "openai"), patch.object(executor, "_PROVIDERS", {"openai": SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": SimpleNamespace(run_conversation=fake)}), \
             patch.object(supervisor.context_builder, "build_context", side_effect=context), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=("Marco揮拳，完成攻擊檢定後才能確定。", [], []))):
         reply, _, _ = asyncio.run(supervisor.run_turn(state, "a", "Marco", "我揮拳", None, "player", state.group_id))
@@ -192,7 +193,7 @@ def test_invalid_completion_keeps_real_inventory_mutation(state):
         await args[5]('remove_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
         return 'invalid completion'
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'incomplete' and fake.await_count == 1
     stored = group_state.load_state(state.group_id)
@@ -224,7 +225,7 @@ def test_referenced_check_not_overridden_by_other_players_luck(state):
     async def narrate(msg):
         captured.append(msg.payload['mechanic_result'])
         return '等待 Ken 檢定。', [], []
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
             patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
             patch.object(supervisor.narrator, 'run_narrator', side_effect=narrate):
         asyncio.run(supervisor.run_turn(state, 'a', 'Marco', '等待 Ken', None, 'player', state.group_id))
@@ -244,7 +245,7 @@ def test_real_transfer_completes_with_unchanged_old_check(state, kind, add_first
             await args[5](name, {'investigator': owner, 'item': '一瓶煤油'})
         return decision(state, kind, evidence_refs=['tool:1', 'tool:2'])
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'resolved_without_check'
     stored = group_state.load_state(state.group_id)
@@ -260,7 +261,7 @@ def test_real_crafting_resolved_uses_inventory_evidence(state):
         await args[5]('add_carried_item', {'investigator': 'Marco', 'item': '未點燃燃燒瓶'})
         return decision(state, 'resolved', evidence_refs=['tool:1', 'tool:2'])
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'resolved_without_check'
     assert group_state.load_state(state.group_id).get_active_character('a').carried_items == ['未點燃燃燒瓶']
@@ -273,7 +274,7 @@ def test_real_end_combat_is_completion_without_roll(state):
         await args[5]('end_combat', {})
         return decision(state, 'resolved', evidence_refs=['tool:1'])
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'resolved_without_check'
     assert not group_state.load_state(state.group_id).combat.active
@@ -295,7 +296,7 @@ def test_completion_does_not_hide_remaining_or_unproven_work(state, mode):
         refs = ['tool:1'] if mode in {'missing_ref', 'failed_add'} else ['tool:1', 'tool:2']
         return decision(state, 'resolved_without_check', evidence_refs=refs)
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'incomplete'
     assert fake.await_count == 1  # failed validation never replays mutations
@@ -310,7 +311,7 @@ def test_compensated_ammunition_change_is_not_deferred(state):
         await args[5]('adjust_ammo', {'investigator': 'Marco', 'weapon': 'gun', 'delta': 1})
         return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert state.get_active_character('a').weapons['gun']['ammo'] == 6
     assert result.turn_resolution.disposition == 'incomplete'
@@ -347,7 +348,7 @@ def test_supervisor_hands_off_completed_transfer_and_old_pending_together(state,
         assert mechanic.check_status['pending']['action_context'] == '偵查木板牆'
         return '煤油已交給 Ken。', [], []
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
             patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
             patch.object(supervisor.narrator, 'run_narrator', side_effect=narrate):
         reply, _, _ = asyncio.run(supervisor.run_turn(state, 'a', 'Marco', '我把煤油交給 Ken', None, 'player', state.group_id))
@@ -366,8 +367,8 @@ def test_truncated_executor_preserves_prior_committed_tool_without_replay(state,
                                    response("incomplete", "add_carried_item", "不應新增")])
     monkeypatch.setattr(openai_provider, "OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(openai_provider, "_create_response_async", create)
-    monkeypatch.setattr(executor, "LLM_PROVIDER", "openai")
-    monkeypatch.setattr(executor, "_PROVIDERS", {"openai": openai_provider})
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(registry, "CONVERSATION_PROVIDERS", {"openai": openai_provider})
     result = asyncio.run(executor.run_executor(message(state)))
     stored = group_state.load_state(state.group_id)
     assert stored.get_active_character("a").carried_items == []
@@ -383,8 +384,8 @@ def test_truncated_narrator_uses_safe_fallback(state, monkeypatch, kind):
     create = AsyncMock(return_value=SimpleNamespace(status="incomplete", incomplete_details=None, output=[]))
     monkeypatch.setattr(openai_provider, "OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(openai_provider, "_create_response_async", create)
-    monkeypatch.setattr(narrator, "LLM_PROVIDER", "openai")
-    monkeypatch.setattr(narrator, "_PROVIDERS", {"openai": openai_provider})
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(registry, "CONVERSATION_PROVIDERS", {"openai": openai_provider})
     msg = message(state)
     msg.payload.update(turn_kind=kind, resolved_check_context={"investigator": "Marco", "roll": 42, "outcome": "成功"})
     reply, _, _ = asyncio.run(narrator.run_narrator(msg))
@@ -424,7 +425,7 @@ def test_invalid_transfer_never_bypasses_old_pending(state, add_first, mode):
             state.get_active_character('b').carried_items.append('未引用的變更')
         return decision(state, 'resolved_without_check', evidence_refs=refs)
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'incomplete'
     assert state.pending_checks['a']['check_id'] == 'old-inspection'
@@ -487,8 +488,8 @@ def test_unvalidated_reason_is_not_narrator_authority(kind):
 
 def _executor_with_provider(state, provider):
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
-         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert fake.await_count == 1
     return result
@@ -565,8 +566,8 @@ def test_private_outputs_survive_executor_failure(state, failure):
         assert (await args[5]('show_scenario_image', {'investigator': 'Ken', 'page_number': 2}))['ok']
         raise failure
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
-         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
          patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
         result = asyncio.run(executor.run_executor(msg))
     assert not result.success and result.turn_resolution.disposition == 'incomplete'
@@ -576,7 +577,6 @@ def test_private_outputs_survive_executor_failure(state, failure):
 
 
 def test_supervisor_preserves_failed_executor_private_outputs(state):
-    from app.agents import narrator
     state.scenario_library_id = 'test-scenario'
     state.game_started = True
     group_state.save_state(state)
@@ -588,10 +588,11 @@ def test_supervisor_preserves_failed_executor_private_outputs(state):
         return AgentMessage(kwargs)
     executor_call = AsyncMock(side_effect=provider)
     narration_call = AsyncMock(return_value='A safe public response.')
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
-         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=executor_call)}), \
-         patch.object(narrator, 'LLM_PROVIDER', 'openai'), \
-         patch.object(narrator, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=narration_call)}), \
+    stages = iter([executor_call, narration_call])  # one provider: the executor runs first, then the narrator
+    async def run_conversation(*args, **kwargs):
+        return await next(stages)(*args, **kwargs)
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=run_conversation)}), \
          patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
          patch.object(supervisor.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text), \
          patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
@@ -612,8 +613,8 @@ def test_supervisor_failure_after_check_keeps_next_action(state, failure):
     async def context(**kwargs):
         return AgentMessage(kwargs)
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
-         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
          patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
          patch.object(supervisor.narrator, 'run_narrator', AsyncMock(return_value=('請使用 /coc check。', [], []))), \
          patch.object(supervisor.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text):
@@ -649,8 +650,8 @@ def test_truncated_continuation_keeps_successful_private_output_queues(state, mo
     ])
     monkeypatch.setattr(openai_provider, 'OPENAI_API_KEY', 'test-key')
     monkeypatch.setattr(openai_provider, '_create_response_async', create)
-    monkeypatch.setattr(executor, 'LLM_PROVIDER', 'openai')
-    monkeypatch.setattr(executor, '_PROVIDERS', {'openai': openai_provider})
+    monkeypatch.setattr(config, 'LLM_PROVIDER', 'openai')
+    monkeypatch.setattr(registry, 'CONVERSATION_PROVIDERS', {'openai': openai_provider})
     msg = message(state)
     with patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
         result = asyncio.run(executor.run_executor(msg))
@@ -685,8 +686,8 @@ def test_cash_and_keys_evidence_gate_and_real_inventory_handoff(state, complete)
         '【依據尚未完整】【取用完整性】[{"complete_for_action":false,"root_record_ids":["intro"]}]'))
     fake = AsyncMock(side_effect=provider)
     with patch.object(keeper, '_execute_tool', side_effect=tool), \
-            patch.object(executor, 'LLM_PROVIDER', 'openai'), \
-            patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+            patch.object(config, 'LLM_PROVIDER', 'openai'), \
+            patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(payload))
     stored = group_state.load_state(state.group_id).get_active_character('a')
     assert ('房屋鑰匙' in stored.carried_items) is complete
@@ -744,8 +745,8 @@ def test_followup_search_reuses_delivered_evidence_and_budgets_wire_receipts(sta
     with patch.object(keeper, '_execute_tool', side_effect=tool), \
             patch.object(input_budget, '_encoding', return_value=None), \
             patch.object(scenario_retrieval, 'request_budget', side_effect=budget), \
-            patch.object(executor, 'LLM_PROVIDER', 'openai'), \
-            patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+            patch.object(config, 'LLM_PROVIDER', 'openai'), \
+            patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(payload))
     assert result.turn_resolution.disposition == 'resolved_without_check'
     assert '鑰匙' in group_state.load_state(state.group_id).get_active_character('a').carried_items

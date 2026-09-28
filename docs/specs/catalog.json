@@ -1168,6 +1168,26 @@
       "path": "docs/specs/refactor/combat_start_in_combat_module_design_spec.md",
       "zh_path": "docs/specs/refactor/combat_start_in_combat_module_design_spec_zh.md",
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "One lookup for the active LLM provider",
+      "zh": "目前 LLM 供應商只從一個地方取得",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/registry.py",
+        "app/agents/executor.py",
+        "app/agents/narrator.py",
+        "app/agents/guard.py",
+        "app/agents/assistant.py",
+        "app/keeper.py",
+        "tests/provider_fakes.py",
+        "tests/test_active_provider_lookup.py",
+        "tests/test_codex_capabilities.py"
+      ],
+      "path": "docs/specs/refactor/active_provider_lookup_design_spec.md",
+      "zh_path": "docs/specs/refactor/active_provider_lookup_design_spec_zh.md",
+      "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
     }
   ]
 }

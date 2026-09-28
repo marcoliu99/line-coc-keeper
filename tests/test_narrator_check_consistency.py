@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from app import config
 from app.agents import narrator
 from app.agents.tool_gateway import _record_check_status
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
+from app.providers import registry
 from app.services.prompt_config import (
     build_mechanic_facts_block,
     build_resolved_check_outcome_block,
@@ -190,8 +192,8 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
         }
         state = GroupState(group_id="g")
 
-        with patch.object(narrator, "LLM_PROVIDER", "openai"), \
-                patch.object(narrator, "_PROVIDERS", {"openai": provider}), \
+        with patch.object(config, "LLM_PROVIDER", "openai"), \
+                patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}), \
                 patch.object(keeper, "_build_static_prompt", return_value="static"), \
                 patch.object(keeper, "_build_dynamic_prompt", return_value="dynamic"), \
                 patch.object(keeper, "_tools_for_speaker_role", wraps=keeper._tools_for_speaker_role):
@@ -233,8 +235,8 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
             calls.append((name, payload))
             return {"ok": True, "damage": 3}
 
-        with patch.object(narrator, "LLM_PROVIDER", "openai"), \
-                patch.object(narrator, "_PROVIDERS", {"openai": provider}), \
+        with patch.object(config, "LLM_PROVIDER", "openai"), \
+                patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}), \
                 patch.object(keeper, "_build_static_prompt", return_value="static"), \
                 patch.object(keeper, "_build_dynamic_prompt", return_value="dynamic"), \
                 patch.object(keeper, "_execute_tool", side_effect=execute):
