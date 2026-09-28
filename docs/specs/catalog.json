@@ -1152,6 +1152,22 @@
       "path": "docs/specs/bug/major_wound_con_check_gate_design_spec.md",
       "zh_path": "docs/specs/bug/major_wound_con_check_gate_design_spec_zh.md",
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "Combat start and enemy de-duplication live in combat.py",
+      "zh": "開戰與敵人去重的規則收進 combat.py",
+      "category": "refactor",
+      "status": "backlog",
+      "evidence": [
+        "app/combat.py",
+        "app/keeper.py",
+        "app/commands/handlers/combat.py",
+        "tests/test_combat_cards.py",
+        "tests/test_state_persistence.py"
+      ],
+      "path": "docs/specs/refactor/combat_start_in_combat_module_design_spec.md",
+      "zh_path": "docs/specs/refactor/combat_start_in_combat_module_design_spec_zh.md",
+      "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
     }
   ]
 }
