@@ -189,3 +189,20 @@ logs or certify arbitrary campaign/combat behavior. See
 [testing guide](../../guides/codex_oauth_testing.md).
 
 [50-case evaluation / 50 案例結果](../../evaluations/codex_oauth_50/README.md)
+
+## Tool correctness follow-up
+
+Live traces reproduced a final decision claiming skill_check unavailable while
+the same request supplied it. Distinguish native CLI tools from executable JSON
+host actions with concrete request/receipt examples. Existing pending identities
+were already in prompts; add a structured, fresh Executor decision context and
+waiting-resolution candidate. Scope check-creation schemas to investigators
+without pending checks/Luck, refreshing after each mutation. Preserve explicit
+clear/correction, other investigators, and unrelated inventory work. Gate only
+Codex callers; keep Python's final state/evidence validation unchanged.
+
+Record proposed decisions, validation codes and full tool receipts only in opt-in
+synthetic evaluation traces. Count invalid JSON/tool proposals as accuracy errors
+even if local validation blocks execution. No fixed extra LLM review or automatic
+check creation, no PR/merge. Validate adversarial/stale schema cases and rerun
+focused pending/new-check cases plus unrelated-action regressions.

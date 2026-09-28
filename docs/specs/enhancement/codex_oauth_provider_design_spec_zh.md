@@ -161,3 +161,17 @@ app-server 採本機 stdio，每段 conversation 一個 server，每次決策建
 代表所有長期團或戰鬥情境。操作方式見[測試指南](../../guides/codex_oauth_testing_zh.md)。
 
 [50-case evaluation / 50 案例結果](../../evaluations/codex_oauth_50/README_zh.md)
+
+## 工具正確性修正
+
+已從真實 trace 重現：同一輸入提供 skill_check，模型卻宣稱沒有這個工具。
+用明確 JSON 呼叫／收據範例區分 CLI 原生工具與真正可執行的 host 操作。
+原 prompt 已有 pending 身分資料；補上每次更新的結構化 Executor 決策資料
+與等待裁決候選。建立檢定工具只允許沒有 pending／Luck 的角色；每次工具
+後重算。保留明確取消／更正、其他角色檢定與獨立物品操作，不一概封鎖回合。
+僅接入 Codex 呼叫端，Python 裁決及依據驗證保持原規則。
+
+只在明確啟用的合成測試 trace 記錄模型原始提案、裁決驗證代碼與完整收據。
+格式錯誤或非法工具提案即使被擋，也計為工具正確率失敗。不增加每輪固定
+LLM 審稿、不代替模型自動建立檢定，不開 PR／merge。補 stale schema 等
+回歸測試，重測 pending、新建檢定及不相關操作。

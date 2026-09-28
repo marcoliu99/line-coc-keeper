@@ -22,6 +22,9 @@ def main():
     parser.add_argument('--transport', choices=['exec', 'app-server'], required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repeats', type=int, default=5)
+    parser.add_argument('--kinds', nargs='+', choices=['check_success', 'check_failure', 'pickup', 'ooc', 'pending'],
+                        default=['check_success', 'check_failure', 'pickup', 'ooc', 'pending'])
+    parser.add_argument('--trace', action='store_true', help='Record synthetic model decisions and validation diagnostics')
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit('Refusing to overwrite an evaluation')
@@ -34,12 +37,23 @@ def main():
             SCENARIO_LIBRARY_DIR=tmp+'/scenarios', IMPORT_DIR=tmp+'/imports',
             OPENAI_API_KEY='', ANTHROPIC_API_KEY='', GEMINI_API_KEY='', DISCORD_BOT_TOKEN='')
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from dataclasses import asdict
+
         from codex_pipeline_fixture import run_pipeline
 
         from app.providers import codex_provider
         from app.providers.codex_transport import AppServerTransport, ExecTransport
+        from app.services import turn_resolution
         logging.basicConfig(level=logging.ERROR)
         metrics = {}
+        trace_enabled = args.trace
+        original_validation = turn_resolution.validate_resolution
+        def traced_validation(*values, **options):
+            result = original_validation(*values, **options)
+            if trace_enabled:
+                metrics['validations'].append(asdict(result))
+            return result
+        turn_resolution.validate_resolution = traced_validation
         original_conversation = codex_provider.run_conversation
 
         async def measured_conversation(*args, **kwargs):
@@ -47,7 +61,8 @@ def main():
             async def measured_tool(name, arguments):
                 result = await original_tool(name, arguments)
                 metrics['tools'].append({'name': name, 'arguments': arguments,
-                                        'ok': bool(result.get('ok')), 'pending': bool(result.get('pending'))})
+                                        'ok': bool(result.get('ok')), 'pending': bool(result.get('pending')),
+                                        **({'receipt': result} if trace_enabled else {})})
                 return result
             args = (*args[:5], measured_tool, *args[6:])
             return await original_conversation(*args, **kwargs)
@@ -60,16 +75,24 @@ def main():
             metrics['input_bytes'] += len(prompt.encode()) + len(json.dumps(schema).encode())
             started = time.monotonic()
             try:
-                return await original_request(self, prompt, schema)
+                response = await original_request(self, prompt, schema)
+                if trace_enabled:
+                    payload = json.loads(prompt)
+                    metrics['decisions'].append({'stage': payload['response_stage'], 'response': response,
+                        'dynamic_system': payload['dynamic_system'], 'receipts': payload['current_conversation'],
+                        'tools': [t['name'] for t in payload['tools']]})
+                return response
             finally:
                 metrics['request_seconds'].append(round(time.monotonic() - started, 3))
         transport_class.request = measured_request
 
         async def run():
             for repetition in range(args.repeats):
-                for kind in ('check_success', 'check_failure', 'pickup', 'ooc', 'pending'):
+                for kind in args.kinds:
                     metrics.clear()
                     metrics.update(requests=0, tools=[], input_bytes=0, request_seconds=[])
+                    if trace_enabled:
+                        metrics.update(decisions=[], validations=[])
                     start = time.monotonic()
                     try:
                         result = await run_pipeline(kind)
