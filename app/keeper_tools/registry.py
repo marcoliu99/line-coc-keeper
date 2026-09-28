@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.keeper_tools import checks as check_handlers
+from app.keeper_tools import dice as dice_handlers
 from app.models import GroupState
 from app.services import opposed_checks
 
@@ -66,6 +68,7 @@ _SPECS = (
                     "required": ["expression"],
                 },
             },
+        handler=dice_handlers.roll_dice,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -94,6 +97,7 @@ _SPECS = (
                     "required": ["weapon_damage", "damage_bonus", "impaling"],
                 },
             },
+        handler=dice_handlers.roll_impaling_damage,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -118,6 +122,7 @@ _SPECS = (
                     "required": ["investigator", "weapon_damage"],
                 },
             },
+        handler=dice_handlers.roll_weapon_damage,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -173,6 +178,7 @@ _SPECS = (
                     "required": ["investigator", "skill"],
                 },
             },
+        handler=check_handlers.skill_check,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
@@ -234,6 +240,7 @@ _SPECS = (
                     "required": ["investigator", "options"],
                 },
             },
+        handler=check_handlers.offer_check_choice,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
@@ -258,6 +265,7 @@ _SPECS = (
                     "required": ["skill_value"],
                 },
             },
+        handler=check_handlers.npc_skill_check,
         kp_assistant=True,
         kp_canonical_game=True,
     ),
@@ -325,6 +333,7 @@ _SPECS = (
                     "required": ["investigator", "options", "attacker_skill_value"],
                 },
             },
+        handler=check_handlers.offer_npc_attack_defense_choice,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
@@ -356,6 +365,7 @@ _SPECS = (
                     "required": ["investigator"],
                 },
             },
+        handler=check_handlers.clear_pending_check,
         kp_assistant=True,
         kp_canonical_game=True,
     ),
@@ -382,6 +392,7 @@ _SPECS = (
                     "required": ["investigator", "loss_success", "loss_failure"],
                 },
             },
+        handler=check_handlers.sanity_check,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
