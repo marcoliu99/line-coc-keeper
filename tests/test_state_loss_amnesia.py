@@ -169,14 +169,14 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertEqual(group_state.load_state(state.group_id).pending_checks, {})
 
     def test_stale_check_button_identity_cannot_match_a_replacement(self) -> None:
-        try:
-            from app.check_identity import compact_identity_token
-            from app.discord_bot import (
-                _check_button_matches_pending,
-                _luck_button_matches_pending,
-            )
-        except ImportError:
-            self.skipTest("discord.py is not installed")
+        # These live in app.services.pending_buttons, which needs no discord.py.
+        from app.check_identity import compact_identity_token
+        from app.services.pending_buttons import (
+            check_button_matches_pending as _check_button_matches_pending,
+        )
+        from app.services.pending_buttons import (
+            luck_button_matches_pending as _luck_button_matches_pending,
+        )
 
         pending = {
             "type": "skill", "check_id": "check-new", "skill": "偵查",

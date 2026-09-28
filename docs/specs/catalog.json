@@ -1225,10 +1225,14 @@
       "category": "refactor",
       "status": "partial",
       "evidence": [
-        "app/discord_bot.py",
-        "app/commands/router.py",
+        "app/commands/handlers/buttons.py",
         "app/commands/handlers/uploads.py",
+        "app/commands/router.py",
+        "app/discord_bot.py",
         "app/legacy_commands.py",
+        "app/services/pending_buttons.py",
+        "tests/test_button_routing.py",
+        "tests/test_pending_button_latency.py",
         "tests/test_upload_routing.py"
       ],
       "path": "docs/specs/refactor/discord_events_through_router_design_spec.md",
