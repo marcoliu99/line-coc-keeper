@@ -1,40 +1,39 @@
-# Codex Structured Document and Image Analysis Provider
+# Codex Structured Text Analysis Provider
 
 ## Goal
 
-Allow `ANALYSIS_PROVIDER=codex` to handle the existing structured text and image analysis requests through the authenticated Codex CLI. Keep current analysis consumers and their synchronous provider contract unchanged.
+Use the authenticated Codex CLI for structured text tasks selected through `LLM_PROVIDER`. Keep PDF/image/OCR and pre-generated character-card extraction on API providers because measured Codex extraction quality is insufficient for those tasks. `ANALYSIS_PROVIDER=codex` is not supported.
 
-## Current behavior and verified facts
+## Baseline behavior and verified facts
 
 As of 2026-09-28, on `main_v2` after PR #120:
 
-- The analysis consumers select providers through `registry.analysis_provider()`; provider registration and config validation are the remaining selection gates.
-- `codex_provider` implements conversation decisions but has no `analyze_text` or `analyze_image` adapter.
+- Before this branch, all analysis consumers selected providers through `registry.analysis_provider()`.
+- Codex conversation requests can return structured text decisions; image extraction must meet the document workflows' accuracy needs before Codex can be considered for `ANALYSIS_PROVIDER`.
 - The seven current analysis call sites run outside the event loop: their callers use `asyncio.to_thread` or a worker process. A synchronous adapter can therefore run the existing async transport with `asyncio.run` without changing those consumers.
-- Codex CLI 0.157.1 supports `codex exec -i/--image` and `--output-schema`. `ExecTransport.request` already writes a schema file and passes it to `codex exec`; it currently has no image argument.
-- `ANALYSIS_PROVIDERS` excludes Codex, and `app/config.py` rejects `ANALYSIS_PROVIDER=codex`.
+- Codex CLI 0.157.1 supports `codex exec -i/--image` and `--output-schema`, which allowed a direct capability probe before deciding not to ship image support.
+- `ANALYSIS_PROVIDERS` and configuration intentionally exclude Codex after the real-PDF map quality test.
 - PDF repair and page-image/map analysis may call image analysis once per page. Since `ExecTransport` starts a CLI process per request, this can multiply startup latency and consume ChatGPT plan capacity. Measure this before implementation.
 
 Provider routing is selected by work type, not merely by whether the source originated in a PDF. Preserve these assignments:
 
 | Work | Provider setting | Reason |
 |---|---|---|
-| PDF page image classification, scene-map/room-graph extraction, and image-based PDF repair/OCR | `ANALYSIS_PROVIDER` | Direct page-image and document-extraction work; may run once per page. |
+| PDF page image classification, scene-map/room-graph extraction, and image-based PDF repair/OCR | `ANALYSIS_PROVIDER` (API provider only) | Direct page-image and document-extraction work; may run once per page. Codex map extraction failed the measured quality check. |
 | Pre-generated investigator/character-card extraction, including structured fields and skills | `ANALYSIS_PROVIDER` | User decision: character-card extraction stays with document analysis even when its input is already extracted text. |
 | Scenario index (NPCs/locations), opening narration extraction, scenario-text comparison, Keeper history summarization, and other non-PDF structured text analysis | `LLM_PROVIDER` | These are general text tasks and should share the conversation provider selection. |
 
-The current implementation has a single global `analysis_provider()` lookup at all seven analysis call sites. To meet this routing policy, the implementation must move the non-PDF text consumers to the active LLM provider while retaining the analysis provider for the PDF/page-image and pregen consumers. Keep the existing `None`-on-handled-failure behavior for structured analysis.
+The implementation moves general non-PDF text consumers to the active LLM provider while retaining `ANALYSIS_PROVIDER` for PDF/page-image and pregen consumers. Keep the existing `None`-on-handled-failure behavior for structured analysis.
 
-## Scope
+## Implemented scope and policy
 
-- Add synchronous `codex_provider.analyze_text(text, tool, prompt_text)` and `codex_provider.analyze_image(png_bytes, tool, prompt_text)` functions.
+- Add synchronous `codex_provider.analyze_text(text, tool, prompt_text)` for general structured text tasks routed through `LLM_PROVIDER`.
 - Derive a Codex strict-output-schema projection from the supplied `tool["input_schema"]`, then validate returned JSON against the original schema with `jsonschema` before returning a dictionary. The projection must set `additionalProperties: false` on every object and satisfy Codex strict-mode required-property rules without widening the original schema.
 - Return `None` for handled CLI, timeout, parse, or schema failures. Do not route a failed request to another provider.
-- Add an optional PNG image argument to `ExecTransport.request`. Write bytes to a temporary `.png` file, pass its path with `-i`/`--image`, and remove it on success, failure, timeout, and cancellation.
-- Use the one-shot `ExecTransport` path for these analysis calls; this is the verified `codex exec` path for image input and `--output-schema`. Do not change conversation transport selection or the app-server protocol in this work.
-- Add Codex to `ANALYSIS_PROVIDERS`; permit `codex` in `ANALYSIS_PROVIDER` validation.
+- Keep `ExecTransport.request` text-only. Do not expose Codex image extraction through the analysis registry.
+- Do not add Codex to `ANALYSIS_PROVIDERS`; reject `ANALYSIS_PROVIDER=codex` with an actionable configuration error.
 - Route scenario indexing, opening narration extraction, scenario-text comparison, and Keeper history summarization through `LLM_PROVIDER`; retain pregen extraction, PDF repair, and scene-map/page-image analysis under `ANALYSIS_PROVIDER`.
-- Update `.env.example` and provider/configuration documentation for `ANALYSIS_PROVIDER=codex`, Codex CLI installation, and `codex login`.
+- Update `.env.example` and provider/configuration documentation to keep PDF/image/OCR and pre-generated card extraction on an API provider when `LLM_PROVIDER=codex`.
 - Keep Codex analysis independent of `OPENAI_API_KEY`. Document that separately enabled RAG embeddings still use the existing OpenAI Embeddings path and may independently need that key.
 
 ## Non-goals
@@ -53,17 +52,17 @@ The public analysis interface remains synchronous:
 ```text
 existing worker-thread/process caller
   -> registry.analysis_provider()
-  -> codex_provider.analyze_text / analyze_image
+  -> codex_provider.analyze_text
   -> asyncio.run(one-shot ExecTransport.request(...))
   -> Codex strict-schema projection
-  -> codex exec --output-schema [ -i temporary-page.png ]
+  -> codex exec --output-schema
   -> strict JSON and original caller-schema validation
   -> dict, or None on a handled failure
 ```
 
-`analyze_text` sends the supplied text and task prompt as request content. `analyze_image` sends the task prompt as request content and the PNG through the CLI image-input flag. The analysis schema is an output contract only: Codex must not execute application or game tools.
+`analyze_text` sends the supplied text and task prompt as request content. The analysis schema is an output contract only: Codex must not execute application or game tools. Image analysis is intentionally excluded after the real-PDF test found no structured rooms on either sampled map page.
 
-The adapter must use existing Codex timeout and input/output limits. Because synchronous calls create short-lived event loops, the implementation must verify that request admission/concurrency limits still apply across those calls; a loop-local `asyncio.Semaphore` alone does not coordinate separate `asyncio.run` loops. Do not log prompts, extracted document text, image bytes, image paths, credentials, or full environment values. Diagnostics may include provider, task kind, elapsed time, and safe error category.
+The text adapter must use existing Codex timeout and input/output limits. Because synchronous calls create short-lived event loops, request admission/concurrency limits must apply across those calls; a loop-local `asyncio.Semaphore` alone does not coordinate separate `asyncio.run` loops. Do not log prompts, extracted document text, credentials, or full environment values. Diagnostics may include provider, task kind, elapsed time, and safe error category.
 
 ## Configuration behavior
 
@@ -71,10 +70,10 @@ The settings remain independently selectable. For example:
 
 ```dotenv
 LLM_PROVIDER=codex
-ANALYSIS_PROVIDER=codex
+ANALYSIS_PROVIDER=anthropic
 ```
 
-Conversation and non-PDF text analysis use `LLM_PROVIDER`; document/image extraction and pregen-card extraction use `ANALYSIS_PROVIDER`. Either can independently select the authenticated Codex CLI. The child process receives only its existing environment allowlist; Codex calls must not require or read `OPENAI_API_KEY`. RAG embeddings remain a separate configured capability and are outside this guarantee.
+Conversation and general non-PDF text analysis use `LLM_PROVIDER`. PDF/image/OCR and pregen-card extraction use `ANALYSIS_PROVIDER`, which accepts only `openai`, `anthropic`, or `gemini`. Codex CLI text calls use the local ChatGPT login and do not require or read `OPENAI_API_KEY`. RAG embeddings remain a separate configured capability and are outside this guarantee.
 
 ### Non-PDF text and structured-extraction probe (2026-09-28)
 
@@ -90,9 +89,9 @@ Five direct Codex CLI probes used `gpt-6-luna`, medium reasoning effort, and rea
 
 The pregen schema contains dynamic-key dictionaries for skills and extra fields. Codex strict output requires a closed object schema, so the probe represented those dictionaries as key/value arrays and normalized them before validating against the existing schema. This adapter detail and age preservation require explicit implementation tests. The 10-card run's 160.5-second latency is a material risk for bulk imports. The other probes used selected pages or a short exchange; the scenario-index location and full-document coverage remain unverified.
 
-## Pre-implementation real-PDF benchmark gate
+## Real-PDF capability benchmark
 
-Before changing runtime code, use one real scenario PDF containing selectable-text pages, at least one scanned/text-image page, and at least one map or diagram page. Use direct authenticated `codex exec -i --output-schema` calls as a transport proof of concept; do not build the adapter first.
+Before making a provider decision, use one real scenario PDF containing selectable-text pages, at least one scanned/text-image page, and at least one map or diagram page. Use direct authenticated `codex exec -i --output-schema` calls as a capability probe.
 
 Record:
 
@@ -103,7 +102,7 @@ Record:
 - Map/diagram quality against a reference: labels/rooms and visible connections correctly identified, missed items, false connections, and invented items.
 - Codex CLI version, selected model/reasoning setting, page image dimensions, schema, and whether calls were sequential or concurrent.
 
-The report must state whether one process launch per page is acceptable for a full scenario import. If latency or plan quota is unacceptable, revise the design before implementation (for example, investigate safe batching or a bounded persistent transport). Marco reviews the measurements and any resulting design change before implementation begins.
+The report must state whether one process launch per page is acceptable for a full scenario import. If latency or plan quota is unacceptable, do not route production page analysis through Codex without revising the design.
 
 ### Initial real-PDF benchmark (2026-09-28)
 
@@ -123,33 +122,32 @@ The first 12 calls passed the existing tool schema unchanged and were rejected b
 
 One instrumented page-18 call reached the first CLI event at 0.70 s and completed at 29.21 s; most of that sample's latency was after process startup. The 12-page batch itself was sequential, while the importer may run up to 12 image requests concurrently; concurrent latency and rate-limit behavior remain unmeasured. The CLI exposes per-call token usage, but neither `codex login status` nor the JSON events exposed remaining ChatGPT plan quota, so no before/after quota balance can be reported. These token counts must not be presented as exact plan-capacity consumption.
 
-**Pre-implementation gate result:** the real PDF confirmed basic page classification and identified a schema compatibility requirement, but the required map graph was absent on both map pages even with a targeted prompt. Marco later directed implementation to proceed. This is an explicit acceptance of the measured latency and token-use risk for trying the provider; it does not establish map extraction as reliable. Keep this limitation visible in configuration guidance and evaluate map output before relying on it in a live scenario.
+**Decision:** the real PDF confirmed basic page classification and identified a schema compatibility requirement, but the required map graph was absent on both map pages even with a targeted prompt. Codex therefore remains disabled for `ANALYSIS_PROVIDER`; successful text probes do not establish reliable PDF, map, OCR, or character-card extraction.
 
 ## Failure and privacy behavior
 
 - Parse exactly one JSON object; reject malformed JSON, duplicate keys, non-object output, and values that fail the supplied input schema.
-- Treat missing CLI/authentication, unsupported image input, nonzero exit, timeout, output/input limit, cancellation, and schema mismatch as `None` using the same handled-failure convention as existing analysis providers.
+- Treat missing CLI/authentication, nonzero exit, timeout, output/input limit, cancellation, and schema mismatch as `None` using the same handled-failure convention as existing analysis providers.
 - Never invoke CoC tools or perform application mutations from this adapter.
-- Always clean temporary image/schema files. Preserve existing subprocess cancellation and process-group cleanup behavior.
-- Do not automatically retry a failed image page by sending it to another provider; the current consumer decides how to handle `None`.
+- Always clean temporary schema files. Preserve existing subprocess cancellation and process-group cleanup behavior.
 
 ## Testing plan
 
-- Offline unit tests with a mocked transport for text and image requests, including the schema argument, image flag/path, and temporary-file cleanup on success and failure.
+- Offline unit tests with a mocked transport for text requests, including schema projection, validation, and concurrency behavior.
 - Validate correct output and `None` for malformed JSON, duplicate keys, wrong JSON types, invalid schema, timeout, nonzero exit, cancellation, and output/input limits.
-- Test provider registration and configuration acceptance for `ANALYSIS_PROVIDER=codex` without requiring `OPENAI_API_KEY`.
-- Add an opt-in authenticated smoke test, disabled by default and explicitly enabled by a test environment variable. It performs one text analysis and one image analysis with the installed CLI and verifies the returned schema. It must not run in normal CI.
-- Run the real-PDF benchmark above before implementation, then repeat a bounded sample after implementation to verify adapter parity without silently increasing calls per page.
+- Test that `ANALYSIS_PROVIDER=codex` is rejected and that Codex text analysis does not require `OPENAI_API_KEY`.
+- Add an opt-in authenticated text smoke test, disabled by default and explicitly enabled by a test environment variable. It performs one structured text request with the installed CLI and verifies the returned schema. It must not run in normal CI.
+- Use source-checked real-PDF results as a gate before enabling Codex for image/document analysis.
 
 ## Implementation record
 
 Implemented on the Codex analysis branch:
 
-- `CodexProvider.analyze_text` and `analyze_image` use `ExecTransport`, project caller schemas to Codex strict output schemas, normalize optional and dynamic-key values, and validate results against the original JSON Schema.
-- `ExecTransport.request` accepts optional PNG bytes, writes them only inside its temporary directory, and passes the file through `codex exec -i`; the existing input limit includes image bytes.
+- `CodexProvider.analyze_text` uses `ExecTransport`, projects caller schemas to Codex strict output schemas, normalizes optional and dynamic-key values, and validates results against the original JSON Schema.
+- `ExecTransport.request` remains text-only. No image adapter or image CLI input is shipped because measured extraction quality was insufficient.
 - Analysis admission is bounded across short-lived event loops in the process. There is no cross-process shared limiter; deployment concurrency across multiple worker processes remains a configuration-level limit.
-- Provider registration/config accept `ANALYSIS_PROVIDER=codex`; scenario indexing, opening extraction, text comparison, and Keeper summaries use `LLM_PROVIDER`. PDF/page-image/OCR-repair and pre-generated character extraction continue to use `ANALYSIS_PROVIDER`.
-- Offline tests cover schema projection/normalization, transport image cleanup, validation failures, and concurrency. The authenticated smoke test is opt-in and makes one text and one image call.
+- Provider registration/config reject `ANALYSIS_PROVIDER=codex`; scenario indexing, opening extraction, text comparison, and Keeper summaries use `LLM_PROVIDER`. PDF/page-image/OCR-repair and pre-generated character extraction continue to use an API provider under `ANALYSIS_PROVIDER`.
+- Offline tests cover schema projection/normalization, validation failures, provider routing, and concurrency. The authenticated smoke test is opt-in and makes one text call.
 - Documentation states that the measured Codex map extraction produced no structured rooms on the tested maps. This implementation does not claim to improve that model capability.
 
-The smoke test does not replace a post-implementation full-PDF benchmark. Run a bounded real sample before enabling Codex map extraction in production and compare against the benchmark above.
+The smoke test does not qualify Codex for image/document extraction. Reconsider that only after a new source-checked benchmark demonstrates reliable map, OCR, and character-card results.

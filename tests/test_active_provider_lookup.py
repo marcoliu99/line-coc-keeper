@@ -27,9 +27,9 @@ class RegistryLookupTests(unittest.TestCase):
             self.assertIsNone(registry.conversation_provider())
             self.assertIsNone(registry.analysis_provider())
 
-    def test_analysis_can_select_codex(self):
+    def test_analysis_rejects_codex_for_document_workflows(self):
         with patch.object(config, "ANALYSIS_PROVIDER", "codex"):
-            self.assertIs(registry.analysis_provider(), codex_provider)
+            self.assertIsNone(registry.analysis_provider())
 
     def test_use_fake_provider_restores_the_setting_and_table(self):
         before = (config.LLM_PROVIDER, dict(registry.CONVERSATION_PROVIDERS))

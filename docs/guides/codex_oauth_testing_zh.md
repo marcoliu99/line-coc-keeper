@@ -1,6 +1,6 @@
 # 本機 Codex OAuth 測試
 
-遊戲對話與結構化文件分析可透過本機 Codex CLI 的 ChatGPT 登入執行；Python
+遊戲對話與一般結構化文字分析可透過本機 Codex CLI 的 ChatGPT 登入執行；Python
 仍負責 CoC 工具、規則與持久化。不會把 OAuth token 當作 OpenAI API key 使用。
 
 ## 環境
@@ -21,7 +21,7 @@ codex login status
 
 ```dotenv
 LLM_PROVIDER=codex
-ANALYSIS_PROVIDER=codex
+ANALYSIS_PROVIDER=anthropic
 CODEX_MODEL=gpt-6-luna
 CODEX_REASONING_EFFORT=medium
 CODEX_TRANSPORT=exec
@@ -33,25 +33,26 @@ MAX_TOOL_ITERATIONS=6
 MAX_TOOLS_PER_TURN=4
 ```
 
-`ANALYSIS_PROVIDER=codex` 會把 PDF 頁面圖片修復／地圖分析與預製角色卡擷取
-交給 Codex。劇本索引、開場擷取、劇本比較與 Keeper 歷史摘要則跟隨
-`LLM_PROVIDER`。Codex CLI 使用本機 ChatGPT 登入，不需要 `OPENAI_API_KEY`；
-可選的 RAG embeddings 仍是獨立的 OpenAI API 功能。Provider 失敗時不會自動切換。
+PDF 頁面圖片修復／地圖分析及預製角色卡擷取的 `ANALYSIS_PROVIDER` 必須使用
+API Provider（`openai`、`anthropic` 或 `gemini`）。Codex 的圖片分析在抽樣地圖頁
+沒有產生結構化房間，因此程式會拒絕把 Codex 用於這項設定。劇本索引、開場擷取、
+劇本比較與 Keeper 歷史摘要則跟隨 `LLM_PROVIDER`，可使用 Codex 文字分析。Codex CLI
+使用本機 ChatGPT 登入，不需要 `OPENAI_API_KEY`；可選 RAG embeddings 仍是獨立的
+OpenAI API 功能。Provider 失敗時不會自動切換。
 
-真實 PDF 測試中，Codex 對抽樣頁面的分類都正確，但兩張地圖都沒有擷取出結構化
-房間。需要可靠地圖擷取時，請選已驗證的分析 Provider；本 adapter 沒有改善這項
-辨識限制。
+真實 PDF 測試中，Codex 對抽樣頁面的分類正確，但兩張地圖都沒有擷取出結構化
+房間。因此 PDF／圖片／OCR 與角色卡擷取不可使用 Codex。
 
 ## 分析煙霧測試（會呼叫已登入的 CLI）
 
-一般 CI 預設略過。使用下列指令，會各送出一次文字與圖片分析：
+一般 CI 預設略過。使用下列指令會送出一次合成文字分析：
 
 ```sh
 RUN_CODEX_ANALYSIS_SMOKE=1 python -m pytest -q tests/test_codex_analysis_smoke.py
 ```
 
-測試會使用本機 ChatGPT 登入並消耗可用方案額度；只傳送合成文字和程式產生的
-8×8 圖片，不發 Discord 訊息，也不讀寫遊戲狀態。
+測試會使用本機 ChatGPT 登入並消耗可用方案額度，只傳送合成文字；不發 Discord
+訊息，也不讀寫遊戲狀態。
 
 ## 不發 Discord 的測試
 

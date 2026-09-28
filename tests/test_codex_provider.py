@@ -246,19 +246,6 @@ class CodexAnalysisTests(unittest.TestCase):
         self.assertEqual(projected['properties']['skills']['type'], 'array')
         self.assertEqual(projected['properties']['extra_fields']['items']['properties']['value']['type'], 'string')
 
-    def test_image_analysis_sends_image_bytes_and_validates_schema(self):
-        tool = {'name': 'describe', 'description': 'Describe image', 'input_schema': {
-            'type': 'object', 'properties': {'label': {'type': 'string'}}, 'required': ['label'],
-        }}
-        self.transport.request.return_value = '{"label":"old house"}'
-        png = b'\x89PNG\r\n\x1a\nimage-data'
-
-        result = cp.analyze_image(png, tool, 'Describe this image')
-
-        self.assertEqual(result, {'label': 'old house'})
-        self.assertEqual(self.transport.request.call_args.kwargs['image_png'], png)
-        self.assertIn('Describe this image', self.transport.request.call_args.args[0])
-
     def test_bad_json_and_original_schema_violation_return_none(self):
         tool = {'name': 'report', 'description': 'Report', 'input_schema': {
             'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count'],

@@ -270,7 +270,7 @@ def _analysis_prompt(text: str, tool: dict, prompt_text: str) -> str:
     return '\n\n'.join(parts)
 
 
-def _run_analysis(text: str, image_png: bytes | None, tool: dict, prompt_text: str) -> dict | None:
+def _run_analysis(text: str, tool: dict, prompt_text: str) -> dict | None:
     started = time.monotonic()
     acquired = False
     gate: threading.BoundedSemaphore | None = None
@@ -294,13 +294,13 @@ def _run_analysis(text: str, image_png: bytes | None, tool: dict, prompt_text: s
             transport = ExecTransport()
             try:
                 return await asyncio.wait_for(
-                    transport.request(prompt, output_schema, image_png=image_png), timeout=remaining
+                    transport.request(prompt, output_schema), timeout=remaining
                 )
             finally:
                 await transport.close()
 
         with observability.span('llm.request', provider='codex', model=CODEX_MODEL,
-                                api_operation='analyze_image' if image_png is not None else 'analyze_text'):
+                                api_operation='analyze_text'):
             raw = asyncio.run(request())
         parsed = json.loads(raw, object_pairs_hook=_unique_object,
                             parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
@@ -308,17 +308,17 @@ def _run_analysis(text: str, image_png: bytes | None, tool: dict, prompt_text: s
         if not isinstance(normalized, dict):
             raise TypeError('analysis result must be an object')
         Draft202012Validator(original_schema).validate(normalized)
-        observability.event('codex.analysis.completed', task_kind='image' if image_png is not None else 'text',
+        observability.event('codex.analysis.completed', task_kind='text',
                             elapsed_ms=int((time.monotonic() - started) * 1000))
         return normalized
     except asyncio.CancelledError:
         observability.event('codex.analysis.failed', level=logging.WARNING, error_type='cancelled',
-                            task_kind='image' if image_png is not None else 'text')
+                            task_kind='text')
         return None
     except Exception as exc:  # noqa: BLE001 - analysis callers treat handled provider failures as absent results.
         observability.event('codex.analysis.failed', level=logging.WARNING,
                             error_type=str(exc)[:80] if isinstance(exc, CodexError) else type(exc).__name__,
-                            task_kind='image' if image_png is not None else 'text')
+                            task_kind='text')
         return None
     finally:
         if acquired and gate is not None:
@@ -326,13 +326,8 @@ def _run_analysis(text: str, image_png: bytes | None, tool: dict, prompt_text: s
 
 
 def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
-    """Run one strict-schema analysis request through the authenticated Codex CLI."""
-    return _run_analysis(text, None, tool, prompt_text)
-
-
-def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
-    """Analyze one PNG through Codex CLI image input; never execute host tools."""
-    return _run_analysis('', png_bytes, tool, prompt_text)
+    """Run a general text analysis request through authenticated Codex CLI."""
+    return _run_analysis(text, tool, prompt_text)
 
 
 async def run_conversation(

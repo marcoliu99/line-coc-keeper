@@ -1,4 +1,4 @@
-"""Shared conversation registry; document analysis remains a separate capability."""
+"""Shared conversation and analysis registries with separate capability routing."""
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -23,8 +23,11 @@ CONVERSATION_PROVIDERS = {
     'openai': openai_provider, 'anthropic': anthropic_provider,
     'gemini': gemini_provider, 'codex': codex_provider,
 }
-# Document and image analysis can select independently from conversation.
-ANALYSIS_PROVIDERS = dict(CONVERSATION_PROVIDERS)
+# Codex remains available for conversation and general text analysis, but its
+# measured image-extraction accuracy is insufficient for PDF/OCR/card workflows.
+ANALYSIS_PROVIDERS = {
+    key: value for key, value in CONVERSATION_PROVIDERS.items() if key != 'codex'
+}
 
 
 def conversation_provider():

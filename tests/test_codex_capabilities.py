@@ -1,5 +1,8 @@
 import asyncio
 import inspect
+import os
+import subprocess
+import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -8,6 +11,17 @@ from app.providers import codex_provider, registry, shutdown_async_clients
 
 
 class CapabilityTests(unittest.TestCase):
+    def test_codex_is_rejected_for_analysis_provider_at_startup(self):
+        env = os.environ.copy()
+        env.update(LLM_PROVIDER='codex', ANALYSIS_PROVIDER='codex')
+        env.pop('OPENAI_API_KEY', None)
+        result = subprocess.run(
+            [sys.executable, '-c', 'import app.config'],
+            check=False, capture_output=True, text=True, env=env,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Codex is not enabled for PDF', result.stderr)
+
     def test_all_conversation_routes_include_codex_and_contract_binds(self):
         # executor, narrator and guard all select through the registry.
         with patch.object(config, 'LLM_PROVIDER', 'codex'):
@@ -26,8 +40,9 @@ class CapabilityTests(unittest.TestCase):
             scenario_intro,
             scene_map,
         )
+        self.assertNotIn('codex', registry.ANALYSIS_PROVIDERS)
         with patch.object(config, 'ANALYSIS_PROVIDER', 'codex'):
-            self.assertIs(registry.analysis_provider(), codex_provider)
+            self.assertIsNone(registry.analysis_provider())
         for module in [pdf_ai_repair, pregen_extractor, scene_map]:
             self.assertIs(module.analysis_provider, registry.analysis_provider)
         for module in [scenario_compare, scenario_index, scenario_intro]:
