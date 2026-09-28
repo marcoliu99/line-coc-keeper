@@ -1,9 +1,11 @@
-"""Step 3 of docs/specs/refactor/discord_events_through_router_design_spec.md.
+"""Steps 3 and 5 of docs/specs/refactor/discord_events_through_router_design_spec.md.
 
 Check and Luck button clicks enter through the router. The end-to-end
 claim/restore races are covered by tests/test_pending_button_latency.py; these
 pin the early exits and the entry event.
 """
+import ast
+import pathlib
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -18,6 +20,31 @@ def _io() -> ButtonIO:
         notify=AsyncMock(), acknowledge=AsyncMock(), reply=AsyncMock(), send_dm=AsyncMock(),
         send_image=AsyncMock(), send_dm_image=AsyncMock(), restore_buttons=AsyncMock(),
     )
+
+
+class LegacyImportBoundaryTests(unittest.TestCase):
+    """Step 5: discord_bot.py imports only transport/domain types from
+    legacy_commands, never behavior; everything it drives — check/Luck
+    buttons (step 3), uploads (step 2), the PDF choice button (step 5) —
+    enters through the router instead."""
+
+    def test_discord_bot_imports_only_types_from_legacy_commands(self):
+        source = (pathlib.Path(__file__).resolve().parents[1] / "app" / "discord_bot.py").read_text(encoding="utf-8")
+        imported = {
+            alias.asname or alias.name
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.ImportFrom) and node.module == "app.legacy_commands"
+            for alias in node.names
+        }
+        self.assertEqual(imported, {"Reply", "SendImage", "PdfChoice"})
+
+
+class PdfChoiceButtonRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_click_goes_through_the_uploads_handler(self):
+        reply = AsyncMock()
+        with patch.object(router.uploads_handler, "handle_pdf_choice", new_callable=AsyncMock) as handle:
+            await router.handle_pdf_choice_button("g", "new", "u1", reply)
+        handle.assert_awaited_once_with("g", "new", "u1", reply)
 
 
 class ButtonEntryTests(unittest.IsolatedAsyncioTestCase):

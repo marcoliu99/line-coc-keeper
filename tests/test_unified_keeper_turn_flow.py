@@ -233,6 +233,70 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.await_args.kwargs["turn_kind"], "opening_fallback")
         self.assertEqual(replies, ["名冊"])
 
+    async def test_extracted_opening_registers_distinct_check_identities(self):
+        state = GroupState(group_id="opening-team", active=True, scenario_text="開場",
+                           characters={
+                               "first": Character(name="一號", owner_id="first"),
+                               "second": Character(name="二號", owner_id="second"),
+                           })
+        replies: list[str] = []
+
+        async def reply(text: str) -> None:
+            replies.append(text)
+
+        with (
+            patch.object(system, "load_state", return_value=state),
+            patch.object(system, "save_state") as save,
+            patch.object(system, "_heal_character", return_value=[]),
+            patch.object(system, "_build_readiness_roster", return_value="名冊"),
+            patch.object(system.scenario_intro, "extract_opening_narration", return_value={
+                "found": True, "text": "開場白", "opening_check": {
+                    "type": "skill", "skill": "偵查", "reason": "環顧四周",
+                },
+            }),
+        ):
+            await system.handle_system_command(
+                "opening-team", "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                ["/coc", "start"],
+            )
+        assert state.game_started
+        assert state.pending_checks["first"]["check_id"] != state.pending_checks["second"]["check_id"]
+        assert all(check["timeline_id"] == state.timeline_id for check in state.pending_checks.values())
+        assert "開場白" in replies
+        save.assert_called_once_with(state)
+
+    async def test_extracted_opening_does_not_overwrite_one_players_luck(self):
+        state = GroupState(group_id="opening-luck", active=True, scenario_text="開場",
+                           characters={
+                               "first": Character(name="一號", owner_id="first"),
+                               "second": Character(name="二號", owner_id="second"),
+                           })
+        state.pending_luck_decisions["second"] = {"decision_id": "old", "options": []}
+        replies: list[str] = []
+
+        async def reply(text: str) -> None:
+            replies.append(text)
+
+        with (
+            patch.object(system, "load_state", return_value=state),
+            patch.object(system, "save_state") as save,
+            patch.object(system, "_heal_character", return_value=[]),
+            patch.object(system, "_build_readiness_roster", return_value="名冊"),
+            patch.object(system.scenario_intro, "extract_opening_narration", return_value={
+                "found": True, "text": "開場白", "opening_check": {"type": "skill", "skill": "自訂古語"},
+            }),
+        ):
+            await system.handle_system_command(
+                "opening-luck", "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                ["/coc", "start"],
+            )
+        assert not state.game_started
+        assert state.pending_checks == {}
+        assert all("自訂古語" not in char.skills for char in state.characters.values())
+        assert state.pending_luck_decisions["second"]["decision_id"] == "old"
+        assert any("Luck" in text for text in replies)
+        save.assert_not_called()
+
     async def test_resolved_check_uses_one_narrative_conversation_and_cannot_reroll(self):
         state = GroupState(group_id="unified-check", game_started=True,
                            timeline_id="timeline-current")

@@ -24,7 +24,7 @@ The state model holds **one pending check per player** (`pending_checks[owner_id
 | `resolve_enemy_action`, attack branch (`app/combat.py:1141`) | none | same |
 | `process_timing`, effect damage (`app/combat.py:770`) | none | same |
 
-On the four combat paths, the HP loss is saved, `major_wound_triggered` comes back `False`, and nothing tells the player or the Keeper model that a major wound happened. **A possible 昏迷／倒地 consequence is lost.** On `adjust_character` the same loss needs a race: another path registers a check between the outer guard and the lock-protected reload. `_reject_if_check_already_pending`'s docstring (`app/keeper.py:1006`) describes exactly that race for skill checks.
+On the four combat paths, the HP loss is saved, `major_wound_triggered` comes back `False`, and nothing tells the player or the Keeper model that a major wound happened. **A possible 昏迷／倒地 consequence is lost.** On `adjust_character` the same loss needs a race: another path registers a check between the outer guard and the lock-protected reload. The registration contract in `app/check_lifecycle.py` addresses the same race for skill checks.
 
 None of the five paths looks at `pending_luck_decisions`, so a CON check can also be registered while the owner is still deciding on a Luck buy-up. That leaves the investigator with two unresolved states at once, which the Luck-gate spec forbids.
 
@@ -43,7 +43,7 @@ None of the five paths looks at `pending_luck_decisions`, so a CON check can als
 
 ### 1. One ownership predicate both layers can import
 
-Add `pending_check_blocker(state, owner_id) -> Literal["pending_check", "pending_luck_decision"] | None` to `app/check_identity.py`. That module imports nothing from `app`, so `combat.py` can use it without the `keeper` ↔ `combat` import cycle. `_reject_if_check_already_pending` builds its existing messages from it, so skill/SAN behaviour is unchanged.
+Add `pending_check_blocker(state, owner_id) -> Literal["pending_check", "pending_luck_decision"] | None` to `app/check_identity.py`. That module imports nothing from `app`, so `combat.py` can use it without the `keeper` ↔ `combat` import cycle. `app/check_lifecycle.py` uses this blocker for all new check registration; callers retain their existing messages.
 
 ### 2. Combat damage checks before it mutates
 

@@ -1,15 +1,26 @@
 """Keeper player and NPC check handlers."""
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
-from app import dice, luck
-from app.check_identity import effective_check_id, new_decision_id
-from app.models import GroupState
+from app import check_lifecycle, dice, luck
+from app.check_identity import new_decision_id
+from app.models import Character, GroupState
 from app.services import opposed_checks
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
+
+
+def _check_registration_error(char: Character, blocker: str | None) -> dict[str, Any]:
+    if blocker == "pending_luck_decision":
+        return {"ok": False, "error": f"{char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。"}
+    return {
+        "ok": False,
+        "error": f"{char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
+                 "才能再要求新的檢定，不要重複呼叫。",
+    }
 
 
 def skill_check(call: ToolCall) -> dict[str, Any]:
@@ -42,7 +53,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
         if opposed_request and (tool_input.get('pushed') or tool_input.get('difficulty', 'regular') != 'regular'):
             raise ValueError('對抗檢定以雙方等級比較，不可強推或用固定難度替代。')
         if not target_state.autoroll_checks:
-            value = keeper.resolve_skill_value(target_char, tool_input["skill"])
+            value = keeper.resolve_skill_value(target_char, tool_input["skill"], register_unknown=False)
             bonus = int(tool_input.get("bonus_dice") or 0)
             penalty = int(tool_input.get("penalty_dice") or 0)
             difficulty = tool_input.get("difficulty") or "regular"
@@ -57,48 +68,35 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
                 "difficulty": difficulty,
                 "pushed": bool(tool_input.get("pushed", False)),
             }
-            new_check.update(services.pending_check_metadata(target_state, target_char.owner_id, tool_input))
             if opposed_request:
                 new_check['opposed'] = opposed_request
-            if target_char.owner_id in target_state.pending_luck_decisions:
+            new_check['action_basis'] = str(tool_input.get('action_basis', ''))[:600]
+            registration = check_lifecycle.register(
+                target_state, target_char.owner_id, new_check,
+                duplicate="identical", source=tool_input,
+            )
+            if registration.status == "blocked":
+                return services.StateMutation(
+                    _check_registration_error(target_char, registration.blocker), should_save=False
+                )
+            if registration.status == "identical":
+                existing = registration.pending or {}
                 return services.StateMutation(
                     {
-                        "ok": False,
-                        "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
-                    },
-                    should_save=False,
+                        "ok": True, "pending": True, "investigator": target_char.name,
+                        "skill": tool_input["skill"], "skill_value": value,
+                        "bonus_dice": bonus, "penalty_dice": penalty,
+                        "difficulty": difficulty,
+                        "note": "已經有相同的待處理檢定（防重複）。",
+                        "opposed_pending": bool(existing.get('opposed')),
+                    }, should_save=False,
                 )
-            existing = target_state.pending_checks.get(target_char.owner_id)
-            if existing:
-                if services.is_identical_pending_check(existing, new_check):
-                    return services.StateMutation(
-                        {
-                            "ok": True,
-                            "pending": True,
-                            "investigator": target_char.name,
-                            "skill": tool_input["skill"],
-                            "skill_value": value,
-                            "bonus_dice": bonus,
-                            "penalty_dice": penalty,
-                            "difficulty": difficulty,
-                            "note": "已經有相同的待處理檢定（防重複）。",
-                            "opposed_pending": bool(existing.get('opposed')),
-                        },
-                        should_save=False,
-                    )
-                return services.StateMutation(
-                    {
-                        "ok": False,
-                        "error": (
-                            f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
-                            "才能再要求新的檢定，不要重複呼叫。"
-                        ),
-                    },
-                    should_save=False,
-                )
+            registered = registration.pending
+            assert registered is not None
+            keeper.resolve_skill_value(target_char, tool_input["skill"])
             if opposed_request:
-                new_check['opposed'] = opposed_checks.roll_opponent(opposed_request)
-            target_state.pending_checks[target_char.owner_id] = new_check
+                registered['opposed'] = opposed_checks.roll_opponent(opposed_request)
+            new_check = registered
             return services.StateMutation(
                 {
                     "ok": True,
@@ -114,27 +112,21 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
                 },
                 should_save=True,
             )
-        cached = services.cached_check_result(target_state, cache_key)
+        prior_result = services.cached_check_result(target_state, cache_key)
+        cached = check_lifecycle.reusable_cached_result(
+            target_state, target_char.owner_id, prior_result
+        )
         if cached is not None:
             return services.StateMutation(cached, should_save=False)
-        if target_char.owner_id in target_state.pending_checks:
+        if prior_result is not None:
+            return services.StateMutation({
+                "ok": False,
+                "error": "這次檢定的狀態已改變；不能重擲已結算的骰，請先確認目前狀態。",
+            }, should_save=False)
+        admission = check_lifecycle.admit(target_state, target_char.owner_id)
+        if admission.status == "blocked":
             return services.StateMutation(
-                {
-                    "ok": False,
-                    "error": (
-                        f"{target_char.name} 仍有舊版待處理檢定；請先用最新按鈕或 /coc check 選擇完成，"
-                        "不要在它完成前開始另一個檢定。"
-                    ),
-                },
-                should_save=False,
-            )
-        if target_char.owner_id in target_state.pending_luck_decisions:
-            return services.StateMutation(
-                {
-                    "ok": False,
-                    "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
-                },
-                should_save=False,
+                _check_registration_error(target_char, admission.blocker), should_save=False
             )
         value = keeper.resolve_skill_value(target_char, tool_input["skill"])
         bonus = int(tool_input.get("bonus_dice") or 0)
@@ -147,7 +139,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
         opposed_receipt = opposed_checks.roll_opponent(opposed_request)
         roll = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
         opposed_outcome = opposed_checks.resolve(opposed_receipt, roll.tier)
-        metadata = services.pending_check_metadata(target_state, target_char.owner_id, tool_input)
+        metadata = check_lifecycle.metadata(target_state, target_char.owner_id, tool_input)
         result: dict[str, Any] = {
             "ok": True,
             "resolved": True,
@@ -263,7 +255,7 @@ def offer_check_choice(call: ToolCall) -> dict[str, Any]:
     attacker_tier = tool_input.get("attacker_tier")
     def _register_pending_choice(target_state: GroupState) -> Any:
         target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
-        options = services.resolve_defense_options(target_char, raw_options)
+        options = services.resolve_defense_options(target_char, raw_options, register_unknown=False)
         # COC7e：攻擊方大成功時沒有任何等級贏得過它，「反擊」選項不成立——這是
         # offer_npc_attack_defense_choice 已有的同一條規則，code review 發現這個
         # 舊版兩步流程（npc_skill_check 先擲、這裡再註冊選項）從未套用，讓仍在用
@@ -282,25 +274,22 @@ def offer_check_choice(call: ToolCall) -> dict[str, Any]:
                 )
             options = filtered_options
         new_choice: dict[str, Any] = {"type": "choice", "options": options}
-        new_choice.update(services.pending_check_metadata(target_state, target_char.owner_id, tool_input))
         if attacker_tier:
             new_choice["attacker_tier"] = attacker_tier
-        # 先檢查是否已有待處理檢定
-        existing = target_state.pending_checks.get(target_char.owner_id)
-        if existing:
-            # 如果完全相同，直接返回結果而不重新保存（防重複）
-            if services.is_identical_pending_check(existing, new_choice):
-                return services.StateMutation({
-                    "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                    "note": "已經有相同的防守選項等待（防重複）。",
-                }, should_save=False)
-            # 否則拒絕（已有不同的待處理檢定）
+        decision = check_lifecycle.register(
+            target_state, target_char.owner_id, new_choice,
+            duplicate="identical", source=tool_input,
+        )
+        if decision.status == "identical":
             return services.StateMutation({
-                "ok": False,
-                "error": f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）才能再要求新的檢定，不要重複呼叫。",
+                "ok": True, "pending": True, "investigator": target_char.name, "options": options,
+                "note": "已經有相同的防守選項等待（防重複）。",
             }, should_save=False)
-        # 沒有待處理檢定，註冊新的
-        target_state.pending_checks[target_char.owner_id] = new_choice
+        if decision.status == "blocked":
+            return services.StateMutation(
+                _check_registration_error(target_char, decision.blocker), should_save=False
+            )
+        services.resolve_defense_options(target_char, raw_options)
         return services.StateMutation({
             "ok": True, "pending": True, "investigator": target_char.name, "options": options,
             "note": "等待玩家選一個選項；選定後預設由玩家用 /coc check 或按鈕擲骰，只有 autoroll 開啟時才由系統代擲。",
@@ -309,7 +298,6 @@ def offer_check_choice(call: ToolCall) -> dict[str, Any]:
 
 
 def npc_skill_check(call: ToolCall) -> dict[str, Any]:
-
     tool_input = call.input
     skill_value = max(0, min(100, int(tool_input["skill_value"])))
     bonus = int(tool_input.get("bonus_dice") or 0)
@@ -351,7 +339,7 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
         # freshly-loaded mutator that performs the roll and write. A
         # rejected call therefore never rolls, and there is no gap
         # between checking the pending entry and saving its result.
-        options = services.resolve_defense_options(target_char, raw_options)
+        options = services.resolve_defense_options(target_char, raw_options, register_unknown=False)
         new_choice: dict[str, Any] = {
             "type": "choice",
             "options": options,
@@ -359,75 +347,31 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
             "attacker_bonus_dice": attacker_bonus,
             "attacker_penalty_dice": attacker_penalty,
             "is_ranged": is_ranged,
-            # Code review: the dedup/reuse comparison below must match
-            # against what the CALLER asked for, not what ended up
-            # persisted after server-side filtering (critical-tier
-            # Fight Back removal, ranged Fight Back removal) — those
-            # filters can shrink the saved "options" (e.g. to just
-            # ["閃避"]) relative to the raw request (["閃避","反擊"]),
-            # so comparing against saved "options" made a legitimate
-            # identical retry fail to match and fall through to the
-            # generic "already pending" rejection instead of reusing
-            # the cached roll.
+            # Check lifecycle compares the full raw request, because
+            # server-side filtering may shrink persisted options.
             "raw_option_labels": sorted(str(o.get("label", "")) for o in raw_options),
+            "raw_option_request": sorted(
+                json.dumps(option, ensure_ascii=False, sort_keys=True, default=str)
+                for option in raw_options
+            ),
         }
-        new_choice.update(services.pending_check_metadata(target_state, target_char.owner_id, tool_input))
-        existing = target_state.pending_checks.get(target_char.owner_id)
-        # 防重複：如果已經有完全相同的防守選項且有真實掷骰結果，重用現有結果而不重新掷。
-        # 遠程情境的 attacker_roll 永遠是 None（見下方 is_ranged 分支——攻擊方要等
-        # 防守方擲完「撲向掩體」才會擲，見 §2.4），所以這個重用條件天生不會對遠程
-        # pending 觸發，遠程重複呼叫會自然落到下面的「已有待處理檢定」拒絕分支，
-        # 這正是我們要的行為（不會被誤判成「已擲過，重用結果」）。
-        if (
-            existing
-            and existing.get("type") == "choice"
-            and existing.get("attacker_roll") is not None
-            and existing.get("attacker_skill_value") == attacker_skill_value
-            and existing.get("attacker_bonus_dice", 0) == attacker_bonus
-            and existing.get("attacker_penalty_dice", 0) == attacker_penalty
-            # Code review: is_ranged 沒被比對時，一個先以 is_ranged=False（近戰）
-            # 註冊、已經擲出 attacker_roll 的 pending，會在呼叫端只把 is_ranged
-            # 改成 True 重試時被誤判成「完全相同、可以重用」——因為前面幾個欄位
-            # 剛好都符合。這樣會悄悄延用近戰對抗擲骰的舊結果，讓修正後的遠程呼叫
-            # 錯誤地留在近戰 opposed-roll 路徑上，也連帶繞過遠程分支自己的反擊
-            # 選項過濾（見下方 is_ranged 分支）。
-            and existing.get("is_ranged", False) == is_ranged
-        ):
-            # 比較防守選項是否相同——用呼叫時的「原始 raw_option_labels」比對，
-            # 不是比對 existing 已保存的 options，因為 critical/遠程過濾可能讓
-            # 保存的 options 比原始請求少（見上方 new_choice 建構處的說明）；
-            # existing 若是舊版沒有 raw_option_labels 欄位的資料，get 回傳 None
-            # 不等於任何排序後的 list，安全地直接判定不相符、退回下面的拒絕分支。
-            try:
-                existing_labels = existing.get("raw_option_labels")
-                new_labels = new_choice["raw_option_labels"]
-                if existing_labels == new_labels:
-                    # 防守選項相同且有真實掷骰結果，重用現有（已套用過濾的）結果
-                    persisted_timeline_id = target_state.timeline_id or f"legacy-{target_state.group_id}"
-                    return services.StateMutation({
-                        "ok": True, "pending": True, "investigator": target_char.name,
-                        "options": existing.get("options", options),
-                        "attacker_roll": existing.get("attacker_roll"),
-                        "attacker_tier": existing.get("attacker_tier"),
-                        # The response must carry the same stable
-                        # identity as the persisted pending entry.
-                        # Reusing a roll must not manufacture a new
-                        # check id that the button cannot consume.
-                        "check_id": effective_check_id(
-                            target_char.owner_id, existing, persisted_timeline_id
-                        ),
-                        "timeline_id": persisted_timeline_id,
-                        "note": "防守選項相同，重用之前的掷骰結果（防重複）。",
-                    }, should_save=False)
-            except (TypeError, ValueError):
-                pass  # 無法排序時，繼續執行新的掷骰
-        if existing:
+        decision = check_lifecycle.admit(
+            target_state, target_char.owner_id, new_choice, duplicate="npc_melee"
+        )
+        if decision.status == "identical":
+            existing = decision.pending or {}
+            return services.StateMutation({
+                "ok": True, "pending": True, "investigator": target_char.name,
+                "options": existing.get("options", options),
+                "attacker_roll": existing.get("attacker_roll"),
+                "attacker_tier": existing.get("attacker_tier"),
+                "check_id": decision.check_id,
+                "timeline_id": decision.timeline_id,
+                "note": "防守選項相同，重用之前的掷骰結果（防重複）。",
+            }, should_save=False)
+        if decision.status == "blocked":
             return services.StateMutation(
-                {
-                    "ok": False,
-                    "error": f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）才能再要求新的檢定，不要重複呼叫。",
-                },
-                should_save=False,
+                _check_registration_error(target_char, decision.blocker), should_save=False
             )
 
         if is_ranged:
@@ -456,7 +400,8 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
             # 玩家觸發防守擲骰的當下才擲（見 app/legacy_commands.py 的
             # _build_check_narration ranged_attacker 分支）。這裡只登記選項跟
             # 攻擊方的技能值/骰數修正，不寫 attacker_tier/attacker_roll。
-            target_state.pending_checks[target_char.owner_id] = new_choice
+            check_lifecycle.register(target_state, target_char.owner_id, new_choice, source=tool_input)
+            services.resolve_defense_options(target_char, raw_options)
             return services.StateMutation({
                 "ok": True, "pending": True, "investigator": target_char.name, "options": options,
                 "note": "遠程攻擊：這不是對抗檢定，不會預先擲攻擊方。等待玩家選擇「撲向掩體」並"
@@ -488,7 +433,8 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
             new_choice["options"] = options
         new_choice["attacker_tier"] = npc_roll.tier
         new_choice["attacker_roll"] = npc_roll.roll  # 保存掷骰結果供後續防重複檢查
-        target_state.pending_checks[target_char.owner_id] = new_choice
+        check_lifecycle.register(target_state, target_char.owner_id, new_choice, source=tool_input)
+        services.resolve_defense_options(target_char, raw_options)
         return services.StateMutation({
             "ok": True, "pending": True, "investigator": target_char.name, "options": options,
             "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
@@ -544,42 +490,41 @@ def sanity_check(call: ToolCall) -> dict[str, Any]:
         nonlocal sanity_event_seed
         target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
         if not target_state.autoroll_checks:
-            blocked = services.reject_if_check_already_pending(target_state, target_char)
-            if blocked is not None:
-                return services.StateMutation(blocked, should_save=False)
-            target_state.pending_checks[target_char.owner_id] = {
-                "type": "sanity",
-                "loss_success": loss_success,
-                "loss_failure": loss_failure,
-                **services.pending_check_metadata(target_state, target_char.owner_id, tool_input),
-            }
+            decision = check_lifecycle.register(
+                target_state, target_char.owner_id,
+                {"type": "sanity", "loss_success": loss_success, "loss_failure": loss_failure},
+                source=tool_input,
+            )
+            if decision.status == "blocked":
+                return services.StateMutation(
+                    _check_registration_error(target_char, decision.blocker), should_save=False
+                )
             return services.StateMutation(
                 {
-                    "ok": True,
-                    "pending": True,
+                    "ok": True, "pending": True,
                     "investigator": target_char.name,
                     "current_san": target_char.san,
                     "note": "等待玩家自己用 /coc check 或按鈕擲 SAN；在結果回來前不要自行扣 SAN 或判定瘋狂。",
                 },
-                should_save=True,
+                should_save=decision.should_save,
             )
-        cached = services.cached_check_result(target_state, cache_key)
+        prior_result = services.cached_check_result(target_state, cache_key)
+        cached = check_lifecycle.reusable_cached_result(
+            target_state, target_char.owner_id, prior_result
+        )
         if cached is not None:
             return services.StateMutation(cached, should_save=False)
-        if target_char.owner_id in target_state.pending_checks:
+        if prior_result is not None:
+            return services.StateMutation({
+                "ok": False,
+                "error": "這次檢定的狀態已改變；不能重擲已結算的骰，請先確認目前狀態。",
+            }, should_save=False)
+        admission = check_lifecycle.admit(target_state, target_char.owner_id)
+        if admission.status == "blocked":
             return services.StateMutation(
-                {
-                    "ok": False,
-                    "error": f"{target_char.name} 仍有待處理的防守選擇，請先完成選擇再做 SAN 檢定。",
-                },
-                should_save=False,
+                _check_registration_error(target_char, admission.blocker), should_save=False
             )
-        if target_char.owner_id in target_state.pending_luck_decisions:
-            return services.StateMutation(
-                {"ok": False, "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。"},
-                should_save=False,
-            )
-        metadata = services.pending_check_metadata(target_state, target_char.owner_id, tool_input)
+        metadata = check_lifecycle.metadata(target_state, target_char.owner_id, tool_input)
         state_before = services.character_attribute_snapshot(target_char)
         sanity_result = dice.sanity_check(target_char.san, loss_success, loss_failure)
         target_char.san = sanity_result.san_after

@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from app import (
     async_utils,
+    check_lifecycle,
     combat,
     db,
     dice,
@@ -35,10 +36,6 @@ from app import (
     scenario_templates,
     scene_digest,
     spoiler_policy,
-)
-from app.check_identity import (
-    new_check_id,
-    pending_check_blocker,
 )
 from app.config import (
     MAX_LOG_TURNS,
@@ -61,7 +58,7 @@ from app.repositories.group_state import (
     save_page_image,
     save_state,
 )
-from app.services import mutation_admission, opposed_checks
+from app.services import mutation_admission
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
@@ -216,70 +213,6 @@ def require_character(state: GroupState, name: str) -> Character:
     return character
 
 
-def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict | None:
-    """Return an error for a legacy pending check, otherwise ``None``.
-
-    It remains available for pending-check compatibility and for the choice
-    tools, whose pending entry represents a player action selection. In the
-    default mode, new skill/SAN requests also use this guard so an existing
-    player-owned check cannot be silently replaced.
-
-    When called, this must be from inside that tool's _mutate_and_save_state mutator,
-    against the freshly-reloaded `target_state` — not the outer, possibly
-    stale `state` a caller was handed before this turn's lock was ever
-    taken. An earlier revision checked the outer `state` directly (cheaper:
-    no lock needed just to reject), reasoning that tool calls within one
-    Keeper turn run sequentially and `state` stays synced after every
-    _mutate_and_save_state call *within that same turn*. That left a real
-    gap, though: it never accounted for a /coc check resolution racing in
-    from a *different* code path — legacy_commands.py's pending-check
-    resolver only takes app/locks.py's per-conversation state lock, not
-    the Keeper-turn-scoped one this function's caller is running under, so
-    a player could resolve (and pop) their pending check mid-turn while
-    this function was still looking at a stale snapshot that still showed
-    it pending, wrongly rejecting a call that should have succeeded.
-    Checking against `target_state` inside the same lock-protected reload
-    the actual write goes through closes that gap: the roll (if any) and
-    the pending_checks write only happen if this check, right before them,
-    still sees nothing pending under that fresh read."""
-    # A character mid-Luck-decision has nothing in pending_checks yet, so the
-    # blocker covers both states; see check_identity.pending_check_blocker.
-    blocker = pending_check_blocker(state, char.owner_id)
-    if blocker == "pending_check":
-        return {
-            "ok": False,
-            "error": f"{char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
-                     "才能再要求新的檢定，不要重複呼叫。",
-        }
-    if blocker == "pending_luck_decision":
-        return {
-            "ok": False,
-            "error": f"{char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
-        }
-    return None
-
-
-def _pending_check_metadata(target_state: GroupState, owner_id: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-    """Build bounded, persisted identity/context for a new pending check."""
-    if not target_state.timeline_id:
-        target_state.timeline_id = f"timeline-{uuid4().hex[:8]}"
-    context = str(tool_input.get("action_context", "")).strip()
-    if len(context) > 240:
-        context = context[:237] + "..."
-    current_context = observability.current_context()
-    return {
-        "check_id": new_check_id(),
-        "timeline_id": target_state.timeline_id,
-        "origin_revision": target_state.state_revision + 1,
-        "origin_turn_id": str(current_context.get("turn_id", "")),
-        "origin_request_id": str(current_context.get("request_id", "")),
-        "action_context": context,
-        "player_declaration": str(tool_input.get("_player_action", ""))[:1000],
-        "action_basis": str(tool_input.get("action_basis", ""))[:600],
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
-
-
 def _deterministic_check_cache_key(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -334,45 +267,9 @@ def _remember_check_result(state: GroupState, cache_key: str, result: dict[str, 
         state.deterministic_check_results.pop(oldest, None)
 
 
-def _is_identical_pending_check(existing: dict, new_check_dict: dict) -> bool:
-    """檢查新的待處理檢定是否與現有的相同。
-    用來防止在狀態重新載入時重複註冊完全相同的檢定。"""
-    # 比較檢定類型
-    if existing.get("type") != new_check_dict.get("type"):
-        return False
-
-    if existing.get("type") == "skill":
-        # 比較技能檢定的所有關鍵參數
-        return (
-            existing.get("skill") == new_check_dict.get("skill") and
-            existing.get("skill_value") == new_check_dict.get("skill_value") and
-            existing.get("bonus_dice") == new_check_dict.get("bonus_dice") and
-            existing.get("penalty_dice") == new_check_dict.get("penalty_dice") and
-            existing.get("difficulty") == new_check_dict.get("difficulty") and
-            existing.get("pushed") == new_check_dict.get("pushed") and
-            opposed_checks.request_part(existing.get("opposed")) == opposed_checks.request_part(new_check_dict.get("opposed")) and
-            existing.get("action_basis", "") == new_check_dict.get("action_basis", "")
-        )
-    elif existing.get("type") == "sanity":
-        # 比較理智檢定
-        return (
-            existing.get("loss_success") == new_check_dict.get("loss_success") and
-            existing.get("loss_failure") == new_check_dict.get("loss_failure")
-        )
-    elif existing.get("type") == "choice":
-        # 比較防守選項（排序後比較，避免順序差異導致誤判）
-        try:
-            existing_opts = sorted(str(o) for o in existing.get("options", []))
-            new_opts = sorted(str(o) for o in new_check_dict.get("options", []))
-            return existing_opts == new_opts
-        except (TypeError, ValueError):
-            # 如果無法排序，直接比較
-            return existing.get("options") == new_check_dict.get("options")
-
-    return False
-
-
-def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[dict]:
+def _resolve_defense_options(
+    char: Character, raw_options: list[dict], *, register_unknown: bool = True
+) -> list[dict]:
     """Expand offer_check_choice/offer_npc_attack_defense_choice's raw
     {label, skill, bonus_dice, penalty_dice} option list into one with
     each option's actual resolved skill_value baked in.
@@ -388,7 +285,7 @@ def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[d
     resolves skill_value, it doesn't validate or normalize kind."""
     options = []
     for opt in raw_options:
-        value = resolve_skill_value(char, opt["skill"])
+        value = resolve_skill_value(char, opt["skill"], register_unknown=register_unknown)
         resolved = {
             "label": opt["label"], "skill": opt["skill"], "skill_value": value,
             "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
@@ -399,7 +296,7 @@ def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[d
     return options
 
 
-def resolve_skill_value(char: Character, skill_name: str) -> int:
+def resolve_skill_value(char: Character, skill_name: str, *, register_unknown: bool = True) -> int:
     key = skill_name.strip()
     if key in char.skills:
         return char.skills[key]
@@ -423,11 +320,11 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
         if norm == kk or norm in kk or kk in norm:
             return v
 
-    # Unknown skill: register under its canonical name (not the raw LLM
-    # phrasing) so future lookups stay consistent, using the real COC7e base
-    # rate when we recognize it instead of always guessing a flat 20.
+    # Unknown skill: calculate its canonical base rate first. Registration
+    # callers defer writing the character card until check admission succeeds.
     default_value = BASE_SKILLS.get(canonical_query, 20)
-    char.skills[canonical_query] = default_value
+    if register_unknown:
+        char.skills[canonical_query] = default_value
     return default_value
 
 
@@ -1065,13 +962,10 @@ check_tool_services = SimpleNamespace(
     cached_check_result=_cached_check_result,
     character_attribute_snapshot=_character_attribute_snapshot,
     deterministic_check_cache_key=_deterministic_check_cache_key,
-    is_identical_pending_check=_is_identical_pending_check,
     mutate_and_save_state=_mutate_and_save_state,
-    pending_check_metadata=_pending_check_metadata,
     persist_resolved_check_event=_persist_resolved_check_event,
     remember_check_result=_remember_check_result,
     resolve_defense_options=_resolve_defense_options,
-    reject_if_check_already_pending=_reject_if_check_already_pending,
 )
 
 
@@ -1153,7 +1047,7 @@ def execute_legacy_tool(
                 # Checked against the reloaded state, so a check registered by
                 # another path since this turn loaded can't slip past.
                 blocker = (
-                    pending_check_blocker(target_state, target_char.owner_id)
+                    check_lifecycle.blocker(target_state, target_char.owner_id)
                     if is_major_wound and not target_state.autoroll_checks
                     else None
                 )
@@ -1184,20 +1078,17 @@ def execute_legacy_tool(
                                     target_char.status_tags.append(tag)
                     else:
                         major_wound = True
-                        target_state.pending_checks[target_char.owner_id] = {
-                            "type": "skill",
-                            "skill": "CON",
-                            "skill_value": con_value,
-                            "bonus_dice": 0,
-                            "penalty_dice": 0,
-                            "difficulty": "regular",
-                            "major_wound_trigger": True,
-                            **_pending_check_metadata(
-                                target_state,
-                                target_char.owner_id,
-                                {"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
-                            ),
-                        }
+                        decision = check_lifecycle.register(
+                            target_state, target_char.owner_id,
+                            {
+                                "type": "skill", "skill": "CON", "skill_value": con_value,
+                                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                                "major_wound_trigger": True,
+                            },
+                            source={"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
+                        )
+                        if decision.status != "admitted":
+                            raise RuntimeError(f"major-wound CON registration blocked: {decision.blocker}")
                 return _StateMutation((new_val, major_wound, wound_roll))
 
             new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)
