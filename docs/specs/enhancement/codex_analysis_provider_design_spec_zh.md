@@ -1,0 +1,107 @@
+# Codex 結構化文件與圖片分析 Provider
+
+## 目標
+
+讓 `ANALYSIS_PROVIDER=codex` 能透過已登入的 Codex CLI 處理現有結構化文字與圖片分析請求，同時維持分析呼叫端既有的同步 Provider 介面。
+
+## 現況與已查證事實
+
+截至 2026-09-28，`main_v2` 已包含 PR #120：
+
+- 分析呼叫端透過 `registry.analysis_provider()` 選擇 Provider；剩下的選擇限制在 Provider 登錄表與設定驗證。
+- `codex_provider` 有對話決策能力，但沒有 `analyze_text` 或 `analyze_image` adapter。
+- 目前七個分析呼叫點都在事件迴圈之外執行：呼叫端使用 `asyncio.to_thread` 或工作程序。因此同步 adapter 可以在其中以 `asyncio.run` 執行現有非同步 transport，不必改動呼叫端。
+- Codex CLI 0.157.1 支援 `codex exec -i/--image` 與 `--output-schema`。`ExecTransport.request` 已會建立 schema 檔並傳給 `codex exec`，但目前沒有圖片參數。
+- `ANALYSIS_PROVIDERS` 排除 Codex，`app/config.py` 也拒絕 `ANALYSIS_PROVIDER=codex`。
+- PDF 圖片修復及地圖／頁面圖片分析可能每頁呼叫一次。`ExecTransport` 每次請求都會啟動 CLI 子程序，可能使啟動延遲與 ChatGPT 方案額度按頁數累積；實作前必須先量測。
+
+目前分析呼叫端涵蓋劇本索引與比較、開場敘事擷取、預製角色擷取、場景地圖分析、PDF 圖片修復，以及 Keeper 端的結構化擷取。維持它們現有的「處理失敗時回傳 `None`」慣例。
+
+## 範圍
+
+- 新增同步函式 `codex_provider.analyze_text(text, tool, prompt_text)` 與 `codex_provider.analyze_image(png_bytes, tool, prompt_text)`。
+- 使用 `tool["input_schema"]` 作為 Codex 結構化輸出 schema，並以 `jsonschema` 驗證回傳 JSON；驗證成功才回傳字典。
+- CLI、逾時、解析或 schema 驗證等可處理的失敗回傳 `None`，不改送其他 Provider。
+- 為 `ExecTransport.request` 新增可選 PNG 圖片參數。將 bytes 寫入暫存 `.png`，以 `-i`／`--image` 傳入路徑，並在成功、失敗、逾時或取消時清除檔案。
+- 分析請求使用一次性的 `ExecTransport`；圖片輸入與 `--output-schema` 已在此 `codex exec` 路徑查證。此工作不改動對話 transport 選擇，也不改 app-server 協定。
+- 將 Codex 加入 `ANALYSIS_PROVIDERS`，並允許 `ANALYSIS_PROVIDER` 設為 `codex`。
+- 更新 `.env.example` 與 Provider／設定文件，說明 `ANALYSIS_PROVIDER=codex`、Codex CLI 安裝和 `codex login`。
+- Codex 分析不依賴或讀取 `OPENAI_API_KEY`。文件須說明：另外啟用的 RAG embeddings 仍走現有 OpenAI Embeddings 路徑，可能獨立需要該金鑰。
+
+## 非目標
+
+- 不改分析呼叫端介面，也不把分析請求搬回事件迴圈。
+- 不改玩家對話、CoC 工具、遊戲規則或劇本資料格式。
+- Codex 失敗時不自動改送 OpenAI、Anthropic 或 Gemini。
+- 不更換對話 transport，也不在此工作新增 app-server 圖片支援。
+- 不遷移未使用分析 Provider registry 的功能。
+- 不移除 RAG 索引／搜尋中獨立使用的 OpenAI Embeddings。
+
+## 介面與資料流程
+
+公開分析介面維持同步：
+
+```text
+既有工作執行緒／工作程序呼叫端
+  -> registry.analysis_provider()
+  -> codex_provider.analyze_text / analyze_image
+  -> asyncio.run(一次性 ExecTransport.request(...))
+  -> codex exec --output-schema [ -i 暫存頁面.png ]
+  -> 嚴格 JSON 與呼叫端 schema 驗證
+  -> 回傳字典；可處理的失敗回傳 None
+```
+
+`analyze_text` 將提供的文字與任務提示作為請求內容。`analyze_image` 傳送任務提示，並透過 CLI 圖片參數傳入 PNG。分析 schema 只是輸出契約；Codex 不得執行應用程式或遊戲工具。
+
+Adapter 必須沿用 Codex 逾時與輸入／輸出上限。同步呼叫會建立短生命週期事件迴圈，因此實作必須確認請求准入與並發上限能跨這些呼叫生效；只有事件迴圈範圍的 `asyncio.Semaphore` 無法協調不同的 `asyncio.run` 迴圈。不得記錄提示詞、擷取出的文件文字、圖片 bytes、圖片路徑、憑證或完整環境值。診斷資訊可記錄 Provider、任務種類、耗時和安全的錯誤類別。
+
+## 設定行為
+
+目標設定如下：
+
+```dotenv
+LLM_PROVIDER=codex
+ANALYSIS_PROVIDER=codex
+```
+
+對話與分析都使用已登入的 Codex CLI。子程序沿用現有環境變數 allowlist；分析不得要求或讀取 `OPENAI_API_KEY`。此保證只適用於對話與分析 Provider 呼叫；RAG embeddings 是獨立功能，不在此保證範圍內。
+
+## 實作前真實劇本 PDF 量測門檻
+
+修改執行程式碼前，使用一份真實劇本 PDF。PDF 必須同時包含可選取文字頁、至少一頁掃描／圖片文字頁，以及至少一頁地圖或示意圖。先直接以已登入的 Codex 執行 `codex exec -i --output-schema` 作為 transport PoC；不要先建 adapter。
+
+記錄項目：
+
+- PDF 總頁數，以及現有 PDF 修復和頁面圖片／地圖流程會送去分析的頁數。
+- 每一分析頁的子程序啟動時間與端到端耗時，包括中位數、p90、p95、最大值、逾時／錯誤數及總耗時。若量測方式可行，分開記錄子程序啟動和模型完成時間。
+- 執行前後的 ChatGPT 方案用量／額度。若 CLI 或 Provider 有提供用量，記錄該數值；否則記錄帳戶畫面前後的額度並標示為估算。服務未公開精確用量時，不推算精確 token 數或額度消耗。
+- 掃描頁辨識品質，依對照原稿確認必要文字／欄位擷取成功數、錯誤值和無依據新增內容。
+- 地圖／示意圖品質，依對照資料確認標籤／房間及可見連線的正確識別數、漏失、錯誤連線和虛構項目。
+- Codex CLI 版本、模型與 reasoning 設定、頁面圖片尺寸、schema，以及請求為循序或併發。
+
+量測報告必須說明「每頁啟動一次 CLI」用於整份劇本匯入是否可接受。若延遲或方案額度不理想，須先調整設計再實作，例如評估安全的批次處理或有上限的常駐 transport。Marco 審查量測結果與因此產生的設計修訂後，才開始實作。
+
+## 失敗與隱私行為
+
+- 僅解析一個 JSON 物件；拒絕格式錯誤 JSON、重複 key、非物件輸出，以及不符合呼叫端 schema 的值。
+- 缺少 CLI／登入、圖片輸入不支援、非零結束碼、逾時、輸入／輸出超限、取消或 schema 不符時，依既有分析 Provider 慣例回傳 `None`。
+- 不得從此 adapter 呼叫 CoC 工具或修改應用程式狀態。
+- 一律清除暫存圖片與 schema 檔，並沿用現有子程序取消和 process-group 清理行為。
+- 圖片頁失敗時，不得自動改送其他 Provider；由既有呼叫端決定如何處理 `None`。
+
+## 測試計畫
+
+- 離線單元測試 mock transport，涵蓋文字／圖片請求、schema 參數、圖片旗標／路徑，以及成功和失敗時的暫存檔清理。
+- 驗證正確輸出，以及 malformed JSON、重複 key、錯誤 JSON 類型、schema 不符、逾時、非零退出、取消與輸入／輸出上限時的 `None` 行為。
+- 測試 `ANALYSIS_PROVIDER=codex` 可解析到 Codex，且不要求 `OPENAI_API_KEY`。
+- 新增預設停用的真實登入 smoke test，只有明確設定測試環境變數才執行；使用已安裝 CLI 各做一次文字與圖片分析並驗證 schema。一般 CI 不執行此測試。
+- 實作前執行上述真實 PDF 量測；實作後重測受限樣本，確認 adapter 行為相同且每頁呼叫數沒有非預期增加。
+
+## 審查決策
+
+1. 審查實作前 PDF 量測，決定每頁 CLI 啟動時間與 ChatGPT 方案額度是否可接受。
+2. 確認分析 adapter 即使對話使用 app-server，仍應使用 `ExecTransport`；圖片輸入和 schema 輸出目前是在 `codex exec` 查證。
+3. 確認同步工作執行緒／工作程序呼叫應採用的並發上限，因現有 Codex semaphore 只作用於單一事件迴圈。
+4. 確認文件應說明 Codex 對話／分析不需要 OpenAI key，但可選 RAG embeddings 仍是獨立路徑。
+
+Marco 核准本規格及實作前量測決策之前，不開始實作。

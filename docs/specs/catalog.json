@@ -1188,6 +1188,22 @@
       "path": "docs/specs/refactor/active_provider_lookup_design_spec.md",
       "zh_path": "docs/specs/refactor/active_provider_lookup_design_spec_zh.md",
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "Codex structured document and image analysis provider",
+      "zh": "Codex 結構化文件與圖片分析 Provider",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "app/providers/codex_provider.py",
+        "app/providers/codex_transport.py",
+        "app/providers/registry.py",
+        "app/config.py",
+        "tests/test_codex_analysis_provider.py",
+        "tests/test_codex_analysis_smoke.py"
+      ],
+      "path": "docs/specs/enhancement/codex_analysis_provider_design_spec.md",
+      "zh_path": "docs/specs/enhancement/codex_analysis_provider_design_spec_zh.md"
     }
   ]
 }
