@@ -214,3 +214,14 @@ and enough iteration budget for both a tool and final. Explain that an unsent
 call has no receipt; preserve genuine evidence/permission blockers. This is not
 a fixed review stage or automatic Python check creation. Count such retries
 separately from first-pass correctness; all existing deadlines/budgets apply.
+
+## Follow-up: inventory actions with pending checks
+
+Return existing Python resolution validation feedback to Codex before accepting
+a final, at most once and within the same iteration/deadline/tool budgets.
+Reuse existing validation; do not loosen completion evidence or replay committed
+tools. Refresh inventory/pending context and explain that an independent pickup
+needs its own successful tool receipt before handing back the remaining check.
+Validate real blockers and retry exhaustion. Run 25 real OAuth synthetic cases
+(15 exec, 10 app-server) covering pending pickup, plain pickup, unchanged pending,
+new successful checks and failed-check follow-up. Record repairs separately.
