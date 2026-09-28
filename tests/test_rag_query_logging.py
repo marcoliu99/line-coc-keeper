@@ -8,8 +8,8 @@ embeddings API call for a query string):
   RAG *proactively* once per turn (memory unconditionally whenever the
   speaker has a character, scenario when SCENARIO_RAG_ENABLED) — a call
   site a first pass at this fix missed entirely, discovered during review.
-- Movement candidates no longer run a separate room-name RAG lookup; the
-  existing context/Executor searches above supply adjudication evidence.
+- app/legacy_commands.py's _find_room_via_rag, the Map/Scene Engine's RAG
+  fallback for room-name resolution.
 
 Before this, none of these captured the query string itself anywhere in the
 logs — only counts (candidate_count, result_count, ...) via their
@@ -62,13 +62,12 @@ class RagQueryLoggingTests(unittest.TestCase):
         matching = [line for line in logs.output if "search_scenario" in line and "地窖" in line]
         self.assertEqual(len(matching), 2)
 
-    def test_movement_candidate_does_not_add_a_second_rag_search(self):
-        state = self._state()
-        state.characters["u"] = Character("A", "u")
-        with patch.object(scenario_rag, "search", side_effect=AssertionError("no pre-move RAG")):
-            result = legacy_commands._resolve_map_action_core(state, "u", "前往廚房")
-        self.assertFalse(result.context["committed"])
-        self.assertFalse(state.current_room_id)
+    def test_find_room_via_rag_logs_the_query_text(self):
+        with patch.object(scenario_rag, "get_index", return_value="fake-index"), \
+             patch.object(scenario_rag, "search", return_value=[]), \
+             self.assertLogs("app.legacy_commands", level="INFO") as logs:
+            legacy_commands._find_room_via_rag("g", "scenario text", {"rooms": []}, "廚房")
+        self.assertTrue(any("_find_room_via_rag" in line and "廚房" in line for line in logs.output))
 
 
 class ContextBuilderQueryLoggingTests(unittest.IsolatedAsyncioTestCase):

@@ -142,7 +142,9 @@ class RulingTests(unittest.TestCase):
 
     def test_the_packet_has_the_receipt_the_location_and_the_log_around_the_turn(self):
         state = _state()
-        state.narrative_locations["u1"] = "書房"
+        state.scene_maps["16"] = {"rooms": [{"id": "study", "name": "書房", "exits": []}]}
+        state.current_map_page["u1"] = "16"
+        state.current_room_id["u1"] = "study"
         state.log += [{"role": "assistant", "content": f"第 {n} 段"} for n in range(20)]
         state.log[5] = {"role": "assistant", "content": "前情。你打開抽屜，裡面只有灰塵。後續。"}
         fake = _model(decision="reject", evidence=["narration"], reason="x")

@@ -13,7 +13,14 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from app import async_utils, locks, observability, scenario_templates, spoiler_policy
+from app import (
+    async_utils,
+    locks,
+    observability,
+    scenario_templates,
+    scene_map,
+    spoiler_policy,
+)
 from app.providers.registry import analysis_provider
 from app.repositories.group_state import load_state
 from app.services import mutation_admission, narrative_corrections
@@ -83,7 +90,7 @@ def _evidence(state: Any, report: dict) -> dict[str, str]:
         skills = "、".join(f"{k} {v}" for k, v in character.skills.items())
         items[f"sheet:{character.name}"] = (
             f"{character.name}：HP {character.hp}/{character.hp_max}，MP {character.mp}，SAN {character.san}，"
-            f"LUCK {character.luck}，地點：{state.narrative_locations.get(character.owner_id) or '（未記錄）'}，"
+            f"LUCK {character.luck}，地點：{_tracked_location(state, character.owner_id)}，"
             f"攜帶：{'、'.join(character.carried_items) or '（無）'}，狀態：{'、'.join(character.status_tags) or '（無）'}，"
             f"技能：{skills or '（無）'}"
         )
@@ -96,6 +103,15 @@ def _evidence(state: Any, report: dict) -> dict[str, str]:
     for n, row in enumerate(_scenario_passages(state, report), 1):
         items[f"scenario:{n}"] = f"（第 {row.get('page', '?')} 頁）{row.get('text', '')}"
     return items
+
+
+def _tracked_location(state: Any, owner_id: str) -> str:
+    """Where a map is tracked for this investigator (as `/coc where` shows it);
+    not every scene has a map, so this is often unavailable."""
+    page = state.current_map_page.get(owner_id, "")
+    scene = state.scene_maps.get(page) if page else None
+    room = scene_map.get_room(scene, state.current_room_id.get(owner_id, "")) if scene else None
+    return room.get("name", "") if room else "（未記錄）"
 
 
 def _log_around(log: list[dict], excerpt: str) -> list[dict]:

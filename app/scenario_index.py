@@ -153,24 +153,10 @@ def format_location_index_block(locations: list[dict[str, Any]]) -> str:
         lines.append(f"・{name}{alias_note}" + (f"：{detail}" if detail else ""))
     return "\n".join(lines)
 
-# An arrival is committed against a known destination, so a scenario whose
-# location index is empty cannot have any movement validated: every attempt to
-# go somewhere is refused, while the prose still describes the stairs the
-# player is trying to use. A twenty-five turn party session sat in one room for
-# all of it under exactly this condition — the scenario's own prose was intact
-# and only its index was missing, so nothing in the replies said why.
-# What each artifact actually does, checked against the code rather than assumed:
-#
-# The location index is injected into the prompt and nothing else. Movement
-# never reads it, so an empty one costs the Keeper context, not arrivals.
-#
-# Floor plans are what mapped navigation resolves against — scene_map.
-# resolve_move and find_room_by_text. Without them a player cannot walk a path
-# between known rooms, but movement.py's mapless branch still commits an
-# arrival whose destination is supported by retrieved evidence
-# (tests/test_turn_routing_and_movement.py::
-# test_sr_m07_mapless_supported_arrival_needs_no_new_map), so neither notice
-# may claim that movement is refused.
+# The location index enters the Keeper prompt but is not read by the legacy
+# map resolver. Floor plans enable tracked room-to-room movement; without one,
+# the Keeper may still narrate travel from scenario text. Neither missing
+# artifact alone proves that every movement attempt will be refused.
 EMPTY_SCENE_MAPS_NOTICE = (
     "⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;"
     "有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。"
