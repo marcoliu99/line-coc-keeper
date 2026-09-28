@@ -143,7 +143,7 @@ One instrumented page-18 call reached the first CLI event at 0.70 s and complete
 
 Implemented on the Codex analysis branch:
 
-- `CodexProvider.analyze_text` uses `ExecTransport`, projects caller schemas to Codex strict output schemas, normalizes optional and dynamic-key values, and validates results against the original JSON Schema.
+- `CodexProvider.analyze_text` uses `ExecTransport`, projects caller schemas to Codex strict output schemas, normalizes optional and dynamic-key values, and validates results against the original JSON Schema. Nullable objects (for example an optional opening check) retain their closed object properties and required fields in the strict projection, with null as a separate alternative.
 - `ExecTransport.request` remains text-only. No image adapter or image CLI input is shipped because measured extraction quality was insufficient.
 - Analysis admission is bounded across short-lived event loops in the process. There is no cross-process shared limiter; deployment concurrency across multiple worker processes remains a configuration-level limit.
 - Provider registration/config reject `ANALYSIS_PROVIDER=codex`; scenario indexing, opening extraction, text comparison, and Keeper summaries use `LLM_PROVIDER`. PDF/page-image/OCR-repair and pre-generated character extraction continue to use an API provider under `ANALYSIS_PROVIDER`.

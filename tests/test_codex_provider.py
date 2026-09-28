@@ -246,6 +246,27 @@ class CodexAnalysisTests(unittest.TestCase):
         self.assertEqual(projected['properties']['skills']['type'], 'array')
         self.assertEqual(projected['properties']['extra_fields']['items']['properties']['value']['type'], 'string')
 
+    def test_opening_check_nullable_object_survives_strict_projection(self):
+        from jsonschema import Draft202012Validator
+
+        from app import scenario_intro
+
+        tool = scenario_intro._REPORT_TOOL
+        for opening_check in (
+            None,
+            {'type': 'skill', 'skill': '偵查', 'loss_success': None,
+             'loss_failure': None, 'reason': None},
+        ):
+            with self.subTest(opening_check=opening_check):
+                wire = {'found': True, 'text': 'Opening', 'page': None,
+                        'opening_check': opening_check}
+                self.transport.request.return_value = json.dumps(wire, ensure_ascii=False)
+                result = cp.analyze_text('Opening source', tool, 'Extract opening')
+                projected = self.transport.request.call_args.args[1]
+                Draft202012Validator(projected).validate(wire)
+                self.assertEqual(result['opening_check'],
+                                 None if opening_check is None else {'type': 'skill', 'skill': '偵查'})
+
     def test_bad_json_and_original_schema_violation_return_none(self):
         tool = {'name': 'report', 'description': 'Report', 'input_schema': {
             'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count'],

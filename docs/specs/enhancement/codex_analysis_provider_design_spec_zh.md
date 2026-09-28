@@ -28,7 +28,7 @@ Provider 依工作類型分流，不只看資料是否來自 PDF。路由如下�
 ## 實作範圍與政策
 
 - 新增同步函式 `codex_provider.analyze_text(text, tool, prompt_text)`，供走 `LLM_PROVIDER` 的一般結構化文字工作使用。
-- 依 `tool["input_schema"]` 衍生 Codex strict-output-schema，再以 `jsonschema` 對照原始 schema 驗證回傳 JSON；驗證成功才回傳字典。衍生 schema 必須替每個 object 設定 `additionalProperties: false`，並符合 Codex strict mode 的 required 欄位規則，且不能放寬原始 schema。
+- 依 `tool["input_schema"]` 衍生 Codex strict-output-schema，再以 `jsonschema` 對照原始 schema 驗證回傳 JSON；驗證成功才回傳字典。衍生 schema 必須替每個 object 設定 `additionalProperties: false`，並符合 Codex strict mode 的 required 欄位規則，且不能放寬原始 schema。 可為 null 的物件（例如開場檢定）仍須保留封閉物件的 properties 與 required，另以 null 作為替代分支。
 - CLI、逾時、解析或 schema 驗證等可處理的失敗回傳 `None`，不改送其他 Provider。
 - `ExecTransport.request` 維持純文字，不透過分析 registry 提供 Codex 圖片擷取。
 - Codex 不加入 `ANALYSIS_PROVIDERS`；若設定 `ANALYSIS_PROVIDER=codex`，設定檢查會提供明確錯誤。

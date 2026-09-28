@@ -142,6 +142,9 @@ def _strict_analysis_schema(schema: dict) -> dict:
     if not schema:
         return {'type': 'string'}
     schema_type = schema.get('type')
+    if isinstance(schema_type, list) and set(schema_type) == {'object', 'null'}:
+        object_schema = {**schema, 'type': 'object'}
+        return {'anyOf': [_strict_analysis_schema(object_schema), {'type': 'null'}]}
     additional = schema.get('additionalProperties', False)
     properties = schema.get('properties', {})
     if schema_type == 'object' and (isinstance(additional, dict) or additional is True):
@@ -191,7 +194,12 @@ def _strict_analysis_schema(schema: dict) -> dict:
 
 def _normalize_analysis_value(value, schema: dict):
     """Restore null-optional and dynamic-map wire values to caller shapes."""
-    if schema.get('type') == 'object':
+    schema_type = schema.get('type')
+    if isinstance(schema_type, list) and set(schema_type) == {'object', 'null'}:
+        if value is None:
+            return None
+        return _normalize_analysis_value(value, {**schema, 'type': 'object'})
+    if schema_type == 'object':
         additional = schema.get('additionalProperties', False)
         properties = schema.get('properties', {})
         if isinstance(additional, dict) or additional is True:
