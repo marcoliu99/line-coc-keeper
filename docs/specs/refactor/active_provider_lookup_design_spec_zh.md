@@ -52,4 +52,5 @@ def analysis_provider() -> AnalysisProvider | None: ...           # config.ANALY
 ## 限制
 
 - 供應商的*能力*判斷（`supports_dynamic_tools`、`supports_response_stage`）已經在 registry 裡，這次不動。
+- 審查決定的順序：完整實作（範圍四個步驟全做），排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後。
 - 最大的成本在測試的改動量，不在正式程式碼。如果判斷現在不值得，可以只做步驟 1–2，把舊別名留成薄薄的已棄用包裝；但那正是這份規格想要結束的半套狀態。

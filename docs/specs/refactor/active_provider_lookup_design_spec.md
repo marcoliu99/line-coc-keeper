@@ -52,4 +52,5 @@ def analysis_provider() -> AnalysisProvider | None: ...           # config.ANALY
 ## Limits
 
 - Provider *capabilities* (`supports_dynamic_tools`, `supports_response_stage`) are already in the registry and are untouched.
+- Ordering, decided in review: implement the full version (all four scope steps), after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land.
 - The largest cost is test churn, not production code. If that's judged not worth it now, steps 1–2 can land alone by keeping the old aliases as thin deprecated wrappers, but that's the halfway state this spec is trying to leave.
