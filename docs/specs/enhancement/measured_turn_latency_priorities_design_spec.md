@@ -475,7 +475,9 @@ Goal: preserve current-turn evidence and message admission order while retaining
 3. **Admission order.** Register an ordinary turn in the conversation's ordering queue before awaiting its prefetch. Retrieval may run while it waits, but a later completed prefetch cannot pass an earlier message. The configured KP Assistant retains priority over waiting players. Cancellation removes its ticket.
 4. **Queue position.** Count waiters at both the KP priority gate and the conversation lock, without double-counting a turn that has crossed from the gate to the lock. The notice and `turn.queue` use the same snapshot and update as turns finish.
 
-Acceptance: targeted regression tests for invalid response chains, chapter and memory changes, intentionally delayed prefetches with FIFO/KP priority, cancellation, and gate queue counts; then the isolated full suite, Ruff, mypy, and `git diff --check`. No additional model request or synchronous review stage is introduced.## 9. Re-measured with a five-investigator party
+Acceptance: targeted regression tests for invalid response chains, chapter and memory changes, intentionally delayed prefetches with FIFO/KP priority, cancellation, and gate queue counts; then the isolated full suite, Ruff, mypy, and `git diff --check`. No additional model request or synchronous review stage is introduced.
+
+## 9. Re-measured with a five-investigator party
 
 Everything above was measured against the database's current groups, which hold **one** character each. The recorded sessions had three to five speakers — Mick 53 turns, Marco 52, Ken 39, 馬可先生 31 — so the per-turn figures were a solo game and the queue figures were not.
 
@@ -534,7 +536,7 @@ Arm A produced no `deferred` turns; arm D produced three. The arms also diverged
 
 It is nonetheless the instruction-following risk §2.6 said was unverified: the block moved from `instructions`, where it took precedence, to a `developer` message after the player's line. **A controlled comparison from an identical state, with the same pending items, is owed before WP2 ships.** Cache and delivery were verified; judgement was not.
 
-### 8.7 The controlled comparison, first attempt: inconclusive by design fault
+### 9.7 The controlled comparison, first attempt: inconclusive by design fault
 
 `scripts/experiments/controlled_disposition_ab.py` restores the database to one snapshot before every turn, so both compositions see identical state, identical pending items and the same message. Four cases, three repeats each, twenty-four turns.
 
@@ -554,7 +556,7 @@ The verdict compared `Counter` equality, which at three samples reports a one-of
 
 One result does survive: **no `deferred` appeared in either arm, in any case.** The 0-against-3 signal from §8.6 did not reproduce from identical state, which points at the arms' state divergence rather than the prompt composition. That removes the evidence for the concern; it does not clear WP2, which still owes a comparison with a probe that can succeed.
 
-### 8.8 The controlled comparison, repaired: WP2 is the more consistent of the two
+### 9.8 The controlled comparison, repaired: WP2 is the more consistent of the two
 
 Two probes, two cases, four repeats each, thirty-two turns, the database restored to one snapshot before every turn.
 
