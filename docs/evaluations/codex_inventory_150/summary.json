@@ -1,0 +1,170 @@
+{
+  "exec": {
+    "cases": 75,
+    "flow_assertions_pass": 75,
+    "tool_pass": 75,
+    "strict_pass": 75,
+    "first_pass": 75,
+    "final_retries": 0,
+    "incomplete_retries": 0,
+    "invalid_proposals": 0,
+    "requests": 225,
+    "game_calls": 60,
+    "python_rolls": 30,
+    "median_seconds": 25.365,
+    "p95_seconds": 38.035,
+    "total_case_seconds": 1771.218
+  },
+  "server": {
+    "cases": 75,
+    "flow_assertions_pass": 74,
+    "tool_pass": 73,
+    "strict_pass": 73,
+    "first_pass": 71,
+    "final_retries": 2,
+    "incomplete_retries": 0,
+    "invalid_proposals": 0,
+    "requests": 227,
+    "game_calls": 60,
+    "python_rolls": 30,
+    "median_seconds": 23.738,
+    "p95_seconds": 38.202,
+    "total_case_seconds": 1690.88
+  },
+  "total": {
+    "cases": 150,
+    "flow_assertions_pass": 149,
+    "tool_pass": 148,
+    "strict_pass": 148,
+    "first_pass": 146,
+    "final_retries": 2,
+    "incomplete_retries": 0,
+    "invalid_proposals": 0,
+    "requests": 452,
+    "game_calls": 120,
+    "python_rolls": 60,
+    "median_seconds": 24.343,
+    "p95_seconds": 38.035,
+    "total_case_seconds": 3462.098
+  },
+  "by_kind": {
+    "check_failure": {
+      "cases": 30,
+      "flow_assertions_pass": 30,
+      "tool_pass": 30,
+      "strict_pass": 30,
+      "first_pass": 30,
+      "final_retries": 0,
+      "incomplete_retries": 0,
+      "invalid_proposals": 0,
+      "requests": 120,
+      "game_calls": 30,
+      "python_rolls": 30,
+      "median_seconds": 29.965,
+      "p95_seconds": 41.839,
+      "total_case_seconds": 938.4
+    },
+    "check_success": {
+      "cases": 30,
+      "flow_assertions_pass": 30,
+      "tool_pass": 30,
+      "strict_pass": 30,
+      "first_pass": 30,
+      "final_retries": 0,
+      "incomplete_retries": 0,
+      "invalid_proposals": 0,
+      "requests": 120,
+      "game_calls": 30,
+      "python_rolls": 30,
+      "median_seconds": 30.872,
+      "p95_seconds": 39.046,
+      "total_case_seconds": 940.6
+    },
+    "pending": {
+      "cases": 30,
+      "flow_assertions_pass": 30,
+      "tool_pass": 29,
+      "strict_pass": 29,
+      "first_pass": 29,
+      "final_retries": 0,
+      "incomplete_retries": 0,
+      "invalid_proposals": 0,
+      "requests": 32,
+      "game_calls": 1,
+      "python_rolls": 0,
+      "median_seconds": 6.327,
+      "p95_seconds": 13.315,
+      "total_case_seconds": 210.805
+    },
+    "pending_pickup": {
+      "cases": 30,
+      "flow_assertions_pass": 29,
+      "tool_pass": 29,
+      "strict_pass": 29,
+      "first_pass": 27,
+      "final_retries": 2,
+      "incomplete_retries": 0,
+      "invalid_proposals": 0,
+      "requests": 90,
+      "game_calls": 29,
+      "python_rolls": 0,
+      "median_seconds": 22.912,
+      "p95_seconds": 28.891,
+      "total_case_seconds": 693.037
+    },
+    "pickup": {
+      "cases": 30,
+      "flow_assertions_pass": 30,
+      "tool_pass": 30,
+      "strict_pass": 30,
+      "first_pass": 30,
+      "final_retries": 0,
+      "incomplete_retries": 0,
+      "invalid_proposals": 0,
+      "requests": 90,
+      "game_calls": 30,
+      "python_rolls": 0,
+      "median_seconds": 21.97,
+      "p95_seconds": 28.833,
+      "total_case_seconds": 679.256
+    }
+  },
+  "failures": [
+    {
+      "transport": "app-server",
+      "repetition": 8,
+      "kind": "pending",
+      "ok": true,
+      "tool_correct": false,
+      "failures": []
+    },
+    {
+      "transport": "app-server",
+      "repetition": 10,
+      "kind": "pending_pickup",
+      "ok": false,
+      "tool_correct": false,
+      "failures": [
+        "item_not_acquired"
+      ]
+    }
+  ],
+  "repairs": [
+    {
+      "transport": "app-server",
+      "repetition": 7,
+      "kind": "pending_pickup",
+      "requests": 4,
+      "elapsed_seconds": 32.343,
+      "final_retries": 1
+    },
+    {
+      "transport": "app-server",
+      "repetition": 13,
+      "kind": "pending_pickup",
+      "requests": 4,
+      "elapsed_seconds": 28.891,
+      "final_retries": 1
+    }
+  ]
+}
