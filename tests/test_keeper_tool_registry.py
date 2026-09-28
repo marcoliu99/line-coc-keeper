@@ -103,6 +103,17 @@ def test_registry_covers_schemas_and_preserves_provider_order() -> None:
         ]
 
 
+def test_check_family_dispatches_without_legacy_cascade() -> None:
+    from app.models import GroupState
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy check dispatch"))):
+        result = keeper._execute_tool(
+            GroupState(group_id="npc-check"), "npc_skill_check", {"skill_value": 100}, [], [],
+        )
+    assert result["ok"] and result["skill_value"] == 100
+
+
 def test_dice_family_dispatches_without_legacy_cascade() -> None:
     state = GroupState(group_id="dice-family")
     state.characters["p1"] = Character(name="Investigator", owner_id="p1", occupation="Detective")
