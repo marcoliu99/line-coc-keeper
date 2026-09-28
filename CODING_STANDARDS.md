@@ -9,7 +9,7 @@ Each rule gives the target behaviour and the reason for it. When existing code b
 **Discord events enter through the command router.** `discord_bot.py` translates Discord events (messages, uploads, button callbacks) and passes them to `app/commands/router.py`, which dispatches to `app/commands/handlers/*`.
 _Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls `legacy_commands` directly skips them.
 
-**Handlers parse and reply; rule modules own game rules.** Combat, check registration, checkpoints and purchases live in `combat.py`, `keeper.py`, `checkpoints.py` and `services/purchases.py`. A handler calls those modules; it does not copy their guards.
+**Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `keeper.py` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.
 _Why:_ a copied guard drifts. The auto-combat checkpoint and the duplicate-NPC guard already exist in both a handler and a rule module.
 
 **Private stays private.** A leading underscore means the name is used only inside its own module. When another module needs it, give it a public name in the owning module first, then call it. Ruff SLF001 enforces this; `pyproject.toml` lists the existing violations as debt.
@@ -26,7 +26,7 @@ _Why:_ `_execute_tool` is about 1,180 lines of `if name == ...` branches, so eac
 **Every new pending check goes through the ownership gate.** Before registering a skill, SAN or CON check, inspect both `pending_checks` and `pending_luck_decisions` on the freshly reloaded state inside `_mutate_and_save_state` (see `_reject_if_check_already_pending`). When the gate blocks, report the block to the player or the model.
 _Why:_ a check that returns silently loses a rules consequence. Spec: `docs/specs/bug/bugfix_duplicate_pending_checks.md`.
 
-**Closed value sets are types.** Represent fixed values such as `speaker_role`, check types and blocker codes with `Literal` or `Enum`, not bare strings.
+**Closed value sets are types.** Represent fixed values such as `speaker_role` and check types with `Literal` or `Enum`, not bare strings.
 _Why:_ mypy can then catch typos and missing branches.
 
 ## Comments and docs

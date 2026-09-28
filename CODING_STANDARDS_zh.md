@@ -9,7 +9,7 @@
 **Discord 事件一律經過 command router。** `discord_bot.py` 負責轉換 Discord 事件（訊息、上傳、按鈕回呼），交給 `app/commands/router.py`，再由它分派到 `app/commands/handlers/*`。
 _理由：_ KP／sudo 權限檢查和回合路由都在 router 這層；直接呼叫 `legacy_commands` 的入口會繞過它們。
 
-**Handler 只負責解析和回覆，遊戲規則放在規則模組。** 戰鬥、檢定登記、存檔點和購物分別放在 `combat.py`、`keeper.py`、`checkpoints.py`、`services/purchases.py`。Handler 呼叫這些模組，不自己複製一份防護邏輯。
+**Handler 只負責解析和回覆，遊戲規則放在規則模組。** 戰鬥、檢定登記和存檔點分別放在 `combat.py`、`keeper.py`、`checkpoints.py`。Handler 呼叫這些模組，不自己複製一份防護邏輯。
 _理由：_ 複製出來的防護邏輯會慢慢不一致。開戰存檔點和 NPC 重複加入的防護，現在就同時存在於 handler 和規則模組。
 
 **私有就是私有。** 底線開頭的名稱只在自己的模組內使用。其他模組需要時，先在原模組提供一個不帶底線的公開名稱再呼叫。由 ruff SLF001 自動檢查，`pyproject.toml` 列出了既有的違規作為待清理項目。
@@ -26,7 +26,7 @@ _理由：_ `_execute_tool` 已經是約 1,180 行的 `if name == ...` 分支，
 **每個新的待處理檢定都要經過歸屬檢查。** 登記技能、SAN 或 CON 檢定前，在 `_mutate_and_save_state` 內、針對重新載入的狀態，同時檢查 `pending_checks` 和 `pending_luck_decisions`（參考 `_reject_if_check_already_pending`）。被擋下時要讓玩家或模型知道。
 _理由：_ 無聲返回的檢定會讓規則後果直接消失。規格：`docs/specs/bug/bugfix_duplicate_pending_checks.md`。
 
-**固定的值集合用型別表示。** `speaker_role`、檢定類型、blocker code 這類固定值用 `Literal` 或 `Enum`，不用裸字串。
+**固定的值集合用型別表示。** `speaker_role`、檢定類型這類固定值用 `Literal` 或 `Enum`，不用裸字串。
 _理由：_ 這樣 mypy 才能抓到錯字和漏掉的分支。
 
 ## 註解與文件
