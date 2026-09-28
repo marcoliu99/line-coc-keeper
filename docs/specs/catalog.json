@@ -1173,11 +1173,13 @@
       "title": "Re-adding a defeated enemy's name: confirm it, and keep the two apart",
       "zh": "再次加入已倒下敵人的名字：提醒確認，並把兩者區分開",
       "category": "bug",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/combat.py",
         "app/keeper.py",
-        "app/commands/handlers/combat.py"
+        "app/commands/handlers/combat.py",
+        "tests/test_defeated_enemy_readd.py",
+        "tests/test_state_persistence.py"
       ],
       "path": "docs/specs/bug/defeated_enemy_readd_design_spec.md",
       "zh_path": "docs/specs/bug/defeated_enemy_readd_design_spec_zh.md",

@@ -2,7 +2,7 @@
 
 [繁體中文](defeated_enemy_readd_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review). Base: `main_v2` at `1a169a3`. Depends on #118 (`combat.add_combatant`).
+Status: **implemented**. Base: `main_v2` at `1a169a3`. Depends on #118 (`combat.add_combatant`).
 
 ## Problem and evidence
 
@@ -54,4 +54,5 @@ In `_find_combatant`'s exact-match pass, when several combatants match, return t
 ## Limits
 
 - There is still no tool to *remove* a mistaken combatant; zeroing its HP is the correction path the note gives. A removal tool is out of scope.
+- Numbering applies only when the display name would repeat. Re-adding through an index alias (`柯比特` after a defeated `Walter Corbitt`) already reads differently, so it isn't numbered, but a later lookup by the *other* name (`Walter Corbitt`) still exactly matches only the defeated one. Name lookups don't expand index aliases; doing that for combat targeting is a separate change.
 - Numbering applies only to combatants added after this lands. Existing saved fights with two identical display names still benefit from step 3's living-first lookup.
