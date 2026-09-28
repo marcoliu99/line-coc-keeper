@@ -1188,6 +1188,21 @@
       "path": "docs/specs/refactor/active_provider_lookup_design_spec.md",
       "zh_path": "docs/specs/refactor/active_provider_lookup_design_spec_zh.md",
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "Check registration lifecycle",
+      "zh": "檢定註冊生命週期",
+      "category": "refactor",
+      "status": "backlog",
+      "evidence": [
+        "app/keeper.py",
+        "app/combat.py",
+        "app/check_identity.py",
+        "app/commands/handlers/system.py",
+        "app/legacy_commands.py"
+      ],
+      "path": "docs/specs/refactor/check_lifecycle_design_spec.md",
+      "zh_path": "docs/specs/refactor/check_lifecycle_design_spec_zh.md"
     }
   ]
 }
