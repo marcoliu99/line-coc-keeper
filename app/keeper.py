@@ -48,7 +48,7 @@ from app.config import (
     SCENE_DIGEST_TURN_INTERVAL,
 )
 from app.models import BASE_SKILLS, Character, GroupState
-from app.providers.registry import analysis_provider
+from app.providers.registry import conversation_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
     clear_page_images,
@@ -2633,7 +2633,7 @@ def _execute_tool(
                 # A second call for a monster already in the fight (the Keeper
                 # re-searched a scenario NPC mid-turn) reuses its HP pool; see
                 # combat.add_combatant.
-                existing = combat.add_combatant(
+                added = combat.add_combatant(
                     target_state,
                     npc_name,
                     int(tool_input.get("dex", 50)),
@@ -2643,12 +2643,21 @@ def _execute_tool(
                     attacks=tool_input.get("attacks"),
                     abilities=tool_input.get("abilities"),
                 )
-                if existing is not None:
+                if added.reused:
                     return _StateMutation(
-                        f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
+                        f"（系統偵測到「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
                         "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
                         "add_npc_to_combat。）",
                         should_save=False,
+                    )
+                if added.defeated_namesake is not None:
+                    # Right when a second monster of the kind arrives, wrong when
+                    # the Keeper forgot this one was already defeated: ask.
+                    new = added.combatant
+                    index_note += (
+                        f"（{combat.defeated_namesake_notice(added)}"
+                        f"如果這其實是同一隻，請用 damage_combatant 把「{new.display_name}」的 HP 歸零，"
+                        "並依原本倒下的狀態敘事。）"
                     )
                 return _StateMutation(index_note, should_save=True)
             index_note = _mutate_and_save_state(state, _mutate_add_npc)
@@ -3368,7 +3377,7 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
     returns nothing usable all fall back to returning current_summary
     unchanged (logged, not raised) — a failed summarization should never
     crash the turn or lose the existing summary, only leave it stale."""
-    provider = analysis_provider()
+    provider = conversation_provider()
     if provider is None:
         return current_summary
     try:

@@ -14,6 +14,8 @@ from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import map_handler
 from app.commands.handlers import system as system_handler
+from app.commands.handlers import uploads as uploads_handler
+from app.commands.handlers.uploads import Upload
 from app.legacy_commands import (
     FormatMention,
     GetDisplayName,
@@ -28,6 +30,7 @@ from app.legacy_commands import (
     handle_luck_decision,
     handle_pregen_luck_roll,
     handle_roll_command,
+    handle_unsupported_message,
 )
 from app.repositories.group_state import load_state
 from app.services import mutation_admission
@@ -397,6 +400,29 @@ async def _handle_sudo_command(
             duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
             status=dispatch_status,
         )
+
+
+async def handle_uploads(
+    conversation_id: str,
+    uploads: list[Upload],
+    reply: Reply,
+    *,
+    post_pdf_buttons: Callable[[], Awaitable[None]],
+) -> bool:
+    """Discord attachments enter here, as text enters through handle_text_message.
+
+    True when an attachment was handled; the caller then ignores the text.
+    """
+    if not uploads:
+        return False
+    observability.event("turn.entry", entry="upload")
+    with observability.span("router", command_name="upload"):
+        return await uploads_handler.handle_uploads(conversation_id, uploads, reply, post_pdf_buttons=post_pdf_buttons)
+
+
+async def handle_unsupported_attachment(conversation_id: str, reply: Reply) -> None:
+    """A message with attachments nothing handles, and no text."""
+    await handle_unsupported_message(conversation_id, reply, "附件")
 
 
 def is_known_coc_command(subcommand: str) -> bool:

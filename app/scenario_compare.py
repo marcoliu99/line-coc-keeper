@@ -3,7 +3,7 @@ produced alternate parse of the same PDF (a different OCR/parsing tool's
 output), to catch content our pipeline (app/pdf_loader.py) missed, garbled, or
 mis-attributed — a GM-triggered QA check, not something run during play.
 
-Single forced tool-call (via whichever ANALYSIS_PROVIDER is configured — see
+Single forced tool-call (via whichever LLM_PROVIDER is configured — see
 app/providers/*.py's analyze_text), same dispatch pattern as
 app/pregen_extractor.py.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.config import MAX_SCENARIO_CHARS
-from app.providers.registry import analysis_provider
+from app.providers.registry import conversation_provider
 
 _REPORT_TOOL = {
     "name": "report_discrepancies",
@@ -43,7 +43,7 @@ _REPORT_TOOL = {
 
 
 def compare_scenario_text(our_text: str, alt_text: str) -> list[dict[str, Any]]:
-    provider = analysis_provider()
+    provider = conversation_provider()
     if provider is None or not our_text.strip() or not alt_text.strip():
         return []
 

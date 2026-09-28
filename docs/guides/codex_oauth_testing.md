@@ -1,8 +1,9 @@
 # Local Codex OAuth testing
 
-This experiment uses the installed Codex CLI and its ChatGPT login for game
-conversation. It does not convert a ChatGPT OAuth token into an OpenAI API key.
-The host Python application executes all CoC tools and persists state.
+This guide covers the installed Codex CLI and its ChatGPT login for game
+conversation and general structured text analysis. It does not convert a ChatGPT
+OAuth token into an OpenAI API key. The host Python application executes all
+CoC tools and persists state.
 
 ## Setup
 
@@ -26,7 +27,7 @@ Relevant configuration:
 
 ```dotenv
 LLM_PROVIDER=codex
-ANALYSIS_PROVIDER=openai
+ANALYSIS_PROVIDER=anthropic
 CODEX_MODEL=gpt-6-luna
 CODEX_REASONING_EFFORT=medium
 CODEX_TRANSPORT=exec
@@ -38,12 +39,32 @@ MAX_TOOL_ITERATIONS=6
 MAX_TOOLS_PER_TURN=4
 ```
 
-`ANALYSIS_PROVIDER` should match the existing analysis backend; the copied local
-configuration preserves that choice. API keys remain relevant for PDF/image
-analysis, structured extraction, summary maintenance and optional embeddings.
-Switching conversation to Codex does not migrate these capabilities or make all
-API traffic disappear. No automatic fallback from OAuth to paid API conversation
-is performed. The requested `gpt-6-luna` was verified with this local account.
+`ANALYSIS_PROVIDER` must be an API provider (`openai`, `anthropic`, or `gemini`)
+for PDF page-image repair/map analysis and pre-generated character-card
+extraction. Codex's tested image analysis produced no structured rooms for the
+sampled map pages, and it is intentionally rejected for this setting. Scenario
+indexing, opening narration extraction, scenario comparison, and Keeper history
+summaries follow `LLM_PROVIDER` and can use Codex text analysis. Codex CLI calls
+use the local ChatGPT login and do not need `OPENAI_API_KEY`; optional RAG
+embeddings remain a separate OpenAI API feature. There is no automatic provider
+fallback.
+
+The real-PDF probe recorded in the analysis-provider spec found that Codex
+classified sampled pages correctly but returned no structured rooms for either
+sampled map page. Do not route PDF/image/OCR or character-card extraction through
+Codex.
+
+## Analysis smoke test (uses the authenticated CLI)
+
+The smoke test is skipped during normal CI. Opt in to one synthetic text
+request with:
+
+```sh
+RUN_CODEX_ANALYSIS_SMOKE=1 python -m pytest -q tests/test_codex_analysis_smoke.py
+```
+
+The request uses the local ChatGPT login and consumes its available plan
+capacity. It sends synthetic text; no Discord traffic or game state is involved.
 
 ## Smoke tests (no Discord)
 
