@@ -2,7 +2,7 @@
 
 [繁體中文](keeper_adjudicates_corrections_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review). Base: `bug/keeper-role-superuser` at `434b76d`. Decision record: `docs/adr/0001-keeper-adjudicates-corrections-without-kp.md`.
+Status: **implemented** in `app/services/correction_adjudication.py`; tests in `tests/test_keeper_adjudicates_corrections.py`. Base: `bug/keeper-role-superuser` at `434b76d`. Decision record: `docs/adr/0001-keeper-adjudicates-corrections-without-kp.md`.
 
 ## Problem
 

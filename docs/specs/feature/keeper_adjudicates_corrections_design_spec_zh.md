@@ -2,7 +2,7 @@
 
 [English](keeper_adjudicates_corrections_design_spec.md)
 
-狀態：**backlog**（等待規格審查）。基準：`bug/keeper-role-superuser` 的 `434b76d`。決策紀錄：`docs/adr/0001-keeper-adjudicates-corrections-without-kp.md`。
+狀態：**implemented**，實作在 `app/services/correction_adjudication.py`；測試在 `tests/test_keeper_adjudicates_corrections.py`。基準：`bug/keeper-role-superuser` 的 `434b76d`。決策紀錄：`docs/adr/0001-keeper-adjudicates-corrections-without-kp.md`。
 
 ## 問題
 

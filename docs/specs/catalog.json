@@ -1230,7 +1230,7 @@
       "title": "A Discord role named keeper is a hidden superuser",
       "zh": "名為 keeper 的 Discord 身分組是隱藏的超級使用者",
       "category": "bug",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/discord_bot.py",
         "app/commands/router.py",
@@ -1239,7 +1239,8 @@
         "app/legacy_commands.py",
         "app/services/movement.py",
         "app/agents/supervisor.py",
-        "app/agents/executor.py"
+        "app/agents/executor.py",
+        "tests/test_kp_authority.py"
       ],
       "path": "docs/specs/bug/keeper_role_superuser_design_spec.md",
       "zh_path": "docs/specs/bug/keeper_role_superuser_design_spec_zh.md",
@@ -1249,11 +1250,13 @@
       "title": "The Keeper adjudicates narrative corrections when a group has no KP Assistant",
       "zh": "群組沒有 KP 助手時，由守秘人裁定敘事更正",
       "category": "feature",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
+        "app/services/correction_adjudication.py",
         "app/commands/handlers/correct.py",
         "app/services/narrative_corrections.py",
-        "app/providers/registry.py"
+        "app/commands/handlers/system.py",
+        "tests/test_keeper_adjudicates_corrections.py"
       ],
       "path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec.md",
       "zh_path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec_zh.md",

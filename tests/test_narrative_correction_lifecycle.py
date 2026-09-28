@@ -29,7 +29,7 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def test_old_effective_decisions_survive_pruning_and_reload(self):
         state = self.state()
         correct._prune_adjudicated(state)
-        correct._save(state)
+        corrections.save(state)
         restored = load_state(state.group_id)
         context, overflow = corrections.projection(restored)
         self.assertFalse(overflow)
@@ -121,7 +121,7 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_target_never_creates_a_report(self):
         state = GroupState(group_id='unknown-target', timeline_id='t')
         reply = AsyncMock()
-        with patch.object(correct, 'load_state', return_value=state), patch.object(correct, '_save') as save:
+        with patch.object(correct, 'load_state', return_value=state), patch.object(corrections, 'save') as save:
             await correct.handle_correct_command(state.group_id, 'player', reply,
                                                  ['/coc', 'correct', '123456', '疑點'])
         self.assertIn('無法確認目標', reply.call_args.args[0])

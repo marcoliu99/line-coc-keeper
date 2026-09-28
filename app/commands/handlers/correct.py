@@ -1,8 +1,9 @@
 """Out-of-character reports about Keeper narration.
 
-Player text here is an allegation, never an established game fact. Only a KP
-adjudication can publish a correction, and this handler does not call the
-Supervisor, Executor, dice, or gameplay tools.
+Player text here is an allegation, never an established game fact. The
+group's KP Assistant adjudicates; in a group without one the Keeper rules from
+system-held evidence (docs/adr/0001-keeper-adjudicates-corrections-without-kp.md).
+This handler does not call the Supervisor, Executor, dice, or gameplay tools.
 """
 
 from __future__ import annotations
@@ -11,13 +12,16 @@ import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from app import db
 from app.commands import permissions
 from app.legacy_commands import Reply
 from app.models import GroupState
-from app.repositories.group_state import load_state, save_state
-from app.services import mutation_admission
-from app.services.narrative_corrections import target_receipt
+from app.repositories.group_state import load_state
+from app.services import (
+    correction_adjudication,
+    mutation_admission,
+    narrative_corrections,
+)
+from app.services.narrative_corrections import OPEN_STATUSES, target_receipt
 
 _MESSAGE_URL = re.compile(r"^https://(?:canary\.|ptb\.)?discord\.com/channels/\d+/\d+/(\d+)$")
 _MESSAGE_ID = re.compile(r"^\d{5,25}$")
@@ -25,6 +29,7 @@ _MAX_ISSUE_LENGTH = 500
 _MAX_RESOLUTION_LENGTH = 1000
 _MAX_PENDING_PER_GROUP = 12
 _MAX_PENDING_PER_REPORTER = 3
+_MAX_UNVERIFIED_PER_REPORTER = 3
 _MAX_CLOSED_IN_STATE = 12
 
 
@@ -52,18 +57,8 @@ def _prune_adjudicated(state: GroupState) -> None:
     retained = {id(item) for item in approved + closed[-_MAX_CLOSED_IN_STATE:]}
     state.narrative_corrections[:] = [
         item for item in state.narrative_corrections
-        if item.get("status") in {"pending", "superseded"} or id(item) in retained
+        if item.get("status") in {*OPEN_STATUSES, "superseded"} or id(item) in retained
     ]
-
-
-def _save(state: GroupState) -> None:
-    state.openai_previous_response_id = ""
-    state.openai_previous_response_timeline_id = ""
-    def archive(conn):
-        for record in state.narrative_corrections:
-            key = f"{state.group_id}:{record.get('timeline_id', '')}:{record['id']}"
-            db.set_json_tx(conn, "narrative_correction_archive", key, record)
-    save_state(state, reason="narrative_correction", mutate_tx=archive)
 
 
 @mutation_admission.guard_async_entry
@@ -87,7 +82,7 @@ async def handle_correct_command(
             return
         old["status"] = "superseded"
         old["superseded_by"] = replacement["id"]
-        _save(state)
+        narrative_corrections.save(state)
         await reply(f"更正 #{old['id']} 已由 #{replacement['id']} 取代；原紀錄保留。")
         return
 
@@ -99,15 +94,17 @@ async def handle_correct_command(
             return
         report["hold_scope"] = scope
         report["held_by"] = user_id
-        _save(state)
+        narrative_corrections.save(state)
         await reply("已標記核對範圍；符合指定名稱的行動與狀態工具將暫停。未列出的代稱不保證自動辨識。")
         return
 
     if action == "list":
         visible = [
             item for item in _active_reports(state)
-            if item.get("status") in {"pending", "approved"} and (is_kp or item.get("reporter_id") == user_id)
+            if item.get("status") in {*OPEN_STATUSES, "approved"} and (is_kp or item.get("reporter_id") == user_id)
         ]
+        if not state.kp_assistant_user_id:
+            correction_adjudication.schedule(conversation_id, reply)
         if not visible:
             await reply("目前沒有可查看的待核對敘事異議。")
             return
@@ -123,7 +120,7 @@ async def handle_correct_command(
             await reply(f"用法：/coc correct {action} <提報編號>" + (" <更正內容>" if action == "approve" else ""))
             return
         report = _find_report(state, parts[3])
-        if report is None or report.get("status") != "pending":
+        if report is None or report.get("status") not in OPEN_STATUSES:
             await reply("找不到這筆待核對異議，或已經處理。")
             return
         if action == "withdraw":
@@ -131,35 +128,20 @@ async def handle_correct_command(
                 await reply("只有提報者或 KP 可以撤回這筆異議。")
                 return
             report["status"] = "withdrawn"
+            report["reviewed_by"] = user_id
+            report["reviewed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             message = f"敘事異議 #{report['id']} 已撤回。"
         else:
             if not is_kp:
                 await reply("只有 KP 可以裁定敘事異議。")
                 return
-            if action == "approve":
-                resolution = " ".join(parts[4:]).strip()
-                if not resolution or len(resolution) > _MAX_RESOLUTION_LENGTH:
-                    await reply("請提供 1 到 1000 字的公開更正內容：/coc correct approve <提報編號> <更正內容>")
-                    return
-                report["status"] = "approved"
-                report["resolution"] = resolution
-                message = (
-                    f"【敘事更正 #{report['id']}】先前訊息 {report['target_message_id']} "
-                    f"已由 KP 更正：{resolution}"
-                )
-            else:
-                report["status"] = "rejected"
-                message = f"敘事異議 #{report['id']} 經 KP 核對後不成立。"
-        report["reviewed_by"] = user_id
-        report["reviewed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        if action == "approve":
-            state.log.append({"role": "assistant", "content": message})
-            # A cached provider conversation may still contain the uncorrected
-            # narration. Rebuild the next turn from the corrected local log.
-            state.openai_previous_response_id = ""
-            state.openai_previous_response_timeline_id = ""
+            resolution = " ".join(parts[4:]).strip()
+            if action == "approve" and (not resolution or len(resolution) > _MAX_RESOLUTION_LENGTH):
+                await reply("請提供 1 到 1000 字的公開更正內容：/coc correct approve <提報編號> <更正內容>")
+                return
+            message = narrative_corrections.record_ruling(state, report, action, user_id, resolution=resolution)
         _prune_adjudicated(state)
-        _save(state)
+        narrative_corrections.save(state)
         await reply(message)
         return
 
@@ -191,7 +173,7 @@ async def handle_correct_command(
 
     for item in _active_reports(state):
         if (
-            item.get("status") == "pending"
+            item.get("status") in OPEN_STATUSES
             and item.get("reporter_id") == user_id
             and item.get("target_message_id") == target
             and item.get("issue") == issue
@@ -204,6 +186,12 @@ async def handle_correct_command(
         item.get("reporter_id") == user_id for item in pending
     ) >= _MAX_PENDING_PER_REPORTER:
         await reply("待核對敘事異議已達上限；請先由 KP 處理，或撤回你不再需要的提報。")
+        return
+    # Unverified reports don't count above, so a KP-less group never fills up;
+    # this cap stops one player cycling fabricated reports through the Keeper.
+    if sum(item.get("status") == "unverified" and item.get("reporter_id") == user_id
+           for item in _active_reports(state)) >= _MAX_UNVERIFIED_PER_REPORTER:
+        await reply("你有 3 筆守秘人未能證實的異議；請先撤回其中一筆，或等 KP 裁定後再提報。")
         return
 
     # The next report is the first write in this timeline; discard inactive
@@ -221,5 +209,7 @@ async def handle_correct_command(
         "target_receipt": receipt,
     }
     state.narrative_corrections.append(report)
-    _save(state)
+    narrative_corrections.save(state)
     await reply(f"已收到敘事糾正提報 #{report['id']}，待核對。提報不會改寫劇情或觸發遊戲行動。")
+    if not state.kp_assistant_user_id:
+        correction_adjudication.schedule(conversation_id, reply)

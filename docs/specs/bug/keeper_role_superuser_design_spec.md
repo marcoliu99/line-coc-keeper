@@ -2,7 +2,7 @@
 
 [繁體中文](keeper_role_superuser_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review). Base: `refactor/discord-buttons-through-router` at `5106d47` (on top of `main_v2` at `83e0c54`). Replaces step 4 of `docs/specs/refactor/discord_events_through_router_design_spec.md`.
+Status: **implemented** on `feature/keeper-adjudicates-corrections`, together with the Keeper-adjudication feature. Base: `refactor/discord-buttons-through-router` at `5106d47` (on top of `main_v2` at `83e0c54`). Replaces step 4 of `docs/specs/refactor/discord_events_through_router_design_spec.md`.
 
 ## Problem
 

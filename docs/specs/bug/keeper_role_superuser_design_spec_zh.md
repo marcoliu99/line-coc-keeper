@@ -2,7 +2,7 @@
 
 [English](keeper_role_superuser_design_spec.md)
 
-狀態：**backlog**（等待規格審查）。基準：`refactor/discord-buttons-through-router` 的 `5106d47`（建立在 `main_v2` 的 `83e0c54` 之上）。取代 `docs/specs/refactor/discord_events_through_router_design_spec.md` 的第 4 步。
+狀態：**implemented**，在 `feature/keeper-adjudicates-corrections` 與守秘人裁定功能一起實作。基準：`refactor/discord-buttons-through-router` 的 `5106d47`（建立在 `main_v2` 的 `83e0c54` 之上）。取代 `docs/specs/refactor/discord_events_through_router_design_spec.md` 的第 4 步。
 
 ## 問題
 

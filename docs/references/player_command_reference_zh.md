@@ -536,7 +536,7 @@
 
 ### 提報敘事錯誤
 
-針對 Keeper 先前敘事提出待 KP 核對的異議，不會觸發遊戲行動。
+針對 Keeper 先前敘事提出異議，不會觸發遊戲行動。有 KP 助手時由 KP 裁定；沒有時由守秘人依系統證據裁定。
 
 用法：
 - `回覆 Keeper 訊息：/coc correct <疑點>`
@@ -545,7 +545,7 @@
 - `/coc correct withdraw <提報編號>`
 
 注意：
-- KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。另可 hold <編號> <實體|別名> 暫停指定範圍，supersede <舊編號> <核准替代編號> 整併有效更正。目標須有本頻道目前時間線的訊息紀錄。
+- 沒有 KP 助手時，守秘人只依系統紀錄（原敘事、角色卡、公開線索與事實、劇本段落）裁定；無法證實的異議標為 unverified，保留給之後的 KP，或由提報者撤回。每人最多 3 筆 unverified。KP 裁定：/coc correct approve <提報編號> <公開更正內容>，或 /coc correct reject <提報編號>。另可 hold <編號> <實體|別名> 暫停指定範圍，supersede <舊編號> <核准替代編號> 整併有效更正。目標須有本頻道目前時間線的訊息紀錄。
 
 ### 單純擲骰
 

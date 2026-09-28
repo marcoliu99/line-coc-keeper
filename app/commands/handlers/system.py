@@ -47,7 +47,11 @@ from app.repositories.group_state import (
     save_state,
     scenario_users,
 )
-from app.services import mutation_admission
+from app.services import (
+    correction_adjudication,
+    mutation_admission,
+    narrative_corrections,
+)
 
 
 async def _handle_local_import(
@@ -669,6 +673,9 @@ async def handle_system_command(
             state.kp_ooc_log = []
             save_state(state)
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
+            # With the seat empty, the Keeper rules on what the KP left open.
+            if any(r.get("status") == "pending" for r in narrative_corrections.active(state)):
+                correction_adjudication.schedule(conversation_id, reply)
             return
 
         if kp_action in ("transfer", "takeover"):
