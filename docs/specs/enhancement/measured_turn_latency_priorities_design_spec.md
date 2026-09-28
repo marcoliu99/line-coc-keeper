@@ -493,3 +493,23 @@ Whether a turn can proceed while someone else is mid-decision is the Executor's 
 Arm A produced no `deferred` turns; arm D produced three. The arms also diverged in state as play continued — arm A's first turn cancelled a check where arm D's created one — so the cause is not isolated, and this is one scenario.
 
 It is nonetheless the instruction-following risk §2.6 said was unverified: the block moved from `instructions`, where it took precedence, to a `developer` message after the player's line. **A controlled comparison from an identical state, with the same pending items, is owed before WP2 ships.** Cache and delivery were verified; judgement was not.
+
+### 8.7 The controlled comparison, first attempt: inconclusive by design fault
+
+`scripts/experiments/controlled_disposition_ab.py` restores the database to one snapshot before every turn, so both compositions see identical state, identical pending items and the same message. Four cases, three repeats each, twenty-four turns.
+
+```text
+case              today                       WP2
+clean             incomplete 1, blocked 2     incomplete 2, blocked 1
+other_has_check   incomplete 2, blocked 1     blocked 3
+other_has_luck    incomplete 1, blocked 2     incomplete 1, blocked 2
+self_has_check    incomplete 1, blocked 2     incomplete 2, blocked 1
+```
+
+**It shows nothing, for two reasons, both mine.**
+
+The probe message named a desk. The current scene is a basement storeroom with board walls, so every one of the twenty-four turns was correctly refused and the run had no way to detect a difference in how permissive either composition is. The script now carries two probes, one the scene supports and one it does not.
+
+The verdict compared `Counter` equality, which at three samples reports a one-of-three ratio shift as a difference. Every cell produced the same two dispositions under both compositions; only the proportions moved. The script now reports whether the *set* of dispositions differs, prints counts without calling them a finding, and says plainly that this sample size cannot separate a composition from the model's own variance.
+
+One result does survive: **no `deferred` appeared in either arm, in any case.** The 0-against-3 signal from §8.6 did not reproduce from identical state, which points at the arms' state divergence rather than the prompt composition. That removes the evidence for the concern; it does not clear WP2, which still owes a comparison with a probe that can succeed.

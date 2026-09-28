@@ -48,7 +48,14 @@ from app.repositories.group_state import load_state
 
 logging_config.configure_logging(force=True)
 
-MESSAGE = "我走到書桌旁邊，看看抽屜裡有什麼"
+# Two probes on purpose. A message the scene cannot support can only ever be
+# refused, so on its own it says nothing about how permissive a composition is
+# — the first run used one of those for every cell and all 24 turns refused.
+# The supportable probe names what the current scene actually holds.
+MESSAGES = {
+    "supportable": "我仔細檢查地下室的木板牆",
+    "unsupported": "我走到書桌旁邊，看看抽屜裡有什麼",
+}
 
 # Each case names the pending state another investigator is left holding, which
 # is what the round-robin run suggested the two compositions disagreed about.
@@ -102,7 +109,8 @@ def prepare(pristine: Path, group: str, case: str) -> tuple[str, str]:
     return speaker, speaker_name
 
 
-async def one_turn(group: str, speaker: str, name: str, after_input: bool) -> dict:
+async def one_turn(group: str, speaker: str, name: str, after_input: bool,
+                   message: str) -> dict:
     config.OPENAI_DYNAMIC_PROMPT_AFTER_INPUT = after_input
     from app.providers import openai_provider
     openai_provider.config.OPENAI_DYNAMIC_PROMPT_AFTER_INPUT = after_input
@@ -111,7 +119,7 @@ async def one_turn(group: str, speaker: str, name: str, after_input: bool) -> di
     started = time.monotonic()
     try:
         reply, _private, _images = await supervisor.run_turn(
-            state, speaker, name, MESSAGE, None, "player", group)
+            state, speaker, name, message, None, "player", group)
     except Exception as exc:  # noqa: BLE001 - a failed turn is a result
         reply = f"[raised {type(exc).__name__}: {exc}]"
     return {"reply": reply, "seconds": time.monotonic() - started}
@@ -140,7 +148,8 @@ async def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--source-db", type=Path, required=True)
     parser.add_argument("--group", default="discord-channel-1550744273060765719")
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--repeats", type=int, default=4)
+    parser.add_argument("--probes", nargs="*", default=list(MESSAGES))
     parser.add_argument("--cases", nargs="*", default=list(CASES))
     args = parser.parse_args()
 
@@ -156,29 +165,40 @@ async def main() -> int:
     shutil.copy2(args.source_db, pristine)
     seen = len(dispositions(log_path, 0)) if log_path.exists() else 0
 
-    results: dict[tuple[str, bool], list[str]] = collections.defaultdict(list)
-    replies: dict[tuple[str, bool], list[str]] = collections.defaultdict(list)
-    print(f"sandbox {SANDBOX}\nmessage {MESSAGE!r}\nrepeats {args.repeats}\n")
-    for case in args.cases:
-        for after_input in (False, True):
-            for _ in range(args.repeats):
-                speaker, name = prepare(pristine, args.group, case)
-                outcome = await one_turn(args.group, speaker, name, after_input)
-                fresh = dispositions(log_path, seen)
-                seen += len(fresh)
-                verdict = fresh[-1] if fresh else "none"
-                results[(case, after_input)].append(verdict)
-                replies[(case, after_input)].append(outcome["reply"])
-                print(f"  {case:<16} after_input={after_input!s:<5} "
-                      f"{verdict:<16} {outcome['seconds']:5.1f}s  {outcome['reply'][:56]}",
-                      flush=True)
+    results: dict[tuple[str, str, bool], list[str]] = collections.defaultdict(list)
+    print(f"sandbox {SANDBOX}\nprobes {args.probes}\nrepeats {args.repeats}\n")
+    for probe in args.probes:
+        for case in args.cases:
+            for after_input in (False, True):
+                for _ in range(args.repeats):
+                    speaker, name = prepare(pristine, args.group, case)
+                    outcome = await one_turn(args.group, speaker, name, after_input,
+                                             MESSAGES[probe])
+                    fresh = dispositions(log_path, seen)
+                    seen += len(fresh)
+                    verdict = fresh[-1] if fresh else "none"
+                    results[(probe, case, after_input)].append(verdict)
+                    print(f"  {probe:<12}{case:<16} after_input={after_input!s:<5} "
+                          f"{verdict:<16} {outcome['seconds']:5.1f}s  {outcome['reply'][:44]}",
+                          flush=True)
 
-    print(f"\n{'case':<18}{'today':<34}{'WP2':<34}")
-    for case in args.cases:
-        today = collections.Counter(results[(case, False)])
-        moved = collections.Counter(results[(case, True)])
-        same = "same" if today == moved else "DIFFERS"
-        print(f"  {case:<16}{dict(today)!s:<34}{dict(moved)!s:<30}{same}")
+    # Counts at this sample size cannot separate a composition from the model's
+    # own variance, so the verdict is about which dispositions appear at all.
+    # A ratio shift is printed as a number and never called a finding.
+    print(f"\n{'probe':<13}{'case':<17}{'today':<28}{'WP2':<28}verdict")
+    for probe in args.probes:
+        for case in args.cases:
+            today = collections.Counter(results[(probe, case, False)])
+            moved = collections.Counter(results[(probe, case, True)])
+            only_today = sorted(set(today) - set(moved))
+            only_moved = sorted(set(moved) - set(today))
+            if only_today or only_moved:
+                verdict = f"DIFFERENT SET  today-only={only_today} wp2-only={only_moved}"
+            elif today != moved:
+                verdict = "same set, counts differ (n too small to read)"
+            else:
+                verdict = "identical"
+            print(f"  {probe:<12}{case:<16}{dict(today)!s:<28}{dict(moved)!s:<28}{verdict}")
     print(f"\nlive data untouched; sandbox left at {SANDBOX}")
     return 0
 
