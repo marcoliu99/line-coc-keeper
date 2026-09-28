@@ -320,6 +320,34 @@ No change is proposed here until that split is measured. Reducing searches witho
 - WP1's script reports, per turn, the search queries issued, the record ids returned, and the overlap between successive searches within one turn.
 - The three buckets above are quantified over at least one further session before any change is specified.
 
+### 4.4 Investigated: the logs cannot separate the three buckets
+
+The report is implemented and run over all recorded sessions. It cannot finish the classification, and that is the result.
+
+```text
+turns with 2+ searches: 60   of those with recoverable records: 18
+consecutive pairs: 34
+  identical query reissued   3    8.8%
+  no new records returned    4   11.8%
+```
+
+Record ids survive only in the reducer's end-of-turn summary, and an
+original-source follow-up reports none at all, so a turn is only usable when
+that summary happens to carry as many results as the turn issued queries —
+18 of 60. A turn is skipped rather than guessed at.
+
+What the recoverable part does establish is a **lower bound**: at least one
+consecutive pair in eleven returned no record the previous search had not
+already returned, and at least one in twelve reissued a **byte-identical
+query**. An identical query is unambiguous waste; it is not a rewording.
+
+Separating reworded-repeat from genuinely-new from budget-driven retry needs
+the record ids on each `llm.tool.completed` for `search_scenario`. That is one
+field. **No change to retrieval is specified until it exists and a session has
+been measured with it**, because reducing searches without knowing which
+bucket they fall in would trade back the correctness §8.4 shows these searches
+bought.
+
 ## 5. WP5 — Answer a held Luck decision without a model request
 
 ### 5.1 Measured problem

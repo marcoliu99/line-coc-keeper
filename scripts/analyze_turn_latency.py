@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import itertools
 import json
 import re
 import sys
@@ -65,6 +66,10 @@ def collect(paths: list[Path], since: str | None) -> dict[str, Any]:
     resolutions: collections.Counter[tuple[str, str]] = collections.Counter()
     projections: list[tuple[Any, Any, Any]] = []
     tokenizer: collections.Counter[str] = collections.Counter()
+    # Per-turn retrieval, paired by order: the query lines come from the tool,
+    # the record ids from the reducer's summary at the end of the turn.
+    retrieval: list[dict[str, Any]] = []
+    turn: dict[str, Any] | None = None
 
     for name, event in _iter_events(paths, since):
         kind = event.get("event", "")
@@ -92,6 +97,14 @@ def collect(paths: list[Path], since: str | None) -> dict[str, Any]:
         if kind == "llm.history.selected":
             tokenizer[str(event.get("tokenizer"))] += 1
         message = str(event.get("message", ""))
+        if message.startswith("Supervisor starting turn"):
+            turn = {"queries": [], "records": []}
+            retrieval.append(turn)
+        if turn is not None and message.startswith("search_scenario query="):
+            turn["queries"].append(message.split("query=", 1)[1].strip().strip("'"))
+        if turn is not None and message.startswith("StateReducer:"):
+            for found in re.findall(r"evidence_record_ids=\[([^\]]*)\]", message):
+                turn["records"].append(frozenset(re.findall(r"r\d+", found)))
         if "取用完整性" in message:
             # The projection metadata is embedded in a reducer log line.
             for blob in re.findall(r'\[\{"record_id".*?\}\]', message):
@@ -107,7 +120,7 @@ def collect(paths: list[Path], since: str | None) -> dict[str, Any]:
     return {
         "usage": usage, "lock_waits": lock_waits, "queue": queue, "agents": agents,
         "tools": tools, "tool_rounds": tool_rounds, "resolutions": resolutions,
-        "projections": projections, "tokenizer": tokenizer,
+        "projections": projections, "tokenizer": tokenizer, "retrieval": retrieval,
     }
 
 
@@ -211,6 +224,28 @@ def report(data: dict[str, Any]) -> None:
         print(f"  projection_reason: {dict(collections.Counter(r for _, _, r in projections))}")
     else:
         print("  none recorded")
+
+    print("\n== retrieval within a turn ==")
+    turns = [t for t in data["retrieval"] if len(t["queries"]) >= 2]
+    # Record ids are only recoverable when the reducer summarised as many
+    # results as the turn issued queries; an original-source follow-up reports
+    # none, so a turn is skipped rather than guessed at.
+    paired = [t for t in turns if len(t["records"]) == len(t["queries"])]
+    identical = subset = pairs = 0
+    for entry in paired:
+        rows = list(zip(entry["queries"], entry["records"], strict=True))
+        for (query_a, records_a), (query_b, records_b) in itertools.pairwise(rows):
+            pairs += 1
+            identical += query_a == query_b
+            subset += bool(records_b) and records_b <= records_a
+    print(f"  turns with 2+ searches: {len(turns)}  of those with recoverable records: {len(paired)}")
+    if pairs:
+        print(f"  consecutive pairs: {pairs}")
+        print(f"    identical query reissued {identical:>3}  {_rate(identical, pairs)}")
+        print(f"    no new records returned  {subset:>3}  {_rate(subset, pairs)}")
+        print("  a full split of reworded-repeat / genuinely-new / budget-retry needs the")
+        print("  record ids on each llm.tool.completed; today they survive only in the")
+        print("  reducer's end-of-turn summary, so this is a lower bound on waste.")
 
     print("\n== tokenizer ==")
     print(f"  {dict(data['tokenizer']) or 'no llm.history.selected events'}")
