@@ -1,0 +1,38 @@
+# Coding Standards
+
+The rules tooling can't check. Ruff, mypy and pytest enforce the rest. Their settings live in `pyproject.toml`, `mypy.ini` and `pytest.ini`, and `.github/workflows/ci.yml` runs them on every PR. Module roles are described in README.md `## Architecture`.
+
+Each rule gives the target behaviour and the reason for it. When existing code breaks a rule, fix that part when you next change it; don't widen the gap.
+
+## Layers
+
+**Discord events enter through the command router.** `discord_bot.py` translates Discord events (messages, uploads, button callbacks) and passes them to `app/commands/router.py`, which dispatches to `app/commands/handlers/*`.
+_Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls `legacy_commands` directly skips them.
+
+**Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `keeper.py` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.
+_Why:_ a copied guard drifts. The auto-combat checkpoint and the duplicate-NPC guard already exist in both a handler and a rule module.
+
+**Private stays private.** A leading underscore means the name is used only inside its own module. When another module needs it, give it a public name in the owning module first, then call it. Ruff SLF001 enforces this; `pyproject.toml` lists the existing violations as debt.
+_Why:_ `keeper._build_static_prompt`, `_mutate_and_save_state` and others are called from other modules, so any refactor of `keeper.py` has impact across the whole repo.
+
+**One provider lookup.** Get the active LLM provider through a single function in `app/providers/`. Keep provider-specific branches inside the provider classes.
+_Why:_ the `anthropic`/`gemini`/`openai` map is currently copied into 9 modules. Every provider change has to touch all of them.
+
+**Keeper tools are named functions.** Write each new tool's logic as its own function; `_execute_tool` only dispatches by tool name.
+_Why:_ `_execute_tool` is about 1,180 lines of `if name == ...` branches, so each new branch makes review and testing harder.
+
+## Game state
+
+**Every new pending check goes through the ownership gate.** Before registering a skill, SAN or CON check, inspect both `pending_checks` and `pending_luck_decisions` on the freshly reloaded state inside `_mutate_and_save_state` (see `_reject_if_check_already_pending`). When the gate blocks, report the block to the player or the model.
+_Why:_ a check that returns silently loses a rules consequence. Spec: `docs/specs/bug/bugfix_duplicate_pending_checks.md`.
+
+**Closed value sets are types.** Represent fixed values such as `speaker_role` and check types with `Literal` or `Enum`, not bare strings.
+_Why:_ mypy can then catch typos and missing branches.
+
+## Comments and docs
+
+**Comments name code that exists.** When you rename or remove a function or file, `grep` for its name and update the comments that reference it.
+_Why:_ comments still describe the removed `keeper.run_turn` path and the renamed `app/commands.py` / `app/state.py`, which misleads both people and agents.
+
+**Behaviour changes ship with their spec.** Update the spec under `docs/specs/<category>/` and its `_zh` twin, and add or update its entry in `docs/specs/catalog.json`, in the same PR.
+_Why:_ five specs are missing from the catalog and two entries have fallen behind their specs.
