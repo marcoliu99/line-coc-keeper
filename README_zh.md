@@ -136,3 +136,7 @@ Bot 並產生 SVG flame graph；兩者的 artifact 都會放在 `.runtime/bots/`
 
 
 所有規格均提供英文與繁體中文版本，分類與實作狀態見[文件索引](docs/README_zh.md)。
+
+## 本機 Codex OAuth 實驗
+
+[本機 Codex OAuth 實驗](docs/guides/codex_oauth_testing_zh.md)

@@ -41,8 +41,25 @@ def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 
 # Which LLM plays the Keeper: "anthropic" (Claude), "gemini" (Google Gemini), or
-# "openai" (ChatGPT).
+# "openai" (API), or "codex" (local ChatGPT OAuth CLI).
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
+
+# Conversation and document capabilities can use different backends.
+ANALYSIS_PROVIDER = os.environ.get("ANALYSIS_PROVIDER", LLM_PROVIDER).strip().lower()
+CODEX_MODEL = os.environ.get("CODEX_MODEL", "gpt-6-luna")
+CODEX_REASONING_EFFORT = os.environ.get("CODEX_REASONING_EFFORT", "medium").strip()
+CODEX_TRANSPORT = os.environ.get("CODEX_TRANSPORT", "exec").strip()
+CODEX_BINARY = os.environ.get("CODEX_BINARY", "codex")
+CODEX_TIMEOUT = _env_float("CODEX_TIMEOUT", 120, minimum=0.01)
+CODEX_MAX_CONCURRENCY = _env_int("CODEX_MAX_CONCURRENCY", 2, minimum=1)
+CODEX_MAX_OUTPUT_BYTES = _env_int("CODEX_MAX_OUTPUT_BYTES", 1048576, minimum=1024)
+CODEX_MAX_INPUT_BYTES = _env_int("CODEX_MAX_INPUT_BYTES", 2097152, minimum=1024)
+MAX_TOOLS_PER_TURN = _env_int("MAX_TOOLS_PER_TURN", 4, minimum=1)
+if LLM_PROVIDER == "codex":
+    if ANALYSIS_PROVIDER not in {"openai", "anthropic", "gemini"}:
+        raise ValueError("Codex requires ANALYSIS_PROVIDER=openai, anthropic or gemini")
+    if CODEX_TRANSPORT not in {"exec", "app-server"}:
+        raise ValueError("CODEX_TRANSPORT must be exec or app-server")
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")

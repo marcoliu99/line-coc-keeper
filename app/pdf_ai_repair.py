@@ -9,10 +9,10 @@ from collections import Counter
 import pymupdf
 
 from app import pdf_quality
-from app.config import LLM_PROVIDER
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
+from app.providers.registry import ANALYSIS_PROVIDERS
 
-_PROVIDERS = {'openai': openai_provider, 'anthropic': anthropic_provider, 'gemini': gemini_provider}
+_PROVIDERS = ANALYSIS_PROVIDERS
 _TOOL = {'name': 'transcribe_uncertain_regions', 'description': 'Transcribe visible PDF regions without guessing values.',
          'input_schema': {'type': 'object', 'properties': {'regions': {'type': 'array', 'items': {
              'type': 'object', 'properties': {'block_id': {'type': 'integer'},

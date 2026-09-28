@@ -35,11 +35,13 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.config import (
+    ANALYSIS_PROVIDER as LLM_PROVIDER,
+)
+from app.config import (
     ANTHROPIC_API_KEY,
     ANTHROPIC_MODEL,
     GEMINI_API_KEY,
     GEMINI_MODEL,
-    LLM_PROVIDER,
     OPENAI_API_KEY,
     OPENAI_MODEL,
 )

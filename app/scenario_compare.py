@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.config import LLM_PROVIDER, MAX_SCENARIO_CHARS
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
+from app.config import MAX_SCENARIO_CHARS
+from app.providers.registry import ANALYSIS_PROVIDERS
 
-_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
+_PROVIDERS = ANALYSIS_PROVIDERS
 
 _REPORT_TOOL = {
     "name": "report_discrepancies",

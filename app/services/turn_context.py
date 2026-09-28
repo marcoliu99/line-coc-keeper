@@ -97,3 +97,62 @@ def digest_history(state: GroupState, digest: dict | None) -> str:
         "如與當前 state 衝突，以當前 state 為準。\n"
         + json.dumps(history, ensure_ascii=False)
     )
+
+
+_CHECK_CREATION_TOOLS = frozenset({
+    "skill_check", "sanity_check", "offer_check_choice", "offer_npc_attack_defense_choice",
+})
+
+
+def check_creation_tools(state: GroupState, tools: list[dict]) -> list[dict]:
+    """Advertise only check targets the existing game engine can accept now."""
+    available = sorted({c.name for c in state.active_characters()
+                        if c.owner_id not in state.pending_checks
+                        and c.owner_id not in state.pending_luck_decisions})
+    result = []
+    for tool in tools:
+        if tool['name'] not in _CHECK_CREATION_TOOLS:
+            result.append(tool)
+        elif available:
+            scoped = deepcopy(tool)
+            target = scoped['input_schema']['properties']['investigator']
+            previous = target.get('enum')
+            targets = [name for name in available if previous is None or name in previous]
+            if targets:
+                target['enum'] = targets
+                result.append(scoped)
+    return result
+
+
+def executor_decision_context(state: GroupState, user_id: str) -> dict:
+    """Fresh identity and legal waiting handoff; no automatic action decision."""
+    actor = character_id(state, user_id)
+    luck = state.pending_luck_decisions.get(user_id)
+    pending = luck or state.pending_checks.get(user_id)
+    waiting = None
+    if pending:
+        waiting = {
+            'disposition': 'await_luck' if luck else 'await_check',
+            'actor_character_id': actor, 'waiting_for': actor,
+            'check_id': pending.get('decision_id' if luck else 'check_id', ''),
+            'evidence_refs': ['state'],
+            'reason': '等待既有 Luck 決定' if luck else '等待既有檢定，不重建或重骰',
+        }
+    return {
+        'actor_character_id': actor, 'current_state': current_state(state),
+        'waiting_resolution_candidate': waiting,
+        'instructions': (
+            '先核對當前 pending 的 action_context 與玩家行動。若同一行動仍待處理，'
+            '直接在 final.content 交回 waiting_resolution_candidate 的 JSON 字串；'
+            '不需要任何工具即可等待，不可重建、重骰或為了取得成功收據而清除它。'
+            '不能把 A 的 pending 當成 B 的檢定結果，也不妨礙有依據的獨立物品交接。'
+            '只有玩家明確取消或更正原行動，才可 clear_pending_check；工具後會更新合法目標。'
+            '候選只適用於等待該 pending，不取代其他行動的裁決。'
+            '若本次要求獨立拾取或移除物品，必須先實際呼叫 add_carried_item／remove_carried_item，'
+            '核對成功收據與最新背包；劇本說可以拿不代表已收進背包，final 文字不會修改物品。'
+            '完成獨立操作後若原檢定仍在，可交回 await_check 並引用本次工具收據及原 check_id；'
+            '不可宣稱整回合 resolved_without_check，也不可只回等待而漏掉本次獨立操作。'
+            '若沒有對應 pending，且劇本要求檢定，必須先使用 JSON tool_call 建立檢定，'
+            '取得成功收據及真實 check_id 後才可 await_check。工具清單是可執行的 Python host 工具。'
+        ),
+    }
