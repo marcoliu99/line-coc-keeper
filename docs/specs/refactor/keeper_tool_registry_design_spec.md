@@ -71,3 +71,5 @@ class ToolCall:                            # the Data Clump the handlers share t
 - **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
 
 Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. The combat-start prerequisite has not yet landed on `main_v2`, so the combat handler family remains pending.
+
+The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single state mutation boundary through a public migration seam. Other families remain on the legacy cascade.

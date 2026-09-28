@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.keeper_tools import inventory as inventory_handlers
 from app.models import GroupState
 from app.services import opposed_checks
 
@@ -432,6 +433,7 @@ _SPECS = (
                     "required": ["investigator", "weapon"],
                 },
             },
+        handler=inventory_handlers.adjust_ammo,
     ),
     ToolSpec(
         schema={
@@ -450,6 +452,7 @@ _SPECS = (
                     "required": ["investigator", "item"],
                 },
             },
+        handler=inventory_handlers.add_carried_item,
     ),
     ToolSpec(
         schema={
@@ -464,6 +467,7 @@ _SPECS = (
                     "required": ["investigator", "item"],
                 },
             },
+        handler=inventory_handlers.remove_carried_item,
     ),
     ToolSpec(
         schema={
@@ -513,6 +517,7 @@ _SPECS = (
                     "required": ["investigator", "tag"],
                 },
             },
+        handler=inventory_handlers.add_status_tag,
     ),
     ToolSpec(
         schema={
@@ -530,6 +535,7 @@ _SPECS = (
                     "required": ["investigator", "tag"],
                 },
             },
+        handler=inventory_handlers.remove_status_tag,
     ),
     ToolSpec(
         schema={

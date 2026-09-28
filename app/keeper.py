@@ -558,6 +558,12 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
     return result
 
 
+# Public migration seam for handlers in app/keeper_tools/. State still reloads,
+# mutates, saves, and refreshes through one authoritative boundary.
+ToolStateMutation = _StateMutation
+mutate_tool_state = _mutate_and_save_state
+
+
 _CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
 
 
@@ -1830,77 +1836,8 @@ def execute_legacy_tool(
                 )
             return response
 
-        if name == "adjust_ammo":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            weapon = tool_input.get("weapon", "")
-            entry = char.weapons.get(weapon)
-            if entry is None:
-                available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
-                return {"ok": False, "error": f"「{char.name}」的彈藥欄位裡沒有「{weapon}」，目前有：{available}"}
-            if "ammo_max" not in entry:
-                # A recognized weapon whose ammo isn't tracked (melee, or an
-                # ammo category this project's table doesn't cover) — see
-                # pregen_extractor._resolve_weapon_ammo, which stores these as
-                # {}. Without this check, `entry["ammo_max"]` below would
-                # KeyError instead of giving the Keeper a usable error.
-                return {"ok": False, "error": f"「{weapon}」沒有追蹤彈藥數（近戰武器或未登記彈藥表的槍械），不需要（也無法）裝填。"}
-            def _apply_ammo_change(target_state: GroupState) -> None:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                target_entry = target_char.weapons.get(weapon)
-                if target_entry is None:
-                    raise ValueError(f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料")
-                if tool_input.get("reload_full"):
-                    target_entry["ammo"] = target_entry["ammo_max"]
-                else:
-                    target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
-            _mutate_and_save_state(state, _apply_ammo_change)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            refreshed_entry = refreshed_char.weapons.get(weapon)
-            if refreshed_entry is None:
-                return {"ok": False, "error": f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料"}
-            return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
 
-        if name == "add_carried_item":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            item = tool_input.get("item", "").strip()
-            if not item:
-                return {"ok": False, "error": "item 不能是空字串"}
-            def _mutate_add_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = item not in target_char.carried_items
-                if changed:
-                    target_char.carried_items.append(item)
-                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, _mutate_add_item)
-            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
 
-        if name == "remove_carried_item":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            # .strip() to match add_carried_item's own normalization above — otherwise
-            # an item with incidental whitespace ("鑰匙 " vs "鑰匙") would silently fail
-            # to remove (the no-op-skip logic below would report "unchanged" since the
-            # stripped, stored string never string-equals the unstripped one being removed).
-            item = tool_input.get("item", "").strip()
-            def _mutate_remove_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = item in target_char.carried_items
-                if changed:
-                    target_char.carried_items.remove(item)
-                    target_state.consumed_or_removed_items.append({
-                        "item": item,
-                        "character_id": target_char.owner_id,
-                        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                        "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
-                    })
-                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, _mutate_remove_item)
-            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
 
         if name in ("record_established_fact", "record_clue"):
             field_name = "established_facts" if name == "record_established_fact" else "known_clues"
@@ -1926,39 +1863,7 @@ def execute_legacy_tool(
             result = _mutate_and_save_state(state, _mutate_record)
             return {"ok": True, **result}
 
-        if name == "add_status_tag":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            tag = tool_input.get("tag", "").strip()
-            if not tag:
-                return {"ok": False, "error": "tag 不能是空字串"}
-            def _mutate_add_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = tag not in target_char.status_tags
-                if changed:
-                    target_char.status_tags.append(tag)
-                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, _mutate_add_tag)
-            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
-        if name == "remove_status_tag":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            # .strip() to match add_status_tag's own normalization above — otherwise a
-            # tag with incidental whitespace ("昏迷 " vs "昏迷") would silently fail to
-            # remove (the no-op-skip logic below would report "unchanged" since the
-            # stripped, stored string never string-equals the unstripped one being removed).
-            tag = tool_input.get("tag", "").strip()
-            def _mutate_remove_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = tag in target_char.status_tags
-                if changed:
-                    target_char.status_tags.remove(tag)
-                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, _mutate_remove_tag)
-            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
         if name == "set_skill":
             char = find_character(state, tool_input.get("investigator", ""))
