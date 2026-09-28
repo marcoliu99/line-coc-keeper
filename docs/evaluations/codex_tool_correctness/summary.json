@@ -1,0 +1,48 @@
+{
+  "final-exec": {
+    "pending": {
+      "cases": 3,
+      "flow_pass": 3,
+      "tool_pass": 3,
+      "rejected_proposals": 0,
+      "incomplete_retries": 0
+    },
+    "check_success": {
+      "cases": 3,
+      "flow_pass": 3,
+      "tool_pass": 3,
+      "rejected_proposals": 0,
+      "incomplete_retries": 0
+    },
+    "pending_pickup": {
+      "cases": 3,
+      "flow_pass": 1,
+      "tool_pass": 3,
+      "rejected_proposals": 0,
+      "incomplete_retries": 0
+    }
+  },
+  "final-server": {
+    "pending": {
+      "cases": 3,
+      "flow_pass": 3,
+      "tool_pass": 3,
+      "rejected_proposals": 0,
+      "incomplete_retries": 0
+    },
+    "check_success": {
+      "cases": 3,
+      "flow_pass": 3,
+      "tool_pass": 3,
+      "rejected_proposals": 0,
+      "incomplete_retries": 0
+    },
+    "pending_pickup": {
+      "cases": 3,
+      "flow_pass": 2,
+      "tool_pass": 2,
+      "rejected_proposals": 0,
+      "incomplete_retries": 0
+    }
+  }
+}

@@ -165,6 +165,15 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
                 lambda: combat_status_gate.tools_for_request(tools)
             )
 
+    if getattr(provider, 'SUPPORTS_DECISION_CONTEXT', False):
+        from app.services import turn_context
+        previous_tools = provider_options.get('tools_for_request', lambda: tools)
+        provider_options['tools_for_request'] = lambda: turn_context.check_creation_tools(state, previous_tools())
+        provider_options['decision_context'] = lambda: {
+            'current_state': turn_context.current_state(state),
+            'instructions': '只敘述本階段允許且已驗證的結果，不重建既有 pending 或重骰。',
+        }
+
     try:
         turn_metrics: dict[str, int] = {}
         with observability.metrics_context(turn_metrics), observability.span(

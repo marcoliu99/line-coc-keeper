@@ -206,3 +206,11 @@ synthetic evaluation traces. Count invalid JSON/tool proposals as accuracy error
 even if local validation blocks execution. No fixed extra LLM review or automatic
 check creation, no PR/merge. Validate adversarial/stale schema cases and rerun
 focused pending/new-check cases plus unrelated-action regressions.
+
+The follow-up also reproduces an Executor final response claiming a check was
+requested without sending any tool_call. Permit one conditional retry only for
+an incomplete Executor final with no prior transcript/tools, available tools,
+and enough iteration budget for both a tool and final. Explain that an unsent
+call has no receipt; preserve genuine evidence/permission blockers. This is not
+a fixed review stage or automatic Python check creation. Count such retries
+separately from first-pass correctness; all existing deadlines/budgets apply.

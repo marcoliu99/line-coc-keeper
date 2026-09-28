@@ -22,7 +22,7 @@ def main():
     parser.add_argument('--transport', choices=['exec', 'app-server'], required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repeats', type=int, default=5)
-    parser.add_argument('--kinds', nargs='+', choices=['check_success', 'check_failure', 'pickup', 'ooc', 'pending'],
+    parser.add_argument('--kinds', nargs='+', choices=['check_success', 'check_failure', 'pickup', 'pending_pickup', 'ooc', 'pending'],
                         default=['check_success', 'check_failure', 'pickup', 'ooc', 'pending'])
     parser.add_argument('--trace', action='store_true', help='Record synthetic model decisions and validation diagnostics')
     args = parser.parse_args()
@@ -41,12 +41,21 @@ def main():
 
         from codex_pipeline_fixture import run_pipeline
 
+        from app import observability
         from app.providers import codex_provider
         from app.providers.codex_transport import AppServerTransport, ExecTransport
         from app.services import turn_resolution
         logging.basicConfig(level=logging.ERROR)
         metrics = {}
         trace_enabled = args.trace
+        original_event = observability.event
+        def measured_event(name, **fields):
+            if name == 'codex.decision.incomplete_retry':
+                metrics['incomplete_retries'] += 1
+            if name == 'codex.decision.rejected':
+                metrics['rejected_proposals'] += 1
+            return original_event(name, **fields)
+        observability.event = measured_event
         original_validation = turn_resolution.validate_resolution
         def traced_validation(*values, **options):
             result = original_validation(*values, **options)
@@ -90,7 +99,7 @@ def main():
             for repetition in range(args.repeats):
                 for kind in args.kinds:
                     metrics.clear()
-                    metrics.update(requests=0, tools=[], input_bytes=0, request_seconds=[])
+                    metrics.update(requests=0, tools=[], input_bytes=0, request_seconds=[], rejected_proposals=0, incomplete_retries=0)
                     if trace_enabled:
                         metrics.update(decisions=[], validations=[])
                     start = time.monotonic()
@@ -99,7 +108,7 @@ def main():
                     except Exception as exc:  # noqa: BLE001 - record failed cases and continue the evaluation
                         result = {'ok': False, 'kind': kind, 'failures': [type(exc).__name__]}
                     calls = metrics['tools']
-                    expected = {'check_success': 'skill_check', 'check_failure': 'skill_check', 'pickup': 'add_carried_item'}
+                    expected = {'check_success': 'skill_check', 'check_failure': 'skill_check', 'pickup': 'add_carried_item', 'pending_pickup': 'add_carried_item'}
                     if kind in expected:
                         target = [tool for tool in calls if tool['name'] == expected[kind]]
                         tool_correct = len(target) == 1 and target[0]['ok']
@@ -107,6 +116,9 @@ def main():
                             tool_correct = tool_correct and target[0]['arguments'].get('skill') == '偵查'
                     else:
                         tool_correct = not any(tool['name'] not in {'get_character_sheet', 'search_scenario', 'search_memory'} for tool in calls)
+                    allowed_calls = {'get_character_sheet', 'search_scenario', 'search_memory'} | ({expected[kind]} if kind in expected else set())
+                    tool_correct = (tool_correct and metrics['rejected_proposals'] == 0
+                                    and all(t['ok'] and t['name'] in allowed_calls for t in calls))
                     result.update(transport=args.transport, repetition=repetition+1, **metrics,
                                   tool_correct=tool_correct, elapsed_seconds=round(time.monotonic()-start, 3))
                     with args.output.open('a') as stream:

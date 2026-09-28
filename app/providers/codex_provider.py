@@ -22,6 +22,7 @@ from app.providers.codex_transport import AppServerTransport, CodexError, ExecTr
 CODEX_MODEL = config.CODEX_MODEL
 SUPPORTS_DYNAMIC_TOOLS = True
 SUPPORTS_RESPONSE_STAGE = True
+SUPPORTS_DECISION_CONTEXT = True
 P = ParamSpec('P')
 T = TypeVar('T')
 
@@ -122,6 +123,7 @@ async def run_conversation(
     new_message: str, execute_tool: Callable[[str, dict], Awaitable[dict]],
     max_iterations: int, enable_wrapup: bool = True,
     response_stage: str = 'default', tools_for_request: Callable[[], list[dict]] | None = None,
+    decision_context: Callable[[], dict] | None = None,
 ) -> str:
     budget = _current.get() or TurnBudget()
     started = time.monotonic()
@@ -129,6 +131,7 @@ async def run_conversation(
     transport = AppServerTransport() if config.CODEX_TRANSPORT == 'app-server' else ExecTransport()
     transcript: list[dict] = []
     repaired = False
+    retried_incomplete = False
     iterations = 0
     status = 'error'
     conversation_id = uuid.uuid4().hex
@@ -163,30 +166,56 @@ async def run_conversation(
                 current_tools = []
             prompt = json.dumps({
                 'instructions': 'Respond with {"decision": ...}. For tools encode arguments as arguments_json. '
-                                'Use only listed game tools. Never use native Codex tools. '
+                                'The tools array contains executable Python host tools invoked by JSON tool_call; '
+                                'native Codex tools are separate and must not be used. '
                                 'If no tools remain, report only verified results and unfinished work.',
                 'static_system': static_system, 'dynamic_system': dynamic_system,
                 'history': history, 'new_message': new_message, 'tools': current_tools,
                 'current_conversation': transcript, 'response_stage': response_stage,
+                'decision_context': decision_context() if decision_context else {},
                 'remaining_tool_budget': max(0, config.MAX_TOOLS_PER_TURN - budget.tools_used),
             }, ensure_ascii=False)
             raw = await bounded(lambda prompt=prompt, current_tools=current_tools: transport.request(prompt, response_schema(current_tools)))
             try:
                 decision = parse_decision(raw, current_tools)
             except (ValueError, TypeError, ValidationError, StopIteration, RecursionError):
+                observability.event('codex.decision.rejected', stage=response_stage, reason='invalid_schema')
                 if repaired:
                     raise CodexError('codex_invalid_decision') from None
                 repaired = True
                 transcript.append({'role': 'host', 'error': 'invalid_decision',
-                    'instruction': 'Return one valid decision matching the supplied schema and tool arguments.'})
+                    'instruction': 'Return one decision matching the actual tools and input_schema, including investigator enums. '
+                                   'Use decision_context to distinguish pending work from a new action.'})
                 continue
             if decision['type'] == 'final':
+                try:
+                    resolution = json.loads(decision['content'])
+                except (ValueError, TypeError):
+                    resolution = None
+                if (response_stage == 'executor' and isinstance(resolution, dict)
+                        and resolution.get('disposition') == 'incomplete'
+                        and current_tools and not transcript and not retried_incomplete
+                        and index < max_iterations - (2 if enable_wrapup else 1)):
+                    retried_incomplete = True
+                    observability.event('codex.decision.incomplete_retry', stage=response_stage)
+                    transcript.append({'role': 'host', 'previous_decision': resolution,
+                        'instruction': 'No host tool call has been sent in this conversation. '
+                        'A final response cannot request a tool or wait for an unsent call. '
+                        'If an available tool can perform the grounded action, return tool_call now. '
+                        'If the same action already has pending state, return its waiting resolution. '
+                        'If evidence, permission or another prerequisite really is missing, keep incomplete '
+                        'and explain that blocker. Do not invent prerequisites or bypass scenario constraints.'})
+                    continue
                 status = 'success'
                 return decision['content']
             name, arguments = decision['name'], decision['arguments']
             fresh = tools_for_request() if tools_for_request else tools
             if name not in {t['name'] for t in fresh} or budget.tools_used >= config.MAX_TOOLS_PER_TURN:
                 raise CodexError('codex_tool_not_allowed')
+            try:
+                parse_decision(raw, [t for t in fresh if t['name'] in allowed])
+            except (ValueError, TypeError, ValidationError, StopIteration, RecursionError):
+                raise CodexError('codex_tool_schema_changed') from None
             identity = json.dumps([name, arguments], sort_keys=True, ensure_ascii=False)
             if identity in budget.attempted:
                 # Same-state retries are unsafe even after a tool exception. The

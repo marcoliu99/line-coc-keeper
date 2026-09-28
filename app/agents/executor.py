@@ -204,6 +204,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools), "response_stage": "executor"}
                 if (LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)) else {}
             )
+            if getattr(provider, 'SUPPORTS_DECISION_CONTEXT', False):
+                provider_options['tools_for_request'] = lambda: turn_context.check_creation_tools(
+                    state, combat_status_gate.tools_for_request(tools))
+                provider_options['decision_context'] = lambda: turn_context.executor_decision_context(state, user_id)
             completion = await provider.run_conversation(
                 static_system, dynamic_system, tools, state.log, new_message,
                 execute_turn_tool, MAX_TOOL_ITERATIONS,

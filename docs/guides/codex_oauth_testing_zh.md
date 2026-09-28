@@ -97,3 +97,16 @@ app-server 在單段 conversation 的多次決策間保持啟動，結束即關�
 - [Codex 非互動模式](https://developers.openai.com/codex/noninteractive)
 - [Codex 驗證方式](https://developers.openai.com/codex/auth)
 - [Codex app-server](https://developers.openai.com/codex/app-server)
+
+## 工具決策診斷
+
+使用 `--kinds pending check_success --repeats 3 --trace` 重測合成案例。
+`--trace` 包含模型決策、動態上下文、工具收據與裁決驗證碼，只適用於
+這些自建測試場景。`rejected_proposals` 計入已被 Python 擋住的無效提案；
+`incomplete_retries` 記錄 Executor 未執行工具就回未完成時的一次重試。
+首次決策、最終工具正確率、完整流程成功率須分開報告。
+
+`pending_pickup` 是額外壓力案例：既有驗證器在 pending 期間只接受完整
+調查員間物品交接例外，一般拾取不屬於此例外。因此背包工具成功並不
+代表最後裁決也成功。若保留原 pending 身分，回等待裁決仍可能有效；
+上述例外專指 resolved／resolved_without_check 的完成宣告。

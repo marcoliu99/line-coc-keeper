@@ -33,12 +33,13 @@ async def run_pipeline(kind='check_success'):
         'check_success': '我要檢查桌上字跡模糊的文件，辨認日期。',
         'check_failure': '我要檢查桌上字跡模糊的文件，辨認日期。',
         'pickup': '拿起桌上的黃銅鑰匙，收進背包。',
+        'pending_pickup': '文件的偵查檢定先保留；拿起桌上的黃銅鑰匙，收進背包。',
         'ooc': '場外：我該怎麼擲骰完成待處理的檢定？',
         'pending': '我要檢查桌上字跡模糊的文件，辨認日期。',
     }
-    if kind == 'pending':
+    if kind in {'pending', 'pending_pickup'}:
         receipt = keeper._execute_tool(state, 'skill_check', {'investigator': 'Marco',
-            'skill': '偵查', 'action_context': actions[kind]}, [], [], speaker_role='player')
+            'skill': '偵查', 'action_context': actions['pending']}, [], [], speaker_role='player')
         assert receipt.get('pending'), 'Fixture setup did not create a pending check'
     old_check = dict(state.pending_checks.get('player') or {})
     with patch('app.dice.roll_percentile_with_dice_pool', side_effect=roll):
@@ -75,10 +76,13 @@ async def run_pipeline(kind='check_success'):
                     failures.append('failed_check_disclosed_clue')
                 if '/coc check' in reply:
                     failures.append('reroll_instruction')
-        elif kind == 'pickup':
+        elif kind in {'pickup', 'pending_pickup'}:
             if not any('鑰匙' in item for item in state.get_active_character('player').carried_items):
                 failures.append('item_not_acquired')
-            if state.pending_checks:
+            if kind == 'pending_pickup':
+                if state.pending_checks.get('player') != old_check:
+                    failures.append('pending_check_replaced')
+            elif state.pending_checks:
                 failures.append('unnecessary_check')
         elif kind == 'pending':
             if state.pending_checks.get('player') != old_check:

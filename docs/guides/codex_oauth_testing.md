@@ -115,3 +115,20 @@ No PR or merge is part of this experiment.
 - [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive)
 - [Codex authentication](https://developers.openai.com/codex/auth)
 - [Codex app-server](https://developers.openai.com/codex/app-server)
+
+## Tool-decision diagnostics
+
+Use `--kinds pending check_success --repeats 3 --trace` for focused synthetic
+traces. `--trace` includes model decisions, dynamic context, tool receipts and
+validation codes; keep it restricted to these generated fixtures.
+`rejected_proposals` counts invalid decisions even when Python safely blocks
+them. `incomplete_retries` counts one permitted retry for an Executor that
+ends incomplete without dispatching any tool. Report first-pass decisions,
+final tool correctness, and full flow success separately.
+
+`pending_pickup` is an optional stress probe: the existing validator permits an
+exact investigator-to-investigator transfer while pending, but does not treat
+an ordinary pickup as that exception. A successful inventory tool therefore
+does not necessarily imply successful final adjudication. A waiting disposition
+may still be valid when the old pending identity is preserved; the exception
+above specifically concerns claiming resolved/resolved_without_check.
