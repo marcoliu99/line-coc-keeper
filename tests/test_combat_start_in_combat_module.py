@@ -93,16 +93,16 @@ class SharedWithKeeperToolsTests(unittest.TestCase):
         with patch.object(combat.checkpoints, "create_checkpoint") as checkpoint:
             combat.begin_combat(state)
             combat.begin_combat(state)
-            self.assertIsNone(combat.add_combatant(state, "Hunter", 50, 14))
+            self.assertFalse(combat.add_combatant(state, "Hunter", 50, 14).reused)
         self.assertEqual(checkpoint.call_count, 1)
 
     def test_add_combatant_returns_the_existing_enemy_without_adding(self):
         state = _state()
         with patch.object(combat.checkpoints, "create_checkpoint"):
             combat.add_combatant(state, "Walter Corbitt", 50, 20)
-            existing = combat.add_combatant(state, "柯比特", 50, 20)
-        self.assertIsNotNone(existing)
-        self.assertEqual(existing.name, "Walter Corbitt")
+            added = combat.add_combatant(state, "柯比特", 50, 20)
+        self.assertTrue(added.reused)
+        self.assertEqual(added.combatant.name, "Walter Corbitt")
         self.assertEqual(_enemies(state), ["Walter Corbitt"])
 
 

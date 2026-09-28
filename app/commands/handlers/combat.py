@@ -25,15 +25,16 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
         except ValueError:
             await reply("DEX 和 HP 必須是整數。")
             return
-        existing = combat.add_combatant(state, name, dex, hp, is_ally=action == "addally")
-        if existing is not None:
+        added = combat.add_combatant(state, name, dex, hp, is_ally=action == "addally")
+        if added.reused:
             await reply(
-                f"「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
+                f"「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
                 "這隻怪物的血量與狀態沿用原本那份。"
             )
             return
         save_state(state, reason="combat")
-        await reply(combat.status_text(state))
+        notice = combat.defeated_namesake_notice(added)
+        await reply(f"{notice}\n{combat.status_text(state)}" if notice else combat.status_text(state))
         return
 
     if action == "status":
