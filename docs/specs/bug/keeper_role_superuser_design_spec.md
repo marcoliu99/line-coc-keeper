@@ -71,6 +71,7 @@ Today `/coc kp` registers the first caller when the seat is empty, only the KP c
   - If every member of the group is playing, someone has to `/coc retire` first; takeover doesn't bypass that.
 - Both post a **public** message in the channel naming the old and new KP Assistant, and log `kp.transfer` / `kp.takeover` with hashed ids.
 - The permission is read from Discord when the command is sent. `discord_bot.py` passes it to the router as the boolean `can_manage_server` inside `permissions.ServerFacts` (with the ids of mentioned bots), so the core stays Discord-agnostic. DMs have no server, so there it is false. **It is used for `takeover` and nothing else.** Every other action still needs `permissions.is_kp`.
+- A `@member` target must be a member of this server that the message actually @-mentions (`ServerFacts.member_ids`). A typed `<@id>` for someone outside the server, which Discord doesn't resolve to a member, is refused, so the seat can't go to an account that could never use or give it up.
 - They ship **in the same PR** as the removal, so there's no window without an escape hatch.
 
 ## Safety: this removes a superuser path

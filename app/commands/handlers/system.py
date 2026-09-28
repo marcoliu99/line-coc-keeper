@@ -968,6 +968,9 @@ async def _change_kp(
     if action == "takeover" and not server.can_manage_server:
         await reply("只有在這個伺服器擁有「管理伺服器」權限的成員，才能接手或指派 KP 助手。")
         return
+    if new_kp != user_id and new_kp not in server.member_ids:
+        await reply("請用 @ 指定這個伺服器裡的成員。")
+        return
     if new_kp == state.kp_assistant_user_id:
         await reply("這位成員已經是這局的 KP 助手。")
         return

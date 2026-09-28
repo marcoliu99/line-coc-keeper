@@ -71,6 +71,7 @@ KP 權限只有**一個**來源：成為群組登記的 KP 助手（`state.kp_as
   - 如果群組裡每個成員都在玩，就必須先有人 `/coc retire`；接手不會繞過這一點。
 - 兩者都會在頻道發**公開**訊息，寫明原本和新的 KP 助手，並以雜湊後的 ID 記錄 `kp.transfer`／`kp.takeover`。
 - 權限在下指令的當下從 Discord 讀取。`discord_bot.py` 把它放在 `permissions.ServerFacts` 裡的布林值 `can_manage_server`（連同被提及的機器人 id）傳給 router，讓核心邏輯不依賴 Discord。私訊沒有伺服器，所以一律是 false。**它只用於 `takeover`，不用於其他任何事**；其他動作仍然需要 `permissions.is_kp`。
+- `@成員` 指定的對象必須是這則訊息真的 @ 到、而且屬於這個伺服器的成員（`ServerFacts.member_ids`）。手打一個不在伺服器裡的 `<@id>`，Discord 不會把它解析成成員，會被拒絕，避免把位子交給一個永遠無法使用、也無法交出它的帳號。
 - 和移除**放在同一個 PR** 上線，避免中間出現沒有逃生口的空窗期。
 
 ## 安全措施：這是在移除一條超級使用者路徑

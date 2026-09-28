@@ -236,6 +236,14 @@ async def _apply(conversation_id: str, timeline_id: str, report_id: str, ruling:
             if state.kp_assistant_user_id or state.timeline_id != timeline_id or report is None:
                 observability.event("correction.keeper_ruling_discarded", report_id=report_id)
                 return ""
+            # Scenario passages and private sheet notes are evidence, never
+            # content: an approval whose text would reveal a protected term is
+            # never recorded, since the log feeds every later turn.
+            protected = spoiler_policy.collect_protected_terms(state)
+            if ruling.decision == "approve" and not spoiler_policy.sanitize_public_text(
+                    ruling.resolution, protected).is_safe:
+                observability.event("correction.keeper_ruling_withheld", report_id=report_id)
+                ruling = UNDECIDED
             if ruling.decision == "undecided":
                 narrative_corrections.record_unverified(report)
                 text = generic = (f"守秘人無法依現有證據證實敘事異議 #{report_id}；"
@@ -247,18 +255,33 @@ async def _apply(conversation_id: str, timeline_id: str, report_id: str, ruling:
                 )
                 generic = (f"敘事異議 #{report_id} 經守秘人依證據核對後成立，已更正先前訊息 {report['target_message_id']}。"
                            if ruling.decision == "approve" else f"敘事異議 #{report_id} 經守秘人依證據核對後不成立。")
-                if ruling.reason:
-                    text += f"\n理由：{ruling.reason}"
+                # The model's own reason stays in the record: it has read the
+                # scenario, so only what it cited is named in public.
+                text += f"\n依據：{_public_basis(ruling.evidence)}。"
             narrative_corrections.save(state)
             observability.event(
                 "correction.keeper_ruling", report_id=report_id, decision=ruling.decision,
                 evidence_kinds=sorted({e.split(":", 1)[0] for e in ruling.evidence}),
             )
-            # Scenario passages and private sheets are evidence, never content.
-            checked = spoiler_policy.sanitize_public_text(text, spoiler_policy.collect_protected_terms(state))
-            return text if checked.is_safe else generic
+            return text if spoiler_policy.sanitize_public_text(text, protected).is_safe else generic
     except mutation_admission.MutationHeld:
         return ""  # a rollback is in progress; the report stays pending and is retried later
+
+
+_BASIS_LABELS = {"narration": "原敘事", "clue": "公開線索", "fact": "既定事實",
+                 "log": "先前的遊戲紀錄", "scenario": "劇本資料"}
+
+
+def _public_basis(evidence: tuple[str, ...]) -> str:
+    """What a ruling rested on, named by kind: `sheet:Ada` is Ada's sheet, a
+    scenario passage is only "劇本資料", never its text."""
+    labels: list[str] = []
+    for item in evidence:
+        kind, _, name = item.partition(":")
+        label = f"{name} 的角色卡" if kind == "sheet" else _BASIS_LABELS.get(kind, "")
+        if label and label not in labels:
+            labels.append(label)
+    return "、".join(labels)
 
 
 def _pending_report(state: Any, report_id: str) -> dict | None:

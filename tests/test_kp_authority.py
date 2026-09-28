@@ -47,6 +47,11 @@ def _run(state: GroupState, user_id: str, text: str, **kwargs) -> tuple[list[str
     return replies, save
 
 
+def _mentions(*member_ids: str, manager: bool = False, bots: frozenset[str] = frozenset()) -> permissions.ServerFacts:
+    """A message that @-mentions these members of the server."""
+    return permissions.ServerFacts(can_manage_server=manager, member_ids=frozenset(member_ids), bot_user_ids=bots)
+
+
 class PermissionTests(unittest.TestCase):
     def test_only_the_registered_kp_assistant_is_kp(self):
         state = _state(kp_assistant_user_id="kp")
@@ -186,7 +191,7 @@ class TransferTests(unittest.TestCase):
         }
         for name, (state, bots, expected) in cases.items():
             with self.subTest(case=name):
-                replies, save = _run(state, "kp", "/coc kp transfer <@222>", server=permissions.ServerFacts(bot_user_ids=bots))
+                replies, save = _run(state, "kp", "/coc kp transfer <@222>", server=_mentions("222", bots=bots))
                 self.assertIn(expected, replies[0])
                 self.assertEqual(state.kp_assistant_user_id, "kp")
                 save.assert_not_called()
@@ -194,12 +199,36 @@ class TransferTests(unittest.TestCase):
     def test_transfer_hands_over_and_announces(self):
         state = _state(kp_assistant_user_id="kp", kp_ooc_log=[{"role": "kp_assistant", "content": "x"}])
         with patch.object(system_handler.observability, "event") as event:
-            replies, save = _run(state, "kp", "/coc kp transfer <@222>")
+            replies, save = _run(state, "kp", "/coc kp transfer <@222>", server=_mentions("222"))
         self.assertEqual(state.kp_assistant_user_id, "222")
         self.assertEqual(state.kp_ooc_log, [])
         save.assert_called_once_with(state)
         self.assertIn("<@kp> 已將 KP 助手交接給 <@222>", replies[0])
         self.assertEqual(event.call_args.args[0], "kp.transfer")
+
+
+class MentionedMemberTests(unittest.TestCase):
+    def test_a_raw_id_that_isnt_a_mentioned_member_never_takes_the_seat(self):
+        cases = {
+            "transfer": ("kp", "/coc kp transfer <@555>", permissions.ServerFacts()),
+            "takeover": ("manager", "/coc kp takeover <@555>", permissions.ServerFacts(can_manage_server=True)),
+        }
+        for name, (user_id, text, server) in cases.items():
+            with self.subTest(action=name):
+                state = _state(kp_assistant_user_id="kp")
+                replies, save = _run(state, user_id, text, server=server)
+                self.assertIn("這個伺服器", replies[0])
+                self.assertEqual(state.kp_assistant_user_id, "kp")
+                save.assert_not_called()
+
+    def test_discord_mentions_become_member_and_bot_ids(self):
+        member = SimpleNamespace(id=11, bot=False, guild=object())
+        bot = SimpleNamespace(id=12, bot=True, guild=object())
+        stranger = SimpleNamespace(id=13, bot=False)  # a User, not a member of this server
+        author = SimpleNamespace(id=7, guild_permissions=SimpleNamespace(manage_guild=True))
+        facts = discord_bot._server_facts(author, [member, bot, stranger])
+        self.assertEqual(facts, permissions.ServerFacts(
+            can_manage_server=True, member_ids=frozenset({"11", "12"}), bot_user_ids=frozenset({"12"})))
 
 
 class TakeoverTests(unittest.TestCase):
@@ -229,7 +258,7 @@ class TakeoverTests(unittest.TestCase):
 
     def test_a_playing_manager_can_appoint_someone_eligible(self):
         state = _with_investigator(_state(kp_assistant_user_id="gone"), "manager")
-        replies, _ = _run(state, "manager", "/coc kp takeover <@333>", server=permissions.ServerFacts(can_manage_server=True))
+        replies, _ = _run(state, "manager", "/coc kp takeover <@333>", server=_mentions("333", manager=True))
         self.assertEqual(state.kp_assistant_user_id, "333")
         self.assertIn("<@manager> 指派 <@333> 擔任這局的 KP 助手", replies[0])
 
@@ -243,7 +272,7 @@ class TakeoverTests(unittest.TestCase):
         }
         for name, (state, bots) in cases.items():
             with self.subTest(case=name):
-                _, save = _run(state, "manager", "/coc kp takeover <@333>", server=permissions.ServerFacts(can_manage_server=True, bot_user_ids=bots))
+                _, save = _run(state, "manager", "/coc kp takeover <@333>", server=_mentions("333", manager=True, bots=bots))
                 self.assertEqual(state.kp_assistant_user_id, "gone")
                 save.assert_not_called()
 

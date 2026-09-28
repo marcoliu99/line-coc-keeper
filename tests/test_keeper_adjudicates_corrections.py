@@ -288,7 +288,8 @@ class AdjudicatePendingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["resolution"], "Ada 手上一直拿著手電筒。")
         self.assertIn("已由守秘人依證據更正：Ada 手上一直拿著手電筒。", state.log[-1]["content"])
         self.assertEqual(len(posted), 1)
-        self.assertIn("Ada 的角色卡上有手電筒", posted[0])
+        self.assertIn("依據：原敘事、Ada 的角色卡。", posted[0])
+        self.assertEqual(report["reason"], "Ada 的角色卡上有手電筒")  # kept for the record, not posted
         ruling = next(c for c in event.call_args_list if c.args[0] == "correction.keeper_ruling")
         self.assertEqual(ruling.kwargs["decision"], "approve")
         self.assertNotIn("手槍", str(ruling.kwargs))  # the reporter's text never goes into the log
@@ -339,8 +340,30 @@ class AdjudicatePendingTests(unittest.IsolatedAsyncioTestCase):
         save_state(state)
         leaky = dict(_APPROVAL, decision="reject", reason="劇本說教團首領是神父，所以抽屜本來就空")
         posted = await self._adjudicate(_model(**leaky))
-        self.assertEqual(posted, ["敘事異議 #r1 經守秘人依證據核對後不成立。"])
+        self.assertEqual(posted, ["敘事異議 #r1 經守秘人依證據核對後不成立。\n依據：原敘事、Ada 的角色卡。"])
         self.assertEqual(load_state(self.group).narrative_corrections[0]["status"], "rejected")
+
+    async def test_the_models_own_words_about_scenario_passages_are_never_posted(self):
+        state = load_state(self.group)
+        state.scenario_text = "劇本全文"
+        save_state(state)
+        rows = [{"page": 3, "text": "書房的書櫃後面藏著密室。", "score": 1.0}]
+        output = dict(_APPROVAL, evidence=["narration", "scenario:1", "sheet:Ada"], reason="劇本第 3 頁寫書櫃後面藏著密室")
+        with patch.object(scenario_templates, "search_for_state", return_value=(None, rows)):
+            posted = await self._adjudicate(_model(**output))
+        self.assertNotIn("密室", posted[0])
+        self.assertIn("依據：原敘事、劇本資料、Ada 的角色卡。", posted[0])
+
+    async def test_an_approval_that_would_reveal_a_secret_is_not_recorded(self):
+        state = load_state(self.group)
+        state.known_clues.append({"text": "教團首領是神父", "visibility": "kp_only"})
+        save_state(state)
+        leaky = dict(_APPROVAL, resolution="Ada 手上拿著手電筒，照見教團首領是神父。")
+        posted = await self._adjudicate(_model(**leaky))
+        after = load_state(self.group)
+        self.assertEqual(after.narrative_corrections[0]["status"], "unverified")
+        self.assertNotIn("神父", str(after.narrative_corrections) + str(after.log))
+        self.assertNotIn("神父", posted[0])
 
     async def test_a_later_kp_can_supersede_the_keepers_ruling(self):
         await self._adjudicate(_model(**_APPROVAL))

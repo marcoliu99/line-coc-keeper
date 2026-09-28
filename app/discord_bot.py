@@ -13,7 +13,7 @@ import io
 import logging
 import time
 import unicodedata
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from typing import TypeVar, cast
 
@@ -415,6 +415,17 @@ _FORMERLY_ROLE_GATED: dict[str, frozenset[str] | None] = {
     "scenario": frozenset({"source", "template", "cards", "use", "reparse", "cancel", "clean"}),
     "correct": frozenset({"approve", "reject", "hold", "supersede"}),
 }
+
+
+def _server_facts(author: discord.abc.User, mentions: Sequence[discord.abc.User]) -> permissions.ServerFacts:
+    """What Discord says about a message: the author's Manage Server permission
+    and which mentioned users are members of this server (a Member has a guild)."""
+    members = [u for u in mentions if getattr(u, "guild", None) is not None]
+    return permissions.ServerFacts(
+        can_manage_server=_can_manage_server(author),
+        member_ids=frozenset(str(u.id) for u in members),
+        bot_user_ids=frozenset(str(u.id) for u in members if u.bot),
+    )
 
 
 def _formerly_role_gated(parts: list[str]) -> str | None:
@@ -1984,10 +1995,7 @@ async def _handle_message(message: discord.Message) -> None:
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
                 format_mention, post_turn_hook=claim_after_locked_turn,
-                server=permissions.ServerFacts(
-                    can_manage_server=_can_manage_server(message.author),
-                    bot_user_ids=frozenset(str(u.id) for u in getattr(message, "mentions", ()) if u.bot),
-                ),
+                server=_server_facts(message.author, getattr(message, "mentions", ())),
                 referenced_message_id=(
                     str(message.reference.message_id)
                     if command_parts[0].casefold() == "/coc"

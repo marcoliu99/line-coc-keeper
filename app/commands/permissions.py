@@ -22,11 +22,14 @@ class ServerFacts:
     """What the chat server says about a message, for seating a KP Assistant.
 
     `can_manage_server` is Discord's Manage Server permission, the only thing
-    that lets a member take over the seat; `bot_user_ids` are the bots the
-    message mentions, who can never hold it.
+    that lets a member take over the seat. `member_ids` are the server members
+    the message @-mentions: only they can be handed the seat, so a typed
+    `<@id>` for someone outside the server never can. `bot_user_ids` are the
+    mentioned bots, who can never hold it.
     """
 
     can_manage_server: bool = False
+    member_ids: frozenset[str] = frozenset()
     bot_user_ids: frozenset[str] = frozenset()
 
 
