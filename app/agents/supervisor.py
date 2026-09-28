@@ -5,7 +5,7 @@ import logging
 from copy import deepcopy
 from typing import Any, Literal
 
-from app import keeper, observability
+from app import config, keeper, locks, observability
 from app.agents import (
     assistant,
     context_builder,
@@ -102,6 +102,7 @@ async def run_turn(
     turn_kind: PlayerTurnKind = "player_action",
     resolved_check_context: dict[str, Any] | None = None,
     prefetched_retrieval: context_builder.RetrievalPrefetch | None = None,
+    handoff: locks.TurnHandoff | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
@@ -359,6 +360,20 @@ async def run_turn(
                                                 pending_checks_before, pending_luck_before, message.payload)
     else:
         _logger.info("Routing directly to NarratorAgent (Fast Path)")
+
+    # Every mutation this turn will make is committed by now: the Executor's
+    # tools persist through their own locked path and the reducer is pure. An
+    # ordinary turn's Narrator runs with tools=[], so from here the turn needs
+    # ordering, not exclusion — hand the mutation lock to the next player and
+    # queue for narration instead.
+    #
+    # Not for a tool-enabled Narrator. narrator.py gives resolved_check_followup
+    # and opening_fallback a restricted tool set, and #99 commits arrivals
+    # inside that loop, so those turns keep the mutation lock to the end.
+    if (handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
+            and turn_kind == "player_action"):
+        await handoff.to_narration()
+        observability.event("turn.handoff", phase="narration")
 
     # 5. Narrator Agent generates the final text
     if pending_reply:

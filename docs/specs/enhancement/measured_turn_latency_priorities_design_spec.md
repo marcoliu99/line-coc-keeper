@@ -2,7 +2,7 @@
 
 [繁體中文](measured_turn_latency_priorities_design_spec_zh.md)
 
-Status: **WP1, WP2, WP3.2, WP3.3, WP3.4 and WP5 implemented; WP3.5 and WP4 proposed**. Base: `main_v2` at `5961f2b`.
+Status: **WP1, WP2, WP3.2–WP3.5 and WP5 implemented (WP3.5 behind a default-off flag); WP4 proposed**. Base: `main_v2` at `5961f2b`.
 
 ## 0. Why this document exists
 
@@ -259,7 +259,38 @@ The failure interleaving is also not new. Today B's Executor already resolves ag
 
 The conversation lock is taken in `router.py` around `_handle_ordinary_text_message_locked`, which spans `run_turn` and the post-turn maintenance that posts the reply. Releasing before narration means releasing from inside `run_turn`, which has eleven return paths, and making that release idempotent against the router's own `async with`. The existing code already carries a warning about this exact hazard: a conversation lock leaked by an exception escaping the cleanup "permanently leaks a lock that *was* successfully acquired and deadlocking every future command in that conversation until the process restarts."
 
-That is a channel-wide deadlock as the failure mode, against a measured gain of the Narrator's median 5.0 s out of a ~21.7 s hold. The design above is sound and the blockers are addressable, but it needs the router/supervisor lock boundary restructured deliberately rather than threaded through as an extra argument, and concurrency behaviour that this document has no way to exercise in a test. It stays specified and unimplemented pending that decision.
+That is a channel-wide deadlock as the failure mode, against a measured gain of the Narrator's median 5.0 s out of a ~21.7 s hold.
+
+#### Implemented behind `NARRATION_OUTSIDE_MUTATION_LOCK`, default off
+
+The posting ticket in the original sketch is unnecessary. Both locks are FIFO and the mutation lock already serializes the Executors, so a turn reaches narration in the order it reached mutation and a plain second lock preserves message order:
+
+```text
+mutation phase (conversation lock + Keeper turn lock, both FIFO) -> Executor -> release both
+    -> narration lock (FIFO) -> Narrator, commit, post
+                             ^ the next player's Executor starts here
+```
+
+**Review correction: this diagram originally showed the conversation lock alone, and that was wrong.** An ordinary text turn also takes `get_keeper_turn_lock` inside `_handle_ordinary_text_message_locked` — **after** loading state — and holds it through narration, delivery and commit. Handing on the conversation lock alone therefore handed on nothing: the next turn does take the conversation lock and does load state there, then blocks on the Keeper turn lock until the previous turn has finished entirely — **no overlap at all, and it then runs on a snapshot taken before that turn's commit**, so its prompt can omit the immediately preceding action and narration. That is worse than not handing off.
+
+The fix has two halves:
+
+- `TurnHandoff` now holds every lock the turn took for its mutation phase. `mutation_phase_lock()` lets the router hand it the Keeper turn lock too; a handoff releases them in reverse acquisition order, and leaving the block after a handoff does not release one twice.
+- **State is reloaded once the Keeper turn lock is held.** The pre-lock snapshot is missing anything committed while the turn queued for that lock, flag or no flag.
+
+`locks.TurnHandoff` owns which locks a turn still holds, and the router's context managers yield one and `close()` it in their `finally`. `close()` releases exactly what is still held, so the eleven return paths inside `run_turn` need no per-path handling: a turn that never handed off is released as before, and one that did releases narration instead. `to_narration()` is idempotent.
+
+`run_turn` hands off in one place, after the reducer, and only for `turn_kind == "player_action"`. `resolved_check_followup` and `opening_fallback` keep the mutation lock to the end because `narrator.py:44` gives them a restricted tool set and #99 commits arrivals inside it.
+
+One cost of the overlap is **by design and remains**: `_commit_turn_result` appends this turn's message and reply to `state.log` after narration, so the next turn's `build_context` does not see those two entries (it does see every state change the Executor committed). With five players talking at once, B's prompt does not contain what A just did. That is the trade this work package chose, and one of the main reasons the flag defaults off.
+
+The flag defaults off because the gain is seconds and the failure mode is a channel that stops until restart. What is verified is the lock accounting — every test asserts which locks are free afterwards, across handing off or not, closing twice, handing off twice, and an exception after handoff — plus that the next turn's Executor overlaps this turn's narration without reordering the posts. What is not verified is behaviour under real concurrent load.
+
+One hazard worth recording: with the narration lock leaked, the ordering test **hung rather than failed**, because the next turn waited forever. It now waits with a bound, so a leak fails in seconds. The same shape bit twice elsewhere — `FakeSupervisorRunner` pinned `run_turn`'s keyword signature, so a new argument raised inside the turn, the blocking event was never set, and the suite hung; it now tolerates added arguments.
+
+With the KP priority gate in play the gate is still held across narration, so a conversation that has a KP assistant does not get the overlap. That is left as is.
+
+Two review fixes to WP1's script are recorded here because they change numbers this document quotes. Retrieval statistics keyed on the most recent `Supervisor starting turn`, so when two conversations' log lines interleave one turn's queries were attached to another; they now accumulate by `(file, turn_id)`, falling back to a per-file sequence for harness logs that carry no `turn_id`. Record ids were extracted as `r\d+` substrings, which emptied every result set for a scenario whose ids are words such as `intro` and truncated a compound id like `c1-u1-r1` to `r1`, where it could collide — an emptied set still counted toward the denominator while failing `bool(records_b)`, systematically understating retrieval waste. The logged list is now parsed.
 
 ### 3.6 Acceptance
 
@@ -300,6 +331,34 @@ No change is proposed here until that split is measured. Reducing searches witho
 
 - WP1's script reports, per turn, the search queries issued, the record ids returned, and the overlap between successive searches within one turn.
 - The three buckets above are quantified over at least one further session before any change is specified.
+
+### 4.4 Investigated: the logs cannot separate the three buckets
+
+The report is implemented and run over all recorded sessions. It cannot finish the classification, and that is the result.
+
+```text
+turns with 2+ searches: 60   of those with recoverable records: 18
+consecutive pairs: 34
+  identical query reissued   3    8.8%
+  no new records returned    4   11.8%
+```
+
+Record ids survive only in the reducer's end-of-turn summary, and an
+original-source follow-up reports none at all, so a turn is only usable when
+that summary happens to carry as many results as the turn issued queries —
+18 of 60. A turn is skipped rather than guessed at.
+
+What the recoverable part does establish is a **lower bound**: at least one
+consecutive pair in eleven returned no record the previous search had not
+already returned, and at least one in twelve reissued a **byte-identical
+query**. An identical query is unambiguous waste; it is not a rewording.
+
+Separating reworded-repeat from genuinely-new from budget-driven retry needs
+the record ids on each `llm.tool.completed` for `search_scenario`. That is one
+field. **No change to retrieval is specified until it exists and a session has
+been measured with it**, because reducing searches without knowing which
+bucket they fall in would trade back the correctness §8.4 shows these searches
+bought.
 
 ## 5. WP5 — Answer a held Luck decision without a model request
 
@@ -417,3 +476,101 @@ Goal: preserve current-turn evidence and message admission order while retaining
 4. **Queue position.** Count waiters at both the KP priority gate and the conversation lock, without double-counting a turn that has crossed from the gate to the lock. The notice and `turn.queue` use the same snapshot and update as turns finish.
 
 Acceptance: targeted regression tests for invalid response chains, chapter and memory changes, intentionally delayed prefetches with FIFO/KP priority, cancellation, and gate queue counts; then the isolated full suite, Ruff, mypy, and `git diff --check`. No additional model request or synchronous review stage is introduced.
+
+## 9. Re-measured with a five-investigator party
+
+Everything above was measured against the database's current groups, which hold **one** character each. The recorded sessions had three to five speakers — Mick 53 turns, Marco 52, Ken 39, 馬可先生 31 — so the per-turn figures were a solo game and the queue figures were not.
+
+`scripts/experiments/make_party_state.py` seats a five-investigator party in a sandbox copy. `live_narration_ab.py --round-robin` rotates the speaker, as a table plays.
+
+### 9.1 Lock waits scale with the party, as expected
+
+| speakers in the log | lock wait p99 | max |
+| --- | --- | --- |
+| 3 (Ken/Marco/Mick) | 131,178 ms | 131,189 ms |
+| 3 (Ken/Mick/馬可先生) | 48,734 ms | 55,085 ms |
+| 2 | 29,513 ms | 29,513 ms |
+
+The p99 this document reported is not an outlier; it is what a table of three already produces.
+
+### 9.2 WP2 is stronger with a party, not weaker
+
+| | solo | five |
+| --- | --- | --- |
+| dynamic block | 1,343 | **2,125** |
+| cacheable prefix (static + tools) | 17,477 | 18,066 |
+| arm A cached | 2.2% | **0.0%** |
+| arm D cached | 92.9% | **86.0%** |
+
+The party's vitals grow the block that sits at the cache boundary by 58% while the stable prefix barely moves, so today's composition loses everything rather than most of it.
+
+### 9.3 WP5 fires, and costs nothing when it does
+
+Turn 16, Nora holding her own decision: **0 requests, 0 tokens, 0.0 s**, against 5.5 s for the equivalent turn under today's code. One occurrence in twenty turns is not a frequency estimate.
+
+### 9.4 Cost by disposition, twenty party turns
+
+| disposition | turns | requests/turn | input/turn |
+| --- | --- | --- | --- |
+| `incomplete` | 5 | 6.0 | 155,107 |
+| `blocked` | 5 | 3.8 | 87,937 |
+| `await_check` | 3 | 4.7 | 105,597 |
+| `deferred` | 3 | 2.7 | 54,779 |
+| `no_mechanics` | 2 | 2.0 | 36,848 |
+| `await_luck` | 1 | 1.0 | 24,233 |
+| short-circuit (WP5) | 1 | **0.0** | **0** |
+
+Refusals — `deferred`, `blocked`, and most `incomplete` — are 13 of 20 turns and the bulk of the tokens. That is the shape of a multiplayer game: one player mid-decision refuses the rest of the table, and each refusal costs a full pipeline.
+
+### 9.5 A deterministic cross-player refusal does not survive the data
+
+The obvious extension of WP5 is: while any player holds a Luck decision, answer everyone else from state too. Of ten turns by other players while a decision was outstanding, **nine were refused anyway** — three `deferred`, three `blocked`, three `incomplete`.
+
+The tenth was not. Turn 12, marco: "我檢查一下自己身上還有什麼東西" resolved `no_mechanics` and was answered properly. A deterministic gate would have refused a legitimate inventory question.
+
+Whether a turn can proceed while someone else is mid-decision is the Executor's judgement, not a state fact, and the same state produced `deferred`, `blocked`, `incomplete` and `no_mechanics` across these twenty turns. **Not implemented.** The refusal cost is real and is the largest single waste this document has measured, but it cannot be recovered by reading state.
+
+### 9.6 An open question this raised about WP2
+
+Arm A produced no `deferred` turns; arm D produced three. The arms also diverged in state as play continued — arm A's first turn cancelled a check where arm D's created one — so the cause is not isolated, and this is one scenario.
+
+It is nonetheless the instruction-following risk §2.6 said was unverified: the block moved from `instructions`, where it took precedence, to a `developer` message after the player's line. **A controlled comparison from an identical state, with the same pending items, is owed before WP2 ships.** Cache and delivery were verified; judgement was not.
+
+### 9.7 The controlled comparison, first attempt: inconclusive by design fault
+
+`scripts/experiments/controlled_disposition_ab.py` restores the database to one snapshot before every turn, so both compositions see identical state, identical pending items and the same message. Four cases, three repeats each, twenty-four turns.
+
+```text
+case              today                       WP2
+clean             incomplete 1, blocked 2     incomplete 2, blocked 1
+other_has_check   incomplete 2, blocked 1     blocked 3
+other_has_luck    incomplete 1, blocked 2     incomplete 1, blocked 2
+self_has_check    incomplete 1, blocked 2     incomplete 2, blocked 1
+```
+
+**It shows nothing, for two reasons, both mine.**
+
+The probe message named a desk. The current scene is a basement storeroom with board walls, so every one of the twenty-four turns was correctly refused and the run had no way to detect a difference in how permissive either composition is. The script now carries two probes, one the scene supports and one it does not.
+
+The verdict compared `Counter` equality, which at three samples reports a one-of-three ratio shift as a difference. Every cell produced the same two dispositions under both compositions; only the proportions moved. The script now reports whether the *set* of dispositions differs, prints counts without calling them a finding, and says plainly that this sample size cannot separate a composition from the model's own variance.
+
+One result does survive: **no `deferred` appeared in either arm, in any case.** The 0-against-3 signal from §8.6 did not reproduce from identical state, which points at the arms' state divergence rather than the prompt composition. That removes the evidence for the concern; it does not clear WP2, which still owes a comparison with a probe that can succeed.
+
+### 9.8 The controlled comparison, repaired: WP2 is the more consistent of the two
+
+Two probes, two cases, four repeats each, thirty-two turns, the database restored to one snapshot before every turn.
+
+| probe | case | today | WP2 |
+| --- | --- | --- | --- |
+| supportable | clean | `await_check` 2, `incomplete` 1, `no_mechanics` 1 | **`await_check` 4** |
+| supportable | other holds Luck | `await_check` 2, `incomplete` 1, `no_mechanics` 1 | **`await_check` 4** |
+| unsupported | clean | `blocked` 3, `incomplete` 1 | `blocked` 2, `incomplete` 2 |
+| unsupported | other holds Luck | `blocked` 2, `incomplete` 2 | `blocked` 3, `incomplete` 1 |
+
+On an action the scene supports — examining the board wall the scenario describes — the moved block produced the mechanically correct outcome, an Investigate check, on four of four attempts in both cases. Today's composition managed two of four. The other two were worse outcomes, not different ones: once `no_mechanics`, narrating the wall without offering a roll, and once `incomplete` reporting "marco 尚未擲骰的檢定已取消" — a check created and then cancelled.
+
+On an action the scene does not support, both compositions refuse, with the same two dispositions and a one-of-four ratio difference that this sample cannot read.
+
+**This is the comparison §2.6 said was owed, and it does not find the regression §8.6 suspected.** Nothing here shows the moved block weakening the model's judgement; on the one cell with room to differ it was steadier. Four samples per cell is small, and the claim is only that a degradation did not appear where one was looked for.
+
+Taken with §8.7, the `deferred` divergence has no support left: it did not reproduce from identical state, and under a probe that can succeed the moved block is if anything more decisive.
