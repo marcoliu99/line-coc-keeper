@@ -480,12 +480,18 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已建立", reply)
         self.assertIn("/coc check", reply)
 
-    async def test_supervisor_passes_existing_pending_luck_and_suppresses_new_roll(self):
+    async def test_supervisor_passes_luck_created_during_the_turn_to_the_narrator(self):
+        """WP5 answers a decision the speaker *already* held from state, so this
+        covers the path that still reaches the Narrator: the roll lands inside
+        the turn, and the decision must be forwarded rather than re-rolled.
+
+        Keeping the pre-existing variant would have passed on the reply text
+        while never entering run_narrator at all."""
         from app.agents import supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g")
-        state.pending_luck_decisions["u1"] = {
+        created_luck = {
             "skill_name": "STR", "value": 40, "roll": 69,
             "original_tier": "failure", "difficulty": "regular",
             "options": [{"tier": "regular", "cost": 29}], "decision_id": "decision-1",
@@ -503,6 +509,9 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async def fake_build_context(**kwargs):
+            # The roll lands while the turn runs, as it does in play, so the
+            # short circuit does not apply and the decision must be forwarded.
+            state.pending_luck_decisions["u1"] = created_luck
             return message
 
         async def fake_run_narrator(msg):

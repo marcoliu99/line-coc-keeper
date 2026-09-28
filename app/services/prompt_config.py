@@ -449,6 +449,20 @@ def _pending_luck_fallback(pending_luck: dict) -> str:
     return _pending_luck_instruction(pending_luck) + " 最終成敗尚未定案，請先處理這筆決定。"
 
 
+def pending_luck_reply(pending_luck: dict, investigator: str = "") -> str:
+    """Answer an action held behind an unresolved Luck decision.
+
+    The same text this module already substitutes after a turn has run. A
+    caller that knows the decision is outstanding can produce it before the
+    turn starts, which is the whole point: the dice are already rolled, so
+    nothing the model could add is still undetermined.
+    """
+    record = dict(pending_luck)
+    if investigator:
+        record.setdefault("investigator", investigator)
+    return _pending_luck_fallback(record)
+
+
 PURE_ROLEPLAY_BLOCK = "【純角色扮演（無機制判定）】請以 KP 的身分自然地回應玩家的行動或對話。"
 
 

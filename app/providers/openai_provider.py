@@ -414,17 +414,38 @@ async def run_conversation(
         "executor": config.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS,
         "narrator": config.OPENAI_NARRATOR_MAX_OUTPUT_TOKENS,
     }.get(response_stage, config.OPENAI_DEFAULT_MAX_OUTPUT_TOKENS)
-    instructions = f"{static_system}\n\n{dynamic_system}"
+    # The cached prefix ends at the first byte that differs between requests,
+    # so anything that changes every turn must sit after everything that does
+    # not. dynamic_system carries HP/SAN, location and retrieval context, so
+    # holding it inside instructions puts it ahead of the tool schema and
+    # makes both uncacheable across turns. Measured over 10 turns whose
+    # dynamic block genuinely varied, against the real API: 12.5% cached with
+    # it inside instructions, 82.5% with it placed after the player's message.
+    # Moving it to the *front* of the input list instead measured 0.0%, worse
+    # than today, so its position relative to new_message is what matters and
+    # not merely leaving instructions — see
+    # docs/specs/enhancement/measured_turn_latency_priorities_design_spec.md
+    # and scripts/experiments/ab_prompt_cache_boundary.py.
+    dynamic_after_input = config.OPENAI_DYNAMIC_PROMPT_AFTER_INPUT
+    instructions = static_system if dynamic_after_input else f"{static_system}\n\n{dynamic_system}"
     inherited_tokens: int | None = None
     static_tokens = input_budget.estimate(static_system, OPENAI_MODEL)
     dynamic_tokens = input_budget.estimate(dynamic_system, OPENAI_MODEL)
 
+    def full_input() -> list[dict]:
+        items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
+        items.append({"role": "user", "content": new_message})
+        if dynamic_after_input:
+            items.append({"role": "developer", "content": dynamic_system})
+        return items
+
     if previous_response_id:
         input_items: list[dict] = [{"role": "user", "content": new_message}]
         active_previous_response_id: str | None = previous_response_id
+        if dynamic_after_input:
+            input_items.append({"role": "developer", "content": dynamic_system})
     else:
-        input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
-        input_items.append({"role": "user", "content": new_message})
+        input_items = full_input()
         active_previous_response_id = None
 
     # Omitted entirely (not sent as an empty/None value) when
@@ -459,7 +480,8 @@ async def run_conversation(
         estimated_input = (
             inherited_tokens + new_input_tokens if active_previous_response_id and inherited_tokens is not None
             else None if active_previous_response_id
-            else static_tokens + dynamic_tokens + tools_tokens + new_input_tokens
+            else static_tokens + tools_tokens + new_input_tokens
+            + (0 if dynamic_after_input else dynamic_tokens)
         )
         observability.event('llm.input.composition', stage=response_stage,
                             static_tokens_estimate=static_tokens, dynamic_tokens_estimate=dynamic_tokens,
@@ -481,14 +503,14 @@ async def run_conversation(
                     "llm.fallback", level=logging.WARNING, provider="openai",
                     fallback_kind="previous_response_id", reason="invalid_previous_response_id",
                 )
-                input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
-                input_items.append({"role": "user", "content": new_message})
+                input_items = full_input()
                 active_previous_response_id = None
                 request_kwargs["input"] = input_items
                 request_kwargs.pop("previous_response_id", None)
                 response = await _create_response_async(
                     _log_iteration=iteration,
-                    _input_tokens_estimate=static_tokens + dynamic_tokens + tools_tokens + input_budget.estimate(input_items, OPENAI_MODEL) + output_limit,
+                    _input_tokens_estimate=static_tokens + tools_tokens + input_budget.estimate(input_items, OPENAI_MODEL)
+                    + (0 if dynamic_after_input else dynamic_tokens) + output_limit,
                     **request_kwargs,
                 )
             else:

@@ -33,6 +33,7 @@ import logging
 import math
 import multiprocessing
 import re
+import threading
 import time
 from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -724,9 +725,26 @@ def _load_index_from_disk(group_id: str) -> ScenarioIndex | None:
 # load, not the embeddings call.
 _index_cache: dict[str, ScenarioIndex] = {}
 
+# Building an index calls the embeddings API and then writes scenario_indexes,
+# and both get_index and get_record_index run in worker threads via
+# asyncio.to_thread. Without this, two concurrent misses for one key each pay
+# the embeddings round trip and each write; the payload is identical so the
+# last write is harmless, but the API cost doubles. A per-key build lock keeps
+# the memory/disk fast path lock-free and serializes only the rebuild, with a
+# second cache check inside the lock for the caller that waited.
+_build_locks_guard = threading.Lock()
+_build_locks: dict[str, threading.Lock] = {}
 
-def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
-    text_hash = hashlib.md5(scenario_text.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+def _build_lock(cache_key: str) -> threading.Lock:
+    with _build_locks_guard:
+        lock = _build_locks.get(cache_key)
+        if lock is None:
+            lock = _build_locks[cache_key] = threading.Lock()
+        return lock
+
+
+def _cached_text_index(group_id: str, text_hash: str) -> ScenarioIndex | None:
     cached = _index_cache.get(group_id)
     if cached is not None and cached.text_hash == text_hash:
         cached.index_cache = "memory"
@@ -737,7 +755,23 @@ def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
         disk_index.index_cache = "disk"
         _index_cache[group_id] = disk_index
         return disk_index
+    return None
 
+
+def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
+    text_hash = hashlib.md5(scenario_text.encode("utf-8"), usedforsecurity=False).hexdigest()
+    hit = _cached_text_index(group_id, text_hash)
+    if hit is not None:
+        return hit
+    with _build_lock(group_id):
+        # A concurrent caller may have finished the build while we waited.
+        hit = _cached_text_index(group_id, text_hash)
+        if hit is not None:
+            return hit
+        return _build_text_index(group_id, scenario_text)
+
+
+def _build_text_index(group_id: str, scenario_text: str) -> ScenarioIndex:
     index_metrics = {"index_cache": "rebuilt"}
     started = time.perf_counter()
     with observability.span("rag.index", rag_kind="scenario", metrics=index_metrics):
@@ -751,12 +785,7 @@ def get_index(group_id: str, scenario_text: str) -> ScenarioIndex:
     return index
 
 
-def get_record_index(cache_key: str, records: list[dict]) -> ScenarioIndex:
-    """Index validated template records once per immutable variant/window."""
-    v4 = bool(records) and all(r.get("schema_version") == 4 for r in records)
-    store = {r["id"]: r for r in records} if v4 else None
-    serialized = json.dumps(records, ensure_ascii=False, sort_keys=True)
-    text_hash = hashlib.md5(serialized.encode("utf-8"), usedforsecurity=False).hexdigest()
+def _cached_record_index(cache_key: str, text_hash: str, store: dict | None) -> ScenarioIndex | None:
     cached = _index_cache.get(cache_key)
     if cached is not None and cached.text_hash == text_hash:
         cached.record_store = store
@@ -768,6 +797,28 @@ def get_record_index(cache_key: str, records: list[dict]) -> ScenarioIndex:
         disk.index_cache = "disk"
         _index_cache[cache_key] = disk
         return disk
+    return None
+
+
+def get_record_index(cache_key: str, records: list[dict]) -> ScenarioIndex:
+    """Index validated template records once per immutable variant/window."""
+    v4 = bool(records) and all(r.get("schema_version") == 4 for r in records)
+    store = {r["id"]: r for r in records} if v4 else None
+    serialized = json.dumps(records, ensure_ascii=False, sort_keys=True)
+    text_hash = hashlib.md5(serialized.encode("utf-8"), usedforsecurity=False).hexdigest()
+    hit = _cached_record_index(cache_key, text_hash, store)
+    if hit is not None:
+        return hit
+    with _build_lock(cache_key):
+        # A concurrent caller may have finished the build while we waited.
+        hit = _cached_record_index(cache_key, text_hash, store)
+        if hit is not None:
+            return hit
+        return _build_record_index(cache_key, records, text_hash, store, v4)
+
+
+def _build_record_index(cache_key: str, records: list[dict], text_hash: str,
+                        store: dict | None, v4: bool) -> ScenarioIndex:
     chunks: list[_Chunk] = []
     projections = {} if v4 else scenario_projection.bundles(records)
     for record in records:

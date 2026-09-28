@@ -32,7 +32,7 @@ from app.services import mutation_admission
 
 # Legacy conversation lock: used by the current coarse-grained flow and kept
 # unchanged while callers are migrated incrementally.
-_locks: dict[str, asyncio.Lock] = {}
+_locks: dict[str, _ObservableConversationLock] = {}
 
 # State lock: future per-conversation synchronous state transactions around
 # load_state -> mutate -> save_state. It is a threading.RLock so Keeper worker
@@ -47,18 +47,39 @@ _keeper_turn_locks: dict[str, asyncio.Lock] = {}
 @dataclass
 class _KeeperPriorityGate:
     active: bool = False
+    active_task: asyncio.Task | None = None
     kp_waiters: deque[asyncio.Future[None]] = field(default_factory=deque)
     player_waiters: deque[asyncio.Future[None]] = field(default_factory=deque)
+    waiter_tasks: dict[asyncio.Future[None], asyncio.Task] = field(default_factory=dict)
+
+    def turns_ahead(self, task: asyncio.Task | None, *, is_kp: bool) -> int:
+        """Current priority position, including the holder but excluding this task."""
+        if task is not None and task is self.active_task:
+            return 0
+        own_queue = self.kp_waiters if is_kp else self.player_waiters
+        own_before = 0
+        for future in own_queue:
+            if self.waiter_tasks.get(future) is task and task is not None:
+                break
+            if not future.cancelled():
+                own_before += 1
+        return int(self.active) + own_before + (0 if is_kp else sum(
+            not future.cancelled() for future in self.kp_waiters
+        ))
 
     async def acquire(self, *, is_kp: bool) -> None:
         loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
         if not self.active and not self.kp_waiters and not self.player_waiters:
             self.active = True
+            self.active_task = task
             return
 
         future: asyncio.Future[None] = loop.create_future()
         queue = self.kp_waiters if is_kp else self.player_waiters
         queue.append(future)
+        if task is not None:
+            self.waiter_tasks[future] = task
         try:
             await future
         except BaseException:
@@ -75,17 +96,22 @@ class _KeeperPriorityGate:
                 except ValueError:
                     pass
             raise
+        finally:
+            self.waiter_tasks.pop(future, None)
 
     def release(self) -> None:
+        self.active_task = None
         while self.kp_waiters:
             future = self.kp_waiters.popleft()
             if not future.done():
+                self.active_task = self.waiter_tasks.get(future)
                 future.set_result(None)
                 return
 
         while self.player_waiters:
             future = self.player_waiters.popleft()
             if not future.done():
+                self.active_task = self.waiter_tasks.get(future)
                 future.set_result(None)
                 return
 
@@ -95,30 +121,85 @@ class _KeeperPriorityGate:
 _keeper_priority_gates: dict[str, _KeeperPriorityGate] = {}
 
 
-class _ObservableConversationLock(asyncio.Lock):
-    """Conversation lock that measures queue wait without changing semantics."""
+def priority_gate_position(conversation_id: str, task: asyncio.Task | None, *, is_kp: bool) -> tuple[int, asyncio.Task | None]:
+    gate = _keeper_priority_gates.get(conversation_id)
+    if gate is None:
+        return 0, None
+    return gate.turns_ahead(task, is_kp=is_kp), gate.active_task
 
-    def __init__(self, conversation_id: str):
+
+class _ObservableConversationLock(asyncio.Lock):
+    """Conversation lock that measures queue wait without changing semantics.
+
+    Two counters, both maintained here rather than read from asyncio's private
+    _waiters so they stay correct if that internal changes:
+
+    `blocked` counts callers currently inside acquire(). Read *before* a caller
+    enters the queue it gives how many turns are already ahead of it, because
+    asyncio.Lock hands the lock over in arrival order.
+
+    `completed` counts turns that have finished holding the lock. A waiter
+    cannot recount its own position later — a plain counter cannot tell who
+    arrived before it from who arrived after — so it subtracts this counter's
+    progress from its entry snapshot instead.
+    """
+
+    def __init__(self, conversation_id: str) -> None:
         super().__init__()
         self.conversation_id = conversation_id
+        self.blocked = 0
+        self.completed = 0
+        self.holder_task: asyncio.Task | None = None
+        self.waiting_tasks: set[asyncio.Task] = set()
+
+    def contains_task(self, task: asyncio.Task | None) -> bool:
+        return task is not None and (task is self.holder_task or task in self.waiting_tasks)
+
+    def turns_ahead(self) -> int:
+        """Turns already queued: the holder plus anyone waiting.
+
+        Only meaningful before the calling turn enters the queue itself.
+        """
+        return (1 + self.blocked) if self.locked() else 0
+
+    def remaining_ahead(self, entry_ahead: int, entry_completed: int) -> int:
+        """How much of an entry-time queue is left, for a waiter's own position."""
+        return max(0, entry_ahead - (self.completed - entry_completed))
 
     async def acquire(self) -> Literal[True]:
-        with observability.span(
-            "lock.wait",
-            lock_name="conversation",
-            lock_threshold_ms=config.LOG_SLOW_OPERATION_MS,
-            slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
-        ):
-            await super().acquire()
-            try:
-                mutation_admission.check_conversation_entry(self.conversation_id)
-            except mutation_admission.MutationHeld:
-                super().release()
-                raise
-            return True
+        task = asyncio.current_task()
+        self.blocked += 1
+        if task is not None:
+            self.waiting_tasks.add(task)
+        try:
+            with observability.span(
+                "lock.wait",
+                lock_name="conversation",
+                lock_threshold_ms=config.LOG_SLOW_OPERATION_MS,
+                slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
+            ):
+                await super().acquire()
+                self.holder_task = task
+                try:
+                    mutation_admission.check_conversation_entry(self.conversation_id)
+                except mutation_admission.MutationHeld:
+                    # Released through the override, not super(), so a waiter's
+                    # countdown still sees this turn leave the queue.
+                    self.release()
+                    raise
+                return True
+        finally:
+            self.blocked -= 1
+            if task is not None:
+                self.waiting_tasks.discard(task)
+
+    def release(self) -> None:
+        self.completed += 1
+        self.holder_task = None
+        super().release()
 
 
-def get_conversation_lock(conversation_id: str) -> asyncio.Lock:
+def get_conversation_lock(conversation_id: str) -> _ObservableConversationLock:
     lock = _locks.get(conversation_id)
     if lock is None:
         lock = _ObservableConversationLock(conversation_id)
