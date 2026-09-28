@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from app import help_service, locks, observability
-from app.agents import supervisor
+from app.agents import context_builder, supervisor
 from app.commands import sudo as sudo_policy
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import combat as combat_handler
@@ -175,7 +176,7 @@ async def _run_sudo_act_locked(
 
     action_text = " ".join(parsed.args).strip()
     resolved_location = None
-    async with locks.get_keeper_turn_lock(conversation_id):
+    async with locks.narrating_turn(conversation_id):
         with observability.context(turn_id=observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,
@@ -437,7 +438,15 @@ async def handle_text_message(
 
 
 _QUEUE_ACK_DELAY_SECONDS = 10.0
+# Measured conversation-lock waits reach p99 54.7 s and max 63.3 s, so one
+# notice at 10 s leaves a queued player with no signal for the rest of it.
+# Refresh a bounded number of times instead of going silent.
+_QUEUE_ACK_REFRESH_SECONDS = 20.0
+_QUEUE_ACK_MAX_NOTICES = 3
 _QUEUE_ACK_MESSAGE = "🕒 守密人正在處理上一位調查員的行動，你的動作已排入佇列，請稍候……"
+_QUEUE_ACK_MESSAGE_WITH_POSITION = (
+    "🕒 守密人正在處理其他調查員的行動，你前面還有 {ahead} 個動作，請稍候……"
+)
 
 
 async def _help_revision_matches(conversation_id: str, expected_revision: int | None, reply: Reply) -> bool:
@@ -448,12 +457,46 @@ async def _help_revision_matches(conversation_id: str, expected_revision: int | 
     return False
 
 
-async def _delayed_queue_notice(reply: Reply) -> None:
-    await asyncio.sleep(_QUEUE_ACK_DELAY_SECONDS)
-    try:
-        await reply(_QUEUE_ACK_MESSAGE)
-    except Exception:  # noqa: BLE001 - best-effort UX hint, must never affect whether the lock gets released
-        observability.event("queue_ack.notice_failed", level=logging.WARNING)
+async def _delayed_queue_notice(
+    reply: Reply, turns_ahead: Callable[[], int] | None = None,
+) -> None:
+    """Acknowledge a long wait, then keep the player informed while it lasts.
+
+    Position is re-read for each notice so it reflects the queue draining.
+    A wait that resolves before the first notice sends nothing, because the
+    caller cancels this task on acquire.
+    """
+    delay = _QUEUE_ACK_DELAY_SECONDS
+    for _ in range(_QUEUE_ACK_MAX_NOTICES):
+        await asyncio.sleep(delay)
+        delay = _QUEUE_ACK_REFRESH_SECONDS
+        ahead = turns_ahead() if turns_ahead is not None else 0
+        message = (
+            _QUEUE_ACK_MESSAGE_WITH_POSITION.format(ahead=ahead) if ahead > 0
+            else _QUEUE_ACK_MESSAGE
+        )
+        try:
+            await reply(message)
+        except Exception:  # noqa: BLE001 - best-effort UX hint, must never affect whether the lock gets released
+            observability.event("queue_ack.notice_failed", level=logging.WARNING)
+            return
+
+
+def _emit_turn_queue(started: float, turns_ahead: int, route: str, speaker_role: str) -> None:
+    """Report what a player actually waited for, per turn rather than per lock.
+
+    `lock.wait` already times the acquire; this adds who queued behind whom,
+    which is what v2 UX.4's T_turn_queue and its player-starvation question
+    need. Emitted only on a contended acquire, so an uncontended turn stays
+    off this path entirely.
+    """
+    observability.event(
+        "turn.queue",
+        queue_wait_ms=(time.monotonic() - started) * 1000,
+        turns_ahead=turns_ahead,
+        route=route or "text",
+        speaker_role=speaker_role or "unknown",
+    )
 
 
 async def _stop_queue_notice_task(notify_task: asyncio.Task[None]) -> None:
@@ -469,7 +512,8 @@ async def _stop_queue_notice_task(notify_task: asyncio.Task[None]) -> None:
 @asynccontextmanager
 async def _conversation_lock_with_notice(
     conversation_id: str, reply: Reply, post_turn_hook: PostTurnHook | None = None,
-) -> AsyncIterator[None]:
+    *, route: str = "text", speaker_role: str = "",
+) -> AsyncIterator[locks.TurnHandoff]:
     """Acquires the per-conversation lock, but doesn't leave a queued
     message waiting in silence: if the lock is already held, a background
     task sends a queued-notice reply only if the wait is *still* ongoing
@@ -496,25 +540,34 @@ async def _conversation_lock_with_notice(
     if not lock.locked():
         await lock.acquire()
     else:
-        notify_task = asyncio.ensure_future(_delayed_queue_notice(reply))
+        ahead, settled = lock.turns_ahead(), lock.completed
+        notify_task = asyncio.ensure_future(_delayed_queue_notice(
+            reply, lambda: lock.remaining_ahead(ahead, settled)))
+        started = time.monotonic()
         try:
             await lock.acquire()
         finally:
             await _stop_queue_notice_task(notify_task)
+            _emit_turn_queue(started, ahead, route, speaker_role)
+    handoff = locks.TurnHandoff(conversation_id, lock)
     try:
-        yield
+        # Yielded so a turn can hand the mutation lock on once its state is
+        # committed. A caller that ignores it keeps the lock to the end, which
+        # is what close() then releases.
+        yield handoff
     finally:
         try:
             await _run_post_turn_hook(post_turn_hook)
         finally:
-            lock.release()
+            handoff.close()
 
 
 @asynccontextmanager
 async def _keeper_priority_gate_and_lock_with_notice(
     conversation_id: str, *, is_kp: bool, reply: Reply,
     post_turn_hook: PostTurnHook | None = None,
-) -> AsyncIterator[None]:
+    route: str = "text", speaker_role: str = "",
+) -> AsyncIterator[locks.TurnHandoff]:
     """Notify after a long wait for either Keeper scheduling gate.
 
     Start the timer before the priority gate because that gate serializes
@@ -522,17 +575,35 @@ async def _keeper_priority_gate_and_lock_with_notice(
     acquired, acquire the conversation lock in the established order, then
     cancel the single notice task before entering the handler body.
     """
-    notify_task = asyncio.ensure_future(_delayed_queue_notice(reply))
+    lock = locks.get_conversation_lock(conversation_id)
+    waiting_task = asyncio.current_task()
+
+    def turns_ahead() -> int:
+        gate_ahead, gate_holder = locks.priority_gate_position(
+            conversation_id, waiting_task, is_kp=is_kp,
+        )
+        # The priority-gate holder is usually also the conversation-lock
+        # holder or a waiter there. Count that turn once across both queues.
+        overlap = int(gate_ahead > 0 and lock.contains_task(gate_holder))
+        return gate_ahead + lock.turns_ahead() - overlap
+
+    ahead = turns_ahead()
+    notify_task = asyncio.ensure_future(_delayed_queue_notice(
+        reply, turns_ahead))
+    started = time.monotonic()
     try:
-        async with (
-            locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp),
-            locks.get_conversation_lock(conversation_id),
-        ):
+        async with locks.get_keeper_priority_gate(conversation_id, is_kp=is_kp):
+            await lock.acquire()
             await _stop_queue_notice_task(notify_task)
+            _emit_turn_queue(started, ahead, route, speaker_role)
+            handoff = locks.TurnHandoff(conversation_id, lock)
             try:
-                yield
+                yield handoff
             finally:
-                await _run_post_turn_hook(post_turn_hook)
+                try:
+                    await _run_post_turn_hook(post_turn_hook)
+                finally:
+                    handoff.close()
     finally:
         if not notify_task.done():
             await _stop_queue_notice_task(notify_task)
@@ -586,7 +657,9 @@ async def _handle_text_message_impl(
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
         try:
-            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
@@ -600,7 +673,9 @@ async def _handle_text_message_impl(
             await reply("上一次的檢定還在處理中，請稍等結果出來，不要重複送出。")
             return
         try:
-            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 if choice.casefold() == "roll":
@@ -612,7 +687,9 @@ async def _handle_text_message_impl(
         return
 
     if coc_subcommand == "correct":
-        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
             await correct_handler.handle_correct_command(
                 conversation_id, user_id, reply, command_parts,
                 is_keeper=is_keeper, referenced_message_id=referenced_message_id,
@@ -627,14 +704,18 @@ async def _handle_text_message_impl(
         sub = parts[1] if len(parts) > 1 else "help"
 
         if sub == "combat":
-            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
             return
 
         if sub in _CHARACTER_COMMANDS:
-            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
@@ -659,7 +740,9 @@ async def _handle_text_message_impl(
                     is_keeper, expected_revision,
                 )
             else:
-                async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+                async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
                     if not await _help_revision_matches(conversation_id, expected_revision, reply):
                         return
                     await system_handler.handle_system_command(
@@ -669,14 +752,18 @@ async def _handle_text_message_impl(
             return
 
         if sub in _MAP_COMMANDS:
-            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts,
                                                      send_dm=send_dm, send_dm_image=send_dm_image)
             return
 
-        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
+        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                              route=coc_subcommand or "text",
+                                              speaker_role="keeper" if is_keeper else "player"):
             state = load_state(conversation_id)
             await reply(help_service.get_page(state, user_id).text)
         return
@@ -688,21 +775,47 @@ async def _handle_text_message_impl(
     # bypasses the gate and keeps the plain conversation-lock-only path —
     # see app/locks.py's get_keeper_priority_gate docstring.
     scheduling_state = load_state(conversation_id)
-    if not scheduling_state.kp_assistant_user_id:
-        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook):
-            await _handle_ordinary_text_message_locked(
-                conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
-            )
-        return
+    # Retrieval is read-only and keys on the scenario, not on mutable state, so
+    # it runs before this turn queues rather than inside the lock the queue is
+    # waiting on. build_context re-checks that binding under the lock and
+    # searches again if anything it depended on moved.
+    prefetch_task: asyncio.Task[context_builder.RetrievalPrefetch | None] | None = None
+    if scheduling_state.get_active_character(user_id) is not None:
+        prefetch_task = asyncio.create_task(supervisor.prefetch_retrieval(
+            scheduling_state, user_id, text,
+            "kp_assistant" if scheduling_state.kp_assistant_user_id == user_id else "player",
+            conversation_id,
+        ))
+    try:
+        if not scheduling_state.kp_assistant_user_id:
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                                  route=coc_subcommand or "text",
+                                                  speaker_role="keeper" if is_keeper else "player") as handoff:
+                prefetched = await prefetch_task if prefetch_task else None
+                await _handle_ordinary_text_message_locked(
+                    conversation_id, user_id, get_display_name, reply, send_dm, send_image,
+                    send_dm_image, text, prefetched, handoff,
+                )
+            return
 
-    is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
-    async with _keeper_priority_gate_and_lock_with_notice(
-        conversation_id, is_kp=is_kp_priority, reply=reply,
-        post_turn_hook=post_turn_hook,
-    ):
-        await _handle_ordinary_text_message_locked(
-            conversation_id, user_id, get_display_name, reply, send_dm, send_image, send_dm_image, text
-        )
+        is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
+        async with _keeper_priority_gate_and_lock_with_notice(
+            conversation_id, is_kp=is_kp_priority, reply=reply,
+            post_turn_hook=post_turn_hook, route="text",
+            speaker_role="kp_assistant" if is_kp_priority else ("keeper" if is_keeper else "player"),
+        ) as handoff:
+            prefetched = await prefetch_task if prefetch_task else None
+            await _handle_ordinary_text_message_locked(
+                conversation_id, user_id, get_display_name, reply, send_dm, send_image,
+                send_dm_image, text, prefetched, handoff,
+            )
+    finally:
+        if prefetch_task is not None and not prefetch_task.done():
+            prefetch_task.cancel()
+            try:
+                await prefetch_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def _handle_ordinary_text_message_locked(
@@ -714,6 +827,8 @@ async def _handle_ordinary_text_message_locked(
     send_image: SendImage,
     send_dm_image: SendDMImage,
     text: str,
+    prefetched: context_builder.RetrievalPrefetch | None = None,
+    handoff: locks.TurnHandoff | None = None,
 ) -> None:
     """Handle an ordinary non-command text message via the Keeper Supervisor.
 
@@ -746,7 +861,18 @@ async def _handle_ordinary_text_message_locked(
         speaker_role = "player"
         resolved_location = None
 
-    async with locks.get_keeper_turn_lock(conversation_id):
+    # The Keeper turn lock belongs to the mutation phase, so the handoff has to
+    # own it too — see TurnHandoff.mutation_phase_lock. Without that, handing
+    # the conversation lock on released nothing the next turn needed: it would
+    # take the conversation lock, load state here, then sit on this lock until
+    # this turn had narrated, posted and committed, and go on to run against
+    # that stale snapshot.
+    keeper_lock = locks.get_keeper_turn_lock(conversation_id)
+    held = handoff.mutation_phase_lock(keeper_lock) if handoff is not None else keeper_lock
+    async with held:
+        # Reload under the lock. The snapshot above was taken before it, so
+        # anything committed while this turn queued for it is missing from it.
+        state = load_state(conversation_id)
         with observability.context(turn_id=observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,
@@ -756,6 +882,8 @@ async def _handle_ordinary_text_message_locked(
                 resolved_location=resolved_location,
                 speaker_role=speaker_role,
                 conversation_id=conversation_id,
+                prefetched_retrieval=prefetched,
+                handoff=handoff,
             )
         await _run_post_turn_maintenance_after_output(
             conversation_id,

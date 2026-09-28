@@ -565,6 +565,12 @@ async def handle_system_command(
                 provider="openai",
             )
             _replace_scene_maps_preserving_locations(state, context["scene_maps"])
+            # /coc scenario use assigns both itself, so the upload flow's report
+            # never ran here — selecting an already-stored affected variant was
+            # the one path that stayed silent.
+            artifact_notice = scenario_index.report_location_index(
+                state.scenario_location_index, source="scenario_use",
+                scenario_title=state.scenario_title, scene_maps=state.scene_maps)
             # Pregens belong to the selected library item. Keep live
             # investigators in state.characters, but never leak the previous
             # scenario's pregen pool into this scenario's /coc pregens list.
@@ -592,7 +598,8 @@ async def handle_system_command(
             scenario_templates.schedule_index_prewarm(state)
             note = "\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""
             await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。{note}"
-                        + (f"\n{preference_notice}" if preference_notice and len(parts) == 4 else ""))
+                        + (f"\n{preference_notice}" if preference_notice and len(parts) == 4 else "")
+                        + (f"\n\n{artifact_notice}" if artifact_notice else ""))
             return
         if action == "clean":
             if not _is_kp_or_keeper(state, user_id, is_keeper):
@@ -894,7 +901,7 @@ async def handle_system_command(
             "對調查員說話。這是遊戲的第一段敘述，還沒有任何人採取行動，不要假設玩家已經做了什麼、"
             "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
         )
-        async with locks.get_keeper_turn_lock(conversation_id):
+        async with locks.narrating_turn(conversation_id):
             fresh_state = keeper._refresh_state_snapshot(state)
             if fresh_state.game_started:
                 return

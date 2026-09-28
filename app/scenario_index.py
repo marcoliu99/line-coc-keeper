@@ -16,8 +16,10 @@ against instead of re-reading and re-guessing every time.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from app import observability
 from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
 from app.providers.registry import ANALYSIS_PROVIDERS
 
@@ -153,3 +155,57 @@ def format_location_index_block(locations: list[dict[str, Any]]) -> str:
         detail = "　".join(part for part in (summary, page_note) if part)
         lines.append(f"・{name}{alias_note}" + (f"：{detail}" if detail else ""))
     return "\n".join(lines)
+
+# An arrival is committed against a known destination, so a scenario whose
+# location index is empty cannot have any movement validated: every attempt to
+# go somewhere is refused, while the prose still describes the stairs the
+# player is trying to use. A twenty-five turn party session sat in one room for
+# all of it under exactly this condition — the scenario's own prose was intact
+# and only its index was missing, so nothing in the replies said why.
+# What each artifact actually does, checked against the code rather than assumed:
+#
+# The location index is injected into the prompt and nothing else. Movement
+# never reads it, so an empty one costs the Keeper context, not arrivals.
+#
+# Floor plans are what mapped navigation resolves against — scene_map.
+# resolve_move and find_room_by_text. Without them a player cannot walk a path
+# between known rooms, but movement.py's mapless branch still commits an
+# arrival whose destination is supported by retrieved evidence
+# (tests/test_turn_routing_and_movement.py::
+# test_sr_m07_mapless_supported_arrival_needs_no_new_map), so neither notice
+# may claim that movement is refused.
+EMPTY_SCENE_MAPS_NOTICE = (
+    "⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;"
+    "有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。"
+)
+
+EMPTY_LOCATION_INDEX_NOTICE = (
+    "⚠️ 這份劇本沒有地點索引,守密人的提示詞少了地點對照,"
+    "可能重複推導同一個地點的細節。可用 /coc index 重建。"
+)
+
+
+def report_location_index(locations: list[dict[str, Any]], *, source: str,
+                          scenario_title: str = "",
+                          scene_maps: dict[str, Any] | None = None) -> str:
+    """Record what a scenario can support; warn about whichever part is missing.
+
+    Returns the notice to show the uploader, or an empty string when nothing is
+    missing. Callers with no reply channel can ignore the return value and still
+    leave the event behind. `scene_maps` is optional because not every site that
+    assigns the index also assigns the floor plans.
+    """
+    missing_maps = scene_maps is not None and not scene_maps
+    observability.event(
+        "scenario.derived_artifacts.loaded",
+        level=logging.WARNING if (not locations or missing_maps) else logging.INFO,
+        source=source, location_count=len(locations),
+        scene_map_count=None if scene_maps is None else len(scene_maps),
+        scenario_title=observability.safe_identifier(scenario_title) if scenario_title else "",
+    )
+    notices = []
+    if missing_maps:
+        notices.append(EMPTY_SCENE_MAPS_NOTICE)
+    if not locations:
+        notices.append(EMPTY_LOCATION_INDEX_NOTICE)
+    return "\n\n".join(notices)

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from copy import deepcopy
 from typing import Any, Literal
 
-from app import keeper, observability
+from app import config, keeper, locks, observability
 from app.agents import (
     assistant,
     context_builder,
@@ -53,6 +54,40 @@ def _unchanged_pending_reply(state: GroupState, user_id: str, result: MechanicRe
     return ''
 
 
+async def prefetch_retrieval(
+    state: GroupState, user_id: str, text: str, speaker_role: str, conversation_id: str,
+) -> context_builder.RetrievalPrefetch | None:
+    """Run a turn's retrieval before its caller queues for the conversation lock.
+
+    The query derivation lives here rather than in the router so it cannot
+    drift from what run_turn feeds build_context: a mixed IC/OOC message
+    retrieves on its IC span only.
+
+    Returns None whenever the turn would not retrieve anyway — an OOC route
+    answers without the gameplay context, and a speaker holding a Luck
+    decision is usually answered from state. A None simply means the search
+    happens inside the lock as before.
+    """
+    route = intent_router.route_request(text, speaker_role, "player_action")
+    if route.intent in {"PLAYER_OOC", "OOC_ASSISTANT"}:
+        return None
+    if user_id in state.pending_luck_decisions:
+        return None
+    action_text = route.ic_text if route.message_mode == "mixed" else text
+    try:
+        return await context_builder.prefetch_retrieval(
+            state=state, user_id=user_id, display_name="", text=action_text,
+            resolved_location=None, speaker_role=speaker_role,
+            conversation_id=conversation_id,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # a missed prefetch costs a second, never a turn
+        observability.event("rag.prefetch.failed", level=logging.WARNING)
+        _logger.exception("Retrieval prefetch failed; the turn will search under the lock")
+        return None
+
+
 @with_turn_deadline
 @with_codex_turn
 async def run_turn(
@@ -68,6 +103,8 @@ async def run_turn(
     actor_is_keeper: bool = False,
     turn_kind: PlayerTurnKind = "player_action",
     resolved_check_context: dict[str, Any] | None = None,
+    prefetched_retrieval: context_builder.RetrievalPrefetch | None = None,
+    handoff: locks.TurnHandoff | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
@@ -89,6 +126,37 @@ async def run_turn(
 
     route = intent_router.route_request(text, speaker_role, turn_kind)
     action_text = route.ic_text if route.message_mode == "mixed" else text
+
+    # An unresolved Luck decision of the speaker's own is a closed state: the
+    # dice are already rolled and the reply is the same text prompt_config
+    # substitutes afterwards anyway. Running the turn to discover that costs
+    # 2-4 model requests, 36k-86k input tokens and 10-18 seconds while the
+    # conversation lock is held — measured over a 20-turn session, see
+    # docs/specs/enhancement/measured_turn_latency_priorities_design_spec.md.
+    # Placed after routing so PLAYER_OOC keeps its own path below: an
+    # out-of-character question deserves an answer, not a Luck prompt.
+    #
+    # Only when nobody else is mid-decision. luck_takes_precedence in
+    # turn_resolution keys on the *waited-for* party, not the speaker, so a
+    # player holding a Luck decision may still legitimately defer to another
+    # player's outstanding check; answering from state would silence that.
+    #
+    # A pending *check* is deliberately never handled here: it has not been
+    # rolled, and a player may still withdraw it through the cancelled path.
+    held_luck = state.pending_luck_decisions.get(user_id)
+    others_waiting = any(
+        owner != user_id
+        for owner in (*state.pending_checks, *state.pending_luck_decisions)
+    )
+    if (turn_kind == "player_action" and held_luck and not others_waiting
+            and route.intent == "GAMEPLAY_ACTION"):
+        actor = state.get_active_character(user_id)
+        observability.event("turn.short_circuit", reason="pending_luck",
+                            model_requests_avoided=True)
+        _logger.info("Supervisor answered %s from state: Luck decision outstanding", display_name)
+        return prompt_config.pending_luck_reply(
+            held_luck, actor.name if actor else ""), [], []
+
     # Pure OOC never retrieves private scenario/memory or enters the gameplay
     # prompt builder. Role remains server-owned even when text claims otherwise.
     if route.intent == "PLAYER_OOC":
@@ -118,6 +186,7 @@ async def run_turn(
         resolved_location=resolved_location,
         speaker_role=speaker_role,
         conversation_id=conversation_id,
+        prefetched=prefetched_retrieval,
     )
     message.payload["actor_user_id"] = actor_user_id or user_id
     message.payload["actor_is_keeper"] = actor_is_keeper
@@ -293,6 +362,20 @@ async def run_turn(
                                                 pending_checks_before, pending_luck_before, message.payload)
     else:
         _logger.info("Routing directly to NarratorAgent (Fast Path)")
+
+    # Every mutation this turn will make is committed by now: the Executor's
+    # tools persist through their own locked path and the reducer is pure. An
+    # ordinary turn's Narrator runs with tools=[], so from here the turn needs
+    # ordering, not exclusion — hand the mutation lock to the next player and
+    # queue for narration instead.
+    #
+    # Not for a tool-enabled Narrator. narrator.py gives resolved_check_followup
+    # and opening_fallback a restricted tool set, and #99 commits arrivals
+    # inside that loop, so those turns keep the mutation lock to the end.
+    if (handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
+            and turn_kind == "player_action"):
+        await handoff.to_narration()
+        observability.event("turn.handoff", phase="narration")
 
     # 5. Narrator Agent generates the final text
     if pending_reply:

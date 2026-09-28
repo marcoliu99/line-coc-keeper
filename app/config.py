@@ -282,6 +282,18 @@ IMPORT_DIR = Path(os.environ.get("IMPORT_DIR", "imports")).resolve()
 IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 # History is a soft input-only budget; full state/RAG and stored logs remain.
+# Place the per-turn dynamic prompt after the player's message instead of
+# inside `instructions`, so the static prompt and tool schema stay a stable
+# cached prefix. Set to false to restore the previous composition without
+# touching prompt content. See
+# docs/specs/enhancement/measured_turn_latency_priorities_design_spec.md.
+# Release the per-conversation mutation lock once a turn's state is committed,
+# so the next player's Executor starts while this turn narrates. Off by default:
+# the gain is the Narrator's median 5s of a ~21.7s hold, and the failure mode of
+# a mislaid conversation lock is a channel that deadlocks until restart. See
+# docs/specs/enhancement/measured_turn_latency_priorities_design_spec.md WP3.5.
+NARRATION_OUTSIDE_MUTATION_LOCK = _env_bool("NARRATION_OUTSIDE_MUTATION_LOCK", False)
+OPENAI_DYNAMIC_PROMPT_AFTER_INPUT = _env_bool("OPENAI_DYNAMIC_PROMPT_AFTER_INPUT", True)
 OPENAI_HISTORY_TOKEN_BUDGET = _env_int("OPENAI_HISTORY_TOKEN_BUDGET", 4000)
 OPENAI_HISTORY_MIN_TURNS = _env_int("OPENAI_HISTORY_MIN_TURNS", 2, minimum=1)
 OPENAI_ADAPTIVE_ADMISSION_ENABLED = _env_bool("OPENAI_ADAPTIVE_ADMISSION_ENABLED", True)

@@ -223,6 +223,8 @@ def _apply_scenario_correction(
     state.scenario_text = text
     state.scenario_npc_index = extracted_index["npcs"]
     state.scenario_location_index = extracted_index["locations"]
+    scenario_index.report_location_index(
+        state.scenario_location_index, source="correction", scenario_title=title)
     _merge_extracted_pregens(state, pregens)
 
 
@@ -248,7 +250,6 @@ def _install_library_context(
     if not preserve_maps:
         state.scene_maps = context["scene_maps"]
 
-
 def _install_context_images(conversation_id: str, scenario_id: str, context: dict) -> None:
     clear_page_images(conversation_id)
     scenario_library.copy_context_images(
@@ -265,11 +266,16 @@ def _pdf_upload_confirmation_text(
     page_maps: dict,
     extracted_index: dict,
     pregen_count: int,
+    artifact_notice: str = "",
 ) -> str:
     """Shared by the immediate (first-ever upload) and deferred (button-
     resolved) paths through handle_pdf_upload — the message is identical
     either way, just built at a different point in the flow."""
     warning = ""
+    # Whatever the reporter decided, verbatim. Re-deciding here is how the
+    # missing-floor-plan case went unseen: this only looked at the index.
+    if artifact_notice:
+        warning += "\n\n" + artifact_notice
     if low_text_pages:
         pages_str = "、".join(str(p) for p in low_text_pages)
         warning += (
@@ -536,7 +542,10 @@ async def handle_pdf_upload(
 
     variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     await push(_pdf_upload_confirmation_text(
-        title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
+        title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count,
+        scenario_index.report_location_index(
+            state.scenario_location_index, source="pdf_upload",
+            scenario_title=state.scenario_title, scene_maps=state.scene_maps),
     ) + (f"\n{variant_notice}" if variant_notice else "")
       + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
     return True
@@ -599,6 +608,9 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
         context["scene_maps"], extracted_index, len(state.pregens),
+        scenario_index.report_location_index(
+            state.scenario_location_index, source="pdf_upload",
+            scenario_title=state.scenario_title, scene_maps=state.scene_maps),
     ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "")
 
 @mutation_admission.guard_async_entry
@@ -1285,7 +1297,7 @@ async def _finalize_check_result(
         # "resolved_location is None" fallback block — it just won't be
         # mislabeled as a fresh Map Engine move this check never made.
         resolved_location = None
-        async with locks.get_keeper_turn_lock(conversation_id):
+        async with locks.narrating_turn(conversation_id):
             # The deterministic dice transaction may have finished before the
             # Keeper turn got the per-conversation slot.  Refresh the
             # authoritative snapshot so the provider sees the state that was
