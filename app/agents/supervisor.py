@@ -219,7 +219,10 @@ async def run_turn(
         if arrival_result is not None:
             message.payload["movement_resume_result"] = arrival_result
             if arrival_result.get("arrival"):
-                message.payload["resolved_location"] = {"room_name": arrival_result["arrival"]["destination"]}
+                message.payload["resolved_location"] = {
+                    "room_name": arrival_result["arrival"]["destination"],
+                    "movement_kind": arrival_result["arrival"].get("movement_kind", "scene_transition"),
+                }
 
     # 2. Intent Routing (Fast Path vs Slow Path)
     intent = (
