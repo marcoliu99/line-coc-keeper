@@ -63,6 +63,27 @@ Add `直奔|奔向|奔去|趕往|趕去|趕到|衝向|衝進|衝出|跑向|跑�
 
 `has_movement_verb` is documented as the cheap gate before a room-name match; a false positive costs one extra name match or RAG call and can never commit a move by itself — committing always requires the model to call `commit_movement` and pass the full validation. Erring wide here is therefore safe.
 
+#### Review correction: erring wide attributes someone else's movement to the player
+
+**That was not free, and the first version missed a path.** `propose()` takes the first clause carrying a movement verb, and `movement_clauses` only drops clauses that **open with** 他/她/有人 — not one with a named subject:
+
+```text
+怪物衝進地下室，我開槍
+  clauses = ['怪物衝進地下室', '我開槍']
+  propose() takes the first → a movement proposal for the player
+```
+
+`app/agents/executor.py:232` downgrades `resolved` / `resolved_without_check` / `no_mechanics` to `incomplete` with `arrival_not_committed` whenever a proposal exists and never arrived. So a player who fired one shot, and whose mechanics resolved, would be told 「這次行動尚未完整處理」 — **the exact reply this spec exists to remove.**
+
+`衝進` made no proposal before it was added to the verb list, so this is a regression introduced here. The same shape already held for `走進`, which was always in the list — 「科比特走進客廳，我觀察」 — so that is fixed along with it.
+
+Two layers:
+
+1. `movement_clauses`' third-person prefix filter gains `牠|它|牠們|它們|某人`.
+2. `propose()` skips a clause attributable to a third party (`movement._third_party_clause`): it takes the text **before** the movement verb, admits an empty prefix (verb-initial, 「直奔商店」) or one containing 我/咱/自己, and rejects only when the prefix names a known other actor — another player's character, a non-PC in the initiative order, a `scenario_npc_index` name or alias, all at least two characters — or matches a short list of generic stand-ins (怪物/影子/敵人/那隻…).
+
+**Rejecting only on positive evidence is deliberate.** A spurious proposal breaks a whole turn; a missing one does not, because the Executor can still quote a `source_span` and let `commit_movement` adjudicate it.
+
 ### 2. Record every movement rejection
 
 `movement.py` emits a `movement.rejected` event on **every** refusal path, carrying the error code, `page`, `destination`, the length of `path`, a truncated `source_span`, and the keys currently in `state.scene_maps`. At WARNING.

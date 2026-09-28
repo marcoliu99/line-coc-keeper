@@ -76,8 +76,20 @@ def movement_clauses(text: str) -> list[str]:
     clauses = re.split(r'[，,。；;！!\n]|(?:然後|接著)', unquoted)
     return [c.strip(' （）()') for c in clauses if c.strip()
             and not re.search(r'不要|不想|不會|不去|別|不往|不向|沒有要|沒(?:有)?(?:往|向|走|去|進|離)|假如|如果|是否|能否|嗎|呢|[？?]|他說|她說|據說', c)
-            and not re.match(r'\s*(?:他|她|他們|她們|有人|NPC)', c)
+            and not re.match(r'\s*(?:他|她|牠|它|他們|她們|牠們|它們|有人|某人|NPC)', c)
             and not re.search(r'查看|檢查|觀察|望向|看向|看著|打量|看看.*(?:左|右|樓上|樓下)', c)]
+
+
+
+def movement_verb_start(text: str) -> int | None:
+    """Index of the first movement verb in `text`, or None.
+
+    Callers use what precedes it to tell whose movement a clause describes:
+    「怪物衝進地下室」 and 「直奔商店」 both carry a verb, but only one of them
+    is the player moving.
+    """
+    match = _MOVEMENT_VERB_RE.search(text)
+    return match.start() if match else None
 
 
 def has_movement_verb(text: str) -> bool:

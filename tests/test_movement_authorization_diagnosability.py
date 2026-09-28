@@ -160,3 +160,65 @@ class CheckStatusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThirdPartyClauseTests(unittest.TestCase):
+    """A wider verb list must not turn someone else's movement into the player's.
+
+    `executor.py:232` downgrades an otherwise resolved turn to
+    `arrival_not_committed` whenever a proposal exists and never arrived. So a
+    proposal built out of 「怪物衝進地下室」 breaks the gunshot that followed it:
+    the player asked for one thing, got 「這次行動尚未完整處理」.
+    """
+
+    def _state(self):
+        from app.models import Character, GroupState
+
+        state = GroupState(group_id="g")
+        state.timeline_id = "t"
+        marco = Character(name="Marco", owner_id="u1")
+        state.characters["u1"] = marco
+        state.characters_by_id[marco.character_id] = marco
+        state.active_character_id_by_user["u1"] = marco.character_id
+        state.scenario_npc_index = [{"name": "科比特", "aliases": ["老科比特", "W. Corbitt"]}]
+        return state
+
+    def _span(self, text):
+        from app.services import movement as m
+
+        proposal = m.propose(self._state(), "u1", "u1", text)
+        return proposal.original_span if proposal else None
+
+    def test_a_named_creature_does_not_propose_the_players_movement(self):
+        # The regression the wider verb list introduced: 衝進 was not a verb
+        # before, so this made no proposal at all.
+        self.assertIsNone(self._span("怪物衝進地下室，我開槍"))
+
+    def test_a_scenario_npc_does_not_either(self):
+        # 走進 was always a verb, so this one was wrong before the verbs were
+        # widened too.
+        for text in ("科比特衝向我，我後退", "老科比特走進客廳，我觀察"):
+            with self.subTest(text=text):
+                self.assertIsNone(self._span(text))
+
+    def test_a_non_human_pronoun_is_dropped_with_the_others(self):
+        for text in ("牠衝進地下室，我開槍", "它走向門口，我後退", "某人走進來，我躲起來"):
+            with self.subTest(text=text):
+                self.assertIsNone(self._span(text))
+
+    def test_the_players_own_clause_is_still_found_alongside_one(self):
+        self.assertEqual(self._span("怪物衝進地下室，我跟著跑進去"), "我跟著跑進去")
+
+    def test_the_players_own_movement_is_untouched(self):
+        for text in ("直奔商店購買油燈跟煤油罐", "我走向門口", "前往商店"):
+            with self.subTest(text=text):
+                self.assertEqual(self._span(text), text)
+
+    def test_the_player_moving_with_a_creature_is_still_the_player_moving(self):
+        self.assertEqual(self._span("我和怪物一起衝進地下室"), "我和怪物一起衝進地下室")
+
+    def test_a_one_character_name_is_not_treated_as_an_actor(self):
+        # Matching a single character against a prefix would reject far too much.
+        state = self._state()
+        state.scenario_npc_index = [{"name": "科"}]
+        self.assertNotIn("科", movement._other_actor_names(state, "u1"))

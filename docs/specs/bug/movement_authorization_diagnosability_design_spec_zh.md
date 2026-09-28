@@ -63,6 +63,27 @@ location_index      : 8 entries     current_map_page: {}
 
 `has_movement_verb` 只是「便宜的前置判斷」(見其 docstring)，誤判的代價是多走一次房名比對或 RAG，不會自己提交移動——提交一律要模型呼叫 `commit_movement` 並過完整驗證。因此這裡取寬一點是安全的。
 
+#### 審查修正:取寬會把別人的移動算到玩家頭上
+
+**這裡取寬並不是無代價的,第一版漏掉了一條路。** `propose()` 會挑「第一個含移動動詞的 clause」建立 proposal,而 `movement_clauses` 只排除**以** 他/她/有人 **開頭**的句子,不排除有名字的第三方。於是:
+
+```text
+怪物衝進地下室，我開槍
+  clauses = ['怪物衝進地下室', '我開槍']
+  propose() 取第一句 → 替玩家建立了一個移動 proposal
+```
+
+`app/agents/executor.py:232` 規定:proposal 存在而未到達時,把 `resolved` / `resolved_without_check` / `no_mechanics` **降級成** `incomplete` + `arrival_not_committed`。所以玩家只是開了一槍、機制也結算完了,卻會收到「這次行動尚未完整處理」——**正是本規格要修掉的那種回覆**。
+
+`衝進` 在加進動詞表之前不會產生 proposal,所以這是本次改動造成的回歸。但同一個形狀對 `走進`(本來就在表裡)早就成立,例如「科比特走進客廳，我觀察」,所以順便一起修掉。
+
+修法分兩層:
+
+1. `movement_clauses` 的第三人稱開頭過濾補上 `牠|它|牠們|它們|某人`。
+2. `propose()` 挑 clause 時跳過**歸屬於第三方**的句子(`movement._third_party_clause`):取移動動詞**之前**那段前綴,前綴為空(動詞開頭,如「直奔商店」)或含第一人稱(我/咱/自己)就放行;前綴命中已知的其他行動者名字——其他玩家角色、戰鬥序列中的非 PC、`scenario_npc_index` 的名字與別名(長度 ≥ 2)——或命中一小組泛稱(怪物/影子/敵人/那隻…)才拒絕。
+
+**只在有正面證據時拒絕。** 這個方向是刻意的:多出來的 proposal 會弄壞一整個回合,少一個則不會——Executor 仍然可以自己引用 `source_span` 呼叫 `commit_movement`,由完整驗證裁決。
+
 ### 2. 記錄每一次移動拒絕
 
 `movement.py` 在**每一條**拒絕路徑發一個 `movement.rejected` 事件，帶上:錯誤碼、`page`、`destination`、`path` 長度、`source_span`(截斷)、以及當下 `state.scene_maps` 的鍵。層級 WARNING。

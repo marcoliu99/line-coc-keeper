@@ -101,12 +101,64 @@ def source_version(state: GroupState) -> str:
     return hashlib.sha256(json.dumps(material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+# Creatures and stand-ins a scenario names nowhere, so no index can list them.
+# Only ever consulted for the text *before* a movement verb.
+_THIRD_PARTY_SUBJECT_RE = re.compile(
+    r'怪物|生物|野獸|影子|黑影|人影|身影|敵人|對方|守衛|警衛|老鼠|那隻|那個東西|那東西|一群'
+)
+# The player referring to themselves outranks anything else in the prefix, so
+# 「我和怪物一起衝進地下室」 stays the player's movement.
+_FIRST_PERSON_RE = re.compile(r'我|咱|自己')
+
+
+def _other_actor_names(state: GroupState, subject: str) -> set[str]:
+    own = state.get_active_character(subject)
+    own_name = own.name if own else ''
+    names: set[str] = set()
+    for character in state.characters.values():
+        names.add(getattr(character, 'name', '') or '')
+    for combatant in state.combat.order:
+        if not getattr(combatant, 'is_pc', False):
+            names.add(getattr(combatant, 'name', '') or '')
+    for npc in state.scenario_npc_index:
+        names.add(str(npc.get('name') or ''))
+        names.update(str(alias) for alias in (npc.get('aliases') or []))
+    # Two characters minimum: a one-character "name" matches far too much.
+    return {name for name in names if len(name) >= 2 and name != own_name}
+
+
+def _third_party_clause(clause: str, state: GroupState, subject: str) -> bool:
+    """Does this clause describe someone other than the acting player moving?
+
+    `movement_clauses` drops a clause that *opens* with 他/她/牠/有人, but not
+    one with a named subject. 「怪物衝進地下室，我開槍」 kept 「怪物衝進地下室」,
+    and propose() would build a movement proposal for the player out of it. The
+    Executor then resolves only the gunshot, and executor.py:232 downgrades an
+    otherwise resolved turn to `arrival_not_committed` — because a move the
+    player never asked for never arrived.
+
+    A spurious proposal breaks the turn; a missing one does not, since the
+    Executor can still quote the span and commit_movement will adjudicate it.
+    So this rejects only on positive evidence: a prefix naming a known other
+    actor, or reading as a third party. A verb-initial clause (「直奔商店」) and
+    anything the player refers to themselves in are left alone.
+    """
+    start = intent_parser.movement_verb_start(clause)
+    prefix = clause[:start] if start else ''
+    if not prefix or _FIRST_PERSON_RE.search(prefix):
+        return False
+    if _THIRD_PARTY_SUBJECT_RE.search(prefix):
+        return True
+    return any(name in prefix for name in _other_actor_names(state, subject))
+
+
 def propose(state: GroupState, actor: str, subject: str, text: str) -> MovementProposal | None:
     clauses = intent_parser.movement_clauses(text)
     movement_text = next((c for c in clauses
                           if (intent_parser.has_movement_verb(c)
                               or re.search(r'\b(?:go|enter|walk|move|leave)\b', c, re.IGNORECASE))
-                          and not re.match(r'^(?:我(?:們)?)?(?:走去|去)買', c)), '')
+                          and not re.match(r'^(?:我(?:們)?)?(?:走去|去)買', c)
+                          and not _third_party_clause(c, state, subject)), '')
     if not movement_text:
         return None
     char = state.get_active_character(subject)
