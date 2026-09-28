@@ -18,11 +18,11 @@ handler 版本用 `conversation_id` 組 `event_id`，Keeper 版本用 `state.gro
 
 **存活敵人的去重防護。** 加入一個已經在戰鬥中、尚未倒下的敵人時，必須沿用原本那份血量；即使是用 `/coc index` 的另一個別名再加一次也一樣。這條規則在 Keeper 工具裡（`app/keeper.py:2868-2890`，在有鎖保護的變更內）。handler 又寫了一次（`handlers/combat.py:35-48`），註解寫著 *"Same duplicate guard as the Keeper's add_npc_to_combat tool"*。它依賴的別名解析 `keeper.find_live_enemy_by_any_alias` 和 `_find_npc_index_entry_exact`（`app/keeper.py:1229`、`:1291`）只用到 `combat._normalize` 和 `state.scenario_npc_index`，其實是放在 `keeper.py` 裡的戰鬥邏輯。
 
-**handler 的檢查不是原子性的。** handler 的流程是 `load_state` → 防護檢查 → `add_npc` → `save_state`，沒有經過 Keeper 工具使用的有鎖重新載入（`_mutate_and_save_state`，`app/keeper.py:1378`）。`@mutation_admission.guard_async_entry` 只在有未完成的 worker 佔住這團時拒絕操作，並不是鎖。除非 router 本來就會讓管理指令和 Keeper 回合排隊執行（實作時要確認），否則在 handler 載入和存檔之間，如果有 Keeper 回合加入同一個敵人，仍可能出現兩份血量，或被覆蓋掉。
+**執行順序本來就安全。** router 在 `_conversation_lock_with_notice` 下執行 `/coc combat`（`app/commands/router.py:707`），Keeper 回合持有的也是同一把對話鎖（`_keeper_priority_gate_and_lock_with_notice`，`:566`）。所以 handler 的 `load_state` → 防護檢查 → `save_state` 不會和 Keeper 工具的狀態變更交錯。這次 refactor 只消除重複，不需要改變上鎖方式。
 
 ## 決策
 
-兩條規則都由 `combat.py` 負責。呼叫端只負責解析和回覆，並把呼叫包在有鎖保護的變更裡。
+兩條規則都由 `combat.py` 負責。呼叫端只負責解析和回覆，狀態處理方式維持現狀。
 
 ```python
 # app/combat.py
@@ -38,7 +38,7 @@ def add_combatant(state, name, dex, hp, *, is_ally, **card) -> AddResult
 
 1. 把 `_find_npc_index_entry_exact` 和 `find_live_enemy_by_any_alias` 搬進 `combat.py`，後者改名為 `find_live_enemy`。`keeper._find_npc_index_entry`（用於 HP 校正的模糊查詢）留在 `keeper.py`，改為呼叫搬過去的精確查詢。`app/` 以外唯一的引用（`tests/test_state_persistence.py`）直接改掉，不在 `keeper` 保留別名。
 2. 新增 `begin_combat` 和 `add_combatant`。Keeper 的 `start_combat`／`add_npc_to_combat` 工具在既有的 mutator 內呼叫它們。依索引校正 HP 和相關提示是 Keeper 特有的步驟，留在 Keeper 工具裡。
-3. handler 在有鎖保護的變更內呼叫同一組函式。`_mutate_and_save_state` 是私有函式，所以在 `keeper.py` 給它一個公開名稱（`mutate_and_save_state`，私有名稱保留為別名），而不是直接取用私有名稱。這遵循 `CODING_STANDARDS.md` 的「私有就是私有」。
+3. handler 改為呼叫同一組函式，取代內嵌的副本；原本在 router 對話鎖下的 `load_state`／`save_state` 維持不變。
 4. 刪除 `keeper._ensure_auto_combat_checkpoint` 和 handler 裡的兩份內嵌副本。
 
 ## 測試
@@ -47,9 +47,8 @@ def add_combatant(state, name, dex, hp, *, is_ally, **card) -> AddResult
 
 1. 非戰鬥中執行 `/coc combat start` 和 `/coc combat addnpc`，都只建立一個 `開戰前` 存檔點，且 `event_id == f"combat-start:{group_id}:{revision}"`。戰鬥中執行則不建立。
 2. `/coc combat addnpc` 加入存活中的敵人時（直接用名字或透過索引別名），沿用既有的戰鬥者。`addally` 永遠不去重。已倒下的敵人可以重新加入。
-3. 原子性：在 handler 載入和存檔之間，插入一次 Keeper 的 `add_npc_to_combat` 變更，不會出現同一個敵人的兩個存活戰鬥者。
 
 ## 限制
 
-- 其他 `/coc combat` 子指令（`next`、`end` 等）也直接使用 `load_state`／`save_state`。只有在改法是機械式的情況下，步驟 3 才會一併處理；否則列為後續工作，這次不擴大範圍。
-- 除了步驟 3 的原子性修正之外，不打算改變任何行為。
+- 純搬移，不打算改變任何行為。唯一看得到的差異是 handler 建立存檔點時，`event_id` 改用 `state.group_id` 而不是 `conversation_id`，兩者的值相同。
+- 審查修正：先前的草稿認為 handler 路徑不是原子性的，並提議公開 `_mutate_and_save_state`。router 的共用對話鎖讓這件事變得不必要，所以已刪除。
