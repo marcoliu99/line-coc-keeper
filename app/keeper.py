@@ -2123,21 +2123,6 @@ def execute_legacy_tool(
             _mutate_and_save_state(state, _mutate_end_combat)
             return {"ok": True}
 
-        if name == "send_private_info":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            if not spoiler_policy.is_privacy_isolation_enabled():
-                # §3.4 mechanism #1: still delivered privately (no safe public
-                # fallback exists at this layer — see spec §12 open item #6),
-                # but flagged loudly since this invariant is supposed to hold
-                # unconditionally in production.
-                observability.event(
-                    "privacy.isolation.disabled", level=logging.WARNING, fn="send_private_info"
-                )
-            private_messages.append((char.owner_id, tool_input["message"]))
-            return {"ok": True, "delivered_to": char.name}
-
         if name == "search_scenario_images":
             if not state.scenario_library_id:
                 return {"ok": False, "error": "目前沒有選擇劇本庫項目"}

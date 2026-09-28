@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.keeper_tools import messaging as messaging_handlers
 from app.models import GroupState
 from app.services import opposed_checks
 
@@ -816,6 +817,7 @@ _SPECS = (
                     "required": ["investigator", "message"],
                 },
             },
+        handler=messaging_handlers.send_private_info,
         opening=True,
     ),
     ToolSpec(

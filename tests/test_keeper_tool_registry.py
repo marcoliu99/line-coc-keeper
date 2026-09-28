@@ -100,3 +100,18 @@ def test_registry_covers_schemas_and_preserves_provider_order() -> None:
         assert [tool["name"] for tool in keeper._tools_for_speaker_role("kp_assistant")] == [
             name for name in (*PLAYER_TOOL_ORDER, "search_scenario") if name in KP_ALLOWED
         ]
+
+
+def test_messaging_family_delivers_privately_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="private-message")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+    messages: list[tuple[str, str]] = []
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy messaging dispatch"))):
+        result = keeper._execute_tool(
+            state, "send_private_info", {"investigator": "Ada", "message": "secret"}, messages, [],
+        )
+    assert result == {"ok": True, "delivered_to": "Ada"}
+    assert messages == [("p1", "secret")]
