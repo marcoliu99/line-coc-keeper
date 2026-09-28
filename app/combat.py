@@ -13,7 +13,7 @@ import random
 import re
 import uuid
 from collections.abc import Callable
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from typing import Any
 
@@ -244,7 +244,11 @@ def _find_combatant(state: GroupState, name: str) -> Combatant | None:
     name) but only returns a result when exactly one combatant matches that
     way — an ambiguous partial name returns None (not-found) instead of
     guessing, same as find_live_enemy's own docstring recommends for this
-    class of problem."""
+    class of problem.
+
+    Several exact matches happen when a defeated enemy's name was added
+    again (add_combatant numbers the newcomer's display name, but `name`
+    stays shared): the living one is the one a name refers to."""
     norm = _normalize(name)
     if not norm:
         return None
@@ -252,9 +256,9 @@ def _find_combatant(state: GroupState, name: str) -> Combatant | None:
     def _fields(c: Combatant) -> list[str]:
         return [c.name, c.display_name, c.combatant_id, c.enemy_card_id, c.character_id]
 
-    for c in state.combat.order:
-        if any(norm == _normalize(n) for n in _fields(c) if n):
-            return c
+    exact = [c for c in state.combat.order if any(norm == _normalize(n) for n in _fields(c) if n)]
+    if exact:
+        return next((c for c in exact if not c.defeated), exact[0])
 
     substring_matches = [
         c for c in state.combat.order
@@ -327,12 +331,9 @@ def find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
     return None
 
 
-def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
-    """A non-defeated enemy-side combatant matching `name` or, if `name`
-    exactly matches a /coc index entry, any of that entry's other known
-    aliases — deliberately exact-match only at every step (see
-    find_live_enemy's docstring for why substring/fuzzy matching would be
-    actively harmful here)."""
+def _index_alias_names(state: GroupState, name: str) -> set[str]:
+    """`name` plus, if it exactly matches a /coc index entry, every other
+    known name of that entry."""
     candidate_names = {name}
     index_entry = find_npc_index_entry_exact(state, name)
     if index_entry is not None:
@@ -344,11 +345,46 @@ def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | No
         # update below — filtering to strings keeps this lookup best-effort.
         raw_candidates = [index_entry.get("name", name), *(index_entry.get("aliases") or [])]
         candidate_names.update(c for c in raw_candidates if isinstance(c, str))
-    for candidate in candidate_names:
+    return candidate_names
+
+
+def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
+    """A non-defeated enemy-side combatant matching `name` or, if `name`
+    exactly matches a /coc index entry, any of that entry's other known
+    aliases — deliberately exact-match only at every step (see
+    find_live_enemy's docstring for why substring/fuzzy matching would be
+    actively harmful here)."""
+    for candidate in _index_alias_names(state, name):
         existing = find_live_enemy(state, candidate)
         if existing is not None:
             return existing
     return None
+
+
+def _defeated_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
+    """A defeated enemy that `name`, or any /coc index alias of it, refers to."""
+    names = {_normalize(n) for n in _index_alias_names(state, name)} - {""}
+    for c in state.combat.order:
+        if c.side == "enemy" and c.defeated and (_normalize(c.name) in names or _normalize(c.display_name) in names):
+            return c
+    return None
+
+
+def _number_if_shared(state: GroupState, added: Combatant) -> None:
+    """Give `added` a numbered display name (`深潛者 2`, …) when another
+    combatant already shows the same one, so the two can be told apart.
+    `name` is left as is: index lookups and HP canonicalisation use it."""
+    others = [c for c in state.combat.order if c is not added]
+    shown = {_normalize(c.display_name) for c in others}
+    if _normalize(added.display_name) not in shown:
+        return
+    number = 2
+    while _normalize(f"{added.name} {number}") in shown:
+        number += 1
+    added.display_name = f"{added.name} {number}"
+    if added.side == "ally" and any(c.combatant_id == added.combatant_id for c in others):
+        # Ally ids are built from the name, so same-named allies would share one.
+        added.combatant_id = f"ally:{added.display_name}"
 
 
 def _checkpoint_before_combat(state: GroupState) -> None:
@@ -371,6 +407,26 @@ def begin_combat(state: GroupState) -> CombatState:
     return start_combat(state)
 
 
+@dataclass(frozen=True)
+class AddedCombatant:
+    """What add_combatant did with a request."""
+
+    combatant: Combatant  # the one added, or the live enemy reused instead
+    reused: bool  # True: that enemy was already in the fight; nothing was added
+    defeated_namesake: Combatant | None = None  # a defeated enemy the name also refers to
+
+
+def defeated_namesake_notice(added: AddedCombatant) -> str:
+    """Tell whoever added `added` that its name also matches a defeated enemy."""
+    namesake, new = added.defeated_namesake, added.combatant
+    if namesake is None:
+        return ""
+    return (
+        f"「{namesake.display_name}」先前已在這場戰鬥中被打倒；"
+        f"已加入一隻新的「{new.display_name}」（HP {new.hp}）。"
+    )
+
+
 def add_combatant(
     state: GroupState,
     name: str,
@@ -381,23 +437,29 @@ def add_combatant(
     armor: list[dict[str, Any]] | None = None,
     attacks: list[dict[str, Any]] | None = None,
     abilities: list[dict[str, Any]] | None = None,
-) -> Combatant | None:
+) -> AddedCombatant:
     """Add an NPC or ally to the fight, starting it (with its checkpoint) if needed.
 
     An enemy who is already in the fight and not defeated, under `name` or
     any /coc index alias of it, is not added again, so the same monster never
-    gets a second, independent HP pool; that combatant is returned instead,
-    and None means the combatant was added. Allies are never de-duplicated,
-    and a defeated enemy can be added fresh, so a monster narratively coming
-    back still can be.
+    gets a second, independent HP pool; that combatant is reused instead.
+    Allies are never de-duplicated. A defeated enemy's name can be added
+    again, since a second monster of the same kind may arrive, but the result
+    reports the defeated namesake so the caller can ask whether it's really a
+    new one, and the newcomer gets a numbered display name.
     """
     if not is_ally:
         existing = find_live_enemy_by_any_alias(state, name)
         if existing is not None:
-            return existing
+            return AddedCombatant(existing, reused=True)
+    namesake = None if is_ally else _defeated_enemy_by_any_alias(state, name)
     _checkpoint_before_combat(state)
+    before = {id(c) for c in state.combat.order}
     add_npc(state, name, dex, hp, is_ally=is_ally, armor=armor, attacks=attacks, abilities=abilities)
-    return None
+    # add_npc may also seed the investigators when it starts the fight.
+    added = next(c for c in state.combat.order if id(c) not in before and not c.is_pc)
+    _number_if_shared(state, added)
+    return AddedCombatant(added, reused=False, defeated_namesake=namesake)
 
 
 def _card_for(state: GroupState, combatant: Combatant) -> EnemyCombatCard | None:
