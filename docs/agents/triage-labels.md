@@ -1,6 +1,6 @@
 # Triage Labels
 
-Use these five canonical labels in GitHub Issues.
+These are the five canonical state labels used by the skill.
 
 | Role | Label | Meaning |
 |---|---|---|
@@ -10,4 +10,4 @@ Use these five canonical labels in GitHub Issues.
 | `ready-for-human` | `ready-for-human` | Requires human implementation |
 | `wontfix` | `wontfix` | Will not be actioned |
 
-When a skill names a triage role, apply the matching label above.
+This repo tracks work in design specs and does not apply triage labels to spec files or PRs. If GitHub issue triage is explicitly enabled later, use the matching label above for each role.

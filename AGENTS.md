@@ -2,11 +2,11 @@
 
 ### Issue tracker
 
-Issues live in GitHub Issues and are managed with `gh`. See `docs/agents/issue-tracker.md`.
+Work is tracked as design specs under `docs/specs/` and delivered through GitHub PRs; GitHub Issues are not used. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Use the five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+The skill's default state labels are documented in `docs/agents/triage-labels.md`; they are not applied to this repo's spec files or PRs.
 
 ### Domain docs
 

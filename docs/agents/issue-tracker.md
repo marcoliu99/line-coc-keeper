@@ -1,25 +1,21 @@
-# Issue tracker: GitHub
+# Issue tracker: design specs in `docs/specs/` + GitHub PRs
 
-Issues for this repo live in GitHub Issues. Use the `gh` CLI for all operations.
+This repo does not use GitHub Issues. Each unit of work is tracked as a design spec under `docs/specs/` and delivered through a GitHub PR.
 
 ## Conventions
 
-- Create: `gh issue create --title "..." --body "..."`
-- Read: `gh issue view <number> --comments`
-- List: `gh issue list --state open`
-- Comment: `gh issue comment <number> --body "..."`
-- Apply or remove labels with `gh issue edit`.
-- Close with `gh issue close <number> --comment "..."`.
-- Infer the repository from `git remote -v`; `gh` does this automatically inside the clone.
+- Follow the existing spec naming and organization in `docs/specs/`. Keep English and Traditional Chinese versions together when the surrounding specs use bilingual files.
+- Link relevant spec files in the PR description under `## Specs`.
+- Read a PR with `gh pr view <number> --comments`; inspect its changes with `gh pr diff <number>`.
+- To find the relevant spec when none is linked, inspect `docs/specs/` changes in the PR's commit range with `git log --stat <base>..HEAD -- docs/specs`.
+- Do not create GitHub Issues for work tracked by this repo.
 
-## Pull requests as a triage surface
+## Pull requests as a request surface
 
-**PRs as a request surface: no.**
-
-If this repo later treats external PRs as feature requests, change this flag to `yes` before using `/triage` on PRs.
+**PRs as a request surface: no.** PRs are used to deliver and review changes, not as a replacement for work specs.
 
 ## Skill routing
 
-- When a skill says to publish work to the issue tracker, create a GitHub issue.
-- When a skill asks for the relevant ticket, use `gh issue view <number> --comments`.
-- Do not treat pull requests as issues for triage.
+- When a skill says to publish work to the issue tracker, create or update the relevant design spec under `docs/specs/` and link it from the PR; do not run `gh issue create`.
+- When a skill asks for the relevant ticket, look for the `## Specs` section in the PR body, then inspect spec changes in the commit range.
+- Do not use GitHub Issues as a task queue.
