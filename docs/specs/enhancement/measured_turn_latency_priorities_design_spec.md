@@ -266,19 +266,31 @@ That is a channel-wide deadlock as the failure mode, against a measured gain of 
 The posting ticket in the original sketch is unnecessary. Both locks are FIFO and the mutation lock already serializes the Executors, so a turn reaches narration in the order it reached mutation and a plain second lock preserves message order:
 
 ```text
-mutation lock (FIFO) -> Executor -> release -> narration lock (FIFO) -> Narrator, commit, post
-                                       ^ the next player's Executor starts here
+mutation phase (conversation lock + Keeper turn lock, both FIFO) -> Executor -> release both
+    -> narration lock (FIFO) -> Narrator, commit, post
+                             ^ the next player's Executor starts here
 ```
+
+**Review correction: this diagram originally showed the conversation lock alone, and that was wrong.** An ordinary text turn also takes `get_keeper_turn_lock` inside `_handle_ordinary_text_message_locked` — **after** loading state — and holds it through narration, delivery and commit. Handing on the conversation lock alone therefore handed on nothing: the next turn does take the conversation lock and does load state there, then blocks on the Keeper turn lock until the previous turn has finished entirely — **no overlap at all, and it then runs on a snapshot taken before that turn's commit**, so its prompt can omit the immediately preceding action and narration. That is worse than not handing off.
+
+The fix has two halves:
+
+- `TurnHandoff` now holds every lock the turn took for its mutation phase. `mutation_phase_lock()` lets the router hand it the Keeper turn lock too; a handoff releases them in reverse acquisition order, and leaving the block after a handoff does not release one twice.
+- **State is reloaded once the Keeper turn lock is held.** The pre-lock snapshot is missing anything committed while the turn queued for that lock, flag or no flag.
 
 `locks.TurnHandoff` owns which locks a turn still holds, and the router's context managers yield one and `close()` it in their `finally`. `close()` releases exactly what is still held, so the eleven return paths inside `run_turn` need no per-path handling: a turn that never handed off is released as before, and one that did releases narration instead. `to_narration()` is idempotent.
 
 `run_turn` hands off in one place, after the reducer, and only for `turn_kind == "player_action"`. `resolved_check_followup` and `opening_fallback` keep the mutation lock to the end because `narrator.py:44` gives them a restricted tool set and #99 commits arrivals inside it.
+
+One cost of the overlap is **by design and remains**: `_commit_turn_result` appends this turn's message and reply to `state.log` after narration, so the next turn's `build_context` does not see those two entries (it does see every state change the Executor committed). With five players talking at once, B's prompt does not contain what A just did. That is the trade this work package chose, and one of the main reasons the flag defaults off.
 
 The flag defaults off because the gain is seconds and the failure mode is a channel that stops until restart. What is verified is the lock accounting — every test asserts which locks are free afterwards, across handing off or not, closing twice, handing off twice, and an exception after handoff — plus that the next turn's Executor overlaps this turn's narration without reordering the posts. What is not verified is behaviour under real concurrent load.
 
 One hazard worth recording: with the narration lock leaked, the ordering test **hung rather than failed**, because the next turn waited forever. It now waits with a bound, so a leak fails in seconds. The same shape bit twice elsewhere — `FakeSupervisorRunner` pinned `run_turn`'s keyword signature, so a new argument raised inside the turn, the blocking event was never set, and the suite hung; it now tolerates added arguments.
 
 With the KP priority gate in play the gate is still held across narration, so a conversation that has a KP assistant does not get the overlap. That is left as is.
+
+Two review fixes to WP1's script are recorded here because they change numbers this document quotes. Retrieval statistics keyed on the most recent `Supervisor starting turn`, so when two conversations' log lines interleave one turn's queries were attached to another; they now accumulate by `(file, turn_id)`, falling back to a per-file sequence for harness logs that carry no `turn_id`. Record ids were extracted as `r\d+` substrings, which emptied every result set for a scenario whose ids are words such as `intro` and truncated a compound id like `c1-u1-r1` to `r1`, where it could collide — an emptied set still counted toward the denominator while failing `bool(records_b)`, systematically understating retrieval waste. The logged list is now parsed.
 
 ### 3.6 Acceptance
 

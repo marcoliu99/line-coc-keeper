@@ -861,7 +861,18 @@ async def _handle_ordinary_text_message_locked(
         speaker_role = "player"
         resolved_location = None
 
-    async with locks.get_keeper_turn_lock(conversation_id):
+    # The Keeper turn lock belongs to the mutation phase, so the handoff has to
+    # own it too — see TurnHandoff.mutation_phase_lock. Without that, handing
+    # the conversation lock on released nothing the next turn needed: it would
+    # take the conversation lock, load state here, then sit on this lock until
+    # this turn had narrated, posted and committed, and go on to run against
+    # that stale snapshot.
+    keeper_lock = locks.get_keeper_turn_lock(conversation_id)
+    held = handoff.mutation_phase_lock(keeper_lock) if handoff is not None else keeper_lock
+    async with held:
+        # Reload under the lock. The snapshot above was taken before it, so
+        # anything committed while this turn queued for it is missing from it.
+        state = load_state(conversation_id)
         with observability.context(turn_id=observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,

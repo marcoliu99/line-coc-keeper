@@ -242,24 +242,53 @@ class TurnHandoff:
 
     def __init__(self, conversation_id: str, mutation_lock: asyncio.Lock) -> None:
         self.conversation_id = conversation_id
-        self._mutation_lock = mutation_lock
-        self._holds_mutation = True
+        # Every lock this turn holds for its mutation phase, in acquisition
+        # order. The conversation lock alone is not enough: an ordinary text
+        # turn also takes the Keeper turn lock deeper in, and a handoff that
+        # left that one held would release nothing the next turn is actually
+        # waiting on — it would reach the Keeper lock and block there anyway,
+        # having already loaded a state snapshot that this turn's commit has
+        # not landed in yet.
+        self._mutation_locks: list[asyncio.Lock] = [mutation_lock]
         self._holds_narration = False
 
     @property
     def narrating(self) -> bool:
         return self._holds_narration
 
-    async def to_narration(self) -> None:
-        """Release the mutation lock and queue for this conversation's narration.
+    @asynccontextmanager
+    async def mutation_phase_lock(self, lock: asyncio.Lock) -> AsyncIterator[None]:
+        """Acquire `lock` as part of this turn's mutation phase.
 
-        Idempotent: a turn that already handed off, or never held the mutation
+        Released by whichever comes first: `to_narration`, or leaving this
+        block. Both go through `_release_mutation_locks`, so a turn that hands
+        off does not release it a second time on the way out, and one that
+        never hands off still releases it exactly once.
+        """
+        await lock.acquire()
+        self._mutation_locks.append(lock)
+        try:
+            yield
+        finally:
+            if lock in self._mutation_locks:
+                self._mutation_locks.remove(lock)
+                lock.release()
+
+    def _release_mutation_locks(self) -> None:
+        # Reverse acquisition order, so a waiter woken on the outermost lock
+        # finds the inner ones already free.
+        while self._mutation_locks:
+            self._mutation_locks.pop().release()
+
+    async def to_narration(self) -> None:
+        """Release the mutation locks and queue for this conversation's narration.
+
+        Idempotent: a turn that already handed off, or never held a mutation
         lock, is a no-op rather than an error.
         """
-        if not self._holds_mutation:
+        if not self._mutation_locks:
             return
-        self._holds_mutation = False
-        self._mutation_lock.release()
+        self._release_mutation_locks()
         # Cancelled while queueing leaves this turn holding neither lock, which
         # is exactly what close then sees: _holds_narration is set only after
         # the acquire returns.
@@ -267,9 +296,7 @@ class TurnHandoff:
         self._holds_narration = True
 
     def close(self) -> None:
-        if self._holds_mutation:
-            self._holds_mutation = False
-            self._mutation_lock.release()
+        self._release_mutation_locks()
         if self._holds_narration:
             self._holds_narration = False
             get_narration_lock(self.conversation_id).release()

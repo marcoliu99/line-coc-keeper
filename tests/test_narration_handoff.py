@@ -15,6 +15,7 @@ from app import locks
 def _fresh(conversation_id: str) -> None:
     locks._locks.pop(conversation_id, None)
     locks._narration_locks.pop(conversation_id, None)
+    locks._keeper_turn_locks.pop(conversation_id, None)
 
 
 class TurnHandoffTests(unittest.TestCase):
@@ -87,6 +88,108 @@ class TurnHandoffTests(unittest.TestCase):
             return lock.locked(), locks.get_narration_lock("conv").locked()
 
         self.assertEqual(asyncio.run(scenario()), (False, False))
+
+
+class MutationPhaseLockTests(unittest.TestCase):
+    """The conversation lock is not the only one a turn holds while it mutates.
+
+    An ordinary text turn also takes the Keeper turn lock, and it takes it
+    *after* loading state. A handoff that left it held gave the next turn
+    nothing: it would take the conversation lock, load state, then block on the
+    Keeper lock until this turn had narrated, posted and committed — and then
+    run on the snapshot it took before any of that.
+    """
+
+    def setUp(self):
+        _fresh("conv")
+
+    def _both(self):
+        mutation = locks.get_conversation_lock("conv")
+        return mutation, locks.get_keeper_turn_lock("conv"), locks.TurnHandoff("conv", mutation)
+
+    def test_handing_off_frees_an_adopted_lock_too(self):
+        async def scenario():
+            mutation, keeper, handoff = self._both()
+            await mutation.acquire()
+            async with handoff.mutation_phase_lock(keeper):
+                self.assertTrue(keeper.locked())
+                await handoff.to_narration()
+                return mutation.locked(), keeper.locked(), handoff.narrating
+
+        self.assertEqual(asyncio.run(scenario()), (False, False, True))
+
+    def test_leaving_the_block_after_handoff_does_not_double_release(self):
+        async def scenario():
+            mutation, keeper, handoff = self._both()
+            await mutation.acquire()
+            async with handoff.mutation_phase_lock(keeper):
+                await handoff.to_narration()
+            # keeper is free here; the block's finally must not release it again
+            await keeper.acquire()
+            keeper.release()
+            handoff.close()
+            return mutation.locked(), keeper.locked(), locks.get_narration_lock("conv").locked()
+
+        self.assertEqual(asyncio.run(scenario()), (False, False, False))
+
+    def test_without_a_handoff_the_block_still_releases_exactly_once(self):
+        async def scenario():
+            mutation, keeper, handoff = self._both()
+            await mutation.acquire()
+            async with handoff.mutation_phase_lock(keeper):
+                pass
+            self.assertFalse(keeper.locked())
+            handoff.close()
+            return mutation.locked(), keeper.locked()
+
+        self.assertEqual(asyncio.run(scenario()), (False, False))
+
+    def test_an_exception_inside_the_block_frees_both(self):
+        async def scenario():
+            mutation, keeper, handoff = self._both()
+            await mutation.acquire()
+            try:
+                async with handoff.mutation_phase_lock(keeper):
+                    raise RuntimeError("executor blew up")
+            except RuntimeError:
+                pass
+            finally:
+                handoff.close()
+            return mutation.locked(), keeper.locked()
+
+        self.assertEqual(asyncio.run(scenario()), (False, False))
+
+    def test_the_next_turn_is_not_stopped_by_the_adopted_lock(self):
+        """The overlap this feature exists for, measured at the lock the next
+        turn would actually have blocked on."""
+        async def scenario():
+            events: list[str] = []
+            mutation = locks.get_conversation_lock("conv")
+            keeper = locks.get_keeper_turn_lock("conv")
+
+            async def turn(name: str) -> None:
+                await mutation.acquire()
+                handoff = locks.TurnHandoff("conv", mutation)
+                try:
+                    async with handoff.mutation_phase_lock(keeper):
+                        events.append(f"{name}:executor")
+                        await asyncio.sleep(0.01)
+                        await handoff.to_narration()
+                    events.append(f"{name}:narrating")
+                    await asyncio.sleep(0.02)
+                    events.append(f"{name}:posted")
+                finally:
+                    handoff.close()
+
+            first = asyncio.create_task(turn("A"))
+            await asyncio.sleep(0)
+            second = asyncio.create_task(turn("B"))
+            await asyncio.wait_for(asyncio.gather(first, second), 5)
+            return events
+
+        events = asyncio.run(scenario())
+        self.assertLess(events.index("B:executor"), events.index("A:posted"))
+        self.assertLess(events.index("A:posted"), events.index("B:posted"))
 
 
 class OrderingTests(unittest.TestCase):
@@ -202,3 +305,97 @@ async def _coro(value):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StateReloadTests(unittest.IsolatedAsyncioTestCase):
+    """The snapshot taken before the Keeper turn lock is not the one to run on.
+
+    `_handle_ordinary_text_message_locked` loads state, then queues for that
+    lock. Anything committed while it queued is missing from that snapshot, so
+    the turn reloads once it holds the lock.
+    """
+
+    async def test_the_turn_runs_on_a_snapshot_taken_under_the_keeper_lock(self):
+        from app.commands import router
+        from app.models import Character, GroupState
+
+        def _state(tag: str) -> GroupState:
+            state = GroupState(group_id="g", active=True, game_started=True)
+            state.characters["u1"] = Character(name=tag, owner_id="u1")
+            return state
+
+        loads = [_state("stale"), _state("current")]
+        seen: list[str] = []
+
+        def load_state(_conversation_id):
+            return loads.pop(0) if loads else _state("current")
+
+        async def run_turn(**kwargs):
+            seen.append(kwargs["state"].characters["u1"].name)
+            return "敘事", [], []
+
+        async def maintenance(*_args, **_kwargs):
+            return None
+
+        async def display_name():
+            return "Marco"
+
+        with patch.object(router, "load_state", load_state), \
+                patch.object(router.supervisor, "run_turn", run_turn), \
+                patch.object(router, "_run_post_turn_maintenance_after_output", maintenance):
+            await router._handle_ordinary_text_message_locked(
+                "conv-reload", "u1", display_name, lambda _t: _coro(None),
+                lambda *a, **k: _coro(None), lambda *a, **k: _coro(None),
+                lambda *a, **k: _coro(None), "我推開門",
+            )
+
+        # "stale" is the pre-lock snapshot; running on it is the bug.
+        self.assertEqual(seen, ["current"])
+
+    async def test_the_keeper_lock_is_free_once_the_turn_reaches_narration(self):
+        """The handoff has to reach the lock the next turn actually blocks on.
+
+        Asserted through the router rather than on TurnHandoff alone: the bug
+        was the wiring, not the accounting.
+        """
+        from app.commands import router
+        from app.models import Character, GroupState
+
+        conversation_id = "conv-keeper-lock"
+        _fresh(conversation_id)
+        keeper_lock = locks.get_keeper_turn_lock(conversation_id)
+        mutation = locks.get_conversation_lock(conversation_id)
+        after_handoff: list[tuple[bool, bool]] = []
+
+        def load_state(_conversation_id):
+            state = GroupState(group_id="g", active=True, game_started=True)
+            state.characters["u1"] = Character(name="Marco", owner_id="u1")
+            return state
+
+        async def run_turn(**kwargs):
+            await kwargs["handoff"].to_narration()
+            after_handoff.append((mutation.locked(), keeper_lock.locked()))
+            return "敘事", [], []
+
+        async def maintenance(*_args, **_kwargs):
+            return None
+
+        async def display_name():
+            return "Marco"
+
+        await mutation.acquire()
+        handoff = locks.TurnHandoff(conversation_id, mutation)
+        try:
+            with patch.object(router, "load_state", load_state), \
+                    patch.object(router.supervisor, "run_turn", run_turn), \
+                    patch.object(router, "_run_post_turn_maintenance_after_output", maintenance):
+                await router._handle_ordinary_text_message_locked(
+                    conversation_id, "u1", display_name, lambda _t: _coro(None),
+                    lambda *a, **k: _coro(None), lambda *a, **k: _coro(None),
+                    lambda *a, **k: _coro(None), "我推開門", None, handoff,
+                )
+        finally:
+            handoff.close()
+        self.assertEqual(after_handoff, [(False, False)])
+        self.assertFalse(keeper_lock.locked())
+        self.assertFalse(locks.get_narration_lock(conversation_id).locked())
