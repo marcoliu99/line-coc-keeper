@@ -40,6 +40,33 @@ async def handle_luck_button(conversation_id, owner_id, decision: LuckChoice, io
 4. **Permission:** replace `_is_kp_or_keeper` with a public helper in the router or `commands/sudo.py`, named for the glossary (`CONTEXT.md`): the human is the **KP** and the server administrator is the **Host**, and "Keeper" means only the AI. Rename `_is_keeper_member` / `is_keeper` to `_is_host_member` / `is_host` and the helper to `can_administer_group` (or `_is_kp_or_host`), and change the user-facing text "KP Assistant 或 Discord Keeper" to "KP 或主辦人". The Discord role **name** stays `keeper` so deployed servers need no change; the role check carries a one-line comment saying so.
 5. After step 4, `discord_bot.py` imports only `Reply`/`SendImage` types from `legacy_commands`. A test asserts that.
 
+## Step 1 audit (main_v2 at `2a61269`)
+
+What each entry path gets today. "Guard" is `@mutation_admission.guard_async_entry` on the handler; the router additionally pre-checks `is_held` for text.
+
+| Path | Admission | Conversation lock | Priority gate | Duplicate-submit guard | Permission | Queue notice / router observability |
+| --- | --- | --- | --- | --- | --- | --- |
+| Ordinary text (baseline) | router pre-check | yes | **yes** | — | sudo rules | yes |
+| `/coc check`, `/coc luck` text | router + guard | yes, with notice | no | `try_acquire_check` | owner | yes |
+| Check button (`discord_bot.py:687-710`) | guard | yes, plain | no | `try_acquire_check` | clicker must be owner | no (`check.button.*` events) |
+| Luck button (`:1086-1105`) | guard | yes, plain | no | `try_acquire_check` | clicker must be owner | no |
+| PDF upload (`:2188`, `legacy_commands.py:338`) | guard | taken twice inside the handler, extraction between | no | pending-upload check | **none, intentional** | no |
+| Multi-part PDF staging (`discord_bot.py:2168-2176`) | **only at repository save** | yes, in `discord_bot.py` | no | — | none | no |
+| Map upload (`:2202`) | guard | yes, in handler | no | — | none | no |
+| Role-sheet upload (`:2232`) | guard | yes, in handler | no | — | uploader's own | no |
+| Scenario-compare upload (`:2241`) | guard | none (read-only) | no | — | none | no |
+| PDF choice button (`:1409`) | guard | yes, in handler | no | — | `_is_kp_or_keeper` | no |
+| Unsupported attachment (`:2249`) | none (read-only reply) | yes | no | — | — | no |
+
+Findings:
+
+1. **Only ordinary text passes the Keeper-priority gate.** Every other path is serialised with Keeper turns by the conversation lock alone. This answers the open question: uploads effectively get the conversation lock only today.
+2. **Staging bypasses the admission notice.** It stages files first, then saves; while the group is held, the repository's `assert_admitted` (`repositories/group_state.py:101`) raises `MutationHeld`, which falls through to the generic handler: the user sees 「發生內部錯誤」 instead of the hold notice, and the staged files are orphaned. Step 2 should check admission before staging and reply with the notice.
+3. **PDF upload has no permission check, deliberately** (confirmed by Marco): even with `SCENARIO_LIFECYCLE_KP_ONLY=true`, any player may upload, and the first upload applies at once. Step 4 must keep that; only the choice button and `/coc scenario` are KP/Host-only.
+4. Buttons match the text routes on locking and duplicate guarding; they differ only in the queue notice and router observability, which the 3-second interaction ack makes deliberate.
+
+Steps 2–4 are pure moves except finding 2, which is a fix.
+
 ## Testing
 
 - Each step's existing tests pass unchanged (`tests/test_luck_buyup_gate.py`, the check-button and upload tests, `tests/test_kp_sudo.py`).

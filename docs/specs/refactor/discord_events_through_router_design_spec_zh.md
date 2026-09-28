@@ -40,6 +40,33 @@ async def handle_luck_button(conversation_id, owner_id, decision: LuckChoice, io
 4. **權限：** 把 `_is_kp_or_keeper` 換成 router 或 `commands/sudo.py` 裡的公開函式，名稱依照術語表（`CONTEXT.md`）：真人是 **KP**，伺服器管理員是**主辦人**（Host），「Keeper」只指 AI。把 `_is_keeper_member`／`is_keeper` 改名為 `_is_host_member`／`is_host`，輔助函式改名為 `can_administer_group`（或 `_is_kp_or_host`），使用者看到的「KP Assistant 或 Discord Keeper」改成「KP 或主辦人」。Discord 身分組的**名稱**維持 `keeper`，已部署的伺服器不用改；身分組檢查旁加一行註解說明這點。
 5. 步驟 4 之後，`discord_bot.py` 從 `legacy_commands` 只匯入 `Reply`／`SendImage` 型別，並用測試斷言這一點。
 
+## 第 1 步盤點（main_v2 的 `2a61269`）
+
+各入口路徑目前實際得到的保護。「guard」指 handler 上的 `@mutation_admission.guard_async_entry`；文字路徑另外有 router 的 `is_held` 事先檢查。
+
+| 路徑 | admission | 對話鎖 | 優先關卡 | 防重複送出 | 權限 | 排隊通知／router 觀測 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 一般文字（基準） | router 事先檢查 | 有 | **有** | — | sudo 規則 | 有 |
+| `/coc check`、`/coc luck` 文字 | router + guard | 有，附通知 | 無 | `try_acquire_check` | 擁有者 | 有 |
+| 檢定按鈕（`discord_bot.py:687-710`） | guard | 有，無通知 | 無 | `try_acquire_check` | 點擊者須為擁有者 | 無（`check.button.*` 事件） |
+| 幸運值按鈕（`:1086-1105`） | guard | 有，無通知 | 無 | `try_acquire_check` | 點擊者須為擁有者 | 無 |
+| PDF 上傳（`:2188`、`legacy_commands.py:338`） | guard | handler 內上鎖兩次，中間做擷取 | 無 | 未決上傳檢查 | **無，刻意為之** | 無 |
+| 多段 PDF 暫存（`discord_bot.py:2168-2176`） | **只在 repository 存檔時** | 有，在 `discord_bot.py` 內 | 無 | — | 無 | 無 |
+| 地圖上傳（`:2202`） | guard | 有，在 handler 內 | 無 | — | 無 | 無 |
+| 角色卡上傳（`:2232`） | guard | 有，在 handler 內 | 無 | — | 上傳者本人 | 無 |
+| 劇本比對上傳（`:2241`） | guard | 無（唯讀） | 無 | — | 無 | 無 |
+| PDF 選擇按鈕（`:1409`） | guard | 有，在 handler 內 | 無 | — | `_is_kp_or_keeper` | 無 |
+| 不支援的附件（`:2249`） | 無（唯讀回覆） | 有 | 無 | — | — | 無 |
+
+發現：
+
+1. **只有一般文字會經過 Keeper 優先關卡。** 其他路徑都只靠對話鎖和 Keeper 回合排隊。這回答了待決問題：上傳目前實際上只有對話鎖。
+2. **暫存路徑繞過了 admission 通知。** 它先暫存檔案再存檔；群組被佔住時，repository 的 `assert_admitted`（`repositories/group_state.py:101`）丟出 `MutationHeld`，落到通用錯誤處理：使用者看到「發生內部錯誤」而不是佔用通知，已暫存的檔案也成了孤兒。第 2 步應在暫存前先檢查 admission，並回覆通知。
+3. **PDF 上傳沒有權限檢查，是刻意的**（Marco 確認）：即使 `SCENARIO_LIFECYCLE_KP_ONLY=true`，任何玩家都能上傳，第一次上傳會立即生效。第 4 步必須保留這一點；只有選擇按鈕和 `/coc scenario` 限定 KP／主辦人。
+4. 按鈕在上鎖和防重複送出上與文字路徑一致；差別只在排隊通知和 router 觀測，這是 3 秒互動回應期限造成的刻意設計。
+
+除了發現 2 是修正之外，第 2–4 步都是純搬移。
+
 ## 測試
 
 - 每個步驟既有的測試不修改即通過（`tests/test_luck_buyup_gate.py`、檢定按鈕和上傳的測試、`tests/test_kp_sudo.py`）。
