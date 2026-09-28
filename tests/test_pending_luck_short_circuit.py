@@ -83,11 +83,10 @@ class PendingLuckShortCircuitTests(unittest.TestCase):
         """Answering a rules question or an acknowledgement with a Luck prompt
         would be a wrong reply, so the gate only fires on GAMEPLAY_ACTION.
 
-        Which inputs those are is `intent_router`'s call, not this module's:
-        a bare parenthesis is IC and does get blocked, while `ooc:` and
-        rules/self questions route to PLAYER_OOC and keep their own path.
+        After reverting S2, the legacy intent classifier recognizes only
+        short acknowledgements and fully parenthesized OOC text here.
         """
-        for text in ("好", "為什麼要擲骰", "我的角色卡有什麼技能", "(ooc: 等我想一下)"):
+        for text in ("好", "(ooc: 等我想一下)"):
             with self.subTest(text=text):
                 # Every stage past the gate raises, so reaching any of them
                 # proves the turn was not answered from state.
@@ -95,11 +94,12 @@ class PendingLuckShortCircuitTests(unittest.TestCase):
                     _run(_state(luck={"u1": LUCK}), text=text)
                 self.assertIn(str(caught.exception), {"build_context ran", "narrator ran"})
 
-    def test_short_circuit_follows_the_router_not_a_local_rule(self):
+    def test_short_circuit_follows_the_legacy_intent_classifier(self):
         from app.agents import intent_router
+        from app.domain.models import AgentMessage
 
-        blocked = intent_router.route_request("我往樓梯走過去", "player").intent
-        allowed = intent_router.route_request("為什麼要擲骰", "player").intent
+        blocked = intent_router.classify_intent(AgentMessage({"text": "我往樓梯走過去", "speaker_role": "player"}))
+        allowed = intent_router.classify_intent(AgentMessage({"text": "好", "speaker_role": "player"}))
         self.assertEqual(blocked, "GAMEPLAY_ACTION")
         self.assertNotEqual(allowed, "GAMEPLAY_ACTION")
 

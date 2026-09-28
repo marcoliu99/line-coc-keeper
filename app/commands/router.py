@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from app import help_service, locks, observability
 from app.agents import context_builder, supervisor
 from app.commands import sudo as sudo_policy
+from app.commands.handlers import buttons as buttons_handler
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import correct as correct_handler
@@ -23,6 +24,7 @@ from app.legacy_commands import (
     SendDM,
     SendDMImage,
     SendImage,
+    _resolve_map_action_transaction,
     _run_post_turn_maintenance_after_output,
     _set_character_away_state,
     _skill_names_match,
@@ -168,7 +170,6 @@ async def _run_sudo_act_locked(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
-    *, actor_is_keeper: bool = False,
 ) -> str:
     subject_user_id = acting_context.subject_user_id
     character = state.get_active_character(subject_user_id)
@@ -178,15 +179,18 @@ async def _run_sudo_act_locked(
         raise _SudoDenied("game_not_started")
 
     action_text = " ".join(parsed.args).strip()
-    resolved_location = None
+    canonical_text = f"[KP Assistant 代操作 {character.name}] {action_text}"
     async with locks.narrating_turn(conversation_id):
+        resolved_location = await asyncio.to_thread(
+            _resolve_map_action_transaction, conversation_id, subject_user_id, action_text
+        )
+        state = load_state(conversation_id)
         with observability.context(turn_id=observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,
                 user_id=subject_user_id,
                 display_name=character.name,
-                text=action_text,
-                actor_user_id=acting_context.actor_user_id, actor_is_keeper=actor_is_keeper,
+                text=canonical_text,
                 resolved_location=resolved_location,
                 speaker_role="player",
                 conversation_id=conversation_id,
@@ -253,7 +257,7 @@ async def _dispatch_sudo_locked(
         if parsed.command == "act":
             return await _run_sudo_act_locked(
                 conversation_id, acting_context, parsed, state,
-                marker_reply, send_dm, marker_image, send_dm_image, actor_is_keeper=is_keeper,
+                marker_reply, send_dm, marker_image, send_dm_image,
             )
 
         if parsed.command == "check":
@@ -321,8 +325,7 @@ async def _dispatch_sudo_locked(
             return "success" if result else "rejected"
         if parsed.command in {"showpage", "where", "enter", "leavemap"}:
             result = await map_handler.handle_map_command(
-                conversation_id, acting_context.subject_user_id, marker_reply, marker_image, player_parts,
-                send_dm=send_dm, send_dm_image=send_dm_image, actor_user_id=acting_context.actor_user_id, actor_is_keeper=is_keeper,
+                conversation_id, acting_context.subject_user_id, marker_reply, marker_image, player_parts
             )
             return "success" if result else "rejected"
         raise _SudoDenied("forbidden_command")
@@ -418,6 +421,24 @@ async def handle_uploads(
     observability.event("turn.entry", entry="upload")
     with observability.span("router", command_name="upload"):
         return await uploads_handler.handle_uploads(conversation_id, uploads, reply, post_pdf_buttons=post_pdf_buttons)
+
+
+async def handle_check_button(
+    conversation_id: str, clicker_id: str, owner_id: str, option: str, check_id: str, io: buttons_handler.ButtonIO,
+) -> None:
+    """A check button click enters here, as `/coc check` text does."""
+    observability.event("turn.entry", entry="check_button")
+    with observability.span("router", command_name="check_button"):
+        await buttons_handler.handle_check_button(conversation_id, clicker_id, owner_id, option, check_id, io)
+
+
+async def handle_luck_button(
+    conversation_id: str, clicker_id: str, owner_id: str, choice: str, decision_id: str, io: buttons_handler.ButtonIO,
+) -> None:
+    """A Luck button click enters here, as `/coc luck` text does."""
+    observability.event("turn.entry", entry="luck_button")
+    with observability.span("router", command_name="luck_button"):
+        await buttons_handler.handle_luck_button(conversation_id, clicker_id, owner_id, choice, decision_id, io)
 
 
 async def handle_unsupported_attachment(conversation_id: str, reply: Reply) -> None:
@@ -783,8 +804,7 @@ async def _handle_text_message_impl(
                                               speaker_role="keeper" if is_keeper else "player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
-                await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts,
-                                                     send_dm=send_dm, send_dm_image=send_dm_image)
+                await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts)
             return
 
         async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
@@ -899,6 +919,11 @@ async def _handle_ordinary_text_message_locked(
         # Reload under the lock. The snapshot above was taken before it, so
         # anything committed while this turn queued for it is missing from it.
         state = load_state(conversation_id)
+        if not is_kp_assistant:
+            resolved_location = await asyncio.to_thread(
+                _resolve_map_action_transaction, conversation_id, user_id, text
+            )
+            state = load_state(conversation_id)
         with observability.context(turn_id=observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,

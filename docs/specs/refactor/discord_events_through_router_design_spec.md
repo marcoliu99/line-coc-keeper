@@ -2,7 +2,7 @@
 
 [繁體中文](discord_events_through_router_design_spec_zh.md)
 
-Status: **partial**: steps 1–2 done, steps 3–5 not started. Base: `main_v2` at `a68df95`.
+Status: **partial**: steps 1–3 done, steps 4–5 not started. Base: `main_v2` at `a68df95`.
 
 ## Problem
 
@@ -36,7 +36,7 @@ async def handle_luck_button(conversation_id, owner_id, decision: LuckChoice, io
 
 1. **Map first, no code change.** For each row above, record what it gets today: conversation lock, Keeper-priority gate, mutation admission, sudo, and whether it can interleave with a Keeper turn. Add the result to this spec. It decides whether each migration is a pure move or also a fix, and it goes through review again before step 2.
 2. **Uploads** (lowest risk): add `router.handle_upload` dispatching to `handlers/uploads.py`, and move the PDF-part staging mutation out of `discord_bot.py`. One PR. *Done:* `router.handle_uploads` / `handle_unsupported_attachment`, `handlers/uploads.py` (`Upload(filename, read)`), and audit finding 2 fixed: staging checks the hold before writing anything, and a hold that starts mid-staging keeps content-addressed files, which other conversations or pending decisions may reference, and replies with the hold notice.
-3. **Buttons:** add the two button entry points and move the claim and ordering logic from `discord_bot.py` into the router, keeping `acquire_legacy_for_keeper` semantics exactly. One PR, with the existing button/Luck race tests as the gate.
+3. **Buttons:** add the two button entry points and move the claim and ordering logic from `discord_bot.py` into the router, keeping `acquire_legacy_for_keeper` semantics exactly. One PR, with the existing button/Luck race tests as the gate. *Done:* `router.handle_check_button` / `handle_luck_button` run `handlers/buttons.py`, which keeps the original order (owner, in-flight guard, acknowledge, locked validation and command, claim before unlock, restore after). Claiming and the identity checks moved to `app/services/pending_buttons.py`, which the text path uses too; `discord_bot.py` keeps only Discord I/O, passed in as `ButtonIO`. The race tests needed their **patch targets** moved from `discord_bot` to `buttons` / `pending_buttons`, with assertions unchanged. The move also exposed a silent skip: `test_state_loss_amnesia` caught `ImportError` as "discord.py is not installed", so a missing name would have skipped its identity test; it now imports the discord-free service directly and always runs.
 4. **Permission:** replace `_is_kp_or_keeper` with a public helper in the router or `commands/sudo.py`, named for the glossary (`CONTEXT.md`): the human is the **KP** and the server administrator is the **Host**, and "Keeper" means only the AI. Rename `_is_keeper_member` / `is_keeper` to `_is_host_member` / `is_host` and the helper to `can_administer_group` (or `_is_kp_or_host`), and change the user-facing text "KP Assistant 或 Discord Keeper" to "KP 或主辦人". The Discord role **name** stays `keeper` so deployed servers need no change; the role check carries a one-line comment saying so.
 5. After step 4, `discord_bot.py` imports only `Reply`/`SendImage` types from `legacy_commands`. A test asserts that.
 

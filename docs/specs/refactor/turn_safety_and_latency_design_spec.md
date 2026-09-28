@@ -4,7 +4,7 @@
 
 ## 1. Status, provenance and decision
 
-Category: `refactor` with bug-fix and performance work packages. Status: **S0/S1/S2/S3 implemented**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Subsequently aligned with `main_v2` `e03d5dc`; review R1–R6 contracts are in section 12. Branch: `refactor/turn-safety-and-latency`.
+Category: `refactor` with bug-fix and performance work packages. Status: **S0/S1/S3 implemented; S2 reverted with PR #99**. Baseline: `main_v2` at `8e32683a3e3a3c0159153b3d96d9c6911ec04071`, including PR #94 and its review fixes. Review date: 2026-09-27. Subsequently aligned with `main_v2` `e03d5dc`; review R1–R6 contracts are in section 12. Branch: `refactor/turn-safety-and-latency`.
 
 This specification adopts selected recommendations from two user-supplied ChatGPT documents after reading both documents and checking the current source. It does not adopt their older source baselines as current facts. The original proposal was documentation only; this branch implements S0/S1 as recorded in section 13. No production migration, deployment or live API benchmark was performed.
 
@@ -452,7 +452,7 @@ The first reviewable implementation scope should be S0 baselines plus S1 partial
 
 ## 13. Approved S0/S1 implementation evidence (2026-09-27)
 
-Branch: `refactor/turn-safety-s0-s1`, based on reviewed design `36fb67d` aligned with `main_v2` `e03d5dc`. S3 has been integrated from `refactor/state-mirror-s3`. **Historical checkpoint:** S2 had not started at the S0/S1 commit; section 14 records its subsequent implementation. S4–S9 and early stopping remain deferred.
+Branch: `refactor/turn-safety-s0-s1`, based on reviewed design `36fb67d` aligned with `main_v2` `e03d5dc`. S3 was integrated independently. Section 14 records the historical S2 implementation, which was subsequently reverted with PR #99. S4–S9 and early stopping remain deferred.
 
 ### 13.1 S0 reproducible baseline and trace
 
@@ -503,7 +503,7 @@ The hold is conversation-scoped until independence can be proven. Existing actor
 | Restricted Narrator, opening, resolved follow-up / original player | `run_narrator`, Supervisor, same gateway | Offered-tool allowlist unchanged; same worker/write gate | restricted-tool failure; all turn kinds held before context |
 | Check/Luck button or command / persisted decision owner | observed callback + conversation lock; guarded legacy handlers; deterministic resolver | Reject before dice, then normal identity/owner/timeline checks | authoritative entry matrix; callback hold; original check/Luck IDs |
 | Purchase confirmation / authenticated buyer or authorized sudo subject | guarded purchase handler | `_mutate_and_save_state`, then group DB gate | direct purchase entry + router matrix; existing purchase tests |
-| Map change / current player | guarded map handler; `_resolve_map_action_transaction` | State lock admission before resolving movement | historical S1 entry matrix; S2 shared commit supersedes this path (section 14) |
+| Map change / current player | guarded map handler; `_resolve_map_action_transaction` | State lock admission before resolving movement | direct map + deterministic entry matrix; S2 movement redesign deferred |
 | Character switching / character owner | guarded character handler | `save_state` and DB admission | direct switch entry + router matrix |
 | Newgame / existing command authorization | guarded system handler + conversation lock | Hold checked even when revision replacement is intentional | direct newgame and repository matrix |
 | Rollback / existing KP authorization | system handler + `checkpoints.rollback` | Admission before checkpoint transaction; scoped DB writes/deletes recheck | rollback entry matrix |
@@ -519,125 +519,6 @@ Audited read commands (`help`, `status`, `characters`, `purchases`) and other co
 
 Isolated complete suite: **1044 passed, 1 skipped, 33 subtests**. Ruff passed; mypy **86 source files passed**; `git diff --check` passed. Baseline was 987 passed, 1 skipped. Existing mechanism, button identity, purchase, correction and provider tests remain enabled. No new fixed model stage, live API run, production data mutation, or deployment was performed.
 
-
-## 14. S2 implementation contract (approved continuation)
-
-Branch: `refactor/turn-routing-and-movement-s2`, stacked on S0/S1 (PR #97).
-S3 remains independent (PR #98). S2 is implemented; S4–S9 remain deferred.
-
-- Route before retrieval. Explicit OOC spans are excluded from Executor input,
-  retrieval queries and canonical user history. Parentheses alone do not classify
-  an action as OOC. One existing Narrator completion supplies mixed segments.
-- Public/mixed narration receives a public projection before generation; private
-  character details never enter that projection. Self-only OOC can be delivered
-  privately without granting tools or changing canonical history.
-- Remove pre-Supervisor position writes. Movement candidates preserve source
-  clauses and actor/subject identity. A shared service commits arrival inside
-  the existing tool loop, validates current state/evidence, then refreshes the
-  entire caller snapshot. No final-JSON movement shortcut is enabled initially:
-  this avoids claiming all downstream mechanisms are complete from prose alone.
-- Evidence quotes must refer to supplied scenario/play material; topology alone
-  does not authorize passage. Python validates provenance, graph continuity,
-  identities and pending outcomes; semantic interpretation of free-form passage
-  conditions remains the existing Executor's adjudication responsibility.
-- Location-sensitive inventory acquisition, purchase, clue/fact recording,
-  scene output and scene effects require arrival when an action requests a new
-  location. Carried-item consumption before entry remains independent. Checks
-  needed for entry are bound to that proposal and may resume only after the
-  exact final result, including Luck. Existing restricted follow-up is retained.
-- Explicit map enter/leave requests use the same adjudication and commit path;
-  they do not teleport by changing tracking dictionaries directly.
-- New bounded movement records and narrative locations serialize with state;
-  request segmentation audit is bounded and timeline/recipient scoped, and never
-  feeds canonical summaries or memory. No restart-safe workflow ledger is claimed.
-
-```text
-trusted entry -> route/spans -> IC context -> existing Executor
-                                         -> proposal/evidence -> arrival commit
-                                                              -> dependent tools
-              -> existing Narrator (public projection for mixed/OOC)
-              -> validate candidate segments -> delivery / canonical projections
-```
-
-Verification must cover original six movement counterexamples, SR-M01–M07,
-OOC/mixed canonical and privacy projections, forged metadata, missing coverage,
-ordinary/sudo/map/check entry wiring, and unchanged call counts without live API.
-
-
-### 14.1 Implemented interfaces and boundaries
-
-| Entry / interface | Implementation / authority |
-| --- | --- |
-| Ordinary / sudo / explicit enter-leave | Router passes original IC request; sudo carries trusted actor and subject separately. Explicit map commands use Supervisor, with no dictionary write before adjudication. |
-| RouteDecision / RequestSpan | `agents/intent_router.py`; explicit OOC and high-confidence rules/self-sheet spans; parentheses alone are not OOC. Unknown language stays with the scheduled Executor. |
-| MovementProposal / MovementSession | `services/movement.py`; immutable identity/origin/facing/source candidate; `commit_movement` runs within the existing tool loop. Exact IC clause proposals support phrasing missed by local hints. |
-| Effect admission | Worker entry and `_mutate_and_save_state` both check the session. For a recognized movement request, non-query effects default to requiring arrival. Origin checks and explicitly earlier carried-item consumption are exceptions. Model `requires_arrival=false` cannot bypass this gate. |
-| Check / Luck continuation | Stored proposal, IC request, path, source citations, check and optional decision identity. Deterministic tail restores action context. Shared gateway owns the resume worker, including cancellation holds. |
-| Resolved arrival | Commit precedes restricted Narrator. Only verified arrival enables item/clue/output and independent new-scene checks in that existing loop. Entry skill/context cannot reroll; generic percentile rolling is not offered in this arrival follow-up. |
-| ModelReplySegments | Existing final Narrator JSON; exact span/mode/event validation, complete coverage, reject forged authority fields. No JSON repair call. |
-| Delivery / canon | Public IC passes S1 finalization and canonical commit. Public OOC is appended afterward. Self-only OOC stays private. Canonical log, summary and memory never consume the audit. |
-| Persistence | Narrative positions; last 40 arrival events; per-owner current movement continuation; last 20 segment audit requests (16,000 input characters each), scoped by conversation/timeline/recipient. Scenario replacement clears all four. Cash quote validation includes narrative position. |
-
-Location-sensitive defaults cover inventory acquisition, purchase, clue/fact
-recording, character/resource/status changes, combat/scene effects, private info
-and image output. Only scenario/memory/sheet/combat/image queries, prerequisite
-skill/choice registration, pending cancellation and movement itself are allowed
-before arrival; an explicitly preceding consumption must name an item actually
-carried by the subject. Unknown story causality still requires adjudication.
-
-```text
-ordinary / sudo act / enter / leavemap
-  -> Supervisor: trusted role + spans
-       |-- PLAYER_OOC -> existing Narrator, no tools/retrieval
-       |                 -> public or self-private reply -> scoped audit only
-       `-- IC / mixed -> IC-only retrieval -> Executor
-                          -> shared owned tool gateway
-                               |-- origin check -> pending -> player check/Luck
-                               |                         -> exact bound resume
-                               `-- commit_movement -> locked state commit
-                                                      -> full snapshot refresh
-                                                      -> arrival-dependent tools
-                          -> validated resolution -> existing Narrator
-                               |-- ordinary string -> S1 final delivery
-                               `-- mixed candidates -> validated IC / OOC projection
-                          -> IC canonical log -> summary / memory
-                          -> public OOC appended; self-only output privately
-```
-
-### 14.2 Verification and limits
-
-- Isolated suite: **1,113 passed, 1 skipped, 33 subtests passed**. Command:
-  `python3 /private/tmp/run_review_suite.py s2-release /private/tmp/line-coc-turn-s2`.
-  Ruff passes; mypy passes for 88 source files; `git diff --check` passes.
-- `tests/test_turn_routing_and_movement.py`: six original counterexamples;
-  SR-M01–M07; disconnected/opposite paths; full refresh; held/cancelled internal
-  resume; current actor/origin/facing/source/timeline; independent rations and
-  other-player pending; Spot Hidden versus locked doors; check/Luck identity;
-  real deterministic-check tail before item mutation; exact ACK; explicit map
-  entry; unknown phrasing; mixed privacy/canonical boundaries and malformed JSON.
-- `tests/test_task_trace.py` drives the real OpenAI adapter with a fake SDK:
-  player OOC = **1** generation request; mixed no-tools = **2** (Executor +
-  Narrator); no Guard/repair/tool rounds in these fixtures. Existing ordinary,
-  sudo, check and opening traces continue passing. Tool-loop tests assert one
-  existing provider conversation, not one underlying API request.
-- These are structural/regression measurements, **not live model accuracy or
-  latency measurements**. Production data, credentials and APIs were not used.
-- Citation checks establish source provenance; they do not prove full semantic
-  coverage. The existing Executor interprets free-form passage conditions and
-  unknown IC clauses. Missing evidence/unsupported gates remain incomplete;
-  the program does not invent map nodes or prove passage from a graph alone.
-- Public mixed/OOC generation receives explicit public facts and verified
-  public outcomes, never raw scenario, private sheets, historical summary or
-  memory. A mixed self-sheet request uses a private server rendering; richer
-  free-form private explanation is not mixed into public generation.
-- Final-response movement shortcuts remain disabled. This trades the old
-  premature move for a necessary tool commit and continuation where applicable;
-  no claim of an across-the-board speedup is made. No durable workflow ledger,
-  outbox, automatic replay, background translation or new fixed LLM stage.
-
-## PR #99 review correction
-
-Bind arrival to the requested candidate for both named and directional moves. Reject empty paths that never reach the candidate, substituted destinations and mapless bypasses. Directional candidates must be the first step. Named candidates must be reached; further travel requires a later explicit movement destination in the request, preserving legal multi-edge routes. Rejections must leave persisted position, arrival events and destination effects unchanged.
 ## PR #97 review corrections
 
 Preserve check visibility and the authoritative owner through resolution, Luck, chained checks, event/context construction and delivery. Route private feedback and images to that owner even when invoked from a public command; DM failures must not fall back to public output. Preserve filtered damage_combatant injury/healing results in recovery without exposing enemy HP. Test deterministic check/Luck resolution, chained SAN/INT checks, split and combined delivery, and failures after combat tool commits.

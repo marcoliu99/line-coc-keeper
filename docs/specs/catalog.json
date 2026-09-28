@@ -1125,16 +1125,13 @@
         "app/services/turn_delivery.py",
         "app/services/task_trace.py",
         "tests/test_turn_safety.py",
-        "tests/test_task_trace.py",
-        "app/services/movement.py",
-        "app/services/reply_segments.py",
-        "tests/test_turn_routing_and_movement.py"
+        "tests/test_task_trace.py"
       ],
       "path": "docs/specs/refactor/turn_safety_and_latency_design_spec.md",
       "zh_path": "docs/specs/refactor/turn_safety_and_latency_design_spec_zh.md",
       "source_revision": "e03d5dc5508e6bf0e483705a5032df07d4d66b62",
       "limitations": [
-        "S0/S1/S2/S3 implemented with isolated SDK and state fixtures. Free-form story semantics still require Executor adjudication. Final-response movement shortcuts are disabled. Process-local admission is not a durable ledger/outbox. S4-S9 and live API accuracy and latency evaluation remain deferred."
+        "S0/S1/S3 implemented. S2 was reverted with PR #99; the PR #121 scene-transition changes were also reverted. Process-local admission is not a durable ledger/outbox. S4-S9 and live API accuracy and latency evaluation remain deferred."
       ]
     },
     {
@@ -1233,7 +1230,6 @@
         "app/agents/tool_gateway.py",
         "app/services/turn_context.py",
         "app/services/turn_resolution.py",
-        "app/services/movement.py",
         "app/agents/narrator.py"
       ],
       "path": "docs/specs/refactor/keeper_tool_registry_design_spec.md",
@@ -1246,10 +1242,14 @@
       "category": "refactor",
       "status": "partial",
       "evidence": [
-        "app/discord_bot.py",
-        "app/commands/router.py",
+        "app/commands/handlers/buttons.py",
         "app/commands/handlers/uploads.py",
+        "app/commands/router.py",
+        "app/discord_bot.py",
         "app/legacy_commands.py",
+        "app/services/pending_buttons.py",
+        "tests/test_button_routing.py",
+        "tests/test_pending_button_latency.py",
         "tests/test_upload_routing.py"
       ],
       "path": "docs/specs/refactor/discord_events_through_router_design_spec.md",

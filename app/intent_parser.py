@@ -1,7 +1,14 @@
-"""Conservative movement hints. These never authorize or persist arrival.
+"""Lightweight, rule-based intent detection for player movement messages.
 
-Unknown phrasing remains with the existing Executor, which may propose an exact
-IC source clause to the shared movement service without another classifier call.
+Deliberately NOT another LLM call — this project has been consistently
+cost-conscious (prompt caching, capped scenario/log sizes, vision only on
+low-text pages), and a classifier call on every single message would undercut
+that for a feature (Map/Scene Engine — see app/scene_map.py) whose whole point
+is resolving movement in code instead of spending a model call on it. Regex
+over a fixed set of direction/verb words is enough to catch the common
+phrasings; anything it misses just falls through to the Keeper narrating
+movement itself, exactly like before this feature existed — see
+app/commands.py's handling of a None return here.
 """
 from __future__ import annotations
 
@@ -17,22 +24,17 @@ _DIRECTION_PATTERNS: list[tuple[re.Pattern, str, bool]] = [
     (re.compile(r"左手邊|左邊|左側"), "left", False),
     (re.compile(r"往右|向右|右轉"), "right", True),
     (re.compile(r"右手邊|右邊|右側"), "right", False),
-    (re.compile(r"往上|上樓"), "up", True),
-    (re.compile(r"往下|下樓"), "down", True),
+    (re.compile(r"樓上|往上|上樓"), "up", True),
+    (re.compile(r"樓下|往下|下樓"), "down", True),
     (re.compile(r"回頭|往回走|往後|向後"), "back", True),
     (re.compile(r"背後|後方"), "back", False),
     (re.compile(r"直走|往前|向前"), "front", True),
     (re.compile(r"正前方|前面|前方"), "front", False),
 ]
 
-# Erring wide is safe here: has_movement_verb is the cheap gate before a
-# room-name match (see its docstring), and nothing in this module can commit a
-# move — that always needs the model to call commit_movement and pass the full
-# validation in app/services/movement.py. A missing verb, by contrast, is
-# expensive: 「直奔商店購買油燈跟煤油罐」 produced one unsplittable clause with
-# no verb in it, and the turn could not authorize movement at all.
+# Cheap movement-verb gate before the legacy room-name match.
 _MOVEMENT_VERB_RE = re.compile(
-    r"離開|進入|走進|走向|前往|進去|走到|穿過|移動到|走回|回到"
+    r"離開|進入|走進|走向|前往|進去|走到|查看|檢查|打開|穿過|移動到|走回|回到"
     r"|直奔|奔向|奔去|趕往|趕去|趕到|衝向|衝進|衝出|跑向|跑到|跑進|抵達|來到|返回|折返"
     r"|(?<![拿帶取搬偷拎撿收])走|去(?!過)"
 )
@@ -55,41 +57,13 @@ def parse_movement_intent(text: str) -> dict | None:
     direction with a movement-flavored verb nearby, else None. `order` is the
     1-indexed "第 N 個" ordinal if present, else 1 (the nearest/first matching
     exit)."""
-    for clause in movement_clauses(text):
-        has_verb = bool(_MOVEMENT_VERB_RE.search(clause))
-        matches = [(m.start(), direction) for pattern, direction, sufficient in _DIRECTION_PATTERNS
-                   if (sufficient or has_verb) and (m := pattern.search(clause))]
-        if matches:
-            _, direction = min(matches)
-            m = _ORDINAL_RE.search(clause)
-            return {"relative_direction": direction, "order": _parse_ordinal(m.group(1)) if m else 1}
+    has_verb = bool(_MOVEMENT_VERB_RE.search(text))
+    for pattern, direction, self_sufficient in _DIRECTION_PATTERNS:
+        if pattern.search(text) and (self_sufficient or has_verb):
+            m = _ORDINAL_RE.search(text)
+            order = _parse_ordinal(m.group(1)) if m else 1
+            return {"relative_direction": direction, "order": order}
     return None
-
-
-def movement_clauses(text: str) -> list[str]:
-    """Conservative hints only; unknown language remains with Executor.
-
-    Exclude quoted, negated, observational and interrogative clauses locally,
-    so an unrelated negative clause cannot cancel an affirmative movement.
-    """
-    unquoted = re.sub(r'「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"', '', text)
-    clauses = re.split(r'[，,。；;！!\n]|(?:然後|接著)', unquoted)
-    return [c.strip(' （）()') for c in clauses if c.strip()
-            and not re.search(r'不要|不想|不會|不去|別|不往|不向|沒有要|沒(?:有)?(?:往|向|走|去|進|離)|假如|如果|是否|能否|嗎|呢|[？?]|他說|她說|據說', c)
-            and not re.match(r'\s*(?:他|她|牠|它|他們|她們|牠們|它們|有人|某人|NPC)', c)
-            and not re.search(r'查看|檢查|觀察|望向|看向|看著|打量|看看.*(?:左|右|樓上|樓下)', c)]
-
-
-
-def movement_verb_start(text: str) -> int | None:
-    """Index of the first movement verb in `text`, or None.
-
-    Callers use what precedes it to tell whose movement a clause describes:
-    「怪物衝進地下室」 and 「直奔商店」 both carry a verb, but only one of them
-    is the player moving.
-    """
-    match = _MOVEMENT_VERB_RE.search(text)
-    return match.start() if match else None
 
 
 def has_movement_verb(text: str) -> bool:
@@ -101,7 +75,7 @@ def has_movement_verb(text: str) -> bool:
     trying a room-name match, and only fall back to Scenario RAG (a real API
     call when embeddings are configured) if that also fails — this function
     itself makes no API call and costs nothing."""
-    return any(_MOVEMENT_VERB_RE.search(c) or parse_movement_intent(c) for c in movement_clauses(text))
+    return bool(_MOVEMENT_VERB_RE.search(text))
 
 
 def extract_entered_location(text: str) -> str | None:
@@ -110,7 +84,7 @@ def extract_entered_location(text: str) -> str | None:
     caller to fuzzy-match against known scene_map location names. Returns None
     if no such phrasing is found; the candidate is unvalidated free text, not
     guaranteed to match anything."""
-    m = next((m for c in movement_clauses(text) if (m := _ENTER_LOCATION_RE.search(c))), None)
+    m = _ENTER_LOCATION_RE.search(text)
     if not m:
         return None
     candidate = m.group(1).strip()
