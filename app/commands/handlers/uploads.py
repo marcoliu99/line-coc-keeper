@@ -17,11 +17,13 @@ from pathlib import Path
 
 from app import locks, scenario_library
 from app.legacy_commands import (
+    PdfChoice,
     Reply,
     handle_map_upload,
     handle_pdf_upload,
     handle_role_sheet_upload,
     handle_scenario_compare_upload,
+    resolve_pdf_upload_choice,
 )
 from app.repositories.group_state import load_state, save_state
 from app.services import mutation_admission
@@ -125,3 +127,9 @@ async def _stage_pdf_parts(conversation_id: str, pdfs: list[Upload], reply: Repl
         + "\n".join(f"・{item['key'][:12]} {item['file_name']}" for item in staged)
         + "\n請由 KP 輸入 `/coc scenario merge 暫存ID1 暫存ID2 ...`。"
     )
+
+
+async def handle_pdf_choice(conversation_id: str, choice: PdfChoice, user_id: str, reply: Reply) -> None:
+    """The GM's answer to the new-scenario-vs-correction choice a PDF
+    re-upload posted (discord_bot.PdfUploadChoiceButton)."""
+    await resolve_pdf_upload_choice(conversation_id, choice, reply, user_id=user_id)

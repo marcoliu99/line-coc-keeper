@@ -21,6 +21,7 @@ from app.commands.handlers.uploads import Upload
 from app.legacy_commands import (
     FormatMention,
     GetDisplayName,
+    PdfChoice,
     Reply,
     SendDM,
     SendDMImage,
@@ -34,7 +35,6 @@ from app.legacy_commands import (
     handle_pregen_luck_roll,
     handle_roll_command,
     handle_unsupported_message,
-    resolve_pdf_upload_choice,
 )
 from app.repositories.group_state import load_state
 from app.services import mutation_admission
@@ -440,17 +440,17 @@ async def handle_luck_button(
         await buttons_handler.handle_luck_button(conversation_id, clicker_id, owner_id, choice, decision_id, io)
 
 
-async def handle_pdf_choice_button(conversation_id: str, choice: str, user_id: str, reply: Reply) -> None:
+async def handle_pdf_choice_button(conversation_id: str, choice: PdfChoice, user_id: str, reply: Reply) -> None:
     """A PDF upload choice button click enters here (discord_bot.PdfUploadChoiceButton).
 
     The caller has already refused the click for an unauthorized member
-    without touching the buttons; resolve_pdf_upload_choice re-checks under
-    the conversation lock, since a button can't be trusted not to race a
+    without touching the buttons; handle_pdf_choice re-checks under the
+    conversation lock, since a button can't be trusted not to race a
     permission change.
     """
     observability.event("turn.entry", entry="pdf_choice_button")
     with observability.span("router", command_name="pdf_choice_button"):
-        await resolve_pdf_upload_choice(conversation_id, choice, reply, user_id=user_id)
+        await uploads_handler.handle_pdf_choice(conversation_id, choice, user_id, reply)
 
 
 async def handle_unsupported_attachment(conversation_id: str, reply: Reply) -> None:

@@ -23,11 +23,12 @@ def _io() -> ButtonIO:
 
 
 class LegacyImportBoundaryTests(unittest.TestCase):
-    """Step 5: discord_bot.py imports only transport types from legacy_commands;
-    everything it drives — check/Luck buttons (step 3), uploads (step 2), the
-    PDF choice button (step 5) — enters through the router instead."""
+    """Step 5: discord_bot.py imports only transport/domain types from
+    legacy_commands, never behavior; everything it drives — check/Luck
+    buttons (step 3), uploads (step 2), the PDF choice button (step 5) —
+    enters through the router instead."""
 
-    def test_discord_bot_imports_only_reply_and_sendimage_from_legacy_commands(self):
+    def test_discord_bot_imports_only_types_from_legacy_commands(self):
         source = (pathlib.Path(__file__).resolve().parents[1] / "app" / "discord_bot.py").read_text(encoding="utf-8")
         imported = {
             alias.asname or alias.name
@@ -35,15 +36,15 @@ class LegacyImportBoundaryTests(unittest.TestCase):
             if isinstance(node, ast.ImportFrom) and node.module == "app.legacy_commands"
             for alias in node.names
         }
-        self.assertEqual(imported, {"Reply", "SendImage"})
+        self.assertEqual(imported, {"Reply", "SendImage", "PdfChoice"})
 
 
 class PdfChoiceButtonRoutingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_the_click_goes_through_resolve_pdf_upload_choice(self):
+    async def test_the_click_goes_through_the_uploads_handler(self):
         reply = AsyncMock()
-        with patch.object(router, "resolve_pdf_upload_choice", new_callable=AsyncMock) as resolve:
+        with patch.object(router.uploads_handler, "handle_pdf_choice", new_callable=AsyncMock) as handle:
             await router.handle_pdf_choice_button("g", "new", "u1", reply)
-        resolve.assert_awaited_once_with("g", "new", reply, user_id="u1")
+        handle.assert_awaited_once_with("g", "new", "u1", reply)
 
 
 class ButtonEntryTests(unittest.IsolatedAsyncioTestCase):
