@@ -2,7 +2,7 @@
 
 [繁體中文](discord_events_through_router_design_spec_zh.md)
 
-Status: **partial**: steps 1–3 done, steps 4–5 not started. Base: `main_v2` at `a68df95`.
+Status: **implemented**: steps 1–3 and 5 done; step 4 superseded, see below. Base: `main_v2` at `1a31645`.
 
 ## Problem
 
@@ -38,7 +38,7 @@ async def handle_luck_button(conversation_id, owner_id, decision: LuckChoice, io
 2. **Uploads** (lowest risk): add `router.handle_upload` dispatching to `handlers/uploads.py`, and move the PDF-part staging mutation out of `discord_bot.py`. One PR. *Done:* `router.handle_uploads` / `handle_unsupported_attachment`, `handlers/uploads.py` (`Upload(filename, read)`), and audit finding 2 fixed: staging checks the hold before writing anything, and a hold that starts mid-staging keeps content-addressed files, which other conversations or pending decisions may reference, and replies with the hold notice.
 3. **Buttons:** add the two button entry points and move the claim and ordering logic from `discord_bot.py` into the router, keeping `acquire_legacy_for_keeper` semantics exactly. One PR, with the existing button/Luck race tests as the gate. *Done:* `router.handle_check_button` / `handle_luck_button` run `handlers/buttons.py`, which keeps the original order (owner, in-flight guard, acknowledge, locked validation and command, claim before unlock, restore after). Claiming and the identity checks moved to `app/services/pending_buttons.py`, which the text path uses too; `discord_bot.py` keeps only Discord I/O, passed in as `ButtonIO`. The race tests needed their **patch targets** moved from `discord_bot` to `buttons` / `pending_buttons`, with assertions unchanged. The move also exposed a silent skip: `test_state_loss_amnesia` caught `ImportError` as "discord.py is not installed", so a missing name would have skipped its identity test; it now imports the discord-free service directly and always runs.
 4. **Permission:** *Superseded by `docs/specs/bug/keeper_role_superuser_design_spec.md`.* The earlier plan here, renaming the `keeper`-role helpers to `host`, rested on a wrong reading. The Discord role named `keeper` is the bot's own, so the check is a hidden superuser path to remove, not a person to rename.
-5. After step 4, `discord_bot.py` imports only `Reply`/`SendImage` types from `legacy_commands`. A test asserts that.
+5. After step 4, `discord_bot.py` imports only `Reply`/`SendImage` types from `legacy_commands`. A test asserts that. *Done:* the one remaining call, `resolve_pdf_upload_choice` from `PdfUploadChoiceButton`, moved behind `router.handle_pdf_choice_button`. The Discord-side pre-check (an unauthorized click leaves the buttons in place, unlike an authorized one) stays in `discord_bot.py`, since it decides whether to touch the view at all; `resolve_pdf_upload_choice` still re-checks under the conversation lock. `tests/test_button_routing.py::LegacyImportBoundaryTests` asserts the import set by AST.
 
 ## Step 1 audit (main_v2 at `2a61269`)
 

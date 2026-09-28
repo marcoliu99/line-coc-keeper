@@ -52,7 +52,6 @@ from app.help_registry import HelpAction, HelpPage
 from app.legacy_commands import (
     Reply,
     SendImage,
-    resolve_pdf_upload_choice,
 )
 from app.models import GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -1203,11 +1202,8 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
             return
         await _edit_interaction_view(interaction, view=None)
         push = _make_reply(cast(discord.abc.Messageable, channel))
-        await resolve_pdf_upload_choice(
-            self.conversation_id,
-            self.choice,
-            push,
-            user_id=str(interaction.user.id),
+        await command_router.handle_pdf_choice_button(
+            self.conversation_id, self.choice, str(interaction.user.id), push,
         )
 
 
