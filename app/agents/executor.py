@@ -102,6 +102,12 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         from dataclasses import asdict
         dynamic_system += "\n" + json.dumps(asdict(move_session.proposal), ensure_ascii=False)
     dynamic_system += "\nAvailable movement sources: " + ", ".join(move_session.sources)
+    if not move_session.sources:
+        dynamic_system += (
+            "\nNo current-turn scenario source is registered for movement. Before calling commit_movement, "
+            "call search_scenario for the explicitly requested destination. Cite the returned tool evidence_ref "
+            "and copy an exact quote. A nonempty RAG hit supports travel even if complete_for_action is false."
+        )
     character = state.get_active_character(user_id)
     if character:
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
@@ -174,7 +180,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     scenario_retrieval.BUDGET.reset(budget_token)
                 move_session.accept_source(name, result, f"tool:{len(tool_events) + 1}")
                 if name == "commit_movement" and result.get("arrival"):
-                    message.payload["resolved_location"] = {"room_name": result["arrival"]["destination"]}
+                    message.payload["resolved_location"] = {
+                        "room_name": result["arrival"]["destination"],
+                        "movement_kind": result["arrival"].get("movement_kind", "scene_transition"),
+                    }
                 if result.get("ok") and name in {"add_carried_item", "remove_carried_item"}:
                     owner = result.get("investigator")
                     before_items = inventory_before.get(owner, [])

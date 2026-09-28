@@ -44,6 +44,19 @@ def _authorized_span(span: str, request_text: str) -> bool:
             or intent_parser.parse_movement_intent(span) is not None)
 
 
+def _quote_matches_source(quote: str, source: str) -> bool:
+    """Match copied evidence despite PDF/RAG typography and line wrapping.
+
+    Words and other punctuation must still match; this is not fuzzy matching.
+    """
+    quote_map = str.maketrans({
+        "‘": '"', "’": '"', "‚": '"', "‛": '"',
+        "“": '"', "”": '"', "„": '"', "‟": '"',
+    })
+    normalize = lambda value: re.sub(r'\s+', ' ', value.translate(quote_map)).strip()
+    return bool(normalize(quote) and normalize(quote) in normalize(source))
+
+
 
 def _reject(code: str, state: GroupState, args: dict, span: str = '') -> dict:
     """Refuse an arrival, and record what decided it.
@@ -181,30 +194,48 @@ def propose(state: GroupState, actor: str, subject: str, text: str) -> MovementP
 
 TOOL = {
     'name': 'commit_movement',
-    'description': ('裁定並提交玩家要求的移動。地圖只是拓樸，先查所有通行條件／反應點。'
-                    '到達後才能取得室內物品或套用場景效果；不要把名字命中當作通行許可。'
+    'description': ('裁定並提交玩家明確要求的移動。玩家明確要求前往且 RAG 命中目的地即可抵達；不要只因提到或查到地點就移動。'
+                    '地圖協助定位和辨識已知障礙，OCR 缺少路徑不代表不能通行。保留劇本明確的鎖、檢定、遭遇與反應點。'
+                    '到達後才能取得目的地物品或套用場景效果。'
                     '需要玩家檢定時先建立 skill_check，再以 prerequisite_check_id 綁定移動，等待最終 Luck。'
-                    '多段路徑逐一列出，不得跳過遭遇／選擇；沒有地圖也可用劇本地點名稱。'),
+                    '沒有地圖也可用劇本地點名稱。敘事需交代移動過程，不得新增未有依據的中途地點或事件。'),
     'input_schema': {'type': 'object', 'properties': {
         'source_span': {'type': 'string', 'description': '若本回合未預先辨識移動，引用玩家原句中的移動子句，由既有 Executor 判讀；不可引用 OOC、假設、觀察或否定句'},
-        'destination': {'type': 'string'}, 'page': {'type': 'string'},
-        'path': {'type': 'array', 'items': {'type': 'string'}, 'description': '從目前位置之後的逐一房間 ID，跨頁用 page:room'},
+        'movement_kind': {'type': 'string', 'enum': ['local_path', 'scene_transition'],
+                          'description': '房間內移動用 local_path；前往另一個劇情地點用 scene_transition。只作意圖提示，地圖 key/入口由程式解析。'},
+        'destination': {'type': 'string'},
+        'path': {'type': 'array', 'items': {'type': 'string'}, 'description': '可選的房間路徑建議；地圖 OCR 不完整時，不得只因缺少 graph edge 拒絕移動。'},
         'evidence': {'type': 'array', 'items': {'type': 'object', 'properties': {
             'source': {'type': 'string'}, 'quote': {'type': 'string'}}, 'required': ['source', 'quote']}},
         'conditions': {'type': 'string', 'enum': ['clear', 'await_check', 'blocked']},
         'prerequisite_check_id': {'type': 'string'},
-    }, 'required': ['destination', 'page', 'path', 'evidence', 'conditions']},
+    }, 'required': ['movement_kind', 'destination', 'evidence', 'conditions']},
 }
 PROMPT = '''
 Movement uses commit_movement in this existing tool loop, never a final JSON mutation.
-The movement candidate is NOT arrival. Cite source IDs with exact quotations covering
-passage, locks, triggers and reaction points; continue search if incomplete. Keep
-resolved dice final. A check at the origin may establish entry prerequisites; bind
-its check_id with conditions=await_check. For an origin prerequisite check, set
-action_context to the exact original_span in the movement proposal; an indoor
-check must wait for arrival. A later unrelated success is not permission.
-After committed arrival, continue any requested dependent tools before your final
-resolution. Independent consumption of carried supplies before movement can remain.
+Only move when the player's current message explicitly asks them to travel; merely
+mentioning a location, a question, or a RAG hit never moves anyone. For an explicit
+trip, a relevant current-turn RAG hit for the requested destination is enough to
+arrive, even if that RAG record is incomplete for resolving the location's other
+rules. Do not require a map edge or ask the model to invent a map key. Maps help
+locate rooms and expose known blockers; missing OCR edges are unknown, not proof
+that a route is impossible. Preserve explicit locks, checks, encounters and
+reaction points. Narrate the travel leg using established facts only; never add
+unsupported intermediate locations or events. A check at the origin may establish
+entry prerequisites; bind its check_id with conditions=await_check and use the
+exact original_span. An indoor check must wait for arrival. After arrival, continue
+requested destination-dependent tools before final resolution. Independent
+consumption of carried supplies before movement can remain.
+
+Use only the exact source IDs shown under Available movement sources. If that list
+is empty, or no listed source contains a usable passage for the destination, call
+search_scenario first and cite the returned tool evidence_ref with an exact quote.
+After a current-turn search, scenario_context may also cite its returned text;
+the server binds that alias only to sources searched during this turn and still
+requires an exact quote. Never cite memory or older turns as scenario_context. A
+nonempty current-turn RAG hit can support travel even when complete_for_action is
+false; that flag concerns other scenario-rule coverage, not whether the named
+place was found.
 '''
 
 # Every non-query tool in a movement request defaults to requiring arrival.
@@ -222,6 +253,7 @@ class MovementSession:
     proposal: MovementProposal | None
     request_text: str
     sources: dict[str, str] = field(default_factory=dict)
+    retrieval_sources: set[str] = field(default_factory=set)
     arrived: bool = False
     committed_position: tuple[str, str, str] | None = None
     event_id: str = ''
@@ -269,8 +301,36 @@ class MovementSession:
                 and result.get('timeline_id') == self.proposal.timeline_id):
             self._final_check_id = str(result.get('check_id', ''))
             self._final_skill = str(result.get('skill', ''))
-        if name == 'search_scenario'  and result.get('ok') and result.get('complete_for_action') is not False:
-            self.sources[ref] = str(result.get('results', ''))
+        if name == 'search_scenario' and result.get('ok') and result.get('results'):
+            text = str(result['results'])
+            self.sources[ref] = text
+            # Models often keep using the generic scenario_context label after
+            # a search. Bind that alias to current-turn retrieved text only;
+            # the source ID remains bound to text retrieved during this turn.
+            existing_context = self.sources.get('scenario_context', '')
+            self.sources['scenario_context'] = '\n'.join(x for x in (existing_context, text) if x)
+            self.retrieval_sources.add(ref)
+            self.retrieval_sources.add('scenario_context')
+
+    def _source_content(self, reference: str) -> str | None:
+        """Resolve a model citation to text actually supplied during this turn.
+
+        The executor names the initial retrieved context ``scenario_context``.
+        Models sometimes add its printed PDF page (for example
+        ``scenario_context p.16``); that suffix is descriptive, not a new
+        authority, so accept it only when the base source is registered for
+        this turn. Non-RAG quotation matching is validated separately.
+        """
+        if reference in self.sources:
+            return self.sources[reference]
+        match = re.fullmatch(r'(scenario_context)\s+p\.\s*\d+', reference, re.IGNORECASE)
+        return self.sources.get(match.group(1)) if match else None
+
+    def _is_retrieval_source(self, reference: str) -> bool:
+        if reference in self.retrieval_sources:
+            return True
+        return bool(re.fullmatch(r'scenario_context\s+p\.\s*\d+', reference, re.IGNORECASE)
+                    and 'scenario_context' in self.retrieval_sources)
 
     def commit(self, state: GroupState, args: dict) -> dict:
         from app import keeper
@@ -312,7 +372,8 @@ class MovementSession:
                 check = latest.pending_checks.get(p.subject_id) or latest.pending_luck_decisions[p.subject_id]
                 latest.movement_continuations[p.subject_id] = {
                     'proposal': asdict(p), 'arguments': args,
-                    'sources': {e['source']: self.sources[e['source']] for e in args['evidence']},
+                    'sources': {e['source']: self._source_content(e['source']) or '' for e in args['evidence']},
+                    'retrieval_sources': list(self.retrieval_sources),
                     'request_text': self.request_text,
                     'check_id': args['prerequisite_check_id'],
                     'skill': check.get('skill', check.get('skill_name', '')),
@@ -333,6 +394,7 @@ class MovementSession:
             event = {'event_id': uuid4().hex, 'proposal_id': p.proposal_id, 'timeline_id': p.timeline_id,
                      'actor_id': p.actor_id, 'subject_id': p.subject_id, 'character_id': p.character_id,
                      'origin': list(p.origin), 'destination': destination, 'page': page, 'room': room,
+                     'movement_kind': result.get('movement_kind', 'scene_transition'),
                      'evidence': args['evidence']}
             latest.arrival_events.append(event)
             del latest.arrival_events[:-40]
@@ -354,8 +416,10 @@ class MovementSession:
         evidence = args.get('evidence')
         if (not isinstance(evidence, list) or not evidence or len(evidence) > 20
                 or not all(isinstance(e, dict) and isinstance(e.get('quote'), str) and isinstance(e.get('source'), str)
-                           and len(e['quote'].strip()) >= 8 and e.get('source') in self.sources
-                           and e['quote'] in self.sources[e['source']] for e in evidence)):
+                           and len(e['quote'].strip()) >= 8
+                           and (source_text := self._source_content(e['source'])) is not None
+                           and (self._is_retrieval_source(e['source'])
+                                or _quote_matches_source(e['quote'], source_text)) for e in evidence)):
             return fail('movement_evidence_missing')
         for e in evidence:
             if e['source'].startswith('fact:') and not any(
@@ -382,86 +446,122 @@ class MovementSession:
             return fail('movement_prerequisites_unresolved')
         if check_id and self._final_check_id != check_id:
             return fail('movement_requires_bound_final_result')
-        page, destination, path = args.get('page'), args.get('destination'), args.get('path')
-        if not isinstance(page, str) or not isinstance(destination, str) or not destination.strip() or not isinstance(path, list):
+        destination = args.get('destination')
+        path = args.get('path', [])
+        movement_kind = args.get('movement_kind', '')
+        if (not isinstance(destination, str) or not destination.strip() or not isinstance(path, list)
+                or movement_kind not in {'', 'local_path', 'scene_transition'}):
             return fail('invalid_movement_target')
         if len(destination) > 200 or len(path) > 30 or not all(isinstance(x, str) for x in path):
             return fail('invalid_movement_path')
+        norm = lambda value: re.sub(r'\s+', ' ', value).strip().casefold()
         current_page, current_room, _ = p.origin
-        facing = state.party_facing.get(p.subject_id, 'N')
-        if p.candidate_room and not page:
+        current_map = state.scene_maps.get(current_page, {}) if current_page else {}
+        proposed_room = scene_map.get_room(current_map, p.candidate_room) if p.candidate_room else None
+        direction = intent_parser.parse_movement_intent(p.original_span)
+        if (direction and proposed_room and destination not in {
+                p.candidate_room, proposed_room.get('name')}):
+            return fail('movement_direction_mismatch')
+        movement_clauses = intent_parser.movement_clauses(self.request_text)
+        requested_destination = any(
+            (intent_parser.has_movement_verb(clause)
+             or re.match(r'^(?:我(?:們)?)?(?:再)?(?:到|經)', clause))
+            and norm(destination) in norm(clause)
+            for clause in movement_clauses
+        ) or norm(destination) in norm(p.original_span)
+        if not requested_destination and not (
+                p.candidate_room and destination in {p.candidate_room,
+                    (scene_map.get_room(state.scene_maps.get(p.candidate_page, {}), p.candidate_room) or {}).get('name')}):
             return fail('movement_destination_mismatch')
-        visited: list[tuple[str, str]] = []
-        if page:
-            if p.candidate_room and intent_parser.parse_movement_intent(p.original_span):
-                if not path:
-                    return fail('movement_direction_mismatch')
-                first_page, first_room = path[0].split(':', 1) if ':' in path[0] else (current_page, path[0])
-                if (first_page, first_room) != (p.candidate_page, p.candidate_room):
-                    return fail('movement_direction_mismatch')
-            if page not in state.scene_maps:
-                return fail('unknown_map')
-            if not current_page:
-                current_page, current_room = page, state.scene_maps[page].get('entry_room_id', '')
-                if not path or path[0] not in {current_room, f'{page}:{current_room}'}:
-                    return fail('map_entry_required')
-                visited.append((current_page, current_room))
-                path = path[1:]
+        # Python-issued current-turn RAG source IDs establish retrieval
+        # provenance even when translated/OCR quote text differs. For
+        # non-retrieval context, require the destination label in the quote.
+        if (not any(norm(destination) in norm(e['quote']) for e in evidence)
+                and not any(self._is_retrieval_source(e['source']) for e in evidence)):
+            return fail('destination_not_supported_by_evidence')
+        facing = state.party_facing.get(p.subject_id, 'N')
+
+        def room_named(map_data: dict, name: str) -> dict | None:
+            target = norm(name)
+            return next((room for room in map_data.get('rooms', [])
+                         if target in {norm(str(room.get('id', ''))), norm(str(room.get('name', '')))}
+                         or (norm(str(room.get('name', ''))) and norm(str(room.get('name', ''))) in target)), None)
+
+        current_map = state.scene_maps.get(current_page, {}) if current_page else {}
+        target_room = room_named(current_map, destination) if current_map else None
+        if not target_room and p.candidate_room and p.candidate_page == current_page:
+            target_room = scene_map.get_room(current_map, p.candidate_room)
+
+        # A destination matching a room in the current map is local even if
+        # the model mislabeled it as a scene transition. The map is advisory:
+        # only explicit gates found on a supplied/known edge block the action.
+        if target_room and current_page:
+            target_page, target_room_id = current_page, target_room['id']
+            steps: list[str] = []
             for step in path:
-                next_page, next_room = step.split(':', 1) if ':' in step else (current_page, step)
-                room_data = scene_map.get_room(state.scene_maps.get(current_page, {}), current_room)
-                edge = next((e for e in (room_data or {}).get('exits', [])
-                             if e.get('to') == (next_room if current_page == next_page else f'{next_page}:{next_room}')), None)
+                _, room_id = step.split(':', 1) if ':' in step else (current_page, step)
+                if scene_map.get_room(current_map, room_id):
+                    steps.append(room_id)
+            if p.candidate_room and p.candidate_page == current_page and p.candidate_room != target_room_id:
+                # If the player named an intermediate destination first, that
+                # point must be represented in the submitted route before a
+                # later requested destination can be committed.
+                if p.candidate_room not in steps:
+                    return fail('movement_destination_mismatch')
+            if target_room_id not in steps:
+                steps.append(target_room_id)
+            route = [current_room, *steps]
+            for origin_id, next_id in zip(route, route[1:]):
+                origin_data = scene_map.get_room(current_map, origin_id)
+                edge = next((e for e in (origin_data or {}).get('exits', []) if e.get('to') == next_id), None)
+                # No OCR edge means connectivity is unknown, not impossible.
                 if edge is None:
-                    return fail('disconnected_movement_path')
-                if edge.get('blocked') or (edge.get('locked') and (not check_id or not re.search(r'鎖匠|locksmith', self._final_skill, re.IGNORECASE))):
+                    continue
+                if edge.get('blocked') or (edge.get('locked') and not (
+                        check_id and re.search(r'鎖匠|locksmith', self._final_skill, re.IGNORECASE))):
                     return fail('passage_blocked')
                 if edge.get('requires_check') and edge.get('requires_check') != self._final_skill:
                     return fail('movement_required_check_missing')
                 if edge.get('reaction') or edge.get('requires_choice'):
                     return fail('movement_reaction_point_unresolved')
-                facing = edge.get('compass', facing) if edge.get('compass') not in {'U', 'D'} else facing
-                current_page, current_room = next_page, next_room
-                visited.append((current_page, current_room))
-            if p.candidate_room:
-                candidate = (p.candidate_page, p.candidate_room)
-                if candidate not in visited:
-                    return fail('movement_destination_mismatch')
-                expected = candidate
-                # Preserve explicitly requested onward travel, not model-selected detours.
-                clauses = intent_parser.movement_clauses(self.request_text)
-                later = clauses[clauses.index(p.original_span) + 1:] if p.original_span in clauses else []
-                for clause in later:
-                    if not (intent_parser.has_movement_verb(clause) or re.match(r'^(?:我(?:們)?)?(?:再)?(?:到|經)', clause)):
-                        continue
-                    matches = [(clause.rfind(r['name']), key, r['id'])
-                               for key, m in state.scene_maps.items() for r in m.get('rooms', [])
-                               if r.get('name') and r['name'] in clause]
-                    if matches:
-                        _, target_page, target_room = max(matches)
-                        expected = (target_page, target_room)
-                if (current_page, current_room) != expected:
-                    return fail('movement_destination_mismatch')
-            room_data = scene_map.get_room(state.scene_maps.get(current_page, {}), current_room)
-            if current_page != page or not room_data or destination not in {current_room, room_data.get('name')}:
-                return fail('movement_destination_mismatch')
+                if edge.get('compass') not in {'U', 'D'}:
+                    facing = edge.get('compass', facing)
         else:
-            if path:
-                return fail('mapless_path_must_be_empty')
-            if any(destination in {r.get('id'), r.get('name')} for m in state.scene_maps.values() for r in m.get('rooms', [])):
-                return fail('known_map_location_requires_path')
-            current_page, current_room = '', ''
-        # Require source support for the destination itself, not just any
-        # arbitrary quote copied from the scenario.
-        label = (scene_map.get_room(state.scene_maps[page], current_room) or {}).get('name', destination) if page else destination
-        if not any(label in self.sources[e['source']] for e in evidence):
-            return fail('destination_not_supported_by_evidence')
-        return {'ok': True, 'page': current_page, 'room': current_room, 'facing': facing}
+            # Resolve mapped destinations in Python. Prefer an exact scene
+            # label; a room on another map is also a valid explicitly requested
+            # destination, without requiring a cross-map graph edge.
+            matches: list[tuple[str, dict, dict | None]] = []
+            for map_key, map_data in state.scene_maps.items():
+                location = norm(str(map_data.get('location_name', '')))
+                requested = norm(destination)
+                if location and requested == location:
+                    matches.append((map_key, map_data, None))
+                else:
+                    room = room_named(map_data, destination)
+                    if room:
+                        matches.append((map_key, map_data, room))
+            if len(matches) == 1:
+                target_page, target_map, named_room = matches[0]
+                entry_id = target_map.get('entry_room_id', '')
+                entry_room = scene_map.get_room(target_map, entry_id) if entry_id else None
+                target_room_id = (named_room or entry_room or {}).get('id', '')
+            else:
+                # A RAG-supported place remains reachable even if OCR maps
+                # duplicate its label across pages. In that case track the
+                # narrative destination without guessing which map is active.
+                target_page, target_room_id = '', ''
+
+        return {'ok': True, 'page': target_page, 'room': target_room_id,
+                'facing': facing, 'movement_kind': 'local_path' if target_page == current_page and target_room else 'scene_transition'}
 
 
 def session_for(state: GroupState, actor: str, subject: str, text: str, rag: str = '', *, actor_is_keeper: bool = False) -> MovementSession:
     from app import keeper
-    sources = {'scenario_context': rag} if rag and not scenario_retrieval.incomplete_roots(rag) else {}
+    # Incomplete retrieval is insufficient for resolving the scenario's full
+    # mechanics, but its exact passages remain valid evidence that a requested
+    # destination exists. Movement validates quote provenance separately.
+    sources = {'scenario_context': rag} if rag else {}
+    retrieval_sources = {'scenario_context'} if sources and keeper.SCENARIO_RAG_ENABLED else set()
     if not keeper.SCENARIO_RAG_ENABLED and state.scenario_text:
         sources['scenario_context'] = keeper._bounded_scenario_context(state.scenario_text)
     for entry in state.established_facts:
@@ -471,7 +571,8 @@ def session_for(state: GroupState, actor: str, subject: str, text: str, rag: str
     proposal = propose(state, actor, subject, text)
     if proposal:
         proposal = replace(proposal, actor_is_keeper=actor_is_keeper)
-    return MovementSession(proposal, text, sources, actor_id=actor, subject_id=subject, actor_is_keeper=actor_is_keeper)
+    return MovementSession(proposal, text, sources, retrieval_sources=retrieval_sources,
+                           actor_id=actor, subject_id=subject, actor_is_keeper=actor_is_keeper)
 
 
 def resume(state: GroupState, subject: str, context: dict) -> dict | None:
@@ -494,7 +595,7 @@ def resume(state: GroupState, subject: str, context: dict) -> dict | None:
         return _reject('movement_continuation_identity_mismatch', state, saved.get('arguments', {}), p.original_span)
     if not re.search(r'成功|success', str(context.get('outcome', '')), re.IGNORECASE) or re.search(r'失敗|fail', str(context.get('outcome', '')), re.IGNORECASE):
         return _reject('movement_check_failed', state, saved.get('arguments', {}), p.original_span)
-    session = MovementSession(p, p.original_span, saved['sources'])
+    session = MovementSession(p, p.original_span, saved['sources'], set(saved.get('retrieval_sources', [])))
     session._final_check_id = saved['check_id']
     session._final_skill = saved['skill']
     return session.commit(state, {**saved['arguments'], 'conditions': 'clear'})

@@ -14,7 +14,7 @@ The safety goal is to stop unrequested teleportation: mentioning a destination, 
 - Use a scene map as a positioning aid and as positive evidence when it clearly shows routes or obstacles. Do not reject a plausible route solely because an OCR-derived graph lacks an edge.
 - Allow explicitly requested travel when RAG finds the requested scenario location, even when no floor plan or complete route exists. A relevant current-turn RAG hit is sufficient destination support; do not demand a map edge or additional route proof. Narrate the travel at an appropriate level without inventing rooms, obstacles, encounters, or events.
 - Preserve explicit scenario/map blockers, pending-check and Luck gates, active reaction/combat rules, and destination-arrival ordering.
-- Repair current-turn evidence handling so valid scenario search results can be cited with stable Python-issued source IDs and exact quotes.
+- Repair current-turn evidence handling so valid scenario search results can be cited with stable Python-issued source IDs. A current-turn RAG source ID is sufficient provenance for an explicit destination; the model's displayed quote is an audit hint because translated/OCR text can vary. Non-RAG quotes must match after whitespace and typographic quote normalization. Do not use fuzzy word matching for non-RAG sources.
 
 ## Non-goals
 
@@ -76,7 +76,7 @@ After arrival, allow destination-dependent checks and effects
 
 1. A movement intent must be grounded in the player's current action, not in RAG output, a question, hypothetical, negation, or prior AI narration.
 2. An explicit movement request plus a relevant current-turn RAG hit for the requested scenario location is sufficient to support a scene transition. A RAG hit without an explicit movement request never changes position.
-3. Evidence references must point to sources registered by Python for the current turn. Quotes must match the registered source exactly. Retrieval retries may add sources to the same turn, but sources cannot be reused across turns.
+3. Evidence references must point to sources registered by Python for the current turn. A current-turn RAG source ID is sufficient for travel evidence even if the displayed quote differs through translation or OCR; for non-RAG sources, quotes must match after whitespace and typographic quote normalization. Retrieval retries may add sources to the same turn, but sources cannot be reused across turns.
 4. Pending checks/Luck prevent movement when they are prerequisites for the requested action. Any prerequisite result remains bound to the original movement span and final result.
 5. Explicit blockers remain authoritative. Missing, uncertain, or OCR-omitted map topology is not an explicit blocker.
 6. A destination mention alone never commits position. A successful movement commit must correspond to an explicit player request and narrate the travel/entry action at a fitting level of detail.

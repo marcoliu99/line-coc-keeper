@@ -93,9 +93,168 @@ def test_sr_m01_locked_door_blocks_indoor_item(state):
 
 def test_sr_m02_final_claim_and_rag_name_are_not_entry(state):
     scope = session(state, '我去密室')
-    assert scope.commit(state, args(destination='密室', path=['X']))['error'] == 'disconnected_movement_path'
+    # An explicit request alone is not enough: the current-turn evidence must
+    # support the destination. Missing map edges are tested separately below.
+    assert scope.commit(state, args(destination='密室', path=['X']))['error'] == 'destination_not_supported_by_evidence'
     assert not scope.commit(state, args(evidence=[]))['ok']
-    assert not scope.commit(state, args(destination='密室', page='', path=[]))['ok']
+    assert scope.commit(state, args(destination='密室', page='', path=[]))['error'] == 'destination_not_supported_by_evidence'
+    assert state.current_room_id['u'] == 'A'
+
+
+def test_explicit_rag_supported_scene_transition_ignores_model_page_and_cross_map_edges(state):
+    quote = 'Investigators may consult the old newspapers at Boston Globe.'
+    state.scenario_text += '\n' + quote
+    group_state.save_state(state)
+    scope = session(state, '我和同伴前往 Boston Globe')
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Boston Globe', page='2', path=[],
+        evidence=[{'source': 'scenario_context p.2', 'quote': quote}],
+    ))
+    assert result['ok']
+    assert result['arrival']['movement_kind'] == 'scene_transition'
+    assert state.narrative_locations['u'] == 'Boston Globe'
+    assert 'u' not in state.current_map_page and 'u' not in state.current_room_id
+
+
+def test_explicit_rag_supported_map_scene_resolves_internal_map_key_in_python(state):
+    quote = 'The investigators travel to Corbitt House.'
+    state.scenario_text += '\n' + quote
+    state.scene_maps = {'17': {'location_name': 'Corbitt House', 'entry_room_id': 'E0', 'rooms': [
+        {'id': 'E0', 'name': 'Front Hall', 'exits': []},
+    ]}}
+    state.current_map_page.clear()
+    state.current_room_id.clear()
+    group_state.save_state(state)
+    scope = session(state, '我前往 Corbitt House')
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Corbitt House', page='2', path=[],
+        evidence=[{'source': 'scenario_context p.17', 'quote': quote}],
+    ))
+    assert result['ok']
+    assert state.current_map_page['u'] == '17'
+    assert state.current_room_id['u'] == 'E0'
+
+
+def test_scene_arrival_does_not_guess_an_ocr_missing_entry_room(state):
+    quote = 'The investigators travel to Corbitt House.'
+    state.scenario_text += '\n' + quote
+    state.scene_maps = {'17': {'location_name': 'Corbitt House', 'rooms': [
+        {'id': 'E0', 'name': 'Front Hall', 'exits': []},
+    ]}}
+    state.current_map_page.clear()
+    state.current_room_id.clear()
+    group_state.save_state(state)
+    scope = session(state, '我前往 Corbitt House')
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Corbitt House', page='2', path=[],
+        evidence=[{'source': 'scenario_context p.17', 'quote': quote}],
+    ))
+    assert result['ok']
+    assert state.current_map_page['u'] == '17'
+    assert state.current_room_id.get('u', '') == ''
+
+
+def test_missing_ocr_edge_does_not_block_explicit_rag_supported_local_move(state):
+    quote = '密室 (the hidden room) is inside the house.'
+    state.scenario_text += '\n' + quote
+    group_state.save_state(state)
+    scope = session(state, '我走進密室')
+    result = scope.commit(state, args(
+        destination='密室', path=['X'],
+        evidence=[{'source': 'scenario_context', 'quote': quote}],
+    ))
+    assert result['ok']
+    assert state.current_room_id['u'] == 'X'
+
+
+def test_relevant_english_rag_hit_supports_chinese_player_destination(state, monkeypatch):
+    from app import keeper
+
+    quote = 'The hidden room is inside the house.'
+    monkeypatch.setattr(keeper, 'SCENARIO_RAG_ENABLED', True)
+    scope = movement.session_for(state, 'u', 'u', '我走進密室', rag=quote)
+    result = scope.commit(state, args(destination='密室', path=['X'],
+        evidence=[{'source': 'scenario_context p.8', 'quote': quote}]))
+    assert result['ok']
+    assert state.current_room_id['u'] == 'X'
+
+
+def test_nonempty_rag_hit_supports_travel_even_when_record_is_incomplete(state):
+    quote = 'Boston Globe contains the old newspaper clippings.'
+    scope = session(state, '我前往 Boston Globe')
+    scope.sources.clear()
+    scope.retrieval_sources.clear()
+    scope.accept_source('search_scenario', {
+        'ok': True, 'complete_for_action': False, 'results': quote,
+    }, 'tool:1')
+    assert quote in scope._source_content('scenario_context')
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Boston Globe', page='2', path=[],
+        evidence=[{'source': 'scenario_context', 'quote': quote}],
+    ))
+    assert result['ok']
+    assert state.narrative_locations['u'] == 'Boston Globe'
+
+
+def test_incomplete_initial_rag_keeps_exact_location_hit_available_for_movement(state, monkeypatch):
+    from app import keeper, scenario_retrieval
+
+    quote = 'The investigators may go to the Boston Globe for old clippings.'
+    rag = (quote + '\n【依據尚未完整】仍需補查機制細節。\n【取用完整性】' +
+           '[{"complete_for_action":false,"root_record_ids":["location-globe"]}]')
+    assert scenario_retrieval.incomplete_roots(rag)
+    monkeypatch.setattr(keeper, 'SCENARIO_RAG_ENABLED', True)
+    scope = movement.session_for(state, 'u', 'u', '我前往 Boston Globe', rag=rag)
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Boston Globe', page='2', path=[],
+        evidence=[{'source': 'scenario_context p.2', 'quote': quote}],
+    ))
+    assert result['ok']
+    assert state.narrative_locations['u'] == 'Boston Globe'
+
+
+def test_nonrag_evidence_accepts_equivalent_pdf_quote_glyphs_for_explicit_travel(state):
+    source = 'The “Corbitt House” is the only private residence on the block.'
+    quote = 'The ‘Corbitt House’ is the only private residence on the block.'
+    scope = session(state, '我前往 Corbitt House 所在街區')
+    scope.sources['scenario_context'] = source
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Corbitt House', page='', path=[],
+        evidence=[{'source': 'scenario_context', 'quote': quote}],
+    ))
+    assert result['ok']
+    assert state.narrative_locations['u'] == 'Corbitt House'
+
+
+def test_nonrag_evidence_typography_tolerance_does_not_accept_changed_words(state):
+    source = 'The “Corbitt House” is the only private residence on the block.'
+    scope = session(state, '我前往 Corbitt House 所在街區')
+    scope.sources['scenario_context'] = source
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Corbitt House', page='', path=[],
+        evidence=[{'source': 'scenario_context', 'quote':
+                   'The Corbitt House is the only private hotel on the block.'}],
+    ))
+    assert result['error'] == 'movement_evidence_missing'
+
+
+def test_current_turn_rag_hit_supports_travel_when_translation_differs(state):
+    scope = session(state, '我前往 Corbitt House 所在街區')
+    scope.sources['tool:1'] = '科比特宅邸（別名：Corbitt House、The Old Corbitt Place）：波士頓一棟老宅。'
+    scope.retrieval_sources.add('tool:1')
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Corbitt House 所在街區', page='', path=[],
+        evidence=[{'source': 'tool:1', 'quote':
+                   '科比特宅邸（别名：Corbitt House、The Old Corbitt Place）：波士顿一栋老宅。'}],
+    ))
+    assert result['ok']
+    assert state.narrative_locations['u'] == 'Corbitt House 所在街區'
+
+
+def test_rag_hit_without_player_movement_does_not_change_position(state):
+    scope = session(state, 'Boston Globe 有哪些資料？')
+    result = scope.commit(state, args(destination='Boston Globe'))
+    assert result['error'] == 'no_player_movement_authorization'
     assert state.current_room_id['u'] == 'A'
 
 
