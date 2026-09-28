@@ -321,16 +321,16 @@ def test_size_limit_never_truncates_or_emits_extra_files(prepared, monkeypatch):
 
 
 @_sync
-@pytest.mark.parametrize('keeper,assistant', [(True, ''), (False, 'kp')])
-async def test_commands_allow_trusted_keeper_or_assistant_and_preserve_state(prepared, monkeypatch, keeper, assistant):
+async def test_commands_allow_kp_assistant_and_preserve_state(prepared, monkeypatch):
+    # A Discord role named `keeper` no longer grants this; only the registered KP Assistant does.
     from app.commands.handlers import system
     sid, _, _, _ = prepared()
-    state = GroupState(group_id='g', kp_assistant_user_id=assistant)
+    state = GroupState(group_id='g', kp_assistant_user_id='kp')
     original = deepcopy(state)
     monkeypatch.setattr(system, 'load_state', lambda _: state)
     reply, dm = AsyncMock(), AsyncMock()
     cmd = help_actions.build_command(help_actions.BY_KEY['source_export'], sid)
-    await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), cmd.split(), is_keeper=keeper)
+    await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), cmd.split())
     assert source.PROMPT in dm.call_args.args[1]
     assert source.PROMPT not in reply.call_args.args[0]
     assert state == original
@@ -347,12 +347,13 @@ async def test_commands_deny_player_and_keep_diagnostics_private(prepared, monke
     await system.handle_system_command('g', 'player', reply, dm, AsyncMock(), AsyncMock(), parts)
     dm.assert_not_called()
     assert '只有' in reply.call_args.args[0]
-    await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), parts, is_keeper=True)
+    state.kp_assistant_user_id = 'kp'
+    await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), parts)
     assert 'missing' in dm.call_args.args[1] or 'missing' in dm.call_args.args[1].lower()
     assert 'missing' not in reply.call_args.args[0]
     finish(payload, ['Armor 2.', 'Damage +1D4.'])
     parts = f'/coc scenario source import {sid} {write(path, payload)}'.split()
-    await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), parts, is_keeper=True)
+    await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(), parts)
     result = reply.call_args.args[0]
     assert isinstance(result, source.SourceReadyMessage) and result.scenario_id != sid and result.owner_id == 'kp'
 
@@ -409,15 +410,15 @@ def test_picker_reports_invalid_source_files_without_weakening_import(prepared):
 async def test_private_delivery_failure_does_not_publish_diagnostics(prepared, monkeypatch):
     from app.commands.handlers import system
     sid, _, _, _ = prepared()
-    monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g'))
+    monkeypatch.setattr(system, 'load_state', lambda _: GroupState(group_id='g', kp_assistant_user_id='kp'))
     reply, dm = AsyncMock(), AsyncMock(side_effect=RuntimeError('secret PDF content'))
     await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(),
-                                      f'/coc scenario source status {sid}'.split(), is_keeper=True)
+                                      f'/coc scenario source status {sid}'.split())
     assert all('secret' not in call.args[0] for call in reply.call_args_list)
     assert '私訊' in reply.call_args.args[0]
     dm.reset_mock()
     await system.handle_system_command('g', 'kp', reply, dm, AsyncMock(), AsyncMock(),
-                                      f'/coc scenario source import {sid} missing.md'.split(), is_keeper=True)
+                                      f'/coc scenario source import {sid} missing.md'.split())
     assert all('secret' not in call.args[0] and 'missing' not in call.args[0] for call in reply.call_args_list)
 
 
@@ -439,6 +440,9 @@ async def test_discord_ready_controls_bind_new_version_owner_and_permission(monk
     await view.children[0].callback(interaction)
     finish_action.assert_not_called()
     interaction.user.roles = [SimpleNamespace(name='Keeper')]
+    await view.children[0].callback(interaction)
+    finish_action.assert_not_called()  # a role named keeper grants nothing
+    state.kp_assistant_user_id = '42'
     await view.children[0].callback(interaction)
     assert finish_action.call_args.kwargs['selected'] == 'new-version'
     finish_action.reset_mock()
@@ -528,7 +532,7 @@ def test_raster_cards_blank_pages_and_reference_backs_all_publish(prepared):
 
 
 @_sync
-async def test_keeper_can_select_corrected_english_explicitly_without_enrollment(prepared, monkeypatch):
+async def test_kp_can_select_corrected_english_explicitly(prepared, monkeypatch):
     from app.commands.handlers import system
     sid, _, path, payload = prepared(('Armor 1D40.',))
     finish(payload, ['Armor +1D4.'])
@@ -550,9 +554,11 @@ async def test_keeper_can_select_corrected_english_explicitly_without_enrollment
     reply = AsyncMock()
     await system.handle_system_command('g', '42', reply, AsyncMock(), AsyncMock(), AsyncMock(), command.split())
     assert state == before  # Ordinary player is denied even after a valid selection.
-    await system.handle_system_command('g', '42', reply, AsyncMock(), AsyncMock(), AsyncMock(), command.split(), is_keeper=True)
+    # No Discord role lets someone select without being the KP Assistant any more.
+    state.kp_assistant_user_id = '42'
+    await system.handle_system_command('g', '42', reply, AsyncMock(), AsyncMock(), AsyncMock(), command.split())
     assert state.scenario_library_id == target and state.scenario_variant_id == 'original'
-    assert state.scenario_text.endswith('Armor +1D4.') and state.kp_assistant_user_id == ''
+    assert state.scenario_text.endswith('Armor +1D4.') and state.kp_assistant_user_id == '42'
     assert selected_variants == [('g', target, 'original')]
 
 

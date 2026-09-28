@@ -100,7 +100,6 @@ async def run_turn(
     conversation_id: str,
     *,
     actor_user_id: str | None = None,
-    actor_is_keeper: bool = False,
     turn_kind: PlayerTurnKind = "player_action",
     resolved_check_context: dict[str, Any] | None = None,
     prefetched_retrieval: context_builder.RetrievalPrefetch | None = None,
@@ -189,7 +188,6 @@ async def run_turn(
         prefetched=prefetched_retrieval,
     )
     message.payload["actor_user_id"] = actor_user_id or user_id
-    message.payload["actor_is_keeper"] = actor_is_keeper
     message.payload["route_decision"] = route
     message.payload["turn_kind"] = turn_kind
     if turn_kind == "resolved_check_followup":

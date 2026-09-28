@@ -83,7 +83,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     # search_scenario inclusion, kp_assistant-specific filtering/patching).
     tools = list(tools_for_speaker_role(speaker_role))
     move_session = movement.session_for(state, message.payload.get("actor_user_id", user_id),
-                                        user_id, text, rag_context, actor_is_keeper=bool(message.payload.get("actor_is_keeper")))
+                                        user_id, text, rag_context)
     message.payload["movement_session"] = move_session
     tools.append(movement.TOOL)
 

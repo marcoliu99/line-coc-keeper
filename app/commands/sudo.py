@@ -146,7 +146,7 @@ def denial_message(reason: str) -> str:
         "player_only_luck_roll": "LUCK 必須由玩家本人擲骰。",
         "player_only_character_creation": "角色建立／認領必須由玩家本人執行。",
         "missing_arguments": "sudo command 缺少必要參數。",
-        "not_authorized": "只有目前的 KP Assistant 或 Discord Keeper 可以使用 sudo。",
+        "not_authorized": "只有目前的 KP 助手可以使用 sudo。",
         "actor_role_conflict": "KP Assistant 必須先脫離自己的玩家角色／建角流程，才能使用 sudo。",
         "self_target": "KP Assistant 只能代替其他玩家操作，不能把自己當成 target。",
         "kp_target": "不能代操作目前的 KP Assistant。",

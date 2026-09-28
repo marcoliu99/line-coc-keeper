@@ -935,9 +935,9 @@ class GroupState:
     resolved_check_events: list[dict[str, Any]] = field(default_factory=list)
 
     # Optional group-level override: ordinary investigator checks remain
-    # player-triggered by default. Only the KP Assistant or Discord Keeper may
-    # enable this through /coc autoroll on; old snapshots therefore load as
-    # False without a migration.
+    # player-triggered by default. Any member can enable this through
+    # /coc autoroll on (the command has no permission check); old snapshots
+    # therefore load as False without a migration.
     autoroll_checks: bool = False
 
     # Same-turn idempotency cache for the optional autoroll path. The key

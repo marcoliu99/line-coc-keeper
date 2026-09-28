@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from app import help_service, locks, observability
 from app.agents import context_builder, supervisor
+from app.commands import permissions
 from app.commands import sudo as sudo_policy
 from app.commands.handlers import buttons as buttons_handler
 from app.commands.handlers import character as character_handler
@@ -169,7 +170,6 @@ async def _run_sudo_act_locked(
     send_dm: SendDM,
     send_image: SendImage,
     send_dm_image: SendDMImage,
-    *, actor_is_keeper: bool = False,
 ) -> str:
     subject_user_id = acting_context.subject_user_id
     character = state.get_active_character(subject_user_id)
@@ -187,7 +187,7 @@ async def _run_sudo_act_locked(
                 user_id=subject_user_id,
                 display_name=character.name,
                 text=action_text,
-                actor_user_id=acting_context.actor_user_id, actor_is_keeper=actor_is_keeper,
+                actor_user_id=acting_context.actor_user_id,
                 resolved_location=resolved_location,
                 speaker_role="player",
                 conversation_id=conversation_id,
@@ -209,7 +209,6 @@ async def _run_sudo_act_locked(
 async def _dispatch_sudo_locked(
     conversation_id: str,
     actor_user_id: str,
-    is_keeper: bool,
     parsed: sudo_policy.ParsedSudoCommand,
     reply: Reply,
     send_dm: SendDM,
@@ -218,7 +217,7 @@ async def _dispatch_sudo_locked(
     format_mention: FormatMention,
 ) -> str:
     state = load_state(conversation_id)
-    if state.kp_assistant_user_id != actor_user_id and not is_keeper:
+    if not permissions.is_kp(state, actor_user_id):
         raise _SudoDenied("not_authorized")
     if parsed.subject_user_id == actor_user_id:
         raise _SudoDenied("self_target")
@@ -254,7 +253,7 @@ async def _dispatch_sudo_locked(
         if parsed.command == "act":
             return await _run_sudo_act_locked(
                 conversation_id, acting_context, parsed, state,
-                marker_reply, send_dm, marker_image, send_dm_image, actor_is_keeper=is_keeper,
+                marker_reply, send_dm, marker_image, send_dm_image,
             )
 
         if parsed.command == "check":
@@ -323,7 +322,7 @@ async def _dispatch_sudo_locked(
         if parsed.command in {"showpage", "where", "enter", "leavemap"}:
             result = await map_handler.handle_map_command(
                 conversation_id, acting_context.subject_user_id, marker_reply, marker_image, player_parts,
-                send_dm=send_dm, send_dm_image=send_dm_image, actor_user_id=acting_context.actor_user_id, actor_is_keeper=is_keeper,
+                send_dm=send_dm, send_dm_image=send_dm_image, actor_user_id=acting_context.actor_user_id,
             )
             return "success" if result else "rejected"
         raise _SudoDenied("forbidden_command")
@@ -338,7 +337,6 @@ async def _handle_sudo_command(
     send_dm_image: SendDMImage,
     parts: list[str],
     format_mention: FormatMention,
-    is_keeper: bool,
     allow_opaque_target: bool,
     post_turn_hook: PostTurnHook | None = None,
     expected_revision: int | None = None,
@@ -362,7 +360,6 @@ async def _handle_sudo_command(
                 dispatch_status = await _dispatch_sudo_locked(
                     conversation_id,
                     actor_user_id,
-                    is_keeper,
                     parsed,
                     reply,
                     send_dm,
@@ -460,9 +457,10 @@ async def handle_text_message(
     send_dm_image: SendDMImage,
     text: str,
     format_mention: FormatMention = lambda owner_id: owner_id,
-    is_keeper: bool = False,
     allow_opaque_sudo_target: bool = False,
     *,
+    can_manage_server: bool = False,
+    bot_user_ids: frozenset[str] = frozenset(),
     post_turn_hook: PostTurnHook | None = None,
     expected_revision: int | None = None,
     referenced_message_id: str | None = None,
@@ -475,8 +473,9 @@ async def handle_text_message(
         with mutation_admission.command_scope(text), observability.span("router", command_name=text.split()[1] if len(text.split()) > 1 else "text"):
             await _handle_text_message_impl(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-                send_dm_image, text, format_mention, is_keeper, allow_opaque_sudo_target,
+                send_dm_image, text, format_mention, allow_opaque_sudo_target,
                 post_turn_hook, expected_revision, referenced_message_id,
+                can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
             )
     except mutation_admission.MutationHeld:
         await reply(mutation_admission.NOTICE)
@@ -664,11 +663,13 @@ async def _handle_text_message_impl(
     send_dm_image: SendDMImage,
     text: str,
     format_mention: FormatMention = lambda owner_id: owner_id,
-    is_keeper: bool = False,
     allow_opaque_sudo_target: bool = False,
     post_turn_hook: PostTurnHook | None = None,
     expected_revision: int | None = None,
     referenced_message_id: str | None = None,
+    *,
+    can_manage_server: bool = False,
+    bot_user_ids: frozenset[str] = frozenset(),
 ) -> None:
     text = text.strip()
 
@@ -690,7 +691,6 @@ async def _handle_text_message_impl(
             send_dm_image,
             command_parts,
             format_mention,
-            is_keeper,
             allow_opaque_sudo_target,
             post_turn_hook,
             expected_revision,
@@ -704,7 +704,7 @@ async def _handle_text_message_impl(
         try:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await handle_check_command(conversation_id, user_id, reply, send_dm, send_image, send_dm_image, text)
@@ -720,7 +720,7 @@ async def _handle_text_message_impl(
         try:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 if choice.casefold() == "roll":
@@ -734,10 +734,10 @@ async def _handle_text_message_impl(
     if coc_subcommand == "correct":
         async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
             await correct_handler.handle_correct_command(
                 conversation_id, user_id, reply, command_parts,
-                is_keeper=is_keeper, referenced_message_id=referenced_message_id,
+                referenced_message_id=referenced_message_id,
             )
         return
 
@@ -751,7 +751,7 @@ async def _handle_text_message_impl(
         if sub == "combat":
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await combat_handler.handle_combat_command(conversation_id, reply, parts)
@@ -760,7 +760,7 @@ async def _handle_text_message_impl(
         if sub in _CHARACTER_COMMANDS:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await character_handler.handle_character_command(conversation_id, user_id, reply, send_dm, parts)
@@ -782,24 +782,25 @@ async def _handle_text_message_impl(
                         return
                 await system_handler.handle_system_command(
                     conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
-                    is_keeper, expected_revision,
+                    expected_revision=expected_revision,
+                    can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
                 )
             else:
                 async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
                     if not await _help_revision_matches(conversation_id, expected_revision, reply):
                         return
                     await system_handler.handle_system_command(
                         conversation_id, user_id, reply, send_dm, send_image, send_dm_image, parts, format_mention,
-                        is_keeper,
+                        can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
                     )
             return
 
         if sub in _MAP_COMMANDS:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
                 await map_handler.handle_map_command(conversation_id, user_id, reply, send_image, parts,
@@ -808,7 +809,7 @@ async def _handle_text_message_impl(
 
         async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+                                              speaker_role="player"):
             state = load_state(conversation_id)
             await reply(help_service.get_page(state, user_id).text)
         return
@@ -835,7 +836,7 @@ async def _handle_text_message_impl(
         if not scheduling_state.kp_assistant_user_id:
             async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
                                                   route=coc_subcommand or "text",
-                                                  speaker_role="keeper" if is_keeper else "player") as handoff:
+                                                  speaker_role="player") as handoff:
                 prefetched = await prefetch_task if prefetch_task else None
                 await _handle_ordinary_text_message_locked(
                     conversation_id, user_id, get_display_name, reply, send_dm, send_image,
@@ -847,7 +848,7 @@ async def _handle_text_message_impl(
         async with _keeper_priority_gate_and_lock_with_notice(
             conversation_id, is_kp=is_kp_priority, reply=reply,
             post_turn_hook=post_turn_hook, route="text",
-            speaker_role="kp_assistant" if is_kp_priority else ("keeper" if is_keeper else "player"),
+            speaker_role="kp_assistant" if is_kp_priority else "player",
         ) as handoff:
             prefetched = await prefetch_task if prefetch_task else None
             await _handle_ordinary_text_message_locked(

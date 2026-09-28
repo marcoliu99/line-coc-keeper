@@ -122,7 +122,6 @@ class MovementProposal:
     candidate_page: str = ''
     candidate_room: str = ''
     evidence_refs: tuple[str, ...] = ()
-    actor_is_keeper: bool = False
     origin_facing: str = "N"
 
 
@@ -285,7 +284,6 @@ class MovementSession:
     _final_skill: str = ""
     actor_id: str = ""
     subject_id: str = ""
-    actor_is_keeper: bool = False
 
     def guard(self, state: GroupState, name: str, args: dict) -> str:
         p = self.proposal
@@ -371,7 +369,7 @@ class MovementSession:
                                span if isinstance(span, str) else '')
             p = MovementProposal(uuid4().hex, state.timeline_id, self.actor_id, self.subject_id,
                 char.character_id, position(state, self.subject_id), source_version(state), span,
-                actor_is_keeper=self.actor_is_keeper, origin_facing=state.party_facing.get(self.subject_id, "N"))
+                origin_facing=state.party_facing.get(self.subject_id, "N"))
             self.proposal = p
 
         def mutate(latest: GroupState):
@@ -382,7 +380,8 @@ class MovementSession:
             error = self.guard(latest, 'commit_movement', args)
             if error:
                 return keeper._StateMutation(_reject(error, latest, args, p.original_span), should_save=False)
-            if p.actor_id != p.subject_id and p.actor_id != latest.kp_assistant_user_id and not p.actor_is_keeper:
+            # Only the investigator's own player, or the KP Assistant through sudo, may move them.
+            if p.actor_id != p.subject_id and p.actor_id != latest.kp_assistant_user_id:
                 return keeper._StateMutation(_reject('movement_actor_not_authorized', latest, args, p.original_span), should_save=False)
             existing = next((e for e in latest.arrival_events if e.get('proposal_id') == p.proposal_id
                              and e.get('timeline_id') == p.timeline_id), None)
@@ -640,7 +639,7 @@ class MovementSession:
                 'facing': facing, 'movement_kind': 'local_path' if target_page == current_page and target_room else 'scene_transition'}
 
 
-def session_for(state: GroupState, actor: str, subject: str, text: str, rag: str = '', *, actor_is_keeper: bool = False) -> MovementSession:
+def session_for(state: GroupState, actor: str, subject: str, text: str, rag: str = '') -> MovementSession:
     from app import keeper
     # Incomplete retrieval is insufficient for resolving the scenario's full
     # mechanics, but its exact passages remain valid evidence that a requested
@@ -652,12 +651,9 @@ def session_for(state: GroupState, actor: str, subject: str, text: str, rag: str
     for entry in state.established_facts:
         if entry.get('source_event_id') and entry.get('text'):
             sources[f"fact:{entry['source_event_id']}"] = entry['text']
-    from dataclasses import replace
     proposal = propose(state, actor, subject, text)
-    if proposal:
-        proposal = replace(proposal, actor_is_keeper=actor_is_keeper)
     return MovementSession(proposal, text, sources, retrieval_sources=retrieval_sources,
-                           actor_id=actor, subject_id=subject, actor_is_keeper=actor_is_keeper)
+                           actor_id=actor, subject_id=subject)
 
 
 def resume(state: GroupState, subject: str, context: dict) -> dict | None:

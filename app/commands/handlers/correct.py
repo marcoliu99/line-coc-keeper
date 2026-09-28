@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app import db
+from app.commands import permissions
 from app.legacy_commands import Reply
 from app.models import GroupState
 from app.repositories.group_state import load_state, save_state
@@ -72,11 +73,10 @@ async def handle_correct_command(
     reply: Reply,
     parts: list[str],
     *,
-    is_keeper: bool = False,
     referenced_message_id: str | None = None,
 ) -> None:
     state = load_state(conversation_id)
-    is_kp = is_keeper or bool(state.kp_assistant_user_id and state.kp_assistant_user_id == user_id)
+    is_kp = permissions.is_kp(state, user_id)
     action = parts[2].casefold() if len(parts) > 2 else ""
 
     if action == "supersede":

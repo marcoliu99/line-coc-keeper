@@ -23,6 +23,7 @@ from app import (
     spoiler_policy,
 )
 from app.agents import supervisor
+from app.commands import permissions
 from app.config import IMPORT_DIR
 from app.legacy_commands import (
     FormatMention,
@@ -32,7 +33,6 @@ from app.legacy_commands import (
     SendImage,
     _build_readiness_roster,
     _heal_character,
-    _is_kp_or_keeper,
     _resolve_pdf_upload_choice_locked,
     _run_post_turn_maintenance_after_output,
     _set_character_away_state,
@@ -55,8 +55,8 @@ async def _handle_local_import(
     expected_revision: int | None = None,
 ) -> None:
     state = load_state(conversation_id)
-    if state.kp_assistant_user_id != user_id:
-        await reply("只有目前登記的 KP Assistant 可以匯入伺服器上的 PDF。")
+    if not permissions.is_kp(state, user_id):
+        await reply("只有目前的 KP 助手可以匯入伺服器上的 PDF。")
         return
     filename_index = 3 if len(parts) > 1 and parts[1] == "scenario" else 2
     if len(parts) <= filename_index:
@@ -78,8 +78,8 @@ async def _handle_staged_merge(
     expected_revision: int | None = None,
 ) -> None:
     state = load_state(conversation_id)
-    if state.kp_assistant_user_id != user_id:
-        await reply("只有目前登記的 KP Assistant 可以合併 PDF。")
+    if not permissions.is_kp(state, user_id):
+        await reply("只有目前的 KP 助手可以合併 PDF。")
         return
     refs = parts[3:]
     if not refs:
@@ -147,15 +147,17 @@ async def handle_system_command(
     send_dm_image: SendDMImage,
     parts: list[str],
     format_mention: FormatMention = lambda owner_id: owner_id,
-    is_keeper: bool = False,
+    *,
     expected_revision: int | None = None,
+    can_manage_server: bool = False,
+    bot_user_ids: frozenset[str] = frozenset(),
 ) -> None:
     sub = parts[1].casefold() if len(parts) > 1 else ""
 
     if sub in ("checkpoint", "checkpoints", "rollback"):
         state = load_state(conversation_id)
-        if state.kp_assistant_user_id != user_id and not is_keeper:
-            await reply("只有目前登記的 KP Assistant 可以操作回溯節點。")
+        if not permissions.is_kp(state, user_id):
+            await reply("只有目前的 KP 助手可以操作回溯節點。")
             return
         if sub == "checkpoint":
             if len(parts) > 2 and parts[2].casefold() == "clean":
@@ -210,8 +212,8 @@ async def handle_system_command(
 
     if sub in ("digest", "digests"):
         state = load_state(conversation_id)
-        if state.kp_assistant_user_id != user_id and not is_keeper:
-            await reply("只有目前登記的 KP Assistant 可以查看場景摘要。")
+        if not permissions.is_kp(state, user_id):
+            await reply("只有目前的 KP 助手可以查看場景摘要。")
             return
         if sub == "digests":
             entries = scene_digest.list_digests(conversation_id)
@@ -257,8 +259,8 @@ async def handle_system_command(
         action = parts[2].casefold() if len(parts) > 2 else "list"
         state = load_state(conversation_id)
         if action == "source":
-            if not (is_keeper or state.kp_assistant_user_id == user_id):
-                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以管理英文來源。")
+            if not permissions.is_kp(state, user_id):
+                await reply("只有目前的 KP 助手可以管理英文來源。")
                 return
             if len(parts) < 5:
                 await reply("用法：/coc scenario source export|import|status 劇本ID [檔名或匯出ID]")
@@ -310,8 +312,8 @@ async def handle_system_command(
                 logging.getLogger(__name__).exception("English preparation or private delivery failed")
             return
         if action == "template":
-            if not (is_keeper or state.kp_assistant_user_id == user_id):
-                await reply("只有 KP 可以管理中文劇本模板。")
+            if not permissions.is_kp(state, user_id):
+                await reply("只有目前的 KP 助手可以管理中文劇本模板。")
                 return
             if len(parts) < 5:
                 await reply("用法：/coc scenario template status|export|preview|approve|import 劇本ID [版本或檔名]")
@@ -363,8 +365,8 @@ async def handle_system_command(
                 await reply(f"中文模板無法處理：{exc}")
             return
         if action == "cards":
-            if not (is_keeper or state.kp_assistant_user_id == user_id):
-                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以管理手動角色卡。")
+            if not permissions.is_kp(state, user_id):
+                await reply("只有目前的 KP 助手可以管理手動角色卡。")
                 return
             if len(parts) < 5 or parts[3] not in {"list", "delete"}:
                 await reply("用法：/coc scenario cards list 劇本ID | delete 劇本ID 資產ID")
@@ -432,8 +434,8 @@ async def handle_system_command(
             await reply("\n".join(lines))
             return
         if action == "reparse":
-            if not _is_kp_or_keeper(state, user_id, is_keeper):
-                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以重新解析劇本。")
+            if not permissions.may_manage_scenario_lifecycle(state, user_id):
+                await reply("只有目前的 KP 助手可以重新解析劇本。")
                 return
             if state.pending_pregen_luck:
                 await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
@@ -445,8 +447,8 @@ async def handle_system_command(
                 if expected_revision is not None and state.state_revision != expected_revision:
                     await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
                     return
-                if not _is_kp_or_keeper(state, user_id, is_keeper):
-                    await reply("只有目前的 KP Assistant 或 Discord Keeper 可以重新解析劇本。")
+                if not permissions.may_manage_scenario_lifecycle(state, user_id):
+                    await reply("只有目前的 KP 助手可以重新解析劇本。")
                     return
                 if state.pending_pregen_luck:
                     await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
@@ -490,8 +492,8 @@ async def handle_system_command(
                             save_state(recovery_state)
             return
         if action == "cancel":
-            if not _is_kp_or_keeper(state, user_id, is_keeper):
-                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以取消劇本處理。")
+            if not permissions.may_manage_scenario_lifecycle(state, user_id):
+                await reply("只有目前的 KP 助手可以取消劇本處理。")
                 return
             pending = state.pending_scenario_upload
             if pending is None:
@@ -503,8 +505,8 @@ async def handle_system_command(
             await reply("已放棄本次上傳，既有劇本不受影響。")
             return
         if action == "use":
-            if not (is_keeper or state.kp_assistant_user_id == user_id):
-                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以選擇劇本。")
+            if not permissions.is_kp(state, user_id):
+                await reply("只有目前的 KP 助手可以選擇劇本。")
                 return
             if state.pending_pregen_luck:
                 await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。")
@@ -602,8 +604,8 @@ async def handle_system_command(
                         + (f"\n\n{artifact_notice}" if artifact_notice else ""))
             return
         if action == "clean":
-            if not _is_kp_or_keeper(state, user_id, is_keeper):
-                await reply("只有目前的 KP Assistant 或 Discord Keeper 可以清理劇本庫。")
+            if not permissions.may_manage_scenario_lifecycle(state, user_id):
+                await reply("只有目前的 KP 助手可以清理劇本庫。")
                 return
             if len(parts) < 4:
                 await reply("用法：/coc scenario clean 劇本ID")
@@ -644,8 +646,8 @@ async def handle_system_command(
 
     if sub == "pdf":
         state = load_state(conversation_id)
-        if not _is_kp_or_keeper(state, user_id, is_keeper):
-            await reply("只有目前的 KP Assistant 或 Discord Keeper 可以處理劇本 PDF。")
+        if not permissions.may_manage_scenario_lifecycle(state, user_id):
+            await reply("只有目前的 KP 助手可以處理劇本 PDF。")
             return
         choice_word = parts[2].casefold() if len(parts) > 2 else ""
         choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
@@ -669,8 +671,15 @@ async def handle_system_command(
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             return
 
+        if kp_action in ("transfer", "takeover"):
+            await _change_kp(
+                state, kp_action, user_id, parts[3] if len(parts) > 3 else None, reply, format_mention,
+                too_many_args=len(parts) > 4, can_manage_server=can_manage_server, bot_user_ids=bot_user_ids,
+            )
+            return
+
         if kp_action is not None:
-            await reply("用法：/coc kp 或 /coc kp quit")
+            await reply("用法：/coc kp、/coc kp quit、/coc kp transfer @成員、/coc kp takeover [@成員]")
             return
 
         if state.kp_assistant_user_id == user_id:
@@ -790,9 +799,9 @@ async def handle_system_command(
         if not index_data["npcs"] and not index_data["locations"]:
             await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
             return
-        # §7.1: only the KP Assistant/Discord Keeper sees the full index
+        # §7.1: only the KP Assistant sees the full index
         # (HP/abilities); everyone else gets names only.
-        is_privileged = state.kp_assistant_user_id == user_id or is_keeper
+        is_privileged = permissions.is_kp(state, user_id)
         if spoiler_policy.is_spoiler_protection_enabled() and not is_privileged:
             safe_index = spoiler_policy.redact_public_scenario_index(index_data)
             lines = [f"已重新建立劇本索引：{len(index_data['npcs'])} 個 NPC／怪物、{len(index_data['locations'])} 個地點。"]
@@ -800,7 +809,7 @@ async def handle_system_command(
                 lines.append(f"・{n.get('name') or '未知存在'}")
             await reply(
                 "\n".join(lines)
-                + "\n\n（詳細數值僅供 KP Assistant／Discord Keeper 查看，一般玩家只會看到已登場的名稱。）"
+                + "\n\n（詳細數值僅供 KP 助手查看，一般玩家只會看到已登場的名稱。）"
             )
             return
         lines = [f"已重新建立劇本索引：{len(index_data['npcs'])} 個 NPC／怪物、{len(index_data['locations'])} 個地點。"]
@@ -921,3 +930,66 @@ async def handle_system_command(
         return
 
     await reply(f"未知的系統指令：{sub}")
+
+
+async def _change_kp(
+    state,
+    action: str,
+    user_id: str,
+    target_token: str | None,
+    reply: Reply,
+    format_mention: FormatMention,
+    *,
+    too_many_args: bool,
+    can_manage_server: bool,
+    bot_user_ids: frozenset[str],
+) -> None:
+    """`/coc kp transfer @member` and `/coc kp takeover [@member]`.
+
+    transfer: the current KP Assistant hands the seat over. takeover: a
+    member with Discord's Manage Server permission takes the seat, or
+    appoints someone to it, when the KP Assistant is missing. Both are
+    announced publicly; the seat's exclusivity rules always apply.
+    """
+    if too_many_args or (action == "transfer" and target_token is None):
+        await reply("用法：/coc kp transfer @成員 或 /coc kp takeover [@成員]")
+        return
+    new_kp = user_id
+    if target_token is not None:
+        mentioned = permissions.mentioned_user_id(target_token)
+        if mentioned is None:
+            await reply("請用 @ 指定一位成員。")
+            return
+        new_kp = mentioned
+    if action == "transfer" and not permissions.is_kp(state, user_id):
+        await reply(permissions.kp_only("交接 KP 助手身分"))
+        return
+    if action == "takeover" and not can_manage_server:
+        await reply("只有在這個伺服器擁有「管理伺服器」權限的成員，才能接手或指派 KP 助手。")
+        return
+    if new_kp == state.kp_assistant_user_id:
+        await reply("這位成員已經是這局的 KP 助手。")
+        return
+    blocker = permissions.kp_seat_blocker(state, new_kp, is_bot=new_kp in bot_user_ids)
+    if blocker:
+        if action == "takeover" and new_kp == user_id:
+            blocker += "你可以改用 /coc kp takeover @成員，指派一位沒有在玩的成員擔任 KP 助手。"
+        await reply(blocker)
+        return
+    previous = state.kp_assistant_user_id
+    state.kp_assistant_user_id = new_kp
+    state.kp_ooc_log = []
+    save_state(state)
+    observability.event(
+        f"kp.{action}",
+        actor_hash=observability.safe_identifier(user_id),
+        previous_hash=observability.safe_identifier(previous) if previous else None,
+        new_hash=observability.safe_identifier(new_kp),
+    )
+    replaced = f"（取代原本的 KP 助手 {format_mention(previous)}）" if previous else ""
+    if action == "transfer":
+        await reply(f"{format_mention(user_id)} 已將 KP 助手交接給 {format_mention(new_kp)}。")
+    elif new_kp == user_id:
+        await reply(f"{format_mention(user_id)} 已接手成為這局的 KP 助手{replaced}。")
+    else:
+        await reply(f"{format_mention(user_id)} 指派 {format_mention(new_kp)} 擔任這局的 KP 助手{replaced}。")

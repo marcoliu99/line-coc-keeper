@@ -277,7 +277,7 @@
 - `/coc scenario cards delete 劇本ID 資產ID`
 
 注意：
-- 只有目前的 KP Assistant 或 Discord Keeper 可以執行。
+- 只有目前的 KP 助手可以執行。
 
 ### 清理劇本庫
 
@@ -462,7 +462,7 @@
 - `/coc checkpoint clean ID`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 查看回溯節點 **[KP-only]**
 
@@ -472,7 +472,7 @@
 - `/coc checkpoints`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 查看場景摘要 **[KP-only]**
 
@@ -484,7 +484,7 @@
 - `/coc digest clean 摘要ID`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 列出場景摘要 **[KP-only]**
 
@@ -494,7 +494,7 @@
 - `/coc digests`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 登記 KP Assistant
 
@@ -503,6 +503,11 @@
 用法：
 - `/coc kp`
 - `/coc kp quit`
+- `/coc kp transfer @成員`
+- `/coc kp takeover [@成員]`
+
+注意：
+- transfer：現任 KP 助手交接給別人。takeover：擁有 Discord「管理伺服器」權限的成員接手或指派 KP 助手；KP 助手與調查員角色互斥。
 
 ### 回溯遊戲狀態 **[KP-only]**
 
@@ -512,7 +517,7 @@
 - `/coc rollback 節點ID或唯一名稱`
 
 注意：
-- 需要目前 KP Assistant 或 Discord Keeper role。
+- 需要目前的 KP 助手。
 
 ### 代玩家操作 **[KP-only]**
 
@@ -524,7 +529,7 @@
 - `/coc sudo <@玩家> retire [角色名]`
 
 注意：
-- KP-only：需要目前 KP Assistant 或 Discord Keeper role；不能代替玩家擲 LUCK、建立或認領角色。
+- KP-only：需要目前的 KP 助手；不能代替玩家擲 LUCK、建立或認領角色。
 - actor 必須先脫離自己的玩家角色／建角流程。
 
 ## 其他

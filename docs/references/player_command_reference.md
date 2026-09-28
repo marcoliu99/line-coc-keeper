@@ -303,7 +303,7 @@ Usage:
 - `/coc scenario cards delete 劇本ID 資產ID`
 
 Notes:
-- Only the current KP Assistant or Discord Keeper may execute this.
+- Only the current KP Assistant may execute this.
 
 ### Clean scenario library
 
@@ -467,7 +467,7 @@ Usage:
 - `/coc checkpoint clean ID`
 
 Notes:
-- Requires the current KP Assistant or Discord Keeper role.
+- Requires the current KP Assistant.
 
 ### List checkpoints **[KP-only]**
 
@@ -477,7 +477,7 @@ Usage:
 - `/coc checkpoints`
 
 Notes:
-- Requires the current KP Assistant or Discord Keeper role.
+- Requires the current KP Assistant.
 
 ### View scene digest **[KP-only]**
 
@@ -489,7 +489,7 @@ Usage:
 - `/coc digest clean 摘要ID`
 
 Notes:
-- Requires the current KP Assistant or Discord Keeper role.
+- Requires the current KP Assistant.
 
 ### List scene digests **[KP-only]**
 
@@ -499,15 +499,19 @@ Usage:
 - `/coc digests`
 
 Notes:
-- Requires the current KP Assistant or Discord Keeper role.
+- Requires the current KP Assistant.
 
 ### Register KP Assistant
 
-Register or release the game's KP Assistant role.
+Register, release, hand over or take over the game's KP Assistant role. A group has at most one KP Assistant, who can't also play an investigator.
 
 Usage:
 - `/coc kp`
 - `/coc kp quit`
+- `/coc kp transfer @member`: the current KP Assistant hands the role to another member.
+- `/coc kp takeover [@member]`: a member with Discord's **Manage Server** permission takes the role, or appoints `@member` to it, when the KP Assistant is missing. A manager who is playing an investigator must appoint someone else. Both changes are announced in the channel.
+
+No Discord role grants KP authority; it belongs only to the registered KP Assistant.
 
 ### Restore game state **[KP-only]**
 
@@ -517,7 +521,7 @@ Usage:
 - `/coc rollback 節點ID或唯一名稱`
 
 Notes:
-- Requires the current KP Assistant or Discord Keeper role.
+- Requires the current KP Assistant.
 
 ### Act for a player **[KP-only]**
 
@@ -529,7 +533,7 @@ Usage:
 - `/coc sudo <@玩家> retire [角色名]`
 
 Notes:
-- KP-only: requires the current KP Assistant or Discord Keeper role; cannot roll creation LUCK, create or claim a character for the player.
+- KP-only: requires the current KP Assistant; cannot roll creation LUCK, create or claim a character for the player.
 - The actor must first leave their own player binding/character-creation flow.
 
 ## Other

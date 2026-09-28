@@ -17,7 +17,6 @@ async def handle_map_command(
     send_dm: SendDM | None = None,
     send_dm_image: SendDMImage | None = None,
     actor_user_id: str | None = None,
-    actor_is_keeper: bool = False,
 ) -> bool:
     sub = parts[1].casefold() if len(parts) > 1 else ""
 
@@ -90,7 +89,7 @@ async def handle_map_command(
     async with locks.narrating_turn(conversation_id):
         public, private, images = await supervisor.run_turn(
             state, user_id, character.name, action, None, "player", conversation_id,
-            actor_user_id=actor_user_id or user_id, actor_is_keeper=actor_is_keeper,
+            actor_user_id=actor_user_id or user_id,
         )
         if send_dm is not None and send_dm_image is not None:
             await _run_post_turn_maintenance_after_output(
