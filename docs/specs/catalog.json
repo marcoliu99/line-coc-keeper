@@ -3,8 +3,8 @@
   "reviewed_date": "2026-09-27",
   "specs": [
     {
-      "title": "Source-grounded movement destination aliases",
-      "zh": "有來源依據的移動目的地別名",
+      "title": "AI-adjudicated movement destination matching",
+      "zh": "由 AI 裁定移動目的地名稱",
       "category": "bug",
       "status": "backlog",
       "evidence": [
