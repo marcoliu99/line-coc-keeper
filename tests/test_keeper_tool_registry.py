@@ -100,3 +100,17 @@ def test_registry_covers_schemas_and_preserves_provider_order() -> None:
         assert [tool["name"] for tool in keeper._tools_for_speaker_role("kp_assistant")] == [
             name for name in (*PLAYER_TOOL_ORDER, "search_scenario") if name in KP_ALLOWED
         ]
+
+
+def test_character_family_dispatches_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="character-family")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy character dispatch")),
+          patch.object(keeper, "refresh_tool_state")):
+        result = keeper._execute_tool(
+            state, "get_character_sheet", {"investigator": "Ada"}, [], [],
+        )
+    assert result["ok"] and result["sheet"]["name"] == "Ada"
