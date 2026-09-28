@@ -1157,12 +1157,12 @@
       "title": "Combat start and enemy de-duplication live in combat.py",
       "zh": "開戰與敵人去重的規則收進 combat.py",
       "category": "refactor",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/combat.py",
         "app/keeper.py",
         "app/commands/handlers/combat.py",
-        "tests/test_combat_cards.py",
+        "tests/test_combat_start_in_combat_module.py",
         "tests/test_state_persistence.py"
       ],
       "path": "docs/specs/refactor/combat_start_in_combat_module_design_spec.md",

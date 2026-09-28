@@ -2,7 +2,7 @@
 
 [繁體中文](combat_start_in_combat_module_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review). Base: `main_v2` at `a68df95`.
+Status: **implemented**. Base: `main_v2` at `a68df95`.
 
 ## Problem
 
@@ -27,16 +27,18 @@ The handler copies build `event_id` from `conversation_id`, while the Keeper bui
 ```python
 # app/combat.py
 def begin_combat(state) -> None                     # checkpoint if inactive, then start_combat
-def find_live_enemy(state, name) -> Combatant | None  # moved alias-aware lookup
-def add_combatant(state, name, dex, hp, *, is_ally, **card) -> AddResult
-    # checkpoint-if-inactive + duplicate guard + add_npc; AddResult says added vs reused
+def find_npc_index_entry_exact(state, name) -> dict | None      # moved, now public
+def find_live_enemy_by_any_alias(state, name) -> Combatant | None  # moved, same name
+def add_combatant(state, name, dex, hp, *, is_ally, armor, attacks, abilities) -> Combatant | None
+    # duplicate guard + checkpoint-if-inactive + add_npc;
+    # returns the live enemy it refused to duplicate, None when added
 ```
 
 `combat.py` may import `checkpoints` (it imports `db`, `locks`, `observability`, `models`, `mutation_admission` and the repository, none of which import `combat`), so no import cycle is introduced. The `event_id` always uses `state.group_id`.
 
 ## Scope
 
-1. Move `_find_npc_index_entry_exact` and `find_live_enemy_by_any_alias` into `combat.py` as `find_live_enemy`. `keeper._find_npc_index_entry`, the fuzzy HP-canonicalisation lookup, stays in `keeper.py` and calls the moved exact lookup. Update its one outside reference (`tests/test_state_persistence.py`) instead of keeping a `keeper` alias.
+1. Move `_find_npc_index_entry_exact` and `find_live_enemy_by_any_alias` into `combat.py`, keeping `find_live_enemy_by_any_alias`'s name (`combat.find_live_enemy`, the single-name exact match, already exists) and making the exact lookup public as `find_npc_index_entry_exact`, since `keeper` calls it. `keeper._find_npc_index_entry`, the fuzzy HP-canonicalisation lookup, stays in `keeper.py` and calls the moved exact lookup. Update its one outside reference (`tests/test_state_persistence.py`) instead of keeping a `keeper` alias.
 2. Add `begin_combat` and `add_combatant`. The Keeper's `start_combat` / `add_npc_to_combat` tools call them inside their existing mutators. Index-driven HP canonicalisation and its note stay in the Keeper tool, because that step is Keeper-specific.
 3. The handler calls the same functions in place of its inline copies, keeping its existing `load_state` / `save_state` under the router's conversation lock.
 4. Delete `keeper._ensure_auto_combat_checkpoint` and both inline handler copies.

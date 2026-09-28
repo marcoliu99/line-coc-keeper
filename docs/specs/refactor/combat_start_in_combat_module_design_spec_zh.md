@@ -2,7 +2,7 @@
 
 [English](combat_start_in_combat_module_design_spec.md)
 
-狀態：**backlog**（等待規格審查）。基準：`main_v2` 的 `a68df95`。
+狀態：**已實作**。基準：`main_v2` 的 `a68df95`。
 
 ## 問題
 
@@ -27,16 +27,18 @@ handler 版本用 `conversation_id` 組 `event_id`，Keeper 版本用 `state.gro
 ```python
 # app/combat.py
 def begin_combat(state) -> None                     # 非戰鬥中就建立存檔點，再 start_combat
-def find_live_enemy(state, name) -> Combatant | None  # 搬過來的別名感知查詢
-def add_combatant(state, name, dex, hp, *, is_ally, **card) -> AddResult
-    # 非戰鬥中就建立存檔點 + 去重防護 + add_npc；AddResult 標明是新增還是沿用
+def find_npc_index_entry_exact(state, name) -> dict | None      # 搬過來，改為公開
+def find_live_enemy_by_any_alias(state, name) -> Combatant | None  # 搬過來，名稱不變
+def add_combatant(state, name, dex, hp, *, is_ally, armor, attacks, abilities) -> Combatant | None
+    # 去重防護 + 非戰鬥中就建立存檔點 + add_npc；
+    # 回傳因重複而沒有新增的那個存活敵人，新增成功時回傳 None
 ```
 
 `combat.py` 可以匯入 `checkpoints`（後者匯入的 `db`、`locks`、`observability`、`models`、`mutation_admission` 和 repository 都沒有匯入 `combat`），不會造成循環匯入。`event_id` 一律使用 `state.group_id`。
 
 ## 範圍
 
-1. 把 `_find_npc_index_entry_exact` 和 `find_live_enemy_by_any_alias` 搬進 `combat.py`，後者改名為 `find_live_enemy`。`keeper._find_npc_index_entry`（用於 HP 校正的模糊查詢）留在 `keeper.py`，改為呼叫搬過去的精確查詢。`app/` 以外唯一的引用（`tests/test_state_persistence.py`）直接改掉，不在 `keeper` 保留別名。
+1. 把 `_find_npc_index_entry_exact` 和 `find_live_enemy_by_any_alias` 搬進 `combat.py`。`find_live_enemy_by_any_alias` 保留原名（`combat.find_live_enemy` 這個單一名稱的精確比對已經存在），精確查詢則改為公開的 `find_npc_index_entry_exact`，因為 `keeper` 會呼叫它。`keeper._find_npc_index_entry`（用於 HP 校正的模糊查詢）留在 `keeper.py`，改為呼叫搬過去的精確查詢。`app/` 以外唯一的引用（`tests/test_state_persistence.py`）直接改掉，不在 `keeper` 保留別名。
 2. 新增 `begin_combat` 和 `add_combatant`。Keeper 的 `start_combat`／`add_npc_to_combat` 工具在既有的 mutator 內呼叫它們。依索引校正 HP 和相關提示是 Keeper 特有的步驟，留在 Keeper 工具裡。
 3. handler 改為呼叫同一組函式，取代內嵌的副本；原本在 router 對話鎖下的 `load_state`／`save_state` 維持不變。
 4. 刪除 `keeper._ensure_auto_combat_checkpoint` 和 handler 裡的兩份內嵌副本。
