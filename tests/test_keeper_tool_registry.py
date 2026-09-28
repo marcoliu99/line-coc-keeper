@@ -1,4 +1,4 @@
-"""Pin the old tool lists while handlers migrate to the registry."""
+"""Verify Keeper tool registry coverage, routing, and provider order."""
 from collections.abc import Callable
 from unittest.mock import patch
 
@@ -22,69 +22,17 @@ PLAYER_TOOL_ORDER = (
     "search_memory",
 )
 
-READ_ONLY = frozenset({
-    "roll_dice", "roll_impaling_damage", "roll_weapon_damage", "get_character_sheet",
-    "get_combat_status", "search_scenario_images", "search_memory",
-    "search_scenario", "report_summary",
-})
-CHECKS = frozenset({
-    "skill_check", "sanity_check", "offer_check_choice", "offer_npc_attack_defense_choice",
-})
-KP_ALLOWED = frozenset({
-    "get_character_sheet", "get_combat_status", "search_memory", "search_scenario",
-    "roll_dice", "skill_check", "sanity_check", "offer_check_choice",
-    "npc_skill_check", "offer_npc_attack_defense_choice", "clear_pending_check",
-    "roll_weapon_damage", "roll_impaling_damage", "apply_combat_damage",
-    "apply_final_combat_damage", "add_combat_effect", "search_scenario_images",
-    "show_scenario_image", "advance_scenario_chapter", "record_established_fact",
-    "record_clue",
-})
-KP_CANONICAL = frozenset({
-    "skill_check", "sanity_check", "offer_check_choice", "npc_skill_check",
-    "offer_npc_attack_defense_choice", "clear_pending_check", "roll_weapon_damage",
-    "roll_impaling_damage", "apply_combat_damage", "apply_final_combat_damage",
-    "add_combat_effect",
-})
-COMBAT_INVALIDATING = frozenset({
-    "start_combat", "add_npc_to_combat", "plan_enemy_turn", "advance_combat_turn",
-    "damage_combatant", "resolve_enemy_action", "apply_combat_damage",
-    "apply_final_combat_damage", "end_combat",
-})
-BOUNDED_QUERY = READ_ONLY - {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"}
-OPENING = BOUNDED_QUERY | {"send_private_info", "show_scenario_image"}
-INFORMATION_QUERY = frozenset({
-    "search_scenario", "search_memory", "get_character_sheet", "get_combat_status",
-    "search_scenario_images",
-})
-
-
-def test_derived_sets_match_pre_registry_literals() -> None:
-    expected = {
-        "read_only": READ_ONLY,
-        "resolved_check_followup": READ_ONLY | {
-            "apply_combat_damage", "apply_final_combat_damage", "advance_combat_turn",
-        },
-        "kp_assistant": KP_ALLOWED,
-        "kp_canonical_game": KP_CANONICAL,
-        "invalidates_combat_status": COMBAT_INVALIDATING,
-        "bounded_query": BOUNDED_QUERY,
-        "creates_check": CHECKS,
-        "opening": OPENING,
-        "information_query": INFORMATION_QUERY,
-    }
-    for flag, old_names in expected.items():
-        assert registry.names_with(flag) == old_names, flag
-
-    assert keeper.READ_ONLY_TOOL_NAMES == READ_ONLY
-    assert keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES == expected["resolved_check_followup"]
-    assert keeper._KP_ASSISTANT_ALLOWED_TOOL_NAMES == KP_ALLOWED
-    assert keeper._KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES == KP_CANONICAL
-    assert keeper._COMBAT_STATUS_INVALIDATING_TOOLS == COMBAT_INVALIDATING
-    assert tool_gateway.BOUNDED_QUERY_TOOLS == BOUNDED_QUERY
-    assert tool_gateway._CHECK_REGISTRATION_TOOLS == CHECKS
-    assert narrator._OPENING_TOOL_NAMES == OPENING
-    assert turn_context._CHECK_CREATION_TOOLS == CHECKS
-    assert turn_resolution.INFORMATION_QUERY_TOOLS == INFORMATION_QUERY
+def test_capability_consumers_use_registry_properties() -> None:
+    assert keeper.READ_ONLY_TOOL_NAMES == registry.READ_ONLY_TOOL_NAMES
+    assert keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES == registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+    assert keeper._KP_ASSISTANT_ALLOWED_TOOL_NAMES == registry.KP_ASSISTANT_ALLOWED_TOOL_NAMES
+    assert keeper._KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES == registry.KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES
+    assert keeper._COMBAT_STATUS_INVALIDATING_TOOLS == registry.COMBAT_STATUS_INVALIDATING_TOOLS
+    assert tool_gateway.BOUNDED_QUERY_TOOLS == registry.BOUNDED_QUERY_TOOLS
+    assert tool_gateway._CHECK_REGISTRATION_TOOLS == registry.CHECK_REGISTRATION_TOOLS
+    assert narrator._OPENING_TOOL_NAMES == registry.OPENING_TOOL_NAMES
+    assert turn_context._CHECK_CREATION_TOOLS == registry.CHECK_CREATION_TOOLS
+    assert turn_resolution.INFORMATION_QUERY_TOOLS == registry.INFORMATION_QUERY_TOOLS
 
 
 def test_registry_covers_schemas_and_preserves_provider_order() -> None:
@@ -100,15 +48,21 @@ def test_registry_covers_schemas_and_preserves_provider_order() -> None:
             *PLAYER_TOOL_ORDER, "search_scenario",
         ]
         assert [tool["name"] for tool in keeper._tools_for_speaker_role("kp_assistant")] == [
-            name for name in (*PLAYER_TOOL_ORDER, "search_scenario") if name in KP_ALLOWED
+            name for name in (*PLAYER_TOOL_ORDER, "search_scenario") if name in registry.KP_ASSISTANT_ALLOWED_TOOL_NAMES
         ]
+
+
+def test_summary_schema_is_not_a_turn_tool() -> None:
+    state = GroupState(group_id="summary-only")
+    with patch.object(keeper.mutation_admission, "assert_admitted"):
+        result = keeper._execute_tool(state, "report_summary", {"summary": "notes"}, [], [])
+    assert result == {"ok": False, "error": "未知工具 report_summary"}
 
 
 def test_check_family_dispatches_without_legacy_cascade() -> None:
     from app.models import GroupState
 
-    with (patch.object(keeper.mutation_admission, "assert_admitted"),
-          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy check dispatch"))):
+    with patch.object(keeper.mutation_admission, "assert_admitted"):
         result = keeper._execute_tool(
             GroupState(group_id="npc-check"), "npc_skill_check", {"skill_value": 100}, [], [],
         )
@@ -118,8 +72,7 @@ def test_check_family_dispatches_without_legacy_cascade() -> None:
 def test_dice_family_dispatches_without_legacy_cascade() -> None:
     state = GroupState(group_id="dice-family")
     state.characters["p1"] = Character(name="Investigator", owner_id="p1", occupation="Detective")
-    with (patch.object(keeper.mutation_admission, "assert_admitted"),
-          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy dice dispatch"))):
+    with patch.object(keeper.mutation_admission, "assert_admitted"):
         ordinary = keeper._execute_tool(state, "roll_dice", {"expression": "1d2"}, [], [])
         impaling = keeper._execute_tool(
             state, "roll_impaling_damage",
@@ -140,7 +93,6 @@ def test_character_family_dispatches_without_legacy_cascade() -> None:
     state = GroupState(group_id="character-family")
     state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
     with (patch.object(keeper.mutation_admission, "assert_admitted"),
-          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy character dispatch")),
           patch.object(keeper, "refresh_tool_state")):
         result = keeper._execute_tool(
             state, "get_character_sheet", {"investigator": "Ada"}, [], [],
@@ -159,7 +111,6 @@ def test_inventory_family_dispatches_without_legacy_cascade() -> None:
         return result.value if isinstance(result, keeper.ToolStateMutation) else result
 
     with (patch.object(keeper.mutation_admission, "assert_admitted"),
-          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy inventory dispatch")),
           patch.object(keeper, "mutate_tool_state", side_effect=mutate)):
         added = keeper._execute_tool(
             state, "add_carried_item", {"investigator": "Ada", "item": " key "}, [], [],
@@ -177,7 +128,6 @@ def test_scenario_search_family_dispatches_without_legacy_cascade() -> None:
     from app.models import GroupState
 
     with (patch.object(keeper.mutation_admission, "assert_admitted"),
-          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy search dispatch")),
           patch.object(memory_rag, "search_memory", return_value=[]),
           patch.object(memory_rag, "format_results", return_value="none")):
         result = keeper._execute_tool(
@@ -192,8 +142,7 @@ def test_messaging_family_delivers_privately_without_legacy_cascade() -> None:
     state = GroupState(group_id="private-message")
     state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
     messages: list[tuple[str, str]] = []
-    with (patch.object(keeper.mutation_admission, "assert_admitted"),
-          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy messaging dispatch"))):
+    with patch.object(keeper.mutation_admission, "assert_admitted"):
         result = keeper._execute_tool(
             state, "send_private_info", {"investigator": "Ada", "message": "secret"}, messages, [],
         )
@@ -208,7 +157,7 @@ def test_combat_family_uses_registered_handlers_without_legacy_cascade() -> None
         "resolve_enemy_action", "apply_combat_damage", "apply_final_combat_damage",
         "add_combat_effect", "end_combat",
     }
-    assert all(registry.REGISTRY[name].handler is not registry.legacy_handler
+    assert all(registry.REGISTRY[name].handler.__module__ == "app.keeper_tools.combat"
                for name in combat_names)
 
     state = GroupState(group_id="combat-family")
@@ -218,7 +167,6 @@ def test_combat_family_uses_registered_handlers_without_legacy_cascade() -> None
         return result.value if isinstance(result, keeper.ToolStateMutation) else result
 
     with (patch.object(keeper.mutation_admission, "assert_admitted"),
-          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy combat dispatch")),
           patch.object(keeper, "mutate_tool_state", side_effect=mutate),
           patch.object(keeper, "refresh_tool_state")):
         started = keeper._execute_tool(state, "start_combat", {}, [], [])

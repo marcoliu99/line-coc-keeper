@@ -2,7 +2,7 @@
 
 [English](keeper_tool_registry_design_spec.md)
 
-狀態：**partial**（已審查；註冊表與衍生集合已實作，處理函式家族待遷移）。基準：`main_v2` 的 `1a31645`。
+狀態：**partial**（所有處理函式家族與舊串接刪除已在堆疊分支實作，尚待整合）。基準：`main_v2` 的 `1a31645`。
 
 > 已對照目前的 `main_v2` 更新：`main_v2` 之後撤銷了 PR #99／#121 的移動服務（見 `docs/specs/bug/movement_authorization_diagnosability_design_spec.md`）。`app/services/movement.py`、`movement.TOOL`／`commit_movement` 和 `ORIGIN_TOOLS` 已經不存在，以下把它們和點名它們的遷移步驟一併移除。其餘內容仍與目前程式碼相符，行號已更新。
 
@@ -84,4 +84,4 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 
 訊息家族（`send_private_info`）已遷移至 `app/keeper_tools/messaging.py`。戰鬥家族由獨立分支遷移。
 
-戰鬥家族（開始戰鬥、加入 NPC、狀態查詢、回合推進、傷害、敵人行動計畫、效果與結束戰鬥）遷到 `app/keeper_tools/combat.py`。規則仍由 `app/combat.py` 負責；狀態寫入、被重傷關卡阻擋時不儲存，以及公開傷害結果過濾，仍經 Keeper 的正式共用函式處理。整合分支已包含全部家族；最後一步將移除空的舊串接。
+戰鬥家族（開始戰鬥、加入 NPC、狀態查詢、回合推進、傷害、敵人行動計畫、效果與結束戰鬥）遷到 `app/keeper_tools/combat.py`。規則仍由 `app/combat.py` 負責；狀態寫入、被重傷關卡阻擋時不儲存，以及公開傷害結果過濾，仍經 Keeper 的正式共用函式處理。整合分支已包含全部家族，空的舊串接與舊字面集合等價測試已刪除，工具傳給供應商的順序測試仍保留。`report_summary` 有明確的摘要專用處理函式；若當成回合工具呼叫，仍回覆原本的未知工具結果。

@@ -2,7 +2,7 @@
 
 [繁體中文](keeper_tool_registry_design_spec_zh.md)
 
-Status: **partial** (reviewed; registry and derived sets implemented, handler families pending). Base: `main_v2` at `1a31645`.
+Status: **partial** (all handler families and cascade removal implemented on stacked branches; integration pending). Base: `main_v2` at `1a31645`.
 
 > Refreshed against current `main_v2`: `main_v2` since reverted PR #99/#121's movement pipeline (`docs/specs/bug/movement_authorization_diagnosability_design_spec.md`). `app/services/movement.py`, `movement.TOOL`/`commit_movement`, and `ORIGIN_TOOLS` no longer exist, so they're dropped below along with the migration step that named them. Everything else here still matches the current code, with refreshed line numbers.
 
@@ -84,4 +84,4 @@ The scenario/search family (`record_established_fact`, `record_clue`, image sear
 
 The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`. The combat family is migrated separately.
 
-The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. All families are now combined on the integration branch; the final step removes the empty cascade.
+The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. All families are now combined on the integration branch. The empty cascade and old literal-set equivalence test are removed; provider tool order remains pinned. `report_summary` has an explicit summary-only handler that retains the old unknown-tool result if dispatched as a turn tool.
