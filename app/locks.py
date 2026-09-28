@@ -302,6 +302,34 @@ class TurnHandoff:
             get_narration_lock(self.conversation_id).release()
 
 
+@asynccontextmanager
+async def narrating_turn(conversation_id: str) -> AsyncIterator[None]:
+    """Hold the Keeper turn lock *and* this conversation's narration slot.
+
+    For a route that narrates, commits and posts without handing anything on:
+    `/coc check` and Luck follow-ups, `/coc map` moves, the `/coc start`
+    opening, and sudo acts.
+
+    The Keeper turn lock alone used to order these against an ordinary turn,
+    but only by accident — the ordinary turn held it to the end. Once
+    NARRATION_OUTSIDE_MUTATION_LOCK lets that turn hand its mutation locks on,
+    a command route would find both free and could narrate, commit its log
+    entries and post while the earlier turn was still narrating: two Narrators
+    at once on one conversation, with `state.log` and the visible replies in
+    the wrong order.
+
+    Always in this order — Keeper turn lock, then narration — and a turn that
+    hands off releases the first two *before* taking narration, so neither ever
+    waits on the other.
+    """
+    async with get_keeper_turn_lock(conversation_id):
+        await get_narration_lock(conversation_id).acquire()
+        try:
+            yield
+        finally:
+            get_narration_lock(conversation_id).release()
+
+
 def get_keeper_turn_lock(conversation_id: str) -> asyncio.Lock:
     lock = _keeper_turn_locks.get(conversation_id)
     if lock is None:

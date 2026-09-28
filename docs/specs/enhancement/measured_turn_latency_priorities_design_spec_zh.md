@@ -278,6 +278,10 @@ mutation 階段(對話鎖 + Keeper 回合鎖，皆 FIFO) -> Executor -> 兩把�
 - `TurnHandoff` 改為持有「這個回合在 mutation 階段拿到的每一把鎖」,新增的 `mutation_phase_lock()` 讓 router 把 Keeper 回合鎖也交給它;交接時以取得的反序一起釋放,離開該區塊時若已交接就不再釋放第二次。
 - **取得 Keeper 回合鎖之後重新載入 state。** 鎖前那份快照缺少「排隊等這把鎖期間被提交的東西」,無論旗標開關都不該拿去跑。
 
+**第二個審查發現由第一個衍生而來。** 把 Keeper 回合鎖交出去,等於拿掉了它原本「碰巧」提供的順序保證。其他所有會敘事的路徑——`/coc check` 與 Luck 後續(`legacy_commands.py`)、`/coc map` 移動、`/coc start` 開場、sudo act——都只取那一把鎖,所以在有回合交接過之後,它們會發現鎖是空的,於是同一個對話上跑起第二個 Narrator,並且搶先提交自己的 log 條目、搶先貼文。`state.log` 與玩家看到的訊息順序都會反過來。
+
+現在由 `locks.narrating_turn()` 同時持有 Keeper 回合鎖**與**該對話的敘事名額,上述四條路徑都改用它。順序固定是「Keeper 回合鎖 → 敘事鎖」,而交接過的回合是**先**釋放兩把 mutation 鎖**才**去取敘事鎖,因此兩邊永遠不會互等。`/coc map` 的貼文也一起移進區塊內:只排敘事卻不排貼文,兩則訊息仍然會顛倒。
+
 `locks.TurnHandoff` 負責記住這個回合還持有哪些鎖，router 的兩個 context manager 各 yield 一個，並在 `finally` 呼叫 `close()`。`close()` 只釋放「仍然持有的」，因此 `run_turn` 裡的十一條 return 路徑**不需要逐條處理**：沒交接的回合照舊釋放 mutation，交接過的則釋放 narration。`to_narration()` 具冪等性。
 
 `run_turn` 只在一個地方交接——reducer 之後——且僅限 `turn_kind == "player_action"`。`resolved_check_followup` 與 `opening_fallback` 保留 mutation 鎖到最後，因為 `narrator.py:44` 給它們受限工具集，而 #99 在該迴圈內提交到達。

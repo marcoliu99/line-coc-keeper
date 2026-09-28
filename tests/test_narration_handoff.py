@@ -399,3 +399,82 @@ class StateReloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after_handoff, [(False, False)])
         self.assertFalse(keeper_lock.locked())
         self.assertFalse(locks.get_narration_lock(conversation_id).locked())
+
+
+class CommandRouteOrderingTests(unittest.TestCase):
+    """A command route that narrates must queue behind a handed-off turn.
+
+    The Keeper turn lock used to order these by accident, because an ordinary
+    turn held it to the end. Once that turn hands its mutation locks on, a
+    `/coc check` follow-up, a `/coc map` move, the `/coc start` opening or a
+    sudo act would find both free and could narrate, commit and post ahead of
+    it — two Narrators on one conversation, and `state.log` out of order.
+    """
+
+    def setUp(self):
+        _fresh("conv")
+
+    def test_a_command_route_cannot_overtake_a_narrating_turn(self):
+        async def scenario():
+            events: list[str] = []
+            mutation = locks.get_conversation_lock("conv")
+            keeper = locks.get_keeper_turn_lock("conv")
+
+            async def ordinary_turn() -> None:
+                await mutation.acquire()
+                handoff = locks.TurnHandoff("conv", mutation)
+                try:
+                    async with handoff.mutation_phase_lock(keeper):
+                        events.append("turn:executor")
+                        await asyncio.sleep(0.01)
+                        await handoff.to_narration()
+                    events.append("turn:narrating")
+                    await asyncio.sleep(0.03)
+                    events.append("turn:committed")
+                    events.append("turn:posted")
+                finally:
+                    handoff.close()
+
+            async def command_route() -> None:
+                # What the router does for /coc check: conversation lock first,
+                # then the narrating-turn ordering.
+                await mutation.acquire()
+                try:
+                    async with locks.narrating_turn("conv"):
+                        events.append("command:narrating")
+                        events.append("command:committed")
+                        events.append("command:posted")
+                finally:
+                    mutation.release()
+
+            first = asyncio.create_task(ordinary_turn())
+            await asyncio.sleep(0)
+            second = asyncio.create_task(command_route())
+            await asyncio.wait_for(asyncio.gather(first, second), 5)
+            return events
+
+        events = asyncio.run(scenario())
+        # The command's Narrator may not start until the turn's has finished.
+        self.assertLess(events.index("turn:posted"), events.index("command:narrating"))
+        self.assertLess(events.index("turn:committed"), events.index("command:committed"))
+
+    def test_the_ordering_releases_both_locks_on_the_way_out(self):
+        async def scenario():
+            async with locks.narrating_turn("conv"):
+                pass
+            return (locks.get_keeper_turn_lock("conv").locked(),
+                    locks.get_narration_lock("conv").locked())
+
+        self.assertEqual(asyncio.run(scenario()), (False, False))
+
+    def test_an_exception_inside_the_ordering_frees_both(self):
+        async def scenario():
+            try:
+                async with locks.narrating_turn("conv"):
+                    raise RuntimeError("narration blew up")
+            except RuntimeError:
+                pass
+            return (locks.get_keeper_turn_lock("conv").locked(),
+                    locks.get_narration_lock("conv").locked())
+
+        self.assertEqual(asyncio.run(scenario()), (False, False))

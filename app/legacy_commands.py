@@ -1297,7 +1297,7 @@ async def _finalize_check_result(
         # "resolved_location is None" fallback block — it just won't be
         # mislabeled as a fresh Map Engine move this check never made.
         resolved_location = None
-        async with locks.get_keeper_turn_lock(conversation_id):
+        async with locks.narrating_turn(conversation_id):
             # The deterministic dice transaction may have finished before the
             # Keeper turn got the per-conversation slot.  Refresh the
             # authoritative snapshot so the provider sees the state that was

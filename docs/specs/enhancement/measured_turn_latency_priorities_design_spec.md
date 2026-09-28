@@ -278,6 +278,10 @@ The fix has two halves:
 - `TurnHandoff` now holds every lock the turn took for its mutation phase. `mutation_phase_lock()` lets the router hand it the Keeper turn lock too; a handoff releases them in reverse acquisition order, and leaving the block after a handoff does not release one twice.
 - **State is reloaded once the Keeper turn lock is held.** The pre-lock snapshot is missing anything committed while the turn queued for that lock, flag or no flag.
 
+**A second review finding followed from the first.** Handing on the Keeper turn lock removed the ordering it had been providing by accident. Every other route that narrates — `/coc check` and Luck follow-ups (`legacy_commands.py`), `/coc map` moves, the `/coc start` opening, sudo acts — took that lock and nothing else, so with a turn handed off they would find it free and could run a second Narrator concurrently, commit their log entries and post ahead of the earlier turn. `state.log` and the visible replies both come out reversed.
+
+`locks.narrating_turn()` now holds the Keeper turn lock **and** the conversation's narration slot, and those four routes use it. The order is always Keeper then narration, and a handed-off turn releases its mutation locks *before* taking narration, so neither ever waits on the other. The `/coc map` post moved inside the block: ordering the narration but not the reply would still let the two messages come out reversed.
+
 `locks.TurnHandoff` owns which locks a turn still holds, and the router's context managers yield one and `close()` it in their `finally`. `close()` releases exactly what is still held, so the eleven return paths inside `run_turn` need no per-path handling: a turn that never handed off is released as before, and one that did releases narration instead. `to_narration()` is idempotent.
 
 `run_turn` hands off in one place, after the reducer, and only for `turn_kind == "player_action"`. `resolved_check_followup` and `opening_fallback` keep the mutation lock to the end because `narrator.py:44` gives them a restricted tool set and #99 commits arrivals inside it.

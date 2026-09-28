@@ -176,7 +176,7 @@ async def _run_sudo_act_locked(
 
     action_text = " ".join(parsed.args).strip()
     resolved_location = None
-    async with locks.get_keeper_turn_lock(conversation_id):
+    async with locks.narrating_turn(conversation_id):
         with observability.context(turn_id=observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,
