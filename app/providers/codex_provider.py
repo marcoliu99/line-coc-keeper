@@ -23,6 +23,7 @@ CODEX_MODEL = config.CODEX_MODEL
 SUPPORTS_DYNAMIC_TOOLS = True
 SUPPORTS_RESPONSE_STAGE = True
 SUPPORTS_DECISION_CONTEXT = True
+SUPPORTS_FINAL_FEEDBACK = True
 P = ParamSpec('P')
 T = TypeVar('T')
 
@@ -124,6 +125,7 @@ async def run_conversation(
     max_iterations: int, enable_wrapup: bool = True,
     response_stage: str = 'default', tools_for_request: Callable[[], list[dict]] | None = None,
     decision_context: Callable[[], dict] | None = None,
+    final_feedback: Callable[[str], dict | None] | None = None,
 ) -> str:
     budget = _current.get() or TurnBudget()
     started = time.monotonic()
@@ -132,6 +134,7 @@ async def run_conversation(
     transcript: list[dict] = []
     repaired = False
     retried_incomplete = False
+    retried_final = False
     iterations = 0
     status = 'error'
     conversation_id = uuid.uuid4().hex
@@ -188,6 +191,15 @@ async def run_conversation(
                                    'Use decision_context to distinguish pending work from a new action.'})
                 continue
             if decision['type'] == 'final':
+                if final_feedback and not retried_final and index < max_iterations - 1:
+                    feedback = final_feedback(decision['content'])
+                    if feedback:
+                        retried_final = True
+                        observability.event('codex.decision.final_retry', stage=response_stage,
+                                            validation_code=feedback.get('validation_code', 'invalid_final'))
+                        transcript.append({'role': 'host', 'previous_final': decision['content'],
+                                           'validation_feedback': feedback})
+                        continue
                 try:
                     resolution = json.loads(decision['content'])
                 except (ValueError, TypeError):

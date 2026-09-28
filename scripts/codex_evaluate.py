@@ -50,6 +50,8 @@ def main():
         trace_enabled = args.trace
         original_event = observability.event
         def measured_event(name, **fields):
+            if name == 'codex.decision.final_retry':
+                metrics['final_retries'] += 1
             if name == 'codex.decision.incomplete_retry':
                 metrics['incomplete_retries'] += 1
             if name == 'codex.decision.rejected':
@@ -99,7 +101,7 @@ def main():
             for repetition in range(args.repeats):
                 for kind in args.kinds:
                     metrics.clear()
-                    metrics.update(requests=0, tools=[], input_bytes=0, request_seconds=[], rejected_proposals=0, incomplete_retries=0)
+                    metrics.update(requests=0, tools=[], input_bytes=0, request_seconds=[], rejected_proposals=0, incomplete_retries=0, final_retries=0)
                     if trace_enabled:
                         metrics.update(decisions=[], validations=[])
                     start = time.monotonic()

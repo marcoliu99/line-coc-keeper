@@ -148,6 +148,10 @@ def executor_decision_context(state: GroupState, user_id: str) -> dict:
             '不能把 A 的 pending 當成 B 的檢定結果，也不妨礙有依據的獨立物品交接。'
             '只有玩家明確取消或更正原行動，才可 clear_pending_check；工具後會更新合法目標。'
             '候選只適用於等待該 pending，不取代其他行動的裁決。'
+            '若本次要求獨立拾取或移除物品，必須先實際呼叫 add_carried_item／remove_carried_item，'
+            '核對成功收據與最新背包；劇本說可以拿不代表已收進背包，final 文字不會修改物品。'
+            '完成獨立操作後若原檢定仍在，可交回 await_check 並引用本次工具收據及原 check_id；'
+            '不可宣稱整回合 resolved_without_check，也不可只回等待而漏掉本次獨立操作。'
             '若沒有對應 pending，且劇本要求檢定，必須先使用 JSON tool_call 建立檢定，'
             '取得成功收據及真實 check_id 後才可 await_check。工具清單是可執行的 Python host 工具。'
         ),

@@ -208,6 +208,25 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 provider_options['tools_for_request'] = lambda: turn_context.check_creation_tools(
                     state, combat_status_gate.tools_for_request(tools))
                 provider_options['decision_context'] = lambda: turn_context.executor_decision_context(state, user_id)
+            if getattr(provider, 'SUPPORTS_FINAL_FEEDBACK', False):
+                def final_feedback(candidate: str) -> dict | None:
+                    verified = turn_resolution.validate_resolution(
+                        candidate, state=state, user_id=user_id, before_pending=before_pending,
+                        before_luck=before_luck, tool_events=tool_events,
+                        has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
+                        before_actor=before_actor, before_gameplay=before_gameplay,
+                    )
+                    if verified.disposition != 'incomplete' or verified.validation_code == 'model_incomplete':
+                        return None
+                    return {
+                        'validation_code': verified.validation_code, 'reason': verified.reason,
+                        'instruction': 'Python 尚未接受這份裁決。核對本次玩家要求、當前 state 與工具收據。'
+                            '已成功執行的操作不可重做；若獨立拾取尚未執行，須先呼叫背包工具。'
+                            '原檢定仍待擲時，不宣稱整回合 resolved；完成獨立操作後交回正確的 await_check '
+                            '及 check_id，並引用本次工具證據。不能用等待原檢定掩蓋本次未執行的操作。'
+                            '若真正缺依據或工具失敗，保留 incomplete 並解釋原因，不猜值或繞過驗證。',
+                    }
+                provider_options['final_feedback'] = final_feedback
             completion = await provider.run_conversation(
                 static_system, dynamic_system, tools, state.log, new_message,
                 execute_turn_tool, MAX_TOOL_ITERATIONS,

@@ -132,3 +132,12 @@ an ordinary pickup as that exception. A successful inventory tool therefore
 does not necessarily imply successful final adjudication. A waiting disposition
 may still be valid when the old pending identity is preserved; the exception
 above specifically concerns claiming resolved/resolved_without_check.
+
+### Verified final feedback
+
+The Codex Executor can now receive the existing Python resolution validator's
+rejection before returning. At most one rejected final is sent back within the
+same model-iteration/deadline budget. Already committed tools stay in the
+transcript and must not be replayed. A second invalid final still reaches the
+normal Python rejection path. `final_retries` records this cost separately.
+This capability is opt-in to the Codex provider; other providers are unchanged.

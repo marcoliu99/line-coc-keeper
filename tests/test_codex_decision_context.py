@@ -139,3 +139,38 @@ class FreshSchemaTests(unittest.IsolatedAsyncioTestCase):
             await codex_provider.run_conversation('', '', [tool], [], '', AsyncMock(), 2,
                                                  response_stage='executor')
         self.assertEqual(transport.request.await_count, 1)
+
+    async def test_final_feedback_repairs_handoff_without_replaying_tool(self):
+        tool = {'name': 'change', 'input_schema': {'type': 'object', 'properties': {}}}
+        transport = AsyncMock()
+        transport.request.side_effect = [json.dumps({'decision': {'type': 'tool_call',
+            'name': 'change', 'arguments_json': '{}'}}),
+            json.dumps({'decision': {'type': 'final', 'content': 'wrong handoff'}}),
+            json.dumps({'decision': {'type': 'final', 'content': 'waiting with receipt'}})]
+        callback = AsyncMock(return_value={'ok': True})
+        seen = []
+        def feedback(content):
+            seen.append(content)
+            return {'validation_code': 'unfinished_check_or_luck', 'reason': 'pending remains'}
+        with patch.object(codex_provider.config, 'CODEX_TRANSPORT', 'exec'), \
+             patch.object(codex_provider, 'ExecTransport', return_value=transport):
+            result = await codex_provider.run_conversation('', '', [tool], [], '', callback, 4,
+                response_stage='executor', final_feedback=feedback)
+        self.assertEqual(result, 'waiting with receipt')
+        self.assertEqual(seen, ['wrong handoff'])
+        callback.assert_awaited_once()
+        prompt = json.loads(transport.request.call_args_list[-1].args[0])
+        self.assertEqual(prompt['current_conversation'][-1]['validation_feedback']['validation_code'],
+                         'unfinished_check_or_luck')
+
+    async def test_final_feedback_never_forces_a_tool_or_unbounded_retry(self):
+        transport = AsyncMock()
+        transport.request.return_value = json.dumps({'decision': {'type': 'final', 'content': 'blocked'}})
+        callback = AsyncMock()
+        with patch.object(codex_provider.config, 'CODEX_TRANSPORT', 'exec'), \
+             patch.object(codex_provider, 'ExecTransport', return_value=transport):
+            result = await codex_provider.run_conversation('', '', [], [], '', callback, 6,
+                final_feedback=lambda _: {'reason': 'still blocked'})
+        self.assertEqual(result, 'blocked')
+        self.assertEqual(transport.request.await_count, 2)
+        callback.assert_not_awaited()

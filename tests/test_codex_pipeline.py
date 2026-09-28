@@ -67,3 +67,59 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tool_decisions, ['skill_check'])
             self.assertIn('executor', stages)
             self.assertIn('narrator', stages)
+
+    async def test_pending_pickup_repairs_missing_tool_or_wrong_final_without_replay(self):
+        for missing_tool in (True, False):
+            with self.subTest(missing_tool=missing_tool):
+                state = GroupState(group_id='codex-pickup-' + uuid.uuid4().hex, active=True)
+                state.characters['u'] = Character(name='Marco', owner_id='u', skills={'偵查': 70})
+                state.scenario_text = '桌上黃銅鑰匙可以直接拾取，文件需偵查檢定。'
+                keeper._ensure_turn_timeline(state)
+                keeper._execute_tool(state, 'skill_check', {'investigator': 'Marco', 'skill': '偵查',
+                    'action_context': '辨認文件'}, [], [], speaker_role='player')
+                keeper.save_state(state)
+                old_pending = dict(state.pending_checks['u'])
+                dispatched = []
+                rejected = []
+
+                async def request(prompt, _schema, missing_tool=missing_tool, state=state,
+                                  dispatched=dispatched, rejected=rejected):
+                    payload = json.loads(prompt)
+                    if payload['response_stage'] != 'executor':
+                        return json.dumps({'decision': {'type': 'final',
+                            'content': '黃銅鑰匙已收進背包；文件偵查仍待擲。'}})
+                    transcript = payload['current_conversation']
+                    feedback = [x for x in transcript if 'validation_feedback' in x]
+                    receipts = [x for x in transcript if x.get('name') == 'add_carried_item']
+                    if (not missing_tool and not transcript) or (missing_tool and feedback and not receipts):
+                        dispatched.append('add_carried_item')
+                        return json.dumps({'decision': {'type': 'tool_call', 'name': 'add_carried_item',
+                            'arguments_json': json.dumps({'investigator': 'Marco', 'item': '黃銅鑰匙'})}})
+                    if not feedback:
+                        decision = {'disposition': 'resolved_without_check',
+                            'actor_character_id': character_id(state, 'u'), 'evidence_refs': ['state', 'scenario_context']}
+                        if receipts:
+                            decision['evidence_refs'].append('tool:1')
+                    else:
+                        rejected.append(feedback[0]['validation_feedback']['validation_code'])
+                        decision = dict(payload['decision_context']['waiting_resolution_candidate'])
+                        decision['evidence_refs'] = ['state', 'tool:1']
+                    return json.dumps({'decision': {'type': 'final', 'content': json.dumps(decision)}})
+
+                transport = AsyncMock()
+                transport.request.side_effect = request
+                with patch.object(config, 'CODEX_TRANSPORT', 'exec'), \
+                     patch.object(codex_provider, 'ExecTransport', return_value=transport), \
+                     patch.object(executor, 'LLM_PROVIDER', 'codex'), \
+                     patch.object(narrator, 'LLM_PROVIDER', 'codex'), \
+                     patch.object(guard, 'LLM_PROVIDER', 'codex'), \
+                     patch('app.dice.roll_percentile_with_dice_pool') as dice:
+                    reply, _, _ = await supervisor.run_turn(state, 'u', 'Marco',
+                        '保留文件檢定，拿起黃銅鑰匙', None, 'player', state.group_id)
+                self.assertEqual(dispatched, ['add_carried_item'])
+                self.assertEqual(rejected, ['unfinished_check_or_luck'])
+                self.assertNotIn('尚未完整處理', reply)
+                actual = keeper.load_state(state.group_id)
+                self.assertEqual(actual.pending_checks['u'], old_pending)
+                self.assertEqual(actual.get_active_character('u').carried_items.count('黃銅鑰匙'), 1)
+                dice.assert_not_called()

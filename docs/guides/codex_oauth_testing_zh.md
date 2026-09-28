@@ -110,3 +110,10 @@ app-server 在單段 conversation 的多次決策間保持啟動，結束即關�
 調查員間物品交接例外，一般拾取不屬於此例外。因此背包工具成功並不
 代表最後裁決也成功。若保留原 pending 身分，回等待裁決仍可能有效；
 上述例外專指 resolved／resolved_without_check 的完成宣告。
+
+### 裁決驗證回饋
+
+Codex Executor 現在可在交回 final 前收到既有 Python 驗證器的拒絕原因，
+最多一次，沿用原本模型迭代與期限預算。已提交工具保留在對話收據中，
+不得重播；再次無效仍交由原本 Python 路徑拒絕。`final_retries` 分開記錄
+這項成本。此能力只由 Codex provider 啟用，其他 provider 不變。
