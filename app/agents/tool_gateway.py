@@ -280,6 +280,14 @@ def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[st
             opposed = result.get('opposed_outcome')
             if isinstance(opposed, dict) and opposed.get('winner') in {'player', 'opponent', 'neither'}:
                 status['resolved']['opposed_winner'] = opposed['winner']
+    elif tool_name == "commit_movement":
+        # Why the arrival was refused, so a blocked turn can say something the
+        # player can act on instead of one sentence covering every cause.
+        # A later success in the same turn clears it: the move did happen.
+        if result.get("ok"):
+            status.pop("movement_blocked", None)
+        elif result.get("error"):
+            status["movement_blocked"] = str(result["error"])
     elif tool_name == "clear_pending_check" and result.get("ok") and result.get("cleared"):
         status["tool_called"] = True
         status["pending"] = None

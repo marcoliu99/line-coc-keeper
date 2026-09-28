@@ -2,7 +2,7 @@
 
 [繁體中文](movement_authorization_diagnosability_design_spec_zh.md)
 
-Status: **in progress**. Base: `main_v2` at `3e2e95c`.
+Status: **implemented**. Base: `main_v2` at `3e2e95c`.
 
 ## Problem and evidence
 
@@ -83,14 +83,22 @@ Purely additive: everything that passes today still passes. The only newly admit
 
 `_record_check_status` records the last movement rejection code (`status['movement_blocked']`), and `enforce_mechanic_check_consistency` turns it into one actionable Chinese sentence:
 
+The table as implemented (`prompt_config.MOVEMENT_BLOCKED_ADVICE`) holds ten codes rather than the four first sketched, because `_validate` has several more that are equally actionable:
+
 | code | what the player sees |
 | --- | --- |
-| `no_player_movement_authorization` | 沒看懂你要移動到哪裡；請把移動單獨寫成一句（例如「前往商店，然後購買油燈」）。 |
-| `unknown_map` / `map_entry_required` | 目的地不在目前這份劇本的樓層圖上；請先說明從哪個已知地點出發。 |
-| `movement_evidence_missing` / `destination_not_supported_by_evidence` | 目前沒有足夠的劇本依據支持這次移動。 |
+| `no_player_movement_authorization` | 沒有看懂你要移動到哪裡；請把移動單獨寫成一句（例如「前往商店，然後購買油燈」）。 |
+| `unknown_map` | 目的地不在這份劇本現有的樓層圖上；請先說明你從哪個已知地點出發。 |
+| `map_entry_required` | 你們還沒有進入這張樓層圖；請先描述從入口進入，再往裡面走。 |
+| `movement_evidence_missing` | 這次移動還沒有劇本原文可以佐證；請先描述你在現場看到什麼，或換一個劇本提過的地點。 |
+| `destination_not_supported_by_evidence` | 劇本裡找不到這個地點；請改用劇本提過的地點名稱。 |
+| `known_map_location_requires_path` | 這個地點在樓層圖上，要沿著房間之間的路徑過去；請說明你經過哪些地方。 |
+| `disconnected_movement_path` | 從目前位置沒辦法直接到那裡；請先說明中間會經過哪些地方。 |
 | `passage_blocked` | 這條路目前不通。 |
+| `movement_prerequisites_unresolved` | 還有尚未完成的檢定；請先完成它，再繼續移動。 |
+| `movement_waits_for_final_luck` | 你還有一個幸運選擇沒有決定；請先決定，再繼續移動。 |
 
-An unmapped code keeps the existing sentence. **No disposition and no mechanical result changes** — only the wording.
+An unmapped code keeps the existing sentence. **No disposition and no mechanical result changes** — only the wording. The precedence is unchanged: a pending check, a pending Luck decision and `scenario_evidence_blocked` all still come before the movement advice. A `commit_movement` that succeeds later in the same turn clears the code — that move did happen.
 
 ## Testing
 

@@ -25,8 +25,16 @@ _DIRECTION_PATTERNS: list[tuple[re.Pattern, str, bool]] = [
     (re.compile(r"正前方|前面|前方"), "front", False),
 ]
 
+# Erring wide is safe here: has_movement_verb is the cheap gate before a
+# room-name match (see its docstring), and nothing in this module can commit a
+# move — that always needs the model to call commit_movement and pass the full
+# validation in app/services/movement.py. A missing verb, by contrast, is
+# expensive: 「直奔商店購買油燈跟煤油罐」 produced one unsplittable clause with
+# no verb in it, and the turn could not authorize movement at all.
 _MOVEMENT_VERB_RE = re.compile(
-    r"離開|進入|走進|走向|前往|進去|走到|穿過|移動到|走回|回到|(?<![拿帶取搬偷拎撿收])走|去(?!過)"
+    r"離開|進入|走進|走向|前往|進去|走到|穿過|移動到|走回|回到"
+    r"|直奔|奔向|奔去|趕往|趕去|趕到|衝向|衝進|衝出|跑向|跑到|跑進|抵達|來到|返回|折返"
+    r"|(?<![拿帶取搬偷拎撿收])走|去(?!過)"
 )
 
 _CN_DIGIT = {"一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
