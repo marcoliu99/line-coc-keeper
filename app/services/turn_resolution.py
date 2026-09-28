@@ -12,11 +12,11 @@ from typing import Any
 
 from app import observability
 from app.domain.models import TurnResolution
+from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
 from app.services.turn_context import character_id
 
-INFORMATION_QUERY_TOOLS = frozenset({"search_scenario", "search_memory", "get_character_sheet",
-                                      "get_combat_status", "search_scenario_images"})
+INFORMATION_QUERY_TOOLS = tool_registry.INFORMATION_QUERY_TOOLS
 
 _DISPOSITIONS = {
     "no_mechanics", "await_check", "await_luck", "deferred", "resolved_without_check",

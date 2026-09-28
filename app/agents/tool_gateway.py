@@ -12,6 +12,7 @@ from app.config import (
     TOOL_EXECUTION_TIMEOUT_SECONDS,
 )
 from app.domain.models import ObservedOutcome
+from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
 from app.services import mutation_admission, turn_delivery
 
@@ -19,7 +20,7 @@ _logger = logging.getLogger(__name__)
 
 # Query timeouts retain worker ownership too: some queries refresh the shared
 # snapshot or derived indexes. Dice never inherit query retry semantics.
-BOUNDED_QUERY_TOOLS = keeper.READ_ONLY_TOOL_NAMES - {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"}
+BOUNDED_QUERY_TOOLS = tool_registry.BOUNDED_QUERY_TOOLS
 
 # The design spec originally called for a condensed set of ~5 high-level
 # tools (mechanic_action/character_action/inventory_action/combat_action/
@@ -102,7 +103,7 @@ def make_tool_executor(
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         nonlocal evidence_incomplete
         mutation_admission.assert_admitted(state.group_id)
-        if evidence_incomplete and tool_name not in (keeper.READ_ONLY_TOOL_NAMES - {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"}):
+        if evidence_incomplete and tool_name not in BOUNDED_QUERY_TOOLS:
             return rejection(tool_name, "required_scenario_evidence_missing",
                              "必要劇本依據未齊；請續取完整依據，或暫緩並聚焦行動。不得以截短摘要執行機制。")
         from app.services.narrative_corrections import blocking_reply
@@ -215,9 +216,7 @@ def make_tool_executor(
     return execute
 
 
-_CHECK_REGISTRATION_TOOLS = frozenset({
-    "skill_check", "sanity_check", "offer_check_choice", "offer_npc_attack_defense_choice",
-})
+_CHECK_REGISTRATION_TOOLS = tool_registry.CHECK_REGISTRATION_TOOLS
 
 
 def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[str, Any]) -> None:

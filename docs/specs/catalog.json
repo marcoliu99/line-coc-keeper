@@ -1207,8 +1207,10 @@
       "title": "Keeper tools as a registry",
       "zh": "Keeper 工具改為註冊表",
       "category": "refactor",
-      "status": "backlog",
+      "status": "partial",
       "evidence": [
+        "app/keeper_tools/registry.py",
+        "tests/test_keeper_tool_registry.py",
         "app/keeper.py",
         "app/agents/tool_gateway.py",
         "app/services/turn_context.py",
