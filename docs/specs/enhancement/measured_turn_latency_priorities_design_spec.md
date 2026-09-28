@@ -513,3 +513,22 @@ The probe message named a desk. The current scene is a basement storeroom with b
 The verdict compared `Counter` equality, which at three samples reports a one-of-three ratio shift as a difference. Every cell produced the same two dispositions under both compositions; only the proportions moved. The script now reports whether the *set* of dispositions differs, prints counts without calling them a finding, and says plainly that this sample size cannot separate a composition from the model's own variance.
 
 One result does survive: **no `deferred` appeared in either arm, in any case.** The 0-against-3 signal from §8.6 did not reproduce from identical state, which points at the arms' state divergence rather than the prompt composition. That removes the evidence for the concern; it does not clear WP2, which still owes a comparison with a probe that can succeed.
+
+### 8.8 The controlled comparison, repaired: WP2 is the more consistent of the two
+
+Two probes, two cases, four repeats each, thirty-two turns, the database restored to one snapshot before every turn.
+
+| probe | case | today | WP2 |
+| --- | --- | --- | --- |
+| supportable | clean | `await_check` 2, `incomplete` 1, `no_mechanics` 1 | **`await_check` 4** |
+| supportable | other holds Luck | `await_check` 2, `incomplete` 1, `no_mechanics` 1 | **`await_check` 4** |
+| unsupported | clean | `blocked` 3, `incomplete` 1 | `blocked` 2, `incomplete` 2 |
+| unsupported | other holds Luck | `blocked` 2, `incomplete` 2 | `blocked` 3, `incomplete` 1 |
+
+On an action the scene supports — examining the board wall the scenario describes — the moved block produced the mechanically correct outcome, an Investigate check, on four of four attempts in both cases. Today's composition managed two of four. The other two were worse outcomes, not different ones: once `no_mechanics`, narrating the wall without offering a roll, and once `incomplete` reporting "marco 尚未擲骰的檢定已取消" — a check created and then cancelled.
+
+On an action the scene does not support, both compositions refuse, with the same two dispositions and a one-of-four ratio difference that this sample cannot read.
+
+**This is the comparison §2.6 said was owed, and it does not find the regression §8.6 suspected.** Nothing here shows the moved block weakening the model's judgement; on the one cell with room to differ it was steadier. Four samples per cell is small, and the claim is only that a degradation did not appear where one was looked for.
+
+Taken with §8.7, the `deferred` divergence has no support left: it did not reproduce from identical state, and under a probe that can succeed the moved block is if anything more decisive.
