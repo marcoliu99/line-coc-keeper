@@ -187,6 +187,8 @@ def _apply_new_scenario(
     state.kp_ooc_log = []  # new scenario must not inherit the previous scenario's KP OOC memory
     state.scenario_npc_index = extracted_index["npcs"]
     state.scenario_location_index = extracted_index["locations"]
+    scenario_index.report_location_index(
+        state.scenario_location_index, source="pdf_upload", scenario_title=state.scenario_title)
     state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
     # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
     state.current_map_page = {}
@@ -223,6 +225,8 @@ def _apply_scenario_correction(
     state.scenario_text = text
     state.scenario_npc_index = extracted_index["npcs"]
     state.scenario_location_index = extracted_index["locations"]
+    scenario_index.report_location_index(
+        state.scenario_location_index, source="correction", scenario_title=title)
     _merge_extracted_pregens(state, pregens)
 
 
@@ -243,6 +247,9 @@ def _install_library_context(
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
+    scenario_index.report_location_index(
+        state.scenario_location_index, source="library",
+        scenario_title=state.scenario_title)
     if not preserve_pregens:
         state.pregens = list(context.get("pregens", []))
     if not preserve_maps:
@@ -265,11 +272,17 @@ def _pdf_upload_confirmation_text(
     page_maps: dict,
     extracted_index: dict,
     pregen_count: int,
+    location_count: int | None = None,
 ) -> str:
     """Shared by the immediate (first-ever upload) and deferred (button-
     resolved) paths through handle_pdf_upload — the message is identical
     either way, just built at a different point in the flow."""
     warning = ""
+    # Taken from the state after install, not from extracted_index: a library
+    # variant supplies its own indexes, and an AI-prepared one has been seen
+    # to arrive with none while its prose was intact.
+    if location_count == 0:
+        warning += "\n\n" + scenario_index.EMPTY_LOCATION_INDEX_NOTICE
     if low_text_pages:
         pages_str = "、".join(str(p) for p in low_text_pages)
         warning += (
@@ -536,7 +549,8 @@ async def handle_pdf_upload(
 
     variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     await push(_pdf_upload_confirmation_text(
-        title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count
+        title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count,
+        len(state.scenario_location_index),
     ) + (f"\n{variant_notice}" if variant_notice else "")
       + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
     return True
@@ -599,6 +613,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
         context["scene_maps"], extracted_index, len(state.pregens),
+        len(state.scenario_location_index),
     ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "")
 
 @mutation_admission.guard_async_entry

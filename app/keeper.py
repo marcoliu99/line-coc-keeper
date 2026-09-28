@@ -3063,6 +3063,9 @@ def _execute_tool(
                 target_state.context_chapter_ids = context["context_chapter_ids"]
                 target_state.scenario_npc_index = context["indexes"].get("npcs", [])
                 target_state.scenario_location_index = context["indexes"].get("locations", [])
+                scenario_index.report_location_index(
+                    target_state.scenario_location_index, source="chapter_switch",
+                    scenario_title=target_state.scenario_title)
                 target_state.scene_maps = context["scene_maps"]
                 old_timeline_id = target_state.timeline_id or f"legacy-{target_state.group_id}"
                 target_state.openai_previous_response_id = ""
