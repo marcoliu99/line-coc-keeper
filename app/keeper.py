@@ -1100,49 +1100,6 @@ def execute_legacy_tool(
 ) -> dict:
     """Existing tool cascade; the registry delegates here until each family moves."""
     try:
-
-        if name == "roll_dice":
-            roll_result = dice.roll_expression(tool_input["expression"])
-            return {
-                "ok": True, "expression": roll_result.expression, "rolls": roll_result.rolls,
-                "modifier": roll_result.modifier, "total": roll_result.total,
-            }
-
-        if name == "roll_impaling_damage":
-            try:
-                impale_result = dice.calculate_impaling_damage(
-                    tool_input["weapon_damage"], tool_input.get("damage_bonus") or "0", bool(tool_input.get("impaling"))
-                )
-            except ValueError as exc:
-                return {"ok": False, "error": str(exc)}
-            return {
-                "ok": True,
-                "total": impale_result.total,
-                "max_weapon_damage": impale_result.max_weapon_damage,
-                "max_damage_bonus": impale_result.max_damage_bonus,
-                "impaling": impale_result.impaling,
-                "reroll_total": impale_result.reroll.total if impale_result.reroll else None,
-                "describe": impale_result.describe(),
-            }
-
-        if name == "roll_weapon_damage":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            try:
-                weapon_result = dice.roll_weapon_damage(tool_input["weapon_damage"], char.damage_bonus)
-            except ValueError as exc:
-                return {"ok": False, "error": str(exc)}
-            return {
-                "ok": True,
-                "investigator": char.name,
-                "weapon_damage_roll": weapon_result.weapon_roll.total,
-                "damage_bonus": char.damage_bonus,
-                "damage_bonus_roll": weapon_result.damage_bonus_total,
-                "total": weapon_result.total,
-                "describe": weapon_result.describe(),
-            }
-
         if name == "skill_check":
             char = find_character(state, tool_input.get("investigator", ""))
             if not char:

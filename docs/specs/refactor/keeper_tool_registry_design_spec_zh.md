@@ -71,3 +71,5 @@ class ToolCall:                            # 目前各分支共用、總是一�
 - **排序：** 戰鬥家族的 PR 排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
 
 Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。`refactor/combat-start-in-combat-module` 尚未合入 `main_v2`，戰鬥處理函式家族因此仍待遷移。
+
+骰子家族（`roll_dice`、`roll_impaling_damage`、`roll_weapon_damage`）是第一個完成遷移的處理函式家族。其註冊表項目呼叫 `app/keeper_tools/dice.py`；其他項目暫時仍委派至舊串接。
