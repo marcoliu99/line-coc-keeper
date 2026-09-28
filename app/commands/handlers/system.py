@@ -901,7 +901,7 @@ async def handle_system_command(
             "對調查員說話。這是遊戲的第一段敘述，還沒有任何人採取行動，不要假設玩家已經做了什麼、"
             "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
         )
-        async with locks.get_keeper_turn_lock(conversation_id):
+        async with locks.narrating_turn(conversation_id):
             fresh_state = keeper._refresh_state_snapshot(state)
             if fresh_state.game_started:
                 return

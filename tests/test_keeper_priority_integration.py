@@ -85,7 +85,11 @@ class FakeSupervisorRunner:
         self.current_running = 0
         self.max_concurrent = 0
 
-    async def __call__(self, *, state, user_id, display_name, text, resolved_location, speaker_role, conversation_id, prefetched_retrieval=None):
+    async def __call__(self, *, state, user_id, display_name, text, resolved_location,
+                       speaker_role, conversation_id, **_kwargs):
+        # Tolerant of run_turn gaining arguments. Pinning the signature made
+        # this fake raise *inside* the turn, so blocking_started was never set
+        # and the scenario waited forever — a hang instead of a failure, twice.
         self.started_order.append(user_id)
         self.current_running += 1
         self.max_concurrent = max(self.max_concurrent, self.current_running)

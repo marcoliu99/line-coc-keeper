@@ -85,14 +85,16 @@ async def handle_map_command(
     from app.agents import supervisor
     from app.legacy_commands import _run_post_turn_maintenance_after_output
 
-    async with locks.get_keeper_turn_lock(conversation_id):
+    # The post is inside the ordering, not after it: ordering the narration
+    # but not the reply would still let two turns' messages come out reversed.
+    async with locks.narrating_turn(conversation_id):
         public, private, images = await supervisor.run_turn(
             state, user_id, character.name, action, None, "player", conversation_id,
             actor_user_id=actor_user_id or user_id, actor_is_keeper=actor_is_keeper,
         )
-    if send_dm is not None and send_dm_image is not None:
-        await _run_post_turn_maintenance_after_output(
-            conversation_id, reply, public, send_dm, send_image, send_dm_image, private, images)
-    else:
-        await reply(public)
+        if send_dm is not None and send_dm_image is not None:
+            await _run_post_turn_maintenance_after_output(
+                conversation_id, reply, public, send_dm, send_image, send_dm_image, private, images)
+        else:
+            await reply(public)
     return True
