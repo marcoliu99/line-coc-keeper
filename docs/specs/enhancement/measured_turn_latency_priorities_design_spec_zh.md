@@ -209,14 +209,14 @@ build_context ~1 s + Executor 15.7 s + Narrator 5.0 s + Guard/防雷 ~0 + commit
 
 ### 3.4 把 context 建構移出鎖，在 3.3 之後
 
-`app/agents/context_builder.py` 的 `build_context` 本身沒有任何寫入——沒有 `save_state`、`set_json`、`db.` 呼叫，也沒有對 state 屬性賦值。它的成本是劇本與記憶 RAG 的往返，約 1 秒，可以在取得鎖之前執行，但有兩個條件：
+`app/agents/context_builder.py` 的 `build_context` 本身不寫入團狀態；預取會讀取已儲存的記憶來綁定來源版本。主要成本是劇本與記憶 RAG 的往返，約 1 秒，可以在取得鎖之前執行，但有兩個條件：
 
 - 3.3 必須先落地，因為 `build_context` 會走到 `get_index`，因此可能觸發那條未受保護的重建路徑。
-- 它讀到的 state 快照必須在取得鎖之後重新讀取，只有檢索結果可以沿用。那些結果綁的是劇本版本而非 `state_revision`，因此在空隙期間仍然有效；任何從可變狀態衍生的東西都不得沿用。
+- 取得鎖後須重新讀取 state 快照，只有檢索結果可列為沿用候選。章節視窗、來源文字及記憶來源的綁定仍須相符；可變狀態衍生的 payload 一律重建。
 
-可減少約 1 秒，約持有時間的 5%。這一項最初被評估為純讀重排，實際上不是，而該次重新評估正是 3.3 存在的原因。
+若檢索在既有排隊期間完成且來源未變，可減少約 1 秒、約持鎖時間的 5%；沒有排隊的回合仍可能在取得鎖後等待檢索。這一項最初被評估為純讀重排，實際上不是，而該次重新評估正是 3.3 存在的原因。
 
-**已實作，而且範圍比標題窄。** `build_context` 的 payload 帶有 `state`、`character`、`resolved_check_events` 與更正投影——全都是可變狀態衍生的，在鎖前建構就會過期。**只有檢索會跨過鎖**：`context_builder.prefetch_retrieval` 走一般路徑，只保留 `rag_context`／`memory_context`，外加一份「這些搜尋依賴了什麼」的 binding（劇本變體、標題、timeline、戰鬥狀態、當前角色）。`build_context` 在鎖內重新核對該 binding，只要有任何一項移動就重新搜尋，因此被回滾的 timeline 或切換過的調查員不可能用過期依據敘事。
+**已實作，而且範圍比標題窄。** `build_context` 的 payload 帶有 `state`、`character`、`resolved_check_events` 與更正投影——全都是可變狀態衍生的，在鎖前建構就會過期。**只有檢索會跨過鎖**：`context_builder.prefetch_retrieval` 走一般路徑，只保留 `rag_context`／`memory_context`，並在搜尋前記下來源綁定，包括劇本變體、章節視窗、來源文字、timeline、戰鬥狀態、當前角色、摘要與實際記憶片段。`build_context` 在鎖內重新核對，來源有變就重新搜尋。
 
 決定權在 `supervisor.prefetch_retrieval` 而非 router，這樣查詢就不會和 `run_turn` 餵給 `build_context` 的內容分歧：IC/OOC 混合訊息只對它的 IC 片段預取。以下情況回傳 `None`，讓搜尋留在鎖內、與改動前完全相同：OOC 路由、發話者持有 WP5 會從 state 回答的 Luck 決定、以及任何失敗——失敗會被記錄並吞掉，因為漏掉一次預取的代價是一秒，永遠不是一個回合。
 

@@ -171,7 +171,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
 
         self.assertEqual(len(replies), 1)
         self.assertTrue(notice_before_gate_release)
-        self.assertIn("排入佇列", replies[0])
+        self.assertIn("前面還有 1 個動作", replies[0])
         self.assertFalse(any_lock_left_held)
 
     async def _run_priority_wait(self, conversation_id: str, reply) -> None:

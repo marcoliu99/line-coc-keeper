@@ -132,9 +132,11 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         locks._keeper_priority_gates.clear()
+        locks._locks.pop("g", None)
 
     async def asyncTearDown(self) -> None:
         locks._keeper_priority_gates.clear()
+        locks._locks.pop("g", None)
 
     def _active_state(self, *, with_kp: bool) -> GroupState:
         state = GroupState(group_id="g", active=True, game_started=True, kp_assistant_user_id="kp-user" if with_kp else "")
@@ -248,6 +250,67 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(forbidden_gate.called)
         self.assertEqual(runner.started_order, ["A", "B", "C", "D"])
         self.assertEqual(runner.max_concurrent, 1)
+
+    async def test_slow_prefetch_cannot_reorder_player_turns(self):
+        runner = FakeSupervisorRunner()
+        release_prefetch = asyncio.Event()
+        original_prefetch = router.supervisor.prefetch_retrieval
+
+        async def prefetch(_state, user_id, *_args):
+            if user_id == "B":
+                await release_prefetch.wait()
+
+        async def scenario():
+            task_a = asyncio.create_task(self._send("A"))
+            await runner.blocking_started.wait()
+            task_b = asyncio.create_task(self._send("B"))
+            task_c = asyncio.create_task(self._send("C"))
+            await asyncio.sleep(0)
+            runner.release_blocking.set()
+            await asyncio.sleep(0.02)
+            self.assertEqual(runner.started_order, ["A"])
+            release_prefetch.set()
+            await asyncio.wait_for(asyncio.gather(task_a, task_b, task_c), 2)
+
+        router.supervisor.prefetch_retrieval = prefetch
+        try:
+            await self._run_with_patched_commands(self._active_state(with_kp=False), runner, scenario)
+        finally:
+            router.supervisor.prefetch_retrieval = original_prefetch
+        self.assertEqual(runner.started_order, ["A", "B", "C"])
+
+    async def test_cancelled_queued_turn_cancels_its_prefetch(self):
+        runner = FakeSupervisorRunner()
+        prefetch_started = asyncio.Event()
+        prefetch_cancelled = asyncio.Event()
+        original_prefetch = router.supervisor.prefetch_retrieval
+
+        async def prefetch(_state, user_id, *_args):
+            if user_id == "B":
+                prefetch_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    prefetch_cancelled.set()
+
+        async def scenario():
+            task_a = asyncio.create_task(self._send("A"))
+            await runner.blocking_started.wait()
+            task_b = asyncio.create_task(self._send("B"))
+            await prefetch_started.wait()
+            task_b.cancel()
+            await asyncio.gather(task_b, return_exceptions=True)
+            await asyncio.wait_for(prefetch_cancelled.wait(), 2)
+            runner.release_blocking.set()
+            await asyncio.wait_for(task_a, 2)
+
+        router.supervisor.prefetch_retrieval = prefetch
+        try:
+            await self._run_with_patched_commands(self._active_state(with_kp=False), runner, scenario)
+        finally:
+            router.supervisor.prefetch_retrieval = original_prefetch
+        self.assertEqual(runner.started_order, ["A"])
+        self.assertFalse(locks.get_conversation_lock("g").locked())
 
 
 if __name__ == "__main__":

@@ -432,20 +432,21 @@ async def run_conversation(
     static_tokens = input_budget.estimate(static_system, OPENAI_MODEL)
     dynamic_tokens = input_budget.estimate(dynamic_system, OPENAI_MODEL)
 
+    def full_input() -> list[dict]:
+        items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
+        items.append({"role": "user", "content": new_message})
+        if dynamic_after_input:
+            items.append({"role": "developer", "content": dynamic_system})
+        return items
+
     if previous_response_id:
         input_items: list[dict] = [{"role": "user", "content": new_message}]
         active_previous_response_id: str | None = previous_response_id
+        if dynamic_after_input:
+            input_items.append({"role": "developer", "content": dynamic_system})
     else:
-        input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
-        input_items.append({"role": "user", "content": new_message})
+        input_items = full_input()
         active_previous_response_id = None
-    if dynamic_after_input:
-        # Appended in both shapes. The chained shape relies on instructions to
-        # carry current state today, so omitting it there would leave the model
-        # reading a stale sheet — a correctness failure, not a slower turn.
-        # Later iterations inherit it through previous_response_id along with
-        # the rest of this turn's items.
-        input_items.append({"role": "developer", "content": dynamic_system})
 
     # Omitted entirely (not sent as an empty/None value) when
     # KEEPER_REASONING_EFFORT is "" — that's the escape hatch back to the
@@ -502,14 +503,14 @@ async def run_conversation(
                     "llm.fallback", level=logging.WARNING, provider="openai",
                     fallback_kind="previous_response_id", reason="invalid_previous_response_id",
                 )
-                input_items = [{"role": entry["role"], "content": entry["content"]} for entry in history]
-                input_items.append({"role": "user", "content": new_message})
+                input_items = full_input()
                 active_previous_response_id = None
                 request_kwargs["input"] = input_items
                 request_kwargs.pop("previous_response_id", None)
                 response = await _create_response_async(
                     _log_iteration=iteration,
-                    _input_tokens_estimate=static_tokens + dynamic_tokens + tools_tokens + input_budget.estimate(input_items, OPENAI_MODEL) + output_limit,
+                    _input_tokens_estimate=static_tokens + tools_tokens + input_budget.estimate(input_items, OPENAI_MODEL)
+                    + (0 if dynamic_after_input else dynamic_tokens) + output_limit,
                     **request_kwargs,
                 )
             else:

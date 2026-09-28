@@ -84,6 +84,44 @@ class PrefetchReuseTests(unittest.TestCase):
         state.scenario_variant_id = "variant-2"
         self.assertNotEqual(base, context_builder.retrieval_binding(state, "u1"))
 
+    def test_chapter_window_source_and_memory_revision_invalidate_prefetch(self):
+        state = _state()
+        base = context_builder.retrieval_binding(state, "u1")
+        state.context_chapter_ids = ["chapter-2"]
+        self.assertNotEqual(base, context_builder.retrieval_binding(state, "u1"))
+        state.context_chapter_ids = []
+        state.scenario_text = "New chapter content"
+        self.assertNotEqual(base, context_builder.retrieval_binding(state, "u1"))
+        state.scenario_text = ""
+        state.campaign_summary = "Prior turn committed a memory chunk"
+        self.assertNotEqual(base, context_builder.retrieval_binding(state, "u1"))
+
+    def test_memory_maintenance_during_wait_forces_fresh_search(self):
+        state = _state()
+        stale = _prefetch(binding=context_builder.retrieval_binding(state, "u1"))
+        state.campaign_summary = "New memory summary"
+        searches = []
+
+        def search(*_args, **_kwargs):
+            searches.append(True)
+            return []
+
+        with patch.object(context_builder.memory_rag, "search_memory", search):
+            message = asyncio.run(context_builder.build_context(
+                state=state, user_id="u1", display_name="Marco", text="我推開門",
+                resolved_location=None, speaker_role="player", conversation_id="g",
+                prefetched=stale))
+        self.assertEqual(searches, [True])
+        self.assertNotEqual(message.payload["memory_context"], "MEMORY")
+
+    def test_memory_chunk_append_invalidates_even_with_unchanged_summary(self):
+        state = _state()
+        with patch.object(context_builder.db, "get_json", return_value=[]):
+            before = context_builder.retrieval_binding(state, "u1")
+        with patch.object(context_builder.db, "get_json", return_value=[{"text": "new memory"}]):
+            after = context_builder.retrieval_binding(state, "u1")
+        self.assertNotEqual(before, after)
+
 
 class PrefetchDecisionTests(unittest.TestCase):
     def _run(self, state, text, speaker_role="player"):

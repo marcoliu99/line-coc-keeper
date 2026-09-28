@@ -84,6 +84,49 @@ class TurnQueueEventTests(unittest.TestCase):
         self.assertEqual(fields["speaker_role"], "player")
         self.assertGreaterEqual(fields["queue_wait_ms"], 0)
 
+    def test_priority_gate_waiters_are_counted_once_with_lock_holder(self):
+        async def scenario() -> list[str]:
+            replies: list[str] = []
+            release_holder = asyncio.Event()
+            release_second = asyncio.Event()
+            release_third = asyncio.Event()
+
+            async def reply(message: str) -> None:
+                replies.append(message)
+
+            async def turn(release: asyncio.Event) -> None:
+                async with router._keeper_priority_gate_and_lock_with_notice(
+                    "conv-gate-depth", is_kp=False, reply=reply, speaker_role="player",
+                ):
+                    await release.wait()
+
+            holder = asyncio.create_task(turn(release_holder))
+            while not locks.get_conversation_lock("conv-gate-depth").locked():
+                await asyncio.sleep(0)
+            second = asyncio.create_task(turn(release_second))
+            while len(locks._keeper_priority_gates["conv-gate-depth"].player_waiters) < 1:
+                await asyncio.sleep(0)
+            third = asyncio.create_task(turn(release_third))
+            while len(locks._keeper_priority_gates["conv-gate-depth"].player_waiters) < 2:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.03)
+            release_holder.set()
+            await asyncio.sleep(0.03)
+            release_second.set()
+            release_third.set()
+            await asyncio.wait_for(asyncio.gather(holder, second, third), 2)
+            return replies
+
+        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
+                patch.object(router, "_QUEUE_ACK_REFRESH_SECONDS", 0.01), \
+                patch.object(router.observability, "event") as event:
+            replies = asyncio.run(scenario())
+        self.assertTrue(any("前面還有 2 個動作" in message for message in replies), replies)
+        self.assertTrue(any("前面還有 1 個動作" in message for message in replies), replies)
+        queue_positions = [call.kwargs["turns_ahead"] for call in event.call_args_list
+                           if call.args[0] == "turn.queue"]
+        self.assertIn(2, queue_positions)
+
 
 class QueueNoticeTests(unittest.TestCase):
     def test_notice_carries_position_and_refreshes_while_waiting(self):

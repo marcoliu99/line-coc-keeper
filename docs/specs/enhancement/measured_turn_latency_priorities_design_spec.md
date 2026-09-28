@@ -209,14 +209,14 @@ Fix independently of any lock change: per-key singleflight on `get_index` and `g
 
 ### 3.4 Hoist context building out of the lock, after 3.3
 
-`app/agents/context_builder.py`'s `build_context` performs no writes of its own — no `save_state`, `set_json`, `db.` call or state attribute assignment. Its cost is the scenario and memory RAG round trip, roughly 1 s, and it may run before the lock is acquired, subject to two conditions:
+`app/agents/context_builder.py`'s `build_context` performs no state writes of its own. The prefetch reads persisted memory to bind its source version. Its main cost is the scenario and memory RAG round trip, roughly 1 s, and it may run before the lock is acquired, subject to two conditions:
 
 - 3.3 lands first, because `build_context` reaches `get_index` and can therefore trigger the unprotected rebuild path.
-- The state snapshot it read is re-read after the lock is acquired, and only the retrieval results are carried forward. Those key on scenario version rather than `state_revision`, so they remain valid across the gap; anything derived from mutable state must not be.
+- The state snapshot it read is re-read after the lock is acquired, and only retrieval results are candidates for reuse. Chapter-window, source-text and memory-source bindings must still match; mutable state-derived payloads are always rebuilt.
 
-Removes roughly 1 s, about 5% of the hold. This was initially assessed as a pure read reordering; it is not, and the reassessment is why 3.3 exists.
+When retrieval finishes during an existing queue wait and its sources remain valid, it removes roughly 1 s, about 5% of the lock hold. An uncontended turn may still wait for retrieval after acquiring the lock. This was initially assessed as a pure read reordering; it is not, and the reassessment is why 3.3 exists.
 
-**Implemented, and narrower than the heading suggests.** `build_context`'s payload carries `state`, `character`, `resolved_check_events` and the correction projection — all derived from mutable state, all stale if built before the lock. Only the retrieval travels: `context_builder.prefetch_retrieval` runs the ordinary code path and keeps its `rag_context`/`memory_context` plus a binding of what those searches depended on (scenario variant, title, timeline, combat state, active character). `build_context` re-checks that binding under the lock and searches again if any of it moved, so a rolled-back timeline or a switched investigator cannot narrate from stale evidence.
+**Implemented, and narrower than the heading suggests.** `build_context`'s payload carries `state`, `character`, `resolved_check_events` and the correction projection — all derived from mutable state, all stale if built before the lock. Only the retrieval travels: `context_builder.prefetch_retrieval` runs the ordinary code path and keeps its `rag_context`/`memory_context` plus a binding captured before searching. That binding covers the scenario variant, chapter window, source text, timeline, combat state, active character, summary and persisted memory chunks. `build_context` re-checks it under the lock and searches again if any source moved.
 
 `supervisor.prefetch_retrieval` owns the decision, not the router, so the query cannot drift from what `run_turn` feeds `build_context`: a mixed IC/OOC message prefetches on its IC span only. It returns `None` — leaving the search inside the lock, exactly as before — for an OOC route, for a speaker holding a Luck decision that WP5 will answer from state, and for any failure, which is logged and swallowed because a missed prefetch costs a second and never a turn.
 

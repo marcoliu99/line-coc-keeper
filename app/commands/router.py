@@ -572,9 +572,20 @@ async def _keeper_priority_gate_and_lock_with_notice(
     cancel the single notice task before entering the handler body.
     """
     lock = locks.get_conversation_lock(conversation_id)
-    ahead, settled = lock.turns_ahead(), lock.completed
+    waiting_task = asyncio.current_task()
+
+    def turns_ahead() -> int:
+        gate_ahead, gate_holder = locks.priority_gate_position(
+            conversation_id, waiting_task, is_kp=is_kp,
+        )
+        # The priority-gate holder is usually also the conversation-lock
+        # holder or a waiter there. Count that turn once across both queues.
+        overlap = int(gate_ahead > 0 and lock.contains_task(gate_holder))
+        return gate_ahead + lock.turns_ahead() - overlap
+
+    ahead = turns_ahead()
     notify_task = asyncio.ensure_future(_delayed_queue_notice(
-        reply, lambda: lock.remaining_ahead(ahead, settled)))
+        reply, turns_ahead))
     started = time.monotonic()
     try:
         async with (
@@ -762,33 +773,43 @@ async def _handle_text_message_impl(
     # it runs before this turn queues rather than inside the lock the queue is
     # waiting on. build_context re-checks that binding under the lock and
     # searches again if anything it depended on moved.
-    prefetched = None
+    prefetch_task: asyncio.Task[context_builder.RetrievalPrefetch | None] | None = None
     if scheduling_state.get_active_character(user_id) is not None:
-        prefetched = await supervisor.prefetch_retrieval(
+        prefetch_task = asyncio.create_task(supervisor.prefetch_retrieval(
             scheduling_state, user_id, text,
             "kp_assistant" if scheduling_state.kp_assistant_user_id == user_id else "player",
             conversation_id,
-        )
-    if not scheduling_state.kp_assistant_user_id:
-        async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
-                                              route=coc_subcommand or "text",
-                                              speaker_role="keeper" if is_keeper else "player"):
+        ))
+    try:
+        if not scheduling_state.kp_assistant_user_id:
+            async with _conversation_lock_with_notice(conversation_id, reply, post_turn_hook,
+                                                  route=coc_subcommand or "text",
+                                                  speaker_role="keeper" if is_keeper else "player"):
+                prefetched = await prefetch_task if prefetch_task else None
+                await _handle_ordinary_text_message_locked(
+                    conversation_id, user_id, get_display_name, reply, send_dm, send_image,
+                    send_dm_image, text, prefetched,
+                )
+            return
+
+        is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
+        async with _keeper_priority_gate_and_lock_with_notice(
+            conversation_id, is_kp=is_kp_priority, reply=reply,
+            post_turn_hook=post_turn_hook, route="text",
+            speaker_role="kp_assistant" if is_kp_priority else ("keeper" if is_keeper else "player"),
+        ):
+            prefetched = await prefetch_task if prefetch_task else None
             await _handle_ordinary_text_message_locked(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image,
                 send_dm_image, text, prefetched,
             )
-        return
-
-    is_kp_priority = scheduling_state.kp_assistant_user_id == user_id
-    async with _keeper_priority_gate_and_lock_with_notice(
-        conversation_id, is_kp=is_kp_priority, reply=reply,
-        post_turn_hook=post_turn_hook, route="text",
-        speaker_role="kp_assistant" if is_kp_priority else ("keeper" if is_keeper else "player"),
-    ):
-        await _handle_ordinary_text_message_locked(
-            conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-            send_dm_image, text, prefetched,
-        )
+    finally:
+        if prefetch_task is not None and not prefetch_task.done():
+            prefetch_task.cancel()
+            try:
+                await prefetch_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def _handle_ordinary_text_message_locked(

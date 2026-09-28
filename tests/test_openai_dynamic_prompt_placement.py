@@ -84,6 +84,25 @@ class DynamicPromptPlacementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent["instructions"], "STATIC-PROMPT\n\nDYNAMIC-HP-8/10")
         self.assertEqual([item["role"] for item in sent["input"]], ["user"])
 
+    async def test_invalid_chain_retry_rebuilds_the_current_dynamic_block(self):
+        for after_input in (True, False):
+            with self.subTest(after_input=after_input):
+                client = _client()
+                client.responses.create.side_effect = [
+                    ValueError("previous_response_id resp-from-last-turn expired"),
+                    SimpleNamespace(output=[], output_text="done", id="retry"),
+                ]
+                await _run(client, after_input=after_input,
+                           previous_response_id="resp-from-last-turn",
+                           history=[{"role": "assistant", "content": "先前回覆"}])
+                initial, fallback = [call.kwargs for call in client.responses.create.await_args_list]
+                self.assertEqual(initial["previous_response_id"], "resp-from-last-turn")
+                self.assertNotIn("previous_response_id", fallback)
+                self.assertEqual([item["content"] for item in fallback["input"]],
+                                 ["先前回覆", "我推開門"] + (["DYNAMIC-HP-8/10"] if after_input else []))
+                self.assertEqual(fallback["instructions"],
+                                 "STATIC-PROMPT" if after_input else "STATIC-PROMPT\n\nDYNAMIC-HP-8/10")
+
     async def test_composition_event_does_not_count_the_block_twice(self):
         client = _client()
         with patch.object(openai_provider.observability, "event") as event:

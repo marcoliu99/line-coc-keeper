@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
-from app import async_utils, memory_rag, observability, scenario_rag, scenario_templates
+from app import (
+    async_utils,
+    db,
+    memory_rag,
+    observability,
+    scenario_rag,
+    scenario_templates,
+)
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
@@ -55,9 +64,19 @@ class RetrievalPrefetch:
 
 def retrieval_binding(state: GroupState, user_id: str) -> tuple:
     char = state.get_active_character(user_id)
+    # Memory maintenance can append a chunk even when its new prose summary is
+    # unchanged. Bind to the persisted source itself, rather than a proxy such
+    # as campaign_summary or state_revision (which changes on unrelated turns).
+    memory_chunks = db.get_json("memory_chunks", state.group_id) or []
+    memory_version = hashlib.sha256(json.dumps(
+        memory_chunks, ensure_ascii=False, sort_keys=True,
+    ).encode()).digest()
     return (
-        state.scenario_variant_id, state.scenario_title, state.timeline_id,
-        state.combat.active, char.character_id if char else None,
+        state.scenario_variant_id, state.scenario_title, state.scenario_library_id,
+        state.active_chapter_id, tuple(state.context_chapter_ids),
+        hashlib.sha256(state.scenario_text.encode()).digest(),
+        hashlib.sha256(state.campaign_summary.encode()).digest(), memory_version,
+        state.timeline_id, state.combat.active, char.character_id if char else None,
     )
 
 
@@ -71,6 +90,7 @@ async def prefetch_retrieval(
     so the two cannot drift apart. Building the discarded payload costs well
     under a millisecond; the searches are the ~1s this moves off the lock.
     """
+    binding = retrieval_binding(state, user_id)
     message = await build_context(
         state=state, user_id=user_id, display_name=display_name, text=text,
         resolved_location=resolved_location, speaker_role=speaker_role,
@@ -81,7 +101,7 @@ async def prefetch_retrieval(
         memory_context=message.payload["memory_context"],
         rag_status=message.payload["rag_status"],
         memory_status=message.payload["memory_status"],
-        binding=retrieval_binding(state, user_id),
+        binding=binding,
     )
 
 
