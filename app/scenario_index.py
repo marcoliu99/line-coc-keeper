@@ -162,21 +162,26 @@ def format_location_index_block(locations: list[dict[str, Any]]) -> str:
 # player is trying to use. A twenty-five turn party session sat in one room for
 # all of it under exactly this condition — the scenario's own prose was intact
 # and only its index was missing, so nothing in the replies said why.
-# Room-to-room movement resolves against scene_maps, not against this index:
-# movement.py calls scene_map.resolve_move / find_room_by_text on them. An empty
-# index leaves the Keeper re-deriving NPC and location facts; empty floor plans
-# make movement impossible, and there is no command that rebuilds them — a
-# republished source invalidates them by design (see
-# docs/specs/enhancement/external_english_source_preparation_design_spec.md §7,
-# "推測地圖…失效，不能複製舊值到新來源") without providing a way back.
+# What each artifact actually does, checked against the code rather than assumed:
+#
+# The location index is injected into the prompt and nothing else. Movement
+# never reads it, so an empty one costs the Keeper context, not arrivals.
+#
+# Floor plans are what mapped navigation resolves against — scene_map.
+# resolve_move and find_room_by_text. Without them a player cannot walk a path
+# between known rooms, but movement.py's mapless branch still commits an
+# arrival whose destination is supported by retrieved evidence
+# (tests/test_turn_routing_and_movement.py::
+# test_sr_m07_mapless_supported_arrival_needs_no_new_map), so neither notice
+# may claim that movement is refused.
 EMPTY_SCENE_MAPS_NOTICE = (
-    "⚠️ 這份劇本沒有樓層圖，房間之間的移動無法核對，玩家往其他房間的行動會被拒絕。"
-    "樓層圖只能從 PDF 重新解析取得；改寫過原文的版本不會沿用舊圖。"
+    "⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;"
+    "有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。"
 )
 
 EMPTY_LOCATION_INDEX_NOTICE = (
-    "⚠️ 這份劇本沒有地點索引，移動與到達無法被核對，玩家往其他房間的行動會被拒絕。"
-    "請重新匯入劇本或補上地點索引後再開始。"
+    "⚠️ 這份劇本沒有地點索引,守密人的提示詞少了地點對照,"
+    "可能重複推導同一個地點的細節。可用 /coc index 重建。"
 )
 
 

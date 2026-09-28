@@ -1,11 +1,14 @@
-"""An arrival is committed against a known destination, so a scenario with no
-location index cannot have movement validated at all.
+"""A republished scenario ships with its derived artifacts invalidated, and
+nothing in any reply says so.
 
-Observed: a five-investigator party spent twenty-five turns in one room. Every
-attempt to reach the stairs was refused while the narration kept describing
-them, because the AI-prepared library variant carried `indexes.json == {}`
-while the same scenario's original variant carried eight locations. Nothing in
-any reply said so.
+Observed: the AI-prepared library variant carries `indexes.json == {}` and no
+floor plans, while the same scenario's original variant carries eight locations
+and one plan. A group installs the empty one and is told nothing.
+
+These notices report what is missing. They do not diagnose movement failures:
+`app/services/movement.py` never reads the location index, and its mapless
+branch commits an arrival that retrieved text supports — see
+`test_sr_m07_mapless_supported_arrival_needs_no_new_map`.
 """
 import unittest
 from unittest.mock import patch
@@ -18,7 +21,15 @@ class ReportLocationIndexTests(unittest.TestCase):
         with patch.object(scenario_index.observability, "event"):
             notice = scenario_index.report_location_index([], source="library")
         self.assertEqual(notice, scenario_index.EMPTY_LOCATION_INDEX_NOTICE)
-        self.assertIn("移動", notice)
+
+    def test_neither_notice_claims_movement_is_refused(self):
+        """movement.py commits a mapless arrival whose destination retrieval
+        supports, and never reads the location index at all, so a notice saying
+        movement is rejected would be a false diagnosis."""
+        for notice in (scenario_index.EMPTY_LOCATION_INDEX_NOTICE,
+                       scenario_index.EMPTY_SCENE_MAPS_NOTICE):
+            with self.subTest(notice=notice[:12]):
+                self.assertNotIn("會被拒絕", notice)
 
     def test_a_populated_index_returns_nothing(self):
         with patch.object(scenario_index.observability, "event"):
@@ -53,8 +64,9 @@ class ReportLocationIndexTests(unittest.TestCase):
 
 
 class SceneMapNoticeTests(unittest.TestCase):
-    """Movement resolves against scene_maps, not the location index, so empty
-    floor plans are the condition that actually refuses every move."""
+    """Movement resolves against scene_maps, not the location index. Empty
+    floor plans cost path-based travel between known rooms, not movement as
+    such, so they are reported separately and in those terms."""
 
     def test_empty_floor_plans_are_reported(self):
         with patch.object(scenario_index.observability, "event"):
@@ -90,21 +102,30 @@ class SceneMapNoticeTests(unittest.TestCase):
 
 
 class UploadConfirmationTests(unittest.TestCase):
-    def _text(self, location_count):
+    """The confirmation shows the reporter's verdict verbatim. Re-deciding here
+    is how the missing-floor-plan case went unseen: it only read the index."""
+
+    def _text(self, notice):
         from app import legacy_commands
 
         return legacy_commands._pdf_upload_confirmation_text(
-            "劇本", "內文", [], False, {}, {"npcs": [], "locations": []}, 0, location_count)
+            "劇本", "內文", [], False, {}, {"npcs": [], "locations": []}, 0, notice)
 
-    def test_an_upload_with_no_locations_says_so(self):
-        self.assertIn(scenario_index.EMPTY_LOCATION_INDEX_NOTICE, self._text(0))
+    def test_the_reporters_notice_is_shown(self):
+        for notice in (scenario_index.EMPTY_LOCATION_INDEX_NOTICE,
+                       scenario_index.EMPTY_SCENE_MAPS_NOTICE):
+            with self.subTest(notice=notice[:12]):
+                self.assertIn(notice, self._text(notice))
 
-    def test_an_upload_with_locations_does_not(self):
-        self.assertNotIn(scenario_index.EMPTY_LOCATION_INDEX_NOTICE, self._text(8))
+    def test_both_notices_survive_together(self):
+        combined = (f"{scenario_index.EMPTY_SCENE_MAPS_NOTICE}\n\n"
+                    f"{scenario_index.EMPTY_LOCATION_INDEX_NOTICE}")
+        shown = self._text(combined)
+        self.assertIn(scenario_index.EMPTY_SCENE_MAPS_NOTICE, shown)
+        self.assertIn(scenario_index.EMPTY_LOCATION_INDEX_NOTICE, shown)
 
-    def test_an_unknown_count_stays_silent(self):
-        # None means the caller did not look; it must not read as "none found".
-        self.assertNotIn(scenario_index.EMPTY_LOCATION_INDEX_NOTICE, self._text(None))
+    def test_no_notice_stays_silent(self):
+        self.assertNotIn("⚠️", self._text(""))
 
 
 if __name__ == "__main__":

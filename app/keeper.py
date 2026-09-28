@@ -3065,7 +3065,7 @@ def _execute_tool(
                 target_state.scenario_location_index = context["indexes"].get("locations", [])
                 target_state.scene_maps = context["scene_maps"]
                 # After the assignment, or this reads the previous chapter's maps.
-                scenario_index.report_location_index(
+                artifact_notice = scenario_index.report_location_index(
                     target_state.scenario_location_index, source="chapter_switch",
                     scenario_title=target_state.scenario_title,
                     scene_maps=target_state.scene_maps)
@@ -3084,7 +3084,13 @@ def _execute_tool(
                     target_state.scenario_library_id, context["page_numbers"],
                     lambda page, image: save_page_image(target_state.group_id, page, image),
                 )
-                return {"ok": True, "active_chapter_id": context["active_chapter_id"], "context_chapter_ids": context["context_chapter_ids"]}
+                # Carried into the result, or a group that switches chapters
+                # into an empty-artifact variant is told nothing at all.
+                result = {"ok": True, "active_chapter_id": context["active_chapter_id"],
+                          "context_chapter_ids": context["context_chapter_ids"]}
+                if artifact_notice:
+                    result["notice"] = artifact_notice
+                return result
             return _mutate_and_save_state(state, _advance)
         if name == "search_scenario":
             if not state.scenario_text:
