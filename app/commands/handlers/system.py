@@ -27,6 +27,7 @@ from app.commands import permissions
 from app.config import IMPORT_DIR
 from app.legacy_commands import (
     FormatMention,
+    PdfChoice,
     Reply,
     SendDM,
     SendDMImage,
@@ -652,7 +653,9 @@ async def handle_system_command(
             await reply(permissions.kp_only("處理劇本 PDF"))
             return
         choice_word = parts[2].casefold() if len(parts) > 2 else ""
-        choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
+        choices: dict[str, PdfChoice] = {"new": "new", "全新": "new", "全新劇本": "new",
+                                        "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}
+        choice = choices.get(choice_word)
         if choice is None:
             await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
             return
@@ -779,12 +782,12 @@ async def handle_system_command(
                 "（影響角色卡上傳時，武器只寫泛稱、沒寫具體型號的情況下，自動補上的預設彈藥容量）"
             )
             return
-        choice = parts[2].strip().lower()
+        era_choice = parts[2].strip().lower()
         era_map = {"1920": "1920s", "1920s": "1920s", "modern": "modern"}
-        if choice not in era_map:
+        if era_choice not in era_map:
             await reply("年代設定只接受「1920」或「modern」。")
             return
-        state.era = era_map[choice]
+        state.era = era_map[era_choice]
         save_state(state)
         await reply(f"已設定這個群組的年代為：{'1920 年代' if state.era == '1920s' else '現代／當代'}。")
         return
