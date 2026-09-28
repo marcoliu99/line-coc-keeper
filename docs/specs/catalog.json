@@ -1244,6 +1244,20 @@
       "path": "docs/specs/bug/keeper_role_superuser_design_spec.md",
       "zh_path": "docs/specs/bug/keeper_role_superuser_design_spec_zh.md",
       "source_revision": "5106d47176f8fd017bcc83b300f78879dc7b72ae"
+    },
+    {
+      "title": "The Keeper adjudicates narrative corrections when a group has no KP Assistant",
+      "zh": "群組沒有 KP 助手時，由守秘人裁定敘事更正",
+      "category": "feature",
+      "status": "backlog",
+      "evidence": [
+        "app/commands/handlers/correct.py",
+        "app/services/narrative_corrections.py",
+        "app/providers/registry.py"
+      ],
+      "path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec.md",
+      "zh_path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec_zh.md",
+      "source_revision": "434b76ddaffb865af842617a0c7962b81852e2b8"
     }
   ]
 }
