@@ -16,6 +16,7 @@ from app.agents import (
 )
 from app.domain.models import AgentMessage, MechanicResult
 from app.models import GroupState
+from app.providers.codex_provider import with_codex_turn
 from app.providers.turn_budget import with_turn_deadline
 from app.services import (
     mutation_admission,
@@ -53,6 +54,7 @@ def _unchanged_pending_reply(state: GroupState, user_id: str, result: MechanicRe
 
 
 @with_turn_deadline
+@with_codex_turn
 async def run_turn(
     state: GroupState,
     user_id: str,

@@ -7,11 +7,15 @@ from app import keeper, observability
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.providers.registry import (
+    CONVERSATION_PROVIDERS,
+    supports_dynamic_tools,
+    supports_response_stage,
+)
 from app.services import mutation_admission, prompt_config, reply_segments
 
 _logger = logging.getLogger(__name__)
-_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
+_PROVIDERS = CONVERSATION_PROVIDERS
 _OPENING_TOOL_NAMES = keeper.READ_ONLY_TOOL_NAMES - {
     "roll_dice", "roll_impaling_damage", "roll_weapon_damage",
 } | {"send_private_info", "show_scenario_image"}
@@ -114,7 +118,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     image_requests = message.payload.get("image_requests", [])
     tools: list[dict] = []
     execute_tool: Callable[[str, dict], Awaitable[dict]] = _no_tools
-    provider_options: dict = {"response_stage": "narrator"} if LLM_PROVIDER == "openai" else {}
+    provider_options: dict = {"response_stage": "narrator"} if (LLM_PROVIDER == "openai" or supports_response_stage(provider)) else {}
     if tool_enabled:
         allowed = (
             keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
@@ -137,7 +141,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             observed_outcomes=message.payload.setdefault("observed_outcomes", []),
         )
         combat_status_gate = (
-            keeper._CombatStatusToolGate(state) if LLM_PROVIDER == "openai" else None
+            keeper._CombatStatusToolGate(state) if (LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)) else None
         )
 
         async def execute_restricted_tool(name: str, tool_input: dict) -> dict:

@@ -41,10 +41,10 @@ from __future__ import annotations
 import difflib
 from typing import Any
 
-from app.config import LLM_PROVIDER
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
+from app.providers.registry import ANALYSIS_PROVIDERS
 
-_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
+_PROVIDERS = ANALYSIS_PROVIDERS
 
 # 16-way compass, plus up/down for stairs/floors. "N" is only ever a convention
 # for "further into the page/building" — extraction doesn't have a real compass

@@ -164,3 +164,7 @@ This README is an introduction. Detailed guides and all specifications are avail
 | COC7e rules versus the current implementation | [Rules reference](docs/references/rules_reference.md) |
 | Carried-item plausibility checks | [Carry-audit specification](docs/references/carry_audit.md) |
 | Comparison with the manual [coc-kp-host](https://github.com/SumanasJ/coc-kp-host) preparation workflow | [Preparation and persistence](docs/references/prep_persistence.md) |
+
+## Local Codex OAuth experiment
+
+[Local Codex OAuth experiment](docs/guides/codex_oauth_testing.md)

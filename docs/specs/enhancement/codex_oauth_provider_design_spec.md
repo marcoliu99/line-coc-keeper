@@ -1,6 +1,6 @@
 # Codex OAuth conversation provider
 
-Status: proposed; environment prepared, runtime implementation pending review.
+Status: implemented on the experiment branch; 50-case live evaluation completed (47/50 state/narrative passes).
 Branch: `enhancement/codex-oauth-provider`. Base: current `origin/main_v2`.
 
 ## Goal and scope
@@ -155,3 +155,37 @@ Decide whether to migrate analyze_text/analyze_image only after these results.
 - https://developers.openai.com/codex/auth
 - https://developers.openai.com/codex/app-server
 - Local codex-cli 0.157.1 help; login status reports ChatGPT authentication.
+
+## Implementation record (2026-09-28)
+
+Both transports passed a real OAuth check/gateway/resolver/narration smoke test
+with gpt-6-luna on codex-cli 0.157.1. A fake-transport regression also exercises
+Supervisor -> Executor -> actual skill_check -> pending persistence -> Python
+check resolution -> Narrator without rerolling.
+
+The strict wire envelope is `{"decision": ...}`. Tool decisions encode arguments
+as `arguments_json` (a JSON string), preserving optional legacy tool fields without
+making them mandatory in a strict output schema. Python decodes the string and
+validates it against the actual current game tool schema before dispatch.
+Final content remains a string, including the Executor's resolution JSON.
+
+App-server uses local stdio, a server per conversation, and a fresh ephemeral
+thread per decision with authoritative Python context. The server is reused
+between tool decisions and closed at conversation exit; this is not a global
+server pool. Effective inherited MCP/plugin names are explicitly disabled for
+threads. CLI native shell settings affect only the child, not the developer's
+shell or global Codex settings.
+
+In-flight game mutations retain existing gateway ownership and may outlive the
+LLM deadline while settling. Expiration prevents subsequent model calls; it does
+not undo or replay the mutation. A repeated identical tool invocation in a turn
+is rejected conservatively. This can defer legitimate repeated operations, which
+should be expressed as a separate action rather than silently bypass the guard.
+
+The 50-case evaluation means 25 synthetic scenario runs per transport, each with
+any required deterministic check follow-up. It measures full Supervisor behavior
+and records tool receipts and state assertions. It does not replay production
+logs or certify arbitrary campaign/combat behavior. See
+[testing guide](../../guides/codex_oauth_testing.md).
+
+[50-case evaluation / 50 案例結果](../../evaluations/codex_oauth_50/README.md)

@@ -1,0 +1,89 @@
+{
+  "exec": {
+    "cases": 25,
+    "state_narrative_pass": 24,
+    "strict_tool_pass": 22,
+    "p50_seconds": 24.681,
+    "p95_seconds": 34.742,
+    "successful_p50_seconds": 24.528,
+    "decision_requests": 71,
+    "game_tool_calls": 18,
+    "successful_game_tool_calls": 15,
+    "input_bytes": 3425358,
+    "python_rolls": 10,
+    "failures": [
+      {
+        "repetition": 2,
+        "kind": "pending",
+        "failures": [],
+        "strict_tool_pass": false
+      },
+      {
+        "repetition": 4,
+        "kind": "pending",
+        "failures": [],
+        "strict_tool_pass": false
+      },
+      {
+        "repetition": 5,
+        "kind": "pending",
+        "failures": [
+          "fallback_reply"
+        ],
+        "strict_tool_pass": false
+      }
+    ]
+  },
+  "app-server": {
+    "cases": 25,
+    "state_narrative_pass": 23,
+    "strict_tool_pass": 20,
+    "p50_seconds": 23.424,
+    "p95_seconds": 34.836,
+    "successful_p50_seconds": 24.855,
+    "decision_requests": 71,
+    "game_tool_calls": 18,
+    "successful_game_tool_calls": 14,
+    "input_bytes": 3420930,
+    "python_rolls": 9,
+    "failures": [
+      {
+        "repetition": 1,
+        "kind": "pending",
+        "failures": [],
+        "strict_tool_pass": false
+      },
+      {
+        "repetition": 2,
+        "kind": "check_success",
+        "failures": [
+          "missing_pending_check",
+          "fallback_reply"
+        ],
+        "strict_tool_pass": false
+      },
+      {
+        "repetition": 3,
+        "kind": "pending",
+        "failures": [],
+        "strict_tool_pass": false
+      },
+      {
+        "repetition": 4,
+        "kind": "pending",
+        "failures": [],
+        "strict_tool_pass": false
+      },
+      {
+        "repetition": 5,
+        "kind": "pending",
+        "failures": [
+          "fallback_reply"
+        ],
+        "strict_tool_pass": false
+      }
+    ]
+  },
+  "paired_successes": 23,
+  "paired_median_server_minus_exec_seconds": 0.187
+}

@@ -17,7 +17,10 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.providers.registry import (
+    CONVERSATION_PROVIDERS,
+    supports_dynamic_tools,
+)
 from app.services import (
     movement,
     mutation_admission,
@@ -27,7 +30,7 @@ from app.services import (
 )
 
 _logger = logging.getLogger(__name__)
-_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
+_PROVIDERS = CONVERSATION_PROVIDERS
 
 
 async def run_executor(message: AgentMessage) -> MechanicResult:
@@ -182,7 +185,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         "removed": list((Counter(before_items) - Counter(after_items)).elements()),
                         "evidence_ref": f"tool:{len(tool_events) + 1}",
                     }))
-                if LLM_PROVIDER == "openai":
+                if (LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)):
                     combat_status_gate.observe_tool_result(name, result)
                 tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
                                     "inventory_before": inventory_before,
@@ -199,7 +202,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
 
             provider_options = (
                 {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools), "response_stage": "executor"}
-                if LLM_PROVIDER == "openai" else {}
+                if (LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)) else {}
             )
             completion = await provider.run_conversation(
                 static_system, dynamic_system, tools, state.log, new_message,

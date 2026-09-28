@@ -37,12 +37,18 @@ ToolExecutor: TypeAlias = Callable[[str, dict], Awaitable[dict]]
 
 async def shutdown_async_clients() -> None:
     """Close every provider client; safe to call more than once."""
-    from app.providers import anthropic_provider, gemini_provider, openai_provider
+    from app.providers import (
+        anthropic_provider,
+        codex_provider,
+        gemini_provider,
+        openai_provider,
+    )
 
     providers = (
         ("openai", openai_provider.shutdown_async_client),
         ("anthropic", anthropic_provider.shutdown_async_client),
         ("gemini", gemini_provider.shutdown_async_client),
+        ("codex", codex_provider.shutdown_async_client),
     )
     results = await asyncio.gather(
         *(shutdown() for _, shutdown in providers),

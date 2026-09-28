@@ -7,6 +7,7 @@ from app import keeper, observability, spoiler_policy
 from app.agents import guard, tool_gateway
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
+from app.providers.registry import supports_dynamic_tools
 
 _logger = logging.getLogger(__name__)
 _ROLE = "kp_assistant"
@@ -33,7 +34,7 @@ async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str
     provider = keeper._PROVIDERS.get(keeper.LLM_PROVIDER)
     if provider is None:
         return (
-            f'（設定錯誤：LLM_PROVIDER="{keeper.LLM_PROVIDER}" 不是支援的供應商，請在 .env 設成 anthropic、gemini 或 openai）',
+            f'（設定錯誤：LLM_PROVIDER="{keeper.LLM_PROVIDER}" 不是支援的供應商，請在 .env 設成 anthropic、gemini、openai 或 codex）',
             [], [],
         )
 
@@ -135,6 +136,8 @@ async def _run_assistant_turn(
             final_text = await provider.run_conversation(
                 static_prompt, dynamic_prompt, tools, state.log, provider_message,
                 execute_assistant_tool, MAX_TOOL_ITERATIONS,
+                **({"tools_for_request": lambda: combat_status_gate.tools_for_request(tools)}
+                   if supports_dynamic_tools(provider) else {}),
             )
         except Exception:
             _logger.exception("KP Assistant provider call failed")

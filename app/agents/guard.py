@@ -6,11 +6,11 @@ from app import config, observability, spoiler_policy
 from app.agents import rule_validator
 from app.config import LLM_PROVIDER
 from app.domain.models import AgentMessage
-from app.providers import anthropic_provider, gemini_provider, openai_provider
+from app.providers.registry import CONVERSATION_PROVIDERS
 from app.services import prompt_config
 
 _logger = logging.getLogger(__name__)
-_PROVIDERS = {"anthropic": anthropic_provider, "gemini": gemini_provider, "openai": openai_provider}
+_PROVIDERS = CONVERSATION_PROVIDERS
 
 MAX_REPAIR_ATTEMPTS = 2
 

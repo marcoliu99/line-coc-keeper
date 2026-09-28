@@ -1,0 +1,69 @@
+"""Exercise actual Executor, Narrator, game gateway and check persistence."""
+import json
+import unittest
+import uuid
+from unittest.mock import AsyncMock, patch
+
+from app import config, keeper, legacy_commands
+from app.agents import executor, guard, narrator, supervisor
+from app.models import Character, GroupState
+from app.providers import codex_provider
+from app.services.turn_context import character_id
+
+
+class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_player_check_then_resolved_narration_uses_python_state(self):
+        state = GroupState(group_id='codex-pipeline-' + uuid.uuid4().hex, active=True)
+        state.characters['u'] = Character(name='Marco', owner_id='u', skills={'偵查': 70}, luck=0)
+        state.scenario_text = '書桌的文件藏有日期 1925；偵查成功才能辨認。'
+        keeper._ensure_turn_timeline(state)
+        keeper.save_state(state)
+        tool_decisions = []
+        stages = []
+
+        async def request(prompt, _schema):
+            payload = json.loads(prompt)
+            stages.append(payload['response_stage'])
+            if payload['response_stage'] == 'executor':
+                if not payload['current_conversation']:
+                    tool_decisions.append('skill_check')
+                    return json.dumps({'decision': {'type': 'tool_call', 'name': 'skill_check',
+                        'arguments_json': json.dumps({'investigator': 'Marco', 'skill': '偵查',
+                                                     'action_context': '檢查桌上的文件'})}})
+                receipt = payload['current_conversation'][0]['result']
+                self.assertTrue(receipt['pending'])
+                self.assertIn('evidence_ref', receipt)
+                decision = {'disposition': 'await_check', 'actor_character_id': character_id(state, 'u'),
+                    'waiting_for': character_id(state, 'u'), 'check_id': state.pending_checks['u']['check_id'],
+                    'reason': '辨認文件', 'evidence_refs': ['tool:1']}
+                content = json.dumps(decision)
+            else:
+                content = '請使用 /coc check 完成偵查檢定。' if state.pending_checks else '你辨認出文件日期：1925 年。'
+            return json.dumps({'decision': {'type': 'final', 'content': content}})
+
+        transport = AsyncMock()
+        transport.request.side_effect = request
+        with patch.object(config, 'CODEX_TRANSPORT', 'exec'), \
+             patch.object(codex_provider, 'ExecTransport', return_value=transport), \
+             patch.object(executor, 'LLM_PROVIDER', 'codex'), \
+             patch.object(narrator, 'LLM_PROVIDER', 'codex'), \
+             patch.object(guard, 'LLM_PROVIDER', 'codex'), \
+             patch('app.dice.roll_percentile_with_dice_pool', return_value=20) as dice:
+            reply, _, _ = await supervisor.run_turn(state, 'u', 'Marco', '我要檢查桌上的文件', None, 'player', state.group_id)
+            self.assertIn('/coc check', reply)
+            self.assertEqual(dice.call_count, 0)
+            self.assertEqual(tool_decisions, ['skill_check'])
+            self.assertIn('u', keeper.load_state(state.group_id).pending_checks)
+            resolved = legacy_commands._resolve_check_deterministically(state.group_id, 'u', '/coc check')
+            self.assertTrue(resolved.should_finalize)
+            state = keeper.load_state(state.group_id)
+            self.assertFalse(state.pending_checks)
+            reply, _, _ = await supervisor.run_turn(state, 'u', 'Marco', resolved.keeper_message,
+                None, 'player', state.group_id, turn_kind='resolved_check_followup',
+                resolved_check_context=resolved.resolved_event)
+            self.assertIn('1925', reply)
+            self.assertNotIn('/coc check', reply)
+            self.assertEqual(dice.call_count, 1)
+            self.assertEqual(tool_decisions, ['skill_check'])
+            self.assertIn('executor', stages)
+            self.assertIn('narrator', stages)

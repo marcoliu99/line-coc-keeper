@@ -1,6 +1,6 @@
 # Codex OAuth 對話 Provider
 
-狀態：提案；已準備環境，程式實作待規格確認。
+狀態：已在實驗分支實作；50 案例真實測試已完成，47／50 通過狀態／敘事斷言。
 分支：`enhancement/codex-oauth-provider`，基於最新 `origin/main_v2`。
 
 ## 目標與範圍
@@ -133,3 +133,31 @@ app-server 同案例驗證。模型可用性、CLI 關閉原生工具、schema �
 - https://developers.openai.com/codex/auth
 - https://developers.openai.com/codex/app-server
 - 本機 codex-cli 0.157.1 help；login status 顯示 ChatGPT 登入。
+
+## 實作紀錄（2026-09-28）
+
+兩種 transport 均已在 codex-cli 0.157.1，以 gpt-6-luna 通過真實 OAuth
+檢定／gateway／Python 結算／敘事 smoke test。另以假 transport 回歸測試
+完整 Supervisor -> Executor -> skill_check -> 持久化 pending -> Python
+檢定 -> Narrator，確認沒有重骰。
+
+實際 wire 格式為 `{"decision": ...}`；工具參數以 `arguments_json` JSON
+字串編碼，避免 strict output schema 將既有選填工具參數全部變必填。
+Python 解碼後依目前真正工具 schema 驗證，再執行。final.content 保持字串，
+包含 Executor 所需的裁決 JSON 字串。
+
+app-server 採本機 stdio，每段 conversation 一個 server，每次決策建立新
+的 ephemeral thread 並重送權威 context。工具決策之間保留 server，段落
+結束即關閉，不是全域長駐 pool。逐項停用繼承的 MCP／plugin；關閉原生 shell
+的設定僅影響遊戲子程序，不動目前開發 shell 與全域 Codex 設定。
+
+已開始的遊戲變更沿用 gateway 所有權完成持久化，可能超過 LLM 期限。
+期限到後不能再啟動模型，不撤銷或重播變更。同回合完全相同工具與參數的
+重複呼叫會保守拒絕；也可能暫緩合理的重複操作，應另行提出動作而非自動
+繞過限制。
+
+50 案例指每種 transport 25 個合成劇情案例，包含必要的檢定後續；測量
+完整 Supervisor 行為、工具收據與狀態。不是正式團務 log 回放，也不能
+代表所有長期團或戰鬥情境。操作方式見[測試指南](../../guides/codex_oauth_testing_zh.md)。
+
+[50-case evaluation / 50 案例結果](../../evaluations/codex_oauth_50/README_zh.md)

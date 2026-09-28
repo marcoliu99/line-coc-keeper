@@ -675,3 +675,6 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         return None
     except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
+
+SUPPORTS_DYNAMIC_TOOLS = True
+SUPPORTS_RESPONSE_STAGE = True
