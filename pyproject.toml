@@ -1,0 +1,30 @@
+# Tooling config only; this repo is not an installable package.
+# mypy settings live in mypy.ini, pytest settings in pytest.ini.
+
+[tool.ruff.lint]
+# Ruff's default rule set, pinned by the exact ruff version in
+# requirements-dev.txt, plus cross-module private access
+# (CODING_STANDARDS.md, "Private stays private").
+extend-select = ["SLF001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["SLF001"]
+"scripts/experiments/**" = ["SLF001"]
+# Existing SLF001 debt. Delete a line once its file is clean; add none.
+"app/agents/assistant.py" = ["SLF001"]
+"app/agents/context_builder.py" = ["SLF001"]
+"app/agents/executor.py" = ["SLF001"]
+"app/agents/narrator.py" = ["SLF001"]
+"app/agents/supervisor.py" = ["SLF001"]
+"app/agents/tool_gateway.py" = ["SLF001"]
+"app/commands/handlers/purchase.py" = ["SLF001"]
+"app/commands/handlers/system.py" = ["SLF001"]
+"app/help_actions.py" = ["SLF001"]
+"app/keeper.py" = ["SLF001"]
+"app/legacy_commands.py" = ["SLF001"]
+"app/pdf_ai_repair.py" = ["SLF001"]
+"app/providers/openai_provider.py" = ["SLF001"]
+"app/scenario_library.py" = ["SLF001"]
+"app/scenario_source_authoring.py" = ["SLF001"]
+"app/scenario_source_review.py" = ["SLF001"]
+"app/scenario_templates.py" = ["SLF001"]
