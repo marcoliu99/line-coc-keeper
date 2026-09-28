@@ -103,7 +103,8 @@ async def resolve_pending(group_id: str, owner: str) -> str:
     return "\n".join(lines)
 
 
-async def play(group_id: str, turns: list[str], after_input: bool) -> list[dict]:
+async def play(group_id: str, turns: list[str], after_input: bool,
+               round_robin: bool = False) -> list[dict]:
     config.OPENAI_DYNAMIC_PROMPT_AFTER_INPUT = after_input
     from app.providers import openai_provider
     openai_provider.config.OPENAI_DYNAMIC_PROMPT_AFTER_INPUT = after_input
@@ -111,7 +112,11 @@ async def play(group_id: str, turns: list[str], after_input: bool) -> list[dict]
     results: list[dict] = []
     for index, text in enumerate(turns, 1):
         state = load_state(group_id)
-        character = next(iter(state.active_characters()), None)
+        party = list(state.active_characters())
+        # A table takes turns; measuring one speaker hides what the queue and
+        # the other investigators' vitals cost.
+        character = party[(index - 1) % len(party)] if (round_robin and party) else (
+            party[0] if party else None)
         owner = character.owner_id if character else "probe-user"
         name = character.name if character else "調查員"
         started = time.monotonic()
@@ -124,10 +129,10 @@ async def play(group_id: str, turns: list[str], after_input: bool) -> list[dict]
         results.append({
             "turn": index, "text": text, "reply": reply, "check": check,
             "private": len(private), "images": len(images),
-            "seconds": time.monotonic() - started,
+            "seconds": time.monotonic() - started, "speaker": name,
             "hp": getattr(character, "hp", None), "san": getattr(character, "san", None),
         })
-        print(f"  turn {index} ({results[-1]['seconds']:.1f}s): {reply[:80]}"
+        print(f"  turn {index} {name} ({results[-1]['seconds']:.1f}s): {reply[:70]}"
               + (f"  [check: {check[:50]}]" if check else ""), flush=True)
     return results
 
@@ -135,7 +140,7 @@ async def play(group_id: str, turns: list[str], after_input: bool) -> list[dict]
 def show(label: str, records: list[dict]) -> None:
     print(f"\n{'=' * 78}\n{label}\n{'=' * 78}")
     for record in records:
-        print(f"\n--- turn {record['turn']}  ({record['seconds']:.1f}s, "
+        print(f"\n--- turn {record['turn']} · {record.get('speaker', '?')}  ({record['seconds']:.1f}s, "
               f"private={record['private']}, images={record['images']}) ---")
         print(f"> {record['text']}")
         print(record["reply"])
@@ -152,6 +157,8 @@ async def main() -> int:
     parser.add_argument("--turns", type=int, default=len(TURNS))
     parser.add_argument("--only-wp2", action="store_true",
                         help="run the shipping composition alone, for a longer session")
+    parser.add_argument("--round-robin", action="store_true",
+                        help="rotate the speaker through the party, as a table actually plays")
     args = parser.parse_args()
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -169,7 +176,7 @@ async def main() -> int:
     for label, after_input in arms:
         print(f"arm {label}")
         restore(pristine)
-        outcomes[label] = await play(args.group, turns, after_input)
+        outcomes[label] = await play(args.group, turns, after_input, args.round_robin)
 
     for label, records in outcomes.items():
         show(label, records)

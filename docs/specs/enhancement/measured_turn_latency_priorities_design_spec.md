@@ -435,4 +435,61 @@ Goal: preserve current-turn evidence and message admission order while retaining
 3. **Admission order.** Register an ordinary turn in the conversation's ordering queue before awaiting its prefetch. Retrieval may run while it waits, but a later completed prefetch cannot pass an earlier message. The configured KP Assistant retains priority over waiting players. Cancellation removes its ticket.
 4. **Queue position.** Count waiters at both the KP priority gate and the conversation lock, without double-counting a turn that has crossed from the gate to the lock. The notice and `turn.queue` use the same snapshot and update as turns finish.
 
-Acceptance: targeted regression tests for invalid response chains, chapter and memory changes, intentionally delayed prefetches with FIFO/KP priority, cancellation, and gate queue counts; then the isolated full suite, Ruff, mypy, and `git diff --check`. No additional model request or synchronous review stage is introduced.
+Acceptance: targeted regression tests for invalid response chains, chapter and memory changes, intentionally delayed prefetches with FIFO/KP priority, cancellation, and gate queue counts; then the isolated full suite, Ruff, mypy, and `git diff --check`. No additional model request or synchronous review stage is introduced.## 9. Re-measured with a five-investigator party
+
+Everything above was measured against the database's current groups, which hold **one** character each. The recorded sessions had three to five speakers — Mick 53 turns, Marco 52, Ken 39, 馬可先生 31 — so the per-turn figures were a solo game and the queue figures were not.
+
+`scripts/experiments/make_party_state.py` seats a five-investigator party in a sandbox copy. `live_narration_ab.py --round-robin` rotates the speaker, as a table plays.
+
+### 9.1 Lock waits scale with the party, as expected
+
+| speakers in the log | lock wait p99 | max |
+| --- | --- | --- |
+| 3 (Ken/Marco/Mick) | 131,178 ms | 131,189 ms |
+| 3 (Ken/Mick/馬可先生) | 48,734 ms | 55,085 ms |
+| 2 | 29,513 ms | 29,513 ms |
+
+The p99 this document reported is not an outlier; it is what a table of three already produces.
+
+### 9.2 WP2 is stronger with a party, not weaker
+
+| | solo | five |
+| --- | --- | --- |
+| dynamic block | 1,343 | **2,125** |
+| cacheable prefix (static + tools) | 17,477 | 18,066 |
+| arm A cached | 2.2% | **0.0%** |
+| arm D cached | 92.9% | **86.0%** |
+
+The party's vitals grow the block that sits at the cache boundary by 58% while the stable prefix barely moves, so today's composition loses everything rather than most of it.
+
+### 9.3 WP5 fires, and costs nothing when it does
+
+Turn 16, Nora holding her own decision: **0 requests, 0 tokens, 0.0 s**, against 5.5 s for the equivalent turn under today's code. One occurrence in twenty turns is not a frequency estimate.
+
+### 9.4 Cost by disposition, twenty party turns
+
+| disposition | turns | requests/turn | input/turn |
+| --- | --- | --- | --- |
+| `incomplete` | 5 | 6.0 | 155,107 |
+| `blocked` | 5 | 3.8 | 87,937 |
+| `await_check` | 3 | 4.7 | 105,597 |
+| `deferred` | 3 | 2.7 | 54,779 |
+| `no_mechanics` | 2 | 2.0 | 36,848 |
+| `await_luck` | 1 | 1.0 | 24,233 |
+| short-circuit (WP5) | 1 | **0.0** | **0** |
+
+Refusals — `deferred`, `blocked`, and most `incomplete` — are 13 of 20 turns and the bulk of the tokens. That is the shape of a multiplayer game: one player mid-decision refuses the rest of the table, and each refusal costs a full pipeline.
+
+### 9.5 A deterministic cross-player refusal does not survive the data
+
+The obvious extension of WP5 is: while any player holds a Luck decision, answer everyone else from state too. Of ten turns by other players while a decision was outstanding, **nine were refused anyway** — three `deferred`, three `blocked`, three `incomplete`.
+
+The tenth was not. Turn 12, marco: "我檢查一下自己身上還有什麼東西" resolved `no_mechanics` and was answered properly. A deterministic gate would have refused a legitimate inventory question.
+
+Whether a turn can proceed while someone else is mid-decision is the Executor's judgement, not a state fact, and the same state produced `deferred`, `blocked`, `incomplete` and `no_mechanics` across these twenty turns. **Not implemented.** The refusal cost is real and is the largest single waste this document has measured, but it cannot be recovered by reading state.
+
+### 9.6 An open question this raised about WP2
+
+Arm A produced no `deferred` turns; arm D produced three. The arms also diverged in state as play continued — arm A's first turn cancelled a check where arm D's created one — so the cause is not isolated, and this is one scenario.
+
+It is nonetheless the instruction-following risk §2.6 said was unverified: the block moved from `instructions`, where it took precedence, to a `developer` message after the player's line. **A controlled comparison from an identical state, with the same pending items, is owed before WP2 ships.** Cache and delivery were verified; judgement was not.
