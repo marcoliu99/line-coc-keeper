@@ -71,3 +71,5 @@ class ToolCall:                            # 目前各分支共用、總是一�
 - **排序：** 戰鬥家族的 PR 排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
 
 Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。`refactor/combat-start-in-combat-module` 尚未合入 `main_v2`，戰鬥處理函式家族因此仍待遷移。
+
+劇本／搜尋家族（`record_established_fact`、`record_clue`、圖片搜尋與展示、章節切換、劇本搜尋和記憶搜尋）已移至 `app/keeper_tools/scenario.py`。章節切換與事實記錄仍透過 Keeper 的公開過渡介面使用同一個狀態更新邊界；其他家族暫時沿用舊串接。

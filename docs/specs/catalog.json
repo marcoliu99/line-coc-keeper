@@ -1210,6 +1210,7 @@
       "status": "partial",
       "evidence": [
         "app/keeper_tools/registry.py",
+        "app/keeper_tools/scenario.py",
         "tests/test_keeper_tool_registry.py",
         "app/keeper.py",
         "app/agents/tool_gateway.py",

@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.keeper_tools import scenario as scenario_handlers
 from app.models import GroupState
 from app.services import opposed_checks
 
@@ -478,6 +479,7 @@ _SPECS = (
                     "required": ["fact"],
                 },
             },
+        handler=scenario_handlers.record_fact_or_clue,
         kp_assistant=True,
     ),
     ToolSpec(
@@ -493,6 +495,7 @@ _SPECS = (
                     "required": ["clue"],
                 },
             },
+        handler=scenario_handlers.record_fact_or_clue,
         kp_assistant=True,
     ),
     ToolSpec(
@@ -833,6 +836,7 @@ _SPECS = (
                     },
                 },
             },
+        handler=scenario_handlers.search_scenario_images,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -849,6 +853,7 @@ _SPECS = (
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             },
+        handler=scenario_handlers.advance_scenario_chapter,
         kp_assistant=True,
     ),
     ToolSpec(
@@ -870,6 +875,7 @@ _SPECS = (
                     "required": ["page_number"],
                 },
             },
+        handler=scenario_handlers.show_scenario_image,
         kp_assistant=True,
         opening=True,
     ),
@@ -891,6 +897,7 @@ _SPECS = (
                     "required": ["query"],
                 },
             },
+        handler=scenario_handlers.search_memory,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -927,6 +934,7 @@ _SPECS = (
                 "required": ["query"],
             },
         },
+        handler=scenario_handlers.search_scenario,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,

@@ -100,3 +100,17 @@ def test_registry_covers_schemas_and_preserves_provider_order() -> None:
         assert [tool["name"] for tool in keeper._tools_for_speaker_role("kp_assistant")] == [
             name for name in (*PLAYER_TOOL_ORDER, "search_scenario") if name in KP_ALLOWED
         ]
+
+
+def test_scenario_search_family_dispatches_without_legacy_cascade() -> None:
+    from app import memory_rag
+    from app.models import GroupState
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy search dispatch")),
+          patch.object(memory_rag, "search_memory", return_value=[]),
+          patch.object(memory_rag, "format_results", return_value="none")):
+        result = keeper._execute_tool(
+            GroupState(group_id="scenario-search"), "search_memory", {"query": "door"}, [], [],
+        )
+    assert result == {"ok": True, "results": "none"}
