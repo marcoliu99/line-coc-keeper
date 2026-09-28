@@ -67,7 +67,7 @@ def test_real_adapter_request_baseline(tmp_path, monkeypatch, route, expected_re
             asyncio.run(router.handle_text_message(state.group_id, "kp" if route == "sudo_route" else "u",
                 AsyncMock(return_value="Ada"), reply, AsyncMock(), AsyncMock(), AsyncMock(),
                 "/coc sudo u act 拿起手電筒" if route == "sudo_route" else "拿起手電筒",
-                is_keeper=(route == "sudo_route"), allow_opaque_sudo_target=True))
+                allow_opaque_sudo_target=True))
             reply.assert_awaited()
         else:
             asyncio.run(supervisor.run_turn(state, "u", "Ada", "拿起手電筒", None, "player", state.group_id,

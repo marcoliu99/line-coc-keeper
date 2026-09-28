@@ -346,7 +346,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
             saved = store.get("g")
 
         self.assertFalse(saved.get_active_character("p1").away)
-        self.assertIn("只有目前的 KP Assistant", reply.messages[0])
+        self.assertIn("只有目前的 KP 助手", reply.messages[0])
 
     async def test_sudo_act_requires_started_game(self):
         state = self._state()

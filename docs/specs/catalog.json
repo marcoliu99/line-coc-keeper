@@ -1254,6 +1254,42 @@
       "path": "docs/specs/bug/defeated_enemy_readd_design_spec.md",
       "zh_path": "docs/specs/bug/defeated_enemy_readd_design_spec_zh.md",
       "source_revision": "1a169a3dec2873f3d1af465f1528b06978821ea9"
+    },
+    {
+      "title": "A Discord role named keeper is a hidden superuser",
+      "zh": "名為 keeper 的 Discord 身分組是隱藏的超級使用者",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/discord_bot.py",
+        "app/commands/router.py",
+        "app/commands/handlers/system.py",
+        "app/commands/handlers/correct.py",
+        "app/legacy_commands.py",
+        "app/services/movement.py",
+        "app/agents/supervisor.py",
+        "app/agents/executor.py",
+        "tests/test_kp_authority.py"
+      ],
+      "path": "docs/specs/bug/keeper_role_superuser_design_spec.md",
+      "zh_path": "docs/specs/bug/keeper_role_superuser_design_spec_zh.md",
+      "source_revision": "5106d47176f8fd017bcc83b300f78879dc7b72ae"
+    },
+    {
+      "title": "The Keeper adjudicates narrative corrections when a group has no KP Assistant",
+      "zh": "群組沒有 KP 助手時，由守秘人裁定敘事更正",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/services/correction_adjudication.py",
+        "app/commands/handlers/correct.py",
+        "app/services/narrative_corrections.py",
+        "app/commands/handlers/system.py",
+        "tests/test_keeper_adjudicates_corrections.py"
+      ],
+      "path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec.md",
+      "zh_path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec_zh.md",
+      "source_revision": "434b76ddaffb865af842617a0c7962b81852e2b8"
     }
   ]
 }

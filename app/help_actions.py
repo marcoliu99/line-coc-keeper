@@ -147,7 +147,7 @@ ACTIONS: tuple[HelpExecution, ...] = (
     _a("away", "scenario/away", "暫離遊戲", "direct", "/coc away"),
     _a("back", "scenario/back", "回到遊戲", "direct", "/coc back"),
     # KP
-    _a("kp", "kp/kp", "登記 KP Assistant", "direct", "/coc kp"),
+    _a("kp", "kp/kp", "登記 KP 助手", "direct", "/coc kp"),
     _a("kp_quit", "kp/kp", "解除 KP 身分", "direct", "/coc kp quit", confirm=True),
     _a("sudo", "kp/sudo", "代玩家操作", "sudo", "/coc sudo", confirm=True),
     _a("checkpoint", "kp/checkpoint", "建立回溯節點", "form",

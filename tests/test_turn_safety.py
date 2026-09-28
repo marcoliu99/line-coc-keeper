@@ -222,7 +222,7 @@ def test_read_queries_and_other_groups_remain_available(state, held):
     save_state(other)
     assert load_state("other").state_revision == 1
 
-    async def read_under_lock(*args):
+    async def read_under_lock(*args, **kwargs):
         async with locks.get_conversation_lock(state.group_id):
             assert load_state(state.group_id).characters["u"].name == "Ada"
             with pytest.raises(admission.MutationHeld):

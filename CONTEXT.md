@@ -7,16 +7,12 @@ A Discord bot in which an AI runs Call of Cthulhu 7e sessions for a group of pla
 ### People and roles
 
 **Keeper**（守秘人）:
-The AI game master that runs every turn: it adjudicates actions, calls game tools and narrates.
+The game master of a CoC game, played by the bot: it runs every turn, adjudicates actions, calls game tools and narrates, and holds the Keeper's authority to rule on the game. On Discord it is the bot account; the server role named `keeper` is the bot's own and grants no human anything.
 _Avoid_: KP (for the AI in prose), GM
 
 **KP Assistant**（KP 助手）, short form **KP**:
-The human in a group who helps the Keeper: they can steer or correct it and run group-level administration. "KP" always means this human, never the Keeper.
+The human in a group who helps the Keeper: they can steer or correct it and run group-level administration. A group has at most one, who registers, hands over, or is taken over by a server manager. "KP" always means this human, never the Keeper.
 _Avoid_: GM (for the human)
-
-**Host**（主辦人）:
-A server administrator who manages the bot for a Discord server but doesn't play in its games; identified by a Discord server role. Hosts may perform group-level administration alongside the KP Assistant.
-_Avoid_: Keeper, Discord Keeper
 
 **Player**（玩家）:
 A human taking part in a game through their investigator. A player owns exactly one investigator per game.
