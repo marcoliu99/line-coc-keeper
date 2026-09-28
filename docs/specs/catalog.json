@@ -3,6 +3,19 @@
   "reviewed_date": "2026-09-27",
   "specs": [
     {
+      "title": "Source-grounded movement destination aliases",
+      "zh": "有來源依據的移動目的地別名",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": [
+        "app/services/movement.py",
+        "app/config.py",
+        "tests/test_turn_routing_and_movement.py"
+      ],
+      "path": "docs/specs/bug/movement_destination_aliases_design_spec.md",
+      "zh_path": "docs/specs/bug/movement_destination_aliases_design_spec_zh.md"
+    },
+    {
       "title": "Pending-check ownership and duplicate protection",
       "zh": "待處理檢定的所有權與重複防護",
       "category": "bug",
