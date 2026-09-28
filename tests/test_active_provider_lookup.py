@@ -27,7 +27,7 @@ class RegistryLookupTests(unittest.TestCase):
             self.assertIsNone(registry.conversation_provider())
             self.assertIsNone(registry.analysis_provider())
 
-    def test_analysis_never_selects_codex(self):
+    def test_analysis_rejects_codex_for_document_workflows(self):
         with patch.object(config, "ANALYSIS_PROVIDER", "codex"):
             self.assertIsNone(registry.analysis_provider())
 
