@@ -11,13 +11,11 @@ import asyncio
 import functools
 import io
 import logging
-import re
 import time
 import unicodedata
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import TypeVar, cast
 
 import discord
@@ -33,7 +31,6 @@ from app import (
     logging_config,
     observability,
     providers,
-    scenario_library,
     scenario_rag,
 )
 from app.check_identity import (
@@ -43,6 +40,7 @@ from app.check_identity import (
 )
 from app.commands import router as command_router
 from app.commands import sudo as sudo_policy
+from app.commands.handlers.uploads import Upload
 from app.config import (
     BACKUP_INTERVAL_MINUTES,
     DISCORD_BOT_TOKEN,
@@ -56,11 +54,6 @@ from app.legacy_commands import (
     _is_kp_or_keeper,
     handle_check_command,
     handle_luck_decision,
-    handle_map_upload,
-    handle_pdf_upload,
-    handle_role_sheet_upload,
-    handle_scenario_compare_upload,
-    handle_unsupported_message,
     resolve_pdf_upload_choice,
 )
 from app.models import GroupState
@@ -2154,99 +2147,17 @@ async def _handle_message(message: discord.Message) -> None:
         return f"<@{owner_id}>"
 
     try:
-        pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
-        if pdf_attachments:
-            ordered = sorted(pdf_attachments, key=lambda item: item.filename.lower())
-            part_name = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
-            should_stage = len(ordered) > 1 or any(
-                part_name.search(Path(item.filename).stem) for item in ordered
-            )
-            if should_stage:
-                staged = []
-                for attachment in ordered:
-                    payload = await attachment.read()
-                    key = await asyncio.to_thread(scenario_library.stage_upload, payload)
-                    staged.append({"key": key, "file_name": attachment.filename})
-                async with locks.get_conversation_lock(conversation_id):
-                    state = await asyncio.to_thread(load_group_state, conversation_id)
-                    state.staged_pdf_parts.extend(staged)
-                    from app.repositories.group_state import (
-                        save_state as save_group_state,
-                    )
-                    save_group_state(state)
-                await reply(
-                    "已暫存 PDF part，尚未合併或解析：\n"
-                    + "\n".join(f"・{item['key'][:12]} {item['file_name']}" for item in staged)
-                    + "\n請由 KP 輸入 `/coc scenario merge 暫存ID1 暫存ID2 ...`。"
-                )
-                return
-            attachment = ordered[0]
-            content = await attachment.read()
-            filename = attachment.filename
-            # No reply-token/time-window constraint here, so the same callback
-            # serves as both the immediate ack and the final result.
-            await handle_pdf_upload(conversation_id, reply, reply, content, filename)
-            await _post_pdf_upload_buttons(message.channel, conversation_id)
-            return
-
-        # Requires the map_ prefix (see docs/character_and_dictionary_system_
-        # spec.md's Module 1) — a bare .yaml/.yml attachment is no longer
-        # assumed to be a map on extension alone.
-        map_attachments = [
-            a for a in message.attachments
-            if a.filename.lower().startswith("map_") and a.filename.lower().endswith((".yaml", ".yml"))
-        ]
-        if map_attachments:
-            attachment = map_attachments[0]
-            content = await attachment.read()
-            await handle_map_upload(conversation_id, reply, reply, content, attachment.filename)
-            return
-
-        # A .yaml/.yml file that's missing the map_ prefix isn't silently
-        # dropped (it wouldn't match anything else below either) — tell the
-        # GM exactly what to rename it to, rather than leaving them wondering
-        # why nothing happened.
-        unprefixed_map_attachments = [
-            a for a in message.attachments
-            if a.filename.lower().endswith((".yaml", ".yml")) and not a.filename.lower().startswith("map_")
-        ]
-        if unprefixed_map_attachments:
-            await reply(
-                f"「{unprefixed_map_attachments[0].filename}」看起來是地圖資料，"
-                "但檔名需要以 map_ 開頭（例如 map_lighthouse.yaml）才會被辨識，請改檔名後重新上傳。"
-            )
-            return
-
-        role_attachments = [
-            a for a in message.attachments
-            if a.filename.lower().startswith("role_") and a.filename.lower().endswith((".txt", ".md"))
-        ]
-        if role_attachments:
-            # A GM handing out the whole party's cards often drags every
-            # role_*.txt into one message (Discord natively supports multiple
-            # attachments per message) — this used to only ever look at
-            # attachments[0], silently dropping every other card in the same
-            # message with no feedback at all.
-            for attachment in role_attachments:
-                content = await attachment.read()
-                await handle_role_sheet_upload(
-                    conversation_id, reply, content.decode("utf-8", errors="replace"), attachment.filename
-                )
-            return
-
-        compare_attachments = [a for a in message.attachments if a.filename.lower().endswith((".txt", ".md"))]
-        if compare_attachments:
-            attachment = compare_attachments[0]
-            content = await attachment.read()
-            await handle_scenario_compare_upload(
-                conversation_id, reply, reply, content.decode("utf-8", errors="replace"), attachment.filename
-            )
+        uploads = [Upload(a.filename, a.read) for a in message.attachments]
+        if await command_router.handle_uploads(
+            conversation_id, uploads, reply,
+            post_pdf_buttons=lambda: _post_pdf_upload_buttons(message.channel, conversation_id),
+        ):
             return
 
         text = (message.content or "").strip()
         if not text:
             if message.attachments:
-                await handle_unsupported_message(conversation_id, reply, "附件")
+                await command_router.handle_unsupported_attachment(conversation_id, reply)
             return
 
         command_parts = text.split()

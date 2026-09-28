@@ -1210,11 +1210,13 @@
       "title": "Every Discord event enters through the command router",
       "zh": "所有 Discord 事件一律經過 command router",
       "category": "refactor",
-      "status": "backlog",
+      "status": "partial",
       "evidence": [
         "app/discord_bot.py",
         "app/commands/router.py",
-        "app/legacy_commands.py"
+        "app/commands/handlers/uploads.py",
+        "app/legacy_commands.py",
+        "tests/test_upload_routing.py"
       ],
       "path": "docs/specs/refactor/discord_events_through_router_design_spec.md",
       "zh_path": "docs/specs/refactor/discord_events_through_router_design_spec_zh.md",
