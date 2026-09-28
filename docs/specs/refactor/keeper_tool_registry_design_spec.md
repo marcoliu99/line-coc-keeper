@@ -2,25 +2,26 @@
 
 [繁體中文](keeper_tool_registry_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review; no implementation yet). Base: `main_v2` at `a68df95`.
+Status: **backlog** (awaiting spec review; no implementation yet). Base: `main_v2` at `3705eb2`.
+
+> Refreshed against current `main_v2`: `main_v2` since reverted PR #99/#121's movement pipeline (`docs/specs/bug/movement_authorization_diagnosability_design_spec.md`). `app/services/movement.py`, `movement.TOOL`/`commit_movement`, and `ORIGIN_TOOLS` no longer exist, so they're dropped below along with the migration step that named them. Everything else here still matches the current code, with refreshed line numbers.
 
 ## Problem
 
 A Keeper tool's definition is split across three places that must stay in step by hand.
 
-1. **Schema.** `keeper.TOOLS` (`app/keeper.py:96`) holds 35 JSON schemas, and `movement.TOOL` adds `commit_movement`.
-2. **Behaviour.** `_execute_tool` (`app/keeper.py:1931-3151`, about 1,220 lines) runs shared gates first: mutation admission, the movement session guard, and the KP-assistant `roll_dice` context and allow-list. Then it runs a 34-branch `if name == "…"` cascade. Each branch defines its own nested mutator closure over `state`, `tool_input`, `private_messages`, `image_requests` and `speaker_role`.
+1. **Schema.** `keeper.TOOLS` (`app/keeper.py:97`) holds 35 JSON schemas.
+2. **Behaviour.** `_execute_tool` (`app/keeper.py:1849-…`) runs shared gates first: mutation admission and the KP-assistant `roll_dice` context and allow-list. Then it runs a 34-branch `if name == "…"` cascade. Each branch defines its own nested mutator closure over `state`, `tool_input`, `private_messages`, `image_requests` and `speaker_role`.
 3. **Properties.** What a tool *is* (read-only, KP-assistant-allowed, creates a check, invalidates combat status, …) lives in about a dozen name sets across six modules:
 
 | Set | Where |
 | --- | --- |
-| `READ_ONLY_TOOL_NAMES`, `RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES` | `app/keeper.py:804`, `:818` |
-| `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`, `_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES` | `app/keeper.py:886`, `:910` |
-| `_COMBAT_STATUS_INVALIDATING_TOOLS` | `app/keeper.py:3684` |
-| `BOUNDED_QUERY_TOOLS`, `_CHECK_REGISTRATION_TOOLS` | `app/agents/tool_gateway.py:22`, `:227` |
-| `_OPENING_TOOL_NAMES` | `app/agents/narrator.py:19` |
-| `_CHECK_CREATION_TOOLS` | `app/services/turn_context.py:102` |
-| `ORIGIN_TOOLS` | `app/services/movement.py:213` |
+| `READ_ONLY_TOOL_NAMES`, `RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES` | `app/keeper.py:805`, `:819` |
+| `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`, `_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES` | `app/keeper.py:887`, `:911` |
+| `_COMBAT_STATUS_INVALIDATING_TOOLS` | `app/keeper.py:3589` |
+| `BOUNDED_QUERY_TOOLS`, `_CHECK_REGISTRATION_TOOLS` | `app/agents/tool_gateway.py:22`, `:218` |
+| `_OPENING_TOOL_NAMES` | `app/agents/narrator.py:18` |
+| `_CHECK_CREATION_TOOLS` | `app/services/turn_context.py:99` |
 | `INFORMATION_QUERY_TOOLS` | `app/services/turn_resolution.py:18` |
 
 Adding or changing one tool therefore means editing the schema, a cascade branch, and every set it should belong to. Missing a set fails silently. For example, a new check-creating tool left out of one of the two check-creation sets (`tool_gateway` and `turn_context`) is treated as not creating a check in that layer. The review behind `CODING_STANDARDS.md` flagged the cascade as the repo's largest function and `keeper.py` as its most-changed file.
@@ -66,6 +67,5 @@ class ToolCall:                            # the Data Clump the handlers share t
 ## Decisions from review
 
 - **Location:** handlers live in `app/keeper_tools/`, one module per family (`dice.py`, `checks.py`, `combat.py`, …). They're the Keeper's capabilities, a different kind of thing from the flow services in `app/services/`.
-- **`commit_movement`:** it joins the registry in the **last** step-2 PR. The movement session's `guard` is a gate shared by every tool, so it stays in the dispatcher; only `commit_movement`'s own handling moves into the registry, getting the session from `movement.CURRENT`.
 - **Schema order:** provider prompt caching includes the tool list in the cached prefix, so the registry preserves declaration order and a test pins the order sent to providers.
 - **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
