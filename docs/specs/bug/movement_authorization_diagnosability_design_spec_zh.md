@@ -2,7 +2,7 @@
 
 [English](movement_authorization_diagnosability_design_spec.md)
 
-狀態：**已實作**。基底：`main_v2` 的 `3e2e95c`。
+狀態：**隨 PR #99 部分撤回**。舊版意圖解析器仍保留新增的移動動詞；下文所述的 `commit_movement` 授權、拒絕診斷與受阻回合提示已隨工具移除。以下章節保留 PR #114 的歷史設計紀錄。基底：`main_v2` 的 `3e2e95c`。
 
 ## 問題與證據
 

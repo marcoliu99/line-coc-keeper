@@ -2,7 +2,7 @@
 
 [繁體中文](movement_authorization_diagnosability_design_spec_zh.md)
 
-Status: **implemented**. Base: `main_v2` at `3e2e95c`.
+Status: **partially reverted with PR #99**. The wider travel verbs remain in the legacy intent parser; the `commit_movement` authorization, rejection diagnostics, and blocked-turn advice described below were removed with that tool. The following sections record the historical PR #114 design. Base: `main_v2` at `3e2e95c`.
 
 ## Problem and evidence
 

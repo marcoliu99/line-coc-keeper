@@ -75,7 +75,6 @@ def make_tool_executor(
     evidence_incomplete: bool = False,
     required_evidence_ids: set[str] | None = None,
     observed_outcomes: list[ObservedOutcome] | None = None,
-    internal_operation: Callable[[], dict[str, Any]] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -129,17 +128,9 @@ def make_tool_executor(
                 with mutation_admission.bind(owner):
                     result = None
                     try:
-                        from app.services import movement
-                        operation_token = movement.OPERATION.set((tool_name, tool_input))
-                        try:
-                            # Internal continuations use the same worker ownership,
-                            # cancellation hold and observation path. A callback is
-                            # supplied only by Python, never by tool arguments.
-                            result = (internal_operation() if internal_operation is not None else keeper._execute_tool(
-                                state, tool_name, tool_input, private_messages, image_requests, speaker_role
-                            ))
-                        finally:
-                            movement.OPERATION.reset(operation_token)
+                        result = keeper._execute_tool(
+                            state, tool_name, tool_input, private_messages, image_requests, speaker_role
+                        )
                         observability.event("turn.observed", tool_name=tool_name,
                                             dice_rolled=bool(result.get("ok") and (result.get("resolved") or result.get("pending_luck") or tool_name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"})))
                         # Record before settlement, including late/cancelled awaiters.
@@ -280,14 +271,6 @@ def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[st
             opposed = result.get('opposed_outcome')
             if isinstance(opposed, dict) and opposed.get('winner') in {'player', 'opponent', 'neither'}:
                 status['resolved']['opposed_winner'] = opposed['winner']
-    elif tool_name == "commit_movement":
-        # Why the arrival was refused, so a blocked turn can say something the
-        # player can act on instead of one sentence covering every cause.
-        # A later success in the same turn clears it: the move did happen.
-        if result.get("ok"):
-            status.pop("movement_blocked", None)
-        elif result.get("error"):
-            status["movement_blocked"] = str(result["error"])
     elif tool_name == "clear_pending_check" and result.get("ok") and result.get("cleared"):
         status["tool_called"] = True
         status["pending"] = None

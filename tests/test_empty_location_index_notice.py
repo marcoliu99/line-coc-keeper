@@ -5,10 +5,8 @@ Observed: the AI-prepared library variant carries `indexes.json == {}` and no
 floor plans, while the same scenario's original variant carries eight locations
 and one plan. A group installs the empty one and is told nothing.
 
-These notices report what is missing. They do not diagnose movement failures:
-`app/services/movement.py` never reads the location index, and its mapless
-branch commits an arrival that retrieved text supports — see
-`test_sr_m07_mapless_supported_arrival_needs_no_new_map`.
+These notices report what is missing. The restored legacy map resolver does
+not read the location index, and the Keeper can narrate a mapless trip.
 """
 import unittest
 from unittest.mock import patch
@@ -23,9 +21,7 @@ class ReportLocationIndexTests(unittest.TestCase):
         self.assertEqual(notice, scenario_index.EMPTY_LOCATION_INDEX_NOTICE)
 
     def test_neither_notice_claims_movement_is_refused(self):
-        """movement.py commits a mapless arrival whose destination retrieval
-        supports, and never reads the location index at all, so a notice saying
-        movement is rejected would be a false diagnosis."""
+        """Neither missing artifact alone proves all travel is rejected."""
         for notice in (scenario_index.EMPTY_LOCATION_INDEX_NOTICE,
                        scenario_index.EMPTY_SCENE_MAPS_NOTICE):
             with self.subTest(notice=notice[:12]):
@@ -64,9 +60,7 @@ class ReportLocationIndexTests(unittest.TestCase):
 
 
 class SceneMapNoticeTests(unittest.TestCase):
-    """Movement resolves against scene_maps, not the location index. Empty
-    floor plans cost path-based travel between known rooms, not movement as
-    such, so they are reported separately and in those terms."""
+    """Map tracking and the location-index prompt have separate notices."""
 
     def test_empty_floor_plans_are_reported(self):
         with patch.object(scenario_index.observability, "event"):
