@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import checkpoints, db, keeper, legacy_commands, locks, spoiler_policy
+from app import checkpoints, config, db, keeper, legacy_commands, locks, spoiler_policy
 from app.agents import executor, guard, narrator, supervisor, tool_gateway
 from app.commands import router
 from app.commands.handlers import (
@@ -25,6 +25,7 @@ from app.domain.models import (
     TurnResolution,
 )
 from app.models import Character, Combatant, GroupState
+from app.providers import registry
 from app.repositories.group_state import load_state, save_state
 from app.services import mutation_admission as admission
 from app.services import turn_delivery
@@ -65,8 +66,7 @@ def test_successful_tool_then_provider_failure_preserves_specific_results(state)
         raise RuntimeError("provider disconnected after tool commit")
 
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, "LLM_PROVIDER", "openai"), patch.object(
-        executor, "_PROVIDERS", {"openai": SimpleNamespace(run_conversation=fake)}
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": SimpleNamespace(run_conversation=fake)}
     ):
         result = asyncio.run(executor.run_executor(msg))
     assert fake.await_count == 1
@@ -92,8 +92,7 @@ def test_followup_tool_success_survives_narrator_failure(state):
         raise RuntimeError("narration interrupted")
 
     fake = AsyncMock(side_effect=provider)
-    with patch.object(narrator, "LLM_PROVIDER", "openai"), patch.object(
-        narrator, "_PROVIDERS", {"openai": SimpleNamespace(run_conversation=fake)}
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": SimpleNamespace(run_conversation=fake)}
     ):
         narrative, _, _ = asyncio.run(narrator.run_narrator(msg))
     reply, _ = turn_delivery.finalize(msg, narrative)
@@ -565,8 +564,8 @@ def test_damage_combatant_commit_survives_provider_failure(state, delta):
     async def provider(*args, **kwargs):
         assert (await args[5]('damage_combatant', {'name': 'Ada', 'delta': delta}))['ok']
         raise RuntimeError('provider failed after committed damage/healing')
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), \
-         patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=AsyncMock(side_effect=provider))}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=AsyncMock(side_effect=provider))}):
         asyncio.run(executor.run_executor(msg))
     reply, _ = turn_delivery.finalize(msg, '行動未完成')
     assert 'Ada' in reply and ('已結算傷害 2' if delta < 0 else 'HP 6 → 8') in reply

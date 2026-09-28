@@ -1,8 +1,10 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app import config
 from app.domain.models import AgentMessage
 from app.models import GroupState
+from app.providers import registry
 from app.services import prompt_config
 
 
@@ -54,8 +56,8 @@ class ExecutorRagReuseIntegrationTests(unittest.IsolatedAsyncioTestCase):
         fake_run_conversation = AsyncMock(return_value="ignored")
         fake_provider = type("P", (), {"run_conversation": fake_run_conversation})()
 
-        with patch.object(executor, "_PROVIDERS", {"openai": fake_provider}), \
-                patch.object(executor, "LLM_PROVIDER", "openai"), \
+        with patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": fake_provider}), \
+                patch.object(config, "LLM_PROVIDER", "openai"), \
                 patch("app.keeper.SCENARIO_RAG_ENABLED", True):
             await executor.run_executor(message)
 

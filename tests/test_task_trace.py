@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import db, keeper, observability
-from app.agents import executor, narrator, supervisor
+from app import config, db, keeper, observability
+from app.agents import supervisor
 from app.commands import router
 from app.domain.models import AgentMessage
 from app.models import Character, GroupState
-from app.providers import openai_provider
+from app.providers import openai_provider, registry
 from app.repositories.group_state import save_state
 from app.services import task_trace, turn_context
 
@@ -54,10 +54,8 @@ def test_real_adapter_request_baseline(tmp_path, monkeypatch, route, expected_re
         await reply(text)
     monkeypatch.setattr(openai_provider, "OPENAI_API_KEY", "fake-only")
     monkeypatch.setattr(openai_provider, "_request_scope", scope)
-    monkeypatch.setattr(executor, "LLM_PROVIDER", "openai")
-    monkeypatch.setattr(narrator, "LLM_PROVIDER", "openai")
-    monkeypatch.setattr(executor, "_PROVIDERS", {"openai": openai_provider})
-    monkeypatch.setattr(narrator, "_PROVIDERS", {"openai": openai_provider})
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(registry, "CONVERSATION_PROVIDERS", {"openai": openai_provider})
     kind = route if route in {"opening_fallback", "resolved_check_followup"} else "player_action"
     with task_trace.capture() as trace, \
          patch.object(supervisor.context_builder, "build_context", AsyncMock(side_effect=context)), \
@@ -134,9 +132,8 @@ def test_s2_ooc_and_mixed_actual_adapter_request_shapes(tmp_path, monkeypatch, m
 
     monkeypatch.setattr(openai_provider, 'OPENAI_API_KEY', 'fake-only')
     monkeypatch.setattr(openai_provider, '_request_scope', scope)
-    for agent in (executor, narrator):
-        monkeypatch.setattr(agent, 'LLM_PROVIDER', 'openai')
-        monkeypatch.setattr(agent, '_PROVIDERS', {'openai': openai_provider})
+    monkeypatch.setattr(config, 'LLM_PROVIDER', 'openai')
+    monkeypatch.setattr(registry, 'CONVERSATION_PROVIDERS', {'openai': openai_provider})
     with task_trace.capture() as trace, patch.object(supervisor.context_builder, 'build_context', side_effect=context):
         asyncio.run(supervisor.run_turn(state, 'u', 'Ada', text, None, 'player', state.group_id))
     assert client.responses.create.await_count == expected

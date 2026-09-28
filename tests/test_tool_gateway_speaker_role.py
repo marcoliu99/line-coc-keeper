@@ -9,8 +9,10 @@ keeper._tools_for_speaker_role already does for every other caller.
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app import config
 from app.domain.models import AgentMessage
 from app.models import GroupState
+from app.providers import registry
 
 
 def _tool_names(tools: list[dict]) -> set[str]:
@@ -75,8 +77,8 @@ class ExecutorComputesToolsPerTurnTests(unittest.IsolatedAsyncioTestCase):
             "speaker_role": speaker_role,
         })
         fake_provider = type("P", (), {"run_conversation": fake_run_conversation})()
-        with patch.object(executor, "_PROVIDERS", {"openai": fake_provider}), \
-             patch.object(executor, "LLM_PROVIDER", "openai"):
+        with patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": fake_provider}), \
+             patch.object(config, "LLM_PROVIDER", "openai"):
             await executor.run_executor(message)
 
     async def test_tools_argument_differs_between_player_and_kp_assistant(self):

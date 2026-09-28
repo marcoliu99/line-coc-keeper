@@ -6,9 +6,9 @@ from collections import Counter
 from copy import deepcopy
 from typing import Any
 
-from app import keeper, observability, scenario_retrieval
+from app import config, keeper, observability, scenario_retrieval
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
-from app.config import LLM_PROVIDER, MAX_TOOL_ITERATIONS
+from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import (
     AgentMessage,
     GameEvent,
@@ -18,7 +18,7 @@ from app.domain.models import (
     TurnResolution,
 )
 from app.providers.registry import (
-    CONVERSATION_PROVIDERS,
+    require_conversation_provider,
     supports_dynamic_tools,
 )
 from app.services import (
@@ -30,7 +30,6 @@ from app.services import (
 )
 
 _logger = logging.getLogger(__name__)
-_PROVIDERS = CONVERSATION_PROVIDERS
 
 
 async def run_executor(message: AgentMessage) -> MechanicResult:
@@ -44,7 +43,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     already-locked path, by the time this function returns — state_reducer
     no longer needs to (and must not) re-apply anything on top of it.
     """
-    provider = _PROVIDERS[LLM_PROVIDER]
+    provider = require_conversation_provider()
 
     state = message.payload["state"]
     mutation_admission.assert_admitted(state.group_id)
@@ -134,10 +133,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         # mutation at the tool gateway boundary.
         turn_metrics: dict[str, int] = {}
         with observability.metrics_context(turn_metrics), observability.span(
-            "llm.turn", provider=LLM_PROVIDER,
-            model=getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", None),
+            "llm.turn", provider=config.LLM_PROVIDER,
+            model=getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", None),
             agent="executor",
-            reasoning_effort=observability.llm_reasoning_effort(LLM_PROVIDER),
+            reasoning_effort=observability.llm_reasoning_effort(config.LLM_PROVIDER),
             metrics=turn_metrics,
         ):
             async def execute_turn_tool(name: str, tool_input: dict) -> dict:
@@ -151,9 +150,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
                 if name in {'skill_check', 'offer_check_choice', 'offer_npc_attack_defense_choice', 'sanity_check'}:
                     tool_input = {**tool_input, '_player_action': text}
-                model = getattr(provider, f"{LLM_PROVIDER.upper()}_MODEL", "unknown")
+                model = getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
                 remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
-                    [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], state.log, model, LLM_PROVIDER)
+                    [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], state.log, model, config.LLM_PROVIDER)
                     if name == "search_scenario" else scenario_retrieval.BUDGET.get())
                 current_binding = scenario_retrieval.source_binding(state)
                 if current_binding != source_binding:
@@ -185,7 +184,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         "removed": list((Counter(before_items) - Counter(after_items)).elements()),
                         "evidence_ref": f"tool:{len(tool_events) + 1}",
                     }))
-                if (LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)):
+                if (config.LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)):
                     combat_status_gate.observe_tool_result(name, result)
                 tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
                                     "inventory_before": inventory_before,
@@ -202,7 +201,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
 
             provider_options = (
                 {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools), "response_stage": "executor"}
-                if (LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)) else {}
+                if (config.LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)) else {}
             )
             if getattr(provider, 'SUPPORTS_DECISION_CONTEXT', False):
                 provider_options['tools_for_request'] = lambda: turn_context.check_creation_tools(
