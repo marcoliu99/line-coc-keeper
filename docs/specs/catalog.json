@@ -1225,6 +1225,25 @@
       "path": "docs/specs/refactor/discord_events_through_router_design_spec.md",
       "zh_path": "docs/specs/refactor/discord_events_through_router_design_spec_zh.md",
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "A Discord role named keeper is a hidden superuser",
+      "zh": "名為 keeper 的 Discord 身分組是隱藏的超級使用者",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": [
+        "app/discord_bot.py",
+        "app/commands/router.py",
+        "app/commands/handlers/system.py",
+        "app/commands/handlers/correct.py",
+        "app/legacy_commands.py",
+        "app/services/movement.py",
+        "app/agents/supervisor.py",
+        "app/agents/executor.py"
+      ],
+      "path": "docs/specs/bug/keeper_role_superuser_design_spec.md",
+      "zh_path": "docs/specs/bug/keeper_role_superuser_design_spec_zh.md",
+      "source_revision": "5106d47176f8fd017bcc83b300f78879dc7b72ae"
     }
   ]
 }
