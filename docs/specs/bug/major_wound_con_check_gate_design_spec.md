@@ -14,7 +14,7 @@ Two existing specs set the contract:
 > Registering a new investigator skill or SAN check must inspect both pending_checks and pending_luck_decisions.
 > (`docs/specs/bug/bugfix_duplicate_pending_checks.md:13`)
 
-The state model holds **one pending check per owner** (`pending_checks[owner_id]`). With `/coc autoroll` off, a qualifying hit on an investigator whose owner already has a pending check has nowhere to register its CON check. The five damage paths handle that case in three different ways:
+The state model holds **one pending check per player** (`pending_checks[owner_id]`). That's a domain rule, not a limitation: a player owns exactly one investigator per game (`CONTEXT.md`, *Player*, *Pending check*), so keying by player is keying by investigator. With `/coc autoroll` off, a qualifying hit on an investigator whose owner already has a pending check has nowhere to register its CON check. The five damage paths handle that case in three different ways:
 
 | Entry point | Guard before the mutation | Inside the mutation |
 | --- | --- | --- |
@@ -34,9 +34,10 @@ None of the five paths looks at `pending_luck_decisions`, so a CON check can als
 
 - A hit that **would** trigger a major-wound CON check on an investigator is rejected when the owner has a pending check **or** a pending Luck decision and autoroll is off. Rejected means no HP change, no check, no save.
 - The rejection is explicit. It carries a `blocked_by` code (`pending_check` | `pending_luck_decision`) and a message telling the Keeper to resolve the existing check first and then re-apply the damage.
+- Every rejection emits `observability.event("combat.major_wound.blocked", blocked_by=…, entry_point=…, check_id=…)`. That makes the Limits trigger measurable: the Keeper re-applying the damage shows up as a later successful hit on the same investigator in the same turn or the next one.
 - Autoroll on, non-major hits, and hits that drop HP to 0 are unchanged.
 
-**Alternative considered: a deferred-check queue.** Apply the damage, store the owed CON check, and promote it when the current check clears. That never refuses damage, but it needs a promotion hook everywhere a pending check or Luck decision clears (the `/coc check` resolver, button callbacks, Luck decisions, sudo cancel, rollback). It's deferred to a follow-up spec. See Limits.
+**Alternative considered: a deferred-check queue.** Apply the damage, store the owed CON check, and promote it when the current check clears. That never refuses damage, but it needs a promotion hook everywhere a pending check or Luck decision clears (the `/coc check` resolver, button callbacks, Luck decisions, sudo cancel, rollback). Decided in review: ship the rejection first, and write the queue spec only if the `combat.major_wound.blocked` events show rejected damage never being re-applied. See Limits.
 
 ## Scope
 
@@ -66,9 +67,10 @@ Every case runs with autoroll **off** unless stated otherwise. It uses a real `G
 2. Same as case 1 with a pending Luck decision → `blocked_by == "pending_luck_decision"`.
 3. `process_timing` with an `__all__` effect over two PCs, only the second one blocked: neither is damaged, the effect is not in `processed_timings`, and after the block clears a second `process_timing` damages each PC exactly once.
 4. `adjust_character` race: the outer `state` has no pending check, but `target_state` does → rejected, not silent.
-5. Regressions: with no blocker, a major wound registers the CON check exactly as before. With autoroll on, CON resolves immediately. Non-major hits ignore pending checks.
+5. Each rejection emits exactly one `combat.major_wound.blocked` event with the right `blocked_by` and `entry_point`.
+6. Regressions: with no blocker, a major wound registers the CON check exactly as before. With autoroll on, CON resolves immediately. Non-major hits ignore pending checks.
 
 ## Limits
 
-- The fix depends on the Keeper re-applying the damage after the check resolves. If it doesn't, the damage is lost, but visibly, through an error the model and logs can see instead of a silent `None`. If logs show that happening, the deferred-check queue above becomes the next spec.
-- Out of scope: the `/coc combat` operator handler's direct `load_state`/`save_state` mutations (covered by `refactor/combat-start-in-combat-module`), and any change to how many pending checks an owner can hold.
+- The fix depends on the Keeper re-applying the damage after the check resolves. If it doesn't, the damage is lost, but visibly, through an error the model and logs can see instead of a silent `None`. If the `combat.major_wound.blocked` events show that happening, the deferred-check queue above becomes the next spec.
+- Out of scope: any change to how many pending checks a player can hold. The `/coc combat` handler needs no change here: it adds no damage, and the router serialises it with Keeper turns under the same conversation lock.

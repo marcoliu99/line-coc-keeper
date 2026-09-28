@@ -14,7 +14,7 @@
 > Registering a new investigator skill or SAN check must inspect both pending_checks and pending_luck_decisions.
 > （`docs/specs/bug/bugfix_duplicate_pending_checks.md:13`）
 
-狀態模型中**每位玩家只能有一個待處理檢定**（`pending_checks[owner_id]`）。`/coc autoroll` 關閉時，如果玩家已經有待處理檢定，這時受到的重傷就沒有地方登記 CON 檢定。五條傷害路徑對這個情況有三種不同處理：
+狀態模型中**每位玩家只能有一個待處理檢定**（`pending_checks[owner_id]`）。這是領域規則，不是限制：一位玩家在一局中只擁有一個調查員（`CONTEXT.md` 的 *Player*、*Pending check*），所以用玩家當鍵就等於用調查員當鍵。`/coc autoroll` 關閉時，如果玩家已經有待處理檢定，這時受到的重傷就沒有地方登記 CON 檢定。五條傷害路徑對這個情況有三種不同處理：
 
 | 入口 | 變更前的防護 | 變更中 |
 | --- | --- | --- |
@@ -34,9 +34,10 @@
 
 - 如果這次傷害**會**觸發重傷 CON 檢定，而玩家有待處理檢定**或**待決定的幸運值、且 autoroll 關閉，就拒絕這次傷害。拒絕代表：不扣血、不登記檢定、不存檔。
 - 拒絕必須明確回報，附上 `blocked_by` 代碼（`pending_check`｜`pending_luck_decision`），訊息告訴 Keeper 先處理既有檢定，再重新套用傷害。
+- 每次拒絕都發出 `observability.event("combat.major_wound.blocked", blocked_by=…, entry_point=…, check_id=…)`，讓「限制」一節的觸發條件可以量測：如果 Keeper 有重新套用傷害，同一回合或下一回合就會出現對同一調查員的成功傷害。
 - autoroll 開啟、非重傷的傷害、以及把 HP 降到 0 的傷害，行為都不變。
 
-**考慮過的替代方案：延後檢定佇列。** 先套用傷害，把欠下的 CON 檢定存起來，等目前的檢定清除後再補登記。這樣永遠不會拒絕傷害，但每個會清除待處理檢定或幸運值決定的地方都要加補登記的掛勾（`/coc check` 處理、按鈕回呼、幸運值決定、sudo 取消、回溯）。先延到後續規格，見「限制」。
+**考慮過的替代方案：延後檢定佇列。** 先套用傷害，把欠下的 CON 檢定存起來，等目前的檢定清除後再補登記。這樣永遠不會拒絕傷害，但每個會清除待處理檢定或幸運值決定的地方都要加補登記的掛勾（`/coc check` 處理、按鈕回呼、幸運值決定、sudo 取消、回溯）。審查決定：先上線拒絕的做法；只有當 `combat.major_wound.blocked` 事件顯示被拒絕的傷害一直沒有被重新套用時，才寫佇列的規格。見「限制」。
 
 ## 範圍
 
@@ -66,9 +67,10 @@
 2. 和案例 1 相同，但改為有待決定的幸運值 → `blocked_by == "pending_luck_decision"`。
 3. `process_timing` 對兩位 PC 的 `__all__` 效果，只有第二位被擋：兩位都不扣血、效果不在 `processed_timings` 中；擋下的原因解除後再跑一次 `process_timing`，每位 PC 剛好各扣一次。
 4. `adjust_character` 競態：外層 `state` 沒有待處理檢定，但 `target_state` 有 → 被拒絕，而不是無聲略過。
-5. 迴歸：沒有阻擋時，重傷照舊登記 CON 檢定；autoroll 開啟時，CON 立即判定；非重傷的傷害不受待處理檢定影響。
+5. 每次拒絕都剛好發出一個 `combat.major_wound.blocked` 事件，`blocked_by` 和 `entry_point` 正確。
+6. 迴歸：沒有阻擋時，重傷照舊登記 CON 檢定；autoroll 開啟時，CON 立即判定；非重傷的傷害不受待處理檢定影響。
 
 ## 限制
 
-- 這個修正依賴 Keeper 在檢定解決後重新套用傷害。如果它沒有，傷害仍會遺失，但是是可見的遺失：模型和日誌都看得到錯誤，而不是無聲的 `None`。如果日誌顯示真的發生，上面的延後檢定佇列就是下一份規格。
-- 不在範圍內：`/coc combat` 管理指令 handler 直接用 `load_state`／`save_state` 變更狀態的問題（由 `refactor/combat-start-in-combat-module` 處理），以及改變每位玩家能持有的待處理檢定數量。
+- 這個修正依賴 Keeper 在檢定解決後重新套用傷害。如果它沒有，傷害仍會遺失，但是是可見的遺失：模型和日誌都看得到錯誤，而不是無聲的 `None`。如果 `combat.major_wound.blocked` 事件顯示真的發生，上面的延後檢定佇列就是下一份規格。
+- 不在範圍內：改變每位玩家能持有的待處理檢定數量。`/coc combat` handler 這裡不需要改：它不造成傷害，而且 router 讓它和 Keeper 回合在同一把對話鎖下排隊執行。
