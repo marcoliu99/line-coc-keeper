@@ -1,15 +1,36 @@
 # Tooling config only; this repo is not an installable package.
 # mypy settings live in mypy.ini, pytest settings in pytest.ini.
 
+[tool.ruff]
+# Ruff's default rule set changes between versions (E402, for one, is a
+# default before 0.16 and not in 0.16), so any other version lints
+# differently. Refuse to run instead; bump this together with
+# requirements-dev.txt.
+required-version = "==0.16.8"
+
 [tool.ruff.lint]
-# Ruff's default rule set, pinned by the exact ruff version in
-# requirements-dev.txt, plus cross-module private access
-# (CODING_STANDARDS.md, "Private stays private").
-extend-select = ["SLF001"]
+# Ruff's default rule set, plus:
+#   E402   module-level imports at the top, now enabled explicitly
+#   SLF001 cross-module private access (CODING_STANDARDS.md, "Private stays private")
+extend-select = ["E402", "SLF001"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["SLF001"]
 "scripts/experiments/**" = ["SLF001"]
+# These files deliberately stub modules or set up sys.path/env before
+# importing app code, so their imports can't all sit at the top.
+"tests/test_discord_defense_hint.py" = ["E402"]
+"tests/test_keeper_priority_integration.py" = ["E402"]
+"tests/test_kp_assistant_v2.py" = ["E402"]
+"tests/test_kp_sudo.py" = ["E402"]
+"tests/test_luck_buyup_gate.py" = ["E402"]
+"tests/test_natural_1_bonus.py" = ["E402"]
+"tests/test_npc_attack_latency.py" = ["E402"]
+"tests/test_pregen_and_creation.py" = ["E402"]
+"scripts/benchmark_state_mirrors.py" = ["E402"]
+"scripts/experiments/ab_prompt_cache_boundary.py" = ["E402"]
+"scripts/experiments/controlled_disposition_ab.py" = ["E402"]
+"scripts/experiments/live_narration_ab.py" = ["E402"]
 # Existing SLF001 debt. Delete a line once its file is clean; add none.
 "app/agents/assistant.py" = ["SLF001"]
 "app/agents/context_builder.py" = ["SLF001"]
@@ -17,7 +38,6 @@ extend-select = ["SLF001"]
 "app/agents/narrator.py" = ["SLF001"]
 "app/agents/supervisor.py" = ["SLF001"]
 "app/agents/tool_gateway.py" = ["SLF001"]
-"app/commands/handlers/purchase.py" = ["SLF001"]
 "app/commands/handlers/system.py" = ["SLF001"]
 "app/help_actions.py" = ["SLF001"]
 "app/keeper.py" = ["SLF001"]
