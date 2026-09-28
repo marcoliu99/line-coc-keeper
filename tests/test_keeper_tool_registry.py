@@ -1,4 +1,5 @@
 """Pin the old tool lists while handlers migrate to the registry."""
+from collections.abc import Callable
 from unittest.mock import patch
 
 from app import keeper
@@ -145,3 +146,27 @@ def test_character_family_dispatches_without_legacy_cascade() -> None:
             state, "get_character_sheet", {"investigator": "Ada"}, [], [],
         )
     assert result["ok"] and result["sheet"]["name"] == "Ada"
+
+
+def test_inventory_family_dispatches_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="inventory-family")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+
+    def mutate(current: GroupState, callback: Callable[[GroupState], object]) -> object:
+        result = callback(current)
+        return result.value if isinstance(result, keeper.ToolStateMutation) else result
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy inventory dispatch")),
+          patch.object(keeper, "mutate_tool_state", side_effect=mutate)):
+        added = keeper._execute_tool(
+            state, "add_carried_item", {"investigator": "Ada", "item": " key "}, [], [],
+        )
+        assert added["ok"] and state.characters["p1"].carried_items == ["key"]
+        removed = keeper._execute_tool(
+            state, "remove_carried_item", {"investigator": "Ada", "item": "key "}, [], [],
+        )
+    assert removed["ok"] and state.characters["p1"].carried_items == []
+    assert state.consumed_or_removed_items[-1]["item"] == "key"

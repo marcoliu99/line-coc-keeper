@@ -77,3 +77,5 @@ The checks family (skill, SAN, NPC checks, defense choices, and pending-check cl
 The dice family (`roll_dice`, `roll_impaling_damage`, `roll_weapon_damage`) is migrated to `app/keeper_tools/dice.py`.
 
 The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Major-wound CON registration and state refresh still use Keeper's existing authoritative helpers via a public migration seam. This branch will need re-alignment when the separate check-lifecycle refactor lands.
+
+The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single state mutation boundary through a public migration seam.
