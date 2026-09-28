@@ -63,8 +63,9 @@ class ToolCall:                            # the Data Clump the handlers share t
 - Each step-2 PR: the family's existing tests pass without edits. Add a registry test that every schema has a handler and every handler has a schema.
 - Throughout: the full suite and `tests/test_tool_gateway_speaker_role.py` (KP-assistant gating) stay green.
 
-## Open questions for review
+## Decisions from review
 
-- Where the tool modules live (`app/keeper_tools/` vs `app/services/tools/`), and whether `commit_movement` joins the registry or keeps its session-bound special case.
-- Whether provider-facing schema order must stay stable, for prompt caching (`openai_prompt_cache_key`). If so, the registry preserves declaration order and a test pins it.
-- The combat-family PR should come after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
+- **Location:** handlers live in `app/keeper_tools/`, one module per family (`dice.py`, `checks.py`, `combat.py`, …). They're the Keeper's capabilities, a different kind of thing from the flow services in `app/services/`.
+- **`commit_movement`:** it joins the registry in the **last** step-2 PR. The movement session's `guard` is a gate shared by every tool, so it stays in the dispatcher; only `commit_movement`'s own handling moves into the registry, getting the session from `movement.CURRENT`.
+- **Schema order:** provider prompt caching includes the tool list in the cached prefix, so the registry preserves declaration order and a test pins the order sent to providers.
+- **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
