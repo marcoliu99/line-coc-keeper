@@ -2,25 +2,26 @@
 
 [English](keeper_tool_registry_design_spec.md)
 
-狀態：**backlog**（等待規格審查，尚未實作）。基準：`main_v2` 的 `a68df95`。
+狀態：**backlog**（等待規格審查，尚未實作）。基準：`main_v2` 的 `3705eb2`。
+
+> 已對照目前的 `main_v2` 更新：`main_v2` 之後撤銷了 PR #99／#121 的移動服務（見 `docs/specs/bug/movement_authorization_diagnosability_design_spec.md`）。`app/services/movement.py`、`movement.TOOL`／`commit_movement` 和 `ORIGIN_TOOLS` 已經不存在，以下把它們和點名它們的遷移步驟一併移除。其餘內容仍與目前程式碼相符，行號已更新。
 
 ## 問題
 
 一個 Keeper 工具的定義分散在三個地方，只能靠人手保持同步。
 
-1. **Schema。** `keeper.TOOLS`（`app/keeper.py:96`）有 35 個 JSON schema，`movement.TOOL` 另外加上 `commit_movement`。
-2. **行為。** `_execute_tool`（`app/keeper.py:1931-3151`，約 1,220 行）先執行共用的關卡：mutation admission、movement session 防護、KP 助手的 `roll_dice` 情境檢查和允許清單。接著是 34 個分支的 `if name == "…"` 串接。每個分支都定義自己的巢狀 mutator 閉包，捕捉 `state`、`tool_input`、`private_messages`、`image_requests` 和 `speaker_role`。
+1. **Schema。** `keeper.TOOLS`（`app/keeper.py:97`）有 35 個 JSON schema。
+2. **行為。** `_execute_tool`（`app/keeper.py:1849-…`）先執行共用的關卡：mutation admission、KP 助手的 `roll_dice` 情境檢查和允許清單。接著是 34 個分支的 `if name == "…"` 串接。每個分支都定義自己的巢狀 mutator 閉包，捕捉 `state`、`tool_input`、`private_messages`、`image_requests` 和 `speaker_role`。
 3. **屬性。** 工具*是什麼*（唯讀、KP 助手可用、會建立檢定、會讓戰鬥狀態失效……）放在六個模組、約十幾個名稱集合裡：
 
 | 集合 | 位置 |
 | --- | --- |
-| `READ_ONLY_TOOL_NAMES`、`RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES` | `app/keeper.py:804`、`:818` |
-| `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`、`_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES` | `app/keeper.py:886`、`:910` |
-| `_COMBAT_STATUS_INVALIDATING_TOOLS` | `app/keeper.py:3684` |
-| `BOUNDED_QUERY_TOOLS`、`_CHECK_REGISTRATION_TOOLS` | `app/agents/tool_gateway.py:22`、`:227` |
-| `_OPENING_TOOL_NAMES` | `app/agents/narrator.py:19` |
-| `_CHECK_CREATION_TOOLS` | `app/services/turn_context.py:102` |
-| `ORIGIN_TOOLS` | `app/services/movement.py:213` |
+| `READ_ONLY_TOOL_NAMES`、`RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES` | `app/keeper.py:805`、`:819` |
+| `_KP_ASSISTANT_ALLOWED_TOOL_NAMES`、`_KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES` | `app/keeper.py:887`、`:911` |
+| `_COMBAT_STATUS_INVALIDATING_TOOLS` | `app/keeper.py:3589` |
+| `BOUNDED_QUERY_TOOLS`、`_CHECK_REGISTRATION_TOOLS` | `app/agents/tool_gateway.py:22`、`:218` |
+| `_OPENING_TOOL_NAMES` | `app/agents/narrator.py:18` |
+| `_CHECK_CREATION_TOOLS` | `app/services/turn_context.py:99` |
 | `INFORMATION_QUERY_TOOLS` | `app/services/turn_resolution.py:18` |
 
 所以新增或修改一個工具，要同時改 schema、串接裡的一個分支，以及它該屬於的每一個集合，漏掉一個也不會報錯。例如，新的建立檢定工具如果只加進兩個「建立檢定」集合（`tool_gateway` 和 `turn_context`）中的一個，另一層就會把它當成不會建立檢定。`CODING_STANDARDS.md` 背後的審查也指出，這個串接是 repo 裡最大的函式，`keeper.py` 則是最常被修改的檔案。
@@ -66,6 +67,5 @@ class ToolCall:                            # 目前各分支共用、總是一�
 ## 審查決定
 
 - **位置：** 處理函式放在 `app/keeper_tools/`，一個家族一個模組（`dice.py`、`checks.py`、`combat.py`……）。它們是 Keeper 的能力，和 `app/services/` 裡的流程服務性質不同。
-- **`commit_movement`：** 在步驟 2 的**最後一個** PR 加入註冊表。movement session 的 `guard` 是所有工具共用的關卡，留在分派器裡；只有 `commit_movement` 自己的處理邏輯搬進註冊表，並從 `movement.CURRENT` 取得 session。
 - **Schema 順序：** 供應商的 prompt 快取會把工具清單算進快取前綴，所以註冊表保留宣告順序，並用測試固定送給供應商的順序。
 - **排序：** 戰鬥家族的 PR 排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
