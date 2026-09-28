@@ -63,8 +63,9 @@ class ToolCall:                            # 目前各分支共用、總是一�
 - 步驟 2 的每個 PR：該家族既有的測試不修改即通過；新增註冊表測試，確認每個 schema 都有處理函式、每個處理函式都有 schema。
 - 全程：完整測試套件和 `tests/test_tool_gateway_speaker_role.py`（KP 助手的權限關卡）保持綠燈。
 
-## 待審查決定的問題
+## 審查決定
 
-- 工具模組放在哪裡（`app/keeper_tools/` 或 `app/services/tools/`），以及 `commit_movement` 要加入註冊表，還是保留它和 session 綁定的特例。
-- 送給供應商的 schema 順序是否必須固定，以配合 prompt 快取（`openai_prompt_cache_key`）。如果是，註冊表要保留宣告順序，並用測試固定下來。
-- 戰鬥家族的 PR 應該排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
+- **位置：** 處理函式放在 `app/keeper_tools/`，一個家族一個模組（`dice.py`、`checks.py`、`combat.py`……）。它們是 Keeper 的能力，和 `app/services/` 裡的流程服務性質不同。
+- **`commit_movement`：** 在步驟 2 的**最後一個** PR 加入註冊表。movement session 的 `guard` 是所有工具共用的關卡，留在分派器裡；只有 `commit_movement` 自己的處理邏輯搬進註冊表，並從 `movement.CURRENT` 取得 session。
+- **Schema 順序：** 供應商的 prompt 快取會把工具清單算進快取前綴，所以註冊表保留宣告順序，並用測試固定送給供應商的順序。
+- **排序：** 戰鬥家族的 PR 排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
