@@ -12,9 +12,10 @@ import logging
 import re
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
+from itertools import pairwise
 from uuid import uuid4
 
-from app import intent_parser, observability, scenario_retrieval, scene_map
+from app import intent_parser, observability, scene_map
 from app.models import GroupState
 
 # Four characters: 「直奔商店」 is the shortest real case seen.
@@ -55,6 +56,28 @@ def _quote_matches_source(quote: str, source: str) -> bool:
     })
     normalize = lambda value: re.sub(r'\s+', ' ', value.translate(quote_map)).strip()
     return bool(normalize(quote) and normalize(quote) in normalize(source))
+
+
+def _text_mentions_destination(destination: str, text: str) -> bool:
+    """Match a requested place to visible source text without trusting a source ID.
+
+    Keep CJK names as literal substrings. For mixed-language requests such as
+    ``Corbitt House 所在街區``, accept the contiguous Latin name in the source.
+    This deliberately avoids fuzzy similarity: a nearby but unrelated passage
+    cannot authorize an unknown destination.
+    """
+    normalize = lambda value: re.sub(r'[^\w]+', '', value, flags=re.UNICODE).casefold()
+    target = normalize(destination)
+    source = normalize(text)
+    if target and target in source:
+        return True
+
+    words = re.findall(r'[a-z0-9]+', destination.casefold())
+    source_words = re.findall(r'[a-z0-9]+', text.casefold())
+    if not words or len(words) > len(source_words):
+        return False
+    return any(source_words[index:index + len(words)] == words
+               for index in range(len(source_words) - len(words) + 1))
 
 
 
@@ -473,12 +496,6 @@ class MovementSession:
                 p.candidate_room and destination in {p.candidate_room,
                     (scene_map.get_room(state.scene_maps.get(p.candidate_page, {}), p.candidate_room) or {}).get('name')}):
             return fail('movement_destination_mismatch')
-        # Python-issued current-turn RAG source IDs establish retrieval
-        # provenance even when translated/OCR quote text differs. For
-        # non-retrieval context, require the destination label in the quote.
-        if (not any(norm(destination) in norm(e['quote']) for e in evidence)
-                and not any(self._is_retrieval_source(e['source']) for e in evidence)):
-            return fail('destination_not_supported_by_evidence')
         facing = state.party_facing.get(p.subject_id, 'N')
 
         def room_named(map_data: dict, name: str) -> dict | None:
@@ -492,6 +509,30 @@ class MovementSession:
         if not target_room and p.candidate_room and p.candidate_page == current_page:
             target_room = scene_map.get_room(current_map, p.candidate_room)
 
+        # A citation proves where the text came from, not that the text supports
+        # this destination. Accept a literal place/name in retrieved text, a
+        # verified non-RAG quotation, or a destination already present in a
+        # canonical map. Never let an unrelated current-turn RAG source alone
+        # authorize an arbitrary named destination.
+        mapped_names = [str(map_data.get('location_name', ''))
+                        for map_data in state.scene_maps.values()]
+        mapped_names.extend(str(room.get('name', ''))
+                            for map_data in state.scene_maps.values()
+                            for room in map_data.get('rooms', []))
+        destination_in_map = any(
+            norm(destination) == norm(name) or
+            (norm(name) and norm(name) in norm(destination))
+            for name in mapped_names
+        )
+        destination_in_evidence = any(
+            (_text_mentions_destination(destination, self._source_content(e['source']) or '')
+             if self._is_retrieval_source(e['source']) else
+             _text_mentions_destination(destination, e['quote']))
+            for e in evidence
+        )
+        if not destination_in_evidence and not destination_in_map:
+            return fail('destination_not_supported_by_evidence')
+
         # A destination matching a room in the current map is local even if
         # the model mislabeled it as a scene transition. The map is advisory:
         # only explicit gates found on a supplied/known edge block the action.
@@ -502,28 +543,68 @@ class MovementSession:
                 _, room_id = step.split(':', 1) if ':' in step else (current_page, step)
                 if scene_map.get_room(current_map, room_id):
                     steps.append(room_id)
-            if p.candidate_room and p.candidate_page == current_page and p.candidate_room != target_room_id:
+            if (p.candidate_room and p.candidate_page == current_page
+                    and p.candidate_room != target_room_id and p.candidate_room not in steps):
                 # If the player named an intermediate destination first, that
                 # point must be represented in the submitted route before a
                 # later requested destination can be committed.
-                if p.candidate_room not in steps:
-                    return fail('movement_destination_mismatch')
+                return fail('movement_destination_mismatch')
             if target_room_id not in steps:
                 steps.append(target_room_id)
-            route = [current_room, *steps]
-            for origin_id, next_id in zip(route, route[1:]):
-                origin_data = scene_map.get_room(current_map, origin_id)
-                edge = next((e for e in (origin_data or {}).get('exits', []) if e.get('to') == next_id), None)
-                # No OCR edge means connectivity is unknown, not impossible.
-                if edge is None:
-                    continue
+            def edge_error(edge: dict) -> str:
                 if edge.get('blocked') or (edge.get('locked') and not (
                         check_id and re.search(r'鎖匠|locksmith', self._final_skill, re.IGNORECASE))):
-                    return fail('passage_blocked')
+                    return 'passage_blocked'
                 if edge.get('requires_check') and edge.get('requires_check') != self._final_skill:
-                    return fail('movement_required_check_missing')
+                    return 'movement_required_check_missing'
                 if edge.get('reaction') or edge.get('requires_choice'):
-                    return fail('movement_reaction_point_unresolved')
+                    return 'movement_reaction_point_unresolved'
+                return ''
+
+            def find_route(start: str, goal: str, *, traversable_only: bool) -> list[dict] | None:
+                rooms = current_map.get('rooms', [])
+                room_ids = {str(room.get('id', '')) for room in rooms}
+                queue: list[tuple[str, list[dict]]] = [(start, [])]
+                visited = {start}
+                while queue:
+                    room_id, route_edges = queue.pop(0)
+                    if room_id == goal:
+                        return route_edges
+                    room_data = scene_map.get_room(current_map, room_id) or {}
+                    for edge in room_data.get('exits', []):
+                        next_id = str(edge.get('to', ''))
+                        if next_id not in room_ids or next_id in visited:
+                            continue
+                        if traversable_only and edge_error(edge):
+                            continue
+                        visited.add(next_id)
+                        queue.append((next_id, [*route_edges, edge]))
+                return None
+
+            route = [current_room, *steps]
+            for origin_id, next_id in pairwise(route):
+                origin_data = scene_map.get_room(current_map, origin_id)
+                edge = next((e for e in (origin_data or {}).get('exits', [])
+                             if e.get('to') == next_id), None)
+                if edge is None:
+                    # OCR may omit a real connection. But if the map does show
+                    # a route between these rooms, resolve it and inspect every
+                    # known edge instead of treating the endpoints as adjacent.
+                    known_route = find_route(origin_id, next_id, traversable_only=True)
+                    if known_route is None:
+                        known_route = find_route(origin_id, next_id, traversable_only=False)
+                    if known_route is None:
+                        continue
+                    for known_edge in known_route:
+                        error = edge_error(known_edge)
+                        if error:
+                            return fail(error)
+                        if known_edge.get('compass') not in {'U', 'D'}:
+                            facing = known_edge.get('compass', facing)
+                    continue
+                error = edge_error(edge)
+                if error:
+                    return fail(error)
                 if edge.get('compass') not in {'U', 'D'}:
                     facing = edge.get('compass', facing)
         else:
@@ -545,10 +626,14 @@ class MovementSession:
                 entry_id = target_map.get('entry_room_id', '')
                 entry_room = scene_map.get_room(target_map, entry_id) if entry_id else None
                 target_room_id = (named_room or entry_room or {}).get('id', '')
+            elif len(matches) > 1:
+                # Same-name maps may be separate floors or distinct places.
+                # Without explicit metadata linking them, choosing one would
+                # silently move the investigator to an arbitrary map.
+                return fail('ambiguous_mapped_destination')
             else:
-                # A RAG-supported place remains reachable even if OCR maps
-                # duplicate its label across pages. In that case track the
-                # narrative destination without guessing which map is active.
+                # A supported scenario location with no map remains a valid
+                # narrative position.
                 target_page, target_room_id = '', ''
 
         return {'ok': True, 'page': target_page, 'room': target_room_id,

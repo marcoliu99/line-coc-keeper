@@ -92,12 +92,12 @@ def test_sr_m01_locked_door_blocks_indoor_item(state):
 
 
 def test_sr_m02_final_claim_and_rag_name_are_not_entry(state):
-    scope = session(state, '我去密室')
+    scope = session(state, '我去 Atlantis')
     # An explicit request alone is not enough: the current-turn evidence must
-    # support the destination. Missing map edges are tested separately below.
-    assert scope.commit(state, args(destination='密室', path=['X']))['error'] == 'destination_not_supported_by_evidence'
+    # support an unknown destination. A matching map label is canonical support.
+    assert scope.commit(state, args(destination='Atlantis', path=['X']))['error'] == 'destination_not_supported_by_evidence'
     assert not scope.commit(state, args(evidence=[]))['ok']
-    assert scope.commit(state, args(destination='密室', page='', path=[]))['error'] == 'destination_not_supported_by_evidence'
+    assert scope.commit(state, args(destination='Atlantis', page='', path=[]))['error'] == 'destination_not_supported_by_evidence'
     assert state.current_room_id['u'] == 'A'
 
 
@@ -133,6 +133,54 @@ def test_explicit_rag_supported_map_scene_resolves_internal_map_key_in_python(st
     assert result['ok']
     assert state.current_map_page['u'] == '17'
     assert state.current_room_id['u'] == 'E0'
+
+
+def test_unrelated_current_turn_rag_source_does_not_support_requested_destination(state):
+    quote = 'Boston Globe contains the old newspaper clippings.'
+    state.scenario_text += '\n' + quote
+    group_state.save_state(state)
+    scope = session(state, '我前往 Atlantis')
+    scope.retrieval_sources.add('scenario_context')
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Atlantis', page='', path=[],
+        evidence=[{'source': 'scenario_context', 'quote': quote}],
+    ))
+    assert result['error'] == 'destination_not_supported_by_evidence'
+    assert state.current_room_id['u'] == 'A'
+    assert 'u' not in state.narrative_locations
+
+
+def test_indirect_known_map_route_checks_intermediate_locked_edge(state):
+    state.scene_maps['1']['rooms'][3]['exits'][0]['locked'] = True
+    group_state.save_state(state)
+    scope = session(state, '我前往閣樓')
+    for path in ([], ['E']):
+        result = scope.commit(state, args(
+            destination='閣樓', path=path,
+            evidence=[{'source': 'scenario_context', 'quote': SOURCE}],
+        ))
+        assert result['error'] == 'passage_blocked'
+        assert state.current_room_id['u'] == 'A'
+
+
+def test_same_destination_on_multiple_maps_is_rejected_as_ambiguous(state):
+    quote = 'The investigators travel to Corbitt House.'
+    state.scenario_text += '\n' + quote
+    state.scene_maps['17'] = {'location_name': 'Corbitt House', 'entry_room_id': 'E0', 'rooms': [
+        {'id': 'E0', 'name': 'Front Hall', 'exits': []},
+    ]}
+    state.scene_maps['18'] = {'location_name': 'Corbitt House', 'entry_room_id': 'E1', 'rooms': [
+        {'id': 'E1', 'name': 'Basement', 'exits': []},
+    ]}
+    group_state.save_state(state)
+    scope = session(state, '我前往 Corbitt House')
+    result = scope.commit(state, args(
+        movement_kind='scene_transition', destination='Corbitt House', page='', path=[],
+        evidence=[{'source': 'scenario_context', 'quote': quote}],
+    ))
+    assert result['error'] == 'ambiguous_mapped_destination'
+    assert state.current_room_id['u'] == 'A'
+    assert 'u' not in state.narrative_locations
 
 
 def test_scene_arrival_does_not_guess_an_ocr_missing_entry_room(state):
