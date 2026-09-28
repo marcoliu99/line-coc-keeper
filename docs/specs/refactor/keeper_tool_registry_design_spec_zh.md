@@ -70,7 +70,7 @@ class ToolCall:                            # 目前各分支共用、總是一�
 - **Schema 順序：** 供應商的 prompt 快取會把工具清單算進快取前綴，所以註冊表保留宣告順序，並用測試固定送給供應商的順序。
 - **排序：** 戰鬥家族的 PR 排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
 
-Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。`refactor/combat-start-in-combat-module` 尚未合入 `main_v2`，戰鬥處理函式家族因此仍待遷移。
+Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。戰鬥啟動與重傷檢定兩項前置改動已存在於 `main_v2`；遷移戰鬥處理函式時保留其行為。
 
 檢定家族（技能、SAN、NPC 檢定、防禦選項和清除待處理檢定）已移至 `app/keeper_tools/checks.py`。結果快取、所有權、metadata 與狀態更新仍透過公開過渡介面留在 Keeper。整合前，此分支須與獨立的檢定流程重構重新對齊。
 
@@ -82,4 +82,6 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 
 劇本／搜尋家族（`record_established_fact`、`record_clue`、圖片搜尋與展示、章節切換、劇本搜尋和記憶搜尋）已移至 `app/keeper_tools/scenario.py`。章節切換與事實記錄仍透過 Keeper 的公開過渡介面使用同一個狀態更新邊界。
 
-訊息家族（`send_private_info`）已遷移至 `app/keeper_tools/messaging.py`。目前僅戰鬥家族仍沿用舊串接。
+訊息家族（`send_private_info`）已遷移至 `app/keeper_tools/messaging.py`。戰鬥家族由獨立分支遷移。
+
+戰鬥家族（開始戰鬥、加入 NPC、狀態查詢、回合推進、傷害、敵人行動計畫、效果與結束戰鬥）遷到 `app/keeper_tools/combat.py`。規則仍由 `app/combat.py` 負責；狀態寫入、被重傷關卡阻擋時不儲存，以及公開傷害結果過濾，仍經 Keeper 的正式共用函式處理。整合分支已包含全部家族；最後一步將移除空的舊串接。

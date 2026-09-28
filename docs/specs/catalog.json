@@ -1212,6 +1212,7 @@
         "app/keeper_tools/registry.py",
         "app/keeper_tools/character.py",
         "app/keeper_tools/checks.py",
+        "app/keeper_tools/combat.py",
         "app/keeper_tools/dice.py",
         "app/keeper_tools/inventory.py",
         "app/keeper_tools/scenario.py",

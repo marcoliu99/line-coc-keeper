@@ -811,6 +811,12 @@ def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict
     return {key: result[key] for key in public_keys if key in result}
 
 
+# Additional public helpers for the combat handlers.
+find_npc_index_entry = _find_npc_index_entry
+skip_save_if_blocked = _skip_save_if_blocked
+filter_public_combat_damage_result = _filter_public_combat_damage_result
+
+
 def _persist_memory_maintenance_state(
     group_id: str,
     campaign_summary: str,
@@ -1124,155 +1130,6 @@ def execute_legacy_tool(
 
 
 
-
-
-
-
-
-
-        if name == "start_combat":
-            def _mutate_start_combat(target_state: GroupState) -> None:
-                combat.begin_combat(target_state)
-            _mutate_and_save_state(state, _mutate_start_combat)
-            return {"ok": True, "status": combat.status_text(state)}
-
-        if name == "add_npc_to_combat":
-            npc_name = tool_input["name"]
-            requested_hp = int(tool_input.get("hp", 10))
-            def _mutate_add_npc(target_state: GroupState) -> _StateMutation[str]:
-                hp = requested_hp
-                index_note = ""
-                # Code-enforced consistency check, not just a prompt-level ask: if
-                # this name matches a /coc index entry, the index's HP wins no
-                # matter what the Keeper actually passed — this is what stops the
-                # same monster (or the same life stage of one) from silently
-                # getting a different HP in a later scene, instead of relying
-                # purely on the Keeper remembering to look it up itself.
-                index_entry = _find_npc_index_entry(target_state, npc_name)
-                if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
-                    canonical_hp = int(index_entry["hp"])
-                    if canonical_hp != hp:
-                        index_note = (
-                            f"（系統已依 /coc index 索引修正：你傳入的 HP {hp} 跟索引裡「{index_entry.get('name')}」"
-                            f"登記的 HP {canonical_hp} 不一致，已強制改用索引值。這隻的數值以索引為準，"
-                            "之後同一隻不要再用別的數字。）"
-                        )
-                        hp = canonical_hp
-                is_ally = bool(tool_input.get("is_ally", False))
-                # A second call for a monster already in the fight (the Keeper
-                # re-searched a scenario NPC mid-turn) reuses its HP pool; see
-                # combat.add_combatant.
-                added = combat.add_combatant(
-                    target_state,
-                    npc_name,
-                    int(tool_input.get("dex", 50)),
-                    hp,
-                    is_ally=is_ally,
-                    armor=tool_input.get("armor"),
-                    attacks=tool_input.get("attacks"),
-                    abilities=tool_input.get("abilities"),
-                )
-                if added.reused:
-                    return _StateMutation(
-                        f"（系統偵測到「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
-                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
-                        "add_npc_to_combat。）",
-                        should_save=False,
-                    )
-                if added.defeated_namesake is not None:
-                    # Right when a second monster of the kind arrives, wrong when
-                    # the Keeper forgot this one was already defeated: ask.
-                    new = added.combatant
-                    index_note += (
-                        f"（{combat.defeated_namesake_notice(added)}"
-                        f"如果這其實是同一隻，請用 damage_combatant 把「{new.display_name}」的 HP 歸零，"
-                        "並依原本倒下的狀態敘事。）"
-                    )
-                return _StateMutation(index_note, should_save=True)
-            index_note = _mutate_and_save_state(state, _mutate_add_npc)
-            response = {"ok": True, "status": combat.status_text(state)}
-            if index_note:
-                response["note"] = index_note
-            return response
-
-        if name == "get_combat_status":
-            _refresh_state_snapshot(state)
-            return {"ok": True, "status": combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
-
-        if name == "advance_combat_turn":
-            def _mutate_advance_turn(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.advance_turn(target_state))
-            return _mutate_and_save_state(state, _mutate_advance_turn)
-
-        if name == "damage_combatant":
-            def _mutate_damage_combatant(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(
-                    combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
-                )
-            result = _mutate_and_save_state(state, _mutate_damage_combatant)
-            return _filter_public_combat_damage_result(result, speaker_role)
-
-        if name == "plan_enemy_turn":
-            def _mutate_plan_enemy_turn(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.plan_enemy_turn(target_state, tool_input.get("enemy", "")))
-            return _mutate_and_save_state(state, _mutate_plan_enemy_turn)
-
-        if name == "resolve_enemy_action":
-            def _mutate_resolve_enemy_action(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.resolve_enemy_action(
-                    target_state,
-                    tool_input["plan_id"],
-                    outcome=tool_input.get("outcome"),
-                ))
-            return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
-
-        if name == "apply_combat_damage":
-            def _mutate_apply_combat_damage(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.apply_combat_damage(
-                    target_state,
-                    tool_input["target"],
-                    int(tool_input["raw_damage"]),
-                    damage_type=tool_input.get("damage_type", "physical"),
-                    tags=tool_input.get("tags") or [],
-                    source_id=tool_input.get("source_id", ""),
-                ))
-            result = _mutate_and_save_state(state, _mutate_apply_combat_damage)
-            return _filter_public_combat_damage_result(result, speaker_role)
-
-        if name == "apply_final_combat_damage":
-            def _mutate_apply_final_combat_damage(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.apply_final_combat_damage(
-                    target_state,
-                    tool_input["target"],
-                    int(tool_input["final_damage"]),
-                    damage_type=tool_input.get("damage_type", "physical"),
-                    tags=tool_input.get("tags") or [],
-                    source_id=tool_input.get("source_id", ""),
-                ))
-            result = _mutate_and_save_state(state, _mutate_apply_final_combat_damage)
-            return _filter_public_combat_damage_result(result, speaker_role)
-
-        if name == "add_combat_effect":
-            def _mutate_add_combat_effect(target_state: GroupState) -> dict:
-                return combat.add_combat_effect(
-                    target_state,
-                    tool_input["target"],
-                    tool_input["label"],
-                    timing=tool_input.get("timing", "turn_start"),
-                    damage=tool_input.get("damage", ""),
-                    damage_type=tool_input.get("damage_type", "physical"),
-                    remaining_rounds=tool_input.get("remaining_rounds"),
-                    tags=tool_input.get("tags") or [],
-                    source_id=tool_input.get("source_id", ""),
-                    public_description=tool_input.get("public_description", ""),
-                )
-            return _mutate_and_save_state(state, _mutate_add_combat_effect)
-
-        if name == "end_combat":
-            def _mutate_end_combat(target_state: GroupState) -> None:
-                combat.end_combat(target_state)
-            _mutate_and_save_state(state, _mutate_end_combat)
-            return {"ok": True}
 
 
 

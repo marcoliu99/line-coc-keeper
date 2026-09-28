@@ -70,7 +70,7 @@ class ToolCall:                            # the Data Clump the handlers share t
 - **Schema order:** provider prompt caching includes the tool list in the cached prefix, so the registry preserves declaration order and a test pins the order sent to providers.
 - **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
 
-Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. The combat-start prerequisite has not yet landed on `main_v2`, so the combat handler family remains pending.
+Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. The combat-start and major-wound prerequisites are present in `main_v2`; their behavior is retained by the combat handler migration.
 
 The checks family (skill, SAN, NPC checks, defense choices, and pending-check clearing) is migrated to `app/keeper_tools/checks.py`. Check cache, ownership, metadata, and state mutation remain in Keeper behind a temporary public service seam. This branch needs re-alignment with the separate check-lifecycle refactor before integration.
 
@@ -82,4 +82,6 @@ The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag 
 
 The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) now lives in `app/keeper_tools/scenario.py`. The chapter-advance and fact-record handlers still use Keeper's single state mutation boundary through a public migration seam.
 
-The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`. Only the combat family remains on the legacy cascade.
+The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`. The combat family is migrated separately.
+
+The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. All families are now combined on the integration branch; the final step removes the empty cascade.
