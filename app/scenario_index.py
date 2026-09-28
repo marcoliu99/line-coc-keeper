@@ -162,6 +162,18 @@ def format_location_index_block(locations: list[dict[str, Any]]) -> str:
 # player is trying to use. A twenty-five turn party session sat in one room for
 # all of it under exactly this condition — the scenario's own prose was intact
 # and only its index was missing, so nothing in the replies said why.
+# Room-to-room movement resolves against scene_maps, not against this index:
+# movement.py calls scene_map.resolve_move / find_room_by_text on them. An empty
+# index leaves the Keeper re-deriving NPC and location facts; empty floor plans
+# make movement impossible, and there is no command that rebuilds them — a
+# republished source invalidates them by design (see
+# docs/specs/enhancement/external_english_source_preparation_design_spec.md §7,
+# "推測地圖…失效，不能複製舊值到新來源") without providing a way back.
+EMPTY_SCENE_MAPS_NOTICE = (
+    "⚠️ 這份劇本沒有樓層圖，房間之間的移動無法核對，玩家往其他房間的行動會被拒絕。"
+    "樓層圖只能從 PDF 重新解析取得；改寫過原文的版本不會沿用舊圖。"
+)
+
 EMPTY_LOCATION_INDEX_NOTICE = (
     "⚠️ 這份劇本沒有地點索引，移動與到達無法被核對，玩家往其他房間的行動會被拒絕。"
     "請重新匯入劇本或補上地點索引後再開始。"
@@ -169,17 +181,26 @@ EMPTY_LOCATION_INDEX_NOTICE = (
 
 
 def report_location_index(locations: list[dict[str, Any]], *, source: str,
-                          scenario_title: str = "") -> str:
-    """Record how many locations a scenario offers; warn when it offers none.
+                          scenario_title: str = "",
+                          scene_maps: dict[str, Any] | None = None) -> str:
+    """Record what a scenario can support; warn about whichever part is missing.
 
-    Returns the notice to show the uploader, or an empty string when the index
-    is usable. Callers that have no reply channel can ignore the return value
-    and still leave the event behind.
+    Returns the notice to show the uploader, or an empty string when nothing is
+    missing. Callers with no reply channel can ignore the return value and still
+    leave the event behind. `scene_maps` is optional because not every site that
+    assigns the index also assigns the floor plans.
     """
+    missing_maps = scene_maps is not None and not scene_maps
     observability.event(
-        "scenario.location_index.loaded",
-        level=logging.WARNING if not locations else logging.INFO,
+        "scenario.derived_artifacts.loaded",
+        level=logging.WARNING if (not locations or missing_maps) else logging.INFO,
         source=source, location_count=len(locations),
+        scene_map_count=None if scene_maps is None else len(scene_maps),
         scenario_title=observability.safe_identifier(scenario_title) if scenario_title else "",
     )
-    return "" if locations else EMPTY_LOCATION_INDEX_NOTICE
+    notices = []
+    if missing_maps:
+        notices.append(EMPTY_SCENE_MAPS_NOTICE)
+    if not locations:
+        notices.append(EMPTY_LOCATION_INDEX_NOTICE)
+    return "\n\n".join(notices)

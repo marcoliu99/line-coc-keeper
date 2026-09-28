@@ -187,9 +187,10 @@ def _apply_new_scenario(
     state.kp_ooc_log = []  # new scenario must not inherit the previous scenario's KP OOC memory
     state.scenario_npc_index = extracted_index["npcs"]
     state.scenario_location_index = extracted_index["locations"]
+    state.scene_maps = {str(k): v for k, v in page_maps.items()}
     scenario_index.report_location_index(
-        state.scenario_location_index, source="pdf_upload", scenario_title=state.scenario_title)
-    state.scene_maps = {str(k): v for k, v in page_maps.items()}  # same reasoning —
+        state.scenario_location_index, source="pdf_upload", scenario_title=state.scenario_title,
+        scene_maps=state.scene_maps)  # same reasoning —
     # don't let a new scenario keep the old one's floor plans (see app/scene_map.py).
     state.current_map_page = {}
     state.current_room_id = {}
@@ -247,13 +248,16 @@ def _install_library_context(
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
-    scenario_index.report_location_index(
-        state.scenario_location_index, source="library",
-        scenario_title=state.scenario_title)
     if not preserve_pregens:
         state.pregens = list(context.get("pregens", []))
     if not preserve_maps:
         state.scene_maps = context["scene_maps"]
+    # Reported after the maps are in place: which of the two is missing decides
+    # what the operator has to rebuild, and floor plans are the one that stops
+    # movement outright.
+    scenario_index.report_location_index(
+        state.scenario_location_index, source="library",
+        scenario_title=state.scenario_title, scene_maps=state.scene_maps)
 
 
 def _install_context_images(conversation_id: str, scenario_id: str, context: dict) -> None:

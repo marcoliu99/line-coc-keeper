@@ -26,9 +26,30 @@ And the library it loads from has two variants of the same scenario:
 
 An arrival is committed against a known destination, so with no locations indexed nothing can be validated and every movement is refused. The scenario's prose was intact throughout — retrieval found the stairs, the board walls, even the smell through the seams — which is why the failure looked like a model problem rather than missing data.
 
+## What actually blocks movement
+
+`app/services/movement.py` resolves a destination through `scene_map.resolve_move(state.scene_maps, ...)` and `scene_map.find_room_by_text(state.scene_maps.get(page, {}), ...)`. It never reads `scenario_location_index`. **Empty floor plans are what refuses every move**; an empty location index leaves the Keeper re-deriving NPC and location facts, which is a separate and lesser problem.
+
+Both were empty here, and the AI-prepared variant drops three artifacts, not one:
+
+| variant | `indexes` | `scene_maps` | `pregens` |
+| --- | --- | --- | --- |
+| original | npcs 2, locations 8 | 1 floor plan | 4 |
+| `…-ai-…` (in play) | `{}` | `{}` | `[]` |
+
+Extraction is not at fault. Run against the AI variant's own text, `scenario_index.extract_scenario_index` returns 2 NPCs and 9 locations, including 舊科比特宅邸 with its aliases. The text is intact; the publishing path simply never calls extraction.
+
+## This is specified behaviour, not an oversight
+
+`scenario_source_authoring.py` and `scenario_source_review.py` write `('indexes', {}), ('pregens', []), ('scene_maps', {})` and record `derived_artifacts: 'invalidated: …'`. `docs/specs/enhancement/external_english_source_preparation_design_spec_zh.md` §7 requires it: 「舊 embedding、NPC 索引、pregens、推測地圖與中文版本失效,不能複製舊值到新來源」. A test asserts it, seeding the parent with `{'1': {'old': True}}` to prove the republish does not inherit it.
+
+An earlier attempt at this fix inherited the floor plans, on the reasoning that they derive from page images and the republish keeps the PDF byte-identical. **That reasoning is beside the point and the change was reverted**: the invalidation is about provenance, not staleness — a vision model's inferences must not cross into an audited source without being re-derived there.
+
+**The gap is that the spec invalidates without providing a way back.** `scene_maps` reach a group only from a PDF upload's vision pass or from a library context, and no command rebuilds them; `/coc index` rebuilds the index but not the maps. A republished source is therefore unplayable for movement until the PDF is re-uploaded, and nothing said so.
+
 ## Scope
 
-Make the condition visible. This does not repair the index, restore it from another variant, or relax the arrival check.
+Make the condition visible at the point a scenario is installed or switched. This does not repair any artifact, inherit one, or relax the arrival check.
 
 `scenario_index.report_location_index` records the count at each of the four sites that assign the index — PDF upload, scenario correction, library install, chapter switch — at WARNING when it is empty and INFO otherwise, and returns the notice for a caller that has a reply channel. The PDF upload confirmation shows it, sourced from the state after install rather than from the extracted index, because a library variant supplies its own.
 
