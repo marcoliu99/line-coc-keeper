@@ -1188,6 +1188,20 @@
       "path": "docs/specs/refactor/active_provider_lookup_design_spec.md",
       "zh_path": "docs/specs/refactor/active_provider_lookup_design_spec_zh.md",
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "Re-adding a defeated enemy's name: confirm it, and keep the two apart",
+      "zh": "再次加入已倒下敵人的名字：提醒確認，並把兩者區分開",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": [
+        "app/combat.py",
+        "app/keeper.py",
+        "app/commands/handlers/combat.py"
+      ],
+      "path": "docs/specs/bug/defeated_enemy_readd_design_spec.md",
+      "zh_path": "docs/specs/bug/defeated_enemy_readd_design_spec_zh.md",
+      "source_revision": "1a169a3dec2873f3d1af465f1528b06978821ea9"
     }
   ]
 }
