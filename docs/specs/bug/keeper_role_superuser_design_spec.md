@@ -66,7 +66,9 @@ KP authority comes from **one** place: being the group's registered KP Assistant
 Today `/coc kp` registers the first caller when the seat is empty, only the KP can `/coc kp quit`, and there is no handover. If the KP Assistant disappears, the group is stuck: nobody can register, roll back, sudo or approve corrections. The `keeper` role was, in effect, the escape hatch for that. It goes, so this PR adds visible, deliberate ones:
 
 - **`/coc kp transfer @member`**: only the current KP Assistant. The new KP must meet the `/coc kp` rules: not a bot, no investigator, no creation session. `kp_ooc_log` is cleared, as on registration.
-- **`/coc kp takeover`**: for a member with Discord's **Manage Server** permission in this server (`guild_permissions.manage_guild`; Administrator implies it). It registers the caller, replacing any current KP Assistant, under the same exclusivity rules. Decided with Marco: Manage Server rather than the server owner only, so a takeover still works when the owner is away.
+- **`/coc kp takeover [@member]`**: for a member with Discord's **Manage Server** permission in this server (`guild_permissions.manage_guild`; Administrator implies it). It replaces any current KP Assistant with the caller, or, with `@member`, with that member. Decided with Marco: Manage Server rather than the server owner only, so a takeover still works when the owner is away.
+  - The new KP must meet the same exclusivity rules as `/coc kp`. A manager who is playing an investigator can't take the seat themselves. They're refused with a hint to appoint someone instead, `/coc kp takeover @member`, naming a member who isn't playing. Decided with Marco: KP and investigator stay mutually exclusive, because the KP sees private scenario data and can roll back and act for others. No exception for takeover, and nobody's investigator is changed on their behalf.
+  - If every member of the group is playing, someone has to `/coc retire` first; takeover doesn't bypass that.
 - Both post a **public** message in the channel naming the old and new KP Assistant, and log `kp.transfer` / `kp.takeover` with hashed ids.
 - The permission is read from Discord when the command is sent. `discord_bot.py` passes it to the router as one boolean, `can_manage_server`, so the core stays Discord-agnostic. DMs have no server, so there it is false. **It is used for `takeover` and nothing else.** Every other action still needs `permissions.is_kp`.
 - They ship **in the same PR** as the removal, so there's no window without an escape hatch.
@@ -96,6 +98,8 @@ Plus:
 - Handover and takeover:
   - `transfer` by anyone but the KP is refused, and to a bot, a member with an investigator, or a member in a creation session is refused;
   - `takeover` without Manage Server is refused, including in a DM, and with it replaces the KP and posts the public notice;
+  - a manager with an investigator is refused for themselves, with the appoint hint, and can appoint an eligible member; appointing a bot, a member with an investigator, or a member in a creation session is refused;
+  - the public notice names who appointed whom;
   - `can_manage_server` unlocks no other action;
   - **manual acceptance on a real server:** one account with Manage Server and one without each try `takeover`.
 - An AST check that no `app/` module references `is_keeper`, `actor_is_keeper` or `_is_keeper_member`, and no Discord role name appears in an authorization decision.
