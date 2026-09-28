@@ -642,4 +642,3 @@ def sanity_check(call: ToolCall) -> dict[str, Any]:
     if sanity_event_seed is not None and result.get("resolved"):
         services.persist_resolved_check_event(state, sanity_event_seed)
     return result
-
