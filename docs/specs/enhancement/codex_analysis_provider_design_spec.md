@@ -15,7 +15,15 @@ As of 2026-09-28, on `main_v2` after PR #120:
 - `ANALYSIS_PROVIDERS` excludes Codex, and `app/config.py` rejects `ANALYSIS_PROVIDER=codex`.
 - PDF repair and page-image/map analysis may call image analysis once per page. Since `ExecTransport` starts a CLI process per request, this can multiply startup latency and consume ChatGPT plan capacity. Measure this before implementation.
 
-Current analysis consumers include scenario indexing and comparison, opening narration extraction, pregen extraction, scene-map analysis, PDF image repair, and Keeper-side structured extraction. Keep their existing `None`-on-handled-failure behavior.
+Provider routing is selected by work type, not merely by whether the source originated in a PDF. Preserve these assignments:
+
+| Work | Provider setting | Reason |
+|---|---|---|
+| PDF page image classification, scene-map/room-graph extraction, and image-based PDF repair/OCR | `ANALYSIS_PROVIDER` | Direct page-image and document-extraction work; may run once per page. |
+| Pre-generated investigator/character-card extraction, including structured fields and skills | `ANALYSIS_PROVIDER` | User decision: character-card extraction stays with document analysis even when its input is already extracted text. |
+| Scenario index (NPCs/locations), opening narration extraction, scenario-text comparison, Keeper history summarization, and other non-PDF structured text analysis | `LLM_PROVIDER` | These are general text tasks and should share the conversation provider selection. |
+
+The current implementation has a single global `analysis_provider()` lookup at all seven analysis call sites. To meet this routing policy, the implementation must move the non-PDF text consumers to the active LLM provider while retaining the analysis provider for the PDF/page-image and pregen consumers. Keep the existing `None`-on-handled-failure behavior for structured analysis.
 
 ## Scope
 
@@ -25,6 +33,7 @@ Current analysis consumers include scenario indexing and comparison, opening nar
 - Add an optional PNG image argument to `ExecTransport.request`. Write bytes to a temporary `.png` file, pass its path with `-i`/`--image`, and remove it on success, failure, timeout, and cancellation.
 - Use the one-shot `ExecTransport` path for these analysis calls; this is the verified `codex exec` path for image input and `--output-schema`. Do not change conversation transport selection or the app-server protocol in this work.
 - Add Codex to `ANALYSIS_PROVIDERS`; permit `codex` in `ANALYSIS_PROVIDER` validation.
+- Route scenario indexing, opening narration extraction, scenario-text comparison, and Keeper history summarization through `LLM_PROVIDER`; retain pregen extraction, PDF repair, and scene-map/page-image analysis under `ANALYSIS_PROVIDER`.
 - Update `.env.example` and provider/configuration documentation for `ANALYSIS_PROVIDER=codex`, Codex CLI installation, and `codex login`.
 - Keep Codex analysis independent of `OPENAI_API_KEY`. Document that separately enabled RAG embeddings still use the existing OpenAI Embeddings path and may independently need that key.
 
@@ -58,14 +67,28 @@ The adapter must use existing Codex timeout and input/output limits. Because syn
 
 ## Configuration behavior
 
-The intended configuration is:
+The settings remain independently selectable. For example:
 
 ```dotenv
 LLM_PROVIDER=codex
 ANALYSIS_PROVIDER=codex
 ```
 
-Conversation and analysis both use the authenticated Codex CLI. The child process receives only its existing environment allowlist; analysis must not require or read `OPENAI_API_KEY`. This guarantee is scoped to conversation and analysis provider calls. RAG embeddings remain a separate configured capability and are outside this guarantee.
+Conversation and non-PDF text analysis use `LLM_PROVIDER`; document/image extraction and pregen-card extraction use `ANALYSIS_PROVIDER`. Either can independently select the authenticated Codex CLI. The child process receives only its existing environment allowlist; Codex calls must not require or read `OPENAI_API_KEY`. RAG embeddings remain a separate configured capability and are outside this guarantee.
+
+### Non-PDF text and structured-extraction probe (2026-09-28)
+
+Five direct Codex CLI probes used `gpt-6-luna`, medium reasoning effort, and real scenario/character material. These probes assess capability; they are not a head-to-head provider benchmark or a release-wide accuracy guarantee.
+
+| Task | Source-checked result | End-to-end latency |
+|---|---|---:|
+| Opening narration/check extraction | Correctly returned the Sanity check with success loss `1` and failure loss `1D4` from a Dead Boarder source page. | 16.4 s |
+| Scenario index | Extracted the Corbitt entry from a Haunting stat page and did not invent absent HP. The returned location was not fully checked. | 20.0 s |
+| Scenario-text comparison | Correctly detected a deliberately omitted Armor section and its 5-point value in a controlled two-version comparison. | 29.0 s |
+| Pregen character extraction | On 10 Doors to Darkness character pages: 10/10 names, 10/10 occupation strings, 120/120 sampled numeric fields, and 10/10 Luck source checks matched. Each character had 14–18 skill entries. Age placement was not fully verified; the current schema has no dedicated age field. | 160.5 s |
+| Keeper history summary | Preserved all four checked facts: arrival at Corbitt House, possession of the key, lamp/kerosene/axe not yet acquired, and purchase not completed. | 9.9 s |
+
+The pregen schema contains dynamic-key dictionaries for skills and extra fields. Codex strict output requires a closed object schema, so the probe represented those dictionaries as key/value arrays and normalized them before validating against the existing schema. This adapter detail and age preservation require explicit implementation tests. The 10-card run's 160.5-second latency is a material risk for bulk imports. The other probes used selected pages or a short exchange; the scenario-index location and full-document coverage remain unverified.
 
 ## Pre-implementation real-PDF benchmark gate
 
@@ -120,9 +143,9 @@ One instrumented page-18 call reached the first CLI event at 0.70 s and complete
 
 ## Decisions for review
 
-1. Review the pre-implementation PDF benchmark and decide whether per-page CLI startup and ChatGPT plan usage are acceptable.
+1. Review whether the measured PDF and pregen latency and CLI usage are acceptable before enabling Codex for those consumers.
 2. Confirm the analysis adapter should use `ExecTransport` even when conversation uses app-server; image input and schema output are verified on `codex exec`.
 3. Confirm the concurrency limit expected for synchronous worker/process callers, given the existing Codex semaphore is event-loop-local.
-4. Confirm documentation should state that Codex conversation/analysis need no OpenAI key while optional RAG embeddings remain separate.
+4. Confirm documentation should state that Codex conversation, text analysis, and document analysis need no OpenAI key while optional RAG embeddings remain separate.
 
 Do not begin implementation until Marco approves this spec and the pre-implementation benchmark decision.

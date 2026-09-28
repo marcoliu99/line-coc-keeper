@@ -15,7 +15,15 @@
 - `ANALYSIS_PROVIDERS` 排除 Codex，`app/config.py` 也拒絕 `ANALYSIS_PROVIDER=codex`。
 - PDF 圖片修復及地圖／頁面圖片分析可能每頁呼叫一次。`ExecTransport` 每次請求都會啟動 CLI 子程序，可能使啟動延遲與 ChatGPT 方案額度按頁數累積；實作前必須先量測。
 
-目前分析呼叫端涵蓋劇本索引與比較、開場敘事擷取、預製角色擷取、場景地圖分析、PDF 圖片修復，以及 Keeper 端的結構化擷取。維持它們現有的「處理失敗時回傳 `None`」慣例。
+Provider 依工作類型分流，不只看資料是否來自 PDF。路由如下：
+
+| 工作 | 設定 | 原因 |
+|---|---|---|
+| PDF 頁面圖片分類、場景地圖／房間圖擷取、以圖片修復／OCR PDF | `ANALYSIS_PROVIDER` | 直接處理頁面圖片或文件擷取，可能逐頁呼叫。 |
+| 預製調查員／角色卡擷取，包含結構欄位與技能 | `ANALYSIS_PROVIDER` | 依使用者決定，即使輸入已是抽出的文字，角色卡仍屬於文件分析。 |
+| 劇本索引（NPC／地點）、開場敘事擷取、劇本文字比較、Keeper 歷史摘要，以及其他非 PDF 結構化文字分析 | `LLM_PROVIDER` | 這些是一般文字工作，應跟隨對話 Provider。 |
+
+目前實作的七個分析呼叫點都使用單一全域 `analysis_provider()`。為符合此路由，實作時須把非 PDF 文字工作改由目前的 LLM Provider 處理，同時讓預製角色擷取、PDF 修復及場景地圖／頁面圖片分析繼續使用分析 Provider。結構化分析維持現有的「處理失敗時回傳 `None`」慣例。
 
 ## 範圍
 
@@ -25,6 +33,7 @@
 - 為 `ExecTransport.request` 新增可選 PNG 圖片參數。將 bytes 寫入暫存 `.png`，以 `-i`／`--image` 傳入路徑，並在成功、失敗、逾時或取消時清除檔案。
 - 分析請求使用一次性的 `ExecTransport`；圖片輸入與 `--output-schema` 已在此 `codex exec` 路徑查證。此工作不改動對話 transport 選擇，也不改 app-server 協定。
 - 將 Codex 加入 `ANALYSIS_PROVIDERS`，並允許 `ANALYSIS_PROVIDER` 設為 `codex`。
+- 劇本索引、開場敘事擷取、劇本文字比較與 Keeper 歷史摘要改走 `LLM_PROVIDER`；預製角色擷取、PDF 修復、場景地圖／頁面圖片分析繼續使用 `ANALYSIS_PROVIDER`。
 - 更新 `.env.example` 與 Provider／設定文件，說明 `ANALYSIS_PROVIDER=codex`、Codex CLI 安裝和 `codex login`。
 - Codex 分析不依賴或讀取 `OPENAI_API_KEY`。文件須說明：另外啟用的 RAG embeddings 仍走現有 OpenAI Embeddings 路徑，可能獨立需要該金鑰。
 
@@ -65,7 +74,21 @@ LLM_PROVIDER=codex
 ANALYSIS_PROVIDER=codex
 ```
 
-對話與分析都使用已登入的 Codex CLI。子程序沿用現有環境變數 allowlist；分析不得要求或讀取 `OPENAI_API_KEY`。此保證只適用於對話與分析 Provider 呼叫；RAG embeddings 是獨立功能，不在此保證範圍內。
+對話與非 PDF 文字分析使用 `LLM_PROVIDER`；文件／圖片擷取與預製角色卡擷取使用 `ANALYSIS_PROVIDER`。兩者都可獨立選用已登入的 Codex CLI。子程序沿用現有環境變數 allowlist；Codex 呼叫不得要求或讀取 `OPENAI_API_KEY`。RAG embeddings 是獨立功能，不在此保證範圍內。
+
+### 非 PDF 文字與結構化擷取測試（2026-09-28）
+
+五次直接 Codex CLI 測試使用真實劇本／角色資料、`gpt-6-luna` 與 medium reasoning effort。這些測試用於確認能力，不是與現有 Provider 的對照基準，也不代表全功能準確度保證。
+
+| 工作 | 對照來源的結果 | 端到端耗時 |
+|---|---|---:|
+| 開場敘事／檢定擷取 | 從《Dead Boarder》來源頁正確擷取 Sanity 檢定：成功損失 `1`、失敗損失 `1D4`。 | 16.4 秒 |
+| 劇本索引 | 從《The Haunting》角色數值頁擷取科比特資料，未補造原文沒有的 HP；回傳地點尚未完整核對。 | 20.0 秒 |
+| 劇本文字比較 | 在受控的兩版本比較中，正確找出刻意刪除的 Armor 段落及其 5 點數值。 | 29.0 秒 |
+| 預製角色擷取 | 從《Doors to Darkness》10 張角色頁核對：姓名 10/10、職業原文 10/10、抽樣數值 120/120、Luck 來源核對 10/10 正確；每張有 14–18 個技能項目。年齡放置位置尚未完整驗證；現行 schema 沒有專用年齡欄位。 | 160.5 秒 |
+| Keeper 歷史摘要 | 四項檢查事實都保留：抵達科比特宅邸、持有鑰匙、尚未取得油燈／煤油／斧頭、購買尚未完成。 | 9.9 秒 |
+
+預製角色 schema 的技能與額外欄位使用動態鍵值字典。Codex strict output 要求封閉物件 schema，因此測試先將這些字典表示成鍵值陣列，再轉回原格式並依現有 schema 驗證。這項轉換及年齡保留需要明確的實作測試。10 張角色卡耗時 160.5 秒，是批次匯入的主要風險。其他測試使用選定頁面或短對話；劇本索引的地點結果與完整文件涵蓋率仍未驗證。
 
 ## 實作前真實劇本 PDF 量測門檻
 
@@ -120,9 +143,9 @@ ANALYSIS_PROVIDER=codex
 
 ## 審查決策
 
-1. 審查實作前 PDF 量測，決定每頁 CLI 啟動時間與 ChatGPT 方案額度是否可接受。
+1. 審查 PDF 與預製角色的耗時及 CLI 用量，確認啟用 Codex 分析前可否接受。
 2. 確認分析 adapter 即使對話使用 app-server，仍應使用 `ExecTransport`；圖片輸入和 schema 輸出目前是在 `codex exec` 查證。
 3. 確認同步工作執行緒／工作程序呼叫應採用的並發上限，因現有 Codex semaphore 只作用於單一事件迴圈。
-4. 確認文件應說明 Codex 對話／分析不需要 OpenAI key，但可選 RAG embeddings 仍是獨立路徑。
+4. 確認文件應說明 Codex 對話、文字分析及文件分析不需要 OpenAI key，但可選 RAG embeddings 仍是獨立路徑。
 
 Marco 核准本規格及實作前量測決策之前，不開始實作。
