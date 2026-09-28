@@ -86,7 +86,7 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
         stage.assert_not_called()
         save.assert_not_called()
 
-    async def test_a_hold_that_starts_mid_staging_discards_only_new_files(self):
+    async def test_a_hold_that_starts_mid_staging_keeps_content_addressed_files(self):
         state = GroupState(group_id="g")
         state.staged_pdf_parts = [{"key": "old", "file_name": "kept.pdf"}]
         reply = AsyncMock()
@@ -98,7 +98,7 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(uploads, "save_state", side_effect=mutation_admission.MutationHeld("held")):
             await uploads._stage_pdf_parts("g", [_upload("kept.pdf"), _upload("b.pdf")], reply)
         reply.assert_awaited_once_with(mutation_admission.NOTICE)
-        discard.assert_called_once_with("new")
+        discard.assert_not_called()
 
     async def test_staged_parts_are_recorded_and_listed(self):
         state = GroupState(group_id="g")
