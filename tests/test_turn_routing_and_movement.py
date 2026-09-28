@@ -6,10 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import db, intent_parser, keeper, legacy_commands
-from app.agents import context_builder, executor, intent_router, narrator, supervisor
+from app import config, db, intent_parser, keeper, legacy_commands
+from app.agents import context_builder, executor, intent_router, supervisor
 from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
+from app.providers import registry
 from app.repositories import group_state
 from app.services import movement, reply_segments, turn_context
 
@@ -501,7 +502,7 @@ def test_pure_ooc_one_existing_narrator_no_rag_executor_tools_or_canon(state, te
     state.get_active_character('other').secret_goal = 'OTHER_SECRET'
     group_state.save_state(state)
     fake = AsyncMock(return_value='場外規則答覆')
-    with patch.object(narrator, 'LLM_PROVIDER', 'openai'), patch.object(narrator, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
          patch.object(context_builder, 'build_context', side_effect=AssertionError('OOC must not retrieve')), \
          patch.object(executor, 'run_executor', side_effect=AssertionError('OOC must not execute')):
         public, private, images = asyncio.run(supervisor.run_turn(state, 'u', 'A', text, None, 'player', 's2'))
@@ -539,8 +540,8 @@ def test_mixed_one_narrator_public_projection_and_separate_canonical_log(state):
     fake = AsyncMock(return_value=candidate(route))
     with patch.object(context_builder, 'build_context', side_effect=context), \
          patch.object(executor, 'run_executor', side_effect=execute) as exe, \
-         patch.object(narrator, 'LLM_PROVIDER', 'openai'), \
-         patch.object(narrator, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+         patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         public, private, _ = asyncio.run(supervisor.run_turn(state, 'u', 'A', text, None, 'player', 's2'))
     assert captured == ['進入書房'] and exe.await_count == fake.await_count == 1
     model_input = str(fake.call_args)
@@ -566,7 +567,7 @@ def test_real_executor_move_then_item_in_one_existing_tool_loop(state):
         return json.dumps({'disposition': 'resolved_without_check', 'actor_character_id': turn_context.character_id(state, 'u'),
                            'evidence_refs': [arrived['evidence_ref'], added['evidence_ref']]})
     fake = AsyncMock(side_effect=provider)
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(AgentMessage({'state': state, 'user_id': 'u', 'display_name': 'A',
             'speaker_role': 'player', 'text': '進入書房，拿取信件'})))
     assert fake.await_count == 1 and fake.call_args.kwargs['enable_wrapup'] is False
@@ -578,7 +579,7 @@ def test_real_executor_move_then_item_in_one_existing_tool_loop(state):
 def test_final_json_cannot_teleport(state):
     fake = AsyncMock(return_value=json.dumps({'disposition': 'resolved_without_check', 'actor_character_id': turn_context.character_id(state, 'u'),
         'evidence_refs': ['scenario_context'], 'movement': args()}))
-    with patch.object(executor, 'LLM_PROVIDER', 'openai'), patch.object(executor, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}):
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(AgentMessage({'state': state, 'user_id': 'u', 'display_name': 'A',
             'speaker_role': 'player', 'text': '進入書房'})))
     assert result.turn_resolution.disposition == 'incomplete'
@@ -620,8 +621,8 @@ def test_resolved_check_real_tail_commits_entry_before_restricted_item_tool(stat
 
     fake = AsyncMock(side_effect=provider)
     reply = AsyncMock()
-    with patch.object(narrator, 'LLM_PROVIDER', 'openai'), \
-         patch.object(narrator, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
          patch.object(context_builder, 'build_context', side_effect=build), \
          patch.object(executor, 'run_executor', side_effect=AssertionError('no extra Executor stage')), \
          patch.object(legacy_commands, '_spawn_post_turn_maintenance', return_value=None):
@@ -642,8 +643,8 @@ def test_exact_ack_never_calls_executor_or_spends_pending_luck(state):
         return AgentMessage(kw)
 
     fake = AsyncMock(return_value='好的。')
-    with patch.object(narrator, 'LLM_PROVIDER', 'openai'), \
-         patch.object(narrator, '_PROVIDERS', {'openai': SimpleNamespace(run_conversation=fake)}), \
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+         patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
          patch.object(context_builder, 'build_context', side_effect=build), \
          patch.object(executor, 'run_executor', side_effect=AssertionError('ACK never acts')):
         asyncio.run(supervisor.run_turn(state, 'u', 'A', '好', None, 'player', 's2'))

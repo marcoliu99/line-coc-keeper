@@ -16,10 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
-from app.providers.registry import ANALYSIS_PROVIDERS
-
-_PROVIDERS = ANALYSIS_PROVIDERS
+from app.providers.registry import analysis_provider
 
 _REPORT_TOOL = {
     "name": "report_opening_narration",
@@ -84,7 +81,7 @@ _REPORT_TOOL = {
 
 
 def extract_opening_narration(scenario_text: str) -> dict[str, Any]:
-    """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text),
+    """Dispatches through ANALYSIS_PROVIDER (see app/providers/*.py's analyze_text),
     same provider-agnostic pattern as app/scenario_index.py/app/pregen_extractor.py.
     Returns {"found": bool, "text": str, "page": int, "opening_check": dict | None}
     — found=False (with an empty text, opening_check=None) on any failure (no
@@ -102,7 +99,7 @@ def extract_opening_narration(scenario_text: str) -> dict[str, Any]:
     sanity_check tools use during normal play) so it gets real Discord
     buttons via the existing pending_checks diff-and-post machinery, instead
     of needing a separate one-off code path."""
-    provider = _PROVIDERS.get(LLM_PROVIDER)
+    provider = analysis_provider()
     if provider is None or not scenario_text.strip():
         return {"found": False, "text": "", "page": 0, "opening_check": None}
 

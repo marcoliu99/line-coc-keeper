@@ -4,8 +4,9 @@ from unittest.mock import Mock, patch
 import pymupdf
 import pytest
 
+from app import config, pdf_quality, pregen_extractor
 from app import pdf_ai_repair as repair
-from app import pdf_quality, pregen_extractor
+from app.providers import registry
 
 
 def setup_page(doc, text='STR'):
@@ -18,7 +19,7 @@ def setup_page(doc, text='STR'):
 
 def test_ai_fills_readable_region_without_keeper_session():
     provider = SimpleNamespace(analyze_image=Mock(return_value={'regions': [{'block_id': 0, 'status': 'readable', 'text': 'STR: 60'}]}))
-    with pymupdf.open() as doc, patch.dict(repair._PROVIDERS, {repair.LLM_PROVIDER: provider}):
+    with pymupdf.open() as doc, patch.dict(registry.ANALYSIS_PROVIDERS, {config.ANALYSIS_PROVIDER: provider}):
         page, row = setup_page(doc)
         text, result = repair.repair_page(page, row, 'STR', [1])
     assert text == 'STR: 60' and result['status'] == 'accepted'
@@ -30,7 +31,7 @@ def test_ai_fills_readable_region_without_keeper_session():
 @pytest.mark.parametrize('status,text', [('blank', ''), ('unreadable', ''), ('readable', 'STR')])
 def test_blank_unreadable_or_unchanged_fields_remain_unresolved(status, text):
     provider = SimpleNamespace(analyze_image=Mock(return_value={'regions': [{'block_id': 0, 'status': status, 'text': text}]}))
-    with pymupdf.open() as doc, patch.dict(repair._PROVIDERS, {repair.LLM_PROVIDER: provider}):
+    with pymupdf.open() as doc, patch.dict(registry.ANALYSIS_PROVIDERS, {config.ANALYSIS_PROVIDER: provider}):
         page, row = setup_page(doc)
         _, result = repair.repair_page(page, row, 'STR', [1])
     assert result['unresolved_labels'] == ['STR']
@@ -38,7 +39,7 @@ def test_blank_unreadable_or_unchanged_fields_remain_unresolved(status, text):
 
 def test_luck_blank_is_never_completed_or_sent_alone():
     provider = SimpleNamespace(analyze_image=Mock())
-    with pymupdf.open() as doc, patch.dict(repair._PROVIDERS, {repair.LLM_PROVIDER: provider}):
+    with pymupdf.open() as doc, patch.dict(registry.ANALYSIS_PROVIDERS, {config.ANALYSIS_PROVIDER: provider}):
         page, row = setup_page(doc, 'LUCK')
         _, result = repair.repair_page(page, row, 'LUCK', [1])
     provider.analyze_image.assert_not_called()
@@ -50,7 +51,7 @@ def test_luck_blank_is_never_completed_or_sent_alone():
 
 def test_budget_and_provider_failure_preserve_source():
     provider = SimpleNamespace(analyze_image=Mock(side_effect=RuntimeError('offline')))
-    with pymupdf.open() as doc, patch.dict(repair._PROVIDERS, {repair.LLM_PROVIDER: provider}):
+    with pymupdf.open() as doc, patch.dict(registry.ANALYSIS_PROVIDERS, {config.ANALYSIS_PROVIDER: provider}):
         page, row = setup_page(doc)
         text, result = repair.repair_page(page, row, 'STR', [0])
         assert result['status'] == 'budget_exhausted'
@@ -62,7 +63,7 @@ def test_budget_and_provider_failure_preserve_source():
 def test_unrequested_numbers_and_duplicate_region_answers_rejected():
     assert not repair.validate('STR', 'STR 60 HP 20', [{'label': 'STR', 'status': 'unresolved', 'block': 0}])
     response = {'regions': [{'block_id': 0, 'status': 'readable', 'text': 'STR 60'}] * 2}
-    with pymupdf.open() as doc, patch.dict(repair._PROVIDERS, {repair.LLM_PROVIDER: SimpleNamespace(analyze_image=lambda *args: response)}):
+    with pymupdf.open() as doc, patch.dict(registry.ANALYSIS_PROVIDERS, {config.ANALYSIS_PROVIDER: SimpleNamespace(analyze_image=lambda *args: response)}):
         page, row = setup_page(doc)
         text, result = repair.repair_page(page, row, 'STR', [1])
     assert text == 'STR' and result['unresolved_labels'] == ['STR']

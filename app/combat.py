@@ -12,11 +12,13 @@ from __future__ import annotations
 import random
 import re
 import uuid
+from collections.abc import Callable
+from dataclasses import fields
 from datetime import datetime, timezone
 from typing import Any
 
-from app import dice, observability, spoiler_policy
-from app.check_identity import new_check_id
+from app import checkpoints, dice, observability, spoiler_policy
+from app.check_identity import PendingCheckBlocker, new_check_id, pending_check_blocker
 from app.models import (
     ArmorRule,
     AttackRule,
@@ -284,7 +286,7 @@ def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
     the same NPC re-added under a different scenario-index alias (e.g. "柯
     比特" vs "Walter Corbitt") should call this once per known alias rather
     than relying on substring overlap to bridge them — see
-    app/keeper.py's add_npc_to_combat handler.
+    find_live_enemy_by_any_alias.
     """
     norm = _normalize(name)
     if not norm:
@@ -294,6 +296,107 @@ def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
             continue
         if norm == _normalize(c.name) or (c.display_name and norm == _normalize(c.display_name)):
             return c
+    return None
+
+
+def find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
+    """Exact-match-only lookup of `name` against state.scenario_npc_index's
+    entry names/aliases — no fuzzy fallback. keeper._find_npc_index_entry
+    layers a fuzzy fallback on top of this for its HP-consistency check,
+    where a wrong match only ever corrects a number. find_live_enemy_by_any_alias
+    needs the exact version: it resolves every known alias of the requested
+    name to also catch the same NPC re-added under a different alias, and a
+    fuzzy mismatch there (e.g. matching "深潛者頭目" to the wrong sibling
+    entry "深潛者（幼體）" instead of "深潛者（成年頭目）") would pull in an
+    unrelated entry's aliases and use them to wrongly block a genuinely
+    different enemy from being added.
+
+    Matches case/whitespace-insensitively (same normalization as _normalize)
+    so a name that differs from the registered index entry only in case or
+    spacing still resolves — without this, two calls for the same NPC using
+    slightly different capitalization of an alias would fail to expand to the
+    same candidate set, silently reopening the duplicate-HP-pool bug this
+    whole lookup exists to help prevent."""
+    if not name:
+        return None
+    norm = _normalize(name)
+    for entry in state.scenario_npc_index:
+        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
+        if any(norm == _normalize(c) for c in candidates if c):
+            return entry
+    return None
+
+
+def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
+    """A non-defeated enemy-side combatant matching `name` or, if `name`
+    exactly matches a /coc index entry, any of that entry's other known
+    aliases — deliberately exact-match only at every step (see
+    find_live_enemy's docstring for why substring/fuzzy matching would be
+    actively harmful here)."""
+    candidate_names = {name}
+    index_entry = find_npc_index_entry_exact(state, name)
+    if index_entry is not None:
+        # scenario_npc_index is populated from an LLM's structured tool-call
+        # output (app/scenario_index.py) — its schema declares "name"/
+        # "aliases" as strings, but nothing enforces that at the Python
+        # level once it's persisted. A non-string item here (e.g. a nested
+        # object for a malformed alias) would raise TypeError from set.add/
+        # update below — filtering to strings keeps this lookup best-effort.
+        raw_candidates = [index_entry.get("name", name), *(index_entry.get("aliases") or [])]
+        candidate_names.update(c for c in raw_candidates if isinstance(c, str))
+    for candidate in candidate_names:
+        existing = find_live_enemy(state, candidate)
+        if existing is not None:
+            return existing
+    return None
+
+
+def _checkpoint_before_combat(state: GroupState) -> None:
+    """Save a 開戰前 checkpoint when a fight is about to start, so rollback
+    can return to the moment before it."""
+    if state.combat.active:
+        return
+    checkpoints.create_checkpoint(
+        state,
+        label="開戰前",
+        created_by="system",
+        reason="auto_combat_start",
+        event_id=f"combat-start:{state.group_id}:{state.state_revision}",
+    )
+
+
+def begin_combat(state: GroupState) -> CombatState:
+    """Start combat, saving a 開戰前 checkpoint first if it isn't running yet."""
+    _checkpoint_before_combat(state)
+    return start_combat(state)
+
+
+def add_combatant(
+    state: GroupState,
+    name: str,
+    dex: int,
+    hp: int,
+    *,
+    is_ally: bool = False,
+    armor: list[dict[str, Any]] | None = None,
+    attacks: list[dict[str, Any]] | None = None,
+    abilities: list[dict[str, Any]] | None = None,
+) -> Combatant | None:
+    """Add an NPC or ally to the fight, starting it (with its checkpoint) if needed.
+
+    An enemy who is already in the fight and not defeated, under `name` or
+    any /coc index alias of it, is not added again, so the same monster never
+    gets a second, independent HP pool; that combatant is returned instead,
+    and None means the combatant was added. Allies are never de-duplicated,
+    and a defeated enemy can be added fresh, so a monster narratively coming
+    back still can be.
+    """
+    if not is_ally:
+        existing = find_live_enemy_by_any_alias(state, name)
+        if existing is not None:
+            return existing
+    _checkpoint_before_combat(state)
+    add_npc(state, name, dex, hp, is_ally=is_ally, armor=armor, attacks=attacks, abilities=abilities)
     return None
 
 
@@ -327,6 +430,87 @@ def _pc_for_combatant(state: GroupState, combatant: Combatant):
     return state.get_character_by_name(combatant.name)
 
 
+def _major_wound_pc(
+    state: GroupState, combatant: Combatant, final_damage: int, hp_after: int
+) -> Character | None:
+    """The investigator this hit gives a major wound, if any.
+
+    A major wound is a single hit of at least half max HP that leaves the
+    investigator above 0 HP; dropping to 0 is already unconscious/dying.
+    """
+    pc = _pc_for_combatant(state, combatant)
+    if not pc or hp_after <= 0 or final_damage < pc.hp_max / 2:
+        return None
+    return pc
+
+
+def major_wound_blocked(
+    state: GroupState, pc: Character, blocker: PendingCheckBlocker, *, entry_point: str
+) -> dict[str, Any]:
+    """Reject a major-wound hit whose CON check the player can't take yet.
+
+    A player holds one pending check at a time and none during a Luck
+    decision, so the owed CON check has nowhere to go. The hit is refused
+    before any state changes and the Keeper re-applies it once the existing
+    check resolves (docs/specs/bug/major_wound_con_check_gate_design_spec.md).
+    """
+    existing = state.pending_checks.get(pc.owner_id) or state.pending_luck_decisions.get(pc.owner_id) or {}
+    observability.event(
+        "combat.major_wound.blocked",
+        blocked_by=blocker,
+        entry_point=entry_point,
+        check_id=existing.get("check_id") or existing.get("decision_id"),
+        owner_id_hash=observability.safe_identifier(pc.owner_id),
+    )
+    if blocker == "pending_check":
+        reason, next_step = "已有待處理檢定", "請先完成現有檢定，再重新套用傷害。"
+    else:
+        reason, next_step = "仍在等待 Luck 決定", "請先處理 Luck 選項，再重新套用傷害。"
+    return {
+        "ok": False,
+        "blocked_by": blocker,
+        "investigator": pc.name,
+        "error": f"{pc.name} {reason}；為避免遺失重傷必須的 CON 檢定，本次傷害未套用。{next_step}",
+    }
+
+
+def _planned_damage(
+    state: GroupState,
+    combatant: Combatant,
+    raw_damage: int,
+    damage_type: str,
+    tags: list[str],
+    bypass_armor: bool,
+) -> tuple[int, str, int]:
+    """Armor, armor label and final damage for a hit, without applying it."""
+    card = _card_for(state, combatant)
+    armor, armor_label = (0, "") if bypass_armor else _armor_reduction(card, damage_type, tags)
+    return armor, armor_label, max(0, int(raw_damage) - armor)
+
+
+def _major_wound_block_for(
+    state: GroupState,
+    target_name: str,
+    raw_damage: int,
+    *,
+    damage_type: str = "physical",
+    tags: list[str] | None = None,
+    bypass_armor: bool = False,
+) -> tuple[Character, PendingCheckBlocker] | None:
+    """The investigator and reason a hit must be refused, before it is applied."""
+    if state.autoroll_checks:
+        return None
+    combatant = _find_combatant(state, target_name)
+    if not combatant:
+        return None
+    _, _, final = _planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
+    pc = _major_wound_pc(state, combatant, final, max(0, combatant.hp - final))
+    if pc is None:
+        return None
+    blocker = pending_check_blocker(state, pc.owner_id)
+    return (pc, blocker) if blocker else None
+
+
 def _resolve_major_wound_check(
     state: GroupState, combatant: Combatant, final_damage: int, hp_after: int
 ) -> dict[str, Any] | None:
@@ -337,15 +521,16 @@ def _resolve_major_wound_check(
     group-level exception. The HP mutation and pending registration remain in
     the same state mutation so a concurrent turn cannot lose either one.
     """
-    pc = _pc_for_combatant(state, combatant)
-    if not pc or hp_after <= 0:
-        return None
-    if final_damage < pc.hp_max / 2:
+    pc = _major_wound_pc(state, combatant, final_damage, hp_after)
+    if pc is None:
         return None
 
     if not state.autoroll_checks:
-        if pc.owner_id in state.pending_checks:
-            return None
+        # Callers refuse a blocked hit before mutating (_major_wound_block_for);
+        # reaching here blocked is a bug, so say so rather than drop the check.
+        blocker = pending_check_blocker(state, pc.owner_id)
+        if blocker:
+            return {"pending": False, "blocked_by": blocker, "skill": "CON", "skill_value": pc.con}
         if not state.timeline_id:
             state.timeline_id = f"timeline-{uuid.uuid4().hex[:8]}"
         origin_context = observability.current_context()
@@ -407,13 +592,18 @@ def apply_combat_damage(
     tags: list[str] | None = None,
     source_id: str = "",
     bypass_armor: bool = False,
+    entry_point: str = "apply_combat_damage",
 ) -> dict[str, Any]:
     combatant = _find_combatant(state, target_name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
+    blocked = _major_wound_block_for(
+        state, target_name, raw_damage, damage_type=damage_type, tags=tags, bypass_armor=bypass_armor
+    )
+    if blocked:
+        return major_wound_blocked(state, *blocked, entry_point=entry_point)
     card = _card_for(state, combatant)
-    armor, armor_label = (0, "") if bypass_armor else _armor_reduction(card, damage_type, tags or [])
-    final = max(0, int(raw_damage) - armor)
+    armor, armor_label, final = _planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
     before = combatant.hp
     after = max(0, before - final)
     combatant.hp = after
@@ -471,6 +661,7 @@ def apply_final_combat_damage(
         tags=tags,
         source_id=source_id,
         bypass_armor=True,
+        entry_point="apply_final_combat_damage",
     )
 
 
@@ -480,7 +671,7 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
         return {"ok": False, "error": f"戰鬥中找不到「{name}」"}
 
     if delta < 0:
-        return apply_combat_damage(state, name, -delta)
+        return apply_combat_damage(state, name, -delta, entry_point="damage_combatant")
 
     before = combatant.hp
     combatant.hp = max(0, min(combatant.hp_max, combatant.hp + delta))
@@ -765,21 +956,39 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                     if effect.target_id == "__all__"
                     else [effect.target_id]
                 )
-                applied = True
-                for target in targets:
-                    result = apply_combat_damage(
-                        state,
-                        target,
-                        raw,
-                        damage_type=effect.damage_type,
-                        tags=effect.tags,
-                        source_id=effect.source_id,
-                    )
-                    result["effect_id"] = effect.id
-                    results.append(result)
-                    if not result.get("ok"):
-                        applied = False
-                        timing_failed = True
+                # Check every target before damaging any: refusing the second
+                # of two targets after damaging the first would leave the
+                # effect unprocessed, and the retry would hit the first twice.
+                blocked = [
+                    (target, block)
+                    for target in targets
+                    if (block := _major_wound_block_for(
+                        state, target, raw, damage_type=effect.damage_type, tags=effect.tags
+                    ))
+                ]
+                if blocked:
+                    for target, block in blocked:
+                        result = major_wound_blocked(state, *block, entry_point="process_timing")
+                        result.update(effect_id=effect.id, target_id=target)
+                        results.append(result)
+                    timing_failed = True
+                else:
+                    applied = True
+                    for target in targets:
+                        result = apply_combat_damage(
+                            state,
+                            target,
+                            raw,
+                            damage_type=effect.damage_type,
+                            tags=effect.tags,
+                            source_id=effect.source_id,
+                            entry_point="process_timing",
+                        )
+                        result["effect_id"] = effect.id
+                        results.append(result)
+                        if not result.get("ok"):
+                            applied = False
+                            timing_failed = True
         elif applies:
             applied = True
         if applied:
@@ -890,6 +1099,10 @@ def _choose_target(state: GroupState, enemy_id: str) -> str:
 
 
 def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
+    return _all_or_nothing(state, lambda: _plan_enemy_turn(state, enemy_name))
+
+
+def _plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
@@ -900,7 +1113,7 @@ def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
     if not card:
         return {"ok": False, "error": f"敵人「{combatant.display_name}」沒有戰鬥卡"}
 
-    process_timing(state, "turn_start", combatant.combatant_id)
+    _process_timing_or_stop(state, "turn_start", combatant.combatant_id)
     if _is_skippable(state, combatant):
         return {
             "ok": True,
@@ -1145,6 +1358,7 @@ def resolve_enemy_action(
                 damage_type=outcome.get("damage_type", "physical"),
                 tags=outcome.get("tags") or [],
                 source_id=attack.id,
+                entry_point="resolve_enemy_action",
             )
             if not effect_result.get("ok"):
                 return effect_result
@@ -1152,6 +1366,54 @@ def resolve_enemy_action(
             effect_result = {"ok": True, "applied": False, "hit": False}
     plan["resolved"] = True
     return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
+
+
+class _TimingBlocked(Exception):
+    """A fixed-timing effect was refused for a blocked major wound."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        super().__init__(result.get("error", ""))
+        self.result = result
+
+
+def _process_timing_or_stop(state: GroupState, timing: str, target_id: str = "") -> None:
+    """process_timing for automatic turn advancement: stop at a blocked hit."""
+    for result in process_timing(state, timing, target_id):
+        if result.get("blocked_by"):
+            raise _TimingBlocked(result)
+
+
+def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run a turn-advancing `step`, or leave `state` exactly as it was.
+
+    Advancing runs several timings in a row (turn_end, round_end,
+    round_start, turn_start). If one of them would give a major wound whose
+    CON check the player can't take yet, moving on anyway would silently
+    postpone the hit to the effect's next timing. Instead nothing advances,
+    and the caller is told to resolve the check and advance again.
+    """
+    snapshot = state.to_dict()
+    try:
+        return step()
+    except _TimingBlocked as blocked:
+        restored = GroupState.from_dict(snapshot)
+        for field in fields(GroupState):
+            setattr(state, field.name, getattr(restored, field.name))
+        result = blocked.result
+        name = result.get("investigator", "調查員")
+        if result["blocked_by"] == "pending_check":
+            reason, next_step = "已有待處理檢定", "請先完成現有檢定"
+        else:
+            reason, next_step = "仍在等待 Luck 決定", "請先處理 Luck 選項"
+        return {
+            "ok": False,
+            "blocked_by": result["blocked_by"],
+            "effect_id": result.get("effect_id"),
+            "error": (
+                f"持續效果這時會讓{name}受重傷，但{name}{reason}；為避免遺失重傷必須的 CON 檢定，"
+                f"回合沒有推進。{next_step}，再推進回合。"
+            ),
+        }
 
 
 def _move_to_next_available(state: GroupState) -> bool:
@@ -1162,10 +1424,10 @@ def _move_to_next_available(state: GroupState) -> bool:
         wrapped = next_index == 0
         combat.current_index = next_index
         if wrapped:
-            process_timing(state, "round_end")
+            _process_timing_or_stop(state, "round_end")
             combat.round_number += 1
             _reset_round_usage(state)
-            process_timing(state, "round_start")
+            _process_timing_or_stop(state, "round_start")
             _mark_round_start_abilities(state)
         if not _is_skippable(state, combat.order[combat.current_index]):
             return True
@@ -1173,6 +1435,10 @@ def _move_to_next_available(state: GroupState) -> bool:
 
 
 def advance_turn(state: GroupState) -> dict:
+    return _all_or_nothing(state, lambda: _advance_turn(state))
+
+
+def _advance_turn(state: GroupState) -> dict:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
@@ -1180,18 +1446,18 @@ def advance_turn(state: GroupState) -> dict:
         return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
-    process_timing(state, "turn_end", current.combatant_id)
+    _process_timing_or_stop(state, "turn_end", current.combatant_id)
 
     if not _move_to_next_available(state):
         return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
-    process_timing(state, "turn_start", current.combatant_id)
+    _process_timing_or_stop(state, "turn_start", current.combatant_id)
     while _is_skippable(state, current):
         if not _move_to_next_available(state):
             return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
         current = combat.order[combat.current_index]
-        process_timing(state, "turn_start", current.combatant_id)
+        _process_timing_or_stop(state, "turn_start", current.combatant_id)
     return {
         "ok": True,
         "round": combat.round_number,

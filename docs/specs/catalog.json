@@ -1136,6 +1136,58 @@
       "limitations": [
         "S0/S1/S2/S3 implemented with isolated SDK and state fixtures. Free-form story semantics still require Executor adjudication. Final-response movement shortcuts are disabled. Process-local admission is not a durable ledger/outbox. S4-S9 and live API accuracy and latency evaluation remain deferred."
       ]
+    },
+    {
+      "title": "Major-wound CON checks are never dropped silently",
+      "zh": "重傷 CON 檢定不再被無聲丟棄",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/check_identity.py",
+        "app/combat.py",
+        "app/keeper.py",
+        "tests/test_major_wound_con_gate.py",
+        "tests/test_combat_cards.py"
+      ],
+      "path": "docs/specs/bug/major_wound_con_check_gate_design_spec.md",
+      "zh_path": "docs/specs/bug/major_wound_con_check_gate_design_spec_zh.md",
+      "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "Combat start and enemy de-duplication live in combat.py",
+      "zh": "開戰與敵人去重的規則收進 combat.py",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "app/keeper.py",
+        "app/commands/handlers/combat.py",
+        "tests/test_combat_start_in_combat_module.py",
+        "tests/test_state_persistence.py"
+      ],
+      "path": "docs/specs/refactor/combat_start_in_combat_module_design_spec.md",
+      "zh_path": "docs/specs/refactor/combat_start_in_combat_module_design_spec_zh.md",
+      "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+    },
+    {
+      "title": "One lookup for the active LLM provider",
+      "zh": "目前 LLM 供應商只從一個地方取得",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/registry.py",
+        "app/agents/executor.py",
+        "app/agents/narrator.py",
+        "app/agents/guard.py",
+        "app/agents/assistant.py",
+        "app/keeper.py",
+        "tests/provider_fakes.py",
+        "tests/test_active_provider_lookup.py",
+        "tests/test_codex_capabilities.py"
+      ],
+      "path": "docs/specs/refactor/active_provider_lookup_design_spec.md",
+      "zh_path": "docs/specs/refactor/active_provider_lookup_design_spec_zh.md",
+      "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
     }
   ]
 }

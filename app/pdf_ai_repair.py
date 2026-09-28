@@ -9,10 +9,8 @@ from collections import Counter
 import pymupdf
 
 from app import pdf_quality
-from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
-from app.providers.registry import ANALYSIS_PROVIDERS
+from app.providers.registry import analysis_provider
 
-_PROVIDERS = ANALYSIS_PROVIDERS
 _TOOL = {'name': 'transcribe_uncertain_regions', 'description': 'Transcribe visible PDF regions without guessing values.',
          'input_schema': {'type': 'object', 'properties': {'regions': {'type': 'array', 'items': {
              'type': 'object', 'properties': {'block_id': {'type': 'integer'},
@@ -73,7 +71,7 @@ def repair_page(page: pymupdf.Page, row: dict, text: str, budget: list[int]) -> 
     if budget[0] <= 0 or page.rotation:
         result['status'] = 'budget_exhausted' if budget[0] <= 0 else 'rotation_unresolved'
         return text, result
-    provider = _PROVIDERS.get(LLM_PROVIDER)
+    provider = analysis_provider()
     if provider is None:
         result['status'] = 'provider_unavailable'
         return text, result

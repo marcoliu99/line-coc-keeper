@@ -8,10 +8,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app import config, keeper, memory_rag, observability, scenario_rag
+from app import config, memory_rag, observability, scenario_rag
 from app.agents import assistant
 from app.domain.models import AgentMessage
 from app.models import GroupState
+from app.providers import registry
 
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
@@ -28,7 +29,7 @@ class LoggingCompletionTests(unittest.TestCase):
         )
         state = GroupState(group_id="g")
         with patch.object(config, "LOG_ENABLED", True), patch.object(config, "KEEPER_REASONING_EFFORT", "high"), \
-                patch.object(keeper, "LLM_PROVIDER", "anthropic"), patch.object(keeper, "_PROVIDERS", {"anthropic": provider}), \
+                patch.object(config, "LLM_PROVIDER", "anthropic"), patch.dict(registry.CONVERSATION_PROVIDERS, {"anthropic": provider}), \
                 self.assertLogs("app.observability", level="INFO") as captured:
             asyncio.run(assistant.run_assistant(AgentMessage(payload={
                 "state": state, "user_id": "u1", "display_name": "KP",
@@ -663,10 +664,9 @@ class AgentLifecycleLoggingTests(unittest.IsolatedAsyncioTestCase):
             "speaker_role": "player", "resolved_location": None,
             "intent": "PURE_ROLEPLAY", "rag_context": "", "memory_context": "",
         })
-        with patch.object(config, "LOG_ENABLED", True), patch.object(executor, "LLM_PROVIDER", "anthropic"), \
-                patch.object(executor, "_PROVIDERS", {"anthropic": provider}), \
-                patch.object(narrator, "LLM_PROVIDER", "anthropic"), \
-                patch.object(narrator, "_PROVIDERS", {"anthropic": provider}), \
+        with patch.object(config, "LOG_ENABLED", True), patch.object(config, "LLM_PROVIDER", "anthropic"), \
+                patch.dict(registry.CONVERSATION_PROVIDERS, {"anthropic": provider}), \
+                patch.object(config, "LLM_PROVIDER", "anthropic"), \
                 self.assertLogs("app.observability", level="INFO") as captured:
             await executor.run_executor(executor_message)
             await narrator.run_narrator(narrator_message)
@@ -687,7 +687,7 @@ class AgentLifecycleLoggingTests(unittest.IsolatedAsyncioTestCase):
         )
         message = AgentMessage(payload={"state": GroupState(group_id="g")})
         with patch.object(config, "LOG_ENABLED", True), patch.object(config, "KEEPER_REASONING_EFFORT", "high"), \
-                patch.object(guard, "LLM_PROVIDER", "anthropic"), patch.object(guard, "_PROVIDERS", {"anthropic": provider}), \
+                patch.object(config, "LLM_PROVIDER", "anthropic"), patch.dict(registry.CONVERSATION_PROVIDERS, {"anthropic": provider}), \
                 self.assertLogs("app.observability", level="INFO") as captured:
             result = await guard.run_repair(message, "原始敘述", "缺少規則結果")
 

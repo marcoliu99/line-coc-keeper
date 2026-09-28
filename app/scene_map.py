@@ -41,10 +41,7 @@ from __future__ import annotations
 import difflib
 from typing import Any
 
-from app.config import ANALYSIS_PROVIDER as LLM_PROVIDER
-from app.providers.registry import ANALYSIS_PROVIDERS
-
-_PROVIDERS = ANALYSIS_PROVIDERS
+from app.providers.registry import analysis_provider
 
 # 16-way compass, plus up/down for stairs/floors. "N" is only ever a convention
 # for "further into the page/building" — extraction doesn't have a real compass
@@ -140,19 +137,19 @@ def analyze_page_image(png_bytes: bytes) -> tuple[str, dict[str, Any] | None]:
       app/pdf_loader.py appends to the page's extracted text.
     - scene_map: the structured room graph (see resolve_move below) when the
       page was classified as a map with rooms, else None.
-    Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_image
+    Dispatches through ANALYSIS_PROVIDER (see app/providers/*.py's analyze_image
     functions) rather than being hard-coded to Anthropic — this was a real
     problem in practice: this call used to always use ANTHROPIC_API_KEY
     regardless of which provider was actually configured for the Keeper, so
-    a scenario upload could still fail here even after switching LLM_PROVIDER
+    a scenario upload could still fail here even after switching ANALYSIS_PROVIDER
     away from Anthropic (e.g. because that account ran out of credit).
 
     On any failure (no API key for the configured provider, the call raised,
-    or LLM_PROVIDER isn't a recognized provider) returns ("", None) —
+    or ANALYSIS_PROVIDER isn't a recognized provider) returns ("", None) —
     callers should fall back to local OCR for the text half; there is no
     fallback for the map half.
     """
-    provider = _PROVIDERS.get(LLM_PROVIDER)
+    provider = analysis_provider()
     if provider is None:
         return "", None
     result = provider.analyze_image(png_bytes, _ANALYZE_TOOL, "請依工具欄位分析這張圖片。")

@@ -21,7 +21,6 @@ from uuid import uuid4
 
 from app import (
     async_utils,
-    checkpoints,
     combat,
     db,
     dice,
@@ -36,10 +35,13 @@ from app import (
     scene_digest,
     spoiler_policy,
 )
-from app.check_identity import effective_check_id, new_check_id, new_decision_id
+from app.check_identity import (
+    effective_check_id,
+    new_check_id,
+    new_decision_id,
+    pending_check_blocker,
+)
 from app.config import (
-    ANALYSIS_PROVIDER,
-    LLM_PROVIDER,  # noqa: F401 - public setting used by KP Assistant
     MAX_LOG_TURNS,
     MAX_SCENARIO_CHARS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
@@ -49,8 +51,8 @@ from app.config import (
     SCENARIO_RAG_TOP_K,
     SCENE_DIGEST_TURN_INTERVAL,
 )
-from app.models import BASE_SKILLS, Character, Combatant, GroupState
-from app.providers.registry import ANALYSIS_PROVIDERS, CONVERSATION_PROVIDERS
+from app.models import BASE_SKILLS, Character, GroupState
+from app.providers.registry import analysis_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
     clear_page_images,
@@ -63,7 +65,6 @@ from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
 
-_PROVIDERS = CONVERSATION_PROVIDERS
 _T = TypeVar("_T")
 
 
@@ -1029,21 +1030,16 @@ def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict
     the actual write goes through closes that gap: the roll (if any) and
     the pending_checks write only happen if this check, right before them,
     still sees nothing pending under that fresh read."""
-    if char.owner_id in state.pending_checks:
+    # A character mid-Luck-decision has nothing in pending_checks yet, so the
+    # blocker covers both states; see check_identity.pending_check_blocker.
+    blocker = pending_check_blocker(state, char.owner_id)
+    if blocker == "pending_check":
         return {
             "ok": False,
             "error": f"{char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
                      "才能再要求新的檢定，不要重複呼叫。",
         }
-    # Code-review finding: this guard only ever checked pending_checks —
-    # a character mid-Luck-decision (autoroll_checks was on when the
-    # earlier check resolved, then got turned off before the decision was
-    # made) has nothing in pending_checks yet, so a new check would sail
-    # through and leave the character stuck with two independent unresolved
-    # states at once. The autoroll branch already guards against this
-    # (skill_check's own autoroll path checks pending_luck_decisions); this
-    # non-autoroll path needs the same guard.
-    if char.owner_id in state.pending_luck_decisions:
+    if blocker == "pending_luck_decision":
         return {
             "ok": False,
             "error": f"{char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
@@ -1226,36 +1222,6 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
 _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-name fuzzy match
 
 
-def _find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
-    """Exact-match-only lookup of `name` against state.scenario_npc_index's
-    entry names/aliases — no fuzzy fallback. Split out from
-    _find_npc_index_entry (which layers a fuzzy fallback on top of this) for
-    callers where a *wrong* fuzzy match is costly, unlike the HP-consistency
-    check's fuzzy fallback which only ever corrects a number and can't
-    silently drop an entire combatant. See add_npc_to_combat's duplicate
-    guard in _execute_tool for the caller that needs this distinction: it
-    resolves every known alias of the requested name to also catch the same
-    NPC re-added under a different alias, and a fuzzy mismatch there (e.g.
-    matching "深潛者頭目" to the wrong sibling entry "深潛者（幼體）" instead
-    of "深潛者（成年頭目）") would pull in an unrelated entry's aliases and
-    use them to wrongly block a genuinely different enemy from being added.
-
-    Matches case/whitespace-insensitively (same normalization as
-    combat._normalize) so a name that differs from the registered index
-    entry only in case or spacing still resolves — without this, two calls
-    for the same NPC using slightly different capitalization of an alias
-    would fail to expand to the same candidate set, silently reopening the
-    duplicate-HP-pool bug this whole lookup exists to help prevent."""
-    if not name:
-        return None
-    norm = combat._normalize(name)
-    for entry in state.scenario_npc_index:
-        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
-        if any(norm == combat._normalize(c) for c in candidates if c):
-            return entry
-    return None
-
-
 def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     """Looks up `name` (whatever the Keeper called this NPC/monster when
     calling add_npc_to_combat) against state.scenario_npc_index — exact match
@@ -1268,7 +1234,7 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     in that case, same as before this existed."""
     if not name:
         return None
-    exact = _find_npc_index_entry_exact(state, name)
+    exact = combat.find_npc_index_entry_exact(state, name)
     if exact is not None:
         return exact
 
@@ -1286,35 +1252,6 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
                 best_ratio = ratio
                 best_entry = entry
     return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
-
-
-def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
-    """A non-defeated enemy-side combatant matching `name` or, if `name`
-    exactly matches a /coc index entry, any of that entry's other known
-    aliases — deliberately exact-match only at every step (see
-    combat.find_live_enemy's own docstring for why substring/fuzzy matching
-    would be actively harmful here). Shared by the add_npc_to_combat tool
-    handler and the /coc combat addnpc slash command so a duplicate can't
-    slip in through whichever path skips the other's check."""
-    candidate_names = {name}
-    index_entry = _find_npc_index_entry_exact(state, name)
-    if index_entry is not None:
-        # scenario_npc_index is populated from an LLM's structured tool-call
-        # output (app/scenario_index.py) — its schema declares "name"/
-        # "aliases" as strings, but nothing enforces that at the Python
-        # level once it's persisted. A non-string item here (e.g. a nested
-        # object for a malformed alias) would raise TypeError from set.add/
-        # update below (unlike the older `in` membership check elsewhere,
-        # which tolerates any item type) and fail this whole tool call —
-        # filtering to strings keeps this lookup best-effort instead of a
-        # new crash risk this PR would otherwise introduce.
-        raw_candidates = [index_entry.get("name", name), *(index_entry.get("aliases") or [])]
-        candidate_names.update(c for c in raw_candidates if isinstance(c, str))
-    for candidate in candidate_names:
-        existing = combat.find_live_enemy(state, candidate)
-        if existing is not None:
-            return existing
-    return None
 
 
 def _sync_state_snapshot(target: GroupState, source: GroupState) -> None:
@@ -1640,16 +1577,9 @@ def _validate_kp_roll_dice_context(tool_input: dict) -> str | None:
     return 'KP Assistant 使用 roll_dice 時必須明確指定 roll_context 為 "game_resolution" 或 "ooc_randomizer"。'
 
 
-def _ensure_auto_combat_checkpoint(state: GroupState) -> None:
-    if state.combat.active:
-        return
-    checkpoints.create_checkpoint(
-        state,
-        label="開戰前",
-        created_by="system",
-        reason="auto_combat_start",
-        event_id=f"combat-start:{state.group_id}:{state.state_revision}",
-    )
+def _skip_save_if_blocked(result: dict) -> _StateMutation[dict]:
+    """A hit refused for a blocked major wound changed nothing, so skip the save."""
+    return _StateMutation(result, should_save="blocked_by" not in result)
 
 
 def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict:
@@ -2603,44 +2533,40 @@ def _execute_tool(
             if field_name not in attr_map:
                 return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
             cur_attr, max_attr = attr_map[field_name]
+            blocked_hit: dict[str, Any] | None = None
 
-            # Do not apply a major-wound hit while another player-owned check
-            # for this investigator is pending. The state model can hold only
-            # one pending check per owner, so reject atomically and let the
-            # Keeper retry after the existing check resolves.
-            requested_delta = int(tool_input["delta"])
-            if (
-                field_name == "hp"
-                and requested_delta < 0
-                and not state.autoroll_checks
-                and char.owner_id in state.pending_checks
-            ):
-                requested_hp = max(0, char.hp + requested_delta)
-                if requested_hp > 0 and -requested_delta >= char.hp_max / 2:
-                    return {
-                        "ok": False,
-                        "error": (
-                            f"{char.name} 已有待處理檢定；為避免遺失重傷必須的 CON 檢定，"
-                            "本次傷害未套用。請先完成現有檢定，再重新套用傷害。"
-                        ),
-                    }
-
-            def _apply_attribute_delta(target_state: GroupState) -> tuple[int, bool, dict[str, Any] | None]:
+            def _apply_attribute_delta(
+                target_state: GroupState,
+            ) -> _StateMutation[tuple[int, bool, dict[str, Any] | None]]:
+                nonlocal blocked_hit
                 target_char = require_character(target_state, tool_input.get("investigator", ""))
                 target_cap = getattr(target_char, max_attr) if max_attr else 999
                 delta = int(tool_input["delta"])
                 new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
-                setattr(target_char, cur_attr, new_val)
-
-                major_wound = False
-                wound_roll: dict[str, Any] | None = None
                 # COC7e major wound rule, code-enforced the same way Bout of
                 # Madness is (see sanity_check above): a single hit dealing >=
                 # half of max HP knocks the investigator unconscious unless they
                 # pass a CON roll. Skipped when this hit already dropped HP to
                 # 0 or below — RAW already treats that as unconscious/dying on
                 # its own, so a second CON check on top would be redundant.
-                if field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2:
+                is_major_wound = field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2
+                # Checked against the reloaded state, so a check registered by
+                # another path since this turn loaded can't slip past.
+                blocker = (
+                    pending_check_blocker(target_state, target_char.owner_id)
+                    if is_major_wound and not target_state.autoroll_checks
+                    else None
+                )
+                if blocker:
+                    blocked_hit = combat.major_wound_blocked(
+                        target_state, target_char, blocker, entry_point="adjust_character"
+                    )
+                    return _StateMutation((getattr(target_char, cur_attr), False, None), should_save=False)
+                setattr(target_char, cur_attr, new_val)
+
+                major_wound = False
+                wound_roll: dict[str, Any] | None = None
+                if is_major_wound:
                     con_value = resolve_skill_value(target_char, "CON")
                     if target_state.autoroll_checks:
                         major_wound = True
@@ -2656,7 +2582,7 @@ def _execute_tool(
                             for tag in ("昏迷", "倒地"):
                                 if tag not in target_char.status_tags:
                                     target_char.status_tags.append(tag)
-                    elif target_char.owner_id not in target_state.pending_checks:
+                    else:
                         major_wound = True
                         target_state.pending_checks[target_char.owner_id] = {
                             "type": "skill",
@@ -2672,9 +2598,11 @@ def _execute_tool(
                                 {"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
                             ),
                         }
-                return new_val, major_wound, wound_roll
+                return _StateMutation((new_val, major_wound, wound_roll))
 
             new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)
+            if blocked_hit is not None:
+                return blocked_hit
             refreshed_char = require_character(state, tool_input.get("investigator", ""))
             response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
             if major_wound:
@@ -2839,8 +2767,7 @@ def _execute_tool(
 
         if name == "start_combat":
             def _mutate_start_combat(target_state: GroupState) -> None:
-                _ensure_auto_combat_checkpoint(target_state)
-                combat.start_combat(target_state)
+                combat.begin_combat(target_state)
             _mutate_and_save_state(state, _mutate_start_combat)
             return {"ok": True, "status": combat.status_text(state)}
 
@@ -2848,7 +2775,6 @@ def _execute_tool(
             npc_name = tool_input["name"]
             requested_hp = int(tool_input.get("hp", 10))
             def _mutate_add_npc(target_state: GroupState) -> _StateMutation[str]:
-                _ensure_auto_combat_checkpoint(target_state)
                 hp = requested_hp
                 index_note = ""
                 # Code-enforced consistency check, not just a prompt-level ask: if
@@ -2868,29 +2794,10 @@ def _execute_tool(
                         )
                         hp = canonical_hp
                 is_ally = bool(tool_input.get("is_ally", False))
-                # Guards against the Keeper re-searching a scenario NPC mid-turn
-                # and calling this tool a second time for a monster it already
-                # added — without this, the same name silently gets a second,
-                # independent HP pool instead of being recognized as the fight
-                # it's already in. Scoped to the enemy side only: a defeated
-                # duplicate is not matched, so a monster narratively coming
-                # back can still be added fresh. Also catches the same NPC
-                # re-added under a different /coc index alias (e.g. this call
-                # used "柯比特", an earlier call used "Walter Corbitt") via
-                # find_live_enemy_by_any_alias — see its own docstring, and
-                # _find_npc_index_entry_exact's for why that alias resolution
-                # deliberately does NOT use the fuzzy fallback the HP check
-                # above does (a wrong fuzzy match here would silently block a
-                # genuinely different enemy, not just misprice one).
-                existing = None if is_ally else find_live_enemy_by_any_alias(target_state, npc_name)
-                if existing is not None:
-                    return _StateMutation(
-                        f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
-                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
-                        "add_npc_to_combat。）",
-                        should_save=False,
-                    )
-                combat.add_npc(
+                # A second call for a monster already in the fight (the Keeper
+                # re-searched a scenario NPC mid-turn) reuses its HP pool; see
+                # combat.add_combatant.
+                existing = combat.add_combatant(
                     target_state,
                     npc_name,
                     int(tool_input.get("dex", 50)),
@@ -2900,6 +2807,13 @@ def _execute_tool(
                     attacks=tool_input.get("attacks"),
                     abilities=tool_input.get("abilities"),
                 )
+                if existing is not None:
+                    return _StateMutation(
+                        f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
+                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
+                        "add_npc_to_combat。）",
+                        should_save=False,
+                    )
                 return _StateMutation(index_note, should_save=True)
             index_note = _mutate_and_save_state(state, _mutate_add_npc)
             response = {"ok": True, "status": combat.status_text(state)}
@@ -2912,53 +2826,55 @@ def _execute_tool(
             return {"ok": True, "status": combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
         if name == "advance_combat_turn":
-            def _mutate_advance_turn(target_state: GroupState) -> dict:
-                return combat.advance_turn(target_state)
+            def _mutate_advance_turn(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(combat.advance_turn(target_state))
             return _mutate_and_save_state(state, _mutate_advance_turn)
 
         if name == "damage_combatant":
-            def _mutate_damage_combatant(target_state: GroupState) -> dict:
-                return combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
+            def _mutate_damage_combatant(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(
+                    combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
+                )
             result = _mutate_and_save_state(state, _mutate_damage_combatant)
             return _filter_public_combat_damage_result(result, speaker_role)
 
         if name == "plan_enemy_turn":
-            def _mutate_plan_enemy_turn(target_state: GroupState) -> dict:
-                return combat.plan_enemy_turn(target_state, tool_input.get("enemy", ""))
+            def _mutate_plan_enemy_turn(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(combat.plan_enemy_turn(target_state, tool_input.get("enemy", "")))
             return _mutate_and_save_state(state, _mutate_plan_enemy_turn)
 
         if name == "resolve_enemy_action":
-            def _mutate_resolve_enemy_action(target_state: GroupState) -> dict:
-                return combat.resolve_enemy_action(
+            def _mutate_resolve_enemy_action(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(combat.resolve_enemy_action(
                     target_state,
                     tool_input["plan_id"],
                     outcome=tool_input.get("outcome"),
-                )
+                ))
             return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
 
         if name == "apply_combat_damage":
-            def _mutate_apply_combat_damage(target_state: GroupState) -> dict:
-                return combat.apply_combat_damage(
+            def _mutate_apply_combat_damage(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(combat.apply_combat_damage(
                     target_state,
                     tool_input["target"],
                     int(tool_input["raw_damage"]),
                     damage_type=tool_input.get("damage_type", "physical"),
                     tags=tool_input.get("tags") or [],
                     source_id=tool_input.get("source_id", ""),
-                )
+                ))
             result = _mutate_and_save_state(state, _mutate_apply_combat_damage)
             return _filter_public_combat_damage_result(result, speaker_role)
 
         if name == "apply_final_combat_damage":
-            def _mutate_apply_final_combat_damage(target_state: GroupState) -> dict:
-                return combat.apply_final_combat_damage(
+            def _mutate_apply_final_combat_damage(target_state: GroupState) -> _StateMutation[dict]:
+                return _skip_save_if_blocked(combat.apply_final_combat_damage(
                     target_state,
                     tool_input["target"],
                     int(tool_input["final_damage"]),
                     damage_type=tool_input.get("damage_type", "physical"),
                     tags=tool_input.get("tags") or [],
                     source_id=tool_input.get("source_id", ""),
-                )
+                ))
             result = _mutate_and_save_state(state, _mutate_apply_final_combat_damage)
             return _filter_public_combat_damage_result(result, speaker_role)
 
@@ -3616,7 +3532,7 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
     returns nothing usable all fall back to returning current_summary
     unchanged (logged, not raised) — a failed summarization should never
     crash the turn or lose the existing summary, only leave it stale."""
-    provider = ANALYSIS_PROVIDERS.get(ANALYSIS_PROVIDER)
+    provider = analysis_provider()
     if provider is None:
         return current_summary
     try:

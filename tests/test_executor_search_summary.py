@@ -1,10 +1,11 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import observability
+from app import config, observability
 from app.agents import executor
 from app.domain.models import AgentMessage
 from app.models import GroupState
+from app.providers import registry
 
 
 class ExecutorSearchSummaryTests(unittest.IsolatedAsyncioTestCase):
@@ -26,8 +27,8 @@ class ExecutorSearchSummaryTests(unittest.IsolatedAsyncioTestCase):
 
                 fake_provider = type("Provider", (), {"run_conversation": staticmethod(run_conversation)})()
                 tool = AsyncMock(return_value={"ok": False, "error": "missing"})
-                with patch.object(executor, "LLM_PROVIDER", "openai"), \
-                        patch.object(executor, "_PROVIDERS", {"openai": fake_provider}), \
+                with patch.object(config, "LLM_PROVIDER", "openai"), \
+                        patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": fake_provider}), \
                         patch.object(executor, "make_tool_executor", return_value=tool), \
                         patch.object(observability, "event") as event:
                     await executor.run_executor(message)
@@ -49,8 +50,8 @@ class ExecutorSearchSummaryTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("provider failure")
 
         fake_provider = type("Provider", (), {"run_conversation": staticmethod(run_conversation)})()
-        with patch.object(executor, "LLM_PROVIDER", "anthropic"), \
-                patch.object(executor, "_PROVIDERS", {"anthropic": fake_provider}), \
+        with patch.object(config, "LLM_PROVIDER", "anthropic"), \
+                patch.dict(registry.CONVERSATION_PROVIDERS, {"anthropic": fake_provider}), \
                 patch.object(executor, "make_tool_executor", return_value=AsyncMock(return_value={"ok": False})), \
                 patch.object(observability, "event") as event:
             result = await executor.run_executor(message)

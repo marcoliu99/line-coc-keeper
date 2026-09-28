@@ -3,15 +3,16 @@ import inspect
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import keeper
-from app.agents import executor, guard, narrator
+from app import config, keeper
 from app.providers import codex_provider, registry, shutdown_async_clients
 
 
 class CapabilityTests(unittest.TestCase):
     def test_all_conversation_routes_include_codex_and_contract_binds(self):
-        for routes in [executor._PROVIDERS, narrator._PROVIDERS, guard._PROVIDERS, keeper._PROVIDERS]:
-            self.assertIs(routes['codex'], codex_provider)
+        # executor, narrator and guard all select through the registry.
+        with patch.object(config, 'LLM_PROVIDER', 'codex'):
+            self.assertIs(registry.conversation_provider(), codex_provider)
+            self.assertIs(registry.require_conversation_provider(), codex_provider)
         for provider in registry.CONVERSATION_PROVIDERS.values():
             self.assertTrue(inspect.iscoroutinefunction(provider.run_conversation))
             inspect.signature(provider.run_conversation).bind('', '', [], [], '', AsyncMock(), 6, enable_wrapup=False)
@@ -25,15 +26,17 @@ class CapabilityTests(unittest.TestCase):
             scenario_intro,
             scene_map,
         )
+        self.assertNotIn('codex', registry.ANALYSIS_PROVIDERS)
+        with patch.object(config, 'ANALYSIS_PROVIDER', 'codex'):
+            self.assertIsNone(registry.analysis_provider())
         for module in [pdf_ai_repair, pregen_extractor, scenario_compare, scenario_index, scenario_intro, scene_map]:
-            self.assertNotIn('codex', module._PROVIDERS)
-            self.assertIs(module._PROVIDERS, registry.ANALYSIS_PROVIDERS)
+            self.assertIs(module.analysis_provider, registry.analysis_provider)
 
     def test_summary_uses_explicit_analysis_selection(self):
         provider = unittest.mock.Mock()
         provider.analyze_text.return_value = {'summary': 'updated'}
-        with patch.object(keeper, 'ANALYSIS_PROVIDER', 'openai'), \
-             patch.dict(keeper.ANALYSIS_PROVIDERS, {'openai': provider}):
+        with patch.object(config, 'ANALYSIS_PROVIDER', 'openai'), \
+             patch.dict(registry.ANALYSIS_PROVIDERS, {'openai': provider}):
             self.assertEqual(keeper.summarize_log_chunk('', [{'role': 'user', 'content': 'hello'}]), 'updated')
         provider.analyze_text.assert_called_once()
 

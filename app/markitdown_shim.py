@@ -7,7 +7,7 @@ LLMVisionOCRService (markitdown_ocr/_ocr_service.py) — are hard-coded to call
 `client.chat.completions.create(model=..., messages=[...])`, i.e. the OpenAI
 SDK's Chat Completions shape (confirmed by reading both source files directly,
 not just the docs). This is exactly `openai.OpenAI()`'s native interface, so
-when LLM_PROVIDER=openai this uses a real OpenAI client directly, no
+when ANALYSIS_PROVIDER=openai this uses a real OpenAI client directly, no
 translation needed. For the other two providers, a small shim presents that
 same call shape backed by anthropic.Anthropic() or google-genai instead, so
 this still works without an OpenAI account. Neither shim attempts to support
@@ -15,12 +15,12 @@ any other OpenAI Chat Completions feature (tools, streaming, etc.) —
 MarkItDown's own callers only ever use this one text+image-in, text-out
 shape.
 
-Which provider/key gets used here now follows LLM_PROVIDER directly — same
+Which provider/key gets used here now follows ANALYSIS_PROVIDER directly — same
 dispatch this project's other vision fallback (app/scene_map.py's
 analyze_page_image, via each app/providers/*.py's analyze_image) already
 uses — instead of an independent "prefer OpenAI, fall back to Anthropic"
-priority order that ignored LLM_PROVIDER entirely. That older order meant a
-group running LLM_PROVIDER=anthropic but with an OPENAI_API_KEY also present
+priority order that ignored ANALYSIS_PROVIDER entirely. That older order meant a
+group running ANALYSIS_PROVIDER=anthropic but with an OPENAI_API_KEY also present
 (e.g. for embeddings — see app/scenario_rag.py) would silently have its
 embedded-image OCR calls billed to OpenAI while the rest of the game ran on
 Claude, two different providers active for no visible reason. Now: no key
@@ -35,9 +35,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.config import (
-    ANALYSIS_PROVIDER as LLM_PROVIDER,
-)
-from app.config import (
+    ANALYSIS_PROVIDER,
     ANTHROPIC_API_KEY,
     ANTHROPIC_MODEL,
     GEMINI_API_KEY,
@@ -136,12 +134,12 @@ def _build_gemini_openai_shim(model_default: str) -> Any:
 def build_markitdown(vision_prompt: str):
     """Returns a configured MarkItDown instance (core PDF/office converters
     overridden by markitdown-ocr's OCR-enhanced ones, using our vision prompt
-    for embedded-image description), or None if unavailable — LLM_PROVIDER's
+    for embedded-image description), or None if unavailable — ANALYSIS_PROVIDER's
     key isn't set, or markitdown/markitdown-ocr aren't installed. Callers
     should treat None the same as a failed conversion: fall back to the
     existing PyMuPDF-only pipeline (see app/pdf_loader.py).
 
-    Follows LLM_PROVIDER exactly (see this module's docstring for why) —
+    Follows ANALYSIS_PROVIDER exactly (see this module's docstring for why) —
     OpenAI gets a real native client, Anthropic/Gemini get a small shim
     presenting the same chat.completions.create(...) shape MarkItDown's
     vision hooks are hard-coded to call."""
@@ -150,15 +148,15 @@ def build_markitdown(vision_prompt: str):
     except ImportError:
         return None
 
-    if LLM_PROVIDER == "openai" and OPENAI_API_KEY:
+    if ANALYSIS_PROVIDER == "openai" and OPENAI_API_KEY:
         import openai
 
         llm_client = openai.OpenAI(api_key=OPENAI_API_KEY)
         llm_model = OPENAI_MODEL
-    elif LLM_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
+    elif ANALYSIS_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
         llm_client = _build_anthropic_openai_shim(ANTHROPIC_MODEL)
         llm_model = ANTHROPIC_MODEL
-    elif LLM_PROVIDER == "gemini" and GEMINI_API_KEY:
+    elif ANALYSIS_PROVIDER == "gemini" and GEMINI_API_KEY:
         llm_client = _build_gemini_openai_shim(GEMINI_MODEL)
         llm_model = GEMINI_MODEL
     else:

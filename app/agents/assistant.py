@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app import keeper, observability, spoiler_policy
+from app import config, keeper, observability, spoiler_policy
 from app.agents import guard, tool_gateway
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
-from app.providers.registry import supports_dynamic_tools
+from app.providers.registry import conversation_provider, supports_dynamic_tools
 
 _logger = logging.getLogger(__name__)
 _ROLE = "kp_assistant"
@@ -31,25 +31,25 @@ async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str
     message_text = message.payload["text"]
     resolved_location = message.payload.get("resolved_location")
 
-    provider = keeper._PROVIDERS.get(keeper.LLM_PROVIDER)
+    provider = conversation_provider()
     if provider is None:
         return (
-            f'（設定錯誤：LLM_PROVIDER="{keeper.LLM_PROVIDER}" 不是支援的供應商，請在 .env 設成 anthropic、gemini、openai 或 codex）',
+            f'（設定錯誤：LLM_PROVIDER="{config.LLM_PROVIDER}" 不是支援的供應商，請在 .env 設成 anthropic、gemini、openai 或 codex）',
             [], [],
         )
 
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
     turn_metrics: dict[str, int] = {}
-    model = getattr(provider, f"{keeper.LLM_PROVIDER.upper()}_MODEL", None)
+    model = getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", None)
     with (
         observability.context(turn_id=turn_id),
         observability.metrics_context(turn_metrics),
         observability.span(
             "llm.turn",
-            provider=keeper.LLM_PROVIDER,
+            provider=config.LLM_PROVIDER,
             model=model,
             agent=_ROLE,
-            reasoning_effort=observability.llm_reasoning_effort(keeper.LLM_PROVIDER),
+            reasoning_effort=observability.llm_reasoning_effort(config.LLM_PROVIDER),
             metrics=turn_metrics,
         ),
     ):
@@ -101,7 +101,7 @@ async def _run_assistant_turn(
         return result
 
     openai_response_id: str | None = None
-    if keeper.LLM_PROVIDER == "openai":
+    if config.LLM_PROVIDER == "openai":
         previous_response_id: str | None = (None if correction_context else state.openai_previous_response_id)
         chain_timeline_id = state.openai_previous_response_timeline_id
         if previous_response_id and chain_timeline_id != turn_timeline_id:

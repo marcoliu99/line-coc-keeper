@@ -11,8 +11,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from app.models import GroupState
+
+PendingCheckBlocker = Literal["pending_check", "pending_luck_decision"]
+
+
+def pending_check_blocker(state: GroupState, owner_id: str) -> PendingCheckBlocker | None:
+    """Why ``owner_id`` can't be given a new pending check right now, if anything.
+
+    A player holds at most one pending check, and none while a Luck decision
+    is still open (docs/specs/bug/bugfix_duplicate_pending_checks.md). Every
+    path that registers a check asks this, so the two stay the same rule.
+    """
+    if owner_id in state.pending_checks:
+        return "pending_check"
+    if owner_id in state.pending_luck_decisions:
+        return "pending_luck_decision"
+    return None
 
 
 def new_check_id() -> str:
