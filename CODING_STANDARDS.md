@@ -10,7 +10,7 @@ Each rule gives the target behaviour and the reason for it. When existing code b
 _Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls `legacy_commands` directly skips them.
 
 **Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `keeper.py` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.
-_Why:_ a copied guard drifts. The auto-combat checkpoint and the duplicate-NPC guard already exist in both a handler and a rule module.
+_Why:_ a copied guard drifts. The pre-combat checkpoint and the duplicate-enemy guard were once copied into the `/coc combat` handler, and the copies built the checkpoint `event_id` from a different field; both now live in `combat.py` (`begin_combat`, `add_combatant`).
 
 **Private stays private.** A leading underscore means the name is used only inside its own module. When another module needs it, give it a public name in the owning module first, then call it. Ruff SLF001 enforces this; `pyproject.toml` lists the existing violations as debt.
 _Why:_ `keeper._build_static_prompt`, `_mutate_and_save_state` and others are called from other modules, so any refactor of `keeper.py` has impact across the whole repo.

@@ -21,7 +21,6 @@ from uuid import uuid4
 
 from app import (
     async_utils,
-    checkpoints,
     combat,
     db,
     dice,
@@ -54,7 +53,7 @@ from app.config import (
     SCENARIO_RAG_TOP_K,
     SCENE_DIGEST_TURN_INTERVAL,
 )
-from app.models import BASE_SKILLS, Character, Combatant, GroupState
+from app.models import BASE_SKILLS, Character, GroupState
 from app.providers.registry import ANALYSIS_PROVIDERS, CONVERSATION_PROVIDERS
 from app.repositories.group_state import (
     _save_state_unlocked,
@@ -1226,36 +1225,6 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
 _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-name fuzzy match
 
 
-def _find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
-    """Exact-match-only lookup of `name` against state.scenario_npc_index's
-    entry names/aliases — no fuzzy fallback. Split out from
-    _find_npc_index_entry (which layers a fuzzy fallback on top of this) for
-    callers where a *wrong* fuzzy match is costly, unlike the HP-consistency
-    check's fuzzy fallback which only ever corrects a number and can't
-    silently drop an entire combatant. See add_npc_to_combat's duplicate
-    guard in _execute_tool for the caller that needs this distinction: it
-    resolves every known alias of the requested name to also catch the same
-    NPC re-added under a different alias, and a fuzzy mismatch there (e.g.
-    matching "深潛者頭目" to the wrong sibling entry "深潛者（幼體）" instead
-    of "深潛者（成年頭目）") would pull in an unrelated entry's aliases and
-    use them to wrongly block a genuinely different enemy from being added.
-
-    Matches case/whitespace-insensitively (same normalization as
-    combat._normalize) so a name that differs from the registered index
-    entry only in case or spacing still resolves — without this, two calls
-    for the same NPC using slightly different capitalization of an alias
-    would fail to expand to the same candidate set, silently reopening the
-    duplicate-HP-pool bug this whole lookup exists to help prevent."""
-    if not name:
-        return None
-    norm = combat._normalize(name)
-    for entry in state.scenario_npc_index:
-        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
-        if any(norm == combat._normalize(c) for c in candidates if c):
-            return entry
-    return None
-
-
 def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     """Looks up `name` (whatever the Keeper called this NPC/monster when
     calling add_npc_to_combat) against state.scenario_npc_index — exact match
@@ -1268,7 +1237,7 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     in that case, same as before this existed."""
     if not name:
         return None
-    exact = _find_npc_index_entry_exact(state, name)
+    exact = combat.find_npc_index_entry_exact(state, name)
     if exact is not None:
         return exact
 
@@ -1286,35 +1255,6 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
                 best_ratio = ratio
                 best_entry = entry
     return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
-
-
-def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
-    """A non-defeated enemy-side combatant matching `name` or, if `name`
-    exactly matches a /coc index entry, any of that entry's other known
-    aliases — deliberately exact-match only at every step (see
-    combat.find_live_enemy's own docstring for why substring/fuzzy matching
-    would be actively harmful here). Shared by the add_npc_to_combat tool
-    handler and the /coc combat addnpc slash command so a duplicate can't
-    slip in through whichever path skips the other's check."""
-    candidate_names = {name}
-    index_entry = _find_npc_index_entry_exact(state, name)
-    if index_entry is not None:
-        # scenario_npc_index is populated from an LLM's structured tool-call
-        # output (app/scenario_index.py) — its schema declares "name"/
-        # "aliases" as strings, but nothing enforces that at the Python
-        # level once it's persisted. A non-string item here (e.g. a nested
-        # object for a malformed alias) would raise TypeError from set.add/
-        # update below (unlike the older `in` membership check elsewhere,
-        # which tolerates any item type) and fail this whole tool call —
-        # filtering to strings keeps this lookup best-effort instead of a
-        # new crash risk this PR would otherwise introduce.
-        raw_candidates = [index_entry.get("name", name), *(index_entry.get("aliases") or [])]
-        candidate_names.update(c for c in raw_candidates if isinstance(c, str))
-    for candidate in candidate_names:
-        existing = combat.find_live_enemy(state, candidate)
-        if existing is not None:
-            return existing
-    return None
 
 
 def _sync_state_snapshot(target: GroupState, source: GroupState) -> None:
@@ -1638,18 +1578,6 @@ def _validate_kp_roll_dice_context(tool_input: dict) -> str | None:
     if tool_input.get("roll_context") in ("game_resolution", "ooc_randomizer"):
         return None
     return 'KP Assistant 使用 roll_dice 時必須明確指定 roll_context 為 "game_resolution" 或 "ooc_randomizer"。'
-
-
-def _ensure_auto_combat_checkpoint(state: GroupState) -> None:
-    if state.combat.active:
-        return
-    checkpoints.create_checkpoint(
-        state,
-        label="開戰前",
-        created_by="system",
-        reason="auto_combat_start",
-        event_id=f"combat-start:{state.group_id}:{state.state_revision}",
-    )
 
 
 def _skip_save_if_blocked(result: dict) -> _StateMutation[dict]:
@@ -2842,8 +2770,7 @@ def _execute_tool(
 
         if name == "start_combat":
             def _mutate_start_combat(target_state: GroupState) -> None:
-                _ensure_auto_combat_checkpoint(target_state)
-                combat.start_combat(target_state)
+                combat.begin_combat(target_state)
             _mutate_and_save_state(state, _mutate_start_combat)
             return {"ok": True, "status": combat.status_text(state)}
 
@@ -2851,7 +2778,6 @@ def _execute_tool(
             npc_name = tool_input["name"]
             requested_hp = int(tool_input.get("hp", 10))
             def _mutate_add_npc(target_state: GroupState) -> _StateMutation[str]:
-                _ensure_auto_combat_checkpoint(target_state)
                 hp = requested_hp
                 index_note = ""
                 # Code-enforced consistency check, not just a prompt-level ask: if
@@ -2871,29 +2797,10 @@ def _execute_tool(
                         )
                         hp = canonical_hp
                 is_ally = bool(tool_input.get("is_ally", False))
-                # Guards against the Keeper re-searching a scenario NPC mid-turn
-                # and calling this tool a second time for a monster it already
-                # added — without this, the same name silently gets a second,
-                # independent HP pool instead of being recognized as the fight
-                # it's already in. Scoped to the enemy side only: a defeated
-                # duplicate is not matched, so a monster narratively coming
-                # back can still be added fresh. Also catches the same NPC
-                # re-added under a different /coc index alias (e.g. this call
-                # used "柯比特", an earlier call used "Walter Corbitt") via
-                # find_live_enemy_by_any_alias — see its own docstring, and
-                # _find_npc_index_entry_exact's for why that alias resolution
-                # deliberately does NOT use the fuzzy fallback the HP check
-                # above does (a wrong fuzzy match here would silently block a
-                # genuinely different enemy, not just misprice one).
-                existing = None if is_ally else find_live_enemy_by_any_alias(target_state, npc_name)
-                if existing is not None:
-                    return _StateMutation(
-                        f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
-                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
-                        "add_npc_to_combat。）",
-                        should_save=False,
-                    )
-                combat.add_npc(
+                # A second call for a monster already in the fight (the Keeper
+                # re-searched a scenario NPC mid-turn) reuses its HP pool; see
+                # combat.add_combatant.
+                existing = combat.add_combatant(
                     target_state,
                     npc_name,
                     int(tool_input.get("dex", 50)),
@@ -2903,6 +2810,13 @@ def _execute_tool(
                     attacks=tool_input.get("attacks"),
                     abilities=tool_input.get("abilities"),
                 )
+                if existing is not None:
+                    return _StateMutation(
+                        f"（系統偵測到「{existing.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
+                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
+                        "add_npc_to_combat。）",
+                        should_save=False,
+                    )
                 return _StateMutation(index_note, should_save=True)
             index_note = _mutate_and_save_state(state, _mutate_add_npc)
             response = {"ok": True, "status": combat.status_text(state)}

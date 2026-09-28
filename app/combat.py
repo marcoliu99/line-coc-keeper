@@ -17,7 +17,7 @@ from dataclasses import fields
 from datetime import datetime, timezone
 from typing import Any
 
-from app import dice, observability, spoiler_policy
+from app import checkpoints, dice, observability, spoiler_policy
 from app.check_identity import PendingCheckBlocker, new_check_id, pending_check_blocker
 from app.models import (
     ArmorRule,
@@ -286,7 +286,7 @@ def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
     the same NPC re-added under a different scenario-index alias (e.g. "柯
     比特" vs "Walter Corbitt") should call this once per known alias rather
     than relying on substring overlap to bridge them — see
-    app/keeper.py's add_npc_to_combat handler.
+    find_live_enemy_by_any_alias.
     """
     norm = _normalize(name)
     if not norm:
@@ -296,6 +296,107 @@ def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
             continue
         if norm == _normalize(c.name) or (c.display_name and norm == _normalize(c.display_name)):
             return c
+    return None
+
+
+def find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
+    """Exact-match-only lookup of `name` against state.scenario_npc_index's
+    entry names/aliases — no fuzzy fallback. keeper._find_npc_index_entry
+    layers a fuzzy fallback on top of this for its HP-consistency check,
+    where a wrong match only ever corrects a number. find_live_enemy_by_any_alias
+    needs the exact version: it resolves every known alias of the requested
+    name to also catch the same NPC re-added under a different alias, and a
+    fuzzy mismatch there (e.g. matching "深潛者頭目" to the wrong sibling
+    entry "深潛者（幼體）" instead of "深潛者（成年頭目）") would pull in an
+    unrelated entry's aliases and use them to wrongly block a genuinely
+    different enemy from being added.
+
+    Matches case/whitespace-insensitively (same normalization as _normalize)
+    so a name that differs from the registered index entry only in case or
+    spacing still resolves — without this, two calls for the same NPC using
+    slightly different capitalization of an alias would fail to expand to the
+    same candidate set, silently reopening the duplicate-HP-pool bug this
+    whole lookup exists to help prevent."""
+    if not name:
+        return None
+    norm = _normalize(name)
+    for entry in state.scenario_npc_index:
+        candidates = [entry.get("name", "")] + list(entry.get("aliases") or [])
+        if any(norm == _normalize(c) for c in candidates if c):
+            return entry
+    return None
+
+
+def find_live_enemy_by_any_alias(state: GroupState, name: str) -> Combatant | None:
+    """A non-defeated enemy-side combatant matching `name` or, if `name`
+    exactly matches a /coc index entry, any of that entry's other known
+    aliases — deliberately exact-match only at every step (see
+    find_live_enemy's docstring for why substring/fuzzy matching would be
+    actively harmful here)."""
+    candidate_names = {name}
+    index_entry = find_npc_index_entry_exact(state, name)
+    if index_entry is not None:
+        # scenario_npc_index is populated from an LLM's structured tool-call
+        # output (app/scenario_index.py) — its schema declares "name"/
+        # "aliases" as strings, but nothing enforces that at the Python
+        # level once it's persisted. A non-string item here (e.g. a nested
+        # object for a malformed alias) would raise TypeError from set.add/
+        # update below — filtering to strings keeps this lookup best-effort.
+        raw_candidates = [index_entry.get("name", name), *(index_entry.get("aliases") or [])]
+        candidate_names.update(c for c in raw_candidates if isinstance(c, str))
+    for candidate in candidate_names:
+        existing = find_live_enemy(state, candidate)
+        if existing is not None:
+            return existing
+    return None
+
+
+def _checkpoint_before_combat(state: GroupState) -> None:
+    """Save a 開戰前 checkpoint when a fight is about to start, so rollback
+    can return to the moment before it."""
+    if state.combat.active:
+        return
+    checkpoints.create_checkpoint(
+        state,
+        label="開戰前",
+        created_by="system",
+        reason="auto_combat_start",
+        event_id=f"combat-start:{state.group_id}:{state.state_revision}",
+    )
+
+
+def begin_combat(state: GroupState) -> CombatState:
+    """Start combat, saving a 開戰前 checkpoint first if it isn't running yet."""
+    _checkpoint_before_combat(state)
+    return start_combat(state)
+
+
+def add_combatant(
+    state: GroupState,
+    name: str,
+    dex: int,
+    hp: int,
+    *,
+    is_ally: bool = False,
+    armor: list[dict[str, Any]] | None = None,
+    attacks: list[dict[str, Any]] | None = None,
+    abilities: list[dict[str, Any]] | None = None,
+) -> Combatant | None:
+    """Add an NPC or ally to the fight, starting it (with its checkpoint) if needed.
+
+    An enemy who is already in the fight and not defeated, under `name` or
+    any /coc index alias of it, is not added again, so the same monster never
+    gets a second, independent HP pool; that combatant is returned instead,
+    and None means the combatant was added. Allies are never de-duplicated,
+    and a defeated enemy can be added fresh, so a monster narratively coming
+    back still can be.
+    """
+    if not is_ally:
+        existing = find_live_enemy_by_any_alias(state, name)
+        if existing is not None:
+            return existing
+    _checkpoint_before_combat(state)
+    add_npc(state, name, dex, hp, is_ally=is_ally, armor=armor, attacks=attacks, abilities=abilities)
     return None
 
 
