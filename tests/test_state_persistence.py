@@ -799,7 +799,7 @@ class StatePersistenceTests(unittest.TestCase):
         self.assertEqual(enemy_count, 2)
 
     def test_add_npc_to_combat_alias_resolution_is_case_and_whitespace_insensitive(self):
-        # Third-round review finding: _find_npc_index_entry_exact did a
+        # Third-round review finding: combat.find_npc_index_entry_exact did a
         # literal string match against index names/aliases, unlike
         # combat.find_live_enemy's normalized (lowercased, whitespace-
         # collapsed) comparison. A case/whitespace variant of a registered
@@ -828,7 +828,7 @@ class StatePersistenceTests(unittest.TestCase):
         # an LLM's structured tool-call output with no runtime enforcement
         # that "aliases" items are actually strings. Before this fix, a
         # non-string alias item would raise TypeError from set.update
-        # inside find_live_enemy_by_any_alias, failing the whole
+        # inside combat.find_live_enemy_by_any_alias, failing the whole
         # add_npc_to_combat call instead of just being ignored.
         state = GroupState("discord-group-malformed-alias")
         state.scenario_npc_index = [
