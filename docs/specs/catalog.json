@@ -1193,13 +1193,14 @@
       "title": "Codex structured document and image analysis provider",
       "zh": "Codex 結構化文件與圖片分析 Provider",
       "category": "enhancement",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/providers/codex_provider.py",
         "app/providers/codex_transport.py",
         "app/providers/registry.py",
         "app/config.py",
-        "tests/test_codex_analysis_provider.py",
+        "tests/test_codex_provider.py",
+        "tests/test_codex_transport.py",
         "tests/test_codex_analysis_smoke.py"
       ],
       "path": "docs/specs/enhancement/codex_analysis_provider_design_spec.md",

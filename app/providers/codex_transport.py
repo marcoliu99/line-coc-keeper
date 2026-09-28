@@ -189,19 +189,26 @@ class Process:
 
 
 class ExecTransport:
-    async def request(self, prompt: str, schema: dict) -> str:
-        if len(prompt.encode()) > config.CODEX_MAX_INPUT_BYTES:
+    async def request(self, prompt: str, schema: dict, *, image_png: bytes | None = None) -> str:
+        input_size = len(prompt.encode()) + (len(image_png) if image_png else 0)
+        if input_size > config.CODEX_MAX_INPUT_BYTES:
             raise CodexError('codex_input_limit')
         with tempfile.TemporaryDirectory(prefix='coc-codex-') as cwd:
             schema_path = Path(cwd) / 'response.json'
             schema_path.write_text(json.dumps(schema))
             instructions = Path(cwd) / 'instructions.txt'
             instructions.write_text(PROTOCOL_INSTRUCTIONS)
+            image_path = None
+            if image_png is not None:
+                image_path = Path(cwd) / 'analysis.png'
+                image_path.write_bytes(image_png)
             process = Process()
+            image_args = ['-i', str(image_path)] if image_path is not None else []
             await process.start([
                 'exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules',
                 '--skip-git-repo-check', '--color', 'never', '--model', config.CODEX_MODEL,
                 '--output-schema', str(schema_path),
+                *image_args,
                 *config_args({**ISOLATION, 'model_instructions_file': str(instructions)}), '-',
             ], cwd)
             try:

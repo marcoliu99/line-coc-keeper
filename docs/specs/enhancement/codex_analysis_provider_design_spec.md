@@ -123,7 +123,7 @@ The first 12 calls passed the existing tool schema unchanged and were rejected b
 
 One instrumented page-18 call reached the first CLI event at 0.70 s and completed at 29.21 s; most of that sample's latency was after process startup. The 12-page batch itself was sequential, while the importer may run up to 12 image requests concurrently; concurrent latency and rate-limit behavior remain unmeasured. The CLI exposes per-call token usage, but neither `codex login status` nor the JSON events exposed remaining ChatGPT plan quota, so no before/after quota balance can be reported. These token counts must not be presented as exact plan-capacity consumption.
 
-**Gate result: do not start implementation yet.** The real PDF confirms acceptable basic page classification and identifies a schema compatibility requirement, but the required map graph was absent on both map pages even with a targeted prompt. The current design needs a reviewed plan for making structured maps reliable (or an explicit decision that Codex analysis is not suitable for this consumer). The sequential full-scenario time and per-call token usage also need Marco's acceptance; this run does not predict concurrent import latency or remaining plan capacity.
+**Pre-implementation gate result:** the real PDF confirmed basic page classification and identified a schema compatibility requirement, but the required map graph was absent on both map pages even with a targeted prompt. Marco later directed implementation to proceed. This is an explicit acceptance of the measured latency and token-use risk for trying the provider; it does not establish map extraction as reliable. Keep this limitation visible in configuration guidance and evaluate map output before relying on it in a live scenario.
 
 ## Failure and privacy behavior
 
@@ -141,11 +141,15 @@ One instrumented page-18 call reached the first CLI event at 0.70 s and complete
 - Add an opt-in authenticated smoke test, disabled by default and explicitly enabled by a test environment variable. It performs one text analysis and one image analysis with the installed CLI and verifies the returned schema. It must not run in normal CI.
 - Run the real-PDF benchmark above before implementation, then repeat a bounded sample after implementation to verify adapter parity without silently increasing calls per page.
 
-## Decisions for review
+## Implementation record
 
-1. Review whether the measured PDF and pregen latency and CLI usage are acceptable before enabling Codex for those consumers.
-2. Confirm the analysis adapter should use `ExecTransport` even when conversation uses app-server; image input and schema output are verified on `codex exec`.
-3. Confirm the concurrency limit expected for synchronous worker/process callers, given the existing Codex semaphore is event-loop-local.
-4. Confirm documentation should state that Codex conversation, text analysis, and document analysis need no OpenAI key while optional RAG embeddings remain separate.
+Implemented on the Codex analysis branch:
 
-Do not begin implementation until Marco approves this spec and the pre-implementation benchmark decision.
+- `CodexProvider.analyze_text` and `analyze_image` use `ExecTransport`, project caller schemas to Codex strict output schemas, normalize optional and dynamic-key values, and validate results against the original JSON Schema.
+- `ExecTransport.request` accepts optional PNG bytes, writes them only inside its temporary directory, and passes the file through `codex exec -i`; the existing input limit includes image bytes.
+- Analysis admission is bounded across short-lived event loops in the process. There is no cross-process shared limiter; deployment concurrency across multiple worker processes remains a configuration-level limit.
+- Provider registration/config accept `ANALYSIS_PROVIDER=codex`; scenario indexing, opening extraction, text comparison, and Keeper summaries use `LLM_PROVIDER`. PDF/page-image/OCR-repair and pre-generated character extraction continue to use `ANALYSIS_PROVIDER`.
+- Offline tests cover schema projection/normalization, transport image cleanup, validation failures, and concurrency. The authenticated smoke test is opt-in and makes one text and one image call.
+- Documentation states that the measured Codex map extraction produced no structured rooms on the tested maps. This implementation does not claim to improve that model capability.
+
+The smoke test does not replace a post-implementation full-PDF benchmark. Run a bounded real sample before enabling Codex map extraction in production and compare against the benchmark above.

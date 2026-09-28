@@ -2,6 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app import config
@@ -44,6 +45,82 @@ class ExecTests(unittest.IsolatedAsyncioTestCase):
         ]:
             with self.subTest(error=error), self.assertRaisesRegex(CodexError, error):
                 await self.run_fake(events)
+
+    async def test_image_flag_and_tempfile_are_cleaned_on_success(self):
+        class FakeProcess:
+            image_path = None
+            image_bytes = None
+
+            async def start(self, args, cwd):
+                image_path = Path(args[args.index('-i') + 1])
+                self.image_path = image_path
+                self.image_bytes = image_path.read_bytes()
+                self.proc = SimpleNamespace(stdin=SimpleNamespace(write=lambda _data: None,
+                                                                    drain=self._drain, close=lambda: None))
+                self.events = iter([
+                    {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': '{"ok":true}'}},
+                    {'type': 'turn.completed'},
+                ])
+
+            async def _drain(self):
+                return None
+
+            async def line(self):
+                return next(self.events)
+
+            async def finish(self):
+                return 0
+
+            async def close(self):
+                self.existed_during_close = self.image_path.exists()
+
+        fake = FakeProcess()
+        with patch('app.providers.codex_transport.Process', return_value=fake):
+            result = await ExecTransport().request('inspect this', {'type': 'object'}, image_png=b'png-bytes')
+        self.assertEqual(result, '{"ok":true}')
+        self.assertEqual(fake.image_bytes, b'png-bytes')
+        self.assertTrue(fake.existed_during_close)
+        self.assertFalse(fake.image_path.exists())
+
+    async def test_image_tempfile_is_cleaned_on_failure_and_cancellation(self):
+        class FakeProcess:
+            async def start(self, args, _cwd):
+                self.image_path = Path(args[args.index('-i') + 1])
+                self.proc = SimpleNamespace(stdin=SimpleNamespace(write=lambda _data: None,
+                                                                    drain=self._drain, close=lambda: None))
+
+            async def _drain(self):
+                return None
+
+            async def line(self):
+                raise CodexError('codex_turn_failed')
+
+            async def close(self):
+                self.existed_during_close = self.image_path.exists()
+
+        failed = FakeProcess()
+        with patch('app.providers.codex_transport.Process', return_value=failed), \
+                self.assertRaisesRegex(CodexError, 'turn_failed'):
+            await ExecTransport().request('inspect this', {}, image_png=b'png-bytes')
+        self.assertTrue(failed.existed_during_close)
+        self.assertFalse(failed.image_path.exists())
+
+        entered = asyncio.Event()
+
+        class BlockingProcess(FakeProcess):
+            async def line(self):
+                entered.set()
+                await asyncio.Future()
+
+        cancelled = BlockingProcess()
+        with patch('app.providers.codex_transport.Process', return_value=cancelled):
+            task = asyncio.create_task(ExecTransport().request('inspect this', {}, image_png=b'png-bytes'))
+            await entered.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(cancelled.existed_during_close)
+        self.assertFalse(cancelled.image_path.exists())
 
 
 class AppServerTests(unittest.IsolatedAsyncioTestCase):

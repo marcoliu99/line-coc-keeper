@@ -23,11 +23,8 @@ CONVERSATION_PROVIDERS = {
     'openai': openai_provider, 'anthropic': anthropic_provider,
     'gemini': gemini_provider, 'codex': codex_provider,
 }
-# Document/image analysis has its own setting (ANALYSIS_PROVIDER) because
-# codex_provider has no analyze_text/analyze_image adapter yet (the Codex CLI
-# itself takes images and an output schema); once it does, only this table
-# changes.
-ANALYSIS_PROVIDERS = {key: value for key, value in CONVERSATION_PROVIDERS.items() if key != 'codex'}
+# Document and image analysis can select independently from conversation.
+ANALYSIS_PROVIDERS = dict(CONVERSATION_PROVIDERS)
 
 
 def conversation_provider():

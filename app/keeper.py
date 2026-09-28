@@ -52,7 +52,7 @@ from app.config import (
     SCENE_DIGEST_TURN_INTERVAL,
 )
 from app.models import BASE_SKILLS, Character, GroupState
-from app.providers.registry import analysis_provider
+from app.providers.registry import conversation_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
     clear_page_images,
@@ -3532,7 +3532,7 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
     returns nothing usable all fall back to returning current_summary
     unchanged (logged, not raised) — a failed summarization should never
     crash the turn or lose the existing summary, only leave it stale."""
-    provider = analysis_provider()
+    provider = conversation_provider()
     if provider is None:
         return current_summary
     try:

@@ -2,7 +2,7 @@
 
 [English](README_zh.md) | **繁體中文**
 
-在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端 LLM 可以在 Claude（Anthropic）、Gemini（Google）、OpenAI 之間切換，見 [docs/setup.md](docs/guides/setup_zh.md)。
+在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端支援 Claude（Anthropic）、Gemini（Google）、OpenAI 與已登入的 Codex CLI；對話與文件分析 Provider 可分開選擇，見 [安裝設定](docs/guides/setup_zh.md)及 [Codex OAuth 指南](docs/guides/codex_oauth_testing_zh.md)。
 
 ## 快速開始
 
@@ -40,7 +40,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
   |
   +-- KP 場外討論 -> Supervisor -> assistant.py 獨立流程
 
-共用：keeper.py（提示詞／工具） -> providers/*_provider.py
+共用：keeper.py（提示詞／工具） -> providers/*_provider.py；Codex 對話與結構化分析共用 Codex CLI transport
       services/turn_context.py、turn_resolution.py（權威 state／裁決驗證）
       scenario_rag.py、memory_rag.py（BM25／可選 embeddings）
 儲存：data/coc_bot.db、data/groups/（圖片）、data/scenarios/（劇本庫）
@@ -69,7 +69,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 **核心遊戲邏輯（不分走哪條路由都會用到）**
 - `app/keeper.py`：守密人的系統提示詞組裝、工具定義（擲骰／檢定／戰鬥／角色數值／劇本庫圖片與章節推進等）、工具執行，不綁定特定 LLM
 - `app/providers/anthropic_provider.py`：Claude（Anthropic Messages API）介面卡，含 prompt caching
-- `app/providers/gemini_provider.py` / `app/providers/openai_provider.py`：Gemini（google-genai SDK）／OpenAI 介面卡
+- `app/providers/gemini_provider.py` / `app/providers/openai_provider.py` / `app/providers/codex_provider.py`：Gemini（google-genai SDK）／OpenAI／已登入 Codex CLI 介面卡
 - `app/locks.py`：per-conversation 鎖，防止同一個聊天室的兩則訊息互相覆蓋對方的存檔；KP 助手訊息另有優先權佇列
 - `app/combat.py`：正式戰鬥輪次狀態機（先攻順位、回合、HP）
 - `app/creation.py`：互動式建角流程（擲屬性、分配職業/興趣技能點數）

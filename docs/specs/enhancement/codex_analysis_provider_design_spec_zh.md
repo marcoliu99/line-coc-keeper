@@ -123,7 +123,7 @@ ANALYSIS_PROVIDER=codex
 
 另一次量測第 18 頁時，CLI 第一個 event 出現在 0.70 秒，完整呼叫於 29.21 秒完成；該樣本的大部分耗時在子程序啟動之後。這 12 頁測試採循序執行；匯入器可能同時執行最多 12 個圖片請求，因此併發延遲與限流行為仍未測量。CLI 提供每次呼叫的 token 用量，但 `codex login status` 與 JSON events 均沒有提供 ChatGPT 方案剩餘額度，因此無法報告測試前後額度餘額。不可把這些 token 數當成方案額度的精確消耗。
 
-**門檻結果：目前不應開始實作。** 真實劇本確認基本頁面分類可用，也發現 schema 相容性需求；但兩張地圖都沒有產生必要的結構化房間，即使加上針對地圖的指令仍然失敗。需先讓 Marco 審查地圖結構可靠性的處理方案，或明確決定 Codex 不適合此呼叫端。Marco 也需確認循序整本測試的耗時及每頁 token 用量是否可接受；本次測試無法預測併發匯入耗時或帳戶剩餘額度。
+**實作前門檻結果：** 真實劇本確認基本頁面分類可用，也發現 schema 相容性需求；但兩張地圖都沒有產生必要的結構化房間，即使加上針對地圖的指令仍然失敗。Marco 之後指示繼續實作，代表接受測得的耗時與 token 用量風險以進行這次整合測試；這不代表地圖擷取已可靠。正式使用於劇本前，仍應檢查地圖輸出並保留此限制。
 
 ## 失敗與隱私行為
 
@@ -141,11 +141,15 @@ ANALYSIS_PROVIDER=codex
 - 新增預設停用的真實登入 smoke test，只有明確設定測試環境變數才執行；使用已安裝 CLI 各做一次文字與圖片分析並驗證 schema。一般 CI 不執行此測試。
 - 實作前執行上述真實 PDF 量測；實作後重測受限樣本，確認 adapter 行為相同且每頁呼叫數沒有非預期增加。
 
-## 審查決策
+## 實作紀錄
 
-1. 審查 PDF 與預製角色的耗時及 CLI 用量，確認啟用 Codex 分析前可否接受。
-2. 確認分析 adapter 即使對話使用 app-server，仍應使用 `ExecTransport`；圖片輸入和 schema 輸出目前是在 `codex exec` 查證。
-3. 確認同步工作執行緒／工作程序呼叫應採用的並發上限，因現有 Codex semaphore 只作用於單一事件迴圈。
-4. 確認文件應說明 Codex 對話、文字分析及文件分析不需要 OpenAI key，但可選 RAG embeddings 仍是獨立路徑。
+已在 Codex analysis branch 實作：
 
-Marco 核准本規格及實作前量測決策之前，不開始實作。
+- `CodexProvider.analyze_text` 與 `analyze_image` 使用 `ExecTransport`，將呼叫端 schema 轉成 Codex strict output schema，還原選填欄位與動態 key 值，再依原 JSON Schema 驗證結果。
+- `ExecTransport.request` 可接收選填 PNG bytes，只寫入暫存目錄並透過 `codex exec -i` 傳送；圖片 bytes 也計入既有輸入大小上限。
+- 分析請求准入限制可跨同一程序內短生命週期的事件迴圈共用。多個 worker process 之間沒有共用限流器，部署端仍須限制跨程序並發。
+- Provider registry/config 接受 `ANALYSIS_PROVIDER=codex`；劇本索引、開場擷取、文字比對和 Keeper 摘要改走 `LLM_PROVIDER`。PDF 頁面圖片／OCR 修復與預製角色卡擷取仍走 `ANALYSIS_PROVIDER`。
+- 離線測試涵蓋 schema 投影／還原、圖片暫存檔清理、輸出驗證失敗及並發限制。已登入 CLI 的 smoke test 預設關閉，啟用時各送出一次文字與圖片請求。
+- 文件保留已量測到的限制：測試地圖沒有產生結構化房間。本次實作不宣稱改善了該模型能力。
+
+Smoke test 不等同實作後的整份 PDF 量測。正式啟用 Codex 地圖擷取前，先用有限真實樣本檢查輸出並與上方基準比較。

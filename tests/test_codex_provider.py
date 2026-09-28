@@ -2,6 +2,7 @@ import asyncio
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -209,3 +210,89 @@ class CodexProcessTests(unittest.IsolatedAsyncioTestCase):
                      '{"decision":NaN}']:
             with self.assertRaises(ValueError):
                 cp.parse_decision(data, [])
+
+
+class CodexAnalysisTests(unittest.TestCase):
+    def setUp(self):
+        self.transport = AsyncMock()
+        self.factory = patch.object(cp, 'ExecTransport', return_value=self.transport)
+        self.factory.start()
+        self.addCleanup(self.factory.stop)
+
+    def test_text_analysis_projects_strict_schema_and_restores_dynamic_maps(self):
+        tool = {'name': 'report', 'description': 'Report fields', 'input_schema': {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'luck': {'type': 'integer'},
+                'skills': {'type': 'object', 'additionalProperties': {'type': 'integer'}},
+                'extra_fields': {'type': 'object', 'additionalProperties': {}},
+            },
+            'required': ['name', 'skills', 'extra_fields'],
+        }}
+        self.transport.request.return_value = json.dumps({
+            'name': 'Avery', 'luck': None,
+            'skills': [{'key': '偵查', 'value': 55}],
+            'extra_fields': [{'key': '信念', 'value': '查明真相'}],
+        }, ensure_ascii=False)
+
+        result = cp.analyze_text('visible source', tool, 'Extract the fields')
+
+        self.assertEqual(result, {'name': 'Avery', 'skills': {'偵查': 55},
+                                  'extra_fields': {'信念': '查明真相'}})
+        projected = self.transport.request.call_args.args[1]
+        self.assertEqual(projected['required'], ['name', 'luck', 'skills', 'extra_fields'])
+        self.assertFalse(projected['additionalProperties'])
+        self.assertEqual(projected['properties']['skills']['type'], 'array')
+        self.assertEqual(projected['properties']['extra_fields']['items']['properties']['value']['type'], 'string')
+
+    def test_image_analysis_sends_image_bytes_and_validates_schema(self):
+        tool = {'name': 'describe', 'description': 'Describe image', 'input_schema': {
+            'type': 'object', 'properties': {'label': {'type': 'string'}}, 'required': ['label'],
+        }}
+        self.transport.request.return_value = '{"label":"old house"}'
+        png = b'\x89PNG\r\n\x1a\nimage-data'
+
+        result = cp.analyze_image(png, tool, 'Describe this image')
+
+        self.assertEqual(result, {'label': 'old house'})
+        self.assertEqual(self.transport.request.call_args.kwargs['image_png'], png)
+        self.assertIn('Describe this image', self.transport.request.call_args.args[0])
+
+    def test_bad_json_and_original_schema_violation_return_none(self):
+        tool = {'name': 'report', 'description': 'Report', 'input_schema': {
+            'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count'],
+        }}
+        for output in ['not json', '{"count":"not a number"}']:
+            with self.subTest(output=output):
+                self.transport.request.return_value = output
+                self.assertIsNone(cp.analyze_text('source', tool, 'extract'))
+
+    def test_independent_sync_calls_share_the_configured_concurrency_limit(self):
+        counter_lock = threading.Lock()
+        active = 0
+        maximum = 0
+
+        async def request(*_args, **_kwargs):
+            nonlocal active, maximum
+            with counter_lock:
+                active += 1
+                maximum = max(maximum, active)
+            await asyncio.sleep(0.03)
+            with counter_lock:
+                active -= 1
+            return '{"label":"ok"}'
+
+        self.transport.request.side_effect = request
+        tool = {'name': 'report', 'description': 'Report', 'input_schema': {
+            'type': 'object', 'properties': {'label': {'type': 'string'}}, 'required': ['label'],
+        }}
+        with patch.object(config, 'CODEX_MAX_CONCURRENCY', 1):
+            threads = [threading.Thread(target=cp.analyze_text, args=('source', tool, 'extract'))
+                       for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=2)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(maximum, 1)
