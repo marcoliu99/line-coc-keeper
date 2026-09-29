@@ -107,7 +107,7 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
             prompt = keeper._build_static_prompt(state)
         self.assertIn("條件式旁白", prompt)
-        self.assertIn("你手上的「劇本內容」是只有你知道的機密資料", prompt)
+        self.assertIn("**Spoiler Boundary｜核心限制**", prompt)
 
     def test_static_prompt_keeps_secret_goal_rule_when_spoiler_off_but_privacy_on(self):
         """Regression test for a code-review finding: the two switches must
@@ -126,8 +126,8 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
             prompt = keeper._build_static_prompt(state)
-        self.assertIn("只有你知道、只屬於那位玩家的私人動機", prompt)
-        self.assertIn("反推出私人資訊", prompt)
+        self.assertIn("角色卡上的秘密目標只屬於該玩家", prompt)
+        self.assertIn("反推出秘密內容", prompt)
         self.assertNotIn("條件式旁白", prompt)
 
     def test_static_prompt_drops_secret_goal_rule_when_privacy_off(self):
@@ -135,8 +135,8 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
             prompt = keeper._build_static_prompt(state)
-        self.assertNotIn("只有你知道、只屬於那位玩家的私人動機", prompt)
-        self.assertNotIn("反推出私人資訊", prompt)
+        self.assertNotIn("角色卡上的秘密目標只屬於該玩家", prompt)
+        self.assertNotIn("反推出秘密內容", prompt)
         self.assertIn("條件式旁白", prompt)
 
     def test_combat_damage_filter_hides_enemy_fields_when_enabled(self):
