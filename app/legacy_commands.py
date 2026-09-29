@@ -41,6 +41,7 @@ from app import (
     observability,
     pdf_loader,
     pregen_extractor,
+    scenario_activation,
     scenario_compare,
     scenario_index,
     scenario_library,
@@ -64,10 +65,8 @@ from app.models import (
 )
 from app.repositories import manual_pregens
 from app.repositories.group_state import (
-    clear_page_images,
     load_page_image,
     load_state,
-    save_page_image,
     save_state,
 )
 from app.services import mutation_admission, opposed_checks, turn_delivery
@@ -231,24 +230,9 @@ def _install_library_context(
     preserve_pregens: bool = False,
 ) -> None:
     """Copy the selected chapter window from an immutable library entry into state."""
-    state.scenario_library_id = scenario_id
-    state.scenario_variant_id = scenario_templates.preferred_variant(state.group_id, scenario_id)
-    state.scenario_title = context["manifest"]["title"]
-    state.scenario_text = context["text"]
-    state.active_chapter_id = context["active_chapter_id"]
-    state.context_chapter_ids = context["context_chapter_ids"]
-    state.scenario_npc_index = context["indexes"].get("npcs", [])
-    state.scenario_location_index = context["indexes"].get("locations", [])
-    if not preserve_pregens:
-        state.pregens = list(context.get("pregens", []))
-    if not preserve_maps:
-        state.scene_maps = context["scene_maps"]
-
-def _install_context_images(conversation_id: str, scenario_id: str, context: dict) -> None:
-    clear_page_images(conversation_id)
-    scenario_library.copy_context_images(
-        scenario_id, context["page_numbers"],
-        lambda page, image: save_page_image(conversation_id, page, image),
+    scenario_activation.install_context_fields(
+        state, scenario_id, context, preserve_maps=preserve_maps,
+        preserve_pregens=preserve_pregens,
     )
 
 
@@ -509,14 +493,16 @@ async def handle_pdf_upload(
             old_pool = list(state.pregens)
             _apply_new_scenario(state, text, library_context["manifest"]["title"], extracted_index, page_maps, pregens)
             _install_library_context(state, scenario_id, library_context)
-            _install_context_images(conversation_id, scenario_id, library_context)
             install_result: dict[str, bool] = {}
             def install_first(conn):
                 manual_pregens.capture_legacy(conn, conversation_id, None, old_pool)
                 state.pregens, install_result["stale"] = manual_pregens.install_pool(
                     conn, conversation_id, scenario_id, library_context, bind_unassigned=True,
                 )
-            save_state(state, mutate_tx=install_first)
+            _, image_refreshed = scenario_activation.commit_and_refresh(
+                lambda: save_state(state, mutate_tx=install_first),
+                conversation_id, scenario_id, library_context,
+            )
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
     if raced:
@@ -541,6 +527,7 @@ async def handle_pdf_upload(
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
     ) + (f"\n{variant_notice}" if variant_notice else "")
+      + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
       + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
     return True
 
@@ -587,7 +574,6 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
         preserve_maps=(choice != "new"),
         preserve_pregens=(choice != "new"),
     )
-    _install_context_images(conversation_id, scenario_id, context)
     state.pending_pdf_upload = None
     install_result: dict[str, bool] = {}
     def install_selected(conn):
@@ -597,7 +583,10 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
             conn, conversation_id, scenario_id, context,
             bind_unassigned=(old_scenario_id is None), claimed=claimed,
         )
-    save_state(state, mutate_tx=install_selected)
+    _, image_refreshed = scenario_activation.commit_and_refresh(
+        lambda: save_state(state, mutate_tx=install_selected),
+        conversation_id, scenario_id, context,
+    )
     variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     return _pdf_upload_confirmation_text(
         context["manifest"]["title"], context["text"], pending["low_text_pages"], pending["truncated"],
@@ -605,7 +594,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
         scenario_index.report_location_index(
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
-    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "")
+    ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "") + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
 
 @mutation_admission.guard_async_entry
 async def resolve_pdf_upload_choice(

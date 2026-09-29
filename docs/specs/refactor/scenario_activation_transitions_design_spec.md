@@ -2,7 +2,7 @@
 
 [繁體中文](scenario_activation_transitions_design_spec_zh.md)
 
-Status: **in progress**. Base: `main_v2` at `07d55a7`.
+Status: **implemented**. Base: `main_v2` at `07d55a7`.
 
 ## Current behavior
 

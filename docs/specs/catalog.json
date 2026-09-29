@@ -1227,7 +1227,7 @@
       "title": "Scenario activation and chapter transitions",
       "zh": "劇本啟動與章節轉換",
       "category": "refactor",
-      "status": "in_progress",
+      "status": "implemented",
       "evidence": [
         "app/scenario_activation.py",
         "app/legacy_commands.py",
