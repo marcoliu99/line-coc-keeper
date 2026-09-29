@@ -1187,6 +1187,23 @@
       "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
     },
     {
+      "title": "Check registration lifecycle",
+      "zh": "檢定註冊生命週期",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/check_lifecycle.py",
+        "app/keeper.py",
+        "app/combat.py",
+        "app/commands/handlers/system.py",
+        "tests/test_check_lifecycle.py",
+        "tests/test_npc_attack_latency.py",
+        "tests/test_unified_keeper_turn_flow.py"
+      ],
+      "path": "docs/specs/refactor/check_lifecycle_design_spec.md",
+      "zh_path": "docs/specs/refactor/check_lifecycle_design_spec_zh.md"
+    },
+    {
       "title": "Codex structured text analysis provider",
       "zh": "Codex 結構化文字分析 Provider",
       "category": "enhancement",
@@ -1226,7 +1243,7 @@
       "title": "Every Discord event enters through the command router",
       "zh": "所有 Discord 事件一律經過 command router",
       "category": "refactor",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
         "app/commands/handlers/buttons.py",
         "app/commands/handlers/uploads.py",
@@ -1240,7 +1257,7 @@
       ],
       "path": "docs/specs/refactor/discord_events_through_router_design_spec.md",
       "zh_path": "docs/specs/refactor/discord_events_through_router_design_spec_zh.md",
-      "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+      "source_revision": "1a31645"
     },
     {
       "title": "Re-adding a defeated enemy's name: confirm it, and keep the two apart",
