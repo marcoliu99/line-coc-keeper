@@ -87,3 +87,9 @@ The scenario/search family (`record_established_fact`, `record_clue`, image sear
 The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`.
 
 The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. The now-empty legacy cascade remains for a final cleanup PR.
+
+## Final cleanup contract
+
+After PRs #135–#137 have landed, every player-turn tool has an explicit `ToolSpec.handler`. Remove the empty `execute_legacy_tool` cascade and the `legacy_handler` default; registration must require a handler. Keep `report_summary` in the registry for schema/capability derivation and log summarization, but direct `_execute_tool` dispatch still returns the historical `未知工具 report_summary` error. Unknown names still return the same unknown-tool error, and the existing shared admission and KP Assistant gates remain before dispatch.
+
+Delete migration-only literal-set equivalence tests. Continue to test registry/schema coverage, provider tool ordering derived from the registry, and each family's observable tool result. The old cascade must have no remaining caller before removal. This cleanup does not alter tool schemas, capability flags, or game rules.

@@ -87,3 +87,9 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 訊息家族（`send_private_info`）已移至 `app/keeper_tools/messaging.py`。
 
 戰鬥家族（`start_combat`、NPC 加入、狀態、回合推進、傷害、敵方計畫、效果與結束戰鬥）已移至 `app/keeper_tools/combat.py`。戰鬥規則仍在 `app/combat.py`；狀態寫入、受阻傷害不儲存，以及公開傷害過濾仍透過公開過渡介面使用 Keeper 的權威輔助函式。已清空的舊串接留待最後的清理 PR 移除。
+
+## 最後清理的契約
+
+PR #135–#137 合入後，每個玩家回合工具都有明確的 `ToolSpec.handler`。移除空的 `execute_legacy_tool` 串接與 `legacy_handler` 預設值；註冊工具時必須提供 handler。`report_summary` 繼續留在註冊表，供 schema／能力推導與日誌摘要使用，但直接透過 `_execute_tool` 分派時仍回傳原有的 `未知工具 report_summary` 錯誤。未知工具名稱維持原有錯誤；共用准入與 KP 助手關卡仍在分派前執行。
+
+刪除僅供遷移使用的舊字面集合等價測試。保留註冊表／schema 覆蓋、由註冊表推導的 provider 工具順序，以及各家族可觀察結果的測試。移除舊串接前須確認沒有任何呼叫端。本次清理不修改工具 schema、能力旗標或遊戲規則。
