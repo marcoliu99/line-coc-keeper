@@ -25,6 +25,8 @@
 
 3. 重複的修法是刪掉多餘的重述，不是判定規則不必要——不同規則的「條數」不會變少，變少的只是同一件事「被講幾次」。
 
+4. 精簡或改寫一條規則之前，先問這條規則是不是「用文字禁令頂替一個本來該有的工具」。純文字的「不要做 X」只有在模型沒有更合理的替代做法時才會可靠地被壓下去；如果一個範圍界定清楚的工具本來就能正確引導同樣的意圖，優先修好／補上那個工具，而不是把文字收得更緊。具體證據：`app/keeper.py` 的裝備購買規則，截至 PR #91（2026-09-27，`bug/purchase-turn-provenance`）原本有一個能動的 `purchase_items` 工具，同一天被 revert；規則文字隨後收緊成明文禁止該工具原本用來建立結構的信用評級／現金推理（「不以信用評級、生活水準、價格或現金裁定是否可得」），但模型還是持續往那個方向推理。下面分段清單裡屬於「純禁令、沒有工具支撐」的段落（裝備一致性，項目 6，是最明顯的候選）在真的動手精簡之前，要先重新檢視這一點——精簡一條本來就沒在生效的規則不會讓它變好，只會讓失敗的成本變低。
+
 ## 已查證結果（2026-09-29 調查）
 
 - **autoroll／pending 重複：證實。**「autoroll」這個字在 prompt 裡出現 11 次，分散在至少 7 條不同規則裡重講「autoroll 關閉才 pending，開啟才系統立即代擲」。至少有一句完全多餘、沒加任何工具專屬細節：「`skill_check`／`sanity_check` 在 autoroll 關閉（預設）時建立玩家擲骰 pending；只有 `autoroll on` 才會立即完成。」但其他幾處重述*不是*單純重複——它們把同一條規則掛在特定工具自己的規則旁邊（sanity_check、重傷 CON 檢定、孤注一擲）是為了就近提醒，這有實際價值，不該直接整條刪掉。這裡的整併是挑一個標準版本、把其餘壓成簡短交叉引用，不是無差別刪除。
@@ -40,7 +42,7 @@
 3. **戰鬥工具路由表。** 把散落的 start_combat／add_npc_to_combat／傷害工具／adjust_ammo 指示改成精簡的路由列表；同種怪物多隻要不同名稱這條保留成單一規則，不要埋在長段落敘述裡。
 4. **KP Assistant 權限層級。** 把 KP Assistant 區塊改成明確的優先順序清單（引擎權威狀態 > KP 明確更正 > 劇本正典 > Keeper 敘事判斷），配簡短範例取代長篇說明。
 5. **Canon boundary／spoiler／privacy 整併。** 卡在上面那項重新查證——先找到真正的重複點（如果有）才能動手；這塊把關爆雷／秘密目標正確性，風險比 1-4 高。
-6. **裝備真實性審查（46-51 → 約 3 條）。** 何時要審查、三項合理性檢查、已登記／未登記物品的處理；把購買／取得規則併進第三點，不要獨立一條。
+6. **裝備真實性審查（46-51 → 約 3 條）。** 何時要審查、三項合理性檢查、已登記／未登記物品的處理；把購買／取得規則併進第三點，不要獨立一條。**動手精簡之前先套用契約第 4 條**——購買可負擔性那句正是「純禁令、沒有工具支撐」的案例（`purchase_items` 在 PR #91 被 revert，模型還是持續往現在文字禁止的信用評級／現金推理方向走）。要記錄清楚：單純精簡文字夠不夠，還是需要另開一張票去修好、重新引入一個範圍界定清楚的購買工具。
 7. **`roll_dice` 段落精簡。** 收斂成 `purpose`／`roll_context`（`game_resolution` vs `ooc_randomizer`）的核心契約，各配一個範例；其餘交給工具描述本身。
 
 ## 流程與介面
@@ -56,3 +58,34 @@
 - 動到機制的段落使用 sim harness（本 repo 外部、可重用的腳本）
 
 相關：[bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md](../bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md)（促成這次調查的事故與 RAG 預算被擠光的證據）；[bug-combat-trigger-prompt-and-damage-tool-ambiguity_zh.md](../bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity_zh.md)（一條必須留中文的規則範例——它存在的意義就是給中文語言判斷用的中文對照例句，屬於第 2 條契約的例外情況）。
+
+## 附錄：執行交接
+
+項目 2（`combat_block` 翻英文）已完成——分支 `fix/combat-reveal-beat-before-lethal-damage`，已 push，並用一次 16 輪的真實戰鬥模擬驗證過（`start_combat`／`add_npc_to_combat`／`advance_combat_turn` 英文版都正確觸發）。項目 5（canon／spoiler／privacy）卡在上面提到的重新查證——不要假設原提案的重複主張正確就直接開工。
+
+以下是交給執行者（Codex）處理項目 1、3、4、6、7 的原始交接文字：
+
+**給 Codex 的任務（依序做，每項獨立分支/commit，只 commit+push 到自己的分支，不要開 PR，做完再一起 review）**
+
+Spec：`docs/specs/enhancement/enhancement-static-prompt-consolidation.md`（繁中版同目錄 `_zh.md`）。背景：`app/keeper.py` 的 `_build_static_prompt` 每回合整包重送，7,108 tokens／51 條規則，真實 log 量到 `budget_tokens:0`（RAG 預算被擠光）。已驗證方向：**敘事語氣規則維持繁中不動**（這塊完全不在任務範圍內），**純工具呼叫／機制政策規則**才是整併/翻英文的目標。`combat_block` 已經是驗證過的範例（分支 `fix/combat-reveal-beat-before-lethal-damage`，已 push），可以參考它的做法：翻譯前先 grep 全部測試套件確認零字面依賴、翻完寫 prompt 斷言測試鎖住必要內容、跑滿測試、有動到機制的話額外跑一次 sim smoke 驗證。
+
+每項都用 `git worktree add -b <branch> <path> origin/main_v2` 開新分支，不要疊分支。
+
+**任務 1 — autoroll／pending 檢定流程整合（優先做，風險最低）**
+已證實：「autoroll」在 prompt 裡出現 11 次，至少 7 個不同規則重講「off→pending、on→系統立即代擲」，其中這句完全多餘可直接刪：「`skill_check`／`sanity_check` 在 autoroll 關閉（預設）時建立玩家擲骰 pending；只有 `autoroll on` 才會立即完成。」但不要無差別刪——有幾處是把同一條規則掛在特定工具（sanity_check、重傷 CON 檢定、孤注一擲）旁邊做就近提醒，這個要留，只是壓短成交叉引用，不要整條刪掉。收斂成一個標準版本 + 短提醒。純文字整併，邏輯不變。完成後跑一次聚焦 pending check 的短模擬（sim harness 路徑見下）驗證行為沒退化。
+
+**任務 3 — 戰鬥工具路由表**
+把散落的 start_combat／add_npc_to_combat／offer_npc_attack_defense_choice／roll_weapon_damage／roll_impaling_damage／apply_combat_damage／apply_final_combat_damage／add_combat_effect／adjust_ammo 指示，改成 concise routing list 格式（可參考 spec 裡英文提案的範例格式）。同種怪物多隻要不同名稱這條保留成單一規則。動到戰鬥機制，完成後要跑戰鬥 smoke 驗證。
+
+**任務 4 — KP Assistant 權限層級**
+把 KP Assistant 區塊改成明確優先順序清單（engine state > KP 明確更正 > 劇本正典 > Keeper 敘事判斷），範例從長篇中文說明壓成 `"讓 Marco 做偵查" → skill_check(...)` 這種對照格式就好。
+
+**任務 6 — 裝備真實性審查（46-51 → 約 3 條）**
+何時審查／三項合理性檢查／已登記-未登記物品處理，三條就好，購買規則併進第三條。
+
+**任務 7 — `roll_dice` 段落精簡**
+收斂成 `purpose`／`roll_context`（`game_resolution` vs `ooc_randomizer`）核心契約 + 各一個範例，其餘交給 tool description。
+
+**任務 5（canon boundary／spoiler／privacy）先不要做**——spec 裡已經記錄查證結果：原提案講的「重複」查無實據（那些規則就是 `_spoiler_protection_prompt_rules()`／`_privacy_isolation_prompt_rules()` 的 dict 值本身，不是額外重複的一份）。要做這項前，先用完整規則原文重新查一次是否真的有別處重複，寫清楚查證結果再決定要不要動，不要照原提案假設直接刪。
+
+**每項驗收標準：** ruff 0.16.8 / mypy / compileall / 全套 pytest 全綠 + 新的 prompt 斷言測試 + （任務 1、3 屬機制類）sim smoke 驗證無退化。Sim harness：`/Users/marcoliu/.claude/jobs/c0193acc/sim/sim_playtest.py <worktree路徑>`，`SIM_TURNS=16` 只跑聚焦編排的戰鬥序列，`.env` 用同目錄下已配置好的（記得複製一份改 `DATA_DIR`/`DB_PATH`/`LOG_FILE` 到獨立子目錄，不要共用原本的資料庫）。
