@@ -147,8 +147,7 @@ class ManualPregenPersistenceTests(unittest.TestCase):
         group_state.save_state(fresh)
         replies = []
         with patch.object(system.scenario_library, "load_context", return_value=_context("s")), \
-                patch.object(system.scenario_library, "copy_context_images"), \
-                patch.object(system, "clear_page_images"), \
+                patch.object(system.scenario_activation, "refresh_after_commit", return_value=True), \
                 patch.object(system.scenario_rag, "schedule_index_prewarm"):
             asyncio.run(system.handle_system_command(
                 "g", "kp", reply, None, None, None, ["/coc", "scenario", "use", "s"]

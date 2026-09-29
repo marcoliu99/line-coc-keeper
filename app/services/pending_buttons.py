@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, replace
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
 
-from app import observability
+from app import async_utils, locks, observability
 from app.check_identity import (
     compact_identity_token,
     effective_check_id,
@@ -75,12 +76,40 @@ class PendingButtonIntent:
     claimed_at: float
 
 
+@dataclass
+class ControlCompletion:
+    """One turn's snapshot, in-lock claim, and after-unlock publication."""
+
+    conversation_id: str
+    before_pending: dict
+    before_luck: dict
+    sudo_command: sudo_policy.ParsedSudoCommand | None = None
+    intents: list[PendingButtonIntent] | None = field(default=None, init=False)
+
+    async def claim_locked(self) -> None:
+        self.intents = await try_claim_pending_buttons_locked(
+            self.conversation_id, self.before_pending, self.before_luck,
+            sudo_command=self.sudo_command,
+        )
+
+    async def publish(
+        self, send: Callable[[PendingButtonIntent], Awaitable[None]],
+        recover: Callable[[dict, dict, sudo_policy.ParsedSudoCommand | None], Awaitable[None]],
+    ) -> None:
+        if self.intents is None:
+            await recover(self.before_pending, self.before_luck, self.sudo_command)
+        else:
+            await publish_claimed_buttons(self.conversation_id, self.intents, send)
+
+
 async def claim_pending_buttons_locked(
     conversation_id: str,
     before_pending: dict,
     before_luck_pending: dict,
     *,
     sudo_command: sudo_policy.ParsedSudoCommand | None = None,
+    kinds: frozenset[str] = frozenset({"check", "luck"}),
+    public_marker: str | None = None,
 ) -> list[PendingButtonIntent]:
     """Claim this turn's new buttons while its caller owns the conversation lock.
 
@@ -93,7 +122,7 @@ async def claim_pending_buttons_locked(
     from app.repositories.group_state import save_state
 
     state = await asyncio.to_thread(load_state, conversation_id)
-    marker = sudo_public_marker(state, sudo_command) if sudo_command else None
+    marker = sudo_public_marker(state, sudo_command) if sudo_command else public_marker
     timeline_id = state.timeline_id or f"legacy-{conversation_id}"
     claimed_at = time.perf_counter()
     intents: list[PendingButtonIntent] = []
@@ -101,6 +130,8 @@ async def claim_pending_buttons_locked(
         ("check", state.pending_checks, before_pending),
         ("luck", state.pending_luck_decisions, before_luck_pending),
     ):
+        if kind not in kinds:
+            continue
         for owner_id, entry in collection.items():
             if before.get(owner_id) == entry or entry.get("_buttons_posted"):
                 continue
@@ -145,3 +176,75 @@ async def try_claim_pending_buttons_locked(
     except Exception:
         _logger.exception("failed to claim pending buttons before unlock for conversation_id=%s", conversation_id)
         return None
+
+
+def _equal_ignoring_posted_marker(left: dict, right: dict) -> bool:
+    return {key: value for key, value in left.items() if key != "_buttons_posted"} == {
+        key: value for key, value in right.items() if key != "_buttons_posted"
+    }
+
+
+def _collection_name(kind: str) -> str:
+    return "pending_checks" if kind == "check" else "pending_luck_decisions"
+
+
+async def release_stranded_claim(conversation_id: str, intent: PendingButtonIntent) -> None:
+    """Release only the claimed entry when it still has the same identity/content."""
+    from app.repositories.group_state import save_state
+
+    try:
+        async with locks.get_conversation_lock(conversation_id):
+            state = await asyncio.to_thread(load_state, conversation_id)
+            collection = getattr(state, _collection_name(intent.kind))
+            current = collection.get(intent.owner_id)
+            if (current is None or not current.get("_buttons_posted")
+                    or not _equal_ignoring_posted_marker(current, intent.entry)):
+                return
+            current.pop("_buttons_posted", None)
+            await asyncio.to_thread(save_state, state)
+    except Exception:
+        _logger.exception("failed to release stranded posting claim for owner_id=%s in conversation_id=%s",
+                          intent.owner_id, conversation_id)
+
+
+async def _release_many(conversation_id: str, intents: list[PendingButtonIntent]) -> None:
+    for intent in intents:
+        await release_stranded_claim(conversation_id, intent)
+
+
+async def publish_claimed_buttons(
+    conversation_id: str, intents: list[PendingButtonIntent],
+    send: Callable[[PendingButtonIntent], Awaitable[None]],
+) -> None:
+    """Verify each live claim and send outside the lock through a transport callback."""
+    for index, intent in enumerate(intents):
+        started = time.perf_counter()
+        try:
+            state = await asyncio.to_thread(load_state, conversation_id)
+            current = getattr(state, _collection_name(intent.kind)).get(intent.owner_id)
+            if (state.timeline_id and state.timeline_id != intent.timeline_id
+                    or current is None or not current.get("_buttons_posted")
+                    or not _equal_ignoring_posted_marker(current, intent.entry)):
+                observability.event("pending_button.send.completed", kind=intent.kind, status="stale")
+                continue
+            await send(intent)
+            finished = time.perf_counter()
+            observability.event(
+                "pending_button.send.completed", kind=intent.kind, status="success",
+                claim_to_send_start_ms=(started - intent.claimed_at) * 1000,
+                send_duration_ms=(finished - started) * 1000,
+                claim_to_send_completed_ms=(finished - intent.claimed_at) * 1000,
+            )
+        except asyncio.CancelledError:
+            observability.event("pending_button.send.failed", kind=intent.kind, status="cancelled")
+            cleanup = asyncio.create_task(_release_many(conversation_id, intents[index:]))
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                async_utils.observe_background_task(cleanup, operation="pending_button.claim_release")
+            raise
+        except Exception:
+            _logger.exception("failed to send claimed %s button for owner_id=%s in conversation_id=%s",
+                              intent.kind, intent.owner_id, conversation_id)
+            observability.event("pending_button.send.failed", kind=intent.kind, status="error")
+            await release_stranded_claim(conversation_id, intent)
