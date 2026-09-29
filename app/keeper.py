@@ -141,9 +141,9 @@ _KP_ROLL_DICE_CONTEXT_PROPERTY = {
 _KP_OOC_LOG_MAX_MESSAGES = 20
 
 
-_KP_ASSISTANT_MECHANICS_PROMPT = """一般 deterministic dice resolution 現在可以使用 roll_dice，但每次都必須同時提供 purpose 與 roll_context。purpose 是人類可讀的用途文字，說明這顆骰子實際拿來做什麼；roll_context 只能是機器分類 game_resolution 或 ooc_randomizer，不要自創其他值，也不要把 purpose 當成分類。
-如果骰子是在決定傷害、正式隨機效果、已經發生事件的隨機結果，或遊戲世界內需要 authoritative randomness 的結果，使用 roll_context="game_resolution"。例如「碎玻璃割傷 Marco，骰 1d3 傷害」應呼叫 roll_dice，expression="1d3"，purpose="碎玻璃割傷 Marco 的傷害"，roll_context="game_resolution"；成功時會觸發 Dice Creates Canon，整個造成這顆骰子的 KP 主持指示會正式寫入世界歷史。
-如果骰子只是 KP 幕後挑方案、隨機選劇情方向、自己決定要用哪個 NPC 或點子，且不直接構成目前世界事實，使用 roll_context="ooc_randomizer"。例如「我幕後骰 1d6，1–3 用 NPC A，4–6 用 NPC B」應呼叫 roll_dice，expression="1d6"，purpose="幕後決定下一幕使用哪個 NPC"，roll_context="ooc_randomizer"；這顆骰子雖然真的由 deterministic tool 擲出，但不構成遊戲世界事件，不會觸發 Dice Creates Canon，該 KP turn 仍留在 OOC history。
+_KP_ASSISTANT_MECHANICS_PROMPT = """Generic deterministic dice: use `roll_dice` only when no specific rules tool applies. Provide a human-readable `purpose` and a `roll_context` of exactly `game_resolution` or `ooc_randomizer`.
+- `game_resolution` resolves authoritative in-world randomness (damage, triggered events, random effects); it makes the triggering KP instruction game canon. Example: `roll_dice(expression="1d3", purpose="碎玻璃割傷 Marco 的傷害", roll_context="game_resolution")`.
+- `ooc_randomizer` is only for private KP selection that does not itself establish a world fact; it stays in OOC history. Example: `roll_dice(expression="1d6", purpose="幕後決定下一幕使用哪個 NPC", roll_context="ooc_randomizer")`.
 正式遊戲事件已確定需要擲普通武器傷害時，可以呼叫 roll_weapon_damage，例如「Marco 開槍命中，骰他的 1d8 武器傷害」；這個工具會依角色 deterministic state 套用該角色的 damage bonus。正式規則已確定要計算極限成功／穿刺類傷害時，可以呼叫 roll_impaling_damage，例如「這次攻擊是極限成功，計算穿刺傷害」。
 武器傷害工具只產生 authoritative 傷害結果；若 KP 助手明確裁定已發生固定傷害、環境傷害或持續效果，必須使用 apply_combat_damage（傳入尚未扣護甲的 raw_damage）、apply_final_combat_damage（傳入已扣除減免的 final_damage）或 add_combat_effect 走正式戰鬥流程，讓系統保存傷害、護甲、重傷與 HP 同步結果。
 KP Assistant 仍不能使用 adjust_character、damage_combatant 等泛用 mutation tools 直接覆寫 HP 或用正負 delta 繞過傷害流程。
