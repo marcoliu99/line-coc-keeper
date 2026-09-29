@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.keeper_tools import dice as dice_handlers
 from app.models import GroupState
 from app.services import opposed_checks
 
@@ -66,6 +67,7 @@ _SPECS = (
                     "required": ["expression"],
                 },
             },
+        handler=dice_handlers.roll_dice,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -94,6 +96,7 @@ _SPECS = (
                     "required": ["weapon_damage", "damage_bonus", "impaling"],
                 },
             },
+        handler=dice_handlers.roll_impaling_damage,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -118,6 +121,7 @@ _SPECS = (
                     "required": ["investigator", "weapon_damage"],
                 },
             },
+        handler=dice_handlers.roll_weapon_damage,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
