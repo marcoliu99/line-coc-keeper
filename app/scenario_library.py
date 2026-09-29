@@ -11,7 +11,8 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -38,6 +39,27 @@ def _path(scenario_id: str) -> Path:
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", scenario_id):
         raise ValueError("無效的劇本 ID")
     return SCENARIO_LIBRARY_DIR / scenario_id
+
+
+def scenario_path(scenario_id: str) -> Path:
+    """Return a library path after validating the scenario identifier."""
+    return _path(scenario_id)
+
+
+@contextmanager
+def publication_lock() -> Iterator[None]:
+    """Serialize source review and library publication as one transaction."""
+    with _LIBRARY_LOCK:
+        yield
+
+
+@contextmanager
+def publication_target(scenario_id: str) -> Iterator[Path]:
+    """Hold the library transaction while publishing a validated target."""
+    with publication_lock():
+        target = scenario_path(scenario_id)
+        SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+        yield target
 
 
 def safe_import_path(import_dir: Path, filename: str) -> Path:
@@ -362,6 +384,14 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
         # player-facing pregen selection, which never goes through this tool.
         visibility = "kp_only" if kind == "character_sheet" else "public"
         assets.append({"id": f"page-{page}-{kind}", "page": page, "type": kind, "chapter_id": chapter, "visibility": visibility, "tags": [kind], "description": page_text[:500]})
+    return assets
+
+
+def kp_only_image_assets(pages: list[int], text: str, chapters: list[dict]) -> list[dict[str, Any]]:
+    """Describe reviewed source pages without making them player-visible."""
+    assets = _build_image_assets({page: b"" for page in pages}, {}, text, chapters)
+    for asset in assets:
+        asset["visibility"] = "kp_only"
     return assets
 
 

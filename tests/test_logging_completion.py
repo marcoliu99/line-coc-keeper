@@ -8,7 +8,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app import config, memory_rag, observability, scenario_rag
+from app import config, embedding_execution, memory_rag, observability, scenario_rag
 from app.agents import assistant
 from app.commands.handlers import buttons
 from app.domain.models import AgentMessage
@@ -109,7 +109,7 @@ class LoggingCompletionTests(unittest.TestCase):
         with patch.dict(sys.modules, {"openai": fake_openai}), \
                 patch.object(memory_rag, "OPENAI_API_KEY", "test-key"), \
                 patch.object(scenario_rag, "OPENAI_API_KEY", "test-key"), \
-                patch.object(memory_rag.observability, "event") as event:
+                patch.object(embedding_execution.observability, "event") as event:
             self.assertIsNone(memory_rag._embed_texts(["one", "two"]))
             self.assertIsNone(scenario_rag._embed_texts(["one", "two"]))
 

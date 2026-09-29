@@ -7,7 +7,7 @@ from app import config, keeper, observability, spoiler_policy
 from app.agents import guard, tool_gateway
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
-from app.providers.registry import conversation_provider, supports_dynamic_tools
+from app.providers.conversation_session import ConversationSession
 
 _logger = logging.getLogger(__name__)
 _ROLE = "kp_assistant"
@@ -31,8 +31,8 @@ async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str
     message_text = message.payload["text"]
     resolved_location = message.payload.get("resolved_location")
 
-    provider = conversation_provider()
-    if provider is None:
+    session = ConversationSession.current(required=False)
+    if session is None:
         return (
             f'（設定錯誤：LLM_PROVIDER="{config.LLM_PROVIDER}" 不是支援的供應商，請在 .env 設成 anthropic、gemini、openai 或 codex）',
             [], [],
@@ -40,7 +40,7 @@ async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str
 
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
     turn_metrics: dict[str, int] = {}
-    model = getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", None)
+    model = session.model
     with (
         observability.context(turn_id=turn_id),
         observability.metrics_context(turn_metrics),
@@ -54,7 +54,7 @@ async def run_assistant(message: AgentMessage) -> tuple[str, list[tuple[str, str
         ),
     ):
         return await _run_assistant_turn(
-            state, user_id, display_name, message_text, resolved_location, provider
+            state, user_id, display_name, message_text, resolved_location, session
         )
 
 
@@ -64,7 +64,7 @@ async def _run_assistant_turn(
     display_name: str,
     message_text: str,
     resolved_location: dict | None,
-    provider: Any,
+    session: ConversationSession,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     turn_timeline_id = keeper._ensure_turn_timeline(state)
     static_prompt = keeper._build_static_prompt(state)
@@ -100,48 +100,17 @@ async def _run_assistant_turn(
         combat_status_gate.observe_tool_result(name, result)
         return result
 
-    openai_response_id: str | None = None
-    if config.LLM_PROVIDER == "openai":
-        previous_response_id: str | None = (None if correction_context else state.openai_previous_response_id)
-        chain_timeline_id = state.openai_previous_response_timeline_id
-        if previous_response_id and chain_timeline_id != turn_timeline_id:
-            observability.event(
-                "provider.chain.reset",
-                level=logging.WARNING,
-                provider="openai",
-                reason="missing_timeline_metadata" if not chain_timeline_id else "timeline_mismatch",
-                old_timeline_id=chain_timeline_id or "",
-                requested_timeline_id=turn_timeline_id,
-                chain_timeline_id=chain_timeline_id,
-            )
-            previous_response_id = None
-
-        def remember_openai_response_id(response_id: str) -> None:
-            nonlocal openai_response_id
-            openai_response_id = response_id
-
-        try:
-            final_text = await provider.run_conversation(
-                static_prompt, dynamic_prompt, tools, state.log, provider_message,
-                execute_assistant_tool, MAX_TOOL_ITERATIONS,
-                previous_response_id=previous_response_id,
-                on_response_id=remember_openai_response_id,
-                tools_for_request=lambda: combat_status_gate.tools_for_request(tools),
-            )
-        except Exception:
-            _logger.exception("KP Assistant provider call failed")
-            final_text = _provider_failure_fallback_text(mutating_tools_ran)
-    else:
-        try:
-            final_text = await provider.run_conversation(
-                static_prompt, dynamic_prompt, tools, state.log, provider_message,
-                execute_assistant_tool, MAX_TOOL_ITERATIONS,
-                **({"tools_for_request": lambda: combat_status_gate.tools_for_request(tools)}
-                   if supports_dynamic_tools(provider) else {}),
-            )
-        except Exception:
-            _logger.exception("KP Assistant provider call failed")
-            final_text = _provider_failure_fallback_text(mutating_tools_ran)
+    options = session.stage_options(
+        None, tools_for_request=lambda: combat_status_gate.tools_for_request(tools))
+    options.update(session.continuation(state, turn_timeline_id, correction=bool(correction_context)))
+    try:
+        final_text = await session.provider.run_conversation(
+            static_prompt, dynamic_prompt, tools, state.log, provider_message,
+            execute_assistant_tool, MAX_TOOL_ITERATIONS, **options,
+        )
+    except Exception:
+        _logger.exception("KP Assistant provider call failed")
+        final_text = _provider_failure_fallback_text(mutating_tools_ran)
 
     provider_text = final_text
     final_text = await guard.enforce_narrative_safety(AgentMessage(payload={}), final_text)
@@ -161,7 +130,7 @@ async def _run_assistant_turn(
                 {"role": "user", "content": canonical_message},
                 {"role": "assistant", "content": final_text},
             ],
-            openai_response_id=openai_response_id,
+            openai_response_id=session.response_id,
             timeline_id=turn_timeline_id,
             invalidate_openai_response_chain=final_text != provider_text,
         )

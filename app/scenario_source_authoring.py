@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shutil
-import tempfile
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -23,6 +22,7 @@ from app import scenario_authoring as authoring
 from app import scenario_library as library
 from app import scenario_source_review as review
 from app import scenario_templates as templates
+from app import trusted_scenario_source as trusted
 
 _EXPORT = re.compile(r'source-export-[a-f0-9]{32}')
 MAX_STORAGE_BYTES = 200_000_000
@@ -99,7 +99,7 @@ even as unresolved; omit them from partial results and list their IDs outside JS
 
 
 def _root(sid: str, eid: str) -> Path:
-    library._path(sid)  # Validate library identity before constructing paths.
+    trusted.source_path(sid)  # Validate library identity before constructing paths.
     if not _EXPORT.fullmatch(eid):
         raise ValueError('Invalid English export ID')
     return library.SCENARIO_LIBRARY_DIR / '.source-authoring' / sid / eid
@@ -107,7 +107,7 @@ def _root(sid: str, eid: str) -> Path:
 
 @contextmanager
 def _scenario_locked(sid: str) -> Iterator[None]:
-    library._path(sid)
+    trusted.source_path(sid)
     directory = library.SCENARIO_LIBRARY_DIR / '.source-authoring-locks'
     with _LOCK:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -192,10 +192,10 @@ def _load(sid: str, eid: str) -> dict:
     registry = _read(root / 'registry.json')
     if authoring.digest(registry) != _read(root / 'identity.json')['sha256']:
         raise ValueError('English preparation registry changed; export again')
-    manifest, text = templates._source(sid)
+    snapshot = trusted.read_snapshot(sid)
     if (registry['scenario_id'] != sid or registry['export_id'] != eid
-            or manifest != registry['manifest'] or text != registry['source_text']
-            or review._sha((library._path(sid) / 'source.pdf').read_bytes()) != registry['pdf_sha256']):
+            or snapshot.manifest != registry['manifest'] or snapshot.text != registry['source_text']
+            or snapshot.pdf_sha256 != registry['pdf_sha256']):
         raise ValueError('Source, PDF or chapters changed; export again')
     return registry
 
@@ -214,9 +214,9 @@ def export_source(sid: str) -> Path:
 
 
 def _export_source(sid: str) -> Path:
-    manifest, text = templates._source(sid)
-    pdf_path = library._path(sid) / 'source.pdf'
-    pdf = pdf_path.read_bytes()
+    snapshot = trusted.read_snapshot(sid)
+    manifest, text, pdf = snapshot.manifest, snapshot.text, snapshot.pdf_bytes
+    pdf_path = trusted.source_path(sid) / 'source.pdf'
     eid = 'source-export-' + uuid4().hex
     root = _root(sid, eid)
     output = templates.IMPORT_DIR / eid
@@ -370,7 +370,7 @@ def _progress(registry: dict, draft: dict) -> dict:
 
 
 def status(sid: str, eid: str = '') -> list[dict]:
-    library._path(sid)
+    trusted.source_path(sid)
     base = library.SCENARIO_LIBRARY_DIR / '.source-authoring' / sid
     ids = [eid] if eid else sorted(p.name for p in base.glob('source-export-*') if p.is_dir())
     results = []
@@ -435,95 +435,43 @@ def _publish(registry: dict, draft: dict) -> str:
     text = review._candidate_text(pages)
     digest = authoring.digest([registry, rows, draft['imported_by']])
     target_id = sid[:38].rstrip('-') + '-ai-' + digest[:16]
-    target = library._path(target_id)
     text_hash = review._sha(text.encode())
     receipt_path = _root(sid, eid) / 'publication.json'
-    with library._LIBRARY_LOCK:
-        _load(sid, eid)
-        receipt = _read(receipt_path) if receipt_path.exists() else None
-        if receipt is not None and (receipt.get('target_id') != target_id or receipt.get('candidate_digest') != digest):
-            raise ValueError('Published English receipt changed')
-        if target.exists():
-            if receipt is None:
-                raise ValueError('Published English metadata receipt missing; export a new preparation to certify changes')
-            for name in ('manifest', 'source_review'):
-                if review._sha((target / f'{name}.json').read_bytes()) != receipt.get(name + '_sha256'):
-                    raise ValueError('Published English immutable metadata changed')
-            audit = _read(target / 'source_review.json')
-            manifest, current = templates._source(target_id)
-            if (audit.get('candidate_digest') != digest or current != text
-                    or (target / 'scenario.txt').read_bytes() != text.encode()
-                    or manifest['content_hash'] != text_hash
-                    or review._sha((target / 'source.pdf').read_bytes()) != registry['pdf_sha256']):
-                raise ValueError('Published English destination changed')
-            images = audit.get('image_sha256', {})
-            if set(images) != {f'page_{p["page"]}.png' for p in pages}:
-                raise ValueError('Published English image inventory changed')
-            for name, expected in images.items():
-                if review._sha((target / 'images' / name).read_bytes()) != expected:
-                    raise ValueError('Published English image changed')
-            return target_id
-        stage = Path(tempfile.mkdtemp(prefix='.source-ai-', dir=library.SCENARIO_LIBRARY_DIR))
-        try:
-            pdf = (library._path(sid) / 'source.pdf').read_bytes()
-            if review._sha(pdf) != registry['pdf_sha256']:
-                raise ValueError('Source PDF changed during publication')
-            (stage / 'source.pdf').write_bytes(pdf)
-            (stage / 'scenario.txt').write_bytes(text.encode())
-            (stage / 'preview.txt').write_bytes(text[:2000].encode())
-            (stage / 'images').mkdir(mode=0o700)
-            with pymupdf.open(stream=pdf, filetype='pdf') as doc:
-                for number, page in enumerate(doc, 1):
-                    (stage / 'images' / f'page_{number}.png').write_bytes(page.get_pixmap(dpi=110).tobytes('png'))
-            changes = []
-            for original, row, page in zip(registry['pages'], rows, pages, strict=True):
-                before, after = original['original'], row['text']
-                old, new = scenario_numbers.counts(before), scenario_numbers.counts(after)
-                changes.append({'page': page['page'], 'before': before, 'after': after,
-                                'before_sha256': review._sha(before.encode()), 'after_sha256': review._sha(after.encode()),
-                                'published_text': review._published_page_text(page), 'status': row['status'],
-                                'removed_counts': dict(old-new), 'added_counts': dict(new-old),
-                                'ai_changes': row['changes']})
-            now = receipt['published_at'] if receipt is not None else datetime.now(timezone.utc).isoformat()
-            metadata = {'origin': 'external_ai', 'export_id': eid, 'candidate_digest': digest,
-                        'parent_scenario_id': sid, 'imported_by': draft['imported_by']}
-            audit = {**metadata, 'imported_at': now, 'source_hash_before': registry['manifest']['content_hash'],
-                     'source_hash_after': text_hash, 'pdf_sha256': registry['pdf_sha256'],
-                     'original_source_text': registry['source_text'], 'fallback_native': registry['fallback_native'],
-                     'image_sha256': {p.name: review._sha(p.read_bytes()) for p in sorted((stage / 'images').glob('*.png'))},
-                     'revision_receipts': {p.name: review._sha(p.read_bytes())
-                                           for p in sorted(_root(sid, eid).glob('revision-*.json'))},
-                     'changes': changes, 'derived_artifacts': 'invalidated: indexes, pregens, scene_maps, Chinese variants'}
-            manifest = deepcopy(registry['manifest'])
-            manifest.update(id=target_id, title=manifest.get('title', sid) + ' [AI source]',
-                            content_hash=text_hash, preview_hash=review._sha(text[:2000].encode()),
-                            source_review=metadata, created_at=now, updated_at=now, page_count=len(pages),
-                            image_assets=library._build_image_assets({p['page']: b'' for p in pages}, {}, text, manifest['chapters']))
-            for asset in manifest['image_assets']:
-                asset['visibility'] = 'kp_only'
-            quality = {'version': 'external-ai-v1', 'source_chars': len(text), 'review_pages': [],
-                       'source_review': metadata, 'pdf_sha256': registry['pdf_sha256'],
-                       'pages': [{'page': p['page'], 'method': 'external-ai', 'warnings': [],
-                                  'selected_sha256': review._sha(review._published_page_text(p).encode())} for p in pages]}
-            for name, value in [('manifest', manifest), ('source_review', audit), ('parse_quality', quality),
-                                ('indexes', {}), ('pregens', []), ('scene_maps', {})]:
-                authoring.atomic_json(stage / f'{name}.json', value)
-            for file in stage.rglob('*'):
-                if file.is_file():
-                    file.chmod(0o600)
-            _load(sid, eid)
-            sealed = {'target_id': target_id, 'candidate_digest': digest, 'published_at': now,
-                      **{name + '_sha256': review._sha((stage / f'{name}.json').read_bytes())
-                         for name in ('manifest', 'source_review')}}
-            if receipt is not None and receipt != sealed:
-                raise ValueError('Published English metadata no longer matches its receipt')
-            if receipt is None:
-                authoring.atomic_json(receipt_path, sealed)
-            stage.rename(target)
-        finally:
-            if stage.exists():
-                shutil.rmtree(stage)
-    return target_id
+    snapshot = trusted.read_snapshot(sid)
+
+    def build_metadata(now: str) -> tuple[dict, dict, dict]:
+        changes = []
+        for original, row, page in zip(registry['pages'], rows, pages, strict=True):
+            before, after = original['original'], row['text']
+            old, new = scenario_numbers.counts(before), scenario_numbers.counts(after)
+            changes.append({'page': page['page'], 'before': before, 'after': after,
+                            'before_sha256': review._sha(before.encode()), 'after_sha256': review._sha(after.encode()),
+                            'published_text': review._published_page_text(page), 'status': row['status'],
+                            'removed_counts': dict(old-new), 'added_counts': dict(new-old),
+                            'ai_changes': row['changes']})
+        metadata = {'origin': 'external_ai', 'export_id': eid, 'candidate_digest': digest,
+                    'parent_scenario_id': sid, 'imported_by': draft['imported_by']}
+        audit = {**metadata, 'imported_at': now, 'source_hash_before': registry['manifest']['content_hash'],
+                 'source_hash_after': text_hash, 'pdf_sha256': registry['pdf_sha256'],
+                 'original_source_text': registry['source_text'], 'fallback_native': registry['fallback_native'],
+                 'revision_receipts': {p.name: review._sha(p.read_bytes())
+                                       for p in sorted(_root(sid, eid).glob('revision-*.json'))},
+                 'changes': changes, 'derived_artifacts': 'invalidated: indexes, pregens, scene_maps, Chinese variants'}
+        manifest = deepcopy(registry['manifest'])
+        manifest.update(id=target_id, title=manifest.get('title', sid) + ' [AI source]',
+                        content_hash=text_hash, preview_hash=review._sha(text[:2000].encode()),
+                        source_review=metadata, created_at=now, updated_at=now, page_count=len(pages))
+        quality = {'version': 'external-ai-v1', 'source_chars': len(text), 'review_pages': [],
+                   'source_review': metadata, 'pdf_sha256': registry['pdf_sha256'],
+                   'pages': [{'page': p['page'], 'method': 'external-ai', 'warnings': [],
+                              'selected_sha256': review._sha(review._published_page_text(p).encode())} for p in pages]}
+        return manifest, audit, quality
+
+    return trusted.publish_derived(
+        snapshot, target_id, text, [p['page'] for p in pages],
+        {'candidate_digest': digest, 'imported_by': draft['imported_by']},
+        build_metadata, lambda: _load(sid, eid), receipt_path=receipt_path,
+    )
 
 
 def scenario_label(item: dict) -> str:

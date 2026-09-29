@@ -393,8 +393,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         original_guess_title = commands.pdf_loader.guess_title
         original_extract_preview = commands.pdf_loader.extract_preview
         original_extract_index = commands.scenario_index.extract_scenario_index
-        original_clear_images = commands.clear_page_images
-        original_save_image = commands.save_page_image
+        original_refresh_images = commands.scenario_activation.refresh_after_commit
 
         with StateStorePatch(commands) as store:
             state = GroupState(group_id="g")
@@ -404,8 +403,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             commands.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
             commands.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
             commands.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
-            commands.clear_page_images = lambda conversation_id: None
-            commands.save_page_image = lambda conversation_id, page_number, png_bytes: None
+            commands.scenario_activation.refresh_after_commit = lambda *args: True
             try:
                 reply = ReplyCollector()
                 push = ReplyCollector()
@@ -434,8 +432,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 commands.pdf_loader.guess_title = original_guess_title
                 commands.pdf_loader.extract_preview = original_extract_preview
                 commands.scenario_index.extract_scenario_index = original_extract_index
-                commands.clear_page_images = original_clear_images
-                commands.save_page_image = original_save_image
+                commands.scenario_activation.refresh_after_commit = original_refresh_images
                 commands.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
                 temp_library.cleanup()
 

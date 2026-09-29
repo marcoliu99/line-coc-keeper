@@ -21,7 +21,7 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
         tool_decisions = []
         stages = []
 
-        async def request(prompt, _schema):
+        async def request(prompt, _schema, **_kwargs):
             payload = json.loads(prompt)
             stages.append(payload['response_stage'])
             if payload['response_stage'] == 'executor':
@@ -81,7 +81,7 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
                 rejected = []
 
                 async def request(prompt, _schema, missing_tool=missing_tool, state=state,
-                                  dispatched=dispatched, rejected=rejected):
+                                  dispatched=dispatched, rejected=rejected, **_kwargs):
                     payload = json.loads(prompt)
                     if payload['response_stage'] != 'executor':
                         return json.dumps({'decision': {'type': 'final',

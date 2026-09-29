@@ -745,49 +745,6 @@ def _button_io(interaction: discord.Interaction, conversation_id: str, kind: str
     )
 
 
-def _equal_ignoring_posted_marker(a: dict, b: dict) -> bool:
-    def strip(d: dict) -> dict:
-        return {k: v for k, v in d.items() if k != "_buttons_posted"}
-
-    return strip(a) == strip(b)
-
-
-async def _release_stranded_posting_claim(
-    conversation_id: str, owner_id: str, original_entry: dict, collection_name: str,
-) -> None:
-    """Clears a `_buttons_posted` claim that was saved but never actually
-    reached the player — e.g. `_send_direct_message` raised after an
-    exhausted rate-limit/network retry, or the process exited between the
-    save and the send. Without this, the entry would be permanently
-    skipped by every future `_post_check_buttons`/`_post_luck_buttons`
-    call (that's the whole point of the marker), stranding a genuinely
-    still-pending check/decision with no button ever shown for it again.
-
-    Only clears the claim if the persisted entry is still — apart from the
-    marker itself — the same one this call just claimed; if it's already
-    been resolved or replaced by the time this runs, leaves it alone."""
-    try:
-        async with locks.get_conversation_lock(conversation_id):
-            current_state = await asyncio.to_thread(load_group_state, conversation_id)
-            collection = getattr(current_state, collection_name)
-            current_entry = collection.get(owner_id)
-            if (
-                current_entry is None
-                or not current_entry.get("_buttons_posted")
-                or not _equal_ignoring_posted_marker(current_entry, original_entry)
-            ):
-                return
-            current_entry.pop("_buttons_posted", None)
-            from app.repositories.group_state import save_state as save_group_state
-
-            await asyncio.to_thread(save_group_state, current_state)
-    except Exception:
-        _logger.exception(
-            "failed to release stranded posting claim for owner_id=%s in conversation_id=%s",
-            owner_id, conversation_id,
-        )
-
-
 async def _send_check_button(
     channel: discord.abc.Messageable,
     conversation_id: str,
@@ -821,78 +778,22 @@ async def _send_check_button(
 async def _post_check_buttons(
     channel: discord.abc.Messageable,
     conversation_id: str,
-    state: GroupState,
+    state: GroupState | None,
     before_pending: dict,
     public_marker: str | None = None,
+    *,
+    sudo_command: sudo_policy.ParsedSudoCommand | None = None,
 ) -> None:
-    """Posts a roll button (or, for a "choice" check, one button per option —
-    e.g. 閃避／反擊ーー in the same message) for every pending check that's
-    new or changed since `before_pending` was snapshotted. Content-diffed,
-    not just key-diffed, so a replaced check for the same player still gets
-    fresh buttons; a stale/duplicate pending entry never gets re-posted.
-    Takes an already-loaded `state` (see _post_pending_buttons) rather than
-    loading its own — every caller needs this same post-turn state for both
-    this and _post_luck_buttons, so there's no reason to read it twice.
-
-    Every caller of _post_pending_buttons snapshots its OWN before_pending
-    right at the start of its own request handling and only diffs against
-    that local snapshot — with no cross-call marker, two overlapping
-    requests for the same conversation (e.g. one player's button click
-    still in flight when another player's message finishes processing)
-    can each independently conclude "this check is new to me" and both
-    post a button for it (see docs/specs/bug-duplicate-luck-button-
-    prompt.md for the real incident this reproduces). The `_buttons_posted`
-    flag checked-and-set under the conversation lock below closes that:
-    whichever call gets the lock first claims it durably in persisted
-    state, so a second, overlapping call sees it's already spoken for and
-    skips — not just "different from my stale snapshot"."""
-    from app.repositories.group_state import save_state as save_group_state
-
-    for owner_id, check in state.pending_checks.items():
-        if before_pending.get(owner_id) == check:
-            continue
-        claimed = False
-        claimed_at = 0.0
-        try:
-            async with locks.get_conversation_lock(conversation_id):
-                current_state = await asyncio.to_thread(load_group_state, conversation_id)
-                current_check = current_state.pending_checks.get(owner_id)
-                if current_check != check or current_check.get("_buttons_posted"):
-                    continue
-                current_check["_buttons_posted"] = True
-                await asyncio.to_thread(save_group_state, current_state)
-                claimed = True
-                claimed_at = time.perf_counter()
-                observability.event("pending_button.claimed", kind="check", status="success")
-            char = current_state.get_active_character(owner_id)
-            name = char.name if char else "你"
-            timeline_id = current_state.timeline_id or f"legacy-{conversation_id}"
-            send_started = time.perf_counter()
-            await _send_check_button(
-                channel, conversation_id, owner_id, check, name, timeline_id, public_marker,
+    """Recovery publisher for checks; service owns claim and send recovery."""
+    try:
+        async with locks.get_conversation_lock(conversation_id):
+            intents = await pending_buttons.claim_pending_buttons_locked(
+                conversation_id, before_pending, {}, kinds=frozenset({"check"}),
+                public_marker=public_marker, sudo_command=sudo_command,
             )
-            finished = time.perf_counter()
-            observability.event(
-                "pending_button.send.completed", kind="check", status="success",
-                claim_to_send_start_ms=(send_started - claimed_at) * 1000,
-                send_duration_ms=(finished - send_started) * 1000,
-                claim_to_send_completed_ms=(finished - claimed_at) * 1000,
-            )
-        except Exception:
-            # Never let one broken/unpostable entry (a malformed check dict,
-            # a transient Discord API error, ...) silently swallow every
-            # other pending check's button in the same batch, or propagate
-            # up and mask whatever the caller's own try/finally is protecting.
-            _logger.exception(
-                "failed to post check button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
-            )
-            if claimed:
-                observability.event("pending_button.send.failed", kind="check", status="error")
-                # The _buttons_posted claim was saved, but the actual send
-                # (or view/text construction) failed after that — without
-                # this, the check would be permanently skipped by every
-                # future call, stranding it with no button ever shown.
-                await _release_stranded_posting_claim(conversation_id, owner_id, check, "pending_checks")
+        await _send_claimed_button_intents(channel, conversation_id, intents)
+    except Exception:
+        _logger.exception("failed to recover check buttons for conversation_id=%s", conversation_id)
 
 
 _TIER_ZH = {"regular": "一般成功", "hard": "困難成功", "extreme": "極難成功"}
@@ -982,67 +883,22 @@ async def _send_luck_button(
 async def _post_luck_buttons(
     channel: discord.abc.Messageable,
     conversation_id: str,
-    state: GroupState,
+    state: GroupState | None,
     before_pending: dict,
     public_marker: str | None = None,
+    *,
+    sudo_command: sudo_policy.ParsedSudoCommand | None = None,
 ) -> None:
-    """Same content-diff pattern as _post_check_buttons, for pending Luck-spend
-    decisions (see app/commands.py's handle_check_command). Takes an already-
-    loaded `state` for the same reason _post_check_buttons does.
-
-    Same `_buttons_posted` durable-marker fix as _post_check_buttons — see
-    that function's docstring for why a purely local before/after diff
-    isn't enough to prevent two overlapping requests from each posting a
-    button for the same decision."""
-    from app.repositories.group_state import save_state as save_group_state
-
-    for owner_id, decision in state.pending_luck_decisions.items():
-        if before_pending.get(owner_id) == decision:
-            continue
-        claimed = False
-        claimed_at = 0.0
-        try:
-            async with locks.get_conversation_lock(conversation_id):
-                current_state = await asyncio.to_thread(load_group_state, conversation_id)
-                current_decision = current_state.pending_luck_decisions.get(owner_id)
-                if current_decision != decision or current_decision.get("_buttons_posted"):
-                    continue
-                current_decision["_buttons_posted"] = True
-                await asyncio.to_thread(save_group_state, current_state)
-                claimed = True
-                claimed_at = time.perf_counter()
-                observability.event("pending_button.claimed", kind="luck", status="success")
-            char = current_state.get_active_character(owner_id)
-            name = char.name if char else "你"
-            timeline_id = current_state.timeline_id or f"legacy-{conversation_id}"
-            send_started = time.perf_counter()
-            await _send_luck_button(
-                channel, conversation_id, owner_id, decision, name, timeline_id, public_marker,
+    """Recovery publisher for Luck; reloads after check sends have completed."""
+    try:
+        async with locks.get_conversation_lock(conversation_id):
+            intents = await pending_buttons.claim_pending_buttons_locked(
+                conversation_id, {}, before_pending, kinds=frozenset({"luck"}),
+                public_marker=public_marker, sudo_command=sudo_command,
             )
-            finished = time.perf_counter()
-            observability.event(
-                "pending_button.send.completed", kind="luck", status="success",
-                claim_to_send_start_ms=(send_started - claimed_at) * 1000,
-                send_duration_ms=(finished - send_started) * 1000,
-                claim_to_send_completed_ms=(finished - claimed_at) * 1000,
-            )
-        except Exception:
-            _logger.exception(
-                "failed to post luck button for owner_id=%s in conversation_id=%s", owner_id, conversation_id
-            )
-            if claimed:
-                observability.event("pending_button.send.failed", kind="luck", status="error")
-                await _release_stranded_posting_claim(conversation_id, owner_id, decision, "pending_luck_decisions")
-
-
-async def _release_button_intents(
-    conversation_id: str, intents: list[PendingButtonIntent],
-) -> None:
-    for intent in intents:
-        collection = "pending_checks" if intent.kind == "check" else "pending_luck_decisions"
-        await _release_stranded_posting_claim(
-            conversation_id, intent.owner_id, intent.entry, collection,
-        )
+        await _send_claimed_button_intents(channel, conversation_id, intents)
+    except Exception:
+        _logger.exception("failed to recover Luck buttons for conversation_id=%s", conversation_id)
 
 
 async def _send_claimed_button_intents(
@@ -1050,55 +906,37 @@ async def _send_claimed_button_intents(
     conversation_id: str,
     intents: list[PendingButtonIntent],
 ) -> None:
-    """Send already-claimed buttons without acquiring the conversation lock.
+    """Render via Discord while the service owns freshness and recovery."""
+    await pending_buttons.publish_claimed_buttons(
+        conversation_id, intents,
+        lambda intent: _send_button_intent(channel, conversation_id, intent),
+    )
 
-    A fresh state read before each Luck send preserves the existing protection
-    against a decision changing while an earlier check send awaited Discord.
-    """
-    for index, intent in enumerate(intents):
-        started = time.perf_counter()
-        try:
-            if intent.kind == "luck":
-                current_state = await asyncio.to_thread(load_group_state, conversation_id)
-                current = current_state.pending_luck_decisions.get(intent.owner_id)
-                if (
-                    current is None
-                    or not current.get("_buttons_posted")
-                    or not _equal_ignoring_posted_marker(current, intent.entry)
-                ):
-                    observability.event("pending_button.send.completed", kind="luck", status="stale")
-                    continue
-                await _send_luck_button(
-                    channel, conversation_id, intent.owner_id, intent.entry,
-                    intent.name, intent.timeline_id, intent.public_marker,
-                )
-            else:
-                await _send_check_button(
-                    channel, conversation_id, intent.owner_id, intent.entry,
-                    intent.name, intent.timeline_id, intent.public_marker,
-                )
-            finished = time.perf_counter()
-            observability.event(
-                "pending_button.send.completed", kind=intent.kind, status="success",
-                claim_to_send_start_ms=(started - intent.claimed_at) * 1000,
-                send_duration_ms=(finished - started) * 1000,
-                claim_to_send_completed_ms=(finished - intent.claimed_at) * 1000,
-            )
-        except asyncio.CancelledError:
-            observability.event("pending_button.send.failed", kind=intent.kind, status="cancelled")
-            cleanup = asyncio.create_task(_release_button_intents(conversation_id, intents[index:]))
-            try:
-                await asyncio.shield(cleanup)
-            except asyncio.CancelledError:
-                async_utils.observe_background_task(cleanup, operation="pending_button.claim_release")
-            raise
-        except Exception:
-            _logger.exception(
-                "failed to send claimed %s button for owner_id=%s in conversation_id=%s",
-                intent.kind, intent.owner_id, conversation_id,
-            )
-            observability.event("pending_button.send.failed", kind=intent.kind, status="error")
-            await _release_button_intents(conversation_id, [intent])
+
+async def _send_button_intent(
+    channel: discord.abc.Messageable, conversation_id: str, intent: PendingButtonIntent,
+) -> None:
+    renderer = _send_check_button if intent.kind == "check" else _send_luck_button
+    await renderer(
+        channel, conversation_id, intent.owner_id, intent.entry,
+        intent.name, intent.timeline_id, intent.public_marker,
+    )
+
+
+async def _publish_control_completion(
+    completion: pending_buttons.ControlCompletion,
+    channel: discord.abc.Messageable,
+) -> None:
+    async def recover(before_pending: dict, before_luck: dict,
+                      sudo_command: sudo_policy.ParsedSudoCommand | None) -> None:
+        await _post_pending_buttons(
+            channel, completion.conversation_id, before_pending, before_luck,
+            sudo_command=sudo_command,
+        )
+
+    await completion.publish(
+        lambda intent: _send_button_intent(channel, completion.conversation_id, intent), recover,
+    )
 
 
 async def _post_pending_buttons(
@@ -1110,48 +948,17 @@ async def _post_pending_buttons(
     *,
     sudo_command: sudo_policy.ParsedSudoCommand | None = None,
 ) -> None:
-    """Recovery path for turns that could not claim buttons inside their lock.
-
-    Normal text and button turns send previously claimed intents directly;
-    routes without one outer lock and failed claims still use this path.
-
-    Loads state once for _post_check_buttons, then loads it AGAIN,
-    separately, right before _post_luck_buttons — this is NOT the same as
-    the two independently reloading right after each other with nothing in
-    between (which really would be a redundant read worth merging): every
-    channel.send() inside _post_check_buttons' loop is a real await, a point
-    where the event loop can run another handler (a concurrent /coc newgame,
-    another player's action, ...) that mutates pending_luck_decisions before
-    _post_luck_buttons ever runs. An earlier version of this function shared
-    one snapshot across both calls — cheaper, but meant _post_luck_buttons
-    could publish a stale Luck-spend view for a decision that had already
-    been resolved or cleared by the time it actually posted. Reverted after
-    review: the point-in-time freshness on the Luck pass matters more than
-    saving one SQLite read here.
-
-    Both loads run via asyncio.to_thread: load_group_state is a synchronous
-    SQLite read + JSON deserialize of the *whole* GroupState blob (scenario
-    text, full log, character sheets, ...). Calling it directly on
-    discord.py's single event-loop thread blocks Discord's gateway heartbeat
-    processing for however long that takes — on a long-running campaign
-    (a large scenario_text, hundreds of log entries) this is measurable, and
-    under load can trigger discord.py's own "Heartbeat blocked" warnings or
-    even a gateway reconnect. Every direct load_group_state call in this
-    module goes through to_thread for the same reason."""
-    state = await asyncio.to_thread(load_group_state, conversation_id)
-    check_marker = public_marker
-    if sudo_command is not None:
-        # Resolve the marker from the same post-dispatch snapshot used to find
-        # new pending checks. Computing it before the router lock could name a
-        # character that a concurrent switch/retire operation had already
-        # replaced by the time this sudo command actually ran.
-        check_marker = command_router.sudo_public_marker(state, sudo_command)
-    await _post_check_buttons(channel, conversation_id, state, before_pending, check_marker)
-    state = await asyncio.to_thread(load_group_state, conversation_id)
-    luck_marker = public_marker
-    if sudo_command is not None:
-        luck_marker = command_router.sudo_public_marker(state, sudo_command)
-    await _post_luck_buttons(channel, conversation_id, state, before_luck_pending, luck_marker)
+    """Recovery path for turns that could not claim controls inside their lock."""
+    await _post_check_buttons(
+        channel, conversation_id, None, before_pending,
+        public_marker, sudo_command=sudo_command,
+    )
+    # Claim Luck only after check delivery, so a decision changed during that
+    # send cannot produce an obsolete Luck button.
+    await _post_luck_buttons(
+        channel, conversation_id, None, before_luck_pending,
+        public_marker, sudo_command=sudo_command,
+    )
 
 
 # choice is restricted to these two literal tokens (see app/commands.py's
@@ -1362,22 +1169,16 @@ async def _dispatch_help_command(
         return
     await interaction.response.defer()
     reply = _make_interaction_reply(interaction)
-    before_pending = dict(state.pending_checks)
-    before_luck = dict(state.pending_luck_decisions)
-    claimed_intents: list[PendingButtonIntent] | None = None
     parts = command.split()
     sudo_command: sudo_policy.ParsedSudoCommand | None = None
     if len(parts) > 1 and parts[0] == "/coc" and parts[1] == "sudo":
         sudo_command, _ = sudo_policy.parse_sudo_command(parts, allow_opaque_target=False)
+    completion = pending_buttons.ControlCompletion(
+        conversation_id, dict(state.pending_checks), dict(state.pending_luck_decisions), sudo_command,
+    )
 
     async def get_display_name() -> str:
         return getattr(interaction.user, "display_name", str(interaction.user.id))
-
-    async def claim_after_locked_turn() -> None:
-        nonlocal claimed_intents
-        claimed_intents = await pending_buttons.try_claim_pending_buttons_locked(
-            conversation_id, before_pending, before_luck, sudo_command=sudo_command,
-        )
 
     _note_ignored_keeper_role(interaction.user, state, _formerly_role_gated(parts))
     try:
@@ -1386,7 +1187,7 @@ async def _dispatch_help_command(
             _make_send_image(message_channel), _send_dm_image, command,
             lambda owner_id: f"<@{owner_id}>",
             server=permissions.ServerFacts(can_manage_server=_can_manage_server(interaction.user)),
-            post_turn_hook=claim_after_locked_turn,
+            post_turn_hook=completion.claim_locked,
             expected_revision=expected_revision,
         )
     except StateRevisionConflict:
@@ -1395,13 +1196,7 @@ async def _dispatch_help_command(
         _logger.exception("Help command failed: action=%s", action.key)
         await reply("Help 操作發生內部錯誤，請稍後再試。")
     finally:
-        if claimed_intents is None:
-            await _post_pending_buttons(
-                message_channel, conversation_id, before_pending, before_luck,
-                sudo_command=sudo_command,
-            )
-        else:
-            await _send_claimed_button_intents(message_channel, conversation_id, claimed_intents)
+        await _publish_control_completion(completion, message_channel)
 
 
 async def _finish_help_action(
@@ -1975,25 +1770,19 @@ async def _handle_message(message: discord.Message) -> None:
             return
 
         state_before = await asyncio.to_thread(load_group_state, conversation_id)
-        before_pending = dict(state_before.pending_checks)
-        before_luck_pending = dict(state_before.pending_luck_decisions)
-        claimed_intents: list[PendingButtonIntent] | None = None
         sudo_command: sudo_policy.ParsedSudoCommand | None = None
         if command_parts[0].casefold() == "/coc" and len(command_parts) > 1 and command_parts[1].casefold() == "sudo":
             sudo_command, _ = sudo_policy.parse_sudo_command(command_parts, allow_opaque_target=False)
-
-        async def claim_after_locked_turn() -> None:
-            nonlocal claimed_intents
-            claimed_intents = await pending_buttons.try_claim_pending_buttons_locked(
-                conversation_id, before_pending, before_luck_pending,
-                sudo_command=sudo_command,
-            )
+        completion = pending_buttons.ControlCompletion(
+            conversation_id, dict(state_before.pending_checks),
+            dict(state_before.pending_luck_decisions), sudo_command,
+        )
 
         try:
             _note_ignored_keeper_role(message.author, state_before, _formerly_role_gated(command_parts))
             await command_router.handle_text_message(
                 conversation_id, user_id, get_display_name, reply, _send_dm, send_image, _send_dm_image, text,
-                format_mention, post_turn_hook=claim_after_locked_turn,
+                format_mention, post_turn_hook=completion.claim_locked,
                 server=_server_facts(message.author, getattr(message, "mentions", ())),
                 referenced_message_id=(
                     str(message.reference.message_id)
@@ -2011,16 +1800,7 @@ async def _handle_message(message: discord.Message) -> None:
             # (e.g. skill_check's tool call) before a *later* tool call in the
             # same turn blows up, and that would otherwise silently strand a
             # pending check with no button ever posted for it.
-            if claimed_intents is None:
-                await _post_pending_buttons(
-                    message.channel,
-                    conversation_id,
-                    before_pending,
-                    before_luck_pending,
-                    sudo_command=sudo_command,
-                )
-            else:
-                await _send_claimed_button_intents(message.channel, conversation_id, claimed_intents)
+            await _publish_control_completion(completion, message.channel)
     except StateRevisionConflict:
         observability.mark_request_error()
         _logger.warning(

@@ -17,10 +17,7 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
-from app.providers.registry import (
-    require_conversation_provider,
-    supports_dynamic_tools,
-)
+from app.providers.conversation_session import ConversationSession
 from app.services import (
     mutation_admission,
     prompt_config,
@@ -42,7 +39,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     already-locked path, by the time this function returns — state_reducer
     no longer needs to (and must not) re-apply anything on top of it.
     """
-    provider = require_conversation_provider()
+    session = ConversationSession.current()
+    assert session is not None
+    provider = session.provider
 
     state = message.payload["state"]
     mutation_admission.assert_admitted(state.group_id)
@@ -123,7 +122,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         turn_metrics: dict[str, int] = {}
         with observability.metrics_context(turn_metrics), observability.span(
             "llm.turn", provider=config.LLM_PROVIDER,
-            model=getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", None),
+            model=session.model,
             agent="executor",
             reasoning_effort=observability.llm_reasoning_effort(config.LLM_PROVIDER),
             metrics=turn_metrics,
@@ -139,7 +138,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
                 if name in {'skill_check', 'offer_check_choice', 'offer_npc_attack_defense_choice', 'sanity_check'}:
                     tool_input = {**tool_input, '_player_action': text}
-                model = getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
+                model = session.model or "unknown"
                 remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
                     [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], state.log, model, config.LLM_PROVIDER)
                     if name == "search_scenario" else scenario_retrieval.BUDGET.get())
@@ -166,7 +165,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         "removed": list((Counter(before_items) - Counter(after_items)).elements()),
                         "evidence_ref": f"tool:{len(tool_events) + 1}",
                     }))
-                if (config.LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)):
+                if session.dynamic_tools:
                     combat_status_gate.observe_tool_result(name, result)
                 tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
                                     "inventory_before": inventory_before,
@@ -181,15 +180,13 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     delivered_fragments.update(scenario_retrieval.delivered_fragments(result.get("results", "")))
                 return receipt
 
-            provider_options = (
-                {"tools_for_request": lambda: combat_status_gate.tools_for_request(tools), "response_stage": "executor"}
-                if (config.LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)) else {}
-            )
-            if getattr(provider, 'SUPPORTS_DECISION_CONTEXT', False):
+            provider_options = session.stage_options(
+                'executor', tools_for_request=lambda: combat_status_gate.tools_for_request(tools))
+            if session.decision_context:
                 provider_options['tools_for_request'] = lambda: turn_context.check_creation_tools(
                     state, combat_status_gate.tools_for_request(tools))
                 provider_options['decision_context'] = lambda: turn_context.executor_decision_context(state, user_id)
-            if getattr(provider, 'SUPPORTS_FINAL_FEEDBACK', False):
+            if session.final_feedback:
                 def final_feedback(candidate: str) -> dict | None:
                     verified = turn_resolution.validate_resolution(
                         candidate, state=state, user_id=user_id, before_pending=before_pending,

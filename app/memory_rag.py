@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from app import db, embedding_cache, observability
+from app import db, embedding_cache, embedding_execution
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
@@ -60,22 +60,6 @@ _B = 0.75  # BM25 length-normalization strength
 _MIN_COSINE_RELEVANCE = 0.32
 
 
-def _close_embedding_client(client: object, *, rag_kind: str) -> None:
-    """Close a synchronous embedding client without masking the RAG result."""
-    close = getattr(client, "close", None)
-    if not callable(close):
-        return
-    try:
-        close()
-    except Exception as exc:  # noqa: BLE001 - cleanup must not break BM25 fallback.
-        observability.event(
-            "rag.embedding_client_close_failed",
-            level=logging.WARNING,
-            rag_kind=rag_kind,
-            error_type=type(exc).__name__,
-        )
-
-
 def _tokenize(text: str) -> list[str]:
     """Same scheme as app/scenario_rag.py's _tokenize — CJK runs become
     overlapping bigrams, ASCII words lowercase whole."""
@@ -89,45 +73,11 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _embed_texts(texts: list[str], *, rag_kind: str = "memory") -> list[list[float]] | None:
-    """Best-effort: None if no OPENAI_API_KEY or the call fails — callers
-    fall back to pure BM25 in that case, same contract as scenario_rag.py."""
-    if not texts:
-        return None
-    if not OPENAI_API_KEY:
-        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
-                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
-        return None
-    client = None
-    try:
-        import openai
-
-        client = openai.OpenAI(
-            api_key=OPENAI_API_KEY,
-            timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
-            max_retries=0,
-        )
-        with observability.span(
-            "embedding.batch",
-            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
-            batch_size=len(texts), batch_index=0, batch_count=1,
-        ):
-            response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=texts)
-        ordered: list[list[float] | None] = [None] * len(texts)
-        for item in response.data:
-            ordered[item.index] = item.embedding
-        if any(v is None for v in ordered):
-            observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
-                                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25",
-                                error_type="incomplete_embedding_response")
-            return None
-        return cast(list[list[float]], ordered)
-    except Exception:  # noqa: BLE001 - embedding is best-effort; BM25 remains the safe fallback.
-        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
-                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
-        return None
-    finally:
-        if client is not None:
-            _close_embedding_client(client, rag_kind=rag_kind)
+    """Best-effort embedding; memory ranking and fallback remain local."""
+    return embedding_execution.embed_texts(
+        texts, rag_kind=rag_kind, api_key=OPENAI_API_KEY,
+        model=SCENARIO_RAG_EMBEDDING_MODEL, timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+    )
 
 
 def _vector_norm(vec: list[float]) -> float:
