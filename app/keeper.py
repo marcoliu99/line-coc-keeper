@@ -24,6 +24,7 @@ from app import (
     async_utils,
     combat,
     db,
+    dice,  # noqa: F401 - legacy test patches share this module with checks.py
     locks,
     luck,
     memory_rag,
