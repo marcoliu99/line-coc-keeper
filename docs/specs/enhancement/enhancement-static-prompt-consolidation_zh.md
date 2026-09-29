@@ -41,12 +41,12 @@
 
 每一項各自開分支／commit：先照 `combat_block` pilot 的做法，對全部測試套件 grep 確認該段落沒有中文字面依賴，再整併／翻譯，補上或更新鎖住新文字必要內容的 prompt 斷言測試，跑完整套檢查；凡是動到檢定／戰鬥機制的項目（0、1、3），合併前要沿用既有 sim harness（`sim_playtest.py`，可從 `/Users/marcoliu/.claude/jobs/c0193acc/sim/` 重用）跑一次聚焦檢定或戰鬥的短模擬驗證。
 
-0. **操作權限與錯誤修復（最高優先，取代下面原本的任務 4、5）。** 用一份更完整的設計取代 KP Assistant 權限區塊跟 canon/spoiler/privacy 區塊：明確切開 Keeper 的兩項工作（系統操作層——主動、可修正、工具驅動；玩家敘事層——受劇本正典與防劇透限制），授予主動工具呼叫權限（依推理出的意圖行動，不要因為沒有逐字對應指令就卡住；補做上一輪漏掉的 tool call；用既有的狀態修正工具去修正錯誤的*非 authoritative* 系統狀態），定義兩類錯誤修復模型（A 類：敘事／理解錯誤——直接在下一句敘事裡修正即可，不需要新工具；B 類：已由工具確立的機制結果——HP/SAN/彈藥/戰鬥狀態等——只能透過擁有該狀態的工具改變，不能只靠敘事覆寫），並把 spoiler／canon 邊界維持成唯一真正收緊的地方（Keeper 已知的資訊可以拿來做工具呼叫判斷——這個劇本條件有沒有觸發、這個 NPC 該怎麼反應——但不能提前敘述給玩家）。這是 [bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md](../bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md) 的直接對應修法：漏講甦醒節拍本來是個 A 類敘事缺口，卻因為沒有明確授權「直接在下一句補正即可」，模型只好透過重新呼叫一整套工具去重新推導整個遭遇——用 B 類的做法去修 A 類的問題。下方完整草稿文字可以直接當實作起點；實作時要確認這份文字跟既有的人工閘門式 `/coc correct` OOC 申報流程（`app/commands/handlers/correct.py`）不衝突——那個流程應該繼續當作「AI 自我修正解決不了的爭議」的升級管道，而不是被取代掉。
+0. **操作權限與錯誤修復（最高優先，取代下面原本的任務 4）。** 用一份更完整的設計取代 KP Assistant 權限區塊跟 canon/spoiler/privacy 區塊：明確切開 Keeper 的兩項工作（系統操作層——主動、可修正、工具驅動；玩家敘事層——受劇本正典與防劇透限制），授予主動工具呼叫權限（依推理出的意圖行動，不要因為沒有逐字對應指令就卡住；補做上一輪漏掉的 tool call；用既有的狀態修正工具去修正錯誤的*非 authoritative* 系統狀態），定義兩類錯誤修復模型（A 類：敘事／理解錯誤——直接在下一句敘事裡修正即可，不需要新工具；B 類：已由工具確立的機制結果——HP/SAN/彈藥/戰鬥狀態等——只能透過擁有該狀態的工具改變，不能只靠敘事覆寫），並把 spoiler／canon 邊界維持成唯一真正收緊的地方（Keeper 已知的資訊可以拿來做工具呼叫判斷——這個劇本條件有沒有觸發、這個 NPC 該怎麼反應——但不能提前敘述給玩家）。這是 [bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md](../bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md) 的直接對應修法：漏講甦醒節拍本來是個 A 類敘事缺口，卻因為沒有明確授權「直接在下一句補正即可」，模型只好透過重新呼叫一整套工具去重新推導整個遭遇——用 B 類的做法去修 A 類的問題。下方完整草稿文字可以直接當實作起點；實作時要確認這份文字跟既有的人工閘門式 `/coc correct` OOC 申報流程（`app/commands/handlers/correct.py`）不衝突——那個流程應該繼續當作「AI 自我修正解決不了的爭議」的升級管道，而不是被取代掉。
 1. **autoroll／pending 檢定流程整合。** 把約 7 處重述收斂成一個標準版本；有實際就近提醒價值的工具專屬交叉引用留著、壓短。風險最低：純文字整併，邏輯不變，重複已查證。
 2. **`combat_block` 翻英文。** 已完成 pilot（分支 `fix/combat-reveal-beat-before-lethal-damage`，token 降 22.7%，零測試依賴）；還差一次真實戰鬥模擬驗證行為沒有退化，驗完才算這項完成。
 3. **戰鬥工具路由表。** 把散落的 start_combat／add_npc_to_combat／傷害工具／adjust_ammo 指示改成精簡的路由列表；同種怪物多隻要不同名稱這條保留成單一規則，不要埋在長段落敘述裡。
 4. ~~KP Assistant 權限層級~~ ——已併入任務 0。
-5. ~~Canon boundary／spoiler／privacy 整併~~ ——已併入任務 0。
+5. **Canon boundary／spoiler／privacy 重複性稽核** ——暫緩；先重查完整規則是否真的重複，再決定是否修改。任務 0 更新了部分相關政策，但不代表此項稽核已完成。
 6. **裝備真實性審查（46-51 → 約 3 條）。** 何時要審查、三項合理性檢查、已登記／未登記物品的處理；把購買／取得規則併進第三點，不要獨立一條。**動手精簡之前先套用契約第 4 條**——購買可負擔性那句正是「純禁令、沒有工具支撐」的案例（`purchase_items` 在 PR #91 被 revert，模型還是持續往現在文字禁止的信用評級／現金推理方向走）。要記錄清楚：單純精簡文字夠不夠，還是需要另開一張票去修好、重新引入一個範圍界定清楚的購買工具。
 7. **`roll_dice` 段落精簡。** 收斂成 `purpose`／`roll_context`（`game_resolution` vs `ooc_randomizer`）的核心契約，各配一個範例；其餘交給工具描述本身。
 
