@@ -84,4 +84,6 @@ The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag 
 
 The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) is migrated to `app/keeper_tools/scenario.py`. Chapter advance and fact recording still use Keeper's authoritative state mutation boundary through a public migration seam.
 
-The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`. The remaining handler families still use the legacy cascade.
+The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`.
+
+The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. The now-empty legacy cascade remains for a final cleanup PR.

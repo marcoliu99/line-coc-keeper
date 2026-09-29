@@ -84,4 +84,6 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 
 劇本／搜尋家族（`record_established_fact`、`record_clue`、圖片搜尋／顯示、章節推進、劇本搜尋與記憶搜尋）已移至 `app/keeper_tools/scenario.py`。章節推進與事實記錄仍透過公開過渡介面使用 Keeper 的權威狀態更新邊界。
 
-訊息家族（`send_private_info`）已移至 `app/keeper_tools/messaging.py`。其餘處理函式家族暫時仍使用舊串接。
+訊息家族（`send_private_info`）已移至 `app/keeper_tools/messaging.py`。
+
+戰鬥家族（`start_combat`、NPC 加入、狀態、回合推進、傷害、敵方計畫、效果與結束戰鬥）已移至 `app/keeper_tools/combat.py`。戰鬥規則仍在 `app/combat.py`；狀態寫入、受阻傷害不儲存，以及公開傷害過濾仍透過公開過渡介面使用 Keeper 的權威輔助函式。已清空的舊串接留待最後的清理 PR 移除。
