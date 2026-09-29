@@ -50,9 +50,9 @@ from app.config import (
 )
 from app.help_registry import HelpAction, HelpPage
 from app.legacy_commands import (
+    PdfChoice,
     Reply,
     SendImage,
-    resolve_pdf_upload_choice,
 )
 from app.models import GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
@@ -1173,7 +1173,7 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
     this project restarts on almost every deploy, and pending_pdf_upload is
     persisted specifically so this button still works across one."""
 
-    def __init__(self, conversation_id: str, choice: str, label: str) -> None:
+    def __init__(self, conversation_id: str, choice: PdfChoice, label: str) -> None:
         super().__init__(
             discord.ui.Button(
                 label=label,
@@ -1186,7 +1186,9 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
 
     @classmethod
     async def from_custom_id(cls, interaction, item, match):
-        return cls(match["conversation_id"], match["choice"], item.label or "")
+        # The template's regex accepts only "new"/"fix" (see it above), so
+        # this narrows a plain str to PdfChoice rather than re-validating it.
+        return cls(match["conversation_id"], cast(PdfChoice, match["choice"]), item.label or "")
 
     @_observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -1203,11 +1205,8 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
             return
         await _edit_interaction_view(interaction, view=None)
         push = _make_reply(cast(discord.abc.Messageable, channel))
-        await resolve_pdf_upload_choice(
-            self.conversation_id,
-            self.choice,
-            push,
-            user_id=str(interaction.user.id),
+        await command_router.handle_pdf_choice_button(
+            self.conversation_id, self.choice, str(interaction.user.id), push,
         )
 
 

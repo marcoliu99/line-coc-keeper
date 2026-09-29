@@ -9,6 +9,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.keeper_tools import character as character_handlers
+from app.keeper_tools import checks as check_handlers
+from app.keeper_tools import dice as dice_handlers
+from app.keeper_tools import inventory as inventory_handlers
 from app.keeper_tools import scenario as scenario_handlers
 from app.models import GroupState
 from app.services import opposed_checks
@@ -67,6 +71,7 @@ _SPECS = (
                     "required": ["expression"],
                 },
             },
+        handler=dice_handlers.roll_dice,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -95,6 +100,7 @@ _SPECS = (
                     "required": ["weapon_damage", "damage_bonus", "impaling"],
                 },
             },
+        handler=dice_handlers.roll_impaling_damage,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -119,6 +125,7 @@ _SPECS = (
                     "required": ["investigator", "weapon_damage"],
                 },
             },
+        handler=dice_handlers.roll_weapon_damage,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -174,6 +181,7 @@ _SPECS = (
                     "required": ["investigator", "skill"],
                 },
             },
+        handler=check_handlers.skill_check,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
@@ -235,6 +243,7 @@ _SPECS = (
                     "required": ["investigator", "options"],
                 },
             },
+        handler=check_handlers.offer_check_choice,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
@@ -259,6 +268,7 @@ _SPECS = (
                     "required": ["skill_value"],
                 },
             },
+        handler=check_handlers.npc_skill_check,
         kp_assistant=True,
         kp_canonical_game=True,
     ),
@@ -326,6 +336,7 @@ _SPECS = (
                     "required": ["investigator", "options", "attacker_skill_value"],
                 },
             },
+        handler=check_handlers.offer_npc_attack_defense_choice,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
@@ -357,6 +368,7 @@ _SPECS = (
                     "required": ["investigator"],
                 },
             },
+        handler=check_handlers.clear_pending_check,
         kp_assistant=True,
         kp_canonical_game=True,
     ),
@@ -383,6 +395,7 @@ _SPECS = (
                     "required": ["investigator", "loss_success", "loss_failure"],
                 },
             },
+        handler=check_handlers.sanity_check,
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
@@ -412,6 +425,7 @@ _SPECS = (
                     "required": ["investigator", "field", "delta"],
                 },
             },
+        handler=character_handlers.adjust_character,
     ),
     ToolSpec(
         schema={
@@ -433,6 +447,7 @@ _SPECS = (
                     "required": ["investigator", "weapon"],
                 },
             },
+        handler=inventory_handlers.adjust_ammo,
     ),
     ToolSpec(
         schema={
@@ -451,6 +466,7 @@ _SPECS = (
                     "required": ["investigator", "item"],
                 },
             },
+        handler=inventory_handlers.add_carried_item,
     ),
     ToolSpec(
         schema={
@@ -465,6 +481,7 @@ _SPECS = (
                     "required": ["investigator", "item"],
                 },
             },
+        handler=inventory_handlers.remove_carried_item,
     ),
     ToolSpec(
         schema={
@@ -516,6 +533,7 @@ _SPECS = (
                     "required": ["investigator", "tag"],
                 },
             },
+        handler=inventory_handlers.add_status_tag,
     ),
     ToolSpec(
         schema={
@@ -533,6 +551,7 @@ _SPECS = (
                     "required": ["investigator", "tag"],
                 },
             },
+        handler=inventory_handlers.remove_status_tag,
     ),
     ToolSpec(
         schema={
@@ -548,6 +567,7 @@ _SPECS = (
                     "required": ["investigator", "skill", "value"],
                 },
             },
+        handler=character_handlers.set_skill,
     ),
     ToolSpec(
         schema={
@@ -559,6 +579,7 @@ _SPECS = (
                     "required": ["investigator"],
                 },
             },
+        handler=character_handlers.get_character_sheet,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
