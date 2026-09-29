@@ -43,6 +43,17 @@ def test_snapshot_rejects_changed_source(source) -> None:
         trusted.assert_snapshot(source)
 
 
+def test_public_library_publication_api_validates_path_and_protects_assets(source) -> None:
+    with pytest.raises(ValueError, match="劇本 ID"):
+        library.scenario_path("../escape")
+    with library.publication_target("derived") as target:
+        assert target == library.SCENARIO_LIBRARY_DIR / "derived"
+    assets = library.kp_only_image_assets(
+        [1], "--- 第 1 頁 ---\nHandout", source.manifest["chapters"])
+    assert len(assets) == 1
+    assert assets[0]["visibility"] == "kp_only"
+
+
 def test_publication_preserves_pdf_and_invalidates_derived_artifacts(source) -> None:
     text = "--- 第 1 頁 ---\nCorrected source"
     target = trusted.publish_derived(

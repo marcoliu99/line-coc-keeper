@@ -207,7 +207,7 @@ def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
     """Approve an operator-reviewed candidate without changing the original source."""
     if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 200:
         raise ValueError('An operator reviewer identity is required')
-    with library._LIBRARY_LOCK:
+    with library.publication_lock():
         proposal, registry = _read_proposal(path)
         changes, issues = _validate_proposal(proposal, registry)
         digest = authoring.digest([registry, proposal])

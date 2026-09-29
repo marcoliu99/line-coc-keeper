@@ -24,7 +24,7 @@ def _sha(data: bytes) -> str:
 
 def source_path(scenario_id: str) -> Path:
     """The sole library-path access for source-review producers."""
-    return library._path(scenario_id)  # noqa: SLF001 - library identity validation lives here
+    return library.scenario_path(scenario_id)
 
 
 @dataclass(frozen=True)
@@ -103,10 +103,9 @@ def publish_derived(
     """Stage, seal, and publish a derived source without changing the original."""
     if not pages or pages != list(range(1, len(pages) + 1)):
         raise ValueError("Published pages must cover ordered physical PDF pages")
-    with library._LIBRARY_LOCK:  # noqa: SLF001 - one publisher owns the library transaction
+    with library.publication_target(target_id) as target:
         validate_source()
         assert_snapshot(source)
-        target = source_path(target_id)
         receipt = _read_json(receipt_path) if receipt_path and receipt_path.exists() else None
         if receipt is not None and (receipt.get("target_id") != target_id
                                     or receipt.get("candidate_digest") != identity["candidate_digest"]):
@@ -116,7 +115,7 @@ def publish_derived(
                              require_receipt=receipt_path is not None)
             return target_id
         prefix = ".source-ai-" if receipt_path is not None else ".source-review-"
-        stage = Path(tempfile.mkdtemp(prefix=prefix, dir=library.SCENARIO_LIBRARY_DIR))
+        stage = Path(tempfile.mkdtemp(prefix=prefix, dir=target.parent))
         try:
             (stage / "source.pdf").write_bytes(source.pdf_bytes)
             (stage / "scenario.txt").write_bytes(text.encode())
@@ -134,11 +133,8 @@ def publish_derived(
             manifest, audit, quality = build_metadata(now)
             manifest = deepcopy(manifest)
             audit = deepcopy(audit)
-            manifest["image_assets"] = library._build_image_assets(  # noqa: SLF001 - shared library asset policy
-                {number: b"" for number in pages}, {}, text, manifest["chapters"],
-            )
-            for asset in manifest["image_assets"]:
-                asset["visibility"] = "kp_only"
+            manifest["image_assets"] = library.kp_only_image_assets(
+                pages, text, manifest["chapters"])
             audit["image_sha256"] = {
                 path.name: _sha(path.read_bytes()) for path in sorted((stage / "images").glob("*.png"))
             }

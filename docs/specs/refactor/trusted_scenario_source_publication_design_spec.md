@@ -12,6 +12,8 @@ Operator PDF review and external AI English preparation use different approval r
 
 `app/trusted_scenario_source.py` owns an immutable `SourceSnapshot` (manifest, verified source text, original PDF bytes/hash) and the shared derived-scenario publication transaction. Producers pass their already-approved candidate text, target identity, audit, quality report, and source snapshot. The module rechecks the source immediately before publishing; writes source PDF/text, rendered images, KP-only image assets, and deliberately empty derived artifacts to a private staging directory; then publishes the directory and removes failed stages. Retry verification checks the existing destination against the immutable source and candidate. External AI may provide a receipt path and retains its before-rename receipt sealing and retry rules.
 
+The filesystem library owns ID validation, the publication lock and image-asset policy through public `scenario_path`, `publication_lock`/`publication_target`, and `kp_only_image_assets` APIs. The trusted publication module does not reach into underscored library internals.
+
 The operator's reviewed digest/evidence and the external AI's page/import/revision validation remain separate. Neither producer may revise the original PDF, skip numeric auditing, silently approve an incomplete page, or select the published scenario for play. The existing filesystem library remains the adapter.
 
 ## Verification
