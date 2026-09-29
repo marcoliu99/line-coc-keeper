@@ -4,7 +4,7 @@
 
 ## 狀態與範圍
 
-分類：`enhancement`。狀態：**partial**（本分支正在完成第 5 項英文政策文字；其他項目各自在獨立分支）。對照基準：`main_v2` 的 `5199139`（2026-09-29）。
+分類：`enhancement`。狀態：**partial**（本分支已完成第 5 項稽核與英文政策文字；其他項目各自在獨立分支）。對照基準：`main_v2` 的 `5199139`（2026-09-29）。
 
 第 3 項驗證：prompt 斷言、完整 pytest、Ruff、mypy 與 compileall 均通過。同一份《陰宅》劇本序列、同一個 sim 腳本（SHA-256 `7b6b7ea46815646f0668799ba4e387f330b5053ded427c9f8c8a064045b59d39`）及 provider 設定，用不同資料庫各跑 16 輪。乾淨 `origin/main_v2` 的 `start_combat`／`add_npc_to_combat` 次數為 1／1；原壓縮路由的兩次測試都是 1／0。因此這個聚焦場景顯示 prompt 壓縮造成回歸，不是 `main_v2` 原有缺陷。原 bullet 明確把開戰與登記**已在場且有劇本來源**的敵人連在一起；簡寫的「NPC joins」容易理解為之後才加入。首次開戰回合的動態戰鬥段落尚未啟用，其泛稱路由也無法補救。只在靜態路由補回同一工具序列內 `start_combat` → `add_npc_to_combat`、交接前登記的明確指示後，兩次全新 16 輪重跑各成功登記一次；科比特卡的 HP、護甲與攻擊欄位均有值。這驗證的是此場景的 NPC 登記路徑，不代表所有劇本、能力欄位或整套戰鬥機制均已驗證。
 
@@ -53,9 +53,11 @@
 | NPC 隊友基本規則／NPC 隊友保密 | 常駐段落規定隊友的有限知識與角色行為；可關閉的段落禁止隊友傳遞 Keeper 專屬真相，並要求新資訊走正常調查。刪掉任一段都會改變開關前後的行為。 |
 | 秘密目標／關鍵背景連結 | 後者明確是公開欄位，另有 SAN 流程，沒有重述秘密目標規則。 |
 
-**結論：**第 5 項不刪除或合併任何規則。原先的重複判斷把插入的字典值當成另一份文字；實際沒有可安全刪除的副本。硬合併會丟失不同的行為，或破壞開關獨立性。獨立的任務 0 分支在既有可開關規則之外新增 `SPOILER_BOUNDARY`、`INFORMATION_VISIBILITY`；整合該分支時應再核對其重疊，但須保留已核准的草稿及兩個開關。
+**結論：**第 5 項不刪除或合併任何規則。原先的重複判斷把插入的字典值當成另一份文字；實際沒有可安全刪除的副本。硬合併會丟失不同的行為，或破壞開關獨立性。獨立的任務 0 分支把 `scenario_secrecy`、`private_info_and_secret_goal` 的內容換成草稿中的 `SPOILER_BOUNDARY`、`INFORMATION_VISIBILITY`；整合兩個分支時必須明確對齊文字，同時保留任務 0 已核准的權限／修錯設計、任務 5 的四條英文要求，以及兩個開關。
 
 Marco 隨後要求把四條給模型看的政策改成英文。翻譯 `scenario_secrecy`、`metanarration`、`npc_ally_secrecy`、`private_info_and_secret_goal`，保留每一項限制、資訊接收者邊界，以及 `send_private_info`／`skill_check` 工具路由。前三條仍受 `SPOILER_PROTECTION_ENABLED` 控制，隱私條款仍獨立受 `PRIVACY_ISOLATION_ENABLED` 控制。守密人的繁體中文敘事語氣指示不變。測試改以英文獨有片語斷言，並驗證兩個開關的獨立性。無須修改 schema、儲存狀態或玩家看到的文字。執行完整 pytest、Ruff、mypy、compileall；四條沒有改變戰鬥或檢定工具契約，不須真實 provider 的戰鬥／檢定 smoke。
+
+本分支已將四條規則文字改成英文。`tests/test_spoiler_policy.py` 驗證獨有英文片語、開關獨立、每條只插入一次，以及四條內沒有中文字。四條合計以 `o200k_base` 量測為 625 → 341 tokens；這只是本地 tokenizer 比較，不代表實際回合耗時。
 
 ## 提案分段（一塊一塊做，依下方優先順序）
 
@@ -66,7 +68,7 @@ Marco 隨後要求把四條給模型看的政策改成英文。翻譯 `scenario_
 2. **`combat_block` 翻英文。** 已完成 pilot（分支 `fix/combat-reveal-beat-before-lethal-damage`，token 降 22.7%，零測試依賴）；還差一次真實戰鬥模擬驗證行為沒有退化，驗完才算這項完成。
 3. **戰鬥工具路由表——已實作，聚焦場景的 NPC 登記已驗證。** 把散落的 start_combat／add_npc_to_combat／傷害工具／adjust_ammo 指示改成精簡的路由列表；同種怪物多隻要不同名稱這條保留成單一規則。必須保留已觸發敵人的 `start_combat` → `add_npc_to_combat` 立即交接；第一次壓縮時缺少這個線索而退化。休眠敵人不能只因「在場」就起身，仍依劇本的受威脅／接觸／攻擊條件觸發；`fix/combat-reveal-beat-before-lethal-damage` 原有的起身敘事規則保持原文。
 4. ~~KP Assistant 權限層級~~ ——已併入任務 0。
-5. **Canon boundary／spoiler／privacy 稽核與英文政策文字——進行中。** 完整規則與四種開關組合均未發現 `main_v2` 可刪的重複。將四條獨立規則翻成英文，保留內容與開關；整合任務 0 時再核對新政策文字。
+5. **Canon boundary／spoiler／privacy 稽核與英文政策文字——本分支已實作。** 完整規則與四種開關組合均未發現 `main_v2` 可刪的重複；四條獨立規則已改成英文且保留內容與開關。整合任務 0 時須對齊被替換的規則文字。
 6. **裝備真實性審查（46-51 → 約 3 條）。** 何時要審查、三項合理性檢查、已登記／未登記物品的處理；把購買／取得規則併進第三點，不要獨立一條。**動手精簡之前先套用契約第 4 條**——購買可負擔性那句正是「純禁令、沒有工具支撐」的案例（`purchase_items` 在 PR #91 被 revert，模型還是持續往現在文字禁止的信用評級／現金推理方向走）。要記錄清楚：單純精簡文字夠不夠，還是需要另開一張票去修好、重新引入一個範圍界定清楚的購買工具。
 7. **`roll_dice` 段落精簡。** 收斂成 `purpose`／`roll_context`（`game_resolution` vs `ooc_randomizer`）的核心契約，各配一個範例；其餘交給工具描述本身。
 

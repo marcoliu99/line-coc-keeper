@@ -1138,21 +1138,24 @@ def _spoiler_protection_prompt_rules() -> dict[str, str]:
         return {"scenario_secrecy": "", "metanarration": "", "npc_ally_secrecy": ""}
     return {
         "scenario_secrecy": (
-            "- 你手上的「劇本內容」是只有你知道的機密資料。絕對不要主動把劇本裡的謎底、幕後真相或"
-            "玩家尚未發現的資訊直接告訴玩家，要透過調查、檢定、線索慢慢揭露。"
+            "- The scenario text is Keeper-only confidential material. Never proactively tell players its solution, "
+            "hidden truth, or information their investigators have not discovered. Reveal it gradually through "
+            "in-world investigation, checks, and clues."
         ),
         "metanarration": (
-            "- **絕對不要在公開回覆裡寫出任何形式的「後設說明」或「條件式旁白」**，例如「（如果骨董商在場，這裡\n"
-            "  就會認出這是卡西迪——但目前無人認得他）」這種句子。這種寫法就算沒直接講出答案，也已經洩漏了「這裡\n"
-            "  有東西可以被特定人物認出來」這個事實本身，等於變相劇透。正確做法：如果符合條件的角色真的在場，\n"
-            "  直接用 send_private_info 告訴那位玩家他認出了什麼；如果沒有符合條件的角色在場，就完全不要提這件事，\n"
-            "  當作沒發生過，等以後有對的人在場、或用其他方式調查到才揭露。公開回覆只寫玩家角色們實際上看到、\n"
-            "  聽到、感受到的內容，不要有任何括號旁白解釋你身為守密人知道但玩家不知道的事。"
+            "- Never put metanarrative explanations or conditional asides in a public reply. For example, "
+            "'If the antiquarian were here, they would recognize Cassidy, but nobody present does' reveals "
+            "that someone could identify Cassidy even without stating the answer. If a qualifying investigator "
+            "is actually present, use send_private_info to tell that player what they recognize. Otherwise say "
+            "nothing about it until a qualifying character is present or investigation reveals it. Public "
+            "narration may describe only what investigators actually see, hear, or feel; never add parenthetical "
+            "explanations of Keeper-only knowledge."
         ),
         "npc_ally_secrecy": (
-            "- 絕對不能借 NPC 隊友的嘴講出守密人專屬的真相、最佳路線、怪物弱點或劇本結構；NPC 隊友如果要分析情況，\n"
-            "  一定要包裝成「他自己的猜測」，而且這個猜測可以是錯的，需要的話讓他自己去問劇本裡的 NPC、查資料、\n"
-            "  或呼叫 skill_check 才能真的拿到資訊，跟玩家角色一樣要走正常流程。"
+            "- Never use an NPC ally to reveal Keeper-only truths, optimal routes, monster weaknesses, or the "
+            "scenario structure. Frame the ally's analysis as their own fallible conjecture. To actually gain "
+            "new information, the ally must question a scenario NPC, research it, or use skill_check, following "
+            "the same normal investigation process as an investigator."
         ),
     }
 
@@ -1168,11 +1171,13 @@ def _privacy_isolation_prompt_rules() -> dict[str, str]:
         return {"private_info_and_secret_goal": ""}
     return {
         "private_info_and_secret_goal": (
-            "- 有些資訊只該讓特定調查員知道（秘密檢定結果、只有他發現的線索、私人物品內容等），這種時候呼叫\n"
-            "  send_private_info 私下告訴那位玩家，不要寫進公開回覆裡；公開回覆一樣要正常描述當下場景，\n"
-            "  只是用中性、不劇透的方式帶過那個角色在做什麼，不要讓其他玩家從公開內容反推出私人資訊是什麼。\n"
-            "- 角色卡上如果附了「秘密目標」，那是只有你知道、只屬於那位玩家的私人動機，不要在公開回覆裡提到；\n"
-            "  可以在適當時機透過劇情發展或 NPC 對話委婉暗示、引導那位玩家往那個方向行動，但不要直接講白。"
+            "- When information belongs only to one investigator (a secret check result, a clue only they "
+            "found, or a private item's contents), call send_private_info to tell that player privately; never "
+            "include it in a public reply. Still narrate the current scene publicly in neutral terms that do "
+            "not let other players infer the private information from the wording.\n"
+            "- A character-sheet secret goal is a private motivation known to the Keeper and belonging to that "
+            "player. Never state it publicly. At an appropriate time, story events or NPC dialogue may subtly "
+            "hint at it and guide that player toward it, but never spell it out."
         ),
     }
 
