@@ -1319,6 +1319,20 @@
       "path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec.md",
       "zh_path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec_zh.md",
       "source_revision": "434b76ddaffb865af842617a0c7962b81852e2b8"
+    },
+    {
+      "title": "Codex request ownership",
+      "zh": "Codex 請求擁有權",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/codex_request_owner.py",
+        "app/providers/codex_provider.py",
+        "app/providers/codex_transport.py",
+        "tests/test_codex_request_owner.py"
+      ],
+      "path": "docs/specs/refactor/codex_request_ownership_design_spec.md",
+      "zh_path": "docs/specs/refactor/codex_request_ownership_design_spec_zh.md"
     }
   ]
 }
