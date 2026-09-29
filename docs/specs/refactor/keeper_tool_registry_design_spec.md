@@ -2,7 +2,7 @@
 
 [繁體中文](keeper_tool_registry_design_spec_zh.md)
 
-Status: **backlog** (awaiting spec review; no implementation yet). Base: `main_v2` at `3705eb2`.
+Status: **partial** (reviewed; registry and derived sets implemented, handler families pending). Base: `main_v2` at `1a31645`.
 
 > Refreshed against current `main_v2`: `main_v2` since reverted PR #99/#121's movement pipeline (`docs/specs/bug/movement_authorization_diagnosability_design_spec.md`). `app/services/movement.py`, `movement.TOOL`/`commit_movement`, and `ORIGIN_TOOLS` no longer exist, so they're dropped below along with the migration step that named them. Everything else here still matches the current code, with refreshed line numbers.
 
@@ -69,3 +69,5 @@ class ToolCall:                            # the Data Clump the handlers share t
 - **Location:** handlers live in `app/keeper_tools/`, one module per family (`dice.py`, `checks.py`, `combat.py`, …). They're the Keeper's capabilities, a different kind of thing from the flow services in `app/services/`.
 - **Schema order:** provider prompt caching includes the tool list in the cached prefix, so the registry preserves declaration order and a test pins the order sent to providers.
 - **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
+
+Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. Correction: both prerequisites (`bug/major-wound-con-check-gate` #117, `refactor/combat-start-in-combat-module` #118) had already landed on `main_v2` by the time this spec was last refreshed; that line was stale, not current fact. The combat family is migrated in a later PR (`refactor/keeper-tool-combat`). It is independent of the other handler-family branches and does not touch `app/combat.py` itself. A separate, unrelated effort, `refactor/check-lifecycle` (PR #138), centralizes player check registration and touches the same check/character code the `keeper-tool-checks` and `keeper-tool-character` families extracted, plus `app/combat.py`; those two family branches, and possibly the combat family's eventual final form, need re-alignment with it. Sequencing between them is an open decision, not yet made.

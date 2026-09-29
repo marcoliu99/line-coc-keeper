@@ -7,6 +7,7 @@ from app import config, keeper, observability
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
+from app.keeper_tools import registry as tool_registry
 from app.providers.registry import (
     require_conversation_provider,
     supports_dynamic_tools,
@@ -15,9 +16,7 @@ from app.providers.registry import (
 from app.services import mutation_admission, prompt_config
 
 _logger = logging.getLogger(__name__)
-_OPENING_TOOL_NAMES = keeper.READ_ONLY_TOOL_NAMES - {
-    "roll_dice", "roll_impaling_damage", "roll_weapon_damage",
-} | {"send_private_info", "show_scenario_image"}
+_OPENING_TOOL_NAMES = tool_registry.OPENING_TOOL_NAMES
 
 
 async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:

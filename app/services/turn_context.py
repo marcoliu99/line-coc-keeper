@@ -5,6 +5,7 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
 
 _CHECK_FIELDS = (
@@ -96,9 +97,7 @@ def digest_history(state: GroupState, digest: dict | None) -> str:
     )
 
 
-_CHECK_CREATION_TOOLS = frozenset({
-    "skill_check", "sanity_check", "offer_check_choice", "offer_npc_attack_defense_choice",
-})
+_CHECK_CREATION_TOOLS = tool_registry.CHECK_CREATION_TOOLS
 
 
 def check_creation_tools(state: GroupState, tools: list[dict]) -> list[dict]:
