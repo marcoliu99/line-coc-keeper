@@ -187,7 +187,7 @@ player / KP correction -> owning deterministic tool for confirmed state
 
 - Implementation: [app/keeper.py](../../../app/keeper.py) and [app/keeper_prompt_policy.py](../../../app/keeper_prompt_policy.py).
 - Prompt contracts: `tests/test_static_prompt_*.py`, `tests/test_spoiler_policy.py`, and `tests/test_narrative_boundary_prompts.py`.
-- The integration PR records full checks and an isolated live simulation.
+- Full pytest, Ruff, mypy, and compileall passed after integration. An isolated 16-turn, five-investigator Codex simulation completed with 16/16 router calls and no LLM or tool errors; it exercised player checks, pending follow-ups, combat start, enemy registration, damage, and turn enforcement. `start_combat` and `add_npc_to_combat` occurred on consecutive turns because three scenario searches exhausted the four-tool budget before enemy registration. The scripted sequence did not reach a lethal dormant-enemy wake beat; the exact rule and prompt assertions remain verified, but live narration at that beat is unproven. Independent spoiler/privacy switch combinations are covered by the combined prompt test, not by the live script.
 
 ## Appendix: execution handoff
 

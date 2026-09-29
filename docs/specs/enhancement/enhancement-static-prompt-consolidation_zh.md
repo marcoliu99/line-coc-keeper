@@ -187,7 +187,7 @@ _build_dynamic_prompt(KP Assistant) -> 權限 + 精簡骰子機制
 
 - 實作：[app/keeper.py](../../../app/keeper.py) 和 [app/keeper_prompt_policy.py](../../../app/keeper_prompt_policy.py)。
 - Prompt 契約：`tests/test_static_prompt_*.py`、`tests/test_spoiler_policy.py`、`tests/test_narrative_boundary_prompts.py`。
-- 整合 PR 記錄完整檢查與隔離的真實模擬。
+- 整合後完整 pytest、Ruff、mypy、compileall 均通過。隔離的五名調查員、16 輪 Codex 真實模擬有 16／16 次 router 呼叫完成，沒有 LLM 或工具錯誤；實際走到玩家檢定、待擲後續、建立戰鬥、登記敵人、傷害與先攻限制。因三次劇本搜尋先耗掉四次工具額度，`start_combat` 與 `add_npc_to_combat` 分散在連續兩回合。固定序列未走到沉睡敵人的致命甦醒節拍；僅能確認原句與 prompt 斷言保留，不能宣稱真實敘事已驗證該節拍。防劇透／隱私開關組合由整合 prompt 測試驗證，真實模擬沒有切換開關。
 
 ## 附錄：執行交接
 
