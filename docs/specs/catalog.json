@@ -1419,6 +1419,18 @@
       ],
       "path": "docs/specs/enhancement/enhancement-static-prompt-consolidation.md",
       "zh_path": "docs/specs/enhancement/enhancement-static-prompt-consolidation_zh.md"
+    },
+    {
+      "title": "Dormant-enemy reveal beat before lethal resolution",
+      "zh": "沉睡敵人的甦醒節拍在致命結算前被跳過",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "tests/test_combat_reveal_beat_before_lethal_damage.py"
+      ],
+      "path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md",
+      "zh_path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md"
     }
   ]
 }

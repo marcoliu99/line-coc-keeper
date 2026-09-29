@@ -917,7 +917,7 @@ class StatePersistenceTests(unittest.TestCase):
     def test_static_prompt_instructs_distinct_names_for_same_species_multiples(self):
         state = GroupState("discord-group-prompt-check")
         prompt = keeper._build_static_prompt(state)
-        self.assertIn("同一場戰鬥裡如果同時出現多隻同種怪物", prompt)
+        self.assertIn("Each simultaneously active instance of one enemy type needs a distinct display name", prompt)
 
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")

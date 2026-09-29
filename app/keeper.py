@@ -1270,19 +1270,15 @@ def _build_static_prompt(state: GroupState) -> str:
   不管是否呼叫這個工具，都不可以自己憑空決定成敗或編造骰值；照 deterministic tool 回傳結果敘事。
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具；依上面的群組模式等玩家擲骰或使用立即回傳的 SAN、損失與 madness 結果敘事。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
-- 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
-- **角色用武器攻擊、命中對方時的傷害**：一般（非極限成功）命中呼叫 roll_weapon_damage（給角色名稱
-  跟武器傷害骰，系統會自動查角色的傷害加值 DB 加進去，不用你自己拼骰子表示式或手動加總——
-  `roll_dice` 沒辦法解析「武器骰+DB骰」這種混合表示式，硬湊字串只會失敗或算錯）；如果這次攻擊的
-  **攻擊擲骰**是極限成功（不是反擊），改呼叫 roll_impaling_damage，讓系統照 COC7e 規則正確算出
-  「武器＋傷害加值都算最大值，穿刺武器再額外重骰一次武器傷害」的結果。不是武器傷害的一般描述性
-  擲骰（道具檢定、環境傷害等）才用 roll_dice。
-- 只有劇本條件或已成立的正式事件確實使攻擊、被攻擊、追逐戰鬥等場面發生時，才呼叫 start_combat 開始正式戰鬥；玩家猜測、恐懼或失敗檢定不是開戰依據。這個工具不需要參數；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。開戰後改用 add_npc_to_combat 加入**已有來源的**敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）。呼叫 add_npc_to_combat（不是 start_combat）時，若劇本寫了護甲、攻擊、特殊能力、每輪/每戰使用限制或觸發條件，必須先查劇本，把結果放進 add_npc_to_combat 的 armor/attacks/abilities；不要只填 HP 後靠臨場記憶。**同一場戰鬥裡如果同時出現多隻同種怪物（例如左右各撲來一隻魚人、三隻餓狼同時包抄），每一隻呼叫 add_npc_to_combat 時都要給不同的顯示名稱（例如「魚人（左）」／「魚人（右）」，或「餓狼一」／「餓狼二」／「餓狼三」），不要用完全相同的名字呼叫兩次——系統會把同名、還沒倒下的敵人視為重複加入同一隻而擋下第二次呼叫，用不同名字才能讓每一隻怪物各自有獨立血量、可以被玩家分別鎖定攻擊。**
-- 戰鬥中如果出現持續性效果（例如燃燒、流血、中毒、環境傷害），呼叫 add_combat_effect
-  建立一次效果即可，之後每輪由系統自動結算傷害；不要自己每輪手動呼叫 roll_dice 模擬
-  傷害，更不要把這類擲骰結果透過 adjust_character 寫進任何角色的 HP/MP/SAN/LUCK 欄位
-  ——那個工具只能用來調整敘述明確指名的那位角色自己的數值，不是拿來暫存跟他無關的擲
-  骰結果。
+# Combat Tool Routing
+- A scenario condition or resolved canonical event starts a dangerous fight -> `start_combat` (no arguments). Suspicion, fear, a failed check, or a harmless scuffle does not establish combat.
+- A scenario-backed enemy is already active when combat starts, or activates later under its written trigger -> `add_npc_to_combat`. Immediately after `start_combat` succeeds, call `add_npc_to_combat` for every already-active enemy in the same tool sequence, before final narration or turn handoff; starting combat alone does not register enemies. A dormant enemy does not activate merely because it is present; preserve the scenario's threat/touch/attack trigger. Check the scenario first and pass its armor, attacks, special abilities, usage limits, and triggers in `armor`/`attacks`/`abilities`; HP alone is insufficient. Each simultaneously active instance of one enemy type needs a distinct display name (for example, 「魚人（左）」 and 「魚人（右）」); an identical live name is treated as the same combatant.
+- If the scenario has a dormant enemy that wakes/rises only when threatened/touched/attacked, the first narration dealing damage or defeat MUST show that wake/rise moment — never jump straight from "motionless" to "collapsed, no longer moving" (players can't tell those apart). If a player later says it should have reacted, check get_combat_status/get_character_sheet for what already happened and narrate only the missing beat — do not re-call start_combat/add_npc_to_combat/damage tools to resolve the same attack twice.
+- An NPC attacks an investigator -> `offer_npc_attack_defense_choice`; use the correct `is_ranged` mode and defense options from the active-combat rules below. The player chooses; never decide their defense for them.
+- A firearm with tracked ammunition actually fires, in or out of combat -> `adjust_ammo` (normally `delta=-1`; more for a burst). Weapons without tracked ammunition need no ammo call. An empty gun only clicks; after an actual reload use `reload_full=true`.
+- An ordinary weapon hit -> `roll_weapon_damage`; an extreme success on an active attack, never a counterattack -> `roll_impaling_damage`. Pass the investigator and weapon damage; the tool adds DB and applies the impaling rule. Do not build a weapon-plus-DB expression or manually total it with `roll_dice`; use `roll_dice` only for other random outcomes such as environmental damage.
+- Raw combat damage before armor -> `apply_combat_damage` with `raw_damage`; already-reduced final damage -> `apply_final_combat_damage` with `final_damage`; healing -> `damage_combatant`. Do not bypass combat HP resolution with `adjust_character`.
+- A continuing combat condition (fire, bleeding, poison, environmental harm) -> `add_combat_effect` once; the engine resolves later ticks. Do not roll each tick yourself or store an unrelated roll in another investigator's HP/MP/SAN/LUCK via `adjust_character`.
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
@@ -1401,38 +1397,49 @@ def _build_dynamic_prompt(
 # 目前戰鬥狀態
 {combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
-戰鬥規則：目前正在進行正式戰鬥，一次只處理「輪到的角色」的行動，嚴格按照上面列出的先攻順位進行——
-DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情方便就打亂順序或把不同 DEX 的人合併敘述成同時
-發生；只有 DEX 剛好相同的戰鬥員才可以敘述成同時行動。某位戰鬥員的行動（含擲骰結果）處理完後，必須呼叫
-advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
-呼叫 apply_combat_damage（尚未扣護甲的 raw_damage）或 apply_final_combat_damage（已扣除減免的 final_damage）更新 HP；治療才用 damage_combatant；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
-禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
-不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色被 NPC 攻擊時，呼叫
-offer_npc_attack_defense_choice 讓玩家自己選防守方式，不要自己幫玩家決定。近戰跟遠程走完全不同的
-COC7e 判定機制，一定要正確填 is_ranged 參數，不要漏填：近戰（engaged）是雙方比較成功等級的對抗檢定，
-is_ranged 填 false 或省略，options 給「閃避」「反擊」兩個選項；遠程攻擊（槍械、投擲武器等）不是對抗
-檢定，攻擊方單獨判定命中、防守方只能「撲向掩體」，is_ranged 一定要填 true，options 只給「閃避」一個
-選項，不能反擊、不要為了湊兩個硬塞假的反擊選項。這個工具會直接由程式碼依 is_ranged 選對的機制擲骰
-（近戰立刻擲攻擊方；遠程會等玩家擲完撲向掩體的結果才擲攻擊方，不用你自己先呼叫 npc_skill_check 再把
-結果填回去）；玩家只選防守選項，選定後預設由玩家用 /coc check 觸發防守方骰；autoroll 開啟時才由系統
-自動擲骰並判定攻擊有沒有命中、反擊有沒有生效，你只需要照系統回饋的既定結果敘述，不用自己比較雙方骰出
-的等級誰贏，遠程也不用自己判斷撲向掩體有沒有讓攻擊方多帶懲罰骰。
+Combat rule: a formal combat is underway. Handle only the current combatant's action, strictly following the
+initiative order listed above -- combatants with different DEX act and get narrated in that order; never
+reorder for narrative convenience or merge different-DEX combatants into one simultaneous beat. Only
+combatants with the exact same DEX may be narrated as acting simultaneously. Once a combatant's action
+(including roll results) is resolved, you must call advance_combat_turn to move to the next combatant --
+never silently skip ahead or resolve multiple combatants in one pass. PC or enemy damage/death: call
+apply_combat_damage (pre-armor raw_damage) or apply_final_combat_damage (already-reduced final_damage) to
+update HP; damage_combatant is for healing only; a new enemy joining the fight needs add_npc_to_combat. If
+someone whose turn hasn't come wants to act, politely remind them to wait; a combatant tagged "（暫離）"
+means that player stepped away -- advance_combat_turn skips them automatically, no need to wait on them.
+Call end_combat once combat is clearly over (one side wiped out or fled). When a PC is attacked by an NPC,
+call offer_npc_attack_defense_choice and let the player choose their own defense -- don't decide for them.
+Melee and ranged use entirely different COC7e resolution mechanics, so is_ranged must always be filled
+correctly, never omitted: melee (engaged) is an opposed roll comparing both sides' success levels --
+is_ranged is false or omitted, options are "閃避"/"反擊" (dodge/fight back); ranged attacks (firearms,
+thrown weapons, etc.) are not opposed -- the attacker alone resolves the hit and the defender can only
+"撲向掩體" (dive for cover) -- is_ranged must be true, options is "閃避" alone, never fight back, and
+never pad it with a fake second option. This tool rolls dice itself via code based on is_ranged (melee
+rolls the attacker immediately; ranged waits for the player's dive-for-cover result before rolling the
+attacker -- never call npc_skill_check yourself and feed the result back in). The player only picks a
+defense option; by default they trigger the defender roll with /coc check; only with autoroll on does the
+system roll automatically and resolve hit/counter -- narrate the system's given outcome, never compare
+success levels yourself, and never judge for ranged whether diving for cover added a penalty die to the
+attacker.
 
-敵人回合規則：輪到敵方戰鬥卡時，必須先呼叫 plan_enemy_turn。工具會檢查特殊能力、觸發條件、每輪/每戰使用次數、
-冷卻與可用攻擊；你不能只因玩家站在敵人面前就預設它一定揮拳。照 plan 的 selected_action 處理：若是
-special_ability，依 required_rolls 建立 POW 對抗、技能檢定或其他正式流程，完成後呼叫 resolve_enemy_action
-消耗該能力次數；若是 attack，看 target_ids 裡的 ID 開頭判斷目標類型——「pc:」開頭是玩家角色，「ally:」
-開頭是沒有玩家操控的隊友 NPC，「enemy:」開頭是敵方。目標是玩家角色（pc: 開頭）時，改走上一段「玩家角色
-被 NPC 攻擊時」的規則——直接呼叫 offer_npc_attack_defense_choice，攻擊方的 attacker_skill_value 就用
-這次 plan 的 required_rolls[0].skill_value，is_ranged 跟 options 都看 required_rolls[0].range_band：
-engaged 是近戰，is_ranged 填 false，options 給「閃避」「反擊」兩個選項；near/any 是遠程，is_ranged
-填 true，options 只給「閃避」一個選項；不用另外想辦法取得這些值，也不要
-對這個目標呼叫 resolve_enemy_action（玩家的防守結果出來後，命中與傷害由你在下一輪自然的
-apply_combat_damage／apply_final_combat_damage／damage_combatant 呼叫處理，不是由 resolve_enemy_action 處理）；目標不是玩家角色（ally: 或 enemy: 開頭
-——沒有玩家可以做防守選擇，例如隊友 NPC 或敵方陣營內鬥），才由你自己判定正式命中結果與傷害值放入
-outcome，呼叫 resolve_enemy_action 統一套用護甲與 HP 變更。plan 裡的 private_reason、敵人能力真名、
-POW/護甲/弱點/冷卻/使用次數等未揭露資訊只能供你判斷，不得寫進公開回覆。公開敘事只使用 public_hint，
-或用玩家能感受到的現象描述。"""
+Enemy-turn rule: when it's an enemy combat card's turn, call plan_enemy_turn first. The tool checks special
+abilities, trigger conditions, per-round/per-fight use limits, cooldowns, and available attacks -- never
+assume it swings just because a player is standing in front of it. Follow the plan's selected_action: for
+special_ability, set up the POW-opposed roll, skill check, or other formal process per required_rolls, then
+call resolve_enemy_action once done to consume that use. For attack, read the target_ids prefix for target
+type -- "pc:" is a PC, "ally:" is a player-less ally NPC, "enemy:" is the enemy side. If the target is a PC
+(pc: prefix), follow the "PC attacked by NPC" rule above instead -- call offer_npc_attack_defense_choice
+directly, with attacker_skill_value from this plan's required_rolls[0].skill_value, and is_ranged/options
+from required_rolls[0].range_band: engaged is melee, is_ranged false, options "閃避"/"反擊"; near/any is
+ranged, is_ranged true, options "閃避" alone -- don't source these values any other way, and don't call
+resolve_enemy_action for this target (once the player's defense result is in, hit and damage are handled
+by your normal apply_combat_damage/apply_final_combat_damage/damage_combatant call next round, not by
+resolve_enemy_action). Only when the target isn't a PC (ally: or enemy: prefix -- no player available to
+choose a defense, e.g. an ally NPC or enemy infighting) do you judge the formal hit and damage yourself and
+put it in outcome, then call resolve_enemy_action to apply armor and HP uniformly. The plan's
+private_reason, the enemy ability's true name, and undisclosed POW/armor/weakness/cooldown/use-count info
+are for your judgment only -- never write them into a public reply. Public narration only uses public_hint
+or descriptions of phenomena the players can perceive."""
 
     kp_assistant_block = ""
     if speaker_role == "kp_assistant":
