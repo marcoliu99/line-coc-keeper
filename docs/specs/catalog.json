@@ -1445,6 +1445,21 @@
       ],
       "path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md",
       "zh_path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md"
+    },
+    {
+      "title": "Player check settlement and safe follow-up",
+      "zh": "玩家檢定結算與安全續敘",
+      "category": "refactor",
+      "status": "backlog",
+      "evidence": [
+        "app/check_lifecycle.py",
+        "app/legacy_commands.py",
+        "app/models.py",
+        "tests/test_check_lifecycle.py",
+        "tests/test_resolved_check_events.py"
+      ],
+      "path": "docs/specs/refactor/player_check_settlement_design_spec.md",
+      "zh_path": "docs/specs/refactor/player_check_settlement_design_spec_zh.md"
     }
   ]
 }

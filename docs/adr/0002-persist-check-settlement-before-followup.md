@@ -1,0 +1,3 @@
+# Persist check settlement separately from completed follow-up
+
+A deterministic player roll and final Luck choice can commit before Keeper follow-up finishes. We will persist a separate pending follow-up result in the same state transaction as that settlement, then publish the existing resolved-check event only after follow-up is complete. This adds a state phase but preserves the established meaning of resolved-check events for correction adjudication and prevents a failed Keeper call from inviting a reroll. We rejected both replaying the entire check and publishing an incomplete event as if narration and later tool effects were final.

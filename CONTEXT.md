@@ -34,3 +34,7 @@ _Avoid_: luck buy-up (in prose)
 
 **Major wound**（重傷）:
 A single hit that deals at least half of an investigator's maximum HP without dropping them to 0. It requires a CON check.
+
+**Pending follow-up result**（待續敘結果）:
+A player's check whose dice and final Luck decision have been committed, while the Keeper's follow-up has not yet safely finished. It is distinct from an unrolled pending check and never authorizes another roll.
+_Avoid_: pending check (for a settled result)
