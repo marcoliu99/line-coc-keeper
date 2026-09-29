@@ -13,6 +13,7 @@ from app import keeper
 from app.keeper_tools import combat as combat_handlers
 from app.keeper_tools.registry import ToolCall
 from app.models import GroupState
+from app.services.turn_delivery import observe_tool
 
 
 def _call(state: GroupState, enemies: list[dict]) -> ToolCall:
@@ -51,6 +52,47 @@ class InitializeCombatTests(unittest.TestCase):
         display_names = {c.display_name for c in enemies}
         self.assertEqual(len(display_names), 2)  # both visible and distinguishable
         self.assertEqual([e["ok"] for e in result["enemies"]], [True, True])
+
+    def test_index_aliases_in_one_batch_still_create_distinct_enemies(self):
+        state = GroupState(group_id="initialize-combat-" + self._testMethodName)
+        state.scenario_npc_index = [{"name": "Deep One", "aliases": ["魚人"], "hp": 8}]
+        def mutate(current, callback):
+            result = callback(current)
+            return result.value if isinstance(result, keeper.ToolStateMutation) else result
+
+        with patch.object(keeper, "mutate_tool_state", side_effect=mutate):
+            result = combat_handlers.initialize_combat(_call(state, [
+                {"name": "Deep One", "dex": 40, "hp": 8},
+                {"name": "魚人", "dex": 45, "hp": 8},
+            ]))
+        self.assertEqual([entry["ok"] for entry in result["enemies"]], [True, True])
+        self.assertEqual(len([member for member in state.combat.order if member.side == "enemy"]), 2)
+
+    def test_initial_turn_uses_highest_dex_after_full_batch(self):
+        state = GroupState(group_id="initialize-combat-" + self._testMethodName)
+        combat_handlers.initialize_combat(_call(state, [
+            {"name": "Slow", "dex": 20, "hp": 8},
+            {"name": "Fast", "dex": 90, "hp": 8},
+        ]))
+        self.assertEqual(state.combat.order[state.combat.current_index].name, "Fast")
+
+    def test_empty_and_invalid_batches_do_not_start_combat(self):
+        for enemies in (
+            [],
+            [{"name": "Bad", "dex": "invalid", "hp": 8}],
+            [{"name": "Bad", "dex": 40, "hp": 8, "armor": [None]}],
+        ):
+            state = GroupState(group_id="initialize-combat-" + self._testMethodName)
+            result = combat_handlers.initialize_combat(_call(state, enemies))
+            self.assertFalse(result["ok"])
+            self.assertFalse(state.combat.active)
+
+    def test_reused_existing_enemy_is_reported(self):
+        state = GroupState(group_id="initialize-combat-" + self._testMethodName)
+        combat_handlers.initialize_combat(_call(state, [{"name": "Existing", "dex": 40, "hp": 8}]))
+        result = combat_handlers.initialize_combat(_call(state, [{"name": "Existing", "dex": 40, "hp": 8}]))
+        self.assertTrue(result["enemies"][0]["reused"])
+        self.assertEqual(len([member for member in state.combat.order if member.side == "enemy"]), 1)
 
     def test_armor_attacks_and_abilities_have_field_parity_with_the_single_add_tool(self):
         state = GroupState(group_id="initialize-combat-" + self._testMethodName)
@@ -116,3 +158,12 @@ class InitializeCombatTests(unittest.TestCase):
             }, [], [])
         self.assertTrue(result["ok"])
         self.assertIn("柯比特", result["status"])
+
+    def test_public_observation_omits_enemy_cards(self):
+        result = observe_tool("initialize_combat", {
+            "ok": True,
+            "status": "Secret HP 20",
+            "enemies": [{"name": "Corbitt", "ok": True}],
+        }, 1)
+        self.assertEqual(result.audience, "public")
+        self.assertNotIn("Secret HP", result.public_text)

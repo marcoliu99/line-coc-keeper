@@ -215,7 +215,7 @@ def gameplay_snapshot(state: GroupState) -> dict[str, Any]:
 
 def _setup_only(before: dict, after: dict, event: dict) -> bool:
     """Allow encounter initialization, never damage or advancing an existing turn."""
-    if event["name"] not in {"start_combat", "add_npc_to_combat"} or not event["result"].get("ok"):
+    if event["name"] not in {"start_combat", "add_npc_to_combat", "initialize_combat"} or not event["result"].get("ok"):
         return False
     if {k: v for k, v in before.items() if k not in {"combat", "last_combat_report"}} != {
         k: v for k, v in after.items() if k not in {"combat", "last_combat_report"}

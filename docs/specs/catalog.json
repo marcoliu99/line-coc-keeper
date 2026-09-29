@@ -1047,8 +1047,11 @@
       "status": "implemented",
       "evidence": [
         "app/combat.py",
+        "app/keeper.py",
         "app/keeper_tools/combat.py",
         "app/keeper_tools/registry.py",
+        "app/services/turn_delivery.py",
+        "app/services/turn_resolution.py",
         "tests/test_initialize_combat.py"
       ],
       "path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool.md",

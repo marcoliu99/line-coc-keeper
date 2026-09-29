@@ -437,18 +437,22 @@ def add_combatant(
     armor: list[dict[str, Any]] | None = None,
     attacks: list[dict[str, Any]] | None = None,
     abilities: list[dict[str, Any]] | None = None,
+    force_new_instance: bool = False,
 ) -> AddedCombatant:
     """Add an NPC or ally to the fight, starting it (with its checkpoint) if needed.
 
     An enemy who is already in the fight and not defeated, under `name` or
     any /coc index alias of it, is not added again, so the same monster never
     gets a second, independent HP pool; that combatant is reused instead.
+    `force_new_instance` is used only after a batch has identified a second
+    separately supplied individual matching one already processed in that
+    same batch. Other callers retain the normal active-enemy reuse guard.
     Allies are never de-duplicated. A defeated enemy's name can be added
     again, since a second monster of the same kind may arrive, but the result
     reports the defeated namesake so the caller can ask whether it's really a
     new one, and the newcomer gets a numbered display name.
     """
-    if not is_ally:
+    if not is_ally and not force_new_instance:
         existing = find_live_enemy_by_any_alias(state, name)
         if existing is not None:
             return AddedCombatant(existing, reused=True)

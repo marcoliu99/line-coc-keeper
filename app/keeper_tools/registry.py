@@ -586,7 +586,8 @@ _SPECS = (
                 "name": "start_combat",
                 "description": (
                     "開始一場正式戰鬥，會依照目前登記角色的 DEX 建立先攻順位。"
-                    "開戰後用 add_npc_to_combat 加入敵人，再用 advance_combat_turn 依序推進回合。"
+                    "只有一隻敵人啟動時，開戰後用 add_npc_to_combat 登記；兩隻以上同時啟動改用 "
+                    "initialize_combat 一次開戰並登記。之後用 advance_combat_turn 依序推進回合。"
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             },
@@ -657,6 +658,7 @@ _SPECS = (
                     "properties": {
                         "enemies": {
                             "type": "array",
+                            "minItems": 1,
                             "description": "本次遭遇的所有敵方 NPC／怪物名單，每一隻同種怪物都要給不同的顯示名稱",
                             "items": {
                                 "type": "object",

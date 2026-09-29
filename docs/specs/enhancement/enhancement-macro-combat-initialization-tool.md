@@ -4,7 +4,7 @@
 
 ## Status and scope
 
-Category: `enhancement`. Status: **implemented on branch**. Aligned with `refactor/keeper-tool-registry-final-cleanup` (PR #141) on 2026-09-29.
+Category: `enhancement`. Status: **implemented on branch**. Aligned with `main_v2` after PR #149 on 2026-09-29.
 
 This edition describes the current contract. Proposed work is explicitly identified; historical source text is linked below.
 
@@ -14,13 +14,15 @@ This edition describes the current contract. Proposed work is explicitly identif
 
 2. Each enemy must carry distinct player-visible identity and complete scenario-supported armor/attacks/abilities. Never silently drop same-name array entries; any fallback suffix must be visible to players.
 
-3. Reuse existing combat and duplicate/alias/HP checks, including authoritative indexed HP for each enemy. DEX initiative is already implemented; do not invent a separate initiative-rolling mechanism.
+3. Reuse existing combat and duplicate/alias/HP checks, including authoritative indexed HP for each enemy. After the full initial roster is assembled, the highest DEX starts the first turn. Existing active combat retains its current actor; no separate initiative roll is added.
 
 4. **Decided with Marco (2026-09-29):**
    - **Field parity:** each `enemies` entry accepts `armor`/`attacks`/`abilities`, matching `add_npc_to_combat` exactly — not a reduced schema. The static prompt already requires the Keeper to fill these when the scenario specifies them; a macro tool without them would be a capability regression for any encounter with armored or ability-bearing enemies.
-   - **Partial success, per-entry status:** a validation failure on one array entry (e.g. the duplicate-name guard) does not fail the whole call. Valid entries are still added; the response reports each entry's own outcome, so the Keeper can narrate what happened and, if needed, retry only the failed entries.
-   - **Idempotency:** no new mechanism. `add_npc_to_combat` itself has none today (a duplicate call really does add a second combatant, deliberately — see the "never silently drop" rule above), so `initialize_combat` matches that existing behavior rather than inventing a guarantee the single-add tool doesn't have.
+   - **Partial success, per-entry status:** a validation failure on one array entry does not fail the whole call. Valid entries are still added; each result reports success, error, or reuse of an enemy that was already active before this batch. An empty or wholly invalid batch must not start combat.
+   - **Duplicate identity:** entries in the same batch are separate individuals even if their names normalize alike or use scenario-index aliases. Existing active enemies are reused and explicitly reported. No broader idempotency guarantee is added.
    - `add_npc_to_combat` stays as the path for a single NPC joining an already-active fight; `initialize_combat` is only for starting combat with N enemies at once.
+
+5. The tool is recognized as safe encounter setup by turn-resolution handoff and as a generic public combat outcome without exposing enemy sheets. The static combat routing selects it for two or more already-active, scenario-supported enemies; dormant enemies await their written trigger.
 
 ## Flow and interfaces
 
@@ -34,6 +36,9 @@ The linked implementation and existing regression tests are the audit evidence. 
 
 - [app/keeper_tools/combat.py](../../../app/keeper_tools/combat.py)
 - [app/combat.py](../../../app/combat.py)
+- [app/services/turn_resolution.py](../../../app/services/turn_resolution.py)
+- [app/services/turn_delivery.py](../../../app/services/turn_delivery.py)
+- [app/keeper.py](../../../app/keeper.py)
 - [tests/test_combat_cards.py](../../../tests/test_combat_cards.py)
 - [tests/test_keeper_tool_registry.py](../../../tests/test_keeper_tool_registry.py)
 - [tests/test_initialize_combat.py](../../../tests/test_initialize_combat.py)
