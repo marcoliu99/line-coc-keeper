@@ -1224,6 +1224,19 @@
       "zh_path": "docs/specs/enhancement/codex_analysis_provider_design_spec_zh.md"
     },
     {
+      "title": "Authoritative turn handoff",
+      "zh": "權威回合交接",
+      "category": "refactor",
+      "status": "in_progress",
+      "evidence": [
+        "app/services/turn_handoff.py",
+        "app/agents/supervisor.py",
+        "tests/test_turn_handoff.py"
+      ],
+      "path": "docs/specs/refactor/authoritative_turn_handoff_design_spec.md",
+      "zh_path": "docs/specs/refactor/authoritative_turn_handoff_design_spec_zh.md"
+    },
+    {
       "title": "Keeper tools as a registry",
       "zh": "Keeper 工具改為註冊表",
       "category": "refactor",
