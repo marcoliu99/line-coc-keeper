@@ -9,6 +9,7 @@ from uuid import uuid4
 from app import (
     memory_rag,
     observability,
+    scenario_activation,
     scenario_index,
     scenario_library,
     scenario_rag,
@@ -21,7 +22,6 @@ from app.config import (
     SCENARIO_RAG_TOP_K,
 )
 from app.models import GroupState
-from app.repositories.group_state import clear_page_images, save_page_image
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
@@ -131,6 +131,7 @@ def show_scenario_image(call: ToolCall) -> dict[str, Any]:
 def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
     state = call.state
     from app import keeper
+    context_holder: dict[str, Any] = {}
     def _advance(target_state: GroupState) -> dict:
         if not target_state.scenario_library_id:
             return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
@@ -138,12 +139,12 @@ def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
         if next_id is None:
             return {"ok": False, "error": "目前已是最後一個章節"}
         context = scenario_library.load_context(target_state.scenario_library_id, next_id)
-        target_state.scenario_text = context["text"]
-        target_state.active_chapter_id = context["active_chapter_id"]
-        target_state.context_chapter_ids = context["context_chapter_ids"]
-        target_state.scenario_npc_index = context["indexes"].get("npcs", [])
-        target_state.scenario_location_index = context["indexes"].get("locations", [])
-        target_state.scene_maps = context["scene_maps"]
+        scenario_activation.install_context_fields(
+            target_state, target_state.scenario_library_id, context,
+            variant_id=target_state.scenario_variant_id,
+            preserve_pregens=True,
+        )
+        context_holder.update(context)
         # After the assignment, or this reads the previous chapter's maps.
         artifact_notice = scenario_index.report_location_index(
             target_state.scenario_location_index, source="chapter_switch",
@@ -159,11 +160,6 @@ def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
             requested_timeline_id=old_timeline_id,
             provider="openai",
         )
-        clear_page_images(target_state.group_id)
-        scenario_library.copy_context_images(
-            target_state.scenario_library_id, context["page_numbers"],
-            lambda page, image: save_page_image(target_state.group_id, page, image),
-        )
         # Carried into the result, or a group that switches chapters
         # into an empty-artifact variant is told nothing at all.
         result = {"ok": True, "active_chapter_id": context["active_chapter_id"],
@@ -171,7 +167,14 @@ def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
         if artifact_notice:
             result["notice"] = artifact_notice
         return result
-    return keeper.mutate_tool_state(state, _advance)
+    result = keeper.mutate_tool_state(state, _advance)
+    if result.get("ok") and context_holder:
+        refreshed = scenario_activation.refresh_after_commit(
+            state.group_id, state.scenario_library_id, context_holder,
+        )
+        if not refreshed:
+            result["notice"] = (result.get("notice", "") + "\n頁面圖片快取刷新失敗；章節已推進，請聯絡 KP 檢查圖片。").strip()
+    return result
 
 
 def search_scenario(call: ToolCall) -> dict[str, Any]:

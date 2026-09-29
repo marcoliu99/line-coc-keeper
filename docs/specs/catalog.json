@@ -1238,10 +1238,39 @@
       "zh_path": "docs/specs/refactor/command_completion_controls_design_spec_zh.md"
     },
     {
+      "title": "Scenario activation and chapter transitions",
+      "zh": "劇本啟動與章節轉換",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_activation.py",
+        "app/legacy_commands.py",
+        "app/commands/handlers/system.py",
+        "app/keeper_tools/scenario.py",
+        "app/checkpoints.py",
+        "tests/test_scenario_activation.py"
+      ],
+      "path": "docs/specs/refactor/scenario_activation_transitions_design_spec.md",
+      "zh_path": "docs/specs/refactor/scenario_activation_transitions_design_spec_zh.md"
+    },
+    {
+      "title": "Authoritative turn handoff",
+      "zh": "權威回合交接",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_handoff.py",
+        "app/agents/supervisor.py",
+        "tests/test_turn_handoff.py"
+      ],
+      "path": "docs/specs/refactor/authoritative_turn_handoff_design_spec.md",
+      "zh_path": "docs/specs/refactor/authoritative_turn_handoff_design_spec_zh.md"
+    },
+    {
       "title": "Keeper tools as a registry",
       "zh": "Keeper 工具改為註冊表",
       "category": "refactor",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
         "app/keeper_tools/registry.py",
         "app/keeper_tools/character.py",

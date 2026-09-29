@@ -12,6 +12,7 @@ from app import (
     keeper,
     locks,
     observability,
+    scenario_activation,
     scenario_authoring,
     scenario_index,
     scenario_intro,
@@ -43,9 +44,7 @@ from app.legacy_commands import (
 from app.models import GroupState
 from app.repositories import manual_pregens
 from app.repositories.group_state import (
-    clear_page_images,
     load_state,
-    save_page_image,
     save_state,
     scenario_users,
 )
@@ -542,14 +541,9 @@ async def handle_system_command(
                     old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
                 except (FileNotFoundError, ValueError):
                     pass
-            state.scenario_library_id = parts[3]
-            state.scenario_variant_id = variant_id
-            state.scenario_title = context["manifest"]["title"]
-            state.scenario_text = context["text"]
-            state.active_chapter_id = context["active_chapter_id"]
-            state.context_chapter_ids = context["context_chapter_ids"]
-            state.scenario_npc_index = context["indexes"].get("npcs", [])
-            state.scenario_location_index = context["indexes"].get("locations", [])
+            scenario_activation.install_context_fields(
+                state, parts[3], context, variant_id=variant_id, preserve_maps=True,
+            )
             # Selecting a scenario is a new campaign context even when the
             # live investigator sheets are retained.  Old maintenance,
             # memory, and provider results must not bleed into this scenario.
@@ -580,15 +574,9 @@ async def handle_system_command(
             # Pregens belong to the selected library item. Keep live
             # investigators in state.characters, but never leak the previous
             # scenario's pregen pool into this scenario's /coc pregens list.
-            state.pregens = context["pregens"]
             state.openai_previous_response_id = ""
             state.openai_previous_response_timeline_id = ""
             state.active = True
-            clear_page_images(conversation_id)
-            scenario_library.copy_context_images(
-                parts[3], context["page_numbers"],
-                lambda page, image: save_page_image(conversation_id, page, image),
-            )
             install_result: dict[str, bool] = {}
             def install_cards(conn):
                 manual_pregens.capture_legacy(
@@ -598,14 +586,18 @@ async def handle_system_command(
                     conn, conversation_id, parts[3], context,
                     bind_unassigned=(old_scenario_id is None),
                 )
-            save_state(state, mutate_tx=install_cards)
+            _, image_refreshed = scenario_activation.commit_and_refresh(
+                lambda: save_state(state, mutate_tx=install_cards),
+                conversation_id, parts[3], context,
+            )
             if len(parts) > 4:
                 scenario_templates.select_variant(conversation_id, parts[3], variant_id)
             scenario_templates.schedule_index_prewarm(state)
             note = "\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""
+            image_notice = "\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else ""
             await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。{note}"
                         + (f"\n{preference_notice}" if preference_notice and len(parts) == 4 else "")
-                        + (f"\n\n{artifact_notice}" if artifact_notice else ""))
+                        + (f"\n\n{artifact_notice}" if artifact_notice else "") + image_notice)
             return
         if action == "clean":
             if not permissions.may_manage_scenario_lifecycle(state, user_id):

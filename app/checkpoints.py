@@ -177,30 +177,6 @@ def clean_checkpoint(group_id: str, identifier: str) -> None:
     )
 
 
-def _restore_page_images(state: GroupState) -> None:
-    """Rebuild the on-disk derived image cache for a restored scenario."""
-    from app import scenario_library
-    from app.repositories.group_state import clear_page_images, save_page_image
-
-    clear_page_images(state.group_id)
-    if not state.scenario_library_id:
-        return
-    try:
-        context = scenario_library.load_context(
-            state.scenario_library_id, state.active_chapter_id
-        )
-        scenario_library.copy_context_images(
-            state.scenario_library_id,
-            context["page_numbers"],
-            lambda page, image: save_page_image(state.group_id, page, image),
-        )
-    except FileNotFoundError:
-        _logger.warning(
-            "rollback_image_restore_skipped group_id=%s scenario_id=%s reason=library_missing",
-            _log_group_id(state.group_id), state.scenario_library_id,
-        )
-
-
 @_observed_checkpoint("rollback")
 def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupState, dict, dict]:
     """Atomically create pre-rollback, restore the checkpoint, and return both metadata records."""
@@ -270,7 +246,8 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
         raise
     image_restore_failed = False
     try:
-        _restore_page_images(restored)
+        from app import scenario_activation
+        image_restore_failed = not scenario_activation.refresh_restored_images(restored)
     except Exception:
         # The authoritative SQLite rollback has already committed. Keep that
         # result instead of reporting a failed rollback, but make the derived
