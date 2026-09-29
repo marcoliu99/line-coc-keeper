@@ -81,3 +81,5 @@ The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is
 Both handler families and the lifecycle refactor were aligned together on `integration/keeper-check-character-lifecycle`. PRs #130–#133 and #138 are now integrated into `main_v2`.
 
 The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single authoritative state mutation boundary through a public migration seam.
+
+The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) is migrated to `app/keeper_tools/scenario.py`. Chapter advance and fact recording still use Keeper's authoritative state mutation boundary through a public migration seam.

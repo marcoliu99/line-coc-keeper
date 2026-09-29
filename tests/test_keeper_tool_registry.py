@@ -170,3 +170,17 @@ def test_inventory_family_dispatches_without_legacy_cascade() -> None:
         )
     assert removed["ok"] and state.characters["p1"].carried_items == []
     assert state.consumed_or_removed_items[-1]["item"] == "key"
+
+
+def test_scenario_search_family_dispatches_without_legacy_cascade() -> None:
+    from app import memory_rag
+    from app.models import GroupState
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy search dispatch")),
+          patch.object(memory_rag, "search_memory", return_value=[]),
+          patch.object(memory_rag, "format_results", return_value="none")):
+        result = keeper._execute_tool(
+            GroupState(group_id="scenario-search"), "search_memory", {"query": "door"}, [], [],
+        )
+    assert result == {"ok": True, "results": "none"}

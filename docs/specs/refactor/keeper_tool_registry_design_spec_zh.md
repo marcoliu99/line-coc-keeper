@@ -81,3 +81,5 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 兩個處理函式家族與檢定生命週期重構已在 `integration/keeper-check-character-lifecycle` 一起對齊。PR #130–#133 和 #138 現已合入 `main_v2`。
 
 物品／狀態家族（`adjust_ammo`、攜帶物品新增／移除、狀態標記新增／移除）已移至 `app/keeper_tools/inventory.py`。這些處理函式仍透過公開過渡介面使用 Keeper 單一的權威狀態更新邊界。
+
+劇本／搜尋家族（`record_established_fact`、`record_clue`、圖片搜尋／顯示、章節推進、劇本搜尋與記憶搜尋）已移至 `app/keeper_tools/scenario.py`。章節推進與事實記錄仍透過公開過渡介面使用 Keeper 的權威狀態更新邊界。
