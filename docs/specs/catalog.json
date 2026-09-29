@@ -1319,6 +1319,20 @@
       "path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec.md",
       "zh_path": "docs/specs/feature/keeper_adjudicates_corrections_design_spec_zh.md",
       "source_revision": "434b76ddaffb865af842617a0c7962b81852e2b8"
+    },
+    {
+      "title": "Conversation session and embedding execution",
+      "zh": "對話 session 與 embedding 執行",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/conversation_session.py",
+        "app/embedding_execution.py",
+        "tests/test_conversation_session.py",
+        "tests/test_embedding_execution.py"
+      ],
+      "path": "docs/specs/refactor/conversation_session_embedding_execution_design_spec.md",
+      "zh_path": "docs/specs/refactor/conversation_session_embedding_execution_design_spec_zh.md"
     }
   ]
 }
