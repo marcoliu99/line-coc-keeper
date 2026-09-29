@@ -20,7 +20,7 @@ class ScenarioTemplateReviewFixTests(unittest.TestCase):
                 patch.object(legacy_commands.scenario_library, "load_context", return_value=context), \
                 patch.object(legacy_commands, "_apply_new_scenario"), \
                 patch.object(legacy_commands, "_install_library_context"), \
-                patch.object(legacy_commands, "_install_context_images"), \
+                patch.object(legacy_commands.scenario_activation, "refresh_after_commit", return_value=True), \
                 patch.object(legacy_commands, "_pdf_upload_confirmation_text", return_value="loaded"), \
                 patch.object(scenario_templates, "preference_notice", return_value="已改用原文檢索"):
             response = legacy_commands._resolve_pdf_upload_choice_locked("group", "new")

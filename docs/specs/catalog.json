@@ -1224,6 +1224,22 @@
       "zh_path": "docs/specs/enhancement/codex_analysis_provider_design_spec_zh.md"
     },
     {
+      "title": "Scenario activation and chapter transitions",
+      "zh": "劇本啟動與章節轉換",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_activation.py",
+        "app/legacy_commands.py",
+        "app/commands/handlers/system.py",
+        "app/keeper_tools/scenario.py",
+        "app/checkpoints.py",
+        "tests/test_scenario_activation.py"
+      ],
+      "path": "docs/specs/refactor/scenario_activation_transitions_design_spec.md",
+      "zh_path": "docs/specs/refactor/scenario_activation_transitions_design_spec_zh.md"
+    },
+    {
       "title": "Authoritative turn handoff",
       "zh": "權威回合交接",
       "category": "refactor",
