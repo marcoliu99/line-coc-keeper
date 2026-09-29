@@ -217,9 +217,15 @@ def _setup_only(before: dict, after: dict, event: dict) -> bool:
     """Allow encounter initialization, never damage or advancing an existing turn."""
     if event["name"] not in {"start_combat", "add_npc_to_combat"} or not event["result"].get("ok"):
         return False
-    if {k: v for k, v in before.items() if k != "combat"} != {k: v for k, v in after.items() if k != "combat"}:
+    if {k: v for k, v in before.items() if k not in {"combat", "last_combat_report"}} != {
+        k: v for k, v in after.items() if k not in {"combat", "last_combat_report"}
+    }:
         return False
     old, new = before["combat"], after["combat"]
+    if before.get("last_combat_report") != after.get("last_combat_report") and not (
+        not old["active"] and new["active"] and after.get("last_combat_report") == {}
+    ):
+        return False
     if not new["active"] or new["round_number"] != 1 or new["effects"] or new["plans"]:
         return False
     if old["active"]:

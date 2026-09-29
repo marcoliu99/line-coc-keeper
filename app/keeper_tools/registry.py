@@ -645,7 +645,7 @@ _SPECS = (
     ToolSpec(
         schema={
                 "name": "get_combat_status",
-                "description": "查詢目前戰鬥的回合數、先攻順位與現在輪到誰的行動。一般公開視圖不顯示敵人 HP；KP Assistant 可看 private 視圖。",
+                "description": "查詢目前戰鬥的回合數、先攻順位與現在輪到誰的行動；戰鬥結束後也可查最近一場的結算證據。一般公開視圖不顯示敵人 HP；KP Assistant 可看 private 視圖。",
                 "input_schema": {"type": "object", "properties": {}},
             },
         handler=combat_handlers.get_combat_status,

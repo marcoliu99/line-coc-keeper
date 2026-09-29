@@ -85,6 +85,7 @@ def _seed_from_characters(state: GroupState) -> list[Combatant]:
 def _ensure_started(state: GroupState) -> None:
     _ensure_character_identity(state)
     if not state.combat.active:
+        state.last_combat_report = {}
         state.combat = CombatState(active=True, round_number=1, order=_seed_from_characters(state), current_index=0)
         process_timing(state, "round_start")
         _mark_round_start_abilities(state)
@@ -668,6 +669,19 @@ def apply_combat_damage(
             card.status_tags.append(_damage_taken_trigger_tag())
     _sync_pc_hp(state, combatant)
     major_wound_check = _resolve_major_wound_check(state, combatant, final, after)
+    state.last_combat_report = {
+        "timeline_id": state.timeline_id,
+        "scenario_library_id": state.scenario_library_id,
+        "scenario_title": state.scenario_title,
+        "last_damage": {
+            "target": combatant.display_name,
+            "side": combatant.side,
+            "final_damage": final,
+            "hp_before": before,
+            "hp_after": after,
+            "defeated": combatant.defeated,
+        },
+    }
     return {
         "ok": True,
         "name": combatant.display_name,
@@ -1523,7 +1537,56 @@ def _advance_turn(state: GroupState) -> dict:
 
 
 def end_combat(state: GroupState) -> None:
+    if state.combat.active:
+        report = state.last_combat_report
+        if (
+            report.get("timeline_id") != state.timeline_id
+            or report.get("scenario_library_id") != state.scenario_library_id
+            or report.get("scenario_title") != state.scenario_title
+        ):
+            report = {}
+        state.last_combat_report = {
+            "timeline_id": state.timeline_id,
+            "scenario_library_id": state.scenario_library_id,
+            "scenario_title": state.scenario_title,
+            "ended": True,
+            "combatants": [
+                {
+                    "name": member.display_name,
+                    "side": member.side,
+                    "defeated": member.defeated,
+                    "hp": member.hp,
+                    "hp_max": member.hp_max,
+                }
+                for member in state.combat.order
+            ],
+            "last_damage": report.get("last_damage", {}),
+        }
     state.combat = CombatState()
+
+
+def last_ended_combat_evidence(state: GroupState, *, include_private: bool) -> dict[str, Any]:
+    """Project the final combat state without leaking enemy HP to players."""
+    report = state.last_combat_report
+    if (
+        state.combat.active or not report.get("ended")
+        or report.get("timeline_id") != state.timeline_id
+        or report.get("scenario_library_id") != state.scenario_library_id
+        or report.get("scenario_title") != state.scenario_title
+    ):
+        return {}
+    include_private = include_private or not spoiler_policy.is_privacy_isolation_enabled()
+    members = []
+    for member in report.get("combatants", []):
+        projected = {key: member[key] for key in ("name", "side", "defeated") if key in member}
+        if include_private or member.get("side") != "enemy":
+            projected.update({key: member[key] for key in ("hp", "hp_max") if key in member})
+        members.append(projected)
+    damage = dict(report.get("last_damage") or {})
+    if not include_private and damage.get("side") == "enemy":
+        for key in ("final_damage", "hp_before", "hp_after"):
+            damage.pop(key, None)
+    return {"ended": True, "combatants": members, "last_damage": damage}
 
 
 def status_text(state: GroupState, include_private: bool = False) -> str:

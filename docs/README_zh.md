@@ -20,6 +20,8 @@
 | [區分 NPC 個體與限制工具對話](specs/bug/bug-add-npc-to-combat-duplicate-name-guard_zh.md) | 已實作 | [English](specs/bug/bug-add-npc-to-combat-duplicate-name-guard.md) |
 | [如實回報重傷檢定狀態](specs/bug/bug-adjust-character-false-major-wound-check_zh.md) | 已實作 | [English](specs/bug/bug-adjust-character-false-major-wound-check.md) |
 | [進入戰鬥與傷害工具契約](specs/bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity_zh.md) | 已實作 | [English](specs/bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity.md) |
+| [沉睡敵人的甦醒節拍在致命結算前被跳過](specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md) | 已實作 | [English](specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md) |
+| [戰鬥開始後漏登記已在場敵人](specs/bug/bug-active-enemy-registration-after-combat-start_zh.md) | 待實作 | [English](specs/bug/bug-active-enemy-registration-after-combat-start.md) |
 | [持續效果傷害與幸運數值隔離](specs/bug/bug-continuing-damage-rolls-corrupt-luck-stat_zh.md) | 已實作 | [English](specs/bug/bug-continuing-damage-rolls-corrupt-luck-stat.md) |
 | [無歧義的參戰者定位](specs/bug/bug-find-combatant-substring-collision_zh.md) | 已實作 | [English](specs/bug/bug-find-combatant-substring-collision.md) |
 | [待處理 Luck 阻擋衝突的手動檢定](specs/bug/bug-luck-decision-not-checked-non-autoroll_zh.md) | 已實作 | [English](specs/bug/bug-luck-decision-not-checked-non-autoroll.md) |
