@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app import (
     character_matcher,
+    check_lifecycle,
     checkpoints,
     keeper,
     locks,
@@ -876,30 +877,53 @@ async def handle_system_command(
 
         if opening_data["found"]:
             opening_text = opening_data["text"]
+            opening_check = opening_data.get("opening_check")
+            opening_blocker = ""
             with locks.get_state_lock(conversation_id):
                 state = load_state(conversation_id)
                 if state.game_started:
                     return
-                state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
-                state.log.append({"role": "assistant", "content": opening_text})
-                state.game_started = True
-                
-                opening_check = opening_data.get("opening_check")
                 if opening_check:
+                    candidates: dict[str, dict[str, Any]] = {}
                     for owner_id, char in state.characters.items():
                         if opening_check["type"] == "skill":
-                            value = keeper.resolve_skill_value(char, opening_check["skill"])
-                            state.pending_checks[owner_id] = {
-                                "type": "skill", "skill": opening_check["skill"], "skill_value": value,
-                                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular", "pushed": False,
+                            candidates[owner_id] = {
+                                "type": "skill", "skill": opening_check["skill"],
+                                "skill_value": keeper.resolve_skill_value(char, opening_check["skill"], register_unknown=False),
+                                "bonus_dice": 0, "penalty_dice": 0,
+                                "difficulty": "regular", "pushed": False,
                             }
                         else:
-                            state.pending_checks[owner_id] = {
+                            candidates[owner_id] = {
                                 "type": "sanity",
                                 "loss_success": opening_check.get("loss_success", "0"),
                                 "loss_failure": opening_check.get("loss_failure", "1d4"),
                             }
-                save_state(state)
+                    registrations = check_lifecycle.register_many(
+                        state, candidates, source={"action_context": opening_check.get("reason", "")}
+                    )
+                    blocked = next(
+                        ((owner_id, entry.blocker) for owner_id, entry in registrations.items()
+                         if entry.status == "blocked"), None
+                    )
+                    if blocked:
+                        owner_id, reason = blocked
+                        character = state.characters[owner_id]
+                        if reason == "pending_luck_decision":
+                            opening_blocker = f"{character.name} 仍在等待 Luck 決定，請先處理後再開始遊戲。"
+                        else:
+                            opening_blocker = f"{character.name} 尚有待處理的檢定，請先完成後再開始遊戲。"
+                if not opening_blocker:
+                    if opening_check and opening_check["type"] == "skill":
+                        for char in state.characters.values():
+                            keeper.resolve_skill_value(char, opening_check["skill"])
+                    state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
+                    state.log.append({"role": "assistant", "content": opening_text})
+                    state.game_started = True
+                    save_state(state)
+            if opening_blocker:
+                await reply(opening_blocker)
+                return
             await reply(opening_text)
             if opening_check and opening_check.get("reason"):
                 await reply(f"👉 {opening_check['reason']}——請各自用「/coc check」擲骰。")
