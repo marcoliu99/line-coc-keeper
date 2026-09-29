@@ -91,7 +91,7 @@ class ShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_shutdown_cancels_active_conversation_and_closes_child(self):
         entered = asyncio.Event()
         transport = AsyncMock()
-        async def request(*args):
+        async def request(*args, **kwargs):
             entered.set()
             await asyncio.Future()
         transport.request.side_effect = request
