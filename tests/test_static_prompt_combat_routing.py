@@ -17,9 +17,13 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
 
     assert "failed check, or a harmless scuffle does not establish combat" in routing
     assert "usage limits, and triggers" in routing
-    assert "for every already-present enemy in the same tool sequence" in routing
+    assert "for every already-active enemy in the same tool sequence" in routing
     assert "Immediately after `start_combat` succeeds, call `add_npc_to_combat`" in routing
     assert "before final narration or turn handoff" in routing
+    assert "A dormant enemy does not activate merely because it is present" in routing
+    assert "preserve the scenario's threat/touch/attack trigger" in routing
+    assert "the first narration dealing damage or defeat MUST show that wake/rise moment" in routing
+    assert "do not re-call start_combat/add_npc_to_combat/damage tools" in routing
     assert routing.count("distinct display name") == 1
     assert "`is_ranged` mode and defense options" in routing
     assert "never a counterattack" in routing
