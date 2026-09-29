@@ -11,7 +11,11 @@ from typing import Any, Literal
 
 from app.keeper_tools import character as character_handlers
 from app.keeper_tools import checks as check_handlers
+from app.keeper_tools import combat as combat_handlers
 from app.keeper_tools import dice as dice_handlers
+from app.keeper_tools import inventory as inventory_handlers
+from app.keeper_tools import messaging as messaging_handlers
+from app.keeper_tools import scenario as scenario_handlers
 from app.models import GroupState
 from app.services import opposed_checks
 
@@ -445,6 +449,7 @@ _SPECS = (
                     "required": ["investigator", "weapon"],
                 },
             },
+        handler=inventory_handlers.adjust_ammo,
     ),
     ToolSpec(
         schema={
@@ -463,6 +468,7 @@ _SPECS = (
                     "required": ["investigator", "item"],
                 },
             },
+        handler=inventory_handlers.add_carried_item,
     ),
     ToolSpec(
         schema={
@@ -477,6 +483,7 @@ _SPECS = (
                     "required": ["investigator", "item"],
                 },
             },
+        handler=inventory_handlers.remove_carried_item,
     ),
     ToolSpec(
         schema={
@@ -491,6 +498,7 @@ _SPECS = (
                     "required": ["fact"],
                 },
             },
+        handler=scenario_handlers.record_fact_or_clue,
         kp_assistant=True,
     ),
     ToolSpec(
@@ -506,6 +514,7 @@ _SPECS = (
                     "required": ["clue"],
                 },
             },
+        handler=scenario_handlers.record_fact_or_clue,
         kp_assistant=True,
     ),
     ToolSpec(
@@ -526,6 +535,7 @@ _SPECS = (
                     "required": ["investigator", "tag"],
                 },
             },
+        handler=inventory_handlers.add_status_tag,
     ),
     ToolSpec(
         schema={
@@ -543,6 +553,7 @@ _SPECS = (
                     "required": ["investigator", "tag"],
                 },
             },
+        handler=inventory_handlers.remove_status_tag,
     ),
     ToolSpec(
         schema={
@@ -587,6 +598,7 @@ _SPECS = (
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             },
+        handler=combat_handlers.start_combat,
         invalidates_combat_status=True,
     ),
     ToolSpec(
@@ -635,6 +647,7 @@ _SPECS = (
                     "required": ["name", "dex", "hp"],
                 },
             },
+        handler=combat_handlers.add_npc_to_combat,
         invalidates_combat_status=True,
     ),
     ToolSpec(
@@ -643,6 +656,7 @@ _SPECS = (
                 "description": "查詢目前戰鬥的回合數、先攻順位與現在輪到誰的行動。一般公開視圖不顯示敵人 HP；KP Assistant 可看 private 視圖。",
                 "input_schema": {"type": "object", "properties": {}},
             },
+        handler=combat_handlers.get_combat_status,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -656,6 +670,7 @@ _SPECS = (
                 "description": "把戰鬥推進到下一位戰鬥員的回合（已倒下的會自動跳過）。每次處理完一位戰鬥員的行動後都必須呼叫這個工具，不可以自己心裡默默跳過。",
                 "input_schema": {"type": "object", "properties": {}},
             },
+        handler=combat_handlers.advance_combat_turn,
         resolved_check_followup=True,
         invalidates_combat_status=True,
     ),
@@ -676,6 +691,7 @@ _SPECS = (
                     "required": ["name", "delta"],
                 },
             },
+        handler=combat_handlers.damage_combatant,
         invalidates_combat_status=True,
     ),
     ToolSpec(
@@ -692,6 +708,7 @@ _SPECS = (
                     },
                 },
             },
+        handler=combat_handlers.plan_enemy_turn,
         invalidates_combat_status=True,
     ),
     ToolSpec(
@@ -721,6 +738,7 @@ _SPECS = (
                     "required": ["plan_id"],
                 },
             },
+        handler=combat_handlers.resolve_enemy_action,
         invalidates_combat_status=True,
     ),
     ToolSpec(
@@ -743,6 +761,7 @@ _SPECS = (
                     "required": ["target", "raw_damage"],
                 },
             },
+        handler=combat_handlers.apply_combat_damage,
         resolved_check_followup=True,
         kp_assistant=True,
         kp_canonical_game=True,
@@ -768,6 +787,7 @@ _SPECS = (
                     "required": ["target", "final_damage"],
                 },
             },
+        handler=combat_handlers.apply_final_combat_damage,
         resolved_check_followup=True,
         kp_assistant=True,
         kp_canonical_game=True,
@@ -801,6 +821,7 @@ _SPECS = (
                     "required": ["target", "label", "timing"],
                 },
             },
+        handler=combat_handlers.add_combat_effect,
         kp_assistant=True,
         kp_canonical_game=True,
     ),
@@ -810,6 +831,7 @@ _SPECS = (
                 "description": "結束目前的戰鬥，清除戰鬥狀態（先攻順位、回合數）。戰鬥明確分出勝負或雙方脫離後呼叫。",
                 "input_schema": {"type": "object", "properties": {}},
             },
+        handler=combat_handlers.end_combat,
         invalidates_combat_status=True,
     ),
     ToolSpec(
@@ -831,6 +853,7 @@ _SPECS = (
                     "required": ["investigator", "message"],
                 },
             },
+        handler=messaging_handlers.send_private_info,
         opening=True,
     ),
     ToolSpec(
@@ -848,6 +871,7 @@ _SPECS = (
                     },
                 },
             },
+        handler=scenario_handlers.search_scenario_images,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -864,6 +888,7 @@ _SPECS = (
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             },
+        handler=scenario_handlers.advance_scenario_chapter,
         kp_assistant=True,
     ),
     ToolSpec(
@@ -885,6 +910,7 @@ _SPECS = (
                     "required": ["page_number"],
                 },
             },
+        handler=scenario_handlers.show_scenario_image,
         kp_assistant=True,
         opening=True,
     ),
@@ -906,6 +932,7 @@ _SPECS = (
                     "required": ["query"],
                 },
             },
+        handler=scenario_handlers.search_memory,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
@@ -942,6 +969,7 @@ _SPECS = (
                 "required": ["query"],
             },
         },
+        handler=scenario_handlers.search_scenario,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,

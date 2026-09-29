@@ -1,4 +1,5 @@
 """Pin the old tool lists while handlers migrate to the registry."""
+from collections.abc import Callable
 from unittest.mock import patch
 
 from app import keeper
@@ -145,3 +146,88 @@ def test_character_family_dispatches_without_legacy_cascade() -> None:
             state, "get_character_sheet", {"investigator": "Ada"}, [], [],
         )
     assert result["ok"] and result["sheet"]["name"] == "Ada"
+
+
+def test_inventory_family_dispatches_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="inventory-family")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+
+    def mutate(current: GroupState, callback: Callable[[GroupState], object]) -> object:
+        result = callback(current)
+        return result.value if isinstance(result, keeper.ToolStateMutation) else result
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy inventory dispatch")),
+          patch.object(keeper, "mutate_tool_state", side_effect=mutate)):
+        added = keeper._execute_tool(
+            state, "add_carried_item", {"investigator": "Ada", "item": " key "}, [], [],
+        )
+        assert added["ok"] and state.characters["p1"].carried_items == ["key"]
+        removed = keeper._execute_tool(
+            state, "remove_carried_item", {"investigator": "Ada", "item": "key "}, [], [],
+        )
+    assert removed["ok"] and state.characters["p1"].carried_items == []
+    assert state.consumed_or_removed_items[-1]["item"] == "key"
+
+
+def test_scenario_search_family_dispatches_without_legacy_cascade() -> None:
+    from app import memory_rag
+    from app.models import GroupState
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy search dispatch")),
+          patch.object(memory_rag, "search_memory", return_value=[]),
+          patch.object(memory_rag, "format_results", return_value="none")):
+        result = keeper._execute_tool(
+            GroupState(group_id="scenario-search"), "search_memory", {"query": "door"}, [], [],
+        )
+    assert result == {"ok": True, "results": "none"}
+
+
+def test_messaging_family_delivers_privately_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="private-message")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+    messages: list[tuple[str, str]] = []
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy messaging dispatch"))):
+        result = keeper._execute_tool(
+            state, "send_private_info", {"investigator": "Ada", "message": "secret"}, messages, [],
+        )
+    assert result == {"ok": True, "delivered_to": "Ada"}
+    assert messages == [("p1", "secret")]
+
+
+def test_combat_family_uses_registered_handlers_without_legacy_cascade() -> None:
+    combat_names = {
+        "start_combat", "add_npc_to_combat", "get_combat_status",
+        "advance_combat_turn", "damage_combatant", "plan_enemy_turn",
+        "resolve_enemy_action", "apply_combat_damage", "apply_final_combat_damage",
+        "add_combat_effect", "end_combat",
+    }
+    assert all(registry.REGISTRY[name].handler is not registry.legacy_handler
+               for name in combat_names)
+
+    state = GroupState(group_id="combat-family")
+
+    def mutate(current: GroupState, callback: Callable[[GroupState], object]) -> object:
+        result = callback(current)
+        return result.value if isinstance(result, keeper.ToolStateMutation) else result
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy combat dispatch")),
+          patch.object(keeper, "mutate_tool_state", side_effect=mutate),
+          patch.object(keeper, "refresh_tool_state")):
+        started = keeper._execute_tool(state, "start_combat", {}, [], [])
+        added = keeper._execute_tool(
+            state, "add_npc_to_combat", {"name": "Cultist", "dex": 50, "hp": 10}, [], [],
+        )
+        status = keeper._execute_tool(state, "get_combat_status", {}, [], [])
+        ended = keeper._execute_tool(state, "end_combat", {}, [], [])
+
+    assert started["ok"] and added["ok"] and status["ok"] and ended["ok"]
+    assert "Cultist" in status["status"]
+    assert not state.combat.active

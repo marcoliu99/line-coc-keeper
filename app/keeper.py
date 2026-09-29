@@ -32,8 +32,6 @@ from app import (
     observability,
     scenario_index,
     scenario_library,
-    scenario_rag,
-    scenario_templates,
     scene_digest,
     spoiler_policy,
 )
@@ -41,10 +39,7 @@ from app.config import (
     MAX_LOG_TURNS,
     MAX_SCENARIO_CHARS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
-    SCENARIO_RAG_EMBEDDING_MODEL,
-    SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
-    SCENARIO_RAG_TOP_K,
     SCENE_DIGEST_TURN_INTERVAL,
 )
 from app.keeper_tools import registry as tool_registry
@@ -53,15 +48,16 @@ from app.models import BASE_SKILLS, Character, GroupState
 from app.providers.registry import conversation_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
-    clear_page_images,
     load_state,
-    save_page_image,
     save_state,
 )
 from app.services import mutation_admission
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
+# Existing callers patch scenario_library through keeper. Retain the module
+# object here during the handler migration.
+SCENARIO_LIBRARY_MODULE = scenario_library
 # Tests and compatibility callers patch the shared luck module through keeper.
 LUCK_MODULE = luck
 
@@ -456,8 +452,8 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
     return result
 
 
-# Public migration seam used by app/keeper_tools/character.py. Keep state
-# updates behind the same authoritative Keeper boundary.
+# Public migration seam for handlers in app/keeper_tools/. State still reloads,
+# mutates, saves, and refreshes through one authoritative boundary.
 ToolStateMutation = _StateMutation
 mutate_tool_state = _mutate_and_save_state
 refresh_tool_state = _refresh_state_snapshot
@@ -774,6 +770,12 @@ def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict
         "effect_id",
     }
     return {key: result[key] for key in public_keys if key in result}
+
+
+# Additional public helpers for the combat handlers.
+find_npc_index_entry = _find_npc_index_entry
+skip_save_if_blocked = _skip_save_if_blocked
+filter_public_combat_damage_result = _filter_public_combat_damage_result
 
 
 def _persist_memory_maintenance_state(
@@ -1093,441 +1095,13 @@ def execute_legacy_tool(
 
 
 
-        if name == "adjust_ammo":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            weapon = tool_input.get("weapon", "")
-            entry = char.weapons.get(weapon)
-            if entry is None:
-                available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
-                return {"ok": False, "error": f"「{char.name}」的彈藥欄位裡沒有「{weapon}」，目前有：{available}"}
-            if "ammo_max" not in entry:
-                # A recognized weapon whose ammo isn't tracked (melee, or an
-                # ammo category this project's table doesn't cover) — see
-                # pregen_extractor._resolve_weapon_ammo, which stores these as
-                # {}. Without this check, `entry["ammo_max"]` below would
-                # KeyError instead of giving the Keeper a usable error.
-                return {"ok": False, "error": f"「{weapon}」沒有追蹤彈藥數（近戰武器或未登記彈藥表的槍械），不需要（也無法）裝填。"}
-            def _apply_ammo_change(target_state: GroupState) -> None:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                target_entry = target_char.weapons.get(weapon)
-                if target_entry is None:
-                    raise ValueError(f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料")
-                if tool_input.get("reload_full"):
-                    target_entry["ammo"] = target_entry["ammo_max"]
-                else:
-                    target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
-            _mutate_and_save_state(state, _apply_ammo_change)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            refreshed_entry = refreshed_char.weapons.get(weapon)
-            if refreshed_entry is None:
-                return {"ok": False, "error": f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料"}
-            return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
-
-        if name == "add_carried_item":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            item = tool_input.get("item", "").strip()
-            if not item:
-                return {"ok": False, "error": "item 不能是空字串"}
-            def _mutate_add_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = item not in target_char.carried_items
-                if changed:
-                    target_char.carried_items.append(item)
-                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, _mutate_add_item)
-            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
-
-        if name == "remove_carried_item":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            # .strip() to match add_carried_item's own normalization above — otherwise
-            # an item with incidental whitespace ("鑰匙 " vs "鑰匙") would silently fail
-            # to remove (the no-op-skip logic below would report "unchanged" since the
-            # stripped, stored string never string-equals the unstripped one being removed).
-            item = tool_input.get("item", "").strip()
-            def _mutate_remove_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = item in target_char.carried_items
-                if changed:
-                    target_char.carried_items.remove(item)
-                    target_state.consumed_or_removed_items.append({
-                        "item": item,
-                        "character_id": target_char.owner_id,
-                        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                        "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
-                    })
-                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, _mutate_remove_item)
-            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
-
-        if name in ("record_established_fact", "record_clue"):
-            field_name = "established_facts" if name == "record_established_fact" else "known_clues"
-            text_value = ((tool_input.get("fact") if name == "record_established_fact" else tool_input.get("clue")) or "").strip()
-            if not text_value:
-                return {"ok": False, "error": "內容不能是空字串"}
-            visibility = tool_input.get("visibility", "public")
-            if visibility not in ("public", "kp_only"):
-                return {"ok": False, "error": "visibility 必須是 public 或 kp_only"}
-            def _mutate_record(target_state: GroupState) -> _StateMutation[dict]:
-                records = getattr(target_state, field_name)
-                if any(record.get("text") == text_value and record.get("visibility", "public") == visibility for record in records):
-                    return _StateMutation({"recorded": False, "records": records}, should_save=False)
-                record = {
-                    "text": text_value,
-                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
-                    "visibility": visibility,
-                    "scene_id": "",
-                }
-                records.append(record)
-                return _StateMutation({"recorded": True, "record": record}, should_save=True)
-            result = _mutate_and_save_state(state, _mutate_record)
-            return {"ok": True, **result}
-
-        if name == "add_status_tag":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            tag = tool_input.get("tag", "").strip()
-            if not tag:
-                return {"ok": False, "error": "tag 不能是空字串"}
-            def _mutate_add_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = tag not in target_char.status_tags
-                if changed:
-                    target_char.status_tags.append(tag)
-                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, _mutate_add_tag)
-            return {"ok": True, "investigator": investigator, "status_tags": tags}
-
-        if name == "remove_status_tag":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            # .strip() to match add_status_tag's own normalization above — otherwise a
-            # tag with incidental whitespace ("昏迷 " vs "昏迷") would silently fail to
-            # remove (the no-op-skip logic below would report "unchanged" since the
-            # stripped, stored string never string-equals the unstripped one being removed).
-            tag = tool_input.get("tag", "").strip()
-            def _mutate_remove_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = tag in target_char.status_tags
-                if changed:
-                    target_char.status_tags.remove(tag)
-                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, _mutate_remove_tag)
-            return {"ok": True, "investigator": investigator, "status_tags": tags}
 
 
 
-        if name == "start_combat":
-            def _mutate_start_combat(target_state: GroupState) -> None:
-                combat.begin_combat(target_state)
-            _mutate_and_save_state(state, _mutate_start_combat)
-            return {"ok": True, "status": combat.status_text(state)}
-
-        if name == "add_npc_to_combat":
-            npc_name = tool_input["name"]
-            requested_hp = int(tool_input.get("hp", 10))
-            def _mutate_add_npc(target_state: GroupState) -> _StateMutation[str]:
-                hp = requested_hp
-                index_note = ""
-                # Code-enforced consistency check, not just a prompt-level ask: if
-                # this name matches a /coc index entry, the index's HP wins no
-                # matter what the Keeper actually passed — this is what stops the
-                # same monster (or the same life stage of one) from silently
-                # getting a different HP in a later scene, instead of relying
-                # purely on the Keeper remembering to look it up itself.
-                index_entry = _find_npc_index_entry(target_state, npc_name)
-                if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
-                    canonical_hp = int(index_entry["hp"])
-                    if canonical_hp != hp:
-                        index_note = (
-                            f"（系統已依 /coc index 索引修正：你傳入的 HP {hp} 跟索引裡「{index_entry.get('name')}」"
-                            f"登記的 HP {canonical_hp} 不一致，已強制改用索引值。這隻的數值以索引為準，"
-                            "之後同一隻不要再用別的數字。）"
-                        )
-                        hp = canonical_hp
-                is_ally = bool(tool_input.get("is_ally", False))
-                # A second call for a monster already in the fight (the Keeper
-                # re-searched a scenario NPC mid-turn) reuses its HP pool; see
-                # combat.add_combatant.
-                added = combat.add_combatant(
-                    target_state,
-                    npc_name,
-                    int(tool_input.get("dex", 50)),
-                    hp,
-                    is_ally=is_ally,
-                    armor=tool_input.get("armor"),
-                    attacks=tool_input.get("attacks"),
-                    abilities=tool_input.get("abilities"),
-                )
-                if added.reused:
-                    return _StateMutation(
-                        f"（系統偵測到「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
-                        "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
-                        "add_npc_to_combat。）",
-                        should_save=False,
-                    )
-                if added.defeated_namesake is not None:
-                    # Right when a second monster of the kind arrives, wrong when
-                    # the Keeper forgot this one was already defeated: ask.
-                    new = added.combatant
-                    index_note += (
-                        f"（{combat.defeated_namesake_notice(added)}"
-                        f"如果這其實是同一隻，請用 damage_combatant 把「{new.display_name}」的 HP 歸零，"
-                        "並依原本倒下的狀態敘事。）"
-                    )
-                return _StateMutation(index_note, should_save=True)
-            index_note = _mutate_and_save_state(state, _mutate_add_npc)
-            response = {"ok": True, "status": combat.status_text(state)}
-            if index_note:
-                response["note"] = index_note
-            return response
-
-        if name == "get_combat_status":
-            _refresh_state_snapshot(state)
-            return {"ok": True, "status": combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
-
-        if name == "advance_combat_turn":
-            def _mutate_advance_turn(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.advance_turn(target_state))
-            return _mutate_and_save_state(state, _mutate_advance_turn)
-
-        if name == "damage_combatant":
-            def _mutate_damage_combatant(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(
-                    combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
-                )
-            result = _mutate_and_save_state(state, _mutate_damage_combatant)
-            return _filter_public_combat_damage_result(result, speaker_role)
-
-        if name == "plan_enemy_turn":
-            def _mutate_plan_enemy_turn(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.plan_enemy_turn(target_state, tool_input.get("enemy", "")))
-            return _mutate_and_save_state(state, _mutate_plan_enemy_turn)
-
-        if name == "resolve_enemy_action":
-            def _mutate_resolve_enemy_action(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.resolve_enemy_action(
-                    target_state,
-                    tool_input["plan_id"],
-                    outcome=tool_input.get("outcome"),
-                ))
-            return _mutate_and_save_state(state, _mutate_resolve_enemy_action)
-
-        if name == "apply_combat_damage":
-            def _mutate_apply_combat_damage(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.apply_combat_damage(
-                    target_state,
-                    tool_input["target"],
-                    int(tool_input["raw_damage"]),
-                    damage_type=tool_input.get("damage_type", "physical"),
-                    tags=tool_input.get("tags") or [],
-                    source_id=tool_input.get("source_id", ""),
-                ))
-            result = _mutate_and_save_state(state, _mutate_apply_combat_damage)
-            return _filter_public_combat_damage_result(result, speaker_role)
-
-        if name == "apply_final_combat_damage":
-            def _mutate_apply_final_combat_damage(target_state: GroupState) -> _StateMutation[dict]:
-                return _skip_save_if_blocked(combat.apply_final_combat_damage(
-                    target_state,
-                    tool_input["target"],
-                    int(tool_input["final_damage"]),
-                    damage_type=tool_input.get("damage_type", "physical"),
-                    tags=tool_input.get("tags") or [],
-                    source_id=tool_input.get("source_id", ""),
-                ))
-            result = _mutate_and_save_state(state, _mutate_apply_final_combat_damage)
-            return _filter_public_combat_damage_result(result, speaker_role)
-
-        if name == "add_combat_effect":
-            def _mutate_add_combat_effect(target_state: GroupState) -> dict:
-                return combat.add_combat_effect(
-                    target_state,
-                    tool_input["target"],
-                    tool_input["label"],
-                    timing=tool_input.get("timing", "turn_start"),
-                    damage=tool_input.get("damage", ""),
-                    damage_type=tool_input.get("damage_type", "physical"),
-                    remaining_rounds=tool_input.get("remaining_rounds"),
-                    tags=tool_input.get("tags") or [],
-                    source_id=tool_input.get("source_id", ""),
-                    public_description=tool_input.get("public_description", ""),
-                )
-            return _mutate_and_save_state(state, _mutate_add_combat_effect)
-
-        if name == "end_combat":
-            def _mutate_end_combat(target_state: GroupState) -> None:
-                combat.end_combat(target_state)
-            _mutate_and_save_state(state, _mutate_end_combat)
-            return {"ok": True}
-
-        if name == "send_private_info":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            if not spoiler_policy.is_privacy_isolation_enabled():
-                # §3.4 mechanism #1: still delivered privately (no safe public
-                # fallback exists at this layer — see spec §12 open item #6),
-                # but flagged loudly since this invariant is supposed to hold
-                # unconditionally in production.
-                observability.event(
-                    "privacy.isolation.disabled", level=logging.WARNING, fn="send_private_info"
-                )
-            private_messages.append((char.owner_id, tool_input["message"]))
-            return {"ok": True, "delivered_to": char.name}
-
-        if name == "search_scenario_images":
-            if not state.scenario_library_id:
-                return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-            assets = scenario_library.search_images(
-                state.scenario_library_id,
-                query=tool_input.get("query", ""),
-                image_type=tool_input.get("image_type", ""),
-                allowed_chapter_ids=_scenario_allowed_chapter_ids(state),
-            )
-            # KP-only assets (see scenario_library._build_image_assets — currently
-            # character_sheet pages, which may be NPC/villain stat blocks or a
-            # pregen revealing a "secret" connection) are filtered out of what
-            # ordinary play (speaker_role != "kp_assistant") can even discover,
-            # not just what it can display — a player-facing search shouldn't
-            # surface a KP-only page's existence any more than show_scenario_image
-            # below should let them actually pull it up. §3.4 mechanism #3: this
-            # ownership/visibility filter is privacy isolation, not spoiler
-            # protection.
-            if speaker_role != "kp_assistant":
-                if spoiler_policy.is_privacy_isolation_enabled():
-                    assets = [a for a in (spoiler_policy.filter_public_record(a) for a in assets) if a is not None]
-                else:
-                    # One WARNING per search call, not one per asset — a
-                    # library can have dozens of images, and filter_public_record
-                    # itself logs per-record (see its docstring).
-                    observability.event(
-                        "privacy.isolation.disabled", level=logging.WARNING, fn="search_scenario_images"
-                    )
-            return {"ok": True, "assets": [{key: asset.get(key) for key in ("id", "page", "type", "tags", "description", "visibility")} for asset in assets]}
-
-        if name == "show_scenario_image":
-            if not state.scenario_library_id:
-                return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-            page = int(tool_input["page_number"])
-            assets = scenario_library.search_images(
-                state.scenario_library_id, allowed_chapter_ids=_scenario_allowed_chapter_ids(state)
-            )
-            asset = next((item for item in assets if item.get("page") == page), None)
-            if asset is None:
-                return {"ok": False, "error": "該圖片不在目前章節 Context，不能展示"}
-            if speaker_role != "kp_assistant" and spoiler_policy.filter_public_record(asset) is None:
-                return {"ok": False, "error": "這一頁是 KP 專用資料，不能在一般遊戲流程中展示給玩家"}
-            image_investigator: str = tool_input.get("investigator") or ""
-            image_owner_id: str | None = None
-            if image_investigator:
-                char = find_character(state, image_investigator)
-                if not char:
-                    return {"ok": False, "error": f"找不到角色「{image_investigator}」"}
-                image_owner_id = char.owner_id
-            image_requests.append((image_owner_id, page))
-            return {"ok": True, "page": page, "asset_type": asset.get("type"), "target": "private" if image_owner_id else "public"}
-
-        if name == "advance_scenario_chapter":
-            def _advance(target_state: GroupState) -> dict:
-                if not target_state.scenario_library_id:
-                    return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-                next_id = scenario_library.next_chapter_id(target_state.scenario_library_id, target_state.active_chapter_id)
-                if next_id is None:
-                    return {"ok": False, "error": "目前已是最後一個章節"}
-                context = scenario_library.load_context(target_state.scenario_library_id, next_id)
-                target_state.scenario_text = context["text"]
-                target_state.active_chapter_id = context["active_chapter_id"]
-                target_state.context_chapter_ids = context["context_chapter_ids"]
-                target_state.scenario_npc_index = context["indexes"].get("npcs", [])
-                target_state.scenario_location_index = context["indexes"].get("locations", [])
-                target_state.scene_maps = context["scene_maps"]
-                # After the assignment, or this reads the previous chapter's maps.
-                artifact_notice = scenario_index.report_location_index(
-                    target_state.scenario_location_index, source="chapter_switch",
-                    scenario_title=target_state.scenario_title,
-                    scene_maps=target_state.scene_maps)
-                old_timeline_id = target_state.timeline_id or f"legacy-{target_state.group_id}"
-                target_state.openai_previous_response_id = ""
-                target_state.openai_previous_response_timeline_id = ""
-                observability.event(
-                    "provider.chain.reset",
-                    reason="scenario_chapter_advance",
-                    old_timeline_id=old_timeline_id,
-                    requested_timeline_id=old_timeline_id,
-                    provider="openai",
-                )
-                clear_page_images(target_state.group_id)
-                scenario_library.copy_context_images(
-                    target_state.scenario_library_id, context["page_numbers"],
-                    lambda page, image: save_page_image(target_state.group_id, page, image),
-                )
-                # Carried into the result, or a group that switches chapters
-                # into an empty-artifact variant is told nothing at all.
-                result = {"ok": True, "active_chapter_id": context["active_chapter_id"],
-                          "context_chapter_ids": context["context_chapter_ids"]}
-                if artifact_notice:
-                    result["notice"] = artifact_notice
-                return result
-            return _mutate_and_save_state(state, _advance)
-        if name == "search_scenario":
-            if not state.scenario_text:
-                return {"ok": False, "error": "目前沒有載入劇本可以搜尋"}
-            scenario_query = tool_input.get("query", "")
-            # Plain text log, not a structured event field — the query is
-            # free-form player-adjacent content (see observability.py's own
-            # docstring on why those two channels are kept separate),
-            # gated by LOG_TEXT_ENABLED like any other _logger call. Added
-            # specifically because "did the Keeper just search the same
-            # keyword twice in one turn" was previously impossible to
-            # answer from the logs at all: rag.search's structured metrics
-            # below only ever captured counts (candidate_count,
-            # result_count, ...), never the query text itself.
-            _logger.info("search_scenario query=%r", scenario_query)
-            scenario_metrics: dict[str, Any] = {}
-            with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K,
-                                    embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
-                                    embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
-                index, results = scenario_templates.search_for_state(state, scenario_query, top_k=SCENARIO_RAG_TOP_K, metrics=scenario_metrics,
-                                                                    source=tool_input.get("source", "auto"),
-                                                                    continuation=tool_input.get("continuation", ""),
-                                                                    principal=f"{speaker_role}:{tool_input.get('_retrieval_principal', state.kp_assistant_user_id or '')}")
-                scenario_metrics.update(
-                    evidence_chars=sum(len(row["text"]) for row in results),
-                    budget_omitted=sum(row.get("budget_omitted", 0) for row in results),
-                    candidate_count=len(getattr(index, "chunks", ())),
-                    result_count=len(results),
-                    has_embeddings=getattr(index, "has_embeddings", None),
-                    index_cache=getattr(index, "index_cache", "unknown"),
-                )
-            completeness = [row for row in results if 'complete_for_action' in row]
-            return {"ok": True, "results": scenario_rag.format_results(results),
-                    "complete_for_action": all(row['complete_for_action'] for row in completeness) if completeness else None,
-                    "evidence_record_ids": list({rid for row in completeness for rid in row.get("root_record_ids", [])}),
-                    "continuation_tokens": [row['continuation_token'] for row in completeness if row.get('continuation_token')]}
 
 
-        if name == "search_memory":
-            memory_query = tool_input.get("query", "")
-            _logger.info("search_memory query=%r", memory_query)  # see search_scenario's comment above
-            memory_metrics: dict[str, Any] = {}
-            with observability.span("memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
-                                    embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=memory_metrics):
-                results = memory_rag.search_memory(
-                    state.group_id,
-                    memory_query,
-                    timeline_id=state.timeline_id or f"legacy-{state.group_id}",
-                    metrics=memory_metrics,
-                )
-            return {"ok": True, "results": memory_rag.format_results(results)}
+
+
 
         return {"ok": False, "error": f"未知工具 {name}"}
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error

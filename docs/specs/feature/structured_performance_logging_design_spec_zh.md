@@ -4,7 +4,7 @@
 
 ## 狀態與範圍
 
-分類：`feature`。狀態：**已實作**。對照基準：`main_v2` 的 `afe8ace`（2026-09-27）。
+分類：`feature`。狀態：**已實作**。最初對照 `main_v2` 的 `afe8ace`（2026-09-27）；各 provider 的推理強度欄位契約於 PR #140 更新。
 
 此版本描述現行契約，提案工作均明確標示；歷史來源文字連結列於下方。
 
@@ -20,6 +20,8 @@
 
 5. 目前 Executor 裁決 log 含固定驗證原因碼；劇本搜尋記錄來源／後備診斷，但不能把命中升格為完整保證。
 
+6. `llm.turn` 和 `llm.request` 依目前對話 provider 記錄設定的 `reasoning_effort`。OpenAI 使用 `KEEPER_REASONING_EFFORT`；Codex 使用 `CODEX_REASONING_EFFORT`，與其 `codex.conversation` 事件一致。沒有推理強度設定的 provider 記錄 `null`。此欄位表示送給 provider 的設定，不是實測的推理 token 數。
+
 ## 流程與介面
 
 ```text
@@ -34,6 +36,8 @@
 - [app/logging_config.py](../../../app/logging_config.py)
 - [app/providers/retry.py](../../../app/providers/retry.py)
 - [app/agents/executor.py](../../../app/agents/executor.py)
+- [app/agents/narrator.py](../../../app/agents/narrator.py)
+- [app/providers/codex_provider.py](../../../app/providers/codex_provider.py)
 - [app/discord_bot.py](../../../app/discord_bot.py)
 - [tests/test_observability.py](../../../tests/test_observability.py)
 - [tests/test_logging_completion.py](../../../tests/test_logging_completion.py)
