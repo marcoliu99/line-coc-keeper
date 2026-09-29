@@ -75,3 +75,5 @@ Marco reconfirmed all three decisions before implementation. The first migration
 The checks family (skill, SAN, NPC checks, defense choices, and pending-check clearing) is migrated to `app/keeper_tools/checks.py`. Check cache, ownership, metadata, and state mutation remain in Keeper behind a temporary public service seam. This branch needs re-alignment with the separate check-lifecycle refactor before integration.
 
 The dice family (`roll_dice`, `roll_impaling_damage`, `roll_weapon_damage`) is the first migrated handler family. Its registry entries call `app/keeper_tools/dice.py`; the other entries still delegate to the legacy cascade.
+
+The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Major-wound CON registration and state refresh still use Keeper's existing authoritative helpers via a public migration seam. This branch will need re-alignment when the separate check-lifecycle refactor lands.

@@ -75,3 +75,5 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 檢定家族（技能、SAN、NPC 檢定、防禦選項和清除待處理檢定）已移至 `app/keeper_tools/checks.py`。結果快取、所有權、metadata 與狀態更新仍透過公開過渡介面留在 Keeper。整合前，此分支須與獨立的檢定流程重構重新對齊。
 
 骰子家族（`roll_dice`、`roll_impaling_damage`、`roll_weapon_damage`）是第一個完成遷移的處理函式家族。其註冊表項目呼叫 `app/keeper_tools/dice.py`；其他項目暫時仍委派至舊串接。
+
+角色家族（`adjust_character`、`set_skill`、`get_character_sheet`）已移至 `app/keeper_tools/character.py`。重傷 CON 檢定建立與狀態刷新仍透過公開過渡介面使用 Keeper 原有的權威處理函式。檢定流程重構分支合入後，此分支仍須重新對齊。

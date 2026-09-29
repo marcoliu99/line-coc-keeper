@@ -131,3 +131,17 @@ def test_dice_family_dispatches_without_legacy_cascade() -> None:
     assert ordinary["ok"] and ordinary["total"] in {1, 2}
     assert impaling["ok"] and impaling["total"] == 2
     assert weapon["ok"] and weapon["investigator"] == "Investigator"
+
+
+def test_character_family_dispatches_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="character-family")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy character dispatch")),
+          patch.object(keeper, "refresh_tool_state")):
+        result = keeper._execute_tool(
+            state, "get_character_sheet", {"investigator": "Ada"}, [], [],
+        )
+    assert result["ok"] and result["sheet"]["name"] == "Ada"

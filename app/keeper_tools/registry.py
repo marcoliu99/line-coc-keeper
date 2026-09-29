@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.keeper_tools import character as character_handlers
 from app.keeper_tools import checks as check_handlers
 from app.keeper_tools import dice as dice_handlers
 from app.models import GroupState
@@ -422,6 +423,7 @@ _SPECS = (
                     "required": ["investigator", "field", "delta"],
                 },
             },
+        handler=character_handlers.adjust_character,
     ),
     ToolSpec(
         schema={
@@ -556,6 +558,7 @@ _SPECS = (
                     "required": ["investigator", "skill", "value"],
                 },
             },
+        handler=character_handlers.set_skill,
     ),
     ToolSpec(
         schema={
@@ -567,6 +570,7 @@ _SPECS = (
                     "required": ["investigator"],
                 },
             },
+        handler=character_handlers.get_character_sheet,
         read_only=True,
         resolved_check_followup=True,
         kp_assistant=True,
