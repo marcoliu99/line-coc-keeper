@@ -35,13 +35,13 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
                 self.assertPolicy(prompt, "不是新劇本內容的共同作者")
                 self.assertEqual(prompt.count("# 劇本正典邊界｜最高優先"), 1)
 
-    def test_purchase_policy_does_not_use_credit_or_money(self):
-        shared = self._prompts()['shared']
-        policy = shared.split('# Equipment Consistency', 1)[1].split('\n# ', 1)[0]
-        self.assertIn('Do not decide availability by Credit Rating, lifestyle, price, or cash', policy)
-        self.assertNotIn('**負擔能力**', policy)
-        self.assertNotIn('已確認的現金帳本', policy)
-        self.assertNotIn('purchase_items', shared)
+    def test_equipment_policy_has_no_purchase_instructions_on_any_keeper_path(self):
+        for path, prompt in self._prompts().items():
+            with self.subTest(path=path):
+                policy = prompt.split('# Equipment Consistency', 1)[1].split('\n# ', 1)[0]
+                for purchase_term in ('purchase', 'shop', 'supply', 'price', 'payment', 'Credit Rating', 'cash', 'Luck'):
+                    self.assertNotIn(purchase_term.lower(), policy.lower())
+                self.assertNotIn('purchase_items', prompt)
 
     def test_player_hypotheses_and_failed_rolls_cannot_create_world_elements(self):
         for path, prompt in self._prompts().items():

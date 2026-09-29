@@ -4,7 +4,7 @@ from app import keeper
 from app.models import GroupState
 
 
-def test_equipment_policy_has_three_rules_and_no_implicit_payment() -> None:
+def test_equipment_policy_has_three_rules_without_purchase_instructions() -> None:
     prompt = keeper._build_static_prompt(GroupState(group_id="equipment-prompt"))
     policy = prompt.split("# Equipment Consistency\n", 1)[1].split("\n# ", 1)[0]
 
@@ -15,7 +15,6 @@ def test_equipment_policy_has_three_rules_and_no_implicit_payment() -> None:
     assert "legal/regional availability" in policy
     assert "A recorded item is already owned" in policy
     assert "unrecorded scrutinized item needs acquisition in play" in policy
-    assert "first establish an actual visit and available supply" in policy
-    assert "Do not decide availability by Credit Rating, lifestyle, price, or cash" in policy
-    assert "there is no purchase/affordability tool" in policy
+    for purchase_term in ("purchase", "shop", "supply", "price", "payment", "Credit Rating", "cash", "Luck"):
+        assert purchase_term.lower() not in policy.lower()
     assert "`add_carried_item`" in policy and "`remove_carried_item`" in policy
