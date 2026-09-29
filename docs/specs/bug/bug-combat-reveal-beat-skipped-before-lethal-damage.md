@@ -25,6 +25,8 @@ Both sentences describe an inert body. The scenario's own required beat — the 
 
 2. When a player points out that an enemy or event should have reacted, check existing mechanical state (`get_combat_status`, `get_character_sheet`) for what already happened before re-running `start_combat`/`add_npc_to_combat`/damage tools — narrate the missed beat instead of re-resolving the same attack a second time under a new enemy instance.
 
+This rule is written in English in the static prompt, unlike its ~30 sibling bullets (Traditional Chinese). It is a tool-calling instruction consumed only by the model, not player-facing narration, and measured ~32% fewer tokens than an equally-tightened Chinese version on this session's provider tokenizer — real savings since the static prompt is resent every turn. Being a brand-new, previously untuned bullet, there was no consistency cost against prior tuning to weigh against that.
+
 ## Flow and interfaces
 
 ```text

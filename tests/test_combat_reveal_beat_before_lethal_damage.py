@@ -19,6 +19,14 @@ This rule targets the root cause: when a scenario documents a dormant
 enemy's activation trigger (rises, wakes, animates), that beat must be
 narrated as part of the same resolution that applies damage to it —
 never a silent jump from "still motionless" straight to "defeated."
+
+The rule itself is written in English even though the rest of the
+static prompt is Traditional Chinese: it is a tool-calling instruction
+consumed only by the model, not player-facing narration, and an
+English phrasing measured ~32% fewer tokens than an equally-tightened
+Chinese version on this session's provider tokenizer — a real saving
+since the static prompt is resent every turn. This is a new, previously
+untuned bullet, so there is no consistency cost to weigh against that.
 """
 import unittest
 
@@ -32,15 +40,12 @@ class CombatRevealBeatPromptTests(unittest.TestCase):
         self.assertTrue(
             any(
                 phrase in prompt
-                for phrase in ("甦醒", "起身", "動起來", "活過來")
+                for phrase in ("wakes/rises", "wake/rise", "rises/wakes")
             ),
             "missing guidance about narrating a dormant enemy's activation/rising beat",
         )
         self.assertTrue(
-            any(
-                phrase in prompt
-                for phrase in ("不能直接跳到", "不能悄悄跳到", "不能默默跳到")
-            ),
+            "never jump straight from" in prompt,
             "missing the explicit ban on silently jumping from motionless to defeated",
         )
 

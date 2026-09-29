@@ -25,6 +25,8 @@
 
 2. 當玩家指出某個敵人或事件「應該有反應」時，先用 `get_combat_status`／`get_character_sheet` 確認機制上已經發生了什麼，再補敘漏掉的畫面；不要重新呼叫 `start_combat`／`add_npc_to_combat`／傷害工具，把同一次攻擊在一個新的敵人個體上重新結算一次。
 
+這條規則在 static prompt 裡是用英文寫的，跟旁邊約 30 條中文規則不同——因為它是只給模型看的工具呼叫指示，不是玩家會看到的敘事內容，用這個 session 的 provider tokenizer 量測，精簡後的英文版比同樣精簡的中文版少約 32% token，而 static prompt 每回合都會整包重送，這是真的省。因為是全新、之前沒調過的一條，不用權衡既有調校的一致性成本。
+
 ## 流程與介面
 
 ```text
