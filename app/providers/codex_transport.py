@@ -189,20 +189,20 @@ class Process:
 
 
 class ExecTransport:
-    async def request(self, prompt: str, schema: dict) -> str:
+    async def request(self, prompt: str, schema: dict, *, instructions: str = PROTOCOL_INSTRUCTIONS) -> str:
         if len(prompt.encode()) > config.CODEX_MAX_INPUT_BYTES:
             raise CodexError('codex_input_limit')
         with tempfile.TemporaryDirectory(prefix='coc-codex-') as cwd:
             schema_path = Path(cwd) / 'response.json'
             schema_path.write_text(json.dumps(schema))
-            instructions = Path(cwd) / 'instructions.txt'
-            instructions.write_text(PROTOCOL_INSTRUCTIONS)
+            instructions_path = Path(cwd) / 'instructions.txt'
+            instructions_path.write_text(instructions)
             process = Process()
             await process.start([
                 'exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules',
                 '--skip-git-repo-check', '--color', 'never', '--model', config.CODEX_MODEL,
                 '--output-schema', str(schema_path),
-                *config_args({**ISOLATION, 'model_instructions_file': str(instructions)}), '-',
+                *config_args({**ISOLATION, 'model_instructions_file': str(instructions_path)}), '-',
             ], cwd)
             try:
                 assert process.proc and process.proc.stdin
@@ -283,7 +283,7 @@ class AppServerTransport:
             for name in (cfg.get(section) or {}):
                 self.overrides[f'{section}.{name}.enabled'] = False
 
-    async def request(self, prompt: str, schema: dict) -> str:
+    async def request(self, prompt: str, schema: dict, *, instructions: str = PROTOCOL_INSTRUCTIONS) -> str:
         if self.process.proc is None:
             await self.start()
         assert self.directory
@@ -291,7 +291,7 @@ class AppServerTransport:
             'model': config.CODEX_MODEL, 'modelProvider': 'openai',
             'cwd': self.directory.name, 'ephemeral': True,
             'approvalPolicy': 'never', 'sandbox': 'read-only',
-            'baseInstructions': PROTOCOL_INSTRUCTIONS,
+            'baseInstructions': instructions,
             'developerInstructions': '', 'config': self.overrides,
         })
         if thread.get('model') != config.CODEX_MODEL:

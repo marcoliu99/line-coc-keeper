@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from app import config
 from app.providers import codex_provider as cp
+from app.providers import codex_request_owner
 from app.providers.codex_transport import CodexError, Process, child_environment
 
 TOOL = {'name': 'inspect', 'description': 'inspect an object', 'input_schema': {
@@ -100,21 +101,27 @@ class CodexProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.tool.await_count, 2)
 
     async def test_timeout_includes_queue_and_releases_admission(self):
-        gate = asyncio.Semaphore(0)
-        with patch.object(cp, 'semaphore', return_value=gate), patch.object(config, 'CODEX_TIMEOUT', .01), self.assertRaises(TimeoutError):
-            await self.run_provider([final()])
-        self.assertEqual(gate._value, 0)
+        owner = codex_request_owner.RequestOwner()
+        with patch.object(codex_request_owner, 'OWNER', owner), patch.object(config, 'CODEX_MAX_CONCURRENCY', 1):
+            lease = await owner.acquire(codex_request_owner.deadline())
+            with patch.object(config, 'CODEX_TIMEOUT', .01), self.assertRaises(TimeoutError):
+                await self.run_provider([final()])
+            lease.release()
+        self.assertEqual(owner.in_use, 0)
         self.transport.request.assert_not_awaited()
 
     async def test_queued_cancellation_does_not_release_unowned_slot(self):
-        gate = asyncio.Semaphore(0)
-        with patch.object(cp, 'semaphore', return_value=gate):
+        owner = codex_request_owner.RequestOwner()
+        with patch.object(codex_request_owner, 'OWNER', owner), patch.object(config, 'CODEX_MAX_CONCURRENCY', 1):
+            lease = await owner.acquire(codex_request_owner.deadline())
             task = asyncio.create_task(cp.run_conversation('', '', [], [], '', self.tool, 1))
             await asyncio.sleep(0)
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-        self.assertEqual(gate._value, 0)
+            self.assertEqual(owner.in_use, 1)
+            lease.release()
+        self.assertEqual(owner.in_use, 0)
         self.transport.request.assert_not_awaited()
 
     async def test_extra_fields_and_host_only_arguments_are_rejected(self):
@@ -136,18 +143,18 @@ class CodexProviderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_running_cancellation_closes_transport_and_releases_slot(self):
         started = asyncio.Event()
-        async def blocked(*_args):
+        async def blocked(*_args, **_kwargs):
             started.set()
             await asyncio.Future()
         self.transport.request.side_effect = blocked
-        gate = asyncio.Semaphore(1)
-        with patch.object(cp, 'semaphore', return_value=gate):
+        owner = codex_request_owner.RequestOwner()
+        with patch.object(codex_request_owner, 'OWNER', owner):
             task = asyncio.create_task(cp.run_conversation('', '', [], [], '', self.tool, 1))
             await started.wait()
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-        self.assertEqual(gate._value, 1)
+        self.assertEqual(owner.in_use, 0)
         self.transport.close.assert_awaited_once()
 
     async def test_completed_mutation_survives_deadline_without_replay(self):
