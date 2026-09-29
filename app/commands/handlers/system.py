@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app import (
     character_matcher,
+    check_lifecycle,
     checkpoints,
     keeper,
     locks,
@@ -27,6 +28,7 @@ from app.commands import permissions
 from app.config import IMPORT_DIR
 from app.legacy_commands import (
     FormatMention,
+    PdfChoice,
     Reply,
     SendDM,
     SendDMImage,
@@ -652,7 +654,9 @@ async def handle_system_command(
             await reply(permissions.kp_only("處理劇本 PDF"))
             return
         choice_word = parts[2].casefold() if len(parts) > 2 else ""
-        choice = {"new": "new", "全新": "new", "全新劇本": "new", "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}.get(choice_word)
+        choices: dict[str, PdfChoice] = {"new": "new", "全新": "new", "全新劇本": "new",
+                                        "fix": "fix", "修正": "fix", "修正目前劇本": "fix"}
+        choice = choices.get(choice_word)
         if choice is None:
             await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
             return
@@ -779,12 +783,12 @@ async def handle_system_command(
                 "（影響角色卡上傳時，武器只寫泛稱、沒寫具體型號的情況下，自動補上的預設彈藥容量）"
             )
             return
-        choice = parts[2].strip().lower()
+        era_choice = parts[2].strip().lower()
         era_map = {"1920": "1920s", "1920s": "1920s", "modern": "modern"}
-        if choice not in era_map:
+        if era_choice not in era_map:
             await reply("年代設定只接受「1920」或「modern」。")
             return
-        state.era = era_map[choice]
+        state.era = era_map[era_choice]
         save_state(state)
         await reply(f"已設定這個群組的年代為：{'1920 年代' if state.era == '1920s' else '現代／當代'}。")
         return
@@ -873,30 +877,53 @@ async def handle_system_command(
 
         if opening_data["found"]:
             opening_text = opening_data["text"]
+            opening_check = opening_data.get("opening_check")
+            opening_blocker = ""
             with locks.get_state_lock(conversation_id):
                 state = load_state(conversation_id)
                 if state.game_started:
                     return
-                state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
-                state.log.append({"role": "assistant", "content": opening_text})
-                state.game_started = True
-                
-                opening_check = opening_data.get("opening_check")
                 if opening_check:
+                    candidates: dict[str, dict[str, Any]] = {}
                     for owner_id, char in state.characters.items():
                         if opening_check["type"] == "skill":
-                            value = keeper.resolve_skill_value(char, opening_check["skill"])
-                            state.pending_checks[owner_id] = {
-                                "type": "skill", "skill": opening_check["skill"], "skill_value": value,
-                                "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular", "pushed": False,
+                            candidates[owner_id] = {
+                                "type": "skill", "skill": opening_check["skill"],
+                                "skill_value": keeper.resolve_skill_value(char, opening_check["skill"], register_unknown=False),
+                                "bonus_dice": 0, "penalty_dice": 0,
+                                "difficulty": "regular", "pushed": False,
                             }
                         else:
-                            state.pending_checks[owner_id] = {
+                            candidates[owner_id] = {
                                 "type": "sanity",
                                 "loss_success": opening_check.get("loss_success", "0"),
                                 "loss_failure": opening_check.get("loss_failure", "1d4"),
                             }
-                save_state(state)
+                    registrations = check_lifecycle.register_many(
+                        state, candidates, source={"action_context": opening_check.get("reason", "")}
+                    )
+                    blocked = next(
+                        ((owner_id, entry.blocker) for owner_id, entry in registrations.items()
+                         if entry.status == "blocked"), None
+                    )
+                    if blocked:
+                        owner_id, reason = blocked
+                        character = state.characters[owner_id]
+                        if reason == "pending_luck_decision":
+                            opening_blocker = f"{character.name} 仍在等待 Luck 決定，請先處理後再開始遊戲。"
+                        else:
+                            opening_blocker = f"{character.name} 尚有待處理的檢定，請先完成後再開始遊戲。"
+                if not opening_blocker:
+                    if opening_check and opening_check["type"] == "skill":
+                        for char in state.characters.values():
+                            keeper.resolve_skill_value(char, opening_check["skill"])
+                    state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
+                    state.log.append({"role": "assistant", "content": opening_text})
+                    state.game_started = True
+                    save_state(state)
+            if opening_blocker:
+                await reply(opening_blocker)
+                return
             await reply(opening_text)
             if opening_check and opening_check.get("reason"):
                 await reply(f"👉 {opening_check['reason']}——請各自用「/coc check」擲骰。")
