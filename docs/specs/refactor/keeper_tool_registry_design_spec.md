@@ -83,3 +83,5 @@ Both handler families and the lifecycle refactor were aligned together on `integ
 The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single authoritative state mutation boundary through a public migration seam.
 
 The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) is migrated to `app/keeper_tools/scenario.py`. Chapter advance and fact recording still use Keeper's authoritative state mutation boundary through a public migration seam.
+
+The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`. The remaining handler families still use the legacy cascade.

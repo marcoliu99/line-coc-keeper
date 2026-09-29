@@ -1232,6 +1232,7 @@
         "app/keeper_tools/dice.py",
         "app/keeper_tools/inventory.py",
         "app/keeper_tools/scenario.py",
+        "app/keeper_tools/messaging.py",
         "tests/test_keeper_tool_registry.py",
         "app/keeper.py",
         "app/agents/tool_gateway.py",

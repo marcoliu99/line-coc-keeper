@@ -184,3 +184,18 @@ def test_scenario_search_family_dispatches_without_legacy_cascade() -> None:
             GroupState(group_id="scenario-search"), "search_memory", {"query": "door"}, [], [],
         )
     assert result == {"ok": True, "results": "none"}
+
+
+def test_messaging_family_delivers_privately_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="private-message")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+    messages: list[tuple[str, str]] = []
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy messaging dispatch"))):
+        result = keeper._execute_tool(
+            state, "send_private_info", {"investigator": "Ada", "message": "secret"}, messages, [],
+        )
+    assert result == {"ok": True, "delivered_to": "Ada"}
+    assert messages == [("p1", "secret")]
