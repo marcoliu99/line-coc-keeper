@@ -1416,7 +1416,8 @@
         "app/keeper.py",
         "app/keeper_prompt_policy.py",
         "tests/test_static_prompt_operational_authority.py",
-        "tests/test_static_prompt_integration.py"
+        "tests/test_static_prompt_integration.py",
+        "tests/test_completed_combat_evidence.py"
       ],
       "path": "docs/specs/enhancement/enhancement-static-prompt-consolidation.md",
       "zh_path": "docs/specs/enhancement/enhancement-static-prompt-consolidation_zh.md"

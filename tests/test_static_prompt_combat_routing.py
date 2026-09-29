@@ -23,7 +23,10 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
     assert "A dormant enemy does not activate merely because it is present" in routing
     assert "preserve the scenario's threat/touch/attack trigger" in routing
     assert "the first narration dealing damage or defeat MUST show that wake/rise moment" in routing
+    assert "its `last_ended_combat` receipt preserves the final combatants and last applied damage" in routing
+    assert "Check `get_character_sheet` only for investigator state" in routing
     assert "do not re-call start_combat/add_npc_to_combat/damage tools" in routing
+    assert "do not replay the attack to manufacture evidence" in routing
     assert routing.count("distinct display name") == 1
     assert "`is_ranged` mode and defense options" in routing
     assert "never a counterattack" in routing

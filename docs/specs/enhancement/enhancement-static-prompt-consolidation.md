@@ -41,6 +41,10 @@ Two independent lines of reasoning converged on the same fix direction:
 - **6, equipment:** Three rules cover when to scrutinize, plausibility, and tracked possession. User-requested purchase prose was removed. Acquisition in play and persistent-item tools remain.
 - **7, dice:** A concise `purpose` / `roll_context` contract with one game-resolution and one OOC-randomizer example now lives in the current KP Assistant mechanics block.
 
+### PR review: completed-combat correction evidence
+
+The original item 3 correction instruction sent the Keeper to `get_combat_status` and `get_character_sheet` after a player reported a missing wake beat. That was insufficient after `end_combat`: the live combat tracker had been cleared, and a character sheet could not recover a defeated enemy. The integration now stores one timeline- and scenario-scoped final-combat report in `GroupState`. `get_combat_status` exposes the last applied damage and final combatant outcomes after combat ends, while hiding enemy HP from a player-facing query when privacy isolation is enabled. Starting another combat clears the report. The Keeper may narrate a missing beat only when this authoritative receipt supports it; otherwise it leaves the attack untouched and uses `/coc correct` for the unresolved dispute. No prior damage or enemy is replayed to create evidence.
+
 ### Item 0 draft text
 
 Historical authored draft. The integrated prompt preserves its core operational and recovery semantics; switchable spoiler/privacy text was translated to English in item 5.
@@ -186,7 +190,7 @@ player / KP correction -> owning deterministic tool for confirmed state
 ## Implementation and verification
 
 - Implementation: [app/keeper.py](../../../app/keeper.py) and [app/keeper_prompt_policy.py](../../../app/keeper_prompt_policy.py).
-- Prompt contracts: `tests/test_static_prompt_*.py`, `tests/test_spoiler_policy.py`, and `tests/test_narrative_boundary_prompts.py`.
+- Prompt contracts: `tests/test_static_prompt_*.py`, `tests/test_spoiler_policy.py`, and `tests/test_narrative_boundary_prompts.py`. The completed-combat regression test covers lethal damage, `end_combat`, serialization, role-sensitive history lookup, and timeline/new-combat invalidation.
 - Full pytest, Ruff, mypy, and compileall passed after integration. An isolated 16-turn, five-investigator Codex simulation completed with 16/16 router calls and no LLM or tool errors; it exercised player checks, pending follow-ups, combat start, enemy registration, damage, and turn enforcement. `start_combat` and `add_npc_to_combat` occurred on consecutive turns because three scenario searches exhausted the four-tool budget before enemy registration. The scripted sequence did not reach a lethal dormant-enemy wake beat; the exact rule and prompt assertions remain verified, but live narration at that beat is unproven. Independent spoiler/privacy switch combinations are covered by the combined prompt test, not by the live script.
 
 ## Appendix: execution handoff

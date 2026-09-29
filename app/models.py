@@ -887,6 +887,10 @@ class GroupState:
     creation_sessions: dict[str, CreationSession] = field(default_factory=dict)  # keyed by owner_id
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
+    # One latest authoritative receipt for the most recently ended fight.
+    # It survives end_combat clearing the live initiative tracker, but a new
+    # fight or timeline must not inherit it as current combat evidence.
+    last_combat_report: dict[str, Any] = field(default_factory=dict)
 
     # Canonical NPC/monster and location stat index (see app/scenario_index.py),
     # built on demand via /coc index — analogous to `pregens` above but for
@@ -1147,6 +1151,7 @@ class GroupState:
             "scenario_location_index": self.scenario_location_index,
             "keeper_persona": self.keeper_persona,
             "combat": self.combat.to_dict(),
+            "last_combat_report": self.last_combat_report,
             "scene_maps": self.scene_maps,
             "current_map_page": self.current_map_page,
             "current_room_id": self.current_room_id,
@@ -1232,6 +1237,10 @@ class GroupState:
             scenario_location_index=data.get("scenario_location_index", []),
             keeper_persona=data.get("keeper_persona", ""),
             combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
+            last_combat_report=(
+                dict(data["last_combat_report"])
+                if isinstance(data.get("last_combat_report"), dict) else {}
+            ),
             scene_maps=data.get("scene_maps", {}),
             # .get(..., {}) with an isinstance check rather than a bare .get
             # default: a save from before this became per-character tracking

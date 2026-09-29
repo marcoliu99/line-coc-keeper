@@ -17,3 +17,5 @@ When sourced enemies are already active at formal combat start, each must be reg
 ## Follow-up
 
 Reproduce across identical scenario sequences and inspect Executor tool calls, receipts, and final combat state. Determine whether retrieval budget, missing source evidence, tool scope, the model's routing decision, or a Python handoff causes the omission. A fix must preserve the turn's tool limit against autonomous overreach while allowing the atomic registration of sourced, triggered enemies. Do not register enemies whose scenario trigger has not occurred. The prompt routing reminder is a guardrail, not proof that this intermittent defect is resolved.
+
+[PR #148](https://github.com/marcoliu99/line-coc-keeper/pull/148) already proposes `initialize_combat(enemies)` as a one-call batch path. Its review findings and canonical prompt routing still need resolution, followed by this scenario replay, before considering this bug closed. No duplicate implementation PR is needed yet.

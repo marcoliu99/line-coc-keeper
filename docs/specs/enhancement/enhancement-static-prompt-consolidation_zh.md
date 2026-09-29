@@ -41,6 +41,10 @@
 - **6，裝備：** 三條規則涵蓋審查時機、合理性與持有狀態。依使用者要求移除採買文字規則；保留遊戲內取得與持久物品工具。
 - **7，骰子：** 精簡的 `purpose`／`roll_context` 契約附遊戲結算及 OOC 隨機各一例，置於現行 KP Assistant 機制區塊。
 
+### PR review：戰鬥結束後的更正依據
+
+原任務 3 的修正指示要 Keeper 在玩家指出漏講甦醒節拍時，查 `get_combat_status` 和 `get_character_sheet`；但 `end_combat` 會清空即時戰鬥狀態，角色卡也無法找回已倒下敵人的結算。整合後在 `GroupState` 保存一份有時間線及劇本歸屬的最終戰鬥紀錄。`get_combat_status` 可在戰後查到最近一次傷害與參戰者結局；隱私隔離開啟時，玩家視角不顯示敵人 HP。開始新戰鬥會清除紀錄。只有權威紀錄支持時，Keeper 才能只補敘事；缺少紀錄則保留原攻擊不重做，將未解爭議交給 `/coc correct`。不得重播傷害或重登記敵人來製造依據。
+
 ### 任務 0 草稿文字
 
 以下保留歷史草稿。整合後 prompt 保留操作權限及 A／B 類修錯的核心語意；可切換的防劇透／隱私文字於任務 5 翻成英文。
@@ -186,7 +190,7 @@ _build_dynamic_prompt(KP Assistant) -> 權限 + 精簡骰子機制
 ## 實作與驗證
 
 - 實作：[app/keeper.py](../../../app/keeper.py) 和 [app/keeper_prompt_policy.py](../../../app/keeper_prompt_policy.py)。
-- Prompt 契約：`tests/test_static_prompt_*.py`、`tests/test_spoiler_policy.py`、`tests/test_narrative_boundary_prompts.py`。
+- Prompt 契約：`tests/test_static_prompt_*.py`、`tests/test_spoiler_policy.py`、`tests/test_narrative_boundary_prompts.py`。戰後回歸測試涵蓋致命傷害、`end_combat`、序列化、依角色投影歷史，以及時間線／新戰鬥的失效。
 - 整合後完整 pytest、Ruff、mypy、compileall 均通過。隔離的五名調查員、16 輪 Codex 真實模擬有 16／16 次 router 呼叫完成，沒有 LLM 或工具錯誤；實際走到玩家檢定、待擲後續、建立戰鬥、登記敵人、傷害與先攻限制。因三次劇本搜尋先耗掉四次工具額度，`start_combat` 與 `add_npc_to_combat` 分散在連續兩回合。固定序列未走到沉睡敵人的致命甦醒節拍；僅能確認原句與 prompt 斷言保留，不能宣稱真實敘事已驗證該節拍。防劇透／隱私開關組合由整合 prompt 測試驗證，真實模擬沒有切換開關。
 
 ## 附錄：執行交接
