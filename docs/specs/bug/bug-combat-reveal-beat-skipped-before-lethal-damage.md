@@ -25,6 +25,8 @@ Both sentences describe an inert body. The scenario's own required beat — the 
 
 2. When a player points out that an enemy or event should have reacted, check existing mechanical state (`get_combat_status`, `get_character_sheet`) for what already happened before re-running `start_combat`/`add_npc_to_combat`/damage tools — narrate the missed beat instead of re-resolving the same attack a second time under a new enemy instance.
 
+3. `get_combat_status` retains one completed-combat receipt after `end_combat`, including the final roster and last damage, for a narration-only correction. Its public projection hides enemy HP and damage amounts when privacy isolation is enabled. A new fight clears the receipt; a different timeline or scenario cannot use it as evidence. Clearing that receipt while starting a new fight is valid encounter setup and must not make a deferred turn incomplete.
+
 This rule is written in English in the static prompt, unlike its ~30 sibling bullets (Traditional Chinese). It is a tool-calling instruction consumed only by the model, not player-facing narration, and measured ~32% fewer tokens than an equally-tightened Chinese version on this session's provider tokenizer — real savings since the static prompt is resent every turn. Being a brand-new, previously untuned bullet, there was no consistency cost against prior tuning to weigh against that.
 
 ## Flow and interfaces
@@ -37,6 +39,9 @@ player flags a missing beat -> check current state -> backfill narration only, n
 ## Implementation and verification
 
 - [app/keeper.py](../../../app/keeper.py)
+- [app/combat.py](../../../app/combat.py)
+- [app/services/turn_resolution.py](../../../app/services/turn_resolution.py)
 - [tests/test_combat_reveal_beat_before_lethal_damage.py](../../../tests/test_combat_reveal_beat_before_lethal_damage.py)
+- [tests/test_completed_combat_evidence.py](../../../tests/test_completed_combat_evidence.py)
 
 Related: [bug-combat-trigger-prompt-and-damage-tool-ambiguity.md](bug-combat-trigger-prompt-and-damage-tool-ambiguity.md) covers the adjacent, opposite failure mode (narrative suspicion incorrectly starting combat); this spec covers an already-correctly-triggered combat whose lethal resolution skipped a scenario-mandated narrative beat.

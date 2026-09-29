@@ -25,6 +25,8 @@
 
 2. 當玩家指出某個敵人或事件「應該有反應」時，先用 `get_combat_status`／`get_character_sheet` 確認機制上已經發生了什麼，再補敘漏掉的畫面；不要重新呼叫 `start_combat`／`add_npc_to_combat`／傷害工具，把同一次攻擊在一個新的敵人個體上重新結算一次。
 
+3. `end_combat` 後，`get_combat_status` 保留一筆已結束戰鬥的證據，包括最後的戰鬥員名單與傷害，供只補敘事的更正使用。啟用隱私隔離時，公開結果不顯示敵人 HP 與傷害數字。新戰鬥會清除此紀錄；不同時間線或劇本不得沿用。新戰鬥開始時清除舊紀錄屬於合法的遭遇設置，不應讓暫緩交接誤判為未完成。
+
 這條規則在 static prompt 裡是用英文寫的，跟旁邊約 30 條中文規則不同——因為它是只給模型看的工具呼叫指示，不是玩家會看到的敘事內容，用這個 session 的 provider tokenizer 量測，精簡後的英文版比同樣精簡的中文版少約 32% token，而 static prompt 每回合都會整包重送，這是真的省。因為是全新、之前沒調過的一條，不用權衡既有調校的一致性成本。
 
 ## 流程與介面
@@ -37,6 +39,9 @@
 ## 實作與驗證
 
 - [app/keeper.py](../../../app/keeper.py)
+- [app/combat.py](../../../app/combat.py)
+- [app/services/turn_resolution.py](../../../app/services/turn_resolution.py)
 - [tests/test_combat_reveal_beat_before_lethal_damage.py](../../../tests/test_combat_reveal_beat_before_lethal_damage.py)
+- [tests/test_completed_combat_evidence.py](../../../tests/test_completed_combat_evidence.py)
 
 相關：[bug-combat-trigger-prompt-and-damage-tool-ambiguity_zh.md](bug-combat-trigger-prompt-and-damage-tool-ambiguity_zh.md) 處理的是相反、但相鄰的失敗模式（敘事懷疑錯誤地啟動了戰鬥）；本篇處理的是戰鬥已經正確開始，但致命結算跳過了劇本要求的敘事節拍。

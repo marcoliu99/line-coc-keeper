@@ -1539,7 +1539,11 @@ def _advance_turn(state: GroupState) -> dict:
 def end_combat(state: GroupState) -> None:
     if state.combat.active:
         report = state.last_combat_report
-        if report.get("timeline_id") != state.timeline_id:
+        if (
+            report.get("timeline_id") != state.timeline_id
+            or report.get("scenario_library_id") != state.scenario_library_id
+            or report.get("scenario_title") != state.scenario_title
+        ):
             report = {}
         state.last_combat_report = {
             "timeline_id": state.timeline_id,

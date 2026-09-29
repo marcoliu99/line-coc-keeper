@@ -68,6 +68,23 @@ def test_new_combat_or_timeline_does_not_reuse_previous_evidence() -> None:
         assert "last_ended_combat" not in keeper._execute_tool(state, "get_combat_status", {}, [], [])
 
 
+def test_end_combat_does_not_relabel_damage_from_another_scenario() -> None:
+    state = GroupState(group_id="combat-evidence-scenario", timeline_id="timeline-a", scenario_title="Old")
+    with (
+        patch.object(keeper.mutation_admission, "assert_admitted"),
+        patch.object(keeper, "mutate_tool_state", side_effect=_mutate),
+        patch.object(keeper, "refresh_tool_state"),
+    ):
+        keeper._execute_tool(state, "start_combat", {}, [], [])
+        keeper._execute_tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8}, [], [])
+        keeper._execute_tool(state, "apply_combat_damage", {"target": "Corbitt", "raw_damage": 10}, [], [])
+        state.scenario_title = "New"
+        keeper._execute_tool(state, "end_combat", {}, [], [])
+        status = keeper._execute_tool(state, "get_combat_status", {}, [], [])
+
+    assert status["last_ended_combat"]["last_damage"] == {}
+
+
 def test_completed_combat_receipt_survives_real_state_save() -> None:
     with TemporaryDirectory() as directory:
         path = Path(directory)
