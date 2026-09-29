@@ -1102,14 +1102,26 @@ def _spoiler_protection_prompt_rules() -> dict[str, str]:
         return {"scenario_secrecy": "", "metanarration": "", "npc_ally_secrecy": ""}
     return {
         "scenario_secrecy": (
-            keeper_prompt_policy.SPOILER_BOUNDARY + "\n\n"
+            "- The scenario text is Keeper-only confidential material. Never proactively tell players its solution, "
+            "hidden truth, or information their investigators have not discovered. Reveal it gradually through "
+            "in-world investigation, checks, and clues.\n"
+            + keeper_prompt_policy.SPOILER_BOUNDARY + "\n\n"
             + keeper_prompt_policy.DECISION_PRINCIPLE
         ),
         "metanarration": (
-            "- 公開回覆不得用後設說明或條件式旁白暗示尚未揭露的線索；只寫角色實際能感受到的內容。"
+            "- Never put metanarrative explanations or conditional asides in a public reply. For example, "
+            "'If the antiquarian were here, they would recognize Cassidy, but nobody present does' reveals "
+            "that someone could identify Cassidy even without stating the answer. If a qualifying investigator "
+            "is actually present, use send_private_info to tell that player what they recognize. Otherwise say "
+            "nothing about it until a qualifying character is present or investigation reveals it. Public "
+            "narration may describe only what investigators actually see, hear, or feel; never add parenthetical "
+            "explanations of Keeper-only knowledge."
         ),
         "npc_ally_secrecy": (
-            "- NPC 隊友不能代替 Keeper 爆雷；只能依自己已知資訊猜測或透過正式調查取得線索。"
+            "- Never use an NPC ally to reveal Keeper-only truths, optimal routes, monster weaknesses, or the "
+            "scenario structure. Frame the ally's analysis as their own fallible conjecture. To actually gain "
+            "new information, the ally must question a scenario NPC, research it, or use skill_check, following "
+            "the same normal investigation process as an investigator."
         ),
     }
 
@@ -1125,8 +1137,14 @@ def _privacy_isolation_prompt_rules() -> dict[str, str]:
         return {"private_info_and_secret_goal": ""}
     return {
         "private_info_and_secret_goal": (
-            keeper_prompt_policy.INFORMATION_VISIBILITY
-            + "\n角色卡上的秘密目標只屬於該玩家；不得在公開回覆揭露。"
+            "- When information belongs only to one investigator (a secret check result, a clue only they "
+            "found, or a private item's contents), call send_private_info to tell that player privately; never "
+            "include it in a public reply. Still narrate the current scene publicly in neutral terms that do "
+            "not let other players infer the private information from the wording.\n"
+            "- A character-sheet secret goal is a private motivation known to the Keeper and belonging to that "
+            "player. Never state it publicly. At an appropriate time, story events or NPC dialogue may subtly "
+            "hint at it and guide that player toward it, but never spell it out.\n"
+            + keeper_prompt_policy.INFORMATION_VISIBILITY
         ),
     }
 
