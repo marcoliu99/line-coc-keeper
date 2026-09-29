@@ -63,6 +63,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Pending-button delivery and scenario retrieval latency](specs/enhancement/turn_latency_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_latency_design_spec_zh.md) |
 | [Dynamic Executor tool scoping](specs/enhancement/enhancement-executor-dynamic-tool-scoping.md) | backlog | [繁體中文](specs/enhancement/enhancement-executor-dynamic-tool-scoping_zh.md) |
 | [Proposed batch combat initialization](specs/enhancement/enhancement-macro-combat-initialization-tool.md) | backlog | [繁體中文](specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md) |
+| [Static prompt consolidation: dedupe, then split narrative/policy language](specs/enhancement/enhancement-static-prompt-consolidation.md) | backlog | [繁體中文](specs/enhancement/enhancement-static-prompt-consolidation_zh.md) |
 | [Proposed reasoning policy for ongoing combat effects](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md) | backlog | [繁體中文](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md) |
 | [External AI template authoring and import diagnostics](specs/enhancement/external_template_authoring_design_spec.md) | implemented; live trials pending | [繁體中文](specs/enhancement/external_template_authoring_design_spec_zh.md) |
 | [At most three scenario authoring files](specs/enhancement/three_file_scenario_export_design_spec.md) | implemented | [繁體中文](specs/enhancement/three_file_scenario_export_design_spec_zh.md) |

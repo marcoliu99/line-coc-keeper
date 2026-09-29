@@ -1406,6 +1406,17 @@
       ],
       "path": "docs/specs/refactor/codex_request_ownership_design_spec.md",
       "zh_path": "docs/specs/refactor/codex_request_ownership_design_spec_zh.md"
+    },
+    {
+      "title": "Static prompt consolidation: dedupe, then split narrative/policy language",
+      "zh": "Static prompt 整併：先去重複，再切「敘事／機制政策」雙語層",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "app/keeper.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-static-prompt-consolidation.md",
+      "zh_path": "docs/specs/enhancement/enhancement-static-prompt-consolidation_zh.md"
     }
   ]
 }

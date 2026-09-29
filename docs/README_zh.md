@@ -64,6 +64,7 @@
 | [待處理按鈕交付與劇本檢索延遲](specs/enhancement/turn_latency_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_latency_design_spec.md) |
 | [Executor 動態工具範圍](specs/enhancement/enhancement-executor-dynamic-tool-scoping_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-executor-dynamic-tool-scoping.md) |
 | [批次戰鬥初始化提案](specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-macro-combat-initialization-tool.md) |
+| [Static prompt 整併：先去重複，再切敘事／機制政策雙語層](specs/enhancement/enhancement-static-prompt-consolidation_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-static-prompt-consolidation.md) |
 | [持續戰鬥效果的推理設定提案](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md) |
 | [外部 AI 中文模板整備與匯入診斷](specs/enhancement/external_template_authoring_design_spec_zh.md) | 已實作；實測待完成 | [English](specs/enhancement/external_template_authoring_design_spec.md) |
 
