@@ -17,7 +17,9 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
 
     assert "failed check, or a harmless scuffle does not establish combat" in routing
     assert "usage limits, and triggers" in routing
-    assert "register every already-present combatant before handing off the first turn" in routing
+    assert "for every already-present enemy in the same tool sequence" in routing
+    assert "Immediately after `start_combat` succeeds, call `add_npc_to_combat`" in routing
+    assert "before final narration or turn handoff" in routing
     assert routing.count("distinct display name") == 1
     assert "`is_ranged` mode and defense options" in routing
     assert "never a counterattack" in routing
