@@ -2,7 +2,7 @@
 
 [English](authoritative_turn_handoff_design_spec.md)
 
-狀態：**進行中**。基準：`main_v2` 的 `07d55a7`。
+狀態：**implemented**。基準：`main_v2` 的 `07d55a7`。
 
 ## 目前邊界
 

@@ -1227,7 +1227,7 @@
       "title": "Authoritative turn handoff",
       "zh": "權威回合交接",
       "category": "refactor",
-      "status": "in_progress",
+      "status": "implemented",
       "evidence": [
         "app/services/turn_handoff.py",
         "app/agents/supervisor.py",

@@ -15,6 +15,7 @@ from app.domain.models import TurnResolution
 from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
 from app.services.turn_context import character_id
+from app.services.turn_handoff import owner_for_character
 
 INFORMATION_QUERY_TOOLS = tool_registry.INFORMATION_QUERY_TOOLS
 
@@ -118,8 +119,7 @@ def validate_resolution(
     luck = state.pending_luck_decisions.get(user_id)
     if disposition in {"await_check", "await_luck"}:
         # A turn may legitimately establish a defense/check for someone else.
-        owner = next((c.owner_id for c in state.active_characters()
-                      if character_id(state, c.owner_id) == (waiting or actor_id)), None)
+        owner = owner_for_character(state, waiting or actor_id)
         collection = state.pending_checks if disposition == "await_check" else state.pending_luck_decisions
         record = collection.get(owner or "", {})
         expected_id = record.get("check_id") if disposition == "await_check" else record.get("decision_id")
@@ -140,8 +140,7 @@ def validate_resolution(
         current = None
         if state.combat.active and 0 <= state.combat.current_index < len(state.combat.order):
             current = state.combat.order[state.combat.current_index]
-        waiting_owner = next((c.owner_id for c in state.active_characters()
-                              if character_id(state, c.owner_id) == waiting), None)
+        waiting_owner = owner_for_character(state, waiting)
         actual_wait = bool(waiting and waiting != actor_id and (
             (current and waiting in {current.character_id, current.combatant_id})
             or (waiting_owner and (waiting_owner in state.pending_checks or waiting_owner in state.pending_luck_decisions))
