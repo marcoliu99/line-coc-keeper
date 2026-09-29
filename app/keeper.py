@@ -772,11 +772,8 @@ def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict
     return {key: result[key] for key in public_keys if key in result}
 
 
-# Public migration seam for combat tool handlers. State changes still pass
-# through Keeper's single reload, admission, save, and snapshot boundary.
-ToolStateMutation = _StateMutation
-mutate_tool_state = _mutate_and_save_state
-refresh_tool_state = _refresh_state_snapshot
+# Combat tool handlers reuse the same migration seam declared above, plus
+# combat-specific helpers.
 find_npc_index_entry = _find_npc_index_entry
 skip_save_if_blocked = _skip_save_if_blocked
 filter_public_combat_damage_result = _filter_public_combat_damage_result

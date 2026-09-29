@@ -77,6 +77,46 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     return response
 
 
+def initialize_combat(call: ToolCall) -> dict[str, Any]:
+    from app import keeper
+
+    state = call.state
+    enemies = call.input.get("enemies") or []
+
+    def mutate(target_state: GroupState) -> Any:
+        combat.begin_combat(target_state)
+        results: list[dict[str, Any]] = []
+        # Two entries sharing one name in this same array are two distinct
+        # individuals (see the spec's decided design constraint), not a
+        # duplicate to reuse — but add_combatant's own duplicate check would
+        # otherwise treat the second one as "already in this fight" the
+        # moment the first is added to target_state. Disambiguate same-batch
+        # repeats before calling it, so that check only ever fires for a name
+        # that was already in the fight before this call started.
+        seen_counts: dict[str, int] = {}
+        for entry in enemies:
+            # A bad entry is reported, not fatal: the array's other entries
+            # still get added, per the spec's decided partial-success design.
+            try:
+                requested_name = entry["name"]
+                seen_counts[requested_name] = seen_counts.get(requested_name, 0) + 1
+                occurrence = seen_counts[requested_name]
+                npc_name = requested_name if occurrence == 1 else f"{requested_name} ({occurrence})"
+                added = combat.add_combatant(
+                    target_state, npc_name, int(entry.get("dex", 50)), int(entry.get("hp", 10)),
+                    is_ally=bool(entry.get("is_ally", False)),
+                    armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
+                )
+            except (KeyError, ValueError, TypeError) as exc:
+                results.append({"name": entry.get("name"), "ok": False, "error": str(exc)})
+                continue
+            results.append({"name": added.combatant.display_name, "ok": True})
+        return keeper.ToolStateMutation(results, should_save=True)
+
+    entry_results = keeper.mutate_tool_state(state, mutate)
+    return {"ok": True, "status": combat.status_text(state), "enemies": entry_results}
+
+
 def get_combat_status(call: ToolCall) -> dict[str, Any]:
     from app import keeper
 

@@ -651,6 +651,66 @@ _SPECS = (
     ),
     ToolSpec(
         schema={
+                "name": "initialize_combat",
+                "description": (
+                    "開啟戰鬥並一次登錄本次遭遇的所有敵方 NPC，並依 DEX 計算先攻順位——用於戰鬥剛開始、"
+                    "一次有多隻敵人同時登場的情況，取代連續呼叫 start_combat 加多次 add_npc_to_combat。"
+                    "同種怪物每一隻都要給不同的顯示名稱（例如「魚人（左）」／「魚人（右）」），不要用同一個"
+                    "名字填多筆——系統只會在偵測到同名時才自動編號，那是最後手段，不是預設做法。"
+                    "戰鬥中途只有一隻新敵人加入時，改用 add_npc_to_combat，不要為單一敵人呼叫這個工具。"
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "enemies": {
+                            "type": "array",
+                            "description": "本次遭遇的所有敵方 NPC／怪物名單，每一隻同種怪物都要給不同的顯示名稱",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；劇本沒寫明可抓 40-60 的一般值"},
+                                    "hp": {"type": "integer", "description": "最大生命值"},
+                                    "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
+                                    "armor": {
+                                        "type": "array",
+                                        "description": (
+                                            "敵人護甲規則，每筆含 id/label/value/applies_to/bypass_tags/public_hint 等"
+                                            "（不是 name——欄位名稱是 label，不要跟 attacks/abilities 的 name 搞混）；"
+                                            "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
+                                        ),
+                                        "items": {"type": "object"},
+                                    },
+                                    "attacks": {
+                                        "type": "array",
+                                        "description": (
+                                            "敵人攻擊表，每筆含 id/label/skill_name/skill_value/damage/range_band 等。"
+                                            "range_band 決定這招是不是近戰——沒寫預設是 engaged（近戰），拳頭、小刀、"
+                                            "長矛這類真的要貼身的攻擊可以不寫；只要是有距離的攻擊（手槍、步槍、弓箭、"
+                                            "投擲武器等）務必明確填 near，不然會被系統當成近戰，玩家被打時會多出一個"
+                                            "COC7e 規則不允許的『反擊』選項。不受距離限制的攻擊（法術、詛咒、心靈攻擊等）"
+                                            "填 any。"
+                                        ),
+                                        "items": {"type": "object"},
+                                    },
+                                    "abilities": {
+                                        "type": "array",
+                                        "description": "敵人特殊能力，每筆含 id/name/priority/trigger/check/effect/usage/reveal_policy 等",
+                                        "items": {"type": "object"},
+                                    },
+                                },
+                                "required": ["name", "dex", "hp"],
+                            },
+                        },
+                    },
+                    "required": ["enemies"],
+                },
+            },
+        handler=combat_handlers.initialize_combat,
+        invalidates_combat_status=True,
+    ),
+    ToolSpec(
+        schema={
                 "name": "get_combat_status",
                 "description": "查詢目前戰鬥的回合數、先攻順位與現在輪到誰的行動。一般公開視圖不顯示敵人 HP；KP Assistant 可看 private 視圖。",
                 "input_schema": {"type": "object", "properties": {}},

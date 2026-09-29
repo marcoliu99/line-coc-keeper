@@ -14,7 +14,7 @@ PLAYER_TOOL_ORDER = (
     "clear_pending_check", "sanity_check", "adjust_character", "adjust_ammo",
     "add_carried_item", "remove_carried_item", "record_established_fact",
     "record_clue", "add_status_tag", "remove_status_tag", "set_skill",
-    "get_character_sheet", "start_combat", "add_npc_to_combat", "get_combat_status",
+    "get_character_sheet", "start_combat", "add_npc_to_combat", "initialize_combat", "get_combat_status",
     "advance_combat_turn", "damage_combatant", "plan_enemy_turn",
     "resolve_enemy_action", "apply_combat_damage", "apply_final_combat_damage",
     "add_combat_effect", "end_combat", "send_private_info",
@@ -46,7 +46,7 @@ KP_CANONICAL = frozenset({
     "add_combat_effect",
 })
 COMBAT_INVALIDATING = frozenset({
-    "start_combat", "add_npc_to_combat", "plan_enemy_turn", "advance_combat_turn",
+    "start_combat", "add_npc_to_combat", "initialize_combat", "plan_enemy_turn", "advance_combat_turn",
     "damage_combatant", "resolve_enemy_action", "apply_combat_damage",
     "apply_final_combat_damage", "end_combat",
 })
@@ -188,7 +188,7 @@ def test_scenario_search_family_dispatches_without_legacy_cascade() -> None:
 
 def test_combat_family_uses_registered_handlers_without_legacy_cascade() -> None:
     combat_names = {
-        "start_combat", "add_npc_to_combat", "get_combat_status",
+        "start_combat", "add_npc_to_combat", "initialize_combat", "get_combat_status",
         "advance_combat_turn", "damage_combatant", "plan_enemy_turn",
         "resolve_enemy_action", "apply_combat_damage", "apply_final_combat_damage",
         "add_combat_effect", "end_combat",
