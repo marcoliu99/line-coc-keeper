@@ -155,7 +155,7 @@ class KpOnlyViewsAndButtonsTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(permissions.config, "SCENARIO_LIFECYCLE_KP_ONLY", True), \
                 patch.object(discord_bot, "load_group_state", return_value=_state(kp_assistant_user_id="kp")), \
                 patch.object(discord_bot, "_send_interaction_message", new_callable=AsyncMock) as sent, \
-                patch.object(discord_bot, "resolve_pdf_upload_choice", new_callable=AsyncMock) as resolve:
+                patch.object(discord_bot.command_router, "handle_pdf_choice_button", new_callable=AsyncMock) as resolve:
             await button.callback(self._interaction(conversation_id))
         self.assertIn(KP_ONLY, sent.await_args.args[1])
         resolve.assert_not_awaited()

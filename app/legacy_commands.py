@@ -26,6 +26,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import yaml
@@ -82,6 +83,8 @@ SendDM = Callable[[str, str], Awaitable[None]]  # (owner_id, text) -> None
 # conversation and page metadata are retained for state-aware image sends.
 SendImage = Callable[[bytes, str, int], Awaitable[None]]
 SendDMImage = Callable[[str, bytes, str, int], Awaitable[None]]  # (owner_id, png_bytes, conversation_id, page_number)
+# "new": the upload starts a fresh scenario; "fix": it corrects the current one.
+PdfChoice = Literal["new", "fix"]
 
 
 __all__ = [
@@ -542,7 +545,7 @@ async def handle_pdf_upload(
     return True
 
 
-def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
+def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -> str:
     """Resolve a pending upload while the caller holds the conversation lock."""
     state = load_state(conversation_id)
     pending = state.pending_pdf_upload
@@ -607,7 +610,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: str) -> str:
 @mutation_admission.guard_async_entry
 async def resolve_pdf_upload_choice(
     conversation_id: str,
-    choice: str,
+    choice: PdfChoice,
     push: Reply,
     user_id: str = "",
 ) -> None:

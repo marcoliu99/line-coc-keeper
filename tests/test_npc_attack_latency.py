@@ -784,7 +784,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         checked pending_luck_decisions (only the autoroll branch did) — a
         character could end up with two independent unresolved states at
         once (e.g. autoroll got turned off mid-decision). sanity_check goes
-        through _reject_if_check_already_pending, which needed the same
+        through check_lifecycle.register, which needs the same
         guard the autoroll branch already has."""
         state = _state_with_investigator()
         state.pending_luck_decisions["u1"] = {"options": []}
@@ -939,6 +939,27 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         self.assertEqual(first["check_id"], second["check_id"])
         roll_mock.assert_called_once()
 
+    def test_autoroll_retry_after_luck_resolution_never_rerolls(self):
+        state = _state_with_investigator()
+        state.autoroll_checks = True
+        fake_roll = MagicMock(roll=67, tier="failure", required_tier="regular", success=False)
+        tool_input = {"investigator": "小明", "skill": "射擊", "action_context": "瞄準"}
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with observability.context(turn_id="turn-luck-complete"), patch(
+                "app.keeper.dice.skill_check", return_value=fake_roll
+            ) as roll_mock, patch(
+                "app.keeper.luck.buyable_options", return_value=[MagicMock(tier="regular", cost=12)]
+            ):
+                first = keeper._execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
+                settled = clone_state(store.store["g"])
+                settled.pending_luck_decisions.clear()
+                store.put(settled)
+                second = keeper._execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
+        assert first["pending_luck"]
+        assert not second["ok"]
+        roll_mock.assert_called_once()
+
     def test_skill_check_rejects_when_a_luck_decision_is_still_pending(self):
         """Code-review finding: the non-autoroll skill_check branch only
         checked pending_checks before registering a new one — never
@@ -964,6 +985,21 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 射擊")
         self.assertFalse(resolution.should_finalize)
         self.assertIn("玩家用 /coc check 或按鈕擲骰", resolution.reply_text)
+
+    def test_offer_check_choice_preserves_unresolved_luck(self):
+        state = _state_with_investigator()
+        state.pending_luck_decisions["u1"] = {"decision_id": "old-luck", "options": []}
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(
+                state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
+                [], [], speaker_role="player",
+            )
+            saved = store.store["g"]
+        self.assertFalse(result["ok"])
+        self.assertIn("Luck", result["error"])
+        self.assertEqual(saved.pending_luck_decisions["u1"]["decision_id"], "old-luck")
+        self.assertNotIn("u1", saved.pending_checks)
 
     def test_offer_check_choice_reuses_identical_pending_request(self):
         state = _state_with_investigator()
@@ -997,6 +1033,50 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             )
         self.assertTrue(first["ok"])
         self.assertFalse(second["ok"])
+
+    def test_npc_attack_choice_does_not_roll_while_luck_is_pending(self):
+        state = _state_with_investigator()
+        state.pending_luck_decisions["u1"] = {"decision_id": "old", "options": []}
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check") as roll:
+                result = keeper._execute_tool(
+                    state, "offer_npc_attack_defense_choice",
+                    {"investigator": "小明", "options": self._options(),
+                     "attacker_skill_value": 50}, [], [], speaker_role="player",
+                )
+            saved = store.store["g"]
+        assert not result["ok"] and "Luck" in result["error"]
+        assert saved.pending_checks == {}
+        roll.assert_not_called()
+
+    def test_npc_melee_same_labels_with_changed_skill_parameters_does_not_reuse_roll(self):
+        state = _state_with_investigator()
+        options = [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}]
+        changed = [{"label": "閃避", "skill": "射擊"}, {"label": "反擊", "skill": "格鬥"}]
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=42, tier="hard")) as roll:
+                first = keeper._execute_tool(state, "offer_npc_attack_defense_choice", {
+                    "investigator": "小明", "options": options, "attacker_skill_value": 50,
+                }, [], [], speaker_role="player")
+                second = keeper._execute_tool(state, "offer_npc_attack_defense_choice", {
+                    "investigator": "小明", "options": changed, "attacker_skill_value": 50,
+                }, [], [], speaker_role="player")
+        assert first["ok"] and not second["ok"]
+        roll.assert_called_once()
+
+    def test_blocked_unknown_skill_does_not_change_character_card(self):
+        state = _state_with_investigator()
+        state.pending_luck_decisions["u1"] = {"decision_id": "old", "options": []}
+        with StateStorePatch(keeper) as store:
+            store.put(state)
+            result = keeper._execute_tool(state, "skill_check", {
+                "investigator": "小明", "skill": "自訂古語",
+            }, [], [], speaker_role="player")
+        assert not result["ok"]
+        assert "自訂古語" not in state.characters["u1"].skills
+        assert "自訂古語" not in store.store["g"].characters["u1"].skills
 
     def test_offer_npc_attack_defense_choice_rejects_and_does_not_reroll(self):
         state = _state_with_investigator()

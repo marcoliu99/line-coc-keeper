@@ -5,6 +5,7 @@ from unittest.mock import patch
 from app import keeper
 from app.agents import narrator, tool_gateway
 from app.keeper_tools import registry
+from app.models import Character, GroupState
 from app.services import turn_context, turn_resolution
 
 PLAYER_TOOL_ORDER = (
@@ -101,6 +102,50 @@ def test_registry_covers_schemas_and_preserves_provider_order() -> None:
         assert [tool["name"] for tool in keeper._tools_for_speaker_role("kp_assistant")] == [
             name for name in (*PLAYER_TOOL_ORDER, "search_scenario") if name in KP_ALLOWED
         ]
+
+
+def test_check_family_dispatches_without_legacy_cascade() -> None:
+    from app.models import GroupState
+
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy check dispatch"))):
+        result = keeper._execute_tool(
+            GroupState(group_id="npc-check"), "npc_skill_check", {"skill_value": 100}, [], [],
+        )
+    assert result["ok"] and result["skill_value"] == 100
+
+
+def test_dice_family_dispatches_without_legacy_cascade() -> None:
+    state = GroupState(group_id="dice-family")
+    state.characters["p1"] = Character(name="Investigator", owner_id="p1", occupation="Detective")
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy dice dispatch"))):
+        ordinary = keeper._execute_tool(state, "roll_dice", {"expression": "1d2"}, [], [])
+        impaling = keeper._execute_tool(
+            state, "roll_impaling_damage",
+            {"weapon_damage": "1d2", "damage_bonus": "0", "impaling": False}, [], [],
+        )
+        weapon = keeper._execute_tool(
+            state, "roll_weapon_damage",
+            {"investigator": "Investigator", "weapon_damage": "1d2"}, [], [],
+        )
+    assert ordinary["ok"] and ordinary["total"] in {1, 2}
+    assert impaling["ok"] and impaling["total"] == 2
+    assert weapon["ok"] and weapon["investigator"] == "Investigator"
+
+
+def test_character_family_dispatches_without_legacy_cascade() -> None:
+    from app.models import Character, GroupState
+
+    state = GroupState(group_id="character-family")
+    state.characters["p1"] = Character(name="Ada", owner_id="p1", occupation="Detective")
+    with (patch.object(keeper.mutation_admission, "assert_admitted"),
+          patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy character dispatch")),
+          patch.object(keeper, "refresh_tool_state")):
+        result = keeper._execute_tool(
+            state, "get_character_sheet", {"investigator": "Ada"}, [], [],
+        )
+    assert result["ok"] and result["sheet"]["name"] == "Ada"
 
 
 def test_inventory_family_dispatches_without_legacy_cascade() -> None:
