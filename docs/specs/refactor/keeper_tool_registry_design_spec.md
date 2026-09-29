@@ -70,7 +70,7 @@ class ToolCall:                            # the Data Clump the handlers share t
 - **Schema order:** provider prompt caching includes the tool list in the cached prefix, so the registry preserves declaration order and a test pins the order sent to providers.
 - **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
 
-Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. The combat-start prerequisite has not yet landed on `main_v2`, so the combat handler family remains pending.
+Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. Both combat prerequisites (#117 and #118) have landed; the combat handler family is migrated separately in PR #137.
 
 The dice family (`roll_dice`, `roll_impaling_damage`, `roll_weapon_damage`) is migrated to `app/keeper_tools/dice.py`.
 
@@ -78,4 +78,4 @@ The checks family (skill, SAN, NPC checks, defense choices, and pending-check cl
 
 The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Its handler calls Keeper's public attribute-mutation helper; the nested `_apply_attribute_delta` remains inside Keeper's authoritative state transaction and uses `check_lifecycle.blocker()` and `register()` so a blocked major-wound CON check cannot commit HP damage.
 
-Both handler families and the lifecycle refactor are aligned together on `integration/keeper-check-character-lifecycle`. The independent PRs no longer need to wait for each other's code changes; their merge order still needs coordination before final registry integration.
+Both handler families and the lifecycle refactor were aligned together on `integration/keeper-check-character-lifecycle`. PRs #130–#133 are now integrated into `main_v2`; PR #138 retains this alignment as it merges.
