@@ -78,4 +78,6 @@ The checks family (skill, SAN, NPC checks, defense choices, and pending-check cl
 
 The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Its handler calls Keeper's public attribute-mutation helper; the nested `_apply_attribute_delta` remains inside Keeper's authoritative state transaction and uses `check_lifecycle.blocker()` and `register()` so a blocked major-wound CON check cannot commit HP damage.
 
-Both handler families and the lifecycle refactor were aligned together on `integration/keeper-check-character-lifecycle`. PRs #130–#133 are now integrated into `main_v2`; PR #138 retains this alignment as it merges.
+Both handler families and the lifecycle refactor were aligned together on `integration/keeper-check-character-lifecycle`. PRs #130–#133 and #138 are now integrated into `main_v2`.
+
+The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single authoritative state mutation boundary through a public migration seam.

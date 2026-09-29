@@ -78,4 +78,6 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 
 角色家族（`adjust_character`、`set_skill`、`get_character_sheet`）已移至 `app/keeper_tools/character.py`。角色 handler 呼叫 Keeper 的公開屬性變更輔助函式；內層 `_apply_attribute_delta` 仍在 Keeper 的權威狀態交易裡，使用 `check_lifecycle.blocker()` 和 `register()`，避免重傷 CON 檢定受阻時仍提交 HP 傷害。
 
-兩個處理函式家族與檢定生命週期重構已在 `integration/keeper-check-character-lifecycle` 一起對齊。PR #130–#133 現已合入 `main_v2`；PR #138 合併時保留這項對齊。
+兩個處理函式家族與檢定生命週期重構已在 `integration/keeper-check-character-lifecycle` 一起對齊。PR #130–#133 和 #138 現已合入 `main_v2`。
+
+物品／狀態家族（`adjust_ammo`、攜帶物品新增／移除、狀態標記新增／移除）已移至 `app/keeper_tools/inventory.py`。這些處理函式仍透過公開過渡介面使用 Keeper 單一的權威狀態更新邊界。
