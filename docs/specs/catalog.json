@@ -1224,6 +1224,20 @@
       "zh_path": "docs/specs/enhancement/codex_analysis_provider_design_spec_zh.md"
     },
     {
+      "title": "Command completion and player controls",
+      "zh": "指令完成與玩家控制項",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/pending_buttons.py",
+        "app/discord_bot.py",
+        "tests/test_pending_button_latency.py",
+        "tests/test_logging_completion.py"
+      ],
+      "path": "docs/specs/refactor/command_completion_controls_design_spec.md",
+      "zh_path": "docs/specs/refactor/command_completion_controls_design_spec_zh.md"
+    },
+    {
       "title": "Scenario activation and chapter transitions",
       "zh": "劇本啟動與章節轉換",
       "category": "refactor",
