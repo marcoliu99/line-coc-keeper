@@ -95,3 +95,5 @@ After PRs #135–#137 have landed, every player-turn tool has an explicit `ToolS
 Delete migration-only literal-set equivalence tests. Continue to test registry/schema coverage, provider tool ordering derived from the registry, and each family's observable tool result. The old cascade must have no remaining caller before removal. This cleanup does not alter tool schemas, capability flags, or game rules.
 
 The final cleanup covers the tools present at `07d55a7`. `initialize_combat` had not been pushed to `main_v2` at that revision and is outside this cleanup's registry inventory.
+
+The macro-combat branch now registers `initialize_combat` with an explicit `ToolSpec.handler`, after `add_npc_to_combat` in provider order. Its tests dispatch through the registry without the removed legacy cascade.

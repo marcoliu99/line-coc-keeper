@@ -1044,11 +1044,15 @@
       "title": "Proposed batch combat initialization",
       "zh": "批次戰鬥初始化提案",
       "category": "enhancement",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/combat.py",
         "app/keeper.py",
-        "tests/test_combat_cards.py"
+        "app/keeper_tools/combat.py",
+        "app/keeper_tools/registry.py",
+        "app/services/turn_delivery.py",
+        "app/services/turn_resolution.py",
+        "tests/test_initialize_combat.py"
       ],
       "path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool.md",
       "zh_path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md",

@@ -9,7 +9,7 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
     routing = prompt.split("# Combat Tool Routing\n", 1)[1].split("\n- 劇本內容", 1)[0]
 
     for tool in (
-        "start_combat", "add_npc_to_combat", "offer_npc_attack_defense_choice",
+        "start_combat", "initialize_combat", "add_npc_to_combat", "offer_npc_attack_defense_choice",
         "adjust_ammo", "roll_weapon_damage", "roll_impaling_damage",
         "apply_combat_damage", "apply_final_combat_damage", "add_combat_effect",
     ):
@@ -17,9 +17,10 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
 
     assert "failed check, or a harmless scuffle does not establish combat" in routing
     assert "usage limits, and triggers" in routing
-    assert "for every already-active enemy in the same tool sequence" in routing
-    assert "Immediately after `start_combat` succeeds, call `add_npc_to_combat`" in routing
-    assert "before final narration or turn handoff" in routing
+    assert "all of them before final narration or turn handoff" in routing
+    assert "two or more already-active enemies" in routing
+    assert "For one active enemy, call `start_combat`" in routing
+    assert "then `add_npc_to_combat` in the same tool sequence" in routing
     assert "A dormant enemy does not activate merely because it is present" in routing
     assert "preserve the scenario's threat/touch/attack trigger" in routing
     assert "the first narration dealing damage or defeat MUST show that wake/rise moment" in routing

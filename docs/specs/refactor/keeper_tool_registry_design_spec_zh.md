@@ -95,3 +95,5 @@ PR #135–#137 合入後，每個玩家回合工具都有明確的 `ToolSpec.han
 刪除僅供遷移使用的舊字面集合等價測試。保留註冊表／schema 覆蓋、由註冊表推導的 provider 工具順序，以及各家族可觀察結果的測試。移除舊串接前須確認沒有任何呼叫端。本次清理不修改工具 schema、能力旗標或遊戲規則。
 
 最後清理涵蓋 `07d55a7` 現有的工具；當時 `initialize_combat` 尚未推送至 `main_v2`，不在本次清理的註冊表清單內。
+
+批次戰鬥分支現在也用明確的 `ToolSpec.handler` 註冊 `initialize_combat`，並將它放在 `add_npc_to_combat` 之後以保留 provider 工具順序。測試直接透過註冊表派送，不再依賴已移除的舊串接。

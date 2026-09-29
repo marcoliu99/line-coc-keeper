@@ -554,6 +554,21 @@ def test_setup_only_new_encounter_after_ended_fight_can_still_defer(state):
     assert stored.last_combat_report == {}
 
 
+def test_batch_combat_setup_can_still_defer(state):
+    async def provider(*args, **kwargs):
+        result = await args[5]('initialize_combat', {'enemies': [
+            {'name': 'Slow', 'dex': 20, 'hp': 8},
+            {'name': 'Fast', 'dex': 70, 'hp': 8},
+        ]})
+        assert result['ok']
+        return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
+
+    result = _executor_with_provider(state, provider)
+    assert result.turn_resolution.disposition == 'deferred'
+    stored = group_state.load_state(state.group_id)
+    assert stored.combat.order[stored.combat.current_index].name == 'Ken'
+
+
 @pytest.mark.parametrize('extra', ['inventory', 'enemy', 'other_pending', 'compensated'])
 def test_cancellation_rejects_unrelated_committed_changes(state, extra):
     state.pending_checks = {'a': pending(), 'b': pending('other')}

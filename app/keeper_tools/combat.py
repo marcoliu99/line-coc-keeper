@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app import combat
-from app.models import GroupState
+from app.models import ArmorRule, AttackRule, GroupState, SpecialAbility
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
@@ -75,6 +75,77 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     if index_note:
         response["note"] = index_note
     return response
+
+
+def initialize_combat(call: ToolCall) -> dict[str, Any]:
+    from app import keeper
+
+    state = call.state
+    enemies = call.input.get("enemies") or []
+
+    def mutate(target_state: GroupState) -> Any:
+        results: list[dict[str, Any]] = []
+        started_here = not target_state.combat.active
+        seen_batch_ids: set[str] = set()
+        added_any = False
+        for entry in enemies:
+            # A bad entry is reported, not fatal: the array's other entries
+            # still get added, per the spec's decided partial-success design.
+            try:
+                requested_name = entry["name"].strip()
+                if not requested_name:
+                    raise ValueError("enemy name is empty")
+                hp = int(entry.get("hp", 10))
+                dex = int(entry.get("dex", 50))
+                for field, rule_type in (
+                    ("armor", ArmorRule), ("attacks", AttackRule), ("abilities", SpecialAbility),
+                ):
+                    rules = entry.get(field)
+                    if rules is not None:
+                        if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+                            raise ValueError(f"{field} must be an array of objects")
+                        for rule in rules:
+                            rule_type.from_dict(rule)
+                index_note = ""
+                index_entry = keeper.find_npc_index_entry(target_state, requested_name)
+                if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
+                    canonical_hp = int(index_entry["hp"])
+                    if canonical_hp != hp:
+                        index_note = f"HP {hp} 已依 /coc index 修正為 {canonical_hp}"
+                        hp = canonical_hp
+                matching = combat.find_live_enemy_by_any_alias(target_state, requested_name)
+                added = combat.add_combatant(
+                    target_state, requested_name, dex, hp,
+                    is_ally=bool(entry.get("is_ally", False)),
+                    armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
+                    force_new_instance=(
+                        matching is not None and matching.combatant_id in seen_batch_ids
+                    ),
+                )
+            except (AttributeError, KeyError, ValueError, TypeError) as exc:
+                name = entry.get("name") if isinstance(entry, dict) else None
+                results.append({"name": name, "ok": False, "error": str(exc)})
+                continue
+            seen_batch_ids.add(added.combatant.combatant_id)
+            added_any = added_any or not added.reused
+            result: dict[str, Any] = {
+                "name": added.combatant.display_name, "ok": True, "reused": added.reused,
+            }
+            if index_note:
+                result["note"] = index_note
+            results.append(result)
+        if started_here and target_state.combat.active:
+            # The single-add path preserves the first actor while sorting.
+            # Before the first turn, the full roster's highest DEX acts first.
+            target_state.combat.current_index = 0
+        return keeper.ToolStateMutation(results, should_save=added_any)
+
+    entry_results = keeper.mutate_tool_state(state, mutate)
+    return {
+        "ok": any(entry["ok"] for entry in entry_results),
+        "status": combat.status_text(state),
+        "enemies": entry_results,
+    }
 
 
 def get_combat_status(call: ToolCall) -> dict[str, Any]:

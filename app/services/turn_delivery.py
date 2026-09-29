@@ -55,7 +55,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             text = f"{result.get('investigator')} 的狀態標記已更新：{'、'.join(result.get('status_tags', [])) or '無'}。"
         elif name == "clear_pending_check" and result.get("cleared"):
             text = f"{result.get('investigator', '調查員')} 尚未擲骰的檢定已取消。"
-        elif name in {"start_combat", "end_combat", "advance_combat_turn", "resolve_enemy_action", "add_npc_to_combat", "add_combat_effect"}:
+        elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "resolve_enemy_action", "add_npc_to_combat", "add_combat_effect"}:
             # Do not expose enemy sheets/ability names through a generic dump.
             text = "戰鬥機制操作已記錄；後續以目前戰鬥狀態為準。"
     return ObservedOutcome(f"tool:{number}", name, bool(result.get("ok")), text,
