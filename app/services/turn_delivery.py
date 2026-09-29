@@ -35,6 +35,12 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                     f"骰值 {result.get('roll')}，等級 {result.get('tier')}。")
         elif name in {"apply_combat_damage", "apply_final_combat_damage", "damage_combatant"} and "final_damage" in result:
             text = f"{result.get('name', result.get('target', '目標'))} 已結算傷害 {result['final_damage']}。"
+        elif name == "apply_resolved_check_damage":
+            text = (f"{result.get('investigator', '調查員')} 已結算傷害 {result.get('damage')}，"
+                    f"HP {result.get('hp_before')} → {result.get('hp_after')}。")
+        elif name == "create_triggered_check" and result.get("pending"):
+            text = (f"{result.get('investigator', '調查員')} 的{result.get('skill', '後續')}檢定已建立，"
+                    "等待玩家擲骰。")
         elif name == "damage_combatant":
             # Enemy HP may already have been removed by the public tool projection.
             if "hp" in result and "hp_before" in result:

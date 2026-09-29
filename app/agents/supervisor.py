@@ -191,7 +191,14 @@ async def run_turn(
 
     def consistent(candidate: str) -> str:
         if turn_kind == "resolved_check_followup":
-            candidate = prompt_config.enforce_resolved_check_consistency(candidate, resolved_check_context or {})
+            origin_check_id = (resolved_check_context or {}).get("check_id")
+            new_pending_check = any(
+                isinstance(entry, dict) and entry.get("source_check_id") == origin_check_id
+                for entry in state.pending_checks.values()
+            )
+            candidate = prompt_config.enforce_resolved_check_consistency(
+                candidate, resolved_check_context or {}, new_pending_check=new_pending_check,
+            )
         if public_result is not None:
             candidate = prompt_config.enforce_mechanic_check_consistency(candidate, public_result)
         return candidate

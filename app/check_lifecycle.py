@@ -47,6 +47,7 @@ def _same_check(existing: dict[str, Any], candidate: dict[str, Any]) -> bool:
             and opposed_checks.request_part(existing.get("opposed"))
             == opposed_checks.request_part(candidate.get("opposed"))
             and existing.get("action_basis", "") == candidate.get("action_basis", "")
+            and existing.get("consequences", []) == candidate.get("consequences", [])
         )
     if candidate.get("type") == "sanity":
         return all(existing.get(key) == candidate.get(key) for key in ("loss_success", "loss_failure"))

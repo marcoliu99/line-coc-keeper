@@ -74,6 +74,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         evidence_incomplete=bool(scenario_retrieval.incomplete_roots(rag_context)),
         required_evidence_ids=scenario_retrieval.incomplete_roots(rag_context),
         observed_outcomes=observed,
+        actor_id=user_id,
     )
     combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_

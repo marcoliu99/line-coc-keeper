@@ -31,6 +31,7 @@ from app import (
     luck,
     memory_rag,
     observability,
+    resolved_check_consequences,
     scenario_index,
     scenario_library,
     scene_digest,
@@ -423,6 +424,58 @@ mutate_tool_state = _mutate_and_save_state
 refresh_tool_state = _refresh_state_snapshot
 
 
+def apply_character_delta_in_state(
+    target_state: GroupState, target_char: Character, field_name: str, delta: int,
+    cur_attr: str, max_attr: str | None, *, entry_point: str,
+) -> tuple[int, bool, dict[str, Any] | None, dict[str, Any] | None]:
+    """Shared attribute and major-wound rule within a caller-owned transaction."""
+    target_cap = getattr(target_char, max_attr) if max_attr else 999
+    new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
+    is_major_wound = (
+        field_name == "hp" and delta < 0 and new_val > 0
+        and -delta >= target_char.hp_max / 2
+    )
+    blocker = (
+        check_lifecycle.blocker(target_state, target_char.owner_id)
+        if is_major_wound and not target_state.autoroll_checks else None
+    )
+    if blocker:
+        blocked = combat.major_wound_blocked(
+            target_state, target_char, blocker, entry_point=entry_point
+        )
+        return getattr(target_char, cur_attr), False, None, blocked
+
+    setattr(target_char, cur_attr, new_val)
+    major_wound = False
+    wound_roll: dict[str, Any] | None = None
+    if is_major_wound:
+        con_value = resolve_skill_value(target_char, "CON")
+        major_wound = True
+        if target_state.autoroll_checks:
+            con_result = dice.skill_check(con_value)
+            wound_roll = {
+                "skill": "CON", "skill_value": con_value, "roll": con_result.roll,
+                "tier": con_result.tier, "success": con_result.success,
+            }
+            if not con_result.success:
+                for tag in ("昏迷", "倒地"):
+                    if tag not in target_char.status_tags:
+                        target_char.status_tags.append(tag)
+        else:
+            decision = check_lifecycle.register(
+                target_state, target_char.owner_id,
+                {
+                    "type": "skill", "skill": "CON", "skill_value": con_value,
+                    "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                    "major_wound_trigger": True,
+                },
+                source={"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
+            )
+            if decision.status != "admitted":
+                raise RuntimeError(f"major-wound CON registration blocked: {decision.blocker}")
+    return new_val, major_wound, wound_roll, None
+
+
 def apply_character_attribute_delta(
     state: GroupState,
     tool_input: dict[str, Any],
@@ -431,63 +484,17 @@ def apply_character_attribute_delta(
     max_attr: str | None,
 ) -> tuple[int, bool, dict[str, Any] | None, dict[str, Any] | None]:
     """Apply an attribute change and its required CON check in one transaction."""
-    blocked_hit: dict[str, Any] | None = None
-
     def _apply_attribute_delta(
         target_state: GroupState,
-    ) -> _StateMutation[tuple[int, bool, dict[str, Any] | None]]:
-        nonlocal blocked_hit
+    ) -> _StateMutation[tuple[int, bool, dict[str, Any] | None, dict[str, Any] | None]]:
         target_char = require_character(target_state, tool_input.get("investigator", ""))
-        target_cap = getattr(target_char, max_attr) if max_attr else 999
-        delta = int(tool_input["delta"])
-        new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
-        is_major_wound = (
-            field_name == "hp" and delta < 0 and new_val > 0
-            and -delta >= target_char.hp_max / 2
+        result = apply_character_delta_in_state(
+            target_state, target_char, field_name, int(tool_input["delta"]),
+            cur_attr, max_attr, entry_point="adjust_character",
         )
-        blocker = (
-            check_lifecycle.blocker(target_state, target_char.owner_id)
-            if is_major_wound and not target_state.autoroll_checks
-            else None
-        )
-        if blocker:
-            blocked_hit = combat.major_wound_blocked(
-                target_state, target_char, blocker, entry_point="adjust_character"
-            )
-            return _StateMutation((getattr(target_char, cur_attr), False, None), should_save=False)
+        return _StateMutation(result, should_save=result[3] is None)
 
-        setattr(target_char, cur_attr, new_val)
-        major_wound = False
-        wound_roll: dict[str, Any] | None = None
-        if is_major_wound:
-            con_value = resolve_skill_value(target_char, "CON")
-            major_wound = True
-            if target_state.autoroll_checks:
-                con_result = dice.skill_check(con_value)
-                wound_roll = {
-                    "skill": "CON", "skill_value": con_value, "roll": con_result.roll,
-                    "tier": con_result.tier, "success": con_result.success,
-                }
-                if not con_result.success:
-                    for tag in ("昏迷", "倒地"):
-                        if tag not in target_char.status_tags:
-                            target_char.status_tags.append(tag)
-            else:
-                decision = check_lifecycle.register(
-                    target_state, target_char.owner_id,
-                    {
-                        "type": "skill", "skill": "CON", "skill_value": con_value,
-                        "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
-                        "major_wound_trigger": True,
-                    },
-                    source={"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
-                )
-                if decision.status != "admitted":
-                    raise RuntimeError(f"major-wound CON registration blocked: {decision.blocker}")
-        return _StateMutation((new_val, major_wound, wound_roll))
-
-    new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)
-    return new_val, major_wound, wound_roll, blocked_hit
+    return _mutate_and_save_state(state, _apply_attribute_delta)
 
 
 _CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
@@ -513,6 +520,7 @@ def _persist_resolved_check_event(state: GroupState, event_seed: dict[str, Any])
         char = latest.get_active_character(event_seed["owner_id"])
         if char is None or char.character_id != event_seed["character_id"]:
             return
+        resolved_check_consequences.persist_origin(latest, event_seed)
         after = _character_attribute_snapshot(char)
         event = {key: value for key, value in event_seed.items() if key != "state_before"}
         event["state_effects"] = [
@@ -1016,6 +1024,7 @@ def _execute_tool(
     private_messages: list[tuple[str, str]],
     image_requests: list[tuple[str | None, int]],
     speaker_role: str = "player",
+    actor_id: str = "",
 ) -> dict:
     mutation_admission.assert_admitted(state.group_id, timeline_id=state.timeline_id)
     try:
@@ -1037,6 +1046,7 @@ def _execute_tool(
             state=state, input=tool_input, private_messages=private_messages,
             image_requests=image_requests,
             speaker_role=cast(tool_registry.SpeakerRole, speaker_role), name=name,
+            actor_id=actor_id,
         ))
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}
@@ -1269,7 +1279,8 @@ def _build_static_prompt(state: GroupState) -> str:
   敘事帶過即可，不要為了小事也要求檢定；拿不準的話，優先往上面三類去想，而不是每個行動都檢定。
   不管是否呼叫這個工具，都不可以自己憑空決定成敗或編造骰值；照 deterministic tool 回傳結果敘事。
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具；依上面的群組模式等玩家擲骰或使用立即回傳的 SAN、損失與 madness 結果敘事。
-- 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
+- 劇本若明定某檢定結果會造成傷害或立刻觸發另一個獨立檢定，在建立原 skill_check 時附上 `consequences`：每項包含穩定 key、kind、when、劇本原文 source_quote，並帶傷害骰式／固定值或新技能。此計畫必須在原檢定擲骰前確立；不可在結算後補造。
+- 已結算檢定的非戰鬥傷害只能用 `apply_resolved_check_damage` 提交；已授權的獨立後續檢定只能用 `create_triggered_check` 建立。原檢定不可重建或重擲；新 pending 仍由玩家擲骰。一般非戰鬥恢復與資源調整才用 adjust_character。
 # Combat Tool Routing
 - A scenario condition or resolved canonical event starts a dangerous fight. If two or more already-active enemies are supported by the scenario, use `initialize_combat` once with all of them before final narration or turn handoff. For one active enemy, call `start_combat` (no arguments), then `add_npc_to_combat` in the same tool sequence. Suspicion, fear, a failed check, or a harmless scuffle does not establish combat. Starting combat alone does not register enemies.
 - A scenario-backed enemy activates later under its written trigger -> `add_npc_to_combat`. A dormant enemy does not activate merely because it is present; preserve the scenario's threat/touch/attack trigger. Check the scenario first and pass its armor, attacks, special abilities, usage limits, and triggers in `armor`/`attacks`/`abilities` for either registration tool; HP alone is insufficient. Each simultaneously active instance of one enemy type needs a distinct display name (for example, 「魚人（左）」 and 「魚人（右）」); do not rely on fallback numbering.

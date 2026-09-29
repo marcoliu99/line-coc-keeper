@@ -4,7 +4,7 @@
 
 ## Status and scope
 
-Category: `bug`. Status: **backlog (awaiting spec review)**. Based on `main_v2` at `7cef87c`.
+Category: `bug`. Status: **implemented**. Based on `main_v2` at `7cef87c`.
 
 This spec covers consequences that become due after an investigator check is already settled. It addresses two observed failures: environmental damage was rolled but could not be committed to HP in the restricted resolved-check follow-up; and a successful Spot Hidden result could require a new Dodge check, but the follow-up could only ask the player what they did.
 
@@ -53,6 +53,8 @@ Check A settles
 
 ## Data and integration requirements
 
+- The originating `skill_check` may carry a bounded `consequences` plan before rolling. Each entry states a stable key, result condition, type, exact scenario quote, and damage or next-check parameters. Python checks the quote against the active scenario and the damage expression against that quote. The plan travels through pending check, Luck decision, and the settled result, then is persisted before Narrator follow-up. `cause` and `trigger_condition` never add authorization later.
+- A fixed `final_damage` is accepted only when that exact fixed amount was authorized on the originating check. A separately rolled damage value without a durable linked receipt cannot be treated as preauthorized fixed damage.
 - Persist an outcome-bound consequence authorization and idempotent receipt keyed to timeline, source event, consequence key, and subject. The bounded `resolved_check_events` list is not a sufficient retry ledger.
 - Bind the tool call to the original turn actor using trusted request context; do not trust a model-provided actor ID. Resolve the target by the source event's character identity, not only a display name.
 - Perform dice generation, HP mutation, major-wound handling, receipt persistence, and triggered-check registration through the existing authoritative state mutation/check-lifecycle boundaries. A partial commit must not leave a spent damage roll without its HP result.
@@ -65,9 +67,9 @@ Check A settles
 - Major-wound damage preserves the existing CON check gate and does not create duplicate pending checks.
 - A successful Spot Hidden authorization can create a distinct Dodge pending check. Repeating the same consequence returns the same `check_id`; attempting to recreate the originating Spot Hidden check is rejected.
 - Triggered checks remain pending for the player even with autoroll on; the original result remains unchanged.
-- A source-backed scenario fixture covers the bed attack's exact trigger and damage rule. Confirm the damage expression against the original PDF before treating it as canonical.
+- A source-backed scenario fixture covers the bed attack's trigger and damage rule. The original *The Haunting* PDF, physical page 9 (printed page 25), confirms the fall damage is `1D6 + 2` HP and Spot Hidden success permits Dodge. The parsed scenario text also contains this formula, but two-column extraction separates it from the Bed Attack heading; retrieval can therefore still miss the connection. This change validates quoted evidence but does not repair PDF column ordering.
 - Run focused tool-gateway, check-lifecycle, state-persistence, narrator-handoff tests, then the full suite, Ruff 0.16.8, mypy, and compileall.
 
-## Review question
+## Implementation decision
 
-Python must check an outcome-bound authorization; a free-text `cause` or `trigger_condition` supplied with the tool call cannot establish one. Review where the authorization is created and persisted (for example, on the originating pending check from source-backed Keeper evidence, then copied to its resolved event). The implementation must make this boundary explicit before it can satisfy the validation contract.
+The originating `skill_check` validates and carries the plan before rolling. Manual, Luck, and autoroll paths preserve it; the settled event publishes a durable origin before Narrator follow-up. Both consequence tools verify this origin and the actual outcome. A free-text `cause` or `trigger_condition` cannot authorize a consequence.

@@ -1450,7 +1450,8 @@
       "title": "Safe consequences after a resolved check",
       "zh": "已結算檢定的安全後果",
       "category": "bug",
-      "status": "backlog",
+      "status": "implemented",
+      "evidence": ["app/resolved_check_consequences.py", "app/keeper_tools/consequences.py", "tests/test_resolved_check_consequences.py"],
       "path": "docs/specs/bug/resolved_check_consequence_capabilities_design_spec.md",
       "zh_path": "docs/specs/bug/resolved_check_consequence_capabilities_design_spec_zh.md"
     }
