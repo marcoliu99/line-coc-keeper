@@ -4,17 +4,17 @@
 
 ## 狀態與範圍
 
-分類：`enhancement`。狀態：**實作中**。對照基準：`enhancement/macro-combat-initialization`（建立在 `refactor/keeper-tool-combat` 上，已合併目前的 `main_v2`）的 `c8f7057`（2026-09-29）。
+分類：`enhancement`。狀態：**已在分支實作**。2026-09-29 已對齊 `refactor/keeper-tool-registry-final-cleanup`（PR #141）。
 
 此版本描述現行契約，提案工作均明確標示；歷史來源文字連結列於下方。
 
 ## 現行契約
 
-1. `initialize_combat` 目前還不是可用的 runtime 工具；這個分支要新增它。它把開戰與多個敵人加入合併成一次呼叫，減少模型往返次數。
+1. `initialize_combat` 已用明確的 `ToolSpec.handler` 註冊。它把開戰與多個敵人加入合併成一次呼叫，減少模型往返次數。
 
 2. 每個敵人須有不同玩家可見識別及完整劇本護甲／攻擊／能力；不能默默丟棄同名陣列項，後備編號須玩家可見。
 
-3. 重用既有戰鬥、重複／別名／HP 檢查；DEX 先攻已存在，不能新增不相干的先攻擲骰機制。
+3. 重用既有戰鬥、重複／別名／HP 檢查，包括逐隻套用權威 NPC 索引的 HP；DEX 先攻已存在，不能新增不相干的先攻擲骰機制。
 
 4. **已與 Marco 確認（2026-09-29）：**
    - **欄位對等：** 每個 `enemies` 項目都支援 `armor`／`attacks`／`abilities`，和 `add_npc_to_combat` 完全一致，不是縮減版 schema。既有 static prompt 已經要求 Keeper 在劇本有寫的情況下填這些欄位；巨集工具少了這些，遇到有護甲或特殊能力的敵人就等於功能倒退。
@@ -36,6 +36,7 @@
 - [app/combat.py](../../../app/combat.py)
 - [tests/test_combat_cards.py](../../../tests/test_combat_cards.py)
 - [tests/test_keeper_tool_registry.py](../../../tests/test_keeper_tool_registry.py)
+- [tests/test_initialize_combat.py](../../../tests/test_initialize_combat.py)
 
 ## 歷史依據
 

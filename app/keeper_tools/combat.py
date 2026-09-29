@@ -102,15 +102,26 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                 seen_counts[requested_name] = seen_counts.get(requested_name, 0) + 1
                 occurrence = seen_counts[requested_name]
                 npc_name = requested_name if occurrence == 1 else f"{requested_name} ({occurrence})"
+                hp = int(entry.get("hp", 10))
+                index_note = ""
+                index_entry = keeper.find_npc_index_entry(target_state, requested_name)
+                if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
+                    canonical_hp = int(index_entry["hp"])
+                    if canonical_hp != hp:
+                        index_note = f"HP {hp} 已依 /coc index 修正為 {canonical_hp}"
+                        hp = canonical_hp
                 added = combat.add_combatant(
-                    target_state, npc_name, int(entry.get("dex", 50)), int(entry.get("hp", 10)),
+                    target_state, npc_name, int(entry.get("dex", 50)), hp,
                     is_ally=bool(entry.get("is_ally", False)),
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
                 )
             except (KeyError, ValueError, TypeError) as exc:
                 results.append({"name": entry.get("name"), "ok": False, "error": str(exc)})
                 continue
-            results.append({"name": added.combatant.display_name, "ok": True})
+            result: dict[str, Any] = {"name": added.combatant.display_name, "ok": True}
+            if index_note:
+                result["note"] = index_note
+            results.append(result)
         return keeper.ToolStateMutation(results, should_save=True)
 
     entry_results = keeper.mutate_tool_state(state, mutate)

@@ -296,7 +296,16 @@ def tool_name(name: str) -> str:
 
 
 def llm_reasoning_effort(provider: str) -> str | None:
-    """Return the configured reasoning effort only for providers that use it."""
-    if provider != "openai":
-        return None
-    return config.KEEPER_REASONING_EFFORT or None
+    """Return the configured reasoning effort only for providers that use it.
+
+    Each provider that supports it keeps its own setting: KEEPER_REASONING_
+    EFFORT drives the openai conversation loop, CODEX_REASONING_EFFORT drives
+    Codex (already the value codex_provider.py's own codex.conversation event
+    logs directly — this is the same fact, read here for the outer llm.turn/
+    llm.request span instead of silently reading null for Codex turns).
+    """
+    if provider == "openai":
+        return config.KEEPER_REASONING_EFFORT or None
+    if provider == "codex":
+        return config.CODEX_REASONING_EFFORT or None
+    return None

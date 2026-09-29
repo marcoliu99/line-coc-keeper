@@ -772,8 +772,7 @@ def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict
     return {key: result[key] for key in public_keys if key in result}
 
 
-# Combat tool handlers reuse the same migration seam declared above, plus
-# combat-specific helpers.
+# Additional public helpers for the combat handlers.
 find_npc_index_entry = _find_npc_index_entry
 skip_save_if_blocked = _skip_save_if_blocked
 filter_public_combat_damage_result = _filter_public_combat_damage_result
@@ -1078,55 +1077,6 @@ def _execute_tool(
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}
 
-
-def execute_legacy_tool(
-    state: GroupState,
-    name: str,
-    tool_input: dict,
-    private_messages: list[tuple[str, str]],
-    image_requests: list[tuple[str | None, int]],
-    speaker_role: str = "player",
-) -> dict:
-    """Existing tool cascade; the registry delegates here until each family moves."""
-    try:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        if name == "send_private_info":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            if not spoiler_policy.is_privacy_isolation_enabled():
-                # §3.4 mechanism #1: still delivered privately (no safe public
-                # fallback exists at this layer — see spec §12 open item #6),
-                # but flagged loudly since this invariant is supposed to hold
-                # unconditionally in production.
-                observability.event(
-                    "privacy.isolation.disabled", level=logging.WARNING, fn="send_private_info"
-                )
-            private_messages.append((char.owner_id, tool_input["message"]))
-            return {"ok": True, "delivered_to": char.name}
-
-
-
-
-
-
-        return {"ok": False, "error": f"未知工具 {name}"}
-    except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
-        return {"ok": False, "error": str(exc)}
 
 
 def _bounded_scenario_context(scenario_text: str) -> str:

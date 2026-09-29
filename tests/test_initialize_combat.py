@@ -82,6 +82,22 @@ class InitializeCombatTests(unittest.TestCase):
         self.assertEqual(statuses, [True, False, True])
         self.assertIn("error", result["enemies"][1])
 
+    def test_indexed_hp_is_authoritative_for_each_enemy(self):
+        state = GroupState(group_id="initialize-combat-" + self._testMethodName)
+        state.scenario_npc_index = [{"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 20}]
+
+        def mutate(current, callback):
+            result = callback(current)
+            return result.value if isinstance(result, keeper.ToolStateMutation) else result
+
+        with patch.object(keeper, "mutate_tool_state", side_effect=mutate):
+            result = combat_handlers.initialize_combat(_call(state, [
+                {"name": "柯比特", "dex": 60, "hp": 16},
+            ]))
+        enemy = next(c for c in state.combat.order if not c.is_pc)
+        self.assertEqual(enemy.hp, 20)
+        self.assertIn("HP 16", result["enemies"][0]["note"])
+
     def test_an_enemy_already_in_an_active_fight_is_reused_not_duplicated(self):
         state = GroupState(group_id="initialize-combat-" + self._testMethodName)
         combat_handlers.initialize_combat(_call(state, [{"name": "柯比特", "dex": 60, "hp": 16}]))
@@ -92,10 +108,9 @@ class InitializeCombatTests(unittest.TestCase):
         enemies = [c for c in state.combat.order if not c.is_pc]
         self.assertEqual({c.display_name for c in enemies}, {"柯比特", "深潛者"})
 
-    def test_dispatches_through_the_registry_without_the_legacy_cascade(self):
+    def test_dispatches_through_the_registry(self):
         state = GroupState(group_id="initialize-combat-" + self._testMethodName)
-        with (patch.object(keeper.mutation_admission, "assert_admitted"),
-              patch.object(keeper, "execute_legacy_tool", side_effect=AssertionError("legacy dispatch"))):
+        with patch.object(keeper.mutation_admission, "assert_admitted"):
             result = keeper._execute_tool(state, "initialize_combat", {
                 "enemies": [{"name": "柯比特", "dex": 60, "hp": 16}],
             }, [], [])

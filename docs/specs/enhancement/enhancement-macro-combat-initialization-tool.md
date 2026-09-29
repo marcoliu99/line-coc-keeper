@@ -4,17 +4,17 @@
 
 ## Status and scope
 
-Category: `enhancement`. Status: **in progress**. Audited against `enhancement/macro-combat-initialization` (built on `refactor/keeper-tool-combat`, merged with current `main_v2`) at `c8f7057` (2026-09-29).
+Category: `enhancement`. Status: **implemented on branch**. Aligned with `refactor/keeper-tool-registry-final-cleanup` (PR #141) on 2026-09-29.
 
 This edition describes the current contract. Proposed work is explicitly identified; historical source text is linked below.
 
 ## Current contract
 
-1. `initialize_combat` is not yet an available runtime tool; this branch adds it. It combines combat startup and multiple enemy additions into one call to reduce model round trips.
+1. `initialize_combat` is registered with an explicit `ToolSpec.handler`. It combines combat startup and multiple enemy additions into one call to reduce model round trips.
 
 2. Each enemy must carry distinct player-visible identity and complete scenario-supported armor/attacks/abilities. Never silently drop same-name array entries; any fallback suffix must be visible to players.
 
-3. Reuse existing combat and duplicate/alias/HP checks. DEX initiative is already implemented; do not invent a separate initiative-rolling mechanism.
+3. Reuse existing combat and duplicate/alias/HP checks, including authoritative indexed HP for each enemy. DEX initiative is already implemented; do not invent a separate initiative-rolling mechanism.
 
 4. **Decided with Marco (2026-09-29):**
    - **Field parity:** each `enemies` entry accepts `armor`/`attacks`/`abilities`, matching `add_npc_to_combat` exactly — not a reduced schema. The static prompt already requires the Keeper to fill these when the scenario specifies them; a macro tool without them would be a capability regression for any encounter with armored or ability-bearing enemies.
@@ -36,6 +36,7 @@ The linked implementation and existing regression tests are the audit evidence. 
 - [app/combat.py](../../../app/combat.py)
 - [tests/test_combat_cards.py](../../../tests/test_combat_cards.py)
 - [tests/test_keeper_tool_registry.py](../../../tests/test_keeper_tool_registry.py)
+- [tests/test_initialize_combat.py](../../../tests/test_initialize_combat.py)
 
 ## Historical evidence
 

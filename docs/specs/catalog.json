@@ -977,6 +977,8 @@
         "app/logging_config.py",
         "app/providers/retry.py",
         "app/agents/executor.py",
+        "app/agents/narrator.py",
+        "app/providers/codex_provider.py",
         "app/discord_bot.py",
         "tests/test_observability.py",
         "tests/test_logging_completion.py",
@@ -985,7 +987,8 @@
       "path": "docs/specs/feature/structured_performance_logging_design_spec.md",
       "zh_path": "docs/specs/feature/structured_performance_logging_design_spec_zh.md",
       "previous_path": "docs/structured_performance_logging_design_spec.md",
-      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f",
+      "current_contract_revision": "b4d3338e78e77ef257e0a104cae1a3d9a939999a"
     },
     {
       "title": "Pending-button delivery and scenario retrieval latency",
@@ -1041,11 +1044,12 @@
       "title": "Proposed batch combat initialization",
       "zh": "批次戰鬥初始化提案",
       "category": "enhancement",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/combat.py",
-        "app/keeper.py",
-        "tests/test_combat_cards.py"
+        "app/keeper_tools/combat.py",
+        "app/keeper_tools/registry.py",
+        "tests/test_initialize_combat.py"
       ],
       "path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool.md",
       "zh_path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md",
@@ -1224,7 +1228,7 @@
       "title": "Keeper tools as a registry",
       "zh": "Keeper 工具改為註冊表",
       "category": "refactor",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
         "app/keeper_tools/registry.py",
         "app/keeper_tools/character.py",
@@ -1233,6 +1237,7 @@
         "app/keeper_tools/dice.py",
         "app/keeper_tools/inventory.py",
         "app/keeper_tools/scenario.py",
+        "app/keeper_tools/messaging.py",
         "tests/test_keeper_tool_registry.py",
         "app/keeper.py",
         "app/agents/tool_gateway.py",

@@ -2,7 +2,7 @@
 
 [繁體中文](keeper_tool_registry_design_spec_zh.md)
 
-Status: **partial** (reviewed; registry and derived sets implemented, handler families pending). Base: `main_v2` at `1a31645`.
+Status: **implemented**. Original base: `main_v2` at `1a31645`; final cleanup checked against `07d55a7`.
 
 > Refreshed against current `main_v2`: `main_v2` since reverted PR #99/#121's movement pipeline (`docs/specs/bug/movement_authorization_diagnosability_design_spec.md`). `app/services/movement.py`, `movement.TOOL`/`commit_movement`, and `ORIGIN_TOOLS` no longer exist, so they're dropped below along with the migration step that named them. Everything else here still matches the current code, with refreshed line numbers.
 
@@ -70,7 +70,7 @@ class ToolCall:                            # the Data Clump the handlers share t
 - **Schema order:** provider prompt caching includes the tool list in the cached prefix, so the registry preserves declaration order and a test pins the order sent to providers.
 - **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
 
-Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. Both combat prerequisites (#117 and #118) have landed and are retained by the combat handler migration below.
+Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. Both combat prerequisites (#117 and #118) have landed; the combat handler family is migrated separately in PR #137.
 
 The dice family (`roll_dice`, `roll_impaling_damage`, `roll_weapon_damage`) is migrated to `app/keeper_tools/dice.py`.
 
@@ -84,4 +84,16 @@ The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag 
 
 The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) is migrated to `app/keeper_tools/scenario.py`. Chapter advance and fact recording still use Keeper's authoritative state mutation boundary through a public migration seam.
 
-The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. This branch is independent of the other handler-family branches and does not delete the remaining cascade.
+The messaging family (`send_private_info`) is migrated to `app/keeper_tools/messaging.py`.
+
+The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. The now-empty legacy cascade was removed in the final cleanup.
+
+## Final cleanup contract
+
+After PRs #135–#137 have landed, every player-turn tool has an explicit `ToolSpec.handler`. Remove the empty `execute_legacy_tool` cascade and the `legacy_handler` default; registration must require a handler. Keep `report_summary` in the registry for schema/capability derivation and log summarization, but direct `_execute_tool` dispatch still returns the historical `未知工具 report_summary` error. Unknown names still return the same unknown-tool error, and the existing shared admission and KP Assistant gates remain before dispatch.
+
+Delete migration-only literal-set equivalence tests. Continue to test registry/schema coverage, provider tool ordering derived from the registry, and each family's observable tool result. The old cascade must have no remaining caller before removal. This cleanup does not alter tool schemas, capability flags, or game rules.
+
+The final cleanup covers the tools present at `07d55a7`. `initialize_combat` had not been pushed to `main_v2` at that revision and is outside this cleanup's registry inventory.
+
+The macro-combat branch now registers `initialize_combat` with an explicit `ToolSpec.handler`, after `add_npc_to_combat` in provider order. Its tests dispatch through the registry without the removed legacy cascade.

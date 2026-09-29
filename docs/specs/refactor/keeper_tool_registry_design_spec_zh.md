@@ -2,7 +2,7 @@
 
 [English](keeper_tool_registry_design_spec.md)
 
-狀態：**partial**（已審查；註冊表與衍生集合已實作，處理函式家族待遷移）。基準：`main_v2` 的 `1a31645`。
+狀態：**implemented**。原始基準：`main_v2` 的 `1a31645`；最後清理對照 `07d55a7`。
 
 > 已對照目前的 `main_v2` 更新：`main_v2` 之後撤銷了 PR #99／#121 的移動服務（見 `docs/specs/bug/movement_authorization_diagnosability_design_spec.md`）。`app/services/movement.py`、`movement.TOOL`／`commit_movement` 和 `ORIGIN_TOOLS` 已經不存在，以下把它們和點名它們的遷移步驟一併移除。其餘內容仍與目前程式碼相符，行號已更新。
 
@@ -70,7 +70,7 @@ class ToolCall:                            # 目前各分支共用、總是一�
 - **Schema 順序：** 供應商的 prompt 快取會把工具清單算進快取前綴，所以註冊表保留宣告順序，並用測試固定送給供應商的順序。
 - **排序：** 戰鬥家族的 PR 排在 `bug/major-wound-con-check-gate` 和 `refactor/combat-start-in-combat-module` 合併之後，因為它們會改到同一批分支。
 
-Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。戰鬥家族的兩項前置工作（#117、#118）均已合入，並由下方的戰鬥處理函式遷移保留其行為。
+Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。戰鬥家族的兩項前置工作（#117、#118）均已合入；戰鬥處理函式家族另由 PR #137 遷移。
 
 骰子家族（`roll_dice`、`roll_impaling_damage`、`roll_weapon_damage`）已移至 `app/keeper_tools/dice.py`。
 
@@ -84,4 +84,16 @@ Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌�
 
 劇本／搜尋家族（`record_established_fact`、`record_clue`、圖片搜尋／顯示、章節推進、劇本搜尋與記憶搜尋）已移至 `app/keeper_tools/scenario.py`。章節推進與事實記錄仍透過公開過渡介面使用 Keeper 的權威狀態更新邊界。
 
-戰鬥家族（開始戰鬥、加入 NPC、狀態查詢、回合推進、傷害、敵人行動計畫、效果與結束戰鬥）遷到 `app/keeper_tools/combat.py`。規則仍由 `app/combat.py` 負責；狀態寫入、被重傷關卡阻擋時不儲存，以及公開傷害結果過濾，仍經 Keeper 的正式共用函式處理。此分支獨立於其他工具家族分支，不刪除尚在使用的舊串接。
+訊息家族（`send_private_info`）已移至 `app/keeper_tools/messaging.py`。
+
+戰鬥家族（`start_combat`、NPC 加入、狀態、回合推進、傷害、敵方計畫、效果與結束戰鬥）已移至 `app/keeper_tools/combat.py`。戰鬥規則仍在 `app/combat.py`；狀態寫入、受阻傷害不儲存，以及公開傷害過濾仍透過公開過渡介面使用 Keeper 的權威輔助函式。已清空的舊串接已在最後清理移除。
+
+## 最後清理的契約
+
+PR #135–#137 合入後，每個玩家回合工具都有明確的 `ToolSpec.handler`。移除空的 `execute_legacy_tool` 串接與 `legacy_handler` 預設值；註冊工具時必須提供 handler。`report_summary` 繼續留在註冊表，供 schema／能力推導與日誌摘要使用，但直接透過 `_execute_tool` 分派時仍回傳原有的 `未知工具 report_summary` 錯誤。未知工具名稱維持原有錯誤；共用准入與 KP 助手關卡仍在分派前執行。
+
+刪除僅供遷移使用的舊字面集合等價測試。保留註冊表／schema 覆蓋、由註冊表推導的 provider 工具順序，以及各家族可觀察結果的測試。移除舊串接前須確認沒有任何呼叫端。本次清理不修改工具 schema、能力旗標或遊戲規則。
+
+最後清理涵蓋 `07d55a7` 現有的工具；當時 `initialize_combat` 尚未推送至 `main_v2`，不在本次清理的註冊表清單內。
+
+批次戰鬥分支現在也用明確的 `ToolSpec.handler` 註冊 `initialize_combat`，並將它放在 `add_npc_to_combat` 之後以保留 provider 工具順序。測試直接透過註冊表派送，不再依賴已移除的舊串接。

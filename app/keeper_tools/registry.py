@@ -1,8 +1,4 @@
-"""Ordered Keeper tool declarations and capabilities.
-
-Handlers still delegate to the legacy cascade while families are migrated.
-This module deliberately does not import keeper at import time.
-"""
+"""Ordered Keeper tool declarations and capabilities."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -14,6 +10,7 @@ from app.keeper_tools import checks as check_handlers
 from app.keeper_tools import combat as combat_handlers
 from app.keeper_tools import dice as dice_handlers
 from app.keeper_tools import inventory as inventory_handlers
+from app.keeper_tools import messaging as messaging_handlers
 from app.keeper_tools import scenario as scenario_handlers
 from app.models import GroupState
 from app.services import opposed_checks
@@ -31,19 +28,15 @@ class ToolCall:
     name: str
 
 
-def legacy_handler(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
-
-    return keeper.execute_legacy_tool(
-        call.state, call.name, call.input, call.private_messages,
-        call.image_requests, call.speaker_role,
-    )
+def _summary_dispatch_rejected(call: ToolCall) -> dict[str, Any]:
+    """The summary schema is for log compression, not Keeper tool dispatch."""
+    return {"ok": False, "error": f"未知工具 {call.name}"}
 
 
 @dataclass(frozen=True)
 class ToolSpec:
     schema: dict[str, Any]
-    handler: Callable[[ToolCall], dict[str, Any]] = legacy_handler
+    handler: Callable[[ToolCall], dict[str, Any]]
     read_only: bool = False
     resolved_check_followup: bool = False
     kp_assistant: bool = False
@@ -912,6 +905,7 @@ _SPECS = (
                     "required": ["investigator", "message"],
                 },
             },
+        handler=messaging_handlers.send_private_info,
         opening=True,
     ),
     ToolSpec(
@@ -1053,6 +1047,7 @@ _SPECS = (
                 "required": ["summary"],
             },
         },
+        handler=_summary_dispatch_rejected,
         read_only=True,
         resolved_check_followup=True,
         bounded_query=True,
