@@ -1224,6 +1224,22 @@
       "zh_path": "docs/specs/enhancement/codex_analysis_provider_design_spec_zh.md"
     },
     {
+      "title": "Trusted scenario source publication",
+      "zh": "可信劇本來源發布",
+      "category": "refactor",
+      "status": "in_progress",
+      "evidence": [
+        "app/trusted_scenario_source.py",
+        "app/scenario_source_review.py",
+        "app/scenario_source_authoring.py",
+        "tests/test_trusted_scenario_source.py",
+        "tests/test_scenario_source_review.py",
+        "tests/test_scenario_source_authoring.py"
+      ],
+      "path": "docs/specs/refactor/trusted_scenario_source_publication_design_spec.md",
+      "zh_path": "docs/specs/refactor/trusted_scenario_source_publication_design_spec_zh.md"
+    },
+    {
       "title": "Keeper tools as a registry",
       "zh": "Keeper 工具改為註冊表",
       "category": "refactor",
