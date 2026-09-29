@@ -6,7 +6,7 @@
 
 分類：`enhancement`。狀態：**partial**（本分支完成第 3 項）。對照基準：`main_v2` 的 `07d55a7`（2026-09-29）。
 
-第 3 項驗證：prompt 斷言、完整 pytest、Ruff、mypy 與 compileall 均通過。16 輪真實 provider smoke 中已建立戰鬥，但未登記 NPC，後續回合因而卡住。路由文字已補上「交接第一個戰鬥回合前，登記所有已在場的戰鬥者」。自動審核拒絕再次執行 smoke，原因是會將劇本與遊戲狀態傳送給設定的 provider；最後這次文字修改的實際行為尚未驗證。
+第 3 項驗證：prompt 斷言、完整 pytest、Ruff、mypy 與 compileall 均通過。第一次 16 輪真實 provider smoke 建立了戰鬥，卻沒有登記 NPC。使用者明確授權傳送隔離環境的劇本與遊戲狀態後，第二次 16 輪重跑採用補強後的路由文字；它呼叫了 `start_combat` 和 `advance_combat_turn`，仍未呼叫 `add_npc_to_combat`，後續排定的玩家行動卡在回合所有權。這項 prompt 修改**尚未證明戰鬥機制完整正確**；戰鬥建立後登記已在場敵人的流程缺陷需要另外調查。
 
 此版本描述現行契約，提案工作均明確標示。
 

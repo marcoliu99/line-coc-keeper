@@ -6,7 +6,7 @@
 
 Category: `enhancement`. Status: **partial** (item 3 implemented on this branch). Measured against `main_v2` at `07d55a7` (2026-09-29).
 
-Item 3 verification: prompt assertions, full pytest, Ruff, mypy, and compileall pass. In a 16-turn real-provider smoke, combat started but no NPC was registered and later combat turns stalled. The routing text now explicitly requires registration of present combatants before handoff. A repeat smoke was blocked by automatic approval review because it would transmit scenario and game-state data to the configured provider; live behavior after this final wording change remains unverified.
+Item 3 verification: prompt assertions, full pytest, Ruff, mypy, and compileall pass. The first 16-turn real-provider smoke started combat but did not register the NPC. After explicit user authorization for scenario and game-state transmission, a second isolated 16-turn smoke ran with the revised routing text. It called `start_combat` and `advance_combat_turn`, but still never called `add_npc_to_combat`; later scripted players were blocked on turn ownership. The prompt edit therefore has **not** demonstrated complete combat correctness. Registering an already-present NPC after `start_combat` remains a follow-up flow defect to investigate beyond prompt consolidation.
 
 This edition describes the current contract. Proposed work is explicitly identified.
 
