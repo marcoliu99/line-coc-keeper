@@ -1227,7 +1227,7 @@
       "title": "Command completion and player controls",
       "zh": "指令完成與玩家控制項",
       "category": "refactor",
-      "status": "in_progress",
+      "status": "implemented",
       "evidence": [
         "app/services/pending_buttons.py",
         "app/discord_bot.py",
