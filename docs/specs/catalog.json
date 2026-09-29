@@ -1406,6 +1406,18 @@
       ],
       "path": "docs/specs/refactor/codex_request_ownership_design_spec.md",
       "zh_path": "docs/specs/refactor/codex_request_ownership_design_spec_zh.md"
+    },
+    {
+      "title": "Static prompt consolidation",
+      "zh": "Static prompt 整併",
+      "category": "enhancement",
+      "status": "partial",
+      "evidence": [
+        "app/keeper.py",
+        "tests/test_static_prompt_combat_routing.py"
+      ],
+      "path": "docs/specs/enhancement/enhancement-static-prompt-consolidation.md",
+      "zh_path": "docs/specs/enhancement/enhancement-static-prompt-consolidation_zh.md"
     }
   ]
 }

@@ -1312,19 +1312,14 @@ def _build_static_prompt(state: GroupState) -> str:
 - 角色目擊屍體、超自然現象、恐怖景象等會動搖心智的場面時，呼叫 sanity_check 工具；預設要請玩家做
   `/coc check`，只有 autoroll 開啟才直接依回傳的 SAN、損失與 madness 結果敘事。
 - 角色受傷、失血、恢復、花費幸運點、消耗魔法值時（非戰鬥中），呼叫 adjust_character 工具更新數值。
-- 角色卡「彈藥」欄位裡有登記的槍械，每次真的開槍（不管在不在正式戰鬥中）都要呼叫 adjust_ammo 扣彈（一般一發 delta 為 -1，連發視情境扣更多）；角色卡上沒有登記彈藥的武器（近戰、投擲、或角色卡沒寫彈容量的槍）不用呼叫這個工具，正常敘事就好。彈匣打光了要繼續開槍，先敘述「扳機扣下去只有喀一聲」而不是讓子彈生出來；角色花時間裝填/換彈匣後，呼叫 adjust_ammo 並把 reload_full 設 true 補滿。
-- **角色用武器攻擊、命中對方時的傷害**：一般（非極限成功）命中呼叫 roll_weapon_damage（給角色名稱
-  跟武器傷害骰，系統會自動查角色的傷害加值 DB 加進去，不用你自己拼骰子表示式或手動加總——
-  `roll_dice` 沒辦法解析「武器骰+DB骰」這種混合表示式，硬湊字串只會失敗或算錯）；如果這次攻擊的
-  **攻擊擲骰**是極限成功（不是反擊），改呼叫 roll_impaling_damage，讓系統照 COC7e 規則正確算出
-  「武器＋傷害加值都算最大值，穿刺武器再額外重骰一次武器傷害」的結果。不是武器傷害的一般描述性
-  擲骰（道具檢定、環境傷害等）才用 roll_dice。
-- 只有劇本條件或已成立的正式事件確實使攻擊、被攻擊、追逐戰鬥等場面發生時，才呼叫 start_combat 開始正式戰鬥；玩家猜測、恐懼或失敗檢定不是開戰依據。這個工具不需要參數；小規模、沒有生命危險的推擠拉扯不需要進入正式戰鬥。開戰後改用 add_npc_to_combat 加入**已有來源的**敵人，進入戰鬥規則的流程（見下方「目前戰鬥狀態」區塊）。呼叫 add_npc_to_combat（不是 start_combat）時，若劇本寫了護甲、攻擊、特殊能力、每輪/每戰使用限制或觸發條件，必須先查劇本，把結果放進 add_npc_to_combat 的 armor/attacks/abilities；不要只填 HP 後靠臨場記憶。**同一場戰鬥裡如果同時出現多隻同種怪物（例如左右各撲來一隻魚人、三隻餓狼同時包抄），每一隻呼叫 add_npc_to_combat 時都要給不同的顯示名稱（例如「魚人（左）」／「魚人（右）」，或「餓狼一」／「餓狼二」／「餓狼三」），不要用完全相同的名字呼叫兩次——系統會把同名、還沒倒下的敵人視為重複加入同一隻而擋下第二次呼叫，用不同名字才能讓每一隻怪物各自有獨立血量、可以被玩家分別鎖定攻擊。**
-- 戰鬥中如果出現持續性效果（例如燃燒、流血、中毒、環境傷害），呼叫 add_combat_effect
-  建立一次效果即可，之後每輪由系統自動結算傷害；不要自己每輪手動呼叫 roll_dice 模擬
-  傷害，更不要把這類擲骰結果透過 adjust_character 寫進任何角色的 HP/MP/SAN/LUCK 欄位
-  ——那個工具只能用來調整敘述明確指名的那位角色自己的數值，不是拿來暫存跟他無關的擲
-  骰結果。
+# Combat Tool Routing
+- A scenario condition or resolved canonical event starts a dangerous fight -> `start_combat` (no arguments). Suspicion, fear, a failed check, or a harmless scuffle does not establish combat.
+- A scenario-backed NPC joins -> `add_npc_to_combat`. When `start_combat` establishes a fight, register every already-present combatant before handing off the first turn. Check the scenario first and pass its armor, attacks, special abilities, usage limits, and triggers in `armor`/`attacks`/`abilities`; HP alone is insufficient. Each simultaneously active instance of one enemy type needs a distinct display name (for example, 「魚人（左）」 and 「魚人（右）」); an identical live name is treated as the same combatant.
+- An NPC attacks an investigator -> `offer_npc_attack_defense_choice`; use the correct `is_ranged` mode and defense options from the active-combat rules below. The player chooses; never decide their defense for them.
+- A firearm with tracked ammunition actually fires, in or out of combat -> `adjust_ammo` (normally `delta=-1`; more for a burst). Weapons without tracked ammunition need no ammo call. An empty gun only clicks; after an actual reload use `reload_full=true`.
+- An ordinary weapon hit -> `roll_weapon_damage`; an extreme success on an active attack, never a counterattack -> `roll_impaling_damage`. Pass the investigator and weapon damage; the tool adds DB and applies the impaling rule. Do not build a weapon-plus-DB expression or manually total it with `roll_dice`; use `roll_dice` only for other random outcomes such as environmental damage.
+- Raw combat damage before armor -> `apply_combat_damage` with `raw_damage`; already-reduced final damage -> `apply_final_combat_damage` with `final_damage`; healing -> `damage_combatant`. Do not bypass combat HP resolution with `adjust_character`.
+- A continuing combat condition (fire, bleeding, poison, environmental harm) -> `add_combat_effect` once; the engine resolves later ticks. Do not roll each tick yourself or store an unrelated roll in another investigator's HP/MP/SAN/LUCK via `adjust_character`.
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
@@ -1447,9 +1442,9 @@ def _build_dynamic_prompt(
 戰鬥規則：目前正在進行正式戰鬥，一次只處理「輪到的角色」的行動，嚴格按照上面列出的先攻順位進行——
 DEX 不同的戰鬥員，行動跟敘述都要照順序來，不能因為劇情方便就打亂順序或把不同 DEX 的人合併敘述成同時
 發生；只有 DEX 剛好相同的戰鬥員才可以敘述成同時行動。某位戰鬥員的行動（含擲骰結果）處理完後，必須呼叫
-advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。角色或敵人受傷、死亡要
-呼叫 apply_combat_damage（尚未扣護甲的 raw_damage）或 apply_final_combat_damage（已扣除減免的 final_damage）更新 HP；治療才用 damage_combatant；有新敵人加入戰場要呼叫 add_npc_to_combat；有人想讓還沒輪到的角色行動，
-禮貌提醒他們要等輪到自己；標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
+advance_combat_turn 工具推進到下一位，不可以自己在心裡默默跳過或一次處理多人。受傷、治療、新敵人加入
+依上面的 Combat Tool Routing 呼叫對應工具；有人想讓還沒輪到的角色行動，禮貌提醒他們要等輪到自己；
+標示「（暫離）」的角色代表玩家暫時離開，advance_combat_turn 會自動跳過他們，
 不用特別等他們；戰鬥明確結束（一方全滅或撤退）時呼叫 end_combat。玩家角色被 NPC 攻擊時，呼叫
 offer_npc_attack_defense_choice 讓玩家自己選防守方式，不要自己幫玩家決定。近戰跟遠程走完全不同的
 COC7e 判定機制，一定要正確填 is_ranged 參數，不要漏填：近戰（engaged）是雙方比較成功等級的對抗檢定，
