@@ -16,11 +16,13 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Generic, TypeVar, cast, overload
 from uuid import uuid4
 
 from app import (
     async_utils,
+    check_lifecycle,
     combat,
     db,
     dice,
@@ -30,25 +32,14 @@ from app import (
     observability,
     scenario_index,
     scenario_library,
-    scenario_rag,
-    scenario_templates,
     scene_digest,
     spoiler_policy,
-)
-from app.check_identity import (
-    effective_check_id,
-    new_check_id,
-    new_decision_id,
-    pending_check_blocker,
 )
 from app.config import (
     MAX_LOG_TURNS,
     MAX_SCENARIO_CHARS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
-    SCENARIO_RAG_EMBEDDING_MODEL,
-    SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
-    SCENARIO_RAG_TOP_K,
     SCENE_DIGEST_TURN_INTERVAL,
 )
 from app.keeper_tools import registry as tool_registry
@@ -57,15 +48,18 @@ from app.models import BASE_SKILLS, Character, GroupState
 from app.providers.registry import conversation_provider
 from app.repositories.group_state import (
     _save_state_unlocked,
-    clear_page_images,
     load_state,
-    save_page_image,
     save_state,
 )
-from app.services import mutation_admission, opposed_checks
+from app.services import mutation_admission
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
+# Existing callers patch scenario_library through keeper. Retain the module
+# object here during the handler migration.
+SCENARIO_LIBRARY_MODULE = scenario_library
+# Tests and compatibility callers patch the shared luck module through keeper.
+LUCK_MODULE = luck
 
 _T = TypeVar("_T")
 
@@ -215,70 +209,6 @@ def require_character(state: GroupState, name: str) -> Character:
     return character
 
 
-def _reject_if_check_already_pending(state: GroupState, char: Character) -> dict | None:
-    """Return an error for a legacy pending check, otherwise ``None``.
-
-    It remains available for pending-check compatibility and for the choice
-    tools, whose pending entry represents a player action selection. In the
-    default mode, new skill/SAN requests also use this guard so an existing
-    player-owned check cannot be silently replaced.
-
-    When called, this must be from inside that tool's _mutate_and_save_state mutator,
-    against the freshly-reloaded `target_state` — not the outer, possibly
-    stale `state` a caller was handed before this turn's lock was ever
-    taken. An earlier revision checked the outer `state` directly (cheaper:
-    no lock needed just to reject), reasoning that tool calls within one
-    Keeper turn run sequentially and `state` stays synced after every
-    _mutate_and_save_state call *within that same turn*. That left a real
-    gap, though: it never accounted for a /coc check resolution racing in
-    from a *different* code path — legacy_commands.py's pending-check
-    resolver only takes app/locks.py's per-conversation state lock, not
-    the Keeper-turn-scoped one this function's caller is running under, so
-    a player could resolve (and pop) their pending check mid-turn while
-    this function was still looking at a stale snapshot that still showed
-    it pending, wrongly rejecting a call that should have succeeded.
-    Checking against `target_state` inside the same lock-protected reload
-    the actual write goes through closes that gap: the roll (if any) and
-    the pending_checks write only happen if this check, right before them,
-    still sees nothing pending under that fresh read."""
-    # A character mid-Luck-decision has nothing in pending_checks yet, so the
-    # blocker covers both states; see check_identity.pending_check_blocker.
-    blocker = pending_check_blocker(state, char.owner_id)
-    if blocker == "pending_check":
-        return {
-            "ok": False,
-            "error": f"{char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
-                     "才能再要求新的檢定，不要重複呼叫。",
-        }
-    if blocker == "pending_luck_decision":
-        return {
-            "ok": False,
-            "error": f"{char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
-        }
-    return None
-
-
-def _pending_check_metadata(target_state: GroupState, owner_id: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-    """Build bounded, persisted identity/context for a new pending check."""
-    if not target_state.timeline_id:
-        target_state.timeline_id = f"timeline-{uuid4().hex[:8]}"
-    context = str(tool_input.get("action_context", "")).strip()
-    if len(context) > 240:
-        context = context[:237] + "..."
-    current_context = observability.current_context()
-    return {
-        "check_id": new_check_id(),
-        "timeline_id": target_state.timeline_id,
-        "origin_revision": target_state.state_revision + 1,
-        "origin_turn_id": str(current_context.get("turn_id", "")),
-        "origin_request_id": str(current_context.get("request_id", "")),
-        "action_context": context,
-        "player_declaration": str(tool_input.get("_player_action", ""))[:1000],
-        "action_basis": str(tool_input.get("action_basis", ""))[:600],
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
-
-
 def _deterministic_check_cache_key(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -333,45 +263,9 @@ def _remember_check_result(state: GroupState, cache_key: str, result: dict[str, 
         state.deterministic_check_results.pop(oldest, None)
 
 
-def _is_identical_pending_check(existing: dict, new_check_dict: dict) -> bool:
-    """檢查新的待處理檢定是否與現有的相同。
-    用來防止在狀態重新載入時重複註冊完全相同的檢定。"""
-    # 比較檢定類型
-    if existing.get("type") != new_check_dict.get("type"):
-        return False
-
-    if existing.get("type") == "skill":
-        # 比較技能檢定的所有關鍵參數
-        return (
-            existing.get("skill") == new_check_dict.get("skill") and
-            existing.get("skill_value") == new_check_dict.get("skill_value") and
-            existing.get("bonus_dice") == new_check_dict.get("bonus_dice") and
-            existing.get("penalty_dice") == new_check_dict.get("penalty_dice") and
-            existing.get("difficulty") == new_check_dict.get("difficulty") and
-            existing.get("pushed") == new_check_dict.get("pushed") and
-            opposed_checks.request_part(existing.get("opposed")) == opposed_checks.request_part(new_check_dict.get("opposed")) and
-            existing.get("action_basis", "") == new_check_dict.get("action_basis", "")
-        )
-    elif existing.get("type") == "sanity":
-        # 比較理智檢定
-        return (
-            existing.get("loss_success") == new_check_dict.get("loss_success") and
-            existing.get("loss_failure") == new_check_dict.get("loss_failure")
-        )
-    elif existing.get("type") == "choice":
-        # 比較防守選項（排序後比較，避免順序差異導致誤判）
-        try:
-            existing_opts = sorted(str(o) for o in existing.get("options", []))
-            new_opts = sorted(str(o) for o in new_check_dict.get("options", []))
-            return existing_opts == new_opts
-        except (TypeError, ValueError):
-            # 如果無法排序，直接比較
-            return existing.get("options") == new_check_dict.get("options")
-
-    return False
-
-
-def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[dict]:
+def _resolve_defense_options(
+    char: Character, raw_options: list[dict], *, register_unknown: bool = True
+) -> list[dict]:
     """Expand offer_check_choice/offer_npc_attack_defense_choice's raw
     {label, skill, bonus_dice, penalty_dice} option list into one with
     each option's actual resolved skill_value baked in.
@@ -387,7 +281,7 @@ def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[d
     resolves skill_value, it doesn't validate or normalize kind."""
     options = []
     for opt in raw_options:
-        value = resolve_skill_value(char, opt["skill"])
+        value = resolve_skill_value(char, opt["skill"], register_unknown=register_unknown)
         resolved = {
             "label": opt["label"], "skill": opt["skill"], "skill_value": value,
             "bonus_dice": int(opt.get("bonus_dice") or 0), "penalty_dice": int(opt.get("penalty_dice") or 0),
@@ -398,7 +292,7 @@ def _resolve_defense_options(char: Character, raw_options: list[dict]) -> list[d
     return options
 
 
-def resolve_skill_value(char: Character, skill_name: str) -> int:
+def resolve_skill_value(char: Character, skill_name: str, *, register_unknown: bool = True) -> int:
     key = skill_name.strip()
     if key in char.skills:
         return char.skills[key]
@@ -422,11 +316,11 @@ def resolve_skill_value(char: Character, skill_name: str) -> int:
         if norm == kk or norm in kk or kk in norm:
             return v
 
-    # Unknown skill: register under its canonical name (not the raw LLM
-    # phrasing) so future lookups stay consistent, using the real COC7e base
-    # rate when we recognize it instead of always guessing a flat 20.
+    # Unknown skill: calculate its canonical base rate first. Registration
+    # callers defer writing the character card until check admission succeeds.
     default_value = BASE_SKILLS.get(canonical_query, 20)
-    char.skills[canonical_query] = default_value
+    if register_unknown:
+        char.skills[canonical_query] = default_value
     return default_value
 
 
@@ -556,6 +450,80 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], An
             _save_state_checked(latest_state, reason="tool")
         _sync_state_snapshot(state, latest_state)
     return result
+
+
+# Public migration seam for handlers in app/keeper_tools/. State still reloads,
+# mutates, saves, and refreshes through one authoritative boundary.
+ToolStateMutation = _StateMutation
+mutate_tool_state = _mutate_and_save_state
+refresh_tool_state = _refresh_state_snapshot
+
+
+def apply_character_attribute_delta(
+    state: GroupState,
+    tool_input: dict[str, Any],
+    field_name: str,
+    cur_attr: str,
+    max_attr: str | None,
+) -> tuple[int, bool, dict[str, Any] | None, dict[str, Any] | None]:
+    """Apply an attribute change and its required CON check in one transaction."""
+    blocked_hit: dict[str, Any] | None = None
+
+    def _apply_attribute_delta(
+        target_state: GroupState,
+    ) -> _StateMutation[tuple[int, bool, dict[str, Any] | None]]:
+        nonlocal blocked_hit
+        target_char = require_character(target_state, tool_input.get("investigator", ""))
+        target_cap = getattr(target_char, max_attr) if max_attr else 999
+        delta = int(tool_input["delta"])
+        new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
+        is_major_wound = (
+            field_name == "hp" and delta < 0 and new_val > 0
+            and -delta >= target_char.hp_max / 2
+        )
+        blocker = (
+            check_lifecycle.blocker(target_state, target_char.owner_id)
+            if is_major_wound and not target_state.autoroll_checks
+            else None
+        )
+        if blocker:
+            blocked_hit = combat.major_wound_blocked(
+                target_state, target_char, blocker, entry_point="adjust_character"
+            )
+            return _StateMutation((getattr(target_char, cur_attr), False, None), should_save=False)
+
+        setattr(target_char, cur_attr, new_val)
+        major_wound = False
+        wound_roll: dict[str, Any] | None = None
+        if is_major_wound:
+            con_value = resolve_skill_value(target_char, "CON")
+            major_wound = True
+            if target_state.autoroll_checks:
+                con_result = dice.skill_check(con_value)
+                wound_roll = {
+                    "skill": "CON", "skill_value": con_value, "roll": con_result.roll,
+                    "tier": con_result.tier, "success": con_result.success,
+                }
+                if not con_result.success:
+                    for tag in ("昏迷", "倒地"):
+                        if tag not in target_char.status_tags:
+                            target_char.status_tags.append(tag)
+            else:
+                decision = check_lifecycle.register(
+                    target_state, target_char.owner_id,
+                    {
+                        "type": "skill", "skill": "CON", "skill_value": con_value,
+                        "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular",
+                        "major_wound_trigger": True,
+                    },
+                    source={"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
+                )
+                if decision.status != "admitted":
+                    raise RuntimeError(f"major-wound CON registration blocked: {decision.blocker}")
+        return _StateMutation((new_val, major_wound, wound_roll))
+
+    new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)
+    return new_val, major_wound, wound_roll, blocked_hit
 
 
 _CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
@@ -804,11 +772,7 @@ def _filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict
     return {key: result[key] for key in public_keys if key in result}
 
 
-# Public migration seam for combat tool handlers. State changes still pass
-# through Keeper's single reload, admission, save, and snapshot boundary.
-ToolStateMutation = _StateMutation
-mutate_tool_state = _mutate_and_save_state
-refresh_tool_state = _refresh_state_snapshot
+# Additional public helpers for the combat handlers.
 find_npc_index_entry = _find_npc_index_entry
 skip_save_if_blocked = _skip_save_if_blocked
 filter_public_combat_damage_result = _filter_public_combat_damage_result
@@ -1067,6 +1031,20 @@ def _scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:
     return set(state.context_chapter_ids)
 
 
+# Temporary public seam for check handlers while shared check helpers still
+# live in keeper.py. No handler reaches across the module's private boundary.
+check_tool_services = SimpleNamespace(
+    StateMutation=_StateMutation,
+    cached_check_result=_cached_check_result,
+    character_attribute_snapshot=_character_attribute_snapshot,
+    deterministic_check_cache_key=_deterministic_check_cache_key,
+    mutate_and_save_state=_mutate_and_save_state,
+    persist_resolved_check_event=_persist_resolved_check_event,
+    remember_check_result=_remember_check_result,
+    resolve_defense_options=_resolve_defense_options,
+)
+
+
 def _execute_tool(
     state: GroupState,
     name: str,
@@ -1111,1043 +1089,19 @@ def execute_legacy_tool(
     """Existing tool cascade; the registry delegates here until each family moves."""
     try:
 
-        if name == "roll_dice":
-            roll_result = dice.roll_expression(tool_input["expression"])
-            return {
-                "ok": True, "expression": roll_result.expression, "rolls": roll_result.rolls,
-                "modifier": roll_result.modifier, "total": roll_result.total,
-            }
-
-        if name == "roll_impaling_damage":
-            try:
-                impale_result = dice.calculate_impaling_damage(
-                    tool_input["weapon_damage"], tool_input.get("damage_bonus") or "0", bool(tool_input.get("impaling"))
-                )
-            except ValueError as exc:
-                return {"ok": False, "error": str(exc)}
-            return {
-                "ok": True,
-                "total": impale_result.total,
-                "max_weapon_damage": impale_result.max_weapon_damage,
-                "max_damage_bonus": impale_result.max_damage_bonus,
-                "impaling": impale_result.impaling,
-                "reroll_total": impale_result.reroll.total if impale_result.reroll else None,
-                "describe": impale_result.describe(),
-            }
-
-        if name == "roll_weapon_damage":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            try:
-                weapon_result = dice.roll_weapon_damage(tool_input["weapon_damage"], char.damage_bonus)
-            except ValueError as exc:
-                return {"ok": False, "error": str(exc)}
-            return {
-                "ok": True,
-                "investigator": char.name,
-                "weapon_damage_roll": weapon_result.weapon_roll.total,
-                "damage_bonus": char.damage_bonus,
-                "damage_bonus_roll": weapon_result.damage_bonus_total,
-                "total": weapon_result.total,
-                "describe": weapon_result.describe(),
-            }
-
-        if name == "skill_check":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            owner_id = char.owner_id
-            cache_key = _deterministic_check_cache_key(name, tool_input, owner_id, speaker_role)
-            # Set by _roll_skill_check only when autoroll fully resolves the
-            # check right here with no further player interaction (no Luck
-            # buy-up offered) — see the resolved_check_events wiring after
-            # _mutate_and_save_state below for why this can't be persisted
-            # from inside the mutator itself.
-            resolved_event_seed: dict[str, Any] | None = None
-
-            def _roll_skill_check(target_state: GroupState) -> _StateMutation[dict]:
-                nonlocal resolved_event_seed
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                opposed_request = opposed_checks.contract(tool_input.get("opposed"))
-                if opposed_request and (not isinstance(tool_input.get("action_basis"), str)
-                                        or not tool_input['action_basis'].strip() or len(tool_input['action_basis']) > 600):
-                    raise ValueError('對抗檢定須先說明物件狀態、適用規則及觸發轉變。')
-                if opposed_request and (tool_input.get('pushed') or tool_input.get('difficulty', 'regular') != 'regular'):
-                    raise ValueError('對抗檢定以雙方等級比較，不可強推或用固定難度替代。')
-                if not target_state.autoroll_checks:
-                    value = resolve_skill_value(target_char, tool_input["skill"])
-                    bonus = int(tool_input.get("bonus_dice") or 0)
-                    penalty = int(tool_input.get("penalty_dice") or 0)
-                    difficulty = tool_input.get("difficulty") or "regular"
-                    if difficulty not in ("regular", "hard", "extreme"):
-                        difficulty = "regular"
-                    new_check: dict[str, Any] = {
-                        "type": "skill",
-                        "skill": tool_input["skill"],
-                        "skill_value": value,
-                        "bonus_dice": bonus,
-                        "penalty_dice": penalty,
-                        "difficulty": difficulty,
-                        "pushed": bool(tool_input.get("pushed", False)),
-                    }
-                    new_check.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
-                    if opposed_request:
-                        new_check['opposed'] = opposed_request
-                    if target_char.owner_id in target_state.pending_luck_decisions:
-                        return _StateMutation(
-                            {
-                                "ok": False,
-                                "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
-                            },
-                            should_save=False,
-                        )
-                    existing = target_state.pending_checks.get(target_char.owner_id)
-                    if existing:
-                        if _is_identical_pending_check(existing, new_check):
-                            return _StateMutation(
-                                {
-                                    "ok": True,
-                                    "pending": True,
-                                    "investigator": target_char.name,
-                                    "skill": tool_input["skill"],
-                                    "skill_value": value,
-                                    "bonus_dice": bonus,
-                                    "penalty_dice": penalty,
-                                    "difficulty": difficulty,
-                                    "note": "已經有相同的待處理檢定（防重複）。",
-                                    "opposed_pending": bool(existing.get('opposed')),
-                                },
-                                should_save=False,
-                            )
-                        return _StateMutation(
-                            {
-                                "ok": False,
-                                "error": (
-                                    f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）"
-                                    "才能再要求新的檢定，不要重複呼叫。"
-                                ),
-                            },
-                            should_save=False,
-                        )
-                    if opposed_request:
-                        new_check['opposed'] = opposed_checks.roll_opponent(opposed_request)
-                    target_state.pending_checks[target_char.owner_id] = new_check
-                    return _StateMutation(
-                        {
-                            "ok": True,
-                            "pending": True,
-                            "investigator": target_char.name,
-                            "skill": tool_input["skill"],
-                            "skill_value": value,
-                            "bonus_dice": bonus,
-                            "penalty_dice": penalty,
-                            "difficulty": difficulty,
-                            "note": "等待玩家自己用 /coc check 或按鈕擲骰；在結果回來前不要自行判定成敗。",
-                            "opposed_pending": bool(new_check.get('opposed')),
-                        },
-                        should_save=True,
-                    )
-                cached = _cached_check_result(target_state, cache_key)
-                if cached is not None:
-                    return _StateMutation(cached, should_save=False)
-                if target_char.owner_id in target_state.pending_checks:
-                    return _StateMutation(
-                        {
-                            "ok": False,
-                            "error": (
-                                f"{target_char.name} 仍有舊版待處理檢定；請先用最新按鈕或 /coc check 選擇完成，"
-                                "不要在它完成前開始另一個檢定。"
-                            ),
-                        },
-                        should_save=False,
-                    )
-                if target_char.owner_id in target_state.pending_luck_decisions:
-                    return _StateMutation(
-                        {
-                            "ok": False,
-                            "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。",
-                        },
-                        should_save=False,
-                    )
-                value = resolve_skill_value(target_char, tool_input["skill"])
-                bonus = int(tool_input.get("bonus_dice") or 0)
-                penalty = int(tool_input.get("penalty_dice") or 0)
-                difficulty = tool_input.get("difficulty") or "regular"
-                if difficulty not in ("regular", "hard", "extreme"):
-                    difficulty = "regular"
-                pushed = bool(tool_input.get("pushed", False))
-                state_before = _character_attribute_snapshot(target_char)
-                opposed_receipt = opposed_checks.roll_opponent(opposed_request)
-                roll = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
-                opposed_outcome = opposed_checks.resolve(opposed_receipt, roll.tier)
-                metadata = _pending_check_metadata(target_state, target_char.owner_id, tool_input)
-                result: dict[str, Any] = {
-                    "ok": True,
-                    "resolved": True,
-                    "investigator": target_char.name,
-                    "skill": tool_input["skill"],
-                    "skill_value": value,
-                    "bonus_dice": bonus,
-                    "penalty_dice": penalty,
-                    "difficulty": difficulty,
-                    "roll": roll.roll,
-                    "tier": roll.tier,
-                    "required_tier": roll.required_tier,
-                    "success": (opposed_outcome['winner'] == 'player') if opposed_outcome else roll.success,
-                    "player_check_success": roll.success,
-                    "check_id": metadata["check_id"],
-                    "timeline_id": metadata["timeline_id"],
-                    "action_context": metadata["action_context"],
-                    "player_declaration": metadata['player_declaration'],
-                    "action_basis": metadata['action_basis'],
-                    "opposed_outcome": opposed_checks.public_outcome(opposed_outcome),
-                    "note": (
-                        "Keeper 已由 deterministic dice engine 擲完這次檢定；請直接依照結果敘事，不要再要求玩家擲攻擊骰或技能骰。"
-                        if target_state.autoroll_checks
-                        else "已建立待處理檢定；請讓玩家用 /coc check 或按鈕擲骰，收到結果後再敘事，不要自行判定。"
-                    ),
-                }
-
-                # Always offered whenever there's at least one tier-improving
-                # option the player can afford (buyable_options already
-                # filters to cost <= luck available) -- no cost cap on top
-                # of that; see docs/specs/enhancement-luck-buyup-always-
-                # offered.md for why the previous "<=7" near-miss-only gate
-                # was removed.
-                luck_options = [] if pushed else luck.buyable_options(
-                    value, roll.roll, roll.tier, target_char.luck, difficulty
-                )
-                if luck_options:
-                    decision = {
-                        "decision_id": new_decision_id(),
-                        "check_id": metadata["check_id"],
-                        "timeline_id": metadata["timeline_id"],
-                        "origin_revision": target_state.state_revision + 1,
-                        "origin_turn_id": metadata["origin_turn_id"],
-                        "origin_request_id": metadata["origin_request_id"],
-                        "created_at": metadata["created_at"],
-                        "action_context": metadata["action_context"],
-                        "skill_name": tool_input["skill"],
-                        "display_label": None,
-                        "value": value,
-                        "roll": roll.roll,
-                        "bonus_dice": bonus,
-                        "penalty_dice": penalty,
-                        "original_tier": roll.tier,
-                        "attacker_tier": None,
-                        "difficulty": difficulty,
-                        "options": [{"tier": item.tier, "cost": item.cost} for item in luck_options],
-                        "major_wound_trigger": False,
-                        "opposed": opposed_receipt,
-                        "player_declaration": metadata['player_declaration'],
-                        "action_basis": metadata['action_basis'],
-                    }
-                    target_state.pending_luck_decisions[target_char.owner_id] = decision
-                    result.update({
-                        "pending_luck": True,
-                        "opposed_outcome": None,
-                        "success": None if opposed_receipt else result['success'],
-                        "decision_id": decision["decision_id"],
-                        "luck_options": decision["options"],
-                        "note": (
-                            "Keeper 已擲完檢定，有花 Luck 買到更好結果的選項可用。玩家現在只可選擇是否"
-                            "花 Luck 修正；玩家不需要、也不可以自行重骰。先不要把最終成敗敘事成不可逆的結果。"
-                        ),
-                    })
-                elif target_state.autoroll_checks:
-                    resolved_event_seed = {
-                        "event_id": metadata["check_id"],
-                        "check_id": metadata["check_id"],
-                        "timeline_id": metadata["timeline_id"],
-                        "owner_id": target_char.owner_id,
-                        "character_id": target_char.character_id,
-                        "investigator": target_char.name,
-                        "skill": tool_input["skill"],
-                        "skill_value": value,
-                        "roll": roll.roll,
-                        "difficulty": difficulty,
-                        "outcome": f"{roll.tier} {'成功' if roll.success else '失敗'}" +
-                        (f"；對抗勝方={opposed_outcome['winner']}" if opposed_outcome else ''),
-                        "opposed_outcome": opposed_outcome,
-                        "player_declaration": metadata['player_declaration'],
-                        "action_basis": metadata['action_basis'],
-                        "state_before": state_before,
-                    }
-                _remember_check_result(target_state, cache_key, result)
-                return _StateMutation(result, should_save=True)
-            result = _mutate_and_save_state(state, _roll_skill_check)
-            if resolved_event_seed is not None and result.get("resolved") and not result.get("pending_luck"):
-                _persist_resolved_check_event(state, resolved_event_seed)
-            return result
-
-        if name == "offer_check_choice":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            raw_options = tool_input.get("options") or []
-            if len(raw_options) < 2:
-                return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
-            attacker_tier = tool_input.get("attacker_tier")
-            def _register_pending_choice(target_state: GroupState) -> _StateMutation[dict]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                options = _resolve_defense_options(target_char, raw_options)
-                # COC7e：攻擊方大成功時沒有任何等級贏得過它，「反擊」選項不成立——這是
-                # offer_npc_attack_defense_choice 已有的同一條規則，code review 發現這個
-                # 舊版兩步流程（npc_skill_check 先擲、這裡再註冊選項）從未套用，讓仍在用
-                # 這個入口的 Keeper 能給玩家一個數學上穩輸的反擊選項，補上同樣的過濾。
-                if attacker_tier == "critical":
-                    filtered_options = [o for o in options if not dice.is_counter_option(o)]
-                    if not filtered_options:
-                        return _StateMutation(
-                            {
-                                "ok": False,
-                                "error": "攻擊方這次擲出大成功，沒有任何成功等級贏得過它，「反擊」選項"
-                                         "已不成立；但目前 options 只有反擊，沒有閃避可選，請至少提供一個"
-                                         "「閃避」選項後再重新呼叫這個工具。",
-                            },
-                            should_save=False,
-                        )
-                    options = filtered_options
-                new_choice: dict[str, Any] = {"type": "choice", "options": options}
-                new_choice.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
-                if attacker_tier:
-                    new_choice["attacker_tier"] = attacker_tier
-                # 先檢查是否已有待處理檢定
-                existing = target_state.pending_checks.get(target_char.owner_id)
-                if existing:
-                    # 如果完全相同，直接返回結果而不重新保存（防重複）
-                    if _is_identical_pending_check(existing, new_choice):
-                        return _StateMutation({
-                            "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                            "note": "已經有相同的防守選項等待（防重複）。",
-                        }, should_save=False)
-                    # 否則拒絕（已有不同的待處理檢定）
-                    return _StateMutation({
-                        "ok": False,
-                        "error": f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）才能再要求新的檢定，不要重複呼叫。",
-                    }, should_save=False)
-                # 沒有待處理檢定，註冊新的
-                target_state.pending_checks[target_char.owner_id] = new_choice
-                return _StateMutation({
-                    "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                    "note": "等待玩家選一個選項；選定後預設由玩家用 /coc check 或按鈕擲骰，只有 autoroll 開啟時才由系統代擲。",
-                }, should_save=True)
-            return _mutate_and_save_state(state, _register_pending_choice)
-
-        if name == "npc_skill_check":
-            skill_value = max(0, min(100, int(tool_input["skill_value"])))
-            bonus = int(tool_input.get("bonus_dice") or 0)
-            penalty = int(tool_input.get("penalty_dice") or 0)
-            npc_roll = dice.skill_check(skill_value, bonus_dice=bonus, penalty_dice=penalty)
-            return {"ok": True, "roll": npc_roll.roll, "tier": npc_roll.tier, "skill_value": skill_value}
-
-        if name == "offer_npc_attack_defense_choice":
-            # Merges what used to be two sequential tool calls (npc_skill_check
-            # then offer_check_choice with attacker_tier filled in from its
-            # result) into one — see docs/specs/enhancement/npc_attack_latency_design_spec.md.
-            # offer_check_choice's attacker_tier field structurally depended on
-            # npc_skill_check's return value, forcing the model to make two
-            # separate round-trips (see the result, then decide the next call)
-            # for the single most common combat exchange (NPC attacks, player
-            # picks dodge/counter). Built entirely from the same primitives
-            # both original handlers already used below — not new logic, just
-            # one fewer LLM round-trip to reach it.
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            raw_options = tool_input.get("options") or []
-            if len(raw_options) < 1:
-                return {"ok": False, "error": "options 至少要給一個選項"}
-            attacker_skill_value = max(0, min(100, int(tool_input["attacker_skill_value"])))
-            attacker_bonus = int(tool_input.get("attacker_bonus_dice") or 0)
-            attacker_penalty = int(tool_input.get("attacker_penalty_dice") or 0)
-            is_ranged = bool(tool_input.get("is_ranged", False))
-
-            def _roll_and_register_defense_choice(target_state: GroupState) -> _StateMutation[dict]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                # Resolve the existing-pending/reuse decision inside the same
-                # freshly-loaded mutator that performs the roll and write. A
-                # rejected call therefore never rolls, and there is no gap
-                # between checking the pending entry and saving its result.
-                options = _resolve_defense_options(target_char, raw_options)
-                new_choice: dict[str, Any] = {
-                    "type": "choice",
-                    "options": options,
-                    "attacker_skill_value": attacker_skill_value,
-                    "attacker_bonus_dice": attacker_bonus,
-                    "attacker_penalty_dice": attacker_penalty,
-                    "is_ranged": is_ranged,
-                    # Code review: the dedup/reuse comparison below must match
-                    # against what the CALLER asked for, not what ended up
-                    # persisted after server-side filtering (critical-tier
-                    # Fight Back removal, ranged Fight Back removal) — those
-                    # filters can shrink the saved "options" (e.g. to just
-                    # ["閃避"]) relative to the raw request (["閃避","反擊"]),
-                    # so comparing against saved "options" made a legitimate
-                    # identical retry fail to match and fall through to the
-                    # generic "already pending" rejection instead of reusing
-                    # the cached roll.
-                    "raw_option_labels": sorted(str(o.get("label", "")) for o in raw_options),
-                }
-                new_choice.update(_pending_check_metadata(target_state, target_char.owner_id, tool_input))
-                existing = target_state.pending_checks.get(target_char.owner_id)
-                # 防重複：如果已經有完全相同的防守選項且有真實掷骰結果，重用現有結果而不重新掷。
-                # 遠程情境的 attacker_roll 永遠是 None（見下方 is_ranged 分支——攻擊方要等
-                # 防守方擲完「撲向掩體」才會擲，見 §2.4），所以這個重用條件天生不會對遠程
-                # pending 觸發，遠程重複呼叫會自然落到下面的「已有待處理檢定」拒絕分支，
-                # 這正是我們要的行為（不會被誤判成「已擲過，重用結果」）。
-                if (
-                    existing
-                    and existing.get("type") == "choice"
-                    and existing.get("attacker_roll") is not None
-                    and existing.get("attacker_skill_value") == attacker_skill_value
-                    and existing.get("attacker_bonus_dice", 0) == attacker_bonus
-                    and existing.get("attacker_penalty_dice", 0) == attacker_penalty
-                    # Code review: is_ranged 沒被比對時，一個先以 is_ranged=False（近戰）
-                    # 註冊、已經擲出 attacker_roll 的 pending，會在呼叫端只把 is_ranged
-                    # 改成 True 重試時被誤判成「完全相同、可以重用」——因為前面幾個欄位
-                    # 剛好都符合。這樣會悄悄延用近戰對抗擲骰的舊結果，讓修正後的遠程呼叫
-                    # 錯誤地留在近戰 opposed-roll 路徑上，也連帶繞過遠程分支自己的反擊
-                    # 選項過濾（見下方 is_ranged 分支）。
-                    and existing.get("is_ranged", False) == is_ranged
-                ):
-                    # 比較防守選項是否相同——用呼叫時的「原始 raw_option_labels」比對，
-                    # 不是比對 existing 已保存的 options，因為 critical/遠程過濾可能讓
-                    # 保存的 options 比原始請求少（見上方 new_choice 建構處的說明）；
-                    # existing 若是舊版沒有 raw_option_labels 欄位的資料，get 回傳 None
-                    # 不等於任何排序後的 list，安全地直接判定不相符、退回下面的拒絕分支。
-                    try:
-                        existing_labels = existing.get("raw_option_labels")
-                        new_labels = new_choice["raw_option_labels"]
-                        if existing_labels == new_labels:
-                            # 防守選項相同且有真實掷骰結果，重用現有（已套用過濾的）結果
-                            persisted_timeline_id = target_state.timeline_id or f"legacy-{target_state.group_id}"
-                            return _StateMutation({
-                                "ok": True, "pending": True, "investigator": target_char.name,
-                                "options": existing.get("options", options),
-                                "attacker_roll": existing.get("attacker_roll"),
-                                "attacker_tier": existing.get("attacker_tier"),
-                                # The response must carry the same stable
-                                # identity as the persisted pending entry.
-                                # Reusing a roll must not manufacture a new
-                                # check id that the button cannot consume.
-                                "check_id": effective_check_id(
-                                    target_char.owner_id, existing, persisted_timeline_id
-                                ),
-                                "timeline_id": persisted_timeline_id,
-                                "note": "防守選項相同，重用之前的掷骰結果（防重複）。",
-                            }, should_save=False)
-                    except (TypeError, ValueError):
-                        pass  # 無法排序時，繼續執行新的掷骰
-                if existing:
-                    return _StateMutation(
-                        {
-                            "ok": False,
-                            "error": f"{target_char.name} 已經有一筆待處理的檢定，請等玩家先處理完（/coc check 或按鈕選擇）才能再要求新的檢定，不要重複呼叫。",
-                        },
-                        should_save=False,
-                    )
-
-                if is_ranged:
-                    # COC7e：遠程攻擊不允許「反擊」，只能撲向掩體——跟近戰大成功時濾掉
-                    # 反擊選項同一個道理，不能只靠 prompt 指示 LLM 別給反擊選項，玩家
-                    # 還是能用 /coc check 反擊 之類的文字輸入繞過純 UI 層隱藏，所以這裡
-                    # 也要伺服器端強制過濾（呼應下方近戰 critical 分支的同一個防禦性
-                    # 設計）。code review 發現：這裡原本完全沒有過濾，若 LLM 違反 prompt
-                    # 指示仍帶了反擊選項，玩家選中後會被 is_ranged 分支當「撲向掩體」
-                    # 處理、敘事成撲向掩體結果，跟玩家實際選的「反擊」不符。
-                    filtered_options = [o for o in options if not dice.is_counter_option(o)]
-                    if not filtered_options:
-                        return _StateMutation(
-                            {
-                                "ok": False,
-                                "error": "遠程攻擊 COC7e 規則不允許「反擊」，但目前 options 只有反擊、"
-                                         "沒有「閃避」可選，請至少提供一個「閃避」選項後再重新呼叫這個工具。",
-                            },
-                            should_save=False,
-                        )
-                    options = filtered_options
-                    new_choice["options"] = options
-                    # COC7e：遠程攻擊不是對抗檢定，攻擊方的命中判定完全獨立於防守方，
-                    # 而且要等防守方決定「撲向掩體」有沒有成功，才知道攻擊方這次要不要
-                    # 多帶一個懲罰骰——所以這裡不能像近戰一樣預先擲攻擊方，必須延後到
-                    # 玩家觸發防守擲骰的當下才擲（見 app/legacy_commands.py 的
-                    # _build_check_narration ranged_attacker 分支）。這裡只登記選項跟
-                    # 攻擊方的技能值/骰數修正，不寫 attacker_tier/attacker_roll。
-                    target_state.pending_checks[target_char.owner_id] = new_choice
-                    return _StateMutation({
-                        "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                        "note": "遠程攻擊：這不是對抗檢定，不會預先擲攻擊方。等待玩家選擇「撲向掩體」並"
-                                "觸發擲骰後，系統才會依撲向掩體是否成功決定攻擊方要不要多帶一個懲罰骰，"
-                                "再擲攻擊方的命中判定；不要自行判定命中與否，也不要自己先講攻擊方擲出什麼。",
-                    }, should_save=True)
-
-                npc_roll = dice.skill_check(
-                    attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty
-                )
-                # COC7e：攻擊方擲出大成功時，沒有任何等級能贏過它，「反擊」選項在規則上
-                # 已經不可能成立（閃避仍然可能贏——雙方都大成功時平手，閃避方獲勝，見
-                # dice.resolve_opposed 的 is_counter 分支），所以這裡強制濾掉反擊選項，
-                # 不能只在 Discord 按鈕顯示層隱藏，否則玩家還是能用 /coc check 反擊 之類
-                # 的文字輸入繞過去。
-                if npc_roll.tier == "critical":
-                    filtered_options = [o for o in options if not dice.is_counter_option(o)]
-                    if not filtered_options:
-                        return _StateMutation(
-                            {
-                                "ok": False,
-                                "error": "攻擊方這次擲出大成功，沒有任何成功等級贏得過它，「反擊」選項"
-                                         "已不成立；但目前 options 只有反擊，沒有閃避可選，請至少提供一個"
-                                         "「閃避」選項後再重新呼叫這個工具。",
-                            },
-                            should_save=False,
-                        )
-                    options = filtered_options
-                    new_choice["options"] = options
-                new_choice["attacker_tier"] = npc_roll.tier
-                new_choice["attacker_roll"] = npc_roll.roll  # 保存掷骰結果供後續防重複檢查
-                target_state.pending_checks[target_char.owner_id] = new_choice
-                return _StateMutation({
-                    "ok": True, "pending": True, "investigator": target_char.name, "options": options,
-                    "attacker_roll": npc_roll.roll, "attacker_tier": npc_roll.tier,
-                    "note": "攻擊方檢定已經由系統擲好（tier 見上面）；等待玩家選一個防守選項，"
-                            "選定後預設由玩家用 /coc check 或按鈕擲防守骰，autoroll 開啟時才由系統代擲，不要自行判定命中與否。",
-                }, should_save=True)
-            return _mutate_and_save_state(state, _roll_and_register_defense_choice)
-
-        if name == "clear_pending_check":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            def _clear_pending_check(target_state: GroupState) -> _StateMutation[dict]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                cleared = target_state.pending_checks.pop(target_char.owner_id, None)
-                if cleared is None:
-                    return _StateMutation(
-                        {"ok": True, "cleared": False, "investigator": target_char.name,
-                         "note": f"{target_char.name} 本來就沒有待處理的檢定，沒有動作。"},
-                        should_save=False,
-                    )
-                return _StateMutation({
-                    "ok": True, "cleared": True, "investigator": target_char.name,
-                    "cleared_check_type": cleared.get("type", ""),
-                }, should_save=True)
-            return _mutate_and_save_state(state, _clear_pending_check)
-
-        if name == "sanity_check":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            loss_success = tool_input.get("loss_success", "0")
-            loss_failure = tool_input.get("loss_failure", "1d4")
-            owner_id = char.owner_id
-            cache_key = _deterministic_check_cache_key(name, tool_input, owner_id, speaker_role)
-            sanity_event_seed: dict[str, Any] | None = None
-
-            def _roll_sanity_check(target_state: GroupState) -> _StateMutation[dict]:
-                nonlocal sanity_event_seed
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                if not target_state.autoroll_checks:
-                    blocked = _reject_if_check_already_pending(target_state, target_char)
-                    if blocked is not None:
-                        return _StateMutation(blocked, should_save=False)
-                    target_state.pending_checks[target_char.owner_id] = {
-                        "type": "sanity",
-                        "loss_success": loss_success,
-                        "loss_failure": loss_failure,
-                        **_pending_check_metadata(target_state, target_char.owner_id, tool_input),
-                    }
-                    return _StateMutation(
-                        {
-                            "ok": True,
-                            "pending": True,
-                            "investigator": target_char.name,
-                            "current_san": target_char.san,
-                            "note": "等待玩家自己用 /coc check 或按鈕擲 SAN；在結果回來前不要自行扣 SAN 或判定瘋狂。",
-                        },
-                        should_save=True,
-                    )
-                cached = _cached_check_result(target_state, cache_key)
-                if cached is not None:
-                    return _StateMutation(cached, should_save=False)
-                if target_char.owner_id in target_state.pending_checks:
-                    return _StateMutation(
-                        {
-                            "ok": False,
-                            "error": f"{target_char.name} 仍有待處理的防守選擇，請先完成選擇再做 SAN 檢定。",
-                        },
-                        should_save=False,
-                    )
-                if target_char.owner_id in target_state.pending_luck_decisions:
-                    return _StateMutation(
-                        {"ok": False, "error": f"{target_char.name} 仍在等待 Luck 決定，請先處理 Luck 選項。"},
-                        should_save=False,
-                    )
-                metadata = _pending_check_metadata(target_state, target_char.owner_id, tool_input)
-                state_before = _character_attribute_snapshot(target_char)
-                sanity_result = dice.sanity_check(target_char.san, loss_success, loss_failure)
-                target_char.san = sanity_result.san_after
-                result: dict[str, Any] = {
-                    "ok": True,
-                    "resolved": True,
-                    "investigator": target_char.name,
-                    "current_san": sanity_result.san_before,
-                    "san_after": sanity_result.san_after,
-                    "loss": sanity_result.loss,
-                    "loss_expression": sanity_result.loss_expression,
-                    "roll": sanity_result.check.roll,
-                    "tier": sanity_result.check.tier,
-                    "success": sanity_result.check.success,
-                    "check_id": metadata["check_id"],
-                    "timeline_id": metadata["timeline_id"],
-                    "action_context": metadata["action_context"],
-                    "note": (
-                        "Keeper 已由 deterministic dice engine 擲完 SAN 檢定並更新 SAN；不要要求玩家再輸入 /coc check。"
-                        if target_state.autoroll_checks
-                        else "已建立待處理 SAN 檢定；請讓玩家用 /coc check 或按鈕擲骰，結果回來前不要扣 SAN。"
-                    ),
-                }
-                if sanity_result.risk_of_madness:
-                    int_value = resolve_skill_value(target_char, "INT")
-                    int_result = dice.skill_check(int_value)
-                    result["madness_int_check"] = {
-                        "skill_value": int_value,
-                        "roll": int_result.roll,
-                        "tier": int_result.tier,
-                        "success": int_result.success,
-                    }
-                    if int_result.success:
-                        result["madness"] = dice.roll_madness(realtime=True)
-                        result["note"] = (
-                            "Keeper 已完成 SAN 與後續 INT 檢定；損失達 5 點並觸發短暫瘋狂，"
-                            "請照 madness 結果敘事，不要再要求玩家擲 INT。"
-                        )
-                    else:
-                        result["note"] = (
-                            "Keeper 已完成 SAN 與後續 INT 檢定；INT 未觸發短暫瘋狂，請照結果敘事。"
-                        )
-                sanity_event_seed = {
-                    "event_id": metadata["check_id"],
-                    "check_id": metadata["check_id"],
-                    "timeline_id": metadata["timeline_id"],
-                    "owner_id": target_char.owner_id,
-                    "character_id": target_char.character_id,
-                    "investigator": target_char.name,
-                    "skill": "SAN",
-                    "skill_value": sanity_result.san_before,
-                    "roll": sanity_result.check.roll,
-                    "difficulty": "regular",
-                    "outcome": f"{sanity_result.check.tier} {'成功' if sanity_result.check.success else '失敗'}",
-                    "state_before": state_before,
-                }
-                _remember_check_result(target_state, cache_key, result)
-                return _StateMutation(result, should_save=True)
-            result = _mutate_and_save_state(state, _roll_sanity_check)
-            if sanity_event_seed is not None and result.get("resolved"):
-                _persist_resolved_check_event(state, sanity_event_seed)
-            return result
-
-        if name == "adjust_character":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            field_name = tool_input["field"]
-            attr_map = {"hp": ("hp", "hp_max"), "mp": ("mp", "mp_max"), "san": ("san", "san_max"), "luck": ("luck", None)}
-            if field_name not in attr_map:
-                return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
-            cur_attr, max_attr = attr_map[field_name]
-            blocked_hit: dict[str, Any] | None = None
-
-            def _apply_attribute_delta(
-                target_state: GroupState,
-            ) -> _StateMutation[tuple[int, bool, dict[str, Any] | None]]:
-                nonlocal blocked_hit
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                target_cap = getattr(target_char, max_attr) if max_attr else 999
-                delta = int(tool_input["delta"])
-                new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
-                # COC7e major wound rule, code-enforced the same way Bout of
-                # Madness is (see sanity_check above): a single hit dealing >=
-                # half of max HP knocks the investigator unconscious unless they
-                # pass a CON roll. Skipped when this hit already dropped HP to
-                # 0 or below — RAW already treats that as unconscious/dying on
-                # its own, so a second CON check on top would be redundant.
-                is_major_wound = field_name == "hp" and delta < 0 and new_val > 0 and -delta >= target_char.hp_max / 2
-                # Checked against the reloaded state, so a check registered by
-                # another path since this turn loaded can't slip past.
-                blocker = (
-                    pending_check_blocker(target_state, target_char.owner_id)
-                    if is_major_wound and not target_state.autoroll_checks
-                    else None
-                )
-                if blocker:
-                    blocked_hit = combat.major_wound_blocked(
-                        target_state, target_char, blocker, entry_point="adjust_character"
-                    )
-                    return _StateMutation((getattr(target_char, cur_attr), False, None), should_save=False)
-                setattr(target_char, cur_attr, new_val)
-
-                major_wound = False
-                wound_roll: dict[str, Any] | None = None
-                if is_major_wound:
-                    con_value = resolve_skill_value(target_char, "CON")
-                    if target_state.autoroll_checks:
-                        major_wound = True
-                        con_result = dice.skill_check(con_value)
-                        wound_roll = {
-                            "skill": "CON",
-                            "skill_value": con_value,
-                            "roll": con_result.roll,
-                            "tier": con_result.tier,
-                            "success": con_result.success,
-                        }
-                        if not con_result.success:
-                            for tag in ("昏迷", "倒地"):
-                                if tag not in target_char.status_tags:
-                                    target_char.status_tags.append(tag)
-                    else:
-                        major_wound = True
-                        target_state.pending_checks[target_char.owner_id] = {
-                            "type": "skill",
-                            "skill": "CON",
-                            "skill_value": con_value,
-                            "bonus_dice": 0,
-                            "penalty_dice": 0,
-                            "difficulty": "regular",
-                            "major_wound_trigger": True,
-                            **_pending_check_metadata(
-                                target_state,
-                                target_char.owner_id,
-                                {"action_context": f"{target_char.name} 因為重傷需要做 CON 檢定"},
-                            ),
-                        }
-                return _StateMutation((new_val, major_wound, wound_roll))
-
-            new_val, major_wound, wound_roll = _mutate_and_save_state(state, _apply_attribute_delta)
-            if blocked_hit is not None:
-                return blocked_hit
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
-            if major_wound:
-                response["major_wound"] = True
-                response["major_wound_check"] = wound_roll
-                response["note"] = (
-                    "這次單一傷害達到重傷門檻（≥ 角色最大 HP 一半），COC7e 規則：角色必須做一次 CON 檢定；"
-                    "已替玩家建立待處理的 CON 檢定，請等待玩家輸入 /coc check CON。"
-                    if not state.autoroll_checks
-                    else "這次單一傷害達到重傷門檻；autoroll 已開啟，CON 檢定已由系統完成，請照 major_wound_check 敘事。"
-                )
-            return response
-
-        if name == "adjust_ammo":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            weapon = tool_input.get("weapon", "")
-            entry = char.weapons.get(weapon)
-            if entry is None:
-                available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
-                return {"ok": False, "error": f"「{char.name}」的彈藥欄位裡沒有「{weapon}」，目前有：{available}"}
-            if "ammo_max" not in entry:
-                # A recognized weapon whose ammo isn't tracked (melee, or an
-                # ammo category this project's table doesn't cover) — see
-                # pregen_extractor._resolve_weapon_ammo, which stores these as
-                # {}. Without this check, `entry["ammo_max"]` below would
-                # KeyError instead of giving the Keeper a usable error.
-                return {"ok": False, "error": f"「{weapon}」沒有追蹤彈藥數（近戰武器或未登記彈藥表的槍械），不需要（也無法）裝填。"}
-            def _apply_ammo_change(target_state: GroupState) -> None:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                target_entry = target_char.weapons.get(weapon)
-                if target_entry is None:
-                    raise ValueError(f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料")
-                if tool_input.get("reload_full"):
-                    target_entry["ammo"] = target_entry["ammo_max"]
-                else:
-                    target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
-            _mutate_and_save_state(state, _apply_ammo_change)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            refreshed_entry = refreshed_char.weapons.get(weapon)
-            if refreshed_entry is None:
-                return {"ok": False, "error": f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料"}
-            return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
-
-        if name == "add_carried_item":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            item = tool_input.get("item", "").strip()
-            if not item:
-                return {"ok": False, "error": "item 不能是空字串"}
-            def _mutate_add_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = item not in target_char.carried_items
-                if changed:
-                    target_char.carried_items.append(item)
-                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, _mutate_add_item)
-            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
-
-        if name == "remove_carried_item":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            # .strip() to match add_carried_item's own normalization above — otherwise
-            # an item with incidental whitespace ("鑰匙 " vs "鑰匙") would silently fail
-            # to remove (the no-op-skip logic below would report "unchanged" since the
-            # stripped, stored string never string-equals the unstripped one being removed).
-            item = tool_input.get("item", "").strip()
-            def _mutate_remove_item(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = item in target_char.carried_items
-                if changed:
-                    target_char.carried_items.remove(item)
-                    target_state.consumed_or_removed_items.append({
-                        "item": item,
-                        "character_id": target_char.owner_id,
-                        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                        "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
-                    })
-                return _StateMutation((target_char.name, target_char.carried_items), should_save=changed)
-            investigator, carried_items = _mutate_and_save_state(state, _mutate_remove_item)
-            return {"ok": True, "investigator": investigator, "carried_items": carried_items}
-
-        if name in ("record_established_fact", "record_clue"):
-            field_name = "established_facts" if name == "record_established_fact" else "known_clues"
-            text_value = ((tool_input.get("fact") if name == "record_established_fact" else tool_input.get("clue")) or "").strip()
-            if not text_value:
-                return {"ok": False, "error": "內容不能是空字串"}
-            visibility = tool_input.get("visibility", "public")
-            if visibility not in ("public", "kp_only"):
-                return {"ok": False, "error": "visibility 必須是 public 或 kp_only"}
-            def _mutate_record(target_state: GroupState) -> _StateMutation[dict]:
-                records = getattr(target_state, field_name)
-                if any(record.get("text") == text_value and record.get("visibility", "public") == visibility for record in records):
-                    return _StateMutation({"recorded": False, "records": records}, should_save=False)
-                record = {
-                    "text": text_value,
-                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
-                    "visibility": visibility,
-                    "scene_id": "",
-                }
-                records.append(record)
-                return _StateMutation({"recorded": True, "record": record}, should_save=True)
-            result = _mutate_and_save_state(state, _mutate_record)
-            return {"ok": True, **result}
-
-        if name == "add_status_tag":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            tag = tool_input.get("tag", "").strip()
-            if not tag:
-                return {"ok": False, "error": "tag 不能是空字串"}
-            def _mutate_add_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = tag not in target_char.status_tags
-                if changed:
-                    target_char.status_tags.append(tag)
-                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, _mutate_add_tag)
-            return {"ok": True, "investigator": investigator, "status_tags": tags}
-
-        if name == "remove_status_tag":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            # .strip() to match add_status_tag's own normalization above — otherwise a
-            # tag with incidental whitespace ("昏迷 " vs "昏迷") would silently fail to
-            # remove (the no-op-skip logic below would report "unchanged" since the
-            # stripped, stored string never string-equals the unstripped one being removed).
-            tag = tool_input.get("tag", "").strip()
-            def _mutate_remove_tag(target_state: GroupState) -> _StateMutation[tuple[str, list[str]]]:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                changed = tag in target_char.status_tags
-                if changed:
-                    target_char.status_tags.remove(tag)
-                return _StateMutation((target_char.name, target_char.status_tags), should_save=changed)
-            investigator, tags = _mutate_and_save_state(state, _mutate_remove_tag)
-            return {"ok": True, "investigator": investigator, "status_tags": tags}
-
-        if name == "set_skill":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            value = max(0, min(100, int(tool_input["value"])))
-            def _mutate_set_skill(target_state: GroupState) -> None:
-                target_char = require_character(target_state, tool_input.get("investigator", ""))
-                target_char.skills[tool_input["skill"]] = value
-            _mutate_and_save_state(state, _mutate_set_skill)
-            refreshed_char = require_character(state, tool_input.get("investigator", ""))
-            return {"ok": True, "investigator": refreshed_char.name, "skill": tool_input["skill"], "value": value}
-
-        if name == "get_character_sheet":
-            _refresh_state_snapshot(state)
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            return {"ok": True, "sheet": char.to_dict()}
-
-        if name == "send_private_info":
-            char = find_character(state, tool_input.get("investigator", ""))
-            if not char:
-                return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-            if not spoiler_policy.is_privacy_isolation_enabled():
-                # §3.4 mechanism #1: still delivered privately (no safe public
-                # fallback exists at this layer — see spec §12 open item #6),
-                # but flagged loudly since this invariant is supposed to hold
-                # unconditionally in production.
-                observability.event(
-                    "privacy.isolation.disabled", level=logging.WARNING, fn="send_private_info"
-                )
-            private_messages.append((char.owner_id, tool_input["message"]))
-            return {"ok": True, "delivered_to": char.name}
-
-        if name == "search_scenario_images":
-            if not state.scenario_library_id:
-                return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-            assets = scenario_library.search_images(
-                state.scenario_library_id,
-                query=tool_input.get("query", ""),
-                image_type=tool_input.get("image_type", ""),
-                allowed_chapter_ids=_scenario_allowed_chapter_ids(state),
-            )
-            # KP-only assets (see scenario_library._build_image_assets — currently
-            # character_sheet pages, which may be NPC/villain stat blocks or a
-            # pregen revealing a "secret" connection) are filtered out of what
-            # ordinary play (speaker_role != "kp_assistant") can even discover,
-            # not just what it can display — a player-facing search shouldn't
-            # surface a KP-only page's existence any more than show_scenario_image
-            # below should let them actually pull it up. §3.4 mechanism #3: this
-            # ownership/visibility filter is privacy isolation, not spoiler
-            # protection.
-            if speaker_role != "kp_assistant":
-                if spoiler_policy.is_privacy_isolation_enabled():
-                    assets = [a for a in (spoiler_policy.filter_public_record(a) for a in assets) if a is not None]
-                else:
-                    # One WARNING per search call, not one per asset — a
-                    # library can have dozens of images, and filter_public_record
-                    # itself logs per-record (see its docstring).
-                    observability.event(
-                        "privacy.isolation.disabled", level=logging.WARNING, fn="search_scenario_images"
-                    )
-            return {"ok": True, "assets": [{key: asset.get(key) for key in ("id", "page", "type", "tags", "description", "visibility")} for asset in assets]}
-
-        if name == "show_scenario_image":
-            if not state.scenario_library_id:
-                return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-            page = int(tool_input["page_number"])
-            assets = scenario_library.search_images(
-                state.scenario_library_id, allowed_chapter_ids=_scenario_allowed_chapter_ids(state)
-            )
-            asset = next((item for item in assets if item.get("page") == page), None)
-            if asset is None:
-                return {"ok": False, "error": "該圖片不在目前章節 Context，不能展示"}
-            if speaker_role != "kp_assistant" and spoiler_policy.filter_public_record(asset) is None:
-                return {"ok": False, "error": "這一頁是 KP 專用資料，不能在一般遊戲流程中展示給玩家"}
-            image_investigator: str = tool_input.get("investigator") or ""
-            image_owner_id: str | None = None
-            if image_investigator:
-                char = find_character(state, image_investigator)
-                if not char:
-                    return {"ok": False, "error": f"找不到角色「{image_investigator}」"}
-                image_owner_id = char.owner_id
-            image_requests.append((image_owner_id, page))
-            return {"ok": True, "page": page, "asset_type": asset.get("type"), "target": "private" if image_owner_id else "public"}
-
-        if name == "advance_scenario_chapter":
-            def _advance(target_state: GroupState) -> dict:
-                if not target_state.scenario_library_id:
-                    return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-                next_id = scenario_library.next_chapter_id(target_state.scenario_library_id, target_state.active_chapter_id)
-                if next_id is None:
-                    return {"ok": False, "error": "目前已是最後一個章節"}
-                context = scenario_library.load_context(target_state.scenario_library_id, next_id)
-                target_state.scenario_text = context["text"]
-                target_state.active_chapter_id = context["active_chapter_id"]
-                target_state.context_chapter_ids = context["context_chapter_ids"]
-                target_state.scenario_npc_index = context["indexes"].get("npcs", [])
-                target_state.scenario_location_index = context["indexes"].get("locations", [])
-                target_state.scene_maps = context["scene_maps"]
-                # After the assignment, or this reads the previous chapter's maps.
-                artifact_notice = scenario_index.report_location_index(
-                    target_state.scenario_location_index, source="chapter_switch",
-                    scenario_title=target_state.scenario_title,
-                    scene_maps=target_state.scene_maps)
-                old_timeline_id = target_state.timeline_id or f"legacy-{target_state.group_id}"
-                target_state.openai_previous_response_id = ""
-                target_state.openai_previous_response_timeline_id = ""
-                observability.event(
-                    "provider.chain.reset",
-                    reason="scenario_chapter_advance",
-                    old_timeline_id=old_timeline_id,
-                    requested_timeline_id=old_timeline_id,
-                    provider="openai",
-                )
-                clear_page_images(target_state.group_id)
-                scenario_library.copy_context_images(
-                    target_state.scenario_library_id, context["page_numbers"],
-                    lambda page, image: save_page_image(target_state.group_id, page, image),
-                )
-                # Carried into the result, or a group that switches chapters
-                # into an empty-artifact variant is told nothing at all.
-                result = {"ok": True, "active_chapter_id": context["active_chapter_id"],
-                          "context_chapter_ids": context["context_chapter_ids"]}
-                if artifact_notice:
-                    result["notice"] = artifact_notice
-                return result
-            return _mutate_and_save_state(state, _advance)
-        if name == "search_scenario":
-            if not state.scenario_text:
-                return {"ok": False, "error": "目前沒有載入劇本可以搜尋"}
-            scenario_query = tool_input.get("query", "")
-            # Plain text log, not a structured event field — the query is
-            # free-form player-adjacent content (see observability.py's own
-            # docstring on why those two channels are kept separate),
-            # gated by LOG_TEXT_ENABLED like any other _logger call. Added
-            # specifically because "did the Keeper just search the same
-            # keyword twice in one turn" was previously impossible to
-            # answer from the logs at all: rag.search's structured metrics
-            # below only ever captured counts (candidate_count,
-            # result_count, ...), never the query text itself.
-            _logger.info("search_scenario query=%r", scenario_query)
-            scenario_metrics: dict[str, Any] = {}
-            with observability.span("rag.search", rag_kind="scenario", top_k=SCENARIO_RAG_TOP_K,
-                                    embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
-                                    embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=scenario_metrics):
-                index, results = scenario_templates.search_for_state(state, scenario_query, top_k=SCENARIO_RAG_TOP_K, metrics=scenario_metrics,
-                                                                    source=tool_input.get("source", "auto"),
-                                                                    continuation=tool_input.get("continuation", ""),
-                                                                    principal=f"{speaker_role}:{tool_input.get('_retrieval_principal', state.kp_assistant_user_id or '')}")
-                scenario_metrics.update(
-                    evidence_chars=sum(len(row["text"]) for row in results),
-                    budget_omitted=sum(row.get("budget_omitted", 0) for row in results),
-                    candidate_count=len(getattr(index, "chunks", ())),
-                    result_count=len(results),
-                    has_embeddings=getattr(index, "has_embeddings", None),
-                    index_cache=getattr(index, "index_cache", "unknown"),
-                )
-            completeness = [row for row in results if 'complete_for_action' in row]
-            return {"ok": True, "results": scenario_rag.format_results(results),
-                    "complete_for_action": all(row['complete_for_action'] for row in completeness) if completeness else None,
-                    "evidence_record_ids": list({rid for row in completeness for rid in row.get("root_record_ids", [])}),
-                    "continuation_tokens": [row['continuation_token'] for row in completeness if row.get('continuation_token')]}
 
 
-        if name == "search_memory":
-            memory_query = tool_input.get("query", "")
-            _logger.info("search_memory query=%r", memory_query)  # see search_scenario's comment above
-            memory_metrics: dict[str, Any] = {}
-            with observability.span("memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
-                                    embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=memory_metrics):
-                results = memory_rag.search_memory(
-                    state.group_id,
-                    memory_query,
-                    timeline_id=state.timeline_id or f"legacy-{state.group_id}",
-                    metrics=memory_metrics,
-                )
-            return {"ok": True, "results": memory_rag.format_results(results)}
+
+
+
+
+
+
+
+
+
+
+
 
         return {"ok": False, "error": f"未知工具 {name}"}
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
