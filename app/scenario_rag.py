@@ -37,9 +37,16 @@ import threading
 import time
 from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
-from app import async_utils, db, embedding_cache, observability, scenario_projection
+from app import (
+    async_utils,
+    db,
+    embedding_cache,
+    embedding_execution,
+    observability,
+    scenario_projection,
+)
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
@@ -324,71 +331,13 @@ _EMBEDDING_BATCH_SIZE = 100  # conservative — well under OpenAI's per-request
 # instead of risking one oversized request failing outright.
 
 
-def _close_embedding_client(client: object, *, rag_kind: str) -> None:
-    """Close a synchronous embedding client without masking the RAG result."""
-    close = getattr(client, "close", None)
-    if not callable(close):
-        return
-    try:
-        close()
-    except Exception as exc:  # noqa: BLE001 - cleanup must not break BM25 fallback.
-        observability.event(
-            "rag.embedding_client_close_failed",
-            level=logging.WARNING,
-            rag_kind=rag_kind,
-            error_type=type(exc).__name__,
-        )
-
-
 def _embed_texts(texts: list[str], *, rag_kind: str = "scenario") -> list[list[float]] | None:
-    """Best-effort: embed texts via OpenAI, batching requests so a large
-    input list (a long scenario, or many fine-grained chunks) can't exceed
-    a single request's limits. Returns None if unavailable (no
-    OPENAI_API_KEY) or any batch's call fails for any reason — callers
-    should fall back to pure BM25 in that case, not treat it as an error.
-    Order matches the input list regardless of what order each batch's
-    response returns embeddings in (each Embedding carries its own .index,
-    relative to its own batch)."""
-    if not texts:
-        return None
-    if not OPENAI_API_KEY:
-        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
-                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="missing_api_key")
-        return None
-    client = None
-    try:
-        import openai
-
-        client = openai.OpenAI(
-            api_key=OPENAI_API_KEY,
-            timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
-            max_retries=0,
-        )
-        ordered: list[list[float] | None] = [None] * len(texts)
-        batch_count = (len(texts) + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
-        for batch_index, start in enumerate(range(0, len(texts), _EMBEDDING_BATCH_SIZE)):
-            batch = texts[start : start + _EMBEDDING_BATCH_SIZE]
-            with observability.span(
-                "embedding.batch",
-                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
-                batch_size=len(batch), batch_index=batch_index, batch_count=batch_count,
-            ):
-                response = client.embeddings.create(model=SCENARIO_RAG_EMBEDDING_MODEL, input=batch)
-            for item in response.data:
-                ordered[start + item.index] = item.embedding
-        if any(v is None for v in ordered):
-            observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
-                                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25",
-                                error_type="incomplete_embedding_response")
-            return None
-        return cast(list[list[float]], ordered)
-    except Exception:  # noqa: BLE001 - embedding is best-effort; BM25 remains the safe fallback.
-        observability.event("rag.embedding_fallback", level=logging.WARNING, rag_kind=rag_kind,
-                            embedding_model=SCENARIO_RAG_EMBEDDING_MODEL, fallback="bm25", error_type="embedding_error")
-        return None
-    finally:
-        if client is not None:
-            _close_embedding_client(client, rag_kind=rag_kind)
+    """Best-effort batched embedding; scenario ranking and fallback remain local."""
+    return embedding_execution.embed_texts(
+        texts, rag_kind=rag_kind, api_key=OPENAI_API_KEY,
+        model=SCENARIO_RAG_EMBEDDING_MODEL, timeout=EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+        batch_size=_EMBEDDING_BATCH_SIZE,
+    )
 
 
 def _vector_norm(vec: list[float]) -> float:

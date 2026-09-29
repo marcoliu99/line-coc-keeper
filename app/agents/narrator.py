@@ -8,11 +8,7 @@ from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
 from app.keeper_tools import registry as tool_registry
-from app.providers.registry import (
-    require_conversation_provider,
-    supports_dynamic_tools,
-    supports_response_stage,
-)
+from app.providers.conversation_session import ConversationSession
 from app.services import mutation_admission, prompt_config
 
 _logger = logging.getLogger(__name__)
@@ -29,7 +25,9 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     Returns:
         (reply_text, private_messages, image_requests)
     """
-    provider = require_conversation_provider()
+    session = ConversationSession.current()
+    assert session is not None
+    provider = session.provider
 
     state = message.payload["state"]
     mutation_admission.assert_admitted(state.group_id)
@@ -90,7 +88,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     image_requests = message.payload.get("image_requests", [])
     tools: list[dict] = []
     execute_tool: Callable[[str, dict], Awaitable[dict]] = _no_tools
-    provider_options: dict = {"response_stage": "narrator"} if (config.LLM_PROVIDER == "openai" or supports_response_stage(provider)) else {}
+    provider_options: dict = session.stage_options("narrator")
     if tool_enabled:
         allowed = (
             keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
@@ -105,7 +103,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             observed_outcomes=message.payload.setdefault("observed_outcomes", []),
         )
         combat_status_gate = (
-            keeper._CombatStatusToolGate(state) if (config.LLM_PROVIDER == "openai" or supports_dynamic_tools(provider)) else None
+            keeper._CombatStatusToolGate(state) if session.dynamic_tools else None
         )
 
         async def execute_restricted_tool(name: str, tool_input: dict) -> dict:
@@ -124,7 +122,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
                 lambda: combat_status_gate.tools_for_request(tools)
             )
 
-    if getattr(provider, 'SUPPORTS_DECISION_CONTEXT', False):
+    if session.decision_context:
         from app.services import turn_context
         previous_tools = provider_options.get('tools_for_request', lambda: tools)
         provider_options['tools_for_request'] = lambda: turn_context.check_creation_tools(state, previous_tools())
@@ -137,7 +135,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         turn_metrics: dict[str, int] = {}
         with observability.metrics_context(turn_metrics), observability.span(
             "llm.turn", provider=config.LLM_PROVIDER,
-            model=getattr(provider, f"{config.LLM_PROVIDER.upper()}_MODEL", None),
+            model=session.model,
             agent="narrator",
             reasoning_effort=observability.llm_reasoning_effort(config.LLM_PROVIDER),
             metrics=turn_metrics,
