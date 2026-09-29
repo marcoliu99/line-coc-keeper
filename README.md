@@ -59,7 +59,8 @@ Discord channel
              -> independent provider/tool/guard/commit path
 
 Shared services:
-  app/keeper.py                  Prompts, tool definitions, tool execution
+  app/keeper.py                  Prompts, tool execution (legacy cascade)
+  app/keeper_tools/registry.py    Ordered tool schemas and capability flags
   app/services/turn_context.py   Current-state and historical projections
   app/services/turn_resolution.py  Deterministic handoff validation
   app/scenario_rag.py            Scenario retrieval
@@ -97,7 +98,8 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 
 ### Shared game logic and infrastructure
 
-- **`app/keeper.py`** provides provider-independent system-prompt assembly, tool definitions, and tool execution for dice, checks, combat, character resources, scenario images, and chapter progression.
+- **`app/keeper_tools/registry.py`** declares every Keeper tool once — its JSON schema and its capability flags (read-only, KP-assistant-allowed, creates a check, ...) — as one `ToolSpec` each in `REGISTRY`, in the order sent to providers. Consumers derive their name sets from it (`docs/specs/refactor/keeper_tool_registry_design_spec.md`) instead of keeping their own literal copies.
+- **`app/keeper.py`** provides provider-independent system-prompt assembly and tool execution. A migrated family's handler lives in `app/keeper_tools/<family>.py` and runs via its `ToolSpec.handler`; a family not yet migrated still runs through `keeper.execute_legacy_tool`'s cascade, which every `ToolSpec` falls back to by default.
 - **`app/providers/anthropic_provider.py`** adapts the Anthropic Messages API, including prompt caching. **`gemini_provider.py`** and **`openai_provider.py`** provide the Google GenAI and OpenAI integrations; **`codex_provider.py`** uses the authenticated Codex CLI for conversation and general text analysis. `ANALYSIS_PROVIDER` selects PDF/image/OCR and pre-generated character-card analysis from API providers; Codex is intentionally excluded because measured extraction accuracy was insufficient.
 - **`app/locks.py`** provides per-conversation locking to prevent overlapping messages from overwriting saved state, with priority handling for KP Assistant messages.
 - **`app/combat.py`** manages initiative, rounds, combatant HP, effects, and enemy mechanics.

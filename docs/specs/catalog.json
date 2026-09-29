@@ -1211,6 +1211,8 @@
       "evidence": [
         "app/keeper_tools/registry.py",
         "app/keeper_tools/character.py",
+        "app/keeper_tools/checks.py",
+        "app/keeper_tools/dice.py",
         "tests/test_keeper_tool_registry.py",
         "app/keeper.py",
         "app/agents/tool_gateway.py",
@@ -1226,7 +1228,7 @@
       "title": "Every Discord event enters through the command router",
       "zh": "所有 Discord 事件一律經過 command router",
       "category": "refactor",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
         "app/commands/handlers/buttons.py",
         "app/commands/handlers/uploads.py",
@@ -1240,7 +1242,7 @@
       ],
       "path": "docs/specs/refactor/discord_events_through_router_design_spec.md",
       "zh_path": "docs/specs/refactor/discord_events_through_router_design_spec_zh.md",
-      "source_revision": "a68df959653c4a79b91377dae0978520703081f6"
+      "source_revision": "1a31645"
     },
     {
       "title": "Re-adding a defeated enemy's name: confirm it, and keep the two apart",
