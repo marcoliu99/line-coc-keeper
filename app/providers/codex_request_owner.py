@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 import time
 from collections import deque
@@ -34,14 +35,17 @@ class RequestOwner:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.waiters: deque[_Waiter] = deque()
-        self.active: set[asyncio.Task] = set()
+        self.active: dict[asyncio.Task, concurrent.futures.Future[None]] = {}
         self.in_use = 0
+        self.closing = False
 
     async def acquire(self, deadline: float) -> Lease:
         loop = asyncio.get_running_loop()
         task = asyncio.current_task()
         waiter = _Waiter(loop, loop.create_future())
         with self.lock:
+            if self.closing:
+                raise RuntimeError('codex_request_owner_closing')
             if self.in_use < config.CODEX_MAX_CONCURRENCY and not self.waiters:
                 self.in_use += 1
                 waiter.granted = True
@@ -54,8 +58,10 @@ class RequestOwner:
                 raise TimeoutError('codex_request_deadline')
             await asyncio.wait_for(waiter.future, turn_budget.remaining(remaining) or remaining)
             with self.lock:
+                if self.closing:
+                    raise asyncio.CancelledError
                 if task is not None:
-                    self.active.add(task)
+                    self.active[task] = concurrent.futures.Future()
             return Lease(self, task)
         except BaseException:
             with self.lock:
@@ -66,6 +72,9 @@ class RequestOwner:
             raise
 
     def _release_locked(self) -> None:
+        if self.closing:
+            self.in_use -= 1
+            return
         while self.waiters:
             waiter = self.waiters.popleft()
             if waiter.future.done():
@@ -82,22 +91,23 @@ class RequestOwner:
 
     def release(self, task: asyncio.Task | None) -> None:
         with self.lock:
-            if task is not None:
-                self.active.discard(task)
+            completed = self.active.pop(task, None) if task is not None else None
             self._release_locked()
+        if completed is not None:
+            completed.set_result(None)
 
     async def shutdown(self) -> None:
         current = asyncio.current_task()
         with self.lock:
-            tasks = [task for task in self.active if task is not current]
+            self.closing = True
+            tasks = [(task, done) for task, done in self.active.items() if task is not current]
             waiters = list(self.waiters)
-        for task in tasks:
+        for task, _done in tasks:
             task.get_loop().call_soon_threadsafe(task.cancel)
         for waiter in waiters:
             waiter.loop.call_soon_threadsafe(waiter.future.cancel)
-        local = [task for task in tasks if task.get_loop() is asyncio.get_running_loop()]
-        if local:
-            await asyncio.gather(*local, return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*(asyncio.wrap_future(done) for _task, done in tasks))
 
 
 OWNER = RequestOwner()

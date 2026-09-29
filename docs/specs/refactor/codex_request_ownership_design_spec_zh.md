@@ -10,7 +10,7 @@
 
 ## 介面
 
-`app/providers/codex_request_owner.py` 統一管理跨執行緒、跨事件迴圈的 FIFO 准入、期限、執行中任務與關閉。兩個入口在建立或使用 transport 前取得租約；完成、失敗或取消時釋放，排隊取消不得釋放別人的名額。對話回合期限與 `CODEX_TIMEOUT` 同時限制排隊與請求；文字分析在工作執行緒內執行非同步請求並使用同一管理者。關閉時取消跨迴圈的排隊與執行中請求。
+`app/providers/codex_request_owner.py` 統一管理跨執行緒、跨事件迴圈的 FIFO 准入、期限、執行中任務與關閉。兩個入口在建立或使用 transport 前取得租約；完成、失敗或取消時釋放，排隊取消不得釋放別人的名額。對話回合期限與 `CODEX_TIMEOUT` 同時限制排隊與請求；文字分析在工作執行緒內執行非同步請求並使用同一管理者。關閉時停止新請求准入，取消跨迴圈的排隊與執行中請求，並等待每個已准入請求關閉 transport、釋放租約後的跨執行緒完成確認；此後 provider 才安裝新 owner。
 
 transport 由呼叫端提供任務指示：對話使用遊戲協定，結構化文字分析使用分析指示。exec 和 app-server 繼續作為 transport。PDF、OCR、地圖、預製角色卡仍由 `ANALYSIS_PROVIDER` 處理。
 

@@ -43,7 +43,9 @@ class TurnBudget:
 
 _current: contextvars.ContextVar[TurnBudget | None] = contextvars.ContextVar('codex_turn', default=None)
 async def shutdown_async_client() -> None:
-    await request_owner.OWNER.shutdown()
+    owner = request_owner.OWNER
+    await owner.shutdown()
+    request_owner.OWNER = request_owner.RequestOwner()
 
 
 def with_codex_turn(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:

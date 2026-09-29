@@ -56,3 +56,51 @@ class RequestOwnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(owner.in_use, 1)
             lease.release()
         self.assertEqual(owner.in_use, 0)
+
+    async def test_shutdown_blocks_waiter_granted_just_before_close(self):
+        owner = codex_request_owner.RequestOwner()
+        with patch.object(config, 'CODEX_MAX_CONCURRENCY', 1):
+            lease = await owner.acquire(codex_request_owner.deadline())
+            queued = asyncio.create_task(owner.acquire(codex_request_owner.deadline()))
+            await asyncio.sleep(0)
+            lease.release()
+            await owner.shutdown()
+            with self.assertRaises(asyncio.CancelledError):
+                await queued
+        self.assertEqual(owner.in_use, 0)
+
+    async def test_shutdown_waits_for_analysis_transport_cleanup_on_other_loop(self):
+        owner = codex_request_owner.RequestOwner()
+        started = threading.Event()
+        closing = threading.Event()
+        finish_close = threading.Event()
+        transport = AsyncMock()
+
+        async def blocked_request(*_args, **_kwargs):
+            started.set()
+            await asyncio.Future()
+
+        async def slow_close():
+            closing.set()
+            await asyncio.to_thread(finish_close.wait)
+
+        transport.request.side_effect = blocked_request
+        transport.close.side_effect = slow_close
+        tool = {'name': 'report', 'input_schema': {'type': 'object',
+                'properties': {'label': {'type': 'string'}}, 'required': ['label']}}
+        with patch.object(codex_request_owner, 'OWNER', owner), \
+             patch.object(codex_provider, 'ExecTransport', return_value=transport):
+            analysis = asyncio.create_task(asyncio.to_thread(
+                codex_provider.analyze_text, 'source', tool, 'extract'))
+            self.assertTrue(await asyncio.to_thread(started.wait, 2))
+            shutdown = asyncio.create_task(owner.shutdown())
+            try:
+                self.assertTrue(await asyncio.to_thread(closing.wait, 2))
+                await asyncio.sleep(.02)
+                self.assertFalse(shutdown.done())
+            finally:
+                finish_close.set()
+            await asyncio.wait_for(shutdown, 2)
+            self.assertIsNone(await asyncio.wait_for(analysis, 2))
+        self.assertEqual(owner.in_use, 0)
+        transport.close.assert_awaited_once()
