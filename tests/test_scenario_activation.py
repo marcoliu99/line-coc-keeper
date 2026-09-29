@@ -43,7 +43,7 @@ def test_failed_commit_does_not_publish_images(storage: Path, monkeypatch: pytes
 
 def test_image_failure_preserves_committed_state(storage: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = GroupState(group_id="group", scenario_library_id="new")
-    group_state.save_page_image("group", 1, b"old")
+    group_state.save_page_image("group", 2, b"old")
 
     def fail_copy(_scenario: str, _pages: set[int], _save) -> None:
         assert group_state.load_state("group").scenario_library_id == "new"
@@ -57,7 +57,26 @@ def test_image_failure_preserves_committed_state(storage: Path, monkeypatch: pyt
     assert value is None
     assert not refreshed
     assert group_state.load_state("group").scenario_library_id == "new"
-    assert group_state.load_page_image("group", 1) == b"old"
+    assert group_state.load_page_image("group", 2) is None
+
+
+def test_partial_source_copy_failure_cannot_publish_old_or_partial_images(
+    storage: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_state.save_page_image("group", 2, b"old")
+
+    def fail_after_one(_scenario: str, _pages: set[int], save) -> None:
+        save(2, b"partial-new")
+        raise OSError("second image missing")
+
+    monkeypatch.setattr(scenario_activation.scenario_library, "copy_context_images", fail_after_one)
+    _, refreshed = scenario_activation.commit_and_refresh(
+        lambda: group_state.save_state(GroupState(group_id="group", scenario_library_id="new")),
+        "group", "new", {"page_numbers": {2, 3}},
+    )
+
+    assert not refreshed
+    assert group_state.load_page_image("group", 2) is None
 
 
 def test_success_replaces_old_images_after_commit(storage: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,7 +122,7 @@ def test_scenario_use_keeps_committed_state_on_image_failure(storage: Path, monk
                                              ["/coc", "scenario", "use", "new"]))
 
     assert group_state.load_state("group").scenario_library_id == "new"
-    assert group_state.load_page_image("group", 1) == b"old"
+    assert group_state.load_page_image("group", 1) is None
     assert "圖片快取刷新失敗" in replies[-1]
 
 
@@ -169,7 +188,7 @@ def test_upload_choice_image_failure_preserves_activation(storage: Path, monkeyp
 
     assert "圖片快取刷新失敗" in result
     assert group_state.load_state("group").scenario_library_id == "new"
-    assert group_state.load_page_image("group", 1) == b"old"
+    assert group_state.load_page_image("group", 1) is None
 
 
 def test_upload_choice_commit_failure_preserves_old_state(storage: Path, monkeypatch: pytest.MonkeyPatch) -> None:

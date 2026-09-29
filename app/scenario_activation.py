@@ -37,13 +37,13 @@ def install_context_fields(
 
 
 def refresh_context_images(group_id: str, scenario_id: str, context: dict[str, Any]) -> None:
-    """Read source pages before replacing the cache, limiting failure damage."""
+    """Invalidate old pages before reading images for the committed scenario."""
+    group_state.clear_page_images(group_id)
     images: dict[int, bytes] = {}
     scenario_library.copy_context_images(
         scenario_id, context["page_numbers"],
         lambda page, image: images.__setitem__(page, image),
     )
-    group_state.clear_page_images(group_id)
     for page, image in images.items():
         group_state.save_page_image(group_id, page, image)
 
