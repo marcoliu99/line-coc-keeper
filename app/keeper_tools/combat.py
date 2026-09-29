@@ -132,12 +132,18 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
     from app import keeper
 
     keeper.refresh_tool_state(call.state)
-    return {
+    response = {
         "ok": True,
         "status": combat.status_text(
             call.state, include_private=(call.speaker_role == "kp_assistant")
         ),
     }
+    ended = combat.last_ended_combat_evidence(
+        call.state, include_private=(call.speaker_role == "kp_assistant")
+    )
+    if ended:
+        response["last_ended_combat"] = ended
+    return response
 
 
 def advance_combat_turn(call: ToolCall) -> dict[str, Any]:

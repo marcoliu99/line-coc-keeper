@@ -20,6 +20,8 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Distinct NPC instances and bounded tool conversations](specs/bug/bug-add-npc-to-combat-duplicate-name-guard.md) | implemented | [繁體中文](specs/bug/bug-add-npc-to-combat-duplicate-name-guard_zh.md) |
 | [Truthful major-wound check status](specs/bug/bug-adjust-character-false-major-wound-check.md) | implemented | [繁體中文](specs/bug/bug-adjust-character-false-major-wound-check_zh.md) |
 | [Combat entry and damage-tool contracts](specs/bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity.md) | implemented | [繁體中文](specs/bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity_zh.md) |
+| [Dormant-enemy reveal beat before lethal resolution](specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md) | implemented | [繁體中文](specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md) |
+| [Active enemies omitted after combat starts](specs/bug/bug-active-enemy-registration-after-combat-start.md) | backlog | [繁體中文](specs/bug/bug-active-enemy-registration-after-combat-start_zh.md) |
 | [Keep continuing-effect damage separate from Luck](specs/bug/bug-continuing-damage-rolls-corrupt-luck-stat.md) | implemented | [繁體中文](specs/bug/bug-continuing-damage-rolls-corrupt-luck-stat_zh.md) |
 | [Unambiguous combatant targeting](specs/bug/bug-find-combatant-substring-collision.md) | implemented | [繁體中文](specs/bug/bug-find-combatant-substring-collision_zh.md) |
 | [Pending Luck blocks conflicting manual checks](specs/bug/bug-luck-decision-not-checked-non-autoroll.md) | implemented | [繁體中文](specs/bug/bug-luck-decision-not-checked-non-autoroll_zh.md) |

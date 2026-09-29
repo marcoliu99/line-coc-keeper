@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,15 +100,32 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         state = GroupState("group-spoiler-off")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False):
             prompt = keeper._build_static_prompt(state)
-        self.assertNotIn("條件式旁白", prompt)
-        self.assertNotIn("你手上的「劇本內容」是只有你知道的機密資料", prompt)
+        self.assertNotIn("conditional asides in a public reply", prompt)
+        self.assertNotIn("scenario text is Keeper-only confidential material", prompt)
+        self.assertNotIn("Never use an NPC ally to reveal Keeper-only truths", prompt)
 
     def test_static_prompt_includes_spoiler_rules_when_enabled(self):
         state = GroupState("group-spoiler-on")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
             prompt = keeper._build_static_prompt(state)
-        self.assertIn("條件式旁白", prompt)
-        self.assertIn("你手上的「劇本內容」是只有你知道的機密資料", prompt)
+        self.assertIn("conditional asides in a public reply", prompt)
+        self.assertIn("scenario text is Keeper-only confidential material", prompt)
+        self.assertIn("Never use an NPC ally to reveal Keeper-only truths", prompt)
+
+    def test_four_policy_entries_are_english_and_appear_once(self):
+        state = GroupState("group-policy-language")
+        with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
+                patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
+            prompt = keeper._build_static_prompt(state)
+            entries = {
+                **keeper._spoiler_protection_prompt_rules(),
+                **keeper._privacy_isolation_prompt_rules(),
+            }
+        self.assertEqual(len(entries), 4)
+        for name, entry in entries.items():
+            with self.subTest(name=name):
+                self.assertIsNone(re.search(r"[\u3400-\u9fff]", entry))
+                self.assertEqual(prompt.count(entry), 1)
 
     def test_static_prompt_keeps_secret_goal_rule_when_spoiler_off_but_privacy_on(self):
         """Regression test for a code-review finding: the two switches must
@@ -118,26 +136,25 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         defense if the prompt stopped saying not to leak them.
 
         Uses full sentence fragments unique to each rule, not bare words like
-        "秘密目標" or "send_private_info" — both also appear in unrelated,
-        always-on bullets elsewhere in the prompt (the "★ 關鍵背景連結" bullet
-        and the TOOLS schema respectively), so a bare substring check there
+        "secret goal" or "send_private_info" — both can appear in unrelated
+        always-on prompt text or tool schemas, so a bare substring check there
         would pass regardless of which switch is on."""
         state = GroupState("group-independent-switches")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
             prompt = keeper._build_static_prompt(state)
-        self.assertIn("只有你知道、只屬於那位玩家的私人動機", prompt)
-        self.assertIn("反推出私人資訊", prompt)
-        self.assertNotIn("條件式旁白", prompt)
+        self.assertIn("private motivation known to the Keeper", prompt)
+        self.assertIn("infer the private information from the wording", prompt)
+        self.assertNotIn("conditional asides in a public reply", prompt)
 
     def test_static_prompt_drops_secret_goal_rule_when_privacy_off(self):
         state = GroupState("group-privacy-off")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
             prompt = keeper._build_static_prompt(state)
-        self.assertNotIn("只有你知道、只屬於那位玩家的私人動機", prompt)
-        self.assertNotIn("反推出私人資訊", prompt)
-        self.assertIn("條件式旁白", prompt)
+        self.assertNotIn("private motivation known to the Keeper", prompt)
+        self.assertNotIn("infer the private information from the wording", prompt)
+        self.assertIn("conditional asides in a public reply", prompt)
 
     def test_combat_damage_filter_hides_enemy_fields_when_enabled(self):
         result = {"ok": True, "side": "enemy", "hp": 3, "armor_absorbed": 2, "final_damage": 5}

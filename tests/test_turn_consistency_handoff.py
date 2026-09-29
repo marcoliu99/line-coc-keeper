@@ -534,6 +534,26 @@ def test_setup_only_encounter_can_still_defer(state):
     assert group_state.load_state(state.group_id).combat.active
 
 
+def test_setup_only_new_encounter_after_ended_fight_can_still_defer(state):
+    state.last_combat_report = {
+        'timeline_id': state.timeline_id,
+        'ended': True,
+        'combatants': [{'name': 'Old Enemy', 'side': 'enemy', 'defeated': True}],
+    }
+    group_state.save_state(state)
+
+    async def provider(*args, **kwargs):
+        assert (await args[5]('start_combat', {}))['ok']
+        assert (await args[5]('add_npc_to_combat', {'name': 'New Enemy', 'dex': 20, 'hp': 10}))['ok']
+        return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
+
+    result = _executor_with_provider(state, provider)
+    assert result.turn_resolution.disposition == 'deferred'
+    stored = group_state.load_state(state.group_id)
+    assert stored.combat.active
+    assert stored.last_combat_report == {}
+
+
 @pytest.mark.parametrize('extra', ['inventory', 'enemy', 'other_pending', 'compensated'])
 def test_cancellation_rejects_unrelated_committed_changes(state, extra):
     state.pending_checks = {'a': pending(), 'b': pending('other')}
