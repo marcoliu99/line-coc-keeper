@@ -8,7 +8,7 @@ Category: `enhancement`. Status: **partial** (item 0 implemented on this branch)
 
 Item 0 implementation uses the authored draft verbatim in `app/keeper_prompt_policy.py`. The existing spoiler and privacy switches remain independent. A player allegation still enters through `/coc correct` and remains unverified until the existing OOC adjudication approves it; Class A self-repair requires stronger evidence and does not publish an allegation. Confirmed deterministic state still requires a lawful state-owning tool.
 
-Full pytest, Ruff, mypy, and compileall pass. The requested real-provider correction smoke is pending: automatic approval review rejected a repeat real-provider scenario smoke because it would transmit scenario and game-state data to the configured provider. No replacement external call was attempted.
+Full pytest, Ruff, mypy, and compileall pass. After explicit user authorization for isolated scenario and game-state transmission, a 16-turn real Codex correction smoke completed without execution errors. Four Class A KP corrections were answered by narration alone; no KP turn invoked a tool. Requests to rewrite a completed roll, HP, or ammunition without an owning tool were refused, and persisted HP/ammunition stayed unchanged. The scenario search and skill check calls occurred on player turns. The KP Assistant could not backfill an acquired key: `add_carried_item` is not in its allowed tool set, so it truthfully reported that state was not updated. This permission gap requires a separate tool-authorization decision; the prompt does not override the gateway.
 
 This edition describes the current contract. Proposed work is explicitly identified.
 
