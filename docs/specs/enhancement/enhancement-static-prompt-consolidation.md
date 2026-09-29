@@ -6,7 +6,7 @@
 
 Category: `enhancement`. Status: **partial** (item 6 implemented on this branch). Measured against `main_v2` at `07d55a7` (2026-09-29).
 
-Item 6 applies current-contract item 4: the registry has `add_carried_item` and `remove_carried_item`, but no `purchase_items` or other purchase/affordability tool. The three-rule prompt retains the no-credit/no-cash policy and requires a real visit and source before acquisition. This text trim alone cannot guarantee that a model stops inferring affordability. A separate scoped acquisition-tool design is warranted if that behavior persists: validate scene/source and inventory transfer without reintroducing Credit Rating, cash accounting, or invented payment. It is not part of this prompt-only branch.
+Item 6 applies current-contract item 4: the registry has `add_carried_item` and `remove_carried_item`, but no `purchase_items` or other purchase/affordability tool. Marco subsequently directed that the purchase-specific prose policy be removed entirely. The equipment block now covers only item plausibility, established ownership, and inventory changes after an item is actually acquired. It gives no instructions about shops, supply, prices, payment, Credit Rating, cash, or purchase rolls. This prompt-only change does not add a purchase workflow or grant an item merely because a player says it was bought.
 
 This edition describes the current contract. Proposed work is explicitly identified.
 
@@ -45,7 +45,7 @@ Each item ships as its own branch/commit: grep the full test suite for literal-C
 3. **Combat tool routing table.** Convert the scattered start_combat/add_npc_to_combat/damage-tool/adjust_ammo instructions into a concise routing list format; keep the multi-enemy-same-name caveat as a single rule rather than embedded prose.
 4. ~~KP Assistant authority hierarchy~~ — superseded by item 0.
 5. **Canon boundary / spoiler / privacy duplication audit** — deferred until a full-rule re-audit confirms actual repetition. Item 0 updates related policy but does not complete this audit.
-6. **Equipment consistency (bullets 46-51 → ~3).** When to scrutinize, the three-point plausibility check, and recorded-vs-unrecorded handling; fold the acquisition/purchase rule into the third point instead of a separate bullet. **Before trimming this one, apply contract item 4** — the purchase-affordability sentence is exactly the prohibition-without-a-tool case described there (`purchase_items` was reverted in PR #91, and the model keeps reaching for the Credit-Rating/cash reasoning the prose now forbids). Note whether trimming alone is enough or whether this needs a follow-up ticket to fix and reintroduce a scoped purchase tool instead.
+6. **Equipment consistency (bullets 46-51 → ~3) — implemented on this branch.** Keep when to scrutinize, the three-point plausibility check, and recorded-vs-unrecorded inventory handling. Per Marco's later decision, remove purchase-specific prose from this block rather than folding it into the third rule. No purchase tool or affordability decision is introduced here.
 7. **`roll_dice` section trim.** Reduce to the `purpose`/`roll_context` (`game_resolution` vs `ooc_randomizer`) contract plus one example each; let tool descriptions carry the rest.
 
 ### Item 0 draft text
