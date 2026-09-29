@@ -53,6 +53,14 @@ class LoggingCompletionTests(unittest.TestCase):
             self.assertIsNone(observability.llm_reasoning_effort("anthropic"))
             self.assertIsNone(observability.llm_reasoning_effort("gemini"))
 
+    def test_codex_has_its_own_reasoning_effort_setting(self):
+        # codex_provider.py's own codex.conversation event already logs
+        # config.CODEX_REASONING_EFFORT correctly; this is the outer
+        # llm.turn/llm.request span's copy of the same fact, and it silently
+        # read as null for Codex turns until this test covered it.
+        with patch.object(config, "CODEX_REASONING_EFFORT", "xhigh"):
+            self.assertEqual(observability.llm_reasoning_effort("codex"), "xhigh")
+
     def test_cancelled_span_is_recorded_as_cancelled_not_failed(self):
         with patch.object(config, "LOG_ENABLED", True), \
                 self.assertLogs("app.observability", level="WARNING") as captured, \
