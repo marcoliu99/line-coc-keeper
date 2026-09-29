@@ -1227,7 +1227,7 @@
       "title": "Keeper tools as a registry",
       "zh": "Keeper 工具改為註冊表",
       "category": "refactor",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
         "app/keeper_tools/registry.py",
         "app/keeper_tools/character.py",
