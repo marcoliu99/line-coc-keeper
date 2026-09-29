@@ -1445,6 +1445,22 @@
       ],
       "path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md",
       "zh_path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md"
+    },
+    {
+      "title": "Scenario retrieval execution",
+      "zh": "劇本檢索執行",
+      "category": "refactor",
+      "status": "backlog",
+      "evidence": [
+        "app/agents/context_builder.py",
+        "app/agents/executor.py",
+        "app/keeper_tools/scenario.py",
+        "app/scenario_templates.py",
+        "tests/test_retrieval_prefetch.py",
+        "tests/test_retrieval_readiness.py"
+      ],
+      "path": "docs/specs/refactor/scenario_retrieval_execution_design_spec.md",
+      "zh_path": "docs/specs/refactor/scenario_retrieval_execution_design_spec_zh.md"
     }
   ]
 }
