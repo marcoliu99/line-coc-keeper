@@ -24,7 +24,7 @@
 | `resolve_enemy_action` 的攻擊分支（`app/combat.py:1141`） | 無 | 同上 |
 | `process_timing` 的效果傷害（`app/combat.py:770`） | 無 | 同上 |
 
-在四條戰鬥路徑上，扣血會被存檔，`major_wound_triggered` 回傳 `False`，玩家和 Keeper 模型都不會知道發生了重傷，**可能造成的昏迷／倒地後果就此消失**。`adjust_character` 要發生同樣的遺失需要競態：在外層檢查之後、鎖內重新載入之前，另一條路徑登記了檢定。`_reject_if_check_already_pending` 的 docstring（`app/keeper.py:1006`）描述的就是技能檢定上的同一種競態。
+在四條戰鬥路徑上，扣血會被存檔，`major_wound_triggered` 回傳 `False`，玩家和 Keeper 模型都不會知道發生了重傷，**可能造成的昏迷／倒地後果就此消失**。`adjust_character` 要發生同樣的遺失需要競態：在外層檢查之後、鎖內重新載入之前，另一條路徑登記了檢定。`app/check_lifecycle.py` 的註冊契約也處理技能檢定上的同一種競態。
 
 五條路徑都沒看 `pending_luck_decisions`，所以玩家還在決定要不要花幸運值時，也可能被登記 CON 檢定。調查員會同時處於兩個未解決的狀態，違反幸運值防護的規格。
 
@@ -43,7 +43,7 @@
 
 ### 1. 兩層都能匯入的單一歸屬判斷
 
-在 `app/check_identity.py` 新增 `pending_check_blocker(state, owner_id) -> Literal["pending_check", "pending_luck_decision"] | None`。這個模組不匯入任何 `app` 內的東西，所以 `combat.py` 能用它，又不會造成 `keeper` ↔ `combat` 的循環匯入。`_reject_if_check_already_pending` 改用它來產生原本的訊息，技能／SAN 的行為不變。
+在 `app/check_identity.py` 新增 `pending_check_blocker(state, owner_id) -> Literal["pending_check", "pending_luck_decision"] | None`。這個模組不匯入任何 `app` 內的東西，所以 `combat.py` 能用它，又不會造成 `keeper` ↔ `combat` 的循環匯入。`app/check_lifecycle.py` 對所有新檢定使用這個阻擋原因；呼叫端保留原有訊息。
 
 ### 2. 戰鬥傷害在變更前先檢查
 

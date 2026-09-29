@@ -70,6 +70,18 @@ class ToolCall:                            # the Data Clump the handlers share t
 - **Schema order:** provider prompt caching includes the tool list in the cached prefix, so the registry preserves declaration order and a test pins the order sent to providers.
 - **Sequencing:** the combat-family PR comes after `bug/major-wound-con-check-gate` and `refactor/combat-start-in-combat-module` land, because they edit the same branches.
 
-Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. The combat-start and major-wound prerequisites are present in `main_v2`; their behavior is retained by the combat handler migration.
+Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. Both combat prerequisites (#117 and #118) have landed and are retained by the combat handler migration below.
+
+The dice family (`roll_dice`, `roll_impaling_damage`, `roll_weapon_damage`) is migrated to `app/keeper_tools/dice.py`.
+
+The checks family (skill, SAN, NPC checks, defense choices, and pending-check clearing) is migrated to `app/keeper_tools/checks.py`. Its handlers call `app/check_lifecycle.py` for admission and identity; Keeper retains the state transaction and check-result cache. The old manual pending/Luck checks and check-family branches of the legacy cascade are removed.
+
+The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Its handler calls Keeper's public attribute-mutation helper; the nested `_apply_attribute_delta` remains inside Keeper's authoritative state transaction and uses `check_lifecycle.blocker()` and `register()` so a blocked major-wound CON check cannot commit HP damage.
+
+Both handler families and the lifecycle refactor were aligned together on `integration/keeper-check-character-lifecycle`. PRs #130–#133 and #138 are now integrated into `main_v2`.
+
+The inventory/status family (`adjust_ammo`, carried-item add/remove, status-tag add/remove) is migrated to `app/keeper_tools/inventory.py`. These handlers still use Keeper's single authoritative state mutation boundary through a public migration seam.
+
+The scenario/search family (`record_established_fact`, `record_clue`, image search/display, chapter advance, scenario search, and memory search) is migrated to `app/keeper_tools/scenario.py`. Chapter advance and fact recording still use Keeper's authoritative state mutation boundary through a public migration seam.
 
 The combat family (`start_combat`, NPC admission, status, turn progression, damage, enemy plans, effects, and end combat) is migrated to `app/keeper_tools/combat.py`. Combat rules stay in `app/combat.py`; state writes, blocked-hit no-save behavior, and public damage filtering still use Keeper's authoritative helpers through a public migration seam. This branch is independent of the other handler-family branches and does not delete the remaining cascade.
