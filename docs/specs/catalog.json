@@ -1445,6 +1445,22 @@
       ],
       "path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md",
       "zh_path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md"
+    },
+    {
+      "title": "Tool outcome semantics",
+      "zh": "工具結果語意",
+      "category": "refactor",
+      "status": "backlog",
+      "evidence": [
+        "app/keeper_tools/registry.py",
+        "app/services/turn_resolution.py",
+        "app/services/turn_delivery.py",
+        "app/agents/executor.py",
+        "tests/test_initialize_combat.py",
+        "tests/test_turn_consistency_handoff.py"
+      ],
+      "path": "docs/specs/refactor/tool_outcome_semantics_design_spec.md",
+      "zh_path": "docs/specs/refactor/tool_outcome_semantics_design_spec_zh.md"
     }
   ]
 }
