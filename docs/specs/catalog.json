@@ -1136,6 +1136,18 @@
       "limitations": [
         "S0/S1/S2/S3 implemented with isolated SDK and state fixtures. Free-form story semantics still require Executor adjudication. Final-response movement shortcuts are disabled. Process-local admission is not a durable ledger/outbox. S4-S9 and live API accuracy and latency evaluation remain deferred."
       ]
+    },
+    {
+      "title": "Dormant-enemy reveal beat before lethal resolution",
+      "zh": "沉睡敵人的甦醒節拍在致命結算前被跳過",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper.py",
+        "tests/test_combat_reveal_beat_before_lethal_damage.py"
+      ],
+      "path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md",
+      "zh_path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md"
     }
   ]
 }
