@@ -4,13 +4,13 @@
 
 ## Status and scope
 
-Category: `enhancement`. Status: **partial** (item 0 implemented on this branch). Measured against `main_v2` at `07d55a7` (2026-09-29).
+Category: `enhancement`. Status: **implemented** on the integration branch based on `main_v2` at `5199139` (2026-09-29). Items 0, 1, 2, 3, 5, 6, and 7 are integrated; item 4 was superseded by item 0.
 
-Item 0 implementation uses the authored draft verbatim in `app/keeper_prompt_policy.py`. The existing spoiler and privacy switches remain independent. A player allegation still enters through `/coc correct` and remains unverified until the existing OOC adjudication approves it; Class A self-repair requires stronger evidence and does not publish an allegation. Confirmed deterministic state still requires a lawful state-owning tool.
+The narrative voice remains in Traditional Chinese. Tool routing and the four switchable spoiler/privacy rules are in English. Item 0 retains operational authority, Class A/Class B correction, and KP Assistant semantics. `/coc correct` remains the OOC escalation path for disputed player reports; a report alone does not become canon. Confirmed engine state can change only through the tool that owns it.
 
-Full pytest, Ruff, mypy, and compileall pass. After explicit user authorization for isolated scenario and game-state transmission, a 16-turn real Codex correction smoke completed without execution errors. Four Class A KP corrections were answered by narration alone; no KP turn invoked a tool. Requests to rewrite a completed roll, HP, or ammunition without an owning tool were refused, and persisted HP/ammunition stayed unchanged. The scenario search and skill check calls occurred on player turns. The KP Assistant could not backfill an acquired key: `add_carried_item` is not in its allowed tool set, so it truthfully reported that state was not updated. This permission gap requires a separate tool-authorization decision; the prompt does not override the gateway.
+Six reviewed branches were integrated in this order: operational authority (0), canon/privacy (5), autoroll (1), combat routing and dormant wake (2/3), equipment (6), and dice (7). The item 0/5 overlap was resolved by keeping item 0's correction and authority semantics, translating its switchable visibility rules to English, and retaining item 5's four explicit rules. Item 7's dice contract was inserted into the current KP Assistant mechanics block.
 
-This edition describes the current contract. Proposed work is explicitly identified.
+The earlier item 0 real-provider smoke completed 16 turns without execution errors. It also found a separate KP Assistant permission gap: `add_carried_item` is outside that role's allowlist, so a KP instruction cannot backfill an acquired key. This integration does not widen that permission.
 
 ## Background
 
@@ -29,30 +29,21 @@ Two independent lines of reasoning converged on the same fix direction:
 
 3. Duplication is fixed by deleting the redundant restatement, not by deciding rules are unnecessary — the count of *distinct* rules does not go down, only the number of *times* each one is said.
 
-4. Before shrinking or rewording a rule, ask whether it is actually a *prohibition standing in for a missing tool*. A prose "don't do X" rule only reliably suppresses a behavior the model has no better-shaped alternative for; where a properly-scoped tool would channel the same intent correctly, prefer building or fixing that tool over tightening the prose. Concrete evidence: `app/keeper.py`'s equipment-purchase rule was a working `purchase_items` tool as of PR #91 (2026-09-27, `bug/purchase-turn-provenance`), reverted the same day; the prose was then tightened to explicitly forbid the Credit-Rating/cash reasoning the tool used to structure ("不以信用評級、生活水準、價格或現金裁定是否可得"), and the model has continued reaching for that reasoning anyway. Sections in the breakdown below that are pure prohibition with no backing tool (equipment consistency, item 6, is the clearest candidate) should be re-examined for this before being merely trimmed — trimming a rule that isn't working does not fix it, it just makes the failure cheaper.
+4. Before shrinking or rewording a rule, ask whether it is actually a *prohibition standing in for a missing tool*. A prose "don't do X" rule only reliably suppresses a behavior the model has no better-shaped alternative for; where a properly-scoped tool would channel the same intent correctly, prefer building or fixing that tool over tightening the prose. Concrete evidence: `app/keeper.py`'s equipment-purchase rule was a working `purchase_items` tool as of PR #91 (2026-09-27, `bug/purchase-turn-provenance`), reverted the same day; the prose was then tightened to explicitly forbid the Credit-Rating/cash reasoning the tool used to structure ("不以信用評級、生活水準、價格或現金裁定是否可得"), and the model has continued reaching for that reasoning anyway. This was considered while trimming item 6: purchase prose was removed by user decision, and no purchase tool or affordability rule was reintroduced.
 
-## Verified findings (2026-09-29 investigation)
+## Verified findings and integrated sections
 
-- **autoroll/pending duplication: confirmed.** The token "autoroll" appears 11 times across at least 7 distinct bullets restating "autoroll off → pending only, autoroll on → engine resolves immediately." At least one restatement is fully redundant with no tool-specific nuance added: "`skill_check`／`sanity_check` 在 autoroll 關閉（預設）時建立玩家擲骰 pending；只有 `autoroll on` 才會立即完成。" Several other restatements are *not* pure duplication — they attach the same rule to a specific tool's own bullet (sanity_check, major-wound CON check, pushed rolls) for locality, which has real value and should be preserved as a short reminder, not necessarily deleted outright. Consolidation here means picking one canonical statement of the rule and trimming the rest to a short cross-reference, not blanket deletion.
-
-- **spoiler/privacy "duplication": not confirmed as originally proposed.** The candidate duplicate bullets (scenario secrecy, private info/secret goals, NPC-ally secrecy, no-metanarration) are themselves the return values of `_spoiler_protection_prompt_rules()` and `_privacy_isolation_prompt_rules()` (`app/keeper.py` ~3191-3260), interpolated into the prompt at single points (~3371, 3405-3406, 3418). No second, independent restatement of the same content was found elsewhere in the static prompt during this investigation. Before touching this section, re-audit with the actual full bullet text (not a truncated preview list) to locate the specific duplicate the original proposal had in mind, or confirm there isn't one and drop this item.
-
-## Proposed section breakdown (work one at a time, priority order below)
-
-Each item ships as its own branch/commit: grep the full test suite for literal-Chinese dependency on that section first (as done for the `combat_block` pilot), consolidate, add/update a prompt-assertion test locking the new wording's required content, run the full check suite, and — for anything touching check/combat mechanics (items 0, 1, 3) — run a short combat-or-check-focused smoke pass through the existing sim harness (`sim_playtest.py`, reusable from `/Users/marcoliu/.claude/jobs/c0193acc/sim/`) before merging.
-
-0. **Operational authority and error recovery (highest priority — supersedes the old item 4 below).** Replaces the KP Assistant authority block and the canon/spoiler/privacy section with a fuller design: split the Keeper's two jobs (system operation — proactive, tool-driven, self-correcting; player narration — bound by canon/spoiler) explicitly, grant proactive tool-calling authority (act on inferred intent instead of stalling for a literal-match instruction, catch up on a tool call missed last turn, use the existing state-mutation tools to correct a wrong *non-authoritative* system state), define a two-class error-recovery model (Class A: narrative/interpretation errors — freely self-correctable by just narrating the correction, no new tool needed; Class B: confirmed deterministic results — HP/SAN/ammo/combat state/etc. already applied by a tool — can only change through the tool that owns that state, never by narration alone), and keep the spoiler/canon boundary as the one place restriction stays tight (Keeper-known information can inform tool-calling decisions — did this scenario condition trigger, does this NPC react this way — without ever being narrated to players ahead of when they'd actually learn it). This is the direct fix for [bug-combat-reveal-beat-skipped-before-lethal-damage.md](../bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md): a Class A narration gap (the missing rise/wake beat) had no explicit permission to just be corrected in the next reply, so the model re-derived the whole encounter through tool calls instead — a Class B-style fix for a Class A problem. The full draft text (below, kept in the mixed EN-headers/Chinese-body form as authored) is ready to use as the implementation's starting point; verify during implementation that it doesn't contradict the existing human-gated `/coc correct` OOC-report workflow (`app/commands/handlers/correct.py`) — that workflow should remain the escalation path for disputes the model's own Class A self-correction doesn't resolve, not be replaced by it.
-1. **autoroll/pending check resolution.** Collapse ~7 restatements into one canonical block; keep short tool-local cross-references where they add real locality value. Lowest risk: pure text consolidation, no logic change, duplication already verified.
-2. **`combat_block` → English.** Already piloted (branch `fix/combat-reveal-beat-before-lethal-damage`, +22.7% token reduction, zero test dependency); pending a live combat smoke-run to confirm no behavioral regression before treating as done.
-3. **Combat tool routing table.** Convert the scattered start_combat/add_npc_to_combat/damage-tool/adjust_ammo instructions into a concise routing list format; keep the multi-enemy-same-name caveat as a single rule rather than embedded prose.
-4. ~~KP Assistant authority hierarchy~~ — superseded by item 0.
-5. **Canon boundary / spoiler / privacy duplication audit** — deferred until a full-rule re-audit confirms actual repetition. Item 0 updates related policy but does not complete this audit.
-6. **Equipment consistency (bullets 46-51 → ~3).** When to scrutinize, the three-point plausibility check, and recorded-vs-unrecorded handling; fold the acquisition/purchase rule into the third point instead of a separate bullet. **Before trimming this one, apply contract item 4** — the purchase-affordability sentence is exactly the prohibition-without-a-tool case described there (`purchase_items` was reverted in PR #91, and the model keeps reaching for the Credit-Rating/cash reasoning the prose now forbids). Note whether trimming alone is enough or whether this needs a follow-up ticket to fix and reintroduce a scoped purchase tool instead.
-7. **`roll_dice` section trim.** Reduce to the `purpose`/`roll_context` (`game_resolution` vs `ooc_randomizer`) contract plus one example each; let tool descriptions carry the rest.
+- **0, authority and correction:** System operation is proactive and tool-driven; narration follows canon and spoiler limits. Class A interpretation/narration errors can be corrected in a later reply, while Class B confirmed state needs the owning tool. `/coc correct` remains the OOC dispute path.
+- **1, autoroll and pending:** One canonical rule handles autoroll off/on and Luck; short local reminders preserve context for specialized checks.
+- **2/3, combat:** The verified English `combat_block` and a concise routing table identify establishment, combatant registration, defense, ammunition, damage, and effects. Multiple active enemies of the same type need distinct names. The trigger-dependent dormant-enemy wake/rise rule remains unchanged from the validated fix. The first routing smoke omitted `add_npc_to_combat`; a clean `main_v2` control omitted it too, identifying an [existing defect](../bug/bug-active-enemy-registration-after-combat-start.md). Routing now explicitly requires registering active enemies in the same tool sequence after combat starts.
+- **4, KP Assistant hierarchy:** Superseded by item 0; no second hierarchy was added.
+- **5, canon/spoiler/privacy:** The original claim of independently duplicated rules was not confirmed. Four distinct rules were retained and translated to English under independent spoiler/privacy switches. Item 0 authority and correction semantics were preserved.
+- **6, equipment:** Three rules cover when to scrutinize, plausibility, and tracked possession. User-requested purchase prose was removed. Acquisition in play and persistent-item tools remain.
+- **7, dice:** A concise `purpose` / `roll_context` contract with one game-resolution and one OOC-randomizer example now lives in the current KP Assistant mechanics block.
 
 ### Item 0 draft text
 
-Authored directly for this spec; kept verbatim (mixed English section headers, Chinese body) rather than translated, since rewording risks losing the precision of the original error-recovery class distinctions.
+Historical authored draft. The integrated prompt preserves its core operational and recovery semantics; switchable spoiler/privacy text was translated to English in item 5.
 
 > 你有兩項主要工作：
 >
@@ -184,18 +175,23 @@ Authored directly for this spec; kept verbatim (mixed English section headers, C
 ## Flow and interfaces
 
 ```text
-per section: grep test suite for literal-Chinese dependency -> consolidate/translate -> prompt-assertion test -> full checks -> (mechanics-touching sections) sim smoke run -> commit
+_build_static_prompt -> authority + check/combat/equipment policy
+                     -> independent spoiler/privacy switch blocks
+_build_dynamic_prompt(KP Assistant) -> authority + concise dice mechanics
+player / KP correction -> owning deterministic tool for confirmed state
+                       -> narration repair for unconfirmed Class A error
+                       -> /coc correct for unresolved OOC dispute
 ```
 
 ## Implementation and verification
 
-- [app/keeper.py](../../../app/keeper.py)
-- Prompt-assertion tests per section (new, one per item above)
-- Sim harness for mechanics-touching sections (external to this repo, reusable script)
-
-Related: [bug-combat-reveal-beat-skipped-before-lethal-damage.md](../bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md) (the incident and the RAG-budget-starvation evidence that motivated this investigation); [bug-combat-trigger-prompt-and-damage-tool-ambiguity.md](../bug/bug-combat-trigger-prompt-and-damage-tool-ambiguity.md) (an example of a rule that must stay Chinese — its whole point is Chinese contrastive examples for a Chinese-language judgment call, item 2's exception case).
+- Implementation: [app/keeper.py](../../../app/keeper.py) and [app/keeper_prompt_policy.py](../../../app/keeper_prompt_policy.py).
+- Prompt contracts: `tests/test_static_prompt_*.py`, `tests/test_spoiler_policy.py`, and `tests/test_narrative_boundary_prompts.py`.
+- The integration PR records full checks and an isolated live simulation.
 
 ## Appendix: execution handoff
+
+Historical handoff below predates the final item 0/5/6 decisions. The integrated-section list above is authoritative.
 
 Item 2 (`combat_block` → English) is done — branch `fix/combat-reveal-beat-before-lethal-damage`, pushed, validated with a live 16-turn combat smoke run (`start_combat`/`add_npc_to_combat`/`advance_combat_turn` all fired correctly). Item 5 (canon/spoiler/privacy) is blocked on the re-audit noted above — do not start it on the assumption the original proposal's duplicate claim is correct.
 

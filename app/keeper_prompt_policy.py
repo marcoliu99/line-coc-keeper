@@ -1,6 +1,7 @@
-"""Operational authority policy, copied verbatim from spec item 0.
+"""Operational authority policy and independently switchable visibility rules.
 
-Keep the authored wording and the spoiler/privacy switches separate.
+The core authority and recovery wording follows spec item 0. Visibility rules
+are in English after the item 5 integration.
 """
 
 OPERATIONAL_AND_RECOVERY = """你有兩項主要工作：
