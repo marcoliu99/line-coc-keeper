@@ -31,9 +31,9 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
     def test_every_keeper_path_declares_scenario_as_authority(self):
         for path, prompt in self._prompts().items():
             with self.subTest(path=path):
-                self.assertPolicy(prompt, "劇本是世界事實的權威來源")
-                self.assertPolicy(prompt, "不是新劇本內容的共同作者")
-                self.assertEqual(prompt.count("# 劇本正典邊界｜最高優先"), 1)
+                self.assertPolicy(prompt, "**Scenario Canon Boundary**")
+                self.assertPolicy(prompt, "劇本、KP Assistant 明確建立的主持事實")
+                self.assertEqual(prompt.count("**Scenario Canon Boundary**"), 1)
 
     def test_purchase_policy_does_not_use_credit_or_money(self):
         shared = self._prompts()['shared']
@@ -46,8 +46,8 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
     def test_player_hypotheses_and_failed_rolls_cannot_create_world_elements(self):
         for path, prompt in self._prompts().items():
             with self.subTest(path=path):
-                self.assertPolicy(prompt, "不證明地下室或骷髏存在")
-                self.assertPolicy(prompt, "失敗骰不會生出敵人")
+                self.assertPolicy(prompt, "玩家的猜測不會自動成為正典")
+                self.assertPolicy(prompt, "檢定失敗不會生出敵人")
                 self.assertPolicy(prompt, "只有劇本條件或已成立的正式事件確實使攻擊")
                 self.assertNotIn("看到戰鬥發生就立刻呼叫", prompt)
 
@@ -77,13 +77,13 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         for path, prompt in self._prompts().items():
             with self.subTest(path=path):
                 self.assertPolicy(prompt, "日常隨身小物")
-                self.assertPolicy(prompt, "不能變成關鍵證據或資源")
+                self.assertPolicy(prompt, "不能因此變成關鍵證據或資源")
 
     def test_prior_ai_text_alone_does_not_establish_canon(self):
         for path, prompt in self._prompts().items():
             with self.subTest(path=path):
-                self.assertPolicy(prompt, "上回合")
-                self.assertPolicy(prompt, "不能僅因")
+                self.assertPolicy(prompt, "AI 先前自己說過的內容")
+                self.assertPolicy(prompt, "不會僅因")
                 self.assertPolicy(prompt, "正典")
 
     def test_approved_correction_overrides_old_summary_and_pending_claim_stays_unverified(self):
