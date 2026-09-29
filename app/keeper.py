@@ -1078,35 +1078,6 @@ def _execute_tool(
         return {"ok": False, "error": str(exc)}
 
 
-def execute_legacy_tool(
-    state: GroupState,
-    name: str,
-    tool_input: dict,
-    private_messages: list[tuple[str, str]],
-    image_requests: list[tuple[str | None, int]],
-    speaker_role: str = "player",
-) -> dict:
-    """Existing tool cascade; the registry delegates here until each family moves."""
-    try:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        return {"ok": False, "error": f"未知工具 {name}"}
-    except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
-        return {"ok": False, "error": str(exc)}
-
 
 def _bounded_scenario_context(scenario_text: str) -> str:
     """Keep scenario truncation at page/paragraph boundaries.

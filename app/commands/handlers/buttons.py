@@ -67,14 +67,17 @@ async def _run_button(
         await io.notify(_BUSY)
         return
     snapshots: list[tuple[dict, dict]] = []
-    claimed: list[PendingButtonIntent] | None = None
+    completion: pending_buttons.ControlCompletion | None = None
     try:
         await io.acknowledge()
         async with locks.get_conversation_lock(conversation_id):
             state = await asyncio.to_thread(load_state, conversation_id)
 
             def snapshot() -> None:
-                snapshots.append((dict(state.pending_checks), dict(state.pending_luck_decisions)))
+                nonlocal completion
+                before = (dict(state.pending_checks), dict(state.pending_luck_decisions))
+                snapshots.append(before)
+                completion = pending_buttons.ControlCompletion(conversation_id, *before)
 
             command = await prepare(state, snapshot)
             if command is None:
@@ -82,17 +85,15 @@ async def _run_button(
             try:
                 await command()
             finally:
-                before_pending, before_luck = snapshots[-1]
-                claimed = await pending_buttons.try_claim_pending_buttons_locked(
-                    conversation_id, before_pending, before_luck,
-                )
+                if completion is not None:
+                    await completion.claim_locked()
     finally:
         # A deterministic check/luck entry may be persisted before a later
         # Keeper or narration step raises. Restore any newly created buttons
         # even then, but only once the conversation lock has been released.
         if snapshots:
             try:
-                await io.restore_buttons(*snapshots[-1], claimed)
+                await io.restore_buttons(*snapshots[-1], completion.intents if completion else None)
             except Exception:
                 _logger.exception("failed to restore pending buttons after a button click for conversation_id=%s", conversation_id)
         locks.release_check(conversation_id, owner_id)
