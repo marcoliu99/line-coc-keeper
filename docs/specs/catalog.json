@@ -1227,7 +1227,7 @@
       "title": "Trusted scenario source publication",
       "zh": "可信劇本來源發布",
       "category": "refactor",
-      "status": "in_progress",
+      "status": "implemented",
       "evidence": [
         "app/trusted_scenario_source.py",
         "app/scenario_source_review.py",

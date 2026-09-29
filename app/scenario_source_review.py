@@ -12,10 +12,8 @@ import math
 import os
 import re
 import shutil
-import tempfile
 from collections import Counter
 from copy import deepcopy
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -26,6 +24,7 @@ from app import pdf_quality, scenario_numbers
 from app import scenario_authoring as authoring
 from app import scenario_library as library
 from app import scenario_templates as templates
+from app import trusted_scenario_source as trusted
 
 _VERSION = 1
 _ID = re.compile(r'review-[a-f0-9]{32}')
@@ -57,10 +56,9 @@ def _load(review_id: str) -> dict:
     registry = authoring.read_json(root / 'registry.json')
     if authoring.digest(registry) != authoring.read_json(root / 'registry.sha256.json'):
         raise ValueError('Source review registry was modified')
-    manifest, text = templates._source(registry['scenario_id'])
-    pdf = (library._path(registry['scenario_id']) / 'source.pdf').read_bytes()
-    if (manifest != registry['manifest'] or text != registry['source_text']
-            or _sha(pdf) != registry['pdf_sha256']):
+    snapshot = trusted.read_snapshot(registry['scenario_id'])
+    if (snapshot.manifest != registry['manifest'] or snapshot.text != registry['source_text']
+            or snapshot.pdf_sha256 != registry['pdf_sha256']):
         raise ValueError('Source/PDF/chapters changed; prepare a new review')
     return registry
 
@@ -77,8 +75,8 @@ def _source_pages(text: str, count: int) -> list[str]:
 
 def prepare(scenario_id: str, directory: Path) -> dict:
     """Create private editable proposal and rendered evidence; do not certify it."""
-    manifest, text = templates._source(scenario_id)
-    pdf = (library._path(scenario_id) / 'source.pdf').read_bytes()
+    snapshot = trusted.read_snapshot(scenario_id)
+    manifest, text, pdf = snapshot.manifest, snapshot.text, snapshot.pdf_bytes
     directory = directory.absolute()
     if directory.exists():
         raise ValueError('Review output must be a new directory')
@@ -206,7 +204,7 @@ def _candidate_text(pages: list[dict]) -> str:
 
 
 def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
-    """CLI/operator decision bound to exactly the checked candidate, never an upload flag."""
+    """Approve an operator-reviewed candidate without changing the original source."""
     if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 200:
         raise ValueError('An operator reviewer identity is required')
     with library._LIBRARY_LOCK:
@@ -221,61 +219,35 @@ def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
         if text == registry['source_text']:
             raise ValueError('Source is unchanged')
         scenario_id = registry['scenario_id'][:38].rstrip('-') + '-review-' + digest[:16]
-        target = library._path(scenario_id)
+        snapshot = trusted.read_snapshot(registry['scenario_id'])
         text_hash = _sha(text.encode())
-        if target.exists():
-            audit = authoring.read_json(target / 'source_review.json')
-            manifest, current = templates._source(scenario_id)
-            if (audit.get('candidate_digest') == digest and audit.get('reviewer') == reviewer
-                    and manifest['content_hash'] == text_hash and current == text):
-                return scenario_id
-            raise ValueError('Source review destination already exists with different contents/reviewer')
-        stage = Path(tempfile.mkdtemp(prefix='.source-review-', dir=library.SCENARIO_LIBRARY_DIR))
-        try:
-            source_root = library._path(registry['scenario_id'])
-            pdf = (source_root / 'source.pdf').read_bytes()
-            # Recheck after loading all inputs; no supplied path or hash can override identity.
-            _load(registry['review_id'])
-            (stage / 'source.pdf').write_bytes(pdf)
-            (stage / 'scenario.txt').write_text(text, encoding='utf-8')
-            (stage / 'preview.txt').write_text(text[:2000], encoding='utf-8')
-            (stage / 'images').mkdir(mode=0o700)
-            with pymupdf.open(stream=pdf, filetype='pdf') as doc:
-                for number, page in enumerate(doc, 1):
-                    (stage / 'images' / f'page_{number}.png').write_bytes(page.get_pixmap(dpi=110).tobytes('png'))
-            now = datetime.now(timezone.utc).isoformat()
-            audit = {'version': _VERSION, 'review_id': registry['review_id'], 'candidate_digest': digest,
-                     'parent_scenario_id': registry['scenario_id'], 'source_hash_before': registry['manifest']['content_hash'],
+
+        def build_metadata(now: str) -> tuple[dict, dict, dict]:
+            audit = {'version': _VERSION, 'review_id': registry['review_id'],
+                     'candidate_digest': digest, 'parent_scenario_id': registry['scenario_id'],
+                     'source_hash_before': registry['manifest']['content_hash'],
                      'source_hash_after': text_hash, 'pdf_sha256': registry['pdf_sha256'],
                      'reviewer': reviewer, 'reviewed_at': now, 'changes': changes,
                      'derived_artifacts': 'invalidated: indexes, pregens, scene_maps'}
             manifest = deepcopy(registry['manifest'])
-            manifest.update(id=scenario_id, content_hash=text_hash, title=manifest.get('title', registry['scenario_id']) + ' [source reviewed]',
+            manifest.update(id=scenario_id, content_hash=text_hash,
+                            title=manifest.get('title', registry['scenario_id']) + ' [source reviewed]',
                             preview_hash=_sha(text[:2000].encode()), created_at=now, updated_at=now,
                             source_review={'review_id': registry['review_id'], 'candidate_digest': digest,
                                            'parent_scenario_id': registry['scenario_id'], 'reviewer': reviewer},
-                            page_count=len(proposal['pages']),
-                            image_assets=library._build_image_assets(
-                                {p['page']: b'' for p in proposal['pages']}, {}, text, manifest['chapters']))
-            # Full PDF pages may contain KP secrets even when they mention handouts.
-            for asset in manifest['image_assets']:
-                asset['visibility'] = 'kp_only'
+                            page_count=len(proposal['pages']))
             quality = {'version': 'source-review-v1', 'source_chars': len(text), 'review_pages': [],
                        'source_review': manifest['source_review'], 'pdf_sha256': registry['pdf_sha256'],
                        'pages': [{'page': row['page'], 'method': 'operator-reviewed', 'warnings': [],
-                                  'selected_sha256': _sha(_published_page_text(row).encode())} for row in proposal['pages']]}
-            for name, value in [('manifest', manifest), ('source_review', audit), ('parse_quality', quality),
-                                ('indexes', {}), ('pregens', []), ('scene_maps', {})]:
-                authoring.atomic_json(stage / f'{name}.json', value)
-            for file in stage.rglob('*'):
-                if file.is_file():
-                    file.chmod(0o600)
-            _load(registry['review_id'])
-            stage.rename(target)
-        finally:
-            if stage.exists():
-                shutil.rmtree(stage)
-        return scenario_id
+                                  'selected_sha256': _sha(_published_page_text(row).encode())}
+                                 for row in proposal['pages']]}
+            return manifest, audit, quality
+
+        return trusted.publish_derived(
+            snapshot, scenario_id, text, [row['page'] for row in proposal['pages']],
+            {'candidate_digest': digest, 'reviewer': reviewer}, build_metadata,
+            lambda: _load(registry['review_id']),
+        )
 
 
 def rebind(scenario_id: str, *, old_scenario_id: str, old_export_id: str) -> dict:
