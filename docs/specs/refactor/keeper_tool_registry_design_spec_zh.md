@@ -72,4 +72,10 @@ class ToolCall:                            # 目前各分支共用、總是一�
 
 Marco 在實作前重新確認這三項決定。第一階段也將僅供日誌摘要使用的 `report_summary` 納入註冊表；它不屬於 35 個玩家回合工具，若經 `_execute_tool` 呼叫仍維持原本的未知工具結果。這使既有唯讀與開場集合可保持完全等價。`refactor/combat-start-in-combat-module` 尚未合入 `main_v2`，戰鬥處理函式家族因此仍待遷移。
 
-角色家族（`adjust_character`、`set_skill`、`get_character_sheet`）已移至 `app/keeper_tools/character.py`。與檢定生命週期對齊後，`_apply_attribute_delta` 留在 Keeper 的權威狀態交易裡；角色 handler 呼叫 Keeper 的公開輔助函式，由它使用 `check_lifecycle.blocker()` 和 `register()`，避免重傷 CON 檢定受阻時仍提交 HP 傷害。獨立的檢定 handler 對齊已在 `integration/keeper-check-lifecycle` 驗證。
+骰子家族（`roll_dice`、`roll_impaling_damage`、`roll_weapon_damage`）已移至 `app/keeper_tools/dice.py`。
+
+檢定家族（技能、SAN、NPC 檢定、防禦選項和清除待處理檢定）已移至 `app/keeper_tools/checks.py`。處理函式呼叫 `app/check_lifecycle.py` 判定准入與身分；Keeper 保留狀態交易和檢定結果快取。舊的手動 pending／Luck 判斷及檢定家族的 legacy cascade 分支已移除。
+
+角色家族（`adjust_character`、`set_skill`、`get_character_sheet`）已移至 `app/keeper_tools/character.py`。角色 handler 呼叫 Keeper 的公開屬性變更輔助函式；內層 `_apply_attribute_delta` 仍在 Keeper 的權威狀態交易裡，使用 `check_lifecycle.blocker()` 和 `register()`，避免重傷 CON 檢定受阻時仍提交 HP 傷害。
+
+兩個處理函式家族與檢定生命週期重構已在 `integration/keeper-check-character-lifecycle` 一起對齊。獨立 PR 不再需要等待對方的程式修改；最終註冊表整合前仍須協調合併順序。

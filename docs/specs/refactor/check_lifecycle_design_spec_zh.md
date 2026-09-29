@@ -64,4 +64,4 @@
 
 ## Keeper 工具註冊表對齊
 
-PR #132 已將 Keeper 檢定 handler 搬到 `app/keeper_tools/checks.py`。技能、SAN、選項與 NPC 防禦流程已在新位置呼叫本模組的 `admit()`、`register()`、`metadata()` 和快取驗證，移除舊的手動 pending／Luck 判斷。PR #133 的角色 handler 將屬性變更交給 Keeper 的 `_apply_attribute_delta`；它留在權威狀態交易裡，並用 `blocker()`、`register()` 處理重傷 CON 檢定。戰鬥傷害與開場檢定仍由各自模組負責。兩項對齊已在獨立整合分支通過完整測試；各 PR 在最終註冊表整合前保持獨立。
+PR #132 已將 Keeper 檢定 handler 搬到 `app/keeper_tools/checks.py`。技能、SAN、選項與 NPC 防禦流程已在新位置呼叫本模組的 `admit()`、`register()`、`metadata()` 和快取驗證，移除舊的手動 pending／Luck 判斷。PR #133 的角色 handler 將屬性變更交給 Keeper 內含 `_apply_attribute_delta` 的輔助函式；它留在權威狀態交易裡，並用 `blocker()`、`register()` 處理重傷 CON 檢定。戰鬥傷害與開場檢定仍由各自模組負責。兩項對齊已在 `integration/keeper-check-character-lifecycle` 同時驗證；各 PR 不再等待對方實作，但最終註冊表整合前仍須協調合併順序。

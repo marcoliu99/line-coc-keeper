@@ -1228,6 +1228,8 @@
       "evidence": [
         "app/keeper_tools/registry.py",
         "app/keeper_tools/character.py",
+        "app/keeper_tools/checks.py",
+        "app/keeper_tools/dice.py",
         "tests/test_keeper_tool_registry.py",
         "app/keeper.py",
         "app/agents/tool_gateway.py",

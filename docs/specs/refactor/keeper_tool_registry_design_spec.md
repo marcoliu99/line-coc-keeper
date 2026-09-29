@@ -72,4 +72,10 @@ class ToolCall:                            # the Data Clump the handlers share t
 
 Marco reconfirmed all three decisions before implementation. The first migration step also registers `report_summary`, whose schema is used only for log summarization and is not in the 35 player-turn tools. It retains the old unknown-tool result if dispatched through `_execute_tool`; the registry includes it so the existing read-only and opening sets remain exactly equivalent. The combat-start prerequisite has not yet landed on `main_v2`, so the combat handler family remains pending.
 
-The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Its check-lifecycle integration keeps `_apply_attribute_delta` inside Keeper's authoritative state transaction. The character handler calls that public Keeper helper; the helper uses `check_lifecycle.blocker()` and `register()` so a blocked major-wound CON check cannot commit HP damage. The separate check-handler alignment is validated on `integration/keeper-check-lifecycle`.
+The dice family (`roll_dice`, `roll_impaling_damage`, `roll_weapon_damage`) is migrated to `app/keeper_tools/dice.py`.
+
+The checks family (skill, SAN, NPC checks, defense choices, and pending-check clearing) is migrated to `app/keeper_tools/checks.py`. Its handlers call `app/check_lifecycle.py` for admission and identity; Keeper retains the state transaction and check-result cache. The old manual pending/Luck checks and check-family branches of the legacy cascade are removed.
+
+The character family (`adjust_character`, `set_skill`, `get_character_sheet`) is migrated to `app/keeper_tools/character.py`. Its handler calls Keeper's public attribute-mutation helper; the nested `_apply_attribute_delta` remains inside Keeper's authoritative state transaction and uses `check_lifecycle.blocker()` and `register()` so a blocked major-wound CON check cannot commit HP damage.
+
+Both handler families and the lifecycle refactor are aligned together on `integration/keeper-check-character-lifecycle`. The independent PRs no longer need to wait for each other's code changes; their merge order still needs coordination before final registry integration.
