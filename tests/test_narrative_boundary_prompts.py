@@ -35,13 +35,13 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
                 self.assertPolicy(prompt, "劇本、KP Assistant 明確建立的主持事實")
                 self.assertEqual(prompt.count("**Scenario Canon Boundary**"), 1)
 
-    def test_purchase_policy_does_not_use_credit_or_money(self):
-        shared = self._prompts()['shared']
-        policy = shared.split('# 攜帶物合理性審查', 1)[1].split('\n# ', 1)[0]
-        self.assertIn('不以信用評級、生活水準、價格或現金裁定是否可得', policy)
-        self.assertNotIn('**負擔能力**', policy)
-        self.assertNotIn('已確認的現金帳本', policy)
-        self.assertNotIn('purchase_items', shared)
+    def test_equipment_policy_has_no_purchase_instructions_on_any_keeper_path(self):
+        for path, prompt in self._prompts().items():
+            with self.subTest(path=path):
+                policy = prompt.split('# Equipment Consistency', 1)[1].split('\n# ', 1)[0]
+                for purchase_term in ('purchase', 'shop', 'supply', 'price', 'payment', 'Credit Rating', 'cash', 'Luck'):
+                    self.assertNotIn(purchase_term.lower(), policy.lower())
+                self.assertNotIn('purchase_items', prompt)
 
     def test_player_hypotheses_and_failed_rolls_cannot_create_world_elements(self):
         for path, prompt in self._prompts().items():
