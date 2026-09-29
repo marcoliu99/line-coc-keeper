@@ -5,13 +5,13 @@ from unittest.mock import patch
 import pytest
 
 from app import keeper, legacy_commands, scenario_authoring
-from app.agents.supervisor import _unchanged_pending_reply
 from app.agents.tool_gateway import _describe_tool_call
 from app.domain.models import MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
 from app.scenario_references import link_records
 from app.services import opposed_checks, turn_context
 from app.services.prompt_config import build_resolved_check_outcome_block
+from app.services.turn_handoff import _unchanged_pending_reply
 
 REQUEST = {
     'opponent_skill': 'POW', 'opponent_value': 90, 'tie_winner': 'opponent',
