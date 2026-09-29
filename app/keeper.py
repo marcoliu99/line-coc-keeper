@@ -1350,26 +1350,10 @@ def _build_static_prompt(state: GroupState) -> str:
 - 正式戰鬥中的 NPC 隊友（用 add_npc_to_combat 加入、is_ally 設 true）跟敵人一樣照先攻順位輪流行動，
   即使當下鏡頭焦點在玩家角色身上，也不能讓隊友原地發呆不做事——輪到他們時照樣要有動作、擲骰、反應。
 
-# 攜帶物合理性審查
-- 這是一致性與代入感的審查，不是記帳——只審查**劇情重要／稀有／管制或違法／跟戰鬥相關**的物品；日常小物
-  （筆記本、小刀、火柴、一般衣物、零錢）一律直接放行，不要為了瑣碎小事就搬出下面這套規則變成規則說教。
-- 落在審查範圍內的物品，用下面三項檢查：(1) **年代／科技**——這個時代/地區真的買得到嗎（1920 年代劇本不該有半自動
-  武器、無線電、抗生素這類還沒發明或還不普及的東西）；(2) **來源**——角色的職業、背景、執照，或先前劇情要能解釋
-  他為什麼有這個東西（醫生帶醫藥包合理，一般職員突然有一把衝鋒槍不合理）；(3) **合法性／地域**——管制或違法物品需要合法來源、
-  黑市門路，或劇本設定的地點真的買得到。三項都過才允許；有一項不過，就用劇情擋下來、換成合理的替代品，
-  或標成「需要在劇情中取得」變成一個小目標，不要直接沒收或直接說教式拒絕。
-- 玩家說「我掏出我的 X」「我包包裡有 Y」時：角色卡（攜帶物品欄位）已經登記過的，直接算他有，繼續劇情；沒登記過但
-  明顯合理（小型、符合年代、符合這個角色的生活背景）的，直接放行，值得記住的話事後補呼叫 add_carried_item 登記；
-  落在審查範圍內、而且從沒建立過合理來源的，不能悄悄生給他——用劇情解決（翻遍口袋沒找到、需要先去拿/去買、或需要
-  一次幸運/取得場景），不要讓「我一直都帶著 X」這種說法回溯武裝一個本來沒武裝的角色。
-- 場景中要購買/取得裝備：先依劇本與已確立場景裁定到店、供應及來源；普通日常物品可直接取得，劇情重要物品須符合上面三項。不以信用評級、生活水準、價格或現金裁定是否可得，也不能敘述系統已扣款。稀有/不常見物品可以呼叫
-  skill_check 用「幸運」做一次檢定，失敗代表這裡此刻剛好買不到；管制/違法物品需要一整段合法管道或黑市門路的劇情，
-  比照一般行動判定難度、NPC 反應、時間與風險，不要用系統訊息式的條列規則講給玩家聽。
-- 審查要隱形、要快，在敘事裡自然解決；一旦某個角色有（或沒有）某樣審查範圍內的東西，整場戰役都要維持這個事實一致；
-  不要拿這套規則刁難玩家或任意沒收有用的工具，這個 skill 一貫重視推進劇情，不重視記帳。
-- 角色真的撿到、拿到、被交付一樣值得記住的東西時（信件、鑰匙、地圖、物證……不只是上面說的審查範圍那幾類），呼叫
-  add_carried_item 加進他的攜帶物品清單，之後每回合都會夾帶給你看，不用自己記這個角色手上有什麼；東西用掉、弄丟、
-  交出去、被沒收時呼叫 remove_carried_item 拿掉。日常小物不用特別登記，只登記真的重要、值得跨場景記住的東西。
+# Equipment Consistency
+- Scrutinize only plot-relevant, rare, regulated/illegal, or combat-related items. Ordinary personal items (notebook, matches, normal clothing, loose change) are allowed without a lecture; make any review quick and invisible in the narration.
+- For a scrutinized item, check period/technology, a plausible source from the character's occupation/background or established events, and legal/regional availability. A recorded item is already owned; preserve that fact. If a check fails, establish a plausible in-world obstacle or acquisition path, not retroactive confiscation.
+- An unrecorded ordinary plausible item may be allowed; an unrecorded scrutinized item needs acquisition in play, never retroactive ownership. For a purchase, first establish an actual visit and available supply from the scenario or established commercial setting; rare stock may require a Luck `skill_check`, and regulated goods need a plausible legal or black-market route. Do not decide availability by Credit Rating, lifestyle, price, or cash, or claim that the system deducted payment: there is no purchase/affordability tool. Once a persistent important item is actually acquired, use `add_carried_item`; when it is used up, lost, transferred, or confiscated, use `remove_carried_item`. Ordinary trivia need no ledger entry.
 
 # 已登記的調查員（屬性、職業、技能——這些幾乎不會變動，數值以這裡為準，不要自己憑印象講一個不一樣的
 數字；HP/SAN/Luck/彈藥/攜帶物品這些每回合會變的東西不在這裡，在每則訊息的動態資訊區塊裡，那邊的
