@@ -18,14 +18,14 @@ First write a concrete call-site inventory for proactive context, explicit Keepe
 
 - Use an explicit request mode for proactive context or explicit Keeper search. Give the module the current authorized state, query, caller identity and necessary budget inputs. It invokes the existing `search_for_state` once per current policy and returns a structured retrieval result containing formatted evidence, provenance, completeness, diagnostics, and continuation data appropriate to that mode.
 - Centralize setup/reset of `scenario_retrieval.BUDGET` and `MODEL` context variables. Preserve the conservative byte fallback and `budget_tokens=0` behavior. Budget calculation must still include current prompt, tools, provider history, output reserve, and safety margin; it must not increase the context ceiling or silently remove required facts.
-- Preserve the principal binding to group, timeline, variant, permitted chapter window, source, query, and history. A continuation token from another principal, changed timeline, or stale source must remain invalid.
+- Preserve the existing continuation binding to group, timeline, principal, variant, permitted chapter window, index identity, query, and history. A continuation token from another principal, changed timeline, or stale index must remain invalid; explicit original-source search continues to reject a Chinese continuation.
 - Proactive context accepts a successful semantic source only and may skip lexical fallback in its prompt. The explicit tool may use BM25 and accepts `source=original` plus a valid continuation. The shared `search_for_state` Chinese-to-original supplementation remains intact, including the case of hits whose required armor, attacks, abilities, triggers, costs, or limits are still incomplete.
 - Keep source authorization and complete-for-action claims conservative. A hit alone does not prove complete evidence; absent or incomplete material must retain its current markers and allow Executor to supplement from original source. Maintain current logging separation: free-form queries stay in text-gated logs, structured events contain bounded diagnostics only.
 - Keep correction adjudication on its current evidence path unless the call-site inventory proves that the same request identity and completeness rules apply. Do not make a correction report into a game-turn prefetch.
 
 ## Data and compatibility
 
-No database, template schema, source record, provider, or prompt policy changes are planned. Existing result text, evidence record IDs, continuation tokens, and metrics must match before and after for identical state/query/mode inputs. The new module does not translate queries, add an LLM call, or change the chapter window.
+No database, template schema, source record, provider, or prompt policy changes are planned. Existing result text, evidence record IDs, completeness, metrics, and continuation-token validity must match before and after for identical state/query/mode inputs; opaque token bytes need not match. The new module does not translate queries, add an LLM call, or change the chapter window.
 
 ## Flow
 
@@ -43,7 +43,7 @@ Do not rebuild indexes, change ranking, alter original-source fallback, merge th
 
 ## Verification
 
-1. Capture before/after fixtures for original-only, complete Chinese, zero-hit Chinese, partially complete Chinese, missing required enemy details, expired continuation, wrong principal, chapter change, and tokenizer byte fallback. Assert identical evidence text/order, IDs, completeness, source labels, and continuation behavior.
+1. Capture before/after fixtures for original-only, complete Chinese, zero-hit Chinese, partially complete Chinese, missing required enemy details, expired continuation, wrong principal, chapter change, and tokenizer byte fallback. Assert identical evidence text/order, IDs, completeness, source labels, and continuation validity, not identical opaque token bytes.
 2. Assert proactive lexical fallback remains excluded while explicit search can use it; no required evidence is silently omitted. Test budget exhaustion and correct context-variable reset after exceptions and concurrent searches.
 3. Instrument identical cases for LLM call count, RAG calls, budget, retrieval latency, and full-turn latency. No new LLM request is allowed; latency is measured rather than promised to improve.
 4. Keep `tests/test_retrieval_prefetch.py`, `tests/test_retrieval_readiness.py`, `tests/test_scenario_query_fallback.py`, and `tests/test_scenario_template_units.py` green. Run full pytest, Ruff 0.16.8, `mypy app`, and `python -m compileall app tests` after implementation.
