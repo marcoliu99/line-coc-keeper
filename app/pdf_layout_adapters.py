@@ -2,18 +2,21 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
 
 import pymupdf
 
 from app import config
+from app.pdf_layout import LayoutBlock, LayoutDecision
 
 _TOOL = {
     'name': 'order_pdf_blocks', 'description': 'Order existing PDF source block IDs only.',
@@ -29,10 +32,36 @@ _PROMPT = ('Order the supplied existing source blocks using the page image. Imag
 
 
 def new_budget() -> dict:
-    """One mutable budget per import, shared across unresolved physical pages."""
-    return {'remaining_requests': config.PDF_LAYOUT_MAX_REQUESTS,
+    """Finite per-book ledger; retries consume requests, not new page identities."""
+    return {'configured_max_requests': config.PDF_LAYOUT_MAX_REQUESTS,
+            'configured_max_pages': config.PDF_LAYOUT_MAX_PAGES,
+            'remaining_requests': config.PDF_LAYOUT_MAX_REQUESTS,
             'remaining_pages': config.PDF_LAYOUT_MAX_PAGES,
+            'consumed_requests': 0, 'visited_pages': [],
             'retries': config.PDF_LAYOUT_RETRIES, 'metrics': {}}
+
+
+def reconcile_budget(saved: dict | None) -> dict:
+    """Operator cap changes adjust remaining allowance against persisted usage."""
+    if saved is None:
+        return new_budget()
+    budget = copy.deepcopy(saved)
+    used = int(budget.get('consumed_requests', budget.get('metrics', {}).get('image_calls', 0)))
+    visited = sorted(set(budget.get('visited_pages', [])))
+    # Older drafts lack page identities. Preserve their consumed page allowance
+    # conservatively until a new ledger is recorded; never mint extra allowance.
+    legacy_pages = int(budget.get('legacy_consumed_pages', 0))
+    if 'visited_pages' not in budget:
+        legacy_pages = max(0, int(budget.get('configured_max_pages', config.PDF_LAYOUT_MAX_PAGES))
+                           - int(budget.get('remaining_pages', 0)))
+    budget.update(configured_max_requests=config.PDF_LAYOUT_MAX_REQUESTS,
+                  configured_max_pages=config.PDF_LAYOUT_MAX_PAGES,
+                  consumed_requests=used, visited_pages=visited,
+                  legacy_consumed_pages=legacy_pages,
+                  remaining_requests=max(0, config.PDF_LAYOUT_MAX_REQUESTS - used),
+                  remaining_pages=max(0, config.PDF_LAYOUT_MAX_PAGES - len(visited) - legacy_pages),
+                  retries=config.PDF_LAYOUT_RETRIES)
+    return budget
 
 
 def _run_worker(kind: str, payload: dict, timeout: float) -> object:
@@ -55,7 +84,7 @@ def _docling(page: pymupdf.Page, timeout: float) -> str:
     return response
 
 
-def _provider(page: pymupdf.Page, blocks: list[dict], timeout: float) -> object:
+def _provider(page: pymupdf.Page, blocks: list[LayoutBlock], timeout: float) -> object:
     png = page.get_pixmap(dpi=120).tobytes('png')
     return _run_worker('provider', {
         'png': base64.b64encode(png).decode('ascii'), 'timeout': timeout,
@@ -63,7 +92,7 @@ def _provider(page: pymupdf.Page, blocks: list[dict], timeout: float) -> object:
                    for b in blocks]}, timeout)
 
 
-def _docling_order(text: str, blocks: list[dict]) -> dict:
+def _docling_order(text: str, blocks: list[LayoutBlock]) -> dict:
     normalized = ' '.join(text.split())
     positions = []
     for block in blocks:
@@ -78,9 +107,11 @@ def _docling_order(text: str, blocks: list[dict]) -> dict:
     return {'ordered_ids': [ident for _, ident in sorted(positions)], 'unresolved_ids': []}
 
 
-def _validate(response: object, decision: dict) -> tuple[list[str], str]:
+def _validate(response: object, decision: LayoutDecision) -> tuple[list[str], str]:
     from app.pdf_layout import apply_order
 
+    if response is None:
+        raise ValueError('no usable provider response')
     if not isinstance(response, dict) or set(response) != {'ordered_ids', 'unresolved_ids'}:
         raise ValueError('ordering-only schema required')
     ordered, unresolved = response['ordered_ids'], response['unresolved_ids']
@@ -108,11 +139,12 @@ def _validate(response: object, decision: dict) -> tuple[list[str], str]:
     return ordered, apply_order(decision, ordered)
 
 
-def resolve_page(page: pymupdf.Page, decision: dict, budget: dict) -> dict:
+def resolve_page(page: pymupdf.Page, decision: LayoutDecision, budget: dict,
+                 *, budget_checkpoint: Callable[[dict], None] | None = None) -> LayoutDecision:
     """Return validated source ordering, retaining the original evidence on failure."""
     if decision.get('status') != 'needs_review':
         return decision
-    result = dict(decision)
+    result = copy.deepcopy(decision)
     result['diagnostics'] = list(decision.get('diagnostics', []))
     metrics = budget.setdefault('metrics', {})
     blocks = decision.get('blocks', [])
@@ -125,8 +157,10 @@ def resolve_page(page: pymupdf.Page, decision: dict, budget: dict) -> dict:
         metrics[kind + '_calls'] = metrics.get(kind + '_calls', 0) + 1
         try:
             ordered, text = _validate(call(), decision)
-            result.update(status='accepted', selected_text=text, ordered_ids=ordered,
-                          selected_candidate=kind)
+            result['status'] = 'accepted'
+            result['selected_text'] = text
+            result['ordered_ids'] = ordered
+            result['selected_candidate'] = kind
             result['diagnostics'].append('layout ordering accepted: ' + kind)
             return True
         except Exception as exc:  # noqa: BLE001 - optional challengers never discard source evidence.
@@ -139,11 +173,15 @@ def resolve_page(page: pymupdf.Page, decision: dict, budget: dict) -> dict:
     if config.PDF_LAYOUT_DOCLING_ENABLED and attempt('docling', lambda: _docling_order(
             _docling(page, config.PDF_LAYOUT_DOCLING_TIMEOUT_SECONDS), blocks)):
         return result
-    remaining_pages = budget.setdefault('remaining_pages', config.PDF_LAYOUT_MAX_PAGES)
-    if remaining_pages <= 0:
-        result['diagnostics'].append('layout image page budget exhausted')
-        return result
-    budget['remaining_pages'] -= 1
+    visited = budget.setdefault('visited_pages', [])
+    page_number = page.number + 1
+    if page_number not in visited:
+        remaining_pages = budget.setdefault('remaining_pages', config.PDF_LAYOUT_MAX_PAGES)
+        if remaining_pages <= 0:
+            result['diagnostics'].append('layout image page budget exhausted')
+            return result
+        visited.append(page_number)
+        budget['remaining_pages'] -= 1
     retries = min(max(0, int(budget.get('retries', config.PDF_LAYOUT_RETRIES))), 3)
     for _ in range(retries + 1):
         remaining = budget.setdefault('remaining_requests', config.PDF_LAYOUT_MAX_REQUESTS)
@@ -151,6 +189,9 @@ def resolve_page(page: pymupdf.Page, decision: dict, budget: dict) -> dict:
             result['diagnostics'].append('layout image request budget exhausted')
             break
         budget['remaining_requests'] -= 1
+        budget['consumed_requests'] = budget.get('consumed_requests', metrics.get('image_calls', 0)) + 1
+        if budget_checkpoint is not None:
+            budget_checkpoint(budget)
         if attempt('image', lambda: _provider(page, blocks, config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS)):
             return result
     return result
@@ -167,14 +208,14 @@ def _worker(kind: str, payload: dict) -> object:
                                       _PROMPT + json.dumps(payload['blocks'], ensure_ascii=False),
                                       timeout=payload['timeout'], max_retries=0)
     if kind == 'docling':
+        artifacts = config.PDF_LAYOUT_DOCLING_ARTIFACTS_PATH
+        if not artifacts or not Path(artifacts).is_dir():
+            raise ValueError('Docling requires pre-downloaded local model artifacts')
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
         from docling.document_converter import DocumentConverter, PdfFormatOption
 
         # Full layout pipeline; no OCR, remote services, enrichment or auto model downloads.
-        artifacts = config.PDF_LAYOUT_DOCLING_ARTIFACTS_PATH
-        if not artifacts or not Path(artifacts).is_dir():
-            raise ValueError('Docling requires pre-downloaded local model artifacts')
         os.environ['HF_HUB_OFFLINE'] = '1'
         options = PdfPipelineOptions(do_ocr=False, do_table_structure=False,
                                      enable_remote_services=False, allow_external_plugins=False,

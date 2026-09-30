@@ -63,7 +63,8 @@ def test_resumed_page_reuses_text_images_and_maps_without_parser_work():
         loader.extract_text(source, quality_report=report)
     first = report['pages'][0]
     cached = {1: {'pdf_sha256': hashlib.sha256(source).hexdigest(),
-        'pipeline_version': loader.PIPELINE_VERSION, 'selected_text': first['selected_text'],
+        'pipeline_version': loader.PIPELINE_VERSION, 'renderer_version': loader.RENDERER_VERSION,
+        'extraction_identity': report['extraction_identity'], 'selected_text': first['selected_text'],
         'selected_sha256': first['selected_sha256'], 'report': first, 'image': b'image',
         'map': {'entry_room_id': 'door'}, 'derived_description': 'labeled derived map'}}
     resumed = {}
@@ -106,7 +107,9 @@ def test_published_manifest_distinguishes_pdf_and_rendered_source_hash(tmp_path,
 
 def test_resume_keeps_book_layout_budget():
     source = pdf('Unresolved page.')
-    budget = {'remaining_requests': 0, 'remaining_pages': 0, 'retries': 1, 'metrics': {'image_calls': 8}}
+    budget = loader.pdf_layout_adapters.new_budget()
+    budget.update(remaining_requests=0, remaining_pages=0, consumed_requests=budget['configured_max_requests'],
+                  visited_pages=list(range(1, budget['configured_max_pages'] + 1)), legacy_consumed_pages=0)
     report = {}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
          patch.object(loader.pdf_layout, 'analyze_page', return_value=decision('Unresolved page.', 'needs_review')), \
@@ -116,3 +119,72 @@ def test_resume_keeps_book_layout_budget():
     assert resolve.call_args.args[2] == budget
     assert report['layout_budget'] == budget
     assert report['layout_budget'] is not budget
+
+
+@pytest.mark.parametrize('changed', ['renderer_version', 'pymupdf', 'pymupdf4llm', 'docling', 'quality_version', 'layout_version'])
+def test_changed_executable_identity_reprocesses_cached_page(changed):
+    source = pdf('Verified source.')
+    identity = loader.extraction_identity()
+    report = {}
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None):
+        loader.extract_text(source, quality_report=report)
+    first = report['pages'][0]
+    cached = {1: {'pdf_sha256': hashlib.sha256(source).hexdigest(),
+        'pipeline_version': loader.PIPELINE_VERSION, 'renderer_version': loader.RENDERER_VERSION,
+        'extraction_identity': identity, 'selected_text': first['selected_text'],
+        'selected_sha256': first['selected_sha256'], 'report': first}}
+    updated = dict(identity)
+    updated[changed] = 'changed-version'
+    with patch.object(loader, 'extraction_identity', return_value=updated), \
+         patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None) as parse, \
+         patch.object(loader.pdf_layout, 'analyze_page', wraps=loader.pdf_layout.analyze_page) as analyze:
+        text, *_ = loader.extract_text(source, resume_pages=cached)
+    assert 'Verified source.' in text
+    parse.assert_called_once_with(source, [1])
+    analyze.assert_called_once()
+
+
+@pytest.mark.parametrize('failed', [False, True])
+@pytest.mark.parametrize('readable_page', [False, True])
+def test_unreadable_graphic_page_blocks_publication(failed, readable_page):
+    source = pdf('Readable first page.', '') if readable_page else pdf('')
+    report = {}
+    last_page = 1 if readable_page else 0
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
+         patch.object(loader, '_page_has_graphic_content', side_effect=lambda page: page.number == last_page), \
+         patch.object(loader, '_render_page_png', return_value=b'png'), \
+         patch.object(loader, '_markitdown_page_texts', return_value=None), \
+         patch.object(loader, '_analyze_graphic_page', side_effect=RuntimeError('offline') if failed else None,
+                      return_value=('', None)), \
+         pytest.raises(loader.LayoutReviewRequired) as raised:
+        loader.extract_text(source, quality_report=report)
+    assert report['blocked_pages'] == [last_page + 1]
+    row = report['pages'][last_page]
+    assert row['disposition'] == 'needs_review'
+    assert ('vision_failed' if failed else 'vision_empty') in row['warnings']
+    assert raised.value.result[3][last_page + 1] == b'png'
+
+
+def test_blank_page_without_graphics_keeps_legacy_disposition():
+    report = {}
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
+         patch.object(loader, '_analyze_graphic_page', side_effect=AssertionError('blank page has no visual evidence')):
+        loader.extract_text(pdf('Readable source.', ''), quality_report=report)
+    assert report['blocked_pages'] == []
+    assert report['pages'][1]['disposition'] == 'legacy_route'
+
+
+def test_rendered_unicode_page_markers_preserve_source_unit_spans():
+    from app.scenario_authoring import unit_ranges
+
+    pages = [('A room. 🎲 無損傷。\n\n' * 350).strip(), 'Never roll 2d6.\n\nSanity loss 0/1d4.']
+    source = loader.render_source_pages(pages)
+    spans = unit_ranges(source)
+    assert ''.join(source[start:end] for start, end in spans) == source
+    assert spans[0][0] == 0 and spans[-1][1] == len(source)
+    for marker in ('--- 第 1 頁 ---', '--- 第 2 頁 ---'):
+        assert source.count(marker) == 1
+    quote = '🎲 無損傷。'
+    start = source.index(quote)
+    assert source[start:start + len(quote)] == quote
+    assert len(source[:start].encode()) > start

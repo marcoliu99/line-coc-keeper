@@ -73,7 +73,8 @@ class PdfLoaderImagePersistenceTests(unittest.TestCase):
         )
         with patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}), \
              patch.object(pdf_loader, "_markitdown_page_texts", return_value=None), \
-             patch.object(pdf_loader, "_render_page_png", return_value=b"png"):
+             patch.object(pdf_loader, "_render_page_png", return_value=b"png"), \
+             patch.object(pdf_loader, "_analyze_graphic_page", return_value=("Verified handout transcription.", None)):
             text, low_pages, _truncated, page_images, _page_maps = pdf_loader.extract_text(pdf_bytes)
 
         self.assertIn("layout-aware handout text", text)
@@ -202,8 +203,11 @@ class PdfQualityRegressionTests(unittest.TestCase):
         report = {}
         with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
              patch.object(pdf_loader, '_markitdown_page_texts', return_value=None), \
-             patch.object(pdf_loader, '_analyze_graphic_page', side_effect=RuntimeError('offline')):
-            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+             patch.object(pdf_loader, '_analyze_graphic_page', side_effect=RuntimeError('offline')), \
+             self.assertRaises(pdf_loader.LayoutReviewRequired) as raised:
+            pdf_loader.extract_text(payload, quality_report=report)
+        text, review, _, _, _ = raised.exception.result
+        self.assertEqual(report['blocked_pages'], [1])
         self.assertIn('Preserved source with 2d6', text)
         self.assertIn('vision_failed', report['pages'][0]['warnings'])
         self.assertIn(1, review)

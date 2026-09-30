@@ -381,11 +381,39 @@ async def handle_pdf_upload(
         await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
         return False
 
-    draft = pdf_ingestion_drafts.load(conversation_id)
-    if draft and draft["draft_id"] != resume_draft_id:
-        await reply(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(draft), draft["draft_id"]))
+    async with locks.get_conversation_lock(conversation_id):
+        latest = load_state(conversation_id)
+        if latest.pending_pdf_upload is not None or (latest.pending_scenario_upload is not None and not skip_similarity):
+            await reply("目前已有等待處理的 PDF，請先完成或取消。")
+            return False
+        try:
+            lease = pdf_ingestion_drafts.reserve(
+                conversation_id, pdf_bytes, file_name, owner_id=owner_user_id,
+                resume_draft_id=resume_draft_id, reparse_candidate_id=reparse_candidate_id,
+            )
+        except pdf_ingestion_drafts.ImportOwnershipError as exc:
+            await reply(str(exc))
+            return False
+    try:
+        return await _run_pdf_import(
+            conversation_id, reply, push, pdf_bytes, file_name, skip_similarity,
+            reparse_candidate_id, expected_revision, previous_content_hash, lease,
+        )
+    except pdf_ingestion_drafts.ImportOwnershipError as exc:
+        await push(str(exc))
         return False
-    resume = pdf_ingestion_drafts.resume_pages(draft, pdf_loader.PIPELINE_VERSION) if draft else {}
+    finally:
+        async with locks.get_conversation_lock(conversation_id):
+            pdf_ingestion_drafts.release(lease)
+
+
+async def _run_pdf_import(
+    conversation_id: str, reply: Reply, push: Reply, pdf_bytes: bytes, file_name: str,
+    skip_similarity: bool, reparse_candidate_id: str | None, expected_revision: int | None,
+    previous_content_hash: str, lease: pdf_ingestion_drafts.ImportLease,
+) -> bool:
+    draft = pdf_ingestion_drafts.require_owner(lease)
+    resume = pdf_ingestion_drafts.resume_pages(draft, pdf_loader.extraction_identity())
     preview = ""
     if not skip_similarity:
         try:
@@ -403,6 +431,7 @@ async def handle_pdf_upload(
             # turn, roll, or combat update landing in between); saving that
             # stale snapshot back would silently revert whatever changed.
             async with locks.get_conversation_lock(conversation_id):
+                pdf_ingestion_drafts.require_owner(lease)
                 state = load_state(conversation_id)
                 if expected_revision is not None and state.state_revision != expected_revision:
                     scenario_library.discard_staged_upload(key)
@@ -412,6 +441,7 @@ async def handle_pdf_upload(
                     scenario_library.discard_staged_upload(key)
                     await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
                     return False
+                pdf_ingestion_drafts.discard_owned(lease)
                 state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
                 save_state(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
@@ -425,30 +455,29 @@ async def handle_pdf_upload(
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
             pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality,
             resume_pages=resume if draft else None,
-            layout_budget=(draft or {}).get("report", {}).get("layout_budget")
+            layout_budget=draft.get("report", {}).get("layout_budget"),
+            layout_budget_checkpoint=lambda budget: pdf_ingestion_drafts.record_budget(lease, budget)
         )
     except pdf_loader.LayoutReviewRequired as exc:
         async with locks.get_conversation_lock(conversation_id):
-            current_draft = pdf_ingestion_drafts.load(conversation_id)
-            if resume_draft_id and (not current_draft or current_draft["draft_id"] != resume_draft_id):
-                await push("匯入草稿已取消或變更，請重新查看 /coc scenario status。")
-                return False
-            saved = pdf_ingestion_drafts.save(
-                conversation_id, pdf_bytes, file_name, exc.report, exc.result,
-                owner_id=owner_user_id or (draft or {}).get("owner_id", ""),
-                reparse_candidate_id=reparse_candidate_id,
-            )
+            saved = pdf_ingestion_drafts.checkpoint(lease, exc.report, exc.result)
         await push(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(saved), saved["draft_id"]))
         return False
     except ValueError as exc:
+        async with locks.get_conversation_lock(conversation_id):
+            if parse_quality:
+                pdf_ingestion_drafts.checkpoint(lease, parse_quality, ('', [], False, {}, {}))
         await push(f"讀取 PDF 失敗：{exc}")
         return False
+    except Exception:
+        async with locks.get_conversation_lock(conversation_id):
+            if parse_quality and pdf_ingestion_drafts.owns(lease):
+                pdf_ingestion_drafts.checkpoint(lease, parse_quality, ('', [], False, {}, {}))
+        raise
 
-    if resume_draft_id:
-        current_draft = pdf_ingestion_drafts.load(conversation_id)
-        if not current_draft or current_draft["draft_id"] != resume_draft_id:
-            await push("匯入草稿已取消或變更，請重新查看 /coc scenario status。")
-            return False
+    async with locks.get_conversation_lock(conversation_id):
+        pdf_ingestion_drafts.checkpoint(lease, parse_quality,
+            (text, low_text_pages, truncated, page_images, page_maps), release_attempt=False)
     title = pdf_loader.guess_title(text, file_name=file_name)
 
     # Built automatically here rather than left to a manual /coc index run —
@@ -476,26 +505,19 @@ async def handle_pdf_upload(
         except ValueError:
             preview = text[:12_000]
     async with locks.get_conversation_lock(conversation_id):
-        if resume_draft_id:
-            current_draft = pdf_ingestion_drafts.load(conversation_id)
-            if not current_draft or current_draft["draft_id"] != resume_draft_id:
-                await push("匯入草稿已取消或變更，請重新查看 /coc scenario status。")
-                return False
+        pdf_ingestion_drafts.require_owner(lease)
         scenario_id = await asyncio.to_thread(
             scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
             preview=preview, text=text, indexes=extracted_index, pregens=pregens,
             page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
             parse_quality=parse_quality,
         )
-        if resume_draft_id:
-            pdf_ingestion_drafts.discard(conversation_id, resume_draft_id)
-    library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
-    text = library_context["text"]
-    extracted_index = library_context["indexes"]
-    pregens = library_context["pregens"]
-    page_maps = library_context["scene_maps"]
+        library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
+        text = library_context["text"]
+        extracted_index = library_context["indexes"]
+        pregens = library_context["pregens"]
+        page_maps = library_context["scene_maps"]
 
-    async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if expected_revision is not None and state.state_revision != expected_revision:
             await push("遊戲狀態已更新，這份 PDF 沒有套用；請重新開啟 Help 操作。")
@@ -541,6 +563,7 @@ async def handle_pdf_upload(
             )
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
+        pdf_ingestion_drafts.discard_owned(lease)
     if raced:
         await push(
             f"這份《{title}》來得比較慢——另一份幾乎同時上傳的 PDF 先卡進待確認狀態了，請先處理完"

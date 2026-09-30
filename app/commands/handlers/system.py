@@ -504,14 +504,20 @@ async def handle_system_command(
             candidate_matches = pending.get("matches") or []
             reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
             accepted = False
+            previous_draft = pdf_ingestion_drafts.load(conversation_id)
+            resume_id = (previous_draft["draft_id"] if previous_draft
+                         and previous_draft["file_name"] == pending["file_name"]
+                         and pdf_ingestion_drafts.pdf_bytes(previous_draft) == pdf_bytes else "")
             try:
                 accepted = await handle_pdf_upload(
                     conversation_id, reply, reply, pdf_bytes, pending["file_name"],
                     skip_similarity=True, reparse_candidate_id=reparse_candidate_id, owner_user_id=user_id,
+                    resume_draft_id=resume_id,
                     expected_revision=commit_revision if expected_revision is not None else None,
                 )
             finally:
-                if accepted or pdf_ingestion_drafts.load(conversation_id):
+                current_draft = pdf_ingestion_drafts.load(conversation_id)
+                if accepted or (current_draft and current_draft.get("report", {}).get("blocked_pages")):
                     scenario_library.discard_staged_upload(pending["key"])
                 else:
                     # Do not save the pre-extraction snapshot over concurrent play.

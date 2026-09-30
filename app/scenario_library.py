@@ -243,7 +243,8 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             previous_manifest = _read_json(target / "manifest.json", {})
             manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": previous_manifest.get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
             if parse_quality and parse_quality.get('pipeline_version'):
-                manifest.update(parser_version=parse_quality['pipeline_version'],
+                manifest.update(extraction_identity=parse_quality.get('extraction_identity', {}),
+                                parser_version=parse_quality['pipeline_version'],
                                 renderer_version=parse_quality.get('renderer_version', 1),
                                 pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest())
             (temporary / "images").mkdir()

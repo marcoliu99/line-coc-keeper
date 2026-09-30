@@ -17,12 +17,13 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from importlib import metadata
 from typing import Any, cast
 
 import pymupdf
 
-from app import pdf_ai_repair, pdf_layout, pdf_layout_adapters, pdf_quality
+from app import config, pdf_ai_repair, pdf_layout, pdf_layout_adapters, pdf_quality
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
 
@@ -40,7 +41,7 @@ class LayoutReviewRequired(ValueError):
         self.report = report
         self.result = result
         pages = ', '.join(str(number) for number in report['blocked_pages'])
-        super().__init__(f'PDF 閱讀順序尚未確認：第 {pages} 頁；可繼續匯入未完成頁。')
+        super().__init__(f'PDF 頁面解析尚未完成：第 {pages} 頁；可繼續匯入未完成頁。')
 
 
 def render_source_pages(texts: list[str]) -> str:
@@ -48,12 +49,28 @@ def render_source_pages(texts: list[str]) -> str:
     return '\n\n'.join(f'--- 第 {i + 1} 頁 ---\n{text}' for i, text in enumerate(texts)).strip()
 
 
-def _cached_page(cached: dict | None, pdf_hash: str, number: int) -> dict | None:
+def extraction_identity() -> dict:
+    """Actual executable versions, including renderer and enabled optional parser."""
+    def version(package: str) -> str:
+        try:
+            return metadata.version(package)
+        except metadata.PackageNotFoundError:
+            return 'unavailable'
+    return {'pipeline_version': PIPELINE_VERSION, 'renderer_version': RENDERER_VERSION,
+            'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
+            'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
+            'markitdown': version('markitdown'),
+            'docling': version('docling') if config.PDF_LAYOUT_DOCLING_ENABLED else 'disabled'}
+
+
+def _cached_page(cached: dict | None, pdf_hash: str, number: int, identity: dict) -> dict | None:
     if not isinstance(cached, dict):
         return None
     text = cached.get('selected_text')
     row = cached.get('report')
     if (cached.get('pdf_sha256') != pdf_hash or cached.get('pipeline_version') != PIPELINE_VERSION
+            or cached.get('extraction_identity') != identity
+            or cached.get('renderer_version') != RENDERER_VERSION
             or not isinstance(text, str) or not isinstance(row, dict)
             or row.get('page') != number or row.get('disposition') not in {'accepted', 'legacy_route'}
             or cached.get('selected_sha256') != hashlib.sha256(text.encode()).hexdigest()):
@@ -392,7 +409,8 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
 
 def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8,
                  ai_repair_limit: int = 8, resume_pages: dict[int, dict] | None = None,
-                 layout_budget: dict | None = None) -> PdfExtraction:
+                 layout_budget: dict | None = None,
+                 layout_budget_checkpoint: Callable[[dict], None] | None = None) -> PdfExtraction:
     """Return complete source, review pages, legacy truncation flag, images, maps.
 
     The source is never cut to a prompt budget. The optional report distinguishes
@@ -400,17 +418,19 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     """
     report = quality_report if quality_report is not None else {}
     pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
-    report.update(version=pdf_quality.VERSION, pdf_sha256=pdf_hash,
+    identity = extraction_identity()
+    report.update(extraction_identity=identity, version=pdf_quality.VERSION, pdf_sha256=pdf_hash,
                   pipeline_version=PIPELINE_VERSION, renderer_version=RENDERER_VERSION,
                   pages=[], continuations=[], derived_descriptions={})
     local_budget = [max(0, local_ocr_limit)]
     ai_budget = [max(0, ai_repair_limit)]
-    layout_budget = copy.deepcopy(layout_budget) if layout_budget is not None else pdf_layout_adapters.new_budget()
+    layout_budget = pdf_layout_adapters.reconcile_budget(layout_budget)
+    report["layout_budget"] = layout_budget
     cached_pages = {}
     if resume_pages:
         with pymupdf.open(stream=pdf_bytes, filetype='pdf') as source:
             cached_pages = {number: cached for number in range(1, len(source) + 1)
-                            if (cached := _cached_page(resume_pages.get(number), pdf_hash, number)) is not None}
+                            if (cached := _cached_page(resume_pages.get(number), pdf_hash, number, identity)) is not None}
             unresolved_pages = [number for number in range(1, len(source) + 1) if number not in cached_pages]
         layout_pages = _pymupdf4llm_page_chunks(pdf_bytes, unresolved_pages)
     else:
@@ -454,7 +474,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             warnings.extend(selected_warnings)
             decision = pdf_layout.analyze_page(page, {'native': native, 'layout': layout_text})
             if decision['status'] == 'needs_review':
-                decision = pdf_layout_adapters.resolve_page(page, decision, layout_budget)
+                if layout_budget_checkpoint is None:
+                    decision = pdf_layout_adapters.resolve_page(page, decision, layout_budget)
+                else:
+                    decision = pdf_layout_adapters.resolve_page(page, decision, layout_budget,
+                        budget_checkpoint=layout_budget_checkpoint)
             if decision['status'] == 'accepted':
                 candidate = decision['selected_text']
                 _, checked_method, loss_warnings = pdf_quality.select_text(native, candidate)
@@ -485,7 +509,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                     "warnings": warnings, "evidence": evidence,
                                     "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": repairs,
                                     "candidates": {"native": native, "layout": layout_text},
-                                    "layout_decision": decision})
+                                    "layout_decision": decision, "graphic_evidence": graphic})
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None
@@ -534,6 +558,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     except Exception:  # noqa: BLE001 - retain other pages and record this failed fallback.
                         row["warnings"].append("vision_failed")
                         continue
+                    if not extra:
+                        row["warnings"].append("vision_empty")
                     if extra:
                         row["candidates"]["vision"] = extra
                         checks = pdf_quality.check_pairs(row["numeric_pairs"], extra)
@@ -565,7 +591,10 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         row['selected_text'] = text
         if not row.get('resumed'):
             status = row['layout_decision']['status']
-            row['disposition'] = ('needs_review' if status == 'needs_review'
+            failed_graphic = (row.get('graphic_evidence') and len(text.strip()) < _LOW_TEXT_THRESHOLD
+                              and any(w in {'vision_failed', 'vision_empty', 'vision_pair_mismatch'}
+                                      for w in row['warnings']))
+            row['disposition'] = ('needs_review' if status == 'needs_review' or failed_graphic
                                   else 'accepted' if status == 'accepted' else 'legacy_route')
         if not text.strip():
             row["warnings"].append("empty_page")
@@ -573,7 +602,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             review.append(i + 1)
         if i and pdf_quality.continuation(texts[i - 1], text):
             report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})
-    if not any(t.strip() for t in texts):
+    if not any(t.strip() for t in texts) and not any(row['disposition'] == 'needs_review' for row in report['pages']):
         raise ValueError("這份 PDF 抽不出任何文字內容；請確認 OCR 是否可用並檢查原稿。")
     full_text = render_source_pages(texts)
     report["review_pages"] = review

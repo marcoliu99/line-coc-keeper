@@ -61,3 +61,14 @@ atexit.register(shutil.rmtree, _ROOT, ignore_errors=True)
 
 def pytest_report_header(config):
     return f"storage sandbox: {_ROOT}\ndotenv: disabled (tests assert code defaults)"
+
+
+# Failed imports intentionally survive the caller. Keep these durable files
+# function-scoped, just as tests isolate their fake conversation repositories.
+import pytest  # noqa: E402 - storage environment must precede app imports.
+
+
+@pytest.fixture(autouse=True)
+def isolated_pdf_import_drafts(monkeypatch, tmp_path):
+    from app import pdf_ingestion_drafts
+    monkeypatch.setattr(pdf_ingestion_drafts, 'SCENARIO_LIBRARY_DIR', tmp_path / 'pdf-import-library')
