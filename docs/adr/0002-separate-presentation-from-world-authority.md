@@ -6,6 +6,8 @@ The Keeper remains free to narrate and let players acquire incidental objects. A
 
 An item can be a scenario-backed access item without being a clue. A clue reveals information; an access item enables an action when the use follows from the scenario and scene, including reasonable interpretation of imprecise translated text. The item's existence, possession, use, and information content are separate facts. Do not turn absence of an exact key–lock quote, or a merely mentioned bolt, into a permanent access gate.
 
+The operative boundary is generous interpretation of present actions and strict provenance for past events. Plausible action in the current scene may create a new committed event; ambiguous dialogue or model prose cannot retroactively create an acquisition, discovery, check, or movement. Reconcile genuine omissions from durable scenario or tool evidence.
+
 ## Considered options
 
 - Treat all delivered Keeper prose as canon: preserves continuity but compounds a single mistaken quantity, item, or location into future rulings.
