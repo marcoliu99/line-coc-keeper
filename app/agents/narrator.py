@@ -53,7 +53,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
                                      include_private_checks=False), rag_context, memory_context
     )
     narration_requirements = canonical_facts.requirements(
-        state, recipient_id=user_id, speaker_role=speaker_role
+        state, recipient_id=user_id, speaker_role=speaker_role, public_only=True
     )
     message.payload["narration_requirements"] = canonical_facts.as_payload(narration_requirements)
     authority_block = canonical_facts.prompt_block(narration_requirements)

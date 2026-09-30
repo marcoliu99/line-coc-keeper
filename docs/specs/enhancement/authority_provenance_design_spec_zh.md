@@ -99,3 +99,5 @@ Memory chunk 保留原話，另記 `memory_kind=conversation`、`authority=mixed
 保留 `record_established_fact`／`record_clue` 供遊戲與自然語言更正使用。無來源內容先標 `unverified`；若只是無礙劇情推進與機制的敘事連續性，可以保留描述，但不得據此確立關鍵線索、劇情資源或劇本限定的數量／位置，也不得授權有劇情或機制影響的工具呼叫。先前提到「教會紀錄」只證明守密人曾這樣說，不能因此認定文件是必找線索；普通附帶物件無須因此被禁止。
 
 審查修正：來源 API 使用封閉 RecordKind／AuthorityLevel 型別；新紀錄未知值拒絕，舊紀錄未知類型仍待驗證。
+
+PR #152 審查修正：公開敘事排除收件者私人權威；舊紀錄升格補持久 ID；發現收據隨 fact 保存；歷史來源驗證不受目前章節檢索窗口影響。

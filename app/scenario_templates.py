@@ -546,7 +546,7 @@ def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], li
     return variant, records
 
 
-def match_fact_source(state: Any, record_id: str, quote: str) -> dict[str, str] | None:
+def match_fact_source(state: Any, record_id: str, quote: str, *, historical: bool = False) -> dict[str, str] | None:
     """Resolve an exact quote to the active immutable scenario source.
 
     This establishes source identity, not whether a conditional discovery has
@@ -585,7 +585,7 @@ def match_fact_source(state: Any, record_id: str, quote: str) -> dict[str, str] 
                 content = record.get("public_text", "") + "\n" + record.get("kp_text", "")
                 chapter_id = record["chapter_id"]
                 visibility = record["visibility"]
-        if state.context_chapter_ids and chapter_id and chapter_id not in state.context_chapter_ids:
+        if not historical and state.context_chapter_ids and chapter_id and chapter_id not in state.context_chapter_ids:
             return None
         if quote not in content:
             return None
