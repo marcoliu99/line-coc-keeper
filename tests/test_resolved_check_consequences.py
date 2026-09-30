@@ -205,3 +205,43 @@ def test_major_wound_damage_and_con_check_commit_together(game):
         retry = _invoke(saved, "apply_resolved_check_damage", request)
     assert retry["damage"] == 5
     assert group_state.load_state(game.group_id).pending_checks["u1"]["check_id"] == saved.pending_checks["u1"]["check_id"]
+
+
+def test_autoroll_plan_runs_restricted_narrator_without_releasing_mutation_lock(game):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from app.agents import supervisor
+    from app.domain.models import AgentMessage, MechanicResult, StateDelta
+
+    game.autoroll_checks = True
+    game.characters['u1'].luck = 0
+    group_state.save_state(game)
+    context = AgentMessage({'state': game, 'user_id': 'u1', 'display_name': 'Alicia',
+                            'speaker_role': 'player', 'text': '避開床', 'resolved_location': None})
+
+    async def execute(_message):
+        _invoke(game, 'skill_check', {'investigator': 'Alicia', 'skill': '閃避',
+            'consequences': [{'key': 'bed:hit', 'kind': 'damage', 'when': 'failure',
+                'damage_expression': '1d6+2', 'damage_type': 'impact', 'source_quote': SOURCE}]})
+        return MechanicResult(False, 'check', [], StateDelta())
+
+    async def narrate(message):
+        assert message.payload['turn_kind'] == 'resolved_check_followup'
+        origin = message.payload['resolved_check_context']
+        result = _invoke(game, 'apply_resolved_check_damage', {
+            'investigator': 'Alicia', 'source_check_id': origin['check_id'],
+            'source_event_id': origin['event_id'], 'consequence_key': 'bed:hit',
+            'damage_expression': '1d6+2', 'damage_type': 'impact', 'cause': 'bed strike'})
+        assert result['ok']
+        return '床撞中你，傷害已結算。', [], []
+
+    handoff = AsyncMock()
+    with (patch.object(supervisor.context_builder, 'build_context', AsyncMock(return_value=context)),
+          patch.object(supervisor.executor, 'run_executor', side_effect=execute),
+          patch.object(supervisor.narrator, 'run_narrator', side_effect=narrate),
+          patch.object(supervisor.guard, 'enforce_narrative_safety', AsyncMock(side_effect=lambda _, text: text)),
+          patch('app.dice.random.randint', side_effect=[9, 9, 2])):
+        asyncio.run(supervisor.run_turn(game, 'u1', 'Alicia', '我要閃避', None, 'player', game.group_id, handoff=handoff))
+    assert group_state.load_state(game.group_id).characters['u1'].hp == 6
+    handoff.to_narration.assert_not_called()

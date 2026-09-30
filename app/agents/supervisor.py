@@ -143,11 +143,23 @@ async def run_turn(
     # 3. Route to Executor (Slow Path) or Skip to Narrator (Fast Path)
     mechanic_result: MechanicResult | None = None
     pending_reply = ''
+    autoroll_followups: list[dict[str, Any]] = []
     if intent == "GAMEPLAY_ACTION":
         _logger.info("Routing to ExecutorAgent (Slow Path)")
         pending_checks_before = deepcopy(state.pending_checks)
         pending_luck_before = deepcopy(state.pending_luck_decisions)
+        origins_before = set(state.check_consequence_origins)
         mechanic_result = await executor.run_executor(message)
+        autoroll_followups = [event for event in state.resolved_check_events
+            if event.get("event_id") not in origins_before
+            and event.get("event_id") in state.check_consequence_origins
+            and event.get("owner_id") == user_id
+            and event.get("timeline_id") == state.timeline_id]
+        if autoroll_followups:
+            turn_kind = "resolved_check_followup"
+            message.payload["turn_kind"] = turn_kind
+            resolved_check_context = autoroll_followups[0]
+            message.payload["resolved_check_context"] = resolved_check_context
         pending_reply = turn_handoff.prepare_narrator_handoff(
             state, user_id, mechanic_result, pending_checks_before, pending_luck_before,
             message.payload,
@@ -174,13 +186,26 @@ async def run_turn(
         observability.event("turn.handoff", phase="narration")
 
     # 5. Narrator Agent generates the final text
-    if pending_reply:
+    if pending_reply and not autoroll_followups:
         reply_text = pending_reply
         private_messages: list[tuple[str, str]] = []
         image_requests: list[tuple[str | None, int]] = []
         observability.event('narrator.pending_reused', status='skipped')
     else:
-        reply_text, private_messages, image_requests = await narrator.run_narrator(message)
+        if autoroll_followups:
+            replies = []
+            private_messages = []
+            image_requests = []
+            for result_context in autoroll_followups:
+                message.payload["resolved_check_context"] = result_context
+                part, private, images = await narrator.run_narrator(message)
+                replies.append(part)
+                private_messages.extend(private)
+                image_requests.extend(images)
+            reply_text = "\n\n".join(replies)
+            resolved_check_context = autoroll_followups[-1]
+        else:
+            reply_text, private_messages, image_requests = await narrator.run_narrator(message)
     if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []

@@ -10,9 +10,28 @@ import hashlib
 import json
 import re
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from app.models import Character, GroupState
+
+ConsequenceKind = Literal["damage", "check"]
+TriggerOutcome = Literal["success", "failure"]
+DamageType = Literal["impact", "fire", "cold", "poison", "other"]
+Difficulty = Literal["regular", "hard", "extreme"]
+
+
+class ConsequenceRule(TypedDict):
+    key: str
+    kind: ConsequenceKind
+    when: TriggerOutcome
+    source_quote: str
+    damage_type: NotRequired[DamageType]
+    damage_expression: NotRequired[str]
+    final_damage: NotRequired[int]
+    skill: NotRequired[str]
+    difficulty: NotRequired[Difficulty]
+    next_consequences: NotRequired[list[ConsequenceRule]]
+
 
 _KEY = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _EXPRESSION = re.compile(r"^(\d*)d(\d+)([+-]\d+)?$", re.IGNORECASE)
@@ -29,7 +48,7 @@ def canonical_expression(text: str) -> str:
 
 def normalize_authorizations(
     state: GroupState, raw: Any, *, nested: bool = False,
-) -> list[dict[str, Any]]:
+) -> list[ConsequenceRule]:
     """Validate a plan while the originating check is being registered.
 
     Exact source text proves the referenced rule is present in this active
@@ -43,7 +62,7 @@ def normalize_authorizations(
     scenario = _source_text(state.scenario_text)
     if not scenario and raw:
         raise ValueError("沒有劇本來源，不能預先授權檢定後果")
-    normalized: list[dict[str, Any]] = []
+    normalized: list[ConsequenceRule] = []
     seen: set[str] = set()
     for item in raw:
         if not isinstance(item, dict):
@@ -59,7 +78,7 @@ def normalize_authorizations(
         if not isinstance(quote, str) or len(quote.strip()) < 20 or _source_text(quote) not in scenario:
             raise ValueError("檢定後果的 source_quote 不在目前劇本中")
         seen.add(key)
-        rule: dict[str, Any] = {"key": key, "kind": kind, "when": when,
+        rule: ConsequenceRule = {"key": key, "kind": cast(ConsequenceKind, kind), "when": cast(TriggerOutcome, when),
                                 "source_quote": quote.strip()[:800]}
         if kind == "damage":
             damage_type = item.get("damage_type")
@@ -69,7 +88,7 @@ def normalize_authorizations(
             amount = item.get("final_damage")
             if (expression is None) == (amount is None):
                 raise ValueError("傷害規則必須只指定骰式或固定傷害其中一種")
-            rule["damage_type"] = damage_type
+            rule["damage_type"] = cast(DamageType, damage_type)
             if expression is not None:
                 if not isinstance(expression, str):
                     raise ValueError("傷害骰式無效")
@@ -94,7 +113,7 @@ def normalize_authorizations(
                 raise ValueError("後續檢定技能無效")
             if difficulty not in {"regular", "hard", "extreme"}:
                 raise ValueError("後續檢定難度無效")
-            rule.update({"skill": skill.strip(), "difficulty": difficulty})
+            rule.update({"skill": skill.strip(), "difficulty": cast(Difficulty, difficulty)})
             next_rules = item.get("next_consequences")
             if next_rules is not None:
                 if nested:
@@ -155,7 +174,7 @@ def request_fingerprint(arguments: dict[str, Any]) -> str:
 
 def authorized(
     state: GroupState, *, actor_id: str, investigator: str, check_id: str,
-    event_id: str, key: str, kind: str,
+    event_id: str, key: str, kind: ConsequenceKind,
 ) -> tuple[Character, dict[str, Any], dict[str, Any]]:
     origin = state.check_consequence_origins.get(event_id)
     if not origin or origin.get("check_id") != check_id:

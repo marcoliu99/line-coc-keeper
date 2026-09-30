@@ -73,3 +73,5 @@ Check A settles
 ## Implementation decision
 
 The originating `skill_check` validates and carries the plan before rolling. Manual, Luck, and autoroll paths preserve it; the settled event publishes a durable origin before Narrator follow-up. Both consequence tools verify this origin and the actual outcome. A free-text `cause` or `trigger_condition` cannot authorize a consequence.
+
+Review fixes: consequence kinds, triggers, damage types and difficulties are typed closed sets. Immediate autoroll settlement schedules restricted consequence narration within the same mutation ownership; cached pre-existing origins do not replay.
