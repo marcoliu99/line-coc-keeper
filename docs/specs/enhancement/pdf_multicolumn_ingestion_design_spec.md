@@ -2,7 +2,7 @@
 
 [繁體中文](pdf_multicolumn_ingestion_design_spec_zh.md) | [Docs index](../../README.md)
 
-Status: **backlog — design review in progress**. Base: `main_v2` at `7cef87c`. This proposal refines the external draft `pdf_ingestion_multicolumn_design_spec.md`; it does not change gameplay turn logic. “Approved scenario source” means published PDF-backed text, not an established world fact or an investigator discovery.
+Status: **implemented — PR review pending**. Base: `main_v2` at `7cef87c`. This proposal refines the external draft `pdf_ingestion_multicolumn_design_spec.md`; it does not change gameplay turn logic. “Approved scenario source” means published PDF-backed text, not an established world fact or an investigator discovery.
 
 ## Problem and measured baseline
 
@@ -72,7 +72,7 @@ The image-analysis request carries the page image or bounded region crops plus s
 
 ## Draft and publication
 
-Accepted pages and their diagnostics may be saved in an import draft. A page with unresolved reading order or source loss is blocked individually for repair. The repair route is automatic: run local geometry and, for a hard page, Docling first; only pages still ambiguous use the configured `ANALYSIS_PROVIDER` image capability. This provider is currently OpenAI, Anthropic, or Gemini; Codex is not enabled for PDF/image analysis. The provider result is a candidate and must pass source, order, and numeric gates. It cannot approve its own output. A newly published playable scenario requires every physical page to have a verified text or verified visual-only disposition; an existing published scenario stays available. Publication still uses the trusted scenario-source transaction and invalidates derived translation, records, and indexes when source text changes.
+Accepted pages and their diagnostics may be saved in an import draft. A page with unresolved reading order or source loss is blocked individually for repair. The repair route is automatic: run local geometry and, for a hard page, Docling first; only pages still ambiguous use the configured `ANALYSIS_PROVIDER` image capability. This provider is currently OpenAI, Anthropic, or Gemini; Codex is not enabled for PDF/image analysis. The provider result is a candidate and must pass source, order, and numeric gates. It cannot approve its own output. For this native-text first release, newly published scenarios require every applicable page to pass the reading-order gate. Existing scan, map, character-sheet and table routes retain their established checks and are explicitly labeled `legacy_route`; this label does not claim new layout verification. Empty graphic pages or failed graphic extraction cannot publish; an existing published scenario stays available. Publication still uses the trusted scenario-source transaction and invalidates derived translation, records, and indexes when source text changes.
 
 Provider timeout, invalid ordering, or budget exhaustion gets bounded retries and a resumable draft with an explicit page-level reason. A “continue import” control retries only unresolved pages against their stored PDF hash and pipeline version; already verified pages are reused. Retries never silently accept an invalid answer or restart the whole PDF. If source or pipeline identity changed, re-evaluate the affected pages rather than replaying stale results.
 
@@ -103,4 +103,45 @@ Record PDF hash, extraction pipeline version, renderer version, per-page candida
 - Image analysis can only order and locate existing block/candidate text. OCR/transcription remains in its current guarded route.
 - Local geometry and optional Docling run before image analysis. New image-analysis usage has its own finite, measured per-book budget.
 
-Implementation waits for final shared-understanding confirmation.
+Implementation was authorized by the explicit `$implement-spec` request.
+
+
+## Delivered interface and operational limits
+
+- `pdf_layout.analyze_page()` returns source blocks, word geometry, candidate alignment and an accepted/unresolved/not-applicable decision. `apply_order()` assembles only an exact permutation of source block text. Alignment uses a 0.94 minimum and 0.08 runner-up margin: exact formatting scores 1; repeated matches remain ambiguous. The three real golden pages and synthetic repeated/missing-token cases support this initial calibration; this is not a statistical corpus accuracy claim.
+- `pdf_layout_adapters.resolve_page()` tries optional local Docling, then an ordering-only `ANALYSIS_PROVIDER` response. Subprocess deadlines and zero SDK retries bound each attempt. Docling is opt-in and needs `requirements-pdf-layout.txt` plus pre-downloaded model artifacts; the normal server does not load it.
+- `pdf_loader.extract_text()` preserves its five-value return contract and accepts validated page caches and a persisted layout budget. `LayoutReviewRequired` carries the extraction and report for checkpointing before publication.
+- `/coc scenario continue`, `/coc scenario status` and `/coc scenario cancel` operate on a private conversation-bound draft. Discord provides a Continue button through the existing router and permission checks. Cancellation and publication share import identity and a conversation lock.
+- Defaults: 8 ordering requests, 4 distinct pages, 1 retry per page; image deadline 30 seconds, optional Docling deadline 45 seconds. These are conservative operating caps, not measured optimal settings. Continued imports retain cumulative usage; raising configured limits explicitly provides more allowance without restarting accepted pages. Exhausted drafts explain the required configuration change or cancellation.
+- Cache identity includes original PDF, pipeline/renderer and parser versions. Accepted page text, images, map data and derived-description provenance survive restart/continue. Failed pages do not reuse an accepted disposition.
+
+```mermaid
+flowchart TD
+    A[PDF upload / Continue] --> B[Reserve import identity]
+    B --> C[Reuse pages with matching source and parser identity]
+    C --> D[Native geometry / candidate checks]
+    D -->|ambiguous| E[Optional local Docling]
+    E -->|still ambiguous| F[Bounded ANALYSIS_PROVIDER ordering]
+    D --> G[Source and numeric gates]
+    E --> G
+    F --> G
+    G -->|unresolved| H[Durable draft + Continue button]
+    G -->|all applicable pages accepted| I[Identity check under lock]
+    I --> J[Publish source / chapters / indexes]
+    H --> A
+```
+
+## Evidence
+
+[Measured corpus and limitations](pdf_multicolumn_ingestion_validation.md). The corpus scan is geometry-only, not a claim that every page is publishable. Optional Docling model conversion remains unmeasured and is disabled by default. No gameplay request topology changed.
+
+
+## Implementation task graph
+
+| Ticket | Dependency | Delivered |
+| --- | --- | --- |
+| T1 geometry/arbitration | none | Source block order, candidate alignment, golden fixtures |
+| T2 optional adapters | T1 interface | Docling and bounded image ordering |
+| T3 resumable drafts | loader contract | Durable import ownership and routed controls |
+| T4 pipeline/publication | T1, T2, T3 | Source gates, identity cache, publication checkpoint |
+| T5 release validation | T4 | Corpus, API smoke, full checks, two-axis review |

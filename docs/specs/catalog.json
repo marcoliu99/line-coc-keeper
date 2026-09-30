@@ -877,12 +877,17 @@
       "title": "PDF multicolumn ingestion and reading-order arbitration",
       "zh": "PDF 多欄匯入與閱讀順序裁決",
       "category": "enhancement",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
+        "app/pdf_layout.py",
+        "app/pdf_layout_adapters.py",
         "app/pdf_loader.py",
-        "app/pdf_quality.py",
+        "app/pdf_ingestion_drafts.py",
         "app/scenario_library.py",
-        "tests/test_pdf_loader.py"
+        "tests/test_pdf_layout.py",
+        "tests/test_pdf_layout_adapters.py",
+        "tests/test_pdf_multicolumn_pipeline.py",
+        "tests/test_pdf_ingestion_drafts.py"
       ],
       "path": "docs/specs/enhancement/pdf_multicolumn_ingestion_design_spec.md",
       "zh_path": "docs/specs/enhancement/pdf_multicolumn_ingestion_design_spec_zh.md"

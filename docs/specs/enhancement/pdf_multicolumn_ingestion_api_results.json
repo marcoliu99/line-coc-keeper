@@ -1,0 +1,50 @@
+{
+  "provider": "openai",
+  "results": [
+    {
+      "file": "The_Haunting_Scenario_trimmed.pdf",
+      "page": 11,
+      "before": "needs_review",
+      "after": "accepted",
+      "block_count": 13,
+      "seconds": 5.996,
+      "diagnostics": [
+        "unsupported_spanning_region",
+        "layout ordering accepted: image"
+      ]
+    },
+    {
+      "file": "Dead Boarder.pdf",
+      "page": 12,
+      "before": "needs_review",
+      "after": "accepted",
+      "block_count": 13,
+      "seconds": 4.025,
+      "diagnostics": [
+        "unsupported_spanning_region",
+        "layout ordering accepted: image"
+      ]
+    },
+    {
+      "file": "The Lightless Beacon - Call of Cthulhu.pdf",
+      "page": 13,
+      "before": "needs_review",
+      "after": "accepted",
+      "block_count": 18,
+      "seconds": 12.707,
+      "diagnostics": [
+        "unsupported_spanning_region",
+        "layout ordering accepted: image"
+      ]
+    }
+  ],
+  "budget": {
+    "remaining_requests": 3,
+    "remaining_pages": 0,
+    "retries": 1,
+    "metrics": {
+      "image_calls": 3,
+      "image_seconds": 22.728429584065452
+    }
+  }
+}

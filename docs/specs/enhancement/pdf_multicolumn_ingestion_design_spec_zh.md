@@ -2,7 +2,7 @@
 
 [English](pdf_multicolumn_ingestion_design_spec.md) | [文件索引](../../README.md)
 
-狀態：**backlog — 設計討論中**。基準：`main_v2` 的 `7cef87c`。本規格修訂外部草稿 `pdf_ingestion_multicolumn_design_spec.md`；不修改玩家回合流程。「已核准劇本來源」指已發布、可回溯 PDF 的文字，並不等於已成立世界事實或玩家已發現的內容。
+狀態：**implemented — 等待 PR 審查**。基準：`main_v2` 的 `7cef87c`。本規格修訂外部草稿 `pdf_ingestion_multicolumn_design_spec.md`；不修改玩家回合流程。「已核准劇本來源」指已發布、可回溯 PDF 的文字，並不等於已成立世界事實或玩家已發現的內容。
 
 ## 問題與實測
 
@@ -103,4 +103,46 @@ provider 逾時、順序無效或額度用盡時，只有限次自動重試，�
 - 圖片分析只排序及定位現有候選文字；OCR／轉錄維持原有受限路徑。
 - 本地幾何與選用 Docling 先行，仍有歧義才用圖片分析；新增圖片分析用量設有獨立、可量測的每本上限。
 
-確認共同理解後才開始實作。
+使用者以 `$implement-spec` 明確授權實作。
+
+
+## 已交付介面與操作限制
+
+- `pdf_layout.analyze_page()` 回傳來源 block、word 幾何、候選配對及已接受／未解／不適用的裁決；`apply_order()` 只能組合原 block 文字的完整排列。近似配對門檻 0.94、領先差 0.08：格式正規化後完全匹配得分 1，重複匹配保持疑點。三個真實黃金頁與合成缺字／重複案例支援初始校準，不能推論全庫準確率。
+- `pdf_layout_adapters.resolve_page()` 先選用本地 Docling，仍不明確再要求 `ANALYSIS_PROVIDER` 只回傳排序。子程序期限及停用 SDK 重試限制每次成本。Docling 預設關閉，需安裝 `requirements-pdf-layout.txt` 並預下載模型；伺服器平常不載入。
+- `pdf_loader.extract_text()` 維持五個回傳值，新增已驗證頁快取與持久預算。`LayoutReviewRequired` 帶完整擷取結果及報告，供發布前保存草稿。
+- `/coc scenario continue`、`status`、`cancel` 操作群組綁定的私人草稿；Discord 繼續按鈕走原 router 與權限。取消及發布共用匯入身分與群組鎖。
+- 初始上限：8 次排序請求、4 個不同頁面、每頁 1 次重試；圖片分析期限 30 秒，選用 Docling 45 秒。這是保守操作上限，並非最佳值實測。續跑保留累計用量；明確提高設定上限才能補足額度，已接受頁不重跑。額度用完時提示調整設定或取消，不要求人工核對內容。
+- 快取核對 PDF、pipeline、renderer、parser 版本；續跑保留文字、圖片、地圖與衍生描述來源。失敗頁不得當作已接受重用。
+- 本版只新增原生文字多欄發布閘門。掃描、地圖、角色卡及表格保留既有檢查，明確標為 `legacy_route`，不代表已通過新閱讀順序驗證；空白圖像頁或圖像擷取失敗仍會阻擋發布。原文「每頁皆已驗證」應依此首版範圍理解，不能宣稱掃描頁的新能力。
+
+```mermaid
+flowchart TD
+    A[上傳 PDF / 繼續匯入] --> B[認領匯入身分]
+    B --> C[重用來源及 parser 身分相符頁]
+    C --> D[原生幾何 / 候選檢查]
+    D -->|歧義| E[選用本地 Docling]
+    E -->|仍有歧義| F[有界圖片分析排序]
+    D --> G[來源及數值閘門]
+    E --> G
+    F --> G
+    G -->|未解| H[持久草稿及繼續按鈕]
+    G -->|適用頁皆通過| I[鎖內核對匯入身分]
+    I --> J[發布來源 / 章節 / 索引]
+    H --> A
+```
+
+## 驗證
+
+[實測與限制](pdf_multicolumn_ingestion_validation_zh.md)。整本掃描只量測幾何適用性，不代表每頁可發布。Docling 真實模型轉換尚未量測，預設關閉；玩家回合沒有新增 LLM 呼叫。
+
+
+## 實作任務關係
+
+| 任務 | 依賴 | 交付 |
+| --- | --- | --- |
+| T1 幾何裁決 | 無 | 原 block 排序、候選配對、黃金測試 |
+| T2 選用 adapters | T1 介面 | Docling 與有界圖片排序 |
+| T3 可續草稿 | loader 契約 | 持久認領與 router 控制項 |
+| T4 發布整合 | T1、T2、T3 | 來源閘門、身分快取、發布 checkpoint |
+| T5 發布驗證 | T4 | 樣本、API smoke、完整檢查、雙軸審查 |
