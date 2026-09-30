@@ -59,3 +59,7 @@ Focused tests: numeric substitutions/additions/duplicates, stat swaps, skill swa
 ## Pending review
 
 Confirm this isolated benchmark plan. Implementation/install/model inference begins only after spec review per branch-spec-workflow. Unknown model compatibility and gold coverage are measurement risks, not assumptions to bypass.
+
+## Execution authorization — 2026-10-01
+
+User approved evidence-only execution. Compare Tesseract, en_PP-OCRv5_mobile_rec and PP-OCRv5_server_rec on identical real English inputs. Prioritize exact numeric/dice/skill quality over speed; defaults confer no production preference. Use PaddleOCR 3.7.0 and officially documented macOS CPU PaddlePaddle 3.3.0 in isolated Python 3.11 (project Python 3.14 is a deployment mismatch). Download models only in an explicit setup action without document inputs; inference requires explicit local model paths and OS network denial. Record package/model/cache identities and setup requirements. No cloud calls or application/runtime changes; no production integration.

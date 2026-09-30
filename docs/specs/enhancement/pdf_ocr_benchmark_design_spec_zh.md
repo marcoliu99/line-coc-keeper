@@ -58,3 +58,7 @@ A：真實 region 多種核心類型穩定改善且無新增严重錯誤；C：�
 測試包含替字／新增／重複數值、配對交換、技能交換、d100／+DB、零分母、partial gold、旋轉／座標、timeout／failure、不偷換引擎、彙總分類及報告脫敏。Committed tests 只用 synthetic。執行全 pytest、ruff0.16.8、mypy app、compileall app tests scripts/experiments、diff --check；記錄真實結果。規格階段尚未執行 benchmark 或 runtime gates。
 
 依 branch-spec-workflow，規格確認後才寫 benchmark、安裝及推論。模型相容性與 gold 覆蓋是待量測風險。
+
+## Execution authorization — 2026-10-01
+
+User approved evidence-only execution. Compare Tesseract, en_PP-OCRv5_mobile_rec and PP-OCRv5_server_rec on identical real English inputs. Prioritize exact numeric/dice/skill quality over speed; defaults confer no production preference. Use PaddleOCR 3.7.0 and officially documented macOS CPU PaddlePaddle 3.3.0 in isolated Python 3.11 (project Python 3.14 is a deployment mismatch). Download models only in an explicit setup action without document inputs; inference requires explicit local model paths and OS network denial. Record package/model/cache identities and setup requirements. No cloud calls or application/runtime changes; no production integration.
