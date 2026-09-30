@@ -81,6 +81,9 @@ class CanonicalFactTests(unittest.TestCase):
         facts = canonical_facts.project(load_state("facts"), speaker_role="player")
         self.assertEqual([fact.text for fact in facts], [text])
         self.assertEqual(facts[0].source_ref["trigger_event_id"], "check-1")
+        persisted = load_state("facts")
+        persisted.resolved_check_events = []
+        self.assertEqual([fact.text for fact in canonical_facts.project(persisted)], [text])
 
     def test_explicit_kp_canon_is_separate_from_ai_reply(self) -> None:
         state = load_state("facts")
@@ -110,6 +113,38 @@ class CanonicalFactTests(unittest.TestCase):
         self.assertEqual(len(canonical_facts.project(state, recipient_id="u1")), 1)
         self.assertEqual(canonical_facts.project(state, recipient_id="u2"), [])
 
+    def test_legacy_promotion_assigns_a_durable_id(self) -> None:
+        state = load_state("facts")
+        state.established_facts = [{"text": state.scenario_text, "visibility": "kp_only"}]
+        save_state(state)
+        self.state = state
+        result = self._record(state.scenario_text, source_record_id="scenario-text",
+                              source_quote=state.scenario_text, source_condition="unconditional")
+        self.assertTrue(result["promoted"])
+        facts = canonical_facts.project(load_state("facts"), speaker_role="kp_assistant")
+        self.assertTrue(facts[0].fact_id.startswith("fact:"))
+
+    def test_historical_source_survives_chapter_window(self) -> None:
+        state = load_state("facts")
+        state.active_chapter_id = "ch1"
+        source = scenario_templates.match_fact_source(state, "scenario-text", state.scenario_text)
+        assert source is not None
+        state.established_facts = [{"fact_id": "f", "text": state.scenario_text,
+            "verification_status": "verified", "source_kind": "scenario", "source_ref": source}]
+        state.context_chapter_ids = ["ch2"]
+        self.assertIsNone(scenario_templates.match_fact_source(state, "scenario-text", state.scenario_text))
+        self.assertEqual(len(canonical_facts.project(state)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_public_narration_excludes_private_recipient_fact():
+    from app.services.canonical_facts import requirements
+    state = GroupState(group_id='scope', timeline_id='t')
+    state.log = [{'role': 'user', 'content': 'secret', 'record_kind': 'kp_canon',
+                  'authority': 'authoritative', 'timeline_id': 't', 'turn_id': '1',
+                  'visibility': 'private', 'audience': 'private', 'recipient_ids': ['u']}]
+    assert requirements(state, recipient_id='u').authoritative_facts
+    assert not requirements(state, recipient_id='u', public_only=True).authoritative_facts

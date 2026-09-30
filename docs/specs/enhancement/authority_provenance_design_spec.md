@@ -104,3 +104,7 @@ Do not delete conversation history, shorten narration, remove ordinary sensory c
 ## Resolved recording boundary
 
 Keep the recording behavior of `record_established_fact` and `record_clue` for play and natural-language correction. An unsourced entry stays `unverified`. It may preserve harmless narrative continuity when doing so cannot advance the plot or change mechanics. It cannot establish a consequential clue, plot resource, scenario-constrained quantity or location, and cannot authorize a consequential later tool call until promoted from a verifiable source. A prior mention of “church records” therefore remains part of what the Keeper said, not evidence that those records are a required lead. Incidental objects may exist without such promotion.
+
+Review correction: provenance APIs use closed RecordKind/AuthorityLevel types; invalid new metadata is rejected and unknown legacy kinds remain unverified.
+
+PR #152 review fixes: public narration excludes recipient-private authority; promoted legacy records receive durable IDs; verified discovery receipts persist with facts; historical source validation ignores the active chapter retrieval window.
