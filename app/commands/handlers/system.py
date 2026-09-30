@@ -50,6 +50,7 @@ from app.repositories.group_state import (
 )
 from app.services import (
     correction_adjudication,
+    history_authority,
     mutation_admission,
 )
 
@@ -909,8 +910,16 @@ async def handle_system_command(
                     if opening_check and opening_check["type"] == "skill":
                         for char in state.characters.values():
                             keeper.resolve_skill_value(char, opening_check["skill"])
-                    state.log.append({"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"})
-                    state.log.append({"role": "assistant", "content": opening_text})
+                    turn_id = str(observability.current_context().get("turn_id") or uuid4().hex)
+                    state.log.append(history_authority.annotate_entry(
+                        {"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"},
+                        turn_id=turn_id, timeline_id=state.timeline_id,
+                        record_kind="opening_instruction", authority="claim",
+                    ))
+                    state.log.append(history_authority.annotate_entry(
+                        {"role": "assistant", "content": opening_text},
+                        turn_id=turn_id, timeline_id=state.timeline_id,
+                    ))
                     state.game_started = True
                     save_state(state)
             if opening_blocker:

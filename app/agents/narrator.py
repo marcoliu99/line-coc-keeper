@@ -76,7 +76,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         dynamic_system += "\n\n" + prompt_config.PURE_ROLEPLAY_BLOCK
 
     new_message = f"{display_name}：{text}" + message.payload.get("correction_context", keeper._correction_context_message(state))
-    history = state.log
+    history = session.history(state.log)
 
     async def _no_tools(_name: str, _tool_input: dict) -> dict:
         # Narrator has no tools per the design spec — this is never actually

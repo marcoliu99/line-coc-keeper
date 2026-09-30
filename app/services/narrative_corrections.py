@@ -131,7 +131,13 @@ def record_ruling(
         report["resolution"] = resolution
         judged = "已由守秘人依證據更正" if keeper_basis else "已由 KP 更正"
         message = f"【敘事更正 #{report['id']}】先前訊息 {report['target_message_id']} {judged}：{resolution}"
-        state.log.append({"role": "assistant", "content": message})
+        from app.services import history_authority
+
+        state.log.append(history_authority.annotate_entry(
+            {"role": "assistant", "content": message, "fact_refs": [f"correction:{report['id']}"]},
+            turn_id=report.get("turn_id", report["id"]), timeline_id=state.timeline_id,
+            record_kind="narrative_correction", authority="presentation",
+        ))
         # A cached provider conversation may still contain the uncorrected
         # narration. Rebuild the next turn from the corrected local log.
         state.openai_previous_response_id = ""

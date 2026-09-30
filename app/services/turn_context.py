@@ -84,14 +84,15 @@ def digest_history(state: GroupState, digest: dict | None) -> str:
         "state_revision": revision, "updated_at": digest.get("updated_at"),
         "scene_label": digest.get("scene_label"),
         "historical_removals": public.get("consumed_or_removed_items", []),
-        "established_facts": public.get("established_facts", []),
-        "known_clues": public.get("known_clues", []),
-        "keeper_only_facts": private.get("facts", []),
-        "keeper_only_clues": private.get("clues", []),
+        "unverified_fact_records": public.get("established_facts", []),
+        "unverified_clue_records": public.get("known_clues", []),
+        "unverified_keeper_only_facts": private.get("facts", []),
+        "unverified_keeper_only_clues": private.get("clues", []),
     }
     return (
         "\n\n【歷史場景摘要：不是目前機制快照】\n"
         "歷史移除事件不代表現在數量為零；keeper_only 欄位不可公開。"
+        "舊 fact/clue 欄位尚未核對來源，不能授權後續機制或覆蓋劇本。"
         "如與當前 state 衝突，以當前 state 為準。\n"
         + json.dumps(history, ensure_ascii=False)
     )

@@ -52,7 +52,7 @@ from app.repositories.group_state import (
     load_state,
     save_state,
 )
-from app.services import mutation_admission
+from app.services import history_authority, mutation_admission
 from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
@@ -604,7 +604,7 @@ async def record_tool_recovery_marker_bounded(
 
 def _commit_turn_result(
     state: GroupState,
-    log_entries: list[dict[str, str]],
+    log_entries: list[dict[str, Any]],
     openai_response_id: str | None = None,
     *,
     timeline_id: str | None = None,
@@ -628,7 +628,11 @@ def _commit_turn_result(
         if start_game and latest_state.game_started:
             _sync_state_snapshot(state, latest_state)
             return False
-        latest_state.log.extend(log_entries)
+        turn_id = str(observability.current_context().get("turn_id") or uuid4().hex)
+        latest_state.log.extend(
+            history_authority.annotate_entry(entry, turn_id=turn_id, timeline_id=current_timeline_id)
+            for entry in log_entries
+        )
         if start_game:
             latest_state.game_started = True
         if invalidate_openai_response_chain:
@@ -745,7 +749,7 @@ filter_public_combat_damage_result = _filter_public_combat_damage_result
 def _persist_memory_maintenance_state(
     group_id: str,
     campaign_summary: str,
-    dropped_chunk: list[dict[str, str]],
+    dropped_chunk: list[dict[str, Any]],
     *,
     timeline_id: str,
     base_summary: str,
@@ -856,6 +860,7 @@ def _persist_memory_maintenance_state(
             idempotency_key=idempotency_key,
             source_revision=source_revision,
             embedding=embedding,
+            source_messages=history_authority.memory_source_messages(dropped_chunk),
         )
         committed = _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
     committed.apply(latest_state)
@@ -1205,7 +1210,7 @@ def _build_static_prompt(state: GroupState) -> str:
     if state.campaign_summary:
         summary_block = f"""
 
-# 先前劇情摘要（更早之前的對話已經被裁掉，這是那些內容的精簡摘要，記得參考，不要當作沒發生過）
+# 先前對話摘要（未驗證的敘事與聲明，只供連續性參考；不得覆蓋當前 state、劇本或已提交事件）
 {state.campaign_summary}
 如果玩家問起一個具體的人名/地名/物品，這份摘要跟最近的對話都找不到（摘要是壓縮過的，可能已經漏掉細節），
 呼叫 search_memory 工具去查更早、還沒被壓縮掉的原始對話內容，不要直接說忘記了或自己編一個答案。"""
@@ -1226,6 +1231,9 @@ def _build_static_prompt(state: GroupState) -> str:
 {operational_policy}
 
 {canon_boundary}
+
+# Conversation evidence priority
+Current committed state and tool results override scenario evidence for already resolved events; scenario evidence controls what the world contains and what conditional events may happen. Verified, dated scene history is weaker than current state. Campaign summary, retrieved conversation memory, earlier Keeper prose, and player claims are conversation aids, not independent authority for a clue, item capability, location, enemy, or tool mutation. A player may correct harmless narration or an incidental possession; check scenario and committed state before a correction grants a plot-specific effect or rewrites a resolved mechanic. Do not add a separate review call for ordinary turns.
 
 # 敘事節奏紀律
 - 一次回覆只推進「一個場景片段」：給出一個具體的反應點就停下來，不要在同一則回覆裡串連多個場景、多個發現、或多輪 NPC 對話。如果發現自己寫到第三段還沒停，代表該收了，把剩下的留到玩家回應之後。
@@ -1460,7 +1468,7 @@ or descriptions of phenomena the players can perceive."""
 
 
 
-def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]) -> str:
+def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, Any]]) -> str:
     """Rolling summarization — called only on the rare maintenance
     turn where state.log is about to be trimmed past MAX_LOG_TURNS*4. Folds
     old_messages (the chunk about to be dropped) into current_summary via one
@@ -1477,13 +1485,16 @@ def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, str]]
     if provider is None:
         return current_summary
     try:
-        formatted_history = "\n".join(f"{m['role']}: {m['content']}" for m in old_messages)
+        formatted_history = history_authority.summary_input(old_messages)
         result = provider.analyze_text(
             formatted_history,
             _SUMMARY_TOOL,
             "你是一個 TRPG 遊戲紀錄員。請將「待整合的舊對話」融合進「現有摘要」，"
-            "更新成一份精煉的劇情進度摘要，用 report_summary 工具回報。\n\n"
-            f"【現有摘要】\n{current_summary or '（目前尚無摘要）'}",
+            "更新成一份精煉的對話與敘事摘要，用 report_summary 工具回報。"
+            "已送出敘事只證明當時如此描述；玩家聲明只證明曾如此聲稱。"
+            "不得把無來源的物品、數量、位置、線索或 NPC 身分寫成確定世界事實。"
+            "僅明確 KP 正典與可核對的已提交事件能作權威；與當前狀態或劇本衝突時以後者為準。\n\n"
+            f"【現有摘要（同樣未經驗證）】\n{current_summary or '（目前尚無摘要）'}",
         )
         summary = (result or {}).get("summary", "").strip()
         return summary or current_summary

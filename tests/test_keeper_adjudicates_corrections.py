@@ -39,6 +39,25 @@ def _model(**ruling) -> SimpleNamespace:
 
 
 class RulingTests(unittest.TestCase):
+    def test_old_unsourced_fact_does_not_authorize_a_correction(self):
+        state = _state()
+        state.established_facts.append({"text": "抽屜裡有手槍", "visibility": "public"})
+        fake = _model(decision="approve", evidence=["narration", "fact:1"], reason="舊紀錄如此說",
+                      resolution="抽屜裡有手槍", claims=[{"kind": "fact", "name": "抽屜裡有手槍"}])
+        with use_fake_provider(fake, role="analysis"):
+            self.assertEqual(correction_adjudication.rule(state, _report()).decision, "undecided")
+        self.assertNotIn("[fact:1]", fake.analyze_text.call_args.args[0])
+
+    def test_old_log_alone_proves_utterance_but_not_world_truth(self):
+        state = _state()
+        state.characters.clear()
+        state.characters_by_id.clear()
+        state.active_character_id_by_user.clear()
+        state.log.append({"role": "assistant", "content": "抽屜裡有手槍"})
+        fake = _model(decision="reject", evidence=["log:1"], reason="舊敘事曾這樣說")
+        with use_fake_provider(fake, role="analysis"):
+            self.assertEqual(correction_adjudication.rule(state, _report()).decision, "undecided")
+
     def test_an_approval_claiming_an_item_nobody_holds_becomes_undecided(self):
         fake = _model(
             decision="approve", evidence=["narration"], reason="敘事漏寫了手槍",
@@ -76,9 +95,11 @@ class RulingTests(unittest.TestCase):
     def test_an_approval_stands_only_on_public_state_that_exists(self):
         state = _state()
         state.characters["u1"].status_tags.append("受傷")
-        state.known_clues += [{"text": "地下室的鑰匙", "visibility": "public"},
+        state.known_clues += [{"text": "地下室的鑰匙", "visibility": "public",
+                               "verification_status": "verified", "source_ref": "scenario:clue-1"},
                               {"text": "教團首領是神父", "visibility": "kp_only"}]
-        state.established_facts.append({"text": "圖書館晚上關門", "visibility": "public"})
+        state.established_facts.append({"text": "圖書館晚上關門", "visibility": "public",
+                                        "verification_status": "verified", "source_ref": "scenario:fact-1"})
         holds = [{"kind": "item", "name": "手電筒", "investigator": "Ada"},
                  {"kind": "status", "name": "受傷", "investigator": "Ada"},
                  {"kind": "clue", "name": "地下室的鑰匙"}, {"kind": "fact", "name": "圖書館晚上關門"}]
@@ -101,7 +122,7 @@ class RulingTests(unittest.TestCase):
                 patch.object(scenario_templates, "search_for_state", return_value=(None, rows)):
             self.assertEqual(correction_adjudication.rule(state, _report()).decision, "reject")
         packet = fake.analyze_text.call_args.args[0]
-        self.assertIn("[log:1] 抽屜裡只有灰塵。", packet)
+        self.assertIn("[log:1] （僅證明當時曾這樣說，不證明世界真相）抽屜裡只有灰塵。", packet)
         self.assertIn("[scenario:1] （第 3 頁）書房抽屜是空的。", packet)
 
     def test_malformed_output_or_a_provider_error_is_undecided(self):
@@ -147,7 +168,7 @@ class RulingTests(unittest.TestCase):
         state.current_room_id["u1"] = "study"
         state.log += [{"role": "assistant", "content": f"第 {n} 段"} for n in range(20)]
         state.log[5] = {"role": "assistant", "content": "前情。你打開抽屜，裡面只有灰塵。後續。"}
-        fake = _model(decision="reject", evidence=["narration"], reason="x")
+        fake = _model(decision="reject", evidence=["narration", "sheet:Ada"], reason="角色卡仍可核對")
         with use_fake_provider(fake, role="analysis"):
             correction_adjudication.rule(state, _report())
         packet = fake.analyze_text.call_args.args[0]
@@ -161,7 +182,7 @@ class RulingTests(unittest.TestCase):
     def test_a_failed_scenario_search_still_rules_on_the_rest(self):
         state = _state()
         state.scenario_text = "劇本全文"
-        fake = _model(decision="reject", evidence=["narration"], reason="x")
+        fake = _model(decision="reject", evidence=["narration", "sheet:Ada"], reason="角色卡仍可核對")
         with use_fake_provider(fake, role="analysis"), \
                 patch.object(scenario_templates, "search_for_state", side_effect=RuntimeError("index down")):
             self.assertEqual(correction_adjudication.rule(state, _report()).decision, "reject")

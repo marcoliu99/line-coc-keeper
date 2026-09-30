@@ -4,7 +4,7 @@
 
 ## 狀態與問題
 
-分類：`enhancement`。狀態：**backlog，等待整體設計確認**。依 `main_v2` 的 `7cef87c` 核對。
+分類：`enhancement`。狀態：**partial，阻止放大階段已實作；正典投影、交付契約及更正／歷史整理仍待完成**。依 `main_v2` 的 `7cef87c` 核對。
 
 目前 `GroupState.log` 的玩家回合、KP 正典與核准更正多半只存 `role/content`；摘要與 Memory RAG 又把它們攤平成同一段文字。一次錯誤敘事因此可能被摘要或檢索帶回，變成下一次工具呼叫的假依據。`record_established_fact`／`record_clue` 目前不驗證來源，其紀錄也會進入 Scene Digest。無真人 KP 的更正裁決還能引用附近的 `log:N`；那只能證明「當時說過」，不能證明世界真相。
 
@@ -70,6 +70,8 @@ Memory chunk 保留原話，另記 `memory_kind=conversation`、`authority=mixed
 4. **更正與歷史整理**：自然語言場外入口先於移動解析、沿用真人／AI 裁決權限、持久 supersession、舊收據配對、衝突標記與摘要重建。保留 `/coc correct`。
 
 每項各用獨立分支／PR並更新規格狀態與證據。PR1 不等 PR4 才降低舊摘要與記憶的權威。若一般回合 provider 呼叫數增加，須量測並審查。
+
+阻止放大分支已為新 log 加來源標記，向各對話 provider 投影簡短權威標籤，將舊摘要與 Memory RAG 標為未驗證對話，在新記憶片段保存來源訊息標記，並阻止無來源 fact/clue 或原始 log 引用單獨授權更正裁決。持久來源驗證與正面升格留待正典投影階段；玩家現有更正流程仍可使用。
 
 ## 驗收
 

@@ -427,8 +427,12 @@ class OpeningCommitTests(unittest.TestCase):
             ))
             saved = load_state("start-commit")
             self.assertTrue(saved.game_started)
-            self.assertEqual(saved.log, entries)
+            self.assertEqual(
+                [{key: entry[key] for key in ("role", "content")} for entry in saved.log], entries
+            )
+            self.assertEqual([entry["authority"] for entry in saved.log], ["claim", "presentation"])
+            committed_log = saved.log
             self.assertFalse(keeper._commit_turn_result(
                 state, entries, timeline_id="timeline-current", start_game=True,
             ))
-            self.assertEqual(load_state("start-commit").log, entries)
+            self.assertEqual(load_state("start-commit").log, committed_log)

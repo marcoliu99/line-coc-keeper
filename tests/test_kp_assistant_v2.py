@@ -311,7 +311,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.pending_checks, {})
         self.assertEqual(len(saved.log), 2)
         self.assertEqual(saved.log[0]["role"], "user")
-        self.assertEqual(saved.log[1], {"role": "assistant", "content": "Marco 滿臉是血，需要做理智檢定。"})
+        self.assertEqual(saved.log[1]["content"], "Marco 滿臉是血，需要做理智檢定。")
+        self.assertEqual(saved.log[1]["authority"], "presentation")
+        self.assertEqual(saved.log[0]["record_kind"], "kp_workflow")
         canonical_message = saved.log[0]["content"]
         self.assertTrue(canonical_message.startswith(f"[KP Assistant] {message_text}"))
         self.assertIn("[DETERMINISTIC GAME WORKFLOW]", canonical_message)
@@ -1316,10 +1318,12 @@ class KPManualCanonTests(unittest.IsolatedAsyncioTestCase):
             store.put(state)
             await run_assistant_turn(state, "kp", "KP", "!門後沒有第二隻怪物", speaker_role="kp_assistant")
             saved = store.get("g")
-        self.assertEqual(saved.log, [
+        self.assertEqual([{key: entry[key] for key in ("role", "content")} for entry in saved.log], [
             {"role": "user", "content": "[KP Assistant] 門後沒有第二隻怪物"},
             {"role": "assistant", "content": "Keeper 回覆"},
         ])
+        self.assertEqual([entry["authority"] for entry in saved.log], ["authoritative", "presentation"])
+        self.assertEqual([entry["record_kind"] for entry in saved.log], ["kp_canon", "narrative"])
         self.assertEqual(saved.kp_ooc_log, [])
         self.assertEqual(saved.openai_previous_response_id, "manual-response")
         self.assertEqual(fake_provider.calls[0][0][4], "[KP Assistant] 門後沒有第二隻怪物")

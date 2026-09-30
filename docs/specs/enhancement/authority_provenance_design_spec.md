@@ -4,7 +4,7 @@
 
 ## Status and problem
 
-Category: `enhancement`. Status: **backlog, awaiting overall design confirmation**. Audited against `main_v2` at `7cef87c`.
+Category: `enhancement`. Status: **partial — stop-amplification phase implemented; canonical projection, delivery contract, and correction/reconciliation remain**. Audited against `main_v2` at `7cef87c`.
 
 `GroupState.log` currently stores mostly `role/content` for player turns, KP canon, and approved corrections. The same flattened text feeds the rolling summary and Memory RAG. A mistaken narration can therefore return as apparent evidence and be repeated or used to justify a tool call. `record_established_fact` and `record_clue` currently accept text without checking a source; their rows also enter Scene Digest. The correction adjudicator can cite nearby `log:N` as evidence, even though it proves only what was said.
 
@@ -70,6 +70,8 @@ Memory chunks retain the original conversation wording plus `memory_kind=convers
 4. **Correction and reconciliation:** natural-language OOC admission before map parsing, existing human/AI adjudication rules, durable supersession, legacy receipt matching, conflict markers, and conversation summary rebuild. Preserve the explicit `/coc correct` route.
 
 Each PR gets its own branch and spec status/evidence update. PR1 must not wait for PR4 to lower the authority of old summary and memory. Changes to the normal-turn provider call count require explicit measurement and review.
+
+The stop-amplification branch stamps new log entries, projects compact authority labels through every conversation provider, frames old summaries and Memory RAG as unverified conversation, stores source-message metadata in new memory chunks, and stops unsourced fact/clue rows or raw log citations from independently authorizing correction rulings. Durable source verification and positive promotion are reserved for the canonical-projection phase. Existing player correction flows remain available.
 
 ## Verification
 
