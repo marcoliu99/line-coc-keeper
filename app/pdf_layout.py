@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from typing import Any, Literal, NotRequired, TypedDict
 
 LayoutStatus = Literal['accepted', 'needs_review', 'not_applicable']
+LayoutKind = Literal['other', 'two_columns']
 BlockRole = Literal['body', 'margin', 'spanning', 'heading', 'full_width']
 BlockColumn = Literal['left', 'right']
 
@@ -25,7 +26,7 @@ class LayoutDecision(TypedDict):
     blocks: list[LayoutBlock]
     ordered_ids: list[str]
     diagnostics: list[str]
-    layout_kind: str
+    layout_kind: LayoutKind
     pipeline_version: str
     coordinate_space: NotRequired[str]
     rotation: NotRequired[int]

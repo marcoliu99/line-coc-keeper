@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Iterable
 from importlib import metadata
-from typing import Any, cast
+from typing import Any, Literal, TypedDict, cast
 
 import pymupdf
 
@@ -32,6 +32,18 @@ _logger = logging.getLogger(__name__)
 PIPELINE_VERSION = 'multicolumn-v1'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
+PageDisposition = Literal['accepted', 'needs_review', 'legacy_route']
+
+
+class PagePublication(TypedDict):
+    disposition: PageDisposition
+
+
+def _publication_disposition(status: pdf_layout.LayoutStatus, failed_graphic: bool) -> PageDisposition:
+    if status == 'needs_review' or failed_graphic:
+        return 'needs_review'
+    return 'accepted' if status == 'accepted' else 'legacy_route'
+
 
 
 class LayoutReviewRequired(ValueError):
@@ -594,8 +606,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             failed_graphic = (row.get('graphic_evidence') and len(text.strip()) < _LOW_TEXT_THRESHOLD
                               and any(w in {'vision_failed', 'vision_empty', 'vision_pair_mismatch'}
                                       for w in row['warnings']))
-            row['disposition'] = ('needs_review' if status == 'needs_review' or failed_graphic
-                                  else 'accepted' if status == 'accepted' else 'legacy_route')
+            publication: PagePublication = {'disposition': _publication_disposition(status, bool(failed_graphic))}
+            row.update(publication)
         if not text.strip():
             row["warnings"].append("empty_page")
         if any(w not in {"native_two_columns", "layout_unavailable"} for w in row["warnings"]):
