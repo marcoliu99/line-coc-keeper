@@ -8,6 +8,7 @@ from typing import Any, Literal
 from app.keeper_tools import character as character_handlers
 from app.keeper_tools import checks as check_handlers
 from app.keeper_tools import combat as combat_handlers
+from app.keeper_tools import consequences as consequence_handlers
 from app.keeper_tools import dice as dice_handlers
 from app.keeper_tools import inventory as inventory_handlers
 from app.keeper_tools import messaging as messaging_handlers
@@ -26,11 +27,55 @@ class ToolCall:
     image_requests: list[tuple[str | None, int]]
     speaker_role: SpeakerRole
     name: str
+    actor_id: str = ""
 
 
 def _summary_dispatch_rejected(call: ToolCall) -> dict[str, Any]:
     """The summary schema is for log compression, not Keeper tool dispatch."""
     return {"ok": False, "error": f"未知工具 {call.name}"}
+
+
+_FOLLOWUP_CONSEQUENCE_SCHEMA: dict[str, Any] = {
+    "type": "array", "maxItems": 4,
+    "description": (
+        "劇本明確規定此檢定結果會立刻觸發傷害或另一個檢定時，在原檢定建立時宣告。"
+        "source_quote 須逐字出自目前劇本；when 是此檢定最終成功或失敗。"
+        "傷害填 damage_expression 或固定 final_damage；後續檢定填 skill/difficulty。"
+        "Dodge 失敗才受傷等連鎖規則可放在 check 的 next_consequences。沒有明確依據就省略。"
+    ),
+    "items": {
+        "type": "object",
+        "properties": {
+            "key": {"type": "string", "description": "此來源檢定內唯一的後果鍵，例如 bed:dodge"},
+            "kind": {"type": "string", "enum": ["damage", "check"]},
+            "when": {"type": "string", "enum": ["success", "failure"]},
+            "source_quote": {"type": "string", "description": "劇本中直接支持此後果的原句，包含骰式（若有）"},
+            "damage_expression": {"type": "string"},
+            "final_damage": {"type": "integer"},
+            "damage_type": {"type": "string", "enum": ["impact", "fire", "cold", "poison", "other"]},
+            "skill": {"type": "string"},
+            "difficulty": {"type": "string", "enum": ["regular", "hard", "extreme"]},
+            "next_consequences": {
+                "type": "array", "maxItems": 4,
+                "description": "後續檢定的結果再觸發的規則；例如 Dodge 失敗才承受撞擊傷害",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["damage"]},
+                        "when": {"type": "string", "enum": ["success", "failure"]},
+                        "source_quote": {"type": "string"},
+                        "damage_expression": {"type": "string"},
+                        "final_damage": {"type": "integer"},
+                        "damage_type": {"type": "string", "enum": ["impact", "fire", "cold", "poison", "other"]},
+                    },
+                    "required": ["key", "kind", "when", "source_quote", "damage_type"],
+                },
+            },
+        },
+        "required": ["key", "kind", "when", "source_quote"],
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -46,6 +91,7 @@ class ToolSpec:
     creates_check: bool = False
     opening: bool = False
     information_query: bool = False
+    followup_only: bool = False
 
 
 _SPECS = (
@@ -169,6 +215,7 @@ _SPECS = (
                             "type": "string",
                             "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事；不要放完整劇本或 prompt。",
                         },
+                        "consequences": _FOLLOWUP_CONSEQUENCE_SCHEMA,
                         "opposed": opposed_checks.SCHEMA,
                         "action_basis": {"type": "string", "description": "目前物件狀態、適用規則引用與觸發轉變；不改寫玩家宣告。對抗檢定必填，最多 600 字。"},
                     },
@@ -420,6 +467,63 @@ _SPECS = (
                 },
             },
         handler=character_handlers.adjust_character,
+    ),
+    ToolSpec(
+        schema={
+            "name": "apply_resolved_check_damage",
+            "description": (
+                "提交已結算檢定觸發的非戰鬥傷害。須引用來源 check/event 和預先授權的 consequence_key；"
+                "若給 damage_expression，Python 一次擲骰並原子扣 HP；若給 final_damage，必須是來源"
+                "預先授權的固定值。重試只回傳原收據，不重擲或重扣。不可代替戰鬥傷害工具。"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "investigator": {"type": "string"},
+                    "damage_expression": {"type": "string"},
+                    "final_damage": {"type": "integer"},
+                    "damage_type": {"type": "string", "enum": ["impact", "fire", "cold", "poison", "other"]},
+                    "source_check_id": {"type": "string"},
+                    "source_event_id": {"type": "string"},
+                    "consequence_key": {"type": "string"},
+                    "cause": {"type": "string"},
+                },
+                "required": ["investigator", "damage_type", "source_check_id", "source_event_id",
+                             "consequence_key", "cause"],
+            },
+        },
+        handler=consequence_handlers.apply_resolved_check_damage,
+        resolved_check_followup=True,
+        followup_only=True,
+    ),
+    ToolSpec(
+        schema={
+            "name": "create_triggered_check",
+            "description": (
+                "建立已結算檢定依劇本觸發的新檢定，例如 Spot Hidden 成功後的 Dodge。"
+                "必須引用來源 check/event 和預先授權的 consequence_key；只建立玩家 pending，"
+                "即使 autoroll 開啟也不代骰。不能重建原檢定。"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "investigator": {"type": "string"},
+                    "skill": {"type": "string"},
+                    "difficulty": {"type": "string", "enum": ["regular", "hard", "extreme"]},
+                    "trigger_check_id": {"type": "string"},
+                    "trigger_event_id": {"type": "string"},
+                    "trigger_condition": {"type": "string"},
+                    "consequence_key": {"type": "string"},
+                    "action_context": {"type": "string"},
+                },
+                "required": ["investigator", "skill", "difficulty", "trigger_check_id",
+                             "trigger_event_id", "trigger_condition", "consequence_key", "action_context"],
+            },
+        },
+        handler=consequence_handlers.create_triggered_check,
+        resolved_check_followup=True,
+        creates_check=True,
+        followup_only=True,
     ),
     ToolSpec(
         schema={
@@ -1069,7 +1173,10 @@ REGISTRY: dict[str, ToolSpec] = {spec.schema["name"]: spec for spec in _SPECS}
 if len(REGISTRY) != len(_SPECS):
     raise ValueError("duplicate Keeper tool name")
 
-TOOLS: list[dict[str, Any]] = [spec.schema for spec in _SPECS if spec.schema["name"] not in {"search_scenario", "report_summary"}]
+TOOLS: list[dict[str, Any]] = [
+    spec.schema for spec in _SPECS
+    if spec.schema["name"] not in {"search_scenario", "report_summary"} and not spec.followup_only
+]
 SEARCH_SCENARIO_TOOL = REGISTRY["search_scenario"].schema
 SUMMARY_TOOL = REGISTRY["report_summary"].schema
 
