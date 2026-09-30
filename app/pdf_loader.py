@@ -29,7 +29,7 @@ from app.scene_map import analyze_page_image
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v2'
+PIPELINE_VERSION = 'multicolumn-v3'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route']
@@ -515,7 +515,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 images[number] = _render_page_png(page)
             # Readable labels do not establish a floor plan's spatial graph.
             map_text = re.sub(r"[·_]+", " ", native + "\n" + layout_text)
-            if graphic and re.search(r"(?i)\bfloor\s*plan\b|\binvestigator\s+map\b|平面圖|樓層圖", map_text):
+            map_heading = re.search(r"(?i)\bfloor\s*plan\b|\binvestigator\s+map\b|平面圖|樓層圖", map_text)
+            short_map_title = len(native) < _LOW_TEXT_THRESHOLD and re.search(r"(?i)\bmap\b|地圖", native)
+            if graphic and (map_heading or short_map_title):
                 map_candidates.add(number)
                 pending[number] = images[number]
             if len(text) < _LOW_TEXT_THRESHOLD:

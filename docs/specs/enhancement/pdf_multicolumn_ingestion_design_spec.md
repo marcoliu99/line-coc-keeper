@@ -173,7 +173,7 @@ floor plans (physical pages 16 and 27). These are release-blocking regressions.
   remaining in the final selected page. Rejected-candidate defects and successfully
   resolved ordering diagnostics do not imply the winning source-preserving text
   is still defective. Unresolved fields and failed repairs remain visible.
-- Advance pipeline identity to `multicolumn-v2`; old accepted-page caches cannot
+- Advance pipeline identity to `multicolumn-v3`; old accepted-page caches cannot
   bypass these new map checks.
 
 Regression tests exercise four-card omission, missing-card results, readable-map
@@ -184,3 +184,30 @@ No numerical check is disabled. Full semantic or numerical fidelity is not prove
 by roster count or import acceptance alone.
 
 Additional real-run findings: vision may name a card in Chinese, so the card boundary detector accepts Chinese card labels with attribute evidence. Blank-name placeholders are not character identities and must not collapse different investigators during pool reconciliation or be learned as name aliases. Unresolved attribute markers are scoped to the individual card, not every unnamed card in the book.
+
+
+### Complete-import verification after repair
+
+The isolated three-book run with repository parser/analysis dependencies completed:
+
+| Scenario | Stored investigators | Stored map pages | Complete import seconds | Remaining review pages |
+| --- | --- | --- | ---: | --- |
+| The Haunting | 4 | 17 | 161.778 | 17 |
+| Dead Boarder | 6 | 20 | 283.289 | 1, 3, 20 |
+| The Lightless Beacon | 4 | 16, 27 | 370.228 | 2, 4, 5, 16, 17, 26, 27, 28, 29, 30 |
+
+All three passed the persisted roster and required-map checks. A post-import
+reporting helper mistakenly referenced `scenario_id`; audit was rerun against
+saved library files, without rerunning or changing the actual import. Earlier
+runs from the incomplete dependency environment are excluded from comparison.
+The final Keeper-map title fix was additionally exercised on Haunting physical
+page 7: it produced 15 graph nodes and preserved source text. This targeted run
+is separate from the table above; do not claim page 7 was in that full run.
+Its entry remained unspecified, so this is not proof of a playable entry path.
+
+Candidate-warning attribution is fixed, but remaining legacy image/repair
+warnings are retained. These results establish roster/map recovery, not complete
+semantic fidelity, numerical accuracy of every character field, or a speedup.
+Full enhancement acceptance remains partial while those broader claims are not
+verified. Local suite: 1689 passed, 2 skipped, 152 subtests; ruff 0.16.8,
+mypy app and compileall app tests pass.

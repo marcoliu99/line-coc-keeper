@@ -240,3 +240,16 @@ def test_map_graph_survives_description_that_omits_numeric_source_labels():
         text, _, _, _, maps = loader.extract_text(source)
     assert maps == {1: expected}
     assert '12' in text
+
+
+def test_keeper_map_with_readable_ocr_still_requires_graph():
+    source = pdf('Corbitt House Map (Keeper Version)')
+    expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door'}]}
+    report = {}
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'Room corridor stairs. ' * 20}}), \
+         patch.object(loader, '_page_has_graphic_content', return_value=True), \
+         patch.object(loader, '_render_page_png', return_value=b'png'), \
+         patch.object(loader, '_analyze_graphic_page', return_value=('Map description.', expected)) as analyze:
+        _, _, _, _, maps = loader.extract_text(source, quality_report=report)
+    analyze.assert_called_once()
+    assert maps == {1: expected}
