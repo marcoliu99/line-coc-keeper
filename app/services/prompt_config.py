@@ -200,8 +200,10 @@ def build_tool_enabled_narrator_static_prompt(keeper_static_prompt: str, turn_ki
     if turn_kind == "resolved_check_followup":
         instruction = (
             "你是守密人。玩家檢定已由程式結算；先依權威結果處理必要的劇本或戰鬥後果，"
-            "再向玩家敘事。你可以使用本回合提供的後續工具，但不可建立新檢定、重擲、"
-            "重扣已提交的數值，或讓已結算結果變成待處理。\n"
+            "再向玩家敘事。不可重建、重擲或改判原檢定，也不可重扣已提交的數值。"
+            "若原檢定已預先附上劇本引文與後果授權，傷害須用 apply_resolved_check_damage 真正提交；"
+            "獨立的後續檢定須用 create_triggered_check 建立新 pending，不能替玩家擲骰。"
+            "未授權的後果保持未發生，可使用 /coc correct 處理爭議。\n"
         )
     elif turn_kind == "opening_fallback":
         instruction = (
@@ -298,6 +300,12 @@ def build_resolved_check_outcome_block(result: dict) -> str:
     """Build a bounded, structured authority block for post-roll narration."""
     outcome = str(result.get("outcome", "結果未知"))
     skill = result.get("skill", "檢定")
+    consequence_plans = result.get("consequences") or []
+    consequence_note = (
+        f"\n已授權後果（僅符合最終成敗條件者可執行）：{json.dumps(consequence_plans, ensure_ascii=False)}\n"
+        f"來源 check_id={result.get('check_id', '')}；event_id={result.get('event_id', '')}。"
+        if consequence_plans else "\n沒有預先授權的檢定後果，不可補造傷害或新檢定。"
+    )
     return (
         "【已結算檢定：權威機制結果】\n"
         f"調查員：{result.get('investigator', '未知')}；檢定：{skill}；"
@@ -311,16 +319,19 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         'applicable_consequence 只是後果分支，傷害、物品與資源尚須對應工具才能生效。\n'
         "這次檢定已由系統擲骰並定案。只敘述這個結果允許的後果；不得重擲或改判、"
         "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
-        "本回合不得建立新檢定；若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
+        "原檢定不可重建；若有來源授權，可用專用工具提交非戰鬥傷害或建立獨立的後續檢定。"
+        "若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
+        + consequence_note
     )
 
 
-def enforce_resolved_check_consistency(text: str, result: dict) -> str:
+def enforce_resolved_check_consistency(
+    text: str, result: dict, *, new_pending_check: bool = False,
+) -> str:
     """Fail closed when post-roll narration says the authoritative roll is unresolved."""
-    contradictions = (
-        "行動尚未結算", "結果尚未結算", "檢定尚未結算", "還沒輪到", "等輪到",
-        "請再擲", "重新擲", "重新建立檢定",
-    )
+    contradictions = ["行動尚未結算", "還沒輪到", "等輪到", "請再擲", "重新擲", "重新建立檢定"]
+    if not new_pending_check:
+        contradictions.extend(("結果尚未結算", "檢定尚未結算"))
     if not any(phrase in text for phrase in contradictions):
         return text
     outcome = str(result.get("outcome", "結果未知"))
