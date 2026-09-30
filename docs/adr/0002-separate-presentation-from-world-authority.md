@@ -4,7 +4,7 @@ The Keeper must preserve what players heard without treating every previous narr
 
 The Keeper remains free to narrate and let players acquire incidental objects. A committed inventory change proves possession, while an object's clue status, hidden contents, or special mechanical use requires separate support. Plot relevance is not inferred from an object's name or from the Keeper once describing it as important; a player can directly correct that unsupported implication.
 
-An item can be a scenario-backed access item without being a clue. A clue reveals information; an access item enables an action when the particular use is supported. The item's existence, possession, use, and information content are separate facts.
+An item can be a scenario-backed access item without being a clue. A clue reveals information; an access item enables an action when the use follows from the scenario and scene, including reasonable interpretation of imprecise translated text. The item's existence, possession, use, and information content are separate facts. Do not turn absence of an exact key–lock quote, or a merely mentioned bolt, into a permanent access gate.
 
 ## Considered options
 

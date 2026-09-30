@@ -60,7 +60,7 @@ An object or detail that can support ordinary narration or possession without ch
 The supported connection between an object or statement and scenario progress, clues, triggers, or adjudicated mechanics. It is distinct from the object's mere existence or possession.
 
 **Access item（通行道具）**:
-An item with a supported use to enter or unlock a particular place. It can matter to scenario progress without being a clue: a clue reveals information, while an access item permits an action. Possession alone does not prove a particular lock matches it.
+An item with a scenario-supported or reasonably adjudicated use to enter or unlock a place. Its use can follow from the surrounding scene even when a translation does not explicitly pair the item and lock. It can matter to scenario progress without being a clue: a clue reveals information, while an access item permits an action. Mere possession of an unrelated item does not give it every access capability.
 
 **Clue（線索）**:
 Information revealed through a supported scenario condition, committed event, or authorized ruling. An object can carry a clue, but being useful or having a key shape does not make it a clue by itself.
