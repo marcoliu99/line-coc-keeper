@@ -240,7 +240,8 @@ async def run_conversation(
     return final_text
 
 
-def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
+                  timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Vision + a single forced tool call — used by app/scene_map.py's
     analyze_page_image, not the Keeper conversation loop above. Forces the
     one tool via ToolConfig(function_calling_config=FunctionCallingConfig(
@@ -254,7 +255,11 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        http_options = types.HttpOptions(
+            timeout=int(timeout * 1000) if timeout is not None else None,
+            retry_options=types.HttpRetryOptions(attempts=max_retries + 1) if max_retries is not None else None,
+        )
+        client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_options)
         function_declaration = types.FunctionDeclaration(
             name=tool["name"], description=tool["description"], parameters_json_schema=tool["input_schema"]
         )

@@ -626,7 +626,8 @@ async def run_conversation(
     return final_text
 
 
-def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
+                  timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Vision + a single forced tool call via the Responses API — used by
     app/scene_map.py's analyze_page_image, not the Keeper conversation loop
     above. Image input uses the {"type": "input_image", "image_url": <data
@@ -642,9 +643,15 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
 
         import openai
 
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client_options: dict[str, Any] = {}
+        if timeout is not None:
+            client_options['timeout'] = timeout
+        if max_retries is not None:
+            client_options['max_retries'] = max_retries
+        client = openai.OpenAI(api_key=OPENAI_API_KEY, **client_options)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
-        response = _create_response(client,
+        create: Any = client.responses.create if max_retries == 0 else lambda **kw: _create_response(client, **kw)
+        response = create(
             model=OPENAI_MODEL,
             input=[{
                 "role": "user",

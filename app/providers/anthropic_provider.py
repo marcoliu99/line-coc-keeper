@@ -242,7 +242,8 @@ async def run_conversation(
     return final_text
 
 
-def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
+                  timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Vision + a single forced tool call — used by app/scene_map.py's
     analyze_page_image, not the Keeper conversation loop above. Returns the
     tool's input dict, or None on any failure (no ANTHROPIC_API_KEY, the call
@@ -254,7 +255,12 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
 
         import anthropic
 
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        client_options: dict[str, Any] = {}
+        if timeout is not None:
+            client_options['timeout'] = timeout
+        if max_retries is not None:
+            client_options['max_retries'] = max_retries
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, **client_options)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
             response = cast(Any, client.messages).create(
