@@ -1,6 +1,6 @@
 # Local PDF OCR evidence benchmark
 
-Status: backlog (awaiting benchmark-spec review)
+Status: implemented (bounded evidence pilot; see validation limits)
 
 ## Goal and baseline
 
@@ -58,8 +58,12 @@ Focused tests: numeric substitutions/additions/duplicates, stat swaps, skill swa
 
 ## Pending review
 
-Confirm this isolated benchmark plan. Implementation/install/model inference begins only after spec review per branch-spec-workflow. Unknown model compatibility and gold coverage are measurement risks, not assumptions to bypass.
+The user approved this isolated benchmark on 2026-10-01. The implementation and measured scope are recorded below; unknown deployment compatibility and uncovered gold classes remain limitations, not integration permission.
 
 ## Execution authorization — 2026-10-01
 
 User approved evidence-only execution. Compare Tesseract, en_PP-OCRv5_mobile_rec and PP-OCRv5_server_rec on identical real English inputs. Prioritize exact numeric/dice/skill quality over speed; defaults confer no production preference. Use PaddleOCR 3.7.0 and officially documented macOS CPU PaddlePaddle 3.3.0 in isolated Python 3.11 (project Python 3.14 is a deployment mismatch). Download models only in an explicit setup action without document inputs; inference requires explicit local model paths and OS network denial. Record package/model/cache identities and setup requirements. No cloud calls or application/runtime changes; no production integration.
+
+## Executed evidence pilot — 2026-10-01
+
+The approved independent benchmark completed 13 real physical pages / 26 identical inputs per engine, with 12 visually verified bounded gold regions. This is a deliberately bounded subset of the initial broader selection, not completion of all listed pages or whole-book OCR. Report and limits: [validation](pdf_ocr_benchmark_validation.md), [JSON](pdf_ocr_benchmark_results.json). Outcome C is restricted to characteristic-table challenger evidence; Tesseract stays globally primary, production integration is future work. Both mobile/server remain measured candidates. Actual-box geometry verifies 16/16 main-stat pairs versus 1/16 Tesseract, while faint age modifier fields remain missing. Gold overlays and all source content stay private, image-hash bound. See reports for raw validator vs supplementary scores, offline setup, failures and costs.

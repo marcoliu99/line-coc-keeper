@@ -1,0 +1,6 @@
+# Isolated benchmark Python 3.11/macOS arm64. Not bot requirements.
+paddleocr==3.7.0
+paddlepaddle==3.3.0
+paddlex==3.7.2
+pymupdf==1.28.2
+pytesseract==0.3.13
