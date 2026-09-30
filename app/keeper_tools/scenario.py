@@ -49,17 +49,72 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
     visibility = tool_input.get("visibility", "public")
     if visibility not in ("public", "kp_only"):
         return {"ok": False, "error": "visibility 必須是 public 或 kp_only"}
+
+    def verified_source(target_state: GroupState) -> dict[str, Any] | None:
+        record_id = tool_input.get("source_record_id", "")
+        quote = tool_input.get("source_quote", "")
+        condition = tool_input.get("source_condition", "")
+        if not isinstance(record_id, str) or not isinstance(quote, str) or quote.strip() != text_value:
+            return None
+        source_ref = scenario_templates.match_fact_source(target_state, record_id, quote)
+        if source_ref is None:
+            return None
+        if condition == "resolved_check":
+            event_id = tool_input.get("trigger_event_id", "")
+            event = next((event for event in target_state.resolved_check_events
+                          if event.get("event_id") == event_id
+                          and event.get("timeline_id") == target_state.timeline_id
+                          and "成功" in str(event.get("outcome", ""))), None)
+            if event is None:
+                return None
+            source_ref = {**source_ref, "trigger_event_id": event_id}
+            discovery_receipt = dict(event)
+        elif condition == "observed_now":
+            if not observability.current_context().get("turn_id"):
+                return None
+            source_ref = {**source_ref, "observed_turn_id": str(observability.current_context()["turn_id"])}
+        elif condition == "unconditional":
+            # A scenario rule can be known to the Keeper before the player
+            # discovers it. An exact quotation alone cannot make it public.
+            if visibility != "kp_only":
+                return None
+        else:
+            return None
+        from app.services.canonical_facts import validated_constraints
+        return {
+            "constraints": validated_constraints(tool_input.get("constraints"), quote),
+            **({"discovery_receipt": discovery_receipt} if condition == "resolved_check" else {}),
+            "verification_status": "verified", "source_kind": "scenario",
+            "source_ref": source_ref, "timeline_id": target_state.timeline_id,
+        }
+
     def _mutate_record(target_state: GroupState) -> Any:
         records = getattr(target_state, field_name)
-        if any(record.get("text") == text_value and record.get("visibility", "public") == visibility for record in records):
+        source = verified_source(target_state)
+        existing = next((record for record in records
+                         if record.get("text") == text_value
+                         and record.get("visibility", "public") == visibility
+                         and record.get("timeline_id", target_state.timeline_id) == target_state.timeline_id), None)
+        if existing is not None:
+            if source and (existing.get("verification_status") != "verified"
+                           or existing.get("source_ref") != source["source_ref"]
+                           or existing.get("timeline_id") != target_state.timeline_id):
+                existing.setdefault("fact_id", f"fact:{uuid4().hex}")
+                existing.update(source)
+                return keeper.ToolStateMutation({"recorded": False, "promoted": True,
+                                                 "record": existing}, should_save=True)
             return keeper.ToolStateMutation({"recorded": False, "records": records}, should_save=False)
         record = {
+            "fact_id": f"fact:{uuid4().hex}",
             "text": text_value,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
+            "verification_status": "unverified",
             "visibility": visibility,
             "scene_id": "",
         }
+        if source:
+            record.update(source)
         records.append(record)
         return keeper.ToolStateMutation({"recorded": True, "record": record}, should_save=True)
     result = keeper.mutate_tool_state(state, _mutate_record)

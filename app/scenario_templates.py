@@ -546,6 +546,63 @@ def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], li
     return variant, records
 
 
+def match_fact_source(state: Any, record_id: str, quote: str, *, historical: bool = False) -> dict[str, str] | None:
+    """Resolve an exact quote to the active immutable scenario source.
+
+    This establishes source identity, not whether a conditional discovery has
+    happened. Callers must verify that separately before making it public.
+    """
+    if not record_id or not quote or len(quote) > 2000:
+        return None
+    scenario_id = state.scenario_library_id
+    variant_id = state.scenario_variant_id or "original"
+    try:
+        if not scenario_id:
+            if record_id != "scenario-text":
+                return None
+            content = state.scenario_text
+            source_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            chapter_id = state.active_chapter_id
+            visibility = "kp_only"
+        else:
+            manifest, original_text = _source(scenario_id)
+            source_hash = manifest["content_hash"]
+            if variant_id == "original":
+                record = next((block for block in _blocks(manifest, original_text)
+                               if block["id"] == record_id), None)
+                if record is None:
+                    return None
+                content = record["text"]
+                chapter_id = record["chapter_id"]
+                visibility = "kp_only"
+            else:
+                variant, records = _read_variant(scenario_id, variant_id)
+                if variant.get("review_status") != "approved" or variant.get("source_hash") != source_hash:
+                    return None
+                record = next((row for row in records if row.get("id") == record_id), None)
+                if record is None:
+                    return None
+                content = record.get("public_text", "") + "\n" + record.get("kp_text", "")
+                chapter_id = record["chapter_id"]
+                visibility = record["visibility"]
+        if not historical and state.context_chapter_ids and chapter_id and chapter_id not in state.context_chapter_ids:
+            return None
+        if quote not in content:
+            return None
+    except (FileNotFoundError, KeyError, ValueError):
+        return None
+    return {
+        "scenario_id": scenario_id or state.group_id,
+        "source_hash": source_hash,
+        "variant_id": variant_id,
+        "record_id": record_id,
+        "content_digest": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "source_quote": quote,
+        "chapter_id": chapter_id,
+        "visibility": visibility,
+    }
+
+
 def approve(scenario_id: str, variant_id: str, *, reviewer_id: str) -> None:
     variant, records = _read_variant(scenario_id, variant_id)
     try:

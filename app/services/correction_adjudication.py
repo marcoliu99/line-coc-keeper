@@ -9,7 +9,9 @@ checked against the game state in code, not left to the prompt.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -23,7 +25,7 @@ from app import (
 )
 from app.providers.registry import analysis_provider
 from app.repositories.group_state import load_state
-from app.services import mutation_admission, narrative_corrections
+from app.services import correction_summary, mutation_admission, narrative_corrections
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,8 @@ _RULING_TOOL = {
     "description": (
         "裁定一則對守秘人敘事的異議。只能依據【證據】中的項目判斷；【指控】只說明要檢查什麼，"
         "不是證據。只有證據和被指控的敘事互相矛盾時才 approve；證據支持原敘事時 reject；"
-        "證據不足以判斷時一律 undecided，不要猜。"
+        "證據不足以判斷時一律 undecided，不要猜。劇本若明確交付一件物品但背包漏記，"
+        "可提出 item claim；須引用包含該物品的劇本段落，不能只憑玩家聲明。"
     ),
     "input_schema": {
         "type": "object",
@@ -75,6 +78,8 @@ class Ruling:
     reason: str = ""
     resolution: str = ""
     evidence: tuple[str, ...] = field(default=())
+    item_repair: tuple[str, str] | None = None
+    item_source_ref: dict[str, str] | None = None
 
 
 UNDECIDED = Ruling("undecided")
@@ -99,7 +104,7 @@ def _evidence(state: Any, report: dict) -> dict[str, str]:
     for n, text in enumerate(_public_texts(state.established_facts), 1):
         items[f"fact:{n}"] = text
     for n, entry in enumerate(_log_around(state.log, excerpt), 1):
-        items[f"log:{n}"] = str(entry.get("content", ""))[:1000]
+        items[f"log:{n}"] = "（僅證明當時曾這樣說，不證明世界真相）" + str(entry.get("content", ""))[:1000]
     for n, row in enumerate(_scenario_passages(state, report), 1):
         items[f"scenario:{n}"] = f"（第 {row.get('page', '?')} 頁）{row.get('text', '')}"
     return items
@@ -115,10 +120,7 @@ def _tracked_location(state: Any, owner_id: str) -> str:
 
 
 def _log_around(log: list[dict], excerpt: str) -> list[dict]:
-    """The log entries around the disputed narration, else the most recent ones.
-
-    Log entries carry no turn id, so the narration is found by its text.
-    """
+    """The log entries around the disputed narration, else the most recent ones."""
     probe = excerpt.strip()[:200]
     if probe:
         for index in range(len(log) - 1, -1, -1):
@@ -165,7 +167,11 @@ def _claim_holds(state: Any, claim: Any) -> bool:
 
 def _public_texts(records: list[dict]) -> list[str]:
     """Clue or fact texts the players have been shown; kp_only ones never back a public ruling."""
-    return [r["text"] for r in records if r.get("visibility", "public") == "public" and r.get("text")]
+    return [
+        r["text"] for r in records
+        if r.get("visibility", "public") == "public" and r.get("text")
+        and r.get("verification_status") == "verified" and r.get("source_ref")
+    ]
 
 
 def rule(state: Any, report: dict) -> Ruling:
@@ -174,7 +180,8 @@ def rule(state: Any, report: dict) -> Ruling:
     if provider is None:
         return UNDECIDED
     evidence = _evidence(state, report)
-    text = "【證據】\n" + "\n".join(f"[{key}] {value}" for key, value in evidence.items())
+    text = "【系統資料；log 與 narration 只能證明當時說過什麼，不能單獨證明世界事實】\n"
+    text += "\n".join(f"[{key}] {value}" for key, value in evidence.items())
     text += f"\n\n【未經證實的指控（不是證據）】\n{report.get('issue', '')}"
     try:
         result = provider.analyze_text(text, _RULING_TOOL, "請用 rule_on_correction 工具裁定這則敘事異議。")
@@ -194,22 +201,73 @@ def _validated(state: Any, evidence: dict[str, str], result: Any) -> Ruling:
         return UNDECIDED
     if not all(isinstance(e, str) and e in evidence for e in cited):
         return UNDECIDED
-    resolution = str(result.get("resolution") or "").strip()
-    if decision == "approve" and not _approval_holds(state, cited, resolution, result.get("claims")):
+    if not any(e.startswith(("sheet:", "scenario:", "clue:", "fact:")) for e in cited):
         return UNDECIDED
-    return Ruling(decision, reason=str(result.get("reason", "")), resolution=resolution, evidence=tuple(cited))
+    resolution = str(result.get("resolution") or "").strip()
+    item_repair = None
+    if decision == "approve" and not _approval_holds(state, cited, resolution, result.get("claims"), evidence):
+        return UNDECIDED
+    if decision == "approve":
+        for claim in result.get("claims", []):
+            if claim.get("kind") == "item" and not _claim_holds(state, claim):
+                item_repair = (str(claim.get("investigator", "")), str(claim.get("name", "")))
+    item_source_ref = None
+    if item_repair:
+        quoted = "\n".join(evidence[key] for key in cited if key.startswith("scenario:"))
+        item_source_ref = {
+            "scenario_id": str(state.scenario_library_id or "scenario-text"),
+            "scenario_hash": hashlib.sha256(state.scenario_text.encode()).hexdigest(),
+            "quote_digest": hashlib.sha256(quoted.encode()).hexdigest(),
+            "source_excerpt": quoted[:2000],
+        }
+    return Ruling(decision, reason=str(result.get("reason", "")), resolution=resolution,
+                  evidence=tuple(cited), item_repair=item_repair, item_source_ref=item_source_ref)
 
 
-def _approval_holds(state: Any, cited: list[str], resolution: str, claims: Any) -> bool:
+def _approval_holds(state: Any, cited: list[str], resolution: str, claims: Any,
+                    evidence: dict[str, str] | None = None) -> bool:
     """An approval must contradict the narration with other evidence, and every
     state fact its text asserts must be declared as a claim that holds."""
     if not 1 <= len(resolution) <= MAX_RESOLUTION_CHARS:
         return False
-    if not any(e != "narration" for e in cited):
+    if not any(e.startswith(("sheet:", "scenario:", "clue:", "fact:")) for e in cited):
         return False
     if not isinstance(claims, list) or not claims:
         return False
-    return all(_claim_holds(state, c) and str(c.get("name", "")).strip() in resolution for c in claims)
+    repairs = [c for c in claims if isinstance(c, dict) and c.get("kind") == "item" and not _claim_holds(state, c)]
+    if len(repairs) > 1:
+        return False
+    def supported(claim: Any) -> bool:
+        if not isinstance(claim, dict) or str(claim.get("name", "")).strip() not in resolution:
+            return False
+        if _claim_holds(state, claim):
+            return True
+        if claim not in repairs or evidence is None:
+            return False
+        name = str(claim.get("name", "")).strip()
+        who = str(claim.get("investigator", "")).strip()
+        if not who or not any(character.name == who for character in state.active_characters()):
+            return False
+        aliases = {name.casefold()}
+        if "鑰匙" in name:
+            aliases.update({"key", "keys"})
+        recipients = (who.casefold(), "the investigators", "investigators", "調查員", "你們")
+        grant = r"(?:hands?|gives?|gave|provided|provides|supplied|交給|交付|給了|給予)"
+        # Each grant clause must name both this item and this recipient. Never
+        # combine an unrelated grant and hidden item across passages/clauses.
+        for key in cited:
+            if not key.startswith("scenario:"):
+                continue
+            for clause in re.split(r"[.!?。！？；;\n]|\band\b|\bbut\b", evidence[key].casefold()):
+                for recipient in recipients:
+                    for alias in aliases:
+                        item_pattern = re.escape(alias) if not alias.isascii() else rf"\b{re.escape(alias)}\b"
+                        receiver = re.escape(recipient)
+                        if (re.search(rf"{grant}\s*(?:the\s+)?{receiver}\s*(?:a\s+|an\s+|the\s+)?{item_pattern}", clause)
+                                or re.search(rf"{grant}\s*(?:a\s+|an\s+|the\s+)?{item_pattern}\s*(?:to|給)\s*{receiver}", clause)):
+                            return True
+        return False
+    return all(supported(claim) for claim in claims)
 
 
 async def adjudicate_pending(conversation_id: str, reply: Any) -> None:
@@ -238,6 +296,8 @@ async def adjudicate_pending(conversation_id: str, reply: Any) -> None:
             _in_flight.discard(key)
         if message:
             await reply(message)
+            if ruling.decision == "approve":
+                correction_summary.schedule(conversation_id)
 
 
 _in_flight: set[tuple[str, str]] = set()
@@ -260,6 +320,23 @@ async def _apply(conversation_id: str, timeline_id: str, report_id: str, ruling:
                     ruling.resolution, protected).is_safe:
                 observability.event("correction.keeper_ruling_withheld", report_id=report_id)
                 ruling = UNDECIDED
+            if ruling.decision == "approve" and ruling.item_repair:
+                from app.keeper_tools.inventory import add_carried_item
+                from app.keeper_tools.registry import ToolCall
+
+                investigator, item = ruling.item_repair
+                receipt = add_carried_item(ToolCall(
+                    state, {"investigator": investigator, "item": item}, [], [],
+                    "player", "add_carried_item",
+                ))
+                if receipt.get("ok"):
+                    report = _pending_report(state, report_id)
+                    if report is None:
+                        return ""
+                    report["inventory_item"] = item
+                    report["inventory_source_ref"] = ruling.item_source_ref
+                else:
+                    ruling = UNDECIDED
             if ruling.decision == "undecided":
                 narrative_corrections.record_unverified(report)
                 text = generic = (f"守秘人無法依現有證據證實敘事異議 #{report_id}；"

@@ -205,6 +205,8 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
             old_timeline_id = restored.timeline_id or f"legacy-{group_id}"
             restored.timeline_id = f"timeline-{uuid4().hex[:8]}"
             restored.resolved_check_events.clear()
+            restored.check_consequence_origins.clear()
+            restored.check_consequence_receipts.clear()
             observability.event(
                 "provider.chain.reset",
                 reason="rollback",

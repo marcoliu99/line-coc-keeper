@@ -9,7 +9,7 @@ from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
 from app.keeper_tools import registry as tool_registry
 from app.providers.conversation_session import ConversationSession
-from app.services import mutation_admission, prompt_config
+from app.services import canonical_facts, mutation_admission, prompt_config
 
 _logger = logging.getLogger(__name__)
 _OPENING_TOOL_NAMES = tool_registry.OPENING_TOOL_NAMES
@@ -52,6 +52,13 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role,
                                      include_private_checks=False), rag_context, memory_context
     )
+    narration_requirements = canonical_facts.requirements(
+        state, recipient_id=user_id, speaker_role=speaker_role, public_only=True
+    )
+    message.payload["narration_requirements"] = canonical_facts.as_payload(narration_requirements)
+    authority_block = canonical_facts.prompt_block(narration_requirements)
+    if authority_block:
+        dynamic_system += "\n\n" + authority_block
     character = state.get_active_character(user_id)
     if character:
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
@@ -76,7 +83,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         dynamic_system += "\n\n" + prompt_config.PURE_ROLEPLAY_BLOCK
 
     new_message = f"{display_name}：{text}" + message.payload.get("correction_context", keeper._correction_context_message(state))
-    history = state.log
+    history = session.history(state.log)
 
     async def _no_tools(_name: str, _tool_input: dict) -> dict:
         # Narrator has no tools per the design spec — this is never actually
@@ -96,11 +103,18 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         )
         tools = [tool for tool in tools_for_speaker_role("player")
                  if tool.get("name") in allowed]
+        if turn_kind == "resolved_check_followup":
+            tools.extend(
+                spec.schema for spec in tool_registry.REGISTRY.values()
+                if spec.followup_only and spec.schema["name"] in allowed
+            )
         offered_names = {tool["name"] for tool in tools}
         facts: list[str] = []
         gateway = make_tool_executor(
             state, private_messages, image_requests, "player", facts,
             observed_outcomes=message.payload.setdefault("observed_outcomes", []),
+            actor_id=user_id,
+            resolved_check_followup=(turn_kind == "resolved_check_followup"),
         )
         combat_status_gate = (
             keeper._CombatStatusToolGate(state) if session.dynamic_tools else None

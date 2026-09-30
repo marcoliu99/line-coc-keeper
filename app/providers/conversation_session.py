@@ -8,6 +8,7 @@ from typing import Any
 
 from app import config, observability
 from app.providers import registry
+from app.services import history_authority
 
 
 @dataclass
@@ -37,6 +38,10 @@ class ConversationSession:
     @property
     def final_feedback(self) -> bool:
         return bool(getattr(self.provider, 'SUPPORTS_FINAL_FEEDBACK', False))
+
+    def history(self, entries: list[dict]) -> list[dict[str, str]]:
+        """Project provenance into valid provider messages for every adapter."""
+        return history_authority.provider_history(entries)
 
     def stage_options(
         self, stage: str | None, *, tools_for_request: Callable[[], list[dict]] | None = None,

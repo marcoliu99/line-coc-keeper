@@ -7,11 +7,13 @@ Player allegations alone never create a mechanical hold.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
 MAX_CONTEXT_CHARS = 6000
+_logger = logging.getLogger(__name__)
 # A report still awaiting a ruling. `unverified` is one the Keeper couldn't
 # verify from evidence; it stays open for a KP but doesn't count toward the
 # pending limits (docs/specs/feature/keeper_adjudicates_corrections_design_spec.md).
@@ -90,11 +92,26 @@ def target_receipt(state: Any, message_id: str) -> dict | None:
     return record
 
 
+def latest_receipt(state: Any) -> dict | None:
+    """Most recent bot message in this timeline, for an OOC correction without a reply ID."""
+    from app import db
+    rows = db.list_json("narrative_message_receipts", prefix=f"{state.group_id}:")
+    for _, record in reversed(rows):
+        if (isinstance(record, dict) and record.get("conversation_id") == state.group_id
+                and record.get("timeline_id") == state.timeline_id):
+            return record
+    return None
+
+
 def save(state: Any) -> None:
     """Persist corrections with their archive rows in one transaction."""
     from app import db
     from app.repositories.group_state import save_state
 
+    for report in state.narrative_corrections:
+        if (report.get("status") == "approved" and report.get("timeline_id") == state.timeline_id
+                and report.get("target_receipt")):
+            reconcile_approved_report(state, report)
     state.openai_previous_response_id = ""
     state.openai_previous_response_timeline_id = ""
 
@@ -103,6 +120,20 @@ def save(state: Any) -> None:
             key = f"{state.group_id}:{record.get('timeline_id', '')}:{record['id']}"
             db.set_json_tx(conn, "narrative_correction_archive", key, record)
     save_state(state, reason="narrative_correction", mutate_tx=archive)
+    from app import memory_rag
+    for report in state.narrative_corrections:
+        if (report.get("status") != "approved" or report.get("timeline_id") != state.timeline_id
+                or not report.get("supersedes")):
+            continue
+        receipt = report.get("target_receipt") or {}
+        try:
+            memory_rag.mark_superseded_receipt(
+                state.group_id, state.timeline_id,
+                turn_id=str(receipt.get("turn_id", "")),
+                excerpt=str(receipt.get("excerpt", "")), correction_id=report["id"],
+            )
+        except Exception:  # Optional memory metadata cannot roll back an approved correction.
+            _logger.exception("failed to annotate corrected memory receipt")
 
 
 def mark_reviewed(report: dict, reviewer: str) -> None:
@@ -129,9 +160,19 @@ def record_ruling(
     if decision == "approve":
         report["status"] = "approved"
         report["resolution"] = resolution
+        report["adjudicated_by"] = "keeper" if keeper_basis else "kp_assistant"
+        report["supersedes"] = [f"message:{report['target_message_id']}"]
+        report["summary_rebuild_status"] = "pending"
+        reconcile_approved_report(state, report)
         judged = "已由守秘人依證據更正" if keeper_basis else "已由 KP 更正"
         message = f"【敘事更正 #{report['id']}】先前訊息 {report['target_message_id']} {judged}：{resolution}"
-        state.log.append({"role": "assistant", "content": message})
+        from app.services import history_authority
+
+        state.log.append(history_authority.annotate_entry(
+            {"role": "assistant", "content": message, "fact_refs": [f"correction:{report['id']}"]},
+            turn_id=report.get("turn_id", report["id"]), timeline_id=state.timeline_id,
+            record_kind="narrative_correction", authority="presentation",
+        ))
         # A cached provider conversation may still contain the uncorrected
         # narration. Rebuild the next turn from the corrected local log.
         state.openai_previous_response_id = ""
@@ -146,3 +187,41 @@ def record_ruling(
         report["evidence"] = list(keeper_basis.evidence)
         report["reason"] = keeper_basis.reason
     return message
+
+
+def record_presentation_repair(state: Any, report: dict, *, resolution: str) -> str:
+    """Accept a harmless player correction without promoting it to world canon."""
+    from app.services import history_authority
+
+    report["status"] = "approved"
+    report["resolution"] = resolution
+    report["adjudicated_by"] = "player_presentation"
+    report["supersedes"] = [f"message:{report['target_message_id']}"]
+    report["summary_rebuild_status"] = "pending"
+    reconcile_approved_report(state, report)
+    message = f"【敘事更正 #{report['id']}】已依玩家指正調整先前描述：{resolution}"
+    state.log.append(history_authority.annotate_entry(
+        {"role": "assistant", "content": message, "fact_refs": [f"correction:{report['id']}"]},
+        turn_id=report["id"], timeline_id=state.timeline_id,
+        record_kind="narrative_correction", authority="presentation",
+    ))
+    mark_reviewed(report, report["reporter_id"])
+    state.openai_previous_response_id = ""
+    state.openai_previous_response_timeline_id = ""
+    return message
+
+
+def reconcile_approved_report(state: Any, report: dict) -> None:
+    """Keep old prose, but connect exact receipt matches to the correction."""
+    receipt = report.get("target_receipt") or {}
+    excerpt = str(receipt.get("excerpt", ""))
+    turn_id = str(receipt.get("turn_id", ""))
+    if excerpt:
+        for entry in state.log:
+            if (entry.get("role") == "assistant" and excerpt in str(entry.get("content", ""))
+                    and (not turn_id or entry.get("turn_id", turn_id) == turn_id)):
+                refs = entry.setdefault("superseded_by", [])
+                if report["id"] not in refs:
+                    refs.append(report["id"])
+                entry.setdefault("record_kind", "legacy_mixed")
+                entry.setdefault("authority", "presentation")

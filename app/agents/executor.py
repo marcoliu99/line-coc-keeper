@@ -19,6 +19,7 @@ from app.domain.models import (
 )
 from app.providers.conversation_session import ConversationSession
 from app.services import (
+    canonical_facts,
     mutation_admission,
     prompt_config,
     turn_context,
@@ -74,6 +75,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         evidence_incomplete=bool(scenario_retrieval.incomplete_roots(rag_context)),
         required_evidence_ids=scenario_retrieval.incomplete_roots(rag_context),
         observed_outcomes=observed,
+        actor_id=user_id,
     )
     combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
@@ -89,6 +91,11 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     dynamic_system = prompt_config.build_executor_dynamic_prompt_with_context(
         keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
     )
+    authority_block = canonical_facts.prompt_block(
+        canonical_facts.requirements(state, recipient_id=user_id, speaker_role=speaker_role)
+    )
+    if authority_block:
+        dynamic_system += "\n\n" + authority_block
     character = state.get_active_character(user_id)
     if character:
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
@@ -140,7 +147,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     tool_input = {**tool_input, '_player_action': text}
                 model = session.model or "unknown"
                 remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
-                    [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], state.log, model, config.LLM_PROVIDER)
+                        [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], session.history(state.log), model, config.LLM_PROVIDER)
                     if name == "search_scenario" else scenario_retrieval.BUDGET.get())
                 current_binding = scenario_retrieval.source_binding(state)
                 if current_binding != source_binding:
@@ -206,7 +213,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     }
                 provider_options['final_feedback'] = final_feedback
             completion = await provider.run_conversation(
-                static_system, dynamic_system, tools, state.log, new_message,
+                static_system, dynamic_system, tools, session.history(state.log), new_message,
                 execute_turn_tool, MAX_TOOL_ITERATIONS,
                 # Reuse the existing completion; never force an extra wrap-up.
                 enable_wrapup=False,

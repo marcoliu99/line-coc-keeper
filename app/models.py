@@ -858,9 +858,9 @@ class GroupState:
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
     characters_by_id: dict[str, Character] = field(default_factory=dict)
     active_character_id_by_user: dict[str, str] = field(default_factory=dict)
-    # `log` is the canonical in-game history between players and the Keeper:
-    # player actions, Keeper narration, rolls, and other public campaign events.
-    log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
+    # `log` preserves conversation history. Its narration and player claims
+    # are not independent sources of consequential world facts.
+    log: list[dict[str, Any]] = field(default_factory=list)
 
     # Separate KP Assistant out-of-character working memory for future private
     # "KP Assistant <-> AI Keeper" coordination. This is deliberately separate
@@ -933,6 +933,10 @@ class GroupState:
     # Bounded audit trail of player checks once finalized, including only
     # committed character attribute changes observed across resolution.
     resolved_check_events: list[dict[str, Any]] = field(default_factory=list)
+    # Source-bound consequences are kept separately from the last-20 check
+    # display history so a provider retry cannot roll or apply one twice.
+    check_consequence_origins: dict[str, dict[str, Any]] = field(default_factory=dict)
+    check_consequence_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Optional group-level override: ordinary investigator checks remain
     # player-triggered by default. Any member can enable this through
@@ -1158,6 +1162,8 @@ class GroupState:
             "party_facing": self.party_facing,
             "pending_checks": self.pending_checks,
             "resolved_check_events": self.resolved_check_events,
+            "check_consequence_origins": self.check_consequence_origins,
+            "check_consequence_receipts": self.check_consequence_receipts,
             "autoroll_checks": self.autoroll_checks,
             "deterministic_check_results": self.deterministic_check_results,
             "pending_luck_decisions": self.pending_luck_decisions,
@@ -1255,6 +1261,14 @@ class GroupState:
                 [dict(item) for item in data.get("resolved_check_events", [])[-20:] if isinstance(item, dict)]
                 if isinstance(data.get("resolved_check_events", []), list)
                 else []
+            ),
+            check_consequence_origins=(
+                data.get("check_consequence_origins", {})
+                if isinstance(data.get("check_consequence_origins"), dict) else {}
+            ),
+            check_consequence_receipts=(
+                data.get("check_consequence_receipts", {})
+                if isinstance(data.get("check_consequence_receipts"), dict) else {}
             ),
             autoroll_checks=bool(data.get("autoroll_checks", False)),
             deterministic_check_results=(

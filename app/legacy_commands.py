@@ -42,6 +42,7 @@ from app import (
     pdf_ingestion_drafts,
     pdf_loader,
     pregen_extractor,
+    resolved_check_consequences,
     scenario_activation,
     scenario_compare,
     scenario_index,
@@ -173,6 +174,8 @@ def _apply_new_scenario(
     state.openai_previous_response_timeline_id = ""
     state.timeline_id = new_timeline_id
     state.resolved_check_events.clear()
+    state.check_consequence_origins.clear()
+    state.check_consequence_receipts.clear()
     # Pending player decisions and deterministic check results are scoped to
     # the old scenario.  Invalidate them together with the timeline so stale
     # typed commands or Discord buttons cannot mutate the new scenario.
@@ -1041,6 +1044,7 @@ def _resolved_check_event_seed(
     skill: str, skill_value: int, roll: int, difficulty: str, outcome: str,
     before: dict[str, int], tracked_roll_fields: tuple[str, ...] = (),
     check_context: dict | None = None, opposed_outcome: dict | None = None,
+    success: bool | None = None,
 ) -> dict:
     return {
         "event_id": check_id or new_check_id(),
@@ -1054,6 +1058,8 @@ def _resolved_check_event_seed(
         "roll": int(roll),
         "difficulty": str(difficulty),
         "outcome": outcome,
+        "success": success,
+        "consequences": (check_context or {}).get("consequences", []),
         "state_before": dict(before),
         "tracked_roll_fields": list(tracked_roll_fields),
         "opposed_outcome": opposed_outcome,
@@ -1106,6 +1112,14 @@ def _persist_resolved_check_event(conversation_id: str, event_seed: dict) -> Non
         latest.resolved_check_events.append(event)
         del latest.resolved_check_events[:-20]
         save_state(latest, reason="resolved_check_event")
+
+
+def _persist_check_consequence_origin(conversation_id: str, event_seed: dict) -> None:
+    """Publish the settled check's source-bound plan before its follow-up turn."""
+    with locks.get_state_lock(conversation_id):
+        latest = load_state(conversation_id)
+        if resolved_check_consequences.persist_origin(latest, event_seed):
+            save_state(latest, reason="resolved_check_consequence_origin")
 
 
 @dataclass
@@ -1381,6 +1395,9 @@ async def _finalize_check_result(
                 f"{keeper_message}"
             )
             if resolved_event is not None:
+                await asyncio.to_thread(
+                    _persist_check_consequence_origin, conversation_id, resolved_event
+                )
                 # Preserve changes directly caused by the deterministic roll
                 # (SAN loss or Luck spend). For other fields, start observing
                 # at the serialized Keeper phase so unrelated changes made
@@ -1399,7 +1416,7 @@ async def _finalize_check_result(
                         "investigator", "skill", "skill_value", "roll", "difficulty",
                         "outcome", "action_context", "check_id", "timeline_id",
                         "opposed_outcome", "player_declaration", "action_basis",
-                        "visibility", "recipient_id",
+                        "visibility", "recipient_id", "event_id", "success", "consequences",
                     )
                     if key in resolved_event
                 }
@@ -1769,6 +1786,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "opposed": (pending_entry or {}).get('opposed'),
                 "player_declaration": (pending_entry or {}).get('player_declaration', ''),
                 "action_basis": (pending_entry or {}).get('action_basis', ''),
+                "consequences": (pending_entry or {}).get('consequences', []),
             }
             save_state(state)
             options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
@@ -1823,7 +1841,9 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 outcome=f"{skill_result.tier} {'成功' if skill_result.success else '失敗'}" +
                 (f"；對抗勝方={scenario_opposed['winner']}" if scenario_opposed else ''),
                 before=attributes_before,
-                check_context=pending_entry, opposed_outcome=scenario_opposed,
+                    check_context=pending_entry, opposed_outcome=scenario_opposed,
+                    success=(scenario_opposed["winner"] == "player" if scenario_opposed
+                             else skill_result.success),
             ),
         )
 
@@ -2049,6 +2069,8 @@ def _resolve_luck_decision_deterministically(
                 (f"；花費 Luck {luck_spent}" if luck_spent else ""),
                 before=attributes_before, tracked_roll_fields=(("luck",) if luck_spent else ()),
                 check_context=pending, opposed_outcome=scenario_opposed,
+                success=(scenario_opposed["winner"] == "player" if scenario_opposed
+                         else r.success),
             ),
         )
 
