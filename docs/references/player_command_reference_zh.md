@@ -247,6 +247,57 @@
 
 ## 劇本
 
+### 取消劇本處理
+
+放棄目前等待處理的相似劇本 PDF。
+
+用法：
+- `/coc scenario cancel`
+
+### 繼續 PDF 匯入
+
+只重試尚未通過驗證的頁面。
+
+用法：
+- `/coc scenario continue`
+
+### PDF 匯入進度
+
+查看待修復的 PDF 頁面。
+
+用法：
+- `/coc scenario status`
+
+### 列出劇本庫
+
+查看可用劇本與目前使用中的劇本。
+
+用法：
+- `/coc scenario list`
+
+範例：
+- `/coc scenario list`
+
+### 重新解析劇本
+
+重新處理等待中的相似劇本 PDF。
+
+用法：
+- `/coc scenario reparse`
+
+### 選用劇本 **[KP-only]**
+
+從劇本庫選擇劇本與已校對的中文模板版本。
+
+用法：
+- `/coc scenario use 劇本ID [模板版本]`
+
+範例：
+- `/coc scenario use abc123 zh-TW-123456789abc`
+
+注意：
+- 省略版本時沿用此群組對該劇本的選擇。
+
 ### 暫離遊戲
 
 標記自己暫時離開；戰鬥中會跳過你的回合。
@@ -260,13 +311,6 @@
 
 用法：
 - `/coc back`
-
-### 取消劇本處理
-
-放棄目前等待處理的相似劇本 PDF。
-
-用法：
-- `/coc scenario cancel`
 
 ### 管理手動角色卡 **[KP-only]**
 
@@ -316,16 +360,6 @@
 
 顯示條件：只有已載入劇本時顯示
 
-### 列出劇本庫
-
-查看可用劇本與目前使用中的劇本。
-
-用法：
-- `/coc scenario list`
-
-範例：
-- `/coc scenario list`
-
 ### 合併 PDF parts **[KP-only]**
 
 依指定順序合併已暫存的 Discord PDF parts；只有目前 KP Assistant 可以使用。
@@ -347,13 +381,6 @@
 
 用法：
 - `/coc pdf new|fix`
-
-### 重新解析劇本
-
-重新處理等待中的相似劇本 PDF。
-
-用法：
-- `/coc scenario reparse`
 
 ### 設定守密人風格
 
@@ -437,19 +464,6 @@
 
 用法：
 - `/coc scenario template status 劇本ID`
-
-### 選用劇本 **[KP-only]**
-
-從劇本庫選擇劇本與已校對的中文模板版本。
-
-用法：
-- `/coc scenario use 劇本ID [模板版本]`
-
-範例：
-- `/coc scenario use abc123 zh-TW-123456789abc`
-
-注意：
-- 省略版本時沿用此群組對該劇本的選擇。
 
 ## KP 助手
 
