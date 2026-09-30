@@ -9,6 +9,7 @@ model-derived evidence, distinct from verbatim source transcription.
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import hashlib
 import io
 import logging
@@ -21,11 +22,43 @@ from typing import Any, cast
 
 import pymupdf
 
-from app import pdf_ai_repair, pdf_quality
+from app import pdf_ai_repair, pdf_layout, pdf_layout_adapters, pdf_quality
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
 
 _logger = logging.getLogger(__name__)
+
+PIPELINE_VERSION = 'multicolumn-v1'
+RENDERER_VERSION = 1
+PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
+
+
+class LayoutReviewRequired(ValueError):
+    """Keep an incomplete extraction available for a durable import draft."""
+
+    def __init__(self, report: dict, result: PdfExtraction) -> None:
+        self.report = report
+        self.result = result
+        pages = ', '.join(str(number) for number in report['blocked_pages'])
+        super().__init__(f'PDF 閱讀順序尚未確認：第 {pages} 頁；可繼續匯入未完成頁。')
+
+
+def render_source_pages(texts: list[str]) -> str:
+    """Keep physical page markers and downstream Unicode spans deterministic."""
+    return '\n\n'.join(f'--- 第 {i + 1} 頁 ---\n{text}' for i, text in enumerate(texts)).strip()
+
+
+def _cached_page(cached: dict | None, pdf_hash: str, number: int) -> dict | None:
+    if not isinstance(cached, dict):
+        return None
+    text = cached.get('selected_text')
+    row = cached.get('report')
+    if (cached.get('pdf_sha256') != pdf_hash or cached.get('pipeline_version') != PIPELINE_VERSION
+            or not isinstance(text, str) or not isinstance(row, dict)
+            or row.get('page') != number or row.get('disposition') not in {'accepted', 'legacy_route'}
+            or cached.get('selected_sha256') != hashlib.sha256(text.encode()).hexdigest()):
+        return None
+    return cached
 
 # Below this many extracted characters, a page that also contains an image is
 # treated as "probably graphic content" (handout/map/cover) and gets a
@@ -213,7 +246,7 @@ def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = No
     return pages
 
 
-def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
+def _pymupdf4llm_page_chunks(pdf_bytes: bytes, page_numbers: list[int] | None = None) -> dict[int, dict] | None:
     """Return PyMuPDF4LLM's page-level layout evidence when available.
 
     PyMuPDF4LLM is intentionally optional at import time. This keeps preview
@@ -237,6 +270,14 @@ def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
     doc = None
     try:
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        if page_numbers is not None:
+            if not page_numbers:
+                return None
+            subset = pymupdf.open()
+            for number in page_numbers:
+                subset.insert_pdf(doc, from_page=number - 1, to_page=number - 1)
+            doc.close()
+            doc = subset
         chunks = pymupdf4llm.to_markdown(
             doc,
             page_chunks=True,
@@ -274,6 +315,10 @@ def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
             page_number = index + 1
         if zero_based:
             page_number += 1
+        if page_numbers is not None:
+            if not 1 <= page_number <= len(page_numbers):
+                continue
+            page_number = page_numbers[page_number - 1]
         if page_number >= 1:
             pages[page_number] = chunk
     return pages or None
@@ -345,25 +390,52 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
     return text, attempts
 
 
-def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8, ai_repair_limit: int = 8) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
+def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8,
+                 ai_repair_limit: int = 8, resume_pages: dict[int, dict] | None = None,
+                 layout_budget: dict | None = None) -> PdfExtraction:
     """Return complete source, review pages, legacy truncation flag, images, maps.
 
     The source is never cut to a prompt budget. The optional report distinguishes
     extraction methods, uncertain pages and derived visual descriptions.
     """
     report = quality_report if quality_report is not None else {}
-    report.update(version=pdf_quality.VERSION, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+    pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    report.update(version=pdf_quality.VERSION, pdf_sha256=pdf_hash,
+                  pipeline_version=PIPELINE_VERSION, renderer_version=RENDERER_VERSION,
                   pages=[], continuations=[], derived_descriptions={})
     local_budget = [max(0, local_ocr_limit)]
     ai_budget = [max(0, ai_repair_limit)]
-    layout_pages = _pymupdf4llm_page_chunks(pdf_bytes)
+    layout_budget = copy.deepcopy(layout_budget) if layout_budget is not None else pdf_layout_adapters.new_budget()
+    cached_pages = {}
+    if resume_pages:
+        with pymupdf.open(stream=pdf_bytes, filetype='pdf') as source:
+            cached_pages = {number: cached for number in range(1, len(source) + 1)
+                            if (cached := _cached_page(resume_pages.get(number), pdf_hash, number)) is not None}
+            unresolved_pages = [number for number in range(1, len(source) + 1) if number not in cached_pages]
+        layout_pages = _pymupdf4llm_page_chunks(pdf_bytes, unresolved_pages)
+    else:
+        layout_pages = _pymupdf4llm_page_chunks(pdf_bytes)
     texts: list[str] = []
     images: dict[int, bytes] = {}
     pending: dict[int, bytes] = {}
+    maps: dict[int, dict] = {}
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         report["page_count"] = doc.page_count
         for i, page in enumerate(doc):
             number = i + 1
+            if number in cached_pages:
+                cached = cached_pages[number]
+                texts.append(cached['selected_text'])
+                row = copy.deepcopy(cached['report'])
+                row['resumed'] = True
+                report['pages'].append(row)
+                if isinstance(cached.get('image'), bytes):
+                    images[number] = cached['image']
+                if isinstance(cached.get('map'), dict):
+                    maps[number] = copy.deepcopy(cached['map'])
+                if isinstance(cached.get('derived_description'), str):
+                    report['derived_descriptions'][str(number)] = cached['derived_description']
+                continue
             native, warnings = pdf_quality.native_text(page)
             chunk = layout_pages.get(number) if layout_pages else None
             layout_text = _pymupdf4llm_page_text(chunk)
@@ -380,6 +452,22 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 text, method = native, "native"
                 selected_warnings.append("numeric_pair_review")
             warnings.extend(selected_warnings)
+            decision = pdf_layout.analyze_page(page, {'native': native, 'layout': layout_text})
+            if decision['status'] == 'needs_review':
+                decision = pdf_layout_adapters.resolve_page(page, decision, layout_budget)
+            if decision['status'] == 'accepted':
+                candidate = decision['selected_text']
+                _, checked_method, loss_warnings = pdf_quality.select_text(native, candidate)
+                known_pairs = [pair for pair in pairs if pair['status'] != 'unresolved']
+                order_pair_checks = pdf_quality.check_pairs(known_pairs, candidate)
+                if (checked_method != 'layout'
+                        or any(check['status'] != 'matched' for check in order_pair_checks)):
+                    decision['status'] = 'needs_review'
+                    decision['diagnostics'].append('layout_source_gate_failed')
+                    warnings.extend(loss_warnings)
+                else:
+                    text, method = candidate, 'multicolumn'
+            warnings.extend(decision['diagnostics'])
             text, repairs = _repair_local_regions(page, evidence, pairs, text, local_budget)
             if repairs:
                 warnings.append("local_ocr_review" if any(r["status"] != "accepted" for r in repairs) else "local_ocr_repaired")
@@ -396,7 +484,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             report["pages"].append({"page": number, "method": method, "native_chars": len(native),
                                     "warnings": warnings, "evidence": evidence,
                                     "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": repairs,
-                                    "candidates": {"native": native, "layout": layout_text}})
+                                    "candidates": {"native": native, "layout": layout_text},
+                                    "layout_decision": decision})
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None
@@ -423,6 +512,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
 
         # Repair only remaining numeric/corrupted blocks, before extraction consumers.
         for i, row in enumerate(report["pages"]):
+            if row.get('resumed'):
+                continue
             texts[i], ai_result = pdf_ai_repair.repair_page(doc[i], row, texts[i], ai_budget)
             row["ai_repair"] = ai_result
             if any(r["status"] == "accepted" for r in ai_result["regions"]):
@@ -432,7 +523,6 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if ai_result["unresolved_labels"]:
                 row["warnings"].append("ai_fields_unresolved")
 
-        maps: dict[int, dict] = {}
         if pending:
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))) as executor:
                 futures = {executor.submit(_analyze_graphic_page, png): number for number, png in pending.items()}
@@ -467,11 +557,16 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     for i, text in enumerate(texts):
         row = report["pages"][i]
         unresolved = row["ai_repair"]["unresolved_labels"]
-        if unresolved:
+        if unresolved and not row.get('resumed'):
             text += "\n[PDF_UNRESOLVED_FIELDS: " + ",".join(unresolved) + "]"
             texts[i] = text
         row["extracted_chars"] = len(text)
         row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        row['selected_text'] = text
+        if not row.get('resumed'):
+            status = row['layout_decision']['status']
+            row['disposition'] = ('needs_review' if status == 'needs_review'
+                                  else 'accepted' if status == 'accepted' else 'legacy_route')
         if not text.strip():
             row["warnings"].append("empty_page")
         if any(w not in {"native_two_columns", "layout_unavailable"} for w in row["warnings"]):
@@ -480,12 +575,17 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})
     if not any(t.strip() for t in texts):
         raise ValueError("這份 PDF 抽不出任何文字內容；請確認 OCR 是否可用並檢查原稿。")
-    full_text = "\n\n".join(f"--- 第 {i + 1} 頁 ---\n{t}" for i, t in enumerate(texts)).strip()
+    full_text = render_source_pages(texts)
     report["review_pages"] = review
     report["source_chars"] = len(full_text)
     report["ai_repair_requests"] = max(0, ai_repair_limit) - ai_budget[0]
     report["local_ocr_attempts"] = max(0, local_ocr_limit) - local_budget[0]
-    return full_text, review, False, images, maps
+    report['layout_budget'] = layout_budget
+    report['blocked_pages'] = [row['page'] for row in report['pages'] if row['disposition'] == 'needs_review']
+    result = (full_text, review, False, images, maps)
+    if report['blocked_pages']:
+        raise LayoutReviewRequired(report, result)
+    return result
 
 
 _PAGE_MARKER_RE = re.compile(r"^-*\s*第\s*\d+\s*頁\s*-*$")

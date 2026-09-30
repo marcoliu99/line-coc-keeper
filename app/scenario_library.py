@@ -220,6 +220,8 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
 
 
 def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None, parse_quality: dict | None = None) -> str:
+    if parse_quality and parse_quality.get('blocked_pages'):
+        raise ValueError('PDF layout has unresolved pages; continue the import draft before publication')
     with _LIBRARY_LOCK:
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -240,6 +242,10 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             assets = _build_image_assets(page_images, page_maps, text, chapters)
             previous_manifest = _read_json(target / "manifest.json", {})
             manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": previous_manifest.get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
+            if parse_quality and parse_quality.get('pipeline_version'):
+                manifest.update(parser_version=parse_quality['pipeline_version'],
+                                renderer_version=parse_quality.get('renderer_version', 1),
+                                pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest())
             (temporary / "images").mkdir()
             (temporary / "source.pdf").write_bytes(pdf_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")

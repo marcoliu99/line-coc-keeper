@@ -423,7 +423,9 @@ async def handle_pdf_upload(
     parse_quality: dict = {}
     try:
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
-            pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality, **({"resume_pages": resume} if draft else {})
+            pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality,
+            resume_pages=resume if draft else None,
+            layout_budget=(draft or {}).get("report", {}).get("layout_budget")
         )
     except pdf_loader.LayoutReviewRequired as exc:
         async with locks.get_conversation_lock(conversation_id):
