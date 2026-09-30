@@ -1506,6 +1506,15 @@
       ],
       "path": "docs/specs/enhancement/authority_provenance_design_spec.md",
       "zh_path": "docs/specs/enhancement/authority_provenance_design_spec_zh.md"
+    },
+    {
+      "title": "Import-time PaddleOCR recovery on PR155",
+      "zh": "PR155 匯入階段 PaddleOCR recovery",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec_zh.md"
     }
   ]
 }

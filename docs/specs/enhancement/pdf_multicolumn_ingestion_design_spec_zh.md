@@ -194,3 +194,8 @@ Azure Document Intelligence 明確延後，本版不加入其依賴、設定、�
 逐頁記原頁碼、影像渲染、候選與啟發式分數／detector 版本、是否嘗試分析、狀態、artifact 引用與原因；區分 MAP_NOT_DETECTED、MAP_DETECTED_NOT_ANALYZED、MAP_ANALYSIS_FAILED、MAP_ANALYZED_NO_GRAPH，以及成功／非地圖。分別核對房間 ID、連接目标與入口可用性，不因有檔案就判完整，也不能捏造入口通過檢查。匯入報告新增地圖段落：候選／已分析／成功頁，以及失敗頁原因。最新 Beacon 完整跑已保存第 16、27 實體頁的圖，本版須保留並能說明未來差異。
 
 這一範圍尚待 runtime 實作與驗收。測警告觸發適用復原、再次品質驗證、警告計數、原頁碼對照、可讀地圖、無可用原生標籤的圖、普通頁跳過、分析失敗／無圖、artifact 核對與續跑額度；再做三本對照，角色、地圖、數值／骰式與來源 spans 不退步。不新增固定遊戲回合 LLM 階段。
+
+
+## Production OCR recovery (proposed)
+
+詳見 [Production OCR recovery](pdf_ocr_production_integration_design_spec_zh.md)：PaddleOCR primary candidate、驗證後 Tesseract fallback、離線 setup、OCR identity 與 regression gates。本次為待確認規格，尚未宣稱 production runtime 已修改。

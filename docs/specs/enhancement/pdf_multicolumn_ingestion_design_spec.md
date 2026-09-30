@@ -264,3 +264,8 @@ maps, graphics without usable native labels, normal-page skipping, failed map
 analysis/no graph, artifact validation and resumed budgets. Then repeat the
 three-book comparison, preserving investigators, map artifacts, numbers, dice
 and source spans. No new fixed gameplay LLM stage is added.
+
+
+## Production OCR recovery (proposed)
+
+See [Production OCR recovery](pdf_ocr_production_integration_design_spec.md) for the operator-requested PaddleOCR primary candidate, validated Tesseract fallback, offline setup, OCR identity and regression gates. This extension is proposed; no production runtime change is claimed by this spec checkpoint.
