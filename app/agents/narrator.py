@@ -96,11 +96,18 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         )
         tools = [tool for tool in tools_for_speaker_role("player")
                  if tool.get("name") in allowed]
+        if turn_kind == "resolved_check_followup":
+            tools.extend(
+                spec.schema for spec in tool_registry.REGISTRY.values()
+                if spec.followup_only and spec.schema["name"] in allowed
+            )
         offered_names = {tool["name"] for tool in tools}
         facts: list[str] = []
         gateway = make_tool_executor(
             state, private_messages, image_requests, "player", facts,
             observed_outcomes=message.payload.setdefault("observed_outcomes", []),
+            actor_id=user_id,
+            resolved_check_followup=(turn_kind == "resolved_check_followup"),
         )
         combat_status_gate = (
             keeper._CombatStatusToolGate(state) if session.dynamic_tools else None
