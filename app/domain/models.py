@@ -45,6 +45,7 @@ class ObservedOutcome:
     public_text: str = ""
     audience: str = "internal"
     recipient_id: str = ""
+    fact_ref: str = ""
 
 
 @dataclass

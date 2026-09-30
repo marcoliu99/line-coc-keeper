@@ -1474,6 +1474,8 @@
         "app/services/correction_adjudication.py",
         "tests/test_history_authority.py",
         "tests/test_canonical_facts.py",
+        "app/services/turn_delivery.py",
+        "tests/test_turn_safety.py",
         "tests/test_keeper_adjudicates_corrections.py"
       ],
       "path": "docs/specs/enhancement/authority_provenance_design_spec.md",

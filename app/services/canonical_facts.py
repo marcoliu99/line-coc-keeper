@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -149,3 +150,19 @@ def prompt_block(requirements_value: NarrationRequirements, *, max_facts: int = 
 
 def as_payload(requirements_value: NarrationRequirements) -> dict[str, Any]:
     return asdict(requirements_value)
+
+
+def validated_constraints(raw: Any, quote: str) -> dict[str, Any]:
+    """Accept only an explicit adjacent source quantity; no prose inference."""
+    if not isinstance(raw, dict) or set(raw) != {"entity", "unit", "quantity"}:
+        return {}
+    entity, unit, quantity = raw["entity"], raw["unit"], raw["quantity"]
+    if not isinstance(entity, str) or not entity or not isinstance(unit, str) or not unit or type(quantity) is not int or quantity < 0:
+        return {}
+    counts = {"一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    pattern = rf"(?<![\d一二兩三四五六七八九十])(?P<count>\d+|[一二兩三四五六七八九]){re.escape(unit)}\s*{re.escape(entity)}"
+    for match in re.finditer(pattern, quote):
+        value = match.group("count")
+        if (int(value) if value.isdigit() else counts[value]) == quantity:
+            return dict(raw)
+    return {}

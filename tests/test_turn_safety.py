@@ -29,6 +29,7 @@ from app.providers import registry
 from app.repositories.group_state import load_state, save_state
 from app.services import mutation_admission as admission
 from app.services import turn_delivery
+from app.services.canonical_facts import CanonicalFactRef
 
 
 @pytest.fixture
@@ -168,6 +169,33 @@ def test_valid_narrative_is_preserved(state):
     text = "窗外的雨聲仍未止息，你收起筆記，走向門口。"
     reply, private = turn_delivery.finalize(message(state), text)
     assert reply == text and private == []
+
+
+def test_due_verified_fact_is_delivered_and_explicit_wrong_quantity_uses_fallback(state, monkeypatch):
+    fact = CanonicalFactRef("fact:diary", "櫥櫃裡有三本日記。", "scenario", {},
+                            "public", state.timeline_id,
+                            constraints={"entity": "日記", "quantity": 3, "unit": "本"})
+    monkeypatch.setattr(turn_delivery.canonical_facts, "project", lambda *args, **kwargs: [fact])
+    msg = message(state)
+    msg.payload["observed_outcomes"] = [ObservedOutcome(
+        "tool:1", "record_established_fact", True, "", "internal", fact_ref=fact.fact_id,
+    )]
+    reply, _ = turn_delivery.finalize(msg, "櫥櫃裡有一本日記。")
+    assert "櫥櫃裡有三本日記。" in reply
+    assert "櫥櫃裡有一本日記。" not in reply
+    assert msg.payload["delivery_envelope"].status == "projected_fallback"
+    assert msg.payload["delivery_envelope"].verified_fact_refs == [fact]
+
+
+def test_invalid_fact_ref_cannot_become_authoritative_delivery(state, monkeypatch):
+    monkeypatch.setattr(turn_delivery.canonical_facts, "project", lambda *args, **kwargs: [])
+    msg = message(state)
+    msg.payload["observed_outcomes"] = [ObservedOutcome(
+        "tool:1", "record_established_fact", True, "櫥櫃裡有一本日記。", "public", fact_ref="fact:stale",
+    )]
+    reply, _ = turn_delivery.finalize(msg, "已確認目前狀態。")
+    assert reply == "已確認目前狀態。"
+    assert msg.payload["delivery_envelope"].verified_fact_refs == []
 
 
 @pytest.mark.parametrize("text", ["我攻擊", "/coc check", "/coc luck skip", "/coc sudo u act attack",

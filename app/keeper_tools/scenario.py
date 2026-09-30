@@ -80,7 +80,9 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
                 return None
         else:
             return None
+        from app.services.canonical_facts import validated_constraints
         return {
+            "constraints": validated_constraints(tool_input.get("constraints"), quote),
             **({"discovery_receipt": discovery_receipt} if condition == "resolved_check" else {}),
             "verification_status": "verified", "source_kind": "scenario",
             "source_ref": source_ref, "timeline_id": target_state.timeline_id,
