@@ -55,6 +55,7 @@ from app.legacy_commands import (
     SendImage,
 )
 from app.models import GroupState
+from app.pdf_ingestion_drafts import ContinueImportMessage
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import StateRevisionConflict
 from app.repositories.group_state import load_state as load_group_state
@@ -323,6 +324,9 @@ def _make_reply(channel: discord.abc.Messageable) -> Reply:
 
     async def reply(text: str) -> None:
         channel_id = getattr(channel, "id", None)
+        if isinstance(text, ContinueImportMessage) and isinstance(channel_id, int):
+            await _discord_operation(channel.send(str(text), view=ContinueImportView(_conversation_id(channel_id), text)))
+            return
         if isinstance(text, SourceReadyMessage) and isinstance(channel_id, int):
             await _discord_operation(channel.send(str(text), view=SourceReadyView(_conversation_id(channel_id), text)))
             return
@@ -517,6 +521,9 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
     # Used only after the initial interaction response has been consumed
     # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:
+        if isinstance(text, ContinueImportMessage) and interaction.channel is not None:
+            await _discord_operation(interaction.followup.send(str(text), view=ContinueImportView(_conversation_id(interaction.channel.id), text)))
+            return
         if isinstance(text, SourceReadyMessage) and interaction.channel is not None:
             await _discord_operation(interaction.followup.send(
                 str(text), ephemeral=True,
@@ -1093,6 +1100,26 @@ class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=_HELP_BUTTO
         content = help_service.bounded_page_text(page, MAX_DISCORD_MESSAGE_CHARS)
         await _edit_interaction_message(
             interaction, content, view=_help_view(self.conversation_id, page)
+        )
+
+
+class ContinueImportView(discord.ui.View):
+    def __init__(self, conversation_id: str, result: ContinueImportMessage):
+        super().__init__(timeout=3600)
+        self.add_item(ContinueImportButton(conversation_id, result.draft_id))
+
+
+class ContinueImportButton(discord.ui.Button):
+    def __init__(self, conversation_id: str, draft_id: str):
+        super().__init__(label="繼續匯入", style=discord.ButtonStyle.primary)
+        self.conversation_id, self.draft_id = conversation_id, draft_id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not await _help_interaction_is_valid(interaction, self.conversation_id):
+            return
+        await _dispatch_help_command(
+            interaction, help_actions.BY_KEY["scenario_continue"],
+            f"/coc scenario continue {self.draft_id}",
         )
 
 
@@ -1745,6 +1772,7 @@ async def _handle_message(message: discord.Message) -> None:
         if await command_router.handle_uploads(
             conversation_id, uploads, reply,
             post_pdf_buttons=lambda: _post_pdf_upload_buttons(message.channel, conversation_id),
+            owner_user_id=str(message.author.id),
         ):
             return
 

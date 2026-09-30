@@ -66,6 +66,8 @@ def _entries(lifecycle_kp_only: bool | None = None) -> list[HelpEntry]:
         HelpEntry(("scenario", "template_approve"), "scenario", "核准中文模板", "檢查來源與規則後核准模板供 RAG 使用。", ("/coc scenario template approve 劇本ID 模板版本",), kp_only=True, command=("scenario", "template", "approve")),
         HelpEntry(("scenario", "template_import"), "scenario", "匯入中文模板", "選取對應劇本的 Markdown 檔案並匯入；檔案須先放進伺服器匯入目錄。", ("/coc scenario template import 劇本ID 檔名.md",), kp_only=True, command=("scenario", "template", "import")),
         HelpEntry(("scenario", "cards"), "scenario", "管理手動角色卡", "列出或刪除這個群組在指定劇本保存的手動角色卡。", ("/coc scenario cards list 劇本ID", "/coc scenario cards delete 劇本ID 資產ID"), notes=("只有目前的 KP 助手可以執行。",), kp_only=True, command=("scenario", "cards")),
+        HelpEntry(("scenario", "continue"), "scenario", "繼續 PDF 匯入", "只重試尚未通過驗證的頁面。", ("/coc scenario continue",), notes=lifecycle_note, command=("scenario", "continue"), kp_only=lifecycle_kp_only),
+        HelpEntry(("scenario", "draft_status"), "scenario", "PDF 匯入進度", "查看待修復的 PDF 頁面。", ("/coc scenario status",), notes=lifecycle_note, command=("scenario", "status"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "reparse"), "scenario", "重新解析劇本", "重新處理等待中的相似劇本 PDF。", ("/coc scenario reparse",), notes=lifecycle_note, command=("scenario", "reparse"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "cancel"), "scenario", "取消劇本處理", "放棄目前等待處理的相似劇本 PDF。", ("/coc scenario cancel",), notes=lifecycle_note, command=("scenario", "cancel"), kp_only=lifecycle_kp_only),
         HelpEntry(("scenario", "clean"), "scenario", "清理劇本庫", "刪除沒有被任何群組使用的劇本庫項目。", ("/coc scenario clean 劇本ID",), notes=lifecycle_note, command=("scenario", "clean"), kp_only=lifecycle_kp_only),

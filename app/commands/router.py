@@ -410,6 +410,7 @@ async def handle_uploads(
     reply: Reply,
     *,
     post_pdf_buttons: Callable[[], Awaitable[None]],
+    owner_user_id: str = "",
 ) -> bool:
     """Discord attachments enter here, as text enters through handle_text_message.
 
@@ -419,7 +420,7 @@ async def handle_uploads(
         return False
     observability.event("turn.entry", entry="upload")
     with observability.span("router", command_name="upload"):
-        return await uploads_handler.handle_uploads(conversation_id, uploads, reply, post_pdf_buttons=post_pdf_buttons)
+        return await uploads_handler.handle_uploads(conversation_id, uploads, reply, post_pdf_buttons=post_pdf_buttons, owner_user_id=owner_user_id)
 
 
 async def handle_check_button(
@@ -789,7 +790,7 @@ async def _handle_text_message_impl(
             # sections. asyncio.Lock is not re-entrant.
             scenario_action = parts[2].casefold() if sub == "scenario" and len(parts) > 2 else ""
             is_long_scenario_operation = sub == "scenario" and scenario_action in {
-                "import", "merge", "reparse",
+                "import", "merge", "reparse", "continue",
             }
             if is_long_scenario_operation:
                 async with locks.get_conversation_lock(conversation_id):
