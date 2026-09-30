@@ -4,7 +4,36 @@ from __future__ import annotations
 import re
 from collections import Counter
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict
+
+LayoutStatus = Literal['accepted', 'needs_review', 'not_applicable']
+BlockRole = Literal['body', 'margin', 'spanning', 'heading', 'full_width']
+BlockColumn = Literal['left', 'right']
+
+
+class LayoutBlock(TypedDict):
+    id: str
+    text: str
+    bbox: list[float]
+    column: BlockColumn | None
+    role: BlockRole
+
+
+class LayoutDecision(TypedDict):
+    status: LayoutStatus
+    selected_text: str
+    blocks: list[LayoutBlock]
+    ordered_ids: list[str]
+    diagnostics: list[str]
+    layout_kind: str
+    pipeline_version: str
+    coordinate_space: NotRequired[str]
+    rotation: NotRequired[int]
+    dimensions: NotRequired[list[float]]
+    candidate_alignment: NotRequired[dict[str, Any]]
+    words: NotRequired[list[dict[str, Any]]]
+    selected_candidate: NotRequired[str]
+
 
 PIPELINE_VERSION = 'native-columns-v1'
 # Pinned using the three supplied native-text golden pages. Formatting-only
@@ -19,7 +48,7 @@ def _tokens(text: str) -> list[str]:
     return _TOKEN.findall(text.casefold())
 
 
-def _align(blocks: list[dict], text: str) -> dict:
+def _align(blocks: list[LayoutBlock], text: str) -> dict:
     """Match source passages one to one, without rewriting candidate prose."""
     original = '\n'.join(b['text'] for b in blocks)
     critical = lambda value: Counter(x.casefold() for x in _CRITICAL.findall(value))
@@ -27,7 +56,7 @@ def _align(blocks: list[dict], text: str) -> dict:
         return {'status': 'unresolved', 'reason': 'numeric_dice_or_negation_change'}
     tokens = _tokens(text)
     claimed: set[int] = set()
-    matches = []
+    matches: list[dict[str, Any]] = []
     for block in blocks:
         source = _tokens(block['text'])
         if not source:
@@ -57,7 +86,7 @@ def _align(blocks: list[dict], text: str) -> dict:
     return {'status': 'aligned', 'ordered_ids': [m['id'] for m in sorted(matches, key=lambda m: m['start'])], 'matches': matches}
 
 
-def apply_order(decision: dict, ordered_ids: list[str]) -> str:
+def apply_order(decision: LayoutDecision, ordered_ids: list[str]) -> str:
     """Render a complete permutation of source blocks; reject lost/added IDs."""
     blocks = decision['blocks']
     ids = [b['id'] for b in blocks]
@@ -67,12 +96,12 @@ def apply_order(decision: dict, ordered_ids: list[str]) -> str:
     return '\n\n'.join(by_id[i].strip() for i in ordered_ids)
 
 
-def analyze_page(page: Any, candidates: dict[str, str]) -> dict:
+def analyze_page(page: Any, candidates: dict[str, str]) -> LayoutDecision:
     """Accept clean native columns, or retain all evidence for bounded repair."""
     raw = [b for b in page.get_text('blocks') if len(b) >= 7 and b[6] == 0 and b[4].strip()]
-    blocks = [{'id': f'b{i}', 'text': b[4], 'bbox': list(b[:4]), 'column': None, 'role': 'body'} for i, b in enumerate(raw)]
+    blocks: list[LayoutBlock] = [{'id': f'b{i}', 'text': b[4], 'bbox': list(b[:4]), 'column': None, 'role': 'body'} for i, b in enumerate(raw)]
     width, height = page.cropbox.width, page.cropbox.height
-    decision = {'status': 'not_applicable', 'selected_text': '', 'blocks': blocks, 'ordered_ids': [],
+    decision: LayoutDecision = {'status': 'not_applicable', 'selected_text': '', 'blocks': blocks, 'ordered_ids': [],
                 'diagnostics': [], 'layout_kind': 'other', 'pipeline_version': PIPELINE_VERSION,
                 'coordinate_space': 'unrotated PyMuPDF page coordinates', 'rotation': page.rotation,
                 'dimensions': [width, height], 'candidate_alignment': {}}

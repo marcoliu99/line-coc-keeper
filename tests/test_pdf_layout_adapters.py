@@ -169,3 +169,93 @@ def test_budget_shared_across_pages(source, monkeypatch):
     assert adapters.resolve_page(page, decision, budget)['status'] == 'accepted'
     assert adapters.resolve_page(page, decision, budget)['status'] == 'needs_review'
     assert len(calls) == 1
+
+
+def test_same_physical_page_retry_does_not_consume_second_page_slot(source, monkeypatch):
+    page, decision = source
+    monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ENABLED', False)
+    monkeypatch.setattr(adapters, '_provider', lambda *args: None)
+    budget = {'remaining_requests': 3, 'remaining_pages': 1, 'retries': 0}
+    adapters.resolve_page(page, decision, budget)
+    adapters.resolve_page(page, decision, budget)
+    assert budget['visited_pages'] == [1]
+    assert budget['remaining_pages'] == 0
+    assert budget['remaining_requests'] == 1
+    assert budget['consumed_requests'] == 2
+    assert budget['metrics']['image_calls'] == 2
+    second = page.parent.new_page()
+    assert adapters.resolve_page(second, decision, budget)['status'] == 'needs_review'
+    assert budget['metrics']['image_calls'] == 2
+
+
+def test_continue_preserves_exhaustion_and_explicit_cap_increase(source, monkeypatch):
+    page, decision = source
+    monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ENABLED', False)
+    monkeypatch.setattr(config, 'PDF_LAYOUT_MAX_REQUESTS', 1)
+    monkeypatch.setattr(config, 'PDF_LAYOUT_MAX_PAGES', 1)
+    monkeypatch.setattr(config, 'PDF_LAYOUT_RETRIES', 0)
+    monkeypatch.setattr(adapters, '_provider', lambda *args: None)
+    budget = adapters.new_budget()
+    adapters.resolve_page(page, decision, budget)
+    continued = adapters.reconcile_budget(budget)
+    adapters.resolve_page(page, decision, continued)
+    assert continued['remaining_requests'] == 0
+    assert continued['consumed_requests'] == 1
+    assert continued['visited_pages'] == [1]
+    assert continued['metrics']['image_calls'] == 1
+    monkeypatch.setattr(config, 'PDF_LAYOUT_MAX_REQUESTS', 3)
+    monkeypatch.setattr(config, 'PDF_LAYOUT_MAX_PAGES', 2)
+    increased = adapters.reconcile_budget(continued)
+    assert increased['configured_max_requests'] == 3
+    assert increased['configured_max_pages'] == 2
+    assert increased['remaining_requests'] == 2
+    assert increased['remaining_pages'] == 1
+    adapters.resolve_page(page, decision, increased)
+    assert increased['visited_pages'] == [1]
+    assert increased['remaining_requests'] == increased['consumed_requests'] - 1 == 1
+    assert increased['remaining_pages'] == 1
+
+
+def test_missing_docling_artifacts_rejected_before_heavy_import(source, monkeypatch):
+    monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ARTIFACTS_PATH', '')
+    with pytest.raises(ValueError, match='pre-downloaded'):
+        adapters._worker('docling', {'path': 'unused', 'timeout': 1})
+
+
+def test_request_usage_is_durable_before_provider_dispatch(source, monkeypatch):
+    from app import pdf_ingestion_drafts as drafts
+
+    page, decision = source
+    monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ENABLED', False)
+    lease = drafts.reserve('room', b'PDF', 'book.pdf')
+    budget = {'remaining_requests': 1, 'remaining_pages': 1, 'retries': 0}
+    def provider(*args):
+        stored = drafts.load('room')['report']['layout_budget']
+        assert stored['consumed_requests'] == 1
+        assert stored['remaining_requests'] == 0
+        assert stored['visited_pages'] == [1]
+    monkeypatch.setattr(adapters, '_provider', provider)
+    adapters.resolve_page(page, decision, budget,
+                          budget_checkpoint=lambda current: drafts.record_budget(lease, current))
+    # A new process can acquire the persisted attempt after interruption, but
+    # cannot recover the already spent request as unused allowance.
+    monkeypatch.setattr(drafts, '_PROCESS_ID', 'restarted-worker')
+    recovered = drafts.reserve('room', b'PDF', 'book.pdf', resume_draft_id=lease.draft_id)
+    assert drafts.owns(recovered)
+    assert drafts.load('room')['report']['layout_budget']['consumed_requests'] == 1
+
+
+def test_canceled_budget_callback_prevents_provider_call(source, monkeypatch):
+    from app import pdf_ingestion_drafts as drafts
+
+    page, decision = source
+    monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ENABLED', False)
+    lease = drafts.reserve('room', b'PDF', 'book.pdf')
+    drafts.discard('room', lease.draft_id)
+    newer = drafts.reserve('room', b'new PDF', 'new.pdf')
+    monkeypatch.setattr(adapters, '_provider', lambda *args: pytest.fail('canceled import reached provider'))
+    with pytest.raises(drafts.ImportOwnershipError):
+        adapters.resolve_page(page, decision, {'remaining_requests': 1, 'remaining_pages': 1},
+                              budget_checkpoint=lambda current: drafts.record_budget(lease, current))
+    assert drafts.owns(newer)
+    assert drafts.load('room')['report'] == {}
