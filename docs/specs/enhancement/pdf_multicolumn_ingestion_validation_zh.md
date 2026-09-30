@@ -35,6 +35,16 @@
 - Python 3.14 的 Docling 依賴解析成功，但真實模型轉換、品質與成本尚未量測；維持選用，缺模型或失敗保存草稿。
 - 複雜表格、掃描雙欄、重建 OCR、逐區擷取不屬於首版。原路徑會標示，不宣稱新增多欄驗證。
 - 頁數／請求上限採保守預設；續跑保留累計用量，明確提高設定才能增加額度。
-- 一般遊戲回合没有增加 LLM 呼叫；新增分析只在匯入發生。
+- 一般遊戲回合沒有增加 LLM 呼叫；新增分析只在匯入發生。
 
 Docling 選項與離線模型路徑依其[官方 pipeline 定義](https://github.com/docling-project/docling/blob/main/docling/datamodel/pipeline_options.py)核對。
+
+## 審查處理
+
+### Standards
+
+審查指出一項明文要求：封閉版面值應有型別。版面紀錄加入 Literal／TypedDict；身分檢查集中在草稿擁有者的公開 lease 介面。既有五值擷取契約維持下游相容；選用 worker transport 保留在匯入 adapter，避免另外抽空泛介面。
+
+### Spec
+
+審查發現三項缺口：失敗圖像仍可發布、續跑額度耗盡沒有補足方式、快取少了實際 parser／renderer 身分。失敗圖像改為阻擋；請求累計持久保存，明確提高設定才能補額，頁數按不同頁計算；來源與 parser／renderer 身分改變會使快取失效。額外以匯入認領測試並行新上傳及取消。每次匯入內排序逐頁執行，另記子程序處理耗時；沒有新增 adapter 准入佇列。

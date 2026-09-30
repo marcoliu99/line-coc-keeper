@@ -38,3 +38,13 @@ Used the main_v2 environment's configured OpenAI analysis provider (`OPENAI_MODE
 - No normal gameplay LLM calls were added; all new analysis occurs during import.
 
 Docling option names and offline artifact setup were checked against its [official pipeline options](https://github.com/docling-project/docling/blob/main/docling/datamodel/pipeline_options.py).
+
+## Review disposition
+
+### Standards
+
+The review identified one hard requirement: model closed layout value sets as types. Layout records now use Literal/TypedDict declarations. Import identity checks move behind the draft owner's public lease interface. The legacy five-value extraction contract remains for downstream compatibility; optional worker transport stays in the import-only adapter to avoid a new speculative abstraction.
+
+### Spec
+
+The review found three gaps: failed visual extraction could publish, exhausted Continue had no renewal mechanism, and cache validation omitted actual parser/renderer identity. Failed graphic extraction now blocks; request usage persists with explicit configured cap increases and distinct-page accounting; source, renderer and parser identities invalidate stale caches. Concurrent fresh uploads and cancellation are additionally covered by reserved import identity. Ordering runs serially per import, with subprocess processing durations recorded separately; there is no new adapter admission queue.
