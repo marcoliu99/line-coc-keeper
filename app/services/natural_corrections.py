@@ -1,6 +1,7 @@
 """Conservative admission of explicit player OOC corrections before gameplay parsing."""
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -9,7 +10,7 @@ from app.models import GroupState
 from app.services import history_authority, narrative_corrections
 
 _CORRECTION_CUES = ("你剛才", "你剛剛", "你前面", "剛才你", "剛剛你", "你說我", "守密人剛才", "你說錯", "更正：", "糾正：")
-_ERROR_CUES = ("說錯", "講錯", "說成", "你說我", "敘述", "描述", "搞錯", "誤寫", "誤說", "糾正", "更正")
+_ERROR_CUES = ("說錯", "講錯", "說成", "敘述", "描述", "搞錯", "誤寫", "誤說", "糾正", "更正")
 _PRESENTATION_CUES = ("氣味", "味道", "煙味", "腐紙味", "聲音", "顏色", "只是普通", "不是線索", "不是關鍵", "不重要")
 _CONSEQUENTIAL_CUES = ("HP", "SAN", "MP", "LUCK", "血量", "傷害", "骰", "檢定", "門", "鑰匙", "線索", "日記", "背包", "武器", "地點", "上樓", "下樓")
 _ACTION_CUES = ("我要", "我現在", "我接著", "我走去", "我去買", "再買")
@@ -73,6 +74,16 @@ def submit(state: GroupState, user_id: str, text: str, *, target_message_id: str
     character = state.get_active_character(user_id) if item else None
     if item and character is None:
         kind = "review"
+    if kind in {"presentation", "incidental_item"}:
+        effective = [{k: row[k] for k in ("id", "status", "target_message_id", "resolution", "hold_scope") if k in row}
+                     for row in narrative_corrections.active(state)
+                     if row.get("status") == "approved" or row.get("hold_scope")]
+        proposed = {"id": "x" * 10, "status": "approved", "target_message_id": str(receipt["message_id"]),
+                    "resolution": text}
+        if len(text) > 300 or len(json.dumps(effective + [proposed], ensure_ascii=False)) > narrative_corrections.MAX_CONTEXT_CHARS - 500:
+            return "這筆敘事更正太長或有效更正容量已滿；請縮短說明，現有遊戲仍可繼續。", True
+    if kind == "review" and (len(pending) >= 10 or sum(row.get("reporter_id") == user_id for row in pending) >= 3):
+        return "待核對更正已達上限；請先處理或撤回既有異議。", True
     report = {
         "id": uuid4().hex[:10], "target_message_id": str(receipt["message_id"]),
         "target_receipt": receipt, "issue": text, "reporter_id": user_id,

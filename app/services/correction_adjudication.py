@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -247,14 +248,25 @@ def _approval_holds(state: Any, cited: list[str], resolution: str, claims: Any,
         who = str(claim.get("investigator", "")).strip()
         if not who or not any(character.name == who for character in state.active_characters()):
             return False
-        source_text = "\n".join(evidence[key] for key in cited if key.startswith("scenario:"))
         aliases = {name.casefold()}
         if "鑰匙" in name:
             aliases.update({"key", "keys"})
-        grants = ("hands", "gives", "gave", "provided", "provides", "supplied",
-                  "交給", "交付", "給了", "給予", "取得", "拿到", "獲得")
-        return bool(source_text and any(alias in source_text.casefold() for alias in aliases)
-                    and any(verb in source_text.casefold() for verb in grants))
+        recipients = (who.casefold(), "the investigators", "investigators", "調查員", "你們")
+        grant = r"(?:hands?|gives?|gave|provided|provides|supplied|交給|交付|給了|給予)"
+        # Each grant clause must name both this item and this recipient. Never
+        # combine an unrelated grant and hidden item across passages/clauses.
+        for key in cited:
+            if not key.startswith("scenario:"):
+                continue
+            for clause in re.split(r"[.!?。！？；;\n]|\band\b|\bbut\b", evidence[key].casefold()):
+                for recipient in recipients:
+                    for alias in aliases:
+                        item_pattern = re.escape(alias) if not alias.isascii() else rf"\b{re.escape(alias)}\b"
+                        receiver = re.escape(recipient)
+                        if (re.search(rf"{grant}\s*(?:the\s+)?{receiver}\s*(?:a\s+|an\s+|the\s+)?{item_pattern}", clause)
+                                or re.search(rf"{grant}\s*(?:a\s+|an\s+|the\s+)?{item_pattern}\s*(?:to|給)\s*{receiver}", clause)):
+                            return True
+        return False
     return all(supported(claim) for claim in claims)
 
 

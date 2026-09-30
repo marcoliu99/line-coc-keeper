@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
-RecordKind = Literal["player_claim", "player_correction", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"]
+RecordKind = Literal["player_claim", "player_correction", "correction_request", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"]
 AuthorityLevel = Literal["authoritative", "presentation", "claim", "mixed"]
-_RECORD_KINDS = frozenset({"player_claim", "player_correction", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"})
+_RECORD_KINDS = frozenset({"player_claim", "player_correction", "correction_request", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"})
 _AUTHORITY_LEVELS = frozenset({"authoritative", "presentation", "claim", "mixed"})
 
 

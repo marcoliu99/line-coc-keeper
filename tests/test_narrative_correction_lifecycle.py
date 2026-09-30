@@ -106,12 +106,14 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         state.kp_assistant_user_id = 'kp'
         state.openai_previous_response_id = 'old-chain'
         reply = AsyncMock()
-        with patch.object(correct, 'load_state', return_value=state):
+        with patch.object(correct, 'load_state', return_value=state), patch.object(correct.correction_summary, 'schedule') as rebuild:
             await correct.handle_correct_command(state.group_id, 'player', reply,
                                                  ['/coc', 'correct', 'supersede', '0', '1'])
             self.assertEqual(state.narrative_corrections[0]['status'], 'approved')
             await correct.handle_correct_command(state.group_id, 'kp', reply,
                                                  ['/coc', 'correct', 'supersede', '0', '1'])
+        rebuild.assert_called_once_with(state.group_id)
+        self.assertEqual(state.narrative_corrections[1]['summary_rebuild_status'], 'pending')
         self.assertEqual(state.narrative_corrections[0]['status'], 'superseded')
         self.assertEqual(state.openai_previous_response_id, '')
         archived = db.get_json('narrative_correction_archive', f'{state.group_id}:{state.timeline_id}:0')

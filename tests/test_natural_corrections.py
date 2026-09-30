@@ -192,3 +192,52 @@ def test_key_mentioned_without_grant_cannot_repair_inventory():
               "reason": "玩家說拿過", "resolution": "Ada 持有鑰匙。",
               "claims": [{"kind": "item", "name": "鑰匙", "investigator": "Ada"}]}
     assert correction_adjudication._validated(state, evidence, output).decision == "undecided"
+
+
+def test_dialogue_is_not_an_error_report():
+    assert natural_corrections.classify('你說我該去哪裡？') == ''
+    assert natural_corrections.classify('你說我剛才講的話有道理嗎？') == ''
+
+
+def test_oversized_presentation_correction_cannot_block_play(tmp_path, monkeypatch):
+    state = _state(tmp_path, monkeypatch)
+    reply, handled = natural_corrections.submit(state, 'player', '你剛才說錯了，煙味' + '味道' * 1000)
+    assert handled and '太長' in reply
+    assert not state.narrative_corrections
+    assert not narrative_corrections.projection(state)[1]
+
+
+def test_many_presentation_corrections_keep_projection_bounded(tmp_path, monkeypatch):
+    state = _state(tmp_path, monkeypatch)
+    for i in range(100):
+        natural_corrections.submit(state, 'player', f'你剛才說錯了，煙味應是腐紙味 {i}')
+    assert not narrative_corrections.projection(state)[1]
+    assert len(state.narrative_corrections) < 100
+
+
+def test_summary_retries_after_revision_race(tmp_path, monkeypatch):
+    state = _state(tmp_path, monkeypatch)
+    natural_corrections.submit(state, 'player', '你剛才說錯了，腐紙味不是煙味')
+    calls = []
+    def summarize(*_args):
+        calls.append(1)
+        if len(calls) == 1:
+            latest = load_state(state.group_id)
+            latest.log.append({'role': 'user', 'content': 'new action'})
+            save_state(latest)
+        return '已更正為腐紙味'
+    with patch.object(correction_summary.keeper, 'summarize_log_chunk', side_effect=summarize):
+        asyncio.run(correction_summary.rebuild(state.group_id))
+    assert len(calls) == 2
+    assert load_state(state.group_id).narrative_corrections[-1]['summary_rebuild_status'] == 'done'
+
+
+def test_item_grant_does_not_combine_unrelated_passages(tmp_path, monkeypatch):
+    state = _state(tmp_path, monkeypatch)
+    state.characters['player'] = Character(name='Ada', owner_id='player')
+    claims = [{'kind': 'item', 'name': '鑰匙', 'investigator': 'Ada'}]
+    with patch.object(correction_adjudication, '_claim_holds', return_value=False):
+        assert not correction_adjudication._approval_holds(state, ['scenario:1', 'scenario:2'], 'Ada 持有鑰匙', claims,
+            {'scenario:1': 'The landlord gives the investigators a map.', 'scenario:2': 'A key is hidden under the floor.'})
+        assert not correction_adjudication._approval_holds(state, ['scenario:1'], 'Ada 持有鑰匙', claims,
+            {'scenario:1': 'The landlord gives Bob a key.'})

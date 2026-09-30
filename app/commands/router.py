@@ -911,6 +911,10 @@ async def _handle_ordinary_text_message_locked(
         # play.
         return
 
+    if any(row.get("status") == "approved" and row.get("summary_rebuild_status") == "pending"
+           for row in state.narrative_corrections if row.get("timeline_id") == state.timeline_id):
+        correction_summary.schedule(conversation_id)
+
     if state.kp_assistant_user_id != user_id:
         correction_reply, handled = natural_corrections.submit(
             state, user_id, text, target_message_id=referenced_message_id,

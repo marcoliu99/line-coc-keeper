@@ -116,3 +116,5 @@ Review correction: provenance APIs use closed RecordKind/AuthorityLevel types; i
 PR #152 review fixes: public narration excludes recipient-private authority; promoted legacy records receive durable IDs; verified discovery receipts persist with facts; historical source validation ignores the active chapter retrieval window.
 
 PR #153 review fixes: recording tools accept explicit source-validated entity/unit/quantity constraints and persist them into canonical projection; fallback deduplicates facts across observation and canonical lists.
+
+PR #154 review fixes: automatic presentation repairs have length and remaining-context limits; ordinary dialogue does not imply a correction. Item repairs require a single grant clause linking item and recipient. Supersession marks retired entries and schedules rebuilding; revision races retry at most three times per run, with remaining pending work retried on later player entry. No fixed normal-turn model call was added.
