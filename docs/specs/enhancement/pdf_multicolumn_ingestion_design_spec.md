@@ -2,7 +2,7 @@
 
 [繁體中文](pdf_multicolumn_ingestion_design_spec_zh.md) | [Docs index](../../README.md)
 
-Status: **implemented — PR review pending**. Base: `main_v2` at `7cef87c`. This proposal refines the external draft `pdf_ingestion_multicolumn_design_spec.md`; it does not change gameplay turn logic. “Approved scenario source” means published PDF-backed text, not an established world fact or an investigator discovery.
+Status: **partial — full-import regression verification in progress**. Base: `main_v2` at `7cef87c`. This proposal refines the external draft `pdf_ingestion_multicolumn_design_spec.md`; it does not change gameplay turn logic. “Approved scenario source” means published PDF-backed text, not an established world fact or an investigator discovery.
 
 ## Problem and measured baseline
 
@@ -149,3 +149,38 @@ flowchart TD
 ## Docling completion correction
 
 Real Docling 2.131.0 conversion was missing from the first validation pass. Nine supplied pages convert successfully, but literal whole-block matching rejects all nine because Docling splits source blocks and may represent areas as tables. The adapter consumes ordered provenance rectangles, map them to unchanged native block IDs with complete geometric coverage, and reject ambiguous merged columns or interleaved fragments. It must not replace source text with Docling prose. Defaults enable the challenger after local model setup; installation/model preparation stays explicit and import-time downloads remain disabled.
+
+
+## Full-import regression repair (2026-09-30)
+
+Import acceptance is not the enhancement acceptance criterion. The first external
+three-book run returned four, six, and one investigators; Beacon's source contains
+four explicit investigator cards. It also missed Beacon's readable lighthouse
+floor plans (physical pages 16 and 27). These are release-blocking regressions.
+
+- Detect explicit investigator-card starts from investigator/characteristics
+  headings and at least four attribute labels with values. Analyze each card and
+  its following background pages up to the next card, retaining original page
+  markers. A missing result for an explicit card must not publish a partial roster
+  as complete. Keep the whole-text compatibility path for other card formats.
+- Graphic floor-plan and investigator-map headings require spatial image analysis
+  independently of OCR text length. Successful OCR or local repair cannot remove
+  these pages from the map-analysis queue. If their graph is missing, retain the
+  import draft. Map graph output and description numeric coverage are distinct:
+  never discard a returned graph merely because its prose omits source numbers;
+  preserve the source text and reject the deficient description separately.
+- Keep all candidate warnings for diagnostics. `review_reasons` identifies issues
+  remaining in the final selected page. Rejected-candidate defects and successfully
+  resolved ordering diagnostics do not imply the winning source-preserving text
+  is still defective. Unresolved fields and failed repairs remain visible.
+- Advance pipeline identity to `multicolumn-v2`; old accepted-page caches cannot
+  bypass these new map checks.
+
+Regression tests exercise four-card omission, missing-card results, readable-map
+analysis, failed graph extraction, separate graph/prose acceptance, and candidate
+warning attribution. Repeat the same three complete imports in isolated storage,
+checking persisted rosters and map graphs rather than relying on success messages.
+No numerical check is disabled. Full semantic or numerical fidelity is not proven
+by roster count or import acceptance alone.
+
+Additional real-run findings: vision may name a card in Chinese, so the card boundary detector accepts Chinese card labels with attribute evidence. Blank-name placeholders are not character identities and must not collapse different investigators during pool reconciliation or be learned as name aliases. Unresolved attribute markers are scoped to the individual card, not every unnamed card in the book.

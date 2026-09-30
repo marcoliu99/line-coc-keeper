@@ -188,3 +188,55 @@ def test_rendered_unicode_page_markers_preserve_source_unit_spans():
     start = source.index(quote)
     assert source[start:start + len(quote)] == quote
     assert len(source[:start].encode()) > start
+
+
+def test_readable_floor_plan_still_builds_map():
+    source = pdf('BEACON ISLAND LIGHTHOUSE FLOOR PLAN ' + 'Room entrance corridor stairs. ' * 12)
+    report = {}
+    expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door', 'name': 'Entrance'}]}
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
+         patch.object(loader, '_page_has_graphic_content', return_value=True), \
+         patch.object(loader, '_render_page_png', return_value=b'png'), \
+         patch.object(loader, '_analyze_graphic_page', return_value=('Ground floor entrance.', expected)) as analyze:
+        text, _, _, _, maps = loader.extract_text(source, quality_report=report)
+    analyze.assert_called_once()
+    assert maps[1] == expected
+    assert 'FLOOR PLAN' in text
+
+
+def test_rejected_candidate_warning_does_not_mark_verified_order_for_review():
+    report = {}
+    accepted = decision('Rule causes 2d6 damage.')
+    accepted['diagnostics'] = ['layout:numeric_dice_or_negation_change', 'native:reading_order_mismatch']
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
+         patch.object(loader.pdf_layout, 'analyze_page', return_value=accepted):
+        _, review, *_ = loader.extract_text(pdf('Rule causes 2d6 damage.'), quality_report=report)
+    assert review == []
+    assert 'layout:numeric_dice_or_negation_change' in report['pages'][0]['warnings']
+    assert report['pages'][0]['review_reasons'] == []
+
+
+@pytest.mark.parametrize('failed', [False, True])
+def test_readable_floor_plan_without_graph_stays_draft(failed):
+    source = pdf('FLOOR PLAN ' + 'Room entrance corridor stairs. ' * 12)
+    report = {}
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
+         patch.object(loader, '_page_has_graphic_content', return_value=True), \
+         patch.object(loader, '_render_page_png', return_value=b'png'), \
+         patch.object(loader, '_analyze_graphic_page', side_effect=RuntimeError('offline') if failed else None,
+                      return_value=('Floor plan visible.', None)), \
+         pytest.raises(loader.LayoutReviewRequired):
+        loader.extract_text(source, quality_report=report)
+    assert report['blocked_pages'] == [1]
+
+
+def test_map_graph_survives_description_that_omits_numeric_source_labels():
+    source = pdf('FLOOR PLAN 12 ' + 'Room entrance corridor stairs. ' * 12)
+    expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door'}]}
+    with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
+         patch.object(loader, '_page_has_graphic_content', return_value=True), \
+         patch.object(loader, '_render_page_png', return_value=b'png'), \
+         patch.object(loader, '_analyze_graphic_page', return_value=('Entrance connects to stairs.', expected)):
+        text, _, _, _, maps = loader.extract_text(source)
+    assert maps == {1: expected}
+    assert '12' in text

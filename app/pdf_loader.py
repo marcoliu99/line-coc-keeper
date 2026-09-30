@@ -29,7 +29,7 @@ from app.scene_map import analyze_page_image
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v1'
+PIPELINE_VERSION = 'multicolumn-v2'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route']
@@ -451,6 +451,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     images: dict[int, bytes] = {}
     pending: dict[int, bytes] = {}
     maps: dict[int, dict] = {}
+    map_candidates: set[int] = set()
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         report["page_count"] = doc.page_count
         for i, page in enumerate(doc):
@@ -512,6 +513,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             graphic = _page_has_graphic_content(page) or _pymupdf4llm_has_graphic_evidence(chunk)
             if graphic:
                 images[number] = _render_page_png(page)
+            # Readable labels do not establish a floor plan's spatial graph.
+            map_text = re.sub(r"[·_]+", " ", native + "\n" + layout_text)
+            if graphic and re.search(r"(?i)\bfloor\s*plan\b|\binvestigator\s+map\b|平面圖|樓層圖", map_text):
+                map_candidates.add(number)
+                pending[number] = images[number]
             if len(text) < _LOW_TEXT_THRESHOLD:
                 warnings.append("low_text")
                 if graphic:
@@ -543,7 +549,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     report["pages"][number - 1]["method"] = "markitdown"
                 else:
                     report["pages"][number - 1]["warnings"].append("ocr_evidence_loss")
-                if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD:
+                if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD and number not in map_candidates:
                     pending.pop(number)
 
         # Repair only remaining numeric/corrupted blocks, before extraction consumers.
@@ -554,7 +560,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             row["ai_repair"] = ai_result
             if any(r["status"] == "accepted" for r in ai_result["regions"]):
                 row["method"] += "+ai_repair"
-                if len(texts[i]) >= _LOW_TEXT_THRESHOLD:
+                if len(texts[i]) >= _LOW_TEXT_THRESHOLD and i + 1 not in map_candidates:
                     pending.pop(i + 1, None)
             if ai_result["unresolved_labels"]:
                 row["warnings"].append("ai_fields_unresolved")
@@ -570,6 +576,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     except Exception:  # noqa: BLE001 - retain other pages and record this failed fallback.
                         row["warnings"].append("vision_failed")
                         continue
+                    if scene_map:
+                        maps[number] = scene_map
                     if not extra:
                         row["warnings"].append("vision_empty")
                     if extra:
@@ -588,8 +596,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                         else:
                             texts[number - 1] = (texts[number - 1] + "\n[影像轉錄／描述]\n" + extra).strip()
                         row["warnings"].append("vision_review_required")
-                    if scene_map:
-                        maps[number] = scene_map
+                    if not scene_map and number in map_candidates:
+                        row["warnings"].append("floor_plan_graph_missing")
 
     review = []
     for i, text in enumerate(texts):
@@ -606,11 +614,33 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             failed_graphic = (row.get('graphic_evidence') and len(text.strip()) < _LOW_TEXT_THRESHOLD
                               and any(w in {'vision_failed', 'vision_empty', 'vision_pair_mismatch'}
                                       for w in row['warnings']))
-            publication: PagePublication = {'disposition': _publication_disposition(status, bool(failed_graphic))}
+            publication: PagePublication = {'disposition': _publication_disposition(
+                status, bool(failed_graphic) or (i + 1 in map_candidates and i + 1 not in maps))}
             row.update(publication)
         if not text.strip():
             row["warnings"].append("empty_page")
-        if any(w not in {"native_two_columns", "layout_unavailable"} for w in row["warnings"]):
+        # Candidate diagnostics remain available, but do not imply that the
+        # source-preserving winning candidate still has the rejected defect.
+        informational = {"native_two_columns", "layout_unavailable", "no_native_text_geometry"}
+        candidate_only = {"layout_numeric_loss", "layout_text_loss", "layout_pair_mismatch",
+                          "numeric_pair_review", "ocr_evidence_loss", "ocr_pair_review", "ocr_pair_mismatch"}
+        accepted_order = row['layout_decision']['status'] == 'accepted'
+        review_reasons = []
+        for warning in row['warnings']:
+            if warning in informational:
+                continue
+            if warning == 'low_text' and accepted_order and not row.get('graphic_evidence'):
+                continue
+            if (accepted_order and warning.startswith(
+                    ('native:', 'layout:', 'layout ordering accepted:', 'layout docling failed:'))):
+                continue
+            if accepted_order and warning in {"ambiguous_columns", "unsupported_spanning_region"}:
+                continue
+            if warning in candidate_only and row['method'] in {'native', 'multicolumn'}:
+                continue
+            review_reasons.append(warning)
+        row['review_reasons'] = review_reasons
+        if review_reasons:
             review.append(i + 1)
         if i and pdf_quality.continuation(texts[i - 1], text):
             report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})

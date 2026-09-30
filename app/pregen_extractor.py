@@ -1,7 +1,7 @@
 """Pull any built-in pregenerated investigator sheets out of a scenario's text.
 
 Many published COC7e scenarios ship with ready-made pregens so a group can skip
-character creation entirely. This does a single forced tool-call (via whichever
+character creation entirely. Explicit PDF cards are analyzed individually (via whichever
 ANALYSIS_PROVIDER is configured — see app/providers/*.py's analyze_text) asking it to
 report only what's explicitly written in the text (never invent numbers), so
 `/coc pregens` can offer them instead of everyone rolling a fresh investigator.
@@ -237,9 +237,7 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     if provider is None or not scenario_text.strip():
         return []
 
-    result = provider.analyze_text(
-        scenario_text,
-        _REPORT_TOOL,
+    prompt = (
         "以下是一份 COC7e 劇本的文字內容。請找出裡面是否附有『預製調查員角色卡』"
         "（通常會列出角色姓名、職業、一串屬性數字如 STR/CON/SIZ/DEX/APP/INT/POW/EDU、"
         "以及一份技能列表）。職業請同時回報原文（occupation_original）跟中文翻譯"
@@ -248,11 +246,32 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         "譯名。用 report_pregens 工具回報結果。"
         "若角色卡原文有 LUCK/幸運 數值，除了 luck，必須回報 luck_source_page，"
         "以及從同一張角色卡逐字複製、同時包含 LUCK/幸運 標籤與數值的 luck_source_excerpt；"
-        "空白欄位不得填 luck。遇到 PDF_UNRESOLVED_FIELDS 標記，不得猜測所列屬性，請省略該欄位。",
+        "空白欄位不得填 luck。遇到 PDF_UNRESOLVED_FIELDS 標記，不得猜測所列屬性，請省略該欄位。"
     )
-    pregens = (result or {}).get("pregens", []) or []
     pages = _scenario_pages(scenario_text)
-    for pregen in pregens:
+    starts = [number for number, text in pages.items()
+              if re.search(r"(?i)CHARACTERISTICS|屬性", text)
+              and re.search(r"(?i)\bINVESTIGATOR\b|調查員角色卡|角色卡標題", text)
+              and sum(bool(re.search(rf"(?i)\b{label}\s*\d", text))
+                      for label in ("STR", "CON", "SIZ", "DEX", "APP", "INT", "POW", "EDU")) >= 4]
+    inputs = []
+    if len(starts) > 1:
+        for i, start in enumerate(starts):
+            end = starts[i + 1] if i + 1 < len(starts) else max(pages) + 1
+            inputs.append("\n".join(f"--- 第 {number} 頁 ---\n{text}"
+                                    for number, text in pages.items() if start <= number < end))
+    else:
+        inputs = [scenario_text]
+    pregens: list[dict[str, Any]] = []
+    card_pages: list[dict[int, str]] = []
+    for text in inputs:
+        result = provider.analyze_text(text, _REPORT_TOOL, prompt)
+        extracted = (result or {}).get("pregens", []) or []
+        if len(starts) > 1 and not extracted:
+            raise ValueError("預製角色卡分析未完成，請重試匯入；未發布不完整的角色清單。")
+        pregens.extend(extracted)
+        card_pages.extend([_scenario_pages(text)] * len(extracted))
+    for pregen, source_pages in zip(pregens, card_pages, strict=True):
         _clean_pregen_keys(pregen)
         if "luck" in pregen:
             verified = _verified_pdf_luck(pregen, pregens, pages)
@@ -263,7 +282,7 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
                 pregen["luck"] = verified
         pregen.pop("luck_source_page", None)
         pregen.pop("luck_source_excerpt", None)
-        _apply_pdf_unknowns(pregen, pages)
+        _apply_pdf_unknowns(pregen, source_pages)
         _preserve_extra_fields(pregen)
         # Tagged "llm_extracted" vs parse_role_sheet_text's "manual" above —
         # see that function's own comment for why reconciliation needs this.
