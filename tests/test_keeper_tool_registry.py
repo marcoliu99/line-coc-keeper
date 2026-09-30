@@ -19,7 +19,7 @@ def test_registry_covers_schemas_and_orders_provider_tools() -> None:
                for name, spec in registry.REGISTRY.items())
     player_schemas = [
         spec.schema for name, spec in registry.REGISTRY.items()
-        if name not in {"search_scenario", "report_summary"}
+        if name not in {"search_scenario", "report_summary"} and not spec.followup_only
     ]
     assert keeper.TOOLS == player_schemas
 

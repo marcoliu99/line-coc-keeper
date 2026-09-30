@@ -76,6 +76,8 @@ def make_tool_executor(
     evidence_incomplete: bool = False,
     required_evidence_ids: set[str] | None = None,
     observed_outcomes: list[ObservedOutcome] | None = None,
+    actor_id: str = "",
+    resolved_check_followup: bool = False,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -103,6 +105,9 @@ def make_tool_executor(
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         nonlocal evidence_incomplete
         mutation_admission.assert_admitted(state.group_id)
+        spec = tool_registry.REGISTRY.get(tool_name)
+        if spec is not None and spec.followup_only and not resolved_check_followup:
+            return rejection(tool_name, "tool_not_allowed_for_turn", "此工具只供已結算檢定後續使用")
         if evidence_incomplete and tool_name not in BOUNDED_QUERY_TOOLS:
             return rejection(tool_name, "required_scenario_evidence_missing",
                              "必要劇本依據未齊；請續取完整依據，或暫緩並聚焦行動。不得以截短摘要執行機制。")
@@ -129,9 +134,15 @@ def make_tool_executor(
                 with mutation_admission.bind(owner):
                     result = None
                     try:
-                        result = keeper._execute_tool(
-                            state, tool_name, tool_input, private_messages, image_requests, speaker_role
-                        )
+                        if tool_name in {"apply_resolved_check_damage", "create_triggered_check"}:
+                            result = keeper._execute_tool(
+                                state, tool_name, tool_input, private_messages, image_requests,
+                                speaker_role, actor_id=actor_id,
+                            )
+                        else:
+                            result = keeper._execute_tool(
+                                state, tool_name, tool_input, private_messages, image_requests, speaker_role
+                            )
                         observability.event("turn.observed", tool_name=tool_name,
                                             dice_rolled=bool(result.get("ok") and (result.get("resolved") or result.get("pending_luck") or tool_name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"})))
                         # Record before settlement, including late/cancelled awaiters.
