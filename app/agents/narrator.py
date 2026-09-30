@@ -9,7 +9,7 @@ from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
 from app.keeper_tools import registry as tool_registry
 from app.providers.conversation_session import ConversationSession
-from app.services import mutation_admission, prompt_config
+from app.services import canonical_facts, mutation_admission, prompt_config
 
 _logger = logging.getLogger(__name__)
 _OPENING_TOOL_NAMES = tool_registry.OPENING_TOOL_NAMES
@@ -52,6 +52,13 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role,
                                      include_private_checks=False), rag_context, memory_context
     )
+    narration_requirements = canonical_facts.requirements(
+        state, recipient_id=user_id, speaker_role=speaker_role
+    )
+    message.payload["narration_requirements"] = canonical_facts.as_payload(narration_requirements)
+    authority_block = canonical_facts.prompt_block(narration_requirements)
+    if authority_block:
+        dynamic_system += "\n\n" + authority_block
     character = state.get_active_character(user_id)
     if character:
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(

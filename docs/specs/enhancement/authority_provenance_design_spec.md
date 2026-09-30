@@ -4,7 +4,7 @@
 
 ## Status and problem
 
-Category: `enhancement`. Status: **partial — stop-amplification phase implemented; canonical projection, delivery contract, and correction/reconciliation remain**. Audited against `main_v2` at `7cef87c`.
+Category: `enhancement`. Status: **partial — stop-amplification and canonical-projection phases implemented; delivery contract and correction/reconciliation remain**. Audited against `main_v2` at `7cef87c`.
 
 `GroupState.log` currently stores mostly `role/content` for player turns, KP canon, and approved corrections. The same flattened text feeds the rolling summary and Memory RAG. A mistaken narration can therefore return as apparent evidence and be repeated or used to justify a tool call. `record_established_fact` and `record_clue` currently accept text without checking a source; their rows also enter Scene Digest. The correction adjudicator can cite nearby `log:N` as evidence, even though it proves only what was said.
 
@@ -72,6 +72,8 @@ Memory chunks retain the original conversation wording plus `memory_kind=convers
 Each PR gets its own branch and spec status/evidence update. PR1 must not wait for PR4 to lower the authority of old summary and memory. Changes to the normal-turn provider call count require explicit measurement and review.
 
 The stop-amplification branch stamps new log entries, projects compact authority labels through every conversation provider, frames old summaries and Memory RAG as unverified conversation, stores source-message metadata in new memory chunks, and stops unsourced fact/clue rows or raw log citations from independently authorizing correction rulings. Durable source verification and positive promotion are reserved for the canonical-projection phase. Existing player correction flows remain available.
+
+The canonical-projection branch resolves an exact scenario quote against the active source version, record ID, and content digest. A record without that match stays `unverified`. A Keeper-only unconditional rule can be verified without claiming players have seen it. Public promotion requires a current observed turn or a successful durable check event; an exact quote alone cannot disclose hidden material. The projection rechecks source identity, event and timeline, and recipient visibility each turn, and carries only verified facts and explicit human KP canon into the shared Executor/Narrator authority block and `NarrationRequirements`. The model still judges whether a present action satisfies an unstructured scenario condition; a source quote is not a semantic proof, so the delivery/correction stages remain necessary.
 
 ## Verification
 
