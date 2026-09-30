@@ -5,6 +5,7 @@ messages, enemy statistics and reasoning are never generic fallback material.
 """
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from uuid import uuid4
@@ -12,8 +13,10 @@ from uuid import uuid4
 from app import observability, spoiler_policy
 from app.domain.models import MechanicResult, ObservedOutcome
 from app.models import GroupState
+from app.services import canonical_facts
 
 BLOCKED_NOTICE = "回覆需要核對後才能安全顯示。已結算的結果與待處理選擇仍保留；請查看目前狀態，勿重做這次行動。"
+_COUNT = {"一": 1, "兩": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
 
 def is_private(entry: dict) -> bool:
@@ -58,8 +61,11 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
         elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "resolve_enemy_action", "add_npc_to_combat", "add_combat_effect"}:
             # Do not expose enemy sheets/ability names through a generic dump.
             text = "戰鬥機制操作已記錄；後續以目前戰鬥狀態為準。"
+    record = result.get("record") if name in {"record_clue", "record_established_fact"} else None
+    fact_ref = (str(record.get("fact_id", "")) if isinstance(record, dict)
+                and record.get("verification_status") == "verified" else "")
     return ObservedOutcome(f"tool:{number}", name, bool(result.get("ok")), text,
-                           "public" if text else "internal")
+                           "public" if text else "internal", fact_ref=fact_ref)
 
 
 @dataclass(frozen=True)
@@ -87,12 +93,14 @@ class DeliveryEnvelope:
     recipient_id: str
     narrative: str
     authorized_facts: list[ObservedOutcome] = field(default_factory=list)
+    verified_fact_refs: list[canonical_facts.CanonicalFactRef] = field(default_factory=list)
     interactions: list[InteractionRef] = field(default_factory=list)
     canonical_policy: str = "verified_turn_output"
     status: str = "candidate"
 
     def projected_text(self) -> str:
         lines = [fact.public_text for fact in self.authorized_facts if fact.public_text]
+        lines.extend(fact.text for fact in self.verified_fact_refs)
         lines.extend(dict.fromkeys(ref.instruction for ref in self.interactions))
         return "\n".join(lines)
 
@@ -134,6 +142,26 @@ def public_mechanic(result: MechanicResult | None, state: GroupState) -> Mechani
     return projected
 
 
+def _proven_quantity_conflict(narrative: str, facts: list[canonical_facts.CanonicalFactRef]) -> bool:
+    """Check only a typed, adjacent quantity claim about a known entity.
+
+    This deliberately does not attempt general Chinese prose interpretation.
+    """
+    for fact in facts:
+        entity = fact.constraints.get("entity")
+        quantity = fact.constraints.get("quantity")
+        unit = fact.constraints.get("unit")
+        if not isinstance(entity, str) or not entity or not isinstance(quantity, int) or not isinstance(unit, str) or not unit:
+            continue
+        pattern = rf"(?P<count>\d+|[一二兩三四五六七八九]){re.escape(unit)}(?:[\w\u4e00-\u9fff]{{0,3}})?{re.escape(entity)}"
+        for match in re.finditer(pattern, narrative):
+            raw = match.group("count")
+            observed = int(raw) if raw.isdigit() else _COUNT.get(raw)
+            if observed is not None and observed != quantity:
+                return True
+    return False
+
+
 def validate_delivery_contract(envelope: DeliveryEnvelope, text: str, state: GroupState) -> bool:
     """Validation only. Exact server projection and live identities, no rewrite."""
     live = interaction_refs(state)
@@ -141,6 +169,11 @@ def validate_delivery_contract(envelope: DeliveryEnvelope, text: str, state: Gro
         return False
     if any(fact.audience != envelope.audience or fact.recipient_id != envelope.recipient_id
            for fact in envelope.authorized_facts):
+        return False
+    live_facts = {fact.fact_id: fact for fact in canonical_facts.project(
+        state, recipient_id=envelope.recipient_id,
+    )}
+    if any(live_facts.get(fact.fact_id) != fact for fact in envelope.verified_fact_refs):
         return False
     if any(ref.audience != envelope.audience or ref.recipient_id != envelope.recipient_id
            for ref in envelope.interactions):
@@ -165,8 +198,15 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
         # public artifact merely because the pending decision is now cleared.
         narrative = "請查看你的私訊。"
     refs = interaction_refs(state)
+    due_ids = {outcome.fact_ref for outcome in outcomes if outcome.success and outcome.fact_ref}
+    live_facts = canonical_facts.project(state)
+    due_public = [fact for fact in live_facts if fact.fact_id in due_ids and fact.visibility == "public"]
+    due_valid_ids = {fact.fact_id for fact in due_public}
+    public_outcomes = [outcome for outcome in outcomes if outcome.audience == "public"
+                       and (not outcome.fact_ref or outcome.fact_ref in due_valid_ids)]
     envelope = DeliveryEnvelope(uuid4().hex, "public", "", narrative,
-                                [o for o in outcomes if o.audience == "public"],
+                                public_outcomes,
+                                due_public,
                                 [ref for ref in refs if ref.audience == "public"])
     protected = spoiler_policy.collect_protected_terms(state)
     for entries in (state.pending_checks, state.pending_luck_decisions):
@@ -174,7 +214,8 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
             if is_private(entry):
                 protected.extend(str(entry[key]) for key in ("skill", "skill_name", "action_context") if entry.get(key))
     result = envelope.render()
-    safe = spoiler_policy.sanitize_public_text(result, protected).is_safe
+    conflict = _proven_quantity_conflict(narrative, due_public)
+    safe = spoiler_policy.sanitize_public_text(result, protected).is_safe and not conflict
     valid = validate_delivery_contract(envelope, result, state)
     if not (safe and valid):
         # Drop unsafe narrative, retaining the same required projected facts
@@ -192,7 +233,8 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
         envelope.status = "projected_fallback" if message.payload.get("narration_failed") else "passed"
     message.payload["delivery_envelope"] = envelope
     observability.event("turn.delivery_contract", status=envelope.status,
-                        fact_count=len(envelope.authorized_facts), control_count=len(refs),
+                        fact_count=len(envelope.authorized_facts) + len(envelope.verified_fact_refs), control_count=len(refs),
+                        hard_fact_conflict=conflict,
                         narrative_complete=not message.payload.get("narration_failed", False))
     private = []
     private_owners = [ref.recipient_id for ref in refs if ref.audience == "player_private"]
