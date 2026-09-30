@@ -874,6 +874,20 @@
       "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
     },
     {
+      "title": "PDF multicolumn ingestion and reading-order arbitration",
+      "zh": "PDF 多欄匯入與閱讀順序裁決",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "app/pdf_loader.py",
+        "app/pdf_quality.py",
+        "app/scenario_library.py",
+        "tests/test_pdf_loader.py"
+      ],
+      "path": "docs/specs/enhancement/pdf_multicolumn_ingestion_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pdf_multicolumn_ingestion_design_spec_zh.md"
+    },
+    {
       "title": "Atomic narrative purchases and acquisition provenance",
       "zh": "原子敘事購買與取得來源",
       "category": "bug",
