@@ -2,7 +2,7 @@
 
 [繁體中文](pdf_multicolumn_ingestion_design_spec_zh.md) | [Docs index](../../README.md)
 
-Status: **backlog — design review in progress**. Base: `main_v2` at `7cef87c`. This proposal refines the external draft `pdf_ingestion_multicolumn_design_spec.md`; it does not change gameplay turn logic.
+Status: **backlog — design review in progress**. Base: `main_v2` at `7cef87c`. This proposal refines the external draft `pdf_ingestion_multicolumn_design_spec.md`; it does not change gameplay turn logic. “Approved scenario source” means published PDF-backed text, not an established world fact or an investigator discovery.
 
 ## Problem and measured baseline
 
@@ -60,36 +60,47 @@ PDF bytes + immutable hash
   -> detect text columns, spanning headings, floating regions
   -> candidate-to-geometry alignment and reading-order diagnosis
   -> local geometry order + optional Docling challenger on hard pages
+  -> bounded image-analysis ordering only if still ambiguous
   -> numeric/pair/source checks and decision
   -> accepted page text -> deterministic existing page-marker renderer
   -> scenario.txt -> chapters / source units / translation / RAG
 ```
 
-Do not compare only a weighted score. Hard constraints come first: no missing required source text, numeric/pair regression, source-span misalignment, or unsupported placement. Among eligible candidates, compare reading order and completeness. The native layout baseline is evidence, not automatic truth. The published decision records candidate, reason, region mapping, confidence, and warnings. Docling cannot publish by itself; its ordering and text must pass the same gates. Optional dependency failure and timeout leave the existing candidates available and record a diagnostic. If none is adequate, retain a draft page, not a fabricated winner.
+Do not compare only a weighted score. Hard constraints come first: no missing required source text, numeric/pair regression, source-span misalignment, or unsupported placement. Among eligible candidates, compare reading order and completeness. The native layout baseline is evidence, not automatic truth. The published decision records candidate, reason, region mapping, confidence, and warnings. Docling cannot publish by itself; its ordering and text must pass the same gates. Optional dependency failure and timeout leave the existing candidates available and record a diagnostic. If none is adequate, retain a draft page, not a fabricated winner. Approximate-alignment score and runner-up margin are calibrated on the golden corpus, then pinned as versioned configuration and regression tests; neither is guessed before measurement.
 
-The first release does not change the scan, map, character-sheet, table, and local repair routes. Region-level OCR and table-specific extraction remain follow-up work. Any parser or OCR result that is only a visual description remains labeled as derived material, not a verbatim source quote.
+The image-analysis request carries the page image or bounded region crops plus stable candidate/block IDs and short candidate text. Its structured result may only identify region placement and an ordered permutation of those IDs, with unresolved IDs explicitly listed. Python checks that IDs belong to this page, each required ID occurs exactly once, region assignments are geometrically plausible, and the assembled text still passes existing numeric/pair/source gates. Model-authored replacement prose is rejected. Current OCR repair owns unreadable glyphs, and map analysis owns map geometry. The first release does not change the scan, map, character-sheet, table, and local repair routes. Region-level OCR and table-specific extraction remain follow-up work. Any parser or OCR result that is only a visual description remains labeled as derived material, not a verbatim source quote.
 
 ## Draft and publication
 
-Accepted pages and their diagnostics may be saved in an import draft. A page with unresolved reading order or source loss is blocked individually for repair. A newly published playable scenario must have all plot/rules-relevant pages resolved; an existing published scenario stays available. Publication still uses the trusted scenario-source transaction and invalidates derived translation, records, and indexes when source text changes. The exact repair route is under review.
+Accepted pages and their diagnostics may be saved in an import draft. A page with unresolved reading order or source loss is blocked individually for repair. The repair route is automatic: run local geometry and, for a hard page, Docling first; only pages still ambiguous use the configured `ANALYSIS_PROVIDER` image capability. This provider is currently OpenAI, Anthropic, or Gemini; Codex is not enabled for PDF/image analysis. The provider result is a candidate and must pass source, order, and numeric gates. It cannot approve its own output. A newly published playable scenario requires every physical page to have a verified text or verified visual-only disposition; an existing published scenario stays available. Publication still uses the trusted scenario-source transaction and invalidates derived translation, records, and indexes when source text changes.
+
+Provider timeout, invalid ordering, or budget exhaustion gets bounded retries and a resumable draft with an explicit page-level reason. A “continue import” control retries only unresolved pages against their stored PDF hash and pipeline version; already verified pages are reused. Retries never silently accept an invalid answer or restart the whole PDF. If source or pipeline identity changed, re-evaluate the affected pages rather than replaying stale results.
+
+The older external-AI English source-preparation workflow remains available as a separate operator route. This automatic layout repair does not ask the operator to move files between the bot and a web AI.
 
 ## Versioning and cost
 
-Record PDF hash, extraction pipeline version, renderer version, per-page candidate versions, and resulting scenario text hash. A changed PDF, parser output, or renderer cannot silently reuse stale source spans or translation packages. Only hard pages invoke Docling; report invocation count, per-page and total parse time, failures, and any quality improvement. Import cost may increase, but normal gameplay must not add LLM calls or runtime PDF parsing.
+Record PDF hash, extraction pipeline version, renderer version, per-page candidate versions, and resulting scenario text hash. A changed PDF, parser output, or renderer cannot silently reuse stale source spans or translation packages. Rebuild scenarios one book at a time when the operator chooses; do not automatically reparse or replace existing published books. Only hard pages invoke Docling; only those still ambiguous invoke image analysis. Configure a finite per-book image-analysis page/request budget and per-page retry limit, then calibrate the initial defaults with the golden corpus and import-time measurements. Report separate invocation counts, queue/processing time, failures, and any quality improvement. Import cost may increase, but normal gameplay must not add LLM calls or runtime PDF parsing.
 
 ## Tests and release gate
 
 1. Golden order on selected real native-text pages, including the opposite-winner Haunting and Dead Boarder cases, a correct control page, spanning headings, and a repeated numeric/stat block.
-2. Synthetic pages for ambiguous gutters, near-equal approximate matches, repeated text, rotated coordinates, and a candidate with lost numeric or negation evidence.
+2. Synthetic pages for ambiguous gutters, near-equal approximate matches, repeated text, rotated coordinates, and a candidate with lost numeric or negation evidence. Fake provider tests cover unknown/duplicate/missing IDs, text-rewrite attempts, timeout, budget exhaustion, retry, and resume without reprocessing accepted pages.
 3. Existing `pdf_quality` numeric-pair, local OCR, AI repair, map, character-sheet, scenario-library, source-review, translation, and RAG tests remain green.
 4. Final page markers, Unicode source spans, and source quotes align after rendering. Existing scenarios continue to load; a changed source invalidates stale derived artifacts.
 5. Compare per-page order, text/numeric recall, source alignment, parser calls, and import duration against the old pipeline. Release only when every known wrong-order golden page is corrected and controls, numbers, dice, and spans show no regression.
 
-## Open decisions from the interview
+## Decisions from the interview
 
-- Whether blocked pages are repaired through targeted external-AI PDF/source review or another route.
-- Whether existing scenarios are reprocessed only when the operator chooses each book, or automatically.
-- The final domain term separating approved source text from world canon.
-- Whether approximate-alignment thresholds are calibrated on the golden corpus or fixed before measurement.
+- Ambiguous pages are repaired automatically through the configured image-analysis provider; output must pass deterministic checks. No manual web-AI handoff is required for this path.
+- Existing scenarios remain available until the operator rebuilds each book and the new version is fully publishable.
+- Approved scenario source and established world fact are distinct terms. Source text does not itself establish an investigator discovery.
+- Approximate-alignment thresholds are calibrated against real golden pages and pinned with parser-versioned tests.
 
-Implementation waits for the completed design review.
+## Additional decisions
+
+- Automatic provider failures get bounded retries. Unresolved pages remain in a resumable draft; the operator may continue the import without editing or forwarding page content.
+- Image analysis can only order and locate existing block/candidate text. OCR/transcription remains in its current guarded route.
+- Local geometry and optional Docling run before image analysis. New image-analysis usage has its own finite, measured per-book budget.
+
+Implementation waits for final shared-understanding confirmation.
