@@ -90,3 +90,17 @@ class HistoryAuthorityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_unknown_persisted_provenance_is_not_promoted():
+    from app.services.history_authority import provider_history
+    result = provider_history([{'role': 'assistant', 'content': 'x', 'record_kind': 'kp_cannon'}])
+    assert 'unverified earlier conversation' in result[0]['content']
+
+
+def test_new_invalid_provenance_is_rejected():
+    import pytest
+
+    from app.services.history_authority import annotate_entry
+    with pytest.raises(ValueError):
+        annotate_entry({'role': 'assistant', 'authority': 'authoritativ'}, turn_id='t', timeline_id='l')
