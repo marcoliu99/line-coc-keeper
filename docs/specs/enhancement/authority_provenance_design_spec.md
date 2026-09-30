@@ -4,7 +4,7 @@
 
 ## Status and problem
 
-Category: `enhancement`. Status: **backlog, awaiting design confirmation**. Audited against `main_v2` at `7cef87c`.
+Category: `enhancement`. Status: **backlog, awaiting overall design confirmation**. Audited against `main_v2` at `7cef87c`.
 
 `GroupState.log` currently stores mostly `role/content` for player turns, KP canon, and approved corrections. The same flattened text feeds the rolling summary and Memory RAG. A mistaken narration can therefore return as apparent evidence and be repeated or used to justify a tool call. `record_established_fact` and `record_clue` currently accept text without checking a source; their rows also enter Scene Digest. The correction adjudicator can cite nearby `log:N` as evidence, even though it proves only what was said.
 
@@ -82,6 +82,6 @@ Each PR gets its own branch and spec status/evidence update. PR1 must not wait f
 
 Do not delete conversation history, shorten narration, remove ordinary sensory creativity, make summary a source of authority, grant player claims automatic canon, or add a fixed LLM reviewer. Provenance proves *which source was cited*; it does not by itself prove every free paraphrase is semantically entailed. Admit only source-verifiable content into typed authority, and keep the correction path for disputes. Deterministic hard-fact checks are intentionally partial.
 
-## Final design confirmation
+## Resolved recording boundary
 
-The remaining decision is the write/authority distinction for `record_established_fact` and `record_clue`: this draft keeps their recording behavior for play and natural-language corrections, but treats unsourced entries as `unverified` until they can be promoted from a verifiable source. This preserves flexibility without allowing an unsupported entry to authorize later mechanics. Confirm this distinction before implementation.
+Keep the recording behavior of `record_established_fact` and `record_clue` for play and natural-language correction. An unsourced entry stays `unverified`. It may preserve harmless narrative continuity when doing so cannot advance the plot or change mechanics. It cannot establish a consequential object, clue, resource, quantity, or location, and cannot authorize a later tool call until promoted from a verifiable source. A prior mention of “church records” therefore remains part of what the Keeper said, not evidence that those records can be found or acquired.
