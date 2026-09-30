@@ -27,6 +27,7 @@ def _state(tmp_path, monkeypatch):
 
 def test_ooc_admission_separates_action_and_correction():
     assert natural_corrections.classify("我打開門走進去") == ""
+    assert natural_corrections.classify("你剛才看見什麼？") == ""
     assert natural_corrections.classify("你剛才說錯了，我要打開門") == "clarify"
     assert natural_corrections.classify("你剛才說錯了，我沒有上樓") == "review"
     assert natural_corrections.classify("你剛才說錯了，腐紙味不是煙味") == "presentation"

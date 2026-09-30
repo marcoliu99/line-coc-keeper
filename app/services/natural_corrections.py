@@ -9,6 +9,7 @@ from app.models import GroupState
 from app.services import history_authority, narrative_corrections
 
 _CORRECTION_CUES = ("你剛才", "你剛剛", "你前面", "剛才你", "剛剛你", "你說我", "守密人剛才", "你說錯", "更正：", "糾正：")
+_ERROR_CUES = ("說錯", "講錯", "說成", "你說我", "敘述", "描述", "搞錯", "誤寫", "誤說", "糾正", "更正")
 _PRESENTATION_CUES = ("氣味", "味道", "煙味", "腐紙味", "聲音", "顏色", "只是普通", "不是線索", "不是關鍵", "不重要")
 _CONSEQUENTIAL_CUES = ("HP", "SAN", "MP", "LUCK", "血量", "傷害", "骰", "檢定", "門", "鑰匙", "線索", "日記", "背包", "武器", "地點", "上樓", "下樓")
 _ACTION_CUES = ("我要", "我現在", "我接著", "我走去", "我去買", "再買")
@@ -29,7 +30,8 @@ def incidental_item(text: str) -> str:
 
 def classify(text: str) -> str:
     """Return empty, clarify, presentation, or review; never infer world truth."""
-    if text.startswith("/") or not any(cue in text for cue in _CORRECTION_CUES):
+    if (text.startswith("/") or not any(cue in text for cue in _CORRECTION_CUES)
+            or not any(cue in text for cue in _ERROR_CUES)):
         return ""
     if any(cue in text for cue in _ACTION_CUES):
         return "clarify"
