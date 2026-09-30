@@ -211,3 +211,56 @@ semantic fidelity, numerical accuracy of every character field, or a speedup.
 Full enhancement acceptance remains partial while those broader claims are not
 verified. Local suite: 1689 passed, 2 skipped, 152 subtests; ruff 0.16.8,
 mypy app and compileall app tests pass.
+
+
+## Next repair scope: extraction recovery and independent map diagnostics
+
+Azure Document Intelligence is explicitly deferred: no Azure dependency,
+configuration, credentials, or document uploads are part of this revision.
+Only the existing local geometry/Docling/OCR and bounded ANALYSIS_PROVIDER
+routes participate. A mini-PDF is a local adapter input containing problematic
+pages only, with a persistent original-page-number mapping; it is not a reason
+to rerun a cloud service over the whole book.
+
+Text recovery must be driven by remaining defects in the selected candidate,
+not every historic candidate warning. Diagnose source text coverage, numeric/
+dice preservation, column order, table alignment and unresolved fields; route
+actual failures to the applicable existing recovery adapter; then recalculate
+the same quality contract before publication. A Docling source-ID ordering
+answer may repair reading order but cannot repair glyphs or invent missing
+numbers. OCR repair owns unreadable fields. Recovery exhaustion or unverified
+critical loss retains a resumable draft, including source/page/reason.
+
+Keep immutable initial diagnostics and separate final diagnostics, reporting
+initial/resolved/remaining counts by text and numeric category, local-pass and
+fallback pages, recovery adapter/results, and unresolved pages. Do not clear a
+warning merely because an adapter ran, and do not trigger paid recovery because
+a rejected candidate was poor when the final selected source already passes.
+
+Map routing is independent of text arbitration: PDF page -> rendered image ->
+page classifier -> map/floor-plan candidate -> scene_map image analyzer -> room/
+connector artifact. Text success must never suppress map classification. Do not
+make candidate detection depend on MarkItDown, Docling or any future Azure
+Markdown. Existing PDF/page-image evidence may supply classification hints;
+classification and analysis remain bounded and resumable, with separate cost
+and attempt accounting. The classifier's heuristic score is not a calibrated
+probability. A map candidate without a valid artifact must remain diagnosable
+rather than disappear as a generic no-map notice.
+
+Record original page, image rendered, candidate/heuristic score and detector
+revision, analysis attempted, result status, artifact reference, and failure
+reason. Distinguish MAP_NOT_DETECTED, MAP_DETECTED_NOT_ANALYZED,
+MAP_ANALYSIS_FAILED and MAP_ANALYZED_NO_GRAPH, plus successful/not-map results.
+Check graph room IDs, connector targets and entry availability separately from
+mere artifact existence; never invent an entry to make validation pass.
+Report candidate/analyzed/successful pages and failed-page reasons as a map
+section of the ingestion report. The latest complete Beacon run already stores
+physical-page artifacts 16 and 27; this revision must preserve them and expose
+why any future run differs.
+
+Runtime acceptance is pending: test warning -> appropriate recovery -> repeated
+quality validation, warning-resolution accounting, original-page mapping, readable
+maps, graphics without usable native labels, normal-page skipping, failed map
+analysis/no graph, artifact validation and resumed budgets. Then repeat the
+three-book comparison, preserving investigators, map artifacts, numbers, dice
+and source spans. No new fixed gameplay LLM stage is added.
