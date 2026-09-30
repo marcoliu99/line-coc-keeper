@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -44,12 +45,12 @@ def _visible(record: dict[str, Any], recipient_id: str, speaker_role: str) -> bo
     return visibility == "private" and recipient_id in recipients
 
 
-def _scenario_source_valid(state: GroupState, source_ref: Any) -> bool:
+def _scenario_source_valid(state: GroupState, source_ref: Any, receipt: Any = None) -> bool:
     if not isinstance(source_ref, dict):
         return False
     record_id = source_ref.get("record_id", "")
     quote = source_ref.get("source_quote", "")
-    current = scenario_templates.match_fact_source(state, record_id, quote)
+    current = scenario_templates.match_fact_source(state, record_id, quote, historical=True)
     if current is None or not all(current.get(key) == source_ref.get(key)
                                   for key in ("scenario_id", "source_hash", "variant_id",
                                               "record_id", "content_digest", "source_quote")):
@@ -58,7 +59,7 @@ def _scenario_source_valid(state: GroupState, source_ref: Any) -> bool:
     return not trigger_event_id or any(
         event.get("event_id") == trigger_event_id and event.get("timeline_id") == state.timeline_id
         and "成功" in str(event.get("outcome", ""))
-        for event in state.resolved_check_events
+        for event in [*state.resolved_check_events, *([receipt] if isinstance(receipt, dict) else [])]
     )
 
 
@@ -74,7 +75,7 @@ def project(state: GroupState, *, recipient_id: str = "", speaker_role: str = "p
             source_kind = record.get("source_kind")
             source_ref = record.get("source_ref")
             if source_kind == "scenario":
-                if not _scenario_source_valid(state, source_ref):
+                if not _scenario_source_valid(state, source_ref, record.get("discovery_receipt")):
                     continue
             elif source_kind == "check_event":
                 if not isinstance(source_ref, str) or not any(
@@ -130,8 +131,10 @@ def project(state: GroupState, *, recipient_id: str = "", speaker_role: str = "p
     return facts
 
 
-def requirements(state: GroupState, *, recipient_id: str = "", speaker_role: str = "player") -> NarrationRequirements:
+def requirements(state: GroupState, *, recipient_id: str = "", speaker_role: str = "player", public_only: bool = False) -> NarrationRequirements:
     facts = project(state, recipient_id=recipient_id, speaker_role=speaker_role)
+    if public_only:
+        facts = [fact for fact in facts if fact.visibility == "public"]
     pending = tuple({"owner_id": owner_id, "check_id": row.get("check_id", "")}
                     for owner_id, row in state.pending_checks.items() if isinstance(row, dict))
     events = tuple(event for event in state.resolved_check_events[-5:]
@@ -161,3 +164,19 @@ def prompt_block(requirements_value: NarrationRequirements, *, max_facts: int = 
 
 def as_payload(requirements_value: NarrationRequirements) -> dict[str, Any]:
     return asdict(requirements_value)
+
+
+def validated_constraints(raw: Any, quote: str) -> dict[str, Any]:
+    """Accept only an explicit adjacent source quantity; no prose inference."""
+    if not isinstance(raw, dict) or set(raw) != {"entity", "unit", "quantity"}:
+        return {}
+    entity, unit, quantity = raw["entity"], raw["unit"], raw["quantity"]
+    if not isinstance(entity, str) or not entity or not isinstance(unit, str) or not unit or type(quantity) is not int or quantity < 0:
+        return {}
+    counts = {"一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    pattern = rf"(?<![\d一二兩三四五六七八九十])(?P<count>\d+|[一二兩三四五六七八九]){re.escape(unit)}\s*{re.escape(entity)}"
+    for match in re.finditer(pattern, quote):
+        value = match.group("count")
+        if (int(value) if value.isdigit() else counts[value]) == quantity:
+            return dict(raw)
+    return {}

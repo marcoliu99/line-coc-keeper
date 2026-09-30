@@ -68,6 +68,7 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
             if event is None:
                 return None
             source_ref = {**source_ref, "trigger_event_id": event_id}
+            discovery_receipt = dict(event)
         elif condition == "observed_now":
             if not observability.current_context().get("turn_id"):
                 return None
@@ -79,7 +80,10 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
                 return None
         else:
             return None
+        from app.services.canonical_facts import validated_constraints
         return {
+            "constraints": validated_constraints(tool_input.get("constraints"), quote),
+            **({"discovery_receipt": discovery_receipt} if condition == "resolved_check" else {}),
             "verification_status": "verified", "source_kind": "scenario",
             "source_ref": source_ref, "timeline_id": target_state.timeline_id,
         }
@@ -95,6 +99,7 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
             if source and (existing.get("verification_status") != "verified"
                            or existing.get("source_ref") != source["source_ref"]
                            or existing.get("timeline_id") != target_state.timeline_id):
+                existing.setdefault("fact_id", f"fact:{uuid4().hex}")
                 existing.update(source)
                 return keeper.ToolStateMutation({"recorded": False, "promoted": True,
                                                  "record": existing}, should_save=True)

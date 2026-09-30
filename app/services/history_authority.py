@@ -1,17 +1,24 @@
 """Provenance for conversation history; prose is never a world-state receipt."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, cast
+
+RecordKind = Literal["player_claim", "player_correction", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"]
+AuthorityLevel = Literal["authoritative", "presentation", "claim", "mixed"]
+_RECORD_KINDS = frozenset({"player_claim", "player_correction", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"})
+_AUTHORITY_LEVELS = frozenset({"authoritative", "presentation", "claim", "mixed"})
 
 
 def annotate_entry(
     entry: dict[str, Any], *, turn_id: str, timeline_id: str,
-    record_kind: str | None = None, authority: str | None = None,
+    record_kind: RecordKind | None = None, authority: AuthorityLevel | None = None,
 ) -> dict[str, Any]:
     """Stamp a new log entry without promoting its content to world authority."""
     role = entry.get("role")
     kind = record_kind or entry.get("record_kind") or ("player_claim" if role == "user" else "narrative")
     level = authority or entry.get("authority") or ("claim" if role == "user" else "presentation")
+    if kind not in _RECORD_KINDS or level not in _AUTHORITY_LEVELS:
+        raise ValueError("Unknown history provenance")
     return {
         **entry,
         "record_kind": kind,
@@ -22,9 +29,9 @@ def annotate_entry(
     }
 
 
-def _kind(entry: dict[str, Any]) -> str:
+def _kind(entry: dict[str, Any]) -> RecordKind:
     kind = entry.get("record_kind")
-    return kind if isinstance(kind, str) else "legacy_mixed"
+    return cast(RecordKind, kind) if isinstance(kind, str) and kind in _RECORD_KINDS else "legacy_mixed"
 
 
 def provider_history(history: list[dict[str, Any]]) -> list[dict[str, str]]:
