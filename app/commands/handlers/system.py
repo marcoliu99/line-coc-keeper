@@ -12,6 +12,7 @@ from app import (
     keeper,
     locks,
     observability,
+    pdf_ingestion_drafts,
     scenario_activation,
     scenario_authoring,
     scenario_index,
@@ -73,7 +74,7 @@ async def _handle_local_import(
         await reply("找不到允許匯入的 PDF；只能使用 IMPORT_DIR 內的檔案名稱，不能帶路徑。")
         return
     await reply(f"已讀取伺服器檔案《{pdf_path.name}》，開始解析...")
-    await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pdf_path.name,
+    await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pdf_path.name, owner_user_id=user_id,
                             expected_revision=expected_revision)
 
 
@@ -114,7 +115,7 @@ async def _handle_staged_merge(
     from app.pdf_loader import combine_pdfs
     merged = await asyncio.to_thread(combine_pdfs, payloads)
     merged_name = f"{selected[0]['file_name'].rsplit('.', 1)[0]}_merged.pdf"
-    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name,
+    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name, owner_user_id=user_id,
                                        expected_revision=expected_revision)
     if not accepted:
         return
@@ -261,6 +262,35 @@ async def handle_system_command(
     if sub == "scenario":
         action = parts[2].casefold() if len(parts) > 2 else "list"
         state = load_state(conversation_id)
+        if action in ("continue", "status", "cancel"):
+            if not permissions.may_manage_scenario_lifecycle(state, user_id):
+                await reply(permissions.kp_only("管理 PDF 匯入草稿"))
+                return
+            try:
+                draft = pdf_ingestion_drafts.load(conversation_id)
+            except (OSError, ValueError) as exc:
+                await reply(f"無法讀取匯入草稿：{exc}")
+                return
+            if draft:
+                if action == "status":
+                    await reply(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(draft), draft["draft_id"]))
+                elif action == "cancel":
+                    pdf_ingestion_drafts.discard(conversation_id, draft["draft_id"])
+                    await reply("已取消 PDF 匯入草稿。")
+                else:
+                    if len(parts) > 3 and parts[3] != draft["draft_id"]:
+                        await reply("這個匯入按鈕已過期，請重新查看 /coc scenario status。")
+                        return
+                    await handle_pdf_upload(
+                        conversation_id, reply, reply, pdf_ingestion_drafts.pdf_bytes(draft), draft["file_name"],
+                        skip_similarity=True, reparse_candidate_id=draft.get("reparse_candidate_id"),
+                        expected_revision=expected_revision, owner_user_id=draft.get("owner_id", ""),
+                        resume_draft_id=draft["draft_id"],
+                    )
+                return
+            if action in ("continue", "status"):
+                await reply("目前沒有等待處理的 PDF 匯入草稿。")
+                return
         if action == "source":
             if not permissions.is_kp(state, user_id):
                 await reply(permissions.kp_only("管理英文來源"))
@@ -477,11 +507,11 @@ async def handle_system_command(
             try:
                 accepted = await handle_pdf_upload(
                     conversation_id, reply, reply, pdf_bytes, pending["file_name"],
-                    skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
+                    skip_similarity=True, reparse_candidate_id=reparse_candidate_id, owner_user_id=user_id,
                     expected_revision=commit_revision if expected_revision is not None else None,
                 )
             finally:
-                if accepted:
+                if accepted or pdf_ingestion_drafts.load(conversation_id):
                     scenario_library.discard_staged_upload(pending["key"])
                 else:
                     # Do not save the pre-extraction snapshot over concurrent play.

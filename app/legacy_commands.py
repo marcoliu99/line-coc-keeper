@@ -39,6 +39,7 @@ from app import (
     locks,
     luck,
     observability,
+    pdf_ingestion_drafts,
     pdf_loader,
     pregen_extractor,
     scenario_activation,
@@ -322,6 +323,8 @@ async def handle_pdf_upload(
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
     expected_revision: int | None = None,
+    owner_user_id: str = "",
+    resume_draft_id: str = "",
 ) -> bool:
     """`reply` acknowledges the upload and `push` delivers the extracted result
     after the potentially long vision/OCR pass. Discord can pass the same
@@ -378,6 +381,11 @@ async def handle_pdf_upload(
         await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
         return False
 
+    draft = pdf_ingestion_drafts.load(conversation_id)
+    if draft and draft["draft_id"] != resume_draft_id:
+        await reply(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(draft), draft["draft_id"]))
+        return False
+    resume = pdf_ingestion_drafts.resume_pages(draft, pdf_loader.PIPELINE_VERSION) if draft else {}
     preview = ""
     if not skip_similarity:
         try:
@@ -415,12 +423,30 @@ async def handle_pdf_upload(
     parse_quality: dict = {}
     try:
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
-            pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality
+            pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality, **({"resume_pages": resume} if draft else {})
         )
+    except pdf_loader.LayoutReviewRequired as exc:
+        async with locks.get_conversation_lock(conversation_id):
+            current_draft = pdf_ingestion_drafts.load(conversation_id)
+            if resume_draft_id and (not current_draft or current_draft["draft_id"] != resume_draft_id):
+                await push("匯入草稿已取消或變更，請重新查看 /coc scenario status。")
+                return False
+            saved = pdf_ingestion_drafts.save(
+                conversation_id, pdf_bytes, file_name, exc.report, exc.result,
+                owner_id=owner_user_id or (draft or {}).get("owner_id", ""),
+                reparse_candidate_id=reparse_candidate_id,
+            )
+        await push(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(saved), saved["draft_id"]))
+        return False
     except ValueError as exc:
         await push(f"讀取 PDF 失敗：{exc}")
         return False
 
+    if resume_draft_id:
+        current_draft = pdf_ingestion_drafts.load(conversation_id)
+        if not current_draft or current_draft["draft_id"] != resume_draft_id:
+            await push("匯入草稿已取消或變更，請重新查看 /coc scenario status。")
+            return False
     title = pdf_loader.guess_title(text, file_name=file_name)
 
     # Built automatically here rather than left to a manual /coc index run —
@@ -447,12 +473,20 @@ async def handle_pdf_upload(
             preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
         except ValueError:
             preview = text[:12_000]
-    scenario_id = await asyncio.to_thread(
-        scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
-        preview=preview, text=text, indexes=extracted_index, pregens=pregens,
-        page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
-        parse_quality=parse_quality,
-    )
+    async with locks.get_conversation_lock(conversation_id):
+        if resume_draft_id:
+            current_draft = pdf_ingestion_drafts.load(conversation_id)
+            if not current_draft or current_draft["draft_id"] != resume_draft_id:
+                await push("匯入草稿已取消或變更，請重新查看 /coc scenario status。")
+                return False
+        scenario_id = await asyncio.to_thread(
+            scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
+            preview=preview, text=text, indexes=extracted_index, pregens=pregens,
+            page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
+            parse_quality=parse_quality,
+        )
+        if resume_draft_id:
+            pdf_ingestion_drafts.discard(conversation_id, resume_draft_id)
     library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
     text = library_context["text"]
     extracted_index = library_context["indexes"]
