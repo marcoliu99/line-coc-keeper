@@ -1484,6 +1484,20 @@
       ],
       "path": "docs/specs/enhancement/authority_provenance_design_spec.md",
       "zh_path": "docs/specs/enhancement/authority_provenance_design_spec_zh.md"
+    },
+    {
+      "title": "Local PDF OCR evidence benchmark",
+      "zh": "本地 PDF OCR 實證測試",
+      "category": "enhancement",
+      "status": "backlog",
+      "path": "docs/specs/enhancement/pdf_ocr_benchmark_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pdf_ocr_benchmark_design_spec_zh.md",
+      "source_revision": "189bc8e",
+      "evidence": [
+        "app/pdf_loader.py",
+        "app/pdf_quality.py",
+        "tests/test_pdf_numeric_pairs.py"
+      ]
     }
   ]
 }
