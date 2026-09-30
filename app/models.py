@@ -858,9 +858,9 @@ class GroupState:
     characters: dict[str, Character] = field(default_factory=dict)  # keyed by owner_id
     characters_by_id: dict[str, Character] = field(default_factory=dict)
     active_character_id_by_user: dict[str, str] = field(default_factory=dict)
-    # `log` is the canonical in-game history between players and the Keeper:
-    # player actions, Keeper narration, rolls, and other public campaign events.
-    log: list[dict[str, str]] = field(default_factory=list)  # [{"role": ..., "content": ...}]
+    # `log` preserves conversation history. Its narration and player claims
+    # are not independent sources of consequential world facts.
+    log: list[dict[str, Any]] = field(default_factory=list)
 
     # Separate KP Assistant out-of-character working memory for future private
     # "KP Assistant <-> AI Keeper" coordination. This is deliberately separate

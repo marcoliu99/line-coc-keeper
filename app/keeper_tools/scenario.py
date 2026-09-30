@@ -57,6 +57,7 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
             "text": text_value,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
+            "verification_status": "unverified",
             "visibility": visibility,
             "scene_id": "",
         }

@@ -1451,9 +1451,29 @@
       "zh": "已結算檢定的安全後果",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/resolved_check_consequences.py", "app/keeper_tools/consequences.py", "tests/test_resolved_check_consequences.py"],
+      "evidence": [
+        "app/resolved_check_consequences.py",
+        "app/keeper_tools/consequences.py",
+        "tests/test_resolved_check_consequences.py"
+      ],
       "path": "docs/specs/bug/resolved_check_consequence_capabilities_design_spec.md",
       "zh_path": "docs/specs/bug/resolved_check_consequence_capabilities_design_spec_zh.md"
+    },
+    {
+      "title": "Provenance-aware world authority and narrative continuity",
+      "zh": "來源可追溯的世界權威與敘事連續性",
+      "category": "enhancement",
+      "status": "partial",
+      "evidence": [
+        "app/services/history_authority.py",
+        "app/keeper.py",
+        "app/memory_rag.py",
+        "app/services/correction_adjudication.py",
+        "tests/test_history_authority.py",
+        "tests/test_keeper_adjudicates_corrections.py"
+      ],
+      "path": "docs/specs/enhancement/authority_provenance_design_spec.md",
+      "zh_path": "docs/specs/enhancement/authority_provenance_design_spec_zh.md"
     }
   ]
 }

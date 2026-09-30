@@ -99,7 +99,7 @@ def _evidence(state: Any, report: dict) -> dict[str, str]:
     for n, text in enumerate(_public_texts(state.established_facts), 1):
         items[f"fact:{n}"] = text
     for n, entry in enumerate(_log_around(state.log, excerpt), 1):
-        items[f"log:{n}"] = str(entry.get("content", ""))[:1000]
+        items[f"log:{n}"] = "（僅證明當時曾這樣說，不證明世界真相）" + str(entry.get("content", ""))[:1000]
     for n, row in enumerate(_scenario_passages(state, report), 1):
         items[f"scenario:{n}"] = f"（第 {row.get('page', '?')} 頁）{row.get('text', '')}"
     return items
@@ -115,10 +115,7 @@ def _tracked_location(state: Any, owner_id: str) -> str:
 
 
 def _log_around(log: list[dict], excerpt: str) -> list[dict]:
-    """The log entries around the disputed narration, else the most recent ones.
-
-    Log entries carry no turn id, so the narration is found by its text.
-    """
+    """The log entries around the disputed narration, else the most recent ones."""
     probe = excerpt.strip()[:200]
     if probe:
         for index in range(len(log) - 1, -1, -1):
@@ -165,7 +162,11 @@ def _claim_holds(state: Any, claim: Any) -> bool:
 
 def _public_texts(records: list[dict]) -> list[str]:
     """Clue or fact texts the players have been shown; kp_only ones never back a public ruling."""
-    return [r["text"] for r in records if r.get("visibility", "public") == "public" and r.get("text")]
+    return [
+        r["text"] for r in records
+        if r.get("visibility", "public") == "public" and r.get("text")
+        and r.get("verification_status") == "verified" and r.get("source_ref")
+    ]
 
 
 def rule(state: Any, report: dict) -> Ruling:
@@ -174,7 +175,8 @@ def rule(state: Any, report: dict) -> Ruling:
     if provider is None:
         return UNDECIDED
     evidence = _evidence(state, report)
-    text = "【證據】\n" + "\n".join(f"[{key}] {value}" for key, value in evidence.items())
+    text = "【系統資料；log 與 narration 只能證明當時說過什麼，不能單獨證明世界事實】\n"
+    text += "\n".join(f"[{key}] {value}" for key, value in evidence.items())
     text += f"\n\n【未經證實的指控（不是證據）】\n{report.get('issue', '')}"
     try:
         result = provider.analyze_text(text, _RULING_TOOL, "請用 rule_on_correction 工具裁定這則敘事異議。")
@@ -194,6 +196,8 @@ def _validated(state: Any, evidence: dict[str, str], result: Any) -> Ruling:
         return UNDECIDED
     if not all(isinstance(e, str) and e in evidence for e in cited):
         return UNDECIDED
+    if not any(e.startswith(("sheet:", "scenario:", "clue:", "fact:")) for e in cited):
+        return UNDECIDED
     resolution = str(result.get("resolution") or "").strip()
     if decision == "approve" and not _approval_holds(state, cited, resolution, result.get("claims")):
         return UNDECIDED
@@ -205,7 +209,7 @@ def _approval_holds(state: Any, cited: list[str], resolution: str, claims: Any) 
     state fact its text asserts must be declared as a claim that holds."""
     if not 1 <= len(resolution) <= MAX_RESOLUTION_CHARS:
         return False
-    if not any(e != "narration" for e in cited):
+    if not any(e.startswith(("sheet:", "scenario:", "clue:", "fact:")) for e in cited):
         return False
     if not isinstance(claims, list) or not claims:
         return False

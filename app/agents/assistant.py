@@ -105,7 +105,7 @@ async def _run_assistant_turn(
     options.update(session.continuation(state, turn_timeline_id, correction=bool(correction_context)))
     try:
         final_text = await session.provider.run_conversation(
-            static_prompt, dynamic_prompt, tools, state.log, provider_message,
+            static_prompt, dynamic_prompt, tools, session.history(state.log), provider_message,
             execute_assistant_tool, MAX_TOOL_ITERATIONS, **options,
         )
     except Exception:
@@ -127,8 +127,11 @@ async def _run_assistant_turn(
         committed = keeper._commit_turn_result(
             state,
             [
-                {"role": "user", "content": canonical_message},
-                {"role": "assistant", "content": final_text},
+                {"role": "user", "content": canonical_message,
+                 "record_kind": "kp_canon" if manual_canon else "kp_workflow",
+                 "authority": "authoritative" if manual_canon else "claim"},
+                {"role": "assistant", "content": final_text,
+                 "record_kind": "narrative", "authority": "presentation"},
             ],
             openai_response_id=session.response_id,
             timeline_id=turn_timeline_id,
