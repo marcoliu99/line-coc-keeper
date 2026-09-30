@@ -198,6 +198,23 @@ def test_invalid_fact_ref_cannot_become_authoritative_delivery(state, monkeypatc
     assert msg.payload["delivery_envelope"].verified_fact_refs == []
 
 
+def test_typed_location_and_identity_conflicts_use_verified_fallback(state, monkeypatch):
+    fact = CanonicalFactRef("fact:diary", "三本 Corbitt 日記在封住的櫥櫃內。", "scenario", {},
+                            "public", state.timeline_id,
+                            constraints={"entity": "日記", "location": "櫥櫃內",
+                                         "forbidden_names": ["教會紀錄"]})
+    monkeypatch.setattr(turn_delivery.canonical_facts, "project", lambda *args, **kwargs: [fact])
+    for wrong in ("日記在櫥櫃下方。", "你找到教會紀錄。"):
+        msg = message(state)
+        msg.payload["observed_outcomes"] = [ObservedOutcome(
+            "tool:1", "record_established_fact", True, "", "internal", fact_ref=fact.fact_id,
+        )]
+        reply, _ = turn_delivery.finalize(msg, wrong)
+        assert wrong not in reply
+        assert fact.text in reply
+        assert msg.payload["delivery_envelope"].status == "projected_fallback"
+
+
 @pytest.mark.parametrize("text", ["我攻擊", "/coc check", "/coc luck skip", "/coc sudo u act attack",
                                   "/coc go hallway", "/coc switch other",
                                   "/coc newgame", "/coc rollback saved", "/coc correct issue"])
