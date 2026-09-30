@@ -104,3 +104,5 @@ Memory chunk 保留原話，另記 `memory_kind=conversation`、`authority=mixed
 審查修正：來源 API 使用封閉 RecordKind／AuthorityLevel 型別；新紀錄未知值拒絕，舊紀錄未知類型仍待驗證。
 
 PR #152 審查修正：公開敘事排除收件者私人權威；舊紀錄升格補持久 ID；發現收據隨 fact 保存；歷史來源驗證不受目前章節檢索窗口影響。
+
+PR #153 審查修正：紀錄工具接收可由來源核對的物件／單位／數量約束並持久保存至權威投影；後備去除觀察與權威列表重複 fact。

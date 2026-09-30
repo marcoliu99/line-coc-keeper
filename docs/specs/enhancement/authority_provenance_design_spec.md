@@ -108,3 +108,5 @@ Keep the recording behavior of `record_established_fact` and `record_clue` for p
 Review correction: provenance APIs use closed RecordKind/AuthorityLevel types; invalid new metadata is rejected and unknown legacy kinds remain unverified.
 
 PR #152 review fixes: public narration excludes recipient-private authority; promoted legacy records receive durable IDs; verified discovery receipts persist with facts; historical source validation ignores the active chapter retrieval window.
+
+PR #153 review fixes: recording tools accept explicit source-validated entity/unit/quantity constraints and persist them into canonical projection; fallback deduplicates facts across observation and canonical lists.

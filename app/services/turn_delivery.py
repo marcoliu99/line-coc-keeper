@@ -102,7 +102,7 @@ class DeliveryEnvelope:
         lines = [fact.public_text for fact in self.authorized_facts if fact.public_text]
         lines.extend(fact.text for fact in self.verified_fact_refs)
         lines.extend(dict.fromkeys(ref.instruction for ref in self.interactions))
-        return "\n".join(lines)
+        return "\n".join(dict.fromkeys(lines))
 
     def render(self) -> str:
         additions = [line for line in self.projected_text().splitlines() if line not in self.narrative]
