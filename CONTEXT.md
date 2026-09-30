@@ -59,6 +59,12 @@ An object or detail that can support ordinary narration or possession without ch
 **Plot relevance（劇情關聯）**:
 The supported connection between an object or statement and scenario progress, clues, triggers, or adjudicated mechanics. It is distinct from the object's mere existence or possession.
 
+**Access item（通行道具）**:
+An item with a supported use to enter or unlock a particular place. It can matter to scenario progress without being a clue: a clue reveals information, while an access item permits an action. Possession alone does not prove a particular lock matches it.
+
+**Clue（線索）**:
+Information revealed through a supported scenario condition, committed event, or authorized ruling. An object can carry a clue, but being useful or having a key shape does not make it a clue by itself.
+
 **Player claim（玩家主張）**:
 A player's statement or hypothesis about the world, distinct from the action the player is attempting. It does not establish the truth of its content.
 _Avoid_: Established fact
