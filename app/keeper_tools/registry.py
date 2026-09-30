@@ -590,6 +590,10 @@ _SPECS = (
                     "properties": {
                         "fact": {"type": "string"},
                         "visibility": {"type": "string", "enum": ["public", "kp_only"]},
+                        "source_record_id": {"type": "string", "description": "劇本紀錄 ID；沒有可核對來源時省略"},
+                        "source_quote": {"type": "string", "description": "來源紀錄中的原句；不得改寫"},
+                        "source_condition": {"type": "string", "enum": ["unconditional", "observed_now", "resolved_check"]},
+                        "trigger_event_id": {"type": "string", "description": "條件為已結算檢定時的持久 event_id"},
                     },
                     "required": ["fact"],
                 },
@@ -606,6 +610,10 @@ _SPECS = (
                     "properties": {
                         "clue": {"type": "string"},
                         "visibility": {"type": "string", "enum": ["public", "kp_only"]},
+                        "source_record_id": {"type": "string", "description": "劇本紀錄 ID；沒有可核對來源時省略"},
+                        "source_quote": {"type": "string", "description": "來源紀錄中的原句；不得改寫"},
+                        "source_condition": {"type": "string", "enum": ["unconditional", "observed_now", "resolved_check"]},
+                        "trigger_event_id": {"type": "string", "description": "條件為已結算檢定時的持久 event_id"},
                     },
                     "required": ["clue"],
                 },

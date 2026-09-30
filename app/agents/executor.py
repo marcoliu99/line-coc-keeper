@@ -19,6 +19,7 @@ from app.domain.models import (
 )
 from app.providers.conversation_session import ConversationSession
 from app.services import (
+    canonical_facts,
     mutation_admission,
     prompt_config,
     turn_context,
@@ -90,6 +91,11 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     dynamic_system = prompt_config.build_executor_dynamic_prompt_with_context(
         keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
     )
+    authority_block = canonical_facts.prompt_block(
+        canonical_facts.requirements(state, recipient_id=user_id, speaker_role=speaker_role)
+    )
+    if authority_block:
+        dynamic_system += "\n\n" + authority_block
     character = state.get_active_character(user_id)
     if character:
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
