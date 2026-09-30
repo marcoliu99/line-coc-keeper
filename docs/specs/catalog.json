@@ -1445,6 +1445,14 @@
       ],
       "path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage.md",
       "zh_path": "docs/specs/bug/bug-combat-reveal-beat-skipped-before-lethal-damage_zh.md"
+    },
+    {
+      "title": "Provenance-aware world authority and narrative continuity",
+      "zh": "來源可追溯的世界權威與敘事連續性",
+      "category": "enhancement",
+      "status": "backlog",
+      "path": "docs/specs/enhancement/authority_provenance_design_spec.md",
+      "zh_path": "docs/specs/enhancement/authority_provenance_design_spec_zh.md"
     }
   ]
 }

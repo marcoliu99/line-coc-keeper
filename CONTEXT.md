@@ -50,6 +50,9 @@ A world fact grounded in scenario evidence, a canonical event, or an explicit au
 What the Keeper actually described to players. It preserves conversational and sensory continuity, but cannot independently establish a consequential object, clue, location, identity, trigger, or mechanical state.
 _Avoid_: Canonical fact
 
+**Hard world fact（世界硬事實）**:
+A specific consequential assertion about an entity, quantity, location, identity, resource, secret, trigger, or mechanical state that can affect later adjudication.
+
 **Player claim（玩家主張）**:
 A player's statement or hypothesis about the world, distinct from the action the player is attempting. It does not establish the truth of its content.
 _Avoid_: Established fact
@@ -57,5 +60,11 @@ _Avoid_: Established fact
 **KP canon override（KP 正典覆寫）**:
 An explicit, recorded KP decision that replaces a conflicting scenario or earlier narrative fact. Ordinary KP elaboration does not silently override the scenario; committed mechanical results need their own authorized correction.
 
-**Legacy unverified record（舊版待驗證紀錄）**:
-A previously retained fact or clue whose source has not been verified. It may remain visible as history, but is not promoted to canonical authority solely because it was stored.
+**Player correction request（玩家更正請求）**:
+A player's out-of-game challenge to a previous Keeper presentation or ruling. It is a claim to be resolved, not an automatic change to world truth or mechanics.
+
+**Narrative correction（敘事更正）**:
+An acknowledged change to how a prior scene was described when no consequential world or mechanical fact is altered.
+
+**Unverified record（待驗證紀錄）**:
+A retained fact or clue without a verified source, including older records created before provenance was tracked. It may remain visible as history, but does not authorize consequential game actions until verified.
