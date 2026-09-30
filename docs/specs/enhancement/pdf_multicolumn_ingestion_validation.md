@@ -32,7 +32,6 @@ Used the main_v2 environment's configured OpenAI analysis provider (`OPENAI_MODE
 
 ## Remaining measurement limits
 
-- Docling package resolution succeeded on Python 3.14, but actual local model conversion and its accuracy/cost have not been measured. It remains opt-in; missing artifacts and failures retain source candidates for image fallback, and unresolved pages remain drafts.
 - Complex tables, scanned column layouts, new OCR reconstruction and region extraction are outside the first release. Existing routes remain explicitly labeled, not presented as newly verified multicolumn evidence.
 - Page/request caps are conservative defaults. Continued imports retain cumulative usage and only explicit configuration increases add allowance.
 - No normal gameplay LLM calls were added; all new analysis occurs during import.
@@ -49,4 +48,12 @@ The review identified one hard requirement: model closed layout value sets as ty
 
 The review found three gaps: failed visual extraction could publish, exhausted Continue had no renewal mechanism, and cache validation omitted actual parser/renderer identity. Failed graphic extraction now blocks; request usage persists with explicit configured cap increases and distinct-page accounting; source, renderer and parser identities invalidate stale caches. Concurrent fresh uploads and cancellation are additionally covered by reserved import identity. Ordering runs serially per import, with subprocess processing durations recorded separately; there is no new adapter admission queue.
 
-Final local gates: 1619 pytest tests passed, 2 skipped, 152 subtests passed; Ruff 0.16.8, mypy (117 app files), and compileall passed.
+Final local gates: 1627 pytest tests passed, 2 skipped, 152 subtests passed; Ruff 0.16.8, mypy (117 app files), and compileall passed.
+
+## Real Docling model validation
+
+Docling 2.131.0 / docling-core 2.99.0 on Python 3.14.1 converted all nine supplied pages. Six ordering candidates passed; three were rejected for overlapping or interleaved source coverage and retain fallback. This does not establish whole-book accuracy. Warm conversion took 0.27–0.33 seconds; the first page took 2.71 seconds. Three production subprocess calls took 5.457, 4.073 and 3.812 seconds, preserving the source word multiset without analysis API calls.
+
+Visual review of Haunting page 11 caught a deferred left-column note. Source gutter and spanning-band evidence now normalizes its position before the right column. Only unchanged native blocks are reordered; model prose never replaces source text. Run `python scripts/setup_pdf_layout.py` with the game environment interpreter to install pinned dependencies and prepare offline models. The difficult-page challenger defaults on; unavailable artifacts or timeouts retain fallback, with no import-time downloads.
+
+[Page results, model digest and subprocess measurements](pdf_multicolumn_ingestion_docling_results.json).

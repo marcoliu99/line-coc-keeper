@@ -259,3 +259,58 @@ def test_canceled_budget_callback_prevents_provider_call(source, monkeypatch):
                               budget_checkpoint=lambda current: drafts.record_budget(lease, current))
     assert drafts.owns(newer)
     assert drafts.load('room')['report'] == {}
+
+
+def test_docling_regions_order_split_text_without_rewriting(source, monkeypatch):
+    page, decision = source
+    payload = {'regions': [
+        {'bbox': [200, 10, 300, 40]},
+        {'bbox': [10, 10, 100, 24]},
+        {'bbox': [10, 24, 100, 40]},
+    ]}
+    monkeypatch.setattr(adapters, '_docling', lambda *args: payload)
+    monkeypatch.setattr(adapters, '_provider', lambda *args: pytest.fail('Docling should resolve this page'))
+    result = adapters.resolve_page(page, decision, adapters.new_budget())
+    assert result['selected_candidate'] == 'docling'
+    assert result['selected_text'] == 'Never roll 2d6\n\nCost 20'
+
+
+def test_docling_merged_columns_are_not_guessed(source, monkeypatch):
+    _, decision = source
+    with pytest.raises(ValueError, match='columns'):
+        adapters.order_docling_regions({'regions': [{'bbox': [10, 10, 300, 40]}]}, decision['blocks'])
+
+
+def test_docling_missing_native_region_is_rejected(source):
+    _, decision = source
+    with pytest.raises(ValueError, match='coverage'):
+        adapters.order_docling_regions({'regions': [{'bbox': [10, 10, 100, 40]}]}, decision['blocks'])
+
+
+def test_docling_uses_complete_word_centers_with_tight_font_boxes(source, monkeypatch):
+    page, decision = source
+    decision['blocks'][0]['word_centers'] = [[30, 20], [60, 30]]
+    decision['blocks'][1]['word_centers'] = [[250, 20]]
+    payload = {'regions': [{'bbox': [10, 19, 100, 21]}, {'bbox': [10, 29, 100, 31]},
+                           {'bbox': [200, 19, 300, 21]}]}
+    monkeypatch.setattr(adapters, '_docling', lambda *args: payload)
+    monkeypatch.setattr(adapters, '_provider', lambda *args: pytest.fail('unnecessary API'))
+    assert adapters.resolve_page(page, decision, adapters.new_budget())['selected_candidate'] == 'docling'
+    decision['blocks'][0]['word_centers'].append([80, 37])
+    with pytest.raises(ValueError, match='coverage'):
+        adapters.order_docling_regions(payload, decision['blocks'])
+
+
+@pytest.mark.parametrize('value', [float('nan'), float('inf'), True])
+def test_docling_invalid_coordinates_rejected(source, value):
+    _, decision = source
+    with pytest.raises(ValueError, match='coordinates'):
+        adapters.order_docling_regions({'regions': [{'bbox': [value, 10, 100, 40]}]}, decision['blocks'])
+
+
+def test_docling_note_deferred_after_right_column_is_normalized(source):
+    _, decision = source
+    decision['blocks'].append({'id': 'note', 'text': 'Left Keeper note', 'bbox': [10, 60, 100, 90], 'column': 0})
+    payload = {'regions': [{'bbox': [10, 10, 100, 40]}, {'bbox': [200, 10, 300, 40]},
+                           {'bbox': [10, 60, 100, 90]}]}
+    assert adapters.order_docling_regions(payload, decision['blocks'])['ordered_ids'] == ['l', 'note', 'r']

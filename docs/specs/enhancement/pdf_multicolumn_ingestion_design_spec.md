@@ -109,7 +109,7 @@ Implementation was authorized by the explicit `$implement-spec` request.
 ## Delivered interface and operational limits
 
 - `pdf_layout.analyze_page()` returns source blocks, word geometry, candidate alignment and an accepted/unresolved/not-applicable decision. `apply_order()` assembles only an exact permutation of source block text. Alignment uses a 0.94 minimum and 0.08 runner-up margin: exact formatting scores 1; repeated matches remain ambiguous. The three real golden pages and synthetic repeated/missing-token cases support this initial calibration; this is not a statistical corpus accuracy claim.
-- `pdf_layout_adapters.resolve_page()` tries optional local Docling, then an ordering-only `ANALYSIS_PROVIDER` response. Subprocess deadlines and zero SDK retries bound each attempt. Docling is opt-in and needs `requirements-pdf-layout.txt` plus pre-downloaded model artifacts; the normal server does not load it.
+- `pdf_layout_adapters.resolve_page()` tries optional local Docling, then an ordering-only `ANALYSIS_PROVIDER` response. Subprocess deadlines and zero SDK retries bound each attempt. Docling is enabled by default for difficult pages after explicit setup (`python scripts/setup_pdf_layout.py`); missing dependencies or offline artifacts trigger the bounded fallback. Normal startup does not load its models.
 - `pdf_loader.extract_text()` preserves its five-value return contract and accepts validated page caches and a persisted layout budget. `LayoutReviewRequired` carries the extraction and report for checkpointing before publication.
 - `/coc scenario continue`, `/coc scenario status` and `/coc scenario cancel` operate on a private conversation-bound draft. Discord provides a Continue button through the existing router and permission checks. Cancellation and publication share import identity and a conversation lock.
 - Defaults: 8 ordering requests, 4 distinct pages, 1 retry per page; image deadline 30 seconds, optional Docling deadline 45 seconds. These are conservative operating caps, not measured optimal settings. Continued imports retain cumulative usage; raising configured limits explicitly provides more allowance without restarting accepted pages. Exhausted drafts explain the required configuration change or cancellation.
@@ -133,7 +133,7 @@ flowchart TD
 
 ## Evidence
 
-[Measured corpus and limitations](pdf_multicolumn_ingestion_validation.md). The corpus scan is geometry-only, not a claim that every page is publishable. Optional Docling model conversion remains unmeasured and is disabled by default. No gameplay request topology changed.
+[Measured corpus and limitations](pdf_multicolumn_ingestion_validation.md). The corpus scan is geometry-only, not a claim that every page is publishable. Docling 2.131.0 was converted on nine real pages: six ordering candidates passed, three were rejected; three actual subprocess calls preserved every source word. See the validation report for costs and limits. No gameplay request topology changed.
 
 
 ## Implementation task graph
@@ -145,3 +145,7 @@ flowchart TD
 | T3 resumable drafts | loader contract | Durable import ownership and routed controls |
 | T4 pipeline/publication | T1, T2, T3 | Source gates, identity cache, publication checkpoint |
 | T5 release validation | T4 | Corpus, API smoke, full checks, two-axis review |
+
+## Docling completion correction
+
+Real Docling 2.131.0 conversion was missing from the first validation pass. Nine supplied pages convert successfully, but literal whole-block matching rejects all nine because Docling splits source blocks and may represent areas as tables. The adapter consumes ordered provenance rectangles, map them to unchanged native block IDs with complete geometric coverage, and reject ambiguous merged columns or interleaved fragments. It must not replace source text with Docling prose. Defaults enable the challenger after local model setup; installation/model preparation stays explicit and import-time downloads remain disabled.

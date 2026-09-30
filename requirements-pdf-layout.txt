@@ -1,2 +1,2 @@
 # Optional full local PDF layout pipeline; not required by normal bot startup.
-docling>=2.70,<3
+docling==2.131.0

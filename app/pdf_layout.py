@@ -18,6 +18,7 @@ class LayoutBlock(TypedDict):
     bbox: list[float]
     column: BlockColumn | None
     role: BlockRole
+    word_centers: NotRequired[list[list[float]]]
 
 
 class LayoutDecision(TypedDict):
@@ -36,7 +37,7 @@ class LayoutDecision(TypedDict):
     selected_candidate: NotRequired[str]
 
 
-PIPELINE_VERSION = 'native-columns-v1'
+PIPELINE_VERSION = 'native-columns-v2'
 # Pinned using the three supplied native-text golden pages. Formatting-only
 # candidates score 1; deliberately ambiguous repeated passages have zero margin.
 ALIGNMENT_MIN_SCORE = .94
@@ -111,6 +112,9 @@ def analyze_page(page: Any, candidates: dict[str, str]) -> LayoutDecision:
         return decision
     # Text coordinates remain unrotated even when the displayed page is rotated.
     words = page.get_text('words')
+    for block, source in zip(blocks, raw, strict=True):
+        block['word_centers'] = [[(w[0] + w[2]) / 2, (w[1] + w[3]) / 2]
+                                 for w in words if w[5] == source[5]]
     decision['words'] = [{'bbox': list(w[:4]), 'text': w[4], 'block': w[5], 'line': w[6], 'word': w[7]} for w in words]
     body_tokens = _tokens(' '.join(b['text'] for b in blocks if b['bbox'][1] < height * .92))
     numeric_density = sum(bool(re.match(r'^\d', t)) for t in body_tokens) / max(1, len(body_tokens))

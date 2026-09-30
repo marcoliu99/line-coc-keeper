@@ -109,7 +109,7 @@ provider 逾時、順序無效或額度用盡時，只有限次自動重試，�
 ## 已交付介面與操作限制
 
 - `pdf_layout.analyze_page()` 回傳來源 block、word 幾何、候選配對及已接受／未解／不適用的裁決；`apply_order()` 只能組合原 block 文字的完整排列。近似配對門檻 0.94、領先差 0.08：格式正規化後完全匹配得分 1，重複匹配保持疑點。三個真實黃金頁與合成缺字／重複案例支援初始校準，不能推論全庫準確率。
-- `pdf_layout_adapters.resolve_page()` 先選用本地 Docling，仍不明確再要求 `ANALYSIS_PROVIDER` 只回傳排序。子程序期限及停用 SDK 重試限制每次成本。Docling 預設關閉，需安裝 `requirements-pdf-layout.txt` 並預下載模型；伺服器平常不載入。
+- `pdf_layout_adapters.resolve_page()` 先選用本地 Docling，仍不明確再要求 `ANALYSIS_PROVIDER` 只回傳排序。子程序期限及停用 SDK 重試限制每次成本。Docling 疑難頁候選預設啟用，先執行 `python scripts/setup_pdf_layout.py` 安裝並整備模型；缺依賴或離線模型時走有界後備。一般啟動不載入模型。
 - `pdf_loader.extract_text()` 維持五個回傳值，新增已驗證頁快取與持久預算。`LayoutReviewRequired` 帶完整擷取結果及報告，供發布前保存草稿。
 - `/coc scenario continue`、`status`、`cancel` 操作群組綁定的私人草稿；Discord 繼續按鈕走原 router 與權限。取消及發布共用匯入身分與群組鎖。
 - 初始上限：8 次排序請求、4 個不同頁面、每頁 1 次重試；圖片分析期限 30 秒，選用 Docling 45 秒。這是保守操作上限，並非最佳值實測。續跑保留累計用量；明確提高設定上限才能補足額度，已接受頁不重跑。額度用完時提示調整設定或取消，不要求人工核對內容。
@@ -134,7 +134,7 @@ flowchart TD
 
 ## 驗證
 
-[實測與限制](pdf_multicolumn_ingestion_validation_zh.md)。整本掃描只量測幾何適用性，不代表每頁可發布。Docling 真實模型轉換尚未量測，預設關閉；玩家回合沒有新增 LLM 呼叫。
+[實測與限制](pdf_multicolumn_ingestion_validation_zh.md)。整本掃描只量測幾何適用性，不代表每頁可發布。Docling 2.131.0 已測九個真實頁面：六個排序候選通過、三個拒絕；三次實際子程序保留全部來源詞，成本與限制見實測文件；玩家回合沒有新增 LLM 呼叫。
 
 
 ## 實作任務關係
@@ -146,3 +146,7 @@ flowchart TD
 | T3 可續草稿 | loader 契約 | 持久認領與 router 控制項 |
 | T4 發布整合 | T1、T2、T3 | 來源閘門、身分快取、發布 checkpoint |
 | T5 發布驗證 | T4 | 樣本、API smoke、完整檢查、雙軸審查 |
+
+## Docling 補完修正
+
+首輪漏了 Docling 2.131.0 的實際轉換驗證。九個提供頁面皆轉換成功，但整個 block 的字面配對因拆段與表格區域表示而全部退回。adapter 改吃有順序的來源座標矩形，依完整幾何覆蓋對回未修改的原生 block ID；跨欄合併或交錯片段有歧義時拒絕。不能用 Docling 文字替換來源。完成本地模型整備後預設啟用候選；安裝／模型準備明確執行，匯入時不下載。

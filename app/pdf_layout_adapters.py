@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import math
 import os
 import subprocess
 import sys
@@ -72,14 +73,16 @@ def _run_worker(kind: str, payload: dict, timeout: float) -> object:
     return json.loads(result.stdout)
 
 
-def _docling(page: pymupdf.Page, timeout: float) -> str:
+def _docling(page: pymupdf.Page, timeout: float) -> str | dict:
+    if page.rotation:
+        raise ValueError('Docling rotated coordinate alignment requires fallback')
     with pymupdf.open() as single:
         single.insert_pdf(page.parent, from_page=page.number, to_page=page.number)
         with tempfile.TemporaryDirectory(prefix='coc-layout-') as directory:
             source = Path(directory) / 'page.pdf'
             single.save(source)
             response = _run_worker('docling', {'path': str(source), 'timeout': timeout}, timeout)
-    if not isinstance(response, str):
+    if not isinstance(response, (str, dict)):
         raise TypeError('invalid Docling response')
     return response
 
@@ -92,7 +95,102 @@ def _provider(page: pymupdf.Page, blocks: list[LayoutBlock], timeout: float) -> 
                    for b in blocks]}, timeout)
 
 
-def _docling_order(text: str, blocks: list[LayoutBlock]) -> dict:
+def _area(box: list[float]) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _intersection(a: list[float], b: list[float]) -> list[float]:
+    return [max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])]
+
+
+def _union_area(boxes: list[list[float]]) -> float:
+    xs = sorted({x for b in boxes for x in (b[0], b[2])})
+    area = 0.0
+    for left, right in pairwise(xs):
+        intervals = sorted((b[1], b[3]) for b in boxes if b[0] < right and b[2] > left)
+        end, length = float('-inf'), 0.0
+        for bottom, top in intervals:
+            length += max(0.0, top - max(bottom, end))
+            end = max(end, top)
+        area += (right - left) * length
+    return area
+
+
+def order_docling_regions(payload: dict, blocks: list[LayoutBlock]) -> dict:
+    """Use model region order, never its replacement prose, to order source IDs."""
+    regions = payload.get('regions')
+    if not isinstance(regions, list) or not regions:
+        raise ValueError('Docling region coverage missing')
+    assignments: dict[str, list[int]] = {}
+    margins = [b for b in blocks if b.get('role') == 'margin']
+    body = [b for b in blocks if b not in margins]
+    for block in body:
+        source = block['bbox']
+        centers = block.get('word_centers', [])
+        covered: set[int] = set()
+        pieces, ranks = [], []
+        for rank, region in enumerate(regions):
+            box = region.get('bbox') if isinstance(region, dict) else None
+            if (not isinstance(box, list) or len(box) != 4
+                    or any(type(v) not in (int, float) or not math.isfinite(v) for v in box)
+                    or _area(box) <= 0):
+                raise ValueError('invalid Docling region coordinates')
+            clipped = _intersection(source, box)
+            overlap = _area(clipped)
+            points = {i for i, (x, y) in enumerate(centers)
+                      if box[0] - 2 <= x <= box[2] + 2 and box[1] - 2 <= y <= box[3] + 2}
+            matched = bool(points) if centers else bool(
+                overlap and (overlap / _area(box) >= .8 or overlap / max(_area(source), 1) >= .85))
+            if matched:
+                covered.update(points)
+                pieces.append(clipped)
+                ranks.append(rank)
+        complete = (len(covered) == len(centers)) if centers else (
+            _union_area(pieces) / max(_area(source), 1) >= .7)
+        if not complete:
+            raise ValueError('Docling native region coverage incomplete')
+        assignments[block['id']] = ranks
+    if not body:
+        raise ValueError('Docling has no native body coverage')
+    right_blocks = [b for b in body if b.get('column') in ('right', 1)]
+    right_start = min((b['bbox'][0] for b in right_blocks), default=float('inf'))
+    lanes = {b['id']: ('left' if b.get('column') in ('left', 0) else
+                      'right' if b.get('column') in ('right', 1) else
+                      'left' if b['bbox'][2] < right_start else None) for b in body}
+    ordered = sorted(body, key=lambda b: (min(assignments[b['id']]), b['bbox'][1], b['bbox'][0]))
+    for a, b in pairwise(ordered):
+        ra, rb = assignments[a['id']], assignments[b['id']]
+        if max(ra) > min(rb) and lanes[a['id']] == lanes[b['id']]:
+            raise ValueError('Docling fragments interleave source blocks')
+        if max(ra) == min(rb) and (lanes[a['id']] != lanes[b['id']]
+                                    or a['bbox'][3] > b['bbox'][1] + 2):
+            raise ValueError('Docling merged columns or overlapping blocks')
+    # Docling can defer a sidebar/note until after the opposite column. Source
+    # gutter evidence takes priority: read each column inside spanning bands.
+    if right_blocks:
+        remaining = [b for b in ordered if lanes[b['id']] is not None]
+        normalized: list[LayoutBlock] = []
+        for heading in sorted([b for b in ordered if lanes[b['id']] is None], key=lambda b: b['bbox'][1]):
+            if any(b['bbox'][1] < heading['bbox'][3] - 2 and b['bbox'][3] > heading['bbox'][1] + 2
+                   for b in remaining):
+                raise ValueError('Docling spanning region overlaps columns')
+            before = [b for b in remaining if b['bbox'][3] <= heading['bbox'][1] + 2]
+            normalized.extend(b for lane in ('left', 'right') for b in before if lanes[b['id']] == lane)
+            normalized.append(heading)
+            remaining = [b for b in remaining if b not in before]
+        normalized.extend(b for lane in ('left', 'right') for b in remaining if lanes[b['id']] == lane)
+        ordered = normalized
+    # Geometry, not inferred text, places omitted page furniture. Every source
+    # margin block is retained even when Docling omits its header/footer layer.
+    top = sorted([b for b in margins if b['bbox'][3] <= min(c['bbox'][1] for c in body)],
+                 key=lambda b: (b['bbox'][1], b['bbox'][0]))
+    tail = sorted([b for b in margins if b not in top], key=lambda b: (b['bbox'][1], b['bbox'][0]))
+    return {'ordered_ids': [b['id'] for b in top + ordered + tail], 'unresolved_ids': []}
+
+
+def _docling_order(text: str | dict, blocks: list[LayoutBlock]) -> dict:
+    if isinstance(text, dict):
+        return order_docling_regions(text, blocks)
     normalized = ' '.join(text.split())
     positions = []
     for block in blocks:
@@ -224,8 +322,14 @@ def _worker(kind: str, payload: dict) -> object:
         converted = converter.convert(payload['path'])
         if str(converted.status.value) != 'success':
             raise ValueError('Docling conversion incomplete')
-        return '\n'.join(item.text for item, _ in converted.document.iterate_items()
-                         if hasattr(item, 'text'))
+        regions = []
+        for item, _ in converted.document.iterate_items():
+            for provenance in item.prov:
+                if provenance.page_no != 1:
+                    continue
+                box = provenance.bbox.to_top_left_origin(converted.document.pages[1].size.height)
+                regions.append({'bbox': [box.l, box.t, box.r, box.b]})
+        return {'regions': regions}
     raise ValueError('unknown layout worker')
 
 
