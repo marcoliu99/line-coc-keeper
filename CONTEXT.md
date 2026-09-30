@@ -53,6 +53,12 @@ _Avoid_: Canonical fact
 **Hard world fact（世界硬事實）**:
 A specific consequential assertion about an entity, quantity, location, identity, resource, secret, trigger, or mechanical state that can affect later adjudication.
 
+**Incidental prop（附帶物件）**:
+An object or detail that can support ordinary narration or possession without changing scenario clues, triggers, resources, or mechanical outcomes. Its existence does not establish hidden contents or plot relevance.
+
+**Plot relevance（劇情關聯）**:
+The supported connection between an object or statement and scenario progress, clues, triggers, or adjudicated mechanics. It is distinct from the object's mere existence or possession.
+
 **Player claim（玩家主張）**:
 A player's statement or hypothesis about the world, distinct from the action the player is attempting. It does not establish the truth of its content.
 _Avoid_: Established fact
