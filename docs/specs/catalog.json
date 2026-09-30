@@ -1484,6 +1484,15 @@
       ],
       "path": "docs/specs/enhancement/authority_provenance_design_spec.md",
       "zh_path": "docs/specs/enhancement/authority_provenance_design_spec_zh.md"
+    },
+    {
+      "title": "Configurable automatic scenario image presentation",
+      "zh": "可設定的劇本主動圖片展示",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/enhancement/automatic_scenario_image_display_design_spec.md",
+      "zh_path": "docs/specs/enhancement/automatic_scenario_image_display_design_spec_zh.md"
     }
   ]
 }

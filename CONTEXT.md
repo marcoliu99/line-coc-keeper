@@ -80,3 +80,11 @@ An acknowledged change to how a prior scene was described when no consequential 
 
 **Unverified record（待驗證紀錄）**:
 A retained fact or clue without a verified source, including older records created before provenance was tracked. It may remain visible as history, but does not authorize consequential game actions until verified.
+
+### Scenario presentation
+
+**Automatic image presentation（主動圖片展示）**:
+The Keeper's choice to show a scenario picture during narration without a player using the dedicated page-display command. It can be replaced by an authorized text description without changing what is true in the scenario.
+
+**Requested page display（指定頁面展示）**:
+A player's explicit use of the page-display command to view a scenario image. It remains subject to chapter access and recipient permissions, independently of whether automatic image presentation is enabled.
