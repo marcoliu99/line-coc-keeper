@@ -32,7 +32,7 @@ Used the main_v2 environment's configured OpenAI analysis provider (`OPENAI_MODE
 
 ## Remaining measurement limits
 
-- Docling package resolution succeeded on Python 3.14, but actual local model conversion and its accuracy/cost have not been measured. It remains opt-in; missing artifacts and failures preserve the draft.
+- Docling package resolution succeeded on Python 3.14, but actual local model conversion and its accuracy/cost have not been measured. It remains opt-in; missing artifacts and failures retain source candidates for image fallback, and unresolved pages remain drafts.
 - Complex tables, scanned column layouts, new OCR reconstruction and region extraction are outside the first release. Existing routes remain explicitly labeled, not presented as newly verified multicolumn evidence.
 - Page/request caps are conservative defaults. Continued imports retain cumulative usage and only explicit configuration increases add allowance.
 - No normal gameplay LLM calls were added; all new analysis occurs during import.
@@ -48,3 +48,5 @@ The review identified one hard requirement: model closed layout value sets as ty
 ### Spec
 
 The review found three gaps: failed visual extraction could publish, exhausted Continue had no renewal mechanism, and cache validation omitted actual parser/renderer identity. Failed graphic extraction now blocks; request usage persists with explicit configured cap increases and distinct-page accounting; source, renderer and parser identities invalidate stale caches. Concurrent fresh uploads and cancellation are additionally covered by reserved import identity. Ordering runs serially per import, with subprocess processing durations recorded separately; there is no new adapter admission queue.
+
+Final local gates: 1619 pytest tests passed, 2 skipped, 152 subtests passed; Ruff 0.16.8, mypy (117 app files), and compileall passed.
