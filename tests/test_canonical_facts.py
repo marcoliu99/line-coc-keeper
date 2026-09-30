@@ -113,6 +113,16 @@ class CanonicalFactTests(unittest.TestCase):
         self.assertEqual(len(canonical_facts.project(state, recipient_id="u1")), 1)
         self.assertEqual(canonical_facts.project(state, recipient_id="u2"), [])
 
+    def test_explicit_human_kp_correction_projects_but_ai_ruling_does_not(self) -> None:
+        state = load_state("facts")
+        state.narrative_corrections = [
+            {"id": "human-1", "status": "approved", "adjudicated_by": "kp_assistant",
+             "timeline_id": "t1", "resolution": "日記只是普通筆記本。"},
+            {"id": "ai-1", "status": "approved", "adjudicated_by": "keeper",
+             "timeline_id": "t1", "resolution": "旁邊還有一把神祕鑰匙。"},
+        ]
+        facts = canonical_facts.project(state)
+        self.assertEqual([fact.text for fact in facts], ["日記只是普通筆記本。"])
     def test_legacy_promotion_assigns_a_durable_id(self) -> None:
         state = load_state("facts")
         state.established_facts = [{"text": state.scenario_text, "visibility": "kp_only"}]

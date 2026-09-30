@@ -114,6 +114,20 @@ def project(state: GroupState, *, recipient_id: str = "", speaker_role: str = "p
             source_ref=f"kp:{state.timeline_id}:{turn_id}",
             visibility=str(entry.get("audience", "public")), timeline_id=state.timeline_id,
         ))
+    for report in state.narrative_corrections:
+        if (report.get("status") != "approved" or report.get("adjudicated_by") != "kp_assistant"
+                or report.get("timeline_id") != state.timeline_id):
+            continue
+        resolution = str(report.get("resolution", "")).strip()
+        if not resolution or any(term in resolution.upper() for term in ("HP", "SAN", "MP", "LUCK", "彈藥", "骰值", "先攻")):
+            continue
+        correction_id = str(report.get("id", ""))
+        if correction_id:
+            facts.append(CanonicalFactRef(
+                fact_id=f"correction:{correction_id}", text=resolution,
+                source_kind="kp_canon", source_ref=f"correction:{state.timeline_id}:{correction_id}",
+                visibility="public", timeline_id=state.timeline_id,
+            ))
     return facts
 
 

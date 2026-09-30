@@ -148,13 +148,25 @@ def public_mechanic(result: MechanicResult | None, state: GroupState) -> Mechani
     return projected
 
 
-def _proven_quantity_conflict(narrative: str, facts: list[canonical_facts.CanonicalFactRef]) -> bool:
-    """Check only a typed, adjacent quantity claim about a known entity.
+def _proven_hard_fact_conflict(narrative: str, facts: list[canonical_facts.CanonicalFactRef]) -> bool:
+    """Check only typed, explicit entity/quantity/location/identity conflicts.
 
     This deliberately does not attempt general Chinese prose interpretation.
     """
     for fact in facts:
         entity = fact.constraints.get("entity")
+        forbidden_names = fact.constraints.get("forbidden_names", [])
+        if isinstance(forbidden_names, list) and any(
+            isinstance(name, str) and name and name in narrative for name in forbidden_names
+        ):
+            return True
+        location = fact.constraints.get("location")
+        if isinstance(entity, str) and entity and isinstance(location, str) and location:
+            # Only known mutually exclusive positions are safe to compare.
+            opposites = {"櫥櫃內": ("櫥櫃下", "櫥櫃外"), "櫥櫃下": ("櫥櫃內",)}
+            if any(entity in sentence and any(opposite in sentence for opposite in opposites.get(location, ()))
+                   for sentence in re.split(r"[，。；\n]", narrative)):
+                return True
         quantity = fact.constraints.get("quantity")
         unit = fact.constraints.get("unit")
         if not isinstance(entity, str) or not entity or not isinstance(quantity, int) or not isinstance(unit, str) or not unit:
@@ -220,7 +232,7 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
             if is_private(entry):
                 protected.extend(str(entry[key]) for key in ("skill", "skill_name", "action_context") if entry.get(key))
     result = envelope.render()
-    conflict = _proven_quantity_conflict(narrative, due_public)
+    conflict = _proven_hard_fact_conflict(narrative, due_public)
     safe = spoiler_policy.sanitize_public_text(result, protected).is_safe and not conflict
     valid = validate_delivery_contract(envelope, result, state)
     if not (safe and valid):

@@ -18,6 +18,7 @@ from app.models import GroupState
 from app.repositories.group_state import load_state
 from app.services import (
     correction_adjudication,
+    correction_summary,
     mutation_admission,
     narrative_corrections,
 )
@@ -82,7 +83,13 @@ async def handle_correct_command(
             return
         old["status"] = "superseded"
         old["superseded_by"] = replacement["id"]
+        replacement.setdefault("supersedes", []).append(f"correction:{old['id']}")
+        replacement["summary_rebuild_status"] = "pending"
+        for entry in state.log:
+            if f"correction:{old['id']}" in entry.get("fact_refs", []):
+                entry.setdefault("superseded_by", []).append(replacement["id"])
         narrative_corrections.save(state)
+        correction_summary.schedule(conversation_id)
         await reply(f"更正 #{old['id']} 已由 #{replacement['id']} 取代；原紀錄保留。")
         return
 
@@ -142,6 +149,8 @@ async def handle_correct_command(
         _prune_adjudicated(state)
         narrative_corrections.save(state)
         await reply(message)
+        if action == "approve":
+            correction_summary.schedule(conversation_id)
         return
 
     if referenced_message_id:

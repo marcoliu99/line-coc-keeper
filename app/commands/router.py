@@ -37,7 +37,12 @@ from app.legacy_commands import (
     handle_unsupported_message,
 )
 from app.repositories.group_state import load_state
-from app.services import mutation_admission
+from app.services import (
+    correction_adjudication,
+    correction_summary,
+    mutation_admission,
+    natural_corrections,
+)
 
 _logger = logging.getLogger(__name__)
 PostTurnHook = Callable[[], Awaitable[None]]
@@ -352,6 +357,7 @@ async def _handle_sudo_command(
         _record_sudo_event("sudo.denied", parsed, actor_user_id, level=logging.WARNING, deny_reason=parse_error)
         await reply(sudo_policy.denial_message(parse_error))
         return
+
     assert parsed is not None
     started = asyncio.get_running_loop().time()
     _record_sudo_event("sudo.started", parsed, actor_user_id)
@@ -839,7 +845,8 @@ async def _handle_text_message_impl(
     # waiting on. build_context re-checks that binding under the lock and
     # searches again if anything it depended on moved.
     prefetch_task: asyncio.Task[context_builder.RetrievalPrefetch | None] | None = None
-    if scheduling_state.get_active_character(user_id) is not None:
+    if (scheduling_state.get_active_character(user_id) is not None
+            and not natural_corrections.classify(text)):
         prefetch_task = asyncio.create_task(supervisor.prefetch_retrieval(
             scheduling_state, user_id, text,
             "kp_assistant" if scheduling_state.kp_assistant_user_id == user_id else "player",
@@ -853,7 +860,7 @@ async def _handle_text_message_impl(
                 prefetched = await prefetch_task if prefetch_task else None
                 await _handle_ordinary_text_message_locked(
                     conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-                    send_dm_image, text, prefetched, handoff,
+                    send_dm_image, text, prefetched, handoff, referenced_message_id,
                 )
             return
 
@@ -866,7 +873,7 @@ async def _handle_text_message_impl(
             prefetched = await prefetch_task if prefetch_task else None
             await _handle_ordinary_text_message_locked(
                 conversation_id, user_id, get_display_name, reply, send_dm, send_image,
-                send_dm_image, text, prefetched, handoff,
+                send_dm_image, text, prefetched, handoff, referenced_message_id,
             )
     finally:
         if prefetch_task is not None and not prefetch_task.done():
@@ -888,6 +895,7 @@ async def _handle_ordinary_text_message_locked(
     text: str,
     prefetched: context_builder.RetrievalPrefetch | None = None,
     handoff: locks.TurnHandoff | None = None,
+    referenced_message_id: str | None = None,
 ) -> None:
     """Handle an ordinary non-command text message via the Keeper Supervisor.
 
@@ -902,6 +910,24 @@ async def _handle_ordinary_text_message_locked(
         # (state.game_started) before ordinary free text becomes in-character
         # play.
         return
+
+    if any(row.get("status") == "approved" and row.get("summary_rebuild_status") == "pending"
+           for row in state.narrative_corrections if row.get("timeline_id") == state.timeline_id):
+        correction_summary.schedule(conversation_id)
+
+    if state.kp_assistant_user_id != user_id:
+        correction_reply, handled = natural_corrections.submit(
+            state, user_id, text, target_message_id=referenced_message_id,
+        )
+        if handled:
+            await reply(correction_reply)
+            if (state.narrative_corrections
+                    and state.narrative_corrections[-1].get("summary_rebuild_status") == "pending"):
+                correction_summary.schedule(conversation_id)
+            if (not state.kp_assistant_user_id and state.narrative_corrections
+                    and state.narrative_corrections[-1].get("status") == "pending"):
+                correction_adjudication.schedule(conversation_id, state, reply)
+            return
 
     is_kp_assistant = state.kp_assistant_user_id == user_id
     if is_kp_assistant:

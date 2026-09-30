@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
-RecordKind = Literal["player_claim", "player_correction", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"]
+RecordKind = Literal["player_claim", "player_correction", "correction_request", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"]
 AuthorityLevel = Literal["authoritative", "presentation", "claim", "mixed"]
-_RECORD_KINDS = frozenset({"player_claim", "player_correction", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"})
+_RECORD_KINDS = frozenset({"player_claim", "player_correction", "correction_request", "kp_canon", "kp_workflow", "narrative", "narrative_correction", "opening_instruction", "legacy_mixed"})
 _AUTHORITY_LEVELS = frozenset({"authoritative", "presentation", "claim", "mixed"})
 
 
@@ -39,6 +39,7 @@ def provider_history(history: list[dict[str, Any]]) -> list[dict[str, str]]:
     labels = {
         "player_claim": "claim",
         "player_correction": "correction request",
+        "correction_request": "correction request; not world evidence",
         "kp_canon": "explicit human KP canon",
         "kp_workflow": "KP request; only committed tool results are authoritative",
         "narrative": "prior narration, not independent world evidence",
@@ -67,11 +68,13 @@ def summary_input(history: list[dict[str, Any]]) -> str:
         kind = _kind(entry)
         if kind == "kp_canon":
             name = "Explicit human KP canon (verify timeline and scope)"
-        elif kind in {"player_claim", "player_correction"}:
+        elif kind in {"player_claim", "player_correction", "correction_request"}:
             name = "Player claims and correction requests (not established facts)"
         else:
             name = "Delivered narration and earlier conversation (presentation only)"
-        sections[name].append(f"{entry.get('role', 'unknown')}: {content}")
+        superseded = entry.get("superseded_by")
+        marker = f" [superseded by {', '.join(superseded)}]" if isinstance(superseded, list) and superseded else ""
+        sections[name].append(f"{entry.get('role', 'unknown')}{marker}: {content}")
     return "\n\n".join(f"[{name}]\n" + "\n".join(items or ["(none)"]) for name, items in sections.items())
 
 
