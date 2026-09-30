@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from app import check_lifecycle, dice, luck
+from app import check_lifecycle, dice, luck, resolved_check_consequences
 from app.check_identity import new_decision_id
 from app.models import Character, GroupState
 from app.services import opposed_checks
@@ -46,6 +46,9 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
     def _roll_skill_check(target_state: GroupState) -> Any:
         nonlocal resolved_event_seed
         target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        consequences = resolved_check_consequences.normalize_authorizations(
+            target_state, tool_input.get("consequences")
+        )
         opposed_request = opposed_checks.contract(tool_input.get("opposed"))
         if opposed_request and (not isinstance(tool_input.get("action_basis"), str)
                                 or not tool_input['action_basis'].strip() or len(tool_input['action_basis']) > 600):
@@ -71,6 +74,8 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
             if opposed_request:
                 new_check['opposed'] = opposed_request
             new_check['action_basis'] = str(tool_input.get('action_basis', ''))[:600]
+            if consequences:
+                new_check['consequences'] = consequences
             registration = check_lifecycle.register(
                 target_state, target_char.owner_id, new_check,
                 duplicate="identical", source=tool_input,
@@ -160,6 +165,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
             "player_declaration": metadata['player_declaration'],
             "action_basis": metadata['action_basis'],
             "opposed_outcome": opposed_checks.public_outcome(opposed_outcome),
+            "consequences": consequences,
             "note": (
                 "Keeper 已由 deterministic dice engine 擲完這次檢定；請直接依照結果敘事，不要再要求玩家擲攻擊骰或技能骰。"
                 if target_state.autoroll_checks
@@ -200,6 +206,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
                 "opposed": opposed_receipt,
                 "player_declaration": metadata['player_declaration'],
                 "action_basis": metadata['action_basis'],
+                "consequences": consequences,
             }
             target_state.pending_luck_decisions[target_char.owner_id] = decision
             result.update({
@@ -230,6 +237,8 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
                 "opposed_outcome": opposed_outcome,
                 "player_declaration": metadata['player_declaration'],
                 "action_basis": metadata['action_basis'],
+                "success": result["success"],
+                "consequences": consequences,
                 "state_before": state_before,
             }
         services.remember_check_result(target_state, cache_key, result)
