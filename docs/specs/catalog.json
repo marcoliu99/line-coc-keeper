@@ -1682,6 +1682,15 @@
       ],
       "path": "docs/specs/bug/pdf_map_connectivity_reliability.md",
       "zh_path": "docs/specs/bug/pdf_map_connectivity_reliability_zh.md"
+    },
+    {
+      "title": "Source-backed hidden map topology",
+      "zh": "具來源證據的隱藏地圖連線",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/enhancement/pdf_source_backed_hidden_topology.md",
+      "zh_path": "docs/specs/enhancement/pdf_source_backed_hidden_topology_zh.md"
     }
   ]
 }

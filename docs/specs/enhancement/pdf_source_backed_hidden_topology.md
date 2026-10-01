@@ -1,0 +1,33 @@
+# Source-backed hidden map topology
+
+Status: proposed; implementation awaits spec approval. PR #155, enhancement/pdf-multicolumn-ingestion.
+
+## Goal and authority
+
+Preserve the existing two-phase visible extraction pipeline. Vision may authorize only door, open_passage, stairs and one_way edges with image traversal evidence. Canonical scenario source may authorize hidden_passage, secret_door and conditional_route. A visible wall rejects vision-only traversal; it does not negate a proven source-backed hidden route. No provider requests are needed for this change.
+
+## Data model
+
+Keep ordinary visual room exits unchanged. Add an internal source_topology collection to the merged map, separate from ordinary exits. Each directed route has existing from/to room IDs, a closed route type, authority=scenario_source, visibility=hidden, availability=undiscovered or conditional, and optional explicit condition. Evidence includes physical source page, exact source span offsets, span SHA-256 and full canonical source SHA-256. No raw source quotes are published in parse_quality. Visual edges retain their visual authority; hidden kinds never enter Phase 2 tool schemas.
+
+## Source-bound extraction and deterministic merge
+
+A dedicated import-only module receives final selected, source-safe canonical pages, after source integrity gates. It conservatively recognizes explicit route assertions and exact endpoint names from validated inventory. Extraction supports documented explicit connection/secret-door sentences, with fixtures for their accepted grammar; ambiguous assertions or unmatched endpoints produce private diagnostics, never inferred rooms or routes. Rejected OCR, unverified AI prose, vision descriptions and runtime narration are not inputs. The extractor returns immutable candidates bound to source spans. Deterministic merge replays evidence against exact canonical source and checks unique routes, supported types and existing endpoints before attaching source_topology. Extraction failure remains a derived warning, without changing source publication severity.
+
+## Audit and certificate
+
+Image audit and targeted visual repair continue operating on the visual graph alone. They cannot remove source routes. The merged certificate binds the existing visual certificate/graph hash, hidden-topology hash, full canonical source identity/hash, and merged graph hash. Verification deterministically re-extracts/replays source candidates, rather than trusting stored hashes alone. Visual-only certificates retain their existing validation contract. A hidden certificate requires exact canonical source at verification; missing or changed source fails closed for Map Engine.
+
+Publication and library read use the exact full scenario.txt source, not an activation chapter window. Draft reuse must not trust a source overlay bound to an earlier book-wide selection: reuse certified visual evidence only, then reconstruct and certify the overlay after all final canonical pages are selected. Invalid overlays are quarantined; canonical source remains playable. Private provenance retains spans and proof; public reports contain only hashes, statuses, errors and counts.
+
+## Runtime boundary
+
+Hidden routes remain internal in source_topology and never enter rooms[].exits. Ordinary movement, visible exits, /coc where and public Keeper map projections use visual exits only. Add defensive rejection/filtering for source-authority or hidden metadata injected into ordinary exits. No discovery transition is added; undiscovered and conditional routes are unavailable to normal movement. A future explicit discovery system must define activation separately. Existing visual movement semantics remain unchanged.
+
+## Tests and verification
+
+Use production builder/certificate/publication/cache/runtime seams: reject visual wall; accept source-backed hidden route despite a wall; reject missing/altered evidence; preserve unrelated visual graph; suppress hidden route in public exits/prompts and normal movement; invalidate on source changes; replay valid visual certificate; preserve Beacon visible stairs. Add source input exclusion, ambiguous endpoint, condition, span tampering, draft reconstruction, library read and sanitized-report tests. Run pytest, ruff check ., mypy app, compileall app tests and git diff --check. No real map verification claims without a new real run.
+
+## Limits
+
+Conservative deterministic extraction does not promise to discover every prose-described secret route. Unrecognized routes remain absent with diagnostics where detectable. Source-backed endpoints must already exist in the validated location inventory; creating invisible rooms is outside this change. Canonical source safety, OCR, Docling, scenario readiness and gameplay discovery mechanics are unchanged.
