@@ -8,8 +8,61 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass
+from typing import Literal
 
-_DICE_RE = re.compile(r"^\s*(\d*)d(\d+)\s*([+-]\s*\d+)?\s*$", re.IGNORECASE)
+_TERM_RE = re.compile(r"([+-]?)(?:(\d*)[dD](\d+)|(\d+))")
+DamageBonusPolicy = Literal["none", "full", "half"]
+
+
+def _parse_expression(expression: str) -> tuple[list[tuple[int, int, int]], int]:
+    """Parse bounded sums of dice and integers before drawing any randomness."""
+    if not isinstance(expression, str) or not expression or len(expression) > 256:
+        raise ValueError("骰子表示式長度必須介於 1 到 256 之間")
+    compact = re.sub(r"\s+", "", expression)
+    # Whitespace may surround tokens, but cannot join digits or split a die.
+    if re.search(r"[0-9dD]\s+[0-9dD]", expression):
+        raise ValueError(f"無法解析骰子表示式: {expression!r}")
+    dice: list[tuple[int, int, int]] = []
+    modifier = 0
+    position = 0
+    terms = 0
+    count = 0
+    while position < len(compact):
+        match = _TERM_RE.match(compact, position)
+        if not match or (position and not match.group(1)):
+            raise ValueError(f"無法解析骰子表示式: {expression!r}")
+        terms += 1
+        if terms > 32:
+            raise ValueError("骰子表示式最多 32 項")
+        sign = -1 if match.group(1) == "-" else 1
+        if match.group(3) is not None:
+            n = int(match.group(2) or "1")
+            sides = int(match.group(3))
+            count += n
+            if n < 1 or count > 100:
+                raise ValueError("骰子數量必須介於 1 到 100 之間")
+            if sides < 2 or sides > 1000:
+                raise ValueError("骰子面數必須介於 2 到 1000 之間")
+            dice.append((sign, n, sides))
+        else:
+            value = int(match.group(4))
+            if value > 1000000:
+                raise ValueError("整數項不可超過 1000000")
+            modifier += sign * value
+        position = match.end()
+    if not terms:
+        raise ValueError(f"無法解析骰子表示式: {expression!r}")
+    return dice, modifier
+
+
+def _apply_db_policy(value: int, policy: DamageBonusPolicy) -> int:
+    if policy == "none":
+        return 0
+    if policy == "half":
+        return value // 2
+    if policy == "full":
+        return value
+    raise ValueError(f"Unknown damage bonus policy: {policy!r}")
 
 
 @dataclass
@@ -26,39 +79,25 @@ class RollResult:
 
 
 def roll_expression(expression: str) -> RollResult:
-    """Roll a NdM+K style expression, e.g. '1d100', '3d6+2', 'd4'."""
-    m = _DICE_RE.match(expression)
-    if not m:
-        raise ValueError(f"無法解析骰子表示式: {expression!r}（範例：1d100、3d6+2）")
-    n = int(m.group(1)) if m.group(1) else 1
-    sides = int(m.group(2))
-    modifier = int(m.group(3).replace(" ", "")) if m.group(3) else 0
-    if n < 1 or n > 100:
-        raise ValueError("骰子數量必須介於 1 到 100 之間")
-    if sides < 2 or sides > 1000:
-        raise ValueError("骰子面數必須介於 2 到 1000 之間")
-    rolls = [random.randint(1, sides) for _ in range(n)]
+    """Roll a bounded sum, e.g. '3d6+2', '1d8+1d4-1', or '-2'.
+
+    Subtracted dice are represented by signed entries in rolls, preserving
+    total == sum(rolls) + modifier and the existing RollResult shape.
+    """
+    dice, modifier = _parse_expression(expression)
+    rolls = [sign * random.randint(1, sides) for sign, n, sides in dice for _ in range(n)]
     return RollResult(expression=expression, rolls=rolls, modifier=modifier, total=sum(rolls) + modifier)
 
 
+def max_expression_value(expression: str) -> int:
+    """Maximum of the same bounded grammar used by roll_expression."""
+    dice, modifier = _parse_expression(expression)
+    return modifier + sum(n * (sides if sign > 0 else -1) for sign, n, sides in dice)
+
+
 def _max_value_of_expression(expr: str) -> int:
-    """Highest possible value of an NdM+K expression (every die at its top
-    face, plus the modifier) — or, for a plain signed integer like a flat
-    damage bonus ("-2"/"-1"/"0"), just that integer. Used for COC7e's
-    Extreme-success "maximum damage" rule below, which needs a die's
-    ceiling, not a random roll of it."""
-    expr = (expr or "").strip()
-    if not expr:
-        return 0
-    if re.fullmatch(r"[+-]?\d+", expr):
-        return int(expr)
-    m = _DICE_RE.match(expr.lstrip("+"))
-    if not m:
-        raise ValueError(f"無法解析傷害表示式: {expr!r}（範例：1d10+2、+1d4、-1）")
-    n = int(m.group(1)) if m.group(1) else 1
-    sides = int(m.group(2))
-    modifier = int(m.group(3).replace(" ", "")) if m.group(3) else 0
-    return n * sides + modifier
+    # Retain the legacy empty damage-bonus convention for existing callers.
+    return max_expression_value(expr) if expr and expr.strip() else 0
 
 
 @dataclass
@@ -80,7 +119,10 @@ class ImpalingDamageResult:
         return f"極限成功（非穿刺武器，不重骰）：{base} → 總傷害 {self.total}"
 
 
-def calculate_impaling_damage(weapon_damage_expr: str, damage_bonus_expr: str, impaling: bool) -> ImpalingDamageResult:
+def calculate_impaling_damage(
+    weapon_damage_expr: str, damage_bonus_expr: str, impaling: bool,
+    *, db_policy: DamageBonusPolicy = "full",
+) -> ImpalingDamageResult:
     """COC7e Extreme-success weapon damage (Keeper Rulebook, 戰鬥／確定攻擊順序
     一節，經官方原文核對過，不是憑印象轉述)：攻擊方擲出 Extreme 成功命中時
     （反擊不適用這條——呼叫端只該在真正的主動攻擊擲骰上用這個函式），傷害
@@ -93,7 +135,7 @@ def calculate_impaling_damage(weapon_damage_expr: str, damage_bonus_expr: str, i
     表示式（"+1d4"／"+1d6" 等，對應體型較大角色的傷害加值），都用
     _max_value_of_expression 算出各自的最大值。"""
     max_weapon = _max_value_of_expression(weapon_damage_expr)
-    max_db = _max_value_of_expression(damage_bonus_expr)
+    max_db = _apply_db_policy(_max_value_of_expression(damage_bonus_expr), db_policy)
     max_base = max_weapon + max_db
     reroll = roll_expression(weapon_damage_expr) if impaling else None
     total = max_base + (reroll.total if reroll is not None else 0)
@@ -121,31 +163,30 @@ class WeaponDamageResult:
         weapon_part = f"武器傷害 {self.weapon_roll.describe()}"
         if self.damage_bonus_total:
             db_part = self.damage_bonus_roll.describe() if self.damage_bonus_roll else str(self.damage_bonus_total)
+            if self.damage_bonus_roll and self.damage_bonus_roll.total != self.damage_bonus_total:
+                db_part += f"（套用後 {self.damage_bonus_total}）"
             return f"{weapon_part}，傷害加值 {db_part} → 總傷害 {self.total}"
         return f"{weapon_part} → 總傷害 {self.total}"
 
 
-def roll_weapon_damage(weapon_damage_expr: str, damage_bonus_expr: str) -> WeaponDamageResult:
-    """A normal (non-Extreme-success) weapon hit's damage: roll the weapon's
-    own damage dice, roll the character's damage bonus (DB) if it's a dice
-    expression (a flat "-2"/"-1"/"0" needs no roll), and return the correctly
-    combined total — the caller never has to add two separate roll results
-    together itself, or (worse) try to jam both into one dice expression
-    string like "1d8+1d4", which roll_expression's regex can't parse at all
-    (it only supports one dice term plus a single flat modifier). This is
-    exactly the gap that meant DB only ever got auto-applied on the Extreme-
-    success path (calculate_impaling_damage above) and nowhere else — an
-    ordinary hit still needed the Keeper to manually splice DB into a
-    roll_dice call, which is both the "1d8+1d4" parse failure above and
-    real arithmetic for an LLM to get wrong."""
+def roll_weapon_damage(
+    weapon_damage_expr: str, damage_bonus_expr: str,
+    *, db_policy: DamageBonusPolicy = "full",
+) -> WeaponDamageResult:
+    """Roll weapon and DB separately; half DB rounds down after summing it.
+
+    A DB roll retains its original dice and total for auditing. The applied
+    contribution is damage_bonus_total, which reflects the selected policy.
+    Both expressions and policy are validated before consuming randomness.
+    """
+    _parse_expression(weapon_damage_expr)
+    db_clean = (damage_bonus_expr or "0").strip() or "0"
+    db_dice, db_modifier = _parse_expression(db_clean)
+    _apply_db_policy(0, db_policy)
     weapon_roll = roll_expression(weapon_damage_expr)
-    db_clean = (damage_bonus_expr or "0").strip()
-    if not db_clean or db_clean == "0" or re.fullmatch(r"[+-]?\d+", db_clean):
-        damage_bonus_roll = None
-        damage_bonus_total = int(db_clean) if db_clean and db_clean != "0" else 0
-    else:
-        damage_bonus_roll = roll_expression(db_clean.lstrip("+"))
-        damage_bonus_total = damage_bonus_roll.total
+    damage_bonus_roll = roll_expression(db_clean) if db_dice and db_policy != "none" else None
+    raw_db = damage_bonus_roll.total if damage_bonus_roll is not None else db_modifier
+    damage_bonus_total = _apply_db_policy(raw_db, db_policy)
     return WeaponDamageResult(
         weapon_damage_expr=weapon_damage_expr,
         damage_bonus_expr=damage_bonus_expr,
