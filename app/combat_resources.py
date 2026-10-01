@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from app.models import (
     Character,
+    CombatAction,
     CombatState,
     GroupState,
     InjuryState,
@@ -130,12 +131,12 @@ def _existing(combat: CombatState, event_id: str) -> dict[str, Any] | None:
 
 
 def record_event(state: GroupState, event_id: str, kind: EventKind, *,
-                 data: dict[str, Any] | None = None, reason: str = '') -> dict[str, Any]:
+                 data: Mapping[str, Any] | None = None, reason: str = '') -> dict[str, Any]:
     combat = _managed(state)
     existing = _existing(combat, event_id)
     if existing:
         return existing
-    event = {'event_id': event_id, 'kind': kind, 'data': deepcopy(data or {}),
+    event = {'event_id': event_id, 'kind': kind, 'data': deepcopy(dict(data or {})),
              'reason': reason, 'revision': combat.revision + 1, 'combat_id': combat.combat_id}
     json.dumps(event, allow_nan=False)
     combat.revision += 1
@@ -596,7 +597,7 @@ def reconcile_baseline(state: GroupState, character: Character, *, event_id: str
     return event
 
 
-def _continuing_state(state: GroupState) -> dict[str, Any] | None:
+def _continuing_state(state: GroupState) -> CombatAction | None:
     metadata = state.combat.actions.get(CONTINUING_STATE_KEY)
     if metadata is None:
         return None

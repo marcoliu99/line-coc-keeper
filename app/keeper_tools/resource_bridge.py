@@ -90,7 +90,21 @@ def record_control_receipt(state, pending, owner_id, character, result, *, pendi
         cache[pending['decision_id']] = dict(receipt)
 
 
-def control_receipt(state: GroupState, owner_id: str, identity: str, *, choice=None) -> dict | None:
+def record_choice_control_receipt(state, pending, owner_id, option, reply_text):
+    context = pending['combat_context']
+    action = state.combat.actions[context['action_id']]
+    character = state.get_active_character(owner_id)
+    assert character is not None
+    index = pending['options'].index(option)
+    action.setdefault('control_delivery_receipts', {})[pending['check_id']] = {
+        'kind': 'choice', 'combat_id': state.combat.combat_id,
+        'timeline_id': pending.get('timeline_id'), 'owner_id': owner_id,
+        'character_id': character.character_id, 'reply_text': reply_text,
+        'options': [f'#{index}', option['label'], option['skill'], option['kind']],
+    }
+
+
+def control_receipt(state: GroupState, owner_id: str, identity: str, *, choice=None, check_option=None) -> dict | None:
     """Read only a retained same-battle control; a new battle never replays it."""
     if not identity or not state.combat.combat_id:
         return None
@@ -104,6 +118,7 @@ def control_receipt(state: GroupState, owner_id: str, identity: str, *, choice=N
         if (receipt and receipt.get('owner_id') == owner_id and receipt.get('timeline_id') == timeline
                 and receipt.get('combat_id') == state.combat.combat_id and active
                 and receipt.get('character_id') == active.character_id
-                and (choice is None or receipt.get('choice') == choice)):
+                and (choice is None or receipt.get('choice') == choice)
+                and (receipt.get('kind') != 'choice' or check_option in receipt['options'])):
             return dict(receipt)
     return None

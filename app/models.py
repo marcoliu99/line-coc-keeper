@@ -5,7 +5,7 @@ import dataclasses
 import random
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from app import spoiler_policy
 
@@ -123,6 +123,99 @@ def _roll(expr_dice: int, expr_sides: int, mult: int = 1) -> int:
 
 CombatPhase = Literal['READY', 'PLAYER_CHOICE', 'PLAYER_ROLL', 'LUCK_DECISION',
                       'RESOLVE', 'INJURY_CHECK', 'NEEDS_RULING', 'SETTLEMENT', 'CLOSED', 'ROLLED_BACK']
+
+CombatCheckRole = Literal['attack', 'defense', 'defense_choice', 'injury', 'medical', 'counter']
+CombatActionStage = Literal['attack', 'defense', 'injury']
+
+
+@dataclass(frozen=True)
+class CombatCheckIdentity:
+    """Closed mechanical role plus optional per-patient injury identity."""
+
+    role: CombatCheckRole
+    character_id: str = ''
+
+    @property
+    def serialized_role(self) -> str:
+        return f'injury:{self.character_id}' if self.role == 'injury' and self.character_id else self.role
+
+    @classmethod
+    def from_serialized(cls, value: str) -> CombatCheckIdentity:
+        if not isinstance(value, str):
+            raise TypeError('Unknown combat check role')
+        if value.startswith('injury:') and value.removeprefix('injury:'):
+            return cls('injury', value.removeprefix('injury:'))
+        if value not in ('attack', 'defense', 'defense_choice', 'injury', 'medical', 'counter'):
+            raise ValueError('Unknown combat check role')
+        return cls(cast(CombatCheckRole, value))
+
+
+@dataclass(frozen=True)
+class CombatCheckContext:
+    combat_id: str
+    action_id: str
+    interaction_id: str
+    check: CombatCheckIdentity
+
+    def to_dict(self) -> dict[str, str]:
+        # Keep existing control/receipt IDs, including injury:<character_id>.
+        return {'combat_id': self.combat_id, 'action_id': self.action_id,
+                'interaction_id': self.interaction_id, 'check_role': self.check.serialized_role}
+
+
+class CombatAction(TypedDict, total=False):
+    """Durable action record; rule payloads remain JSON, stages are closed."""
+
+    action_id: str
+    actor_id: str
+    target_id: str
+    stage: CombatActionStage
+    completed: bool
+    checks: dict[str, Any]
+    raw_checks: dict[str, Any]
+    clock_round: int
+    mechanical_round: int
+    event_id: str
+    cancelled: bool
+    cancellation_reason: str
+    action_kind: Any
+    ammo_key: Any
+    ammunition_spent: Any
+    cancelled_interaction: Any
+    cancelled_luck: Any
+    cancelled_pending: Any
+    character_id: Any
+    consumed_checks: dict[str, Any]
+    control_delivery_receipts: dict[str, Any]
+    correction_acknowledgement: Any
+    counter_damage: Any
+    damage: Any
+    db: Any
+    defense_kind: Any
+    difficulty: Any
+    distance_yards: Any
+    injury_queue: Any
+    kind: Any
+    medical_context: dict[str, Any]
+    medical_receipt: dict[str, Any]
+    needs_ruling: Any
+    npc_attack_id: Any
+    obligation: PostcombatObligation
+    parent_action_id: Any
+    parent_con_receipt_id: Any
+    parent_obligation_id: Any
+    plan_id: Any
+    receipt: dict[str, Any]
+    result: dict[str, Any]
+    round: Any
+    skill: Any
+    skill_value: Any
+    source: dict[str, Any]
+    weapon: dict[str, Any]
+    weapon_reference: Any
+    obligation_baseline: Any
+    working_obligations: Any
+    choice_receipts: dict[str, Any]
 
 
 class InjuryState(TypedDict, total=False):
@@ -701,7 +794,7 @@ class CombatState:
     events: list[dict[str, Any]] = field(default_factory=list)
     roll_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
     interaction: dict[str, Any] = field(default_factory=dict)
-    actions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    actions: dict[str, CombatAction] = field(default_factory=dict)
     settlement: dict[str, Any] = field(default_factory=dict)
 
     def retire_character(

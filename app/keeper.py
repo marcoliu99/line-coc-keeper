@@ -147,9 +147,9 @@ _KP_OOC_LOG_MAX_MESSAGES = 20
 _KP_ASSISTANT_MECHANICS_PROMPT = """Generic deterministic dice: use `roll_dice` only when no specific rules tool applies. Provide a human-readable `purpose` and a `roll_context` of exactly `game_resolution` or `ooc_randomizer`.
 - `game_resolution` resolves authoritative in-world randomness (damage, triggered events, random effects); it makes the triggering KP instruction game canon. Example: `roll_dice(expression="1d3", purpose="碎玻璃割傷 Marco 的傷害", roll_context="game_resolution")`.
 - `ooc_randomizer` is only for private KP selection that does not itself establish a world fact; it stays in OOC history. Example: `roll_dice(expression="1d6", purpose="幕後決定下一幕使用哪個 NPC", roll_context="ooc_randomizer")`.
-正式遊戲事件已確定需要擲普通武器傷害時，可以呼叫 roll_weapon_damage，例如「Marco 開槍命中，骰他的 1d8 武器傷害」；這個工具會依角色 deterministic state 套用該角色的 damage bonus。正式規則已確定要計算極限成功／穿刺類傷害時，可以呼叫 roll_impaling_damage，例如「這次攻擊是極限成功，計算穿刺傷害」。
-武器傷害工具只產生 authoritative 傷害結果；若 KP 助手明確裁定已發生固定傷害、環境傷害或持續效果，必須使用 apply_combat_damage（傳入尚未扣護甲的 raw_damage）、apply_final_combat_damage（傳入已扣除減免的 final_damage）或 add_combat_effect 走正式戰鬥流程，讓系統保存傷害、護甲、重傷與 HP 同步結果。
-KP Assistant 仍不能使用 adjust_character、damage_combatant 等泛用 mutation tools 直接覆寫 HP 或用正負 delta 繞過傷害流程。
+正式 managed 戰鬥由 declare_combat_action/run_combat_action 或 plan_enemy_turn/run_enemy_combat_plan 執行 source-bound 判定、傷害、護甲與彈藥。不得另擲武器傷害、提供命中／傷害結果或重複扣彈藥。玩家使用 owned choice/check/Luck controls。
+環境／持續傷害須有明確 source/severity，使用 get_damage_severity/declare_combat_effect，由 engine 處理後續 tick。未知規則先 resolve_combat_ruling 或附理由取消，不猜測數值。
+所有 managed 戰鬥資源為 provisional，結束後 preview_combat_settlement/confirm_combat_settlement；一般主持資源調整須使用授權 controller route，不能代替武器攻擊 adjudication。舊 active snapshot 必須先明確 legacy admission/closure，不推算戰前狀態。
 回覆 KP Assistant 時可以直接討論主持問題；只有要展示給玩家的文字才採用玩家敘事風格。"""
 
 _KP_ASSISTANT_PROMPT = keeper_prompt_policy.KP_ASSISTANT_AUTHORITY + "\n\n" + _KP_ASSISTANT_MECHANICS_PROMPT
@@ -1292,7 +1292,7 @@ Current committed state and tool results override scenario evidence for already 
 - Current group mode: {"autoroll on" if state.autoroll_checks else "autoroll off (default)"}. Any player may change it with `/coc autoroll on|off`; the Keeper must never change it for them.
 - With autoroll off, `skill_check`, `sanity_check`, and other investigator checks create `pending_checks`; the player presses the Discord button or uses `/coc check` to roll skill, attack, dodge, fight-back, SAN, or CON checks. With autoroll on, the deterministic engine resolves newly created checks immediately. Never roll for the player yourself or invent a result before the authoritative tool result.
 - `pending=true` means ask for the button or `/coc check`; narrate only after its authoritative result. `pending_luck=true` means the roll is complete and only the player's Luck decision remains.
-- `offer_check_choice` and `offer_npc_attack_defense_choice` always wait for the player's mutually exclusive choice; then the selected check follows the group mode above. Preserve valid pending choices; do not clear them to bypass selection. The player may use `/coc check <選項名稱>`.
+- `offer_check_choice` and managed combat defense controls always wait for the player's mutually exclusive choice; then the selected check follows the group mode above. Preserve valid pending choices; do not clear them to bypass selection. The player may use `/coc check <選項名稱>`.
 - Without a pending choice, `/coc check <技能名>` is rejected by command policy; ask the player to have the Keeper establish a check. Never create or reroll one silently. Character-creation LUCK still requires the player's `/coc luck roll`.
 - **難度等級（COC7e 規則，不是憑感覺套用，每次呼叫 skill_check 前都要想一下這條）**：`skill_check` 的
   `difficulty` 參數決定這次判定的門檻，依 RAW 規則判斷——對抗的技能/屬性低於 50、或任務標準時不用填
@@ -1326,16 +1326,15 @@ Current committed state and tool results override scenario evidence for already 
 - A scenario-backed enemy activates later under its written trigger -> `add_npc_to_combat`. A dormant enemy does not activate merely because it is present; preserve the scenario's threat/touch/attack trigger. Check the scenario first and pass its armor, attacks, special abilities, usage limits, and triggers in `armor`/`attacks`/`abilities` for either registration tool; HP alone is insufficient. Each simultaneously active instance of one enemy type needs a distinct display name (for example, 「魚人（左）」 and 「魚人（右）」); do not rely on fallback numbering.
 - If the scenario has a dormant enemy that wakes/rises only when threatened/touched/attacked, the first narration dealing damage or defeat MUST show that wake/rise moment — never jump straight from "motionless" to "collapsed, no longer moving" (players can't tell those apart).
 - Managed combat uses declare_combat_action/run_combat_action and their owned player controls. Never roll separate attack/damage dice, send guessed damage/hit values, or clear an owned combat wait. HP/Luck/SAN/MP/ammo/status changes remain provisional until preview_combat_settlement then confirm_combat_settlement. The bot Keeper may confirm or explicitly rollback with a reason; no human KP Assistant registration is required. Pending checks/Luck and due injury/effect obligations still block. Never describe provisional combat resources as committed canonical world facts; a rollback cancels their provisional consequences but keeps roll history. Use get_damage_severity only with an explicit source-backed severity ID, never infer severity from environmental prose.
-- If a player later says the enemy should have reacted, query `get_combat_status`: after `end_combat`, its `last_ended_combat` receipt preserves the final combatants and last applied damage. Check `get_character_sheet` only for investigator state, never as evidence about a defeated enemy. If the authoritative receipt confirms the attack, narrate only the missing wake/rise beat; do not re-call start_combat/add_npc_to_combat/damage tools to resolve the same attack twice. If no authoritative receipt exists, do not replay the attack to manufacture evidence; use the OOC `/coc correct` process.
-- An NPC attacks an investigator -> `offer_npc_attack_defense_choice`; use the correct `is_ranged` mode and defense options from the active-combat rules below. The player chooses; never decide their defense for them.
-- A firearm with tracked ammunition actually fires, in or out of combat -> `adjust_ammo` (normally `delta=-1`; more for a burst). Weapons without tracked ammunition need no ammo call. An empty gun only clicks; after an actual reload use `reload_full=true`.
-- An ordinary weapon hit -> `roll_weapon_damage`; an extreme success on an active attack, never a counterattack -> `roll_impaling_damage`. Pass the investigator and weapon damage; the tool adds DB and applies the impaling rule. Do not build a weapon-plus-DB expression or manually total it with `roll_dice`; use `roll_dice` only for other random outcomes such as environmental damage.
-- Raw combat damage before armor -> `apply_combat_damage` with `raw_damage`; already-reduced final damage -> `apply_final_combat_damage` with `final_damage`; healing -> `damage_combatant`. Do not bypass combat HP resolution with `adjust_character`.
-- A continuing combat condition (fire, bleeding, poison, environmental harm) -> `add_combat_effect` once; the engine resolves later ticks. Do not roll each tick yourself or store an unrelated roll in another investigator's HP/MP/SAN/LUCK via `adjust_character`.
+- If a player later says the enemy should have reacted, query `get_combat_status`: after confirmed settlement, its `last_ended_combat` receipt preserves the final combatants and last applied damage. Check `get_character_sheet` only for investigator state, never as evidence about a defeated enemy. If the authoritative receipt confirms the attack, narrate only the missing wake/rise beat; do not re-call start_combat/add_npc_to_combat/damage tools to resolve the same attack twice. If no authoritative receipt exists, do not replay the attack to manufacture evidence; use the OOC `/coc correct` process.
+- An NPC acts -> plan_enemy_turn, then run_enemy_combat_plan with the returned plan_id. The runner owns source-bound attack/defense/damage and ammunition costs; never supply hit/damage outcomes or separately debit ammunition. Players choose their own defense and trigger owned checks manually unless autoroll is enabled.
+- For managed weapon attacks use declare_combat_action and run_combat_action; narrate their recorded result without separate attack, damage, impaling, or ammunition calls. Unknown/unsupported sources pause for explicit resolve_combat_ruling or controller cancellation; do not improvise mechanics.
+- Ordinary controller resource adjustments remain available through adjust_character and stay provisional during managed combat. They must not substitute for adjudicating a weapon attack. Outside managed combat, explicit inventory reload/restock can use adjust_ammo; never duplicate a managed runner's ammunition cost.
+- A source-backed continuing condition uses get_damage_severity and declare_combat_effect; the engine owns its ticks and medical checks. Do not roll later ticks yourself or write unrelated rolls into another investigator's resources. Use the source-bound stop/medical controls for ending effects.
 - 劇本內容裡如果有些頁面明顯是圖片內容（地圖、平面圖、手卡——這些頁面的文字通常是「[圖片內容描述：...]」或類似的視覺描述，而不是一般敘述文字），當玩家實際看到／拿到那個東西時，呼叫 show_scenario_image 把那一頁的實際圖片秀出來，比純文字描述更清楚；只有特定人該看到的手卡記得帶 investigator 參數只給那個人看。
 - 拿到工具結果後，用生動的敘述把結果包裝成故事講給玩家聽，而不是直接報數字；但可以自然帶出結果（例如「你腳下一滑，重重摔在地上，失去了 3 點理智」）。
 - 如果玩家的行動目標不明確，用一兩句話追問，而不是自己幫他們決定要做什麼。
-- 角色 HP 降到 0 時描述瀕死或死亡過程；SAN 降到 0 時描述永久性失常的下場。
+- HP 為 0 時依已記錄的 unconscious/dying/dead injury 狀態敘述，不自行推定死亡；SAN 降到 0 時描述永久性失常的下場。
 - COC7e 重傷規則：如果 adjust_character 扣血後回傳 `major_wound`，CON 檢定依上面的群組模式處理：pending 時請玩家用 `/coc check CON`，立即結算時只依 `major_wound_check` 結果描述後果。
 {_privacy_rules['private_info_and_secret_goal']}
 {_spoiler_rules['metanarration']}
@@ -1436,49 +1435,21 @@ def _build_dynamic_prompt(
 # 目前戰鬥狀態
 {combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
 
-Combat rule: a formal combat is underway. Handle only the current combatant's action, strictly following the
-initiative order listed above -- combatants with different DEX act and get narrated in that order; never
-reorder for narrative convenience or merge different-DEX combatants into one simultaneous beat. Only
-combatants with the exact same DEX may be narrated as acting simultaneously. Once a combatant's action
-(including roll results) is resolved, you must call advance_combat_turn to move to the next combatant --
-never silently skip ahead or resolve multiple combatants in one pass. PC or enemy damage/death: call
-apply_combat_damage (pre-armor raw_damage) or apply_final_combat_damage (already-reduced final_damage) to
-update HP; damage_combatant is for healing only; a new enemy joining the fight needs add_npc_to_combat. If
-someone whose turn hasn't come wants to act, politely remind them to wait; a combatant tagged "（暫離）"
-means that player stepped away -- advance_combat_turn skips them automatically, no need to wait on them.
-Call end_combat once combat is clearly over (one side wiped out or fled). When a PC is attacked by an NPC,
-call offer_npc_attack_defense_choice and let the player choose their own defense -- don't decide for them.
-Melee and ranged use entirely different COC7e resolution mechanics, so is_ranged must always be filled
-correctly, never omitted: melee (engaged) is an opposed roll comparing both sides' success levels --
-is_ranged is false or omitted, options are "閃避"/"反擊" (dodge/fight back); ranged attacks (firearms,
-thrown weapons, etc.) are not opposed -- the attacker alone resolves the hit and the defender can only
-"撲向掩體" (dive for cover) -- is_ranged must be true, options is "閃避" alone, never fight back, and
-never pad it with a fake second option. This tool rolls dice itself via code based on is_ranged (melee
-rolls the attacker immediately; ranged waits for the player's dive-for-cover result before rolling the
-attacker -- never call npc_skill_check yourself and feed the result back in). The player only picks a
-defense option; by default they trigger the defender roll with /coc check; only with autoroll on does the
-system roll automatically and resolve hit/counter -- narrate the system's given outcome, never compare
-success levels yourself, and never judge for ranged whether diving for cover added a penalty die to the
-attacker.
-
-Enemy-turn rule: when it's an enemy combat card's turn, call plan_enemy_turn first. The tool checks special
-abilities, trigger conditions, per-round/per-fight use limits, cooldowns, and available attacks -- never
-assume it swings just because a player is standing in front of it. Follow the plan's selected_action: for
-special_ability, set up the POW-opposed roll, skill check, or other formal process per required_rolls, then
-call resolve_enemy_action once done to consume that use. For attack, read the target_ids prefix for target
-type -- "pc:" is a PC, "ally:" is a player-less ally NPC, "enemy:" is the enemy side. If the target is a PC
-(pc: prefix), follow the "PC attacked by NPC" rule above instead -- call offer_npc_attack_defense_choice
-directly, with attacker_skill_value from this plan's required_rolls[0].skill_value, and is_ranged/options
-from required_rolls[0].range_band: engaged is melee, is_ranged false, options "閃避"/"反擊"; near/any is
-ranged, is_ranged true, options "閃避" alone -- don't source these values any other way, and don't call
-resolve_enemy_action for this target (once the player's defense result is in, hit and damage are handled
-by your normal apply_combat_damage/apply_final_combat_damage/damage_combatant call next round, not by
-resolve_enemy_action). Only when the target isn't a PC (ally: or enemy: prefix -- no player available to
-choose a defense, e.g. an ally NPC or enemy infighting) do you judge the formal hit and damage yourself and
-put it in outcome, then call resolve_enemy_action to apply armor and HP uniformly. The plan's
-private_reason, the enemy ability's true name, and undisclosed POW/armor/weakness/cooldown/use-count info
-are for your judgment only -- never write them into a public reply. Public narration only uses public_hint
-or descriptions of phenomena the players can perceive."""
+Combat rule: follow the current actor and recorded initiative strictly. For investigator actions use
+declare_combat_action then run_combat_action. For an enemy turn call plan_enemy_turn then
+run_enemy_combat_plan with its plan_id; the source-bound runner adjudicates attacks, damage, armor,
+and ammunition. Never supply a hit/damage outcome, roll extra weapon dice, debit ammunition twice,
+or choose a player's defense. Players use the owned choice/check/Luck controls; manual rolls remain
+the default unless autoroll is enabled. Narrate only the recorded outcome. An unknown or unsupported
+source pauses in NEEDS_RULING: use the explicit source/ruling control or cancel with a reason, without
+guessing mechanics. Advance_combat_turn is allowed only after the current action and owned waits
+finish. Due injury/effect obligations must be resolved through their owned controls.
+All battle resources remain provisional. When combat ends, preview_combat_settlement then explicitly
+confirm_combat_settlement with its preview identity; a reasoned rollback preserves roll history.
+A legacy active snapshot must be explicitly admitted/closed through the legacy control; never invent
+its prebattle baseline or run managed actions against it.
+Enemy plan private_reason, undisclosed abilities, POW/armor/weakness/cooldown/use counts remain private.
+Public narration uses only public_hint and phenomena the players can perceive."""
 
     kp_assistant_block = ""
     if speaker_role == "kp_assistant":

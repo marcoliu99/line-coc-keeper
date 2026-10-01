@@ -1452,11 +1452,12 @@ def _resolve_managed_check(state: GroupState, user_id: str, text: str, pending: 
         )
         if not outcome.get('ok'):
             return _audienced_check_resolution(user_id, pending, reply_text=outcome.get('error', '選擇遭拒'))
+        reply_text = f"已選擇「{option['label']}」。" + (
+            '請用 /coc check 或檢定按鈕擲骰。' if user_id in state.pending_checks
+            else '已依系統紀錄處理；請依目前戰鬥狀態繼續。')
+        resource_bridge.record_choice_control_receipt(state, pending, user_id, option, reply_text)
         save_state(state, reason='combat_choice')
-        return _audienced_check_resolution(user_id, pending,
-            reply_text=f"已選擇「{option['label']}」。" + (
-                '請用 /coc check 或檢定按鈕擲骰。' if user_id in state.pending_checks
-                else '已依系統紀錄處理；請依目前戰鬥狀態繼續。'))
+        return _audienced_check_resolution(user_id, pending, reply_text=reply_text)
     if pending.get('type') != 'skill' or (skill_arg and not _skill_names_match(pending.get('skill', ''), skill_arg)):
         return _audienced_check_resolution(user_id, pending, reply_text='請使用目前待處理檢定的技能或檢定按鈕。')
     try:

@@ -118,3 +118,19 @@ def test_scenario_damage_is_bounded_data_not_executable():
     for damage in ['__import__("os")', '999d6', '1d9999', '1d0', '1d6kh1', '1d6 + 2']:
         with pytest.raises(ValueError):
             replace(weapon('unarmed'), damage=damage)
+
+
+@pytest.mark.parametrize(('distance', 'expected'), [(0, 'regular'), (10, 'regular'),
+    (10.01, 'hard'), (20, 'hard'), (20.01, 'extreme'), (40, 'extreme'), (40.01, None)])
+def test_physical_single_shot_range_boundaries(distance, expected):
+    from app.combat_rules import resolve_range_difficulty
+    assert resolve_range_difficulty(distance, 10).difficulty == expected
+
+
+@pytest.mark.parametrize(('distance', 'base'), [(None, 10), (1, None), (1, 0),
+    (-1, 10), (True, 10), (1, True), (float('nan'), 10), (float('inf'), 10)])
+def test_invalid_physical_range_requires_ruling(distance, base):
+    from app.combat_rules import resolve_range_difficulty
+    resolution = resolve_range_difficulty(distance, base)
+    assert resolution.difficulty is None
+    assert resolution.reason

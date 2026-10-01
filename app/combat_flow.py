@@ -5,7 +5,6 @@ Authoritative check callbacks are server-only; tools never accept die results.
 """
 from __future__ import annotations
 
-import math
 from copy import deepcopy
 from dataclasses import asdict
 from typing import Any, Literal
@@ -13,7 +12,11 @@ from typing import Any, Literal
 from app import check_lifecycle, combat, combat_resources, combat_rules, dice, luck
 from app.models import (
     Character,
+    CombatAction,
     Combatant,
+    CombatCheckContext,
+    CombatCheckIdentity,
+    CombatCheckRole,
     GroupState,
     PostcombatObligation,
     damage_bonus_and_build,
@@ -30,13 +33,13 @@ def _error(message: str) -> dict[str, Any]:
     return {'ok': False, 'error': message}
 
 
-def _ruling(state: GroupState, action: dict[str, Any], reason: str) -> dict[str, Any]:
+def _ruling(state: GroupState, action: CombatAction, reason: str) -> dict[str, Any]:
     state.combat.phase = 'NEEDS_RULING'
     action['needs_ruling'] = reason
     return {'ok': False, 'phase': 'NEEDS_RULING', 'action_id': action['action_id'], 'error': reason}
 
 
-def _result(state: GroupState, action: dict[str, Any]) -> dict[str, Any]:
+def _result(state: GroupState, action: CombatAction) -> dict[str, Any]:
     return deepcopy({'ok': True, 'combat_id': state.combat.combat_id, 'action_id': action['action_id'],
                      'phase': state.combat.phase, 'completed': action.get('completed', False),
                      'interaction': state.combat.interaction, 'result': action.get('result', {})})
@@ -55,17 +58,19 @@ def _skill(character: Character, skill_id: str) -> tuple[str, int] | None:
     return None
 
 
-def _roll(state: GroupState, action: dict[str, Any], role: str, value: int,
-          *, penalty: int = 0, difficulty: str = 'regular') -> dict[str, Any]:
+def _roll(state: GroupState, action: CombatAction, role: CombatCheckRole, value: int,
+          *, penalty: int = 0, difficulty: str = 'regular', character_id: str = '') -> dict[str, Any]:
     return combat_resources.record_roll(
-        state, f"{state.combat.combat_id}:{action['action_id']}:{role}",
+        state, f"{state.combat.combat_id}:{action['action_id']}:{CombatCheckIdentity(role, character_id).serialized_role}",
         lambda: asdict(dice.skill_check(value, penalty_dice=penalty, required_tier=difficulty)),
     )
 
 
-def _context(state: GroupState, action_id: str, role: str) -> dict[str, str]:
-    return {'combat_id': state.combat.combat_id, 'action_id': action_id,
-            'interaction_id': f'{state.combat.combat_id}:{action_id}:{role}', 'check_role': role}
+def _context(state: GroupState, action_id: str, role: CombatCheckRole,
+             *, character_id: str = '') -> CombatCheckContext:
+    check = CombatCheckIdentity(role, character_id)
+    return CombatCheckContext(state.combat.combat_id, action_id,
+        f'{state.combat.combat_id}:{action_id}:{check.serialized_role}', check)
 
 
 def validate_pending_context(state: GroupState, pending: dict[str, Any], owner_id: str) -> dict[str, Any]:
@@ -101,10 +106,13 @@ def validate_pending_context(state: GroupState, pending: dict[str, Any], owner_i
             or owner_id != wait.get('owner_id') or pending.get('check_id') != wait.get('check_id')):
         return _error('Stale or foreign combat control')
     action = state.combat.actions.get(context.get('action_id', ''), {})
-    role = context.get('check_role')
+    try:
+        role = CombatCheckIdentity.from_serialized(context.get('check_role', '')).role
+    except (TypeError, ValueError):
+        return _error('Unknown combat check role')
     participant_id = action.get('actor_id') if role in ('attack', 'medical') else action.get('target_id')
     participant = combat.find_combatant(state, participant_id or '')
-    if participant is not None and participant.defeated and role not in ('injury',) and not str(role).startswith('injury:'):
+    if participant is not None and participant.defeated and role != 'injury':
         return _error('The original action participant is now incapacitated; explicit reconciliation required')
     if state.combat.phase not in {'PLAYER_CHOICE', 'PLAYER_ROLL', 'INJURY_CHECK', 'LUCK_DECISION'}:
         return _error('Combat is not waiting for this control')
@@ -146,18 +154,20 @@ def roll_pending_check(state: GroupState, pending: dict[str, Any], owner_id: str
     if cached_con is not None:
         result = combat_resources.record_roll(state, f"{state.combat.combat_id}:{action['action_id']}:{context['check_role']}", cached_con)
         return dice.SkillCheckResult(**result)
-    result = _roll(state, action, context['check_role'], int(pending['skill_value']),
-                   penalty=int(pending.get('penalty_dice', 0)), difficulty=pending.get('difficulty', 'regular'))
+    check_identity = CombatCheckIdentity.from_serialized(context['check_role'])
+    result = _roll(state, action, check_identity.role, int(pending['skill_value']),
+                   penalty=int(pending.get('penalty_dice', 0)), difficulty=pending.get('difficulty', 'regular'),
+                   character_id=check_identity.character_id)
     if parent_obligation and cache_key:
         parent_obligation.setdefault('roll_receipts', {})[cache_key] = deepcopy(result)
     return dice.SkillCheckResult(**result)
 
 
-def _request_check(state: GroupState, action: dict[str, Any], role: str, character: Character,
+def _request_check(state: GroupState, action: CombatAction, role: CombatCheckRole, character: Character,
                    skill: str, value: int, *, penalty: int = 0, injury: bool = False) -> dict[str, Any]:
     candidate: dict[str, Any] = {'type': 'skill', 'skill': skill, 'skill_value': value, 'bonus_dice': 0,
                  'penalty_dice': penalty, 'difficulty': action.get('difficulty', 'regular') if role == 'attack' else 'regular',
-                 'combat_context': _context(state, action['action_id'], role),
+                 'combat_context': _context(state, action['action_id'], role).to_dict(),
                  'major_wound_trigger': injury, 'allow_luck': not injury}
     if action.get('medical_context'):
         candidate['medical_context'] = deepcopy(action['medical_context'])
@@ -231,18 +241,16 @@ def declare_action(
         return _ruling(state, action, damage.reason)
     difficulty = 'regular'
     if action_kind == 'single_shot':
-        if distance_yards is None or weapon.base_range_yards is None:
-            return _ruling(state, action, 'Single shot requires trusted physical distance and reviewed base range')
-        if distance_yards > weapon.base_range_yards * 4:
-            return _ruling(state, action, 'Distance exceeds supported extreme range')
-        difficulty = ('extreme' if distance_yards > weapon.base_range_yards * 2 else
-                      'hard' if distance_yards > weapon.base_range_yards else 'regular')
+        range_result = combat_rules.resolve_range_difficulty(distance_yards, weapon.base_range_yards)
+        if range_result.difficulty is None:
+            return _ruling(state, action, range_result.reason)
+        difficulty = range_result.difficulty
     pc = _character(state, actor.combatant_id)
     if pc:
         skill = _skill(pc, weapon.skill_id)
         if skill is None:
             return _ruling(state, action, 'Weapon skill has no authoritative investigator value')
-        action.update(skill=skill[0], skill_value=skill[1], db=pc.damage_bonus)
+        action.update({'skill': skill[0], 'skill_value': skill[1], 'db': pc.damage_bonus})
         if weapon.ammo_per_attack:
             effective = combat_resources.effective_character(state, pc)
             inventory_key = weapon_instance.instance_id if weapon_instance else weapon_reference
@@ -264,7 +272,7 @@ def declare_action(
             if not isinstance(raw_db, str):
                 return _ruling(state, action, 'NPC damage bonus needs verified DB or STR/SIZ')
             db = raw_db
-        action.update(skill=weapon.skill_id, skill_value=skill_value, db=db)
+        action.update({'skill': weapon.skill_id, 'skill_value': skill_value, 'db': db})
         if weapon.ammo_per_attack:
             attack = next((a for a in card.attacks if a.id == weapon.id), None)
             if not attack or attack.ammo_or_uses is None or attack.ammo_or_uses < weapon.ammo_per_attack:
@@ -275,12 +283,12 @@ def declare_action(
         dice.max_expression_value(action.get('db', '0'))
     except ValueError as exc:
         return _ruling(state, action, str(exc))
-    action.update(weapon=asdict(weapon), damage=damage.damage, difficulty=difficulty)
+    action.update({'weapon': asdict(weapon), 'damage': damage.damage, 'difficulty': difficulty})
     combat_resources.record_event(state, action_id + ':declaration', 'action', data=deepcopy(action))
     return run_action(state, action_id)
 
 
-def _defense_choice(state: GroupState, action: dict[str, Any], character: Character) -> dict[str, Any]:
+def _defense_choice(state: GroupState, action: CombatAction, character: Character) -> dict[str, Any]:
     if check_lifecycle.blocker(state, character.owner_id):
         return _error('Defender has an existing check or Luck decision')
     ranged = action['action_kind'] == 'single_shot'
@@ -295,7 +303,7 @@ def _defense_choice(state: GroupState, action: dict[str, Any], character: Charac
                 {'kind': 'counter', 'label': '反擊', 'skill': '格鬥（鬥毆）',
                  'skill_value': character.skills.get('格鬥（鬥毆）', 25), 'bonus_dice': 0, 'penalty_dice': 0}])
     candidate: dict[str, Any] = {'type': 'choice', 'options': options,
-                 'combat_context': _context(state, action['action_id'], 'defense_choice')}
+                 'combat_context': _context(state, action['action_id'], 'defense_choice').to_dict()}
     registered = check_lifecycle.register(state, character.owner_id, candidate)
     if registered.pending is None:
         return _error('Cannot register defender choice')
@@ -305,7 +313,25 @@ def _defense_choice(state: GroupState, action: dict[str, Any], character: Charac
     return _result(state, action)
 
 
+def choice_receipt(state: GroupState, *, interaction_id: str, owner_id: str, choice: str) -> dict[str, Any] | None:
+    """Replay only the exact owned input from the retained battle/timeline."""
+    character = state.get_active_character(owner_id)
+    if not character or state.closed_combat_receipts.get(state.combat.combat_id, {}).get('status') == 'rolled_back':
+        return None
+    timeline = state.timeline_id or f'legacy-{state.group_id}'
+    for action in state.combat.actions.values():
+        receipt = action.get('choice_receipts', {}).get(interaction_id)
+        if receipt and (receipt['combat_id'], receipt['timeline_id'], receipt['owner_id'],
+                        receipt['character_id'], receipt['choice']) == (
+                state.combat.combat_id, timeline, owner_id, character.character_id, choice):
+            return deepcopy(receipt['result'])
+    return None
+
+
 def submit_choice(state: GroupState, *, interaction_id: str, owner_id: str, choice: str) -> dict[str, Any]:
+    retained = choice_receipt(state, interaction_id=interaction_id, owner_id=owner_id, choice=choice)
+    if retained is not None:
+        return retained
     pending = state.pending_checks.get(owner_id, {})
     validation = validate_pending_context(state, pending, owner_id)
     wait = state.combat.interaction
@@ -325,8 +351,15 @@ def submit_choice(state: GroupState, *, interaction_id: str, owner_id: str, choi
     action['stage'] = 'defense'
     if option['kind'] == 'no_defense':
         action['checks']['defense'] = {'tier': 'fail', 'success': False}
-        return run_action(state, action['action_id'])
-    return _request_check(state, action, 'defense', character, option['skill'], option['skill_value'])
+        response = run_action(state, action['action_id'])
+    else:
+        response = _request_check(state, action, 'defense', character, option['skill'], option['skill_value'])
+    action.setdefault('choice_receipts', {})[interaction_id] = {
+        'combat_id': state.combat.combat_id, 'timeline_id': state.timeline_id or f'legacy-{state.group_id}',
+        'owner_id': owner_id, 'character_id': character.character_id, 'choice': choice,
+        'result': deepcopy(response),
+    }
+    return response
 
 
 def on_authoritative_check_result(
@@ -337,7 +370,7 @@ def on_authoritative_check_result(
     if not validation['ok']:
         context = pending_entry.get('combat_context', {})
         action = state.combat.actions.get(context.get('action_id', ''), {})
-        if action.get('consumed_checks', {}).get(pending_entry.get('check_id')):
+        if action.get('consumed_checks', {}).get(str(pending_entry.get('check_id') or '')):
             return deepcopy(action.get('receipt', _result(state, action)))
         return validation
     if pending_entry.get('postcombat_context'):
@@ -348,13 +381,14 @@ def on_authoritative_check_result(
     if not context:
         return {'ok': True, 'managed': False}
     action = state.combat.actions[context['action_id']]
-    role = context['check_role']
-    combat_resources.record_roll(state, f"{state.combat.combat_id}:{action['action_id']}:{role}", asdict(result))
+    check_identity = CombatCheckIdentity.from_serialized(context['check_role'])
+    role = check_identity.role
+    combat_resources.record_roll(state, f"{state.combat.combat_id}:{action['action_id']}:{check_identity.serialized_role}", asdict(result))
     if not final:
-        action.setdefault('raw_checks', {})[role] = asdict(result)
+        action.setdefault('raw_checks', {})[check_identity.serialized_role] = asdict(result)
         state.combat.phase = 'LUCK_DECISION'
         return _result(state, action)
-    action['checks'][role] = asdict(result)
+    action['checks'][check_identity.serialized_role] = asdict(result)
     action.setdefault('consumed_checks', {})[pending_entry['check_id']] = asdict(result)
     state.combat.interaction = {}
     state.combat.phase = 'RESOLVE'
@@ -363,7 +397,7 @@ def on_authoritative_check_result(
             'skill': '急救', 'success': result.success, 'roll': result.roll, 'tier': result.tier,
             'medical_context': deepcopy(pending_entry['medical_context'])}
         return _complete(state, action, deepcopy(action['medical_receipt']))
-    if role == 'injury' or role.startswith('injury:'):
+    if role == 'injury':
         character = state.characters_by_id[action['character_id']]
         effective = combat_resources.effective_character(state, character)
         if not result.success:
@@ -504,7 +538,7 @@ def run_action(state: GroupState, action_id: str, *, transition_budget: int = 16
     return _complete(state, action, action['result'])
 
 
-def _complete(state: GroupState, action: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+def _complete(state: GroupState, action: CombatAction, result: dict[str, Any]) -> dict[str, Any]:
     action['completed'] = True
     action['result'] = result
     state.combat.phase = 'READY'
@@ -568,7 +602,7 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
            and a.get('round') == state.combat.round_number for a in state.combat.actions.values()):
         return _error('NPC actor already completed this turn; advance initiative')
     if plan.get('selected_action') != 'attack':
-        action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
+        action: CombatAction = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
                   'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}
         state.combat.actions[identity] = action
         return _ruling(state, action, 'NPC special/movement plan requires an explicit ruling')
@@ -602,16 +636,14 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
         return _ruling(state, action, 'NPC single shot requires ammunition and reviewed physical range')
     difficulty = 'regular'
     if mode == 'single_shot':
-        distance = attack_metadata['distance_yards']
-        base_range = attack_metadata['base_range_yards']
-        if (type(distance) not in (int, float) or type(base_range) not in (int, float)
-                or not math.isfinite(distance) or not math.isfinite(base_range) or distance < 0
-                or base_range <= 0 or distance > base_range * 4):
+        range_result = combat_rules.resolve_range_difficulty(
+            attack_metadata['distance_yards'], attack_metadata['base_range_yards'])
+        if range_result.difficulty is None:
             action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
-                  'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}
+                      'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}
             state.combat.actions[identity] = action
-            return _ruling(state, action, 'NPC trusted distance is outside supported physical range')
-        difficulty = 'extreme' if distance > base_range * 2 else 'hard' if distance > base_range else 'regular'
+            return _ruling(state, action, range_result.reason)
+        difficulty = range_result.difficulty
     action = {'action_id': identity, 'actor_id': actor.combatant_id, 'target_id': targets[0],
               'weapon_reference': attack.id, 'action_kind': mode, 'stage': 'attack',
               'completed': False, 'checks': {}, 'round': state.combat.round_number,
@@ -692,7 +724,7 @@ def declare_effect(
             or combat.find_combatant(state, target_id) is None):
         return _error('Effect requires explicit reviewed severity, target, scope, timing, reason and stop condition')
     if special_rule or defense != 'none':
-        action = {'action_id': 'effect-ruling:' + effect_id, 'kind': 'effect', 'completed': False}
+        action: CombatAction = {'action_id': 'effect-ruling:' + effect_id, 'kind': 'effect', 'completed': False}
         state.combat.actions['effect-ruling:' + effect_id] = action
         return _ruling(state, action, 'Special poison/drowning/fire behavior requires supported source ruling')
     definition = lookup.definition
@@ -982,7 +1014,7 @@ def resolve_ruling(
             action['cancelled_luck'] = deepcopy(state.pending_luck_decisions.pop(owner, None))
             action['cancelled_interaction'] = deepcopy(wait)
             state.combat.interaction = {}
-        action.update(completed=True, cancelled=True, cancellation_reason=reason)
+        action.update({'completed': True, 'cancelled': True, 'cancellation_reason': reason})
         action.pop('needs_ruling', None)
         state.combat.phase = 'READY'
         result = _result(state, action)
@@ -1014,18 +1046,16 @@ def resolve_ruling(
                 return _ruling(state, action, 'Ruling needs an existing owned ammunition mapping')
             action['ammo_key'] = inventory_key
         if weapon.attack_mode == 'single_shot':
-            if distance is None or weapon.base_range_yards is None or distance > weapon.base_range_yards * 4:
-                return _ruling(state, action, 'Ruling needs supported trusted distance/base range')
-            action['difficulty'] = ('extreme' if distance > weapon.base_range_yards * 2 else
-                                    'hard' if distance > weapon.base_range_yards else 'regular')
+            range_result = combat_rules.resolve_range_difficulty(distance, weapon.base_range_yards)
+            if range_result.difficulty is None:
+                return _ruling(state, action, range_result.reason)
+            action['difficulty'] = range_result.difficulty
         try:
             dice.max_expression_value(damage.damage)
             dice.max_expression_value(character.damage_bonus if character else '0')
         except ValueError as exc:
             return _ruling(state, action, str(exc))
-        action.update(weapon_reference=reference, weapon=asdict(weapon), damage=damage.damage,
-                      distance_yards=distance, skill=skill[0], skill_value=skill[1],
-                      db=character.damage_bonus if character else '0')
+        action.update({'weapon_reference': reference, 'weapon': asdict(weapon), 'damage': damage.damage, 'distance_yards': distance, 'skill': skill[0], 'skill_value': skill[1], 'db': character.damage_bonus if character else '0'})
         action.pop('needs_ruling', None)
         state.combat.phase = 'RESOLVE'
         result = run_action(state, action_id)
@@ -1038,14 +1068,13 @@ def request_injury_checks(state: GroupState, characters: list[Character], event_
     if state.autoroll_checks:
         return {'ok': True, 'checks': [request_injury_check(state, c, event_id + ':' + c.character_id) for c in characters]}
     identity = event_id + ':injury-checks'
-    action: dict[str, Any] = {'action_id': identity, 'kind': 'injury', 'completed': False,
+    action: CombatAction = {'action_id': identity, 'kind': 'injury', 'completed': False,
                               'checks': {}, 'injury_queue': [], 'character_id': characters[0].character_id}
     state.combat.actions[identity] = action
     for character in characters:
-        role = 'injury:' + character.character_id
         candidate = {'type': 'skill', 'skill': 'CON', 'skill_value': character.con,
                      'bonus_dice': 0, 'penalty_dice': 0, 'difficulty': 'regular', 'allow_luck': False,
-                     'major_wound_trigger': True, 'combat_context': _context(state, identity, role)}
+                     'major_wound_trigger': True, 'combat_context': _context(state, identity, 'injury', character_id=character.character_id).to_dict()}
         registration = check_lifecycle.register(state, character.owner_id, candidate)
         if registration.pending is None:
             raise RuntimeError('All-target prevalidated injury admission changed')
@@ -1054,7 +1083,7 @@ def request_injury_checks(state: GroupState, characters: list[Character], event_
     return _next_injury_wait(state, action)
 
 
-def _next_injury_wait(state: GroupState, action: dict[str, Any]) -> dict[str, Any]:
+def _next_injury_wait(state: GroupState, action: CombatAction) -> dict[str, Any]:
     item = action['injury_queue'][0]
     pending = item['pending']
     action['character_id'] = item['character_id']
