@@ -120,9 +120,7 @@ def verify(row: dict, evidence: ImageEvidence) -> str:
             continue
         native = row['candidates']['native']
         # A short native caption/heading remains an anchor, not the full image authority.
-        _, method, _ = pdf_quality.select_text(native, candidate)
-        if method != 'layout' or any(p['status'] != 'matched' for p in
-                pdf_quality.check_pairs(row['numeric_pairs'], candidate)):
+        if not pdf_quality.preserves_image_native_anchor(native, candidate, row['numeric_pairs']):
             continue
         record.update(engine=attempt['engine'], status='authoritative', candidate=candidate,
                       reason='independent_transcription_agreement')

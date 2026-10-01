@@ -224,6 +224,8 @@ def test_verified_image_source_can_resume_only_with_the_same_extraction_identity
     assert cached[1]['report']['image_transcription']['status'] == 'authoritative'
     changed = dict(report['extraction_identity'], pipeline_version='multicolumn-v4')
     assert drafts.resume_pages(draft, changed) == {}
+    old_quality = dict(report['extraction_identity'], quality_version='ai-import-repair-v7')
+    assert drafts.resume_pages(draft, old_quality) == {}
 
 
 def test_image_candidate_cannot_be_published_to_the_scenario_library(scanned_page, monkeypatch, tmp_path):
@@ -346,4 +348,28 @@ def test_markitdown_image_completions_obey_exhausted_durable_budget(scanned_page
         pdf_loader.extract_text(scanned_page, quality_report=report)
     assert not completion.called
     assert report['layout_budget']['consumed_requests'] == 0
+    assert report['pages'][0]['image_transcription']['status'] == 'unverified'
+
+
+def test_independent_agreement_cannot_delete_an_intact_native_dice_modifier(scanned_page, monkeypatch):
+    from types import SimpleNamespace
+
+    import pymupdf
+
+    from app import config, pdf_ocr
+    from app.providers import registry
+
+    native = 'The damaged wall hides a silent room. Damage 1d10+DB'
+    candidate = 'The damaged wall hides a silent room. Damage 1d10 STR 60 DEX 55'
+    with pymupdf.open(stream=scanned_page, filetype='pdf') as doc:
+        doc[0].insert_text((40, 60), native)
+        raw = doc.tobytes()
+    monkeypatch.setattr(pdf_ocr, 'paddle_candidate', lambda *_: {
+        'engine': 'paddleocr', 'model': 'PP-OCRv5_mobile_rec', 'candidate': candidate, 'status': 'candidate'})
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
+        analyze_image=lambda *_args, **_kwargs: {'page_type': 'text', 'text': candidate}))
+    report = {}
+    with pytest.raises(pdf_loader.LayoutReviewRequired) as pending:
+        pdf_loader.extract_text(raw, quality_report=report)
+    assert '1d10+DB' in pending.value.result[0]
     assert report['pages'][0]['image_transcription']['status'] == 'unverified'

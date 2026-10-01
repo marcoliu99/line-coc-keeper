@@ -5,9 +5,12 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'ai-import-repair-v7'
+VERSION = 'ai-import-repair-v8'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
+_DICE = re.compile(r'(?<!\w)(?:\d*[dD]\d+(?:[+-](?:\d+|[Dd][Bb]))?)(?!\w)')
+_PERCENTAGES = re.compile(r'(?<!\w)\d+(?:\.\d+)?%')
+_TRANSCRIPTION_TOKEN = re.compile(r'[\u3400-\u9fff]|[^\W_]+|[-+](?=\s*\d)|[$€£¥<>=/]', re.UNICODE)
 
 
 def normalize(text: str) -> str:
@@ -214,10 +217,8 @@ def check_pairs(pairs: list[dict], candidate: str) -> list[dict]:
 
 def preserves_expressions(original: str, candidate: str) -> bool:
     """Exact dice/percentage evidence, even when unresolved scalar fields may be filled."""
-    dice = re.compile(r'(?<!\w)(?:\d*[dD]\d+(?:[+-](?:\d+|[Dd][Bb]))?)(?!\w)')
-    percentages = re.compile(r'(?<!\w)\d+(?:\.\d+)?%')
-    return (Counter(dice.findall(original)) == Counter(dice.findall(candidate))
-            and Counter(percentages.findall(original)) == Counter(percentages.findall(candidate)))
+    return (Counter(_DICE.findall(original)) == Counter(_DICE.findall(candidate))
+            and Counter(_PERCENTAGES.findall(original)) == Counter(_PERCENTAGES.findall(candidate)))
 
 
 def preserves_mechanics(original: str, candidate: str) -> bool:
@@ -252,8 +253,24 @@ def accept_independent_transcription(candidate: str, independent: str) -> bool:
             or re.search(r'\[(?:無法辨識|unreadable|illegible)\]', candidate + independent, re.IGNORECASE)
             or not preserves_mechanics(candidate, independent)):
         return False
-    tokens = re.compile(r'[\u3400-\u9fff]|[^\W_]+|[-+](?=\s*\d)|[$€£¥<>=/]', re.UNICODE)
-    return tokens.findall(candidate.casefold()) == tokens.findall(independent.casefold())
+    return _TRANSCRIPTION_TOKEN.findall(candidate.casefold()) == _TRANSCRIPTION_TOKEN.findall(independent.casefold())
+
+
+def preserves_image_native_anchor(native: str, candidate: str, pairs: list[dict]) -> bool:
+    """Image agreement cannot override intact native mechanics or prose.
+
+    Native anchors may cover only a header or partial body: allow additional
+    independently corroborated image text, but keep every native token in order
+    and every complete numeric/dice/percentage expression. No pair inference.
+    """
+    if any(p['status'] != 'matched' for p in check_pairs(pairs, candidate)):
+        return False
+    for pattern in (_NUMBER, _DICE, _PERCENTAGES):
+        if Counter(pattern.findall(native)) - Counter(pattern.findall(candidate)):
+            return False
+    available = iter(_TRANSCRIPTION_TOKEN.findall(candidate.casefold()))
+    return all(any(token == found for found in available)
+               for token in _TRANSCRIPTION_TOKEN.findall(native.casefold()))
 
 
 def _region_pattern(original: str) -> str:
