@@ -37,3 +37,7 @@ Add real-derived, copyright-free structural regressions plus private hash-bound 
 
 ## Verification and review
 Pending execution/results; machine-readable companion records source evidence and extractor output without raw source text.
+
+## Trust-boundary clarification
+
+Manual structural reading of legacy scenario.txt is candidate discovery only, not certified topology authority. The narrow grammar proposal above is superseded by pdf_semantic_topology_discovery.md and was never implemented. Until PR155 canonical reconstruction independently passes the source-quality contract, candidates remain AWAITING_CANONICAL_SOURCE. Grammar miss is not source unsupported.

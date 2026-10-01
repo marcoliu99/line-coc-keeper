@@ -37,3 +37,7 @@
 
 ## 驗證與 review
 待執行／紀錄；machine-readable companion 僅保存 source evidence、extractor output，不存原文。
+
+## 信任邊界更新
+
+Legacy scenario.txt 的人工結構閱讀僅為 candidate discovery，不具 certified topology authority。上方 narrow grammar 擴充提案已由 pdf_semantic_topology_discovery_zh.md 取代，未曾實作。PR155 canonical reconstruction 未重新通過 source-quality contract 前，候選一律 AWAITING_CANONICAL_SOURCE。Grammar miss 不是 source unsupported。

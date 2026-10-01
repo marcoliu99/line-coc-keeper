@@ -111,7 +111,8 @@
     "canonical_layout_issues": [
       "multicolumn_prose_interleaving",
       "room_and_clause_context_spans_physical_pages_10_11_12"
-    ]
+    ],
+    "authority": "legacy_candidate_discovery_only_not_certified"
   },
   "current_extractor": {
     "version": "source-topology-v2",
@@ -157,5 +158,8 @@
   ],
   "verification": {
     "status": "pending"
-  }
+  },
+  "candidate_discovery_status": "DISCOVERY_CANDIDATE_FOUND",
+  "certification_status": "AWAITING_CANONICAL_SOURCE",
+  "proposal_superseded_by": "docs/specs/enhancement/pdf_semantic_topology_discovery.md"
 }
