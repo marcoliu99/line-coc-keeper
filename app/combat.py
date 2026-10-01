@@ -1515,7 +1515,7 @@ def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> di
     postpone the hit to the effect's next timing. Instead nothing advances,
     and the caller is told to resolve the check and advance again.
     """
-    snapshot = state.to_dict()
+    snapshot = deepcopy(state.to_dict())
     try:
         return step()
     except _TimingBlocked as blocked:
