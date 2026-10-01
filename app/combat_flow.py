@@ -628,7 +628,7 @@ def advance_combat(state: GroupState, *, actor_id: str, event_id: str, transitio
     combat_resources.initialize_working_state(state)
     prior = next((e for e in state.combat.events if e['event_id'] == event_id), None)
     if prior:
-        return deepcopy(prior['data'])
+        return deepcopy(prior['data'].get('final_response', prior['data']))
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
     if not current or current.combatant_id != actor_id or not event_id:
         return _error('Only the current actor may advance with a stable event ID')
@@ -642,14 +642,15 @@ def advance_combat(state: GroupState, *, actor_id: str, event_id: str, transitio
     result = combat.advance_turn(state)
     if not result.get('ok'):
         return result
-    combat_resources.record_event(state, event_id, 'initiative', data=deepcopy(result))
-    if result.get('pending'):
-        return result
-    next_actor = state.combat.order[state.combat.current_index]
-    if next_actor.side == 'enemy':
-        plan = combat.plan_enemy_turn(state, next_actor.display_name)
-        if plan.get('ok'):
-            return run_enemy_plan(state, plan['plan_id'])
+    transition = deepcopy(result)
+    if not result.get('pending'):
+        next_actor = state.combat.order[state.combat.current_index]
+        if next_actor.side == 'enemy':
+            plan = combat.plan_enemy_turn(state, next_actor.display_name)
+            if plan.get('ok'):
+                result = run_enemy_plan(state, plan['plan_id'])
+    combat_resources.record_event(state, event_id, 'initiative',
+                                  data={'transition': transition, 'final_response': deepcopy(result)})
     return result
 
 
