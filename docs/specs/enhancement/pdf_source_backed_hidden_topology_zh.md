@@ -31,3 +31,9 @@ Hidden routes 保存在內部 source_topology，不放入 rooms[].exits。普通
 ## 限制
 
 保守 deterministic extraction 不保證辨識所有散文形式的秘密路線；不支援的路線不建立，可偵測時留下 diagnostics。端點必須已存在 validated inventory，本輪不建立 invisible room。Canonical source safety、OCR、Docling、scenario readiness、discovery mechanics 不變。
+
+## 已授權範圍擴充：conditional barriers
+
+後續實作要求新增 source-only breakable_wall、blocked_passage、sealed_door、collapsible_barrier。預設 availability=blocked；除來源明寫 hidden 外 visibility=visible。Condition 保存由 route evidence 決定的 world_state key、expected=true，以及來源明確條件文字。不得自行增加 STR 難度、HP、armor、工具門檻。明確可破障礙預設 retryable；fail_forward 必須有明確 necessary-for-progress 敘述。失敗不得永久封路。
+
+Static topology/certificate 維持不可變；另於 GroupState 持久化 route outcomes，綁 route identity 與 timeline。既有 action/check/damage workflow 後，由明確授權 KP transition 在 state lock 下保存 discovered/opened/failed、actor、可選 consequence；以 /coc route 提供窄範圍確認，拒絕玩家操作。Narration 不能改狀態。Failed 只增加 attempts，不改 availability，仍可 retry。Opened barrier 或 discovered hidden route 才 available。既有 room-name movement 也須遵守 source route availability；direction movement 只有來源明寫 compass 才使用，不猜方位。公開 exits 隱藏未發現連線，明確 transition 後可顯示 available route。Visible blocked route 回 generic actionable interaction，不創造 mechanics。Source certificate extension 新增 condition metadata hash，visual certificate 不變。
