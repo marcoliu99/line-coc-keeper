@@ -13,7 +13,7 @@
 - Q1 A：分階段交付。先修檢定生命週期、accepted 資產保留、過期發布、deterministic reading order；再完成來源版本／生命週期遷移、其他領域入口及發行驗證。每階段有可執行驗收與 remaining findings，不把部分修復描述為全數完成。
 - Q2 A：遊戲固定明確選用的劇本版本；另一群組重新解析不會自動更新它。切版必須明確且一致處理文字、圖片、地圖與 NPC／角色來源證據。
 
-- Q3 A：舊遊戲／待選擇／checkpoint 僅依可靠來源證據綁定版本。證據不足時保留遊戲資料與歷史，將來源或歷史資產標為未確認／不可用；受影響操作要求明確重新選擇。不以 latest 或新圖片冒充歷史證據。
+- Q3 已取代：使用者會在上線前刪除舊劇本，故歷史劇本／來源版本 migration 移出範圍。尚待確認清理範圍是僅劇本庫，或包含引用它的遊戲、草稿與 checkpoints。Agent 未執行任何刪除。新建立資料仍須 immutable refs、安全重試與生命週期失效。
 - Q4 A：切版前先完成目前戰鬥、玩家檢定與 Luck。未解持續義務須明確處理相容性，不得清空；future obligations 的詳細政策為下一個決策。
 - Q5 A：newgame／切新劇本使舊 worker 與其啟用 binding 失效，保留草稿、accepted assets 與診斷。重用必須在新 context 明確重新匯入／admission，不能自動重綁或過期發布。
 - Q6：依使用者要求排除。不納入 Python 相容修正、版本要求變更或額外 runtime matrix，維持既有驗證環境。
@@ -24,7 +24,7 @@
 
 ## 待細化設計與驗收
 
-Logical scenario 保留穩定身分，published versions 不可變；runtime／rollback 固定選用版本，不讀會移動的 latest pointer。舊資料綁定與缺失證據遵循 Q3；詳細實作與 cleanup 政策仍待確認。共用來源副作用前先核對發布資格；state commit 成功與 derived-image refresh 失敗分開回報。
+Logical scenario 保留穩定身分，published versions 不可變；runtime／rollback 固定選用版本，不讀會移動的 latest pointer。依更新後 Q3 排除初次歷史來源 migration；首次清理範圍與未來版本保留仍待確認。共用來源副作用前先核對發布資格；state commit 成功與 derived-image refresh 失敗分開回報。
 
 驗收覆蓋 restart／retry／failed-save 與真實 repository boundaries。Review 狀態區分 confirmed、already_fixed、not_reproduced、blocked。外部 review 的測試數字是歷史資料，不是這次未實作工作的驗證結果。
 

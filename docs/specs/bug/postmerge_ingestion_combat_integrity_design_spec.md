@@ -13,7 +13,7 @@ Operator review: /Users/marcoliu/Downloads/pr155_pr156_full_code_review.md, date
 - Q1 A: staged delivery. First repair check lifecycle, accepted asset preservation, stale publication and deterministic reading order. Then complete source-version/lifecycle migration, remaining domain boundaries and release verification. Each stage has executable acceptance and explicitly tracked remaining findings; no partial fix is presented as complete.
 - Q2 A: a running game stays on its explicitly selected scenario version. Another group's reparse does not update it. Switching versions is explicit and coherent across text, images, maps and NPC/character source evidence.
 
-- Q3 A: bind legacy games/choices/checkpoints to a version only from reliable source evidence. Preserve stored game data and history when evidence is insufficient; mark source or historical assets unconfirmed/unavailable and require explicit source selection for affected operations. Never substitute latest or new images as historical evidence.
+- Q3 superseded: the operator will delete old scenarios before rollout, so historical scenario/source-version migration is out of scope. The exact cleanup boundary (library only versus all referencing games, drafts and checkpoints) still requires confirmation. No deletion has been performed by the agent. Newly created data still requires immutable references, safe retries and lifecycle invalidation.
 - Q4 A: finish current combat, player checks and Luck before changing selected source version. Outstanding continuing obligations require explicit compatibility handling; this does not authorize clearing them. Details for future obligations remain the next decision.
 - Q5 A: newgame/new-scenario transitions invalidate the old import worker and its activation binding while retaining the draft, accepted assets and diagnostic evidence. Reuse requires explicit reimport/admission under the new context, never automatic rebinding or stale authoritative publication.
 - Q6: excluded at the operator's request. No Python compatibility work, version-requirement change or additional runtime matrix is part of this remediation. Existing verification environments remain as they are.
@@ -24,7 +24,7 @@ Keep ADR0003 whole-battle provisional resources, bot Keeper settlement/rollback,
 
 ## Shape and acceptance to refine
 
-A logical scenario retains its stable identity while published versions remain immutable. Runtime and rollback consumers must refer to a selected version rather than a moving latest pointer. Legacy binding and unavailable evidence follow Q3; detailed implementation and cleanup rules remain open. Publication eligibility must be checked before shared-source side effects; successful game-state commit and failed derived-image refresh must be reported separately.
+A logical scenario retains its stable identity while published versions remain immutable. Runtime and rollback consumers must refer to a selected version rather than a moving latest pointer. Initial historical-source migration is excluded per the revised Q3; rollout cleanup scope and future revision retention remain open. Publication eligibility must be checked before shared-source side effects; successful game-state commit and failed derived-image refresh must be reported separately.
 
 Tests must exercise restart/retry/failed-save and real repository boundaries. Keep review categories confirmed, already_fixed, not_reproduced and blocked explicit. Test totals quoted in the external review are historical, not validation for this future work.
 
