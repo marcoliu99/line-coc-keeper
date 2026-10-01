@@ -80,6 +80,19 @@ class Battle:
                          'damage': '1d3', 'range_band': 'engaged'}], 'source': SOURCE,
         }]})
 
+    def carry_hazard(self) -> str:
+        self.start()
+        identity = self.load().combat.combat_id
+        assert self.tool('declare_combat_effect', {
+            'combat_id': identity, 'effect_id': 'carried:hazard', 'target_id': 'pc:char:ada',
+            'severity_id': 'minor', 'scope': 'round', 'stop_condition': 'leave reviewed hazard',
+            'reason': 'controller selected reviewed generic severity'})['ok']
+        preview = self.tool('preview_combat_settlement')['preview']
+        assert self.tool('confirm_combat_settlement', {
+            'combat_id': identity, 'settlement_id': preview['settlement_id'],
+            'reason': 'controller carries future hazard'})['ok']
+        return identity
+
     def declare(self, action_id: str = 'attack:1', *, weapon: str = 'unarmed',
                 action_kind: str = 'melee', **kwargs) -> dict:
         current = self.load()
@@ -409,6 +422,8 @@ def test_npc_attack_owned_defense_choice_and_manual_roll_survive_reload(battle):
                                                       result(roll=1, tier='critical', value=40)]) as rng:
         declared = battle.tool('advance_combat_turn', {'actor_id': 'pc:char:ada', 'event_id': 'advance:opening'})
         assert declared['phase'] == 'PLAYER_CHOICE'
+        retried = battle.tool('advance_combat_turn', {'actor_id': 'pc:char:ada', 'event_id': 'advance:opening'})
+        assert retried == declared
         waiting = battle.load()
         wait_id = waiting.combat.interaction['interaction_id']
         before = waiting.to_dict()
@@ -613,4 +628,95 @@ def test_zero_hp_prior_dying_target_keeps_owned_wait_through_new_battle_and_roll
         if waiting:
             battle.check(waiting['check_id'])
         assert rng.call_count == draws
-    assert battle.load().postcombat_obligations[0]['next_trigger']['round'] == trigger + 1
+    assert battle.load().postcombat_obligations[0]['next_trigger']['round'] == trigger + 1, (battle.load().postcombat_obligations, battle.load().pending_checks, battle.notifications)
+
+
+@pytest.mark.parametrize('during_new_battle', [False, True])
+def test_source_bound_stop_persists_outside_battle_but_rolls_back_new_working_stop(battle, during_new_battle):
+    source_id = battle.carry_hazard()
+    prior = battle.load().postcombat_obligations
+    if during_new_battle:
+        battle.start()
+        assert battle.load().combat.active
+    stopped = battle.tool('stop_combat_effect', {'combat_id': source_id, 'effect_id': 'carried:hazard',
+                         'event_id': 'hazard:stop', 'reason': 'controller confirms source stop condition'})
+    assert stopped['ok']
+    if during_new_battle:
+        assert battle.load().postcombat_obligations == prior
+        assert battle.tool('preview_combat_settlement')['ok']
+        assert battle.load().combat.settlement['obligations'][0]['status'] == 'resolved'
+        battle.tool('rollback_combat', {'combat_id': battle.load().combat.combat_id,
+                    'event_id': 'stop:rollback', 'reason': 'discard provisional stop'})
+        assert battle.load().postcombat_obligations == prior
+    else:
+        assert battle.load().postcombat_obligations[0]['status'] == 'resolved'
+        with patch('app.dice.random.randint') as rng:
+            assert battle.tool('process_postcombat_obligations', {'logical_round': 1, 'event_id': 'stopped:clock'})['ok']
+            rng.assert_not_called()
+        assert battle.load().characters_by_id['char:ada'].hp == 10
+
+
+def test_unsourced_first_npc_ruling_can_be_cancelled_and_advanced_without_damage(battle):
+    with patch.dict(SOURCE, {'attack_mode': 'melee'}, clear=True):
+        assert battle.start(npc_first=True)['ok']
+    before = battle.load()
+    npc_id = before.combat.order[before.combat.current_index].combatant_id
+    plan = battle.tool('plan_enemy_turn', {'enemy': 'Cultist'})
+    with patch.object(dice, 'skill_check') as rng:
+        blocked = battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+        assert blocked['phase'] == 'NEEDS_RULING'
+        assert not blocked['ok']
+        cancelled = battle.tool('resolve_combat_ruling', {'combat_id': before.combat.combat_id,
+                    'action_id': blocked['action_id'], 'event_id': 'unsourced:cancel', 'decision': 'cancel',
+                    'reason': 'controller cancels unsupported unsourced attack'})
+        assert cancelled['ok']
+        advanced = battle.tool('advance_combat_turn', {'actor_id': npc_id, 'event_id': 'unsourced:advance'})
+        assert advanced['ok'], advanced
+        rng.assert_not_called()
+    current = battle.load()
+    assert current.combat.order[current.combat.current_index].combatant_id == 'pc:char:ada'
+    assert current.characters_by_id['char:ada'].hp == 10
+
+
+def test_distinct_healer_owned_first_aid_stabilizes_only_bound_patient_and_receipt_once(battle):
+    initial = battle.load()
+    healer = Character('Grace', 'healer', character_id='char:grace', dex=70,
+                       hp=10, hp_max=10, skills={'急救': 70})
+    initial.characters['healer'] = healer
+    initial.characters_by_id[healer.character_id] = healer
+    initial.active_character_id_by_user['healer'] = healer.character_id
+    group_state.save_state(initial)
+    battle.start()
+    for identity, damage in [('medical:minor', 4), ('medical:major', 6)]:
+        battle.tool('adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': -damage,
+                    'event_id': identity, 'reason': 'reviewed single-hit damage'})
+    pending = battle.load().pending_checks['player']
+    with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=50)):
+        battle.check(pending['check_id'])
+    combat_id = battle.load().combat.combat_id
+    preview = battle.tool('preview_combat_settlement')['preview']
+    battle.tool('confirm_combat_settlement', {'combat_id': combat_id,
+                'settlement_id': preview['settlement_id'], 'reason': 'carry future dying obligation'})
+    declared = battle.tool('request_stabilization_check', {
+        'healer_character_id': 'char:grace', 'character_id': 'char:ada',
+        'event_id': 'firstaid:1', 'reason': 'source-bound First Aid stabilization'}, actor='healer')
+    assert declared['ok'] and declared['pending']
+    check = battle.load().pending_checks['healer']
+    assert check['medical_context']['character_id'] == 'char:ada'
+    assert check['medical_context']['healer_character_id'] == 'char:grace'
+    with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=70)) as rng:
+        battle.check(check['check_id'], clicker='healer', owner='healer')
+        request = {'character_id': 'char:ada', 'source_check_id': check['check_id'],
+                   'event_id': 'stabilization:1', 'reason': 'controller applies successful bound First Aid'}
+        first = battle.tool('stabilize_investigator', request)
+        assert first['ok']
+        receipt = battle.tool('stabilize_investigator', request)
+        assert receipt == first
+        assert rng.call_count == 1
+        wrong = battle.tool('stabilize_investigator', {**request, 'character_id': 'char:grace',
+                            'event_id': 'stabilization:wrong'})
+        assert not wrong['ok']
+    final = battle.load()
+    assert not final.characters_by_id['char:ada'].injury['dying']
+    assert final.characters_by_id['char:grace'].hp == 10
+    assert all(o['status'] == 'resolved' for o in final.postcombat_obligations)

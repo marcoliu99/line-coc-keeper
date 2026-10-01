@@ -38,7 +38,7 @@ WeaponDefinition 是武器類型規則；WeaponInstance 是持有的具體武器
 
 Definition 包含 skill ID、attack mode、damage expression、DB policy、impale／extreme-success、distance-dependent damage bands、ammo usage 與 provenance／catalog version。霰彈槍依可信距離／裁定選 damage band；目前 abstract range_bands 不等於公尺數。骰式採 bounded parser，不 eval 任意 expression。
 
-Foundry compendiums 作參照，不 wholesale import。目錄有 en-items、en-skills、en-wiki-weapons；已讀 en-items 含 prototype／example weapons，不能看到 weapon row 就當 generic authority。Implementation 必須 pin source revision/hash、逐筆 review shipped definitions，runtime 不抓 mutable develop；目前不宣稱完整 weapons catalog 已驗證。
+Foundry compendiums 作參照，不 wholesale import。目錄有 en-items、en-skills、en-wiki-weapons；已讀 en-items 含 prototype／example weapons，不能看到 weapon row 就當 generic authority。Implementation 必須 pin source revision/hash、逐筆 review shipped definitions，runtime 不抓 mutable develop；目前 shipped subset 已驗證 45 筆：44 筆 pinned wiki weapons，加一筆獨立 reviewed human unarmed；revision `7974aaca08dd15e78959e71f8ce2e0a0ee008a01`，examples 已排除。此證據不代表全部 compendiums 都完成 review。詳見 [implementation validation](combat_turn_state_machine_validation_zh.md)。
 
 Other Forms of Damage severity lookup：minor→1d3、moderate→1d6、severe→1d10、deadly→2d10、terminal→4d10、splat→8d10。Severity 由有權限的明確裁定或 verified scenario rule 選擇，不從自由敘事自動猜。記錄 effect ID／source／單次或每輪／trigger timing／defense／stop condition。特殊 poison／drowning 等保留自己的 CON／reduction／死亡例外；尚未支援時 NEEDS_RULING，不能用通用表抹掉特殊規則。
 

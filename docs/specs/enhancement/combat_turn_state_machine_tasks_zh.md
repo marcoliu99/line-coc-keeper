@@ -9,3 +9,5 @@ T1 Catalog、T2 Dice、T3 Working state 可並行；T4 Combat action runner／in
 T1：reviewed／pinned weapons、scenario override、aliases／ambiguous routing、distance／DB／impale、severity explicit lookup、provenance。T2：bounded composite dice／maximum，保留既有 RollResult／impale API，不 eval。T3：effective resource reads／writes、baseline conflict、append events／receipts、settlement／rollback／correction、postcombat serialization。T4：supported player／NPC runner、明確 waits、injury／timed effects、retry 不重骰。T5：所有 legacy resource paths、既有玩家 controls、high-level tools、bot-only admin gates、queries／prompts。T6：restart、atomic mirrors／absolute commit、duplicate／ownership、conflict、postcombat／next-battle、no half-provisional path。T7：全測與 review findings 清除後才 ready。
 
 狀態同步以英文 ticket table 為準；完工後兩份文件與 design／catalog 一起更新。此次授權包含建立 draft PR 與實作；沒有 merge／deploy 授權。
+
+T4／T5 已於 `f1be316` 以正常 merge 合併；T6 正在完成真正 SQLite／public tool／玩家按鈕整合驗證與雙語報告。T7 的最終 review／checks 尚未完成。
