@@ -577,7 +577,8 @@ def test_lost_player_reply_replays_saved_roll_without_rng_or_resource_cost(battl
     assert '原骰值不會重擲' in battle.notifications[-1]
 
 
-def test_zero_hp_prior_dying_target_keeps_owned_wait_through_new_battle_and_rollback(battle):
+@pytest.mark.parametrize('pending_before_new_battle', [False, True])
+def test_zero_hp_prior_dying_target_keeps_owned_wait_through_new_battle_and_rollback(battle, pending_before_new_battle):
     battle.start()
     for identity, damage in [('minor:4', 4), ('major:6', 6)]:
         assert battle.tool('adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': -damage,
@@ -595,6 +596,11 @@ def test_zero_hp_prior_dying_target_keeps_owned_wait_through_new_battle_and_roll
     assert baseline.characters_by_id['char:ada'].hp == 0
     trigger = baseline.postcombat_obligations[0]['next_trigger']['round']
     assert trigger > baseline.mechanical_round
+    if pending_before_new_battle:
+        for logical_round in range(baseline.mechanical_round + 1, trigger + 1):
+            assert battle.tool('process_postcombat_obligations', {
+                'logical_round': logical_round, 'event_id': f'prior:clock:{logical_round}'})['ok']
+        assert battle.load().pending_checks['player']['postcombat_context']['round'] == trigger
     battle.start()
     new_id = battle.load().combat.combat_id
     assert new_id != old_id

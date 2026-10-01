@@ -2,7 +2,7 @@
 
 [英文 canonical report](combat_turn_state_machine_validation.md) · [核准 design](combat_turn_state_machine_design_spec_zh.md)
 
-操作者於 2026-10-01 授權實作。T1–T5 已在 `f1be316` 合併；T6 以真正 repository transaction／玩家 controls 驗證。OCR／PDF 不在此改動範圍。T7 最終 review／發布 checks 尚未完成。
+操作者於 2026-10-01 授權實作。T1–T5 已在 `f1be316` 合併，exact advance receipt follow-up 為 `d6f870c`；T6 以真正 repository transaction／玩家 controls 驗證。OCR／PDF 不在此改動範圍。T7 最終 review／發布 checks 尚未完成。
 
 ## 權威與持久化
 
@@ -30,6 +30,6 @@ Chaosium 六級：minor 1d3、moderate 1d6、severe 1d10、deadly 2d10、termina
 
 ## 驗證狀態
 
-T6 full-suite checkpoint：**1821 passed、2 skipped、152 subtests passed**，15.02 秒。之後新增 source-stop、unsupported NPC cancellation、distinct-healer public regressions 已逐項通過。最終 T7 totals 與 ruff／mypy／compileall／diff checks 將於完整 integration review 後記錄；dependency deprecation warnings 保留在 logs。
+T6 full-suite checkpoint：**1821 passed、2 skipped、152 subtests passed**，15.02 秒。最終 36 個 public SQLite integration cases 與六份相容性 tests 已通過，包含 source-stop、unsupported NPC cancellation、distinct-healer、既有 pending-control rollback 與 exact advance retry。全 repo ruff 通過；mypy 126 source files 通過；compileall／git diff --check 通過。最終 T7 totals 與 ruff／mypy／compileall／diff checks 將於完整 integration review 後記錄；dependency deprecation warnings 保留在 logs。
 
-T6 尚待 exact initiative-advance retry 回傳原 NPC interaction receipt；目前嚴格 public regression 保存中，由 action runner owner 修正 durable receipt binding，沒有放寬 assertion。
+Exact initiative-advance retry 已回傳原 NPC owned-defense interaction receipt；regression 比對完整 response，再驗證不多骰或扣資源。目前沒有已知 T6 integration defects；T7 仍須完成 final review／重新 integrated verification。

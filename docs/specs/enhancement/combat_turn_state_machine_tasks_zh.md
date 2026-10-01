@@ -10,4 +10,4 @@ T1：reviewed／pinned weapons、scenario override、aliases／ambiguous routing
 
 狀態同步以英文 ticket table 為準；完工後兩份文件與 design／catalog 一起更新。此次授權包含建立 draft PR 與實作；沒有 merge／deploy 授權。
 
-T4／T5 已於 `f1be316` 以正常 merge 合併；T6 正在完成真正 SQLite／public tool／玩家按鈕整合驗證與雙語報告。T7 的最終 review／checks 尚未完成。
+T4／T5 已於 `f1be316` 以正常 merge 合併；T6 已完成真正 SQLite／public tool／玩家按鈕整合驗證與雙語報告，等待 merge。T7 的最終 review／checks 尚未完成。

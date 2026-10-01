@@ -2,7 +2,7 @@
 
 [Approved design](combat_turn_state_machine_design_spec.md) · [task graph](combat_turn_state_machine_tasks.md) · [中文](combat_turn_state_machine_validation_zh.md)
 
-The operator authorized implementation on 2026-10-01. T1–T5 are merged at `f1be316`; T6 verifies the existing repository transaction and player controls. OCR and PDF ingestion are outside this change. Final review and publication checks belong to T7.
+The operator authorized implementation on 2026-10-01. T1–T5 are merged at `f1be316`, with exact advance-receipt follow-up at `d6f870c`; T6 verifies the existing repository transaction and player controls. OCR and PDF ingestion are outside this change. Final review and publication checks belong to T7.
 
 ## Implemented authority and persistence
 
@@ -32,6 +32,6 @@ Executable catalog/dice tests validate every shipped expression, reviewed lookup
 
 ## Verification status
 
-T6 full-suite checkpoint: **1821 passed, 2 skipped, 152 subtests passed** (15.02 seconds). Later source-stop, unsupported-NPC cancellation and distinct-healer public regressions passed incrementally. Final T7 totals and ruff/mypy/compileall/diff checks will be recorded after final integration review. Dependency deprecation warnings are retained in test output.
+T6 full-suite checkpoint: **1821 passed, 2 skipped, 152 subtests passed** (15.02 seconds). The final 36 public SQLite integration cases and related six-file compatibility selection passed; source-stop, unsupported-NPC cancellation, distinct-healer stabilization, prior pending-control rollback and exact advance retries are included. Repository-wide ruff passed; mypy passed for 126 source files; compileall and git diff --check passed. Final T7 totals and ruff/mypy/compileall/diff checks will be recorded after final integration review. Dependency deprecation warnings are retained in test output.
 
-Remaining T6 item: exact initiative-advance retry must return the original NPC interaction receipt, not only the intermediate turn-advance result. The public regression remains strict until the owning action runner fixes its durable receipt binding.
+Exact initiative-advance retry now returns the original NPC owned-defense interaction receipt. The regression compares complete responses, then verifies no extra draws or resource costs. No remaining T6 integration defects are known; T7 still performs final review and fresh integrated verification.
