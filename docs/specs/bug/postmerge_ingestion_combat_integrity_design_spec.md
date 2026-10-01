@@ -6,7 +6,7 @@ Status: backlog; interview in progress. Runtime implementation is not authorized
 
 ## Source and evidence
 
-Operator review: /Users/marcoliu/Downloads/pr155_pr156_full_code_review.md, dated 2026-10-01, pinned PR155 cf62607 and PR156 897409d. Recheck findings against current heads before treating them as regressions. At PR156 1f89f6b, isolated probes confirm R156-01 (postcombat major-wound CON becomes stale on retry) and R156-02 (malfunctioned owned firearm reaches PLAYER_ROLL). The second probe covers declaration, not a complete malfunction/repair flow. PR155 factual verification remains in progress. The old merge-conflict observation is integration history, not a remaining postmerge runtime defect.
+Operator review: /Users/marcoliu/Downloads/pr155_pr156_full_code_review.md, dated 2026-10-01, pinned PR155 cf62607 and PR156 897409d. Recheck findings against current heads before treating them as regressions. At PR156 1f89f6b, isolated probes confirm R156-01 (postcombat major-wound CON becomes stale on retry) and R156-02 (malfunctioned owned firearm reaches PLAYER_ROLL). The second probe covers declaration, not a complete malfunction/repair flow. PR155 1c93712 was statically checked: the later native-anchor changes do not alter the R155-01–11 paths; R155-06 is partially repaired by PR156 replacement guards. This is not a fresh dynamic or combined-tree validation. The old merge-conflict observation is integration history, not a remaining postmerge runtime defect.
 
 ## Confirmed decisions
 

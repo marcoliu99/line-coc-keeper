@@ -6,7 +6,7 @@
 
 ## 來源與證據
 
-使用者 review：/Users/marcoliu/Downloads/pr155_pr156_full_code_review.md，2026-10-01，固定 PR155 cf62607、PR156 897409d。必須先核對目前 heads，再視為 regression。PR156 1f89f6b 的隔離 probes 確認 R156-01（重試使戰後重傷 CON 失效）及 R156-02（已故障且已持有的槍仍進 PLAYER_ROLL）；後者僅重現宣告，未完整跑故障／維修流程。PR155 事實核對仍進行中。舊 merge conflict 是整合歷史，不當成合併後 runtime 缺陷。
+使用者 review：/Users/marcoliu/Downloads/pr155_pr156_full_code_review.md，2026-10-01，固定 PR155 cf62607、PR156 897409d。必須先核對目前 heads，再視為 regression。PR156 1f89f6b 的隔離 probes 確認 R156-01（重試使戰後重傷 CON 失效）及 R156-02（已故障且已持有的槍仍進 PLAYER_ROLL）；後者僅重現宣告，未完整跑故障／維修流程。PR155 1c93712 已靜態核對：後續 native-anchor 修正沒有變更 R155-01～11 路徑；R155-06 已由 PR156 replacement guards 部分改善。未宣稱新增動態或兩支合併驗證。舊 merge conflict 是整合歷史，不當成合併後 runtime 缺陷。
 
 ## 已確認決策
 
