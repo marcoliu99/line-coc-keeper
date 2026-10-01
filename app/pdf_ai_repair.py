@@ -31,6 +31,8 @@ _LUCK = re.compile(r'(?i)(?:\bLUCK\b|幸運)\s*[:：]?\s*\d+')
 def validate(original: str, candidate: str, pairs: list[dict]) -> bool:
     if not candidate.strip() or len(candidate) > max(4000, len(original) * 4):
         return False
+    if not pdf_quality.preserves_expressions(original, candidate):
+        return False
     # A crop repair must not turn a blank/unresolved Luck into a sheet value.
     filled_luck = any(p['label'] in {'LUCK', '幸運'} and p['status'] != 'unresolved' for p in pairs)
     if _LUCK.search(candidate) and not filled_luck:

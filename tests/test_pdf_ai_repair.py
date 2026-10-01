@@ -90,3 +90,14 @@ def test_manual_correction_survives_later_pdf_reextraction():
     assert merged['str_'] == 70 and not merged.get('pdf_unresolved_fields')
     again = pregen_extractor._merge_pregens(merged, incomplete)
     assert again['str_'] == 70 and not again.get('pdf_unresolved_fields')
+
+
+@pytest.mark.parametrize(('original', 'candidate'), [
+    ('The investigator suffers Dam\ufffdage after failure and retains Spot Hidden 50%',
+     'The investigator suffers Damage after failure and retains Spot Hidden 50'),
+    ('The investigator suffers Dam\ufffdage 1d10+DB after failure and must seek help immediately',
+     'The investigator suffers Damage 1d10 after failure and must seek help immediately'),
+    ('Dam\ufffdage d100 1d4 2d6', 'Damage 100 1d4 2d6'),
+])
+def test_ai_repair_cannot_drop_complete_dice_or_percent(original, candidate):
+    assert not repair.validate(original, candidate, [])

@@ -27,10 +27,11 @@ def setup(destination: Path, python: str, model: str, *, install: bool = True) -
         raise ValueError('Choose a persistent model cache, not a temporary directory')
     if not re.fullmatch(r'[A-Za-z0-9_-]+', model):
         raise ValueError('Invalid recognition model name')
-    version = subprocess.run([python, '-c', 'import sys; print(sys.version_info.minor)'],
+    version = subprocess.run([python, '-c', 'import json,sys; print(json.dumps(list(sys.version_info[:2])))'],
                              text=True, capture_output=True, check=True)
-    if not 9 <= int(version.stdout.strip()) <= 13:
-        raise ValueError('Paddle CPU setup requires compatible Python 3.9-3.13; use an explicit worker environment')
+    major, minor = json.loads(version.stdout)
+    if major != 3 or not 11 <= minor <= 13:
+        raise ValueError('Paddle CPU setup requires compatible Python 3.11-3.13; use an explicit worker environment')
     if install:
         subprocess.run([python, '-m', 'pip', 'install', '-r', str(root / 'requirements-pdf-ocr.txt')], check=True)
     versions = subprocess.run([python, str(root / 'app/pdf_ocr.py')],

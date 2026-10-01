@@ -212,13 +212,18 @@ def check_pairs(pairs: list[dict], candidate: str) -> list[dict]:
     return result
 
 
+def preserves_expressions(original: str, candidate: str) -> bool:
+    """Exact dice/percentage evidence, even when unresolved scalar fields may be filled."""
+    dice = re.compile(r'(?<!\w)(?:\d*[dD]\d+(?:[+-](?:\d+|[Dd][Bb]))?)(?!\w)')
+    percentages = re.compile(r'(?<!\w)\d+(?:\.\d+)?%')
+    return (Counter(dice.findall(original)) == Counter(dice.findall(candidate))
+            and Counter(percentages.findall(original)) == Counter(percentages.findall(candidate)))
+
+
 def preserves_mechanics(original: str, candidate: str) -> bool:
     """Exact source mechanics, including percent signs and complete DB dice."""
-    dice = re.compile(r'(?<!\w)(?:\d*[dD]\d+(?:[+-](?:\d+|DB))?)(?!\w)')
-    percentages = re.compile(r'(?<!\w)\d+(?:\.\d+)?%')
     return (Counter(_NUMBER.findall(original)) == Counter(_NUMBER.findall(candidate))
-            and Counter(dice.findall(original)) == Counter(dice.findall(candidate))
-            and Counter(percentages.findall(original)) == Counter(percentages.findall(candidate)))
+            and preserves_expressions(original, candidate))
 
 
 def accept_transcription(original: str, candidate: str, pairs: list[dict]) -> bool:
