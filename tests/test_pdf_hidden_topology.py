@@ -476,3 +476,72 @@ def test_matching_visual_door_stays_blocked_after_failed_authoritative_attempt(m
         assert scene_map.resolve_move({'1': graph}, '1', route['from'], 'N', 'right', available_routes=allowed)['ok'] is expected
         assert scene_map.resolve_source_route(graph, route['from'], route['to'], available_routes=allowed)['ok'] is expected
         assert bool(scene_map.visible_exits(graph, route['from'], available_routes=allowed)) is expected
+
+
+def test_each_source_barrier_on_the_same_connection_must_be_opened(certified_map_result):
+    graph = {'entry_room_id': 'hall', 'rooms': [
+        {'id': 'hall', 'name': 'Hall', 'exits': [{'to': 'cellar', 'compass': 'E', 'label': 'door'}]},
+        {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
+    visual = certified_map_result('', graph)
+    source = ('--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.\n'
+              'A blocked passage connects Hall to Cellar to the east.')
+    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    door, passage = result.graph['source_topology']
+    for allowed in (frozenset(), frozenset({door['id']}), frozenset({passage['id']})):
+        assert scene_map.visible_exits(result.graph, door['from'], available_routes=allowed) == []
+        assert not scene_map.resolve_source_route(result.graph, door['from'], door['to'], available_routes=allowed)['ok']
+        assert not scene_map.resolve_move({'1': result.graph}, '1', door['from'], 'N', 'right', available_routes=allowed)['ok']
+    allowed = frozenset({door['id'], passage['id']})
+    assert scene_map.visible_exits(result.graph, door['from'], available_routes=allowed)
+    assert scene_map.resolve_source_route(result.graph, door['from'], door['to'], available_routes=allowed)['ok']
+    assert scene_map.resolve_move({'1': result.graph}, '1', door['from'], 'N', 'right', available_routes=allowed)['ok']
+
+
+def test_unknown_source_direction_cannot_bypass_a_known_blocked_barrier(certified_map_result):
+    graph = {'entry_room_id': 'hall', 'rooms': [
+        {'id': 'hall', 'name': 'Hall', 'exits': []}, {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
+    visual = certified_map_result('', graph)
+    source = ('--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.\n'
+              'A blocked passage connects Hall to Cellar.')
+    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    door, passage = result.graph['source_topology']
+    allowed = frozenset({passage['id']})
+    assert scene_map.visible_exits(result.graph, passage['from'], available_routes=allowed) == []
+    assert not scene_map.resolve_source_route(result.graph, passage['from'], passage['to'], available_routes=allowed)['ok']
+
+
+def test_multiple_barrier_availability_is_enforced_after_real_persistence(monkeypatch, tmp_path):
+    from app import map_routes
+    from app.models import GroupState
+    from app.repositories.group_state import load_state, save_state
+    scenario_id, _, graph, _, _, _, _ = published_barrier(monkeypatch, tmp_path, visual_door=True,
+        route_text=('A sealed door connects Basement to Corbitt hiding place to the east. '
+                    'A blocked passage connects Basement to Corbitt hiding place to the east.'))
+    door, passage = graph['source_topology']
+    state = GroupState(group_id='multiple-source-barriers', kp_assistant_user_id='kp', scenario_library_id=scenario_id,
+        scene_maps={'1': graph})
+    save_state(state)
+    map_routes.commit_outcome(state.group_id, 'kp', '1', door['id'], 'opened')
+    map_routes.commit_outcome(state.group_id, 'kp', '1', passage['id'], 'failed')
+    allowed = map_routes.available_routes(load_state(state.group_id), '1')
+    assert allowed == frozenset({door['id']})
+    assert not scene_map.resolve_move({'1': graph}, '1', door['from'], 'N', 'right', available_routes=allowed)['ok']
+    assert not scene_map.resolve_source_route(graph, door['from'], door['to'], available_routes=allowed)['ok']
+    map_routes.commit_outcome(state.group_id, 'kp', '1', passage['id'], 'opened')
+    allowed = map_routes.available_routes(load_state(state.group_id), '1')
+    assert scene_map.resolve_move({'1': graph}, '1', door['from'], 'N', 'right', available_routes=allowed)['ok']
+    assert scene_map.resolve_source_route(graph, door['from'], door['to'], available_routes=allowed)['ok']
+
+
+def test_available_alternate_source_route_in_other_direction_remains_usable(certified_map_result):
+    graph = {'entry_room_id': 'hall', 'rooms': [
+        {'id': 'hall', 'name': 'Hall', 'exits': []}, {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
+    visual = certified_map_result('', graph)
+    source = ('--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.\n'
+              'A secret door connects Hall to Cellar to the north.')
+    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    door, secret = result.graph['source_topology']
+    allowed = frozenset({secret['id']})
+    assert len(scene_map.visible_exits(result.graph, secret['from'], available_routes=allowed)) == 1
+    assert scene_map.resolve_move({'1': result.graph}, '1', secret['from'], 'N', 'forward', available_routes=allowed)['ok']
+    assert not scene_map.resolve_move({'1': result.graph}, '1', door['from'], 'N', 'right', available_routes=allowed)['ok']

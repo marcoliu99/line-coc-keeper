@@ -49,3 +49,5 @@ The deterministic extractor currently supports affirmative English whole sentenc
 ## Availability follow-up: multiple source barriers
 
 All matching source barrier conditions constrain a directed connection. An available source route must not bypass another blocked barrier on the same endpoints and compass. Apply the same gate to activated source-route projection, named movement and directional movement. Existing visual traversal in a distinct, unblocked direction remains available. Add a regression for sealed_door plus blocked_passage: no activation and either single activation remain blocked; both activations permit traversal. Source extraction, certificates and publication severity remain unchanged.
+
+Unknown route compass cannot establish a distinct alternate path; matching blocked endpoint barriers remain constraints until their outcomes are available.

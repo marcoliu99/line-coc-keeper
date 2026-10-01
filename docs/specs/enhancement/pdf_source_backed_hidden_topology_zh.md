@@ -49,3 +49,5 @@ Static topology/certificate 維持不可變；另於 GroupState 持久化 route 
 ## Availability 後續修正：多重 source barriers
 
 同一組端點與方位的所有 matching source barrier conditions 都約束該連線。已 available 的 source route 不得繞過另一個仍 blocked 的障礙。Activated source-route projection、named movement、directional movement 共用同一 gate；不同方位且未 blocked 的 existing visual traversal 維持可用。新增 sealed_door 加 blocked_passage regression：未開通與只開通任一障礙時仍 blocked，全部開通後才可通行。Source extraction、certificate、publication severity 不變。
+
+Route compass 不明時，不能藉此宣稱不同替代路徑；matching blocked endpoint barriers 仍需有 available outcomes 才可通行。

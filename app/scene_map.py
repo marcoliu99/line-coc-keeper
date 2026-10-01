@@ -396,7 +396,7 @@ def _barrier_blocks(graph: dict, origin: str, target: str, compass: str,
     return any(route['type'] in ('conditional_route', 'breakable_wall', 'blocked_passage', 'sealed_door', 'collapsible_barrier')
                and {route['from'], route['to']} == {origin, target}
                and route['id'] not in available_routes
-               and (not route['compass'] or (route['from'] == origin and route['compass'] == compass)
+               and (not compass or not route['compass'] or (route['from'] == origin and route['compass'] == compass)
                     or (route['to'] == origin and route['compass'] == _reverse_compass(compass)))
                for route in graph.get('source_topology', []))
 
@@ -414,6 +414,7 @@ def visible_exits(graph: dict, room_id: str, *, available_routes: frozenset[str]
              and not _barrier_blocks(graph, room_id, edge.get('to', ''), edge.get('compass', ''), available_routes)]
     for route in graph.get('source_topology', []):
         if (route['from'] == room_id and route['id'] in available_routes
+                and not _barrier_blocks(graph, room_id, route['to'], route['compass'], available_routes)
                 and not any(edge.get('to') == route['to'] and (not route['compass'] or edge.get('compass') == route['compass'])
                             for edge in exits)):
             target = get_room(graph, route['to'])
@@ -428,7 +429,9 @@ def resolve_source_route(graph: dict, origin: str, target: str, *,
     routes = [route for route in graph.get('source_topology', [])
               if {route['from'], route['to']} == {origin, target}]
     if not routes or any(route['from'] == origin and route['id'] in available_routes
-                         and (compass is None or route['compass'] == compass) for route in routes):
+                         and (compass is None or route['compass'] == compass)
+                         and not _barrier_blocks(graph, origin, target, route['compass'], available_routes)
+                         for route in routes):
         return {'ok': True}
     # An existing visible traversal remains usable even if a distinct secret route exists.
     if any(edge.get('to') == target and ordinary_exit(edge)
