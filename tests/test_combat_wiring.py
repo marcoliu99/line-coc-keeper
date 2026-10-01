@@ -402,6 +402,7 @@ def test_stabilization_tool_uses_bound_recorded_success_and_exposes_eligible_rec
                        skills={'急救': 60}, luck=0)
     state.characters['medic'] = healer
     state.characters_by_id['char:ben'] = healer
+    state.active_character_id_by_user['medic'] = 'char:ben'
     state.postcombat_obligations = [{
         'obligation_id': 'source:dying', 'combat_id': 'source:battle', 'character_id': 'char:ada',
         'kind': 'dying', 'status': 'future', 'next_trigger': {'round': 2}, 'effect': {},
@@ -494,3 +495,22 @@ def test_public_npc_plan_runner_bootstraps_first_actor_owned_defense(store):
     assert result['phase'] == 'PLAYER_CHOICE'
     assert store['state'].pending_checks['player']['combat_context']['check_role'] == 'defense_choice'
     assert store['state'].characters['player'].hp == 10
+
+
+def test_runner_controls_remain_advertised_and_narrator_wait_tracks_actual_owned_interaction(store):
+    from app.agents import tool_gateway
+    from app.services import turn_context
+    store['state'].pending_checks['player'] = {'type': 'skill', 'skill': '急救'}
+    names = {schema['name'] for schema in turn_context.check_creation_tools(store['state'], keeper.TOOLS)}
+    assert {'run_combat_action', 'submit_combat_choice', 'run_enemy_combat_plan'} <= names
+    status = {}
+    tool_gateway._record_check_status(status, 'run_enemy_combat_plan', {
+        'ok': True, 'combat_id': 'combat:wiring', 'action_id': 'npc:plan', 'phase': 'PLAYER_CHOICE',
+        'interaction': {'owner_id': 'player', 'check_id': 'owned:defense', 'check_role': 'defense_choice'},
+    })
+    assert status['pending']['check_id'] == 'owned:defense'
+    assert status['resolved'] is None
+    tool_gateway._record_check_status(status, 'run_combat_action', {
+        'ok': True, 'combat_id': 'combat:wiring', 'action_id': 'npc:plan', 'phase': 'READY', 'completed': True,
+    })
+    assert status['pending'] is None and status['resolved']['completed']

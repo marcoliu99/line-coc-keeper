@@ -1177,9 +1177,9 @@ _SPECS: tuple[ToolSpec, ...] = (
 )
 
 _SPECS += (
-    ToolSpec(schema={'name': 'declare_combat_action', 'description': '宣告來源支持的近戰或單發攻擊；系統使用固定武器表與既有角色數值。不得傳入命中、傷害或骰值。', 'input_schema': {'type': 'object', 'properties': {'action_id': {'type': 'string'}, 'actor_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'weapon_reference': {'type': 'string'}, 'action_kind': {'type': 'string', 'enum': ['melee', 'single_shot']}, 'distance_yards': {'type': 'number', 'minimum': 0}}, 'required': ['action_id', 'actor_id', 'target_id', 'weapon_reference']}}, handler=managed_handlers.declare_combat_action, invalidates_combat_status=True),
-    ToolSpec(schema={'name': 'run_combat_action', 'description': '恢復既有戰鬥行動；沿用原擲骰紀錄與玩家選擇。', 'input_schema': {'type': 'object', 'properties': {'action_id': {'type': 'string'}}, 'required': ['action_id']}}, handler=managed_handlers.run_combat_action, invalidates_combat_status=True),
-    ToolSpec(schema={'name': 'submit_combat_choice', 'description': '提交目前玩家所屬防禦選擇；不得替其他玩家選擇。', 'input_schema': {'type': 'object', 'properties': {'interaction_id': {'type': 'string'}, 'choice': {'type': 'string', 'enum': ['dodge', 'counter', 'dive', 'no_defense']}}, 'required': ['interaction_id', 'choice']}}, handler=managed_handlers.submit_combat_choice, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'declare_combat_action', 'description': '宣告來源支持的近戰或單發攻擊；系統使用固定武器表與既有角色數值。不得傳入命中、傷害或骰值。', 'input_schema': {'type': 'object', 'properties': {'action_id': {'type': 'string'}, 'actor_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'weapon_reference': {'type': 'string'}, 'action_kind': {'type': 'string', 'enum': ['melee', 'single_shot']}, 'distance_yards': {'type': 'number', 'minimum': 0}}, 'required': ['action_id', 'actor_id', 'target_id', 'weapon_reference']}}, handler=managed_handlers.declare_combat_action, creates_check=True, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'run_combat_action', 'description': '恢復既有戰鬥行動；沿用原擲骰紀錄與玩家選擇。', 'input_schema': {'type': 'object', 'properties': {'action_id': {'type': 'string'}}, 'required': ['action_id']}}, handler=managed_handlers.run_combat_action, creates_check=True, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'submit_combat_choice', 'description': '提交目前玩家所屬防禦選擇；不得替其他玩家選擇。', 'input_schema': {'type': 'object', 'properties': {'interaction_id': {'type': 'string'}, 'choice': {'type': 'string', 'enum': ['dodge', 'counter', 'dive', 'no_defense']}}, 'required': ['interaction_id', 'choice']}}, handler=managed_handlers.submit_combat_choice, creates_check=True, invalidates_combat_status=True),
     ToolSpec(schema={'name': 'preview_combat_settlement', 'description': '取得暫定資源差異與結算ID；待處理檢定/Luck/當前醫療後果未完成時不能結算。', 'input_schema': {'type': 'object', 'properties': {}, 'required': []}}, handler=managed_handlers.preview_combat_settlement, invalidates_combat_status=True),
     ToolSpec(schema={'name': 'confirm_combat_settlement', 'description': 'Keeper 明確確認目前結算預覽，原子發布資源並轉移未來事項；不需要真人KP註冊。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'settlement_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id', 'settlement_id', 'reason']}}, handler=managed_handlers.confirm_combat_settlement, invalidates_combat_status=True),
     ToolSpec(schema={'name': 'rollback_combat', 'description': 'Keeper 明確回滾未结算戰鬥並保留紀錄；普通玩家命令不能直接呼叫。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id', 'event_id', 'reason']}}, handler=managed_handlers.rollback_combat, invalidates_combat_status=True),
@@ -1217,6 +1217,8 @@ for _spec in _SPECS:
         if _spec.schema['name'] == 'initialize_combat':
             _properties = _properties['enemies']['items']['properties']
         _properties['source'] = _source_schema
+        _properties['skills'] = {'type': 'object', 'additionalProperties': {'type': 'integer', 'minimum': 0},
+                                 'description': '已核對NPC技能值，例如dodge；不得推測預設閃避'}
     if _spec.schema['name'] == 'advance_combat_turn':
         _spec.schema['input_schema']['properties'].update({'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'}})
     if _spec.schema['name'] in {'adjust_character', 'adjust_ammo', 'add_status_tag', 'remove_status_tag'}:
@@ -1230,7 +1232,7 @@ _SPECS += (
         'name': 'run_enemy_combat_plan',
         'description': '執行plan_enemy_turn既有來源支持計畫；系統擲骰並等待原玩家防禦，不能外傳命中或傷害。',
         'input_schema': {'type': 'object', 'properties': {'plan_id': {'type': 'string'}}, 'required': ['plan_id']},
-    }, handler=managed_handlers.run_enemy_combat_plan, invalidates_combat_status=True),
+    }, handler=managed_handlers.run_enemy_combat_plan, creates_check=True, invalidates_combat_status=True),
     ToolSpec(schema={
         'name': 'request_stabilization_check',
         'description': '宣告自己的急救行動，綁定目前病患與瀕死事項；待玩家擲骰或使用既有autoroll流程。',
@@ -1238,7 +1240,7 @@ _SPECS += (
             'healer_character_id': {'type': 'string'}, 'character_id': {'type': 'string'},
             'event_id': {'type': 'string'}, 'reason': {'type': 'string'},
         }, 'required': ['healer_character_id', 'character_id', 'event_id', 'reason']},
-    }, handler=managed_handlers.request_stabilization_check, invalidates_combat_status=True),
+    }, handler=managed_handlers.request_stabilization_check, creates_check=True, invalidates_combat_status=True),
     ToolSpec(schema={
         'name': 'stabilize_investigator',
         'description': 'Keeper 依目前時間線已記錄成功急救檢定穩定瀕死調查員；不接受外傳結果、不清除死亡或重傷。',

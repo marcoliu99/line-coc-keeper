@@ -11,6 +11,16 @@ if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
 
 
+def _reviewed_skills(payload):
+    if payload is None:
+        return None
+    if (not isinstance(payload, dict) or any(not isinstance(key, str) or not key.strip()
+                                            or type(value) is not int or value < 0
+                                            for key, value in payload.items())):
+        raise ValueError('NPC skills require explicit nonnegative integer source values')
+    return dict(payload)
+
+
 def start_combat(call: ToolCall) -> dict[str, Any]:
     from app import keeper
 
@@ -54,7 +64,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
             armor=tool_input.get("armor"),
             attacks=tool_input.get("attacks"),
             abilities=tool_input.get("abilities"),
-            source=tool_input.get("source"),
+            source=tool_input.get("source"), skills=_reviewed_skills(tool_input.get("skills")),
         )
         if added.reused:
             return keeper.ToolStateMutation(
@@ -120,7 +130,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                     target_state, requested_name, dex, hp,
                     is_ally=bool(entry.get("is_ally", False)),
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
-                    source=entry.get("source"),
+                    source=entry.get("source"), skills=_reviewed_skills(entry.get("skills")),
                     force_new_instance=(
                         matching is not None and matching.combatant_id in seen_batch_ids
                     ),

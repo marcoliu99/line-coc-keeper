@@ -110,6 +110,10 @@ def check_creation_tools(state: GroupState, tools: list[dict]) -> list[dict]:
     for tool in tools:
         if tool['name'] not in _CHECK_CREATION_TOOLS:
             result.append(tool)
+        elif 'investigator' not in tool['input_schema']['properties']:
+            # Runner controls use stable identities and enforce their exact
+            # pending/action gates internally; do not hide resumable controls.
+            result.append(tool)
         elif available:
             scoped = deepcopy(tool)
             target = scoped['input_schema']['properties']['investigator']
