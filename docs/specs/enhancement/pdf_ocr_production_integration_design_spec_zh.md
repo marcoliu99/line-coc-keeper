@@ -89,3 +89,42 @@ Paddle attempt 使用 bounded 短生命 CPU subprocess，不在 bot 載入 Paddl
 platform／full-provider 限制會記錄於 validation；deny-network corpus 結果不能宣稱 paid vision／map full import 成功。
 
 最終結果見 [驗證報告](pdf_ocr_production_integration_validation_zh.md)。完整 expression guard 亦套用 AI repair；明確停用 PyMuPDF4LLM 隱藏 OCR。Worker setup baseline 為 Python 3.11–3.13。操作者已以 `$implement` 授權，local integration 完成；deployment 限制保留於驗證報告。
+
+
+## v4 重新評估：公平比較與 image-only acceptance（待確認）
+
+本修訂依 2026-10-01 的 `pr155_v4_ocr_reassessment_next_fix.md`，取代把 v3 before/after 當作 Paddle acceptance threshold 的要求。先前實作授權涵蓋舊範圍；本次修訂須先審閱，再修改 runtime。
+
+### 問題與範圍
+
+102 頁比較混入 PyMuPDF4LLM hidden OCR 與舊 vision local fallback。multilingual verified crops：numeric glyph 96/103、production numeric 94/103、dice 6/6、raw pair 32/50、skill pair 4/4、added numeric 0、coverage 396/409，支持保留 Paddle，但不證明 production publication 改善。full corpus unresolved pairs 與 numeric pair review 都是 0→0，不做大型 pair-resolution rewrite。
+
+新增同 checkout／dependencies 的 Paddle OFF/ON 比較與 image-only positive path。保留 accept_region() 與 native-evidence accept_transcription() 的保守規則。必要變更限 loader/quality、private draft serialization、extraction identity、現有 validation script 與 loader/draft tests；gameplay 不變。
+
+### Routing、資料與發布
+
+區分短 native text、無 native text、graphic evidence、map candidate、character-sheet/table-like 與 ordinary illustration；不能只靠字數判定 scanned page。短 native 且 mechanics 有效時保留 native，除非有 missing-source evidence。無 native 的文字影像走 image transcription；純插圖不因 OCR 無法認證文字而阻擋。OCR 失敗不能直接把不明影像視為插圖。
+
+private page artifact 新增 image_transcription：engine、status（unverified／authoritative）、candidate、reason、independent evidence provenance。單一 local candidate 保存為 unverified／no_independent_evidence。保留獨立 attempt diagnostics。draft 告知 operator 需 provider verification 或 manual approval；unverified 不得進 canonical source 或 authoritative gameplay RAG。
+
+優先採 MarkItDown OCR 或 AI vision independent candidate：numeric multiset、完整 dice、percentage 必須 exact；已知 label/value pairs 相容，沒有 unsupported additions 或 mechanics 衝突。prose 不要求 byte-identical，但重大 deletion、contradiction、invented mechanics 必須拒絕；無法確定相容時維持 review。保存來源身分，避免 wrapper 重用同一 local output 被誤算 independent evidence。Tesseract 仍為 fallback／diagnostic，不是必要條件或唯一 authority。manual approval 保留既有 operator ownership 與 draft identity checks，只計算實際核准。
+
+Paddle rejection 不得惡化已有 safe native/layout 的 disposition。local_ocr_review、vision_empty、transcription_unverified、empty_page 必須代表 unresolved source defect。map 即使 OCR 成功仍獨立跑 scene_map；graph failure 與 OCR failure 分開。
+
+### Identity、metrics、公平比較
+
+為 routing/publication semantics 更新 pipeline identity；保留 OCR model/package/cache identity 與 strict resume equality，舊 cache 不得跳過新驗證。候選全文只存 private artifact。
+
+新增 counters：paddle_region_attempts、paddle_text_repairs_accepted、paddle_page_transcriptions_authoritative、paddle_page_transcriptions_unverified、paddle_rejected、paddle_failed、tesseract_attempts、tesseract_text_repairs_accepted、tesseract_page_transcriptions_authoritative、markitdown_transcription_agreements、ai_transcription_agreements、manual_approvals、image_only_pages、image_only_authoritative、image_only_unverified。保留相容舊 counter，標明計數單位，不混合 region repair 與 page authority。
+
+輸出 sanitized pdf_ocr_controlled_ab_results.json。同 code/dependencies/PDF hashes/budgets，兩邊 hidden OCR OFF；Docling、MarkItDown、provider availability、review/publication rules 相同，只切換 Paddle enabled。OFF 為 explicit Tesseract；ON 為 Paddle/gate/Tesseract。比較 review/blocked、attempts、accepted repair、authoritative transcription、unresolved scanned、numeric/dice preservation、known pair failures、runtime。無 native 的 mechanics 不可用空 baseline 評分：使用 verified reference 或明示 unavailable。記錄 run identity/configuration/errors，不把 v3 差異叫 Paddle regression。
+
+### 驗證與 rollout
+
+tests 涵蓋 independent agreement、numeric/dice/percentage 衝突、unsupported additions、pair swaps、prose loss、來源重用、單引擎 private persistence、canonical exclusion、identity/resume、短 safe native、rejected challenger、插圖、OCR 成功仍處理 maps。controlled offline real corpus A/B 與 provider-enabled 真實 image-only／floor-plan tests 分開；後者檢查 scene_map rooms/exits 與完整 fallback 是否降低 unresolved。須有真正 Linux CPU smoke。缺 credentials/corpus/infrastructure 時明示未執行 gate，不以 synthetic 代替。
+
+執行 pytest、ruff check .、mypy app、python -m compileall app tests、git diff --check。rollout 需 controlled A/B、provider image-only、provider real map、Linux CPU smoke、safe-page non-regression 全通過。此前僅宣稱 verified crops candidate 較 Tesseract 好，production image-only acceptance 尚未完整驗證。
+
+### 非目標與取捨
+
+保留 PP-OCRv5_mobile_rec、PaddleOCR 3.7.0、PaddlePaddle 3.3.0、CPU、explicit setup、persistent offline cache。不加入 Surya/Camelot/Azure/JEV，不開 Docling OCR/table structure，不用 confidence publish，不放寬 numeric/dice，不改 gameplay。實作前依既有 quality conventions 確定 narrow deterministic prose comparison；不確定就保留 review。驗證資料只屬 import-time，不建立 gameplay dependency。

@@ -99,3 +99,42 @@ Complete dice/percentage checks and intact token-order preservation close observ
 Platform and full-provider limitations will be documented in the validation report; local denied-network corpus evidence must not be described as a successful paid-vision/map import.
 
 Final validation is recorded in [validation](pdf_ocr_production_integration_validation.md). The complete-expression guard also applies to AI repair. PyMuPDF4LLM hidden OCR is explicitly disabled so all local OCR follows the adapter contract. Setup's supported worker baseline is Python 3.11–3.13. Implementation authorization was provided by the operator's `$implement`; local integration is complete, deployment limitations remain explicit in validation.
+
+
+## v4 reassessment: controlled evaluation and image-only acceptance (pending approval)
+
+This amendment supersedes any earlier requirement to use the v3 before/after result as a Paddle acceptance threshold. Requested by `pr155_v4_ocr_reassessment_next_fix.md` (2026-10-01). The earlier implementation approval covers the previous scope; this amendment awaits review before runtime changes.
+
+### Problem and scope
+
+The 102-page comparison conflates PyMuPDF4LLM hidden OCR and the former vision route's local fallback with recognizer changes. Verified multilingual crops support retaining Paddle: numeric glyph exact 96/103, production numeric 94/103, dice 6/6, raw pairs 32/50, skill pairs 4/4, added numeric 0, coverage 396/409. These results measure candidates, not production publication quality. Full-corpus unresolved pairs and numeric pair review remain 0 to 0; do not introduce a pair-resolution rewrite.
+
+Implement a same-checkout, same-dependency Paddle OFF/ON comparison and a separate positive acceptance path for image-only pages. Keep `accept_region()` and native-evidence `accept_transcription()` conservative. Touch loader/quality, private draft serialization and extraction identity only where needed; extend the existing validation script and loader/draft tests. Gameplay remains unchanged.
+
+### Page routing and publication
+
+Record distinct page evidence: short native text, absent native text, graphic evidence, map candidate, character-sheet/table-like content and ordinary illustration. Character count alone cannot establish a scanned page. Keep short native text with valid mechanics unless missing-source evidence exists. Route no-native meaningful text images to image transcription; pure illustrations must not be blocked solely by inability to certify OCR prose. Ambiguous images remain private review rather than being classified as illustrations merely because OCR failed.
+
+Preserve Paddle candidates even when the native gate cannot certify them. The private page artifact gains `image_transcription` with engine, status (`unverified` or `authoritative`), candidate, reason, and independent evidence provenance. A lone local candidate uses `reason: no_independent_evidence`. Retain diagnostic attempts independently of the selected source. Operator drafts explicitly request provider verification or manual approval; unverified text never enters published canonical text or authoritative gameplay RAG.
+
+Prefer independent MarkItDown OCR or AI vision transcription for verification. Require exact numeric multisets, complete dice and percentages; compatible known label/value pairs; no unsupported additions or conflicting mechanics. Prose need not be byte-identical but material deletion, contradiction or invented mechanics prevents acceptance. Fail closed when prose compatibility cannot be determined; preserve review evidence. Record engine/source identity so the same local OCR output reused by another wrapper is not counted as independent evidence. Tesseract stays fallback/diagnostic and is neither required nor the sole positive authority for Paddle. Manual approval uses existing operator ownership and draft identity checks; count only approvals actually performed.
+
+Rejected challenger attempts must not worsen an already safe native/layout page's disposition. Derive `local_ocr_review`, `vision_empty`, `transcription_unverified` and `empty_page` from unresolved source defects, not attempt rejection. Independently run scene_map for map candidates even after successful transcription; graph failures remain separate from OCR failures.
+
+### Identity, metrics and controlled experiment
+
+Bump pipeline identity for new routing/publication semantics; preserve OCR model/package/cache identity and strict draft/resume identity equality. Old selected-page caches cannot bypass independent evidence checks. Keep private candidates out of committed reports.
+
+Expose `paddle_region_attempts`, `paddle_text_repairs_accepted`, `paddle_page_transcriptions_authoritative`, `paddle_page_transcriptions_unverified`, `paddle_rejected`, `paddle_failed`, `tesseract_attempts`, `tesseract_text_repairs_accepted`, `tesseract_page_transcriptions_authoritative`, `markitdown_transcription_agreements`, `ai_transcription_agreements`, `manual_approvals`, `image_only_pages`, `image_only_authoritative`, and `image_only_unverified`. Retain existing counters for compatibility and document count units; avoid conflating region repair with page authority.
+
+Write sanitized `pdf_ocr_controlled_ab_results.json`: same code/dependencies/PDF hashes/budgets, hidden OCR explicitly OFF in both arms, identical Docling/MarkItDown configuration and provider availability, identical review/publication rules. Only Paddle enabled changes: OFF is explicit Tesseract local OCR; ON is Paddle/gate/Tesseract. Report review/blocked pages, attempts, accepted repairs, authoritative transcriptions, unresolved scanned pages, numeric/dice preservation, known pair failures and runtime. Native-empty mechanics cannot be scored against an empty native baseline; use verified references or explicitly mark unavailable. Record run identity/configuration and failures. Do not describe v3 deltas as Paddle regressions.
+
+### Validation and release boundaries
+
+Regression tests cover independent agreement, numeric/dice/percentage conflicts, unsupported additions, pair swaps, prose loss, reused source provenance, single-engine private persistence, canonical exclusion, identity/resume invalidation, short safe native pages, rejected challengers, illustrations and maps despite OCR success. Controlled offline real-corpus A/B is separate from provider-enabled real image-only and real floor-plan tests. The latter validates actual scene_map rooms/exits and whether the full fallback chain lowers unresolved pages. Perform a real Linux CPU smoke; unavailable infrastructure/credentials/corpus are reported as unexecuted gates, never synthetic success.
+
+Run `pytest`, `ruff check .`, `mypy app`, `python -m compileall app tests`, and `git diff --check`. Rollout requires controlled A/B, provider image-only validation, provider real-map validation, Linux CPU smoke and safe-page non-regression. Until then claim only that verified crop candidates exceed Tesseract; production image-only acceptance is not fully validated.
+
+### Non-goals and implementation tradeoffs
+
+Retain PP-OCRv5_mobile_rec, PaddleOCR 3.7.0, PaddlePaddle 3.3.0, CPU, explicit setup and persistent offline cache. No Surya/Camelot/Azure/JEV, Docling OCR/table structure, confidence-based publication, numeric/dice relaxation or gameplay changes. Before implementation settle the narrow deterministic prose-comparison contract within existing quality conventions; uncertainty retains review. Verification evidence remains import-time data, not a new gameplay dependency.

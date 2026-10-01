@@ -1511,7 +1511,7 @@
       "title": "Import-time PaddleOCR recovery on PR155",
       "zh": "PR155 匯入階段 PaddleOCR recovery",
       "category": "enhancement",
-      "status": "implemented",
+      "status": "partial",
       "evidence": [
         "app/pdf_ocr.py",
         "app/pdf_loader.py",
