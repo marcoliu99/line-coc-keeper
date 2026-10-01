@@ -56,3 +56,9 @@ Spec 初審兩項 P2：選擇成功但 reply 遺失的 exact receipt，以及 ac
 ## 最終交付
 
 最終整合 `bb53045` 重新完整驗證：**1851 passed、2 skipped、152 subtests**（13.96 秒），ruff、mypy（126 files）、compileall 與兩種 diff checks 均通過。PR #156 已 ready for review；七個乾淨且已合併的戰鬥實作者工作樹均已移除，保留整合工作樹與已推送分支。未合併主分支或部署。
+
+## GitHub PR #156 review 修正
+
+四項 GitHub findings（兩項 P1、兩項 P2）已修正：所有非徒手調查員武器都檢查 inventory／instance 持有證據；NPC catalog 宣告必須對應 reviewed attack；NPC 裁定恢復讀取 attack 技能與 verified DB／range／ammo；不存在的 effect／來源停止要求回報失敗且不修改 future obligations。宣告與恢復共用持有／來源 gate，transport 保留 owned instance key，已記錄 stop receipts 可安全重試。
+
+新增十個 parameterized／public regressions，涵蓋未持有／已持有近戰武器、NPC 單有技能不可授權、mapped attack、DB／單發射程恢復、不重骰、active stop identity，以及真正 SQLite postcombat stop／owned-instance reload。完整測試：**1861 passed、2 skipped、152 subtests passed**（15.50 秒，九項既有 warnings）。Ruff、mypy（126 files）、compileall、git diff --check 均通過。未擴大既有 source／ownership／recovery 設計範圍。

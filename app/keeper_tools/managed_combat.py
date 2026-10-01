@@ -277,20 +277,19 @@ def resolve_combat_ruling(call: ToolCall) -> dict[str, Any]:
         character = combat.character_for_combatant(state, actor) if actor and actor.is_pc else None
         reference = call.input.get('weapon_reference') or action.get('weapon_reference', '')
         definitions = ()
+        instance = None
         if character:
             try:
                 instance, definitions = _owned_weapon_evidence(state, character, reference)
-                if instance and instance.pinned_definition:
-                    if not any(d.id == instance.pinned_definition.id for d in definitions):
-                        definitions += (instance.pinned_definition,)
-                    if reference == instance.instance_id:
-                        reference = instance.definition_id or reference
+                if (instance and instance.pinned_definition
+                        and not any(d.id == instance.pinned_definition.id for d in definitions)):
+                    definitions += (instance.pinned_definition,)
             except (ValueError, TypeError, KeyError) as error:
                 return {'ok': False, 'phase': 'NEEDS_RULING', 'error': str(error)}
         return combat_flow.resolve_ruling(state, action_id=call.input['action_id'],
             event_id=call.input['event_id'], reason=reason, decision=call.input['decision'],
             weapon_reference=reference, distance_yards=call.input.get('distance_yards'),
-            scenario_definitions=definitions)
+            scenario_definitions=definitions, weapon_instance=instance)
     return _mutate(call, operation)
 
 

@@ -197,6 +197,50 @@ def _request_check(state: GroupState, action: CombatAction, role: CombatCheckRol
     return _result(state, action)
 
 
+def _weapon_actor_evidence(
+    state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition,
+    reference: str, instance: combat_rules.WeaponInstance | None = None,
+) -> CombatAction:
+    """Bind declaration and resumed rulings to the same owned source evidence."""
+    character = _character(state, actor.combatant_id)
+    if character:
+        effective = combat_resources.effective_character(state, character)
+        inventory_key = instance.instance_id if instance else reference
+        metadata = effective.weapon_instances.get(inventory_key)
+        if weapon.id != 'i.weapon.brawl':
+            if inventory_key not in effective.weapons and not metadata:
+                raise ValueError('Weapon requires an existing owned instance or inventory mapping')
+            if metadata and metadata.get('definition_id') not in (None, weapon.id):
+                raise ValueError('Owned weapon definition does not match the declared weapon')
+        skill = _skill(effective, weapon.skill_id)
+        if skill is None:
+            raise ValueError('Weapon skill has no authoritative investigator value')
+        result: CombatAction = {'skill': skill[0], 'skill_value': skill[1], 'db': effective.damage_bonus}
+        if weapon.ammo_per_attack:
+            if effective.weapons.get(inventory_key, {}).get('ammo', 0) < weapon.ammo_per_attack:
+                raise ValueError('Owned ammunition mapping missing or insufficient')
+            result['ammo_key'] = inventory_key
+        return result
+    card = state.combat.enemy_cards.get(actor.enemy_card_id)
+    if not card or card.incomplete or not all(card.source.get(k) for k in ('url', 'revision', 'sha256')):
+        raise ValueError('NPC declaration requires a complete reviewed source card')
+    attack = next((entry for entry in card.attacks if entry.id == weapon.id), None)
+    if attack is None:
+        raise ValueError('NPC weapon requires an explicit mapped reviewed attack')
+    db = '0'
+    if weapon.db_policy != 'none':
+        raw_db = card.source.get('damage_bonus')
+        if raw_db is None and all(k in card.stats for k in ('STR', 'SIZ')):
+            raw_db = damage_bonus_and_build(card.stats['STR'], card.stats['SIZ'])[0]
+        if not isinstance(raw_db, str):
+            raise ValueError('NPC damage bonus needs verified DB or STR/SIZ')
+        db = raw_db
+    if weapon.ammo_per_attack and (attack.ammo_or_uses is None or attack.ammo_or_uses < weapon.ammo_per_attack):
+        raise ValueError('NPC owned ammunition missing or insufficient')
+    return {'skill': attack.skill_name, 'skill_value': attack.skill_value, 'db': db,
+            'npc_attack_id': attack.id}
+
+
 def declare_action(
     state: GroupState, *, action_id: str, actor_id: str, target_id: str,
     weapon_reference: str, action_kind: ActionKind = 'melee', distance_yards: float | None = None,
@@ -245,39 +289,10 @@ def declare_action(
         if range_result.difficulty is None:
             return _ruling(state, action, range_result.reason)
         difficulty = range_result.difficulty
-    pc = _character(state, actor.combatant_id)
-    if pc:
-        skill = _skill(pc, weapon.skill_id)
-        if skill is None:
-            return _ruling(state, action, 'Weapon skill has no authoritative investigator value')
-        action.update({'skill': skill[0], 'skill_value': skill[1], 'db': pc.damage_bonus})
-        if weapon.ammo_per_attack:
-            effective = combat_resources.effective_character(state, pc)
-            inventory_key = weapon_instance.instance_id if weapon_instance else weapon_reference
-            if inventory_key not in effective.weapons or effective.weapons[inventory_key].get('ammo', 0) < weapon.ammo_per_attack:
-                return _ruling(state, action, 'Owned ammunition mapping missing or insufficient')
-            action['ammo_key'] = inventory_key
-    else:
-        card = state.combat.enemy_cards.get(actor.enemy_card_id)
-        if (not card or card.incomplete or not all(card.source.get(k) for k in ('url', 'revision', 'sha256'))):
-            return _ruling(state, action, 'NPC declaration requires a complete reviewed source card')
-        skill_value = card.skills.get(weapon.skill_id)
-        if skill_value is None:
-            return _ruling(state, action, 'NPC weapon skill has no authoritative value')
-        db = '0'
-        if weapon.db_policy != 'none':
-            raw_db = card.source.get('damage_bonus')
-            if raw_db is None and all(k in card.stats for k in ('STR', 'SIZ')):
-                raw_db = damage_bonus_and_build(card.stats['STR'], card.stats['SIZ'])[0]
-            if not isinstance(raw_db, str):
-                return _ruling(state, action, 'NPC damage bonus needs verified DB or STR/SIZ')
-            db = raw_db
-        action.update({'skill': weapon.skill_id, 'skill_value': skill_value, 'db': db})
-        if weapon.ammo_per_attack:
-            attack = next((a for a in card.attacks if a.id == weapon.id), None)
-            if not attack or attack.ammo_or_uses is None or attack.ammo_or_uses < weapon.ammo_per_attack:
-                return _ruling(state, action, 'NPC owned ammunition requires an explicit mapped weapon attack')
-            action['npc_attack_id'] = attack.id
+    try:
+        action.update(_weapon_actor_evidence(state, actor, weapon, weapon_reference, weapon_instance))
+    except ValueError as exc:
+        return _ruling(state, action, str(exc))
     try:
         dice.max_expression_value(damage.damage)
         dice.max_expression_value(action.get('db', '0'))
@@ -748,16 +763,31 @@ def stop_effect(state: GroupState, *, effect_id: str, event_id: str, reason: str
     source_combat = combat_id or (state.combat.combat_id if combat.is_managed(state) else '')
     if not reason.strip() or not event_id or not source_combat:
         return _error('Stopping an effect requires an explicit source battle and recorded reason')
-    if combat.is_managed(state) and source_combat == state.combat.combat_id:
-        state.combat.effects = [e for e in state.combat.effects if e.id != effect_id]
-        combat_resources.record_event(state, event_id, 'effect', data={'stopped_effect_id': effect_id}, reason=reason)
-    for obligation in _continuing_store(state):
-        if obligation.get('combat_id') == source_combat and obligation.get('effect', {}).get('id') == effect_id:
-            obligation['status'] = 'resolved'
-            marker = 'stop:' + event_id
-            if marker not in obligation.setdefault('processed_timings', []):
-                obligation['processed_timings'].append(marker)
-    return {'ok': True, 'stopped_effect_id': effect_id, 'combat_id': source_combat}
+    result = {'ok': True, 'stopped_effect_id': effect_id, 'combat_id': source_combat}
+    if combat.is_managed(state):
+        prior = next((event for event in state.combat.events if event['event_id'] == event_id), None)
+        if prior:
+            if (prior['kind'] != 'effect' or prior['data'].get('stopped_effect_id') != effect_id
+                    or prior['data'].get('combat_id', state.combat.combat_id) != source_combat):
+                return _error('Stop event identity belongs to another effect or source')
+            return result
+    obligations = [obligation for obligation in _continuing_store(state)
+                   if obligation.get('combat_id') == source_combat
+                   and obligation.get('effect', {}).get('id') == effect_id]
+    active_match = (combat.is_managed(state) and source_combat == state.combat.combat_id
+                    and any(effect.id == effect_id for effect in state.combat.effects))
+    if not active_match and not obligations:
+        return _error('No matching effect in the specified source battle')
+    if active_match:
+        state.combat.effects = [effect for effect in state.combat.effects if effect.id != effect_id]
+    for obligation in obligations:
+        obligation['status'] = 'resolved'
+        marker = 'stop:' + event_id
+        if marker not in obligation.setdefault('processed_timings', []):
+            obligation['processed_timings'].append(marker)
+    if combat.is_managed(state):
+        combat_resources.record_event(state, event_id, 'effect', data=result, reason=reason)
+    return result
 
 
 def postcombat_obligations(state: GroupState) -> list[PostcombatObligation]:
@@ -988,6 +1018,7 @@ def resolve_ruling(
     decision: Literal['resume', 'cancel'], weapon_reference: str | None = None,
     distance_yards: float | None = None,
     scenario_definitions: tuple[combat_rules.WeaponDefinition, ...] = (),
+    weapon_instance: combat_rules.WeaponInstance | None = None,
 ) -> dict[str, Any]:
     """Explicit supported source mapping/range ruling or audited cancellation.
 
@@ -1025,7 +1056,7 @@ def resolve_ruling(
         if not actor or actor.combatant_id != state.combat.order[state.combat.current_index].combatant_id:
             return _error('Source reconciliation needs the original current actor and target')
         reference = weapon_reference or action.get('weapon_reference', '')
-        lookup = combat_rules.resolve_weapon(reference, scenario_definitions=scenario_definitions)
+        lookup = combat_rules.resolve_weapon(reference, scenario_definitions=scenario_definitions, instance=weapon_instance)
         if lookup.definition is None:
             return _ruling(state, action, lookup.reason)
         weapon = lookup.definition
@@ -1033,18 +1064,12 @@ def resolve_ruling(
         damage = combat_rules.resolve_weapon_damage(weapon, distance_yards=distance)
         if damage.damage is None or weapon.attack_mode != action.get('action_kind'):
             return _ruling(state, action, damage.reason or 'Unsupported changed attack mode')
-        character = _character(state, actor.combatant_id)
-        skill = _skill(character, weapon.skill_id) if character else None
-        if skill is None:
-            return _ruling(state, action, 'Source mapping has no authoritative actor skill')
-        if action.get('checks') and action.get('skill') != skill[0]:
+        try:
+            evidence = _weapon_actor_evidence(state, actor, weapon, reference, weapon_instance)
+        except ValueError as exc:
+            return _ruling(state, action, str(exc))
+        if action.get('checks') and action.get('skill') != evidence['skill']:
             return _ruling(state, action, 'Changed skill invalidates retained player result; explicit cancellation required')
-        if weapon.ammo_per_attack:
-            effective = combat_resources.effective_character(state, character) if character else None
-            inventory_key = action.get('ammo_key', action.get('weapon_reference', reference))
-            if effective is None or effective.weapons.get(inventory_key, {}).get('ammo', 0) < weapon.ammo_per_attack:
-                return _ruling(state, action, 'Ruling needs an existing owned ammunition mapping')
-            action['ammo_key'] = inventory_key
         if weapon.attack_mode == 'single_shot':
             range_result = combat_rules.resolve_range_difficulty(distance, weapon.base_range_yards)
             if range_result.difficulty is None:
@@ -1052,10 +1077,10 @@ def resolve_ruling(
             action['difficulty'] = range_result.difficulty
         try:
             dice.max_expression_value(damage.damage)
-            dice.max_expression_value(character.damage_bonus if character else '0')
+            dice.max_expression_value(evidence['db'])
         except ValueError as exc:
             return _ruling(state, action, str(exc))
-        action.update({'weapon_reference': reference, 'weapon': asdict(weapon), 'damage': damage.damage, 'distance_yards': distance, 'skill': skill[0], 'skill_value': skill[1], 'db': character.damage_bonus if character else '0'})
+        action.update({'weapon_reference': reference, 'weapon': asdict(weapon), 'damage': damage.damage, 'distance_yards': distance, **evidence})
         action.pop('needs_ruling', None)
         state.combat.phase = 'RESOLVE'
         result = run_action(state, action_id)

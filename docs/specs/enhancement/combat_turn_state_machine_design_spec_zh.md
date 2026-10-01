@@ -87,3 +87,7 @@ Postcombat record 保留 participant／effect ID、injury state、下一個 logi
 測 scenario override／weapon ambiguity、DB／composite dice／shot distance、severity 不猜值、defense ties／autoroll、actor／check ownership、所有資源／治療 routing、zero-HP injury、effect timing once、各 roll／Luck／checkpoint／settlement crash boundary、retry 不重扣、external conflicts、one-battle admission、append corrections／rollback stale controls、pending settlement、atomic postcombat transfer、瀕死後續檢定／restart timing／再進戰鬥與 rollback 不 transfer、enemy privacy、既有 narrative authority。Implementation 跑 full pytest／ruff／mypy／compileall／diff-check。Tool-round-trip performance 要用 traces 實測，不把 draft estimates 当已證明效果。
 
 Implementation tickets / 工作圖: [EN](combat_turn_state_machine_tasks.md), [繁中](combat_turn_state_machine_tasks_zh.md).
+
+## PR #156 持有與恢復 review
+
+調查員使用任何非徒手武器，都必須有既有 owned instance 或明確 inventory mapping，即使不消耗彈藥也須檢查。NPC 每個宣告武器都必須對應 reviewed attack-card entry，單獨具備技能不足以授權。宣告與來源／射程裁定恢復共用這些 gates；NPC 恢復使用對應 attack 的技能及 card 的 verified DB／STR+SIZ，保留原骰與彈藥 identity。停止效果必須匹配精確來源戰鬥／effect 或已記錄的停止收據；不存在或過期的目標回報失敗且不修改狀態。

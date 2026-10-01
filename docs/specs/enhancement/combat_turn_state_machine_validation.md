@@ -58,3 +58,9 @@ Relative to approved base `189bc8e`, 58 files are changed, including review fixe
 ## Final publication
 
 Final merged checkpoint `bb53045` passed a fresh full suite: **1851 passed, 2 skipped, 152 subtests** (13.96 seconds), plus ruff, mypy (126 files), compileall and both whitespace checks. PR #156 is ready for review. All seven clean, merged combat implementer worktrees were removed; the integration worktree and published branches remain. No main-branch merge or deployment was performed.
+
+## GitHub PR #156 review follow-up
+
+The four GitHub findings (two P1, two P2) are fixed: non-unarmed investigator weapons require owned inventory/instance evidence regardless of ammunition; NPC catalog declarations require a mapped reviewed attack; NPC rulings resume with the card attack skill and verified DB/range/ammo; unknown effect/source stop commands fail without modifying future obligations. Declaration and resume share the ownership/source gate. The transport retains owned instance keys during resume; recorded stop receipts remain idempotent.
+
+Ten additional parameterized/public regressions cover denied/owned melee, skill-only NPC rejection, mapped attacks, DB and single-shot range recovery, no extra draws on replay, active-effect stop identity and real SQLite postcombat stop/owned-instance reload. Full suite: **1861 passed, 2 skipped, 152 subtests passed** (15.50 seconds, 9 existing warnings). Ruff, mypy (126 files), compileall and git diff --check pass. This follow-up changes no gameplay scope beyond the approved source/ownership/recovery contracts.

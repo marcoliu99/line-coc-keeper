@@ -14,9 +14,9 @@ def check(tier='regular', value=60, roll=30):
     return dice.SkillCheckResult(value, roll, 0, 0, tier, tier not in ('fail', 'fumble'))
 
 
-def battle(*, npc_first=False, autoroll=False):
+def battle(*, npc_first=False, autoroll=False, weapons=None, weapon_instances=None):
     pc = Character('Investigator', 'player', character_id='pc1', hp=10, hp_max=10,
-                   dex=50 if npc_first else 80, luck=0, skills={'格鬥（鬥毆）': 60, '閃避': 40})
+                   dex=50 if npc_first else 80, luck=0, weapons=weapons or {}, weapon_instances=weapon_instances or {}, skills={'格鬥（鬥毆）': 60, '閃避': 40})
     state = GroupState(group_id='test', active=True, characters={'player': pc},
                        characters_by_id={'pc1': pc}, active_character_id_by_user={'player': 'pc1'},
                        autoroll_checks=autoroll)
@@ -612,3 +612,102 @@ def test_npc_ranged_trusted_range_difficulty_or_refusal_before_draw(distance, ba
         assert result['phase'] == 'NEEDS_RULING'
     assert card.attacks[0].ammo_or_uses == 3
     rng.assert_not_called()
+
+
+@pytest.mark.parametrize('ownership', ['missing', 'inventory', 'instance'])
+def test_ammo_free_player_weapon_requires_owned_evidence(ownership):
+    state, _, enemy = battle(
+        weapons={'large club': {}} if ownership == 'inventory' else None,
+        weapon_instances={'large club': {'definition_id': 'i.weapon.club-large'}} if ownership == 'instance' else None,
+    )
+    with patch('app.dice.skill_check') as rng:
+        result = combat_flow.declare_action(state, action_id='club', actor_id='pc:pc1',
+            target_id=enemy.combatant_id, weapon_reference='large club')
+    rng.assert_not_called()
+    assert result['phase'] == ('NEEDS_RULING' if ownership == 'missing' else 'PLAYER_ROLL')
+    if ownership == 'missing':
+        replay = combat_flow.resolve_ruling(state, action_id='club', event_id='retry:club',
+            reason='Same unsupported weapon', decision='resume')
+        assert replay['phase'] == 'NEEDS_RULING'
+        assert not state.pending_checks
+
+
+@pytest.mark.parametrize('mapped', [False, True])
+def test_ammo_free_npc_weapon_requires_matching_reviewed_attack(mapped):
+    state, _, enemy = battle(npc_first=True)
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.skills['fighting-brawl'] = 99  # Skill alone does not authorize a club.
+    card.source['damage_bonus'] = '1d4'
+    if mapped:
+        card.attacks[0].id = 'i.weapon.club-large'
+    with patch('app.dice.skill_check', return_value=check('fail', value=50, roll=90)) as rng:
+        result = combat_flow.declare_action(state, action_id='npc:club', actor_id=enemy.combatant_id,
+            target_id='pc:pc1', weapon_reference='large club')
+    assert result['phase'] == ('PLAYER_CHOICE' if mapped else 'NEEDS_RULING')
+    assert rng.call_count == int(mapped)
+    if mapped:
+        assert state.combat.actions['npc:club']['skill_value'] == card.attacks[0].skill_value
+    else:
+        assert not state.combat.roll_receipts
+        assert combat_flow.resolve_ruling(state, action_id='npc:club', event_id='retry:npcclub',
+            reason='Skill still does not establish weapon', decision='resume')['phase'] == 'NEEDS_RULING'
+
+
+def test_verified_npc_ruling_resumes_missing_damage_bonus_from_card():
+    state, _, enemy = battle(npc_first=True)
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.stats = {}
+    card.source.pop('damage_bonus', None)
+    card.attacks[0].id = 'i.weapon.club-large'
+    result = combat_flow.declare_action(state, action_id='npc:club', actor_id=enemy.combatant_id,
+        target_id='pc:pc1', weapon_reference='large club')
+    assert result['phase'] == 'NEEDS_RULING'
+    card.source['damage_bonus'] = '1d4'
+    with patch('app.dice.skill_check', return_value=check('fail', roll=90)) as rng:
+        result = combat_flow.resolve_ruling(state, action_id='npc:club', event_id='ruling:npcclub',
+            reason='Verified scenario DB', decision='resume')
+        restored = GroupState.from_dict(deepcopy(state.to_dict()))
+        assert combat_flow.resolve_ruling(restored, action_id='npc:club', event_id='ruling:npcclub',
+            reason='Verified scenario DB', decision='resume') == result
+    assert rng.call_count == 1
+    assert result['phase'] == 'PLAYER_CHOICE'
+    assert state.combat.actions['npc:club']['db'] == '1d4'
+
+
+def test_verified_npc_single_shot_ruling_resumes_missing_distance():
+    from app import combat_rules
+    weapon = next(w for w in combat_rules.weapon_catalog() if w.attack_mode == 'single_shot'
+                  and w.db_policy == 'none' and not w.ruling_reason and not w.distance_bands)
+    state, _, enemy = battle(npc_first=True)
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.attacks[0].id = weapon.id
+    card.attacks[0].ammo_or_uses = 3
+    result = combat_flow.declare_action(state, action_id='npc:shot', actor_id=enemy.combatant_id,
+        target_id='pc:pc1', weapon_reference=weapon.id, action_kind='single_shot')
+    assert result['phase'] == 'NEEDS_RULING'
+    with patch('app.dice.skill_check') as rng:
+        result = combat_flow.resolve_ruling(state, action_id='npc:shot', event_id='ruling:shot',
+            reason='Verified distance', decision='resume', distance_yards=1)
+    rng.assert_not_called()  # Player first chooses whether to dive.
+    assert result['phase'] == 'PLAYER_CHOICE'
+    assert state.combat.actions['npc:shot']['npc_attack_id'] == weapon.id
+    assert card.attacks[0].ammo_or_uses == 3
+
+
+def test_unknown_effect_stop_rejected_and_recorded_stop_replayed_after_reload():
+    state, _, _ = battle()
+    assert combat_flow.declare_effect(state, effect_id='hazard', target_id='pc:pc1', severity_id='minor',
+        scope='round', reason='Reviewed hazard', stop_condition='leave')['ok']
+    before = deepcopy(state.to_dict())
+    for effect_id, source in [('typo', state.combat.combat_id), ('hazard', 'wrong:source')]:
+        result = combat_flow.stop_effect(state, effect_id=effect_id, combat_id=source,
+            event_id='stop:missing', reason='Source must match')
+        assert not result['ok']
+        assert state.to_dict() == before
+    result = combat_flow.stop_effect(state, effect_id='hazard', event_id='stop:hazard', reason='Left')
+    assert result['ok'] and not state.combat.effects
+    restored = GroupState.from_dict(deepcopy(state.to_dict()))
+    before = deepcopy(restored.to_dict())
+    assert combat_flow.stop_effect(restored, effect_id='hazard', event_id='stop:hazard', reason='Left') == result
+    assert restored.to_dict() == before
+    assert not combat_flow.stop_effect(restored, effect_id='typo', event_id='stop:hazard', reason='Left')['ok']

@@ -797,3 +797,45 @@ def test_unknown_check_role_cannot_enter_mechanical_boundary(role):
     from app.models import CombatCheckIdentity
     with pytest.raises((TypeError, ValueError), match='Unknown combat check role'):
         CombatCheckIdentity.from_serialized(role)
+
+
+def test_unknown_effect_stop_cannot_publish_success_or_disable_future_damage(battle):
+    source = battle.carry_hazard()
+    before = battle.load().to_dict()
+    arguments = {'combat_id': source, 'effect_id': 'typo:hazard',
+                 'event_id': 'stop:missing', 'reason': 'Controller requests a stop'}
+    assert not battle.tool('stop_combat_effect', arguments)['ok']
+    assert battle.load().to_dict() == before
+    arguments.update(effect_id='carried:hazard', combat_id='wrong:source')
+    assert not battle.tool('stop_combat_effect', arguments)['ok']
+    assert battle.load().to_dict() == before
+    arguments.update(combat_id=source, event_id='stop:correct')
+    accepted = battle.tool('stop_combat_effect', arguments)
+    assert accepted['ok']
+    stopped = battle.load().to_dict()
+    assert battle.tool('stop_combat_effect', arguments) == accepted
+    assert battle.load().to_dict() == stopped
+    assert battle.load().postcombat_obligations[0]['status'] == 'resolved'
+
+
+def test_source_ruling_keeps_owned_instance_key_through_real_tool_reload(battle):
+    from app import combat_rules
+    weapon = combat_rules.resolve_weapon('.45 Automatic').definition
+    assert weapon is not None
+    state = battle.load()
+    character = state.characters_by_id['char:ada']
+    character.weapons = {'owned:gun': {'ammo': 7, 'ammo_max': 7}}
+    character.weapon_instances = {'owned:gun': {'definition_id': weapon.id}}
+    group_state.save_state(state)
+    battle.start()
+    assert battle.declare(weapon='owned:gun', action_kind='single_shot')['phase'] == 'NEEDS_RULING'
+    current = battle.load()
+    action_id = next(k for k, a in current.combat.actions.items() if not a.get('completed'))
+    resumed = battle.tool('resolve_combat_ruling', {
+        'combat_id': current.combat.combat_id, 'action_id': action_id, 'event_id': 'ruling:ownedgun',
+        'reason': 'Verified physical distance', 'decision': 'resume', 'distance_yards': 1})
+    assert resumed['phase'] == 'PLAYER_ROLL'
+    reloaded = battle.load()
+    assert reloaded.combat.actions[action_id]['ammo_key'] == 'owned:gun'
+    assert reloaded.combat.actions[action_id]['weapon_reference'] == 'owned:gun'
+    assert battle.effective().weapons['owned:gun']['ammo'] == 7
