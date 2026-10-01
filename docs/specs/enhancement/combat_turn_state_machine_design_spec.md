@@ -1,12 +1,12 @@
 # Table-driven combat turns and provisional settlement
 
-Status: design interview; Q1–Q17 confirmed, two remaining domain decisions. No runtime implementation authorized by this interview. Branch `enhancement/combat-turn-state-machine`; base `main_v2` at `189bc8e`.
+Status: design interview complete; Q1–Q19 confirmed, awaiting explicit spec/implementation confirmation. No runtime implementation authorized by this interview. Branch `enhancement/combat-turn-state-machine`; base `main_v2` at `189bc8e`.
 
 ## Goal and scope
 
 AI interprets intent and narrates. Code resolves supported mechanics using reviewed catalogs, recorded dice and explicit combat states; neither model prose nor caller-supplied damage establishes a mechanic. First version covers melee, dodge/fight-back, single-shot ranged attacks, damage, major wounds and dying. Burst/full-auto, combat maneuvers and unsupported special attacks enter NEEDS_RULING. No guessed weapons, ranges, stat values or severity.
 
-Two lookup capabilities are in scope: weapon damage definitions and Other Forms of Damage severity definitions. Catalog lookup is distinct from support for automatically resolving every special damage rule. Human/bot ruling ownership remains Q18 below. No OCR/PDF runtime work belongs to this branch.
+Two lookup capabilities are in scope: weapon damage definitions and Other Forms of Damage severity definitions. Catalog lookup is distinct from support for automatically resolving every special damage rule. The bot Keeper owns approval/ruling/rollback; a human KP Assistant is optional. No OCR/PDF runtime work belongs to this branch.
 
 ## Confirmed decisions
 
@@ -16,12 +16,12 @@ Two lookup capabilities are in scope: weapon damage definitions and Other Forms 
 | Q2 | Whole battle provisional; persistent investigator resources change only at settlement. |
 | Q3 | All battle-caused resource/injury/healing changes share one working state, including HP, Luck, SAN, MP and ammunition. |
 | Q4 | Durable checkpoints retain working state, rolls and waits; restart never silently rerolls. |
-| Q5 | Ordinary players cannot rollback; end requires pending checks/Luck/injury handling completed. Exact controller role clarified by Q18. |
+| Q5 | Ordinary players cannot rollback; end requires pending checks/Luck/injury handling completed. The controller is the bot Keeper. |
 | Q6 | Manual means player clicks existing bot check control, not user-submitted physical die values. |
 | Q7 | Missing/ambiguous mechanics enter NEEDS_RULING instead of using guessed defaults. |
 | Q8 | Ordinary battle-time resource adjustments route into working state with events rather than bypassing it or being categorically rejected. |
 | Q9 | MVP is melee, dodge/fight-back, single-shot, injury/dying; other attacks require ruling. |
-| Q10 | Pending-empty produces settlement preview; designated controller confirms before atomic commit. Controller role is Q18. |
+| Q10 | Pending-empty produces settlement preview; designated controller confirms before atomic commit. The controller is the bot Keeper. |
 | Q11 | Corrections append records, preserve original rolls, recalculate affected state; rerolls must be explicit. |
 | Q12 | Timeouts retain waits; reminders/controller intervention do not silently select or roll. Existing autoroll remains. |
 | Q13 | Only current actor/wait owner advances; duplicates return prior result, not queued future actions. |
@@ -29,6 +29,8 @@ Two lookup capabilities are in scope: weapon damage definitions and Other Forms 
 | Q15 | Queries display effective working state, marked provisional; controller can inspect persistent differences. |
 | Q16 | Concurrent persistent character changes block settlement until explicit reconciliation, never overwrite. |
 | Q17 | An investigator may belong to only one unclosed battle. |
+| Q18 | The bot Keeper approves settlement and rollback; human KP Assistant registration/approval is not required. |
+| Q19 | Settlement may occur with ongoing injury/effects; transfer future obligations into durable postcombat tracking. |
 
 ## Source and catalog contracts
 
@@ -64,14 +66,22 @@ Corrections retain original receipts and append explicit overrides. Recompute de
 
 Settlement previews show baseline→effective values and injuries, bound to current battle revision and settlement ID. Confirm only if current, pending-empty and persistent baselines still match. Write absolute final values, character mirrors, receipt and closed combat state in one repository transaction. Repeat confirmation returns the same committed receipt. Conflict keeps battle open; reconciliation generates a fresh preview. Normal narration does not independently publish provisional mechanics as committed scenario facts.
 
-## Remaining interview frontier
+## Resolved authority and continuing-state contracts
 
-Q18: repository glossary defines Keeper as bot and KP Assistant/KP as human. Prior questions used Keeper for approval/ruling/rollback. Explicitly decide whether these administrative decisions require registered human KP authority or intentionally belong to the bot; do not silently reinterpret a confirmed answer. ADR-0001 allows some narrative corrections without KP, not arbitrary mechanical rollback.
+The controller in this spec is the **bot Keeper**, as defined in CONTEXT.md. It may review and confirm settlement, make explicit supported rulings and approve rollback without a registered human KP Assistant. A player request does not directly invoke administrative mutation; the Keeper must issue an explicit scoped command with a reason. Code checks battle identity, command ownership, pending state, current preview, baseline conflicts and duplicate receipts regardless of the Keeper's prose. Rollback cannot be disguised as a retry or a player-side cancel button. Human KP steering/correction remains available under existing authority; no new mandatory human role is introduced. This is a deliberate combat decision, not an inference from ADR-0001's limited narrative-correction policy.
 
-Q19: determine whether combat may settle while an investigator is still dying or has a continuing effect with a future obligation. Transfer these structured obligations to postcombat play, or block settlement until stabilized/ended? Pending-empty alone does not decide future round checks. Never drop the obligation when clearing CombatState.
+The settlement preview/confirmation phase remains explicit and durable, but the bot performs confirmation; it is not an extra human approval wait. Concurrent mutations or unresolved inputs still block the deterministic transition, even when the Keeper asks to confirm.
+
+Pending-empty means no **currently due, unresolved** player choice/check, Luck decision, injury transition or effect application. It does not mean all injuries must heal or all future effects must cease. A dying investigator or ongoing effect can settle once currently due work is resolved, provided the settlement atomically preserves the injury and transfers every future obligation to structured postcombat tracking.
+
+Postcombat records retain participant/effect identity, injury state, next logical-game-time trigger, condition/stop rule, rule source and processed timing/roll receipts. Continued dying CON checks remain player owned (or existing autoroll); effect damage uses reviewed rules and persistent receipts. Logical round advancement is explicit game progression, not a wall-clock timer. Settlement cannot grant a free interval, restart timing, skip a due check or duplicate a tick. Player-owned unresolved postcombat checks pause applicable progression. End/clear CombatState only after transfer is durable. Restart restores obligations without rerolling; a subsequent battle admits those existing obligations rather than creating duplicates or resetting injuries.
+
+After settlement, obligation resolution applies under the ordinary persistent-state mutation contract; a new battle routes affected resource/injury changes into its working state. Source-battle receipts remain available for audit. Rolling back an uncommitted battle does not transfer its provisional obligations or publish them as committed canonical facts.
+
+There are no remaining business-decision questions in the current interview. Technical schema/parser/catalog verification details are implementation work to be validated at the stated seams; they are not silently delegated to the player.
 
 ## Validation and delivery
 
-Spec/glossary/ADR first, explicit shared-understanding/implementation confirmation after resolving frontier. Incremental implementation: catalogs and lookup tests → bounded dice/receipts → effective resources/checkpoints → supported action/interaction runner → structured injury/effects → settlement/correction/resume integration. Do not ship half-provisional runtime where HP is shadowed but Luck/ammo writes remain immediate. Legacy active battles require explicit migration/version admission, with no guessed reconstructed baseline or lost pending roll.
+Spec/glossary/ADR first, explicit shared-understanding/implementation confirmation before runtime changes. Incremental implementation: catalogs and lookup tests → bounded dice/receipts → effective resources/checkpoints → supported action/interaction runner → structured injury/effects → settlement/correction/resume integration. Do not ship half-provisional runtime where HP is shadowed but Luck/ammo writes remain immediate. Legacy active battles require explicit migration/version admission, with no guessed reconstructed baseline or lost pending roll.
 
-Tests: scenario overrides and weapon ambiguity; DB/compound expressions, shot distance and unsupported rules; table severity lookup without freeform guessing; defense ties and existing autoroll; exact actor/check ownership; HP/Luck/ammo/SAN/MP/healing routing; zero-HP injury distinctions; effect timing once; retries/restarts at each roll/Luck/checkpoint/settlement boundary; no duplicate deductions; external conflicts; two-battle admission; appended corrections; cancelled-control invalidation; pending-empty settlement; Q19 continuing-state outcome; privacy of enemy HP; existing narrative correction authority. Run full pytest, ruff, mypy, compileall and diff-check on implementation. Compare tool-round-trip counts on real traces; draft performance estimates are not measured evidence.
+Tests: scenario overrides and weapon ambiguity; DB/compound expressions, shot distance and unsupported rules; table severity lookup without freeform guessing; defense ties and existing autoroll; exact actor/check ownership; HP/Luck/ammo/SAN/MP/healing routing; zero-HP injury distinctions; effect timing once; retries/restarts at each roll/Luck/checkpoint/settlement boundary; no duplicate deductions; external conflicts; two-battle admission; appended corrections; cancelled-control invalidation; pending-empty settlement; atomic postcombat obligation transfer, continued dying checks, restart timing, later-battle admission and rollback without transfer; privacy of enemy HP; existing narrative correction authority. Run full pytest, ruff, mypy, compileall and diff-check on implementation. Compare tool-round-trip counts on real traces; draft performance estimates are not measured evidence.

@@ -98,3 +98,6 @@ _Avoid_: newly generated roll on retry
 **Combat rollback（戰鬥回滾）**:
 The explicit cancellation of an uncommitted battle's provisional changes, while retaining its historical record.
 _Avoid_: deleting combat history
+
+**Postcombat obligation（戰鬥後待履行事項）**:
+An ongoing injury check or effect consequence that remains due after a battle's resources have been settled. Ending initiative combat does not cancel it.

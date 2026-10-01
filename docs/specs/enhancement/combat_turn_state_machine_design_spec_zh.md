@@ -1,6 +1,6 @@
 # 查表式戰鬥回合與 provisional settlement
 
-狀態：設計訪談，Q1–Q17 已確認，尚有兩個 domain 決策。訪談不代表 runtime implementation 授權。Branch：`enhancement/combat-turn-state-machine`；base：`main_v2`／`189bc8e`。
+狀態：設計訪談完成，Q1–Q19 已確認，等待 spec／implementation 明確確認。訪談不代表 runtime implementation 授權。Branch：`enhancement/combat-turn-state-machine`；base：`main_v2`／`189bc8e`。
 
 ## 目標與範圍
 
@@ -16,12 +16,12 @@ AI 理解意圖與敘事；程式依 reviewed catalog、已記錄骰值、明確
 | Q2 | 整場 provisional，settlement 才改 persistent Character。 |
 | Q3 | HP、Luck、SAN、MP、ammo、傷勢、治療等戰鬥變更都共用 working state。 |
 | Q4 | 每個完成 action 保存 checkpoint、骰值與等待步驟，restart 不默默重擲。 |
-| Q5 | 普通玩家不能 rollback；pending 檢定／Luck／傷勢未完成不能結算。操作者身份待 Q18 明確化。 |
+| Q5 | 普通玩家不能 rollback；pending 檢定／Luck／傷勢未完成不能結算。操作者為 bot Keeper。 |
 | Q6 | 手動指玩家按既有 bot 檢定操作，不是輸入實體骰結果。 |
 | Q7 | 缺少或 ambiguous input 就 NEEDS_RULING。 |
 | Q8 | 一般資源修改在戰鬥期間導向 working state，留 event；不繞過，也不全面拒絕。 |
 | Q9 | MVP 近戰、閃避／反擊、單發、傷勢；其他先裁定。 |
-| Q10 | Pending 清空後出 preview，指定操作者確認才 atomic commit。身份待 Q18。 |
+| Q10 | Pending 清空後出 preview，指定操作者確認才 atomic commit。操作者為 bot Keeper。 |
 | Q11 | 修正 append event、保留原骰、重算受影響狀態；重擲必須明確指定。 |
 | Q12 | Timeout 不代替玩家選擇或擲骰；既有 autoroll 保留。 |
 | Q13 | 只有目前 actor／wait owner 能推進；duplicate 回原結果，不排未來行動。 |
@@ -29,6 +29,8 @@ AI 理解意圖與敘事；程式依 reviewed catalog、已記錄骰值、明確
 | Q15 | 查詢顯示 effective working state，標示未結算；操作者可看 persistent 差異。 |
 | Q16 | Persistent character 有外部變更則停止 settlement，明確 reconciliation，不覆蓋。 |
 | Q17 | 同一調查員只能參與一場未結算戰鬥。 |
+| Q18 | Bot Keeper 確認 settlement／rollback，不要求註冊人類 KP Assistant 或取得其批准。 |
+| Q19 | 可在傷勢／effects 未終止時結算，但未來義務必須轉入 durable postcombat tracking。 |
 
 ## 兩張表與 source authority
 
@@ -64,14 +66,22 @@ READY → declaration／validation → 必要 PLAYER_CHOICE／PLAYER_ROLL → �
 
 Settlement preview 綁 current battle revision／settlement ID，顯示 baseline→effective resources／injuries。Pending-empty、preview current、persistent baselines match 才能提交。Absolute final values、mirrors、receipt、closed battle 一個 transaction 寫入；repeat confirm 回原 receipt。Conflict 維持 open，reconciliation 後生成新 preview。Narration 不能獨立把 provisional mechanics 發布成 committed scenario fact。
 
-## 剩餘訪談 frontier
+## 已確定的權限與戰鬥後追蹤契約
 
-**Q18：操作者身份。** Repo Keeper 是 bot，KP Assistant／KP 才是人類；先前問題用 Keeper 指 approval／ruling／rollback。需確認是註冊人類 KP 的行政權，還是有意交 bot；不能默默改解讀。ADR-0001 的無 KP narrative correction 不等於允許任意 mechanical rollback。
+本 spec 的操作者是 CONTEXT.md 定義的 **bot Keeper**。它可 review／confirm settlement、做明確且有依據的裁定、批准 rollback，不要求每場有人類 KP Assistant。玩家請求不直接獲得行政 mutation 權限：Keeper 必須發出明確、綁定本場的操作與理由。Code 仍檢查 battle identity、command ownership、pending、preview revision、baseline conflict、duplicate receipt，不靠 Keeper 敘事當通過證據。Rollback 不能偽裝成 retry 或玩家 cancel button。既有人類 KP steering／correction 保留；沒有新增必要人類角色。這是此次明確 combat 選擇，不是從 ADR-0001 的 narrative correction 權限推論而來。
 
-**Q19：仍瀕死／持續 effect 時能否 settlement？** Pending-empty 不代表未來 CON／effect timing 沒有義務。要把 structured obligation 帶入 postcombat play，或要等 stabilized／effect ended 才能結算？清 CombatState 絕不能刪義務。
+Preview／confirmation phase 仍明確且 durable，但由 bot 確認，不增加等待人類批准的步驟。Conflict／unresolved inputs 仍能阻止 deterministic transition，即使 Keeper 呼叫 confirm。
+
+Pending-empty 指**目前到期、尚未完成**的玩家 choice／check、Luck、injury transition／effect application 都處理完，不要求所有傷勢痊癒或未來 effects 終止。瀕死或仍受 effect 的調查員可以結算，但 settlement 必須 atomic 保存傷勢並把所有未來義務轉入 structured postcombat tracking。
+
+Postcombat record 保留 participant／effect ID、injury state、下一個 logical-game-time trigger、condition／stop rule、rule source、processed timing／roll receipts。後續瀕死 CON 仍 player-owned（或既有 autoroll）；持續傷害依 reviewed rule 與 durable receipt 解決。以明確遊戲時間／round 推進，不是 wall-clock timer。Settlement 不重設 timing、不跳過 due check、不重複 tick，也不多送免傷間隔。未完成的 postcombat player check 暫停相關推進。只有 transfer 已 durable 才清 CombatState。Restart 不重擲；下一場接納原有傷勢／義務，不複製 effect 或重設傷勢。
+
+結算後，義務處理依普通 persistent-state mutation contract；若已进入新戰鬥，相關 resource／injury 變更導向新 working state。保留來源 battle receipts。未提交戰鬥 rollback 不 transfer provisional obligations，也不將其發布為 committed canonical fact。
+
+目前訪談沒有剩餘 business-decision 問題。Schema／parser／catalog verification 是 implementation seam 要驗證的工作，不把這些 technical details 丟給玩家決定。
 
 ## Delivery／testing
 
-先完成 spec／glossary／ADR，frontier 解決後確認 shared understanding，再授權 implementation。Incremental seams：catalog lookup → bounded dice／receipts → effective resources／checkpoint → supported action runner → injury/effects → settlement／correction／resume。不得上線「HP provisional 但 Luck／ammo 還直接寫入」的半套。Legacy active battle 要 explicit schema migration／admission，不猜 reconstructed baseline 或丟 pending。
+先完成 spec／glossary／ADR，確認 shared understanding 後，再授權 implementation。Incremental seams：catalog lookup → bounded dice／receipts → effective resources／checkpoint → supported action runner → injury/effects → settlement／correction／resume。不得上線「HP provisional 但 Luck／ammo 還直接寫入」的半套。Legacy active battle 要 explicit schema migration／admission，不猜 reconstructed baseline 或丟 pending。
 
-測 scenario override／weapon ambiguity、DB／composite dice／shot distance、severity 不猜值、defense ties／autoroll、actor／check ownership、所有資源／治療 routing、zero-HP injury、effect timing once、各 roll／Luck／checkpoint／settlement crash boundary、retry 不重扣、external conflicts、one-battle admission、append corrections／rollback stale controls、pending settlement 與 Q19 obligation、enemy privacy、既有 narrative authority。Implementation 跑 full pytest／ruff／mypy／compileall／diff-check。Tool-round-trip performance 要用 traces 實測，不把 draft estimates 当已證明效果。
+測 scenario override／weapon ambiguity、DB／composite dice／shot distance、severity 不猜值、defense ties／autoroll、actor／check ownership、所有資源／治療 routing、zero-HP injury、effect timing once、各 roll／Luck／checkpoint／settlement crash boundary、retry 不重扣、external conflicts、one-battle admission、append corrections／rollback stale controls、pending settlement、atomic postcombat transfer、瀕死後續檢定／restart timing／再進戰鬥與 rollback 不 transfer、enemy privacy、既有 narrative authority。Implementation 跑 full pytest／ruff／mypy／compileall／diff-check。Tool-round-trip performance 要用 traces 實測，不把 draft estimates 当已證明效果。
