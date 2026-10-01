@@ -1700,7 +1700,10 @@
         "app/commands/router.py",
         "app/legacy_commands.py",
         "app/keeper.py",
-        "tests/test_pdf_hidden_topology.py"
+        "tests/test_pdf_hidden_topology.py",
+        "docs/specs/enhancement/pdf_source_backed_hidden_topology_validation.md",
+        "docs/specs/enhancement/pdf_source_backed_hidden_topology_validation_zh.md",
+        "docs/specs/enhancement/pdf_source_backed_hidden_topology_validation_results.json"
       ],
       "path": "docs/specs/enhancement/pdf_source_backed_hidden_topology.md",
       "zh_path": "docs/specs/enhancement/pdf_source_backed_hidden_topology_zh.md"
