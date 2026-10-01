@@ -210,7 +210,8 @@ class MarkitdownPages(dict[int, str]):
 _MARKITDOWN_PAGE_RE = re.compile(r"^##\s*Page\s+(\d+)\s*$", re.MULTILINE)
 
 
-def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = None) -> dict[int, str] | None:
+def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = None, *,
+                          reserve_image_request: Callable[[], bool] | None = None) -> dict[int, str] | None:
     """Best-effort: convert the whole PDF via MarkItDown (+ markitdown-ocr,
     see app/markitdown_shim.py — its PDF converter emits a "## Page N" header
     before every page's content, which is what this splits back apart into a
@@ -232,7 +233,8 @@ def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = No
                 subset.insert_pdf(original, from_page=number - 1, to_page=number - 1)
             pdf_bytes = subset.tobytes()
     image_ocr_evidence: list[dict] = []
-    md = build_markitdown(_VISION_PROMPT, image_ocr_evidence=image_ocr_evidence)
+    md = build_markitdown(_VISION_PROMPT, image_ocr_evidence=image_ocr_evidence,
+                         reserve_image_request=reserve_image_request)
     if md is None:
         return None
     try:
@@ -527,7 +529,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if graphic and (map_heading or short_map_title):
                 map_candidates.add(number)
                 pending[number] = images[number]
+            raster_source_gap = any((rect & page.rect).get_area() >= page.rect.get_area() * .5
+                                    for image in page.get_images()
+                                    for rect in page.get_image_rects(image[0]))
             safe_short_native = bool(native.strip()
+                                     and (not raster_source_gap or bool(pairs))
                                      and '\ufffd' not in text
                                      and all(p['status'] == 'matched' for p in pdf_quality.check_pairs(pairs, text)))
             if len(text) < _LOW_TEXT_THRESHOLD:
@@ -541,6 +547,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                     "candidates": {"native": native, "layout": layout_text},
                                     "layout_decision": decision, "graphic_evidence": graphic,
                                     "safe_short_native": safe_short_native,
+                                    "raster_source_gap": raster_source_gap,
                                     "requires_image_transcription": bool(graphic and len(text) < _LOW_TEXT_THRESHOLD
                                                                            and not safe_short_native),
                                     "source_kind": ('native_text_absent' if not native.strip() else
@@ -571,7 +578,17 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         alternate_pages = [number for number in pending if len(texts[number - 1]) < _LOW_TEXT_THRESHOLD
                            and not any(a['status'] == 'accepted' for a in
                                        report['pages'][number - 1].get('page_ocr_attempts', []))]
-        alternate = _markitdown_page_texts(pdf_bytes, sorted(alternate_pages)) if alternate_pages else None
+        alternate: dict[int, str] = MarkitdownPages()
+        # Convert separately so each image request is charged to its physical page,
+        # even when a converter makes several requests for embedded images.
+        for number in sorted(alternate_pages):
+            def reserve_image_request(number: int = number) -> bool:
+                return pdf_image_transcription.reserve_verification(layout_budget, number, layout_budget_checkpoint)
+            converted = _markitdown_page_texts(pdf_bytes, [number], reserve_image_request=reserve_image_request)
+            if converted:
+                alternate.update(converted)
+                if isinstance(converted, MarkitdownPages) and isinstance(alternate, MarkitdownPages):
+                    alternate.image_evidence.update(converted.image_evidence)
         for number in list(pending):
             extra = (alternate or {}).get(number, "").strip()
             if extra:

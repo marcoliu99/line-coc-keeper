@@ -31,6 +31,7 @@ it happens to be present.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -134,17 +135,20 @@ def _build_gemini_openai_shim(model_default: str) -> Any:
 class _RecordingImageCompletions:
     """Audit actual vision completion responses, not converter/native/local text."""
 
-    def __init__(self, completions: Any, evidence: list[dict]) -> None:
+    def __init__(self, completions: Any, evidence: list[dict], reserve: Callable[[], bool] | None) -> None:
         self._completions = completions
         self._evidence = evidence
+        self._reserve = reserve
 
     def create(self, **kwargs: Any) -> Any:
         import hashlib
 
-        response = self._completions.create(**kwargs)
         images = [part['image_url']['url'] for message in kwargs.get('messages', [])
                   for part in message.get('content', []) if isinstance(part, dict)
                   and part.get('type') == 'image_url']
+        if images and self._reserve is not None and not self._reserve():
+            raise ValueError('MarkItDown image verification budget exhausted')
+        response = self._completions.create(**kwargs)
         choices = getattr(response, 'choices', [])
         if images and choices and getattr(choices[0], 'finish_reason', 'stop') == 'stop':
             text = choices[0].message.content
@@ -154,7 +158,8 @@ class _RecordingImageCompletions:
         return response
 
 
-def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | None = None):
+def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | None = None,
+                    reserve_image_request: Callable[[], bool] | None = None):
     """Returns a configured MarkItDown instance (core PDF/office converters
     overridden by markitdown-ocr's OCR-enhanced ones, using our vision prompt
     for embedded-image description), or None if unavailable — ANALYSIS_PROVIDER's
@@ -188,7 +193,7 @@ def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | Non
 
     if image_ocr_evidence is not None:
         llm_client = SimpleNamespace(chat=SimpleNamespace(completions=_RecordingImageCompletions(
-            llm_client.chat.completions, image_ocr_evidence)))
+            llm_client.chat.completions, image_ocr_evidence, reserve_image_request)))
     return MarkItDown(
         enable_plugins=True,
         llm_client=llm_client,

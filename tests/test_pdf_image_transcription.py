@@ -42,7 +42,7 @@ def scanned_page(monkeypatch):
         page.insert_image(page.rect, stream=png.getvalue())
         raw = doc.tobytes()
     monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
-    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *_: None)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(pdf_loader, '_analyze_graphic_page', lambda *_: ('', None))
     monkeypatch.setattr(pdf_ocr, 'paddle_candidate', lambda *_: {
         'engine': 'paddleocr', 'model': 'PP-OCRv5_mobile_rec',
@@ -122,7 +122,7 @@ def test_reused_local_output_is_not_independent_markitdown_evidence(scanned_page
     from app import pdf_loader
 
     monkeypatch.setattr(pdf_loader, '_markitdown_page_texts',
-                        lambda *_: {1: 'STR 60 DEX 55 Damage 1d10+DB'})
+                        lambda *_args, **_kwargs: {1: 'STR 60 DEX 55 Damage 1d10+DB'})
     report = {}
     with pytest.raises(pdf_loader.LayoutReviewRequired):
         pdf_loader.extract_text(scanned_page, quality_report=report)
@@ -291,4 +291,59 @@ def test_empty_paddle_and_provider_no_text_classification_can_resolve_tesseract_
     assert review == []
     assert '5 es' not in text
     assert report['pages'][0]['verified_illustration'] is True
+    assert report['pages'][0]['image_transcription']['status'] == 'unverified'
+
+
+def test_native_header_does_not_hide_the_scanned_page_body(scanned_page, monkeypatch):
+    from types import SimpleNamespace
+
+    import pymupdf
+
+    from app import config, pdf_ocr
+    from app.providers import registry
+
+    with pymupdf.open(stream=scanned_page, filetype='pdf') as doc:
+        doc[0].insert_text((40, 60), 'Investigator')
+        raw = doc.tobytes()
+    candidate = 'Investigator STR 60 DEX 55 Damage 1d10+DB'
+    monkeypatch.setattr(pdf_ocr, 'paddle_candidate', lambda *_: {
+        'engine': 'paddleocr', 'model': 'PP-OCRv5_mobile_rec', 'candidate': candidate, 'status': 'candidate'})
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
+        analyze_image=lambda *_args, **_kwargs: {'page_type': 'character_sheet', 'text': candidate}))
+    report = {}
+    text, *_ = pdf_loader.extract_text(raw, quality_report=report)
+    assert candidate in text
+    assert report['pages'][0]['image_transcription']['status'] == 'authoritative'
+
+
+def test_markitdown_image_completions_obey_exhausted_durable_budget(scanned_page, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from app import config, markitdown_shim
+
+    completion = Mock(return_value=SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(content='STR 60 DEX 55 Damage 1d10+DB'), finish_reason='stop')]))
+    class MarkItDown:
+        def __init__(self, **options):
+            self.client = options['llm_client']
+
+        def convert(self, *_args, **_kwargs):
+            response = self.client.chat.completions.create(messages=[{'content': [
+                {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,aW1hZ2U='}}]}])
+            return SimpleNamespace(text_content='## Page 1\n' + response.choices[0].message.content)
+
+    monkeypatch.setattr(config, 'PDF_LAYOUT_MAX_REQUESTS', 0)
+    monkeypatch.setattr(markitdown_shim, 'ANALYSIS_PROVIDER', 'openai')
+    monkeypatch.setattr(markitdown_shim, 'OPENAI_API_KEY', 'fake-test-key')
+    monkeypatch.setitem(sys.modules, 'openai', SimpleNamespace(OpenAI=lambda **_: SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))))
+    monkeypatch.setitem(sys.modules, 'markitdown', SimpleNamespace(MarkItDown=MarkItDown, StreamInfo=lambda **_: None))
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', _MARKITDOWN_CONVERT)
+    report = {}
+    with pytest.raises(pdf_loader.LayoutReviewRequired):
+        pdf_loader.extract_text(scanned_page, quality_report=report)
+    assert not completion.called
+    assert report['layout_budget']['consumed_requests'] == 0
     assert report['pages'][0]['image_transcription']['status'] == 'unverified'

@@ -29,6 +29,8 @@ def main() -> None:
     mechanics = pdf_quality.preserves_mechanics(source, attempt['candidate'])
     result = {'platform': platform.system(), 'machine': platform.machine(), 'identity': identity,
               'status': attempt['status'], 'mechanics_preserved': mechanics,
+              'synthetic_source': source, 'synthetic_candidate': attempt['candidate'],
+              'reason': attempt.get('reason'),
               'runtime_network_policy': 'worker denies socket connects', 'scope': 'synthetic CPU smoke, not corpus acceptance'}
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(result, indent=2) + '\n')
