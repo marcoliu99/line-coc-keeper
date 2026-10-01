@@ -1687,8 +1687,21 @@
       "title": "Source-backed hidden map topology",
       "zh": "具來源證據的隱藏地圖連線",
       "category": "enhancement",
-      "status": "backlog",
-      "evidence": [],
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_source_topology.py",
+        "app/pdf_map_analysis.py",
+        "app/pdf_loader.py",
+        "app/map_routes.py",
+        "app/scene_map.py",
+        "app/models.py",
+        "app/scenario_library.py",
+        "app/commands/handlers/map_handler.py",
+        "app/commands/router.py",
+        "app/legacy_commands.py",
+        "app/keeper.py",
+        "tests/test_pdf_hidden_topology.py"
+      ],
       "path": "docs/specs/enhancement/pdf_source_backed_hidden_topology.md",
       "zh_path": "docs/specs/enhancement/pdf_source_backed_hidden_topology_zh.md"
     }

@@ -726,6 +726,10 @@ async def handle_map_upload(
         # rooms/exits shape — see scene_map.import_node_graph's own docstring.
         data, import_warnings = scene_map_engine.import_node_graph(data)
 
+    # Custom YAML has no reviewed canonical-source certificate to authorize hidden topology.
+    if isinstance(data, dict) and data.get('source_topology'):
+        await reply('自訂地圖不可授權 hidden/conditional topology；需要 canonical source 驗證。')
+        return
     errors = scene_map_engine.validate_scene_map(data)
     if errors:
         error_list = "\n".join(f"・{e}" for e in errors)
@@ -2355,12 +2359,14 @@ def _resolve_map_action_core(
                 state.party_facing[user_id] = facing
                 resolved_room = scene_map_engine.get_room(scene_map, current_room)
 
+    from app import map_routes
     active_map = state.scene_maps.get(current_page) if current_page else None
     if active_map:
         movement = intent_parser.parse_movement_intent(text)
         if movement:
             result = scene_map_engine.resolve_move(
                 state.scene_maps, current_page, current_room, facing, movement["relative_direction"], movement["order"],
+                available_routes=map_routes.available_routes(state, current_page),
             )
             if result["ok"]:
                 if "map_key" in result:  # crossed into a different map — see scene_map.py's module docstring
@@ -2368,6 +2374,8 @@ def _resolve_map_action_core(
                 state.current_room_id[user_id] = result["room"]["id"]
                 state.party_facing[user_id] = result["facing"]
                 resolved_room = result["room"]
+            elif result.get('blocked'):
+                return _MapActionResolution(context={'movement_blocked': True, 'interaction': result['interaction']})
             # result["ok"] is False (no matching exit): deliberately not
             # returned as an error here — let the Keeper's own dynamic prompt
             # (see _build_dynamic_prompt) decide how to narrate a blocked or
@@ -2389,6 +2397,10 @@ def _resolve_map_action_core(
                 else:
                     needs_rag = True
             if target_room is not None:
+                route_result = scene_map_engine.resolve_source_route(active_map, current_room, target_room['id'],
+                    available_routes=map_routes.available_routes(state, current_page))
+                if not route_result['ok']:
+                    return _MapActionResolution(context={'movement_blocked': True, 'interaction': route_result['interaction']})
                 state.current_room_id[user_id] = target_room["id"]
                 state.party_facing[user_id] = "N"  # arbitrary jump, no direction to carry forward
                 resolved_room = target_room

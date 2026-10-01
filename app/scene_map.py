@@ -191,7 +191,7 @@ GraphIssueCode = Literal['malformed_graph', 'missing_rooms', 'invalid_room', 'in
                          'duplicate_room_id', 'malformed_exits', 'malformed_exit', 'invalid_compass',
                          'invalid_target', 'invalid_cross_map_target', 'dangling_exit', 'invalid_entry_room',
                          'duplicate_directed_edge', 'self_edge', 'conflicting_compass',
-                         'asymmetric_indoor_connection', 'possible_duplicate_room']
+                         'asymmetric_indoor_connection', 'possible_duplicate_room', 'invalid_source_topology']
 
 
 class GraphIssue(TypedDict):
@@ -254,6 +254,8 @@ def inspect_scene_map(data: Any) -> GraphValidation:
             if not isinstance(edge, dict):
                 errors.append({'code': 'malformed_exit', 'message': f'房間「{room.get("id")}」有一個格式錯誤的 exit'})
                 continue
+            if not ordinary_exit(edge):
+                errors.append({'code': 'malformed_exit', 'message': 'Hidden/source routes must not appear in ordinary exits'})
             compass, target = edge.get('compass'), edge.get('to')
             if not isinstance(compass, str) or compass not in _COMPASS + _VERTICAL:
                 errors.append({'code': 'invalid_compass', 'message': f'房間「{room.get("id")}」的 exit 方位「{compass}」不是合法值'})
@@ -284,6 +286,9 @@ def inspect_scene_map(data: Any) -> GraphValidation:
             diagnostics.append({'code': 'conflicting_compass', 'message': f'{origin} -> {target} 有不同方位，須以圖面核對'})
         if ':' not in target and target != origin and (target, origin) not in connections:
             diagnostics.append({'code': 'asymmetric_indoor_connection', 'message': f'{origin} -> {target} 無反向連接；可能為合法單向通道，須核對圖面'})
+    from app import pdf_source_topology
+    if not pdf_source_topology.structurally_valid(data):
+        errors.append({'code': 'invalid_source_topology', 'message': 'Source topology is malformed or lacks source evidence'})
     entry = data.get('entry_room_id', '')
     if not isinstance(entry, str) or entry not in ids:
         errors.append({'code': 'invalid_entry_room', 'message': f'entry_room_id「{entry}」不是 rooms 裡任何一個房間的 id'})
@@ -374,6 +379,44 @@ def import_node_graph(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     return scene_map, warnings
 
 
+
+def ordinary_exit(edge: Any) -> bool:
+    """Only visual, currently available edges belong in ordinary room exits."""
+    return (isinstance(edge, dict) and edge.get('authority', 'visual') == 'visual'
+            and edge.get('visibility', 'visible') == 'visible'
+            and edge.get('availability', 'available') == 'available'
+            and edge.get('type') not in ('hidden_passage', 'secret_door', 'conditional_route', 'breakable_wall',
+                                         'blocked_passage', 'sealed_door', 'collapsible_barrier')
+            and 'source_evidence' not in edge)
+
+
+def visible_exits(graph: dict, room_id: str, *, available_routes: frozenset[str] = frozenset()) -> list[dict]:
+    """Public exit projection; unactivated source routes never appear here."""
+    room = get_room(graph, room_id)
+    exits = [edge for edge in (room or {}).get('exits', []) if ordinary_exit(edge)]
+    for route in graph.get('source_topology', []):
+        if route['from'] == room_id and route['id'] in available_routes:
+            target = get_room(graph, route['to'])
+            exits.append({'to': route['to'], 'compass': route['compass'],
+                          'label': (target or {}).get('name', ''), 'authority': 'scenario_source'})
+    return exits
+
+
+def resolve_source_route(graph: dict, origin: str, target: str, *,
+                         available_routes: frozenset[str] = frozenset()) -> dict:
+    """Gate named movement without changing the pre-existing visual movement rules."""
+    routes = [route for route in graph.get('source_topology', [])
+              if {route['from'], route['to']} == {origin, target}]
+    if not routes or any(route['from'] == origin and route['id'] in available_routes for route in routes):
+        return {'ok': True}
+    # An existing visible traversal remains usable even if a distinct secret route exists.
+    if any(edge.get('to') == target and ordinary_exit(edge) for edge in (get_room(graph, origin) or {}).get('exits', [])):
+        return {'ok': True}
+    visible = any(route['visibility'] == 'visible' for route in routes)
+    return {'ok': False, 'blocked': True,
+            'interaction': '這裡目前有障礙，必須先處理障礙才能通行。' if visible else '目前沒有已確認可通行的出口。'}
+
+
 def get_room(scene_map: dict[str, Any], room_id: str) -> dict[str, Any] | None:
     for room in scene_map.get("rooms", []):
         if room.get("id") == room_id:
@@ -458,6 +501,7 @@ def resolve_move(
     facing: str,
     relative_direction: str,
     order: int = 1,
+    *, available_routes: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """The actual "player_location + facing + direction + door_index -> target
     room" resolution, computed in code before any LLM call is made — see this
@@ -486,8 +530,14 @@ def resolve_move(
         return {"ok": False, "error": f"目前所在房間 {current_room_id!r} 不在這張地圖裡"}
 
     absolute = resolve_direction(facing, relative_direction)
-    matches = [e for e in room.get("exits", []) if e.get("compass") == absolute]
+    matches = [e for e in visible_exits(scene_map, current_room_id, available_routes=available_routes)
+               if e.get("compass") == absolute]
     if not matches:
+        blocked = [route for route in scene_map.get('source_topology', [])
+                   if route['from'] == current_room_id and route['compass'] == absolute
+                   and route['id'] not in available_routes]
+        if blocked:
+            return resolve_source_route(scene_map, current_room_id, blocked[0]['to'], available_routes=available_routes)
         return {"ok": False, "error": f"「{room.get('name', current_room_id)}」沒有通往 {absolute} 方向的出口"}
 
     index = max(1, order) - 1

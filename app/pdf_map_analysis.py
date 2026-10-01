@@ -8,9 +8,9 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
-from app import config, scene_map
+from app import config, pdf_source_topology, scene_map
 from app import pdf_map_evidence as maps
 from app.providers import image_diagnostics
 from app.providers.registry import analysis_provider
@@ -22,6 +22,9 @@ MapStage = Literal['phase1_generation', 'phase1_audit', 'phase2_generation', 'ta
 
 
 class MapAnalysis(TypedDict):
+    source_topology_certificate: NotRequired[dict[str, str]]
+    source_topology_diagnostics: NotRequired[list[dict[str, str]]]
+    source_topology_count: NotRequired[int]
     version: str
     image_sha256: str
     status: MapStatus
@@ -65,13 +68,27 @@ def graph_hash(graph: Any) -> str:
     return hashlib.sha256(json.dumps(graph, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def verified_graph(graph: Any, analysis: dict | None, image: bytes | None = None) -> bool:
+def verified_graph(graph: Any, analysis: dict | None, image: bytes | None = None, *,
+                   canonical_source: str | None = None) -> bool:
     """Recheck certificates at cache/publication boundaries without trusting status alone."""
     if (not isinstance(analysis, dict) or analysis.get('version') != VERSION
             or analysis.get('status') != 'MAP_GRAPH_VERIFIED' or analysis.get('verified') is not True
             or scene_map.validate_scene_map(graph) or analysis.get('graph_sha256') != graph_hash(graph)
             or (image is not None and analysis.get('image_sha256') != hashlib.sha256(image).hexdigest())):
         return False
+    if 'source_topology' in graph or 'source_topology_certificate' in analysis:
+        certificate = analysis.get('source_topology_certificate')
+        visual = copy.deepcopy(graph)
+        routes = visual.pop('source_topology', None)
+        if not isinstance(certificate, dict) or not isinstance(canonical_source, str):
+            return False
+        expected = _source_certificate(visual, routes, canonical_source, graph)
+        if certificate != expected or pdf_source_topology.extract(visual, canonical_source).routes != routes:
+            return False
+        analysis = copy.deepcopy(analysis)
+        analysis.pop('source_topology_certificate')
+        analysis['graph_sha256'] = graph_hash(visual)
+        return verified_graph(visual, analysis, image)
     inventory, connectivity, inventory_audit = (analysis.get(key) for key in ('inventory', 'connectivity', 'inventory_audit'))
     if (not isinstance(inventory, list) or not inventory or not isinstance(connectivity, dict)
             or not isinstance(inventory_audit, dict) or inventory_audit.get('complete') is not True
@@ -89,6 +106,61 @@ def verified_graph(graph: Any, analysis: dict | None, image: bytes | None = None
             or audit.get('output_evidence') != evidence[-1]):
         return False
     return not _audit_errors(graph, evidence[-1], _visible_labels(evidence[:-1]))
+
+
+
+def _source_certificate(visual: dict, routes: Any, source: str, merged: dict) -> dict[str, str]:
+    return {'version': pdf_source_topology.VERSION, 'visual_graph_sha256': graph_hash(visual),
+            'hidden_topology_sha256': graph_hash(routes),
+            'canonical_source_sha256': pdf_source_topology.source_hash(source),
+            'condition_metadata_sha256': graph_hash([{'id': route['id'], 'condition': route['condition'],
+                'progression_policy': route['progression_policy']} for route in routes]),
+            'merged_graph_sha256': graph_hash(merged)}
+
+
+def certify_source_topology(graph: dict, analysis: MapAnalysis, canonical_source: str) -> MapResult:
+    """Merge only source-backed hidden evidence after visual certification/source gates."""
+    if not verified_graph(graph, dict(analysis)):
+        raise ValueError('A certified visual graph is required before source topology merge')
+    visual, record = copy.deepcopy(graph), copy.deepcopy(analysis)
+    topology = pdf_source_topology.extract(visual, canonical_source)
+    record['source_topology_diagnostics'] = topology.diagnostics
+    record['source_topology_count'] = len(topology.routes)
+    if topology.diagnostics:
+        record['status'] = 'MAP_GRAPH_INCOMPLETE'
+        record['verified'] = False
+        record['completeness_errors'].extend(issue['code'] for issue in topology.diagnostics)
+        return MapResult(str(visual.get('description', '')), None, record)
+    merged = copy.deepcopy(visual)
+    if topology.routes:
+        merged['source_topology'] = topology.routes
+        record['source_topology_certificate'] = _source_certificate(visual, topology.routes, canonical_source, merged)
+        record['graph_sha256'] = graph_hash(merged)
+        record['candidate_graph'] = copy.deepcopy(merged)
+    return MapResult(str(visual.get('description', '')), merged, record)
+
+
+def reusable_visual_graph(graph: Any, analysis: Any, image: bytes) -> MapResult | None:
+    """Discard draft source overlays; reuse only independently certified visual proof.
+
+    All final pages must be selected before a new source overlay can be built.
+    This never authorizes or returns the old hidden routes.
+    """
+    if not isinstance(graph, dict) or not isinstance(analysis, dict):
+        return None
+    visual, record = copy.deepcopy(graph), copy.deepcopy(analysis)
+    visual.pop('source_topology', None)
+    certificate = record.pop('source_topology_certificate', None)
+    if certificate is not None:
+        if not isinstance(certificate, dict) or certificate.get('visual_graph_sha256') != graph_hash(visual):
+            return None
+        record['graph_sha256'] = graph_hash(visual)
+    record.pop('source_topology_diagnostics', None)
+    record.pop('source_topology_count', None)
+    if not verified_graph(visual, record, image):
+        return None
+    record['candidate_graph'] = copy.deepcopy(visual)
+    return MapResult(str(visual.get('description', '')), visual, cast(MapAnalysis, record))
 
 
 def _certificate_phases(analysis: dict, attempts: list[dict], graph: dict) -> bool:

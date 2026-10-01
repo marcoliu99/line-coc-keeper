@@ -107,7 +107,7 @@ def normalize_connectivity(raw: Any) -> tuple[dict, list[MapError]]:
     errors: list[MapError] = []
     ids = set()
     missing = result.get('missing_locations', [])
-    if (any(key in raw for key in ('rooms', 'locations', 'exits')) or not isinstance(missing, list)
+    if (any(key in raw for key in ('rooms', 'locations', 'exits', 'source_topology', 'source_evidence')) or not isinstance(missing, list)
             or any(not isinstance(row, dict) or any(not isinstance(row.get(key), str) or not row[key].strip()
                    for key in ('label', 'floor_or_section', 'evidence')) or row.get('visible') is not True for row in missing)):
         errors.append({'code': 'malformed_connectivity', 'subject': 'missing_locations'})
@@ -153,7 +153,8 @@ def build_graph(inventory: list[Location], connectivity: dict) -> tuple[dict, li
         compass = edge.get('compass')
         if origin is None or target is None:
             errors.append({'code': 'dangling_exit', 'subject': subject})
-        if (basis is None or kind != basis
+        if (any(key in edge for key in ('authority', 'visibility', 'availability', 'source_evidence', 'condition'))
+                or basis is None or kind != basis
                 or not isinstance(edge.get('evidence'), str) or not edge['evidence'].strip()):
             errors.append({'code': 'unsupported_edge', 'subject': subject})
         if compass not in COMPASS_DIRECTIONS:

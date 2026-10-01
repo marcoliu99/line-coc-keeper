@@ -1,6 +1,6 @@
 # 具 canonical source 證據的隱藏地圖連線
 
-狀態：提案，待規格確認後實作。PR #155，enhancement/pdf-multicolumn-ingestion。
+狀態：已實作；驗證與雙軸 review 記錄於 validation companion。PR #155，enhancement/pdf-multicolumn-ingestion。
 
 ## 目標與權威
 
@@ -8,7 +8,7 @@
 
 ## 資料模型
 
-既有 visual room exits 維持原樣；merged map 新增內部 source_topology 集合，不放入普通 exits。每條有向連線保存既存 from/to room IDs、closed route type、authority=scenario_source、visibility=hidden、availability=undiscovered 或 conditional，以及明確條件（若有）。證據保存實體 source page、精確 span offsets、span SHA-256、整份 canonical source SHA-256。公開 parse_quality 不保存原文 quote。Hidden types 不加入 Phase 2 schema。
+既有 visual room exits 維持原樣；merged map 新增內部 source_topology 集合，不放入普通 exits。每條有向連線保存既存 from/to room IDs、closed route type、authority=scenario_source、visibility=hidden、availability=undiscovered 或 blocked，以及明確條件（若有）。證據保存實體 source page、精確 span offsets、span SHA-256、整份 canonical source SHA-256。公開 parse_quality 不保存原文 quote。Hidden types 不加入 Phase 2 schema。
 
 ## Source extraction 與 deterministic merge
 
@@ -22,7 +22,7 @@ Publication 與 library read 使用完整 scenario.txt，而非 chapter window�
 
 ## Runtime 邊界
 
-Hidden routes 保存在內部 source_topology，不放入 rooms[].exits。普通 movement、visible exits、/coc where、公開 Keeper map projection 僅使用 visual exits；對被注入 ordinary exits 的 hidden/source-authority metadata 加入防禦性拒絕或過濾。不新增 discovery transition；undiscovered/conditional routes 不可用於普通移動。未來明確 discovery state transition 另行定義。既有 visual movement semantics 不變。
+Hidden routes 保存在內部 source_topology，不放入 rooms[].exits。普通 movement、visible exits、/coc where、公開 Keeper map projection 僅使用 visual exits；對被注入 ordinary exits 的 hidden/source-authority metadata 加入防禦性拒絕或過濾。只有明確授權的 KP outcome 能啟用 source route；undiscovered/blocked routes 不可用於普通移動。既有 visual movement semantics 不變。
 
 ## 測試與驗證
 
@@ -37,3 +37,10 @@ Hidden routes 保存在內部 source_topology，不放入 rooms[].exits。普通
 後續實作要求新增 source-only breakable_wall、blocked_passage、sealed_door、collapsible_barrier。預設 availability=blocked；除來源明寫 hidden 外 visibility=visible。Condition 保存由 route evidence 決定的 world_state key、expected=true，以及來源明確條件文字。不得自行增加 STR 難度、HP、armor、工具門檻。明確可破障礙預設 retryable；fail_forward 必須有明確 necessary-for-progress 敘述。失敗不得永久封路。
 
 Static topology/certificate 維持不可變；另於 GroupState 持久化 route outcomes，綁 route identity 與 timeline。既有 action/check/damage workflow 後，由明確授權 KP transition 在 state lock 下保存 discovered/opened/failed、actor、可選 consequence；以 /coc route 提供窄範圍確認，拒絕玩家操作。Narration 不能改狀態。Failed 只增加 attempts，不改 availability，仍可 retry。Opened barrier 或 discovered hidden route 才 available。既有 room-name movement 也須遵守 source route availability；direction movement 只有來源明寫 compass 才使用，不猜方位。公開 exits 隱藏未發現連線，明確 transition 後可顯示 available route。Visible blocked route 回 generic actionable interaction，不創造 mechanics。Source certificate extension 新增 condition metadata hash，visual certificate 不變。
+
+
+## 已實作的 source grammar 與 runtime confirmation
+
+目前 deterministic extractor 僅接受英文 affirmative whole sentence：`A/The/There is a [two-way] [hidden] <route kind> connects/links <精確 inventory label> to <精確 inventory label>`，或 `leads/runs from ... to ...`。可選 `If/When <condition>,` 保存明確來源條件。精確 `to the east`（或支援的方位、上下）suffix 才提供 compass；未提供則留空。`; it is necessary for progress` 才授權 fail_forward。Two-way 必須明寫，不猜反向通行。跨樓層重複 label 無法授權端點。已辨識但端點不明的敘述使 map incomplete，不封鎖 source；其他語言或散文形式不靠猜測解讀。
+
+`/coc route <page> <route-id> opened|discovered|failed [已裁定的 consequence]` 只允許目前 KP；持久化前重新驗證 published map/source certificate。Route IDs 在 private map artifact 中，不新增公開 hidden-route 列表。此確認接在正常 action resolution 後；不會因任意 skill roll 或 narration 自動開通障礙。Runtime outcomes 另存 GroupState，不修改 immutable certificate。Timeline 或 graph identity 改變時，舊 availability receipt 停用。

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import cast
+
+from app import map_routes
 from app import scene_map as scene_map_engine
 from app.legacy_commands import Reply, SendImage
 from app.repositories.group_state import load_page_image, load_state, save_state
@@ -15,6 +18,21 @@ async def handle_map_command(
     parts: list[str],
 ) -> bool:
     sub = parts[1].casefold() if len(parts) > 1 else ""
+
+    if sub == 'route':
+        if len(parts) < 5 or parts[4] not in ('opened', 'discovered', 'failed'):
+            await reply('用法：/coc route 頁碼 route-id opened|discovered|failed [已裁定的後果]（僅 KP）')
+            return False
+        try:
+            # Explicit KP confirmation after normal action resolution; not a narrative inference.
+            result = map_routes.commit_outcome(conversation_id, user_id, parts[2], parts[3], cast(map_routes.RouteOutcome, parts[4]),
+                                               consequence=' '.join(parts[5:]))
+        except (PermissionError, ValueError):
+            await reply('無法確認路線狀態；需由目前 KP 確認有效來源地圖與已裁定的 action 結果。')
+            return False
+        await reply('地圖路線狀態已儲存。' if result['availability'] == 'available' else
+                    '嘗試結果已儲存；路線仍可再次嘗試，尚未開通。')
+        return True
 
     if sub == "showpage":
         if len(parts) < 3:
@@ -40,10 +58,11 @@ async def handle_map_command(
             return False
         scene_map = state.scene_maps.get(current_page)
         room = scene_map_engine.get_room(scene_map, state.current_room_id.get(user_id, "")) if scene_map else None
-        if not room:
+        if not scene_map or not room:
             await reply("地圖資料異常，目前所在房間找不到對應資料，可以用「/coc leavemap」重置。")
             return False
-        exits = room.get("exits", [])
+        exits = scene_map_engine.visible_exits(scene_map, room["id"],
+            available_routes=map_routes.available_routes(state, current_page))
         exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
         desc = f"\n{room['description']}" if room.get("description") else ""
         location_note = f"第 {current_page} 頁的地圖" if current_page.isdigit() else f"地圖「{current_page}」"

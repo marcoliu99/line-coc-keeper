@@ -1,6 +1,6 @@
 # Source-backed hidden map topology
 
-Status: proposed; implementation awaits spec approval. PR #155, enhancement/pdf-multicolumn-ingestion.
+Status: implemented; verification and two-axis review recorded in the validation companion. PR #155, enhancement/pdf-multicolumn-ingestion.
 
 ## Goal and authority
 
@@ -8,7 +8,7 @@ Preserve the existing two-phase visible extraction pipeline. Vision may authoriz
 
 ## Data model
 
-Keep ordinary visual room exits unchanged. Add an internal source_topology collection to the merged map, separate from ordinary exits. Each directed route has existing from/to room IDs, a closed route type, authority=scenario_source, visibility=hidden, availability=undiscovered or conditional, and optional explicit condition. Evidence includes physical source page, exact source span offsets, span SHA-256 and full canonical source SHA-256. No raw source quotes are published in parse_quality. Visual edges retain their visual authority; hidden kinds never enter Phase 2 tool schemas.
+Keep ordinary visual room exits unchanged. Add an internal source_topology collection to the merged map, separate from ordinary exits. Each directed route has existing from/to room IDs, a closed route type, authority=scenario_source, visibility=hidden, availability=undiscovered or blocked, and optional explicit condition. Evidence includes physical source page, exact source span offsets, span SHA-256 and full canonical source SHA-256. No raw source quotes are published in parse_quality. Visual edges retain their visual authority; hidden kinds never enter Phase 2 tool schemas.
 
 ## Source-bound extraction and deterministic merge
 
@@ -22,7 +22,7 @@ Publication and library read use the exact full scenario.txt source, not an acti
 
 ## Runtime boundary
 
-Hidden routes remain internal in source_topology and never enter rooms[].exits. Ordinary movement, visible exits, /coc where and public Keeper map projections use visual exits only. Add defensive rejection/filtering for source-authority or hidden metadata injected into ordinary exits. No discovery transition is added; undiscovered and conditional routes are unavailable to normal movement. A future explicit discovery system must define activation separately. Existing visual movement semantics remain unchanged.
+Hidden routes remain internal in source_topology and never enter rooms[].exits. Ordinary movement, visible exits, /coc where and public Keeper map projections use visual exits only. Add defensive rejection/filtering for source-authority or hidden metadata injected into ordinary exits. Only an explicit authorized KP outcome can activate source routes; undiscovered and blocked routes are unavailable to normal movement. Existing visual movement semantics remain unchanged.
 
 ## Tests and verification
 
@@ -37,3 +37,10 @@ Conservative deterministic extraction does not promise to discover every prose-d
 The follow-up implementation request adds breakable_wall, blocked_passage, sealed_door and collapsible_barrier as source-only kinds. Their default availability is blocked; visibility is visible unless source explicitly says hidden. Conditions have a world_state key (deterministically scoped to the route evidence) and expected=true, plus exact explicit source condition text when present. Source states no implicit STR tier, HP, armor or tool requirement. Progression policy is retryable for explicit breakable barriers; fail_forward requires an explicit necessary-for-progress assertion. Failed attempts never permanently close a route.
 
 Keep static source topology/certification immutable. Persist route outcomes separately in GroupState, bound to route identity and current timeline. An explicit authorized KP transition after the existing action/check/damage workflow records discovered/opened/failed, actor and optional consequence under the state lock. Narration is never a transition. Expose this narrow confirmation through /coc route; player requests are rejected. A failed result increments attempts, preserves availability and remains retryable. Only an opened barrier or discovered hidden route becomes available. Existing direct room-name movement must also respect unavailable source routes. Direction movement uses source compass only when explicitly stated; unknown compass is never guessed. Public exits omit undiscovered routes and include available routes after an authorized transition. Blocked visible routes return a generic actionable interaction without invented mechanics. Add condition metadata hash to the source certificate extension; the visual certificate remains unchanged.
+
+
+## Implemented source grammar and runtime confirmation
+
+The deterministic extractor currently supports affirmative English whole sentences of the form `A/The/There is a [two-way] [hidden] <route kind> connects/links <exact inventory label> to <exact inventory label>` or `leads/runs from ... to ...`. Optional `If/When <condition>,` preserves the source condition. An exact `to the east` (or supported cardinal/intercardinal/vertical direction) suffix supplies compass; absent direction remains empty. `; it is necessary for progress` justifies fail_forward. Two-way must be explicit; no reciprocal traversal is guessed. Repeated labels across floors cannot authorize endpoints. Unmatched supported assertions quarantine the map as incomplete, without source blocking. Other prose languages/forms are not interpreted by guessing.
+
+`/coc route <page> <route-id> opened|discovered|failed [adjudicated consequence]` is restricted to the current KP and revalidates the published map/source certificate before persistence. IDs are available in private map artifacts; no public hidden-route listing is introduced. This confirmation follows ordinary action resolution; there is no automatic link from an arbitrary skill roll or narration to a barrier. The immutable certificate remains valid after runtime outcomes because outcomes live separately in GroupState. Timeline and graph identity mismatches disable old availability receipts.

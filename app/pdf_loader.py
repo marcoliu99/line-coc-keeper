@@ -32,6 +32,7 @@ from app import (
     pdf_ocr,
     pdf_quality,
     pdf_raster_source,
+    pdf_source_topology,
 )
 from app.markitdown_shim import build_markitdown
 
@@ -86,7 +87,7 @@ def extraction_identity() -> dict:
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
             'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
-            'map_version': pdf_map_analysis.VERSION,
+            'map_version': pdf_map_analysis.VERSION, 'source_topology_version': pdf_source_topology.VERSION,
             'docling': version('docling') if config.PDF_LAYOUT_DOCLING_ENABLED else 'disabled'}
 
 
@@ -103,9 +104,15 @@ def _cached_page(cached: dict | None, pdf_hash: str, number: int, identity: dict
             or row.get('publication_severity') == 'HARD_BLOCK' or row.get('source_blocking_reasons')
             or cached.get('selected_sha256') != hashlib.sha256(text.encode()).hexdigest()):
         return None
-    if cached.get('map') is not None and (not isinstance(cached.get('image'), bytes)
-            or not pdf_map_analysis.verified_graph(cached['map'], row.get('map_analysis'), cached['image'])):
-        return None
+    if cached.get('map') is not None:
+        if not isinstance(cached.get('image'), bytes):
+            return None
+        reusable = pdf_map_analysis.reusable_visual_graph(cached['map'], row.get('map_analysis'), cached['image'])
+        if reusable is None:
+            return None
+        cached = copy.deepcopy(cached)
+        cached['map'] = reusable.graph
+        cached['report']['map_analysis'] = reusable.analysis
     if (row.get('map_analysis', {}).get('status') == 'MAP_GRAPH_VERIFIED'
             and not isinstance(cached.get('map'), dict)):
         return None
@@ -841,6 +848,23 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if row['page'] not in review:
                 review.append(row['page'])
     full_text = render_source_pages(texts)
+    # Source topology can use only the final canonical book, after every source gate.
+    # Draft overlays are rebuilt here, never reused against an earlier source identity.
+    if not any(row['publication_severity'] == 'HARD_BLOCK' for row in report['pages']):
+        for number, graph in list(maps.items()):
+            row = report['pages'][number - 1]
+            merged = pdf_map_analysis.certify_source_topology(graph, row['map_analysis'], full_text)
+            row['map_analysis'] = merged.analysis
+            if merged.graph is not None:
+                maps[number] = merged.graph
+            else:
+                maps.pop(number)
+                report['derived_descriptions'].pop(str(number), None)
+                row['publication_severity'] = 'SOFT_REVIEW'
+                row['derived_feature_warnings'].append('MAP_GRAPH_INCOMPLETE')
+                row['review_reasons'].append('source_topology_unverified')
+                if number not in review:
+                    review.append(number)
     report["review_pages"] = review
     report["source_chars"] = len(full_text)
     report["ai_repair_requests"] = max(0, ai_repair_limit) - ai_budget[0]

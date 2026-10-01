@@ -1053,6 +1053,8 @@ class GroupState:
     # string (JSON object keys are always strings, so this avoids an int/str
     # round-trip mismatch between what's written and what's read back).
     scene_maps: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Runtime outcomes are separate from immutable, source-certified topology.
+    map_route_states: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Per-character position — each entry keyed by owner_id, independent of
     # every other character. Deliberately NOT a single shared "party
@@ -1302,6 +1304,7 @@ class GroupState:
             "closed_combat_receipts": self.closed_combat_receipts,
             "last_combat_report": self.last_combat_report,
             "scene_maps": self.scene_maps,
+            "map_route_states": self.map_route_states,
             "current_map_page": self.current_map_page,
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
@@ -1396,6 +1399,7 @@ class GroupState:
                 if isinstance(data.get("last_combat_report"), dict) else {}
             ),
             scene_maps=data.get("scene_maps", {}),
+            map_route_states=(data.get("map_route_states", {}) if isinstance(data.get("map_route_states", {}), dict) else {}),
             # .get(..., {}) with an isinstance check rather than a bare .get
             # default: a save from before this became per-character tracking
             # left these as plain strings ("" / "N"), which would otherwise
