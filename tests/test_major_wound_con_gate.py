@@ -6,6 +6,7 @@ changes, on every damage path, and says so, instead of dropping the CON
 check it owes.
 """
 import unittest
+from copy import deepcopy
 from unittest.mock import patch
 
 from app import combat, combat_resources, dice, keeper
@@ -153,7 +154,7 @@ class TurnAdvancementTests(unittest.TestCase):
     """PR #117 review: advancing must not move past a blocked timed hit."""
 
     def _snapshot(self, state: GroupState) -> dict:
-        snapshot = state.to_dict()
+        snapshot = deepcopy(state.to_dict())
         # Refused effects retain only their durable draw for a safe retry.
         snapshot['combat'].pop('roll_receipts', None)
         snapshot['combat'].pop('revision', None)
