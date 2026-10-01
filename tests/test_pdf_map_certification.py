@@ -112,16 +112,17 @@ def test_invalid_graph_stays_in_private_draft_and_never_in_loader_maps(map_pdf, 
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
                         SimpleNamespace(analyze_image=lambda *_args, **_options: invalid))
     report = {}
-    with pytest.raises(pdf_loader.LayoutReviewRequired) as pending:
-        pdf_loader.extract_text(map_pdf, quality_report=report)
-    assert pending.value.result[4] == {}
+    result = pdf_loader.extract_text(map_pdf, quality_report=report)
+    assert result[4] == {}
+    assert report['soft_review_pages'] == [1]
+    assert report['blocked_pages'] == []
     assert report['pages'][0]['map_analysis']['status'] == 'MAP_GRAPH_INVALID'
     assert report['map_graph_generated'] == report['map_graph_invalid'] == 1
     assert report['map_graph_verified'] == 0
     assert report['pages'][0]['map_analysis']['candidate_graph'] == invalid
     monkeypatch.setattr(drafts, 'SCENARIO_LIBRARY_DIR', tmp_path)
     lease = drafts.reserve('map-test', map_pdf, 'map.pdf')
-    saved = drafts.checkpoint(lease, report, pending.value.result)
+    saved = drafts.checkpoint(lease, report, result)
     assert saved['pages']['1']['map'] is None
     assert saved['pages']['1']['report']['map_analysis']['candidate_graph'] == invalid
 
@@ -181,8 +182,9 @@ def test_exhausted_budget_keeps_map_unanalyzed_without_dispatch(map_pdf, monkeyp
     call = Mock(return_value=GRAPH)
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(analyze_image=call))
     report = {}
-    with pytest.raises(pdf_loader.LayoutReviewRequired):
-        pdf_loader.extract_text(map_pdf, quality_report=report, layout_budget=budget)
+    pdf_loader.extract_text(map_pdf, quality_report=report, layout_budget=budget)
+    assert report['soft_review_pages'] == [1]
+    assert report['blocked_pages'] == []
     call.assert_not_called()
     assert report['pages'][0]['map_analysis']['status'] == 'MAP_NOT_ANALYZED'
     assert report['map_analysis_attempted'] == 0
@@ -222,7 +224,7 @@ def test_modified_cached_graph_is_reanalyzed_instead_of_reused(map_pdf, monkeypa
     assert not final['pages'][0].get('resumed')
 
 
-def test_continued_draft_retains_previous_graph_repair_provenance(map_pdf, monkeypatch, tmp_path):
+def test_explicit_reanalysis_retains_previous_graph_repair_provenance(map_pdf, monkeypatch, tmp_path):
     from app import pdf_ingestion_drafts as drafts
 
     invalid = {**GRAPH, 'entry_room_id': 'missing'}
@@ -231,14 +233,12 @@ def test_continued_draft_retains_previous_graph_repair_provenance(map_pdf, monke
     monkeypatch.setattr(drafts, 'SCENARIO_LIBRARY_DIR', tmp_path)
     lease = drafts.reserve('map-history', map_pdf, 'map.pdf')
     report = {}
-    with pytest.raises(pdf_loader.LayoutReviewRequired) as first:
-        pdf_loader.extract_text(map_pdf, quality_report=report)
-    saved = drafts.checkpoint(lease, report, first.value.result)
+    first = pdf_loader.extract_text(map_pdf, quality_report=report)
+    saved = drafts.checkpoint(lease, report, first)
     lease = drafts.reserve('map-history', map_pdf, 'map.pdf', resume_draft_id=saved['draft_id'])
     report = {}
-    with pytest.raises(pdf_loader.LayoutReviewRequired) as second:
-        pdf_loader.extract_text(map_pdf, quality_report=report, layout_budget=saved['report']['layout_budget'])
-    saved = drafts.checkpoint(lease, report, second.value.result)
+    second = pdf_loader.extract_text(map_pdf, quality_report=report, layout_budget=saved['report']['layout_budget'])
+    saved = drafts.checkpoint(lease, report, second)
     row = saved['pages']['1']['report']
     assert row['map_analysis']['repair_attempts'] == 1
     assert len(row['map_analysis_history']) == 1

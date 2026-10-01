@@ -252,7 +252,10 @@ def test_image_only_map_candidate_runs_scene_map_independently_of_ocr(scanned_pa
         {'id': 'room_2', 'name': 'Room 2', 'exits': [{'to': 'room_1', 'compass': 'W'}]}]}
     monkeypatch.setattr(pdf_loader, '_analyze_graphic_page', lambda png, **_options: certified_map_result('', graph, png))
     report = {}
-    text, _, _, _, maps = pdf_loader.extract_text(scanned_page, quality_report=report)
+    with pytest.raises(pdf_loader.LayoutReviewRequired) as pending:
+        pdf_loader.extract_text(scanned_page, quality_report=report)
+    text, _, _, _, maps = pending.value.result
+    assert report['hard_block_pages'] == [1]  # Graph certification does not certify image-only source text.
     assert maps[1] == graph
     assert 'Floor plan Room 1 Room 2' not in text
     assert 'floor_plan_graph_missing' not in report['pages'][0]['review_reasons']

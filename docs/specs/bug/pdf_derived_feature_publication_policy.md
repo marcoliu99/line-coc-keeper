@@ -19,3 +19,5 @@ Successful first-time upload activates canonical library source with original im
 ## Verification
 
 Test public extraction/publication/draft/activation seams with safe source + invalid/incomplete/provider-failed map, image-only source failure, soft reuse without provider redispatch, and first-time 30 safe pages + one invalid map. Assert unsafe graph absent in library/runtime while canonical source remains available. Check conflicting mechanics still block and illustrations remain non-blocking. Run pytest, Ruff, mypy, compileall and diff check. Real provider validation is not required to prove this publication policy; prior graph-correctness evidence remains pending.
+
+Private graph provenance is archived as `.ingestion-provenance.json` (0600) in the atomic scenario publication, separately from sanitized `parse_quality.json`. It is never loaded as gameplay context. This preserves evidence after the successful draft is discarded.

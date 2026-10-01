@@ -5,6 +5,7 @@ small current/next-chapter context window in GroupState.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -219,13 +220,36 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
     return SequenceMatcher(None, text[:20000], existing_text[:20000]).ratio() >= threshold
 
 
+def _publication_quality(report: dict) -> dict:
+    """Keep feature diagnostics public while archiving provider graphs privately."""
+    public = copy.deepcopy(report)
+    rows = public.get('pages', [])
+    rows = list(rows.values()) if isinstance(rows, dict) else rows
+    for row in rows:
+        analyses = [row.get('map_analysis', {}), *row.get('map_analysis_history', [])]
+        for analysis in analyses:
+            analysis.pop('candidate_graph', None)
+            analysis.pop('image_evidence', None)
+            for attempt in analysis.get('attempts', []):
+                attempt.pop('output_graph', None)
+                attempt.pop('output_evidence', None)
+        if row.get('map_analysis'):
+            row.pop('map_candidate_description', None)
+            row.get('candidates', {}).pop('vision', None)
+    return public
+
+
 def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None, parse_quality: dict | None = None) -> str:
-    if parse_quality and parse_quality.get('blocked_pages'):
+    if parse_quality and (parse_quality.get('blocked_pages') or parse_quality.get('hard_block_pages')
+                          or parse_quality.get('scenario_readiness') == 'BLOCKED'):
         raise ValueError('PDF layout has unresolved pages; continue the import draft before publication')
     from app import pdf_map_analysis, scene_map
 
     rows = (parse_quality or {}).get('pages', [])
     rows = list(rows.values()) if isinstance(rows, dict) else rows
+    if any(row.get('publication_severity') == 'HARD_BLOCK' or row.get('disposition') == 'needs_review'
+           or row.get('source_blocking_reasons') for row in rows):
+        raise ValueError('PDF source has unresolved pages; retain the private import draft')
     for page, graph in page_maps.items():
         if scene_map.validate_scene_map(graph):
             raise ValueError(f'Invalid scene_map on page {page}; retain the private import draft')
@@ -263,7 +287,11 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             (temporary / "source.pdf").write_bytes(pdf_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")
             (temporary / "scenario.txt").write_text(text, encoding="utf-8")
-            (temporary / "parse_quality.json").write_text(json.dumps(parse_quality or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+            if any(row.get('map_analysis') for row in rows):
+                private_provenance = temporary / '.ingestion-provenance.json'
+                private_provenance.write_text(json.dumps(parse_quality, ensure_ascii=False, indent=2), encoding='utf-8')
+                private_provenance.chmod(0o600)
+            (temporary / "parse_quality.json").write_text(json.dumps(_publication_quality(parse_quality or {}), ensure_ascii=False, indent=2), encoding="utf-8")
             (temporary / "indexes.json").write_text(json.dumps(indexes, ensure_ascii=False), encoding="utf-8")
             (temporary / "pregens.json").write_text(json.dumps(pregens, ensure_ascii=False), encoding="utf-8")
             (temporary / "scene_maps.json").write_text(json.dumps(page_maps, ensure_ascii=False), encoding="utf-8")

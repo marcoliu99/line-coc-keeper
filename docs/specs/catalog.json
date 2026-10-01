@@ -1595,7 +1595,17 @@
       "status": "in_progress",
       "path": "docs/specs/bug/pdf_derived_feature_publication_policy.md",
       "zh_path": "docs/specs/bug/pdf_derived_feature_publication_policy_zh.md",
-      "evidence": []
+      "evidence": [
+        "app/pdf_loader.py",
+        "app/pdf_ingestion_drafts.py",
+        "app/scenario_library.py",
+        "app/legacy_commands.py",
+        "tests/test_pdf_publication_policy.py",
+        "tests/test_pdf_map_certification.py",
+        "tests/test_pdf_image_transcription.py",
+        "tests/test_pdf_loader.py",
+        "tests/test_pdf_multicolumn_pipeline.py"
+      ]
     }
   ]
 }

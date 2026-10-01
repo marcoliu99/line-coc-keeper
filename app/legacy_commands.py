@@ -253,6 +253,7 @@ def _pdf_upload_confirmation_text(
     extracted_index: dict,
     pregen_count: int,
     artifact_notice: str = "",
+    disabled_map_pages: list[int] | None = None,
 ) -> str:
     """Shared by the immediate (first-ever upload) and deferred (button-
     resolved) paths through handle_pdf_upload — the message is identical
@@ -274,13 +275,17 @@ def _pdf_upload_confirmation_text(
             "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
         )
     map_note = ""
+    if disabled_map_pages:
+        pages_str = "、".join(str(page) for page in disabled_map_pages)
+        map_note = (f"\n\n⚠️ 第 {pages_str} 頁地圖尚未通過驗證，該頁 Map Engine 已停用；"
+                    "劇本已載入，可開始遊戲，遊戲仍使用劇本文字與原始圖片。")
     if page_maps:
         # Keys may be plain ints (fresh from pdf_loader.extract_text) or
         # strings (round-tripped through pending_pdf_upload's JSON storage —
         # see resolve_pdf_upload_choice) — sort numerically either way so a
         # page 10 doesn't sort before page 2.
         pages_str = "、".join(str(p) for p in sorted(page_maps.keys(), key=lambda k: int(k)))
-        map_note = (
+        map_note += (
             f"\n\n🗺️ 第 {pages_str} 頁偵測到平面圖，已經拆解成房間圖——玩家在裡面移動時"
             "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
             "用 `/coc where` 可以看目前在哪個房間。"
@@ -485,6 +490,9 @@ async def _run_pdf_import(
     async with locks.get_conversation_lock(conversation_id):
         pdf_ingestion_drafts.checkpoint(lease, parse_quality,
             (text, low_text_pages, truncated, page_images, page_maps), release_attempt=False)
+    disabled_map_pages = sorted(int(page) for page, status in parse_quality.get('map_status', {}).items()
+                                if status != 'MAP_GRAPH_VERIFIED')
+    low_text_pages = [page for page in low_text_pages if page not in disabled_map_pages]
     title = pdf_loader.guess_title(text, file_name=file_name)
 
     # Built automatically here rather than left to a manual /coc index run —
@@ -542,6 +550,7 @@ async def _run_pdf_import(
                 "text": text,
                 "title": library_context["manifest"]["title"],
                 "low_text_pages": low_text_pages,
+                "disabled_map_pages": disabled_map_pages,
                 "truncated": truncated,
                 "npcs": extracted_index["npcs"],
                 "locations": extracted_index["locations"],
@@ -592,6 +601,7 @@ async def _run_pdf_import(
         scenario_index.report_location_index(
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
+        disabled_map_pages=disabled_map_pages,
     ) + (f"\n{variant_notice}" if variant_notice else "")
       + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
       + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
@@ -660,6 +670,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
         scenario_index.report_location_index(
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
+        disabled_map_pages=pending.get("disabled_map_pages", []),
     ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "") + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
 
 @mutation_admission.guard_async_entry

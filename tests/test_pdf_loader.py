@@ -280,16 +280,21 @@ class PdfQualityRegressionTests(unittest.TestCase):
         self.assertIn('Alice STR: 60', text)
         self.assertNotIn('PDF_UNRESOLVED_FIELDS', text)
         self.assertEqual(report['ai_repair_requests'], 1)
-        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None):
-            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), local_ocr_limit=0, ai_repair_limit=0)
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+             self.assertRaises(pdf_loader.LayoutReviewRequired) as pending:
+            pdf_loader.extract_text(self.pdf(['Alice STR']), local_ocr_limit=0, ai_repair_limit=0)
+        text = pending.exception.result[0]
         self.assertIn('[PDF_UNRESOLVED_FIELDS: STR]', text)
 
 
     def test_unverified_layout_value_never_becomes_source(self):
         report = {}
-        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'Alice STR 60'}}):
-            text, _, _, _, _ = pdf_loader.extract_text(self.pdf(['Alice STR']), quality_report=report,
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'Alice STR 60'}}), \
+             self.assertRaises(pdf_loader.LayoutReviewRequired) as pending:
+            pdf_loader.extract_text(self.pdf(['Alice STR']), quality_report=report,
                                                        local_ocr_limit=0, ai_repair_limit=0)
+        text = pending.exception.result[0]
+        self.assertEqual(report['hard_block_pages'], [1])
         self.assertNotIn('60', text)
         self.assertIn('PDF_UNRESOLVED_FIELDS: STR', text)
         self.assertEqual(report['pages'][0]['method'], 'native')

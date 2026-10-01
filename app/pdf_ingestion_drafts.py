@@ -209,9 +209,13 @@ def resume_pages(draft: dict, identity: dict) -> dict[int, dict]:
     cached = {}
     for page, stored in draft['pages'].items():
         row = stored['report']
-        if row.get('disposition', row.get('status')) not in ('accepted', 'legacy_route'):
+        if row.get('disposition', row.get('status')) not in ('accepted', 'legacy_route', 'soft_review'):
+            continue
+        if row.get('publication_severity') == 'HARD_BLOCK' or row.get('source_blocking_reasons'):
             continue
         record = dict(stored)
+        if row.get('map_analysis') and row['map_analysis'].get('status') != 'MAP_GRAPH_VERIFIED':
+            record['map'] = None  # Candidate provenance is never a reusable gameplay artifact.
         if record['image']:
             record['image'] = base64.b64decode(record['image'], validate=True)
         cached[int(page)] = record

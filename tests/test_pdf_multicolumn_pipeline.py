@@ -219,17 +219,18 @@ def test_rejected_candidate_warning_does_not_mark_verified_order_for_review():
 
 
 @pytest.mark.parametrize('failed', [False, True])
-def test_readable_floor_plan_without_graph_stays_draft(failed):
+def test_readable_floor_plan_without_graph_publishes_with_warning(failed):
     source = pdf('FLOOR PLAN ' + 'Room entrance corridor stairs. ' * 12)
     report = {}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
          patch.object(loader, '_page_has_graphic_content', return_value=True), \
          patch.object(loader, '_render_page_png', return_value=b'png'), \
          patch.object(loader, '_analyze_graphic_page', side_effect=RuntimeError('offline') if failed else None,
-                      return_value=('Floor plan visible.', None)), \
-         pytest.raises(loader.LayoutReviewRequired):
+                      return_value=('Floor plan visible.', None)):
         loader.extract_text(source, quality_report=report)
-    assert report['blocked_pages'] == [1]
+    assert report['blocked_pages'] == []
+    assert report['soft_review_pages'] == [1]
+    assert report['scenario_readiness'] == 'READY_WITH_WARNINGS'
 
 
 def test_map_graph_survives_description_that_omits_numeric_source_labels(certified_map_result):

@@ -36,18 +36,20 @@ from app.markitdown_shim import build_markitdown
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v6'
+PIPELINE_VERSION = 'multicolumn-v7'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
-PageDisposition = Literal['accepted', 'needs_review', 'legacy_route']
+PageDisposition = Literal['accepted', 'needs_review', 'legacy_route', 'soft_review']
+PublicationSeverity = Literal['NONE', 'HARD_BLOCK', 'SOFT_REVIEW']
+ScenarioReadiness = Literal['READY', 'READY_WITH_WARNINGS', 'BLOCKED']
 
 
 class PagePublication(TypedDict):
     disposition: PageDisposition
 
 
-def _publication_disposition(status: pdf_layout.LayoutStatus, failed_graphic: bool) -> PageDisposition:
-    if status == 'needs_review' or failed_graphic:
+def _publication_disposition(status: pdf_layout.LayoutStatus, source_blocking: bool) -> PageDisposition:
+    if status == 'needs_review' or source_blocking:
         return 'needs_review'
     return 'accepted' if status == 'accepted' else 'legacy_route'
 
@@ -92,14 +94,15 @@ def _cached_page(cached: dict | None, pdf_hash: str, number: int, identity: dict
             or cached.get('extraction_identity') != identity
             or cached.get('renderer_version') != RENDERER_VERSION
             or not isinstance(text, str) or not isinstance(row, dict)
-            or row.get('page') != number or row.get('disposition') not in {'accepted', 'legacy_route'}
+            or row.get('page') != number or row.get('disposition') not in {'accepted', 'legacy_route', 'soft_review'}
+            or row.get('publication_severity') == 'HARD_BLOCK' or row.get('source_blocking_reasons')
             or cached.get('selected_sha256') != hashlib.sha256(text.encode()).hexdigest()):
         return None
     if cached.get('map') is not None and (not isinstance(cached.get('image'), bytes)
             or not pdf_map_analysis.verified_graph(cached['map'], row.get('map_analysis'), cached['image'])):
         return None
-    if row.get('map_analysis', {}).get('candidate') and (not isinstance(cached.get('map'), dict)
-            or row['map_analysis'].get('status') != 'MAP_GRAPH_VERIFIED'):
+    if (row.get('map_analysis', {}).get('status') == 'MAP_GRAPH_VERIFIED'
+            and not isinstance(cached.get('map'), dict)):
         return None
     return cached
 
@@ -749,19 +752,21 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         if not row.get('resumed'):
             status = row['layout_decision']['status']
             verified_image = row.get('image_transcription', {}).get('status') == 'authoritative'
-            failed_graphic = (not verified_image and not row.get('safe_short_native')
-                              and not row.get('verified_illustration') and row.get('graphic_evidence') and i + 1 not in maps
-                              and len(text.strip()) < _LOW_TEXT_THRESHOLD
-                              and any(w in {'vision_failed', 'vision_empty', 'vision_pair_mismatch'}
-                                      for w in row['warnings']))
-            unresolved_image = (row.get('requires_image_transcription') and not verified_image
-                                and not row.get('verified_illustration') and i + 1 not in maps)
+            # A derived map failure cannot certify or invalidate canonical source.
+            source_blocking_reasons = []
+            if status == 'needs_review':
+                source_blocking_reasons.append('source_ordering_unverified')
+            if (row.get('requires_image_transcription') and not verified_image
+                    and not row.get('verified_illustration')):
+                source_blocking_reasons.append('source_image_transcription_unverified')
+            if unresolved:
+                source_blocking_reasons.append('source_mechanics_unresolved')
+            if ('transcription_unverified' in row['warnings']
+                    or ('transcription_review' in row['warnings'] and not text.strip())):
+                source_blocking_reasons.append('source_transcription_unverified')
             publication: PagePublication = {'disposition': _publication_disposition(
-                status, bool(failed_graphic) or bool(unresolved_image) or (row.get('image_transcription', {}).get('status') == 'unverified'
-                    and i + 1 not in maps and not row.get('verified_illustration'))
-                or 'transcription_unverified' in row['warnings']
-                or ('transcription_review' in row['warnings'] and not text.strip())
-                or (i + 1 in map_candidates and i + 1 not in maps))}
+                status, bool(source_blocking_reasons))}
+            row['source_blocking_reasons'] = source_blocking_reasons
             row.update(publication)
         if not text.strip() and not row.get('verified_illustration') and i + 1 not in maps:
             row["warnings"].append("empty_page")
@@ -800,13 +805,25 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if warning in {'source_pair_unresolved', 'ai_fields_unresolved'} and not unresolved:
                 continue
             review_reasons.append(warning)
+        map_soft_failure = bool(row.get('map_analysis', {}).get('candidate') and i + 1 not in maps)
+        row['derived_feature_warnings'] = ([row['map_analysis']['status']] if map_soft_failure else [])
+        severity: PublicationSeverity = ('HARD_BLOCK' if row['disposition'] == 'needs_review'
+                                          else 'SOFT_REVIEW' if map_soft_failure or review_reasons else 'NONE')
+        row['publication_severity'] = severity
         row['review_reasons'] = review_reasons
         if review_reasons:
             review.append(i + 1)
         if i and pdf_quality.continuation(texts[i - 1], text):
             report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})
-    if not any(t.strip() for t in texts) and not maps and not any(row.get('verified_illustration') for row in report['pages']) and not any(row['disposition'] == 'needs_review' for row in report['pages']):
-        raise ValueError("這份 PDF 抽不出任何文字內容；請確認 OCR 是否可用並檢查原稿。")
+    if (not any(t.strip() for t in texts)
+            and not any(row.get('verified_illustration') for row in report['pages'])
+            and not any(row['disposition'] == 'needs_review' for row in report['pages'])):
+        for row in report['pages']:
+            row.update(disposition='needs_review', publication_severity='HARD_BLOCK',
+                       source_blocking_reasons=['canonical_playable_source_missing'])
+            row['review_reasons'].append('canonical_playable_source_missing')
+            if row['page'] not in review:
+                review.append(row['page'])
     full_text = render_source_pages(texts)
     report["review_pages"] = review
     report["source_chars"] = len(full_text)
@@ -829,7 +846,14 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     report.update(pdf_image_transcription.metrics(report['pages']))
     report.update(pdf_map_analysis.metrics(report['pages']))
     report['layout_budget'] = layout_budget
-    report['blocked_pages'] = [row['page'] for row in report['pages'] if row['disposition'] == 'needs_review']
+    report['hard_block_pages'] = [row['page'] for row in report['pages'] if row['publication_severity'] == 'HARD_BLOCK']
+    report['blocked_pages'] = list(report['hard_block_pages'])
+    report['soft_review_pages'] = [row['page'] for row in report['pages'] if row['publication_severity'] == 'SOFT_REVIEW']
+    readiness: ScenarioReadiness = ('BLOCKED' if report['hard_block_pages']
+                                    else 'READY_WITH_WARNINGS' if report['soft_review_pages'] or review else 'READY')
+    report['scenario_readiness'] = readiness
+    report['map_status'] = {str(row['page']): row['map_analysis']['status']
+                            for row in report['pages'] if row.get('map_analysis', {}).get('candidate')}
     result = (full_text, review, False, images, maps)
     if report['blocked_pages']:
         raise LayoutReviewRequired(report, result)

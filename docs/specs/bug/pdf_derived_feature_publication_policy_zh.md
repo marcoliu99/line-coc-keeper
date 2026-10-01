@@ -19,3 +19,5 @@ Draft safe pages（accepted／legacy_route／soft_review compatibility）在 sou
 ## 驗證
 
 以 public extraction／publication／draft／activation seams 測 safe source + invalid／incomplete／provider-failed map、image-only source failure、soft reuse 無 provider redispatch、首次 30 safe pages + 1 invalid map。確認 library／runtime 無 unsafe graph，canonical source 可用；mechanics conflict 仍 block，illustration 不 block。執行 pytest、Ruff、mypy、compileall、diff check。此 publication policy 不需真實 provider 結果才能驗證；先前 graph-correctness evidence 仍 pending。
+
+Private graph provenance 以 `.ingestion-provenance.json`（0600）納入 atomic scenario publication，與 sanitized `parse_quality.json` 分開；不作 gameplay context 載入。成功後 draft 被移除，仍可追溯原始 evidence。
