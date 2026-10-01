@@ -1,6 +1,6 @@
 # 查表式戰鬥回合與 provisional settlement
 
-狀態：設計訪談完成，Q1–Q19 已確認，等待 spec／implementation 明確確認。訪談不代表 runtime implementation 授權。Branch：`enhancement/combat-turn-state-machine`；base：`main_v2`／`189bc8e`。
+狀態：操作者於 2026-10-01 以 `$implement-spec` 明確授權實作；Q1–Q19 已確認。Branch：`enhancement/combat-turn-state-machine`；base：`main_v2`／`189bc8e`。
 
 ## 目標與範圍
 
@@ -85,3 +85,5 @@ Postcombat record 保留 participant／effect ID、injury state、下一個 logi
 先完成 spec／glossary／ADR，確認 shared understanding 後，再授權 implementation。Incremental seams：catalog lookup → bounded dice／receipts → effective resources／checkpoint → supported action runner → injury/effects → settlement／correction／resume。不得上線「HP provisional 但 Luck／ammo 還直接寫入」的半套。Legacy active battle 要 explicit schema migration／admission，不猜 reconstructed baseline 或丟 pending。
 
 測 scenario override／weapon ambiguity、DB／composite dice／shot distance、severity 不猜值、defense ties／autoroll、actor／check ownership、所有資源／治療 routing、zero-HP injury、effect timing once、各 roll／Luck／checkpoint／settlement crash boundary、retry 不重扣、external conflicts、one-battle admission、append corrections／rollback stale controls、pending settlement、atomic postcombat transfer、瀕死後續檢定／restart timing／再進戰鬥與 rollback 不 transfer、enemy privacy、既有 narrative authority。Implementation 跑 full pytest／ruff／mypy／compileall／diff-check。Tool-round-trip performance 要用 traces 實測，不把 draft estimates 当已證明效果。
+
+Implementation tickets / 工作圖: [EN](combat_turn_state_machine_tasks.md), [繁中](combat_turn_state_machine_tasks_zh.md).

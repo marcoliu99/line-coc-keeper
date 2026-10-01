@@ -1,6 +1,6 @@
 # Table-driven combat turns and provisional settlement
 
-Status: design interview complete; Q1–Q19 confirmed, awaiting explicit spec/implementation confirmation. No runtime implementation authorized by this interview. Branch `enhancement/combat-turn-state-machine`; base `main_v2` at `189bc8e`.
+Status: implementation authorized by operator `$implement-spec` on 2026-10-01; Q1–Q19 confirmed. Branch `enhancement/combat-turn-state-machine`; base `main_v2` at `189bc8e`.
 
 ## Goal and scope
 
@@ -85,3 +85,5 @@ There are no remaining business-decision questions in the current interview. Tec
 Spec/glossary/ADR first, explicit shared-understanding/implementation confirmation before runtime changes. Incremental implementation: catalogs and lookup tests → bounded dice/receipts → effective resources/checkpoints → supported action/interaction runner → structured injury/effects → settlement/correction/resume integration. Do not ship half-provisional runtime where HP is shadowed but Luck/ammo writes remain immediate. Legacy active battles require explicit migration/version admission, with no guessed reconstructed baseline or lost pending roll.
 
 Tests: scenario overrides and weapon ambiguity; DB/compound expressions, shot distance and unsupported rules; table severity lookup without freeform guessing; defense ties and existing autoroll; exact actor/check ownership; HP/Luck/ammo/SAN/MP/healing routing; zero-HP injury distinctions; effect timing once; retries/restarts at each roll/Luck/checkpoint/settlement boundary; no duplicate deductions; external conflicts; two-battle admission; appended corrections; cancelled-control invalidation; pending-empty settlement; atomic postcombat obligation transfer, continued dying checks, restart timing, later-battle admission and rollback without transfer; privacy of enemy HP; existing narrative correction authority. Run full pytest, ruff, mypy, compileall and diff-check on implementation. Compare tool-round-trip counts on real traces; draft performance estimates are not measured evidence.
+
+Implementation tickets / 工作圖: [EN](combat_turn_state_machine_tasks.md), [繁中](combat_turn_state_machine_tasks_zh.md).
