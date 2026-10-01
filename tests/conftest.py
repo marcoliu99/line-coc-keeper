@@ -149,7 +149,7 @@ def map_evidence_provider(monkeypatch):
                 return {'entry': {'status': entry, 'room_id': 'door' if entry == 'resolved' else '',
                                  'evidence': 'Visible entry' if entry == 'resolved' else ''}, 'edges': edges, 'missing_locations': []}
             if name == 'patch_map_evidence':
-                return {'add_locations': [], 'remove_edges': ['bad'] if phase_error == 'repair' else [],
+                return {'add_locations': [], 'remove_edges': [{'edge_id': 'bad', 'evidence': 'Original image solid wall', 'reason': 'No visible opening'}] if phase_error == 'repair' else [],
                         'replace_edges': [], 'add_edges': [], 'entry_update': None}
             graph = payload['graph']
             evidence = {'complete': True, 'uncertainties': [],

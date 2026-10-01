@@ -132,3 +132,26 @@ def test_phase_and_patch_metrics_are_aggregated(map_evidence_provider):
     assert not {'inventory', 'inventory_audit', 'connectivity', 'targeted_patch', 'candidate_graph', 'image_evidence'} & public.keys()
     assert all('output_evidence' not in attempt for attempt in public['attempts'])
     assert result.analysis['inventory']
+
+
+def test_malformed_removal_cannot_be_applied_or_replayed_as_certificate(map_evidence_provider):
+    import copy
+    calls = map_evidence_provider(phase_error='repair')
+    valid = pdf_map_analysis.analyze(b'image', reserve=lambda: True)
+    assert len(calls) == 5
+    changed = copy.deepcopy(valid.analysis)
+    changed['targeted_patch']['remove_edges'] = ['bad']
+    changed['attempts'][3]['output_evidence'] = copy.deepcopy(changed['targeted_patch'])
+    assert not pdf_map_analysis.verified_graph(valid.graph, changed, b'image')
+    provider = registry.ANALYSIS_PROVIDERS[config.ANALYSIS_PROVIDER]
+    original = provider.analyze_image
+    def malformed(png, tool, prompt, **options):
+        response = original(png, tool, prompt, **options)
+        if tool['name'] == 'patch_map_evidence':
+            response['remove_edges'] = ['bad']
+        return response
+    provider.analyze_image = malformed
+    rejected = pdf_map_analysis.analyze(b'image', reserve=lambda: True)
+    assert rejected.graph is None
+    assert rejected.analysis['status'] == 'MAP_GRAPH_INVALID'
+    assert 'malformed_patch' in rejected.analysis['validation_errors']

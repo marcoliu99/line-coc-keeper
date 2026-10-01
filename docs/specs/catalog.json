@@ -1613,8 +1613,20 @@
       "title": "Two-phase image-grounded map evidence",
       "zh": "兩階段 image-grounded map evidence",
       "category": "enhancement",
-      "status": "in_progress",
-      "evidence": [],
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_map_evidence.py",
+        "app/pdf_map_analysis.py",
+        "app/scenario_library.py",
+        "scripts/experiments/validate_pdf_ocr_production_path.py",
+        "tests/test_pdf_map_evidence.py",
+        "tests/test_pdf_two_phase_map.py",
+        "tests/test_pdf_map_certification.py",
+        "tests/test_pdf_publication_policy.py",
+        "docs/specs/enhancement/pdf_two_phase_map_extraction_validation.md",
+        "docs/specs/enhancement/pdf_two_phase_map_extraction_validation_zh.md",
+        "docs/specs/enhancement/pdf_two_phase_map_extraction_results.json"
+      ],
       "path": "docs/specs/enhancement/pdf_two_phase_map_extraction.md",
       "zh_path": "docs/specs/enhancement/pdf_two_phase_map_extraction_zh.md"
     }

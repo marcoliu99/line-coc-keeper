@@ -1,0 +1,81 @@
+{
+  "map_version": "image-map-certification-v2",
+  "pipeline_version": "multicolumn-v7",
+  "real_validation": {
+    "status": "PENDING",
+    "provider_requests": 0,
+    "reason": "Existing automatic approval review rejected third-party transfer of real PDF page images; no new upload authorization or dispatch in this round.",
+    "targets": [
+      {
+        "scenario": "The Haunting",
+        "page": 7,
+        "historical_rooms": 20,
+        "historical_directed_exits": 44,
+        "phase1_locations": null,
+        "phase1_missing_found": null,
+        "phase2_edges": null,
+        "targeted_repair_errors": null,
+        "repair_patch": null,
+        "final_rooms": null,
+        "final_exits": null,
+        "entry": null,
+        "final_map_status": null,
+        "corbitt_wall_edge_verified_absent": null,
+        "verified": false
+      },
+      {
+        "scenario": "Lightless Beacon",
+        "page": 16,
+        "historical_rooms": 9,
+        "historical_directed_exits": 15,
+        "phase1_locations": null,
+        "phase1_missing_found": null,
+        "phase2_edges": null,
+        "targeted_repair_errors": null,
+        "repair_patch": null,
+        "final_rooms": null,
+        "final_exits": null,
+        "entry": null,
+        "final_map_status": null,
+        "service_room_present": null,
+        "lamp_room_present": null,
+        "lantern_gallery_present": null,
+        "stairs_verified": null,
+        "verified": false
+      }
+    ]
+  },
+  "mocked_provider_regressions": {
+    "real_evidence": false,
+    "requests_without_patch": 4,
+    "requests_with_patch": 5,
+    "inventory_audit_missing_location_merge": "PASS",
+    "wall_edge_removal_preserves_unrelated_edge": "PASS",
+    "malformed_removal_rejection": "PASS",
+    "certificate_phase_replay": "PASS",
+    "safe_first_upload_and_start": "PASS",
+    "source_conflict_still_blocks": "PASS"
+  },
+  "checks": {
+    "pytest": {
+      "passed": 2065,
+      "skipped": 2,
+      "warnings": 9,
+      "subtests_passed": 152
+    },
+    "ruff": "PASS",
+    "mypy": {
+      "status": "PASS",
+      "source_files": 133
+    },
+    "compileall": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "production_rollout": "HOLD",
+  "remaining_blockers": [
+    "Real Haunting p7 graph/Corbitt wall evidence pending",
+    "Real Beacon p16 inventory/topology evidence pending",
+    "Previously pending real image-only authoritative positive remains pending"
+  ],
+  "publication_policy": "Source failure HARD_BLOCK; derived map failure SOFT_REVIEW, map disabled, safe scenario playable."
+}

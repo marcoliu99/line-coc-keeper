@@ -30,7 +30,25 @@ class Location(TypedDict):
     evidence: str
 
 
-_TRAVERSAL = {'door', 'open_passage', 'stairs', 'one_way'}
+TraversalKind = Literal['door', 'open_passage', 'stairs', 'one_way']
+
+
+class TraversalExit(TypedDict):
+    to: str
+    compass: str
+    label: str
+    type: TraversalKind
+    visual_basis: TraversalKind
+    evidence: str
+    evidence_id: str
+
+
+def traversal_kind(value: Any) -> TraversalKind | None:
+    aliases: dict[str, TraversalKind] = {'door': 'door', 'passage': 'open_passage',
+        'open passage': 'open_passage', 'open_passage': 'open_passage', 'stairs': 'stairs', 'one_way': 'one_way'}
+    return aliases.get(value) if isinstance(value, str) else None
+
+
 _COMPASS = dict(zip(['north', 'north_northeast', 'northeast', 'east_northeast', 'east', 'east_southeast', 'southeast', 'south_southeast', 'south', 'south_southwest', 'southwest', 'west_southwest', 'west', 'west_northwest', 'northwest', 'north_northwest', 'up', 'down'],
                     ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'U', 'D'], strict=True))
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
@@ -131,15 +149,12 @@ def build_graph(inventory: list[Location], connectivity: dict) -> tuple[dict, li
             continue
         subject = str(edge.get('id', 'edge'))
         origin, target = _resolve(edge.get('from'), inventory), _resolve(edge.get('to'), inventory)
-        basis = edge.get('visual_basis')
-        basis = {'open passage': 'open_passage', 'passage': 'open_passage'}.get(basis, basis) if isinstance(basis, str) else None
-        kind = edge.get('type')
-        kind = {'open passage': 'open_passage', 'passage': 'open_passage'}.get(kind, kind) if isinstance(kind, str) else None
+        basis, kind = traversal_kind(edge.get('visual_basis')), traversal_kind(edge.get('type'))
         compass = edge.get('compass')
         compass = _COMPASS.get(compass.casefold(), compass.upper()) if isinstance(compass, str) else ''
         if origin is None or target is None:
             errors.append({'code': 'dangling_exit', 'subject': subject})
-        if (basis not in _TRAVERSAL or kind != basis
+        if (basis is None or kind != basis
                 or not isinstance(edge.get('evidence'), str) or not edge['evidence'].strip()):
             errors.append({'code': 'unsupported_edge', 'subject': subject})
         if compass not in _COMPASS.values():
@@ -152,8 +167,10 @@ def build_graph(inventory: list[Location], connectivity: dict) -> tuple[dict, li
             errors.append({'code': 'unsupported_edge', 'subject': subject})
             continue
         seen.add(key)
-        rooms[origin]['exits'].append({'to': target, 'compass': compass, 'label': edge['evidence'],
-                                     'type': kind, 'visual_basis': basis, 'evidence': edge['evidence'], 'evidence_id': subject})
+        assert kind is not None and basis is not None
+        exit_: TraversalExit = {'to': target, 'compass': compass, 'label': edge['evidence'],
+            'type': kind, 'visual_basis': basis, 'evidence': edge['evidence'], 'evidence_id': subject}
+        rooms[origin]['exits'].append(exit_)
     entry = connectivity.get('entry', {})
     room_id = _resolve(entry.get('room_id'), inventory) if isinstance(entry, dict) else None
     if (not isinstance(entry, dict) or entry.get('status') != 'resolved' or room_id is None
@@ -208,14 +225,17 @@ def apply_patch(inventory: list[Location], connectivity: dict, patch: Any, error
 
     changed = set()
     for removal in patch['remove_edges']:
-        edge_id = removal.get('edge_id') if isinstance(removal, dict) else removal
-        evidence = removal.get('evidence') if isinstance(removal, dict) else None
-        reason = removal.get('reason') if isinstance(removal, dict) else None
+        if (not isinstance(removal, dict) or any(not isinstance(removal.get(key), str) or not removal[key].strip()
+                                                for key in ('edge_id', 'evidence', 'reason'))):
+            rejected.append({'code': 'malformed_patch', 'subject': 'remove_edges'})
+            continue
+        edge_id, evidence, reason = removal['edge_id'], removal['evidence'], removal['reason']
         if allowed_change(edge_id, evidence, reason):
             changed.add(edge_id)
             del edges[edge_id]
     for replacement in patch['replace_edges']:
-        if not isinstance(replacement, dict) or not isinstance(replacement.get('edge'), dict):
+        if (not isinstance(replacement, dict) or not isinstance(replacement.get('edge'), dict)
+                or not isinstance(replacement.get('reason'), str) or not replacement['reason'].strip()):
             rejected.append({'code': 'malformed_patch', 'subject': 'replace_edges'})
             continue
         edge_id, edge = replacement.get('edge_id'), copy.deepcopy(replacement['edge'])

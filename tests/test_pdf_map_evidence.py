@@ -66,11 +66,11 @@ def test_wall_patch_removes_only_failing_edge_and_preserves_verified_edge():
     wall = {'id': 'wall', 'from': 'cellar', 'to': 'hide', 'type': 'door', 'visual_basis': 'wall', 'compass': 'E', 'evidence': 'Solid shared wall'}
     connectivity = {'entry': {'status': 'resolved', 'room_id': 'hall', 'evidence': 'Visible entrance'}, 'edges': [good, wall], 'missing_locations': []}
     _, errors = maps.build_graph(rooms, connectivity)
-    patch = {'add_locations': [], 'remove_edges': ['wall'], 'add_edges': [], 'replace_edges': [], 'entry_update': None}
+    patch = {'add_locations': [], 'remove_edges': [{'edge_id': 'wall', 'evidence': 'Visible solid shared wall', 'reason': 'No opening shown'}], 'add_edges': [], 'replace_edges': [], 'entry_update': None}
     _, repaired, rejected = maps.apply_patch(rooms, connectivity, patch, errors, verified_edges={'door'}, verified_entry=True)
     assert not rejected
     assert repaired['edges'] == [good]
-    patch['remove_edges'].append('door')
+    patch['remove_edges'].append({'edge_id': 'door', 'evidence': 'Visible door', 'reason': 'Unrelated deletion'})
     unchanged_rooms, unchanged, rejected = maps.apply_patch(rooms, connectivity, patch, errors, verified_edges={'door'}, verified_entry=True)
     assert rejected and unchanged == connectivity and unchanged_rooms == rooms
 
@@ -84,7 +84,7 @@ def test_patch_cannot_add_unseen_room_or_modify_verified_evidence_without_proof(
     patch = {'add_locations': [location('Invented tunnel', hint='tunnel')], 'remove_edges': [], 'add_edges': [], 'replace_edges': [], 'entry_update': None}
     assert maps.apply_patch(rooms, connectivity, patch, errors, verified_edges={'door'}, verified_entry=True)[2]
     patch['add_locations'] = []
-    patch['remove_edges'] = ['door']
+    patch['remove_edges'] = [{'edge_id': 'door', 'evidence': 'Visible door', 'reason': 'Existing evidence'}]
     assert maps.apply_patch(rooms, connectivity, patch, errors, verified_edges={'door'}, verified_entry=True)[2][0]['code'] == 'verified_evidence_change'
     patch['remove_edges'] = [{'edge_id': 'door', 'evidence': 'New image closeup shows wall', 'reason': 'Old door evidence disproven'}]
     assert not maps.apply_patch(rooms, connectivity, patch, errors, verified_edges={'door'}, verified_entry=True)[2]

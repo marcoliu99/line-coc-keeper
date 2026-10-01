@@ -240,9 +240,9 @@ def _audit_errors(graph: dict, evidence: dict, prior_labels: list[str]) -> list[
             if row.get('verdict') != 'supported' or not isinstance(row.get('evidence'), str) or not row['evidence'].strip():
                 prefix = 'unsupported_' if row.get('verdict') == 'unsupported' else 'uncertain_'
                 errors.append(prefix + kind + ':' + row[key])
-            if kind == 'edges' and row.get('basis') not in {'door', 'passage', 'open_passage', 'stairs', 'one_way'}:
+            if kind == 'edges' and maps.traversal_kind(row.get('basis')) is None:
                 errors.append('non_traversable_edge:' + row[key])
-            if kind == 'edges' and edge_bases.get(row[key]) and ('open_passage' if row.get('basis') == 'passage' else row.get('basis')) != edge_bases[row[key]]:
+            if kind == 'edges' and edge_bases.get(row[key]) and maps.traversal_kind(row.get('basis')) != edge_bases[row[key]]:
                 errors.append('conflicting_edge_basis:' + row[key])
     entry = evidence.get('entry')
     if (not isinstance(entry, dict) or entry.get('room_id') != graph.get('entry_room_id', '')
