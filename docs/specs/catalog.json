@@ -1527,7 +1527,14 @@
         "docs/specs/enhancement/pdf_ocr_production_integration_validation.md",
         "app/pdf_ai_repair.py",
         "tests/test_pdf_ai_repair.py",
-        "docs/specs/enhancement/pdf_ocr_production_integration_validation_zh.md"
+        "docs/specs/enhancement/pdf_ocr_production_integration_validation_zh.md",
+        "app/pdf_image_transcription.py",
+        "app/markitdown_shim.py",
+        "tests/test_pdf_image_transcription.py",
+        "scripts/experiments/validate_pdf_ocr_controlled_ab.py",
+        "scripts/experiments/validate_pdf_ocr_production_path.py",
+        "scripts/experiments/smoke_pdf_ocr_cpu.py",
+        ".github/workflows/pdf-ocr-cpu-smoke.yml"
       ],
       "path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec.md",
       "zh_path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec_zh.md"

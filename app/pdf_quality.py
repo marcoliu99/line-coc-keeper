@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'ai-import-repair-v6'
+VERSION = 'ai-import-repair-v7'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 
@@ -239,6 +239,21 @@ def accept_transcription(original: str, candidate: str, pairs: list[dict]) -> bo
         return accept_region(original, candidate, pairs)
     _, method, _ = select_text(original, candidate)
     return method == 'layout' and _WORD.findall(original.casefold()) == _WORD.findall(candidate.casefold())
+
+
+def accept_independent_transcription(candidate: str, independent: str) -> bool:
+    """Certify agreement only; the caller must prove independent image provenance.
+
+    Keep lexical order exact to reject pair swaps, prose deletion and negation
+    changes. Ignore formatting punctuation, not words; uncertain paraphrases
+    stay in private review. This deliberately does not relax native gates.
+    """
+    if (not candidate.strip() or '\ufffd' in candidate or '\ufffd' in independent
+            or re.search(r'\[(?:無法辨識|unreadable|illegible)\]', candidate + independent, re.IGNORECASE)
+            or not preserves_mechanics(candidate, independent)):
+        return False
+    tokens = re.compile(r'[\u3400-\u9fff]|[^\W_]+|[-+](?=\s*\d)|[$€£¥<>=/]', re.UNICODE)
+    return tokens.findall(candidate.casefold()) == tokens.findall(independent.casefold())
 
 
 def _region_pattern(original: str) -> str:

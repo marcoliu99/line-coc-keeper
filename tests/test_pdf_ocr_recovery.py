@@ -208,7 +208,7 @@ def test_both_local_engines_fail_but_markitdown_route_is_preserved():
     from app import pdf_loader, pdf_ocr
     doc = pymupdf.open()
     page = doc.new_page()
-    page.insert_text((40, 60), 'Handout')
+    page.insert_text((40, 60), 'Alice STR')
     for number in range(10):
         page.draw_line((40, 100 + number * 10), (250, 100 + number * 10))
     raw = doc.tobytes()
@@ -218,14 +218,14 @@ def test_both_local_engines_fail_but_markitdown_route_is_preserved():
          patch.object(pdf_ocr, 'paddle_candidate', return_value={'engine': 'paddleocr',
              'model': 'PP-OCRv5_mobile_rec', 'candidate': '', 'status': 'error'}), \
          patch.object(pdf_loader, '_ocr_image', return_value=''), \
-         patch.object(pdf_loader, '_markitdown_page_texts', return_value={1: 'Handout'}) as fallback, \
+         patch.object(pdf_loader, '_markitdown_page_texts', return_value={1: 'Alice STR'}) as fallback, \
          patch.object(pdf_loader, '_analyze_graphic_page', return_value=('', None)):
         with pytest.raises(pdf_loader.LayoutReviewRequired) as pending:
             pdf_loader.extract_text(raw, quality_report=report)
         text = pending.value.result[0]
-    assert 'Handout' in text
-    assert report['pages'][0]['candidates']['markitdown'] == 'Handout'
-    assert report['pages'][0]['method'] == 'markitdown'
+    assert 'Alice STR' in text
+    assert report['pages'][0]['candidates']['markitdown'] == 'Alice STR'
+    assert report['pages'][0]['method'] == 'native'
     assert fallback.call_args.args[1] == [1]
 
 

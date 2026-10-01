@@ -220,6 +220,12 @@ def progress(draft: dict) -> str:
                   if item['report'].get('disposition', item['report'].get('status')) == 'needs_review']
     message = (f"《{draft['file_name']}》匯入草稿已保存；待修復頁面：{', '.join(unresolved) or '處理中／尚未解析'}。"
                '\n使用 /coc scenario continue 繼續匯入；/coc scenario status 查看；/coc scenario cancel 取消。')
+    unverified = [page for page, item in draft['pages'].items()
+                  if item['report'].get('image_transcription', {}).get('status') == 'unverified'
+                  and item['report'].get('disposition') == 'needs_review']
+    if unverified:
+        message += (f"\n第 {', '.join(unverified)} 頁影像轉錄尚未驗證；候選僅存於私人草稿，未發布。"
+                    '需要 AI/provider verification（設定影像供應商後繼續）或 manual approval（人工核對原稿與核准）。')
     budget = draft.get('report', {}).get('layout_budget', {})
     unseen = any(int(page) not in budget.get('visited_pages', []) for page in unresolved)
     if budget and (budget.get('remaining_requests', 0) <= 0

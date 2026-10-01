@@ -91,9 +91,9 @@ platform／full-provider 限制會記錄於 validation；deny-network corpus 結
 最終結果見 [驗證報告](pdf_ocr_production_integration_validation_zh.md)。完整 expression guard 亦套用 AI repair；明確停用 PyMuPDF4LLM 隱藏 OCR。Worker setup baseline 為 Python 3.11–3.13。操作者已以 `$implement` 授權，local integration 完成；deployment 限制保留於驗證報告。
 
 
-## v4 重新評估：公平比較與 image-only acceptance（待確認）
+## v4 重新評估：公平比較與 image-only acceptance（已授權實作）
 
-本修訂依 2026-10-01 的 `pr155_v4_ocr_reassessment_next_fix.md`，取代把 v3 before/after 當作 Paddle acceptance threshold 的要求。先前實作授權涵蓋舊範圍；本次修訂須先審閱，再修改 runtime。
+本修訂依 2026-10-01 的 `pr155_v4_ocr_reassessment_next_fix.md`，取代把 v3 before/after 當作 Paddle acceptance threshold 的要求。operator 已透過 implement 授權本次修訂。
 
 ### 問題與範圍
 
@@ -128,3 +128,5 @@ tests 涵蓋 independent agreement、numeric/dice/percentage 衝突、unsupporte
 ### 非目標與取捨
 
 保留 PP-OCRv5_mobile_rec、PaddleOCR 3.7.0、PaddlePaddle 3.3.0、CPU、explicit setup、persistent offline cache。不加入 Surya/Camelot/Azure/JEV，不開 Docling OCR/table structure，不用 confidence publish，不放寬 numeric/dice，不改 gameplay。實作前依既有 quality conventions 確定 narrow deterministic prose comparison；不確定就保留 review。驗證資料只屬 import-time，不建立 gameplay dependency。
+
+本次實作補充：image evidence／verification／metrics 集中於 import-only app/pdf_image_transcription.py；新 verification 共用 durable layout provider budget，在 dispatch 前 checkpoint。明確 AI 無文字分類加上 Paddle empty 可排除 Tesseract noise；其他衝突候選保持 private。Linux CPU smoke 由獨立 PR workflow 執行，下載僅發生於 explicit setup。驗證結果另見 pdf_ocr_image_only_validation_zh.md。

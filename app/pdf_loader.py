@@ -23,6 +23,7 @@ import pymupdf
 from app import (
     config,
     pdf_ai_repair,
+    pdf_image_transcription,
     pdf_layout,
     pdf_layout_adapters,
     pdf_ocr,
@@ -33,7 +34,7 @@ from app.scene_map import analyze_page_image
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v4'
+PIPELINE_VERSION = 'multicolumn-v5'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route']
@@ -198,6 +199,14 @@ def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
     return description, scene_map
 
 
+class MarkitdownPages(dict[int, str]):
+    """Page-aligned converted text with separately observed image OCR provenance."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_evidence: dict[int, pdf_image_transcription.ImageEvidence] = {}
+
+
 _MARKITDOWN_PAGE_RE = re.compile(r"^##\s*Page\s+(\d+)\s*$", re.MULTILINE)
 
 
@@ -222,7 +231,8 @@ def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = No
             for number in page_numbers:
                 subset.insert_pdf(original, from_page=number - 1, to_page=number - 1)
             pdf_bytes = subset.tobytes()
-    md = build_markitdown(_VISION_PROMPT)
+    image_ocr_evidence: list[dict] = []
+    md = build_markitdown(_VISION_PROMPT, image_ocr_evidence=image_ocr_evidence)
     if md is None:
         return None
     try:
@@ -240,7 +250,7 @@ def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = No
     if not matches:
         return None  # can't align without page markers — don't guess
 
-    pages: dict[int, str] = {}
+    pages = MarkitdownPages()
     for i, m in enumerate(matches):
         page_num = int(m.group(1))
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
@@ -252,6 +262,14 @@ def _markitdown_page_texts(pdf_bytes: bytes, page_numbers: list[int] | None = No
                 continue
             page_num = page_numbers[page_num - 1]
         pages[page_num] = page_text
+        # Only a full-page transcription observed on the image completion path
+        # can certify the local candidate; unrelated embedded captions cannot.
+        for observed in image_ocr_evidence:
+            if pdf_quality.accept_independent_transcription(page_text, observed['candidate']):
+                pages.image_evidence[page_num] = {
+                    'origin': 'markitdown_ocr', 'source_id': observed['source_id'],
+                    'candidate': observed['candidate'], 'page_type': 'text'}
+                break
     return pages
 
 
@@ -509,16 +527,25 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if graphic and (map_heading or short_map_title):
                 map_candidates.add(number)
                 pending[number] = images[number]
+            safe_short_native = bool(native.strip()
+                                     and '\ufffd' not in text
+                                     and all(p['status'] == 'matched' for p in pdf_quality.check_pairs(pairs, text)))
             if len(text) < _LOW_TEXT_THRESHOLD:
                 warnings.append("low_text")
-                if graphic:
+                if graphic and not safe_short_native:
                     pending[number] = images[number]
             texts.append(text)
             report["pages"].append({"page": number, "method": method, "native_chars": len(native),
                                     "warnings": warnings, "evidence": evidence,
                                     "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": repairs,
                                     "candidates": {"native": native, "layout": layout_text},
-                                    "layout_decision": decision, "graphic_evidence": graphic})
+                                    "layout_decision": decision, "graphic_evidence": graphic,
+                                    "safe_short_native": safe_short_native,
+                                    "requires_image_transcription": bool(graphic and len(text) < _LOW_TEXT_THRESHOLD
+                                                                           and not safe_short_native),
+                                    "source_kind": ('native_text_absent' if not native.strip() else
+                                                    'native_text_present_but_short' if len(native) < _LOW_TEXT_THRESHOLD
+                                                    else 'native_text_present')})
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         for number in list(pending):
@@ -529,6 +556,13 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             chosen, attempts = recover_local_ocr(pending[number], texts[number - 1],
                                                   row['numeric_pairs'], region=False)
             row['page_ocr_attempts'] = attempts
+            if any(re.search(r'(?i)\bfloor\s*plan\b|\binvestigator\s+map\b|平面圖|樓層圖', a['candidate'])
+                   for a in attempts):
+                map_candidates.add(number)
+            if row['requires_image_transcription']:
+                transcription = pdf_image_transcription.retain_local(attempts)
+                if transcription:
+                    row['image_transcription'] = transcription
             if chosen:
                 texts[number - 1] = chosen
                 row['method'] += '+local_page_ocr'
@@ -543,6 +577,16 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if extra:
                 row = report["pages"][number - 1]
                 row["candidates"]["markitdown"] = extra
+                if row['requires_image_transcription']:
+                    independent = alternate.image_evidence.get(number) if isinstance(alternate, MarkitdownPages) else None
+                    if independent:
+                        chosen = pdf_image_transcription.verify(row, independent)
+                        if chosen:
+                            texts[number - 1] = chosen
+                            row['method'] = 'image_transcription'
+                            if number not in map_candidates:
+                                pending.pop(number)
+                            continue
                 checks = pdf_quality.check_pairs(row["numeric_pairs"], extra)
                 row["ocr_pair_checks"] = checks
                 if any(p["status"] != "matched" for p in checks):
@@ -559,6 +603,44 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     report["pages"][number - 1]["warnings"].append("ocr_evidence_loss")
                 if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD and number not in map_candidates:
                     pending.pop(number)
+
+        # Image-only candidates need independent image evidence, never native-empty certification.
+        for number in list(pending):
+            row = report['pages'][number - 1]
+            if not row['requires_image_transcription'] or number in map_candidates:
+                continue
+            if not pdf_image_transcription.reserve_verification(layout_budget, number, layout_budget_checkpoint):
+                row['warnings'].append('image_verification_budget_exhausted')
+                pending.pop(number)
+                continue
+            try:
+                image_evidence = pdf_image_transcription.analyze(pending[number])
+            except Exception:  # noqa: BLE001 - preserve private candidates on provider failure.
+                row['warnings'].append('image_verification_failed')
+                pending.pop(number)
+                continue
+            if image_evidence is None:
+                row['warnings'].append('vision_empty')
+                pending.pop(number)
+                continue
+            row['image_page_type'] = image_evidence['page_type']
+            if (image_evidence['page_type'] == 'illustration' and not image_evidence['candidate']
+                    and not row['candidates']['native'].strip()
+                    and (not any(a['candidate'].strip() for a in row.get('page_ocr_attempts', []))
+                         or any(a['engine'] == 'paddleocr' and a['status'] == 'empty'
+                                for a in row.get('page_ocr_attempts', [])))):
+                row['verified_illustration'] = True
+                pending.pop(number)
+                continue
+            chosen = pdf_image_transcription.verify(row, image_evidence)
+            if chosen:
+                texts[number - 1] = chosen
+                row['method'] = 'image_transcription'
+                pending.pop(number)
+            elif image_evidence['page_type'] == 'map':
+                map_candidates.add(number)
+            else:
+                pending.pop(number)  # The transcription request already classified this non-map page.
 
         # Repair only remaining numeric/corrupted blocks, before extraction consumers.
         for i, row in enumerate(report["pages"]):
@@ -625,16 +707,22 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         row['selected_text'] = text
         if not row.get('resumed'):
             status = row['layout_decision']['status']
-            failed_graphic = (row.get('graphic_evidence') and i + 1 not in maps
+            verified_image = row.get('image_transcription', {}).get('status') == 'authoritative'
+            failed_graphic = (not verified_image and not row.get('safe_short_native')
+                              and not row.get('verified_illustration') and row.get('graphic_evidence') and i + 1 not in maps
                               and len(text.strip()) < _LOW_TEXT_THRESHOLD
                               and any(w in {'vision_failed', 'vision_empty', 'vision_pair_mismatch'}
                                       for w in row['warnings']))
+            unresolved_image = (row.get('requires_image_transcription') and not verified_image
+                                and not row.get('verified_illustration') and i + 1 not in maps)
             publication: PagePublication = {'disposition': _publication_disposition(
-                status, bool(failed_graphic) or 'transcription_unverified' in row['warnings']
+                status, bool(failed_graphic) or bool(unresolved_image) or (row.get('image_transcription', {}).get('status') == 'unverified'
+                    and i + 1 not in maps and not row.get('verified_illustration'))
+                or 'transcription_unverified' in row['warnings']
                 or ('transcription_review' in row['warnings'] and not text.strip())
                 or (i + 1 in map_candidates and i + 1 not in maps))}
             row.update(publication)
-        if not text.strip():
+        if not text.strip() and not row.get('verified_illustration') and i + 1 not in maps:
             row["warnings"].append("empty_page")
         # Candidate diagnostics remain available, but do not imply that the
         # source-preserving winning candidate still has the rejected defect.
@@ -644,6 +732,13 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         accepted_order = row['layout_decision']['status'] == 'accepted'
         review_reasons = []
         for warning in row['warnings']:
+            if warning == 'table_or_character_grid' and row.get('graphic_evidence') and row.get('safe_short_native'):
+                continue
+            if warning in {'low_text', 'vision_empty', 'vision_failed', 'transcription_review',
+                           'transcription_unverified', 'vision_review_required'} and (
+                    row.get('safe_short_native') or row.get('verified_illustration')
+                    or row.get('image_transcription', {}).get('status') == 'authoritative'):
+                continue
             if warning in informational:
                 continue
             if warning == 'low_text' and accepted_order and not row.get('graphic_evidence'):
@@ -669,7 +764,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             review.append(i + 1)
         if i and pdf_quality.continuation(texts[i - 1], text):
             report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})
-    if not any(t.strip() for t in texts) and not any(row['disposition'] == 'needs_review' for row in report['pages']):
+    if not any(t.strip() for t in texts) and not maps and not any(row.get('verified_illustration') for row in report['pages']) and not any(row['disposition'] == 'needs_review' for row in report['pages']):
         raise ValueError("這份 PDF 抽不出任何文字內容；請確認 OCR 是否可用並檢查原稿。")
     full_text = render_source_pages(texts)
     report["review_pages"] = review
@@ -690,6 +785,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         any(a['engine'] == 'paddleocr' for a in group) and any(a['engine'] == 'tesseract' for a in group)
         for row in report['pages'] for group in ([row.get('page_ocr_attempts', [])]
             + [repair.get('ocr_attempts', []) for repair in row['local_repairs']]))
+    report.update(pdf_image_transcription.metrics(report['pages']))
     report['layout_budget'] = layout_budget
     report['blocked_pages'] = [row['page'] for row in report['pages'] if row['disposition'] == 'needs_review']
     result = (full_text, review, False, images, maps)

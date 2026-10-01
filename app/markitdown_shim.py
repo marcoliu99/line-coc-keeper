@@ -131,7 +131,30 @@ def _build_gemini_openai_shim(model_default: str) -> Any:
     return SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
 
-def build_markitdown(vision_prompt: str):
+class _RecordingImageCompletions:
+    """Audit actual vision completion responses, not converter/native/local text."""
+
+    def __init__(self, completions: Any, evidence: list[dict]) -> None:
+        self._completions = completions
+        self._evidence = evidence
+
+    def create(self, **kwargs: Any) -> Any:
+        import hashlib
+
+        response = self._completions.create(**kwargs)
+        images = [part['image_url']['url'] for message in kwargs.get('messages', [])
+                  for part in message.get('content', []) if isinstance(part, dict)
+                  and part.get('type') == 'image_url']
+        choices = getattr(response, 'choices', [])
+        if images and choices and getattr(choices[0], 'finish_reason', 'stop') == 'stop':
+            text = choices[0].message.content
+            if isinstance(text, str) and text.strip():
+                self._evidence.append({'candidate': text.strip(), 'source_id': ANALYSIS_PROVIDER + ':'
+                    + hashlib.sha256('\n'.join(images).encode()).hexdigest()})
+        return response
+
+
+def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | None = None):
     """Returns a configured MarkItDown instance (core PDF/office converters
     overridden by markitdown-ocr's OCR-enhanced ones, using our vision prompt
     for embedded-image description), or None if unavailable — ANALYSIS_PROVIDER's
@@ -148,6 +171,7 @@ def build_markitdown(vision_prompt: str):
     except ImportError:
         return None
 
+    llm_client: Any
     if ANALYSIS_PROVIDER == "openai" and OPENAI_API_KEY:
         import openai
 
@@ -162,6 +186,9 @@ def build_markitdown(vision_prompt: str):
     else:
         return None
 
+    if image_ocr_evidence is not None:
+        llm_client = SimpleNamespace(chat=SimpleNamespace(completions=_RecordingImageCompletions(
+            llm_client.chat.completions, image_ocr_evidence)))
     return MarkItDown(
         enable_plugins=True,
         llm_client=llm_client,

@@ -101,9 +101,9 @@ Platform and full-provider limitations will be documented in the validation repo
 Final validation is recorded in [validation](pdf_ocr_production_integration_validation.md). The complete-expression guard also applies to AI repair. PyMuPDF4LLM hidden OCR is explicitly disabled so all local OCR follows the adapter contract. Setup's supported worker baseline is Python 3.11–3.13. Implementation authorization was provided by the operator's `$implement`; local integration is complete, deployment limitations remain explicit in validation.
 
 
-## v4 reassessment: controlled evaluation and image-only acceptance (pending approval)
+## v4 reassessment: controlled evaluation and image-only acceptance (implementation authorized)
 
-This amendment supersedes any earlier requirement to use the v3 before/after result as a Paddle acceptance threshold. Requested by `pr155_v4_ocr_reassessment_next_fix.md` (2026-10-01). The earlier implementation approval covers the previous scope; this amendment awaits review before runtime changes.
+This amendment supersedes any earlier requirement to use the v3 before/after result as a Paddle acceptance threshold. Requested by `pr155_v4_ocr_reassessment_next_fix.md` (2026-10-01). The operator authorized this amendment via implement.
 
 ### Problem and scope
 
@@ -138,3 +138,5 @@ Run `pytest`, `ruff check .`, `mypy app`, `python -m compileall app tests`, and 
 ### Non-goals and implementation tradeoffs
 
 Retain PP-OCRv5_mobile_rec, PaddleOCR 3.7.0, PaddlePaddle 3.3.0, CPU, explicit setup and persistent offline cache. No Surya/Camelot/Azure/JEV, Docling OCR/table structure, confidence-based publication, numeric/dice relaxation or gameplay changes. Before implementation settle the narrow deterministic prose-comparison contract within existing quality conventions; uncertainty retains review. Verification evidence remains import-time data, not a new gameplay dependency.
+
+Implementation detail: the import-only app/pdf_image_transcription.py owns image evidence, verification and metrics. New verification dispatches share the durable layout provider budget and checkpoint before dispatch. Explicit AI no-text classification plus Paddle empty can reject Tesseract noise as illustration diagnostics; other conflicts remain private. A separate PR workflow runs Linux CPU smoke with downloads confined to explicit setup. See pdf_ocr_image_only_validation.md for measured validation.

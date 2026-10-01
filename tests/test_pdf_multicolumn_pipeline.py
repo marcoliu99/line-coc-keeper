@@ -154,14 +154,14 @@ def test_unreadable_graphic_page_blocks_publication(failed, readable_page):
          patch.object(loader, '_page_has_graphic_content', side_effect=lambda page: page.number == last_page), \
          patch.object(loader, '_render_page_png', return_value=b'png'), \
          patch.object(loader, '_markitdown_page_texts', return_value=None), \
-         patch.object(loader, '_analyze_graphic_page', side_effect=RuntimeError('offline') if failed else None,
-                      return_value=('', None)), \
+         patch.object(loader.pdf_image_transcription, 'analyze', side_effect=RuntimeError('offline') if failed else None,
+                      return_value=None), \
          pytest.raises(loader.LayoutReviewRequired) as raised:
         loader.extract_text(source, quality_report=report)
     assert report['blocked_pages'] == [last_page + 1]
     row = report['pages'][last_page]
     assert row['disposition'] == 'needs_review'
-    assert ('vision_failed' if failed else 'vision_empty') in row['warnings']
+    assert ('image_verification_failed' if failed else 'vision_empty') in row['warnings']
     assert raised.value.result[3][last_page + 1] == b'png'
 
 
