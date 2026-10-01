@@ -40,4 +40,8 @@ The Corbitt-shaped two-wall assertion and Beacon stairs tests are synthetic regr
 
 ## Verification
 
-Full pytest: 2161 passed, 2 skipped, 152 subtests passed. Ruff check . passed. Mypy app passed (137 files). Compileall app/tests and git diff --check passed. New segment regression file: 14 passed; existing hidden-topology regressions: 25 passed. Independent Standards/Spec review pending.
+Full pytest: 2163 passed, 2 skipped, 152 subtests passed. Ruff check . passed. Mypy app passed (137 files). Compileall app/tests and git diff --check passed. New segment regression file: 16 passed; existing hidden-topology regressions: 25 passed. Independent Standards/Spec review pending.
+
+## Review remediation
+
+Initial Standards review found no documented-standard violations; its duplicated published-identity guard suggestion was addressed with a shared module-local guard. Initial Spec review found two issues: named jumps into deeper chain nodes from outside the chain and malformed matching segment/edge endpoints raising TypeError. Both received regressions and fixes. Explicit independent visible/source exits remain usable; uncertified jumps do not. Final review recheck pending.

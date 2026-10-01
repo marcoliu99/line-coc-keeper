@@ -217,6 +217,9 @@ def test_visible_beacon_stairs_have_no_conditional_overlay(certified_map_result)
 def test_unnamed_transit_movement_uses_only_current_open_segment(monkeypatch, tmp_path):
     import asyncio
 
+    from app.commands import router
+    assert router.is_known_coc_command('traverse')
+
     from app import map_routes
     from app.commands.handlers.map_handler import handle_map_command
     from app.models import GroupState
@@ -260,6 +263,10 @@ def test_malformed_source_overlays_fail_closed_without_crashing(certified_map_re
         graph['source_topology'][0][field] = value
         assert not pdf_source_topology.structurally_valid(graph)
         assert not pdf_map_analysis.verified_graph(graph, result.analysis, canonical_source=SOURCE)
+        if field in ('from', 'to'):
+            graph['source_route_chains'][0]['segments'][0][field] = value
+            assert not pdf_source_topology.structurally_valid(graph)
+            assert not pdf_map_analysis.verified_graph(graph, result.analysis, canonical_source=SOURCE)
 
 
 def test_hidden_discovery_does_not_expose_deeper_chain_in_where(monkeypatch, tmp_path):
@@ -320,3 +327,27 @@ def test_all_open_still_requires_sequential_movement(certified_map_result):
     assert not scene_map.resolve_source_route(result.graph, first['from'], second['to'], available_routes=allowed)['ok']
     exits = scene_map.visible_exits(result.graph, first['from'], available_routes=allowed)
     assert [e['to'] for e in exits] == [first['to']]
+
+
+def test_external_room_cannot_jump_into_hidden_deeper_location(certified_map_result):
+    visual = certified_map_result('', {'entry_room_id': 'basement', 'rooms': [
+        {'id': 'basement', 'name': 'Basement', 'exits': []},
+        {'id': 'hall', 'name': 'Hall', 'exits': []},
+        {'id': 'hiding', 'name': 'Corbitt hiding place', 'exits': []}]})
+    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, SOURCE)
+    hall = result.graph['rooms'][1]['id']
+    first, second = result.graph['source_route_chains'][0]['segments']
+    for target in (first['to'], second['to']):
+        assert not scene_map.resolve_source_route(result.graph, hall, target)['ok']
+    assert scene_map.resolve_source_route(result.graph, hall, first['from'])['ok']
+
+
+def test_independent_visible_door_to_chain_location_remains_usable(certified_map_result):
+    visual = certified_map_result('', {'entry_room_id': 'basement', 'rooms': [
+        {'id': 'basement', 'name': 'Basement', 'exits': []},
+        {'id': 'hall', 'name': 'Hall', 'exits': [{'to': 'hiding', 'compass': 'E', 'label': 'door'}]},
+        {'id': 'hiding', 'name': 'Corbitt hiding place', 'exits': [{'to': 'hall', 'compass': 'W', 'label': 'door'}]}]})
+    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, SOURCE)
+    hall, hiding = result.graph['rooms'][1:]
+    assert scene_map.resolve_source_route(result.graph, hall['id'], hiding['id'])['ok']
+    assert scene_map.resolve_move({'7': result.graph}, '7', hall['id'], 'N', 'right')['ok']

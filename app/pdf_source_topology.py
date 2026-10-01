@@ -353,7 +353,8 @@ def _valid_chains(graph: dict) -> bool:
             if not isinstance(segment, dict) or not isinstance(barrier, dict):
                 return False
             edge = edges.get(segment.get('id')) if isinstance(segment.get('id'), str) else None
-            if (edge is None or segment['id'] in used_segments
+            if (edge is None or not isinstance(segment.get('from'), str) or not isinstance(segment.get('to'), str)
+                    or segment['id'] in used_segments
                     or any(segment.get(k) != edge.get(k) for k in ('from', 'to'))
                     or segment.get('route_kind') != edge.get('type')
                     or not isinstance(segment.get('barrier_id'), str)

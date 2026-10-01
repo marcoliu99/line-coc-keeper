@@ -430,14 +430,20 @@ def resolve_source_route(graph: dict, origin: str, target: str, *,
     """Gate named movement without changing the pre-existing visual movement rules."""
     routes = [route for route in graph.get('source_topology', [])
               if {route['from'], route['to']} == {origin, target}]
-    # A named destination beyond the next segment is not a single move, even
-    # after all barriers open. Existing independent visual exits stay usable.
+    # Entering a deeper node requires its adjacent source segment or an
+    # independently established visible/source exit, even from outside the chain.
     for chain in graph.get('source_route_chains', []):
         nodes = [chain['segments'][0]['from']] + [s['to'] for s in chain['segments']]
-        if (origin in nodes and target in nodes and abs(nodes.index(origin) - nodes.index(target)) > 1
-                and not any(e.get('to') == target and ordinary_exit(e)
-                            and not _barrier_blocks(graph, origin, target, e.get('compass', ''), available_routes)
-                            for e in (get_room(graph, origin) or {}).get('exits', []))):
+        skips_segment = (target in nodes[1:] and origin not in nodes) or (
+            origin in nodes and target in nodes and abs(nodes.index(origin) - nodes.index(target)) > 1)
+        independent_exit = any(e.get('to') == target and ordinary_exit(e)
+                               and (compass is None or e.get('compass') == compass)
+                               and not _barrier_blocks(graph, origin, target, e.get('compass', ''), available_routes)
+                               for e in (get_room(graph, origin) or {}).get('exits', [])) or any(
+            route['from'] == origin and route['id'] in available_routes
+            and (compass is None or route['compass'] == compass)
+            and not _barrier_blocks(graph, origin, target, route['compass'], available_routes) for route in routes)
+        if skips_segment and not independent_exit:
             return {'ok': False, 'blocked': True, 'interaction': '目前沒有已確認可通行的出口。'}
     if not routes or any(route['from'] == origin and route['id'] in available_routes
                          and (compass is None or route['compass'] == compass)

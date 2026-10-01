@@ -110,6 +110,17 @@ def visible_barriers(state: GroupState, page: str, room_id: str) -> list[dict]:
     return result
 
 
+def _published_graph(state: GroupState, page: str) -> dict:
+    graph = state.scene_maps.get(page)
+    if not graph or not state.scenario_library_id or not pdf_source_topology.structurally_valid(graph):
+        raise ValueError('A published source-certified map is required')
+    # Replay full published source/certificate at both authority boundaries.
+    current = scenario_library.load_context(state.scenario_library_id, state.active_chapter_id)['scene_maps'].get(page)
+    if current != graph:
+        raise ValueError('Map/source certificate changed; reload the scenario map')
+    return graph
+
+
 def commit_outcome(conversation_id: str, actor_id: str, page: str, route_id: str,
                    outcome: RouteOutcome, *, consequence: str = '', barrier_id: str | None = None) -> dict:
     """Persist a KP's explicit post-action ruling, never infer success from prose.
@@ -124,13 +135,7 @@ def commit_outcome(conversation_id: str, actor_id: str, page: str, route_id: str
             raise PermissionError(permissions.kp_only('確認地圖路線狀態'))
         if outcome not in ('opened', 'discovered', 'failed'):
             raise ValueError('Invalid route outcome')
-        graph = state.scene_maps.get(page)
-        if not graph or not state.scenario_library_id:
-            raise ValueError('A published source-certified map is required')
-        # Revalidate source/certificate at this authority boundary, using full library source.
-        current = scenario_library.load_context(state.scenario_library_id, state.active_chapter_id)['scene_maps'].get(page)
-        if current != graph:
-            raise ValueError('Map/source certificate changed; reload the scenario map')
+        graph = _published_graph(state, page)
         chain = next((c for c in graph.get('source_route_chains', []) if c['id'] == route_id), None)
         if chain is not None:
             return _commit_barrier(state, actor_id, page, graph, chain, barrier_id, outcome, consequence)
@@ -206,12 +211,7 @@ def traverse_segment(conversation_id: str, actor_id: str, segment_id: str) -> di
     with locks.get_state_lock(conversation_id):
         state = load_state(conversation_id)
         page, origin = state.current_map_page.get(actor_id, ''), state.current_room_id.get(actor_id, '')
-        graph = state.scene_maps.get(page, {})
-        if not pdf_source_topology.structurally_valid(graph) or not state.scenario_library_id:
-            raise ValueError('A source-certified current map is required')
-        current = scenario_library.load_context(state.scenario_library_id, state.active_chapter_id)['scene_maps'].get(page)
-        if current != graph:
-            raise ValueError('Map/source certificate changed; reload the scenario map')
+        graph = _published_graph(state, page)
         segment = next((s for c in graph.get('source_route_chains', []) for s in c['segments']
                         if s['id'] == segment_id and s['from'] == origin), None)
         allowed = available_routes(state, page)
