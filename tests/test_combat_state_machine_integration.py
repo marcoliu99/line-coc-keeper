@@ -541,3 +541,76 @@ def test_first_npc_can_run_source_bound_plan_without_client_hit_or_damage(battle
     assert battle.load().characters_by_id['char:ada'].hp == 10
     with pytest.raises(ValueError, match='due combat work'):
         battle.tool('preview_combat_settlement')
+
+
+def test_lost_player_reply_replays_saved_roll_without_rng_or_resource_cost(battle):
+    battle.start()
+    battle.declare('lost:roll')
+    check_id = battle.load().pending_checks['player']['check_id']
+    with patch.object(dice, 'skill_check', return_value=result(roll=30)) as rng:
+        with patch.object(battle, 'reply', side_effect=RuntimeError('transport dropped response')), \
+             pytest.raises(RuntimeError, match='transport dropped'):
+            battle.check(check_id)
+        durable = battle.load().to_dict()
+        assert durable['combat']['phase'] == 'LUCK_DECISION'
+        draws = rng.call_count
+        battle.check(check_id)
+        assert rng.call_count == draws
+        assert battle.load().to_dict() == durable
+    assert '擲出 30' in battle.notifications[-1]
+    assert '60%' in battle.notifications[-1]
+    assert '原骰值不會重擲' in battle.notifications[-1]
+
+
+def test_zero_hp_prior_dying_target_keeps_owned_wait_through_new_battle_and_rollback(battle):
+    battle.start()
+    for identity, damage in [('minor:4', 4), ('major:6', 6)]:
+        assert battle.tool('adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': -damage,
+                          'event_id': identity, 'reason': 'reviewed single-hit damage'})['ok']
+    assert battle.effective().injury['dying']
+    first_wait = battle.load().pending_checks.get('player')
+    if first_wait:
+        with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=50)):
+            battle.check(first_wait['check_id'])
+    old_id = battle.load().combat.combat_id
+    preview = battle.tool('preview_combat_settlement')['preview']
+    battle.tool('confirm_combat_settlement', {'combat_id': old_id,
+                'settlement_id': preview['settlement_id'], 'reason': 'carry future dying check'})
+    baseline = battle.load()
+    assert baseline.characters_by_id['char:ada'].hp == 0
+    trigger = baseline.postcombat_obligations[0]['next_trigger']['round']
+    assert trigger > baseline.mechanical_round
+    battle.start()
+    new_id = battle.load().combat.combat_id
+    assert new_id != old_id
+    assert battle.load().combat.active
+    assert 'char:ada' in battle.load().combat.working_resources
+    for logical_round in range(battle.load().mechanical_round + 1, trigger):
+        assert battle.tool('process_postcombat_obligations', {
+            'logical_round': logical_round, 'event_id': f'dying:clock:{logical_round}'})['ok']
+    due = battle.tool('process_postcombat_obligations', {'logical_round': trigger, 'event_id': 'dying:round'})
+    assert due['ok']
+    pending = battle.load().pending_checks['player']
+    assert pending['postcombat_context']['round'] == trigger
+    assert baseline.postcombat_obligations[0]['character_id'] == 'char:ada'
+    with pytest.raises(ValueError, match='[Pp]rior|[Cc]ommitted|due|pending'):
+        battle.tool('rollback_combat', {'combat_id': new_id, 'event_id': 'dying:rollback',
+                    'reason': 'discard only new battle'})
+    assert battle.load().pending_checks['player']['check_id'] == pending['check_id']
+    with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=50)) as rng:
+        battle.check(pending['check_id'])
+        assert not battle.load().pending_checks
+        battle.tool('rollback_combat', {'combat_id': new_id, 'event_id': 'dying:rollback',
+                    'reason': 'discard new battle after prior due work resolved'})
+        restored = battle.load()
+        assert restored.postcombat_obligations[0]['next_trigger']['round'] == trigger
+        draws = rng.call_count
+        replay = battle.tool('process_postcombat_obligations', {'logical_round': trigger, 'event_id': 'dying:catchup'})
+        assert replay['ok']
+        # Manual replay regenerates an owned control, whose authoritative roll
+        # is the original durable CON receipt rather than another server draw.
+        waiting = battle.load().pending_checks.get('player')
+        if waiting:
+            battle.check(waiting['check_id'])
+        assert rng.call_count == draws
+    assert battle.load().postcombat_obligations[0]['next_trigger']['round'] == trigger + 1

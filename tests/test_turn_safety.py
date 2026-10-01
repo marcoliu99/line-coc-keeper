@@ -24,7 +24,7 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
-from app.models import Character, Combatant, GroupState
+from app.models import Character, GroupState
 from app.providers import registry
 from app.repositories.group_state import load_state, save_state
 from app.services import mutation_admission as admission
