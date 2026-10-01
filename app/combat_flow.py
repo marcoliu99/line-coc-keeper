@@ -637,6 +637,8 @@ def advance_combat(state: GroupState, *, actor_id: str, event_id: str, transitio
     if not result.get('ok'):
         return result
     combat_resources.record_event(state, event_id, 'initiative', data=deepcopy(result))
+    if result.get('pending'):
+        return result
     next_actor = state.combat.order[state.combat.current_index]
     if next_actor.side == 'enemy':
         plan = combat.plan_enemy_turn(state, next_actor.display_name)

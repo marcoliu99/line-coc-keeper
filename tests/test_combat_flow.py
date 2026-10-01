@@ -491,3 +491,16 @@ def test_rolled_back_medical_success_cannot_publish_later_stabilization():
     assert not combat_flow.stabilize_investigator(state, character_id='patient', source_check_id=pending['check_id'],
                                                 event_id='stabilize', reason='Rolled-back success')['ok']
     assert patient.injury['dying']
+
+
+def test_second_battle_same_enemy_never_reuses_closed_retained_order():
+    state, pc, enemy = battle()
+    original_id = state.combat.combat_id
+    preview = combat_resources.get_settlement(state, obligations=combat_flow.postcombat_obligations(state))
+    combat_resources.commit_settlement(state, preview['settlement_id'])
+    added = combat.add_combatant(state, enemy.name, 40, 20, attacks=[{'id': 'claw', 'damage': '1d3'}], source=SOURCE)
+    assert state.combat.active
+    assert state.combat.combat_id != original_id
+    assert not added.reused
+    assert added.combatant is not enemy
+    assert pc.hp == 10
