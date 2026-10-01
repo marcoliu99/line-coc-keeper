@@ -186,6 +186,12 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
             'correctable_events': [{key: event[key] for key in ('event_id', 'kind', 'revision')}
                                    for event in managed.events
                                    if event['kind'] not in {'administrative', 'reconciliation', 'correction', 'snapshot'}],
+            'retained_controls': [{'owner_id': owner, 'check_id': entry.get('check_id'),
+                                   'decision_id': entry.get('decision_id'), 'type': entry.get('type')}
+                                  for entries in (call.state.pending_checks, call.state.pending_luck_decisions)
+                                  for owner, entry in entries.items()
+                                  if owner in {call.state.characters_by_id[i].owner_id
+                                               for i in managed.working_resources}],
             'plans': [{key: plan.get(key) for key in (
                 'plan_id', 'enemy_combatant_id', 'round_number', 'selected_action', 'selected_id', 'target_ids',
             )} for plan in managed.plans.values()],
