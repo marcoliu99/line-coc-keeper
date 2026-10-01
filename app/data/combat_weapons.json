@@ -1,0 +1,1412 @@
+{
+  "version": "coc7-reviewed-2026-10-01",
+  "distance_unit_source": {
+    "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/static/lang/en.json",
+    "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+    "sha256": "e6a919bb21dc0630cfce199a021261946048e9c5cea8f82f46cf3938600e5546",
+    "accessed": "2026-10-01"
+  },
+  "weapons": [
+    {
+      "id": "i.weapon.brawl",
+      "name": "Unarmed (human)",
+      "aliases": [
+        "unarmed",
+        "punch",
+        "kick",
+        "brawl",
+        "徒手"
+      ],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d3",
+      "db_policy": "full",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.bow",
+      "name": "Bow",
+      "aliases": [
+        "弓"
+      ],
+      "skill_id": "firearms-bow",
+      "attack_mode": "single_shot",
+      "damage": "1d6",
+      "db_policy": "half",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 30,
+      "ammo_per_attack": 1,
+      "capacity": 1,
+      "malfunction": 97,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.brass-knuckles",
+      "name": "Brass Knuckles",
+      "aliases": [],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d3+1",
+      "db_policy": "full",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.bullwhip",
+      "name": "Bullwhip",
+      "aliases": [],
+      "skill_id": "fighting-whip",
+      "attack_mode": "single_shot",
+      "damage": "1d3",
+      "db_policy": "half",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": 3,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "Special attack or continuing effect requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.burning-torch",
+      "name": "Burning Torch",
+      "aliases": [],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d6",
+      "db_policy": "none",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "Special attack or continuing effect requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.blackjack",
+      "name": "Blackjack",
+      "aliases": [],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d8",
+      "db_policy": "full",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.club-large",
+      "name": "Club, Large",
+      "aliases": [
+        "large club",
+        "baseball bat",
+        "大型棍棒"
+      ],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d8",
+      "db_policy": "full",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.club-small",
+      "name": "Club, Small",
+      "aliases": [
+        "small club"
+      ],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d6",
+      "db_policy": "full",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.crossbow",
+      "name": "Crossbow",
+      "aliases": [],
+      "skill_id": "firearms-bow",
+      "attack_mode": "single_shot",
+      "damage": "1d8+2",
+      "db_policy": "half",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 50,
+      "ammo_per_attack": 1,
+      "capacity": 1,
+      "malfunction": 96,
+      "ruling_reason": "Reload cadence requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.garrote",
+      "name": "Garrote",
+      "aliases": [],
+      "skill_id": "fighting-garrote",
+      "attack_mode": "melee",
+      "damage": "1d6",
+      "db_policy": "full",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "Special attack or continuing effect requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.hatchet-sickle",
+      "name": "Hatchet/Sickle",
+      "aliases": [
+        "hatchet",
+        "sickle",
+        "手斧"
+      ],
+      "skill_id": "fighting-axe",
+      "attack_mode": "melee",
+      "damage": "1d6+1",
+      "db_policy": "full",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.knife-large",
+      "name": "Knife, Large",
+      "aliases": [],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d8",
+      "db_policy": "full",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.knife-medium",
+      "name": "Knife, Medium",
+      "aliases": [],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d4+2",
+      "db_policy": "full",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.knife-small",
+      "name": "Knife, Small",
+      "aliases": [],
+      "skill_id": "fighting-brawl",
+      "attack_mode": "melee",
+      "damage": "1d4",
+      "db_policy": "full",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.nunchaku",
+      "name": "Nunchaku",
+      "aliases": [],
+      "skill_id": "fighting-flail",
+      "attack_mode": "melee",
+      "damage": "1d8",
+      "db_policy": "full",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "Special/range classification requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.rock-thrown",
+      "name": "Rock, Thrown",
+      "aliases": [],
+      "skill_id": "throw",
+      "attack_mode": "single_shot",
+      "damage": "1d4",
+      "db_policy": "half",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "Special/range classification requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.shuriken",
+      "name": "Shuriken",
+      "aliases": [],
+      "skill_id": "throw",
+      "attack_mode": "single_shot",
+      "damage": "1d3",
+      "db_policy": "half",
+      "extreme_rule": "maximum",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": 97,
+      "ruling_reason": "Special/range classification requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.spear",
+      "name": "Spear",
+      "aliases": [],
+      "skill_id": "fighting-spear",
+      "attack_mode": "melee",
+      "damage": "1d8+1",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "Source omits damage bonus flag; requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.spear-thrown",
+      "name": "Spear, Thrown",
+      "aliases": [],
+      "skill_id": "throw",
+      "attack_mode": "single_shot",
+      "damage": "1d8",
+      "db_policy": "half",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "Source duplicates shuriken ID; DB/impaling classification requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.22-short-automatic",
+      "name": ".22 Short Automatic",
+      "aliases": [
+        "handgun",
+        "pistol",
+        "手槍"
+      ],
+      "skill_id": "firearms-handgun",
+      "attack_mode": "single_shot",
+      "damage": "1d6",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 10,
+      "ammo_per_attack": 1,
+      "capacity": 6,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.25-derringer-1b",
+      "name": ".25 Derringer (1B)",
+      "aliases": [
+        "handgun",
+        "pistol",
+        "手槍"
+      ],
+      "skill_id": "firearms-handgun",
+      "attack_mode": "single_shot",
+      "damage": "1d6",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 3,
+      "ammo_per_attack": 1,
+      "capacity": 1,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.32-or-7-65mm-revolver",
+      "name": ".32 or 7.65mm Revolver",
+      "aliases": [
+        "handgun",
+        "pistol",
+        "手槍"
+      ],
+      "skill_id": "firearms-handgun",
+      "attack_mode": "single_shot",
+      "damage": "1d8",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 15,
+      "ammo_per_attack": 1,
+      "capacity": 6,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.32-or-7-65mm-automatic",
+      "name": ".32 or 7.65mm Automatic",
+      "aliases": [
+        "handgun",
+        "pistol",
+        "手槍"
+      ],
+      "skill_id": "firearms-handgun",
+      "attack_mode": "single_shot",
+      "damage": "1d8",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 15,
+      "ammo_per_attack": 1,
+      "capacity": 8,
+      "malfunction": 99,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.model-p08-luger",
+      "name": "Model P08 Luger",
+      "aliases": [
+        "handgun",
+        "pistol",
+        "手槍"
+      ],
+      "skill_id": "firearms-handgun",
+      "attack_mode": "single_shot",
+      "damage": "1d10",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 15,
+      "ammo_per_attack": 1,
+      "capacity": 8,
+      "malfunction": 99,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.45-revolver",
+      "name": ".45 Revolver",
+      "aliases": [
+        ".45 revolver",
+        "handgun",
+        "pistol",
+        "手槍",
+        ".45"
+      ],
+      "skill_id": "firearms-handgun",
+      "attack_mode": "single_shot",
+      "damage": "1d10+2",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 15,
+      "ammo_per_attack": 1,
+      "capacity": 6,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.45-automatic",
+      "name": ".45 Automatic",
+      "aliases": [
+        ".45 automatic pistol",
+        "handgun",
+        "pistol",
+        "手槍",
+        ".45"
+      ],
+      "skill_id": "firearms-handgun",
+      "attack_mode": "single_shot",
+      "damage": "1d10+2",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 15,
+      "ammo_per_attack": 1,
+      "capacity": 7,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.22-bolt-action-rifle",
+      "name": ".22 Bolt-Action Rifle",
+      "aliases": [],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "1d6+1",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 30,
+      "ammo_per_attack": 1,
+      "capacity": 6,
+      "malfunction": 99,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.30-lever-action-carbine",
+      "name": ".30 Lever-Action Carbine",
+      "aliases": [],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "2d6",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 50,
+      "ammo_per_attack": 1,
+      "capacity": 6,
+      "malfunction": 98,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.45-martini-henry-rifle",
+      "name": ".45 Martini-Henry Rifle",
+      "aliases": [],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "1d8+1d6+3",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 80,
+      "ammo_per_attack": 1,
+      "capacity": 1,
+      "malfunction": 100,
+      "ruling_reason": "Reload cadence requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.col-moran-s-air-rifle",
+      "name": "Col. Moran's Air Rifle",
+      "aliases": [],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+1",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 20,
+      "ammo_per_attack": 1,
+      "capacity": 1,
+      "malfunction": 88,
+      "ruling_reason": "Reload cadence requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.303-lee-enfield",
+      "name": ".303 Lee-Enfield",
+      "aliases": [],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 110,
+      "ammo_per_attack": 1,
+      "capacity": 10,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.30-06-bolt-action-rifle",
+      "name": ".30-06 Bolt-Action Rifle",
+      "aliases": [],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 110,
+      "ammo_per_attack": 1,
+      "capacity": 5,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.elephant-gun-2b",
+      "name": "Elephant Gun (2B)",
+      "aliases": [],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "3d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 100,
+      "ammo_per_attack": 1,
+      "capacity": 2,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.20-gauge-shotgun-2b",
+      "name": "20-gauge Shotgun (2B)",
+      "aliases": [
+        "shotgun",
+        "霰彈槍"
+      ],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "2d6",
+      "db_policy": "none",
+      "extreme_rule": "maximum",
+      "distance_bands": [
+        {
+          "id": "normal",
+          "max_distance_yards": 10,
+          "damage": "2d6"
+        },
+        {
+          "id": "long",
+          "max_distance_yards": 20,
+          "damage": "1d6"
+        },
+        {
+          "id": "extreme",
+          "max_distance_yards": 50,
+          "damage": "1d3"
+        }
+      ],
+      "base_range_yards": 10,
+      "ammo_per_attack": 1,
+      "capacity": 2,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.16-gauge-shotgun-2b",
+      "name": "16-gauge Shotgun (2B)",
+      "aliases": [
+        "shotgun",
+        "霰彈槍"
+      ],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+2",
+      "db_policy": "none",
+      "extreme_rule": "maximum",
+      "distance_bands": [
+        {
+          "id": "normal",
+          "max_distance_yards": 10,
+          "damage": "2d6+2"
+        },
+        {
+          "id": "long",
+          "max_distance_yards": 20,
+          "damage": "1d6+1"
+        },
+        {
+          "id": "extreme",
+          "max_distance_yards": 50,
+          "damage": "1d4"
+        }
+      ],
+      "base_range_yards": 10,
+      "ammo_per_attack": 1,
+      "capacity": 2,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.12-gauge-shotgun-2b",
+      "name": "12-gauge Shotgun (2B)",
+      "aliases": [
+        "12 gauge double barrel shotgun",
+        "shotgun",
+        "霰彈槍"
+      ],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "4d6",
+      "db_policy": "none",
+      "extreme_rule": "maximum",
+      "distance_bands": [
+        {
+          "id": "normal",
+          "max_distance_yards": 10,
+          "damage": "4d6"
+        },
+        {
+          "id": "long",
+          "max_distance_yards": 20,
+          "damage": "2d6"
+        },
+        {
+          "id": "extreme",
+          "max_distance_yards": 50,
+          "damage": "1d6"
+        }
+      ],
+      "base_range_yards": 10,
+      "ammo_per_attack": 1,
+      "capacity": 2,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.12-gauge-shotgun-semi-auto",
+      "name": "12-gauge Shotgun (semi-auto)",
+      "aliases": [
+        "shotgun",
+        "霰彈槍"
+      ],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "4d6",
+      "db_policy": "none",
+      "extreme_rule": "maximum",
+      "distance_bands": [
+        {
+          "id": "normal",
+          "max_distance_yards": 10,
+          "damage": "4d6"
+        },
+        {
+          "id": "long",
+          "max_distance_yards": 20,
+          "damage": "2d6"
+        },
+        {
+          "id": "extreme",
+          "max_distance_yards": 50,
+          "damage": "1d6"
+        }
+      ],
+      "base_range_yards": 10,
+      "ammo_per_attack": 1,
+      "capacity": 5,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.12-gauge-shotgun-2b-sawed-off",
+      "name": "12-gauge Shotgun (2B sawed off)",
+      "aliases": [
+        "shotgun",
+        "霰彈槍"
+      ],
+      "skill_id": "firearms-rifle-shotgun",
+      "attack_mode": "single_shot",
+      "damage": "4d6",
+      "db_policy": "none",
+      "extreme_rule": "maximum",
+      "distance_bands": [
+        {
+          "id": "normal",
+          "max_distance_yards": 5,
+          "damage": "4d6"
+        },
+        {
+          "id": "long",
+          "max_distance_yards": 10,
+          "damage": "1d6"
+        }
+      ],
+      "base_range_yards": 5,
+      "ammo_per_attack": 1,
+      "capacity": 2,
+      "malfunction": 100,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.bergmann-mp181-mp2811",
+      "name": "Bergmann MP181/MP2811",
+      "aliases": [],
+      "skill_id": "firearms-submachine-gun",
+      "attack_mode": "single_shot",
+      "damage": "1d10",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 20,
+      "ammo_per_attack": 1,
+      "capacity": 20,
+      "malfunction": 96,
+      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.thompson",
+      "name": "Thompson",
+      "aliases": [],
+      "skill_id": "firearms-submachine-gun",
+      "attack_mode": "single_shot",
+      "damage": "1d10+2",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 20,
+      "ammo_per_attack": 1,
+      "capacity": 20,
+      "malfunction": 96,
+      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.browning-auto-rifle-m1918",
+      "name": "Browning Auto Rifle M1918",
+      "aliases": [],
+      "skill_id": "firearms-machine-gun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 90,
+      "ammo_per_attack": 1,
+      "capacity": 20,
+      "malfunction": 100,
+      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.30-browning-m1917a1",
+      "name": ".30 Browning M1917A1",
+      "aliases": [],
+      "skill_id": "firearms-machine-gun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 150,
+      "ammo_per_attack": 1,
+      "capacity": 250,
+      "malfunction": 96,
+      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.bren-gun",
+      "name": "Bren Gun",
+      "aliases": [],
+      "skill_id": "firearms-machine-gun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 110,
+      "ammo_per_attack": 1,
+      "capacity": 30,
+      "malfunction": 96,
+      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.mark-i-lewis-gun",
+      "name": "Mark I Lewis Gun",
+      "aliases": [],
+      "skill_id": "firearms-machine-gun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 110,
+      "ammo_per_attack": 1,
+      "capacity": 47,
+      "malfunction": 96,
+      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.vickers-303",
+      "name": "Vickers .303",
+      "aliases": [],
+      "skill_id": "firearms-machine-gun",
+      "attack_mode": "single_shot",
+      "damage": "2d6+4",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 110,
+      "ammo_per_attack": 1,
+      "capacity": 250,
+      "malfunction": 99,
+      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
+        "revision": "snapshot-2026-10-01",
+        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
+        "accessed": "2026-10-01"
+      }
+    }
+  ]
+}

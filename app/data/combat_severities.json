@@ -1,0 +1,17 @@
+{
+  "version": "coc7-reviewed-2026-10-01",
+  "source": {
+    "url": "https://cthulhuwiki.chaosium.com/rules/hit-points-wounds-and-healing.html",
+    "revision": "snapshot-2026-10-01",
+    "sha256": "6498d208539738b1f0a04c764032110b1b5acf40f0d225163397b7630bbfdfbf",
+    "accessed": "2026-10-01"
+  },
+  "severities": {
+    "minor": "1d3",
+    "moderate": "1d6",
+    "severe": "1d10",
+    "deadly": "2d10",
+    "terminal": "4d10",
+    "splat": "8d10"
+  }
+}
