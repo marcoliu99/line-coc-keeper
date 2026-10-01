@@ -27,7 +27,7 @@ def source_pdf():
         return doc.tobytes()
 
 
-@pytest.mark.parametrize('mechanic', ['�d6+2', '1d�+2', '1d6+�', '�%', '+�2'])
+@pytest.mark.parametrize('mechanic', ['�d6+2', '1d�+2', '1d6+�', '�%', '+�2', '1d6+�B', '1d6+D�', '-1.�', '+ �2', '1d6 + �', '50.�%'])
 def test_final_corrupted_mechanics_hard_block(extraction_without_providers, monkeypatch, mechanic):
     # PDF font decoding can return replacement glyphs; inject that parser result.
     monkeypatch.setattr(pdf_quality, 'native_text', lambda _: ('Damage ' + mechanic, []))
@@ -39,15 +39,16 @@ def test_final_corrupted_mechanics_hard_block(extraction_without_providers, monk
     assert report['scenario_readiness'] == 'BLOCKED'
 
 
-def test_clean_final_source_with_failed_challenger_not_blocked(extraction_without_providers, monkeypatch):
-    monkeypatch.setattr(pdf_quality, 'native_text', lambda _: ('Damage 1d6+2', []))
+@pytest.mark.parametrize('source', ['Damage 1d6+2', 'Damage 1d6+DB', 'Modifier -1.2'])
+def test_clean_final_source_with_failed_challenger_not_blocked(extraction_without_providers, monkeypatch, source):
+    monkeypatch.setattr(pdf_quality, 'native_text', lambda _: (source, []))
     monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks',
                         lambda *_: {1: {'text': 'Damage 1d10+99'}})
     report = {}
     text, *_ = pdf_loader.extract_text(source_pdf(), quality_report=report, local_ocr_limit=0, ai_repair_limit=0)
-    assert 'Damage 1d6+2' in text
+    assert source in text
     assert report['pages'][0]['candidates']['layout'] == 'Damage 1d10+99'
-    assert 'layout_numeric_loss' in report['pages'][0]['warnings']
+    assert any(w in report['pages'][0]['warnings'] for w in {'layout_numeric_loss', 'layout_text_loss'})
     assert report['blocked_pages'] == []
 
 

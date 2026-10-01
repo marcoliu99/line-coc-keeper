@@ -18,7 +18,10 @@ _IMAGE_MECHANIC = re.compile(
 # Replacement glyphs inside a recognizable mechanical token cannot be
 # authoritative, even when no stat/skill label was recovered from the page.
 _CORRUPTED_MECHANIC = re.compile(
-    r'(?<!\w)(?:[\d�]*[dD][\d�]+(?:[+-][\d�]+)?|[\d�]+(?:\.[\d�]+)?%|[+-][\d�]+)(?!\w)')
+    r'(?<!\w)(?:[\d�]*[ \t]*[dD][ \t]*[\d�]+'
+    r'(?:[ \t]*[+-][ \t]*(?:[\d�]+|[dD�][bB�]))?'
+    r'|[\d�]+(?:\.[\d�]+)?[ \t]*%'
+    r'|[+-][ \t]*[\d�]+(?:\.[\d�]+)?)(?!\w)')
 
 
 def has_corrupted_mechanics(text: str) -> bool:
