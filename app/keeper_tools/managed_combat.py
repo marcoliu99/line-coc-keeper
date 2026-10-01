@@ -1,6 +1,7 @@
 """Bot Keeper commands for durable combat; no player-supplied roll outcomes."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +16,7 @@ def _mutate(call: ToolCall, operation):
     from app import keeper
 
     def mutate(state):
-        before = state.to_dict()
+        before = deepcopy(state.to_dict())
         result = operation(state)
         result.setdefault("provisional", resource_bridge.managed(state))
         return keeper.ToolStateMutation(result, should_save=state.to_dict() != before)

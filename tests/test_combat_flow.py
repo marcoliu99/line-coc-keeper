@@ -359,6 +359,30 @@ def test_effect_block_retains_original_damage_receipt_and_no_partial_targets():
     assert pc.hp == 10
 
 
+def test_turn_rollback_restores_earlier_effect_working_hp_and_events_but_retains_rolls():
+    state, pc, _ = battle()
+    state.combat.current_index = len(state.combat.order) - 1
+    state.pending_checks['player'] = {'type': 'skill', 'skill': 'Other'}
+    for identity, severity in [('small', 'minor'), ('large', 'severe')]:
+        combat_flow.declare_effect(state, effect_id=identity, target_id='pc:pc1', severity_id=severity,
+                                   scope='round', reason='Reviewed hazard', stop_condition='Removed')
+    before = deepcopy(state.to_dict())
+    with patch('app.dice.random.randint', side_effect=[2, 6]) as rng:
+        result = combat.advance_turn(state)
+    assert not result['ok']
+    assert combat_resources.effective_character(state, pc).hp == 10
+    assert state.combat.working_resources == before['combat']['working_resources']
+    assert state.combat.events == before['combat']['events']
+    assert state.combat.actions == before['combat']['actions']
+    assert state.combat.processed_timings == before['combat']['processed_timings']
+    assert state.combat.current_index == before['combat']['current_index']
+    assert len(state.combat.roll_receipts) == 2
+    assert rng.call_count == 2
+    with patch('app.dice.random.randint') as retry_rng:
+        assert not combat.advance_turn(state)['ok']
+    retry_rng.assert_not_called()
+
+
 def test_prior_committed_effect_rollback_restores_due_schedule_with_cached_draw():
     state, pc, _ = battle()
     combat_flow.declare_effect(state, effect_id='acid', target_id='pc:pc1', severity_id='minor', scope='round',

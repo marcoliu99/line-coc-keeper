@@ -1,6 +1,7 @@
 """Keeper combat tool handlers. Combat rules remain in app.combat."""
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from app import combat
@@ -247,7 +248,7 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
             from app import combat_flow
-            before = target_state.to_dict()
+            before = deepcopy(target_state.to_dict())
             result = combat_flow.advance_combat(target_state, actor_id=call.input.get('actor_id', ''),
                                                event_id=resource_bridge.mutation_id(call.name, call.input))
             return keeper.ToolStateMutation(result, should_save=target_state.to_dict() != before)

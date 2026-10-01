@@ -678,3 +678,29 @@ def test_explicit_incident_runner_retry_keeps_native_roll_and_damage(store):
         replay = tool(store, 'run_combat_effect', {'combat_id': 'combat:wiring', 'effect_id': 'incident:retry'})
     assert replay['ok'], replay
     assert store['state'].to_dict() == before
+
+
+def test_outside_battle_effect_stop_saves_a_detached_durable_projection(store):
+    initial = store['state']
+    initial.combat.active = False
+    initial.postcombat_obligations = [{
+        'obligation_id': 'source:effect', 'combat_id': 'source:battle', 'character_id': 'char:ada',
+        'kind': 'effect', 'status': 'future', 'next_trigger': {'round': 4},
+        'effect': {'id': 'source:fire'}, 'processed_timings': [],
+    }]
+    durable = {'snapshot': deepcopy(initial.to_dict()), 'writes': 0}
+    live = GroupState.from_dict(deepcopy(durable['snapshot']))
+    def load(_):
+        return GroupState.from_dict(deepcopy(durable['snapshot']))
+    def save(state, **kwargs):
+        durable['snapshot'] = deepcopy(state.to_dict())
+        durable['writes'] += 1
+    with patch.object(keeper, 'load_state', side_effect=load), patch.object(keeper, '_save_state_checked', side_effect=save):
+        result = keeper._execute_tool(live, 'stop_combat_effect', {
+            'combat_id': 'source:battle', 'effect_id': 'source:fire', 'event_id': 'stop:durable',
+            'reason': 'Keeper verified source fire extinguished',
+        }, [], [])
+    assert result['ok'], result
+    assert durable['writes'] == 1
+    reloaded = load('wiring')
+    assert reloaded.postcombat_obligations[0]['status'] == 'resolved'
