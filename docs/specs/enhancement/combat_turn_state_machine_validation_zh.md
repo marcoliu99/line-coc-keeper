@@ -32,7 +32,7 @@ Chaosium 六級：minor 1d3、moderate 1d6、severe 1d10、deadly 2d10、termina
 
 T6 merged checkpoint `29f7f2d`：**1823 passed、2 skipped、152 subtests passed**。Review fixes 與舊 prompt expectation 更新後，固定 runtime/test checkpoint `314b52d`：**1851 passed、2 skipped、152 subtests passed**，44.31 秒。Integration 檔案包含 38 個 SQLite／transport／prompt cases 與 11 個 serialized-role codec cases。全 repo `ruff check .` 通過；`mypy app` 126 source files 通過；`python -m compileall app tests`、`git diff --check` 與 `git diff 189bc8e...HEAD --check` 通過。九個既有 dependency deprecation warnings 留在完整 output；pytest 時間不是實際玩家效能 benchmark。
 
-Exact initiative-advance／choice retry 回傳原 owned interaction response。Lost roll／choice delivery regressions 重新載入 durable state，確認原結果、不多骰且資源不變。兩軸獨立 recheck 已通過，零 remaining/new findings。最終 merged HEAD 另行執行 integration checks；PR ready／cleanup 不代表授權 merge `main_v2` 或 deploy。
+Exact initiative-advance／choice retry 回傳原 owned interaction response。Lost roll／choice delivery regressions 重新載入 durable state，確認原結果、不多骰且資源不變。兩軸獨立 recheck 已通過，零 remaining/new findings。最終 merged HEAD 的重新驗證結果如下；PR ready／cleanup 不代表授權 merge `main_v2` 或 deploy。
 
 ## Review findings 與修正
 
@@ -52,3 +52,7 @@ Spec 初審兩項 P2：選擇成功但 reply 遺失的 exact receipt，以及 ac
 - Agent/prompt/turn integration: `app/agents/context_builder.py`, `app/agents/executor.py`, `app/agents/narrator.py`, `app/agents/tool_gateway.py`, `app/keeper.py`, `app/keeper_prompt_policy.py`, `app/services/canonical_facts.py`, `app/services/prompt_config.py`, `app/services/turn_context.py`, `app/services/turn_delivery.py`, `app/services/turn_resolution.py`.
 - Tests: `tests/test_combat_cards.py`, `tests/test_combat_flow.py`, `tests/test_combat_resources.py`, `tests/test_combat_rules.py`, `tests/test_combat_state_machine_integration.py`, `tests/test_combat_wiring.py`, `tests/test_completed_combat_evidence.py`, `tests/test_compound_dice.py`, `tests/test_keeper_tool_registry.py`, `tests/test_kp_assistant_v2.py`, `tests/test_major_wound_con_gate.py`, `tests/test_static_prompt_combat_routing.py`, `tests/test_static_prompt_integration.py`, `tests/test_static_prompt_operational_authority.py`, `tests/test_turn_consistency_handoff.py`, `tests/test_turn_safety.py`.
 - Domain/spec/validation docs: `CONTEXT.md`, `docs/adr/0003-provisional-combat-settlement.md`, `docs/specs/catalog.json`, `docs/specs/enhancement/combat_turn_state_machine_design_spec.md`, `docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md`, `docs/specs/enhancement/combat_turn_state_machine_tasks.md`, `docs/specs/enhancement/combat_turn_state_machine_tasks_zh.md`, `docs/specs/enhancement/combat_turn_state_machine_validation.md`, `docs/specs/enhancement/combat_turn_state_machine_validation_zh.md`.
+
+## 最終交付
+
+最終整合 `bb53045` 重新完整驗證：**1851 passed、2 skipped、152 subtests**（13.96 秒），ruff、mypy（126 files）、compileall 與兩種 diff checks 均通過。PR #156 已 ready for review；七個乾淨且已合併的戰鬥實作者工作樹均已移除，保留整合工作樹與已推送分支。未合併主分支或部署。
