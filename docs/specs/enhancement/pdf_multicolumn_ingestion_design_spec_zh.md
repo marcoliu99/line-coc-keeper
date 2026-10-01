@@ -196,6 +196,6 @@ Azure Document Intelligence 明確延後，本版不加入其依賴、設定、�
 這一範圍尚待 runtime 實作與驗收。測警告觸發適用復原、再次品質驗證、警告計數、原頁碼對照、可讀地圖、無可用原生標籤的圖、普通頁跳過、分析失敗／無圖、artifact 核對與續跑額度；再做三本對照，角色、地圖、數值／骰式與來源 spans 不退步。不新增固定遊戲回合 LLM 階段。
 
 
-## Production OCR recovery (proposed)
+## Production OCR recovery
 
-詳見 [Production OCR recovery](pdf_ocr_production_integration_design_spec_zh.md)：PaddleOCR primary candidate、驗證後 Tesseract fallback、離線 setup、OCR identity 與 regression gates。本次為待確認規格，尚未宣稱 production runtime 已修改。
+詳見 [Production OCR recovery](pdf_ocr_production_integration_design_spec_zh.md)：PaddleOCR primary candidate、驗證後 Tesseract fallback、離線 setup、OCR identity 與 regression gates。使用者已授權實作；實測範圍與剩餘限制以 validation report 為準。

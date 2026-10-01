@@ -1,0 +1,1080 @@
+{
+  "model": "PP-OCRv5_mobile_rec",
+  "device": "cpu",
+  "network_denied": true,
+  "metric_implementation_commit": "9f48775",
+  "metric_script_sha256": "c8523028aec75e662171595dc7817ea3c35b0549aacc8fbf178e90308b4a5462",
+  "real_regions": [
+    {
+      "pdf_sha256": "de28127fe4978a32076a4a5099496c0a377b91408b2eb402151bd5151009fcb1",
+      "page": 11,
+      "scope": "representative_numeric",
+      "image_sha256": "151246af5584e860062f866d727ff7007438d54728f4c4a7893568eb4f8720e0",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 7,
+          "expected": 8,
+          "exact": 0.875,
+          "missing": 1,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 7,
+          "expected": 8,
+          "exact": 0.875,
+          "missing": 1,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 5,
+          "expected": 6,
+          "exact": 0.8333333333333334,
+          "missing": 1,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 4,
+          "expected": 4,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 4,
+          "expected": 4,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 99,
+          "expected": 101,
+          "exact": 0.9801980198019802,
+          "missing": 2,
+          "added": 2
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 0,
+          "errors": {}
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 2,
+        "negation": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 4839.425
+    },
+    {
+      "pdf_sha256": "de28127fe4978a32076a4a5099496c0a377b91408b2eb402151bd5151009fcb1",
+      "page": 14,
+      "scope": "representative_numeric",
+      "image_sha256": "f1c86aec092f61c5533678e430e61bdbd8c7b233bf41a4394ebe155ac3d5fcd2",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 15,
+          "expected": 15,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 13,
+          "expected": 15,
+          "exact": 0.8666666666666667,
+          "missing": 2,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 12,
+          "expected": 14,
+          "exact": 0.8571428571428571,
+          "missing": 2,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 41,
+          "expected": 45,
+          "exact": 0.9111111111111111,
+          "missing": 4,
+          "added": 2
+        },
+        "pair_raw": {
+          "matched": 12,
+          "expected": 14,
+          "errors": {
+            "matched": 12,
+            "candidate_pair_unverified": 2
+          }
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 2,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 6529.717
+    },
+    {
+      "pdf_sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274",
+      "page": 17,
+      "scope": "representative_numeric",
+      "image_sha256": "587c4761a2afab87689646de008a88cae0b8e3a3945fc1e5d76efd262ef713ab",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 14,
+          "expected": 14,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 14,
+          "expected": 14,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 13,
+          "expected": 13,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 28,
+          "expected": 28,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 14,
+          "expected": 14,
+          "errors": {
+            "matched": 14
+          }
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 2634.82
+    },
+    {
+      "pdf_sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274",
+      "page": 17,
+      "scope": "representative_numeric",
+      "image_sha256": "89a9d3cbd3d229de7ee3692ec1efd9c5699279d2063fdcc4015eeca7dd9e797d",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 4,
+          "expected": 4,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 4,
+          "expected": 4,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 4,
+          "expected": 4,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 10,
+          "expected": 10,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 4,
+          "expected": 4,
+          "errors": {
+            "matched": 4
+          }
+        },
+        "skill_raw": {
+          "matched": 4,
+          "expected": 4
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 2047.297
+    },
+    {
+      "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
+      "page": 13,
+      "scope": "representative_numeric",
+      "image_sha256": "491ccf9a95db3a813ed49c4c9c490cb40e48e5b113843010b501443535d243ff",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 1,
+          "expected": 2,
+          "exact": 0.5,
+          "missing": 1,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 1,
+          "expected": 2,
+          "exact": 0.5,
+          "missing": 1,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 1,
+          "expected": 2,
+          "exact": 0.5,
+          "missing": 1,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 56,
+          "expected": 58,
+          "exact": 0.9655172413793104,
+          "missing": 2,
+          "added": 2
+        },
+        "pair_raw": {
+          "matched": 1,
+          "expected": 1,
+          "errors": {
+            "matched": 1
+          }
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 2,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 3931.258
+    },
+    {
+      "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
+      "page": 13,
+      "scope": "representative_numeric",
+      "image_sha256": "5742f53482b43e40be91735afbaf4f92bba8a15516cf68de6c620c4bc85d30e2",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 2,
+          "expected": 2,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 2,
+          "expected": 2,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 2,
+          "expected": 2,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 72,
+          "expected": 72,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 1,
+          "expected": 1,
+          "errors": {
+            "matched": 1
+          }
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 4018.108
+    },
+    {
+      "pdf_sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274",
+      "page": 3,
+      "scope": "production_suspect",
+      "image_sha256": "96b11e6f96259e236b7028bd9b2b702d602ee63ca094db72a4e977e35015501c",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 8,
+          "expected": 8,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 0,
+          "errors": {}
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 1654.566
+    },
+    {
+      "pdf_sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274",
+      "page": 3,
+      "scope": "production_suspect",
+      "image_sha256": "d830f446170fa7a65199cd2104beba49a7c0ddccaeaa44df30e291cbcf966d2b",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 3,
+          "expected": 3,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 0,
+          "errors": {}
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 1670.703
+    },
+    {
+      "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
+      "page": 4,
+      "scope": "production_suspect",
+      "image_sha256": "49cb4f855c669037034291a6f664f89933c9cbc9049660d7b78ac0fa49cbc7fa",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 1,
+          "expected": 1,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 2,
+          "expected": 2,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 0,
+          "errors": {}
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 1692.369
+    },
+    {
+      "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
+      "page": 4,
+      "scope": "production_suspect",
+      "image_sha256": "e128c9de7cdb98da01a63296fa2a0e334e528ef8f0ae9fd299a564684b0c486b",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 0,
+          "expected": 1,
+          "exact": 0.0,
+          "missing": 1,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 0,
+          "expected": 1,
+          "exact": 0.0,
+          "missing": 1,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 0,
+          "expected": 1,
+          "exact": 0.0,
+          "missing": 1,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 2,
+          "expected": 3,
+          "exact": 0.6666666666666666,
+          "missing": 1,
+          "added": 1
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 0,
+          "errors": {}
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 1,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 1797.019
+    },
+    {
+      "pdf_sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274",
+      "page": 31,
+      "scope": "representative_image_table",
+      "image_sha256": "9b1cfbed6c684d40f18f0531bebdde16606e9136669712f87b6e98b35bcea1ff",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 25,
+          "expected": 27,
+          "exact": 0.9259259259259259,
+          "missing": 2,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 25,
+          "expected": 27,
+          "exact": 0.9259259259259259,
+          "missing": 2,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 25,
+          "expected": 27,
+          "exact": 0.9259259259259259,
+          "missing": 2,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 37,
+          "expected": 39,
+          "exact": 0.9487179487179487,
+          "missing": 2,
+          "added": 1
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 8,
+          "errors": {
+            "candidate_pair_unverified": 8
+          }
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 1,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 6460.011
+    },
+    {
+      "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
+      "page": 34,
+      "scope": "representative_image_table",
+      "image_sha256": "ba5319bd2e7e27a5ef33791af510c507c6ba2dc799ca16b843e8bfd4e079c0b2",
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 25,
+          "expected": 27,
+          "exact": 0.9259259259259259,
+          "missing": 2,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 25,
+          "expected": 27,
+          "exact": 0.9259259259259259,
+          "missing": 2,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 25,
+          "expected": 27,
+          "exact": 0.9259259259259259,
+          "missing": 2,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 38,
+          "expected": 40,
+          "exact": 0.95,
+          "missing": 2,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 8,
+          "errors": {
+            "candidate_pair_unverified": 8
+          }
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 0
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      },
+      "status": "candidate",
+      "elapsed_ms": 5921.827
+    }
+  ],
+  "aggregate": {
+    "glyph_numeric": {
+      "matched": 96,
+      "expected": 103,
+      "added": 0,
+      "exact_rate": 0.9320388349514563
+    },
+    "production_numeric": {
+      "matched": 94,
+      "expected": 103,
+      "added": 0,
+      "exact_rate": 0.912621359223301
+    },
+    "dice_strict": {
+      "matched": 6,
+      "expected": 6,
+      "added": 0,
+      "exact_rate": 1.0
+    },
+    "pair_raw": {
+      "matched": 32,
+      "expected": 50,
+      "added": 0,
+      "exact_rate": 0.64
+    },
+    "skill_raw": {
+      "matched": 4,
+      "expected": 4,
+      "added": 0,
+      "exact_rate": 1.0
+    },
+    "text_coverage": {
+      "matched": 396,
+      "expected": 409,
+      "added": 8,
+      "exact_rate": 0.9682151589242054
+    }
+  },
+  "synthetic_pages": [
+    {
+      "kind": "ordinary_mixed_fonts",
+      "mechanics_exact": true,
+      "repair_accepted": true,
+      "candidate_exact": true,
+      "elapsed_ms": 5343.664,
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 8,
+          "expected": 8,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "production_numeric": {
+          "matched": 8,
+          "expected": 8,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "strict_numeric": {
+          "matched": 7,
+          "expected": 7,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_strict": {
+          "matched": 2,
+          "expected": 2,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 2,
+          "expected": 2,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 20,
+          "expected": 20,
+          "exact": 1.0,
+          "missing": 0,
+          "added": 0
+        },
+        "pair_raw": {
+          "matched": 6,
+          "expected": 6,
+          "errors": {
+            "matched": 6
+          }
+        },
+        "skill_raw": {
+          "matched": 2,
+          "expected": 2
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 0,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      }
+    },
+    {
+      "kind": "CJK_ascii_font_stress",
+      "mechanics_exact": false,
+      "repair_accepted": false,
+      "candidate_exact": false,
+      "elapsed_ms": 4975.59,
+      "metrics": {
+        "glyph_numeric": {
+          "matched": 5,
+          "expected": 8,
+          "exact": 0.625,
+          "missing": 3,
+          "added": 2
+        },
+        "production_numeric": {
+          "matched": 4,
+          "expected": 8,
+          "exact": 0.5,
+          "missing": 4,
+          "added": 2
+        },
+        "strict_numeric": {
+          "matched": 4,
+          "expected": 7,
+          "exact": 0.5714285714285714,
+          "missing": 3,
+          "added": 2
+        },
+        "dice_strict": {
+          "matched": 1,
+          "expected": 2,
+          "exact": 0.5,
+          "missing": 1,
+          "added": 0
+        },
+        "dice_casefold": {
+          "matched": 1,
+          "expected": 2,
+          "exact": 0.5,
+          "missing": 1,
+          "added": 0
+        },
+        "text_coverage": {
+          "matched": 8,
+          "expected": 20,
+          "exact": 0.4,
+          "missing": 12,
+          "added": 15
+        },
+        "pair_raw": {
+          "matched": 0,
+          "expected": 6,
+          "errors": {
+            "candidate_pair_unverified": 6
+          }
+        },
+        "skill_raw": {
+          "matched": 0,
+          "expected": 2
+        },
+        "accept_region": false,
+        "geometry_pair": null,
+        "added_lexical_tokens": 15,
+        "negation": {
+          "matched": 0,
+          "expected": 0,
+          "exact": null,
+          "missing": 0,
+          "added": 0
+        },
+        "sentence_additions": null
+      }
+    }
+  ],
+  "notes": [
+    "All metrics from same hash-bound, manually verified 12 gold region images as prior pilot.",
+    "One cold worker per crop. Timing is not a warm per-page throughput comparison.",
+    "Raw pair metrics preserve the known text-spacing limitation; image table geometry score was not rerun."
+  ],
+  "scored_region_count": 12
+}

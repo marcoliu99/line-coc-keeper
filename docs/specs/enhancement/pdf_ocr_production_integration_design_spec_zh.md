@@ -2,7 +2,7 @@
 
 [English](pdf_ocr_production_integration_design_spec.md)
 
-狀態：規格待確認；尚未實作 production runtime。
+狀態：使用者已透過 `implement` 授權實作；local runtime 已整合，最終驗證／review 進行中。
 分支：`enhancement/pdf-multicolumn-ingestion`，PR #155，目標 `main_v2`。
 基準：`ead28a4ac4ab7a7b7f9829cd2e2462fc3b2c4ef6`。
 本規格擴充現有多欄 ingestion 規格，保留 reading order、map 與 durable draft contract。
@@ -78,3 +78,14 @@ Regression 涵蓋中英文 Investigator／調查員、STR／DEX／SAN／幸運�
 ## 待 review 決策
 
 Model、fallback order、offline 原則依使用者指示已固定。依 branch/spec workflow，此具體規格需明確確認後實作。persistent compatible worker environment、保守 identity invalidation、scanned critical fields review 是明確提出的 implementation choices；不將先前英文模型 pilot 當多語 production default 已驗證。
+
+
+## 實作 checkpoint
+
+Paddle attempt 使用 bounded 短生命 CPU subprocess，不在 bot 載入 Paddle；每次 latency 含 initialization。worker interpreter 明確指定，identity 記錄實際 package versions。region padding／DPI／原 region allowance 不改；low-text page OCR 另有等於 local OCR limit 的有限 allowance，分開紀錄。
+
+完整 dice／百分比與 intact token order guard 補上現有 acceptance 缺口。source region 必須可唯一替換才標記 accepted；若選中來源已有通過同一 deterministic repair gate 的恢復 region，就跳過過期 OCR 工作。未驗證的 vision transcription 只留 derived/private evidence；無支持的 critical mechanics 阻擋 publication。valid map graph 不因 description 空白／不合格被丟棄，但 source validation 不放寬。
+
+platform／full-provider 限制會記錄於 validation；deny-network corpus 結果不能宣稱 paid vision／map full import 成功。
+
+最終結果見 [驗證報告](pdf_ocr_production_integration_validation_zh.md)。完整 expression guard 亦套用 AI repair；明確停用 PyMuPDF4LLM 隱藏 OCR。Worker setup baseline 為 Python 3.11–3.13。操作者已以 `$implement` 授權，local integration 完成；deployment 限制保留於驗證報告。

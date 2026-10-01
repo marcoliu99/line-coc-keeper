@@ -2,7 +2,7 @@
 
 [繁體中文](pdf_ocr_production_integration_design_spec_zh.md)
 
-Status: proposed; production implementation awaits explicit spec confirmation.
+Status: implementation authorized by the operator invoking `implement`; local runtime implemented, final validation/review in progress.
 Branch: `enhancement/pdf-multicolumn-ingestion` (PR #155, targeting `main_v2`).
 Baseline: `ead28a4ac4ab7a7b7f9829cd2e2462fc3b2c4ef6`.
 This extends the existing multicolumn ingestion spec; it does not replace its ordering, map or durable-draft contracts.
@@ -88,3 +88,14 @@ If real evidence shows numeric/dice/pairing/source-preservation regression, keep
 ## Review decisions
 
 The requested model, fallback order and offline policy are fixed by the operator. Implementation needs confirmation of this concrete spec under the repository branch/spec workflow. The persistent compatible worker environment, conservative identity invalidation, and review treatment of scanned critical fields are explicit implementation choices. No claim is made that the previous English-model pilot validated the new multilingual production default.
+
+
+## Implementation checkpoint
+
+The adapter uses a short-lived bounded CPU subprocess per Paddle attempt, rather than importing Paddle into the bot. Initialization is included in each measured attempt. The worker interpreter is explicit and actual package versions are part of identity. Region padding/DPI/region allowance remain unchanged; low-text page OCR has its own finite allowance equal to the configured local OCR limit, recorded separately.
+
+Complete dice/percentage checks and intact token-order preservation close observable acceptance gaps. A source region must be uniquely replaceable before an attempt is marked accepted. If the selected source already contains a region that passes this same deterministic repair gate, skip stale OCR work. Unverified visual transcription remains derived/private evidence; unsupported critical mechanics block publication. A valid map graph survives an empty/rejected description, without weakening source validation.
+
+Platform and full-provider limitations will be documented in the validation report; local denied-network corpus evidence must not be described as a successful paid-vision/map import.
+
+Final validation is recorded in [validation](pdf_ocr_production_integration_validation.md). The complete-expression guard also applies to AI repair. PyMuPDF4LLM hidden OCR is explicitly disabled so all local OCR follows the adapter contract. Setup's supported worker baseline is Python 3.11–3.13. Implementation authorization was provided by the operator's `$implement`; local integration is complete, deployment limitations remain explicit in validation.

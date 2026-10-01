@@ -266,6 +266,6 @@ three-book comparison, preserving investigators, map artifacts, numbers, dice
 and source spans. No new fixed gameplay LLM stage is added.
 
 
-## Production OCR recovery (proposed)
+## Production OCR recovery
 
-See [Production OCR recovery](pdf_ocr_production_integration_design_spec.md) for the operator-requested PaddleOCR primary candidate, validated Tesseract fallback, offline setup, OCR identity and regression gates. This extension is proposed; no production runtime change is claimed by this spec checkpoint.
+See [Production OCR recovery](pdf_ocr_production_integration_design_spec.md) for the operator-requested PaddleOCR primary candidate, validated Tesseract fallback, offline setup, OCR identity and regression gates. The operator authorized implementation; consult its validation report for measured scope and remaining limits.
