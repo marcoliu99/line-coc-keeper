@@ -1482,6 +1482,7 @@ def _resolve_managed_check(state: GroupState, user_id: str, text: str, pending: 
         if not outcome.get('ok'):
             save_state(state, reason='combat_check_paused')
             return _audienced_check_resolution(user_id, pending, reply_text=f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
+        resource_bridge.record_control_receipt(state, decision, user_id, character, result, pending_luck=True)
         save_state(state, reason='combat_check_luck')
         options_text = '、'.join(f"{o.tier}（{o.cost} 點）" for o in options)
         return _audienced_check_resolution(user_id, pending,
@@ -1491,6 +1492,7 @@ def _resolve_managed_check(state: GroupState, user_id: str, text: str, pending: 
     if not outcome.get('ok'):
         save_state(state, reason='combat_check_paused')
         return _audienced_check_resolution(user_id, pending, reply_text=f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
+    resource_bridge.record_control_receipt(state, pending, user_id, character, result)
     save_state(state, reason='combat_check')
     return _managed_check_feedback(state, character, user_id, pending, result, outcome, before)
 
@@ -1553,6 +1555,7 @@ def _resolve_managed_luck(state: GroupState, user_id: str, choice: str, pending:
     if not outcome.get('ok'):
         save_state(state, reason='combat_luck_paused')
         return _audienced_check_resolution(user_id, pending, reply_text=f"Luck 決定與骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
+    resource_bridge.record_control_receipt(state, pending, user_id, character, result, choice=choice)
     save_state(state, reason='combat_luck')
     return _managed_check_feedback(state, character, user_id, pending, result, outcome, before, luck_spent=spent)
 

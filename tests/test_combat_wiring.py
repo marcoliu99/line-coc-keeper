@@ -600,3 +600,44 @@ def test_committed_combat_report_uses_native_damage_and_existing_enemy_privacy(s
     assert status['last_ended_combat']['last_damage']['target'] == 'Cultist'
     assert 'hp' not in status['last_ended_combat']['last_damage']
     assert store['state'].last_combat_report['provisional'] is False
+
+
+def test_consumed_check_and_luck_buttons_replay_same_battle_receipts_without_mutation(store):
+    from app.commands.handlers import buttons
+    enemy = add_reviewed_enemy(store)
+    actor = next(p for p in store['state'].combat.order if p.is_pc)
+    with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(50, 55, 0, 0, 'fail', False)):
+        assert tool(store, 'declare_combat_action', {
+            'action_id': 'shot:replay', 'actor_id': actor.combatant_id, 'target_id': enemy.combatant_id,
+            'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
+        })['ok']
+        check_id = store['state'].pending_checks['player']['check_id']
+        resolved = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+    assert resolved.decision_id
+    notifications = []
+    async def notify(message):
+        notifications.append(message)
+    async def noop(*args):
+        return None
+    io = buttons.ButtonIO(notify, noop, noop, noop, noop, noop, noop)
+    before = deepcopy(store['state'].to_dict())
+    writes = store['writes']
+    with (patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())),
+          patch.object(dice, 'skill_check', side_effect=AssertionError('replay RNG'))):
+        asyncio.run(buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
+    assert '55' in notifications[-1] and 'Luck' in notifications[-1]
+    assert store['state'].to_dict() == before and store['writes'] == writes
+    assert legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'skip').should_finalize
+    before = deepcopy(store['state'].to_dict())
+    writes = store['writes']
+    with patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())):
+        asyncio.run(buttons.handle_luck_button('wiring', 'player', 'player', 'skip', resolved.decision_id, io))
+        assert '55' in notifications[-1] and '已保存' in notifications[-1]
+        asyncio.run(buttons.handle_check_button('wiring', 'foreign', 'player', '', check_id, io))
+        assert '不是你的' in notifications[-1]
+    assert store['state'].to_dict() == before and store['writes'] == writes
+    assert tool(store, 'rollback_combat', {'combat_id': 'combat:wiring', 'event_id': 'rollback:replay',
+                                         'reason': 'Keeper explicitly cancels source battle'})['ok']
+    with patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())):
+        asyncio.run(buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
+    assert '失效' in notifications[-1]
