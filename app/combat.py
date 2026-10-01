@@ -677,7 +677,8 @@ def apply_combat_damage(
 ) -> dict[str, Any]:
     if is_managed(state):
         return apply_managed_damage(state, target_name, raw_damage, event_id=event_id or f'damage:{uuid.uuid4().hex}',
-                                    damage_type=damage_type, tags=tags, source_id=source_id, bypass_armor=bypass_armor)
+                                    damage_type=damage_type, tags=tags, source_id=source_id, bypass_armor=bypass_armor,
+                                    entry_point=entry_point)
     combatant = find_combatant(state, target_name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
@@ -1700,6 +1701,7 @@ def apply_managed_damage(
     state: GroupState, target_id: str, raw_damage: int, *, event_id: str,
     damage_type: str = 'physical', tags: list[str] | None = None,
     source_id: str = '', bypass_armor: bool = False, defer_injury: bool = False,
+    entry_point: str = 'apply_managed_damage',
 ) -> dict[str, Any]:
     """Trusted single-hit primitive; transport must not expose caller hit amounts."""
     from app import combat_flow
@@ -1722,7 +1724,7 @@ def apply_managed_damage(
         assert pc is not None
         block = check_lifecycle.blocker(state, pc.owner_id)
         if block and not state.autoroll_checks:
-            return major_wound_blocked(state, pc, block, entry_point='apply_managed_damage')
+            return major_wound_blocked(state, pc, block, entry_point=entry_point)
         if state.combat.interaction and state.combat.interaction.get('owner_id') != pc.owner_id:
             return {'ok': False, 'error': 'Another combat interaction is unresolved'}
     injury: InjuryState = deepcopy(effective.injury) if effective else InjuryState()
@@ -1757,7 +1759,7 @@ def apply_managed_damage(
         'private_notes': f'raw={raw_damage}, armor={armor_label}, source={source_id}',
         'hp_before': before, 'hp_after': after, 'hp': after, 'hp_max': target.hp_max,
         'injury': injury, 'major_wound_triggered': requires_con, 'defeated': target.defeated,
-        'public_summary': f'{target.display_name} 受到 {final} 點傷害（戰鬥暫定）',
+        'public_summary': f'{target.display_name} 受到 {final} 點傷害（戰鬥暫定）' + ('（部分傷害被擋下）' if armor_label else ''),
     }
     combat_resources.record_event(state, event_id, 'damage', data=result, reason=source_id)
     if requires_con and pc and not defer_injury:
@@ -1829,7 +1831,13 @@ def _process_managed_timing(state: GroupState, timing: str, target_id: str) -> l
         if effect.damage:
             def draw_effect_damage(expression: str = effect.damage) -> dict[str, Any]:
                 return asdict(dice.roll_expression(expression))
-            receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{identity}:damage', draw_effect_damage)
+            try:
+                receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{identity}:damage', draw_effect_damage)
+            except ValueError as exc:
+                results.append({'ok': False, 'effect_id': effect.id, 'error': f'無法解析效果傷害：{exc}'})
+                failed = True
+                state.combat.phase = 'NEEDS_RULING'
+                continue
             raw = max(0, receipt['total'])
         blocked = [(target, block) for target in targets
                    if (block := _major_wound_block_for(state, target, raw, damage_type=effect.damage_type, tags=effect.tags))]
