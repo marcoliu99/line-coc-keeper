@@ -1,8 +1,23 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from app import combat
+from app import combat, combat_resources, dice
 from app.models import Character, Combatant, EffectState, GroupState
+
+SCENARIO_SOURCE = {'url': 'https://example.test/reviewed-scenario', 'revision': 'v1', 'sha256': 'fixture'}
+
+
+def _reviewed_scenario_effect(state, *args, **kwargs):
+    """Rule-level fixtures explicitly approve exact scenario damage/timing.
+
+    Production declarations use combat_flow.declare_effect; these tests retain
+    the timing/armor algorithms with reviewed scenario evidence in EffectState.
+    """
+    result = combat.add_combat_effect(state, *args, **kwargs)
+    if result['ok']:
+        state.combat.effects[-1].save_or_check = {'severity_id': 'minor', 'rule_source': SCENARIO_SOURCE,
+                                                'stop_condition': 'Scenario incident completes'}
+    return result
 
 
 class CombatCardTests(unittest.TestCase):
@@ -75,7 +90,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertIn("legacy-user:u2", state.characters_by_id)
         self.assertIs(state.characters["u2"], state.characters_by_id["legacy-user:u2"])
         state.characters["u1"].hp = 2
-        self.assertEqual(state.characters_by_id["char-mark"].hp, 2)
+        self.assertEqual(combat_resources.effective_character(state, state.characters_by_id["char-mark"]).hp, 2)
         self.assertEqual(state.active_character_id_by_user["u2"], "legacy-user:u2")
 
     def test_start_combat_sorts_initiative_by_dex(self):
@@ -118,7 +133,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertNotIn("Song of Lost Dreams", plan["public_hint"])
         self.assertNotIn("POW", plan["public_hint"])
 
-    def test_resolve_enemy_action_consumes_usage(self):
+    def test_unsupported_enemy_action_requires_ruling_without_consuming_usage(self):
         state = self._state_with_pc()
         combat.start_combat(state)
         combat.add_npc(
@@ -140,10 +155,12 @@ class CombatCardTests(unittest.TestCase):
         result = combat.resolve_enemy_action(state, plan["plan_id"])
         second_plan = combat.plan_enemy_turn(state)
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(second_plan["selected_action"], "attack")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["phase"], "NEEDS_RULING")
+        self.assertEqual(second_plan["selected_action"], "special_ability")
+        self.assertEqual(state.combat.enemy_cards[plan["enemy_card_id"]].abilities[0].usage.get("used_total", 0), 0)
 
-    def test_resolve_enemy_attack_applies_authoritative_damage(self):
+    def test_resolve_enemy_attack_rejects_caller_supplied_damage(self):
         state = self._state_with_pc()
         combat.start_combat(state)
         combat.add_npc(state, "Attacker", 60, 14, attacks=[
@@ -156,9 +173,9 @@ class CombatCardTests(unittest.TestCase):
             state, plan["plan_id"], outcome={"hit": True, "damage": 4, "damage_type": "physical"}
         )
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["effect"]["hp_after"], 8)
-        self.assertEqual(next(c for c in state.combat.order if c.is_pc).hp, 8)
+        self.assertFalse(result["ok"])
+        self.assertEqual(combat_resources.effective_character(state, state.characters["u1"]).hp, 12)
+        self.assertEqual(next(c for c in state.combat.order if c.is_pc).hp, 12)
 
     def test_planned_attack_exposes_range_band_for_defense_gating(self):
         """combat_block's prompt decides melee (Dodge+Fight Back) vs. ranged
@@ -255,11 +272,11 @@ class CombatCardTests(unittest.TestCase):
         first = combat.resolve_enemy_action(state, plan["plan_id"])
         second = combat.resolve_enemy_action(state, plan["plan_id"])
 
-        self.assertTrue(first["ok"])
-        self.assertTrue(second["ok"])
-        self.assertTrue(second["already_resolved"])
-        self.assertEqual(card.abilities[0].usage["used_total"], 1)
-        self.assertEqual(card.abilities[0].usage["used_this_round"], 1)
+        self.assertFalse(first["ok"])
+        self.assertEqual(first, second)
+        self.assertEqual(first["phase"], "NEEDS_RULING")
+        self.assertEqual(card.abilities[0].usage.get("used_total", 0), 0)
+        self.assertEqual(card.abilities[0].usage.get("used_this_round", 0), 0)
 
     def test_armor_entry_with_an_unexpected_key_does_not_crash(self):
         """docs/specs/bug/bug-add-npc-to-combat-armor-schema-crash.md: a real
@@ -351,9 +368,10 @@ class CombatCardTests(unittest.TestCase):
 
         ability = state.combat.enemy_cards[first["enemy_card_id"]].abilities[0]
         self.assertEqual(first["plan_id"], second["plan_id"])
-        self.assertTrue(result["ok"])
-        self.assertTrue(duplicate_result["already_resolved"])
-        self.assertEqual(ability.usage["used_total"], 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result, duplicate_result)
+        self.assertEqual(result["phase"], "NEEDS_RULING")
+        self.assertEqual(ability.usage.get("used_total", 0), 0)
 
     def test_enemy_plan_cannot_resolve_outside_enemy_turn(self):
         state = self._state_with_pc()
@@ -376,7 +394,7 @@ class CombatCardTests(unittest.TestCase):
         result = combat.resolve_enemy_action(state, plan["plan_id"])
 
         self.assertFalse(result["ok"])
-        self.assertIn("目前不是這個敵人的回合", result["error"])
+        self.assertIn("not current", result["error"])
 
     def test_target_in_range_trigger_accepts_reverse_range_key(self):
         state = self._state_with_pc()
@@ -422,7 +440,7 @@ class CombatCardTests(unittest.TestCase):
 
         self.assertIn("_trigger:round_start:round-call", card.status_tags)
 
-    def test_successful_ability_materializes_declared_effect(self):
+    def test_caller_supplied_ability_outcome_cannot_materialize_effect(self):
         state = self._state_with_pc()
         combat.start_combat(state)
         combat.add_npc(
@@ -452,10 +470,9 @@ class CombatCardTests(unittest.TestCase):
         plan = combat.plan_enemy_turn(state)
         result = combat.resolve_enemy_action(state, plan["plan_id"], outcome={"success": True})
 
-        self.assertTrue(result["ok"])
-        self.assertTrue(result["effect"]["applied"])
-        self.assertEqual(state.combat.effects[0].id, "lost-dreams-trance")
-        self.assertEqual(state.combat.effects[0].target_id, "pc:char-mark")
+        self.assertFalse(result["ok"])
+        self.assertEqual(state.combat.effects, [])
+        self.assertEqual(state.combat.enemy_cards[plan["enemy_card_id"]].abilities[0].usage.get("used_total", 0), 0)
 
     def test_ability_effect_requires_outcome_before_consuming_usage(self):
         state = self._state_with_pc()
@@ -488,7 +505,7 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
         combat.add_npc(state, "Burning Thing", 60, 10)
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Burning Thing")
-        combat.add_combat_effect(
+        _reviewed_scenario_effect(
             state,
             "Burning Thing",
             "Burning",
@@ -513,7 +530,7 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
         combat.add_npc(state, "Burning Thing", 60, 1)
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Burning Thing")
-        combat.add_combat_effect(
+        _reviewed_scenario_effect(
             state, "Burning Thing", "Fatal fire", timing="turn_start", damage="1", remaining_rounds=1
         )
 
@@ -542,7 +559,9 @@ class CombatCardTests(unittest.TestCase):
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
         first = combat.plan_enemy_turn(state)
-        combat.resolve_enemy_action(state, first["plan_id"])
+        card = state.combat.enemy_cards[first["enemy_card_id"]]
+        card.abilities[0].usage["used_this_round"] = 1
+        card.abilities[0].current_cooldown = 1
         same_round = combat.plan_enemy_turn(state)
 
         self.assertEqual(same_round["selected_action"], "attack")
@@ -627,7 +646,8 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(before_damage["selected_action"], "attack")
         self.assertEqual(after_damage["selected_action"], "special_ability")
         self.assertEqual(after_damage["selected_id"], "retaliate")
-        self.assertEqual(after_resolve["selected_action"], "attack")
+        self.assertEqual(after_resolve["selected_action"], "special_ability")
+        self.assertEqual(state.combat.phase, "NEEDS_RULING")
 
     def test_target_in_range_trigger_uses_abstract_range_band(self):
         state = self._state_with_pc()
@@ -758,21 +778,17 @@ class CombatCardTests(unittest.TestCase):
         with patch.object(
             combat.dice,
             "skill_check",
-            return_value=MagicMock(roll=42, tier="regular", success=True),
+            return_value=dice.SkillCheckResult(50, 42, 0, 0, "regular", True),
         ) as check_mock:
             result = combat.apply_combat_damage(state, "Mark", 6)
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_triggered"])
-        self.assertEqual(result["major_wound_check"], {
-            "skill": "CON",
-            "skill_value": 50,
-            "roll": 42,
-            "tier": "regular",
-            "success": True,
-        })
+        self.assertFalse(result["major_wound_check"]["pending"])
+        self.assertEqual(result["major_wound_check"]["roll"], 42)
+        self.assertTrue(result["major_wound_check"]["success"])
         self.assertEqual(state.pending_checks, {})
-        check_mock.assert_called_once_with(50)
+        check_mock.assert_called_once_with(50, penalty_dice=0, required_tier="regular")
 
     def test_apply_combat_damage_resolves_wound_without_clobbering_choice(self):
         """A pending choice must survive unrelated damage; the CON roll is
@@ -785,7 +801,7 @@ class CombatCardTests(unittest.TestCase):
         with patch.object(
             combat.dice,
             "skill_check",
-            return_value=MagicMock(roll=99, tier="fail", success=False),
+            return_value=dice.SkillCheckResult(50, 99, 0, 0, "fail", False),
         ):
             result = combat.apply_combat_damage(state, "Mark", 6)
 
@@ -793,8 +809,8 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(result["major_wound_triggered"])
         self.assertFalse(result["major_wound_check"]["success"])
         self.assertEqual(state.pending_checks["u1"], {"type": "sanity", "skill_value": 40})
-        self.assertIn("昏迷", state.characters["u1"].status_tags)
-        self.assertIn("倒地", state.characters["u1"].status_tags)
+        self.assertIn("昏迷", combat_resources.effective_character(state, state.characters["u1"]).status_tags)
+        self.assertIn("倒地", combat_resources.effective_character(state, state.characters["u1"]).status_tags)
 
     def test_apply_combat_damage_defaults_to_player_major_wound_roll(self):
         state = self._state_with_pc()
@@ -813,7 +829,7 @@ class CombatCardTests(unittest.TestCase):
         state = self._state_with_pc()
         combat.start_combat(state)
 
-        added = combat.add_combat_effect(
+        added = _reviewed_scenario_effect(
             state,
             "Mark",
             "Burning Curtains",
@@ -824,6 +840,9 @@ class CombatCardTests(unittest.TestCase):
             tags=["fire"],
             source_id="scene:curtains",
         )
+        for effect in state.combat.effects:
+            effect.save_or_check = {'severity_id': 'minor', 'rule_source': SCENARIO_SOURCE,
+                                    'stop_condition': 'Scenario incident completes'}
         results = combat.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
 
         self.assertTrue(added["ok"])
@@ -834,16 +853,16 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(results[0]["raw_damage"], 1)
         self.assertEqual(results[0]["damage_type"], "fire")
         self.assertEqual(state.combat.order[0].hp, 11)
-        self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
+        self.assertEqual(combat_resources.effective_character(state, state.characters_by_id["char-mark"]).hp, 11)
         self.assertEqual(state.combat.effects, [])
 
     def test_environment_and_all_combat_effects_are_supported(self):
         state = self._state_with_two_pcs()
         combat.start_combat(state)
-        environment = combat.add_combat_effect(
+        environment = _reviewed_scenario_effect(
             state, "environment", "Smoke", timing="round_start", tags=["smoke"]
         )
-        all_damage = combat.add_combat_effect(
+        all_damage = _reviewed_scenario_effect(
             state, "all", "Fire", timing="round_start", damage="1", damage_type="fire"
         )
 
@@ -858,7 +877,7 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
         combat.add_npc(state, "Fast Enemy", 80, 10)
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Fast Enemy")
-        combat.add_combat_effect(
+        _reviewed_scenario_effect(
             state,
             "Mark",
             "Burning",
@@ -874,7 +893,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["current_turn"], "Mark")
         self.assertEqual(state.combat.order[state.combat.current_index].hp, 11)
-        self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
+        self.assertEqual(combat_resources.effective_character(state, state.characters_by_id["char-mark"]).hp, 11)
         self.assertEqual(state.combat.effects, [])
 
     def test_round_end_effect_triggers_before_new_round(self):
@@ -884,7 +903,7 @@ class CombatCardTests(unittest.TestCase):
         # Advance from the last initiative slot so this transition crosses
         # the round boundary and exercises round_end before round_start.
         state.combat.current_index = len(state.combat.order) - 1
-        combat.add_combat_effect(
+        _reviewed_scenario_effect(
             state,
             "Mark",
             "Round-end fire",
@@ -899,7 +918,7 @@ class CombatCardTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(state.combat.round_number, 2)
-        self.assertEqual(state.characters_by_id["char-mark"].hp, 11)
+        self.assertEqual(combat_resources.effective_character(state, state.characters_by_id["char-mark"]).hp, 11)
         self.assertEqual(state.combat.effects, [])
 
     def test_round_end_effect_does_not_trigger_before_round_boundary(self):
@@ -907,7 +926,7 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
         combat.add_npc(state, "Fast Enemy", 80, 10)
         state.combat.current_index = 0
-        combat.add_combat_effect(
+        _reviewed_scenario_effect(
             state,
             "Mark",
             "Round-end fire",
@@ -920,7 +939,7 @@ class CombatCardTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(state.combat.round_number, 1)
-        self.assertEqual(state.characters_by_id["char-mark"].hp, 12)
+        self.assertEqual(combat_resources.effective_character(state, state.characters_by_id["char-mark"]).hp, 12)
         self.assertEqual(state.combat.effects[0].remaining_rounds, 2)
 
     def test_invalid_effect_damage_reports_error_without_consuming_duration(self):
@@ -935,6 +954,9 @@ class CombatCardTests(unittest.TestCase):
             damage="1d1",
         ))
 
+        for effect in state.combat.effects:
+            effect.save_or_check = {'severity_id': 'minor', 'rule_source': SCENARIO_SOURCE,
+                                    'stop_condition': 'Scenario incident completes'}
         results = combat.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
 
         self.assertEqual(state.combat.order[0].hp, 12)
@@ -957,6 +979,8 @@ class CombatCardTests(unittest.TestCase):
             damage="1d1",
         ))
 
+        state.combat.effects[0].save_or_check = {'severity_id': 'minor', 'rule_source': SCENARIO_SOURCE,
+                                                'stop_condition': 'Scenario incident completes'}
         first = combat.process_timing(state, "turn_start", target_id)
         state.combat.effects[0].damage = "1"
         second = combat.process_timing(state, "turn_start", target_id)
@@ -1016,7 +1040,8 @@ class CombatCardTests(unittest.TestCase):
         combat.apply_combat_damage(state, "pc:char-2", 3)
 
         self.assertEqual(first.hp, 10)
-        self.assertEqual(second.hp, 7)
+        self.assertEqual(second.hp, 10)
+        self.assertEqual(combat_resources.effective_character(state, second).hp, 7)
 
     def test_switch_active_character_updates_legacy_and_id_views(self):
         state = GroupState("g")
@@ -1124,7 +1149,7 @@ class FindCombatantTests(unittest.TestCase):
         combat.add_npc(state, "深潛者", 50, 10)
         combat.add_npc(state, "深潛者頭目", 60, 30)
 
-        found = combat._find_combatant(state, "深潛者頭目")
+        found = combat.find_combatant(state, "深潛者頭目")
 
         self.assertIsNotNone(found)
         self.assertEqual(found.name, "深潛者頭目")
@@ -1137,14 +1162,14 @@ class FindCombatantTests(unittest.TestCase):
 
         # "Cult" substring-matches both — neither an exact match, so this
         # must not silently pick whichever happens to be first in order.
-        self.assertIsNone(combat._find_combatant(state, "Cult"))
+        self.assertIsNone(combat.find_combatant(state, "Cult"))
 
     def test_unambiguous_substring_match_still_resolves(self):
         state = self._state_with_pc()
         combat.start_combat(state)
         combat.add_npc(state, "Cultist Leader", 60, 30)
 
-        found = combat._find_combatant(state, "Cultist")
+        found = combat.find_combatant(state, "Cultist")
 
         self.assertIsNotNone(found)
         self.assertEqual(found.name, "Cultist Leader")
