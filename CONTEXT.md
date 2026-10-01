@@ -101,3 +101,13 @@ _Avoid_: deleting combat history
 
 **Postcombat obligation（戰鬥後待履行事項）**:
 An ongoing injury check or effect consequence that remains due after a battle's resources have been settled. Ending initiative combat does not cancel it.
+
+### Scenario versions
+
+**Scenario version（劇本版本）**:
+A particular complete published source for a logical scenario, including its text, images, maps and source-backed character/NPC evidence. Publishing another version does not change a game's selected version.
+_Avoid_: latest scenario as current authority
+
+**Selected scenario version（選用劇本版本）**:
+The scenario version explicitly chosen as a game's source. A new publication becomes its source only through an explicit version change.
+_Avoid_: automatically current latest version

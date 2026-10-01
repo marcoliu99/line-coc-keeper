@@ -1515,6 +1515,15 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
+    },
+    {
+      "title": "Postmerge ingestion and combat integrity remediation",
+      "zh": "合併後匯入與戰鬥完整性修復",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/bug/postmerge_ingestion_combat_integrity_design_spec.md",
+      "zh_path": "docs/specs/bug/postmerge_ingestion_combat_integrity_design_spec_zh.md"
     }
   ]
 }
