@@ -296,3 +296,65 @@ def test_group_mechanical_clock_survives_state_serialization_and_new_battle():
     restarted = GroupState.from_dict(state.to_dict())
     assert restarted.mechanical_round == 17
     assert restarted.combat.combat_id == 'battle:1'
+
+
+@pytest.mark.parametrize(('original_damage', 'corrected_damage', 'injury'), [
+    (10, 2, {'dead': True}),
+    (2, 10, {}),
+])
+def test_corrected_hp_cannot_publish_stale_injury_in_either_direction(original_damage, corrected_damage, injury):
+    state, character = battle()
+    combat_resources.adjust_resource(state, character, 'hp', -original_damage, event_id='hit')
+    combat_resources.set_injury(state, character, injury, event_id='injury-result')
+    combat_resources.set_status_tag(state, character, 'dead', bool(injury.get('dead')), event_id='status-result')
+    combat_resources.correct_event(state, 'hit', event_id='correction', changes={'amount': -corrected_damage},
+                                   reason='source-backed corrected damage')
+    assert combat_resources.effective_character(state, character).hp == 10 - corrected_damage
+    assert state.combat.phase == 'NEEDS_RULING'
+    assert state.combat.interaction['requires_injury_reconciliation']
+    assert state.combat.interaction['character_id'] == 'char:ada'
+    with pytest.raises(combat_resources.CombatAdmissionError):
+        combat_resources.get_settlement(state)
+    assert state.combat.events[0]['data']['amount'] == -original_damage
+    assert character.hp == 10
+
+
+def test_corrected_fatal_damage_without_prior_injury_event_still_requires_rule_reconciliation():
+    state, character = battle()
+    combat_resources.adjust_resource(state, character, 'hp', -2, event_id='hit')
+    combat_resources.correct_event(state, 'hit', event_id='fatal-correction', changes={'amount': -10},
+                                   reason='verified actual damage')
+    assert state.combat.phase == 'NEEDS_RULING'
+    with pytest.raises(combat_resources.CombatAdmissionError):
+        combat_resources.get_settlement(state)
+
+
+def test_rollback_invalidates_only_controls_owned_by_current_battle():
+    state, _ = battle()
+    state.pending_checks['player'] = {'check_id': 'old-dying', 'postcombat_context': {
+        'obligation_id': 'old:dying', 'round': 7}}
+    state.pending_luck_decisions['player'] = {'decision_id': 'battle-luck', 'combat_context': {'combat_id': 'battle:1'}}
+    receipt = combat_resources.rollback_combat(state, event_id='rollback', reason='cancel current battle')
+    assert state.pending_checks['player']['check_id'] == 'old-dying'
+    assert 'player' not in state.pending_luck_decisions
+    assert receipt['pending_luck_decisions']['player']['decision_id'] == 'battle-luck'
+    assert 'pending_checks' not in receipt
+    restored = GroupState.from_dict(state.to_dict())
+    assert restored.pending_checks['player']['postcombat_context']['obligation_id'] == 'old:dying'
+
+
+def test_rollback_preserves_unrelated_or_different_battle_controls_for_same_owner():
+    state, _ = battle()
+    state.pending_checks['player'] = {'check_id': 'unrelated-skill'}
+    state.pending_luck_decisions['player'] = {'decision_id': 'old-luck', 'combat_context': {'combat_id': 'battle:old'}}
+    combat_resources.rollback_combat(state, event_id='rollback', reason='cancel current battle')
+    assert state.pending_checks['player']['check_id'] == 'unrelated-skill'
+    assert state.pending_luck_decisions['player']['decision_id'] == 'old-luck'
+
+
+def test_rollback_cannot_erase_a_prior_obligation_control_even_if_it_also_has_combat_context():
+    state, _ = battle()
+    state.pending_checks['player'] = {'check_id': 'old-dying', 'combat_context': {'combat_id': 'battle:1'},
+                                      'postcombat_context': {'obligation_id': 'old:dying', 'round': 7}}
+    combat_resources.rollback_combat(state, event_id='rollback', reason='cancel current battle')
+    assert state.pending_checks['player']['check_id'] == 'old-dying'
