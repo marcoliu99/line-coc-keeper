@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app import combat
+from app.keeper_tools import managed_combat, resource_bridge
 from app.models import ArmorRule, AttackRule, GroupState, SpecialAbility
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     state = call.state
     tool_input = call.input
     npc_name = tool_input["name"]
-    requested_hp = int(tool_input.get("hp", 10))
+    requested_hp = int(tool_input["hp"])
 
     def mutate(target_state: GroupState) -> Any:
         hp = requested_hp
@@ -47,12 +48,13 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
         added = combat.add_combatant(
             target_state,
             npc_name,
-            int(tool_input.get("dex", 50)),
+            int(tool_input["dex"]),
             hp,
             is_ally=bool(tool_input.get("is_ally", False)),
             armor=tool_input.get("armor"),
             attacks=tool_input.get("attacks"),
             abilities=tool_input.get("abilities"),
+            source=tool_input.get("source"),
         )
         if added.reused:
             return keeper.ToolStateMutation(
@@ -65,7 +67,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
             new = added.combatant
             index_note += (
                 f"（{combat.defeated_namesake_notice(added)}"
-                f"如果這其實是同一隻，請用 damage_combatant 把「{new.display_name}」的 HP 歸零，"
+                f"如果這其實是同一隻，請明確更正「{new.display_name}」的建立紀錄，"
                 "並依原本倒下的狀態敘事。）"
             )
         return keeper.ToolStateMutation(index_note, should_save=True)
@@ -95,8 +97,8 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                 requested_name = entry["name"].strip()
                 if not requested_name:
                     raise ValueError("enemy name is empty")
-                hp = int(entry.get("hp", 10))
-                dex = int(entry.get("dex", 50))
+                hp = int(entry["hp"])
+                dex = int(entry["dex"])
                 for field, rule_type in (
                     ("armor", ArmorRule), ("attacks", AttackRule), ("abilities", SpecialAbility),
                 ):
@@ -118,6 +120,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                     target_state, requested_name, dex, hp,
                     is_ally=bool(entry.get("is_ally", False)),
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
+                    source=entry.get("source"),
                     force_new_instance=(
                         matching is not None and matching.combatant_id in seen_batch_ids
                     ),
@@ -153,7 +156,7 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
 
     keeper.refresh_tool_state(call.state)
     response = {
-        "ok": True,
+        "ok": True, "provisional": resource_bridge.managed(call.state),
         "status": combat.status_text(
             call.state, include_private=(call.speaker_role == "kp_assistant")
         ),
@@ -170,6 +173,10 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
     from app import keeper
 
     def mutate(target_state: GroupState) -> Any:
+        if resource_bridge.managed(target_state):
+            from app import combat_flow
+            return combat_flow.advance_combat(target_state, actor_id=call.input.get('actor_id', ''),
+                                               event_id=resource_bridge.mutation_id(call.name, call.input))
         return keeper.skip_save_if_blocked(combat.advance_turn(target_state))
 
     return keeper.mutate_tool_state(call.state, mutate)
@@ -181,6 +188,8 @@ def damage_combatant(call: ToolCall) -> dict[str, Any]:
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
+        if target_state.combat.active:
+            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
         return keeper.skip_save_if_blocked(
             combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
         )
@@ -206,6 +215,8 @@ def resolve_enemy_action(call: ToolCall) -> dict[str, Any]:
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
+        if target_state.combat.active:
+            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
         return keeper.skip_save_if_blocked(combat.resolve_enemy_action(
             target_state,
             tool_input["plan_id"],
@@ -221,6 +232,8 @@ def apply_combat_damage(call: ToolCall) -> dict[str, Any]:
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
+        if target_state.combat.active:
+            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
         return keeper.skip_save_if_blocked(combat.apply_combat_damage(
             target_state,
             tool_input["target"],
@@ -240,6 +253,8 @@ def apply_final_combat_damage(call: ToolCall) -> dict[str, Any]:
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
+        if target_state.combat.active:
+            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
         return keeper.skip_save_if_blocked(combat.apply_final_combat_damage(
             target_state,
             tool_input["target"],
@@ -258,7 +273,9 @@ def add_combat_effect(call: ToolCall) -> dict[str, Any]:
 
     tool_input = call.input
 
-    def mutate(target_state: GroupState) -> dict[str, Any]:
+    def mutate(target_state: GroupState) -> Any:
+        if target_state.combat.active:
+            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
         return combat.add_combat_effect(
             target_state,
             tool_input["target"],
@@ -276,10 +293,6 @@ def add_combat_effect(call: ToolCall) -> dict[str, Any]:
 
 
 def end_combat(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
-
-    def mutate(target_state: GroupState) -> None:
-        combat.end_combat(target_state)
-
-    keeper.mutate_tool_state(call.state, mutate)
-    return {"ok": True}
+    if resource_bridge.managed(call.state):
+        return managed_combat.preview_combat_settlement(call)
+    return {"ok": False, "error": "Legacy battle requires explicit controller admission/closure; end cannot discard pending evidence"}

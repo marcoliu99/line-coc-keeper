@@ -11,6 +11,7 @@ from app.keeper_tools import combat as combat_handlers
 from app.keeper_tools import consequences as consequence_handlers
 from app.keeper_tools import dice as dice_handlers
 from app.keeper_tools import inventory as inventory_handlers
+from app.keeper_tools import managed_combat as managed_handlers
 from app.keeper_tools import messaging as messaging_handlers
 from app.keeper_tools import scenario as scenario_handlers
 from app.models import GroupState
@@ -94,7 +95,7 @@ class ToolSpec:
     followup_only: bool = False
 
 
-_SPECS = (
+_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         schema={
                 "name": "roll_dice",
@@ -446,7 +447,7 @@ _SPECS = (
                 "name": "adjust_character",
                 "description": (
                     "調整角色的 HP、MP、SAN 或 LUCK 數值（例如受傷扣血、花費幸運點、恢復精神力）。"
-                    "field 只能是 hp/mp/san/luck，delta 為正負整數變化量。"
+                    "field 只能是 hp/mp/san/luck，delta 為正負整數變化量。戰鬥中須填 event_id 與來源 reason；攻擊應使用 declare_combat_action，不可自行猜傷害。"
                     "COC7e 規則：如果這次扣血（field=hp、delta 為負）單次傷害達到角色最大 HP 的一半以上，"
                     "預設會替玩家註冊一次 CON 檢定，等玩家輸入 /coc check CON；只有 /coc autoroll on 才立即"
                     "代擲並回傳結果。不要自行判斷重傷檢定結果。"
@@ -725,7 +726,7 @@ _SPECS = (
                     "type": "object",
                     "properties": {
                         "name": {"type": "string"},
-                        "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；劇本沒寫明可抓 40-60 的一般值"},
+                        "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；必須來自已核對來源或明確裁定，缺少時暫停。"},
                         "hp": {"type": "integer", "description": "最大生命值"},
                         "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
                         "armor": {
@@ -782,7 +783,7 @@ _SPECS = (
                                 "type": "object",
                                 "properties": {
                                     "name": {"type": "string"},
-                                    "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；劇本沒寫明可抓 40-60 的一般值"},
+                                    "dex": {"type": "integer", "description": "DEX 值，決定先攻順序；必須來自已核對來源或明確裁定，缺少時暫停。"},
                                     "hp": {"type": "integer", "description": "最大生命值"},
                                     "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
                                     "armor": {
@@ -1000,7 +1001,7 @@ _SPECS = (
     ToolSpec(
         schema={
                 "name": "end_combat",
-                "description": "結束目前的戰鬥，清除戰鬥狀態（先攻順位、回合數）。戰鬥明確分出勝負或雙方脫離後呼叫。",
+                "description": "取得目前戰鬥結算預覽；另用 confirm_combat_settlement 明確確認。不能清除尚未處理的檢定或未來義務。",
                 "input_schema": {"type": "object", "properties": {}},
             },
         handler=combat_handlers.end_combat,
@@ -1174,6 +1175,51 @@ _SPECS = (
         opening=True,
     ),
 )
+
+_SPECS += (
+    ToolSpec(schema={'name': 'declare_combat_action', 'description': '宣告來源支持的近戰或單發攻擊；系統使用固定武器表與既有角色數值。不得傳入命中、傷害或骰值。', 'input_schema': {'type': 'object', 'properties': {'action_id': {'type': 'string'}, 'actor_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'weapon_reference': {'type': 'string'}, 'action_kind': {'type': 'string', 'enum': ['melee', 'single_shot']}, 'distance_yards': {'type': 'number', 'minimum': 0}}, 'required': ['action_id', 'actor_id', 'target_id', 'weapon_reference']}}, handler=managed_handlers.declare_combat_action, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'run_combat_action', 'description': '恢復既有戰鬥行動；沿用原擲骰紀錄與玩家選擇。', 'input_schema': {'type': 'object', 'properties': {'action_id': {'type': 'string'}}, 'required': ['action_id']}}, handler=managed_handlers.run_combat_action, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'submit_combat_choice', 'description': '提交目前玩家所屬防禦選擇；不得替其他玩家選擇。', 'input_schema': {'type': 'object', 'properties': {'interaction_id': {'type': 'string'}, 'choice': {'type': 'string', 'enum': ['dodge', 'counter', 'dive', 'no_defense']}}, 'required': ['interaction_id', 'choice']}}, handler=managed_handlers.submit_combat_choice, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'preview_combat_settlement', 'description': '取得暫定資源差異與結算ID；待處理檢定/Luck/當前醫療後果未完成時不能結算。', 'input_schema': {'type': 'object', 'properties': {}, 'required': []}}, handler=managed_handlers.preview_combat_settlement, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'confirm_combat_settlement', 'description': 'Keeper 明確確認目前結算預覽，原子發布資源並轉移未來事項；不需要真人KP註冊。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'settlement_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id', 'settlement_id', 'reason']}}, handler=managed_handlers.confirm_combat_settlement, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'rollback_combat', 'description': 'Keeper 明確回滾未结算戰鬥並保留紀錄；普通玩家命令不能直接呼叫。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id', 'event_id', 'reason']}}, handler=managed_handlers.rollback_combat, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'correct_combat_event', 'description': 'Keeper 明確附加更正紀錄；保留原骰，後續無法成立則暫停裁定。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'target_event_id': {'type': 'string'}, 'changes': {'type': 'object', 'properties': {'after': {}, 'amount': {'type': 'integer'}, 'delta': {'type': 'integer'}}}}, 'required': ['combat_id', 'event_id', 'reason', 'target_event_id', 'changes']}}, handler=managed_handlers.correct_combat_event, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'reconcile_combat_baseline', 'description': '外部持久角色變更衝突時，Keeper 明確選擇保留暫定值或採用持久值；產生新預覽。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'investigator': {'type': 'string'}, 'decision': {'type': 'string', 'enum': ['keep_working', 'adopt_persistent']}}, 'required': ['combat_id', 'event_id', 'reason', 'investigator', 'decision']}}, handler=managed_handlers.reconcile_combat_baseline, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'change_combat_initiative', 'description': 'Keeper 只在已完成行動邊界調整先攻，待處理選擇/檢定/Luck時禁止。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'order': {'type': 'array', 'items': {'type': 'string'}}}, 'required': ['combat_id', 'event_id', 'reason', 'order']}}, handler=managed_handlers.change_combat_initiative, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'process_postcombat_obligations', 'description': '明確推進邏輯遊戲回合，處理戰鬥後醫療/效果事項；沿用紀錄，不受現實時間觸發。', 'input_schema': {'type': 'object', 'properties': {'logical_round': {'type': 'integer', 'minimum': 0}, 'event_id': {'type': 'string'}}, 'required': ['logical_round', 'event_id']}}, handler=managed_handlers.process_postcombat_obligations, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'get_damage_severity', 'description': '只查詢明確來源/裁定的severity ID與固定骰式；火/毒/溺水等敘述不能推斷類別。', 'input_schema': {'type': 'object', 'properties': {'severity_id': {'type': 'string', 'enum': ['minor', 'moderate', 'severe', 'deadly', 'terminal', 'splat']}}, 'required': ['severity_id']}}, handler=managed_handlers.get_damage_severity, read_only=True, bounded_query=True, information_query=True, kp_assistant=True),
+)
+
+_SPECS += (
+    ToolSpec(schema={'name': 'declare_combat_effect', 'description': 'Keeper 明確指定來源/裁定的傷害severity及範圍、觸發、停止條件；特殊規則未支持時暫停。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'severity_id': {'type': 'string', 'enum': ['minor','moderate','severe','deadly','terminal','splat']}, 'scope': {'type': 'string','enum': ['incident','round']}, 'timing': {'type': 'string','enum': ['round_end']}, 'special_rule': {'type': 'string'}, 'stop_condition': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','target_id','severity_id','stop_condition','reason']}}, handler=managed_handlers.declare_combat_effect, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'stop_combat_effect', 'description': 'Keeper 根據明確停止條件結束效果；保留原紀錄。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','event_id','reason']}}, handler=managed_handlers.stop_combat_effect, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'close_legacy_combat', 'description': 'Keeper 明確關閉沒有安全基準的舊版戰鬥；保留歷史與待處理證據，不猜測戰前值。', 'input_schema': {'type': 'object','properties': {'event_id': {'type': 'string'},'reason': {'type': 'string'}},'required': ['event_id','reason']}}, handler=managed_handlers.close_legacy_combat, invalidates_combat_status=True),
+)
+
+
+_SPECS += (
+    ToolSpec(schema={'name': 'resolve_combat_ruling', 'description': 'Keeper 明確裁定暫停的行動：指定已核對的武器ID或物理距離後恢復，或明確取消；不接受任意命中、傷害或骰值。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'action_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'decision': {'type': 'string', 'enum': ['resume','cancel']}, 'weapon_reference': {'type': 'string'}, 'distance_yards': {'type': 'number','minimum': 0}}, 'required': ['combat_id','action_id','event_id','reason','decision']}}, handler=managed_handlers.resolve_combat_ruling, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'reconcile_combat_correction', 'description': 'Keeper 明確核對更正後的傷害/重傷狀態與受影響行動；保留原骰與原選擇，不默默丟棄。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'injury_by_character': {'type': 'object', 'additionalProperties': {'type': 'object','properties': {'major_wound': {'type': 'boolean'},'unconscious': {'type': 'boolean'},'dying': {'type': 'boolean'},'dead': {'type': 'boolean'}}, 'additionalProperties': False}}, 'acknowledge_action_ids': {'type': 'array','items': {'type': 'string'}}}, 'required': ['combat_id','event_id','reason','injury_by_character','acknowledge_action_ids']}}, handler=managed_handlers.reconcile_combat_correction, invalidates_combat_status=True),
+)
+
+for _spec in _SPECS:
+    if _spec.schema['name'] in {'add_npc_to_combat', 'initialize_combat'}:
+        _source_schema = {'type': 'object', 'properties': {
+            'url': {'type': 'string'}, 'revision': {'type': 'string'}, 'sha256': {'type': 'string'},
+            'attack_mode': {'type': 'string', 'enum': ['melee', 'single_shot']},
+            'extreme_rule': {'type': 'string', 'enum': ['maximum', 'impale']},
+        }, 'required': ['url', 'revision', 'sha256', 'attack_mode', 'extreme_rule']}
+        _properties = _spec.schema['input_schema']['properties']
+        if _spec.schema['name'] == 'initialize_combat':
+            _properties = _properties['enemies']['items']['properties']
+        _properties['source'] = _source_schema
+    if _spec.schema['name'] == 'advance_combat_turn':
+        _spec.schema['input_schema']['properties'].update({'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'}})
+    if _spec.schema['name'] in {'adjust_character', 'adjust_ammo', 'add_status_tag', 'remove_status_tag'}:
+        _spec.schema['input_schema']['properties'].update({
+            'event_id': {'type': 'string', 'description': '穩定操作識別；重試沿用，相同數值的新操作須用新ID'},
+            'reason': {'type': 'string', 'description': '明確的來源與調整原因'},
+        })
 
 REGISTRY: dict[str, ToolSpec] = {spec.schema["name"]: spec for spec in _SPECS}
 if len(REGISTRY) != len(_SPECS):

@@ -24,6 +24,7 @@ from app import (
     async_utils,
     check_lifecycle,
     combat,
+    combat_resources,
     db,
     dice,
     keeper_prompt_policy,
@@ -45,6 +46,7 @@ from app.config import (
     SCENE_DIGEST_TURN_INTERVAL,
 )
 from app.keeper_tools import registry as tool_registry
+from app.keeper_tools import resource_bridge
 from app.keeper_tools.registry import ToolCall
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers.registry import conversation_provider
@@ -426,9 +428,27 @@ refresh_tool_state = _refresh_state_snapshot
 
 def apply_character_delta_in_state(
     target_state: GroupState, target_char: Character, field_name: str, delta: int,
-    cur_attr: str, max_attr: str | None, *, entry_point: str,
+    cur_attr: str, max_attr: str | None, *, entry_point: str, event_id: str = "", reason: str = "",
 ) -> tuple[int, bool, dict[str, Any] | None, dict[str, Any] | None]:
     """Shared attribute and major-wound rule within a caller-owned transaction."""
+    if target_state.combat.active:
+        if not resource_bridge.participating(target_state, target_char):
+            raise ValueError('Active combat requires admitted character resource evidence')
+        identity = event_id or resource_bridge.mutation_id(entry_point, {
+            'investigator': target_char.character_id, 'field': field_name, 'delta': delta,
+        })
+        if field_name == 'hp' and delta < 0:
+            damage_result = combat.managed_single_hit(target_state, target_char, -delta,
+                                                     event_id=identity, reason=reason or entry_point)
+            if not damage_result.get('ok'):
+                return resource_bridge.effective(target_state, target_char).hp, False, None, damage_result
+            effective = resource_bridge.effective(target_state, target_char)
+            return effective.hp, bool(damage_result.get('major_wound_triggered')), damage_result.get('major_wound_check'), None
+        receipt = combat_resources.adjust_resource(
+            target_state, target_char, cast(combat_resources.ResourceField, field_name), delta,
+            event_id=identity, reason=reason or entry_point,
+        )
+        return receipt['after'], False, None, None
     target_cap = getattr(target_char, max_attr) if max_attr else 999
     new_val = max(0, min(target_cap, getattr(target_char, cur_attr) + delta))
     is_major_wound = (
@@ -491,6 +511,7 @@ def apply_character_attribute_delta(
         result = apply_character_delta_in_state(
             target_state, target_char, field_name, int(tool_input["delta"]),
             cur_attr, max_attr, entry_point="adjust_character",
+            event_id=str(tool_input.get("event_id") or ""), reason=str(tool_input.get("reason") or ""),
         )
         return _StateMutation(result, should_save=result[3] is None)
 
@@ -533,6 +554,16 @@ def _persist_resolved_check_event(state: GroupState, event_seed: dict[str, Any])
             for field, before in event_seed["state_before"].items()
             if before != after[field]
         ]
+        if resource_bridge.participating(latest, char):
+            event['provisional'] = True
+            event['combat_id'] = latest.combat.combat_id
+            effective_after = _character_attribute_snapshot(resource_bridge.effective(latest, char))
+            event['provisional_state_effects'] = [
+                {'field': _CHECK_EVENT_ATTRIBUTE_NAMES[field], 'before': before,
+                 'after': effective_after[field], 'delta': effective_after[field] - before}
+                for field, before in event_seed['state_before'].items() if before != effective_after[field]
+            ]
+            event['state_effects'] = []
         event["resolved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         latest.resolved_check_events.append(event)
         del latest.resolved_check_events[:-20]
@@ -1294,6 +1325,7 @@ Current committed state and tool results override scenario evidence for already 
 - A scenario condition or resolved canonical event starts a dangerous fight. If two or more already-active enemies are supported by the scenario, use `initialize_combat` once with all of them before final narration or turn handoff. For one active enemy, call `start_combat` (no arguments), then `add_npc_to_combat` in the same tool sequence. Suspicion, fear, a failed check, or a harmless scuffle does not establish combat. Starting combat alone does not register enemies.
 - A scenario-backed enemy activates later under its written trigger -> `add_npc_to_combat`. A dormant enemy does not activate merely because it is present; preserve the scenario's threat/touch/attack trigger. Check the scenario first and pass its armor, attacks, special abilities, usage limits, and triggers in `armor`/`attacks`/`abilities` for either registration tool; HP alone is insufficient. Each simultaneously active instance of one enemy type needs a distinct display name (for example, 「魚人（左）」 and 「魚人（右）」); do not rely on fallback numbering.
 - If the scenario has a dormant enemy that wakes/rises only when threatened/touched/attacked, the first narration dealing damage or defeat MUST show that wake/rise moment — never jump straight from "motionless" to "collapsed, no longer moving" (players can't tell those apart).
+- Managed combat uses declare_combat_action/run_combat_action and their owned player controls. Never roll separate attack/damage dice, send guessed damage/hit values, or clear an owned combat wait. HP/Luck/SAN/MP/ammo/status changes remain provisional until preview_combat_settlement then confirm_combat_settlement. The bot Keeper may confirm or explicitly rollback with a reason; no human KP Assistant registration is required. Pending checks/Luck and due injury/effect obligations still block. Never describe provisional combat resources as committed canonical world facts; a rollback cancels their provisional consequences but keeps roll history. Use get_damage_severity only with an explicit source-backed severity ID, never infer severity from environmental prose.
 - If a player later says the enemy should have reacted, query `get_combat_status`: after `end_combat`, its `last_ended_combat` receipt preserves the final combatants and last applied damage. Check `get_character_sheet` only for investigator state, never as evidence about a defeated enemy. If the authoritative receipt confirms the attack, narrate only the missing wake/rise beat; do not re-call start_combat/add_npc_to_combat/damage tools to resolve the same attack twice. If no authoritative receipt exists, do not replay the attack to manufacture evidence; use the OOC `/coc correct` process.
 - An NPC attacks an investigator -> `offer_npc_attack_defense_choice`; use the correct `is_ranged` mode and defense options from the active-combat rules below. The player chooses; never decide their defense for them.
 - A firearm with tracked ammunition actually fires, in or out of combat -> `adjust_ammo` (normally `delta=-1`; more for a burst). Weapons without tracked ammunition need no ammo call. An empty gun only clicks; after an actual reload use `reload_full=true`.
@@ -1358,8 +1390,10 @@ def _build_dynamic_prompt(
     Changes every turn, so this stays OUTSIDE the cached block — it's small
     and cheap to resend, and keeping it separate means those changes don't
     invalidate the much larger cached scenario+roster block above."""
-    active_characters = state.active_characters()
+    active_characters = [resource_bridge.effective(state, c) for c in state.active_characters()]
     chars_text = "\n".join(c.dynamic_state_text() for c in active_characters) or "（目前尚無登記角色）"
+    if resource_bridge.managed(state):
+        chars_text = "【戰鬥暫定資源；尚未結算】\n" + chars_text
     secret_goals = "\n".join(c.keeper_notes_text() for c in active_characters if c.secret_goal)
     secret_block = f"\n\n{secret_goals}" if secret_goals else ""
     digest = scene_digest.latest_digest(state.group_id, state.timeline_id)

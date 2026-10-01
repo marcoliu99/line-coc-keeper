@@ -4,7 +4,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from app import check_lifecycle, dice, resolved_check_consequences
+from app import check_lifecycle, combat_resources, dice, resolved_check_consequences
+from app.keeper_tools import resource_bridge
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
@@ -64,19 +65,26 @@ def apply_resolved_check_damage(call: ToolCall) -> dict[str, Any]:
         blocker = check_lifecycle.blocker(latest, char.owner_id)
         if blocker:
             return keeper.ToolStateMutation(_failure(f"請先處理 {blocker}，再結算此傷害"), should_save=False)
-        roll = dice.roll_expression(expression) if expression is not None else None
+        if resource_bridge.participating(latest, char) and expression is not None:
+            from dataclasses import asdict
+            receipt = combat_resources.record_roll(latest, identity + ':damage-roll',
+                                                   lambda: asdict(dice.roll_expression(expression)))
+            roll = dice.RollResult(**receipt)
+        else:
+            roll = dice.roll_expression(expression) if expression is not None else None
         damage = roll.total if roll is not None else final_damage
         if not isinstance(damage, int) or damage < 0:
             return keeper.ToolStateMutation(_failure("傷害結果不能為負數"), should_save=False)
-        hp_before = char.hp
+        hp_before = resource_bridge.effective(latest, char).hp
         hp_after, major_wound, wound_roll, blocked = keeper.apply_character_delta_in_state(
             latest, char, "hp", -damage, "hp", "hp_max",
-            entry_point="apply_resolved_check_damage",
+            entry_point="apply_resolved_check_damage", event_id=identity, reason=args["cause"],
         )
         if blocked is not None:
             raise RuntimeError("重傷檢定在傷害計算後遭到阻擋")
         result = {
             "ok": True, "investigator": char.name, "damage": damage,
+            "provisional": resource_bridge.participating(latest, char),
             "damage_type": args["damage_type"], "hp_before": hp_before,
             "hp_after": hp_after, "source_check_id": args["source_check_id"],
             "source_event_id": args["source_event_id"],

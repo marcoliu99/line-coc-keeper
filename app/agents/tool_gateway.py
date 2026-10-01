@@ -134,7 +134,7 @@ def make_tool_executor(
                 with mutation_admission.bind(owner):
                     result = None
                     try:
-                        if tool_name in {"apply_resolved_check_damage", "create_triggered_check"}:
+                        if tool_name in {"apply_resolved_check_damage", "create_triggered_check", "declare_combat_action", "submit_combat_choice"}:
                             result = keeper._execute_tool(
                                 state, tool_name, tool_input, private_messages, image_requests,
                                 speaker_role, actor_id=actor_id,

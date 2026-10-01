@@ -35,6 +35,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     inventory = []
     latest = {}
     ended = False
+    combat_completed = False
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
         if (name in {'add_carried_item', 'remove_carried_item', 'end_combat'}
@@ -48,6 +49,18 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 return False, False
             inventory.append(event)
             latest[owner] = after
+        if result.get('ok') and f'tool:{i}' in refs and name in {'declare_combat_action', 'run_combat_action'}:
+            action = state.combat.actions.get(result.get('action_id', ''), {})
+            combat_completed = combat_completed or bool(
+                result.get('combat_id') == state.combat.combat_id and action.get('completed')
+                and result.get('completed')
+            )
+        if result.get('ok') and f'tool:{i}' in refs and name == 'confirm_combat_settlement':
+            receipt = result.get('receipt', {})
+            retained = state.closed_combat_receipts.get(receipt.get('combat_id', ''), {})
+            combat_completed = combat_completed or bool(
+                retained.get('status') == 'committed' and retained.get('settlement_id') == receipt.get('settlement_id')
+            )
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
@@ -73,7 +86,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     transfer = transfer and all(e['name'] in {
         'add_carried_item', 'remove_carried_item', 'search_scenario', 'get_character_sheet',
     } for e in events)
-    return bool(ended or (inventory and actor_involved)), transfer
+    return bool(ended or combat_completed or (inventory and actor_involved)), transfer
 
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
@@ -195,6 +208,8 @@ def actor_snapshot(state: GroupState, user_id: str) -> dict[str, Any]:
     char = state.get_active_character(user_id)
     if char is None:
         return {}
+    from app.keeper_tools import resource_bridge
+    char = resource_bridge.effective(state, char)
     return deepcopy({key: getattr(char, key) for key in (
         "hp", "mp", "san", "luck", "carried_items", "cash_balances", "weapons", "status_tags",
     )})
