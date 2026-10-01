@@ -1,0 +1,125 @@
+{
+  "review_baseline": "9d331bb3e7814718d655e0b0192785d7f0dff02a",
+  "implementation_revision": "dcad3739c59bdbcc001ece5c133ac28ad93540de",
+  "findings": {
+    "F1": "FIXED_REGRESSION_PASS",
+    "F2": "FIXED_REGRESSION_PASS",
+    "F3": "FIXED_REGRESSION_PASS",
+    "F4": "FIXED_REGRESSION_PASS",
+    "F5": "FIXED_REGRESSION_PASS",
+    "F6": "FIXED_REGRESSION_PASS"
+  },
+  "pipeline_version": "multicolumn-v8",
+  "quality_version": "ai-import-repair-v10",
+  "real_provider_requests": 0,
+  "map_validation": {
+    "haunting_p7": "PENDING_NOT_RERUN",
+    "beacon_p16": "PENDING_NOT_RERUN"
+  },
+  "map_timeout_seconds": {
+    "inventory": 30,
+    "connectivity": 60,
+    "repair": 60,
+    "audit": 60
+  },
+  "markitdown_transport_tests": [
+    {
+      "provider": "openai",
+      "failure": "429",
+      "durable_reservations": 1,
+      "transport_requests": 1,
+      "configured_timeout_seconds": 0.25
+    },
+    {
+      "provider": "openai",
+      "failure": "timeout",
+      "durable_reservations": 1,
+      "transport_requests": 1,
+      "configured_timeout_seconds": 0.25
+    },
+    {
+      "provider": "anthropic",
+      "failure": "429",
+      "durable_reservations": 1,
+      "transport_requests": 1,
+      "configured_timeout_seconds": 0.25
+    },
+    {
+      "provider": "anthropic",
+      "failure": "timeout",
+      "durable_reservations": 1,
+      "transport_requests": 1,
+      "configured_timeout_seconds": 0.25
+    },
+    {
+      "provider": "gemini",
+      "failure": "429",
+      "durable_reservations": 1,
+      "transport_requests": 1,
+      "configured_timeout_seconds": 0.25
+    },
+    {
+      "provider": "gemini",
+      "failure": "timeout",
+      "durable_reservations": 1,
+      "transport_requests": 1,
+      "configured_timeout_seconds": 0.25
+    }
+  ],
+  "verification": {
+    "pytest": {
+      "passed": 2112,
+      "skipped": 2,
+      "warnings": 10,
+      "subtests_passed": 152,
+      "elapsed_seconds": 28.52
+    },
+    "ruff": "PASS",
+    "mypy": {
+      "status": "PASS",
+      "source_files": 135
+    },
+    "compileall": "PASS",
+    "diff_check": "PASS",
+    "main_v2_alignment": "PASS"
+  },
+  "followup_review": {
+    "standards": {
+      "documented_breaches": 0,
+      "optional_geometry_duplication": 1
+    },
+    "spec": {
+      "actionable_findings": 0,
+      "reproduced_suffix_bug": "FIXED_AND_REREVIEWED"
+    }
+  },
+  "remaining_code_findings_F1_F6": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "production_rollout": "HOLD",
+  "next_real_validation": "REQUIRES_NEW_AUTHORIZATION_AND_BUDGET",
+  "files_changed": [
+    ".env.example",
+    "app/config.py",
+    "app/markitdown_shim.py",
+    "app/pdf_loader.py",
+    "app/pdf_map_analysis.py",
+    "app/pdf_map_evidence.py",
+    "app/pdf_quality.py",
+    "app/pdf_raster_source.py",
+    "app/providers/anthropic_provider.py",
+    "app/providers/gemini_provider.py",
+    "app/providers/openai_provider.py",
+    "app/providers/image_diagnostics.py",
+    "app/scenario_library.py",
+    "tests/test_markitdown_request_budget.py",
+    "tests/test_pdf_image_transcription.py",
+    "tests/test_pdf_library_map_boundary.py",
+    "tests/test_pdf_provider_failures.py",
+    "tests/test_pdf_source_integrity.py",
+    "tests/test_pdf_two_phase_map.py",
+    "tests/test_scenario_library.py"
+  ]
+}

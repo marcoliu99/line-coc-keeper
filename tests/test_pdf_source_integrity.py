@@ -48,7 +48,7 @@ def test_clean_final_source_with_failed_challenger_not_blocked(extraction_withou
     text, *_ = pdf_loader.extract_text(source_pdf(), quality_report=report, local_ocr_limit=0, ai_repair_limit=0)
     assert source in text
     assert report['pages'][0]['candidates']['layout'] == 'Damage 1d10+99'
-    assert any(w in report['pages'][0]['warnings'] for w in {'layout_numeric_loss', 'layout_text_loss'})
+    assert any(w in report['pages'][0]['warnings'] for w in ('layout_numeric_loss', 'layout_text_loss'))
     assert report['blocked_pages'] == []
 
 
