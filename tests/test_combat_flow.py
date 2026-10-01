@@ -59,6 +59,23 @@ def test_manual_attack_receipt_retry_restart_preserves_baseline():
     assert not declare(restored, restored.combat.order[1], 'another')['ok']
 
 
+def test_advance_receipt_retains_final_npc_wait_and_original_transition_after_reload():
+    state, _, enemy = battle()
+    declare(state, enemy)
+    with patch('app.dice.skill_check', return_value=check('fail', roll=80)):
+        assert finish(state, check('fail', roll=80))['completed']
+        result = combat_flow.advance_combat(state, actor_id='pc:pc1', event_id='advance:opening')
+    assert result['phase'] == 'PLAYER_CHOICE'
+    receipt = next(e for e in state.combat.events if e['event_id'] == 'advance:opening')
+    assert receipt['data']['transition']['ok']
+    restored = GroupState.from_dict(deepcopy(state.to_dict()))
+    before = deepcopy(restored.to_dict())
+    with patch('app.dice.skill_check') as rng:
+        assert combat_flow.advance_combat(restored, actor_id='pc:pc1', event_id='advance:opening') == result
+    rng.assert_not_called()
+    assert restored.to_dict() == before
+
+
 def test_foreign_actor_and_stale_control_refuse_before_rng():
     state, _, enemy = battle()
     with patch('app.dice.random.randint') as rng:
