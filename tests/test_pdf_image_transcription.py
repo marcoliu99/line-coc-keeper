@@ -351,7 +351,15 @@ def test_markitdown_image_completions_obey_exhausted_durable_budget(scanned_page
     assert report['pages'][0]['image_transcription']['status'] == 'unverified'
 
 
-def test_independent_agreement_cannot_delete_an_intact_native_dice_modifier(scanned_page, monkeypatch):
+@pytest.mark.parametrize(('native', 'candidate'), [
+    ('The damaged wall hides a silent room. Damage 1d10+DB',
+     'The damaged wall hides a silent room. Damage 1d10 STR 60 DEX 55'),
+    ('The door is locked.', 'The door is not locked. STR 60'),
+    ('Damage 1d10', 'Damage -1d10 STR 60'),
+    ('1d10', '-1d10 STR 60'),
+    ('60', '-60 STR 60'),
+])
+def test_independent_agreement_cannot_change_an_intact_native_anchor(scanned_page, monkeypatch, native, candidate):
     from types import SimpleNamespace
 
     import pymupdf
@@ -359,8 +367,6 @@ def test_independent_agreement_cannot_delete_an_intact_native_dice_modifier(scan
     from app import config, pdf_ocr
     from app.providers import registry
 
-    native = 'The damaged wall hides a silent room. Damage 1d10+DB'
-    candidate = 'The damaged wall hides a silent room. Damage 1d10 STR 60 DEX 55'
     with pymupdf.open(stream=scanned_page, filetype='pdf') as doc:
         doc[0].insert_text((40, 60), native)
         raw = doc.tobytes()
@@ -371,5 +377,5 @@ def test_independent_agreement_cannot_delete_an_intact_native_dice_modifier(scan
     report = {}
     with pytest.raises(pdf_loader.LayoutReviewRequired) as pending:
         pdf_loader.extract_text(raw, quality_report=report)
-    assert '1d10+DB' in pending.value.result[0]
+    assert native in pending.value.result[0]
     assert report['pages'][0]['image_transcription']['status'] == 'unverified'

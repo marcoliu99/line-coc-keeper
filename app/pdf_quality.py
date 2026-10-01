@@ -5,12 +5,14 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'ai-import-repair-v8'
+VERSION = 'ai-import-repair-v9'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 _DICE = re.compile(r'(?<!\w)(?:\d*[dD]\d+(?:[+-](?:\d+|[Dd][Bb]))?)(?!\w)')
 _PERCENTAGES = re.compile(r'(?<!\w)\d+(?:\.\d+)?%')
 _TRANSCRIPTION_TOKEN = re.compile(r'[\u3400-\u9fff]|[^\W_]+|[-+](?=\s*\d)|[$€£¥<>=/]', re.UNICODE)
+_IMAGE_MECHANIC = re.compile(
+    r'(?<!\w)([+-]?)\s*(\d*[dD]\d+(?:[+-](?:\d+|[Dd][Bb]))?|\d+(?:\.\d+)?%?)(?!\w)')
 
 
 def normalize(text: str) -> str:
@@ -260,7 +262,7 @@ def preserves_image_native_anchor(native: str, candidate: str, pairs: list[dict]
     """Image agreement cannot override intact native mechanics or prose.
 
     Native anchors may cover only a header or partial body: allow additional
-    independently corroborated image text, but keep every native token in order
+    independently corroborated image text, but keep the native token span intact
     and every complete numeric/dice/percentage expression. No pair inference.
     """
     if any(p['status'] != 'matched' for p in check_pairs(pairs, candidate)):
@@ -268,9 +270,18 @@ def preserves_image_native_anchor(native: str, candidate: str, pairs: list[dict]
     for pattern in (_NUMBER, _DICE, _PERCENTAGES):
         if Counter(pattern.findall(native)) - Counter(pattern.findall(candidate)):
             return False
-    available = iter(_TRANSCRIPTION_TOKEN.findall(candidate.casefold()))
-    return all(any(token == found for found in available)
-               for token in _TRANSCRIPTION_TOKEN.findall(native.casefold()))
+    native_signs: dict[str, set[str]] = {}
+    for sign, expression in _IMAGE_MECHANIC.findall(native.casefold()):
+        native_signs.setdefault(expression, set()).add(sign)
+    # An unsigned anchor cannot be satisfied by a signed occurrence, even at
+    # the edge of the prose span or beside another copy of the same number.
+    if any(expression in native_signs and sign not in native_signs[expression]
+           for sign, expression in _IMAGE_MECHANIC.findall(candidate.casefold())):
+        return False
+    anchor = _TRANSCRIPTION_TOKEN.findall(native.casefold())
+    available = _TRANSCRIPTION_TOKEN.findall(candidate.casefold())
+    return not anchor or any(available[i:i + len(anchor)] == anchor
+                             for i in range(len(available) - len(anchor) + 1))
 
 
 def _region_pattern(original: str) -> str:
