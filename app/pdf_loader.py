@@ -14,22 +14,26 @@ import hashlib
 import io
 import logging
 import re
-import shutil
-import subprocess
-import tempfile
 from collections.abc import Callable, Iterable
 from importlib import metadata
 from typing import Any, Literal, TypedDict, cast
 
 import pymupdf
 
-from app import config, pdf_ai_repair, pdf_layout, pdf_layout_adapters, pdf_quality
+from app import (
+    config,
+    pdf_ai_repair,
+    pdf_layout,
+    pdf_layout_adapters,
+    pdf_ocr,
+    pdf_quality,
+)
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v3'
+PIPELINE_VERSION = 'multicolumn-v4'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route']
@@ -71,7 +75,7 @@ def extraction_identity() -> dict:
     return {'pipeline_version': PIPELINE_VERSION, 'renderer_version': RENDERER_VERSION,
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
-            'markitdown': version('markitdown'),
+            'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
             'docling': version('docling') if config.PDF_LAYOUT_DOCLING_ENABLED else 'disabled'}
 
 
@@ -158,51 +162,28 @@ def _render_page_png(page: pymupdf.Page, dpi: int = 200) -> bytes:
 
 
 def _ocr_image(png_bytes: bytes) -> str:
-    """Best-effort OCR of a page image. Returns "" if OCR isn't available/fails
-    (missing pytesseract, missing the tesseract binary, missing language pack, ...).
-    Recovers text-in-image content, but — unlike _analyze_graphic_page — has no
-    way to reconstruct the spatial relationships between what it reads.
-    """
-    languages = ("chi_tra+eng", "eng")
-    try:
-        import pytesseract
-        from PIL import Image
-    except ImportError:
-        pytesseract = None
-        Image = None  # type: ignore[assignment]
+    """Compatibility seam for unchanged Tesseract fallback; not a publication gate."""
+    return pdf_ocr.tesseract_text(png_bytes)
 
-    if pytesseract is not None and Image is not None:
-        try:
-            image = Image.open(io.BytesIO(png_bytes))
-            for lang in languages:
-                text = pytesseract.image_to_string(image, lang=lang).strip()
-                if text:
-                    return text
-        except Exception:  # OCR libraries have version-specific failures; fallback below is intentional.
-            _logger.debug("pytesseract image OCR failed", exc_info=True)
 
-    tesseract = shutil.which("tesseract")
-    if not tesseract:
-        return ""
-    with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
-        tmp.write(png_bytes)
-        tmp.flush()
-        for lang in languages:
-            try:
-                result = subprocess.run(
-                    [tesseract, tmp.name, "stdout", "-l", lang, "--psm", "6"],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-            except (OSError, subprocess.SubprocessError):
-                _logger.debug("tesseract subprocess failed for language %s", lang, exc_info=True)
-                continue
-            text = (result.stdout or "").strip()
-            if text:
-                return text
-    return ""
+def recover_local_ocr(png_bytes: bytes, original: str, pairs: list[dict], *,
+                      region: bool = True, source_unique: bool = True) -> tuple[str, list[pdf_ocr.OcrAttempt]]:
+    """Offer local candidates lazily, preserving rejected attempts before fallback."""
+    attempts = []
+    for attempt in pdf_ocr.candidates(png_bytes, tesseract=_ocr_image):
+        candidate = pdf_quality.normalize(attempt['candidate'])
+        attempt['candidate'] = candidate
+        attempt['pair_checks'] = pdf_quality.check_pairs(pairs, candidate)
+        if attempt['status'] == 'candidate':
+            accepted = source_unique and (pdf_quality.accept_region(original, candidate, pairs) if region
+                        else pdf_quality.accept_transcription(original, candidate, pairs))
+            attempt['status'] = 'accepted' if accepted else 'rejected'
+            if not accepted:
+                attempt['reason'] = 'source_evidence_gate_failed' if source_unique else 'source_region_not_unique'
+        attempts.append(attempt)
+        if attempt['status'] == 'accepted':
+            return candidate, attempts
+    return '', attempts
 
 
 def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
@@ -211,11 +192,10 @@ def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
     handles both the prose description (spatial layout for maps, exhaustive
     number transcription for character sheets, brief description otherwise)
     and, when the page turns out to be a map, the structured room graph.
-    Falls back to local OCR for the text half only if the vision call
-    produced nothing (no ANTHROPIC_API_KEY, or the call failed) — there's no
-    fallback for the map half, a page just won't get one."""
+    Local transcription is attempted separately through deterministic gates;
+    an OCR result never substitutes for the map half."""
     description, scene_map = analyze_page_image(png_bytes)
-    return description or _ocr_image(png_bytes), scene_map
+    return description, scene_map
 
 
 _MARKITDOWN_PAGE_RE = re.compile(r"^##\s*Page\s+(\d+)\s*$", re.MULTILINE)
@@ -312,6 +292,8 @@ def _pymupdf4llm_page_chunks(pdf_bytes: bytes, page_numbers: list[int] | None = 
             page_chunks=True,
             write_images=False,
             embed_images=False,
+            use_ocr=False,
+            force_ocr=False,
         )
     except Exception:  # a parser failure must fall back to PyMuPDF text extraction.
         _logger.debug("pymupdf4llm page parsing failed", exc_info=True)
@@ -390,8 +372,11 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
         original = pdf_quality.normalize("\n".join(line["text"] for line in block["lines"]))
         if block["id"] not in suspect and "\ufffd" not in original:
             continue
+        local_pairs = [p for p in pairs if p['block'] == block['id']]
+        if pdf_quality.recovered_region(original, text, local_pairs) is not None:
+            continue  # The final selected source already passes this exact repair gate.
         attempt = {"block": block["id"], "bbox": block["bbox"], "original": original,
-                   "ocr_text": "", "status": "review_required"}
+                   "ocr_text": "", "ocr_attempts": [], "status": "review_required"}
         attempts.append(attempt)
         if page.rotation:
             attempt["status"] = "rotation_requires_review"
@@ -404,15 +389,18 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
         attempt["crop_bbox"] = list(rect)
         try:
             png = page.get_pixmap(clip=rect, dpi=300).tobytes("png")
-            candidate = pdf_quality.normalize(_ocr_image(png))
+            local_pairs = [p for p in pairs if p['block'] == block['id']]
+            candidate, engine_attempts = recover_local_ocr(
+                png, original, local_pairs, source_unique=text.count(original) == 1)
+            attempt['ocr_attempts'] = engine_attempts
         except Exception:  # noqa: BLE001 - local optional OCR never discards source.
             attempt["status"] = "ocr_failed"
             continue
-        attempt["ocr_text"] = candidate
+        attempt["ocr_text"] = candidate or (engine_attempts[-1]["candidate"] if engine_attempts else "")
         local_pairs = [p for p in pairs if p["block"] == block["id"]]
-        attempt["pair_checks"] = pdf_quality.check_pairs(local_pairs, candidate)
+        attempt["pair_checks"] = pdf_quality.check_pairs(local_pairs, attempt["ocr_text"])
         if not candidate:
-            attempt["status"] = "ocr_empty"
+            attempt["status"] = "review_required" if any(a["candidate"] for a in engine_attempts) else "ocr_empty"
         elif text.count(original) == 1 and pdf_quality.accept_region(original, candidate, local_pairs):
             text = text.replace(original, candidate, 1)
             attempt["status"] = "accepted"
@@ -435,6 +423,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                   pipeline_version=PIPELINE_VERSION, renderer_version=RENDERER_VERSION,
                   pages=[], continuations=[], derived_descriptions={})
     local_budget = [max(0, local_ocr_limit)]
+    local_page_budget = max(0, local_ocr_limit)
     ai_budget = [max(0, ai_repair_limit)]
     layout_budget = pdf_layout_adapters.reconcile_budget(layout_budget)
     report["layout_budget"] = layout_budget
@@ -532,7 +521,23 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                     "layout_decision": decision, "graphic_evidence": graphic})
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
-        alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None
+        for number in list(pending):
+            row = report['pages'][number - 1]
+            if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD or local_page_budget <= 0:
+                continue  # Readable map labels still require scene_map, not whole-page OCR.
+            local_page_budget -= 1
+            chosen, attempts = recover_local_ocr(pending[number], texts[number - 1],
+                                                  row['numeric_pairs'], region=False)
+            row['page_ocr_attempts'] = attempts
+            if chosen:
+                texts[number - 1] = chosen
+                row['method'] += '+local_page_ocr'
+                if len(chosen) >= _LOW_TEXT_THRESHOLD and number not in map_candidates:
+                    pending.pop(number)
+        alternate_pages = [number for number in pending if len(texts[number - 1]) < _LOW_TEXT_THRESHOLD
+                           and not any(a['status'] == 'accepted' for a in
+                                       report['pages'][number - 1].get('page_ocr_attempts', []))]
+        alternate = _markitdown_page_texts(pdf_bytes, sorted(alternate_pages)) if alternate_pages else None
         for number in list(pending):
             extra = (alternate or {}).get(number, "").strip()
             if extra:
@@ -543,7 +548,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 if any(p["status"] != "matched" for p in checks):
                     row["warnings"].append("ocr_pair_review")
                 chosen, method, warnings = pdf_quality.select_text(texts[number - 1], extra)
-                if any(p["status"] == "pair_mismatch" for p in checks):
+                if (any(p['status'] != 'matched' for p in checks)
+                        or not pdf_quality.accept_transcription(texts[number - 1], extra, row['numeric_pairs'])):
                     method = "native"
                     row["warnings"].append("ocr_pair_mismatch")
                 if method == "layout":
@@ -595,8 +601,12 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                             report["derived_descriptions"][str(number)] = extra
                             # A labeled derived section is not a verbatim quote.
                             texts[number - 1] += "\n[地圖視覺解讀，非原文轉錄]\n" + extra
+                        elif pdf_quality.accept_transcription(texts[number - 1], extra, row['numeric_pairs']):
+                            texts[number - 1] = extra
                         else:
-                            texts[number - 1] = (texts[number - 1] + "\n[影像轉錄／描述]\n" + extra).strip()
+                            row['warnings'].append('transcription_unverified' if not pdf_quality.preserves_mechanics(
+                                texts[number - 1], extra) else 'transcription_review')
+                            report['derived_descriptions'][str(number)] = extra
                         row["warnings"].append("vision_review_required")
                     if not scene_map and number in map_candidates:
                         row["warnings"].append("floor_plan_graph_missing")
@@ -608,16 +618,21 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         if unresolved and not row.get('resumed'):
             text += "\n[PDF_UNRESOLVED_FIELDS: " + ",".join(unresolved) + "]"
             texts[i] = text
+        if i + 1 in map_candidates and i + 1 not in maps and 'floor_plan_graph_missing' not in row['warnings']:
+            row['warnings'].append('floor_plan_graph_missing')
         row["extracted_chars"] = len(text)
         row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         row['selected_text'] = text
         if not row.get('resumed'):
             status = row['layout_decision']['status']
-            failed_graphic = (row.get('graphic_evidence') and len(text.strip()) < _LOW_TEXT_THRESHOLD
+            failed_graphic = (row.get('graphic_evidence') and i + 1 not in maps
+                              and len(text.strip()) < _LOW_TEXT_THRESHOLD
                               and any(w in {'vision_failed', 'vision_empty', 'vision_pair_mismatch'}
                                       for w in row['warnings']))
             publication: PagePublication = {'disposition': _publication_disposition(
-                status, bool(failed_graphic) or (i + 1 in map_candidates and i + 1 not in maps))}
+                status, bool(failed_graphic) or 'transcription_unverified' in row['warnings']
+                or ('transcription_review' in row['warnings'] and not text.strip())
+                or (i + 1 in map_candidates and i + 1 not in maps))}
             row.update(publication)
         if not text.strip():
             row["warnings"].append("empty_page")
@@ -638,7 +653,15 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 continue
             if accepted_order and warning in {"ambiguous_columns", "unsupported_spanning_region"}:
                 continue
-            if warning in candidate_only and row['method'] in {'native', 'multicolumn'}:
+            if warning in candidate_only and row['method'].split('+')[0] in {'native', 'multicolumn'}:
+                continue
+            if warning == 'local_ocr_repaired':
+                continue
+            if warning == 'local_ocr_review':
+                resolved_blocks = {r['block_id'] for r in row['ai_repair']['regions'] if r['status'] == 'accepted'}
+                if all(r['status'] == 'accepted' or r['block'] in resolved_blocks for r in row['local_repairs']):
+                    continue
+            if warning in {'source_pair_unresolved', 'ai_fields_unresolved'} and not unresolved:
                 continue
             review_reasons.append(warning)
         row['review_reasons'] = review_reasons
@@ -653,6 +676,20 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     report["source_chars"] = len(full_text)
     report["ai_repair_requests"] = max(0, ai_repair_limit) - ai_budget[0]
     report["local_ocr_attempts"] = max(0, local_ocr_limit) - local_budget[0]
+    report["local_page_ocr_attempts"] = max(0, local_ocr_limit) - local_page_budget
+    engine_attempts = [attempt for row in report['pages']
+                       for attempt in (row.get('page_ocr_attempts', [])
+                           + [a for repair in row['local_repairs'] for a in repair.get('ocr_attempts', [])])]
+    for engine, name in [('paddleocr', 'paddle'), ('tesseract', 'tesseract')]:
+        selected = [a for a in engine_attempts if a['engine'] == engine]
+        report[f'local_{name}_attempts'] = len(selected)
+        report[f'local_{name}_accepted'] = sum(a['status'] == 'accepted' for a in selected)
+        report[f'local_{name}_rejected'] = sum(a['status'] == 'rejected' for a in selected)
+        report[f'local_{name}_failed'] = sum(a['status'] in {'unavailable', 'error', 'empty'} for a in selected)
+    report['tesseract_fallbacks'] = sum(
+        any(a['engine'] == 'paddleocr' for a in group) and any(a['engine'] == 'tesseract' for a in group)
+        for row in report['pages'] for group in ([row.get('page_ocr_attempts', [])]
+            + [repair.get('ocr_attempts', []) for repair in row['local_repairs']]))
     report['layout_budget'] = layout_budget
     report['blocked_pages'] = [row['page'] for row in report['pages'] if row['disposition'] == 'needs_review']
     result = (full_text, review, False, images, maps)

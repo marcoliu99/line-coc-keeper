@@ -1,0 +1,5 @@
+# Optional CPU OCR worker; install explicitly with Python 3.11-3.13.
+# Keep outside minimal bot dependencies (bot Python may be newer).
+paddleocr==3.7.0
+paddlepaddle==3.3.0
+paddlex==3.7.2

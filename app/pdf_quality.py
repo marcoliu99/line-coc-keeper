@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'ai-import-repair-v5'
+VERSION = 'ai-import-repair-v6'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 
@@ -212,9 +212,55 @@ def check_pairs(pairs: list[dict], candidate: str) -> list[dict]:
     return result
 
 
+def preserves_mechanics(original: str, candidate: str) -> bool:
+    """Exact source mechanics, including percent signs and complete DB dice."""
+    dice = re.compile(r'(?<!\w)(?:\d*[dD]\d+(?:[+-](?:\d+|DB))?)(?!\w)')
+    percentages = re.compile(r'(?<!\w)\d+(?:\.\d+)?%')
+    return (Counter(_NUMBER.findall(original)) == Counter(_NUMBER.findall(candidate))
+            and Counter(dice.findall(original)) == Counter(dice.findall(candidate))
+            and Counter(percentages.findall(original)) == Counter(percentages.findall(candidate)))
+
+
+def accept_transcription(original: str, candidate: str, pairs: list[dict]) -> bool:
+    """Certify page transcription only from available source evidence, not confidence."""
+    if not candidate.strip() or not preserves_mechanics(original, candidate):
+        return False
+    if any(p['status'] != 'matched' for p in check_pairs(pairs, candidate)):
+        return False
+    if not original.strip():
+        # Prose without native evidence remains a labeled transcription/review.
+        return False
+    if '\ufffd' in original:
+        return accept_region(original, candidate, pairs)
+    _, method, _ = select_text(original, candidate)
+    return method == 'layout' and _WORD.findall(original.casefold()) == _WORD.findall(candidate.casefold())
+
+
+def _region_pattern(original: str) -> str:
+    return r'\s*' + r'\s+'.join(r'[^\s]+' if '\ufffd' in token else re.escape(token)
+                               for token in original.split()) + r'\s*'
+
+
+def recovered_region(original: str, selected: str, pairs: list[dict]) -> str | None:
+    """Recognize a certified repair already in the selected source; avoid stale OCR work."""
+    if '\ufffd' not in original or any(p['status'] == 'unresolved' for p in pairs):
+        return None
+    matches = list(re.finditer(r'(?<!\S)' + _region_pattern(original) + r'(?!\S)', selected, re.IGNORECASE))
+    if len(matches) == 1:
+        candidate = normalize(matches[0].group())
+        if accept_region(original, candidate, pairs):
+            return candidate
+    return None
+
+
 def accept_region(original: str, candidate: str, pairs: list[dict]) -> bool:
     """Only fix observable text corruption; uncertain numbers stay for review."""
     if '\ufffd' not in original or not candidate.strip() or '\ufffd' in candidate:
+        return False
+    # Only damaged tokens may change; keep intact wording in its original sequence.
+    # Whitespace layout is allowed to vary. A damaged whitespace-delimited token
+    # can become one token, never a sentence or a rearrangement of its neighbors.
+    if not re.fullmatch(_region_pattern(original), candidate, flags=re.IGNORECASE):
         return False
     # Ignore only the damaged token, not intact surrounding evidence.
     intact = re.sub(r'\S*\ufffd\S*', '', original)
@@ -222,7 +268,7 @@ def accept_region(original: str, candidate: str, pairs: list[dict]) -> bool:
     available = Counter(_WORD.findall(candidate.casefold()))
     if required - available:
         return False
-    if Counter(n.casefold() for n in _NUMBER.findall(original)) != Counter(n.casefold() for n in _NUMBER.findall(candidate)):
+    if not preserves_mechanics(original, candidate):
         return False
     resolved = [p for p in pairs if p['status'] != 'unresolved']
     return all(p['status'] == 'matched' for p in check_pairs(resolved, candidate))

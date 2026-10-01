@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -321,3 +322,12 @@ PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS = _env_float('PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS'
 PDF_LAYOUT_MAX_REQUESTS = _env_int('PDF_LAYOUT_MAX_REQUESTS', 8)
 PDF_LAYOUT_MAX_PAGES = _env_int('PDF_LAYOUT_MAX_PAGES', 4)
 PDF_LAYOUT_RETRIES = min(3, _env_int('PDF_LAYOUT_RETRIES', 1))
+
+# Import-only local OCR. Models/dependencies are prepared by explicit setup only.
+PDF_OCR_PADDLE_ENABLED = _env_bool('PDF_OCR_PADDLE_ENABLED', True)
+PDF_OCR_PADDLE_MODEL = os.environ.get('PDF_OCR_PADDLE_MODEL', 'PP-OCRv5_mobile_rec').strip()
+PDF_OCR_PADDLE_MODELS_PATH = os.environ.get(
+    'PDF_OCR_PADDLE_MODELS_PATH', '') or str(DATA_DIR.parent / 'models' / 'paddleocr')
+PDF_OCR_PADDLE_DEVICE = os.environ.get('PDF_OCR_PADDLE_DEVICE', 'cpu').strip()
+PDF_OCR_PADDLE_PYTHON = os.environ.get('PDF_OCR_PADDLE_PYTHON', '') or sys.executable
+PDF_OCR_PADDLE_TIMEOUT_SECONDS = _env_float('PDF_OCR_PADDLE_TIMEOUT_SECONDS', 60, minimum=0.01)
