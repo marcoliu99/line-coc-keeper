@@ -14,7 +14,7 @@ from app.agents import supervisor
 from app.commands import router
 from app.commands.handlers.buttons import ButtonIO
 from app.keeper_tools import registry
-from app.models import Character, GroupState
+from app.models import Character, Combatant, CombatState, GroupState
 from app.repositories import group_state
 
 GROUP = 'combat-integration'
@@ -175,6 +175,8 @@ def test_atomic_settlement_updates_both_mirrors_and_old_receipt_cannot_close_new
         assert db.get_json('characters', f'{GROUP}:{identity}')['sheet']['mp'] == 7
     assert battle.tool('confirm_combat_settlement', arguments)['receipt'] == settled['receipt']
     assert battle.start()['ok']
+    assert battle.load().combat.active
+    assert battle.load().combat.combat_id != arguments['combat_id']
     new_battle = battle.load().to_dict()
     assert battle.tool('confirm_combat_settlement', arguments)['receipt'] == settled['receipt']
     assert battle.load().to_dict() == new_battle
@@ -258,6 +260,8 @@ def test_whole_battle_rollback_preserves_baseline_and_closed_audit_across_retry(
     assert 'events' not in receipt
     assert battle.tool('rollback_combat', arguments)['receipt'] == receipt
     assert battle.start()['ok']
+    assert battle.load().combat.active
+    assert battle.load().combat.combat_id != arguments['combat_id']
     new_battle = battle.load().to_dict()
     assert battle.tool('rollback_combat', arguments)['receipt'] == receipt
     assert battle.load().to_dict() == new_battle
@@ -351,7 +355,9 @@ def test_prior_effect_tick_is_provisional_in_new_battle_and_rollback_reuses_orig
     assert len(committed.postcombat_obligations) == 1
     original = committed.postcombat_obligations[0]
     assert battle.start()['ok']
+    assert battle.load().combat.active
     second_id = battle.load().combat.combat_id
+    assert second_id != combat_id
     with patch('app.dice.random.randint', return_value=2) as rng:
         tick = battle.tool('process_postcombat_obligations', {'logical_round': 1, 'event_id': 'clock:1'})
         assert tick['ok']
@@ -457,3 +463,52 @@ def test_unsupported_or_unsourced_action_needs_ruling_before_rng_or_ammo(battle,
     assert battle.effective().weapons['.45 Automatic']['ammo'] == 7
     assert battle.load().characters_by_id['char:ada'].weapons['.45 Automatic']['ammo'] == 7
     assert not battle.load().pending_checks
+
+
+def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
+    battle.start()
+    for field, delta, expected in [('san', -2, 48), ('mp', -3, 7), ('luck', -4, 46)]:
+        arguments = {'investigator': 'Ada', 'field': field, 'delta': delta,
+                     'event_id': f'resource:{field}', 'reason': 'reviewed combat resource mutation'}
+        battle.tool('adjust_character', arguments)
+        battle.tool('adjust_character', arguments)
+        assert getattr(battle.effective(), field) == expected
+    ammo = {'investigator': 'Ada', 'weapon': '.45 Automatic', 'delta': -2, 'event_id': 'ammo:2'}
+    battle.tool('adjust_ammo', ammo)
+    battle.tool('adjust_ammo', ammo)
+    assert battle.effective().weapons['.45 Automatic']['ammo'] == 5
+    battle.tool('adjust_ammo', {'investigator': 'Ada', 'weapon': '.45 Automatic',
+                              'reload_full': True, 'event_id': 'reload:1'})
+    battle.tool('add_status_tag', {'investigator': 'Ada', 'tag': 'Pinned', 'event_id': 'status:1'})
+    sheet = battle.tool('get_character_sheet', {'investigator': 'Ada'})
+    assert sheet['provisional']
+    assert sheet['sheet']['status_tags'] == ['Pinned']
+    assert sheet['sheet']['weapons']['.45 Automatic']['ammo'] == 7
+    persistent = battle.load().characters_by_id['char:ada']
+    assert (persistent.san, persistent.mp, persistent.luck) == (50, 10, 50)
+    assert persistent.status_tags == []
+    battle.tool('remove_status_tag', {'investigator': 'Ada', 'tag': 'Pinned', 'event_id': 'status:2'})
+    assert battle.effective().status_tags == []
+
+
+def test_legacy_active_history_requires_explicit_closure_without_guessed_baseline(battle):
+    old = battle.load()
+    old.characters_by_id['char:ada'].hp = 7
+    old.characters['player'].hp = 7
+    old.combat = CombatState(active=True, round_number=4, order=[
+        Combatant('Ada', dex=80, hp=7, hp_max=10, is_pc=True, side='pc',
+                  character_id='char:ada', combatant_id='pc:char:ada')])
+    group_state.save_state(old)
+    before = battle.load().to_dict()
+    with pytest.raises(combat_resources.CombatAdmissionError, match='No safely admitted combat working state'):
+        battle.tool('preview_combat_settlement')
+    assert battle.load().to_dict() == before
+    closed = battle.tool('close_legacy_combat', {'event_id': 'legacy:close',
+                         'reason': 'controller explicitly closes already committed historical tracker'})
+    assert closed['status'] == 'legacy_closed'
+    reloaded = battle.load()
+    assert not reloaded.combat.active
+    assert reloaded.characters_by_id['char:ada'].hp == 7
+    audit = reloaded.closed_combat_receipts['legacy-closed:legacy:close']['legacy_state']
+    assert audit['round_number'] == 4
+    assert audit['baseline_resources'] == {}

@@ -5,7 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app import db, keeper, spoiler_policy
+from app import db, dice, keeper, spoiler_policy
+from app.keeper_tools import registry
 from app.models import GroupState
 from app.repositories import group_state
 
@@ -15,6 +16,27 @@ def _mutate(current: GroupState, callback: Callable[[GroupState], object]) -> ob
     return result.value if isinstance(result, keeper.ToolStateMutation) else result
 
 
+
+def _tool(state, name, arguments, *, speaker_role='player'):
+    return registry.REGISTRY[name].handler(registry.ToolCall(state, arguments, [], [], speaker_role, name))
+
+
+def _reviewed_lethal_hit(state):
+    target = next(p for p in state.combat.order if p.side == 'enemy')
+    with patch.object(dice.random, 'randint', return_value=10):
+        return _tool(state, 'declare_combat_effect', {
+            'combat_id': state.combat.combat_id, 'effect_id': 'reviewed:lethal',
+            'target_id': target.combatant_id, 'severity_id': 'severe', 'scope': 'incident',
+            'stop_condition': 'single reviewed incident completed', 'reason': 'reviewed severe damage table'})
+
+
+def _settle(state):
+    preview = _tool(state, 'end_combat', {})
+    assert state.combat.active  # The historical end tool now requests only a preview.
+    return _tool(state, 'confirm_combat_settlement', {
+        'combat_id': state.combat.combat_id, 'settlement_id': preview['preview']['settlement_id'],
+        'reason': 'bot controller confirms reviewed settlement'})
+
 def test_post_lethal_status_preserves_damage_evidence_without_public_enemy_hp() -> None:
     state = GroupState(group_id="combat-evidence", timeline_id="timeline-a")
 
@@ -23,23 +45,21 @@ def test_post_lethal_status_preserves_damage_evidence_without_public_enemy_hp() 
         patch.object(keeper, "mutate_tool_state", side_effect=_mutate),
         patch.object(keeper, "refresh_tool_state"),
     ):
-        assert keeper._execute_tool(state, "start_combat", {}, [], [])["ok"]
-        assert keeper._execute_tool(
-            state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8}, [], [],
+        assert _tool(state, "start_combat", {})["ok"]
+        assert _tool(
+            state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8},
         )["ok"]
-        damage = keeper._execute_tool(
-            state, "apply_combat_damage", {"target": "Corbitt", "raw_damage": 10}, [], [],
-        )
+        damage = _reviewed_lethal_hit(state)
         assert damage["ok"] and damage["defeated"]
-        assert keeper._execute_tool(state, "end_combat", {}, [], [])["ok"]
+        assert _settle(state)["ok"]
 
         restored = GroupState.from_dict(state.to_dict())
-        player = keeper._execute_tool(restored, "get_combat_status", {}, [], [])
-        kp = keeper._execute_tool(
-            restored, "get_combat_status", {}, [], [], speaker_role="kp_assistant",
+        player = _tool(restored, "get_combat_status", {})
+        kp = _tool(
+            restored, "get_combat_status", {}, speaker_role="kp_assistant",
         )
         with patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
-            relaxed = keeper._execute_tool(restored, "get_combat_status", {}, [], [])
+            relaxed = _tool(restored, "get_combat_status", {})
 
     assert not restored.combat.active
     assert player["last_ended_combat"]["last_damage"]["target"] == "Corbitt"
@@ -57,15 +77,15 @@ def test_new_combat_or_timeline_does_not_reuse_previous_evidence() -> None:
         patch.object(keeper, "mutate_tool_state", side_effect=_mutate),
         patch.object(keeper, "refresh_tool_state"),
     ):
-        keeper._execute_tool(state, "start_combat", {}, [], [])
-        keeper._execute_tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8}, [], [])
-        keeper._execute_tool(state, "apply_combat_damage", {"target": "Corbitt", "raw_damage": 10}, [], [])
-        keeper._execute_tool(state, "end_combat", {}, [], [])
+        _tool(state, "start_combat", {})
+        _tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8})
+        _reviewed_lethal_hit(state)
+        _settle(state)
         state.timeline_id = "timeline-b"
-        assert "last_ended_combat" not in keeper._execute_tool(state, "get_combat_status", {}, [], [])
+        assert "last_ended_combat" not in _tool(state, "get_combat_status", {})
         state.timeline_id = "timeline-a"
-        keeper._execute_tool(state, "start_combat", {}, [], [])
-        assert "last_ended_combat" not in keeper._execute_tool(state, "get_combat_status", {}, [], [])
+        _tool(state, "start_combat", {})
+        assert "last_ended_combat" not in _tool(state, "get_combat_status", {})
 
 
 def test_end_combat_does_not_relabel_damage_from_another_scenario() -> None:
@@ -75,12 +95,12 @@ def test_end_combat_does_not_relabel_damage_from_another_scenario() -> None:
         patch.object(keeper, "mutate_tool_state", side_effect=_mutate),
         patch.object(keeper, "refresh_tool_state"),
     ):
-        keeper._execute_tool(state, "start_combat", {}, [], [])
-        keeper._execute_tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8}, [], [])
-        keeper._execute_tool(state, "apply_combat_damage", {"target": "Corbitt", "raw_damage": 10}, [], [])
+        _tool(state, "start_combat", {})
+        _tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8})
+        _reviewed_lethal_hit(state)
         state.scenario_title = "New"
-        keeper._execute_tool(state, "end_combat", {}, [], [])
-        status = keeper._execute_tool(state, "get_combat_status", {}, [], [])
+        _settle(state)
+        status = _tool(state, "get_combat_status", {})
 
     assert status["last_ended_combat"]["last_damage"] == {}
 
@@ -93,11 +113,11 @@ def test_completed_combat_receipt_survives_real_state_save() -> None:
             state = GroupState(group_id="combat-evidence-sqlite", timeline_id="timeline-a")
             group_state.save_state(state)
             with patch.object(keeper.mutation_admission, "assert_admitted"):
-                keeper._execute_tool(state, "start_combat", {}, [], [])
-                keeper._execute_tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8}, [], [])
-                keeper._execute_tool(state, "apply_combat_damage", {"target": "Corbitt", "raw_damage": 10}, [], [])
-                keeper._execute_tool(state, "end_combat", {}, [], [])
+                _tool(state, "start_combat", {})
+                _tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8})
+                _reviewed_lethal_hit(state)
+                _settle(state)
                 restored = group_state.load_state(state.group_id)
-                status = keeper._execute_tool(restored, "get_combat_status", {}, [], [])
+                status = _tool(restored, "get_combat_status", {})
 
     assert status["last_ended_combat"]["last_damage"]["defeated"] is True
