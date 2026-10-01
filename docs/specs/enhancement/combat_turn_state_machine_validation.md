@@ -2,7 +2,7 @@
 
 [Approved design](combat_turn_state_machine_design_spec.md) · [task graph](combat_turn_state_machine_tasks.md) · [中文](combat_turn_state_machine_validation_zh.md)
 
-The operator authorized implementation on 2026-10-01. T1–T5 are merged at `f1be316`, with exact advance-receipt follow-up at `d6f870c`; T6 verifies the existing repository transaction and player controls. OCR and PDF ingestion are outside this change. Final review and publication checks belong to T7.
+The operator authorized implementation on 2026-10-01. T1–T5 are merged at `f1be316`, with exact advance-receipt follow-up at `d6f870c`; T6 verifies the existing repository transaction and player controls. OCR and PDF ingestion are outside this change. T6 is merged at `29f7f2d`; T7 fixes have passed both independent review axes. Final integrated/publication gates are recorded separately below.
 
 ## Implemented authority and persistence
 
@@ -32,6 +32,25 @@ Executable catalog/dice tests validate every shipped expression, reviewed lookup
 
 ## Verification status
 
-T6 full-suite checkpoint: **1821 passed, 2 skipped, 152 subtests passed** (15.02 seconds). The final 36 public SQLite integration cases and related six-file compatibility selection passed; source-stop, unsupported-NPC cancellation, distinct-healer stabilization, prior pending-control rollback and exact advance retries are included. Repository-wide ruff passed; mypy passed for 126 source files; compileall and git diff --check passed. Final T7 totals and ruff/mypy/compileall/diff checks will be recorded after final integration review. Dependency deprecation warnings are retained in test output.
+T6 merged checkpoint `29f7f2d` passed **1823 tests, 2 skipped, 152 subtests**. After accepted review fixes and prompt expectation migration, fixed runtime/test checkpoint `314b52d` passed **1851 tests, 2 skipped, 152 subtests** (44.31 seconds). The integration file now includes 38 SQLite/transport/prompt cases and 11 serialized-role codec cases. Repository-wide `ruff check .` passed; `mypy app` passed for 126 source files; `python -m compileall app tests`, `git diff --check` and `git diff 189bc8e...HEAD --check` passed. Nine existing dependency deprecation warnings remain in the full output. No benchmark or actual-player timing inference is made from pytest duration.
 
-Exact initiative-advance retry now returns the original NPC owned-defense interaction receipt. The regression compares complete responses, then verifies no extra draws or resource costs. No remaining T6 integration defects are known; T7 still performs final review and fresh integrated verification.
+Exact initiative-advance and choice retries return their original owned interaction responses. Lost roll and choice delivery regressions reload durable state and verify the previous result, no extra draws and unchanged resources. Both independent review axes are accepted with no remaining/new findings. Final integration checks attest the merged HEAD separately; PR readiness/cleanup do not authorize merge to `main_v2` or deployment.
+
+## Review findings and resolutions
+
+Standards initially reported two findings: the closed role/stage type boundary (P2) and repeated range selection (P3). Fix `c5547ff` types the actual `CombatState.actions` stage and check context/role interfaces, preserving serialized `injury:<character_id>` identities. All three ranged paths use a small owning rules helper while their ammunition/source admission stays separate. Independent Standards recheck: **0 remaining/new findings**.
+
+Spec initially reported two P2 findings: exact choice replay after lost delivery, and static/active/KP prompts directing legacy caller outcomes. Fix `c5547ff` retains the battle/timeline/owner/character/exact-choice response and original button reply. Identical owned input replays its prior result; foreign/changed-choice/rolled-back/new-battle controls cannot replay it. Prompts now use source-bound runners, owned controls, single ammunition costs and preview/confirmation. Ordinary authorized controller resource adjustments remain available without substituting for weapon adjudication. Independent Spec recheck: **0 remaining/new confirmed findings**. Tests-only follow-up `314b52d` updates three obsolete prompt expectations and retains scenario-trigger, privacy and correction assertions.
+
+Actual player-session traces are unavailable. Evidence is limited to controlled synthetic mechanics using real SQLite and public bot/router flows; no production session throughput, model latency or token savings are claimed.
+
+## Changed file inventory
+
+Relative to approved base `189bc8e`, 58 files are changed, including review fixes:
+
+- Core state/rules/dice: `app/combat.py`, `app/combat_flow.py`, `app/combat_resources.py`, `app/combat_rules.py`, `app/dice.py`, `app/models.py`.
+- Catalog data: `app/data/combat_severities.json`, `app/data/combat_weapons.json`.
+- Tools/player controls: `app/commands/handlers/buttons.py`, `app/commands/handlers/character.py`, `app/commands/handlers/combat.py`, `app/commands/handlers/system.py`, `app/commands/router.py`, `app/keeper_tools/character.py`, `app/keeper_tools/checks.py`, `app/keeper_tools/combat.py`, `app/keeper_tools/consequences.py`, `app/keeper_tools/inventory.py`, `app/keeper_tools/managed_combat.py`, `app/keeper_tools/registry.py`, `app/keeper_tools/resource_bridge.py`, `app/legacy_commands.py`.
+- Agent/prompt/turn integration: `app/agents/context_builder.py`, `app/agents/executor.py`, `app/agents/narrator.py`, `app/agents/tool_gateway.py`, `app/keeper.py`, `app/keeper_prompt_policy.py`, `app/services/canonical_facts.py`, `app/services/prompt_config.py`, `app/services/turn_context.py`, `app/services/turn_delivery.py`, `app/services/turn_resolution.py`.
+- Tests: `tests/test_combat_cards.py`, `tests/test_combat_flow.py`, `tests/test_combat_resources.py`, `tests/test_combat_rules.py`, `tests/test_combat_state_machine_integration.py`, `tests/test_combat_wiring.py`, `tests/test_completed_combat_evidence.py`, `tests/test_compound_dice.py`, `tests/test_keeper_tool_registry.py`, `tests/test_kp_assistant_v2.py`, `tests/test_major_wound_con_gate.py`, `tests/test_static_prompt_combat_routing.py`, `tests/test_static_prompt_integration.py`, `tests/test_static_prompt_operational_authority.py`, `tests/test_turn_consistency_handoff.py`, `tests/test_turn_safety.py`.
+- Domain/spec/validation docs: `CONTEXT.md`, `docs/adr/0003-provisional-combat-settlement.md`, `docs/specs/catalog.json`, `docs/specs/enhancement/combat_turn_state_machine_design_spec.md`, `docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md`, `docs/specs/enhancement/combat_turn_state_machine_tasks.md`, `docs/specs/enhancement/combat_turn_state_machine_tasks_zh.md`, `docs/specs/enhancement/combat_turn_state_machine_validation.md`, `docs/specs/enhancement/combat_turn_state_machine_validation_zh.md`.

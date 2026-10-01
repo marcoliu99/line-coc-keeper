@@ -2,7 +2,7 @@
 
 [英文 canonical report](combat_turn_state_machine_validation.md) · [核准 design](combat_turn_state_machine_design_spec_zh.md)
 
-操作者於 2026-10-01 授權實作。T1–T5 已在 `f1be316` 合併，exact advance receipt follow-up 為 `d6f870c`；T6 以真正 repository transaction／玩家 controls 驗證。OCR／PDF 不在此改動範圍。T7 最終 review／發布 checks 尚未完成。
+操作者於 2026-10-01 授權實作。T1–T5 已在 `f1be316` 合併，exact advance receipt follow-up 為 `d6f870c`；T6 以真正 repository transaction／玩家 controls 驗證。OCR／PDF 不在此改動範圍。T6 於 `29f7f2d` 合併；T7 review 修正已通過兩軸獨立 recheck，最終整合／發布 gates 另行記錄。
 
 ## 權威與持久化
 
@@ -30,6 +30,25 @@ Chaosium 六級：minor 1d3、moderate 1d6、severe 1d10、deadly 2d10、termina
 
 ## 驗證狀態
 
-T6 full-suite checkpoint：**1821 passed、2 skipped、152 subtests passed**，15.02 秒。最終 36 個 public SQLite integration cases 與六份相容性 tests 已通過，包含 source-stop、unsupported NPC cancellation、distinct-healer、既有 pending-control rollback 與 exact advance retry。全 repo ruff 通過；mypy 126 source files 通過；compileall／git diff --check 通過。最終 T7 totals 與 ruff／mypy／compileall／diff checks 將於完整 integration review 後記錄；dependency deprecation warnings 保留在 logs。
+T6 merged checkpoint `29f7f2d`：**1823 passed、2 skipped、152 subtests passed**。Review fixes 與舊 prompt expectation 更新後，固定 runtime/test checkpoint `314b52d`：**1851 passed、2 skipped、152 subtests passed**，44.31 秒。Integration 檔案包含 38 個 SQLite／transport／prompt cases 與 11 個 serialized-role codec cases。全 repo `ruff check .` 通過；`mypy app` 126 source files 通過；`python -m compileall app tests`、`git diff --check` 與 `git diff 189bc8e...HEAD --check` 通過。九個既有 dependency deprecation warnings 留在完整 output；pytest 時間不是實際玩家效能 benchmark。
 
-Exact initiative-advance retry 已回傳原 NPC owned-defense interaction receipt；regression 比對完整 response，再驗證不多骰或扣資源。目前沒有已知 T6 integration defects；T7 仍須完成 final review／重新 integrated verification。
+Exact initiative-advance／choice retry 回傳原 owned interaction response。Lost roll／choice delivery regressions 重新載入 durable state，確認原結果、不多骰且資源不變。兩軸獨立 recheck 已通過，零 remaining/new findings。最終 merged HEAD 另行執行 integration checks；PR ready／cleanup 不代表授權 merge `main_v2` 或 deploy。
+
+## Review findings 與修正
+
+Standards 初審兩項：typed closed role/stage boundary（P2）與重複 range selection（P3）。`c5547ff` 將實際 `CombatState.actions` stage 與 check context/role 型別化，保留 `injury:<character_id>` 序列化；三條 ranged paths 共用小型 owning rules helper，各自 ammo/source admission 不變。Standards recheck：**0 remaining/new findings**。
+
+Spec 初審兩項 P2：選擇成功但 reply 遺失的 exact receipt，以及 active/static/KP prompts 仍指向 legacy caller outcomes。`c5547ff` 保存 battle/timeline/owner/character/exact-choice response 與原 button reply；相同 owned input 重播原結果，foreign/不同選項/rollback/新戰鬥不能 replay。Prompts 改為 source-bound runner、owned controls、單次 ammo 與 preview/confirm，保留一般 authorized controller resource adjustment，不能代替 weapon adjudication。Spec recheck：**0 remaining/new confirmed findings**。`314b52d` 更新三份舊 prompt tests，保留 scenario trigger、privacy 與 correction assertions。
+
+沒有真實玩家 session traces 可供效能比較；目前 evidence 限於 controlled synthetic mechanics／真實 SQLite 與 public bot/router flows，不宣稱 production session throughput、LLM latency 或 token 節省。
+
+## 修改檔案清單
+
+相對核准 base `189bc8e`，共 58 個檔案（包含 review fixes）：
+
+- Core state/rules/dice: `app/combat.py`, `app/combat_flow.py`, `app/combat_resources.py`, `app/combat_rules.py`, `app/dice.py`, `app/models.py`.
+- Catalog data: `app/data/combat_severities.json`, `app/data/combat_weapons.json`.
+- Tools/player controls: `app/commands/handlers/buttons.py`, `app/commands/handlers/character.py`, `app/commands/handlers/combat.py`, `app/commands/handlers/system.py`, `app/commands/router.py`, `app/keeper_tools/character.py`, `app/keeper_tools/checks.py`, `app/keeper_tools/combat.py`, `app/keeper_tools/consequences.py`, `app/keeper_tools/inventory.py`, `app/keeper_tools/managed_combat.py`, `app/keeper_tools/registry.py`, `app/keeper_tools/resource_bridge.py`, `app/legacy_commands.py`.
+- Agent/prompt/turn integration: `app/agents/context_builder.py`, `app/agents/executor.py`, `app/agents/narrator.py`, `app/agents/tool_gateway.py`, `app/keeper.py`, `app/keeper_prompt_policy.py`, `app/services/canonical_facts.py`, `app/services/prompt_config.py`, `app/services/turn_context.py`, `app/services/turn_delivery.py`, `app/services/turn_resolution.py`.
+- Tests: `tests/test_combat_cards.py`, `tests/test_combat_flow.py`, `tests/test_combat_resources.py`, `tests/test_combat_rules.py`, `tests/test_combat_state_machine_integration.py`, `tests/test_combat_wiring.py`, `tests/test_completed_combat_evidence.py`, `tests/test_compound_dice.py`, `tests/test_keeper_tool_registry.py`, `tests/test_kp_assistant_v2.py`, `tests/test_major_wound_con_gate.py`, `tests/test_static_prompt_combat_routing.py`, `tests/test_static_prompt_integration.py`, `tests/test_static_prompt_operational_authority.py`, `tests/test_turn_consistency_handoff.py`, `tests/test_turn_safety.py`.
+- Domain/spec/validation docs: `CONTEXT.md`, `docs/adr/0003-provisional-combat-settlement.md`, `docs/specs/catalog.json`, `docs/specs/enhancement/combat_turn_state_machine_design_spec.md`, `docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md`, `docs/specs/enhancement/combat_turn_state_machine_tasks.md`, `docs/specs/enhancement/combat_turn_state_machine_tasks_zh.md`, `docs/specs/enhancement/combat_turn_state_machine_validation.md`, `docs/specs/enhancement/combat_turn_state_machine_validation_zh.md`.
