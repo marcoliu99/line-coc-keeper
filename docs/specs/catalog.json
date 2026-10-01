@@ -1707,6 +1707,15 @@
       ],
       "path": "docs/specs/enhancement/pdf_source_backed_hidden_topology.md",
       "zh_path": "docs/specs/enhancement/pdf_source_backed_hidden_topology_zh.md"
+    },
+    {
+      "title": "Ordered source-backed route segments",
+      "zh": "有來源依據的有序路線分段",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/enhancement/pdf_ordered_source_route_segments.md",
+      "zh_path": "docs/specs/enhancement/pdf_ordered_source_route_segments_zh.md"
     }
   ]
 }
