@@ -1225,6 +1225,30 @@ for _spec in _SPECS:
             'reason': {'type': 'string', 'description': '明確的來源與調整原因'},
         })
 
+_SPECS += (
+    ToolSpec(schema={
+        'name': 'run_enemy_combat_plan',
+        'description': '執行plan_enemy_turn既有來源支持計畫；系統擲骰並等待原玩家防禦，不能外傳命中或傷害。',
+        'input_schema': {'type': 'object', 'properties': {'plan_id': {'type': 'string'}}, 'required': ['plan_id']},
+    }, handler=managed_handlers.run_enemy_combat_plan, invalidates_combat_status=True),
+    ToolSpec(schema={
+        'name': 'request_stabilization_check',
+        'description': '宣告自己的急救行動，綁定目前病患與瀕死事項；待玩家擲骰或使用既有autoroll流程。',
+        'input_schema': {'type': 'object', 'properties': {
+            'healer_character_id': {'type': 'string'}, 'character_id': {'type': 'string'},
+            'event_id': {'type': 'string'}, 'reason': {'type': 'string'},
+        }, 'required': ['healer_character_id', 'character_id', 'event_id', 'reason']},
+    }, handler=managed_handlers.request_stabilization_check, invalidates_combat_status=True),
+    ToolSpec(schema={
+        'name': 'stabilize_investigator',
+        'description': 'Keeper 依目前時間線已記錄成功急救檢定穩定瀕死調查員；不接受外傳結果、不清除死亡或重傷。',
+        'input_schema': {'type': 'object', 'properties': {
+            'character_id': {'type': 'string'}, 'source_check_id': {'type': 'string'},
+            'event_id': {'type': 'string'}, 'reason': {'type': 'string'},
+        }, 'required': ['character_id', 'source_check_id', 'event_id', 'reason']},
+    }, handler=managed_handlers.stabilize_investigator, invalidates_combat_status=True),
+)
+
 REGISTRY: dict[str, ToolSpec] = {spec.schema["name"]: spec for spec in _SPECS}
 if len(REGISTRY) != len(_SPECS):
     raise ValueError("duplicate Keeper tool name")

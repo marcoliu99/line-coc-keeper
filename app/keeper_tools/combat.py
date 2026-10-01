@@ -174,7 +174,11 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
                 'action_id', 'actor_id', 'target_id', 'completed', 'needs_ruling', 'weapon_reference',
             ) if key in action} for action in managed.actions.values()],
             'correctable_events': [{key: event[key] for key in ('event_id', 'kind', 'revision')}
-                                   for event in managed.events],
+                                   for event in managed.events
+                                   if event['kind'] not in {'administrative', 'reconciliation', 'correction', 'snapshot'}],
+            'plans': [{key: plan.get(key) for key in (
+                'plan_id', 'enemy_combatant_id', 'round_number', 'selected_action', 'selected_id', 'target_ids',
+            )} for plan in managed.plans.values()],
             'settlement_id': managed.settlement.get('settlement_id', ''),
             'participants': [{'combatant_id': p.combatant_id, 'character_id': p.character_id,
                               'name': p.display_name} for p in managed.order],
@@ -188,6 +192,30 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
     response['postcombat_controls'] = [{key: obligation.get(key) for key in (
         'obligation_id', 'combat_id', 'character_id', 'kind', 'status', 'next_trigger',
     )} for obligation in call.state.postcombat_obligations if obligation.get('status') != 'resolved']
+    from app import combat_flow
+    obligations = (combat_flow.postcombat_obligations(call.state) if resource_bridge.managed(call.state)
+                   else call.state.postcombat_obligations)
+    medical_events = list(call.state.resolved_check_events)
+    medical_events.extend(action['medical_receipt'] for action in call.state.combat.actions.values()
+                          if action.get('medical_receipt'))
+    medical_events.extend(action['medical_receipt']
+                          for closed in call.state.closed_combat_receipts.values()
+                          if closed.get('status') == 'committed'
+                          for action in closed.get('actions', {}).values() if action.get('medical_receipt'))
+    eligible = {}
+    for event in medical_events:
+        context = event.get('medical_context', {})
+        patient = call.state.characters_by_id.get(context.get('character_id', ''))
+        active_ids = sorted(o['obligation_id'] for o in obligations
+                            if o.get('character_id') == context.get('character_id')
+                            and o.get('kind') == 'dying' and o.get('status') != 'resolved')
+        if (event.get('timeline_id') == call.state.timeline_id and event.get('success') is True
+                and event.get('skill') in {'急救', 'First Aid'} and not event.get('stabilization_receipt')
+                and patient and resource_bridge.effective(call.state, patient).injury.get('dying')
+                and active_ids and active_ids == context.get('obligation_ids')):
+            eligible[event['check_id']] = {key: event.get(key) for key in (
+                'check_id', 'character_id', 'investigator', 'skill', 'success', 'medical_context')}
+    response['medical_check_receipts'] = list(eligible.values())
     ended = combat.last_ended_combat_evidence(
         call.state, include_private=(call.speaker_role == "kp_assistant")
     )

@@ -53,10 +53,14 @@ def owned_character(state: GroupState, pending: dict[str, Any], owner_id: str) -
     if context:
         action = state.combat.actions.get(context.get('action_id', ''), {})
         expected_id = action.get('character_id', '')
+        if context.get('check_role') == 'medical':
+            expected_id = action.get('medical_context', {}).get('healer_character_id', '')
         if not expected_id:
             participant_id = action.get('actor_id') if context.get('check_role') == 'attack' else action.get('target_id')
             participant = next((p for p in state.combat.order if p.combatant_id == participant_id), None)
             expected_id = participant.character_id if participant else ''
+    elif pending.get('medical_context'):
+        expected_id = pending['medical_context'].get('healer_character_id', '')
     elif continuing:
         obligation: dict[str, Any] = next((dict(o) for o in state.postcombat_obligations
                            if o.get('obligation_id') == continuing.get('obligation_id')), {})

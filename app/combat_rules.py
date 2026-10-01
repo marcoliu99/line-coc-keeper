@@ -142,6 +142,27 @@ def _validate_damage(expression: str) -> None:
             raise ValueError('Constant exceeds catalog bounds')
 
 
+def parse_weapon_definition(payload: dict) -> WeaponDefinition:
+    """Validate a previously reviewed durable definition at the owning-layer seam."""
+    row = dict(payload)
+    if any(not isinstance(row.get(key), str) or not row[key].strip()
+           for key in ('id', 'name', 'skill_id', 'catalog_version', 'damage')):
+        raise ValueError('Definition requires explicit identity, skill, version and damage')
+    for key in ('source', 'rule_source'):
+        source = dict(row[key])
+        if (not str(source.get('url', '')).startswith(('https://', 'http://'))
+                or not str(source.get('revision', '')).strip()
+                or not re.fullmatch(r'[a-fA-F0-9]{64}', str(source.get('sha256', '')))
+                or not str(source.get('accessed', '')).strip()):
+            raise ValueError('Reviewed definition requires complete pinned provenance')
+        row[key] = RuleSource(**source)
+    if not isinstance(row.get('aliases'), (list, tuple)) or any(not isinstance(a, str) for a in row['aliases']):
+        raise ValueError('Weapon aliases require explicit strings')
+    row['aliases'] = tuple(row['aliases'])
+    row['distance_bands'] = tuple(DistanceBand(**band) for band in row.get('distance_bands', ()))
+    return WeaponDefinition(**row)
+
+
 @lru_cache(maxsize=1)
 def weapon_catalog() -> tuple[WeaponDefinition, ...]:
     payload = json.loads((_DATA / 'combat_weapons.json').read_text())
