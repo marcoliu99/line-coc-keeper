@@ -100,7 +100,14 @@ def worker(args: argparse.Namespace) -> dict:
             'initial_map_status': analysis.get('initial_status'), 'map_status': analysis.get('status'),
             'map_validation_errors': analysis.get('validation_errors', []),
             'map_completeness_errors': analysis.get('completeness_errors', []),
-            'map_repair_attempts': analysis.get('repair_attempts', 0), 'map_verified': analysis.get('verified', False),
+            'map_repair_attempts': analysis.get('repair_attempts', 0),
+            'map_phase1_locations': analysis.get('map_phase1_locations', 0),
+            'map_phase1_missing_found': analysis.get('map_phase1_missing_found', 0),
+            'map_phase2_edges': analysis.get('map_phase2_edges', 0),
+            'map_targeted_repairs': analysis.get('map_targeted_repairs', 0),
+            'map_patch_add_locations': analysis.get('map_patch_add_locations', 0),
+            'map_patch_remove_edges': analysis.get('map_patch_remove_edges', 0),
+            'map_patch_add_edges': analysis.get('map_patch_add_edges', 0), 'map_verified': analysis.get('verified', False),
             'room_count': len(candidate_graph.get('rooms', [])),
             'exit_count': sum(len(room.get('exits', [])) for room in candidate_graph.get('rooms', [])),
             'entry_room_id': candidate_graph.get('entry_room_id'), 'final_graph_sha256': analysis.get('graph_sha256'),
@@ -119,7 +126,9 @@ def worker(args: argparse.Namespace) -> dict:
                        'paddle_page_attempts', 'paddle_region_attempts', 'paddle_rejected', 'paddle_failed',
                        'tesseract_fallbacks', 'provider_transcription_conflicts', 'markitdown_transcription_conflicts',
                        'map_candidates', 'map_analysis_attempted', 'map_analysis_failed', 'map_graph_generated',
-                       'map_graph_invalid', 'map_graph_incomplete', 'map_graph_repaired', 'map_graph_verified')}})
+                       'map_graph_invalid', 'map_graph_incomplete', 'map_graph_repaired', 'map_graph_verified',
+                       'map_phase1_locations', 'map_phase1_missing_found', 'map_phase2_edges', 'map_targeted_repairs',
+                       'map_patch_add_locations', 'map_patch_remove_edges', 'map_patch_add_edges')}})
         print('PAGE_DONE', filename, number, flush=True)
     return {'pages': rows, 'provider': config.ANALYSIS_PROVIDER,
             'docling_enabled': config.PDF_LAYOUT_DOCLING_ENABLED,

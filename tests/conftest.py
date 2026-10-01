@@ -78,24 +78,92 @@ def isolated_pdf_import_drafts(monkeypatch, tmp_path):
 @pytest.fixture
 def certified_map_result():
     """Stub the image boundary in routing tests; certification has its own provider tests."""
-    from app import pdf_map_analysis, scene_map
+    from app import pdf_map_analysis, pdf_map_evidence, scene_map
 
     def result(description, graph, image=b'png'):
         assert not scene_map.validate_scene_map(graph)
+        inventory, errors = pdf_map_evidence.merge_inventory([], [
+            {'label': room.get('visible_label', room['name']), 'floor_or_section': 'ground', 'id_hint': room['id'],
+             'visible': True, 'evidence': 'Known fixture room'} for room in graph['rooms']])
+        assert not errors
+        connectivity = {'entry': {'status': 'resolved', 'room_id': graph['entry_room_id'], 'evidence': 'Known fixture entry'},
+            'edges': [{'id': f'edge_{i}_{j}', 'from': room['id'], 'to': edge['to'], 'compass': edge['compass'],
+                       'type': 'door', 'visual_basis': 'door', 'evidence': 'Known fixture door'}
+                      for i, room in enumerate(graph['rooms']) for j, edge in enumerate(room.get('exits', []))], 'missing_locations': []}
+        built, errors = pdf_map_evidence.build_graph(inventory, connectivity)
+        assert not errors
+        graph.clear()
+        graph.update(built)
         record = pdf_map_analysis.not_analyzed()
+        record['inventory'] = inventory
+        record['connectivity'] = connectivity
+        record['inventory_audit'] = {'complete': True, 'uncertainties': [], 'confirmed_ids': [r['id'] for r in inventory], 'missing_locations': []}
         record.update(status='MAP_GRAPH_VERIFIED', initial_status='MAP_GRAPH_VERIFIED',
                       verified=True, graph_generated=True, analysis_attempted=True,
                       image_sha256=hashlib.sha256(image).hexdigest(),
                       graph_sha256=pdf_map_analysis.graph_hash(graph), candidate_graph=graph)
         evidence = {'complete': True, 'uncertainties': [],
-            'visible_locations': [{'label': room['name'], 'room_id': room['id']} for room in graph['rooms']],
+            'visible_locations': [{'label': room['visible_label'], 'room_id': room['id']} for room in graph['rooms']],
             'rooms': [{'room_id': room['id'], 'verdict': 'supported', 'evidence': 'Known fixture room'} for room in graph['rooms']],
             'edges': [{'edge_id': f'{room["id"]}:{i}', 'verdict': 'supported', 'basis': 'door',
                        'evidence': 'Known fixture door'} for room in graph['rooms'] for i, _ in enumerate(room.get('exits', []))],
             'entry': {'room_id': graph.get('entry_room_id', ''),
                       'verdict': 'supported' if graph.get('entry_room_id') else 'not_visible', 'evidence': 'Known fixture entry'}}
         record['image_evidence'] = [evidence]
-        record['attempts'] = [{'stage': 'image_audit', 'input_graph_sha256': record['graph_sha256'],
+        raw = [{'label': r['label'], 'floor_or_section': r['floor_or_section'], 'id_hint': r['id_hints'][0],
+                'visible': True, 'evidence': r['evidence']} for r in inventory]
+        record['attempts'] = [
+            {'stage': 'phase1_generation', 'image_sha256': record['image_sha256'], 'output_evidence': {'page_type': 'map', 'locations': raw}},
+            {'stage': 'phase1_audit', 'image_sha256': record['image_sha256'], 'output_evidence': record['inventory_audit']},
+            {'stage': 'phase2_generation', 'image_sha256': record['image_sha256'], 'output_evidence': connectivity},
+            {'stage': 'image_audit', 'input_graph_sha256': record['graph_sha256'],
                                'image_sha256': record['image_sha256'], 'output_evidence': evidence}]
         return pdf_map_analysis.MapResult(description, graph, record)
     return result
+
+
+@pytest.fixture
+def map_evidence_provider(monkeypatch):
+    """Exercise production phase schemas while stubbing only external image inference."""
+    import json
+    from types import SimpleNamespace
+
+    from app import config
+    from app.providers import registry
+
+    def install(*, entry='resolved', final_error=None, phase_error=None):
+        calls = []
+        def analyze(_png, tool, prompt, **_options):
+            name = tool['name']
+            calls.append(name)
+            location = {'label': 'Entrance', 'floor_or_section': 'ground', 'id_hint': 'door',
+                        'visible': True, 'kind': 'location', 'evidence': 'Visible entrance label'}
+            if name == 'inventory_map_locations':
+                return {'page_type': 'map', 'description': 'A visible entrance.', 'locations': [location]}
+            payload = json.loads(prompt.split('\nINPUT_JSON\n')[1])
+            if name == 'audit_map_inventory':
+                return {'complete': True, 'uncertainties': [], 'confirmed_ids': [r['id'] for r in payload['inventory']], 'missing_locations': []}
+            if name == 'extract_map_connectivity':
+                edges = [] if not phase_error else [{'id': 'bad', 'from': 'door', 'to': 'absent', 'type': 'door',
+                    'visual_basis': 'wall', 'compass': 'E', 'evidence': 'Solid wall'}]
+                return {'entry': {'status': entry, 'room_id': 'door' if entry == 'resolved' else '',
+                                 'evidence': 'Visible entry' if entry == 'resolved' else ''}, 'edges': edges, 'missing_locations': []}
+            if name == 'patch_map_evidence':
+                return {'add_locations': [], 'remove_edges': ['bad'] if phase_error == 'repair' else [],
+                        'replace_edges': [], 'add_edges': [], 'entry_update': None}
+            graph = payload['graph']
+            evidence = {'complete': True, 'uncertainties': [],
+                'visible_locations': [{'label': r['visible_label'], 'room_id': r['id']} for r in graph['rooms']],
+                'rooms': [{'room_id': r['id'], 'verdict': 'supported', 'evidence': 'Visible room'} for r in graph['rooms']],
+                'edges': [{'edge_id': e['edge_id'], 'verdict': 'supported', 'basis': e['visual_basis'], 'evidence': 'Visible opening'} for e in payload['edge_inventory']],
+                'entry': {'room_id': graph['entry_room_id'], 'verdict': 'supported', 'evidence': 'Visible entry'}}
+            if final_error == 'missing':
+                evidence['visible_locations'].append({'label': 'Lamp Room', 'room_id': ''})
+            if final_error == 'unavailable':
+                return None
+            if final_error == 'unsupported':
+                evidence['rooms'][0]['verdict'] = 'unsupported'
+            return evidence
+        monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(analyze_image=analyze))
+        return calls
+    return install

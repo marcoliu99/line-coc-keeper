@@ -76,7 +76,7 @@ def test_resumed_page_reuses_text_images_and_maps_without_parser_work(certified_
         text, _, _, images, maps = loader.extract_text(source, resume_pages=cached, quality_report=resumed)
     parse.assert_called_once_with(source, [2])
     assert analyze.call_count == repair.call_count == 1
-    assert images[1] == b'image' and maps[1]['entry_room_id'] == 'door'
+    assert images[1] == b'image' and maps[1]['entry_room_id'] == graph['entry_room_id']
     assert resumed['derived_descriptions']['1'] == 'labeled derived map'
     assert resumed['pages'][0]['resumed']
     assert text.count('--- 第 1 頁 ---') == text.count('--- 第 2 頁 ---') == 1

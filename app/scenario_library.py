@@ -222,17 +222,17 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
 
 def _publication_quality(report: dict) -> dict:
     """Keep feature diagnostics public while archiving provider graphs privately."""
+    from app import pdf_map_analysis
+
     public = copy.deepcopy(report)
     rows = public.get('pages', [])
     rows = list(rows.values()) if isinstance(rows, dict) else rows
     for row in rows:
-        analyses = [row.get('map_analysis', {}), *row.get('map_analysis_history', [])]
-        for analysis in analyses:
-            analysis.pop('candidate_graph', None)
-            analysis.pop('image_evidence', None)
-            for attempt in analysis.get('attempts', []):
-                attempt.pop('output_graph', None)
-                attempt.pop('output_evidence', None)
+        if row.get('map_analysis'):
+            row['map_analysis'] = pdf_map_analysis.publication_summary(row['map_analysis'])
+        if row.get('map_analysis_history'):
+            row['map_analysis_history'] = [pdf_map_analysis.publication_summary(analysis)
+                                           for analysis in row['map_analysis_history']]
         if row.get('map_analysis'):
             row.pop('map_candidate_description', None)
             row.get('candidates', {}).pop('vision', None)

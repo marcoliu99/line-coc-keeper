@@ -80,24 +80,13 @@ def test_soft_map_page_resumes_without_retrying_or_trusting_candidate(safe_map_p
 @pytest.mark.parametrize(('failed_kind', 'expected_status'), [
     ('incomplete', 'MAP_GRAPH_INCOMPLETE'), ('provider_failed', 'MAP_ANALYSIS_FAILED'),
     ('audit_failed', 'MAP_GRAPH_INCOMPLETE'), ('graph_missing', 'MAP_GRAPH_MISSING')])
-def test_derived_map_failure_alone_never_blocks_source(safe_map_pdf, monkeypatch, tmp_path, failed_kind, expected_status):
-    graph = {'page_type': 'map', 'description': 'Map only', 'entry_room_id': 'room',
-             'rooms': [{'id': 'room', 'name': 'Entrance', 'exits': []}]}
-    def analyze(_png, tool, _prompt, **_options):
-        if failed_kind == 'provider_failed':
-            return None
-        if failed_kind == 'graph_missing':
-            return {'page_type': 'map', 'rooms': []}
-        if tool['name'] == 'analyze_page_image':
-            return graph
-        if failed_kind == 'audit_failed':
-            return None
-        return {'complete': True, 'uncertainties': [],
-                'visible_locations': [{'label': 'Entrance', 'room_id': 'room'},
-                                      {'label': 'Lamp Room', 'room_id': ''}],
-                'rooms': [{'room_id': 'room', 'verdict': 'supported', 'evidence': 'Visible room'}],
-                'edges': [], 'entry': {'room_id': 'room', 'verdict': 'supported', 'evidence': 'Visible door'}}
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(analyze_image=analyze))
+def test_derived_map_failure_alone_never_blocks_source(safe_map_pdf, monkeypatch, tmp_path, map_evidence_provider, failed_kind, expected_status):
+    if failed_kind in {'incomplete', 'audit_failed'}:
+        map_evidence_provider(final_error='missing' if failed_kind == 'incomplete' else 'unavailable')
+    else:
+        response = None if failed_kind == 'provider_failed' else {'page_type': 'map', 'locations': []}
+        monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
+                            SimpleNamespace(analyze_image=lambda *_args, **_options: response))
     report = {}
     text, _, _, images, maps = pdf_loader.extract_text(safe_map_pdf, quality_report=report)
     assert report['scenario_readiness'] == 'READY_WITH_WARNINGS'
@@ -218,12 +207,12 @@ def test_published_quality_keeps_map_warnings_but_candidate_provenance_is_privat
     assert published['map_status'] == {'1': 'MAP_GRAPH_INVALID'}
     assert published['soft_review_pages'] == [1]
     assert 'candidate_graph' not in published['pages'][0]['map_analysis']
-    assert 'output_graph' not in published['pages'][0]['map_analysis']['attempts'][1]
+    assert 'output_graph' not in published['pages'][0]['map_analysis']['attempts'][0]
     private = tmp_path / sid / '.ingestion-provenance.json'
     assert private.stat().st_mode & 0o777 == 0o600
     saved = json.loads(private.read_text())
     assert saved['pages'][0]['map_analysis']['candidate_graph'] == graph
-    assert saved['pages'][0]['map_analysis']['attempts'][1]['output_graph'] == graph
+    assert saved['pages'][0]['map_analysis']['attempts'][0]['output_evidence'] == graph
     assert report['pages'][0]['map_analysis']['candidate_graph'] == graph
 
 

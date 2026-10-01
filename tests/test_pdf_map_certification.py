@@ -28,103 +28,66 @@ def map_pdf(monkeypatch):
     return source
 
 
-def test_valid_graph_requires_image_audit_before_it_is_verified(monkeypatch):
+def test_valid_graph_requires_all_image_phases_before_verification(map_evidence_provider):
     from app import pdf_map_analysis
-
-    calls = []
-    def analyze(_png, tool, _prompt, **_options):
-        calls.append(tool['name'])
-        return GRAPH if tool['name'] == 'analyze_page_image' else AUDIT
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
-                        SimpleNamespace(analyze_image=analyze))
+    calls = map_evidence_provider()
     result = pdf_map_analysis.analyze(b'original-image', reserve=lambda: True, candidate=True)
     assert result.analysis['status'] == 'MAP_GRAPH_VERIFIED'
-    assert result.graph == GRAPH
-    assert calls == ['analyze_page_image', 'audit_scene_map_image']
+    assert len(calls) == 4
+    assert result.graph['rooms'][0]['visible_label'] == 'Entrance'
     assert scene_map.validate_scene_map(result.graph) == []
+    assert pdf_map_analysis.verified_graph(result.graph, result.analysis, b'original-image')
 
 
 @pytest.mark.parametrize('repair_succeeds', [True, False])
-def test_invalid_entry_gets_one_image_grounded_repair_and_revalidation(monkeypatch, repair_succeeds):
+def test_invalid_connectivity_gets_one_scoped_repair(map_evidence_provider, repair_succeeds):
     from app import pdf_map_analysis
-
-    invalid = {**GRAPH, 'entry_room_id': 'missing'}
-    prompts = []
-    def analyze(png, tool, prompt, **options):
-        assert png == b'original-image'
-        assert options['max_retries'] == 0
-        if tool['name'] == 'audit_scene_map_image':
-            return AUDIT
-        prompts.append(prompt)
-        return GRAPH if len(prompts) == 2 and repair_succeeds else invalid
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
-                        SimpleNamespace(analyze_image=analyze))
-    result = pdf_map_analysis.analyze(b'original-image', reserve=lambda: True, candidate=True)
+    calls = map_evidence_provider(phase_error='repair' if repair_succeeds else 'invalid')
+    result = pdf_map_analysis.analyze(b'image', reserve=lambda: True)
     assert result.analysis['repair_attempts'] == 1
-    assert len(prompts) == 2
-    assert 'invalid_entry_room' in prompts[1]
-    assert 'missing' in prompts[1]
-    attempt = result.analysis['attempts'][1]
-    assert attempt['stage'] == 'repair'
-    assert attempt['input_graph_sha256'] == pdf_map_analysis.graph_hash(invalid)
-    assert attempt['validation_errors'] == ['invalid_entry_room']
+    attempt = result.analysis['attempts'][3]
+    assert attempt['stage'] == 'targeted_repair'
+    assert attempt['input_graph_sha256']
+    assert 'dangling_exit' in attempt['validation_errors']
     assert attempt['elapsed_seconds'] >= 0
+    assert len(calls) == (5 if repair_succeeds else 4)
     assert result.analysis['status'] == ('MAP_GRAPH_VERIFIED' if repair_succeeds else 'MAP_GRAPH_INVALID')
-    assert result.graph == (GRAPH if repair_succeeds else None)
+    assert (result.graph is not None) == repair_succeeds
 
 
-def test_unsupported_wall_edge_cannot_be_certified_even_if_structure_is_valid(monkeypatch):
+def test_independent_image_rejection_never_certifies(map_evidence_provider):
     from app import pdf_map_analysis
-
-    graph = {**GRAPH, 'rooms': [{'id': 'door', 'name': 'Entrance', 'exits': [{'to': 'cellar', 'compass': 'E'}]},
-                               {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
-    evidence = {**AUDIT, 'visible_locations': [{'label': 'Entrance', 'room_id': 'door'},
-                                              {'label': 'Cellar', 'room_id': 'cellar'}],
-                'rooms': [{'room_id': 'door', 'verdict': 'supported', 'evidence': 'Visible entrance'},
-                          {'room_id': 'cellar', 'verdict': 'supported', 'evidence': 'Visible cellar'}],
-                'edges': [{'edge_id': 'door:0', 'verdict': 'unsupported', 'basis': 'wall',
-                           'evidence': 'Solid wall with no opening'}]}
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
-        analyze_image=lambda _png, tool, _prompt, **_options: graph if tool['name'] == 'analyze_page_image' else evidence))
-    result = pdf_map_analysis.analyze(b'image', reserve=lambda: True, candidate=True)
+    map_evidence_provider(final_error='unsupported')
+    result = pdf_map_analysis.analyze(b'image', reserve=lambda: True)
     assert result.analysis['status'] == 'MAP_GRAPH_INVALID'
     assert result.graph is None
-    assert result.analysis['repair_attempts'] == 1
+    assert result.analysis['repair_attempts'] == 0  # No full regeneration after final audit.
 
 
-def test_missing_image_visible_location_remains_incomplete_after_repair(monkeypatch):
+def test_missing_image_visible_location_remains_incomplete(map_evidence_provider):
     from app import pdf_map_analysis
-
-    evidence = {**AUDIT, 'visible_locations': [{'label': 'Entrance', 'room_id': 'door'},
-                                              {'label': 'Lamp Room', 'room_id': ''}]}
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
-        analyze_image=lambda _png, tool, _prompt, **_options: GRAPH if tool['name'] == 'analyze_page_image' else evidence))
-    result = pdf_map_analysis.analyze(b'image', reserve=lambda: True, candidate=True)
+    map_evidence_provider(final_error='missing')
+    result = pdf_map_analysis.analyze(b'image', reserve=lambda: True)
     assert result.analysis['status'] == 'MAP_GRAPH_INCOMPLETE'
     assert 'missing_visible_location:Lamp Room' in result.analysis['completeness_errors']
     assert result.graph is None
 
 
-def test_invalid_graph_stays_in_private_draft_and_never_in_loader_maps(map_pdf, monkeypatch, tmp_path):
+def test_invalid_graph_stays_private_and_never_in_loader_maps(map_pdf, map_evidence_provider, monkeypatch, tmp_path):
     from app import pdf_ingestion_drafts as drafts
-
-    invalid = {**GRAPH, 'entry_room_id': 'missing'}
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
-                        SimpleNamespace(analyze_image=lambda *_args, **_options: invalid))
+    map_evidence_provider(phase_error='invalid')
     report = {}
     result = pdf_loader.extract_text(map_pdf, quality_report=report)
     assert result[4] == {}
     assert report['soft_review_pages'] == [1]
     assert report['blocked_pages'] == []
-    assert report['pages'][0]['map_analysis']['status'] == 'MAP_GRAPH_INVALID'
     assert report['map_graph_generated'] == report['map_graph_invalid'] == 1
-    assert report['map_graph_verified'] == 0
-    assert report['pages'][0]['map_analysis']['candidate_graph'] == invalid
+    candidate = report['pages'][0]['map_analysis']['candidate_graph']
     monkeypatch.setattr(drafts, 'SCENARIO_LIBRARY_DIR', tmp_path)
     lease = drafts.reserve('map-test', map_pdf, 'map.pdf')
     saved = drafts.checkpoint(lease, report, result)
     assert saved['pages']['1']['map'] is None
-    assert saved['pages']['1']['report']['map_analysis']['candidate_graph'] == invalid
+    assert saved['pages']['1']['report']['map_analysis']['candidate_graph'] == candidate
 
 
 def test_invalid_graph_cannot_bypass_library_guard_with_missing_quality_report(map_pdf, monkeypatch, tmp_path):
@@ -138,11 +101,9 @@ def test_invalid_graph_cannot_bypass_library_guard_with_missing_quality_report(m
     assert list(tmp_path.iterdir()) == []
 
 
-def test_certified_graph_persists_without_changing_pdf_source_transcription(map_pdf, monkeypatch, tmp_path):
+def test_certified_graph_persists_without_changing_source(map_pdf, map_evidence_provider, monkeypatch, tmp_path):
     from app import scenario_library
-
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
-        analyze_image=lambda _png, tool, _prompt, **_options: GRAPH if tool['name'] == 'analyze_page_image' else AUDIT))
+    map_evidence_provider()
     report = {}
     text, _, _, images, maps = pdf_loader.extract_text(map_pdf, quality_report=report)
     assert 'A visible entrance.' not in text
@@ -151,25 +112,25 @@ def test_certified_graph_persists_without_changing_pdf_source_transcription(map_
     monkeypatch.setattr(scenario_library, 'SCENARIO_LIBRARY_DIR', tmp_path)
     scenario = scenario_library.save_scenario(map_pdf, title='Map', filename='map.pdf', preview='',
         text=text, indexes={}, pregens=[], page_images=images, page_maps=maps, parse_quality=report)
-    assert scenario_library.load_context(scenario)['scene_maps'] == {'1': GRAPH}
+    assert scenario_library.load_context(scenario)['scene_maps'] == {'1': maps[1]}
 
 
-def test_shared_budget_is_checkpointed_before_every_actual_map_dispatch(map_pdf, monkeypatch):
+def test_shared_budget_is_checkpointed_before_every_dispatch(map_pdf, monkeypatch, map_evidence_provider):
     from app import pdf_layout_adapters
-
-    snapshots, calls = [], []
+    snapshots = []
+    calls = map_evidence_provider()
+    provider = registry.ANALYSIS_PROVIDERS[config.ANALYSIS_PROVIDER]
+    original = provider.analyze_image
+    def analyze(*args, **options):
+        assert snapshots[-1]['consumed_requests'] == len(calls) + 1
+        return original(*args, **options)
+    provider.analyze_image = analyze
     budget = pdf_layout_adapters.new_budget()
-    def analyze(_png, tool, _prompt, **_options):
-        calls.append(tool['name'])
-        assert snapshots[-1]['consumed_requests'] == len(calls)
-        return GRAPH if tool['name'] == 'analyze_page_image' else AUDIT
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
-                        SimpleNamespace(analyze_image=analyze))
     report = {}
     pdf_loader.extract_text(map_pdf, quality_report=report, layout_budget=budget,
         layout_budget_checkpoint=lambda value: snapshots.append(dict(value)))
-    assert calls == ['analyze_page_image', 'audit_scene_map_image']
-    assert report['layout_budget']['consumed_requests'] == 2
+    assert len(calls) == 4
+    assert report['layout_budget']['consumed_requests'] == 4
 
 
 def test_exhausted_budget_keeps_map_unanalyzed_without_dispatch(map_pdf, monkeypatch):
@@ -198,16 +159,10 @@ def test_verified_boolean_without_image_audit_is_not_a_certificate():
     assert not pdf_map_analysis.verified_graph(GRAPH, claims)
 
 
-def test_modified_cached_graph_is_reanalyzed_instead_of_reused(map_pdf, monkeypatch):
+def test_modified_cached_graph_is_reanalyzed(map_pdf, map_evidence_provider):
     import copy
     import hashlib
-
-    calls = []
-    def analyze(_png, tool, _prompt, **_options):
-        calls.append(tool['name'])
-        return GRAPH if tool['name'] == 'analyze_page_image' else AUDIT
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
-                        SimpleNamespace(analyze_image=analyze))
+    calls = map_evidence_provider()
     report = {}
     _, _, _, images, maps = pdf_loader.extract_text(map_pdf, quality_report=report)
     row = report['pages'][0]
@@ -219,17 +174,14 @@ def test_modified_cached_graph_is_reanalyzed_instead_of_reused(map_pdf, monkeypa
         'selected_sha256': row['selected_sha256'], 'report': row, 'image': images[1], 'map': graph}}
     final = {}
     result = pdf_loader.extract_text(map_pdf, quality_report=final, resume_pages=cached)
-    assert calls == ['analyze_page_image', 'audit_scene_map_image'] * 2
-    assert result[4][1]['entry_room_id'] == 'door'
+    assert len(calls) == 8
+    assert result[4][1] == maps[1]
     assert not final['pages'][0].get('resumed')
 
 
-def test_explicit_reanalysis_retains_previous_graph_repair_provenance(map_pdf, monkeypatch, tmp_path):
+def test_explicit_reanalysis_retains_previous_patch_provenance(map_pdf, map_evidence_provider, monkeypatch, tmp_path):
     from app import pdf_ingestion_drafts as drafts
-
-    invalid = {**GRAPH, 'entry_room_id': 'missing'}
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
-                        SimpleNamespace(analyze_image=lambda *_args, **_options: invalid))
+    map_evidence_provider(phase_error='invalid')
     monkeypatch.setattr(drafts, 'SCENARIO_LIBRARY_DIR', tmp_path)
     lease = drafts.reserve('map-history', map_pdf, 'map.pdf')
     report = {}
@@ -242,9 +194,10 @@ def test_explicit_reanalysis_retains_previous_graph_repair_provenance(map_pdf, m
     row = saved['pages']['1']['report']
     assert row['map_analysis']['repair_attempts'] == 1
     assert len(row['map_analysis_history']) == 1
-    assert row['map_analysis_history'][0]['repair_attempts'] == 1
-    assert row['map_analysis_history'][0]['attempts'][1]['output_graph'] == invalid
-    assert saved['report']['layout_budget']['consumed_requests'] == 4
+    previous = row['map_analysis_history'][0]
+    assert previous['repair_attempts'] == 1
+    assert previous['attempts'][3]['output_evidence'] == previous['targeted_patch']
+    assert saved['report']['layout_budget']['consumed_requests'] == 8
 
 
 @pytest.mark.parametrize(('response', 'status'), [(None, 'MAP_ANALYSIS_FAILED'),
@@ -263,21 +216,18 @@ def test_attempted_analysis_failure_and_missing_graph_are_distinct(monkeypatch, 
     assert result.analysis['repair_attempts'] == 0
 
 
-def test_repair_cannot_erase_previously_visible_missing_labels(monkeypatch):
+def test_final_audit_cannot_erase_inventory_label(map_evidence_provider, monkeypatch):
     from app import pdf_map_analysis
-
-    audits = []
-    missing = {**AUDIT, 'visible_locations': [*AUDIT['visible_locations'],
-                                             {'label': 'Lamp Room', 'room_id': ''}]}
-    def analyze(_png, tool, _prompt, **_options):
-        if tool['name'] == 'analyze_page_image':
-            return GRAPH
-        audits.append(tool['name'])
-        return missing if len(audits) == 1 else AUDIT
-    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
-                        SimpleNamespace(analyze_image=analyze))
+    map_evidence_provider()
+    provider = registry.ANALYSIS_PROVIDERS[config.ANALYSIS_PROVIDER]
+    original = provider.analyze_image
+    def analyze(png, tool, prompt, **options):
+        evidence = original(png, tool, prompt, **options)
+        if tool['name'] == 'audit_scene_map_image':
+            evidence['visible_locations'] = []
+        return evidence
+    provider.analyze_image = analyze
     result = pdf_map_analysis.analyze(b'image', reserve=lambda: True, candidate=True)
     assert result.analysis['status'] == 'MAP_GRAPH_INCOMPLETE'
-    assert 'missing_prior_visible_location:Lamp Room' in result.analysis['completeness_errors']
-    assert result.analysis['repair_attempts'] == 1
+    assert 'incomplete_visible_location_audit' in result.analysis['completeness_errors']
     assert result.graph is None
