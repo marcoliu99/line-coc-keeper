@@ -1667,8 +1667,19 @@
       "title": "Map connectivity reliability follow-up",
       "zh": "Map connectivity reliability 補強",
       "category": "bug",
-      "status": "in_progress",
-      "evidence": [],
+      "status": "implemented",
+      "evidence": [
+        ".env.example",
+        "app/pdf_map_analysis.py",
+        "app/pdf_map_evidence.py",
+        "tests/test_pdf_map_evidence.py",
+        "tests/test_pdf_map_request_policy.py",
+        "tests/test_pdf_provider_failures.py",
+        "tests/test_pdf_two_phase_map.py",
+        "docs/specs/bug/pdf_map_connectivity_reliability_results.json",
+        "docs/specs/bug/pdf_map_connectivity_reliability_validation.md",
+        "docs/specs/bug/pdf_map_connectivity_reliability_validation_zh.md"
+      ],
       "path": "docs/specs/bug/pdf_map_connectivity_reliability.md",
       "zh_path": "docs/specs/bug/pdf_map_connectivity_reliability_zh.md"
     }
