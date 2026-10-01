@@ -6,4 +6,4 @@ The operator confirmed that the bot Keeper approves settlement and rollback beca
 
 Settlement may complete while a participant remains dying or exposed to a continuing effect. Currently due checks/applications must finish; future obligations transfer atomically into durable postcombat tracking with their timing and receipts, rather than disappearing with CombatState. New battles and restarts preserve these obligations. This accepts the cost of lifecycle tracking in order to end initiative combat without ending its medical or environmental consequences.
 
-The domain decisions are confirmed; runtime implementation remains subject to the final spec confirmation gate.
+The operator authorized implementation with `$implement-spec` on 2026-10-01. The runtime now uses durable working resources, source-bound actions, owned manual controls, explicit absolute settlement and continuing obligations. Final integration verification and the two-axis review are recorded in the implementation validation document; no deployment or branch merge is authorized by this decision.

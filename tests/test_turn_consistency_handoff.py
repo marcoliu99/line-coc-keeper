@@ -271,12 +271,17 @@ def test_real_end_combat_is_completion_without_roll(state):
     combat.start_combat(state)
     group_state.save_state(state)
     async def provider(*args, **kwargs):
-        await args[5]('end_combat', {})
-        return decision(state, 'resolved', evidence_refs=['tool:1'])
+        preview = await args[5]('end_combat', {})
+        assert group_state.load_state(state.group_id).combat.active
+        confirmation = await args[5]('confirm_combat_settlement', {
+            'combat_id': group_state.load_state(state.group_id).combat.combat_id,
+            'settlement_id': preview['preview']['settlement_id'], 'reason': 'bot controller confirms final resources'})
+        assert confirmation['ok'], confirmation
+        return decision(state, 'resolved', evidence_refs=['tool:1', 'tool:2'])
     fake = AsyncMock(side_effect=provider)
     with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
-    assert result.turn_resolution.disposition == 'resolved_without_check'
+    assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
     assert not group_state.load_state(state.group_id).combat.active
 
 
@@ -303,12 +308,12 @@ def test_completion_does_not_hide_remaining_or_unproven_work(state, mode):
 
 
 def test_compensated_ammunition_change_is_not_deferred(state):
-    combat.start_combat(state)
     state.get_active_character('a').weapons = {'gun': {'ammo': 6, 'ammo_max': 6}}
+    combat.start_combat(state)
     group_state.save_state(state)
     async def provider(*args, **kwargs):
-        await args[5]('adjust_ammo', {'investigator': 'Marco', 'weapon': 'gun', 'delta': -1})
-        await args[5]('adjust_ammo', {'investigator': 'Marco', 'weapon': 'gun', 'delta': 1})
+        await args[5]('adjust_ammo', {'investigator': 'Marco', 'weapon': 'gun', 'delta': -1, 'event_id': 'ammo:spend'})
+        await args[5]('adjust_ammo', {'investigator': 'Marco', 'weapon': 'gun', 'delta': 1, 'event_id': 'ammo:restore'})
         return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
     fake = AsyncMock(side_effect=provider)
     with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
@@ -496,20 +501,22 @@ def _executor_with_provider(state, provider):
 
 
 @pytest.mark.parametrize('compensate', [False, True])
-def test_deferred_rejects_enemy_damage_even_if_restored(state, compensate):
+def test_rejected_raw_enemy_damage_never_creates_a_committed_change(state, compensate):
     combat.start_combat(state)
     combat.add_npc(state, 'Enemy', 20, 10)
     group_state.save_state(state)
     async def provider(*args, **kwargs):
-        assert (await args[5]('damage_combatant', {'name': 'Enemy', 'delta': -3}))['ok']
+        rejected = await args[5]('damage_combatant', {'name': 'Enemy', 'delta': -3})
+        assert not rejected['ok']
+        assert 'source-bound' in rejected['error']
         if compensate:
-            assert (await args[5]('damage_combatant', {'name': 'Enemy', 'delta': 3}))['ok']
+            assert not (await args[5]('damage_combatant', {'name': 'Enemy', 'delta': 3}))['ok']
         return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
     result = _executor_with_provider(state, provider)
-    assert result.turn_resolution.disposition == 'incomplete'
+    assert result.turn_resolution.disposition == 'deferred'
     stored = group_state.load_state(state.group_id)
     enemy = next(c for c in stored.combat.order if c.name == 'Enemy')
-    assert enemy.hp == (10 if compensate else 7)
+    assert enemy.hp == 10
 
 
 def test_deferred_rejects_other_character_inventory_change(state):
@@ -582,7 +589,11 @@ def test_cancellation_rejects_unrelated_committed_changes(state, extra):
             if extra == 'compensated':
                 await args[5]('add_carried_item', {'investigator': 'Marco', 'item': '一瓶煤油'})
         elif extra == 'enemy':
-            await args[5]('damage_combatant', {'name': 'Enemy', 'delta': -3})
+            await args[5]('declare_combat_effect', {
+                'combat_id': state.combat.combat_id, 'effect_id': 'hazard:cancel',
+                'target_id': combat.find_combatant(state, 'Enemy').combatant_id,
+                'severity_id': 'minor', 'scope': 'incident', 'stop_condition': 'single incident',
+                'reason': 'controller reviewed damage severity'})
         else:
             await args[5]('clear_pending_check', {'investigator': 'Ken'})
         return decision(state, 'cancelled', check_id='old', evidence_refs=['tool:1'])
@@ -798,3 +809,23 @@ def test_blocked_travel_cannot_be_narrated_as_arrival_or_acquisition():
     result.check_status.update(state_changed=True, pending={'investigator': 'Marco', 'skill': '偵查'})
     reply = prompt_config.enforce_mechanic_check_consistency(bad, result)
     assert '已記錄的變更會保留' in reply and '/coc check' in reply
+
+
+def test_deferred_rejects_reviewed_native_enemy_damage(state):
+    combat.start_combat(state)
+    combat.add_npc(state, 'Enemy', 20, 10)
+    group_state.save_state(state)
+
+    async def provider(*args, **kwargs):
+        hit = await args[5]('declare_combat_effect', {
+            'combat_id': state.combat.combat_id, 'effect_id': 'hazard:deferral',
+            'target_id': combat.find_combatant(state, 'Enemy').combatant_id,
+            'severity_id': 'minor', 'scope': 'incident', 'stop_condition': 'single incident',
+            'reason': 'controller selected reviewed table severity'})
+        assert hit['ok']
+        return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
+
+    with patch('app.dice.random.randint', return_value=3):
+        result = _executor_with_provider(state, provider)
+    assert result.turn_resolution.disposition == 'incomplete'
+    assert combat.find_combatant(group_state.load_state(state.group_id), 'Enemy').hp == 7

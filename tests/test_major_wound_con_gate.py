@@ -249,23 +249,33 @@ class KeeperToolTests(unittest.TestCase):
         stored = _combat_state("Mark")
         stored.pending_checks["u1"] = dict(SEARCH_CHECK)
         result, saves = self._run(stored, "apply_combat_damage", {"target": "Mark", "raw_damage": 6})
-        self.assertEqual(result["blocked_by"], "pending_check")
+        self.assertFalse(result["ok"])
+        self.assertIn("source-bound", result["error"])
         self.assertEqual(saves, [])
 
     def test_advance_combat_turn_tool_skips_the_save_when_blocked(self):
         stored = _combat_state("First", "Second")
         combat.add_combat_effect(stored, "all", "Collapsing Ceiling", timing="turn_start", damage="6")
         stored.pending_checks["u1"] = dict(SEARCH_CHECK)
-        result, saves = self._run(stored, "advance_combat_turn", {})
-        self.assertEqual(result["blocked_by"], "pending_check")
+        result, saves = self._run(stored, "advance_combat_turn", {
+            "actor_id": stored.combat.order[stored.combat.current_index].combatant_id,
+            "event_id": "advance:blocked",
+        })
+        self.assertFalse(result["ok"])
+        self.assertIn("completed action", result["error"])
         self.assertEqual(saves, [])
 
     def test_combat_damage_tool_still_saves_an_applied_hit(self):
         stored = _combat_state("Mark")
-        result, saves = self._run(stored, "apply_combat_damage", {"target": "Mark", "raw_damage": 6})
+        result, saves = self._run(stored, "adjust_character", {
+            "investigator": "Mark", "field": "hp", "delta": -6,
+            "event_id": "reviewed:hit", "reason": "controller source-backed single hit",
+        })
         self.assertTrue(result["ok"])
         self.assertEqual(len(saves), 1)
-        self.assertEqual(saves[0].characters["u1"].hp, 6)
+        self.assertTrue(result["provisional"])
+        self.assertEqual(saves[0].characters["u1"].hp, 12)
+        self.assertEqual(combat_resources.effective_character(saves[0], saves[0].characters["u1"]).hp, 6)
         self.assertEqual(saves[0].pending_checks["u1"]["skill"], "CON")
 
 
