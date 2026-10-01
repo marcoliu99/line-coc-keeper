@@ -112,6 +112,14 @@ _Avoid_: latest scenario as current authority
 The scenario version explicitly chosen as a game's source. A new publication becomes its source only through an explicit version change.
 _Avoid_: automatically current latest version
 
+**Scenario publication（劇本發布）**:
+Making a complete validated scenario version available for explicit selection. Publication alone does not make it a game's selected source.
+_Avoid_: game activation
+
+**Scenario activation（劇本啟用）**:
+A game's explicit adoption of a particular scenario version as its current source. It is distinct from that version becoming available in the library.
+_Avoid_: source publication
+
 ### Weapon condition
 
 **Malfunctioned weapon（故障武器）**:
