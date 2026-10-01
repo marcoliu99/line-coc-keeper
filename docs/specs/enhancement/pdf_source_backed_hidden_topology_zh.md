@@ -44,3 +44,8 @@ Static topology/certificate 維持不可變；另於 GroupState 持久化 route 
 目前 deterministic extractor 僅接受英文 affirmative whole sentence：`A/The/There is a [two-way] [hidden] <route kind> connects/links <精確 inventory label> to <精確 inventory label>`，或 `leads/runs from ... to ...`。可選 `If/When <condition>,` 保存明確來源條件。精確 `to the east`（或支援的方位、上下）suffix 才提供 compass；未提供則留空。`; it is necessary for progress` 才授權 fail_forward。Two-way 必須明寫，不猜反向通行。跨樓層重複 label 無法授權端點。已辨識但端點不明的敘述使 map incomplete，不封鎖 source；其他語言或散文形式不靠猜測解讀。
 
 `/coc route <page> <route-id> opened|discovered|failed [已裁定的 consequence]` 只允許目前 KP；持久化前重新驗證 published map/source certificate。Route IDs 在 private map artifact 中，不新增公開 hidden-route 列表。此確認接在正常 action resolution 後；不會因任意 skill roll 或 narration 自動開通障礙。Runtime outcomes 另存 GroupState，不修改 immutable certificate。Timeline 或 graph identity 改變時，舊 availability receipt 停用。
+
+
+## Availability 後續修正：多重 source barriers
+
+同一組端點與方位的所有 matching source barrier conditions 都約束該連線。已 available 的 source route 不得繞過另一個仍 blocked 的障礙。Activated source-route projection、named movement、directional movement 共用同一 gate；不同方位且未 blocked 的 existing visual traversal 維持可用。新增 sealed_door 加 blocked_passage regression：未開通與只開通任一障礙時仍 blocked，全部開通後才可通行。Source extraction、certificate、publication severity 不變。
