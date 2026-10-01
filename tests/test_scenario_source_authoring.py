@@ -46,7 +46,9 @@ def prepared(tmp_path, monkeypatch):
         raw = '\n\n'.join(f'--- 第 {n} 頁 ---\n{t}' for n, t in enumerate(('' if i in raster_pages else t for i, t in enumerate(texts)), 1)) if markers else 'Unlocated old OCR'
         sid = library.save_scenario(content, title='Real Scenario', filename='original.pdf', preview='test', text=raw,
                                     indexes={'stale': True}, pregens=[{'name': 'stale'}],
-                                    page_maps={'1': {'stale': True}}, page_images={})
+                                    page_maps={}, page_images={})
+        # Seed a legacy library artifact to test source-review cleanup, bypassing new-import publication.
+        (library.SCENARIO_LIBRARY_DIR / sid / 'scene_maps.json').write_text(json.dumps({'1': {'stale': True}}))
         path = source.export_source(sid)
         payload = authoring.parse_markdown(path.read_text())
         result = path.parent.parent / 'results' / path.name

@@ -28,7 +28,9 @@ def source(tmp_path, monkeypatch):
         text = '\n\n'.join(f'--- 第 {i} 頁 ---\n{page}' for i, page in enumerate(pages, 1))
         sid = library.save_scenario(pdf, title='Test', filename='test.pdf', preview='test', text=text,
                                     indexes={'old': 'must not carry'}, pregens=[{'name': 'old'}],
-                                    page_maps={'1': {'old': True}}, page_images={})
+                                    page_maps={}, page_images={})
+        # Seed a legacy library artifact to test source-review cleanup, bypassing new-import publication.
+        (library.SCENARIO_LIBRARY_DIR / sid / 'scene_maps.json').write_text(json.dumps({'1': {'old': True}}))
         prepared = review.prepare(sid, tmp_path / 'review')
         path = Path(prepared['proposal'])
         payload = authoring.parse_markdown(path.read_text())

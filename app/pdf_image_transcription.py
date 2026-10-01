@@ -146,6 +146,7 @@ def metrics(pages: list[dict]) -> dict[str, int]:
         result[prefix + '_page_transcriptions_authoritative'] = sum(
             r['status'] == 'authoritative' for r in records)
         if prefix == 'paddle':
+            result['paddle_page_attempts'] = len(attempts) - len(region_attempts)
             result['paddle_page_transcriptions_unverified'] = sum(r['status'] == 'unverified' for r in records)
             result['paddle_rejected'] = sum(a['status'] == 'rejected' for a in attempts)
             result['paddle_failed'] = sum(a['status'] in {'unavailable', 'error', 'empty'} for a in attempts)
@@ -153,6 +154,11 @@ def metrics(pages: list[dict]) -> dict[str, int]:
     for origin, prefix in [('markitdown_ocr', 'markitdown'), ('ai_vision', 'ai')]:
         result[prefix + '_transcription_agreements'] = sum(
             r['status'] == 'authoritative' and any(e['origin'] == origin for e in r['evidence']) for r in records)
+        result[prefix + '_transcription_conflicts'] = sum(
+            r['reason'] == 'independent_evidence_conflict' and any(e['origin'] == origin for e in r['evidence'])
+            for r in records)
+    result['provider_transcription_agreements'] = result['ai_transcription_agreements']
+    result['provider_transcription_conflicts'] = result['ai_transcription_conflicts']
     image_pages = [row for row in pages if row.get('source_kind') == 'native_text_absent'
                    and row.get('graphic_evidence') and not row.get('verified_illustration')]
     result['image_only_pages'] = len(image_pages)

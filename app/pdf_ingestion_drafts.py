@@ -172,12 +172,22 @@ def checkpoint(lease: ImportLease, report: dict, result: tuple, *, release_attem
         page = int(row.get('pdf_page', row.get('page', 0)))
         text = row.get('selected_text', '')
         image = images.get(page, images.get(str(page)))
+        stored_row = copy.deepcopy(row)
+        if row.get('map_analysis'):
+            previous = data.get('pages', {}).get(str(page), {}).get('report', {})
+            history = copy.deepcopy(previous.get('map_analysis_history', []))
+            if (not row.get('resumed') and previous.get('map_analysis')
+                    and previous.get('map_analysis_attempt_id') != lease.attempt_id):
+                history.append(copy.deepcopy(previous['map_analysis']))
+            stored_row['map_analysis_history'] = history
+            if not row.get('resumed'):
+                stored_row['map_analysis_attempt_id'] = lease.attempt_id
         records[str(page)] = {
             'pdf_sha256': data['pdf_sha256'], 'pipeline_version': report.get('pipeline_version', ''),
             'renderer_version': report.get('renderer_version'),
             'extraction_identity': report.get('extraction_identity', {}),
             'selected_text': text, 'selected_sha256': hashlib.sha256(text.encode()).hexdigest(),
-            'report': row, 'image': base64.b64encode(image).decode() if image else None,
+            'report': stored_row, 'image': base64.b64encode(image).decode() if image else None,
             'map': maps.get(page, maps.get(str(page))),
             'derived_description': descriptions.get(str(page), descriptions.get(page, row.get('derived_description', ''))),
         }

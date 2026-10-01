@@ -202,6 +202,13 @@ def _deny_network(*_args, **_kwargs):
     raise OSError('Network is disabled in the local OCR worker')
 
 
+def worker_network_policy() -> dict:
+    """Probe the actual configured worker's socket policy without loading models."""
+    from app import config
+
+    return _worker_call({'operation': 'network_probe'}, min(10, config.PDF_OCR_PADDLE_TIMEOUT_SECONDS))
+
+
 def worker(payload: dict) -> dict:
     """Standalone transport used by explicit compatible CPU interpreter only."""
     if payload.get('operation') == 'versions':
@@ -216,6 +223,19 @@ def worker(payload: dict) -> dict:
     socket.socket.connect = _deny_network  # type: ignore[assignment]
     socket.socket.connect_ex = _deny_network  # type: ignore[assignment]
     socket.create_connection = _deny_network
+    if payload.get('operation') == 'network_probe':
+        result = {}
+        with socket.socket() as probe:
+            calls = [('connect_denied', lambda: probe.connect(('127.0.0.1', 9))),
+                     ('connect_ex_denied', lambda: probe.connect_ex(('127.0.0.1', 9))),
+                     ('create_connection_denied', lambda: socket.create_connection(('127.0.0.1', 9), timeout=.2))]
+            for name, call in calls:
+                try:
+                    call()
+                    result[name] = False
+                except OSError as error:
+                    result[name] = str(error) == 'Network is disabled in the local OCR worker'
+        return result
     os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
     os.environ['HF_HUB_OFFLINE'] = '1'
     os.environ['CUDA_VISIBLE_DEVICES'] = ''

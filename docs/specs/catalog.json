@@ -1538,7 +1538,14 @@
         "docs/specs/enhancement/pdf_ocr_image_only_validation.md",
         "docs/specs/enhancement/pdf_ocr_controlled_ab_results.json",
         "docs/specs/enhancement/pdf_ocr_production_path_results.json",
-        "docs/specs/enhancement/pdf_ocr_linux_cpu_smoke_results.json"
+        "docs/specs/enhancement/pdf_ocr_linux_cpu_smoke_results.json",
+        "app/scene_map.py",
+        "app/pdf_map_analysis.py",
+        "app/scenario_library.py",
+        "tests/test_scene_map_validation.py",
+        "tests/test_pdf_map_certification.py",
+        "tests/test_pdf_cpu_smoke.py",
+        "tests/fixtures/pdf_ocr/cpu/manifest.json"
       ],
       "path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec.md",
       "zh_path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec_zh.md"

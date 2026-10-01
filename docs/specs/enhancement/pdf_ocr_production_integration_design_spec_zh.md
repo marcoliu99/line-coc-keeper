@@ -145,3 +145,5 @@ Operator 明確授權直接在 PR155 修改 production code。維持既有 OCR�
 - 保留 image-only agreement／conflict／local-only 與 text-free illustration safety tests。尋找 real image-only authoritative positive，不放寬 lexical/mechanics gates；若證據不足，保留 blocker。
 
 已同意的公開測試 seams：scene_map validator；pdf_loader.extract_text publication/report/cache；scenario_library.save_scenario persistence；real CPU smoke 與 worker network policy。重跑 provider-enabled Haunting p7、Beacon p16，特別人工核對地下室實牆與 Service Room／Lamp Room／Lantern Gallery。保留已有公平 OFF/ON non-regression 證據並執行最終 relevant comparisons。Rollout 必須兩張圖 verified、Linux positive／corruption tests 通過、至少一個 real independent authoritative image-only case，以及 persistence safety 全達成；任一 gate 未完成維持 hold。
+
+後續 operator 指示：macOS Apple Silicon 才是 production correctness gate；Linux CPU smoke 改列 optional portability check。上述 rollout 使用 macOS positive inference／corrupted-mechanics rejection，Linux 結果仍分開回報。

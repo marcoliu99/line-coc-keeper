@@ -22,6 +22,7 @@ module happens to be imported first, so whether the suite passed depended on
 collection order.
 """
 import atexit
+import hashlib
 import os
 import shutil
 import sys
@@ -72,3 +73,29 @@ import pytest  # noqa: E402 - storage environment must precede app imports.
 def isolated_pdf_import_drafts(monkeypatch, tmp_path):
     from app import pdf_ingestion_drafts
     monkeypatch.setattr(pdf_ingestion_drafts, 'SCENARIO_LIBRARY_DIR', tmp_path / 'pdf-import-library')
+
+
+@pytest.fixture
+def certified_map_result():
+    """Stub the image boundary in routing tests; certification has its own provider tests."""
+    from app import pdf_map_analysis, scene_map
+
+    def result(description, graph, image=b'png'):
+        assert not scene_map.validate_scene_map(graph)
+        record = pdf_map_analysis.not_analyzed()
+        record.update(status='MAP_GRAPH_VERIFIED', initial_status='MAP_GRAPH_VERIFIED',
+                      verified=True, graph_generated=True, analysis_attempted=True,
+                      image_sha256=hashlib.sha256(image).hexdigest(),
+                      graph_sha256=pdf_map_analysis.graph_hash(graph), candidate_graph=graph)
+        evidence = {'complete': True, 'uncertainties': [],
+            'visible_locations': [{'label': room['name'], 'room_id': room['id']} for room in graph['rooms']],
+            'rooms': [{'room_id': room['id'], 'verdict': 'supported', 'evidence': 'Known fixture room'} for room in graph['rooms']],
+            'edges': [{'edge_id': f'{room["id"]}:{i}', 'verdict': 'supported', 'basis': 'door',
+                       'evidence': 'Known fixture door'} for room in graph['rooms'] for i, _ in enumerate(room.get('exits', []))],
+            'entry': {'room_id': graph.get('entry_room_id', ''),
+                      'verdict': 'supported' if graph.get('entry_room_id') else 'not_visible', 'evidence': 'Known fixture entry'}}
+        record['image_evidence'] = [evidence]
+        record['attempts'] = [{'stage': 'image_audit', 'input_graph_sha256': record['graph_sha256'],
+                               'image_sha256': record['image_sha256'], 'output_evidence': evidence}]
+        return pdf_map_analysis.MapResult(description, graph, record)
+    return result

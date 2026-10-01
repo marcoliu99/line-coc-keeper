@@ -241,7 +241,7 @@ def test_image_candidate_cannot_be_published_to_the_scenario_library(scanned_pag
     assert not list(tmp_path.iterdir())
 
 
-def test_image_only_map_candidate_runs_scene_map_independently_of_ocr(scanned_page, monkeypatch):
+def test_image_only_map_candidate_runs_scene_map_independently_of_ocr(scanned_page, monkeypatch, certified_map_result):
     from app import pdf_ocr
 
     monkeypatch.setattr(pdf_ocr, 'paddle_candidate', lambda *_: {
@@ -250,7 +250,7 @@ def test_image_only_map_candidate_runs_scene_map_independently_of_ocr(scanned_pa
     graph = {'entry_room_id': 'room_1', 'rooms': [
         {'id': 'room_1', 'name': 'Room 1', 'exits': [{'to': 'room_2', 'compass': 'E'}]},
         {'id': 'room_2', 'name': 'Room 2', 'exits': [{'to': 'room_1', 'compass': 'W'}]}]}
-    monkeypatch.setattr(pdf_loader, '_analyze_graphic_page', lambda *_: ('', graph))
+    monkeypatch.setattr(pdf_loader, '_analyze_graphic_page', lambda png, **_options: certified_map_result('', graph, png))
     report = {}
     text, _, _, _, maps = pdf_loader.extract_text(scanned_page, quality_report=report)
     assert maps[1] == graph

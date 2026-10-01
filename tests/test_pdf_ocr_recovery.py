@@ -170,7 +170,7 @@ def test_model_configuration_participates_in_extraction_identity(monkeypatch):
     assert pdf_loader.extraction_identity()['ocr']['enabled'] is False
 
 
-def test_map_ocr_success_does_not_suppress_spatial_graph_or_spend_provider_budget():
+def test_map_ocr_success_retains_native_text_and_independent_certified_graph(certified_map_result):
     from unittest.mock import patch
 
     import pymupdf
@@ -183,13 +183,13 @@ def test_map_ocr_success_does_not_suppress_spatial_graph_or_spend_provider_budge
         page.draw_line((40, 100 + number * 10), (250, 100 + number * 10))
     raw = doc.tobytes()
     doc.close()
-    graph = {'rooms': [{'id': '1'}, {'id': '2'}], 'entry_room_id': '1'}
+    graph = {'rooms': [{'id': '1', 'name': 'Room 1'}, {'id': '2', 'name': 'Room 2'}], 'entry_room_id': '1'}
     report = {}
     with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
          patch.object(pdf_loader, '_markitdown_page_texts', return_value=None) as transcription, \
          patch.object(pdf_ocr, 'paddle_candidate', return_value={'engine': 'paddleocr',
              'model': 'PP-OCRv5_mobile_rec', 'candidate': 'Floor plan Room 1 Room 2', 'status': 'candidate'}), \
-         patch.object(pdf_loader, '_analyze_graphic_page', return_value=('', graph)):
+         patch.object(pdf_loader, '_analyze_graphic_page', side_effect=lambda png, **_options: certified_map_result('', graph, png)):
         text, _, _, _, maps = pdf_loader.extract_text(raw, quality_report=report)
     assert maps[1] == graph
     transcription.assert_not_called()

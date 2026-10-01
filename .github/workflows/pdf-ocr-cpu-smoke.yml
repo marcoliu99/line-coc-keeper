@@ -7,6 +7,7 @@ on:
       - 'requirements-pdf-ocr.txt'
       - 'scripts/setup_pdf_ocr.py'
       - 'scripts/experiments/smoke_pdf_ocr_cpu.py'
+      - 'tests/fixtures/pdf_ocr/cpu/**'
       - '.github/workflows/pdf-ocr-cpu-smoke.yml'
   workflow_dispatch:
 
@@ -15,6 +16,7 @@ permissions:
 
 jobs:
   linux-cpu:
+    name: Linux CPU portability (optional)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

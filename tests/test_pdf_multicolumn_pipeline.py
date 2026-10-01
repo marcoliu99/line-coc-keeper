@@ -52,7 +52,7 @@ def test_pending_page_never_reaches_library_publication(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_resumed_page_reuses_text_images_and_maps_without_parser_work():
+def test_resumed_page_reuses_text_images_and_maps_without_parser_work(certified_map_result):
     source = pdf('Accepted first page.', 'Pending second page.')
     report = {}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
@@ -62,11 +62,13 @@ def test_resumed_page_reuses_text_images_and_maps_without_parser_work():
          pytest.raises(loader.LayoutReviewRequired):
         loader.extract_text(source, quality_report=report)
     first = report['pages'][0]
+    graph = {'entry_room_id': 'door', 'rooms': [{'id': 'door', 'name': 'Entrance'}]}
+    first['map_analysis'] = certified_map_result('', graph, b'image').analysis
     cached = {1: {'pdf_sha256': hashlib.sha256(source).hexdigest(),
         'pipeline_version': loader.PIPELINE_VERSION, 'renderer_version': loader.RENDERER_VERSION,
         'extraction_identity': report['extraction_identity'], 'selected_text': first['selected_text'],
         'selected_sha256': first['selected_sha256'], 'report': first, 'image': b'image',
-        'map': {'entry_room_id': 'door'}, 'derived_description': 'labeled derived map'}}
+        'map': graph, 'derived_description': 'labeled derived map'}}
     resumed = {}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None) as parse, \
          patch.object(loader.pdf_layout, 'analyze_page', return_value=decision('Pending second page.')) as analyze, \
@@ -190,14 +192,14 @@ def test_rendered_unicode_page_markers_preserve_source_unit_spans():
     assert len(source[:start].encode()) > start
 
 
-def test_readable_floor_plan_still_builds_map():
+def test_readable_floor_plan_still_builds_map(certified_map_result):
     source = pdf('BEACON ISLAND LIGHTHOUSE FLOOR PLAN ' + 'Room entrance corridor stairs. ' * 12)
     report = {}
     expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door', 'name': 'Entrance'}]}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
          patch.object(loader, '_page_has_graphic_content', return_value=True), \
          patch.object(loader, '_render_page_png', return_value=b'png'), \
-         patch.object(loader, '_analyze_graphic_page', return_value=('Ground floor entrance.', expected)) as analyze:
+         patch.object(loader, '_analyze_graphic_page', return_value=certified_map_result('Ground floor entrance.', expected)) as analyze:
         text, _, _, _, maps = loader.extract_text(source, quality_report=report)
     analyze.assert_called_once()
     assert maps[1] == expected
@@ -230,26 +232,26 @@ def test_readable_floor_plan_without_graph_stays_draft(failed):
     assert report['blocked_pages'] == [1]
 
 
-def test_map_graph_survives_description_that_omits_numeric_source_labels():
+def test_map_graph_survives_description_that_omits_numeric_source_labels(certified_map_result):
     source = pdf('FLOOR PLAN 12 ' + 'Room entrance corridor stairs. ' * 12)
-    expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door'}]}
+    expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door', 'name': 'Entrance'}]}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
          patch.object(loader, '_page_has_graphic_content', return_value=True), \
          patch.object(loader, '_render_page_png', return_value=b'png'), \
-         patch.object(loader, '_analyze_graphic_page', return_value=('Entrance connects to stairs.', expected)):
+         patch.object(loader, '_analyze_graphic_page', return_value=certified_map_result('Entrance connects to stairs.', expected)):
         text, _, _, _, maps = loader.extract_text(source)
     assert maps == {1: expected}
     assert '12' in text
 
 
-def test_keeper_map_with_readable_ocr_still_requires_graph():
+def test_keeper_map_with_readable_ocr_still_requires_graph(certified_map_result):
     source = pdf('Corbitt House Map (Keeper Version)')
-    expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door'}]}
+    expected = {'entry_room_id': 'door', 'rooms': [{'id': 'door', 'name': 'Entrance'}]}
     report = {}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': 'Room corridor stairs. ' * 20}}), \
          patch.object(loader, '_page_has_graphic_content', return_value=True), \
          patch.object(loader, '_render_page_png', return_value=b'png'), \
-         patch.object(loader, '_analyze_graphic_page', return_value=('Map description.', expected)) as analyze:
+         patch.object(loader, '_analyze_graphic_page', return_value=certified_map_result('Map description.', expected)) as analyze:
         _, _, _, _, maps = loader.extract_text(source, quality_report=report)
     analyze.assert_called_once()
     assert maps == {1: expected}

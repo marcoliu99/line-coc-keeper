@@ -222,6 +222,18 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
 def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None, parse_quality: dict | None = None) -> str:
     if parse_quality and parse_quality.get('blocked_pages'):
         raise ValueError('PDF layout has unresolved pages; continue the import draft before publication')
+    from app import pdf_map_analysis, scene_map
+
+    rows = (parse_quality or {}).get('pages', [])
+    rows = list(rows.values()) if isinstance(rows, dict) else rows
+    for page, graph in page_maps.items():
+        if scene_map.validate_scene_map(graph):
+            raise ValueError(f'Invalid scene_map on page {page}; retain the private import draft')
+        record = next((row.get('map_analysis') for row in rows if str(row.get('page')) == str(page)), None)
+        image = page_images.get(page)
+        if ((parse_quality or {}).get('pdf_sha256') != hashlib.sha256(pdf_bytes).hexdigest()
+                or not isinstance(image, bytes) or not pdf_map_analysis.verified_graph(graph, record, image)):
+            raise ValueError(f'Unverified scene_map on page {page}; retain the private import draft')
     with _LIBRARY_LOCK:
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()

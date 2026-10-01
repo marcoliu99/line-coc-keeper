@@ -14,7 +14,9 @@ import hashlib
 import io
 import logging
 import re
+import threading
 from collections.abc import Callable, Iterable
+from functools import partial
 from importlib import metadata
 from typing import Any, Literal, TypedDict, cast
 
@@ -26,15 +28,15 @@ from app import (
     pdf_image_transcription,
     pdf_layout,
     pdf_layout_adapters,
+    pdf_map_analysis,
     pdf_ocr,
     pdf_quality,
 )
 from app.markitdown_shim import build_markitdown
-from app.scene_map import analyze_page_image
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v5'
+PIPELINE_VERSION = 'multicolumn-v6'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route']
@@ -77,6 +79,7 @@ def extraction_identity() -> dict:
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
             'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
+            'map_version': pdf_map_analysis.VERSION,
             'docling': version('docling') if config.PDF_LAYOUT_DOCLING_ENABLED else 'disabled'}
 
 
@@ -91,6 +94,12 @@ def _cached_page(cached: dict | None, pdf_hash: str, number: int, identity: dict
             or not isinstance(text, str) or not isinstance(row, dict)
             or row.get('page') != number or row.get('disposition') not in {'accepted', 'legacy_route'}
             or cached.get('selected_sha256') != hashlib.sha256(text.encode()).hexdigest()):
+        return None
+    if cached.get('map') is not None and (not isinstance(cached.get('image'), bytes)
+            or not pdf_map_analysis.verified_graph(cached['map'], row.get('map_analysis'), cached['image'])):
+        return None
+    if row.get('map_analysis', {}).get('candidate') and (not isinstance(cached.get('map'), dict)
+            or row['map_analysis'].get('status') != 'MAP_GRAPH_VERIFIED'):
         return None
     return cached
 
@@ -187,16 +196,9 @@ def recover_local_ocr(png_bytes: bytes, original: str, pairs: list[dict], *,
     return '', attempts
 
 
-def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
-    """One combined vision call (scene_map.analyze_page_image — see its own
-    docstring for why this used to be two separate API calls per page)
-    handles both the prose description (spatial layout for maps, exhaustive
-    number transcription for character sheets, brief description otherwise)
-    and, when the page turns out to be a map, the structured room graph.
-    Local transcription is attempted separately through deterministic gates;
-    an OCR result never substitutes for the map half."""
-    description, scene_map = analyze_page_image(png_bytes)
-    return description, scene_map
+def _analyze_graphic_page(png_bytes: bytes, *, reserve: Callable[[], bool], candidate: bool) -> pdf_map_analysis.MapResult:
+    """Image-only graph certification remains independent of source transcription."""
+    return pdf_map_analysis.analyze(png_bytes, reserve=reserve, candidate=candidate)
 
 
 class MarkitdownPages(dict[int, str]):
@@ -673,18 +675,34 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 row["warnings"].append("ai_fields_unresolved")
 
         if pending:
+            map_dispatch_lock = threading.Lock()
+            def reserve_map_request(number: int) -> bool:
+                with map_dispatch_lock:
+                    return pdf_image_transcription.reserve_verification(layout_budget, number, layout_budget_checkpoint)
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))) as executor:
-                futures = {executor.submit(_analyze_graphic_page, png): number for number, png in pending.items()}
+                futures = {executor.submit(_analyze_graphic_page, png,
+                    reserve=partial(reserve_map_request, number),
+                    candidate=number in map_candidates): number for number, png in pending.items()}
                 for future in concurrent.futures.as_completed(futures):
                     number = futures[future]
                     row = report["pages"][number - 1]
                     try:
-                        extra, scene_map = future.result()
+                        map_result = future.result()
+                        extra, scene_map = map_result.description, map_result.graph
+                        row['map_analysis'] = map_result.analysis
+                        if map_result.analysis['candidate']:
+                            map_candidates.add(number)
                     except Exception:  # noqa: BLE001 - retain other pages and record this failed fallback.
                         row["warnings"].append("vision_failed")
+                        analysis = pdf_map_analysis.not_analyzed(candidate=number in map_candidates)
+                        analysis.update({'status': 'MAP_ANALYSIS_FAILED', 'initial_status': 'MAP_ANALYSIS_FAILED',
+                                         'analysis_attempted': True})
+                        row['map_analysis'] = analysis
                         continue
-                    if scene_map:
+                    if scene_map and pdf_map_analysis.verified_graph(scene_map, row['map_analysis'], pending[number]):
                         maps[number] = scene_map
+                    else:
+                        scene_map = None
                     if not extra:
                         row["warnings"].append("vision_empty")
                     if extra:
@@ -697,9 +715,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                             row["warnings"].append("vision_pair_mismatch")
                             continue
                         if scene_map:
-                            report["derived_descriptions"][str(number)] = extra
-                            # A labeled derived section is not a verbatim quote.
-                            texts[number - 1] += "\n[地圖視覺解讀，非原文轉錄]\n" + extra
+                            report["derived_descriptions"][str(number)] = scene_map.get('description', extra)
+                            # Graph interpretation is a separate artifact, never PDF source text.
+                        elif number in map_candidates:
+                            # Uncertified descriptions belong only to private evidence.
+                            row['map_candidate_description'] = extra
                         elif pdf_quality.accept_transcription(texts[number - 1], extra, row['numeric_pairs']):
                             texts[number - 1] = extra
                         else:
@@ -707,8 +727,6 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                 texts[number - 1], extra) else 'transcription_review')
                             report['derived_descriptions'][str(number)] = extra
                         row["warnings"].append("vision_review_required")
-                    if not scene_map and number in map_candidates:
-                        row["warnings"].append("floor_plan_graph_missing")
 
     review = []
     for i, text in enumerate(texts):
@@ -717,8 +735,14 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         if unresolved and not row.get('resumed'):
             text += "\n[PDF_UNRESOLVED_FIELDS: " + ",".join(unresolved) + "]"
             texts[i] = text
-        if i + 1 in map_candidates and i + 1 not in maps and 'floor_plan_graph_missing' not in row['warnings']:
-            row['warnings'].append('floor_plan_graph_missing')
+        if i + 1 in map_candidates and i + 1 not in maps:
+            analysis = row.get('map_analysis')
+            if analysis is None:
+                analysis = pdf_map_analysis.not_analyzed()
+                row['map_analysis'] = analysis
+            warning = analysis['status'].lower()
+            if warning not in row['warnings']:
+                row['warnings'].append(warning)
         row["extracted_chars"] = len(text)
         row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         row['selected_text'] = text
@@ -803,6 +827,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         for row in report['pages'] for group in ([row.get('page_ocr_attempts', [])]
             + [repair.get('ocr_attempts', []) for repair in row['local_repairs']]))
     report.update(pdf_image_transcription.metrics(report['pages']))
+    report.update(pdf_map_analysis.metrics(report['pages']))
     report['layout_budget'] = layout_budget
     report['blocked_pages'] = [row['page'] for row in report['pages'] if row['disposition'] == 'needs_review']
     result = (full_text, review, False, images, maps)
