@@ -35,3 +35,20 @@ Phase 2 elapsed：Haunting **30.244 s**、Beacon **30.248 s**；配置 timeout *
 Counts：map_candidates 2、map_analysis_attempted 2、map_analysis_failed 2；graph_generated／invalid／incomplete／repaired／verified 均 0；phase1_locations 26、missing_found 0、phase2_edges 0、targeted_repairs 0、patch counts 0。Phase2 edge metric 的 0 表示未成功產生 edges，不是地圖沒有通道。Final room／exit／entry／patch 在 JSON 記為 null。
 
 **Graph correctness verification = PENDING；production rollout = HOLD。** 兩頁 unsafe/missing map 仍停用，source-safe scenario 的 READY_WITH_WARNINGS policy 不變。前文 0 real requests／authorization blocker 是 rerun 前的歷史紀錄，以上更新與 sanitized JSON 為最新結果。Implementation test/tooling 結果仍對應已驗證 commit；本輪只新增 real evidence 摘要，未更動 production code。
+
+## 40 秒 timeout continuation（最新結果）
+
+依使用者要求，本次驗證覆寫 timeout 為 **40 秒**；production 預設未更動。重用前次原圖 hash 相同的 Phase1 inventory／audit，不重新送出這兩個階段；每頁仅重試一次 Phase2。Actual SDK 仍是既有 OpenAI Responses client、destination 仍 `https://api.openai.com/v1`；新增 exception-type-only diagnostics，不記錄 API key／錯誤 response body 到公開報告。
+
+| Target | 新增 requests | 累计 requests | Phase2 elapsed | Result |
+|---|---:|---:|---:|---|
+| Haunting p7 | 1 | 4 | 32.637 s | MAP_GRAPH_INVALID |
+| Beacon p16 | 1 | 4 | 40.245 s | MAP_ANALYSIS_FAILED；APITimeoutError |
+
+Haunting Phase2 現在有真實回應：**3 proposed directed edges**，但三個 visual_basis 全部回傳描述句，而非 door/open_passage/stairs/one_way，因此 deterministic builder 全數拒絕。Inventory candidate rooms **14**、accepted candidate exits **0**；另有 **2 missing_location** 與 **unverified_entry**。沒有 certified/final gameplay graph，不將候選 counts 當成通過；Corbitt wall-edge correctness 仍 PENDING。
+
+Beacon 此次捕捉到明確 SDK exception **APITimeoutError**（無 HTTP status），所以 40 秒仍不足以取得 Phase2 response。先前 12 locations／Service Room／Lamp Room／Lantern Gallery 的 inventory＋audit evidence 保留，stairs/topology 仍 PENDING。
+
+兩次執行合計 **8 actual requests**，每頁累计 **4/5**，每份 PDF durable budget consumed 4、remaining 4；原授權則各僅剩 **1 image request**，這個更嚴格 cap 優先。未做 targeted repair／final audit／額外 retry，因 Haunting 尚有錯誤，而 repair＋final audit 至少需兩次，不能在僅剩一次時宣稱完整驗證。Beacon 無 current graph 可修。這不是改 gate 或繞過 transport。
+
+最新 counts：candidates/attempted 2；analysis_failed 1、graph_generated 1、graph_invalid 1、graph_verified/repaired/incomplete 0；phase1_locations 26、phase1_missing_found 0、phase2_edges 3、targeted_repairs/patch counts 0。**Graph verification PENDING；production rollout HOLD；source-safe scenario 仍可開始、兩頁 map 停用。** Raw continuation responses／candidate graph／full evidence 私存；repo 僅 sanitized 摘要。前節 30 秒的兩頁失敗紀錄保留為歷史，以上與 JSON 為最新狀態。

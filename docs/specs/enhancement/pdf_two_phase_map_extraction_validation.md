@@ -28,3 +28,13 @@ Haunting7 inventory: **14 locations**, audit complete, **0 additions**. Beacon16
 Both final statuses are **MAP_ANALYSIS_FAILED**, verified=false. No graph/edge/entry/patch was obtained; no claim of valid Corbitt wall edges or Beacon stair/topology correctness. Counts: candidates/attempted/failed=2 each, generated/invalid/incomplete/repaired/verified=0; phase1 locations=26, missing found=0, phase2 edges/repair/patch counts=0. Missing final graph fields are null; zero generated edges does not mean no passages in the image.
 
 **Graph verification PENDING; rollout HOLD.** Missing maps remain disabled and source-safe scenarios remain playable with warnings. Earlier zero-request/authorization-blocker text above is historical; this section and sanitized JSON contain the current evidence. No production code changed during this evidence-only rerun.
+
+## 40-second timeout continuation (latest result)
+
+The user's requested **40-second validation override** reused hash-bound original images and completed inventory/audit evidence. Production defaults were not changed. Only failed Phase2 was retried once per page using the same OpenAI Responses transport/destination; exception-type-only instrumentation exposes no key or response body publicly.
+
+Haunting7 returned in **32.637 s**: **3 proposed directed edges**, but each visual_basis was descriptive text instead of an allowed traversal kind. All were rejected; **14 candidate rooms, zero accepted candidate exits**, plus **two missing locations and unresolved entry**. Status **MAP_GRAPH_INVALID**, no certified graph or verified Corbitt wall correctness.
+
+Beacon16 failed in **40.245 s**, now with proven SDK **APITimeoutError** and no HTTP status. Status **MAP_ANALYSIS_FAILED**. Its prior audited 12-location inventory including the three required locations remains; stairs/topology is still unverified.
+
+**Two additional requests; eight total, four per page.** Each document durable budget consumed4/remaining4, but original authorization leaves only **one request per page** under the five-request cap. No repair/final audit/extra retry: repairing and auditing Haunting would need two requests; Beacon has no graph. Counts: candidate/attempted=2; failed/generated/invalid=1 each; verified/repaired/incomplete=0; inventory=26, missing-audit-additions=0, proposed edges=3, repair/patch=0. **Graph verification PENDING; rollout HOLD.** Unsafe maps remain disabled and source-safe scenarios playable. Raw evidence stays private; only sanitized results are committed. Earlier 30-second results above are historical.

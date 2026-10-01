@@ -3,8 +3,8 @@
   "pipeline_version": "multicolumn-v7",
   "real_validation": {
     "status": "PENDING",
-    "provider_requests": 6,
-    "reason": "Both Phase 2 calls returned None after approximately 30.24 seconds. Configured timeout is 30 seconds. The existing provider adapter catches SDK exceptions without exposing their type, so timeout is suspected but not proven. No graph, repair or final audit; no retries or alternate transport.",
+    "provider_requests": 8,
+    "reason": "40-second continuation reused original inventories/audits. Haunting returned connectivity but all three visual_basis fields were descriptive text rather than allowed traversal kinds, plus unresolved entry and two missing locations. Beacon raised APITimeoutError after 40.245 seconds. No final verified graph. No targeted repair/final audit; cumulative four requests per page.",
     "targets": [
       {
         "scenario": "The Haunting",
@@ -13,23 +13,25 @@
         "historical_directed_exits": 44,
         "phase1_locations": 14,
         "phase1_missing_found": 0,
-        "phase2_edges": null,
+        "phase2_edges": 3,
         "targeted_repair_errors": null,
         "repair_patch": null,
         "final_rooms": null,
         "final_exits": null,
         "entry": null,
-        "final_map_status": "MAP_ANALYSIS_FAILED",
+        "final_map_status": "MAP_GRAPH_INVALID",
         "corbitt_wall_edge_verified_absent": null,
         "verified": false,
         "repair_attempts": 0,
         "entry_status": "unresolved",
         "initial_map_status": "MAP_ANALYSIS_FAILED",
-        "provider_requests": 3,
+        "provider_requests": 4,
         "image_sha256": "db739a7a8c125d4b2ed2688167a6688616b06c3608b572deb2155e8686f775fb",
         "pdf_sha256": "de28127fe4978a32076a4a5099496c0a377b91408b2eb402151bd5151009fcb1",
         "validation_errors": [
-          "malformed_connectivity"
+          "missing_location",
+          "unsupported_edge",
+          "unverified_entry"
         ],
         "completeness_errors": [],
         "attempts": [
@@ -64,14 +66,27 @@
         "durable_budget": {
           "configured_max_requests": 8,
           "configured_max_pages": 4,
-          "consumed_requests": 3,
-          "remaining_requests": 5,
+          "consumed_requests": 4,
+          "remaining_requests": 4,
           "remaining_pages": 3,
           "visited_pages": [
             7
           ]
         },
-        "phase1_inventory_audit_complete": true
+        "phase1_inventory_audit_complete": true,
+        "candidate_rooms": 14,
+        "candidate_accepted_exits": 0,
+        "missing_location_count": 2,
+        "unsupported_edge_count": 3,
+        "continuation_attempts": [
+          {
+            "attempt_number": 4,
+            "stage": "phase2_generation",
+            "timeout_seconds": 40,
+            "elapsed_seconds": 32.637,
+            "provider_diagnostics": []
+          }
+        ]
       },
       {
         "scenario": "Lightless Beacon",
@@ -95,11 +110,11 @@
         "repair_attempts": 0,
         "entry_status": "unresolved",
         "initial_map_status": "MAP_ANALYSIS_FAILED",
-        "provider_requests": 3,
+        "provider_requests": 4,
         "image_sha256": "9750f2a2140084534631fada34ecef3a5c338568b2fd1546ffcb12ff8cdda42e",
         "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
         "validation_errors": [
-          "malformed_connectivity"
+          "phase2_provider_returned_none"
         ],
         "completeness_errors": [],
         "attempts": [
@@ -134,36 +149,63 @@
         "durable_budget": {
           "configured_max_requests": 8,
           "configured_max_pages": 4,
-          "consumed_requests": 3,
-          "remaining_requests": 5,
+          "consumed_requests": 4,
+          "remaining_requests": 4,
           "remaining_pages": 3,
           "visited_pages": [
             16
           ]
         },
-        "phase1_inventory_audit_complete": true
+        "phase1_inventory_audit_complete": true,
+        "candidate_rooms": null,
+        "candidate_accepted_exits": null,
+        "missing_location_count": null,
+        "unsupported_edge_count": null,
+        "continuation_attempts": [
+          {
+            "attempt_number": 4,
+            "stage": "phase2_generation",
+            "timeout_seconds": 40,
+            "elapsed_seconds": 40.245,
+            "provider_diagnostics": [
+              {
+                "exception_type": "APITimeoutError",
+                "http_status": null
+              }
+            ]
+          }
+        ]
       }
     ],
-    "execution_status": "COMPLETED_WITH_PROVIDER_FAILURE",
+    "execution_status": "COMPLETED_WITH_GRAPH_AND_PROVIDER_FAILURES",
     "destination": "https://api.openai.com/v1",
     "authorization": "Explicit user authorization for exactly Haunting p7 and Beacon p16 full-page PNGs, maximum five image requests each; no other payloads.",
     "implementation_commit": "8807bf63c18213d82032ecfca0e77f95e2928574",
     "map_status_counts": {
       "map_candidates": 2,
       "map_analysis_attempted": 2,
-      "map_analysis_failed": 2,
-      "map_graph_generated": 0,
-      "map_graph_invalid": 0,
+      "map_analysis_failed": 1,
+      "map_graph_generated": 1,
+      "map_graph_invalid": 1,
       "map_graph_incomplete": 0,
       "map_graph_repaired": 0,
       "map_graph_verified": 0,
       "map_phase1_locations": 26,
       "map_phase1_missing_found": 0,
-      "map_phase2_edges": 0,
+      "map_phase2_edges": 3,
       "map_targeted_repairs": 0,
       "map_patch_add_locations": 0,
       "map_patch_remove_edges": 0,
       "map_patch_add_edges": 0
+    },
+    "timeout_continuation": {
+      "timeout_seconds": 40,
+      "new_provider_requests": 2,
+      "cumulative_requests_per_page": 4,
+      "remaining_authorized_requests_per_page": 1,
+      "phase1_reused": true,
+      "targeted_repair_requests": 0,
+      "final_audit_requests": 0
     }
   },
   "mocked_provider_regressions": {
@@ -194,9 +236,9 @@
   },
   "production_rollout": "HOLD",
   "remaining_blockers": [
-    "Both real map Phase 2 provider calls returned None; underlying SDK exception is not exposed by the existing adapter",
-    "Real Haunting graph/Corbitt wall-edge verification remains pending",
-    "Real Beacon graph/stairs/topology verification remains pending; three required location inventory/audit checks passed",
+    "Haunting connectivity has three unsupported traversal-basis values, unresolved entry and two newly reported missing locations; no verified graph",
+    "Beacon Phase 2 APITimeoutError at 40 seconds; no graph/topology verification",
+    "Only one request per page remains under original five-request authorization; repair plus final audit would require two",
     "Previously pending real image-only authoritative positive remains pending"
   ],
   "publication_policy": "Source failure HARD_BLOCK; derived map failure SOFT_REVIEW, map disabled, safe scenario playable."
