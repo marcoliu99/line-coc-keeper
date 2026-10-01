@@ -1,3 +1,5 @@
+> Historical multicolumn-v6 evidence. Source publication policy is superseded by [source/derived readiness](../bug/pdf_derived_feature_publication_policy_validation.md): unsafe maps disable that feature, while safe source can publish. Pending real graph evidence below is unchanged.
+
 # PR155 graph correctness follow-up
 
 Production rollout remains **hold**. Production code and regression tests are implemented; the new provider-enabled map and image-only experiments have not run. Automatic approval review rejected uploading real PDF-derived images to the configured OpenAI API (`api.openai.com`) without explicit payload/destination approval. No alternate transport or provider was attempted.

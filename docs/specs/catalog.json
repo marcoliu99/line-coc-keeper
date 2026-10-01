@@ -1592,7 +1592,7 @@
       "title": "PDF source readiness and derived-feature quarantine",
       "zh": "PDF source readiness 與 derived-feature quarantine",
       "category": "bug",
-      "status": "in_progress",
+      "status": "implemented",
       "path": "docs/specs/bug/pdf_derived_feature_publication_policy.md",
       "zh_path": "docs/specs/bug/pdf_derived_feature_publication_policy_zh.md",
       "evidence": [
@@ -1604,7 +1604,9 @@
         "tests/test_pdf_map_certification.py",
         "tests/test_pdf_image_transcription.py",
         "tests/test_pdf_loader.py",
-        "tests/test_pdf_multicolumn_pipeline.py"
+        "tests/test_pdf_multicolumn_pipeline.py",
+        "docs/specs/bug/pdf_derived_feature_publication_policy_validation.md",
+        "docs/specs/bug/pdf_derived_feature_publication_policy_validation_zh.md"
       ]
     }
   ]

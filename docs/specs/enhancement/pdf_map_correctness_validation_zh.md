@@ -1,3 +1,5 @@
+> 本文為 multicolumn-v6 歷史證據。Source publication policy 已由[新 source／derived readiness](../bug/pdf_derived_feature_publication_policy_validation_zh.md)取代：unsafe map 停用該 feature，安全 source 仍可發布。以下真實 graph evidence pending 狀態不變。
+
 # PR155 graph correctness 本輪驗證
 
 Production rollout 維持 **hold**。Production code 與 regression tests 已完成，但新版本 provider-enabled 地圖／image-only 實驗尚未執行。自動核准審查拒絕將真實 PDF 衍生圖片上傳至設定中的 OpenAI API（`api.openai.com`），理由是缺少圖片內容及目的地的明確授權；沒有改用其他 transport 或 provider 繞過拒絕。

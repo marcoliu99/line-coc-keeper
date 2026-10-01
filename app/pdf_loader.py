@@ -42,10 +42,14 @@ PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route', 'soft_review']
 PublicationSeverity = Literal['NONE', 'HARD_BLOCK', 'SOFT_REVIEW']
 ScenarioReadiness = Literal['READY', 'READY_WITH_WARNINGS', 'BLOCKED']
+SourceBlockingReason = Literal['source_ordering_unverified', 'source_image_transcription_unverified',
+                               'source_mechanics_unresolved', 'source_transcription_unverified',
+                               'canonical_playable_source_missing']
 
 
 class PagePublication(TypedDict):
     disposition: PageDisposition
+    source_blocking_reasons: list[SourceBlockingReason]
 
 
 def _publication_disposition(status: pdf_layout.LayoutStatus, source_blocking: bool) -> PageDisposition:
@@ -753,7 +757,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             status = row['layout_decision']['status']
             verified_image = row.get('image_transcription', {}).get('status') == 'authoritative'
             # A derived map failure cannot certify or invalidate canonical source.
-            source_blocking_reasons = []
+            source_blocking_reasons: list[SourceBlockingReason] = []
             if status == 'needs_review':
                 source_blocking_reasons.append('source_ordering_unverified')
             if (row.get('requires_image_transcription') and not verified_image
@@ -765,8 +769,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     or ('transcription_review' in row['warnings'] and not text.strip())):
                 source_blocking_reasons.append('source_transcription_unverified')
             publication: PagePublication = {'disposition': _publication_disposition(
-                status, bool(source_blocking_reasons))}
-            row['source_blocking_reasons'] = source_blocking_reasons
+                status, bool(source_blocking_reasons)), 'source_blocking_reasons': source_blocking_reasons}
             row.update(publication)
         if not text.strip() and not row.get('verified_illustration') and i + 1 not in maps:
             row["warnings"].append("empty_page")
@@ -819,8 +822,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             and not any(row.get('verified_illustration') for row in report['pages'])
             and not any(row['disposition'] == 'needs_review' for row in report['pages'])):
         for row in report['pages']:
-            row.update(disposition='needs_review', publication_severity='HARD_BLOCK',
-                       source_blocking_reasons=['canonical_playable_source_missing'])
+            publication = {'disposition': 'needs_review',
+                           'source_blocking_reasons': ['canonical_playable_source_missing']}
+            row.update(publication, publication_severity='HARD_BLOCK')
             row['review_reasons'].append('canonical_playable_source_missing')
             if row['page'] not in review:
                 review.append(row['page'])
