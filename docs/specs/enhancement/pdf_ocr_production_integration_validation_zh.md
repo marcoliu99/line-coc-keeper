@@ -1,5 +1,7 @@
 # PR155 離線 OCR integration 驗證
 
+> 重新評估：此舊 v3/v4 comparison 混入 hidden OCR 與 routing confounds，不能當 Paddle 因果比較或 acceptance threshold。請見[公平／image-only 驗證](pdf_ocr_image_only_validation_zh.md)。
+
 已在 `enhancement/pdf-multicolumn-ingestion` 完成候選產生、驗證與 fallback integration；**尚不能宣稱 production 匯入品質已改善**。102 頁離線 extraction 沒有任何真實 OCR candidate 通過 gate，掃描頁待審數增加。未證實 numeric／pair／dice／原文保存退步；raw word counter 的唯一差異是 Markdown `_Corbitt`，原字仍在，JSON 保留該診斷。
 
 ## 最終架構與設定

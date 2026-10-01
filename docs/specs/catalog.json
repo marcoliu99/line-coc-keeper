@@ -1534,7 +1534,11 @@
         "scripts/experiments/validate_pdf_ocr_controlled_ab.py",
         "scripts/experiments/validate_pdf_ocr_production_path.py",
         "scripts/experiments/smoke_pdf_ocr_cpu.py",
-        ".github/workflows/pdf-ocr-cpu-smoke.yml"
+        ".github/workflows/pdf-ocr-cpu-smoke.yml",
+        "docs/specs/enhancement/pdf_ocr_image_only_validation.md",
+        "docs/specs/enhancement/pdf_ocr_controlled_ab_results.json",
+        "docs/specs/enhancement/pdf_ocr_production_path_results.json",
+        "docs/specs/enhancement/pdf_ocr_linux_cpu_smoke_results.json"
       ],
       "path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec.md",
       "zh_path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec_zh.md"

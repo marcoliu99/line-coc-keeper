@@ -91,6 +91,10 @@ def main() -> None:
         load_dotenv(args.env_file, override=False)
     combined = {'scope': 'real provider OFF/ON selected-page production validation', 'failures': []}
     root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root))
+    from scripts.experiments.validate_pdf_ocr_controlled_ab import code_identity
+    identity = code_identity(root)
+    combined['code_sha256'] = identity
     for name in ('provider_off', 'provider_on'):
         private = args.private_dir / name
         private.mkdir(parents=True, exist_ok=True)
@@ -101,6 +105,8 @@ def main() -> None:
         output = private / 'sanitized.json'
         subprocess.run([sys.executable, str(Path(__file__).resolve()), '--worker', '--corpus-dir', str(args.corpus_dir),
                         '--private-dir', str(private), '--report', str(output)], cwd=root, env=env, check=True, timeout=900)
+        if code_identity(root) != identity:
+            raise ValueError('code changed during production comparison; rerun both arms')
         combined[name] = json.loads(output.read_text())
     combined['unresolved_before'] = sum(r['disposition'] == 'needs_review' for r in combined['provider_off']['pages'])
     combined['unresolved_after'] = sum(r['disposition'] == 'needs_review' for r in combined['provider_on']['pages'])

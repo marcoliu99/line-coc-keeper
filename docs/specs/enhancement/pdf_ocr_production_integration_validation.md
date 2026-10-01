@@ -1,5 +1,7 @@
 # PR155 offline OCR integration validation
 
+> Reassessment: this legacy v3/v4 comparison includes hidden-OCR and routing confounds. It is not a Paddle causal comparison or acceptance threshold. See [controlled/image-only validation](pdf_ocr_image_only_validation.md).
+
 Implementation is complete on `enhancement/pdf-multicolumn-ingestion`. Deployment readiness remains limited: the offline extraction run accepted **zero real OCR candidates** and left more scanned pages blocked. This is not evidence of improved completed imports. No numeric/pair/dice/source-word regression was established; one raw word-counter difference was verified as Markdown emphasis (`Corbitt` versus `_Corbitt`), retained explicitly in the JSON audit.
 
 ## Architecture and configuration
