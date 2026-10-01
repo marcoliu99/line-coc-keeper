@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast, get_args
 
 from app import scene_map
 
@@ -31,11 +31,13 @@ class Location(TypedDict):
 
 
 TraversalKind = Literal['door', 'open_passage', 'stairs', 'one_way']
+Compass = Literal['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S',
+                  'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'U', 'D']
 
 
 class TraversalExit(TypedDict):
     to: str
-    compass: str
+    compass: Compass
     label: str
     type: TraversalKind
     visual_basis: TraversalKind
@@ -44,14 +46,11 @@ class TraversalExit(TypedDict):
 
 
 def traversal_kind(value: Any) -> TraversalKind | None:
-    aliases: dict[str, TraversalKind] = {'door': 'door', 'passage': 'open_passage',
-        'open passage': 'open_passage', 'open_passage': 'open_passage', 'stairs': 'stairs', 'one_way': 'one_way'}
-    return aliases.get(value) if isinstance(value, str) else None
+    """Provider evidence must use the same closed kinds as the tool schema."""
+    return cast(TraversalKind, value) if isinstance(value, str) and value in get_args(TraversalKind) else None
 
 
-_COMPASS = dict(zip(['north', 'north_northeast', 'northeast', 'east_northeast', 'east', 'east_southeast', 'southeast', 'south_southeast', 'south', 'south_southwest', 'southwest', 'west_southwest', 'west', 'west_northwest', 'northwest', 'north_northwest', 'up', 'down'],
-                    ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'U', 'D'], strict=True))
-COMPASS_DIRECTIONS = tuple(_COMPASS.values())
+COMPASS_DIRECTIONS = get_args(Compass)
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
 
 
@@ -152,24 +151,24 @@ def build_graph(inventory: list[Location], connectivity: dict) -> tuple[dict, li
         origin, target = _resolve(edge.get('from'), inventory), _resolve(edge.get('to'), inventory)
         basis, kind = traversal_kind(edge.get('visual_basis')), traversal_kind(edge.get('type'))
         compass = edge.get('compass')
-        compass = _COMPASS.get(compass.casefold(), compass.upper()) if isinstance(compass, str) else ''
         if origin is None or target is None:
             errors.append({'code': 'dangling_exit', 'subject': subject})
         if (basis is None or kind != basis
                 or not isinstance(edge.get('evidence'), str) or not edge['evidence'].strip()):
             errors.append({'code': 'unsupported_edge', 'subject': subject})
-        if compass not in _COMPASS.values():
+        if compass not in COMPASS_DIRECTIONS:
             errors.append({'code': 'invalid_compass', 'subject': subject})
         if any(error['subject'] == subject for error in errors):
             continue
         assert origin is not None and target is not None
+        compass = cast(Compass, compass)
         key = (origin, target, compass)
         if key in seen or origin == target:
             errors.append({'code': 'unsupported_edge', 'subject': subject})
             continue
         seen.add(key)
         assert kind is not None and basis is not None
-        exit_: TraversalExit = {'to': target, 'compass': compass, 'label': edge['evidence'],
+        exit_: TraversalExit = {'to': target, 'compass': cast(Compass, compass), 'label': edge['evidence'],
             'type': kind, 'visual_basis': basis, 'evidence': edge['evidence'], 'evidence_id': subject}
         rooms[origin]['exits'].append(exit_)
     entry = connectivity.get('entry', {})

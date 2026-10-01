@@ -13,13 +13,19 @@ from app.providers import openai_provider, registry
 @pytest.mark.parametrize(('failure', 'error_type', 'status', 'timed_out'), [
     ('timeout', 'APITimeoutError', None, True), ('401', 'AuthenticationError', 401, False),
     ('429', 'RateLimitError', 429, False), ('json', 'JSONDecodeError', None, False),
-    ('missing_tool', 'MissingToolCall', None, False)])
+    ('missing_tool', 'MissingToolCall', None, False),
+    ('connection', 'APIConnectionError', None, False),
+    ('invalid_arguments', 'InvalidToolArguments', None, False)])
 def test_map_records_sanitized_swallowed_provider_failure(monkeypatch, failure, error_type, status, timed_out):
     secret = 'PRIVATE-PROMPT-IMAGE-KEY-BODY'
     request = httpx.Request('POST', 'https://api.openai.com/v1/responses')
     def create(**_options):
         if failure == 'timeout':
             raise openai.APITimeoutError(request=request)
+        if failure == 'connection':
+            raise openai.APIConnectionError(message=secret, request=request)
+        if failure == 'invalid_arguments':
+            return SimpleNamespace(output=[SimpleNamespace(type='function_call', name='inventory_map_locations', arguments='[]')])
         if failure in {'401', '429'}:
             response = httpx.Response(int(failure), request=request, json={'private': secret})
             cls = openai.AuthenticationError if failure == '401' else openai.RateLimitError

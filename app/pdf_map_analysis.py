@@ -168,7 +168,7 @@ _AUDIT_PROMPT = (
 def _stage_timeout(stage: MapStage) -> float:
     timeouts: dict[MapStage, float] = {
         'phase1_generation': config.PDF_MAP_INVENTORY_TIMEOUT_SECONDS,
-        'phase1_audit': config.PDF_MAP_AUDIT_TIMEOUT_SECONDS,
+        'phase1_audit': config.PDF_MAP_INVENTORY_TIMEOUT_SECONDS,
         'phase2_generation': config.PDF_MAP_CONNECTIVITY_TIMEOUT_SECONDS,
         'targeted_repair': config.PDF_MAP_REPAIR_TIMEOUT_SECONDS,
         'image_audit': config.PDF_MAP_AUDIT_TIMEOUT_SECONDS,

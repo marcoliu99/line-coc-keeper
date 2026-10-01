@@ -25,7 +25,7 @@ def test_deterministic_builder_accepts_traversal_and_rejects_walls():
     from app import pdf_map_evidence as maps
 
     inventory, _ = maps.merge_inventory([], [location('Entrance', hint='a'), location('Upper', 'upper', 'b')])
-    for basis, compass in [('door', 'east'), ('stairs', 'U'), ('open passage', 'N')]:
+    for basis, compass in [('door', 'E'), ('stairs', 'U'), ('open_passage', 'N'), ('one_way', 'S')]:
         connectivity, _ = maps.normalize_connectivity({'entry': {'status': 'resolved', 'room_id': 'a', 'evidence': 'Visible entrance'},
             'edges': [{'from': 'a', 'to': 'b', 'type': basis, 'visual_basis': basis, 'compass': compass, 'evidence': 'Visible route'}]})
         graph, errors = maps.build_graph(inventory, connectivity)
@@ -111,3 +111,23 @@ def test_provider_cannot_smuggle_rooms_into_connectivity():
     assert errors[0]['code'] == 'malformed_connectivity'
     rooms, errors = maps.merge_inventory([], [{**location('Hall'), 'kind': []}, {**location('Hall'), 'label': ''}])
     assert not rooms and len(errors) == 2
+
+
+def test_builder_rejects_noncanonical_traversal_and_compass_aliases():
+    from app import pdf_map_evidence as maps
+
+    rooms, _ = maps.merge_inventory([], [location('Hall', hint='hall'), location('Upper', 'upper', 'upper')])
+    edge = {'id': 'route', 'from': 'hall', 'to': 'upper', 'type': 'door',
+            'visual_basis': 'door', 'compass': 'E', 'evidence': 'Visible doorway'}
+    for alias in ('passage', 'open passage'):
+        graph, errors = maps.build_graph(rooms, {'entry': {'status': 'resolved', 'room_id': 'hall',
+            'evidence': 'Visible entrance'}, 'edges': [{**edge, 'type': alias, 'visual_basis': alias}]})
+        assert graph['rooms'][0]['exits'] == []
+        assert any(error['code'] == 'unsupported_edge' for error in errors)
+    for field, value in [('type', 'passage'), ('visual_basis', 'open passage'),
+                         ('visual_basis', 'visible doorway'), ('compass', 'east'),
+                         ('compass', 'e'), ('compass', 'roughly east')]:
+        graph, errors = maps.build_graph(rooms, {'entry': {'status': 'resolved', 'room_id': 'hall',
+            'evidence': 'Visible entrance'}, 'edges': [{**edge, field: value}], 'missing_locations': []})
+        assert graph['rooms'][0]['exits'] == []
+        assert any(error['code'] == ('invalid_compass' if field == 'compass' else 'unsupported_edge') for error in errors)
