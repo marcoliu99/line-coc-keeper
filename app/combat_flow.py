@@ -100,6 +100,12 @@ def validate_pending_context(state: GroupState, pending: dict[str, Any], owner_i
             or any(context.get(k) != wait.get(k) for k in ('action_id', 'interaction_id', 'check_role'))
             or owner_id != wait.get('owner_id') or pending.get('check_id') != wait.get('check_id')):
         return _error('Stale or foreign combat control')
+    action = state.combat.actions.get(context.get('action_id', ''), {})
+    role = context.get('check_role')
+    participant_id = action.get('actor_id') if role in ('attack', 'medical') else action.get('target_id')
+    participant = combat.find_combatant(state, participant_id or '')
+    if participant is not None and participant.defeated and role not in ('injury',) and not str(role).startswith('injury:'):
+        return _error('The original action participant is now incapacitated; explicit reconciliation required')
     if state.combat.phase not in {'PLAYER_CHOICE', 'PLAYER_ROLL', 'INJURY_CHECK', 'LUCK_DECISION'}:
         return _error('Combat is not waiting for this control')
     return {'ok': True}
@@ -676,6 +682,8 @@ def declare_effect(
     combat_resources.initialize_working_state(state)
     existing = next((e for e in state.combat.events if e['event_id'] == effect_id + ':declaration'), None)
     if existing:
+        if existing['data'].get('scope') == 'incident':
+            return run_effect(state, effect_id)
         return deepcopy(existing['data'])
     lookup = combat_rules.resolve_severity(severity_id)
     if (not effect_id or not reason.strip() or not stop_condition.strip() or lookup.definition is None
@@ -683,8 +691,9 @@ def declare_effect(
             or combat.find_combatant(state, target_id) is None):
         return _error('Effect requires explicit reviewed severity, target, scope, timing, reason and stop condition')
     if special_rule or defense != 'none':
-        state.combat.phase = 'NEEDS_RULING'
-        return {'ok': False, 'phase': 'NEEDS_RULING', 'error': 'Special poison/drowning/fire behavior requires supported source ruling'}
+        action = {'action_id': 'effect-ruling:' + effect_id, 'kind': 'effect', 'completed': False}
+        state.combat.actions['effect-ruling:' + effect_id] = action
+        return _ruling(state, action, 'Special poison/drowning/fire behavior requires supported source ruling')
     definition = lookup.definition
     from app.models import EffectState
     effect = EffectState(id=effect_id, label=reason, source_id=definition.id, target_id=target_id,
@@ -698,7 +707,7 @@ def declare_effect(
               'scope': scope, 'timing': timing, 'defense': defense, 'source': asdict(definition.source)}
     combat_resources.record_event(state, effect_id + ':declaration', 'effect', data=result, reason=reason)
     if scope == 'incident':
-        return combat.process_timing(state, timing, target_id)[-1]
+        return run_effect(state, effect_id)
     return result
 
 
@@ -735,6 +744,8 @@ def postcombat_obligations(state: GroupState) -> list[PostcombatObligation]:
         if identity in known:
             continue
         source = effect.save_or_check
+        if source.get('scope') == 'incident':
+            raise combat_resources.CombatAdmissionError('Currently due incident must resolve before settlement')
         if not source.get('rule_source') or not source.get('stop_condition'):
             raise combat_resources.CombatAdmissionError('Continuing effect needs reviewed rule and stop condition')
         participant = combat.find_combatant(state, effect.target_id)
@@ -1058,6 +1069,7 @@ def _next_injury_wait(state: GroupState, action: dict[str, Any]) -> dict[str, An
 def reconcile_correction(
     state: GroupState, *, event_id: str, reason: str,
     injury_by_character: dict[str, dict[str, bool]], acknowledge_action_ids: list[str],
+    acknowledge_check_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Controller reviews corrected working resources and all dependent injury/decisions.
 
@@ -1082,11 +1094,25 @@ def reconcile_correction(
             return _error('Injury projection requires supported boolean states')
         snapshot = state.combat.working_resources[identity]
         if (injury.get('dying') and (snapshot['hp'] != 0 or not injury.get('major_wound') or injury.get('dead'))
-                or injury.get('dead') and not injury.get('unconscious')):
+                or injury.get('dead') and (snapshot['hp'] != 0 or not injury.get('unconscious'))
+                or snapshot['hp'] == 0 and not injury.get('unconscious')):
             return _error('Corrected injury/resource projection is inconsistent')
     owners = {state.characters_by_id[i].owner_id for i in injury_by_character}
-    if owners & (state.pending_checks.keys() | state.pending_luck_decisions.keys()):
-        return _error('Retained player controls need explicit cancellation/reconciliation before correction confirmation')
+    retained = {key: {owner: deepcopy(entry) for owner, entry in getattr(state, key).items() if owner in owners}
+                for key in ('pending_checks', 'pending_luck_decisions')}
+    expected_checks = {entry.get('check_id') for entries in retained.values() for entry in entries.values()}
+    if None in expected_checks or set(acknowledge_check_ids or []) != expected_checks:
+        return _error('Explicitly acknowledge every retained owned check/Luck identity before correction confirmation')
+    for entries in retained.values():
+        for owner, entry in entries.items():
+            context = entry.get('postcombat_context')
+            if context:
+                obligation = next((o for o in _all_obligations(state) if o['obligation_id'] == context['obligation_id']), None)
+                if obligation and injury_by_character[obligation['character_id']].get('dying'):
+                    return _error('A still-due dying check must resolve; reconciliation cannot grant a free interval')
+    for key, entries in retained.items():
+        for owner in entries:
+            getattr(state, key).pop(owner)
     from app.models import InjuryState
     for identity, projection in injury_by_character.items():
         character = state.characters_by_id[identity]
@@ -1103,6 +1129,10 @@ def reconcile_correction(
                 effective.status_tags.remove(tag)
         combat_resources.reconcile_effective_character(state, effective,
                                                       event_id=event_id + ':' + identity, reason=reason)
+        if not reviewed_injury.get('dying'):
+            for obligation in _all_obligations(state):
+                if obligation.get('character_id') == identity and obligation.get('kind') == 'dying':
+                    obligation['status'] = 'resolved'
         if reviewed_injury.get('dying'):
             ensure_dying_obligation(state, character, event_id)
         participant = next(p for p in state.combat.order if p.character_id == identity)
@@ -1113,7 +1143,7 @@ def reconcile_correction(
     state.combat.interaction = {}
     state.combat.phase = 'READY'
     result = {'ok': True, 'reconciled_correction': deepcopy(wait), 'event_id': event_id,
-              'acknowledged_actions': list(acknowledge_action_ids)}
+              'acknowledged_actions': list(acknowledge_action_ids), 'retained_controls': retained}
     combat_resources.record_event(state, event_id, 'ruling', data=result, reason=reason)
     return result
 
@@ -1279,3 +1309,24 @@ def _autoroll_medical(state: GroupState, healer: Character, pending: dict[str, A
                 'success': result.success, 'outcome': result.tier, 'medical_context': deepcopy(pending['medical_context'])}
     state.resolved_check_events.append(evidence)
     return {'ok': True, 'completed': True, 'check_id': pending['check_id'], 'result': evidence}
+
+
+def run_effect(state: GroupState, effect_id: str) -> dict[str, Any]:
+    """Resolve an explicitly declared incident independently of shared timing keys."""
+    combat_resources.initialize_working_state(state)
+    identity = effect_id + ':incident'
+    prior = next((e for e in state.combat.events if e['event_id'] == identity), None)
+    if prior:
+        return deepcopy(prior['data'])
+    effect = next((e for e in state.combat.effects if e.id == effect_id), None)
+    if not effect or effect.save_or_check.get('scope') != 'incident':
+        return _error('Unknown declared incident effect')
+    if not effect.save_or_check.get('rule_source') or effect.save_or_check.get('severity_id') is None:
+        return _error('Incident requires reviewed severity evidence')
+    receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{identity}:damage',
+                                           lambda: asdict(dice.roll_expression(effect.damage)))
+    result = combat.apply_managed_damage(state, effect.target_id, max(0, receipt['total']), event_id=identity,
+                                        source_id=effect.source_id, damage_type=effect.damage_type, tags=effect.tags)
+    if result['ok']:
+        state.combat.effects.remove(effect)
+    return result
