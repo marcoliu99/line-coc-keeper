@@ -358,3 +358,116 @@ def test_rollback_cannot_erase_a_prior_obligation_control_even_if_it_also_has_co
                                       'postcombat_context': {'obligation_id': 'old:dying', 'round': 7}}
     combat_resources.rollback_combat(state, event_id='rollback', reason='cancel current battle')
     assert state.pending_checks['player']['check_id'] == 'old-dying'
+
+
+def prior_effect_projection(state):
+    from copy import deepcopy
+    baseline = {'obligation_id': 'old:effect', 'combat_id': 'battle:old', 'character_id': 'char:ada',
+                'kind': 'effect', 'status': 'future', 'next_trigger': {'round': 1},
+                'stop_condition': 'stopped', 'rule_source': {'rule': 'severe exposure'},
+                'processed_timings': [], 'roll_receipts': {}, 'effect': {'id': 'old-effect'}}
+    state.postcombat_obligations = [deepcopy(baseline)]
+    working = {**deepcopy(baseline), 'next_trigger': {'round': 2},
+               'processed_timings': ['old:effect:1'], 'roll_receipts': {'old:effect:1': {'total': 2}}}
+    state.combat.actions[combat_resources.CONTINUING_STATE_KEY] = {
+        'action_id': combat_resources.CONTINUING_STATE_KEY, 'completed': True,
+        'obligation_baseline': [deepcopy(baseline)], 'working_obligations': [working]}
+    return baseline, working
+
+
+def test_settlement_atomically_publishes_prior_obligation_projection_and_working_hp():
+    state, character = battle()
+    _, working = prior_effect_projection(state)
+    combat_resources.adjust_resource(state, character, 'hp', -2, event_id='old:effect:1')
+    preview = combat_resources.get_settlement(state, obligations=[working])
+    assert character.hp == 10
+    assert state.postcombat_obligations[0]['next_trigger']['round'] == 1
+    combat_resources.commit_settlement(state, preview['settlement_id'])
+    assert character.hp == 8
+    assert state.postcombat_obligations[0]['next_trigger']['round'] == 2
+    assert state.postcombat_obligations[0]['roll_receipts']['old:effect:1']['total'] == 2
+
+
+def test_changed_prior_obligation_baseline_blocks_whole_settlement_without_hp_publication():
+    state, character = battle()
+    _, working = prior_effect_projection(state)
+    combat_resources.adjust_resource(state, character, 'hp', -2, event_id='old:effect:1')
+    preview = combat_resources.get_settlement(state, obligations=[working])
+    state.postcombat_obligations[0]['next_trigger']['round'] = 4
+    with pytest.raises(combat_resources.SettlementConflict):
+        combat_resources.commit_settlement(state, preview['settlement_id'])
+    assert character.hp == 10
+    assert state.combat.active
+    assert state.postcombat_obligations[0]['next_trigger']['round'] == 4
+
+
+def test_prior_obligation_projection_is_bound_to_settlement_preview():
+    state, _ = battle()
+    _, working = prior_effect_projection(state)
+    preview = combat_resources.get_settlement(state, obligations=[working])
+    state.combat.actions[combat_resources.CONTINUING_STATE_KEY]['working_obligations'][0]['next_trigger']['round'] = 3
+    with pytest.raises(combat_resources.SettlementConflict):
+        combat_resources.commit_settlement(state, preview['settlement_id'])
+
+
+def test_rollback_preserves_prior_due_schedule_and_clock_but_reuses_cached_rolls():
+    state, character = battle()
+    _, working = prior_effect_projection(state)
+    state.mechanical_round = 1
+    combat_resources.adjust_resource(state, character, 'hp', -2, event_id='old:effect:1')
+    receipt = combat_resources.rollback_combat(state, event_id='rollback', reason='cancel later battle')
+    obligation = state.postcombat_obligations[0]
+    assert obligation['next_trigger']['round'] == 1
+    assert obligation['processed_timings'] == []
+    assert obligation['status'] == 'future'
+    assert obligation['roll_receipts']['old:effect:1']['total'] == 2
+    assert state.mechanical_round == 1
+    assert character.hp == 10
+    assert receipt['continuing_obligations']['working'] == [working]
+    restarted = GroupState.from_dict(state.to_dict())
+    assert restarted.postcombat_obligations == [obligation]
+
+
+def test_pending_prior_committed_projection_blocks_rollback_without_erasing_wait():
+    state, character = battle()
+    baseline, _ = prior_effect_projection(state)
+    working = state.combat.actions[combat_resources.CONTINUING_STATE_KEY]['working_obligations'][0]
+    working.update(status='pending', next_trigger={'round': 1, 'check_id': 'original-check'})
+    state.pending_checks['player'] = {'check_id': 'original-check', 'postcombat_context': {
+        'obligation_id': baseline['obligation_id'], 'round': 1}}
+    with pytest.raises(combat_resources.CombatAdmissionError):
+        combat_resources.rollback_combat(state, event_id='rollback', reason='cancel later battle')
+    assert state.combat.active
+    assert state.pending_checks['player']['check_id'] == 'original-check'
+    assert state.postcombat_obligations == [baseline]
+    assert character.hp == 10
+    assert not state.closed_combat_receipts
+
+
+def test_cached_prior_roll_cannot_be_changed_by_provisional_projection_on_rollback():
+    state, _ = battle()
+    baseline, _ = prior_effect_projection(state)
+    baseline['roll_receipts']['old:effect:1'] = {'total': 3}
+    state.postcombat_obligations[0]['roll_receipts']['old:effect:1'] = {'total': 3}
+    state.combat.actions[combat_resources.CONTINUING_STATE_KEY]['obligation_baseline'][0]['roll_receipts']['old:effect:1'] = {'total': 3}
+    with pytest.raises(combat_resources.SettlementConflict):
+        combat_resources.rollback_combat(state, event_id='rollback', reason='cancel later battle')
+    assert state.combat.active
+    assert state.postcombat_obligations[0]['roll_receipts']['old:effect:1']['total'] == 3
+
+
+def test_prior_obligation_added_after_preview_is_not_silently_dropped_without_projection_metadata():
+    state, character = battle()
+    preview = combat_resources.get_settlement(state)
+    state.postcombat_obligations.append({'obligation_id': 'external:effect', 'kind': 'effect', 'status': 'future'})
+    with pytest.raises(combat_resources.SettlementConflict):
+        combat_resources.commit_settlement(state, preview['settlement_id'])
+    assert character.hp == 10
+    assert len(state.postcombat_obligations) == 1
+
+
+def test_unfinished_durable_action_without_status_string_blocks_settlement():
+    state, _ = battle()
+    state.combat.actions['attack'] = {'action_id': 'attack', 'completed': False, 'stage': 'damage'}
+    with pytest.raises(combat_resources.CombatAdmissionError):
+        combat_resources.get_settlement(state)
