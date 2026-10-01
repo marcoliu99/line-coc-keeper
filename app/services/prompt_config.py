@@ -131,13 +131,13 @@ def build_executor_dynamic_prompt_with_context(
 
 
 def build_resolved_check_history_block(
-    events: list[dict], character_values: dict | None
+    events: list[dict], character_values: dict | None, *, provisional: bool = False
 ) -> str:
     """Show recent finalized outcomes separately from this turn's mechanics."""
     if not character_values:
         return ""
     lines = [
-        "【目前角色數值（權威存檔）】"
+        ("【目前角色數值（戰鬥暫定；尚未結算）】" if provisional else "【目前角色數值（權威存檔）】")
         + "、".join(f"{name} {value}" for name, value in character_values.items()),
         "【近期已結算檢定（歷史事件，不代表本回合檢定）】",
     ]
@@ -150,6 +150,8 @@ def build_resolved_check_history_block(
             f"{event.get('skill_value', '?')}%，擲出 {event.get('roll', '?')}，"
             f"難度 {event.get('difficulty', 'regular')}，結果 {event.get('outcome', '未知')}。"
         )
+        if event.get('provisional'):
+            lines.append('  此戰鬥紀錄是暫定機械結果；擲骰保留，但不能獨立建立已提交的世界後果。')
         effects = event.get("state_effects", [])
         if effects:
             for effect in effects:

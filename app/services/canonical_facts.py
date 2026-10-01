@@ -45,6 +45,15 @@ def _visible(record: dict[str, Any], recipient_id: str, speaker_role: str) -> bo
     return visibility == "private" and recipient_id in recipients
 
 
+
+def committed_check_event(state: GroupState, event: dict[str, Any]) -> bool:
+    """A provisional battle result authorizes world consequences only on commit."""
+    if not event.get('provisional'):
+        return True
+    receipt = state.closed_combat_receipts.get(event.get('combat_id', ''), {})
+    return receipt.get('status') == 'committed'
+
+
 def _scenario_source_valid(state: GroupState, source_ref: Any, receipt: Any = None) -> bool:
     if not isinstance(source_ref, dict):
         return False
@@ -58,6 +67,7 @@ def _scenario_source_valid(state: GroupState, source_ref: Any, receipt: Any = No
     trigger_event_id = source_ref.get("trigger_event_id")
     return not trigger_event_id or any(
         event.get("event_id") == trigger_event_id and event.get("timeline_id") == state.timeline_id
+        and committed_check_event(state, event)
         and "成功" in str(event.get("outcome", ""))
         for event in [*state.resolved_check_events, *([receipt] if isinstance(receipt, dict) else [])]
     )
@@ -80,6 +90,7 @@ def project(state: GroupState, *, recipient_id: str = "", speaker_role: str = "p
             elif source_kind == "check_event":
                 if not isinstance(source_ref, str) or not any(
                     event.get("event_id") == source_ref and event.get("timeline_id") == state.timeline_id
+                    and committed_check_event(state, event)
                     for event in state.resolved_check_events
                 ):
                     continue
@@ -138,7 +149,7 @@ def requirements(state: GroupState, *, recipient_id: str = "", speaker_role: str
     pending = tuple({"owner_id": owner_id, "check_id": row.get("check_id", "")}
                     for owner_id, row in state.pending_checks.items() if isinstance(row, dict))
     events = tuple(event for event in state.resolved_check_events[-5:]
-                   if event.get("timeline_id") == state.timeline_id)
+                   if event.get("timeline_id") == state.timeline_id and committed_check_event(state, event))
     return NarrationRequirements(
         authoritative_facts=tuple(facts), committed_events=events, pending=pending,
         allowed_evidence_refs=tuple(f.fact_id for f in facts),

@@ -52,7 +52,7 @@ OPERATIONAL_AND_RECOVERY = """你有兩項主要工作：
 
 例如：
 
-已確定玩家開槍但漏扣彈藥 → 補呼叫 adjust_ammo
+已確認的既有攻擊 → 先查詢其行動紀錄；戰鬥中由 declare_combat_action/run_combat_action 一次處理擲骰與彈藥，不要另行重扣。獨立彈藥調整須用新穩定 event_id。
 
 已確定角色取得重要物品但未登記 → 補呼叫 add_carried_item
 
@@ -62,7 +62,7 @@ OPERATIONAL_AND_RECOVERY = """你有兩項主要工作：
 
 已確定敵人加入戰鬥但尚未登記 → 呼叫 add_npc_to_combat
 
-已確定持續燃燒／流血／中毒效果 → 呼叫 add_combat_effect
+已確認效果來源 → 在戰鬥中用 declare_combat_effect 指定已裁定的 severity、範圍、時機與停止條件；特殊火／毒／溺水規則未支持時須暫停裁定。
 
 已確定應建立技能或 SAN 檢定但先前漏掉 → 建立對應 check workflow
 

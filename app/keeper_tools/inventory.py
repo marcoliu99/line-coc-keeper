@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from app import combat_resources
+from app.keeper_tools import resource_bridge
 from app.models import GroupState
 
 if TYPE_CHECKING:
@@ -20,6 +22,7 @@ def adjust_ammo(call: ToolCall) -> dict[str, Any]:
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     weapon = tool_input.get("weapon", "")
+    char = resource_bridge.effective(state, char)
     entry = char.weapons.get(weapon)
     if entry is None:
         available = "、".join(char.weapons.keys()) or "（沒有登記彈藥的槍械）"
@@ -33,6 +36,16 @@ def adjust_ammo(call: ToolCall) -> dict[str, Any]:
         return {"ok": False, "error": f"「{weapon}」沒有追蹤彈藥數（近戰武器或未登記彈藥表的槍械），不需要（也無法）裝填。"}
     def _apply_ammo_change(target_state: GroupState) -> None:
         target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        if resource_bridge.participating(target_state, target_char):
+            combat_resources.adjust_ammo(
+                target_state, target_char, weapon, int(tool_input.get('delta') or 0),
+                event_id=resource_bridge.mutation_id(call.name, tool_input),
+                reason=str(tool_input.get('reason') or 'Keeper ammunition adjustment'),
+                reload_full=bool(tool_input.get('reload_full')),
+            )
+            return
+        if target_state.combat.active:
+            raise ValueError('Active combat lacks admitted resource evidence')
         target_entry = target_char.weapons.get(weapon)
         if target_entry is None:
             raise ValueError(f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料")
@@ -41,11 +54,11 @@ def adjust_ammo(call: ToolCall) -> dict[str, Any]:
         else:
             target_entry["ammo"] = max(0, min(target_entry["ammo_max"], target_entry["ammo"] + int(tool_input.get("delta") or 0)))
     keeper.mutate_tool_state(state, _apply_ammo_change)
-    refreshed_char = keeper.require_character(state, tool_input.get("investigator", ""))
+    refreshed_char = resource_bridge.effective(state, keeper.require_character(state, tool_input.get("investigator", "")))
     refreshed_entry = refreshed_char.weapons.get(weapon)
     if refreshed_entry is None:
         return {"ok": False, "error": f"「{weapon}」的彈藥欄位已不存在，請重新查詢角色資料"}
-    return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"]}
+    return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"], "provisional": resource_bridge.participating(state, refreshed_char)}
 
 
 def add_carried_item(call: ToolCall) -> dict[str, Any]:
@@ -111,12 +124,25 @@ def add_status_tag(call: ToolCall) -> dict[str, Any]:
         return {"ok": False, "error": "tag 不能是空字串"}
     def _mutate_add_tag(target_state: GroupState) -> Any:
         target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        effective = resource_bridge.effective(target_state, target_char)
+        changed = tag not in effective.status_tags
+        if resource_bridge.participating(target_state, target_char):
+            if changed:
+                combat_resources.set_status_tag(
+                    target_state, target_char, tag, True,
+                    event_id=resource_bridge.mutation_id(call.name, tool_input),
+                    reason=str(tool_input.get('reason') or 'Keeper status adjustment'),
+                )
+            tags = resource_bridge.effective(target_state, target_char).status_tags
+            return keeper.ToolStateMutation((target_char.name, tags), should_save=changed)
+        if target_state.combat.active:
+            raise ValueError('Active combat lacks admitted resource evidence')
         changed = tag not in target_char.status_tags
         if changed:
             target_char.status_tags.append(tag)
         return keeper.ToolStateMutation((target_char.name, target_char.status_tags), should_save=changed)
     investigator, tags = keeper.mutate_tool_state(state, _mutate_add_tag)
-    return {"ok": True, "investigator": investigator, "status_tags": tags}
+    return {"ok": True, "investigator": investigator, "status_tags": tags, "provisional": resource_bridge.participating(state, char)}
 
 
 def remove_status_tag(call: ToolCall) -> dict[str, Any]:
@@ -134,9 +160,22 @@ def remove_status_tag(call: ToolCall) -> dict[str, Any]:
     tag = tool_input.get("tag", "").strip()
     def _mutate_remove_tag(target_state: GroupState) -> Any:
         target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        effective = resource_bridge.effective(target_state, target_char)
+        changed = tag in effective.status_tags
+        if resource_bridge.participating(target_state, target_char):
+            if changed:
+                combat_resources.set_status_tag(
+                    target_state, target_char, tag, False,
+                    event_id=resource_bridge.mutation_id(call.name, tool_input),
+                    reason=str(tool_input.get('reason') or 'Keeper status adjustment'),
+                )
+            tags = resource_bridge.effective(target_state, target_char).status_tags
+            return keeper.ToolStateMutation((target_char.name, tags), should_save=changed)
+        if target_state.combat.active:
+            raise ValueError('Active combat lacks admitted resource evidence')
         changed = tag in target_char.status_tags
         if changed:
             target_char.status_tags.remove(tag)
         return keeper.ToolStateMutation((target_char.name, target_char.status_tags), should_save=changed)
     investigator, tags = keeper.mutate_tool_state(state, _mutate_remove_tag)
-    return {"ok": True, "investigator": investigator, "status_tags": tags}
+    return {"ok": True, "investigator": investigator, "status_tags": tags, "provisional": resource_bridge.participating(state, char)}
