@@ -75,6 +75,7 @@ class Battle:
     def start(self, *, npc_first: bool = False) -> dict:
         return self.tool('initialize_combat', {'enemies': [{
             'name': 'Cultist', 'dex': 90 if npc_first else 40, 'hp': 20,
+            'skills': {'Dodge': 40},
             'attacks': [{'id': 'claw', 'skill_name': 'Brawl', 'skill_value': 50,
                          'damage': '1d3', 'range_band': 'engaged'}], 'source': SOURCE,
         }]})
@@ -526,3 +527,17 @@ def test_bot_diagnostics_expose_usable_ids_without_enemy_hp_in_player_status(bat
     assert waiting['interaction']['check_id'] == battle.load().pending_checks['player']['check_id']
     assert any(a['action_id'] == 'diagnostic:action' for a in waiting['actions'])
     assert all('hp' not in a and 'hp_after' not in a for a in waiting['actions'])
+
+
+def test_first_npc_can_run_source_bound_plan_without_client_hit_or_damage(battle):
+    battle.start(npc_first=True)
+    plan = battle.tool('plan_enemy_turn', {'enemy': 'Cultist'})
+    assert plan['ok']
+    with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=50)):
+        started = battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+    assert started['phase'] == 'PLAYER_CHOICE'
+    pending = battle.load().pending_checks['player']
+    assert pending['combat_context']['check_role'] == 'defense_choice'
+    assert battle.load().characters_by_id['char:ada'].hp == 10
+    with pytest.raises(ValueError, match='due combat work'):
+        battle.tool('preview_combat_settlement')
