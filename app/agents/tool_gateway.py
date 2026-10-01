@@ -134,7 +134,7 @@ def make_tool_executor(
                 with mutation_admission.bind(owner):
                     result = None
                     try:
-                        if tool_name in {"apply_resolved_check_damage", "create_triggered_check", "declare_combat_action", "submit_combat_choice"}:
+                        if tool_name in {"apply_resolved_check_damage", "create_triggered_check", "declare_combat_action", "submit_combat_choice", "request_stabilization_check"}:
                             result = keeper._execute_tool(
                                 state, tool_name, tool_input, private_messages, image_requests,
                                 speaker_role, actor_id=actor_id,
@@ -239,6 +239,23 @@ def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[st
     """
     if tool_name in _CHECK_REGISTRATION_TOOLS:
         status["tool_called"] = True
+        interaction = result.get('interaction') or {}
+        if result.get('ok') and result.get('phase') in {'PLAYER_CHOICE', 'PLAYER_ROLL', 'INJURY_CHECK', 'LUCK_DECISION'}:
+            key = 'pending_luck' if result['phase'] == 'LUCK_DECISION' else 'pending'
+            status['pending'] = None
+            status['pending_luck'] = None
+            status['resolved'] = None
+            status[key] = {**interaction, 'combat_id': result.get('combat_id'),
+                           'action_id': result.get('action_id'), 'phase': result['phase']}
+            return
+        if result.get('ok') and result.get('completed'):
+            status['pending'] = None
+            status['pending_luck'] = None
+            status['resolved'] = result.get('result') or {
+                'combat_id': result.get('combat_id'), 'action_id': result.get('action_id'),
+                'check_id': result.get('check_id'), 'completed': True,
+            }
+            return
         if result.get("ok") and result.get("pending") is True:
             status["pending"] = {
                 key: result[key]

@@ -56,6 +56,27 @@ def _battle(state, call):
     return reason
 
 
+def _owned_weapon_evidence(state, character, reference):
+    metadata = resource_bridge.effective(state, character).weapon_instances.get(reference, {})
+    if not metadata:
+        return None, ()
+    definition_id = metadata.get('definition_id')
+    version = metadata.get('catalog_version')
+    scenario_definitions = tuple(combat_rules.parse_weapon_definition(row)
+                                 for row in metadata.get('scenario_definitions', ()))
+    pin = (combat_rules.parse_weapon_definition(metadata['pinned_definition'])
+           if metadata.get('pinned_definition') else next(
+               (d for d in combat_rules.weapon_catalog() if d.id == definition_id
+                and (not version or d.catalog_version == version)), None))
+    if pin and ((definition_id and pin.id != definition_id) or (version and pin.catalog_version != version)):
+        raise ValueError('Pinned weapon definition identity/version unavailable')
+    if not pin and not scenario_definitions:
+        raise ValueError('Pinned weapon definition unavailable')
+    instance = combat_rules.WeaponInstance(reference,
+                                           definition_id or (pin.id if pin else None), pin)
+    return instance, scenario_definitions
+
+
 def declare_combat_action(call: ToolCall) -> dict[str, Any]:
     from app import combat, combat_flow
 
@@ -68,22 +89,19 @@ def declare_combat_action(call: ToolCall) -> dict[str, Any]:
             if not character or not call.actor_id or character.owner_id != call.actor_id:
                 return {'ok': False, 'error': 'Player action belongs to another investigator'}
         instance = None
+        scenario_definitions = ()
         if actor.is_pc:
             character = combat.character_for_combatant(state, actor)
-            metadata = resource_bridge.effective(state, character).weapon_instances.get(call.input['weapon_reference'], {})
-            if metadata:
-                definition_id = metadata.get('definition_id')
-                version = metadata.get('catalog_version')
-                pin = next((d for d in combat_rules.weapon_catalog() if d.id == definition_id
-                            and (not version or d.catalog_version == version)), None)
-                if not pin:
-                    return {'ok': False, 'phase': 'NEEDS_RULING', 'error': 'Pinned weapon definition unavailable'}
-                instance = combat_rules.WeaponInstance(call.input['weapon_reference'], definition_id, pin)
+            try:
+                instance, scenario_definitions = _owned_weapon_evidence(state, character, call.input['weapon_reference'])
+            except (ValueError, TypeError, KeyError) as error:
+                return {'ok': False, 'phase': 'NEEDS_RULING', 'error': str(error)}
         result = combat_flow.declare_action(
             state, action_id=call.input['action_id'], actor_id=actor.combatant_id,
             target_id=call.input['target_id'], weapon_reference=call.input['weapon_reference'],
             action_kind=call.input.get('action_kind', 'melee'),
             distance_yards=call.input.get('distance_yards'), weapon_instance=instance,
+            scenario_definitions=scenario_definitions,
         )
         result['provisional'] = True
         return result
@@ -125,7 +143,25 @@ def confirm_combat_settlement(call: ToolCall) -> dict[str, Any]:
         old = state.closed_combat_receipts.get(str(call.input.get('combat_id') or ''), {})
         if old.get('settlement_id') != call.input['settlement_id']:
             _battle(state, call)
+        first_commit = old.get('settlement_id') != call.input['settlement_id']
         receipt = combat_resources.commit_settlement(state, call.input['settlement_id'])
+        if first_commit:
+            from copy import deepcopy
+            report = state.last_combat_report
+            scoped = (report.get('timeline_id') == state.timeline_id
+                      and report.get('scenario_library_id') == state.scenario_library_id
+                      and report.get('scenario_title') == state.scenario_title)
+            last_damage = deepcopy(report.get('last_damage', {})) if scoped else {}
+            if last_damage.get('public_summary'):
+                last_damage['public_summary'] = last_damage['public_summary'].replace('（戰鬥暫定）', '（已結算）')
+            state.last_combat_report = {
+                'timeline_id': state.timeline_id, 'scenario_library_id': state.scenario_library_id,
+                'scenario_title': state.scenario_title, 'combat_id': receipt['combat_id'],
+                'settlement_id': receipt['settlement_id'], 'ended': True, 'provisional': False,
+                'combatants': [{'name': member.display_name, 'side': member.side, 'defeated': member.defeated,
+                               'hp': member.hp, 'hp_max': member.hp_max} for member in state.combat.order],
+                'last_damage': last_damage,
+            }
         return {'ok': True, 'receipt': receipt, 'provisional': False}
     return _mutate(call, operation)
 
@@ -205,8 +241,11 @@ def stop_combat_effect(call: ToolCall) -> dict[str, Any]:
     from app import combat_flow
 
     def operation(state):
-        reason = _battle(state, call)
-        return combat_flow.stop_effect(state, effect_id=call.input['effect_id'],
+        reason = str(call.input.get('reason') or '').strip()
+        if not reason:
+            raise ValueError('Explicit controller reason is required')
+        return combat_flow.stop_effect(state, combat_id=call.input['combat_id'],
+                                       effect_id=call.input['effect_id'],
                                        event_id=call.input['event_id'], reason=reason)
     return _mutate(call, operation)
 
@@ -226,10 +265,27 @@ def resolve_combat_ruling(call: ToolCall) -> dict[str, Any]:
     from app import combat_flow
 
     def operation(state):
+        from app import combat
         reason = _battle(state, call)
+        action = state.combat.actions.get(call.input['action_id'], {})
+        actor = combat.find_combatant(state, action.get('actor_id', ''))
+        character = combat.character_for_combatant(state, actor) if actor and actor.is_pc else None
+        reference = call.input.get('weapon_reference') or action.get('weapon_reference', '')
+        definitions = ()
+        if character:
+            try:
+                instance, definitions = _owned_weapon_evidence(state, character, reference)
+                if instance and instance.pinned_definition:
+                    if not any(d.id == instance.pinned_definition.id for d in definitions):
+                        definitions += (instance.pinned_definition,)
+                    if reference == instance.instance_id:
+                        reference = instance.definition_id or reference
+            except (ValueError, TypeError, KeyError) as error:
+                return {'ok': False, 'phase': 'NEEDS_RULING', 'error': str(error)}
         return combat_flow.resolve_ruling(state, action_id=call.input['action_id'],
             event_id=call.input['event_id'], reason=reason, decision=call.input['decision'],
-            weapon_reference=call.input.get('weapon_reference'), distance_yards=call.input.get('distance_yards'))
+            weapon_reference=reference, distance_yards=call.input.get('distance_yards'),
+            scenario_definitions=definitions)
     return _mutate(call, operation)
 
 
@@ -251,3 +307,31 @@ def get_weapon_definition(call: ToolCall) -> dict[str, Any]:
             'definition': asdict(lookup.definition) if lookup.definition else None,
             'candidates': [asdict(d) for d in lookup.candidates], 'reason': lookup.reason,
             'note': 'Reviewed type lookup does not establish ownership, ammo or scenario authority'}
+
+
+def stabilize_investigator(call: ToolCall) -> dict[str, Any]:
+    """Use a recorded successful First Aid check; never accept a supplied outcome."""
+    from app import combat_flow
+
+    return _mutate(call, lambda state: combat_flow.stabilize_investigator(
+        state, character_id=call.input['character_id'], source_check_id=call.input['source_check_id'],
+        event_id=call.input['event_id'], reason=call.input['reason']))
+
+
+def request_stabilization_check(call: ToolCall) -> dict[str, Any]:
+    from app import combat_flow
+
+    def operation(state):
+        healer = state.characters_by_id.get(call.input['healer_character_id'])
+        if not healer or not call.actor_id or healer.owner_id != call.actor_id:
+            return {'ok': False, 'error': 'First Aid declaration belongs to another investigator'}
+        return combat_flow.request_stabilization_check(
+            state, healer_character_id=healer.character_id, character_id=call.input['character_id'],
+            event_id=call.input['event_id'], reason=call.input['reason'])
+    return _mutate(call, operation)
+
+
+def run_enemy_combat_plan(call: ToolCall) -> dict[str, Any]:
+    from app import combat_flow
+
+    return _mutate(call, lambda state: combat_flow.run_enemy_plan(state, call.input['plan_id']))

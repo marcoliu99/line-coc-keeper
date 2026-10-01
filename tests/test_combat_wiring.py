@@ -320,3 +320,283 @@ def test_public_status_exposes_durable_control_ids_and_provisional_pc_difference
     assert any(event['event_id'] == 'magic:status' for event in status['control']['correctable_events'])
     assert status['working_changes']['char:ada']['mp'] == {'baseline': 10, 'effective': 8}
     assert store['state'].characters['player'].mp == 10
+
+
+def test_controller_correction_and_initiative_tools_are_reachable_without_human_kp(store):
+    actor = store['state'].combat.order[0].combatant_id
+    initiative = tool(store, 'change_combat_initiative', {
+        'combat_id': 'combat:wiring', 'event_id': 'initiative:review',
+        'reason': 'Keeper reviewed scenario initiative', 'order': [actor],
+    })
+    assert initiative['ok'], initiative
+    adjusted = tool(store, 'adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': -1,
+                                              'event_id': 'incident:correct', 'reason': 'Verified incident'})
+    assert adjusted['ok']
+    corrected = tool(store, 'correct_combat_event', {
+        'combat_id': 'combat:wiring', 'event_id': 'correction:review',
+        'target_event_id': 'incident:correct:hp', 'changes': {'after': 10},
+        'reason': 'Keeper corrected the authoritative incident',
+    })
+    assert corrected['ok'] and corrected['phase'] == 'NEEDS_RULING', corrected
+    reconciled = tool(store, 'reconcile_combat_correction', {
+        'combat_id': 'combat:wiring', 'event_id': 'correction:confirm',
+        'reason': 'Keeper reviewed every retained injury and action',
+        'injury_by_character': {'char:ada': {}},
+        'acknowledge_action_ids': list(store['state'].combat.actions),
+    })
+    assert reconciled['ok'], reconciled
+    assert effective(store).hp == 10 and store['state'].characters['player'].hp == 10
+
+
+def test_foreign_actor_and_changed_character_binding_reject_before_managed_rng(store):
+    enemy = add_reviewed_enemy(store)
+    actor = next(p for p in store['state'].combat.order if p.is_pc)
+    args = {'action_id': 'shot:ownership', 'actor_id': actor.combatant_id,
+            'target_id': enemy.combatant_id, 'weapon_reference': '.45 Automatic',
+            'action_kind': 'single_shot', 'distance_yards': 5}
+    before = deepcopy(store['state'].to_dict())
+    denied = tool(store, 'declare_combat_action', args, actor='other-player')
+    assert not denied['ok'] and store['state'].to_dict() == before
+    assert tool(store, 'declare_combat_action', args)['ok']
+    original = store['state'].characters['player']
+    original.active = False
+    replacement = Character('New investigator', 'player', character_id='char:replacement', hp=10, hp_max=10)
+    store['state'].characters['player'] = replacement
+    store['state'].characters_by_id[replacement.character_id] = replacement
+    before = deepcopy(store['state'].to_dict())
+    with patch.object(dice, 'skill_check', side_effect=AssertionError('foreign binding consumed RNG')):
+        result = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+    assert not result.should_finalize
+    assert store['state'].to_dict() == before
+    assert original.weapons['.45 Automatic']['ammo'] == 7
+
+
+def test_postcombat_effect_stop_requires_matching_source_battle(store):
+    state = store['state']
+    state.combat.active = False
+    state.postcombat_obligations = [
+        {'obligation_id': 'old:effect', 'combat_id': 'battle:old', 'character_id': 'char:ada',
+         'kind': 'effect', 'status': 'future', 'next_trigger': 2, 'effect': {'id': 'fire'},
+         'processed_timings': []},
+        {'obligation_id': 'other:effect', 'combat_id': 'battle:other', 'character_id': 'char:ada',
+         'kind': 'effect', 'status': 'future', 'next_trigger': 3, 'effect': {'id': 'fire'},
+         'processed_timings': []},
+    ]
+    result = tool(store, 'stop_combat_effect', {
+        'combat_id': 'battle:old', 'effect_id': 'fire', 'event_id': 'stop:fire',
+        'reason': 'Keeper verified source fire extinguished',
+    })
+    assert result['ok'], result
+    assert store['state'].postcombat_obligations[0]['status'] == 'resolved'
+    assert store['state'].postcombat_obligations[1]['status'] == 'future'
+
+
+def test_stabilization_tool_uses_bound_recorded_success_and_exposes_eligible_receipt_ids(store):
+    state = store['state']
+    state.combat.active = False
+    state.autoroll_checks = True
+    patient = state.characters['player']
+    patient.hp = 0
+    patient.injury = {'major_wound': True, 'unconscious': True, 'dying': True}
+    healer = Character('Ben', 'medic', character_id='char:ben', hp=10, hp_max=10,
+                       skills={'急救': 60}, luck=0)
+    state.characters['medic'] = healer
+    state.characters_by_id['char:ben'] = healer
+    state.active_character_id_by_user['medic'] = 'char:ben'
+    state.postcombat_obligations = [{
+        'obligation_id': 'source:dying', 'combat_id': 'source:battle', 'character_id': 'char:ada',
+        'kind': 'dying', 'status': 'future', 'next_trigger': {'round': 2}, 'effect': {},
+        'processed_timings': [],
+    }]
+    state.resolved_check_events = [{'check_id': 'historic:unbound', 'timeline_id': state.timeline_id,
+                                   'skill': '急救', 'success': True}]
+    args = {'character_id': 'char:ada', 'source_check_id': 'historic:unbound',
+            'event_id': 'stabilize:1', 'reason': 'Keeper reviewed first aid patient'}
+    before = deepcopy(state.to_dict())
+    assert not tool(store, 'stabilize_investigator', args)['ok']
+    assert store['state'].to_dict() == before
+    with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(60, 1, 0, 0, 'critical', True)):
+        requested = tool(store, 'request_stabilization_check', {
+            'character_id': 'char:ada', 'healer_character_id': 'char:ben',
+            'event_id': 'medical:1', 'reason': 'Ben gives current patient first aid',
+        }, actor='medic')
+    assert requested['ok'], requested
+    args['source_check_id'] = requested['check_id']
+    status = tool(store, 'get_combat_status')
+    assert status['medical_check_receipts'][0]['check_id'] == args['source_check_id']
+    assert tool(store, 'stabilize_investigator', args)['ok']
+    assert store['state'].characters['player'].injury == {'major_wound': True, 'unconscious': True, 'dying': False}
+    assert store['state'].postcombat_obligations[0]['status'] == 'resolved'
+    before = deepcopy(store['state'].to_dict())
+    assert tool(store, 'stabilize_investigator', args)['ok']
+    assert store['state'].to_dict() == before
+
+
+@pytest.mark.parametrize(('scenario_override', 'expected'), [(False, '1d6+2'), (True, '1d4+1')])
+def test_production_action_uses_persisted_reviewed_pin_and_scenario_precedence(store, scenario_override, expected):
+    from dataclasses import asdict, replace
+
+    from app import combat_rules
+    enemy = add_reviewed_enemy(store)
+    state = store['state']
+    actor = next(p for p in state.combat.order if p.is_pc)
+    generic = combat_rules.resolve_weapon('.45 Automatic').definition
+    assert generic is not None
+    pin = replace(generic, damage='1d6+2', catalog_version='reviewed-instance-v1')
+    metadata = {'definition_id': pin.id, 'catalog_version': pin.catalog_version,
+                'pinned_definition': asdict(pin)}
+    if scenario_override:
+        override = replace(pin, damage='1d4+1', catalog_version='reviewed-scenario-v1')
+        metadata['scenario_definitions'] = [asdict(override)]
+    state.characters['player'].weapon_instances['.45 Automatic'] = metadata
+    state.combat.baseline_resources['char:ada']['weapon_instances'] = deepcopy(state.characters['player'].weapon_instances)
+    state.combat.working_resources['char:ada']['weapon_instances'] = deepcopy(state.characters['player'].weapon_instances)
+    result = tool(store, 'declare_combat_action', {
+        'action_id': 'shot:reviewed', 'actor_id': actor.combatant_id, 'target_id': enemy.combatant_id,
+        'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
+    })
+    assert result['ok'], result
+    assert store['state'].combat.actions['shot:reviewed']['weapon']['damage'] == expected
+
+
+def test_unverified_persisted_weapon_definition_rejects_before_rng_or_ammo(store):
+    from dataclasses import asdict
+
+    from app import combat_rules
+    enemy = add_reviewed_enemy(store)
+    state = store['state']
+    actor = next(p for p in state.combat.order if p.is_pc)
+    definition = combat_rules.resolve_weapon('.45 Automatic').definition
+    assert definition is not None
+    payload = asdict(definition)
+    payload['source']['sha256'] = ''
+    metadata = {'definition_id': definition.id, 'pinned_definition': payload}
+    state.characters['player'].weapon_instances['.45 Automatic'] = metadata
+    state.combat.baseline_resources['char:ada']['weapon_instances'] = deepcopy(state.characters['player'].weapon_instances)
+    state.combat.working_resources['char:ada']['weapon_instances'] = deepcopy(state.characters['player'].weapon_instances)
+    before = deepcopy(state.to_dict())
+    with patch.object(dice, 'skill_check', side_effect=AssertionError('unverified definition consumed RNG')):
+        result = tool(store, 'declare_combat_action', {
+            'action_id': 'shot:invalid', 'actor_id': actor.combatant_id, 'target_id': enemy.combatant_id,
+            'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
+        })
+    assert not result['ok'] and result['phase'] == 'NEEDS_RULING'
+    assert store['state'].to_dict() == before
+
+
+def test_public_npc_plan_runner_bootstraps_first_actor_owned_defense(store):
+    enemy = add_reviewed_enemy(store, npc_first=True)
+    assert store['state'].combat.order[0].combatant_id == enemy.combatant_id
+    plan = tool(store, 'plan_enemy_turn', {'enemy': 'Cultist'})
+    assert plan['ok'], plan
+    with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(50, 30, 0, 0, 'regular', True)):
+        result = tool(store, 'run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+    assert result['ok'], result
+    assert result['phase'] == 'PLAYER_CHOICE'
+    assert store['state'].pending_checks['player']['combat_context']['check_role'] == 'defense_choice'
+    assert store['state'].characters['player'].hp == 10
+
+
+def test_runner_controls_remain_advertised_and_narrator_wait_tracks_actual_owned_interaction(store):
+    from app.agents import tool_gateway
+    from app.services import turn_context
+    store['state'].pending_checks['player'] = {'type': 'skill', 'skill': '急救'}
+    names = {schema['name'] for schema in turn_context.check_creation_tools(store['state'], keeper.TOOLS)}
+    assert {'run_combat_action', 'submit_combat_choice', 'run_enemy_combat_plan'} <= names
+    status = {}
+    tool_gateway._record_check_status(status, 'run_enemy_combat_plan', {
+        'ok': True, 'combat_id': 'combat:wiring', 'action_id': 'npc:plan', 'phase': 'PLAYER_CHOICE',
+        'interaction': {'owner_id': 'player', 'check_id': 'owned:defense', 'check_role': 'defense_choice'},
+    })
+    assert status['pending']['check_id'] == 'owned:defense'
+    assert status['resolved'] is None
+    tool_gateway._record_check_status(status, 'run_combat_action', {
+        'ok': True, 'combat_id': 'combat:wiring', 'action_id': 'npc:plan', 'phase': 'READY', 'completed': True,
+    })
+    assert status['pending'] is None and status['resolved']['completed']
+
+
+def reviewed_enemy_entry():
+    return {'name': 'Cultist', 'dex': 20, 'hp': 20,
+            'attacks': [{'id': 'claw', 'skill_value': 50, 'damage': '1d3', 'range_band': 'engaged'}],
+            'skills': {'dodge': 20},
+            'source': {'url': 'https://example.test/scenario', 'revision': 'reviewed-v1',
+                       'sha256': 'a' * 64, 'attack_mode': 'melee', 'extreme_rule': 'maximum'}}
+
+
+def test_public_initializer_supplies_reviewed_npc_dodge_to_ranged_action(store):
+    state = store['state']
+    state.characters['player'].skills['firearms-handgun'] = 50
+    assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
+    actor = next(p for p in store['state'].combat.order if p.is_pc)
+    enemy = next(p for p in store['state'].combat.order if p.side == 'enemy')
+    outcomes = [dice.SkillCheckResult(20, 99, 0, 0, 'fail', False),
+                dice.SkillCheckResult(50, 1, 0, 0, 'critical', True)]
+    with patch.object(dice, 'skill_check', side_effect=outcomes) as rolls:
+        declared = tool(store, 'declare_combat_action', {
+            'action_id': 'shot:public-npc', 'actor_id': actor.combatant_id, 'target_id': enemy.combatant_id,
+            'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
+        })
+        assert declared['ok'], declared
+        result = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+    assert result.should_finalize
+    assert rolls.call_count == 2
+    action = store['state'].combat.actions['shot:public-npc']
+    assert action['completed'] and not action.get('needs_ruling')
+    assert effective(store).weapons['.45 Automatic']['ammo'] == 6
+
+
+@pytest.mark.parametrize('closure', ['confirm', 'rollback'])
+def test_public_initializer_opens_fresh_battle_after_closed_roster_and_preserves_clock(store, closure):
+    entry = reviewed_enemy_entry()
+    assert tool(store, 'initialize_combat', {'enemies': [entry]})['ok']
+    previous_id = store['state'].combat.combat_id
+    store['state'].mechanical_round = 7
+    if closure == 'confirm':
+        preview = tool(store, 'preview_combat_settlement')
+        assert tool(store, 'confirm_combat_settlement', {
+            'combat_id': previous_id, 'settlement_id': preview['preview']['settlement_id'],
+            'reason': 'Keeper reviewed final battle',
+        })['ok']
+    else:
+        assert tool(store, 'rollback_combat', {'combat_id': previous_id, 'event_id': 'cancel:old',
+                                             'reason': 'Keeper explicitly cancelled old battle'})['ok']
+    assert not store['state'].combat.active
+    opened = tool(store, 'initialize_combat', {'enemies': [entry]})
+    assert opened['ok'] and store['state'].combat.active
+    assert store['state'].combat.combat_id != previous_id
+    assert store['state'].mechanical_round == 7
+    assert previous_id in store['state'].closed_combat_receipts
+    retried = tool(store, 'initialize_combat', {'enemies': [entry]})
+    assert retried['enemies'][0]['reused']
+    assert len([p for p in store['state'].combat.order if p.side == 'enemy']) == 1
+
+
+def test_blocked_managed_advance_does_not_save_unchanged_state(store):
+    actor = store['state'].combat.order[0].combatant_id
+    before = deepcopy(store['state'].to_dict())
+    outcome = tool(store, 'advance_combat_turn', {'actor_id': actor, 'event_id': 'advance:blocked'})
+    assert not outcome['ok']
+    assert store['state'].to_dict() == before and store['writes'] == 0
+
+
+def test_committed_combat_report_uses_native_damage_and_existing_enemy_privacy(store):
+    assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
+    enemy = next(p for p in store['state'].combat.order if p.side == 'enemy')
+    result = tool(store, 'declare_combat_effect', {
+        'combat_id': 'combat:wiring', 'effect_id': 'incident:report', 'target_id': enemy.combatant_id,
+        'severity_id': 'minor', 'scope': 'incident', 'stop_condition': 'One verified incident',
+        'reason': 'Reviewed minor scenario incident',
+    })
+    assert result['ok'], result
+    assert 'last_ended_combat' not in tool(store, 'get_combat_status')
+    preview = tool(store, 'preview_combat_settlement')
+    assert tool(store, 'confirm_combat_settlement', {
+        'combat_id': 'combat:wiring', 'settlement_id': preview['preview']['settlement_id'],
+        'reason': 'Keeper reviewed the final native damage',
+    })['ok']
+    with patch('app.spoiler_policy.is_privacy_isolation_enabled', return_value=True):
+        status = tool(store, 'get_combat_status')
+    assert status['last_ended_combat']['last_damage']['target'] == 'Cultist'
+    assert 'hp' not in status['last_ended_combat']['last_damage']
+    assert store['state'].last_combat_report['provisional'] is False

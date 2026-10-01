@@ -11,6 +11,16 @@ if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
 
 
+def _reviewed_skills(payload):
+    if payload is None:
+        return None
+    if (not isinstance(payload, dict) or any(not isinstance(key, str) or not key.strip()
+                                            or type(value) is not int or value < 0
+                                            for key, value in payload.items())):
+        raise ValueError('NPC skills require explicit nonnegative integer source values')
+    return dict(payload)
+
+
 def start_combat(call: ToolCall) -> dict[str, Any]:
     from app import keeper
 
@@ -54,7 +64,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
             armor=tool_input.get("armor"),
             attacks=tool_input.get("attacks"),
             abilities=tool_input.get("abilities"),
-            source=tool_input.get("source"),
+            source=tool_input.get("source"), skills=_reviewed_skills(tool_input.get("skills")),
         )
         if added.reused:
             return keeper.ToolStateMutation(
@@ -120,7 +130,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                     target_state, requested_name, dex, hp,
                     is_ally=bool(entry.get("is_ally", False)),
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
-                    source=entry.get("source"),
+                    source=entry.get("source"), skills=_reviewed_skills(entry.get("skills")),
                     force_new_instance=(
                         matching is not None and matching.combatant_id in seen_batch_ids
                     ),
@@ -174,7 +184,11 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
                 'action_id', 'actor_id', 'target_id', 'completed', 'needs_ruling', 'weapon_reference',
             ) if key in action} for action in managed.actions.values()],
             'correctable_events': [{key: event[key] for key in ('event_id', 'kind', 'revision')}
-                                   for event in managed.events],
+                                   for event in managed.events
+                                   if event['kind'] not in {'administrative', 'reconciliation', 'correction', 'snapshot'}],
+            'plans': [{key: plan.get(key) for key in (
+                'plan_id', 'enemy_combatant_id', 'round_number', 'selected_action', 'selected_id', 'target_ids',
+            )} for plan in managed.plans.values()],
             'settlement_id': managed.settlement.get('settlement_id', ''),
             'participants': [{'combatant_id': p.combatant_id, 'character_id': p.character_id,
                               'name': p.display_name} for p in managed.order],
@@ -188,11 +202,36 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
     response['postcombat_controls'] = [{key: obligation.get(key) for key in (
         'obligation_id', 'combat_id', 'character_id', 'kind', 'status', 'next_trigger',
     )} for obligation in call.state.postcombat_obligations if obligation.get('status') != 'resolved']
+    from app import combat_flow
+    obligations = (combat_flow.postcombat_obligations(call.state) if resource_bridge.managed(call.state)
+                   else call.state.postcombat_obligations)
+    medical_events = list(call.state.resolved_check_events)
+    medical_events.extend(action['medical_receipt'] for action in call.state.combat.actions.values()
+                          if action.get('medical_receipt'))
+    medical_events.extend(action['medical_receipt']
+                          for closed in call.state.closed_combat_receipts.values()
+                          if closed.get('status') == 'committed'
+                          for action in closed.get('actions', {}).values() if action.get('medical_receipt'))
+    eligible = {}
+    for event in medical_events:
+        context = event.get('medical_context', {})
+        patient = call.state.characters_by_id.get(context.get('character_id', ''))
+        active_ids = sorted(o['obligation_id'] for o in obligations
+                            if o.get('character_id') == context.get('character_id')
+                            and o.get('kind') == 'dying' and o.get('status') != 'resolved')
+        if (event.get('timeline_id') == call.state.timeline_id and event.get('success') is True
+                and event.get('skill') in {'急救', 'First Aid'} and not event.get('stabilization_receipt')
+                and patient and resource_bridge.effective(call.state, patient).injury.get('dying')
+                and active_ids and active_ids == context.get('obligation_ids')):
+            eligible[event['check_id']] = {key: event.get(key) for key in (
+                'check_id', 'character_id', 'investigator', 'skill', 'success', 'medical_context')}
+    response['medical_check_receipts'] = list(eligible.values())
     ended = combat.last_ended_combat_evidence(
         call.state, include_private=(call.speaker_role == "kp_assistant")
     )
     if ended:
-        response["last_ended_combat"] = ended
+        response["last_ended_combat"] = managed_combat.public_result(
+            ended, include_private=call.speaker_role == "kp_assistant")
     return response
 
 
@@ -202,11 +241,14 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
             from app import combat_flow
-            return combat_flow.advance_combat(target_state, actor_id=call.input.get('actor_id', ''),
+            before = target_state.to_dict()
+            result = combat_flow.advance_combat(target_state, actor_id=call.input.get('actor_id', ''),
                                                event_id=resource_bridge.mutation_id(call.name, call.input))
+            return keeper.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return keeper.skip_save_if_blocked(combat.advance_turn(target_state))
 
-    return keeper.mutate_tool_state(call.state, mutate)
+    return managed_combat.public_result(keeper.mutate_tool_state(call.state, mutate),
+                                        include_private=call.speaker_role == 'kp_assistant')
 
 
 def damage_combatant(call: ToolCall) -> dict[str, Any]:

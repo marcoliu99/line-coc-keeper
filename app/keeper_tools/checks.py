@@ -468,7 +468,7 @@ def clear_pending_check(call: ToolCall) -> dict[str, Any]:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     def _clear_pending_check(target_state: GroupState) -> Any:
         existing = target_state.pending_checks.get(char.owner_id) or {}
-        if existing.get('combat_context') or existing.get('postcombat_context'):
+        if existing.get('combat_context') or existing.get('postcombat_context') or existing.get('medical_context'):
             return services.StateMutation({"ok": False, "error": "Owned combat wait requires explicit controller correction"}, should_save=False)
         target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
         cleared = target_state.pending_checks.pop(target_char.owner_id, None)

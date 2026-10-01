@@ -1014,6 +1014,7 @@ def _resolved_check_event_seed(
         "opposed_outcome": opposed_outcome,
         "player_declaration": (check_context or {}).get('player_declaration', ''),
         "action_basis": (check_context or {}).get('action_basis', ''),
+        "medical_context": dict((check_context or {}).get("medical_context") or {}),
     }
 
 
@@ -1575,7 +1576,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         char = resource_bridge.effective(state, char)
         attributes_before = _character_attribute_snapshot(char)
         owned = state.pending_checks.get(user_id) or {}
-        if owned.get('combat_context') or owned.get('postcombat_context'):
+        if owned.get('combat_context') or owned.get('postcombat_context') or owned.get('medical_context'):
             return _resolve_managed_check(state, user_id, text, owned)
 
         parts = text.split()
@@ -1883,6 +1884,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "player_declaration": (pending_entry or {}).get('player_declaration', ''),
                 "action_basis": (pending_entry or {}).get('action_basis', ''),
                 "consequences": (pending_entry or {}).get('consequences', []),
+                "medical_context": dict((pending_entry or {}).get("medical_context") or {}),
             }
             save_state(state)
             options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
@@ -2031,7 +2033,7 @@ def _resolve_luck_decision_deterministically(
         state = load_state(conversation_id)
         audience_entry = dict(state.pending_luck_decisions.get(user_id) or {})
         owned = state.pending_luck_decisions.get(user_id) or {}
-        if owned.get('combat_context') or owned.get('postcombat_context'):
+        if owned.get('combat_context') or owned.get('postcombat_context') or owned.get('medical_context'):
             return _resolve_managed_luck(state, user_id, choice, owned)
         pending = state.pending_luck_decisions.pop(user_id, None)
         if not pending:
