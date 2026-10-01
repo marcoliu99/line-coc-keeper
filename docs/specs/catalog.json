@@ -1725,6 +1725,17 @@
       ],
       "path": "docs/specs/enhancement/pdf_ordered_source_route_segments.md",
       "zh_path": "docs/specs/enhancement/pdf_ordered_source_route_segments_zh.md"
+    },
+    {
+      "title": "The Haunting canonical source topology validation",
+      "zh": "The Haunting 正典來源 topology 驗證",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "docs/specs/enhancement/pdf_haunting_source_topology_validation_results.json"
+      ],
+      "path": "docs/specs/enhancement/pdf_haunting_source_topology_validation.md",
+      "zh_path": "docs/specs/enhancement/pdf_haunting_source_topology_validation_zh.md"
     }
   ]
 }
