@@ -1741,8 +1741,11 @@
       "title": "Semantic topology discovery with deterministic publication proof",
       "zh": "Semantic topology discovery 與 deterministic publication proof",
       "category": "enhancement",
-      "status": "backlog",
-      "evidence": [],
+      "status": "implemented",
+      "evidence": [
+        "docs/specs/enhancement/pdf_semantic_topology_validation_results.json",
+        "tests/test_pdf_semantic_topology.py"
+      ],
       "path": "docs/specs/enhancement/pdf_semantic_topology_discovery.md",
       "zh_path": "docs/specs/enhancement/pdf_semantic_topology_discovery_zh.md"
     }

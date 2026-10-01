@@ -1,6 +1,6 @@
 # Semantic topology discovery with deterministic publication proof
 
-Status: proposed; runtime implementation awaits explicit confirmation. Branch: enhancement/pdf-multicolumn-ingestion / PR #155. Supersedes the unapproved narrow-grammar proposal in pdf_haunting_source_topology_validation.md.
+Status: implemented after explicit confirmation. Branch: enhancement/pdf-multicolumn-ingestion / PR #155. Supersedes the unapproved narrow-grammar proposal in pdf_haunting_source_topology_validation.md.
 
 ## Problem and trust boundary
 The existing source-topology-v2 extractor recognizes fixed affirmative assertions. A grammar miss is neither a negative source assertion nor proof that topology is unsupported. The published legacy Haunting text on physical pages 10–12 suggests outer boards → explorable wall space → inner wall → Room 4. That text has column interleaving, no current PR155 quality provenance, and no certified room inventory. It is discovery input only, never topology authority. Do not reimport/reconstruct those pages or rerun map-image providers in this scope.
@@ -46,3 +46,14 @@ Negative controls: unrelated adjacent walls/boards, shared wall, a single barrie
 
 ## Remaining input
 The user's last message ended midway through the first negative-control example. Any additional constraints supplied afterward must be incorporated before implementing dependent behavior. No model/provider validation run is authorized by this design-review checkpoint itself.
+
+## Implementation and validation
+Implemented source-topology-v3, semantic-source-proof-v1 and multicolumn-v9. The new canonical eligibility and replay contract changes accepted-page/draft identity; visual-only image-map-certification-v2 stays unchanged. Provider model identity is supplied through the common registry interface. Text requests use 30-second timeout/zero retries; a separate durable ledger inside the import budget preserves reservations and identical-window results without spending image allowance.
+
+The closed candidate representation bundles each action/result assertion into `opening` then ordered `crossing` citations (physical page, absolute Unicode offsets, exact quote); the binder derives barrier types, endpoints, transit, order and hidden state from original clauses, never supplied normalized semantics/confidence. Initial proof recipes recognize explicit removal revealing an enterable space and subsequent uniquely referenced crossings, plus successive named-location crossings and an explicit hidden-route opening. Original grammar remains the fast path. Other wording is still discovered but remains EVIDENCE_INCOMPLETE/AMBIGUOUS. Explicit naming evidence blocks anonymous transit unless a named proof resolves inventory; uncertain continuation blocks partial certification. These conservative proof limits are deliberate, not a claim of real-corpus semantic accuracy.
+
+The private accepted proof and canonical receipt are hashed into the source certificate and replayed without inference at library/cache boundaries. Public reports keep sanitized statuses/counts; candidate quotes and durable window payloads stay private. No OCR, Docling, visual extraction, gameplay or source publication gates were changed.
+
+Real legacy Haunting p10–12: six existing source span hashes rechecked; manually supplied evidence candidate returns CANONICAL_SOURCE_UNAVAILABLE / AWAITING_CANONICAL_SOURCE, zero certified routes. No semantic or image provider was called, no canonical reconstruction or real discovery accuracy evaluation was performed. See pdf_semantic_topology_validation_results.json. Source/inventory revalidation remains separately required.
+
+Final verification: pytest 2,181 passed, 2 skipped, 152 subtests passed; ruff check . passed; mypy app passed (138 modules, existing untyped-body note); compileall app tests passed; git diff --check passed. The 18 new tests cover discovery/budget/resume, canonical authority, source entailment, naming, continuation, hidden progression, source identity and private/public separation. Independent Standards and Spec review found no remaining blockers after corrections; the large discovery function is an optional maintainability improvement. main_v2 remains an ancestor, with no merge conflict.

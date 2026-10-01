@@ -33,12 +33,13 @@ from app import (
     pdf_quality,
     pdf_raster_source,
     pdf_source_topology,
+    pdf_source_topology_discovery,
 )
 from app.markitdown_shim import build_markitdown
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v8'
+PIPELINE_VERSION = 'multicolumn-v9'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route', 'soft_review']
@@ -87,6 +88,7 @@ def extraction_identity() -> dict:
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
             'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
+            'source_discovery': pdf_source_topology_discovery.identity(),
             'map_version': pdf_map_analysis.VERSION, 'source_topology_version': pdf_source_topology.VERSION,
             'docling': version('docling') if config.PDF_LAYOUT_DOCLING_ENABLED else 'disabled'}
 
@@ -848,13 +850,28 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if row['page'] not in review:
                 review.append(row['page'])
     full_text = render_source_pages(texts)
+    discovery_ledger = layout_budget.get('source_discovery', {})
+    def checkpoint_discovery(ledger: dict) -> None:
+        layout_budget['source_discovery'] = ledger
+        if layout_budget_checkpoint is not None:
+            layout_budget_checkpoint(layout_budget)
+    report['source_topology_discovery'] = pdf_source_topology_discovery.discover(full_text,
+        ledger=discovery_ledger, checkpoint=checkpoint_discovery)
+    report['source_topology_discovery_requests'] = report['source_topology_discovery']['requests']
+    source_context = pdf_source_topology_discovery.source_context(full_text, report, pdf_sha256=report['pdf_sha256'])
+    report['source_topology_discovery']['certification_status'] = (
+        'DISCOVERY_NONE' if not report['source_topology_discovery']['candidates'] else
+        'AWAITING_CANONICAL_SOURCE' if source_context.receipt() is None else 'ENDPOINT_UNRESOLVED')
     # Source topology can use only the final canonical book, after every source gate.
     # Draft overlays are rebuilt here, never reused against an earlier source identity.
     if not any(row['publication_severity'] == 'HARD_BLOCK' for row in report['pages']):
         for number, graph in list(maps.items()):
             row = report['pages'][number - 1]
-            merged = pdf_map_analysis.certify_source_topology(graph, row['map_analysis'], full_text)
+            merged = pdf_map_analysis.certify_source_topology(graph, row['map_analysis'], full_text,
+                source_context=source_context, candidates=report['source_topology_discovery']['candidates'])
             row['map_analysis'] = merged.analysis
+            bindings = merged.analysis.get('source_topology_binding_statuses', [])
+            row['source_topology_binding_statuses'] = bindings
             if merged.graph is not None:
                 maps[number] = merged.graph
             else:
@@ -865,6 +882,18 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 row['review_reasons'].append('source_topology_unverified')
                 if number not in review:
                     review.append(number)
+    candidate_outcomes = []
+    for index, _ in enumerate(report['source_topology_discovery']['candidates']):
+        statuses = [row['source_topology_binding_statuses'][index] for row in report['pages']
+                    if index < len(row.get('source_topology_binding_statuses', []))]
+        candidate_outcomes.append('CERTIFIED' if 'CERTIFIED' in statuses else
+            statuses[0] if statuses else report['source_topology_discovery']['certification_status'])
+    report['source_topology_discovery']['binding_statuses'] = candidate_outcomes
+    report['source_topology_discovery']['certified_count'] = candidate_outcomes.count('CERTIFIED')
+    report['source_topology_discovery']['pending_count'] = len(candidate_outcomes) - candidate_outcomes.count('CERTIFIED')
+    if candidate_outcomes:
+        report['source_topology_discovery']['certification_status'] = (
+            'CERTIFIED' if all(status == 'CERTIFIED' for status in candidate_outcomes) else next(status for status in candidate_outcomes if status != 'CERTIFIED'))
     report["review_pages"] = review
     report["source_chars"] = len(full_text)
     report["ai_repair_requests"] = max(0, ai_repair_limit) - ai_budget[0]
@@ -891,6 +920,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     report['soft_review_pages'] = [row['page'] for row in report['pages'] if row['publication_severity'] == 'SOFT_REVIEW']
     readiness: ScenarioReadiness = ('BLOCKED' if report['hard_block_pages']
                                     else 'READY_WITH_WARNINGS' if report['soft_review_pages'] or review else 'READY')
+    if readiness == 'READY' and report['source_topology_discovery']['pending_count']:
+        readiness = 'READY_WITH_WARNINGS'
     report['scenario_readiness'] = readiness
     report['map_status'] = {str(row['page']): row['map_analysis']['status']
                             for row in report['pages'] if row.get('map_analysis', {}).get('candidate')}

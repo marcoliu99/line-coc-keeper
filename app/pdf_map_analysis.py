@@ -12,6 +12,7 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from app import config, pdf_source_topology, scene_map
 from app import pdf_map_evidence as maps
+from app import pdf_source_topology_discovery as discovery
 from app.providers import image_diagnostics
 from app.providers.registry import analysis_provider
 
@@ -22,6 +23,8 @@ MapStage = Literal['phase1_generation', 'phase1_audit', 'phase2_generation', 'ta
 
 
 class MapAnalysis(TypedDict):
+    source_topology_binding_statuses: NotRequired[list[discovery.Status]]
+    source_topology_proof: NotRequired[list[dict]]
     source_topology_certificate: NotRequired[dict[str, str]]
     source_topology_diagnostics: NotRequired[list[dict[str, str]]]
     source_topology_count: NotRequired[int]
@@ -69,7 +72,7 @@ def graph_hash(graph: Any) -> str:
 
 
 def verified_graph(graph: Any, analysis: dict | None, image: bytes | None = None, *,
-                   canonical_source: str | None = None) -> bool:
+                   canonical_source: str | None = None, source_context: discovery.SourceContext | None = None) -> bool:
     """Recheck certificates at cache/publication boundaries without trusting status alone."""
     if (not isinstance(analysis, dict) or analysis.get('version') != VERSION
             or analysis.get('status') != 'MAP_GRAPH_VERIFIED' or analysis.get('verified') is not True
@@ -80,10 +83,14 @@ def verified_graph(graph: Any, analysis: dict | None, image: bytes | None = None
         certificate = analysis.get('source_topology_certificate')
         visual = pdf_source_topology.visual_graph(graph)
         routes = graph.get('source_topology')
-        if not isinstance(certificate, dict) or not isinstance(canonical_source, str):
+        proof = analysis.get('source_topology_proof')
+        if (not isinstance(certificate, dict) or not isinstance(canonical_source, str)
+                or source_context is None or source_context.text != canonical_source
+                or source_context.receipt() is None or not isinstance(proof, list)
+                or any(not isinstance(c, dict) for c in proof)):
             return False
-        expected = _source_certificate(visual, routes, canonical_source, graph)
-        if certificate != expected or pdf_source_topology.merge(visual, pdf_source_topology.extract(visual, canonical_source)) != graph:
+        expected = _source_certificate(visual, routes, source_context, graph, proof)
+        if certificate != expected or pdf_source_topology.merge(visual, discovery.replay(visual, source_context, proof)) != graph:
             return False
         analysis = copy.deepcopy(analysis)
         analysis.pop('source_topology_certificate')
@@ -109,10 +116,12 @@ def verified_graph(graph: Any, analysis: dict | None, image: bytes | None = None
 
 
 
-def _source_certificate(visual: dict, routes: Any, source: str, merged: dict) -> dict[str, str]:
+def _source_certificate(visual: dict, routes: Any, context: discovery.SourceContext, merged: dict, proof: list[dict]) -> dict[str, str]:
     return {'version': pdf_source_topology.VERSION, 'visual_graph_sha256': graph_hash(visual),
             'hidden_topology_sha256': graph_hash(routes),
-            'canonical_source_sha256': pdf_source_topology.source_hash(source),
+            'canonical_source_sha256': pdf_source_topology.source_hash(context.text),
+            'canonical_quality_sha256': graph_hash(context.receipt()),
+            'binding_proof_sha256': graph_hash(discovery.proof_candidates(proof)),
             'condition_metadata_sha256': graph_hash([{'id': route['id'], 'condition': route['condition'],
                 'progression_policy': route['progression_policy']} for route in routes]),
             'route_segments_sha256': graph_hash([c['segments'] for c in merged.get('source_route_chains', [])]),
@@ -123,12 +132,22 @@ def _source_certificate(visual: dict, routes: Any, source: str, merged: dict) ->
             'merged_graph_sha256': graph_hash(merged)}
 
 
-def certify_source_topology(graph: dict, analysis: MapAnalysis, canonical_source: str) -> MapResult:
+def certify_source_topology(graph: dict, analysis: MapAnalysis, canonical_source: str, *,
+                            source_context: discovery.SourceContext | None = None, candidates: list[dict] | None = None) -> MapResult:
     """Merge only source-backed hidden evidence after visual certification/source gates."""
     if not verified_graph(graph, dict(analysis)):
         raise ValueError('A certified visual graph is required before source topology merge')
     visual, record = copy.deepcopy(graph), copy.deepcopy(analysis)
-    topology = pdf_source_topology.extract(visual, canonical_source)
+    context = source_context or discovery.source_context(canonical_source)
+    if context.text != canonical_source or context.receipt() is None:
+        record['source_topology_diagnostics'] = [{'code': 'CANONICAL_SOURCE_UNAVAILABLE', 'span_sha256': pdf_source_topology.source_hash(canonical_source)}]
+        record['source_topology_count'] = 0
+        return MapResult(str(visual.get('description', '')), visual, record)
+    bindings = [(candidate, discovery.bind_candidate(candidate, context, visual)) for candidate in (candidates or [])]
+    record['source_topology_binding_statuses'] = [result.status for _, result in bindings]
+    accepted = [candidate for candidate, result in bindings if result.topology is not None]
+    proof = discovery.proof_candidates(accepted)
+    topology = discovery.replay(visual, context, proof)
     record['source_topology_diagnostics'] = topology.diagnostics
     record['source_topology_count'] = len(topology.routes)
     if topology.diagnostics:
@@ -138,7 +157,8 @@ def certify_source_topology(graph: dict, analysis: MapAnalysis, canonical_source
         return MapResult(str(visual.get('description', '')), None, record)
     merged = pdf_source_topology.merge(visual, topology)
     if topology.routes:
-        record['source_topology_certificate'] = _source_certificate(visual, topology.routes, canonical_source, merged)
+        record['source_topology_proof'] = proof
+        record['source_topology_certificate'] = _source_certificate(visual, topology.routes, context, merged, proof)
         record['graph_sha256'] = graph_hash(merged)
         record['candidate_graph'] = copy.deepcopy(merged)
     return MapResult(str(visual.get('description', '')), merged, record)
@@ -158,6 +178,8 @@ def reusable_visual_graph(graph: Any, analysis: Any, image: bytes) -> MapResult 
         if not isinstance(certificate, dict) or certificate.get('visual_graph_sha256') != graph_hash(visual):
             return None
         record['graph_sha256'] = graph_hash(visual)
+    record.pop('source_topology_proof', None)
+    record.pop('source_topology_binding_statuses', None)
     record.pop('source_topology_diagnostics', None)
     record.pop('source_topology_count', None)
     if not verified_graph(visual, record, image):
@@ -578,7 +600,7 @@ def metrics(pages: list[dict]) -> dict[str, int]:
 def publication_summary(analysis: dict) -> dict:
     """Expose feature diagnostics; raw image/provider evidence stays private."""
     public = copy.deepcopy(analysis)
-    for key in ('candidate_graph', 'image_evidence', 'inventory', 'inventory_audit', 'connectivity', 'targeted_patch'):
+    for key in ('source_topology_proof', 'source_topology_discovery', 'candidate_graph', 'image_evidence', 'inventory', 'inventory_audit', 'connectivity', 'targeted_patch'):
         public.pop(key, None)
     for attempt in public.get('attempts', []):
         for key in ('output_graph', 'output_evidence', 'output_patch'):

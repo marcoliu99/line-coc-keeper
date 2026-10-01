@@ -683,7 +683,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
         return None
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Text-only sibling of analyze_image above — a single forced tool call,
     no image. Used by app/pregen_extractor.py. Returns the tool call's parsed
     arguments dict, or None on any failure (no OPENAI_API_KEY, the call
@@ -693,8 +693,14 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
     try:
         import openai
 
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = _create_response(client,
+        options: dict = {}
+        if timeout is not None:
+            options['timeout'] = timeout
+        if max_retries is not None:
+            options['max_retries'] = max_retries
+        client = openai.OpenAI(api_key=OPENAI_API_KEY, **options)
+        output_options: dict = {'max_output_tokens': 4096} if timeout is not None else {}
+        response = _create_response(client, **output_options,
             model=OPENAI_MODEL,
             input=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
             tools=[{
@@ -714,3 +720,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
 
 SUPPORTS_DYNAMIC_TOOLS = True
 SUPPORTS_RESPONSE_STAGE = True
+
+
+def analysis_model_identity() -> str:
+    return OPENAI_MODEL

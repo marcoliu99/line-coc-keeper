@@ -13,9 +13,9 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
-VERSION = 'source-topology-v2'
+VERSION = 'source-topology-v3'
 RouteKind = Literal['hidden_passage', 'secret_door', 'conditional_route', 'breakable_wall',
                     'blocked_passage', 'sealed_door', 'collapsible_barrier']
 Authority = Literal['visual', 'scenario_source']
@@ -70,6 +70,7 @@ class SourceBarrier(TypedDict):
 
 
 class SourceRouteChain(TypedDict):
+    binding_version: NotRequired[Literal['semantic-source-proof-v1']]
     id: str
     segments: list[SourceSegment]
     barriers: list[SourceBarrier]
@@ -363,7 +364,8 @@ def _valid_chains(graph: dict) -> bool:
                     or barrier.get('state') != 'blocked' or barrier.get('visibility') != edge.get('visibility')
                     or barrier.get('progression_policy') != edge.get('progression_policy')
                     or barrier.get('source_evidence') != edge.get('source_evidence')
-                    or chain.get('source_evidence') != edge.get('source_evidence')
+                    or (chain.get('binding_version') != 'semantic-source-proof-v1'
+                        and chain.get('source_evidence') != edge.get('source_evidence'))
                     or (previous is not None and segment['from'] != previous)
                     or segment.get('to') in visited):
                 return False
@@ -376,6 +378,7 @@ def _valid_chains(graph: dict) -> bool:
                 if endpoint in node_ids:
                     used_nodes.add(endpoint)
                     node = next(n for n in nodes if n['id'] == endpoint)
-                    if node['source_evidence'] != edge.get('source_evidence'):
+                    if (chain.get('binding_version') != 'semantic-source-proof-v1'
+                            and node['source_evidence'] != edge.get('source_evidence')):
                         return False
     return used_nodes == node_ids

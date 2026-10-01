@@ -1,7 +1,8 @@
 """Synthetic canonical assertions: two walls must remain two transitions."""
 from app import pdf_map_analysis, scene_map
+from tests.pdf_source_helpers import certify, verify
 
-SOURCE = ('--- 第 7 頁 ---\nA hidden route runs from Basement through breakable wall Wall A '
+SOURCE = ('--- 第 1 頁 ---\nA hidden route runs from Basement through breakable wall Wall A '
           'into an unnamed enterable space, then through breakable wall Wall B '
           'to Corbitt hiding place; it is necessary for progress.')
 
@@ -10,7 +11,7 @@ def chain_result(certified_map_result, source=SOURCE):
     visual = certified_map_result('', {'entry_room_id': 'basement', 'rooms': [
         {'id': 'basement', 'name': 'Basement', 'exits': []},
         {'id': 'hiding', 'name': 'Corbitt hiding place', 'exits': []}]}, image=b'map')
-    return pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    return certify(visual.graph, visual.analysis, source)
 
 
 def test_source_two_walls_certifies_ordered_segments_without_shortcut(certified_map_result):
@@ -25,9 +26,9 @@ def test_source_two_walls_certifies_ordered_segments_without_shortcut(certified_
     transit = result.graph['source_transit_nodes'][0]
     assert transit['id'].startswith('source_transit_')
     assert transit['kind'] == 'source_transit' and transit['player_label'] == ''
-    assert transit['source_evidence']['page'] == 7
+    assert transit['source_evidence']['page'] == 1
     assert result.graph['rooms'][0]['exits'] == []
-    assert pdf_map_analysis.verified_graph(result.graph, result.analysis, b'map', canonical_source=SOURCE)
+    assert verify(result.graph, result.analysis, b'map', canonical_source=SOURCE)
     assert scene_map.validate_scene_map(result.graph) == []
 
 
@@ -132,7 +133,7 @@ def test_transit_requires_explicit_enterable_source_and_never_invents_a_name(cer
     broken = dict(result.graph, source_transit_nodes=[{'id': 'not-source-evidenced'}])
     assert not pdf_source_topology.structurally_valid(broken)
     with pytest.raises(ValueError):
-        pdf_map_analysis.certify_source_topology(result.graph, result.analysis, SOURCE)
+        certify(result.graph, result.analysis, SOURCE)
 
 
 def test_named_canonical_intermediate_uses_existing_location(certified_map_result):
@@ -141,7 +142,7 @@ def test_named_canonical_intermediate_uses_existing_location(certified_map_resul
         {'id': 'cavity', 'name': 'Cavity', 'exits': []},
         {'id': 'hiding', 'name': 'Corbitt hiding place', 'exits': []}]})
     source = SOURCE.replace('an unnamed enterable space', 'Cavity')
-    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    result = certify(visual.graph, visual.analysis, source)
     assert result.graph['source_route_chains'][0]['segments'][0]['to'] == visual.graph['rooms'][1]['id']
     assert not result.graph.get('source_transit_nodes')
     assert result.graph['rooms'] == visual.graph['rooms']
@@ -161,11 +162,11 @@ def test_order_and_transit_evidence_tampering_invalidate_certificate(certified_m
             graph['source_transit_nodes'][0]['source_evidence']['page'] = 9
         else:
             graph['source_topology'][0]['source_evidence']['span_start'] += 1
-        assert not pdf_map_analysis.verified_graph(graph, result.analysis, canonical_source=SOURCE)
+        assert not verify(graph, result.analysis, canonical_source=SOURCE)
     restored = pdf_map_analysis.reusable_visual_graph(result.graph, result.analysis, b'map')
     assert restored is not None
     assert not any(k.startswith('source_') for k in restored.graph)
-    assert pdf_map_analysis.verified_graph(restored.graph, restored.analysis, b'map')
+    assert verify(restored.graph, restored.analysis, b'map')
 
 
 def test_three_barriers_preserve_order_and_no_transit_without_enterable_assertion(certified_map_result):
@@ -174,7 +175,7 @@ def test_three_barriers_preserve_order_and_no_transit_without_enterable_assertio
     result = chain_result(certified_map_result, source)
     assert len(result.graph['source_route_chains'][0]['segments']) == 3
     assert len(result.graph['source_transit_nodes']) == 2
-    assert pdf_map_analysis.verified_graph(result.graph, result.analysis, canonical_source=source)
+    assert verify(result.graph, result.analysis, canonical_source=source)
 
 
 def test_persisted_barriers_are_bound_to_timeline_graph_route_barrier_and_source(monkeypatch, tmp_path):
@@ -207,11 +208,11 @@ def test_visible_beacon_stairs_have_no_conditional_overlay(certified_map_result)
     visual = certified_map_result('', {'entry_room_id': 'hall', 'rooms': [
         {'id': 'hall', 'name': 'Hall', 'exits': [{'to': 'lamp', 'compass': 'U', 'label': 'stairs'}]},
         {'id': 'lamp', 'name': 'Lamp Room', 'exits': [{'to': 'hall', 'compass': 'D', 'label': 'stairs'}]}]})
-    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis,
+    result = certify(visual.graph, visual.analysis,
         '--- 第 1 頁 ---\nThe stairs ascend to the lamp room.')
     assert result.graph == visual.graph
     assert scene_map.resolve_move({'1': result.graph}, '1', result.graph['entry_room_id'], 'N', 'up')['ok']
-    assert pdf_map_analysis.verified_graph(result.graph, result.analysis)
+    assert verify(result.graph, result.analysis)
 
 
 def test_unnamed_transit_movement_uses_only_current_open_segment(monkeypatch, tmp_path):
@@ -262,11 +263,11 @@ def test_malformed_source_overlays_fail_closed_without_crashing(certified_map_re
         graph = copy.deepcopy(result.graph)
         graph['source_topology'][0][field] = value
         assert not pdf_source_topology.structurally_valid(graph)
-        assert not pdf_map_analysis.verified_graph(graph, result.analysis, canonical_source=SOURCE)
+        assert not verify(graph, result.analysis, canonical_source=SOURCE)
         if field in ('from', 'to'):
             graph['source_route_chains'][0]['segments'][0][field] = value
             assert not pdf_source_topology.structurally_valid(graph)
-            assert not pdf_map_analysis.verified_graph(graph, result.analysis, canonical_source=SOURCE)
+            assert not verify(graph, result.analysis, canonical_source=SOURCE)
 
 
 def test_hidden_discovery_does_not_expose_deeper_chain_in_where(monkeypatch, tmp_path):
@@ -334,7 +335,7 @@ def test_external_room_cannot_jump_into_hidden_deeper_location(certified_map_res
         {'id': 'basement', 'name': 'Basement', 'exits': []},
         {'id': 'hall', 'name': 'Hall', 'exits': []},
         {'id': 'hiding', 'name': 'Corbitt hiding place', 'exits': []}]})
-    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, SOURCE)
+    result = certify(visual.graph, visual.analysis, SOURCE)
     hall = result.graph['rooms'][1]['id']
     first, second = result.graph['source_route_chains'][0]['segments']
     for target in (first['to'], second['to']):
@@ -347,7 +348,7 @@ def test_independent_visible_door_to_chain_location_remains_usable(certified_map
         {'id': 'basement', 'name': 'Basement', 'exits': []},
         {'id': 'hall', 'name': 'Hall', 'exits': [{'to': 'hiding', 'compass': 'E', 'label': 'door'}]},
         {'id': 'hiding', 'name': 'Corbitt hiding place', 'exits': [{'to': 'hall', 'compass': 'W', 'label': 'door'}]}]})
-    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, SOURCE)
+    result = certify(visual.graph, visual.analysis, SOURCE)
     hall, hiding = result.graph['rooms'][1:]
     assert scene_map.resolve_source_route(result.graph, hall['id'], hiding['id'])['ok']
     assert scene_map.resolve_move({'7': result.graph}, '7', hall['id'], 'N', 'right')['ok']

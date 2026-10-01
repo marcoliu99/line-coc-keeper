@@ -1,6 +1,6 @@
 # Semantic topology discovery 與 deterministic publication proof
 
-狀態：提案；runtime 實作待明確確認。分支 enhancement/pdf-multicolumn-ingestion／PR #155。取代 pdf_haunting_source_topology_validation.md 中尚未核准的 narrow-grammar proposal。
+狀態：已依使用者明確確認實作。分支 enhancement/pdf-multicolumn-ingestion／PR #155。取代 pdf_haunting_source_topology_validation.md 中尚未核准的 narrow-grammar proposal。
 
 ## 問題與信任邊界
 現有 source-topology-v2 只識別固定肯定 assertion。Grammar miss 不等於否定來源，也不是 source unsupported 的證據。Legacy Haunting physical p10–12 提示：外側木板 → 可探索 wall space → 內側牆 → Room 4；但有多欄交錯、缺 current PR155 quality provenance、無 certified inventory，只能 discovery，不具 topology authority。本輪不重建／reimport 頁面，也不重跑 map-image provider。
@@ -46,3 +46,14 @@ Negative controls：不相關相鄰 wall/boards、shared wall、單一 barrier �
 
 ## 待補輸入
 使用者最新訊息停在第一個 negative control 範例中途。後續補充約束須在 dependent behavior 實作前納入。本設計審閱 checkpoint 本身不授權 model/provider validation run。
+
+## 實作與驗證
+實作 source-topology-v3、semantic-source-proof-v1 與 multicolumn-v9。Canonical eligibility/replay contract 改變，故 accepted-page/draft identity 升版；visual-only image-map-certification-v2 不變。Provider model identity 經共通 registry 介面供應。文字請求 timeout 30 秒、zero retries；獨立 durable ledger 放於 import budget，保存 reservation 與相同視窗結果，不消耗 image allowance。
+
+Closed candidate 將每個 action/result assertion 合併為 opening 與依序 crossing citation（physical page、完整來源 Unicode offsets、exact quote）。Binder 從原始 clause 推導 barrier type、endpoint、transit、order 與 hidden，不能相信 model 提供的 normalized semantics/confidence。初始 proof 支援移除障礙露出 enterable space、唯一引用後續 crossing、具名 successive location crossing、明確 hidden-route opening；舊 grammar 保留 fast path。其他措辭可 discovery，但保持 EVIDENCE_INCOMPLETE/AMBIGUOUS。明確命名證據會阻止匿名 transit，除非具名 proof 能解到 inventory；不明 continuation 阻止截短認證。這些是保守 proof 限制，不代表已量測真實 corpus semantic accuracy。
+
+Private accepted proof/canonical receipt 納入 source certificate hash；library/cache boundary 不呼叫 inference，只 replay。Public report 僅留 sanitized status/count；候選引用與 durable window payload 保持 private。未改 OCR、Docling、visual extraction、gameplay 或 source publication gate。
+
+真實 legacy Haunting p10–12：重新核對六個既有 source span hashes；手動提供 evidence candidate 得到 CANONICAL_SOURCE_UNAVAILABLE / AWAITING_CANONICAL_SOURCE，certified route 為零。未呼叫 semantic/image provider，未 canonical reconstruction，未量測真實 discovery accuracy。詳見 pdf_semantic_topology_validation_results.json；source/inventory revalidation 仍需另案。
+
+Final verification：pytest 2,181 passed、2 skipped、152 subtests passed；ruff check . 通過；mypy app 通過（138 modules，既有 untyped-body note）；compileall app tests 通過；git diff --check 通過。18 個新增測試涵蓋 discovery/budget/resume、canonical authority、source entailment、命名、continuation、hidden progression、source identity 與 private/public 分離。獨立 Standards／Spec review 修正後無剩餘 blockers；大型 discovery 函式拆分為可選維護改善。main_v2 為 ancestor，無 merge conflict。

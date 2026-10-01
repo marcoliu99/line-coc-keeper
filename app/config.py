@@ -335,3 +335,7 @@ PDF_OCR_PADDLE_MODELS_PATH = os.environ.get(
 PDF_OCR_PADDLE_DEVICE = os.environ.get('PDF_OCR_PADDLE_DEVICE', 'cpu').strip()
 PDF_OCR_PADDLE_PYTHON = os.environ.get('PDF_OCR_PADDLE_PYTHON', '') or sys.executable
 PDF_OCR_PADDLE_TIMEOUT_SECONDS = _env_float('PDF_OCR_PADDLE_TIMEOUT_SECONDS', 60, minimum=0.01)
+
+# Bounded import-only semantic proposals. Publication still requires source proof.
+PDF_SOURCE_DISCOVERY_ENABLED = _env_bool('PDF_SOURCE_DISCOVERY_ENABLED', True)
+PDF_SOURCE_DISCOVERY_MAX_REQUESTS = min(4, max(0, _env_int('PDF_SOURCE_DISCOVERY_MAX_REQUESTS', 4)))
