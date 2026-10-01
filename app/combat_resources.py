@@ -414,12 +414,16 @@ def rollback_combat(state: GroupState, *, event_id: str, reason: str) -> dict[st
                'pipeline_version': combat.pipeline_version}
     owners = {_find_character(state, identity).owner_id for identity in combat.working_resources}
     for owner in owners:
-        # These controls belong to this single unclosed battle; retain the
-        # original pending evidence in its rollback audit before invalidation.
+        # Invalidate only this battle's controls. Prior committed obligations
+        # and unrelated owner checks retain their original timing and receipts.
         for key in ('pending_checks', 'pending_luck_decisions'):
-            pending = getattr(state, key).pop(owner, None)
-            if pending is not None:
-                receipt.setdefault(key, {})[owner] = deepcopy(pending)
+            controls = getattr(state, key)
+            pending = controls.get(owner)
+            if not isinstance(pending, dict) or 'postcombat_context' in pending:
+                continue  # A committed prior obligation is not part of this rollback.
+            context = pending.get('combat_context')
+            if isinstance(context, dict) and context.get('combat_id') == combat.combat_id:
+                receipt.setdefault(key, {})[owner] = deepcopy(controls.pop(owner))
     state.closed_combat_receipts[combat.combat_id] = receipt
     combat.settlement = deepcopy(receipt)
     combat.phase = 'ROLLED_BACK'
@@ -527,11 +531,20 @@ def correct_event(state: GroupState, target_event_id: str, *, event_id: str,
         if participant.character_id in projected:
             participant.hp = projected[participant.character_id]['hp']
     position = next(i for i, e in enumerate(combat.events) if e['event_id'] == target_event_id)
-    if target['kind'] not in {'resource', 'ammo', 'status', 'injury'} or any(
-            e['kind'] in {'action', 'damage', 'effect', 'reconciliation'} for e in combat.events[position + 1:-1]):
+    hp_correction = target['kind'] == 'resource' and target['data'].get('field') == 'hp'
+    if hp_correction or target['kind'] not in {'resource', 'ammo', 'status', 'injury'} or any(
+            e['kind'] in {'action', 'damage', 'effect', 'reconciliation', 'injury', 'status'}
+            for e in combat.events[position + 1:-1]):
+        # HP projection cannot decide single-hit injury thresholds. Both reduced
+        # fatal damage and increased minor damage need the owning injury rules;
+        # stale injury/status events must not certify the corrected source.
+        previous_interaction = deepcopy(combat.interaction)
         combat.phase = 'NEEDS_RULING'
         combat.interaction = {'kind': 'correction_reconciliation', 'status': 'pending',
-                              'target_event_id': target_event_id, 'event_id': event_id}
+                              'target_event_id': target_event_id, 'event_id': event_id,
+                              'character_id': target['data'].get('character_id'),
+                              'requires_injury_reconciliation': hp_correction,
+                              'previous_interaction': previous_interaction}
     return appended
 
 
