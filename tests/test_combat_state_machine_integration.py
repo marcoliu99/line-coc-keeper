@@ -467,12 +467,12 @@ def test_unsupported_or_unsourced_action_needs_ruling_before_rng_or_ammo(battle,
 
 def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
     battle.start()
-    for field, delta, expected in [('san', -2, 48), ('mp', -3, 7), ('luck', -4, 46)]:
-        arguments = {'investigator': 'Ada', 'field': field, 'delta': delta,
-                     'event_id': f'resource:{field}', 'reason': 'reviewed combat resource mutation'}
+    for resource_field, delta, expected in [('san', -2, 48), ('mp', -3, 7), ('luck', -4, 46)]:
+        arguments = {'investigator': 'Ada', 'field': resource_field, 'delta': delta,
+                     'event_id': f'resource:{resource_field}', 'reason': 'reviewed combat resource mutation'}
         battle.tool('adjust_character', arguments)
         battle.tool('adjust_character', arguments)
-        assert getattr(battle.effective(), field) == expected
+        assert getattr(battle.effective(), resource_field) == expected
     ammo = {'investigator': 'Ada', 'weapon': '.45 Automatic', 'delta': -2, 'event_id': 'ammo:2'}
     battle.tool('adjust_ammo', ammo)
     battle.tool('adjust_ammo', ammo)
@@ -512,3 +512,17 @@ def test_legacy_active_history_requires_explicit_closure_without_guessed_baselin
     audit = reloaded.closed_combat_receipts['legacy-closed:legacy:close']['legacy_state']
     assert audit['round_number'] == 4
     assert audit['baseline_resources'] == {}
+
+
+def test_bot_diagnostics_expose_usable_ids_without_enemy_hp_in_player_status(battle):
+    battle.start()
+    status = battle.tool('get_combat_status')
+    assert status['control']['combat_id'] == battle.load().combat.combat_id
+    assert status['control']['current_actor_id'] == 'pc:char:ada'
+    assert '20/20' not in status['status']
+    battle.declare('diagnostic:action')
+    waiting = battle.tool('get_combat_status')['control']
+    assert waiting['interaction']['action_id'] == 'diagnostic:action'
+    assert waiting['interaction']['check_id'] == battle.load().pending_checks['player']['check_id']
+    assert any(a['action_id'] == 'diagnostic:action' for a in waiting['actions'])
+    assert all('hp' not in a and 'hp_after' not in a for a in waiting['actions'])
