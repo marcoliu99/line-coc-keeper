@@ -111,3 +111,9 @@ _Avoid_: latest scenario as current authority
 **Selected scenario version（選用劇本版本）**:
 The scenario version explicitly chosen as a game's source. A new publication becomes its source only through an explicit version change.
 _Avoid_: automatically current latest version
+
+### Weapon condition
+
+**Malfunctioned weapon（故障武器）**:
+A particular owned weapon whose recorded malfunction prevents ordinary firing until an evidence-backed clearing or ruling. Another weapon of the same type is a different possession and does not inherit that malfunction.
+_Avoid_: malfunctioning weapon type

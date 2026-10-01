@@ -20,16 +20,21 @@ Operator review: /Users/marcoliu/Downloads/pr155_pr156_full_code_review.md, date
 
 - Q7 A: the operator will perform a clean reset of old scenarios and related game progress, drafts, checkpoints and image/map assets before rollout. Historical scenario/source-version and old-session recovery migration are excluded. No cleanup or deletion has been executed by the agent. The fresh-start precondition must be verified before rollout; newly created data still needs durable restart/retry contracts.
 
+- Q8 A: an explicit same-scenario version update may retain compatible future obligations after current due checks/waits are resolved. Each retained obligation keeps its original source version, target/ownership, logical timing and roll receipts. Incompatibility blocks the update until explicitly resolved; no reset/free interval/reroll. This does not relax newgame or different-scenario replacement guards.
+- Q9 A: repair malfunction admission/execution guards and support only evidence-backed, recorded clearing/rulings. Do not add a full repair skill/duration/turn subsystem. Bind malfunction to stable owned weapon identity, preserve it through persistence/settlement/rollback, and leave other weapons usable. Unsupported NPC malfunction/repair semantics enter NEEDS_RULING.
+- Q10 A: clear harmless incidental omissions and evidence-backed possession omissions may use existing correction handling; uncertain or consequential retrospective changes go through the existing review authority. Assess the whole claim, not only the item keyword. Preserve reasonable present-time acquisition and conditional Keeper review from system evidence when no KP Assistant is registered; no fixed per-turn judge or blanket human approval.
+- Q11 A: retain all newly published versions in this remediation. No revision pruning/cleanup tool is implemented; existing broad cleanup paths must not silently remove referenced versions. The operator's one-time pre-rollout reset is distinct from normal runtime reset/cancel.
+
 ## Preserved contracts
 
 Keep ADR0003 whole-battle provisional resources, bot Keeper settlement/rollback, original dice receipts, due ownership and future obligations. Keep presentation distinct from authority (ADR0002). Do not add a fixed per-turn model judge, automatically clear combat, guess missing source history, or conflate successful extraction/publication with activation in a game. OCR remains import-time work; gameplay consumes validated imported evidence.
 
 ## Shape and acceptance to refine
 
-A logical scenario retains its stable identity while published versions remain immutable. Runtime and rollback consumers must refer to a selected version rather than a moving latest pointer. Initial historical-source migration is excluded per the revised Q3; rollout cleanup follows Q7; future revision retention remains open. Publication eligibility must be checked before shared-source side effects; successful game-state commit and failed derived-image refresh must be reported separately.
+A logical scenario retains its stable identity while published versions remain immutable. Runtime and rollback consumers must refer to a selected version rather than a moving latest pointer. Initial historical-source migration is excluded per the revised Q3; rollout cleanup follows Q7; all new versions are retained under Q11. Publication eligibility must be checked before shared-source side effects; successful game-state commit and failed derived-image refresh must be reported separately.
 
 Tests must exercise restart/retry/failed-save and real repository boundaries. Keep review categories confirmed, already_fixed, not_reproduced and blocked explicit. Test totals quoted in the external review are historical, not validation for this future work.
 
 ## Open interview frontier
 
-Future obligations during a same-scenario version update; retrospective incidental correction boundaries; supported malfunction/repair scope; source retention/cleanup. Detailed recovery and publication gates must respect the decisions above. Final shared-understanding confirmation is required before runtime changes.
+Release gate for staged delivery: separate reviewable phases do not yet determine when the clean-start production rollout occurs. Confirm that gate, then present the final shared-understanding/spec summary before any runtime implementation.

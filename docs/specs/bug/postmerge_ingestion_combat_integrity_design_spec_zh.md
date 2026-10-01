@@ -20,16 +20,21 @@
 
 - Q7 A：使用者會在上線前清理舊劇本及相關遊戲進度、草稿、checkpoints、圖片／地圖，乾淨重開。排除歷史劇本／版本及舊局恢復 migration。Agent 未執行清理或刪除；上線前须確認全新資料前提成立。新資料仍需 durable restart／retry 契約。
 
+- Q8 A：同劇本明確切版時，當前 due checks／waits 完成後，可保留相容的 future obligations。各義務保留原來源版本、target／ownership、logical timing、roll receipts；不相容須先明確處理，不 reset／多給間隔／重骰。不放寬 newgame 或換不同劇本的 replacement guards。
+- Q9 A：補故障宣告／執行 guards，僅支援有證據且留紀錄的清障／裁定。不新增完整維修技能、耗時或回合子系統。故障綁穩定 owned weapon identity，持久化／結算／回滾一致；其他武器仍可用。未知 NPC 故障／維修規則進 NEEDS_RULING。
+- Q10 A：明確無重大效果的日常遺漏及有證據的持有遺漏沿既有更正；不確定或 consequential 的追溯更正走既有 review authority。檢查整句主張，不只物品關鍵字。保留合理當下取得與無 KP Assistant 時依 system evidence 的 conditional Keeper review，不新增固定每回合 judge 或全面人工批准。
+- Q11 A：本批保留全部新發布版本，不實作 pruning／cleanup tool；既有廣泛 cleanup 不可靜默刪除被引用的版本。使用者上線前一次性清理，與正常 runtime reset／cancel 分開。
+
 ## 保留契約
 
 保留 ADR0003 整場 provisional、bot Keeper 結算／回滾、原骰收據、due ownership 與 future obligations；保留 ADR0002 presentation／authority 分離。不新增固定每回合 judge、不自動清空戰鬥、不猜歷史來源、不把解析／來源發布成功混成遊戲已啟用。OCR 留在 import-time，遊戲使用已驗證匯入證據。
 
 ## 待細化設計與驗收
 
-Logical scenario 保留穩定身分，published versions 不可變；runtime／rollback 固定選用版本，不讀會移動的 latest pointer。依更新後 Q3 排除初次歷史來源 migration；首次清理依 Q7；未來版本保留仍待確認。共用來源副作用前先核對發布資格；state commit 成功與 derived-image refresh 失敗分開回報。
+Logical scenario 保留穩定身分，published versions 不可變；runtime／rollback 固定選用版本，不讀會移動的 latest pointer。依更新後 Q3 排除初次歷史來源 migration；首次清理依 Q7；未來版本依 Q11 全部保留。共用來源副作用前先核對發布資格；state commit 成功與 derived-image refresh 失敗分開回報。
 
 驗收覆蓋 restart／retry／failed-save 與真實 repository boundaries。Review 狀態區分 confirmed、already_fixed、not_reproduced、blocked。外部 review 的測試數字是歷史資料，不是這次未實作工作的驗證結果。
 
 ## 尚待確認
 
-同劇本更新時的 future obligations、追溯日常物品更正、故障／維修支援範圍、來源保留／cleanup。後續恢復與發布 gates 必須遵循已確認決策；runtime 變更前需要最終共同理解確認。
+分階段交付的正式上線 gate 尚待確認：獨立可 review 階段，不等於已決定何時乾淨重開部署。確認後整理共同理解／完整規格，runtime 實作前需使用者確認。
