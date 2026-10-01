@@ -1608,6 +1608,15 @@
         "docs/specs/bug/pdf_derived_feature_publication_policy_validation.md",
         "docs/specs/bug/pdf_derived_feature_publication_policy_validation_zh.md"
       ]
+    },
+    {
+      "title": "Two-phase image-grounded map evidence",
+      "zh": "兩階段 image-grounded map evidence",
+      "category": "enhancement",
+      "status": "in_progress",
+      "evidence": [],
+      "path": "docs/specs/enhancement/pdf_two_phase_map_extraction.md",
+      "zh_path": "docs/specs/enhancement/pdf_two_phase_map_extraction_zh.md"
     }
   ]
 }
