@@ -9,7 +9,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from app.models import (
@@ -21,6 +21,7 @@ from app.models import (
 )
 
 PIPELINE_VERSION = 'combat-working-v1'
+CONTINUING_STATE_KEY = 'system:continuing-state'
 ResourceField = Literal['hp', 'luck', 'san', 'mp']
 EventKind = Literal['resource', 'ammo', 'status', 'injury', 'snapshot', 'correction',
                     'action', 'damage', 'ruling', 'initiative', 'effect', 'timing', 'administrative', 'reconciliation']
@@ -297,52 +298,63 @@ def _pending_empty(state: GroupState) -> None:
             or combat.phase in {'PLAYER_CHOICE', 'PLAYER_ROLL', 'LUCK_DECISION', 'INJURY_CHECK', 'NEEDS_RULING', 'RESOLVE'}
             or (combat.interaction and combat.interaction.get('status') not in {'resolved', 'completed', 'cancelled'})):
         raise CombatAdmissionError('Currently due combat work must finish before settlement')
-    if any(o.get('character_id') in combat.working_resources and o.get('status') in {'due', 'pending'}
-           for o in state.postcombat_obligations):
+    if any(o.get('character_id') in combat.working_resources and _obligation_due(state, o)
+           for o in _prior_obligations(state)):
         raise CombatAdmissionError('Currently due postcombat obligation must be resolved')
-    if any(action.get('status') in {'declared', 'pending', 'resolving'} for action in combat.actions.values()):
+    if any(action.get('completed') is False or action.get('status') in {'declared', 'pending', 'resolving'}
+           for action in combat.actions.values()):
         raise CombatAdmissionError('Combat action is still unresolved')
 
 
 def _conflicts(state: GroupState) -> list[str]:
-    return [identity for identity, baseline in state.combat.baseline_resources.items()
-            if _snapshot(_find_character(state, identity)) != baseline]
+    conflicts = [identity for identity, baseline in state.combat.baseline_resources.items()
+                 if _snapshot(_find_character(state, identity)) != baseline]
+    continuing = _continuing_state(state)
+    if continuing and continuing['obligation_baseline'] != state.postcombat_obligations:
+        conflicts.append('postcombat_obligations')
+    return conflicts
 
 
 def get_settlement(state: GroupState, *, obligations: list[PostcombatObligation] | None = None) -> dict[str, Any]:
     _pending_empty(state)
     combat = state.combat
-    future = deepcopy(obligations if obligations is not None else combat.settlement.get('obligations', []))
+    future = _compose_obligations(state, obligations if obligations is not None else combat.settlement.get('obligations', []))
     _validate_obligations(state, future)
-    payload = {'final': combat.working_resources, 'obligations': future, 'revision': combat.revision}
+    continuing = _continuing_snapshot(state)
+    payload = {'final': combat.working_resources, 'obligations': future, 'revision': combat.revision,
+               'continuing_obligations': continuing}
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     combat.phase = 'SETTLEMENT'
     combat.settlement = {'settlement_id': f'{combat.combat_id}:settlement:{combat.revision}:{digest[:12]}',
                          'combat_id': combat.combat_id, 'revision': combat.revision,
                          'status': 'preview', 'baseline': deepcopy(combat.baseline_resources),
                          'final': deepcopy(combat.working_resources), 'conflicts': _conflicts(state),
-                         'obligations': future}
+                         'obligations': future, 'continuing_obligations': continuing,
+                         'obligation_baseline': deepcopy(state.postcombat_obligations)}
     return deepcopy(combat.settlement)
 
 
 def _validate_obligations(state: GroupState, obligations: list[PostcombatObligation]) -> None:
     combat = state.combat
     identifiers = set()
+    prior = {o.get('obligation_id'): o for o in _prior_obligations(state)}
     for obligation in obligations:
         identity = obligation.get('obligation_id')
-        if (not identity or identity in identifiers or obligation.get('combat_id') != combat.combat_id
+        if not identity or identity in identifiers:
+            raise CombatAdmissionError('Continuing obligation needs a unique stable identity')
+        identifiers.add(identity)
+        if identity in prior:
+            if obligation != prior[identity]:
+                raise SettlementConflict('Reviewed prior obligation projection changed')
+            continue  # Existing source battle/status/receipts are retained, not recreated.
+        if (obligation.get('combat_id') != combat.combat_id
                 or obligation.get('character_id') not in combat.working_resources
                 or obligation.get('kind') not in {'dying', 'effect'}
                 or obligation.get('status') != 'future' or not isinstance(obligation.get('next_trigger'), dict)
-                or not obligation.get('next_trigger')
-                or not obligation.get('rule_source') or not obligation.get('stop_condition')):
-            raise CombatAdmissionError('Future obligation requires identity, timing, rule source and stop condition')
-        identifiers.add(identity)
-    existing = {o.get('obligation_id'): o for o in state.postcombat_obligations}
-    for obligation in obligations:
-        if obligation['obligation_id'] in existing and existing[obligation['obligation_id']] != obligation:
-            raise SettlementConflict('Existing postcombat obligation must not be reset')
-    continuing = [o for o in obligations + state.postcombat_obligations if o.get('status') == 'future']
+                or not obligation.get('next_trigger') or not obligation.get('rule_source')
+                or not obligation.get('stop_condition') or _obligation_due(state, obligation)):
+            raise CombatAdmissionError('Future obligation requires identity, future timing, rule source and stop condition')
+    continuing = [o for o in obligations if o.get('status') == 'future']
     for identity, snapshot in combat.working_resources.items():
         if (snapshot['injury'].get('dying') and not snapshot['injury'].get('dead')
                 and not any(o.get('character_id') == identity and o.get('kind') == 'dying' for o in continuing)):
@@ -362,9 +374,12 @@ def commit_settlement(state: GroupState, settlement_id: str, *,
     combat = state.combat
     preview = combat.settlement
     if (not preview or preview.get('settlement_id') != settlement_id or preview.get('revision') != combat.revision
-            or preview.get('final') != combat.working_resources or combat.phase != 'SETTLEMENT'):
+            or preview.get('final') != combat.working_resources or combat.phase != 'SETTLEMENT'
+            or preview.get('continuing_obligations') != _continuing_snapshot(state)):
         raise SettlementConflict('Settlement preview is stale')
     conflicts = _conflicts(state)
+    if preview.get('obligation_baseline') != state.postcombat_obligations:
+        conflicts.append('postcombat_obligations')
     if conflicts:
         raise SettlementConflict('Persistent participant resources changed: ' + ', '.join(conflicts))
     future = deepcopy(preview.get('obligations', []))
@@ -381,8 +396,7 @@ def commit_settlement(state: GroupState, settlement_id: str, *,
         for owner, mirror in state.characters.items():
             if _character_id(mirror) == identity:
                 state.characters[owner] = character
-    known = {o.get('obligation_id') for o in state.postcombat_obligations}
-    state.postcombat_obligations.extend(o for o in future if o['obligation_id'] not in known)
+    state.postcombat_obligations = deepcopy(future)
     receipt = {**deepcopy(preview), 'status': 'committed', 'events': deepcopy(combat.events),
                'roll_receipts': deepcopy(combat.roll_receipts), 'obligations': future,
                'actions': deepcopy(combat.actions), 'processed_timings': list(combat.processed_timings),
@@ -404,6 +418,8 @@ def rollback_combat(state: GroupState, *, event_id: str, reason: str) -> dict[st
     combat = _managed(state)
     if not reason.strip():
         raise ValueError('Rollback requires an explicit controller reason')
+    restored_obligations = _rollback_obligations(state)
+    continuing = _continuing_snapshot(state)
     record_event(state, event_id, 'administrative', data={'decision': 'rollback'}, reason=reason)
     receipt = {'combat_id': combat.combat_id, 'rollback_event_id': event_id, 'status': 'rolled_back',
                'reason': reason, 'events': deepcopy(combat.events), 'roll_receipts': deepcopy(combat.roll_receipts),
@@ -411,7 +427,8 @@ def rollback_combat(state: GroupState, *, event_id: str, reason: str) -> dict[st
                'interaction': deepcopy(combat.interaction), 'actions': deepcopy(combat.actions),
                'processed_timings': list(combat.processed_timings),
                'final_order': [p.to_dict() for p in combat.order],
-               'pipeline_version': combat.pipeline_version}
+               'pipeline_version': combat.pipeline_version, 'continuing_obligations': continuing}
+    state.postcombat_obligations = restored_obligations
     owners = {_find_character(state, identity).owner_id for identity in combat.working_resources}
     for owner in owners:
         # Invalidate only this battle's controls. Prior committed obligations
@@ -577,3 +594,83 @@ def reconcile_baseline(state: GroupState, character: Character, *, event_id: str
         if participant.character_id == identity:
             participant.hp = proposed['hp']
     return event
+
+
+def _continuing_state(state: GroupState) -> dict[str, Any] | None:
+    metadata = state.combat.actions.get(CONTINUING_STATE_KEY)
+    if metadata is None:
+        return None
+    if (not metadata.get('completed') or not isinstance(metadata.get('obligation_baseline'), list)
+            or not isinstance(metadata.get('working_obligations'), list)):
+        raise CombatAdmissionError('Malformed continuing-state projection')
+    for records in (metadata['obligation_baseline'], metadata['working_obligations']):
+        identifiers = [o.get('obligation_id') for o in records if isinstance(o, dict)]
+        if len(identifiers) != len(records) or None in identifiers or len(set(identifiers)) != len(identifiers):
+            raise CombatAdmissionError('Malformed continuing-state obligation identity')
+    return metadata
+
+
+def _prior_obligations(state: GroupState) -> list[PostcombatObligation]:
+    continuing = _continuing_state(state)
+    return continuing['working_obligations'] if continuing else state.postcombat_obligations
+
+
+def _continuing_snapshot(state: GroupState) -> dict[str, Any] | None:
+    continuing = _continuing_state(state)
+    return ({'baseline': deepcopy(continuing['obligation_baseline']),
+             'working': deepcopy(continuing['working_obligations'])} if continuing else None)
+
+
+def _obligation_due(state: GroupState, obligation: PostcombatObligation) -> bool:
+    if obligation.get('status') in {'due', 'pending'}:
+        return True
+    trigger = obligation.get('next_trigger', {}).get('round')
+    return (obligation.get('status') == 'future' and isinstance(trigger, int)
+            and trigger <= state.mechanical_round)
+
+
+def _compose_obligations(state: GroupState, proposed: list[PostcombatObligation]) -> list[PostcombatObligation]:
+    final = deepcopy(_prior_obligations(state))
+    known = {o.get('obligation_id'): o for o in final}
+    supplied = set()
+    for obligation in proposed:
+        identity = obligation.get('obligation_id')
+        if identity in supplied:
+            raise CombatAdmissionError('Continuing obligation identity is duplicated')
+        supplied.add(identity)
+        if identity in known:
+            if known[identity] != obligation:
+                raise SettlementConflict('Existing obligation must not be silently reset')
+        else:
+            final.append(deepcopy(obligation))
+    return final
+
+
+def _rollback_obligations(state: GroupState) -> list[PostcombatObligation]:
+    continuing = _continuing_state(state)
+    if not continuing:
+        return deepcopy(state.postcombat_obligations)
+    if continuing['obligation_baseline'] != state.postcombat_obligations:
+        raise SettlementConflict('Persistent continuing obligations changed during battle')
+    working = cast(list[PostcombatObligation], continuing['working_obligations'])
+    if any(_obligation_due(state, obligation) for obligation in working):
+        raise CombatAdmissionError('Resolve currently due prior committed consequences before rollback')
+    identities = {o.get('obligation_id') for o in working}
+    for controls in (state.pending_checks, state.pending_luck_decisions):
+        if any(isinstance(pending.get('postcombat_context'), dict)
+               and pending['postcombat_context'].get('obligation_id') in identities for pending in controls.values()):
+            raise CombatAdmissionError('Prior committed obligation control must finish before rollback')
+    restored = deepcopy(state.postcombat_obligations)
+    projected = {o['obligation_id']: o for o in working}
+    # Roll results survive; resource/injury consequences and processed timings
+    # do not. T4 replays the original due trigger at retained logical time.
+    for baseline in restored:
+        current = projected.get(baseline.get('obligation_id', ''))
+        if current is None:
+            raise CombatAdmissionError('Prior obligation cannot disappear from rollback evidence')
+        cached = baseline.setdefault('roll_receipts', {})
+        for identity, roll in current.get('roll_receipts', {}).items():
+            if identity in cached and cached[identity] != roll:
+                raise SettlementConflict('Original continuing roll receipt cannot be replaced')
+            cached[identity] = deepcopy(roll)
+    return restored
