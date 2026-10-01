@@ -390,12 +390,32 @@ def ordinary_exit(edge: Any) -> bool:
             and 'source_evidence' not in edge)
 
 
+
+def _barrier_blocks(graph: dict, origin: str, target: str, compass: str,
+                    available_routes: frozenset[str]) -> bool:
+    return any(route['type'] in ('conditional_route', 'breakable_wall', 'blocked_passage', 'sealed_door', 'collapsible_barrier')
+               and {route['from'], route['to']} == {origin, target}
+               and route['id'] not in available_routes
+               and (not route['compass'] or (route['from'] == origin and route['compass'] == compass)
+                    or (route['to'] == origin and route['compass'] == _reverse_compass(compass)))
+               for route in graph.get('source_topology', []))
+
+
+def _reverse_compass(compass: str) -> str:
+    if compass in _COMPASS:
+        return _COMPASS[(_COMPASS.index(compass) + len(_COMPASS) // 2) % len(_COMPASS)]
+    return {'U': 'D', 'D': 'U'}.get(compass, '')
+
+
 def visible_exits(graph: dict, room_id: str, *, available_routes: frozenset[str] = frozenset()) -> list[dict]:
     """Public exit projection; unactivated source routes never appear here."""
     room = get_room(graph, room_id)
-    exits = [edge for edge in (room or {}).get('exits', []) if ordinary_exit(edge)]
+    exits = [edge for edge in (room or {}).get('exits', []) if ordinary_exit(edge)
+             and not _barrier_blocks(graph, room_id, edge.get('to', ''), edge.get('compass', ''), available_routes)]
     for route in graph.get('source_topology', []):
-        if route['from'] == room_id and route['id'] in available_routes:
+        if (route['from'] == room_id and route['id'] in available_routes
+                and not any(edge.get('to') == route['to'] and (not route['compass'] or edge.get('compass') == route['compass'])
+                            for edge in exits)):
             target = get_room(graph, route['to'])
             exits.append({'to': route['to'], 'compass': route['compass'],
                           'label': (target or {}).get('name', ''), 'authority': 'scenario_source'})
@@ -403,14 +423,18 @@ def visible_exits(graph: dict, room_id: str, *, available_routes: frozenset[str]
 
 
 def resolve_source_route(graph: dict, origin: str, target: str, *,
-                         available_routes: frozenset[str] = frozenset()) -> dict:
+                         available_routes: frozenset[str] = frozenset(), compass: str | None = None) -> dict:
     """Gate named movement without changing the pre-existing visual movement rules."""
     routes = [route for route in graph.get('source_topology', [])
               if {route['from'], route['to']} == {origin, target}]
-    if not routes or any(route['from'] == origin and route['id'] in available_routes for route in routes):
+    if not routes or any(route['from'] == origin and route['id'] in available_routes
+                         and (compass is None or route['compass'] == compass) for route in routes):
         return {'ok': True}
     # An existing visible traversal remains usable even if a distinct secret route exists.
-    if any(edge.get('to') == target and ordinary_exit(edge) for edge in (get_room(graph, origin) or {}).get('exits', [])):
+    if any(edge.get('to') == target and ordinary_exit(edge)
+           and (compass is None or edge.get('compass') == compass)
+           and not _barrier_blocks(graph, origin, target, edge.get('compass', ''), available_routes)
+           for edge in (get_room(graph, origin) or {}).get('exits', [])):
         return {'ok': True}
     visible = any(route['visibility'] == 'visible' for route in routes)
     return {'ok': False, 'blocked': True,
@@ -534,10 +558,10 @@ def resolve_move(
                if e.get("compass") == absolute]
     if not matches:
         blocked = [route for route in scene_map.get('source_topology', [])
-                   if route['from'] == current_room_id and route['compass'] == absolute
+                   if route['from'] == current_room_id and route['compass'] in ('', absolute)
                    and route['id'] not in available_routes]
         if blocked:
-            return resolve_source_route(scene_map, current_room_id, blocked[0]['to'], available_routes=available_routes)
+            return resolve_source_route(scene_map, current_room_id, blocked[0]['to'], available_routes=available_routes, compass=absolute)
         return {"ok": False, "error": f"「{room.get('name', current_room_id)}」沒有通往 {absolute} 方向的出口"}
 
     index = max(1, order) - 1

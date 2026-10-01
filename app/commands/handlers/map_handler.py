@@ -27,7 +27,7 @@ async def handle_map_command(
             # Explicit KP confirmation after normal action resolution; not a narrative inference.
             result = map_routes.commit_outcome(conversation_id, user_id, parts[2], parts[3], cast(map_routes.RouteOutcome, parts[4]),
                                                consequence=' '.join(parts[5:]))
-        except (PermissionError, ValueError):
+        except (PermissionError, ValueError, OSError):
             await reply('無法確認路線狀態；需由目前 KP 確認有效來源地圖與已裁定的 action 結果。')
             return False
         await reply('地圖路線狀態已儲存。' if result['availability'] == 'available' else

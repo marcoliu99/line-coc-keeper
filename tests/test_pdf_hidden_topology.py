@@ -79,7 +79,7 @@ def test_unproven_hidden_routes_and_hidden_exits_are_structurally_rejected(certi
     assert not scene_map.resolve_move({'7': graph}, '7', graph['rooms'][0]['id'], 'N', 'right')['ok']
 
 
-def install_wall_map_provider(monkeypatch):
+def install_wall_map_provider(monkeypatch, *, visual_door=False):
     """Stub only image inference; run production inventory/audit/build/certificate."""
     import json
     from types import SimpleNamespace
@@ -101,15 +101,19 @@ def install_wall_map_provider(monkeypatch):
                     'confirmed_ids': [r['id'] for r in payload['inventory']]}
         if stage == 'extract_map_connectivity':
             return {'entry': {'status': 'resolved', 'room_id': payload['inventory'][0]['id'], 'evidence': 'Visible entrance'},
-                    'edges': [], 'missing_locations': []}
+                    'edges': ([{'id': 'door', 'from': payload['inventory'][0]['id'], 'to': payload['inventory'][1]['id'],
+                                'type': 'door', 'visual_basis': 'door', 'compass': 'E', 'evidence': 'Visible door'}]
+                              if visual_door else []), 'missing_locations': []}
         assert stage == 'audit_scene_map_image'
         # Hidden routes are not subject to an image traversal verdict.
         graph = payload['graph']
         assert 'source_topology' not in graph
         return {'complete': True, 'uncertainties': [],
             'visible_locations': [{'label': r['visible_label'], 'room_id': r['id']} for r in graph['rooms']],
-            'rooms': [{'room_id': r['id'], 'verdict': 'supported', 'evidence': 'Room visible; shared solid wall has no door'}
-                      for r in graph['rooms']], 'edges': [],
+            'rooms': [{'room_id': r['id'], 'verdict': 'supported', 'evidence': 'Room visible with a door' if visual_door else 'Room visible; shared solid wall has no door'}
+                      for r in graph['rooms']],
+            'edges': [{'edge_id': r['id'] + ':' + str(i), 'verdict': 'supported', 'basis': 'door', 'evidence': 'Visible door'}
+                      for r in graph['rooms'] for i, _ in enumerate(r['exits'])],
             'entry': {'room_id': graph['entry_room_id'], 'verdict': 'supported', 'evidence': 'Visible entrance'}}
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(analyze_image=analyze))
     return calls
@@ -125,9 +129,9 @@ def source_pdf(text):
         return doc.tobytes()
 
 
-def published_barrier(monkeypatch, tmp_path, *, route_text=None):
+def published_barrier(monkeypatch, tmp_path, *, route_text=None, visual_door=False):
     from app import pdf_loader, scenario_library
-    calls = install_wall_map_provider(monkeypatch)
+    calls = install_wall_map_provider(monkeypatch, visual_door=visual_door)
     monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
     monkeypatch.setattr(scenario_library, 'SCENARIO_LIBRARY_DIR', tmp_path)
     source = source_pdf(route_text or 'A breakable wall connects Basement to Corbitt hiding place to the east; it is necessary for progress.')
@@ -422,3 +426,53 @@ def test_narrated_breakthrough_does_not_open_a_route(monkeypatch, tmp_path):
     assert reloaded.current_room_id['player'] == route['from']
     assert reloaded.map_route_states == {}
     assert not map_routes.available_routes(reloaded, '1')
+
+
+def test_source_sealed_door_blocks_matching_visual_exit(certified_map_result):
+    graph = {'entry_room_id': 'hall', 'rooms': [
+        {'id': 'hall', 'name': 'Hall', 'exits': [{'to': 'cellar', 'compass': 'E', 'label': 'door'}]},
+        {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
+    visual = certified_map_result('', graph)
+    source = '--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.'
+    merged = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    route = merged.graph['source_topology'][0]
+    assert not scene_map.resolve_move({'1': merged.graph}, '1', route['from'], 'N', 'right')['ok']
+    assert not scene_map.resolve_source_route(merged.graph, route['from'], route['to'])['ok']
+    assert scene_map.visible_exits(merged.graph, route['from']) == []
+    allowed = frozenset({route['id']})
+    assert scene_map.resolve_move({'1': merged.graph}, '1', route['from'], 'N', 'right', available_routes=allowed)['ok']
+    assert scene_map.resolve_source_route(merged.graph, route['from'], route['to'], available_routes=allowed)['ok']
+
+
+def test_alternate_secret_route_does_not_disable_an_ordinary_visible_door(certified_map_result):
+    graph = {'entry_room_id': 'hall', 'rooms': [
+        {'id': 'hall', 'name': 'Hall', 'exits': [{'to': 'cellar', 'compass': 'E', 'label': 'door'}]},
+        {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
+    visual = certified_map_result('', graph)
+    source = '--- 第 1 頁 ---\nA secret door connects Hall to Cellar to the north.'
+    merged = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    route = merged.graph['source_topology'][0]
+    assert scene_map.resolve_move({'1': merged.graph}, '1', route['from'], 'N', 'right')['ok']
+    assert not scene_map.resolve_move({'1': merged.graph}, '1', route['from'], 'N', 'forward')['ok']
+    assert len(scene_map.visible_exits(merged.graph, route['from'])) == 1
+
+
+def test_matching_visual_door_stays_blocked_after_failed_authoritative_attempt(monkeypatch, tmp_path):
+    from app import map_routes
+    from app.models import GroupState
+    from app.repositories.group_state import load_state, save_state
+    scenario_id, _, graph, _, _, _, _ = published_barrier(monkeypatch, tmp_path, visual_door=True,
+        route_text='A sealed door connects Basement to Corbitt hiding place to the east.')
+    route = graph['source_topology'][0]
+    assert graph['rooms'][0]['exits']  # Ordinary visible door existed before source merge.
+    state = GroupState(group_id='sealed-door-visual', kp_assistant_user_id='kp', scenario_library_id=scenario_id,
+        scene_maps={'1': graph})
+    save_state(state)
+    for outcome in (None, 'failed', 'opened'):
+        if outcome:
+            map_routes.commit_outcome(state.group_id, 'kp', '1', route['id'], outcome)
+        allowed = map_routes.available_routes(load_state(state.group_id), '1')
+        expected = outcome == 'opened'
+        assert scene_map.resolve_move({'1': graph}, '1', route['from'], 'N', 'right', available_routes=allowed)['ok'] is expected
+        assert scene_map.resolve_source_route(graph, route['from'], route['to'], available_routes=allowed)['ok'] is expected
+        assert bool(scene_map.visible_exits(graph, route['from'], available_routes=allowed)) is expected
