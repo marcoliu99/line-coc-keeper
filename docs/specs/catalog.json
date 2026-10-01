@@ -1587,6 +1587,15 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
+    },
+    {
+      "title": "PDF source readiness and derived-feature quarantine",
+      "zh": "PDF source readiness 與 derived-feature quarantine",
+      "category": "bug",
+      "status": "in_progress",
+      "path": "docs/specs/bug/pdf_derived_feature_publication_policy.md",
+      "zh_path": "docs/specs/bug/pdf_derived_feature_publication_policy_zh.md",
+      "evidence": []
     }
   ]
 }
