@@ -18,3 +18,20 @@
 14. **Rollout**：production rollout **HOLD**，沒有部署。Source-safe scenario 可 READY_WITH_WARNINGS 開始，unverified map disabled；map failure 不重新變成 scenario hard block。
 
 Sanitized machine-readable record：`pdf_two_phase_map_extraction_results.json`。本輪無 real images/source text/provider candidate graph 入版控。
+
+## 明確授權後的 real provider rerun（本輪更新）
+
+使用者明確授權後，安全審查允許執行。僅將指定兩頁 200-DPI 完整 PNG 傳送至 `https://api.openai.com/v1`；每頁實際 **3 requests**，共 **6**，各 PDF durable ledger 由 8 remaining requests 減至 5。沒有其他頁面／crop／provider／destination，沒有重試、targeted repair 或 final audit，也沒有 scenario publication／runtime 圖片傳送。Raw PNG／完整 responses／inventory／evidence 保存在 private 0700 directory／0600 files；不入版控。驗證 code commit 為 `8807bf6`。
+
+| Target | Phase 1 locations | Audit additions | Phase 2 | Requests | Final map status | Verified |
+|---|---:|---:|---|---:|---|---|
+| Haunting p7 | 14 | 0 | provider returned None | 3 | MAP_ANALYSIS_FAILED | false |
+| Beacon p16 | 12 | 0 | provider returned None | 3 | MAP_ANALYSIS_FAILED | false |
+
+兩頁 inventory audit 均 complete。Beacon 的 **Service Room／Lamp Room／Lantern Gallery 都存在 inventory，且 audit 通過**。這只證明 location inventory 的本輪 provider evidence，不證明 stairs／Hallway W/E／upper/lower/elevation connectivity。Haunting 無最終 graph，故 Corbitt 地下室實牆 traversal correctness 仍未驗證，不能因無 graph 就宣稱通過。
+
+Phase 2 elapsed：Haunting **30.244 s**、Beacon **30.248 s**；配置 timeout **30 s**。Precise observed failure 是既有 `openai_provider.analyze_image` 回傳 `None`；adapter 的 `except Exception: return None` 未保留 SDK exception 類型／HTTP status，所以 timeout **suspected, not proven**，不能捏造 APITimeoutError／provider 拒絕或其他原因。這次不是 authorization 拒絕。沒有可修的 connectivity graph，故沒有用額外 requests 偷換成 full graph regeneration。
+
+Counts：map_candidates 2、map_analysis_attempted 2、map_analysis_failed 2；graph_generated／invalid／incomplete／repaired／verified 均 0；phase1_locations 26、missing_found 0、phase2_edges 0、targeted_repairs 0、patch counts 0。Phase2 edge metric 的 0 表示未成功產生 edges，不是地圖沒有通道。Final room／exit／entry／patch 在 JSON 記為 null。
+
+**Graph correctness verification = PENDING；production rollout = HOLD。** 兩頁 unsafe/missing map 仍停用，source-safe scenario 的 READY_WITH_WARNINGS policy 不變。前文 0 real requests／authorization blocker 是 rerun 前的歷史紀錄，以上更新與 sanitized JSON 為最新結果。Implementation test/tooling 結果仍對應已驗證 commit；本輪只新增 real evidence 摘要，未更動 production code。

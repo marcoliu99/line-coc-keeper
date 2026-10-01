@@ -18,3 +18,13 @@ Implementation is complete; real provider verification remains PENDING. Map iden
 14. **Rollout:** production **HOLD**, no deployment. Source-safe scenarios remain READY_WITH_WARNINGS and playable; unverified maps stay disabled.
 
 See `pdf_two_phase_map_extraction_results.json` for sanitized results and the Chinese twin for full details. No real images, source text or provider candidate graphs are committed.
+
+## Real provider rerun after explicit authorization (latest update)
+
+Automatic review permitted this execution following the user's exact payload/destination authorization. Only the two designated full-page 200-DPI PNGs were sent to `https://api.openai.com/v1`. **Three requests per page, six total**; each PDF's durable ledger consumed 3 of 8, leaving 5. No other pages/crops/providers/destinations, retries, repair, final audit, publication or runtime image transmission. Raw images/full responses/inventory/evidence remain private in 0700 directories/0600 files, never committed. Implementation commit: `8807bf6`.
+
+Haunting7 inventory: **14 locations**, audit complete, **0 additions**. Beacon16: **12 locations**, audit complete, **0 additions**; **Service Room, Lamp Room and Lantern Gallery are all present and audited**. Both Phase2 calls returned None: elapsed **30.244 s** and **30.248 s**, against configured **30 s** timeout. The existing adapter suppresses SDK exceptions, so timeout is suspected but its exception type/HTTP status cannot be established. This execution was not rejected by authorization review.
+
+Both final statuses are **MAP_ANALYSIS_FAILED**, verified=false. No graph/edge/entry/patch was obtained; no claim of valid Corbitt wall edges or Beacon stair/topology correctness. Counts: candidates/attempted/failed=2 each, generated/invalid/incomplete/repaired/verified=0; phase1 locations=26, missing found=0, phase2 edges/repair/patch counts=0. Missing final graph fields are null; zero generated edges does not mean no passages in the image.
+
+**Graph verification PENDING; rollout HOLD.** Missing maps remain disabled and source-safe scenarios remain playable with warnings. Earlier zero-request/authorization-blocker text above is historical; this section and sanitized JSON contain the current evidence. No production code changed during this evidence-only rerun.
