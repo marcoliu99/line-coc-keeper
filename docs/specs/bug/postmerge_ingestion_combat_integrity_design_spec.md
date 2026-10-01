@@ -13,16 +13,21 @@ Operator review: /Users/marcoliu/Downloads/pr155_pr156_full_code_review.md, date
 - Q1 A: staged delivery. First repair check lifecycle, accepted asset preservation, stale publication and deterministic reading order. Then complete source-version/lifecycle migration, remaining domain boundaries and release verification. Each stage has executable acceptance and explicitly tracked remaining findings; no partial fix is presented as complete.
 - Q2 A: a running game stays on its explicitly selected scenario version. Another group's reparse does not update it. Switching versions is explicit and coherent across text, images, maps and NPC/character source evidence.
 
+- Q3 A: bind legacy games/choices/checkpoints to a version only from reliable source evidence. Preserve stored game data and history when evidence is insufficient; mark source or historical assets unconfirmed/unavailable and require explicit source selection for affected operations. Never substitute latest or new images as historical evidence.
+- Q4 A: finish current combat, player checks and Luck before changing selected source version. Outstanding continuing obligations require explicit compatibility handling; this does not authorize clearing them. Details for future obligations remain the next decision.
+- Q5 A: newgame/new-scenario transitions invalidate the old import worker and its activation binding while retaining the draft, accepted assets and diagnostic evidence. Reuse requires explicit reimport/admission under the new context, never automatic rebinding or stale authoritative publication.
+- Q6: excluded at the operator's request. No Python compatibility work, version-requirement change or additional runtime matrix is part of this remediation. Existing verification environments remain as they are.
+
 ## Preserved contracts
 
 Keep ADR0003 whole-battle provisional resources, bot Keeper settlement/rollback, original dice receipts, due ownership and future obligations. Keep presentation distinct from authority (ADR0002). Do not add a fixed per-turn model judge, automatically clear combat, guess missing source history, or conflate successful extraction/publication with activation in a game. OCR remains import-time work; gameplay consumes validated imported evidence.
 
 ## Shape and acceptance to refine
 
-A logical scenario retains its stable identity while published versions remain immutable. Runtime and rollback consumers must refer to a selected version rather than a moving latest pointer. Detailed migration, incomplete historical evidence, pending selections and cleanup rules remain open. Publication eligibility must be checked before shared-source side effects; successful game-state commit and failed derived-image refresh must be reported separately.
+A logical scenario retains its stable identity while published versions remain immutable. Runtime and rollback consumers must refer to a selected version rather than a moving latest pointer. Legacy binding and unavailable evidence follow Q3; detailed implementation and cleanup rules remain open. Publication eligibility must be checked before shared-source side effects; successful game-state commit and failed derived-image refresh must be reported separately.
 
 Tests must exercise restart/retry/failed-save and real repository boundaries. Keep review categories confirmed, already_fixed, not_reproduced and blocked explicit. Test totals quoted in the external review are historical, not validation for this future work.
 
 ## Open interview frontier
 
-Legacy version binding and unavailable assets; rules for changing source during active mechanics; ownership/pending-selection invalidation; supported Python baseline; narrow staged containment and durable injury/weapon repair migration. Later rounds depend on those answers. Final shared-understanding confirmation is required before runtime changes.
+Future obligations during a same-scenario version update; retrospective incidental correction boundaries; supported malfunction/repair scope; source retention/cleanup. Detailed recovery and publication gates must respect the decisions above. Final shared-understanding confirmation is required before runtime changes.
