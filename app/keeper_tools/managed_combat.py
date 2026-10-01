@@ -121,6 +121,10 @@ def submit_combat_choice(call: ToolCall) -> dict[str, Any]:
     if not call.actor_id:
         return {'ok': False, 'error': 'Owned combat choice requires player identity'}
     def operation(state):
+        retained = combat_flow.choice_receipt(state, interaction_id=call.input['interaction_id'],
+                                              owner_id=call.actor_id, choice=call.input['choice'])
+        if retained is not None:
+            return retained
         pending = state.pending_checks.get(call.actor_id, {})
         resource_bridge.owned_character(state, pending, call.actor_id)
         return combat_flow.submit_choice(state, interaction_id=call.input['interaction_id'],

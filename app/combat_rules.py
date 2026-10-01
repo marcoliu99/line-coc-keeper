@@ -17,6 +17,7 @@ DBPolicy = Literal['none', 'full', 'half']
 AttackMode = Literal['melee', 'single_shot']
 ExtremeRule = Literal['maximum', 'impale']
 LookupStatus = Literal['resolved', 'needs_ruling']
+CheckDifficulty = Literal['regular', 'hard', 'extreme']
 SeverityId = Literal['minor', 'moderate', 'severe', 'deadly', 'terminal', 'splat']
 _DATA = Path(__file__).with_name('data')
 
@@ -223,6 +224,29 @@ def resolve_weapon(
     if definition.ruling_reason:
         return WeaponResolution('needs_ruling', candidates=matches, reason=definition.ruling_reason)
     return WeaponResolution('resolved', definition=definition, candidates=matches)
+
+
+@dataclass(frozen=True)
+class RangeResolution:
+    difficulty: CheckDifficulty | None = None
+    reason: str = ''
+
+
+def resolve_range_difficulty(distance_yards: float | None, base_range_yards: float | None) -> RangeResolution:
+    """Single-shot hit bands; caller still owns ammo, source and damage admission."""
+    if distance_yards is None or base_range_yards is None:
+        return RangeResolution(reason='Single shot requires trusted physical distance and reviewed base range')
+    if (type(distance_yards) not in (int, float) or type(base_range_yards) not in (int, float)
+            or not math.isfinite(distance_yards) or not math.isfinite(base_range_yards)
+            or distance_yards < 0 or base_range_yards <= 0):
+        return RangeResolution(reason='Invalid supported physical range')
+    if distance_yards > base_range_yards * 4:
+        return RangeResolution(reason='Distance exceeds supported extreme range')
+    if distance_yards > base_range_yards * 2:
+        return RangeResolution('extreme')
+    if distance_yards > base_range_yards:
+        return RangeResolution('hard')
+    return RangeResolution('regular')
 
 
 def resolve_weapon_damage(

@@ -432,12 +432,16 @@ def test_npc_attack_owned_defense_choice_and_manual_roll_survive_reload(battle):
         assert battle.load().to_dict() == before
         chosen = battle.tool('submit_combat_choice', {'interaction_id': wait_id, 'choice': 'dodge'})
         assert chosen['phase'] == 'PLAYER_ROLL'
+        before_retry = battle.load().to_dict()
+        assert battle.tool('submit_combat_choice', {'interaction_id': wait_id, 'choice': 'dodge'}) == chosen
+        assert battle.load().to_dict() == before_retry
         pending = battle.load().pending_checks['player']
         npc_action = pending['combat_context']['action_id']
         assert npc_action.startswith('npc:')
         battle.check(pending['check_id'])
         finished = battle.load()
         assert finished.combat.actions[npc_action]['completed']
+        assert battle.tool('submit_combat_choice', {'interaction_id': wait_id, 'choice': 'dodge'}) == chosen
         draws = rng.call_count
         with pytest.raises(ValueError, match='owned check investigator binding'):
             battle.tool('submit_combat_choice', {'interaction_id': wait_id, 'choice': 'fight_back'})
@@ -726,3 +730,70 @@ def test_distinct_healer_owned_first_aid_stabilizes_only_bound_patient_and_recei
     assert not final.characters_by_id['char:ada'].injury['dying']
     assert final.characters_by_id['char:grace'].hp == 10
     assert all(o['status'] == 'resolved' for o in final.postcombat_obligations)
+
+
+def test_owned_defense_choice_button_replays_saved_delivery_without_new_roll(battle):
+    battle.start(npc_first=True)
+    with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=50)) as rng:
+        plan = battle.tool('plan_enemy_turn', {})
+        battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+        pending = battle.load().pending_checks['player']
+        assert pending['type'] == 'choice'
+        with patch.object(battle, 'reply', side_effect=RuntimeError('choice delivery lost')), \
+             pytest.raises(RuntimeError, match='choice delivery lost'):
+            battle.check(pending['check_id'], option='#0')
+        # The current NPC action, not the prior initializer metadata, owns delivery evidence.
+        receipt = battle.load().combat.actions[pending['combat_context']['action_id']]
+        original = receipt['control_delivery_receipts'][pending['check_id']]['reply_text']
+        saved = battle.load().to_dict()
+        draws = rng.call_count
+        battle.check(pending['check_id'], option='#0')
+        assert battle.notifications[-1] == original
+        assert battle.load().to_dict() == saved
+        assert rng.call_count == draws
+        battle.check(pending['check_id'], option='#1')
+        assert battle.notifications[-1] != original
+        assert battle.load().to_dict() == saved
+        battle.check(pending['check_id'], option='#0', clicker='intruder')
+        assert battle.load().to_dict() == saved
+
+
+def test_active_keeper_prompts_follow_managed_source_runner_and_settlement(battle):
+    from app import keeper
+    battle.start()
+    current = battle.load()
+    static = keeper._build_static_prompt(current)
+    dynamic = keeper._build_dynamic_prompt(current, 'player')
+    assistant = keeper._build_dynamic_prompt(current, 'player', speaker_role='kp_assistant')
+    for prompt in (static, dynamic, assistant):
+        assert 'plan_enemy_turn' in prompt
+        assert 'run_enemy_combat_plan' in prompt
+        assert 'confirm_combat_settlement' in prompt
+        assert 'offer_npc_attack_defense_choice' not in prompt
+        assert 'resolve_enemy_action' not in prompt
+        assert 'apply_final_combat_damage' not in prompt
+        assert 'roll_weapon_damage' not in prompt
+    assert 'adjust_character' in static
+    assert 'never duplicate' in static
+    assert 'owned choice/check/Luck controls' in dynamic
+    assert 'manual rolls remain' in dynamic
+    assert 'legacy active snapshot' in dynamic
+
+
+@pytest.mark.parametrize('role', ['attack', 'defense', 'defense_choice', 'injury', 'medical', 'counter',
+                                 'injury:char:ada'])
+def test_check_role_codec_preserves_durable_control_identity(role):
+    from app.models import CombatCheckContext, CombatCheckIdentity
+    identity = CombatCheckIdentity.from_serialized(role)
+    context = CombatCheckContext('battle', 'action', 'interaction', identity)
+    assert context.to_dict()['check_role'] == role
+    if role.startswith('injury:'):
+        assert identity.role == 'injury'
+        assert identity.character_id == 'char:ada'
+
+
+@pytest.mark.parametrize('role', ['invented', 'injury:', 17, None])
+def test_unknown_check_role_cannot_enter_mechanical_boundary(role):
+    from app.models import CombatCheckIdentity
+    with pytest.raises((TypeError, ValueError), match='Unknown combat check role'):
+        CombatCheckIdentity.from_serialized(role)

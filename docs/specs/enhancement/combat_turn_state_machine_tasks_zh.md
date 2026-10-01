@@ -10,4 +10,4 @@ T1：reviewed／pinned weapons、scenario override、aliases／ambiguous routing
 
 狀態同步以英文 ticket table 為準；完工後兩份文件與 design／catalog 一起更新。此次授權包含建立 draft PR 與實作；沒有 merge／deploy 授權。
 
-T4／T5 已於 `f1be316` 以正常 merge 合併；T6 已完成真正 SQLite／public tool／玩家按鈕整合驗證與雙語報告，等待 merge。T7 的最終 review／checks 尚未完成。
+T4／T5 已於 `f1be316` 以正常 merge 合併；T6 已完成真正 SQLite／public tool／玩家按鈕整合驗證與雙語報告，並於 `29f7f2d` 合併。T7 兩軸獨立 review 各提出兩項 findings：Standards 為 closed role/stage typing 與重複 range selection；Spec 為 choice lost-reply receipt 與互相矛盾的 prompts。`c5547ff` 修正後兩軸 recheck 均為零 remaining/new findings，`314b52d` 更新舊 prompt assertions。最終 integration／publication gates 進行中；實際 checks 記於雙語 validation，未授權 merge main 或 deploy。

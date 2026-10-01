@@ -29,7 +29,8 @@ def test_kp_authority_only_appears_in_kp_dynamic_context() -> None:
     assert keeper_prompt_policy.KP_ASSISTANT_AUTHORITY not in player
     assert keeper_prompt_policy.KP_ASSISTANT_AUTHORITY in kp
     assert "不是調查員" in kp
-    assert "不能使用 adjust_character" in kp
+    assert "一般主持資源調整須使用授權 controller route" in kp
+    assert "不能代替武器攻擊 adjudication" in kp
 
 
 def test_spoiler_and_privacy_switches_remain_independent() -> None:
