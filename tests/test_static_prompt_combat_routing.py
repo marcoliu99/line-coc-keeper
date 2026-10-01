@@ -8,12 +8,15 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
     prompt = keeper._build_static_prompt(GroupState(group_id="combat-routing-prompt"))
     routing = prompt.split("# Combat Tool Routing\n", 1)[1].split("\n- 劇本內容", 1)[0]
 
-    for tool in (
-        "start_combat", "initialize_combat", "add_npc_to_combat", "offer_npc_attack_defense_choice",
-        "adjust_ammo", "roll_weapon_damage", "roll_impaling_damage",
-        "apply_combat_damage", "apply_final_combat_damage", "add_combat_effect",
-    ):
-        assert f"`{tool}`" in routing
+    for tool in ('start_combat', 'initialize_combat', 'add_npc_to_combat', 'adjust_ammo'):
+        assert tool in routing
+    for tool in ('declare_combat_action', 'run_combat_action', 'plan_enemy_turn',
+                 'run_enemy_combat_plan', 'preview_combat_settlement', 'confirm_combat_settlement',
+                 'get_damage_severity', 'declare_combat_effect'):
+        assert tool in routing
+    for obsolete in ('offer_npc_attack_defense_choice', 'roll_weapon_damage', 'roll_impaling_damage',
+                     'apply_combat_damage', 'apply_final_combat_damage', 'add_combat_effect'):
+        assert obsolete not in routing
 
     assert "failed check, or a harmless scuffle does not establish combat" in routing
     assert "usage limits, and triggers" in routing
@@ -29,9 +32,12 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
     assert "do not re-call start_combat/add_npc_to_combat/damage tools" in routing
     assert "do not replay the attack to manufacture evidence" in routing
     assert routing.count("distinct display name") == 1
-    assert "`is_ranged` mode and defense options" in routing
-    assert "never a counterattack" in routing
-    assert "the tool adds DB" in routing
-    assert "before armor" in routing and "already-reduced final damage" in routing
-    assert "Do not bypass combat HP resolution with `adjust_character`" in routing
-    assert "the engine resolves later ticks" in routing
+    assert 'source-bound attack/defense/damage and ammunition costs' in routing
+    assert 'never supply hit/damage outcomes or separately debit ammunition' in routing
+    assert 'Players choose their own defense' in routing
+    assert 'manual' in routing
+    assert 'Unknown/unsupported sources pause' in routing
+    assert 'Ordinary controller resource adjustments remain available through adjust_character' in routing
+    assert 'must not substitute for adjudicating a weapon attack' in routing
+    assert 'never duplicate a managed runner' in routing
+    assert 'the engine owns its ticks and medical checks' in routing

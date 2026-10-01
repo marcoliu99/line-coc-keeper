@@ -23,6 +23,7 @@ from app.config import (
     SCENARIO_RAG_TOP_K,
 )
 from app.domain.models import AgentMessage
+from app.keeper_tools import resource_bridge
 from app.models import GroupState
 from app.services import narrative_corrections
 
@@ -122,6 +123,8 @@ async def build_context(
     # Resolve through the active binding instead of the legacy owner index so
     # a stale persisted mapping cannot make a sudo turn use the wrong sheet.
     char = state.get_active_character(user_id)
+    if char:
+        char = resource_bridge.effective(state, char)
 
     # 1. RAG Context (Scenario Text)
     # scenario_rag has no single query_scenario() entry point — it's a
@@ -331,7 +334,8 @@ async def build_context(
         "text": text,
         "resolved_location": resolved_location,
         "state": state,  # Reference to the current GroupState
-        "character": char, # Reference to the active Character (if any)
+        "character": char,  # Resource-effective copy during managed combat.
+        "combat_provisional": resource_bridge.managed(state),
         # Historical finalized outcomes are deliberately separate from this
         # turn's tool results. Filter by owner, active character, and current
         # timeline so switched investigators never inherit each other's sheet history.

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -17,18 +18,19 @@ sys.modules.setdefault(
     ),
 )
 
-from app import combat, keeper
+from app import combat, dice, keeper
 from app import legacy_commands as commands
 from app.agents import assistant
 from app.commands import router
 from app.commands.handlers import system as system_handler
 from app.domain.models import AgentMessage
+from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
 from tests.provider_fakes import use_fake_provider
 
 
 def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(state.to_dict())
+    return GroupState.from_dict(deepcopy(state.to_dict()))
 
 
 class ReplyCollector:
@@ -586,7 +588,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(rejected["ok"])
             self.assertIn("已允許的查詢與主持流程工具", rejected["error"])
 
-    def test_kp_assistant_fixed_damage_tools_are_allowed_and_canonical(self):
+    def test_kp_assistant_raw_damage_tools_cannot_bypass_managed_source_authority(self):
         state = GroupState(group_id="g")
         state.autoroll_checks = True
         char = Character(name="Marco", owner_id="p1", character_id="char-marco", dex=50, hp=12, hp_max=12)
@@ -645,21 +647,14 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 speaker_role="kp_assistant",
             )
 
-        self.assertTrue(effect_result["ok"])
-        self.assertEqual(effect_result["damage"], "1")
-        self.assertEqual(effect_result["damage_type"], "fire")
-        self.assertTrue(damage_result["ok"])
-        self.assertTrue(final_damage_result["ok"])
-        self.assertEqual(final_damage_result["armor_reduction"], 0)
-        self.assertEqual(final_damage_result["final_damage"], 5)
-        self.assertEqual(final_damage_result["hp_after"], 5)
-        self.assertFalse(blocked_result["ok"])
-        self.assertTrue(keeper._kp_tool_result_creates_canon("add_combat_effect", {}, effect_result))
-        self.assertTrue(keeper._kp_tool_result_creates_canon("apply_combat_damage", {}, damage_result))
-        self.assertTrue(
-            keeper._kp_tool_result_creates_canon("apply_final_combat_damage", {}, final_damage_result)
-        )
-        self.assertEqual(store.get("g").characters_by_id["char-marco"].hp, 11)
+        for name, result in (
+            ('add_combat_effect', effect_result), ('apply_combat_damage', damage_result),
+            ('apply_final_combat_damage', final_damage_result), ('damage_combatant', blocked_result),
+        ):
+            self.assertFalse(result['ok'])
+            self.assertFalse(keeper._kp_tool_result_creates_canon(name, {}, result))
+        self.assertEqual(store.get('g').characters_by_id['char-marco'].hp, 12)
+        self.assertEqual(combat.find_combatant(store.get('g'), 'Armored Thing').hp, 10)
 
     def test_kp_assistant_can_see_private_enemy_hp_in_combat_status(self):
         state = GroupState(group_id="g")
@@ -712,26 +707,27 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
         private_state = clone_state(state)
 
-        with StateStorePatch(keeper) as public_store:
+        with StateStorePatch(keeper) as public_store, patch.object(dice.random, "randint", return_value=8):
             public_store.put(state)
             public_result = keeper._execute_tool(
                 state,
-                "apply_combat_damage",
-                {"target": "Armored Thing", "raw_damage": 8, "damage_type": "physical"},
+                "declare_combat_effect",
+                {"combat_id": state.combat.combat_id, "effect_id": "severity:hit",
+                 "target_id": combat.find_combatant(state, "Armored Thing").combatant_id,
+                 "severity_id": "severe", "scope": "incident", "stop_condition": "single incident",
+                 "reason": "controller selected reviewed severity"},
                 [],
                 [],
                 speaker_role="player",
             )
 
-        with StateStorePatch(keeper) as private_store:
+        with StateStorePatch(keeper) as private_store, patch.object(dice.random, "randint", return_value=8):
             private_store.put(private_state)
-            private_result = keeper._execute_tool(
-                private_state,
-                "apply_combat_damage",
-                {"target": "Armored Thing", "raw_damage": 8, "damage_type": "physical"},
-                [],
-                [],
-                speaker_role="kp_assistant",
+            private_result = tool_registry.REGISTRY['declare_combat_effect'].handler(
+                tool_registry.ToolCall(private_state, {"combat_id": private_state.combat.combat_id, "effect_id": "severity:hit",
+                 "target_id": combat.find_combatant(private_state, "Armored Thing").combatant_id,
+                 "severity_id": "severe", "scope": "incident", "stop_condition": "single incident",
+                 "reason": "controller selected reviewed severity"}, [], [], 'kp_assistant', 'declare_combat_effect')
             )
 
         self.assertTrue(public_result["ok"])
@@ -746,6 +742,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private_notes", public_result)
 
         self.assertTrue(private_result["ok"])
+        self.assertIn("armor_reduction", private_result, private_result)
         self.assertEqual(private_result["armor_reduction"], 3)
         self.assertEqual(private_result["armor_label"], "Hide")
         self.assertEqual(private_result["hp_after"], 5)

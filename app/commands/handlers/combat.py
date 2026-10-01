@@ -5,9 +5,21 @@ from app.services import mutation_admission
 
 
 @mutation_admission.guard_async_entry
-async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[str]) -> None:
+async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[str], user_id: str = "") -> None:
     action = parts[2].casefold() if len(parts) > 2 else None
     state = load_state(conversation_id)
+    if action in {'rollback', 'confirm', 'settle', 'correct', 'reconcile', 'initiative'}:
+        await reply('此操作須由 Keeper 發出明確範圍與理由的命令；玩家不能直接變更戰鬥結算或回滾。')
+        return
+    if state.combat.active and action == 'damage':
+        await reply('戰鬥傷害由來源支持的行動流程處理；請描述行動或請 Keeper 明確更正。')
+        return
+    if state.combat.active and action == 'end':
+        await reply('請由 Keeper 取得結算預覽，再明確確認；當前待處理事項仍保留。')
+        return
+    if state.combat.active and action == 'next':
+        await reply('請由 Keeper 完成目前行動後推進；玩家指令不能略過待處理選擇或檢定。')
+        return
 
     if action == "start":
         combat.begin_combat(state)

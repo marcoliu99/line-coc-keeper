@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from app import check_lifecycle, dice, luck, resolved_check_consequences
 from app.check_identity import new_decision_id
+from app.keeper_tools import resource_bridge
 from app.models import Character, GroupState
 from app.services import opposed_checks
 
@@ -45,7 +46,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
 
     def _roll_skill_check(target_state: GroupState) -> Any:
         nonlocal resolved_event_seed
-        target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
         consequences = resolved_check_consequences.normalize_authorizations(
             target_state, tool_input.get("consequences")
         )
@@ -241,6 +242,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
                 "consequences": consequences,
                 "state_before": state_before,
             }
+        result["provisional"] = resource_bridge.participating(target_state, target_char)
         services.remember_check_result(target_state, cache_key, result)
         return services.StateMutation(result, should_save=True)
     result = services.mutate_and_save_state(state, _roll_skill_check)
@@ -263,7 +265,7 @@ def offer_check_choice(call: ToolCall) -> dict[str, Any]:
         return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
     attacker_tier = tool_input.get("attacker_tier")
     def _register_pending_choice(target_state: GroupState) -> Any:
-        target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
         options = services.resolve_defense_options(target_char, raw_options, register_unknown=False)
         # COC7e：攻擊方大成功時沒有任何等級贏得過它，「反擊」選項不成立——這是
         # offer_npc_attack_defense_choice 已有的同一條規則，code review 發現這個
@@ -343,7 +345,9 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
     is_ranged = bool(tool_input.get("is_ranged", False))
 
     def _roll_and_register_defense_choice(target_state: GroupState) -> Any:
-        target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        if resource_bridge.managed(target_state):
+            return services.StateMutation({"ok": False, "error": "Managed combat uses declare_combat_action and its owned defense interaction"}, should_save=False)
+        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
         # Resolve the existing-pending/reuse decision inside the same
         # freshly-loaded mutator that performs the roll and write. A
         # rejected call therefore never rolls, and there is no gap
@@ -463,7 +467,10 @@ def clear_pending_check(call: ToolCall) -> dict[str, Any]:
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     def _clear_pending_check(target_state: GroupState) -> Any:
-        target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        existing = target_state.pending_checks.get(char.owner_id) or {}
+        if existing.get('combat_context') or existing.get('postcombat_context') or existing.get('medical_context'):
+            return services.StateMutation({"ok": False, "error": "Owned combat wait requires explicit controller correction"}, should_save=False)
+        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
         cleared = target_state.pending_checks.pop(target_char.owner_id, None)
         if cleared is None:
             return services.StateMutation(
@@ -497,7 +504,7 @@ def sanity_check(call: ToolCall) -> dict[str, Any]:
 
     def _roll_sanity_check(target_state: GroupState) -> Any:
         nonlocal sanity_event_seed
-        target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
         if not target_state.autoroll_checks:
             decision = check_lifecycle.register(
                 target_state, target_char.owner_id,
@@ -576,6 +583,7 @@ def sanity_check(call: ToolCall) -> dict[str, Any]:
                 result["note"] = (
                     "Keeper 已完成 SAN 與後續 INT 檢定；INT 未觸發短暫瘋狂，請照結果敘事。"
                 )
+        resource_bridge.reconcile(target_state, target_char, event_id=f"{metadata['check_id']}:san", reason="Authoritative SAN check")
         sanity_event_seed = {
             "event_id": metadata["check_id"],
             "check_id": metadata["check_id"],
@@ -590,6 +598,7 @@ def sanity_check(call: ToolCall) -> dict[str, Any]:
             "outcome": f"{sanity_result.check.tier} {'成功' if sanity_result.check.success else '失敗'}",
             "state_before": state_before,
         }
+        result["provisional"] = resource_bridge.participating(target_state, target_char)
         services.remember_check_result(target_state, cache_key, result)
         return services.StateMutation(result, should_save=True)
     result = services.mutate_and_save_state(state, _roll_sanity_check)
