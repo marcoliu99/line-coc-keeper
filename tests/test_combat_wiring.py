@@ -21,7 +21,7 @@ def store(monkeypatch):
     state = GroupState('wiring', active=True, timeline_id='timeline:wiring',
                        characters={'player': character}, characters_by_id={'char:ada': character})
     state.combat.active = True
-    state.combat.order = [Combatant(name='Ada', character_id=character.character_id, is_pc=True, hp=10, hp_max=10)]
+    state.combat.order = [Combatant(name='Ada', character_id=character.character_id, is_pc=True, dex=50, hp=10, hp_max=10)]
     combat_resources.initialize_working_state(state, combat_id='combat:wiring', new_combat=True)
     saved = {'state': GroupState.from_dict(state.to_dict()), 'writes': 0}
     def load(group_id):
@@ -217,9 +217,9 @@ def test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_r
         assert decision['check_id'] == pending_before['check_id']
         assert store['state'].combat.phase == 'LUCK_DECISION'
         assert len(store['state'].combat.roll_receipts) == 2  # NPC dive and investigator attack.
-        with patch.object(legacy_commands, '_resolve_ranged_defense_outcome', side_effect=AssertionError('extra RNG')):
-            with patch.object(dice.random, 'randint', return_value=2):
-                finalized = legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'regular')
+        with (patch.object(legacy_commands, '_resolve_ranged_defense_outcome', side_effect=AssertionError('extra RNG')),
+              patch.object(dice.random, 'randint', return_value=2)):
+            finalized = legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'regular')
         assert finalized.should_finalize
         assert rolls.call_count == 2
     assert effective(store).luck == 45
@@ -295,3 +295,28 @@ def test_managed_hp_adjustment_uses_owned_injury_hook_and_status_query_is_provis
     assert resolved.should_finalize
     assert effective(store).injury['unconscious']
     assert store['state'].characters['player'].injury == {}
+
+
+def test_reviewed_weapon_lookup_reports_exact_mechanics_without_establishing_inventory(store):
+    before = deepcopy(store['state'].to_dict())
+    lookup = tool(store, 'get_weapon_definition', {'reference': '.45 Automatic'})
+    assert lookup['ok'], lookup
+    definition = lookup['definition']
+    assert definition['damage'] == '1d10+2'
+    assert definition['db_policy'] == 'none'
+    assert definition['source']['revision']
+    assert definition['base_range_yards'] == 15
+    unknown = tool(store, 'get_weapon_definition', {'reference': 'unreviewed fictional blaster'})
+    assert not unknown['ok'] and unknown['status'] == 'needs_ruling'
+    assert store['state'].to_dict() == before
+
+
+def test_public_status_exposes_durable_control_ids_and_provisional_pc_differences(store):
+    tool(store, 'adjust_character', {'investigator': 'Ada', 'field': 'mp', 'delta': -2,
+                                    'event_id': 'magic:status', 'reason': 'Verified spell cost'})
+    status = tool(store, 'get_combat_status')
+    assert status['control']['combat_id'] == 'combat:wiring'
+    assert status['control']['participants'][0]['character_id'] == 'char:ada'
+    assert any(event['event_id'] == 'magic:status' for event in status['control']['correctable_events'])
+    assert status['working_changes']['char:ada']['mp'] == {'baseline': 10, 'effective': 8}
+    assert store['state'].characters['player'].mp == 10

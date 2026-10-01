@@ -128,7 +128,7 @@ def test_messaging_family_delivers_privately() -> None:
     assert messages == [("p1", "secret")]
 
 
-def test_combat_family_returns_status_and_ends() -> None:
+def test_combat_family_returns_status_and_requires_reviewed_settlement() -> None:
     state = GroupState(group_id="combat-family")
 
     def mutate(current: GroupState, callback: Callable[[GroupState], object]) -> object:
@@ -143,7 +143,13 @@ def test_combat_family_returns_status_and_ends() -> None:
             state, "add_npc_to_combat", {"name": "Cultist", "dex": 50, "hp": 10}, [], [],
         )
         status = keeper._execute_tool(state, "get_combat_status", {}, [], [])
-        ended = keeper._execute_tool(state, "end_combat", {}, [], [])
+        preview = keeper._execute_tool(state, "end_combat", {}, [], [])
+        assert state.combat.active
+        ended = keeper._execute_tool(state, "confirm_combat_settlement", {
+            "combat_id": state.combat.combat_id,
+            "settlement_id": preview["preview"]["settlement_id"],
+            "reason": "Keeper reviewed the resource differences",
+        }, [], [])
 
     assert started["ok"] and added["ok"] and status["ok"] and ended["ok"]
     assert "Cultist" in status["status"]

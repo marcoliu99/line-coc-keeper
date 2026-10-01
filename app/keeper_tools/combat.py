@@ -161,6 +161,33 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
             call.state, include_private=(call.speaker_role == "kp_assistant")
         ),
     }
+    if resource_bridge.managed(call.state):
+        managed = call.state.combat
+        response['control'] = {
+            'combat_id': managed.combat_id, 'revision': managed.revision, 'phase': managed.phase,
+            'current_actor_id': managed.order[managed.current_index].combatant_id if managed.order else '',
+            'interaction': {key: managed.interaction[key] for key in (
+                'kind', 'combat_id', 'action_id', 'interaction_id', 'owner_id', 'check_id', 'check_role',
+                'character_id', 'requires_injury_reconciliation',
+            ) if key in managed.interaction},
+            'actions': [{key: action[key] for key in (
+                'action_id', 'actor_id', 'target_id', 'completed', 'needs_ruling', 'weapon_reference',
+            ) if key in action} for action in managed.actions.values()],
+            'correctable_events': [{key: event[key] for key in ('event_id', 'kind', 'revision')}
+                                   for event in managed.events],
+            'settlement_id': managed.settlement.get('settlement_id', ''),
+            'participants': [{'combatant_id': p.combatant_id, 'character_id': p.character_id,
+                              'name': p.display_name} for p in managed.order],
+        }
+        response['working_changes'] = {
+            identity: {field: {'baseline': baseline[field], 'effective': managed.working_resources[identity][field]}
+                       for field in ('hp', 'luck', 'san', 'mp', 'weapons', 'status_tags', 'injury')
+                       if baseline[field] != managed.working_resources[identity][field]}
+            for identity, baseline in managed.baseline_resources.items()
+        }
+    response['postcombat_controls'] = [{key: obligation.get(key) for key in (
+        'obligation_id', 'combat_id', 'character_id', 'kind', 'status', 'next_trigger',
+    )} for obligation in call.state.postcombat_obligations if obligation.get('status') != 'resolved']
     ended = combat.last_ended_combat_evidence(
         call.state, include_private=(call.speaker_role == "kp_assistant")
     )

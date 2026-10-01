@@ -197,7 +197,7 @@ def declare_combat_effect(call: ToolCall) -> dict[str, Any]:
             target_id=call.input['target_id'], severity_id=call.input['severity_id'],
             scope=call.input.get('scope', 'incident'), reason=reason,
             stop_condition=call.input['stop_condition'], timing=call.input.get('timing', 'round_end'),
-            special_rule=call.input.get('special_rule'))
+            special_rule=call.input.get('special_rule'), defense=call.input.get('defense', 'none'))
     return _mutate(call, operation)
 
 
@@ -242,3 +242,12 @@ def reconcile_combat_correction(call: ToolCall) -> dict[str, Any]:
             injury_by_character=call.input['injury_by_character'],
             acknowledge_action_ids=call.input['acknowledge_action_ids'])
     return _mutate(call, operation)
+
+
+def get_weapon_definition(call: ToolCall) -> dict[str, Any]:
+    """Definition lookup establishes no owned weapon identity or ammunition."""
+    lookup = combat_rules.resolve_weapon(call.input['reference'])
+    return {'ok': lookup.status == 'resolved', 'status': lookup.status,
+            'definition': asdict(lookup.definition) if lookup.definition else None,
+            'candidates': [asdict(d) for d in lookup.candidates], 'reason': lookup.reason,
+            'note': 'Reviewed type lookup does not establish ownership, ammo or scenario authority'}
