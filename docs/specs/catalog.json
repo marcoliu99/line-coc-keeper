@@ -1662,6 +1662,15 @@
       ],
       "path": "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes.md",
       "zh_path": "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes_zh.md"
+    },
+    {
+      "title": "Map connectivity reliability follow-up",
+      "zh": "Map connectivity reliability 補強",
+      "category": "bug",
+      "status": "in_progress",
+      "evidence": [],
+      "path": "docs/specs/bug/pdf_map_connectivity_reliability.md",
+      "zh_path": "docs/specs/bug/pdf_map_connectivity_reliability_zh.md"
     }
   ]
 }
