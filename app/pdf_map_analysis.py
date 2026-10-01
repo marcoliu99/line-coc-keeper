@@ -12,6 +12,7 @@ from typing import Any, Literal, TypedDict
 
 from app import config, scene_map
 from app import pdf_map_evidence as maps
+from app.providers import image_diagnostics
 from app.providers.registry import analysis_provider
 
 VERSION = 'image-map-certification-v2'
@@ -164,6 +165,17 @@ _AUDIT_PROMPT = (
 )
 
 
+def _stage_timeout(stage: MapStage) -> float:
+    timeouts: dict[MapStage, float] = {
+        'phase1_generation': config.PDF_MAP_INVENTORY_TIMEOUT_SECONDS,
+        'phase1_audit': config.PDF_MAP_AUDIT_TIMEOUT_SECONDS,
+        'phase2_generation': config.PDF_MAP_CONNECTIVITY_TIMEOUT_SECONDS,
+        'targeted_repair': config.PDF_MAP_REPAIR_TIMEOUT_SECONDS,
+        'image_audit': config.PDF_MAP_AUDIT_TIMEOUT_SECONDS,
+    }
+    return timeouts[stage]
+
+
 def _dispatch(record: MapAnalysis, png: bytes, reserve: Callable[[], bool], stage: MapStage,
               request: Callable[[], dict | None], graph: Any = None) -> dict | None:
     if len(record['attempts']) >= 5 or not reserve():
@@ -175,15 +187,20 @@ def _dispatch(record: MapAnalysis, png: bytes, reserve: Callable[[], bool], stag
                'validation_errors': list(record['validation_errors']) + list(record['completeness_errors'])}
     record['attempts'].append(attempt)
     started = time.perf_counter()
-    try:
-        output = request()
-        attempt['output_evidence'] = copy.deepcopy(output)
-        return output
-    except Exception as error:  # noqa: BLE001 - failed import evidence remains private.
-        attempt['failure'] = type(error).__name__
-        return None
-    finally:
-        attempt['elapsed_seconds'] = round(time.perf_counter() - started, 3)
+    with image_diagnostics.capture(stage) as failures:
+        try:
+            output = request()
+            attempt['output_evidence'] = copy.deepcopy(output)
+            if output is None and not failures:
+                image_diagnostics.record(config.ANALYSIS_PROVIDER, 'EmptyResponse')
+            return output
+        except Exception as error:  # noqa: BLE001 - quarantine failure without private exception text.
+            image_diagnostics.record(config.ANALYSIS_PROVIDER, error)
+            return None
+        finally:
+            if failures:
+                attempt['failure'] = failures[-1]
+            attempt['elapsed_seconds'] = round(time.perf_counter() - started, 3)
 
 
 def _label_key(text: str) -> str:
@@ -261,7 +278,7 @@ def _audit(record: MapAnalysis, png: bytes, graph: dict, reserve: Callable[[], b
              for room in graph['rooms'] for index, edge in enumerate(room.get('exits', []))]
     prompt = _AUDIT_PROMPT + '\nINPUT_JSON\n' + json.dumps({'graph': graph, 'edge_inventory': edges}, ensure_ascii=False)
     evidence = _dispatch(record, png, reserve, 'image_audit', lambda: provider.analyze_image(
-        png, _AUDIT_TOOL, prompt, timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS, max_retries=0), graph)
+        png, _AUDIT_TOOL, prompt, timeout=_stage_timeout('image_audit'), max_retries=0), graph)
     if not isinstance(evidence, dict):
         record['completeness_errors'] = list(dict.fromkeys(record['completeness_errors'] + ['image_audit_unavailable']))
         return False
@@ -281,9 +298,12 @@ _LOCATION_SCHEMA = {'type': 'object', 'properties': {
     'kind': {'type': 'string', 'enum': ['location', 'room', 'furniture', 'object']},
     'evidence': {'type': 'string'}},
     'required': ['id_hint', 'label', 'floor_or_section', 'visible', 'kind', 'evidence']}
-_EDGE_SCHEMA = {'type': 'object', 'properties': {
+_EDGE_SCHEMA: dict[str, Any] = {'type': 'object', 'properties': {
     key: {'type': 'string'} for key in ('id', 'from', 'to', 'type', 'compass', 'visual_basis', 'evidence')},
     'required': ['id', 'from', 'to', 'type', 'compass', 'visual_basis', 'evidence']}
+for _field in ('type', 'visual_basis'):
+    _EDGE_SCHEMA['properties'][_field]['enum'] = ['door', 'open_passage', 'stairs', 'one_way']
+_EDGE_SCHEMA['properties']['compass']['enum'] = list(maps.COMPASS_DIRECTIONS)
 _ENTRY_SCHEMA = {'type': 'object', 'properties': {
     'status': {'type': 'string', 'enum': ['resolved', 'unresolved']},
     'room_id': {'type': 'string'}, 'evidence': {'type': 'string'}, 'reason': {'type': 'string'}},
@@ -327,7 +347,7 @@ def _request(record: MapAnalysis, png: bytes, reserve: Callable[[], bool], stage
     prompt = _IMAGE_RULES + instruction + '\nINPUT_JSON\n' + json.dumps(payload, ensure_ascii=False)
     count = len(record['attempts'])
     response = _dispatch(record, png, reserve, stage, lambda: provider.analyze_image(
-        png, tool, prompt, timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS, max_retries=0), graph)
+        png, tool, prompt, timeout=_stage_timeout(stage), max_retries=0), graph)
     if len(record['attempts']) > count:
         record['attempts'][-1]['input_evidence_sha256'] = graph_hash(payload)
     return response

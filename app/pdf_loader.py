@@ -31,12 +31,13 @@ from app import (
     pdf_map_analysis,
     pdf_ocr,
     pdf_quality,
+    pdf_raster_source,
 )
 from app.markitdown_shim import build_markitdown
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_VERSION = 'multicolumn-v7'
+PIPELINE_VERSION = 'multicolumn-v8'
 RENDERER_VERSION = 1
 PdfExtraction = tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]
 PageDisposition = Literal['accepted', 'needs_review', 'legacy_route', 'soft_review']
@@ -538,13 +539,14 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if graphic and (map_heading or short_map_title):
                 map_candidates.add(number)
                 pending[number] = images[number]
-            raster_source_gap = any((rect & page.rect).get_area() >= page.rect.get_area() * .5
-                                    for image in page.get_images()
-                                    for rect in page.get_image_rects(image[0]))
+            raster_source_gap = pdf_raster_source.raster_source_gap(
+                page, native, minimum_text=_LOW_TEXT_THRESHOLD)
             safe_short_native = bool(native.strip()
-                                     and (not raster_source_gap or bool(pairs))
+                                     and not raster_source_gap
                                      and '\ufffd' not in text
                                      and all(p['status'] == 'matched' for p in pdf_quality.check_pairs(pairs, text)))
+            if raster_source_gap:
+                pending[number] = images[number]
             if len(text) < _LOW_TEXT_THRESHOLD:
                 warnings.append("low_text")
                 if graphic and not safe_short_native:
@@ -557,7 +559,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                     "layout_decision": decision, "graphic_evidence": graphic,
                                     "safe_short_native": safe_short_native,
                                     "raster_source_gap": raster_source_gap,
-                                    "requires_image_transcription": bool(graphic and len(text) < _LOW_TEXT_THRESHOLD
+                                    "requires_image_transcription": bool(graphic and (raster_source_gap or len(text) < _LOW_TEXT_THRESHOLD)
                                                                            and not safe_short_native),
                                     "source_kind": ('native_text_absent' if not native.strip() else
                                                     'native_text_present_but_short' if len(native) < _LOW_TEXT_THRESHOLD
@@ -566,7 +568,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         # adapter. Already readable layout pages never trigger whole-book OCR.
         for number in list(pending):
             row = report['pages'][number - 1]
-            if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD or local_page_budget <= 0:
+            if (len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD and not row['requires_image_transcription']) or local_page_budget <= 0:
                 continue  # Readable map labels still require scene_map, not whole-page OCR.
             local_page_budget -= 1
             chosen, attempts = recover_local_ocr(pending[number], texts[number - 1],
@@ -582,11 +584,14 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if chosen:
                 texts[number - 1] = chosen
                 row['method'] += '+local_page_ocr'
-                if len(chosen) >= _LOW_TEXT_THRESHOLD and number not in map_candidates:
+                if (len(chosen) >= _LOW_TEXT_THRESHOLD and number not in map_candidates
+                        and not row['requires_image_transcription']):
                     pending.pop(number)
-        alternate_pages = [number for number in pending if len(texts[number - 1]) < _LOW_TEXT_THRESHOLD
-                           and not any(a['status'] == 'accepted' for a in
-                                       report['pages'][number - 1].get('page_ocr_attempts', []))]
+        alternate_pages = [number for number in pending if (len(texts[number - 1]) < _LOW_TEXT_THRESHOLD
+                           or report['pages'][number - 1]['requires_image_transcription'])
+                           and (report['pages'][number - 1]['requires_image_transcription']
+                                or not any(a['status'] == 'accepted' for a in
+                                           report['pages'][number - 1].get('page_ocr_attempts', [])))]
         alternate: dict[int, str] = MarkitdownPages()
         # Convert separately so each image request is charged to its physical page,
         # even when a converter makes several requests for embedded images.
@@ -627,7 +632,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     report["pages"][number - 1]["method"] = "markitdown"
                 else:
                     report["pages"][number - 1]["warnings"].append("ocr_evidence_loss")
-                if len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD and number not in map_candidates:
+                if (len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD and number not in map_candidates
+                        and not row['requires_image_transcription']):
                     pending.pop(number)
 
         # Image-only candidates need independent image evidence, never native-empty certification.
@@ -771,6 +777,12 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             publication: PagePublication = {'disposition': _publication_disposition(
                 status, bool(source_blocking_reasons)), 'source_blocking_reasons': source_blocking_reasons}
             row.update(publication)
+        # Recheck the final canonical source even on reusable cached pages.
+        if pdf_quality.has_corrupted_mechanics(text):
+            reasons = row.setdefault('source_blocking_reasons', [])
+            if 'source_mechanics_unresolved' not in reasons:
+                reasons.append('source_mechanics_unresolved')
+            row['disposition'] = 'needs_review'
         if not text.strip() and not row.get('verified_illustration') and i + 1 not in maps:
             row["warnings"].append("empty_page")
         # Candidate diagnostics remain available, but do not imply that the

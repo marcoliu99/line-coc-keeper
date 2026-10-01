@@ -27,7 +27,7 @@ from app.config import (
     LOG_SLOW_OPERATION_MS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
-from app.providers import retry
+from app.providers import image_diagnostics, retry
 from app.providers.client_lifecycle import AsyncClientLifecycle
 
 _client_lifecycle = AsyncClientLifecycle("gemini", PROVIDER_SHUTDOWN_GRACE_SECONDS)
@@ -250,6 +250,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
     tool call's args dict, or None on any failure (no GEMINI_API_KEY, the
     call raised, or no matching function call came back)."""
     if not GEMINI_API_KEY:
+        image_diagnostics.record('gemini', 'MissingCredentials')
         return None
     try:
         from google import genai
@@ -280,8 +281,10 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
         for fc in response.function_calls or []:
             if fc.name == tool["name"]:
                 return dict(fc.args or {})
+        image_diagnostics.record('gemini', 'MissingToolCall')
         return None
-    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+    except Exception as error:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+        image_diagnostics.record('gemini', error)
         return None
 
 

@@ -78,7 +78,7 @@ def safe_import_path(import_dir: Path, filename: str) -> Path:
 def _read_json(path: Path, fallback: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return fallback
 
 
@@ -318,6 +318,43 @@ def _filter_index(items: list[dict], pages: set[int]) -> list[dict]:
     return [item for item in items if isinstance(item, dict) and isinstance(item.get("page"), int) and item["page"] in pages]
 
 
+def _certified_library_maps(root: Path, manifest: dict, pages: set[int]) -> dict:
+    """Old or tampered PDF maps fail closed for Map Engine, never for source."""
+    from app import pdf_map_analysis
+
+    candidates = _read_json(root / 'scene_maps.json', {})
+    provenance = _read_json(root / '.ingestion-provenance.json', {})
+    if not isinstance(candidates, dict) or not isinstance(provenance, dict):
+        return {}
+    if not candidates:
+        return {}
+    try:
+        pdf_hash = hashlib.sha256((root / 'source.pdf').read_bytes()).hexdigest()
+    except OSError:
+        return {}
+    if provenance.get('pdf_sha256') != pdf_hash or manifest.get('pdf_sha256') != pdf_hash:
+        return {}
+    rows = provenance.get('pages', [])
+    rows = list(rows.values()) if isinstance(rows, dict) else rows
+    if not isinstance(rows, list):
+        return {}
+    result = {}
+    for key, graph in candidates.items():
+        if not str(key).isdigit() or int(key) not in pages:
+            continue
+        matching = [row for row in rows if isinstance(row, dict) and str(row.get('page')) == str(key)]
+        if len(matching) != 1:
+            continue
+        try:
+            image = (root / 'images' / f'page_{int(key)}.png').read_bytes()
+            if pdf_map_analysis.verified_graph(graph, matching[0].get('map_analysis'), image):
+                result[str(key)] = graph
+        except (OSError, KeyError, TypeError, ValueError, IndexError, AttributeError):
+            # Malformed archived evidence must not break canonical activation.
+            continue
+    return result
+
+
 def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any]:
     root = _path(scenario_id)
     manifest = _read_json(root / "manifest.json", None)
@@ -335,7 +372,7 @@ def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any
     if not context_text.strip() and text.strip():
         context_text = text
     page_set = {p for c in window for p in range(c["start_page"], c["end_page"] + 1)}
-    maps = {str(k): v for k, v in _read_json(root / "scene_maps.json", {}).items() if str(k).isdigit() and int(k) in page_set}
+    maps = _certified_library_maps(root, manifest, page_set)
     all_indexes = _read_json(root / "indexes.json", {"npcs": [], "locations": []})
     indexes = {"npcs": _filter_index(all_indexes.get("npcs", []), page_set), "locations": _filter_index(all_indexes.get("locations", []), page_set)}
     return {"manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}

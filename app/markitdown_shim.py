@@ -35,6 +35,7 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
+from app import config
 from app.config import (
     ANALYSIS_PROVIDER,
     ANTHROPIC_API_KEY,
@@ -86,7 +87,8 @@ def _build_anthropic_openai_shim(model_default: str) -> Any:
     anthropic.Anthropic() instead."""
     import anthropic
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0,
+                                 timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS)
     completions = _AnthropicChatCompletions(client, model_default)
     return SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
@@ -126,8 +128,11 @@ def _build_gemini_openai_shim(model_default: str) -> Any:
     google-genai (see app/providers/gemini_provider.py — same SDK, same
     "not exercised against a live key" caveat applies to this shim too)."""
     from google import genai
+    from google.genai import types
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(
+        timeout=int(config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS * 1000),
+        retry_options=types.HttpRetryOptions(attempts=1)))
     completions = _GeminiChatCompletions(client, model_default)
     return SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
@@ -180,7 +185,8 @@ def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | Non
     if ANALYSIS_PROVIDER == "openai" and OPENAI_API_KEY:
         import openai
 
-        llm_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        llm_client = openai.OpenAI(api_key=OPENAI_API_KEY, max_retries=0,
+                                   timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS)
         llm_model = OPENAI_MODEL
     elif ANALYSIS_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
         llm_client = _build_anthropic_openai_shim(ANTHROPIC_MODEL)

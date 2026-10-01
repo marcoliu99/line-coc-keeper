@@ -107,8 +107,13 @@ def test_short_safe_native_mechanics_survive_graphic_challenger_failure(scanned_
 
     from app import pdf_loader
 
-    with pymupdf.open(stream=scanned_page, filetype='pdf') as doc:
-        doc[0].insert_text((40, 60), 'STR 60 DEX 55 Damage 1d10+DB')
+    # Safe native source with a decorative graphic, not an untranscribed
+    # full-page scan whose additional mechanics are unknown.
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.insert_text((40, 60), 'STR 60 DEX 55 Damage 1d10+DB')
+        for index in range(8):
+            page.draw_rect((40 + index * 10, 710, 45 + index * 10, 720))
         raw = doc.tobytes()
     report = {}
     text, review, *_ = pdf_loader.extract_text(raw, quality_report=report)

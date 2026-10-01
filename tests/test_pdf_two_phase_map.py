@@ -22,9 +22,14 @@ def final_audit(payload):
 
 def test_two_phase_inventory_audit_precedes_connectivity_and_canonical_build(monkeypatch):
     calls = []
+    monkeypatch.setattr(config, 'PDF_MAP_INVENTORY_TIMEOUT_SECONDS', 11)
+    monkeypatch.setattr(config, 'PDF_MAP_CONNECTIVITY_TIMEOUT_SECONDS', 22)
+    monkeypatch.setattr(config, 'PDF_MAP_AUDIT_TIMEOUT_SECONDS', 44)
     def analyze(png, tool, prompt, **options):
         assert png == b'original-image'
         assert options['max_retries'] == 0
+        expected_timeout = {'inventory_map_locations': 11, 'extract_map_connectivity': 22}.get(tool['name'], 44)
+        assert options['timeout'] == expected_timeout
         calls.append(tool['name'])
         if tool['name'] == 'inventory_map_locations':
             assert 'exits' not in tool['input_schema']['properties']
@@ -34,6 +39,10 @@ def test_two_phase_inventory_audit_precedes_connectivity_and_canonical_build(mon
             return {'complete': True, 'uncertainties': [], 'confirmed_ids': [payload['inventory'][0]['id']],
                     'missing_locations': [loc('Lamp Room', 'side elevation', 'lamp')]}
         if tool['name'] == 'extract_map_connectivity':
+            schema = tool['input_schema']['properties']['edges']['items']['properties']
+            for key in ('type', 'visual_basis'):
+                assert schema[key]['enum'] == ['door', 'open_passage', 'stairs', 'one_way']
+            assert schema['compass']['enum'] == ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'U', 'D']
             assert len(payload['inventory']) == 2
             return {'entry': {'status': 'resolved', 'room_id': 'entrance', 'evidence': 'Visible entry'},
                     'edges': [{'from': 'entrance', 'to': 'lamp', 'type': 'stairs', 'visual_basis': 'stairs',
@@ -155,3 +164,28 @@ def test_malformed_removal_cannot_be_applied_or_replayed_as_certificate(map_evid
     assert rejected.graph is None
     assert rejected.analysis['status'] == 'MAP_GRAPH_INVALID'
     assert 'malformed_patch' in rejected.analysis['validation_errors']
+
+
+def test_connectivity_schema_is_closed_and_builder_rejects_free_text():
+    from app import pdf_map_evidence
+
+    inventory, errors = pdf_map_evidence.merge_inventory([], [loc(), loc('Hall', 'ground', 'hall')])
+    assert errors == []
+    edge = {'id': 'door', 'from': 'entrance', 'to': 'hall', 'type': 'door',
+            'visual_basis': 'door', 'compass': 'E', 'evidence': 'Visible doorway'}
+    evidence = {'entry': {'status': 'resolved', 'room_id': 'entrance', 'evidence': 'Front door'},
+                'edges': [edge], 'missing_locations': []}
+    normalized, errors = pdf_map_evidence.normalize_connectivity(evidence)
+    assert errors == []
+    graph, errors = pdf_map_evidence.build_graph(inventory, normalized)
+    assert errors == []
+    assert graph['rooms'][0]['exits'][0]['visual_basis'] == 'door'
+    edge['visual_basis'] = 'visible doorway'
+    normalized, _ = pdf_map_evidence.normalize_connectivity(evidence)
+    _, errors = pdf_map_evidence.build_graph(inventory, normalized)
+    assert any(error['code'] == 'unsupported_edge' for error in errors)
+    edge['visual_basis'] = 'door'
+    edge['compass'] = 'roughly east'
+    normalized, _ = pdf_map_evidence.normalize_connectivity(evidence)
+    _, errors = pdf_map_evidence.build_graph(inventory, normalized)
+    assert any(error['code'] == 'invalid_compass' for error in errors)

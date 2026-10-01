@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-VERSION = 'ai-import-repair-v9'
+VERSION = 'ai-import-repair-v10'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 _DICE = re.compile(r'(?<!\w)(?:\d*[dD]\d+(?:[+-](?:\d+|[Dd][Bb]))?)(?!\w)')
@@ -13,6 +13,17 @@ _PERCENTAGES = re.compile(r'(?<!\w)\d+(?:\.\d+)?%')
 _TRANSCRIPTION_TOKEN = re.compile(r'[\u3400-\u9fff]|[^\W_]+|[-+](?=\s*\d)|[$€£¥<>=/]', re.UNICODE)
 _IMAGE_MECHANIC = re.compile(
     r'(?<!\w)([+-]?)\s*(\d*[dD]\d+(?:[+-](?:\d+|[Dd][Bb]))?|\d+(?:\.\d+)?%?)(?!\w)')
+
+
+# Replacement glyphs inside a recognizable mechanical token cannot be
+# authoritative, even when no stat/skill label was recovered from the page.
+_CORRUPTED_MECHANIC = re.compile(
+    r'(?<!\w)(?:[\d�]*[dD][\d�]+(?:[+-][\d�]+)?|[\d�]+(?:\.[\d�]+)?%|[+-][\d�]+)(?!\w)')
+
+
+def has_corrupted_mechanics(text: str) -> bool:
+    """Check final source tokens; ordinary damaged prose is not a dice rule."""
+    return any('�' in match.group() for match in _CORRUPTED_MECHANIC.finditer(text))
 
 
 def normalize(text: str) -> str:

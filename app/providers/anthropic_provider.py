@@ -20,7 +20,7 @@ from app.config import (
     LOG_SLOW_OPERATION_MS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
-from app.providers import retry
+from app.providers import image_diagnostics, retry
 from app.providers.client_lifecycle import AsyncClientLifecycle
 
 _client_lifecycle = AsyncClientLifecycle("anthropic", PROVIDER_SHUTDOWN_GRACE_SECONDS)
@@ -249,6 +249,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
     tool's input dict, or None on any failure (no ANTHROPIC_API_KEY, the call
     raised, or no matching tool_use came back)."""
     if not ANTHROPIC_API_KEY:
+        image_diagnostics.record('anthropic', 'MissingCredentials')
         return None
     try:
         import base64
@@ -273,9 +274,14 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
             )
         for block in response.content:
             if block.type == "tool_use" and block.name == tool["name"]:
+                if not isinstance(block.input, dict):
+                    image_diagnostics.record('anthropic', 'InvalidToolArguments')
+                    return None
                 return block.input
+        image_diagnostics.record('anthropic', 'MissingToolCall')
         return None
-    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+    except Exception as error:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+        image_diagnostics.record('anthropic', error)
         return None
 
 

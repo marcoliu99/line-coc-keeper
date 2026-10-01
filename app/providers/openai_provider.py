@@ -37,7 +37,7 @@ from app.config import (
     OPENAI_MODEL,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
-from app.providers import admission, retry, turn_budget
+from app.providers import admission, image_diagnostics, retry, turn_budget
 from app.providers.client_lifecycle import AsyncClientLifecycle
 from app.services import input_budget
 
@@ -637,6 +637,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
     parsed arguments dict, or None on any failure (no OPENAI_API_KEY, the
     call raised, or no matching function_call came back)."""
     if not OPENAI_API_KEY:
+        image_diagnostics.record('openai', 'MissingCredentials')
         return None
     try:
         import base64
@@ -670,9 +671,15 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
         )
         for item in response.output:
             if item.type == "function_call" and item.name == tool["name"]:
-                return json.loads(item.arguments or "{}")
+                arguments = json.loads(item.arguments or "{}")
+                if not isinstance(arguments, dict):
+                    image_diagnostics.record('openai', 'InvalidToolArguments')
+                    return None
+                return arguments
+        image_diagnostics.record('openai', 'MissingToolCall')
         return None
-    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+    except Exception as error:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+        image_diagnostics.record('openai', error)
         return None
 
 

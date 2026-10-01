@@ -51,6 +51,7 @@ def traversal_kind(value: Any) -> TraversalKind | None:
 
 _COMPASS = dict(zip(['north', 'north_northeast', 'northeast', 'east_northeast', 'east', 'east_southeast', 'southeast', 'south_southeast', 'south', 'south_southwest', 'southwest', 'west_southwest', 'west', 'west_northwest', 'northwest', 'north_northwest', 'up', 'down'],
                     ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'U', 'D'], strict=True))
+COMPASS_DIRECTIONS = tuple(_COMPASS.values())
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
 
 
