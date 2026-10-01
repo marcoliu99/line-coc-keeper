@@ -130,3 +130,18 @@ tests 涵蓋 independent agreement、numeric/dice/percentage 衝突、unsupporte
 保留 PP-OCRv5_mobile_rec、PaddleOCR 3.7.0、PaddlePaddle 3.3.0、CPU、explicit setup、persistent offline cache。不加入 Surya/Camelot/Azure/JEV，不開 Docling OCR/table structure，不用 confidence publish，不放寬 numeric/dice，不改 gameplay。實作前依既有 quality conventions 確定 narrow deterministic prose comparison；不確定就保留 review。驗證資料只屬 import-time，不建立 gameplay dependency。
 
 本次實作補充：image evidence／verification／metrics 集中於 import-only app/pdf_image_transcription.py；新 verification 共用 durable layout provider budget，在 dispatch 前 checkpoint。明確 AI 無文字分類加上 Paddle empty 可排除 Tesseract noise；其他衝突候選保持 private。Linux CPU smoke 由獨立 PR workflow 執行，下載僅發生於 explicit setup。驗證結果另見 pdf_ocr_image_only_validation_zh.md。
+
+
+## 已授權的 graph correctness／Linux safety 後續修正（2026-10-01）
+
+Operator 明確授權直接在 PR155 修改 production code。維持既有 OCR／reading-order 主架構、pinned offline models、exact numeric/dice gates、hidden OCR OFF 與 Docling OCR/table structure OFF。最新已交付 pipeline 是 multicolumn-v5（需求引用較早 v4），本輪 map 認證 contract 會推進 extraction identity。不得改 gameplay movement、RAG 或規則。
+
+- 分開 map 未分析、分析失敗、graph 缺失、invalid、incomplete、verified。Generated graph、驗證結果、image-visible labels 與 bounded repair provenance 只存 private page report；產生圖本身不代表認證。
+- Structural validation 檢查 typed nonempty unique room IDs、有效 entry reference、local／cross-map target syntax、compass 與 exits。Duplicate／self／conflicting／asymmetric indoor edge 為診斷；不強制所有連接 reciprocal。
+- Publication 前獨立重新看原圖，核對所有 room/location labels（含立面／其他樓層）、entry 與每條 proposed edge。實牆不得視為通道；不確定 geometry 或遺漏 image-visible locations 維持 incomplete。不得為通過檢查虛構房間或入口。
+- 每頁最多一次 image-grounded graph repair，可修 structural 或 image-evidence 缺陷；輸入包含原 PNG、目前 graph 與明確錯誤，保留 source transcription。所有 generation／audit／repair 實際 dispatch 共用既有 durable provider budget，先 reserve/checkpoint；SDK 零 retry 且 timeout 有限。記錄 attempt、provider、image/input graph hash、errors、output graph、validation、elapsed time。修後重新 validate／audit，仍失敗就 block。
+- Loader 僅回傳 certified graphs，invalid/incomplete graphs 留 private draft evidence。Library publication 再做 structural check，PDF graphs 必須有匹配 certified import report，才寫 scene_maps。推進 map／extraction identity，舊認證不能繞過新 gate。
+- Linux smoke 分成 neutral pinned raster 的實際 offline CPU inference 與 corrupted-dice rejection。保留 1d6+2 原 raster，以未修改的 mechanics gate 拒絕 ld6+2。跨 host 比對固定 PNG／font/render metadata hashes；驗證 cache ready 與 network denied。
+- 保留 image-only agreement／conflict／local-only 與 text-free illustration safety tests。尋找 real image-only authoritative positive，不放寬 lexical/mechanics gates；若證據不足，保留 blocker。
+
+已同意的公開測試 seams：scene_map validator；pdf_loader.extract_text publication/report/cache；scenario_library.save_scenario persistence；real CPU smoke 與 worker network policy。重跑 provider-enabled Haunting p7、Beacon p16，特別人工核對地下室實牆與 Service Room／Lamp Room／Lantern Gallery。保留已有公平 OFF/ON non-regression 證據並執行最終 relevant comparisons。Rollout 必須兩張圖 verified、Linux positive／corruption tests 通過、至少一個 real independent authoritative image-only case，以及 persistence safety 全達成；任一 gate 未完成維持 hold。
