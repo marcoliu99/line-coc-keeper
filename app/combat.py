@@ -221,6 +221,7 @@ def add_npc(
     attacks: list[dict[str, Any]] | None = None,
     abilities: list[dict[str, Any]] | None = None,
     source: dict[str, Any] | None = None,
+    skills: dict[str, int] | None = None,
 ) -> CombatState:
     _ensure_started(state)
     if is_ally:
@@ -245,6 +246,7 @@ def add_npc(
         attacks=attacks,
         abilities=abilities,
         source=source,
+        skills=skills,
         incomplete=not attacks and not abilities,
     )
     return add_enemy_card_to_combat(state, card.id)
@@ -460,6 +462,7 @@ def add_combatant(
     abilities: list[dict[str, Any]] | None = None,
     force_new_instance: bool = False,
     source: dict[str, Any] | None = None,
+    skills: dict[str, int] | None = None,
 ) -> AddedCombatant:
     """Add an NPC or ally to the fight, starting it (with its checkpoint) if needed.
 
@@ -474,6 +477,8 @@ def add_combatant(
     reports the defeated namesake so the caller can ask whether it's really a
     new one, and the newcomer gets a numbered display name.
     """
+    if not state.combat.active:
+        begin_combat(state)
     if not is_ally and not force_new_instance:
         existing = find_live_enemy_by_any_alias(state, name)
         if existing is not None:
@@ -481,7 +486,7 @@ def add_combatant(
     namesake = None if is_ally else _defeated_enemy_by_any_alias(state, name)
     _checkpoint_before_combat(state)
     before = {id(c) for c in state.combat.order}
-    add_npc(state, name, dex, hp, is_ally=is_ally, armor=armor, attacks=attacks, abilities=abilities, source=source)
+    add_npc(state, name, dex, hp, is_ally=is_ally, armor=armor, attacks=attacks, abilities=abilities, source=source, skills=skills)
     # add_npc may also seed the investigators when it starts the fight.
     added = next(c for c in state.combat.order if id(c) not in before and not c.is_pc)
     _number_if_shared(state, added)
@@ -1516,7 +1521,9 @@ def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> di
     except _TimingBlocked as blocked:
         retained_rolls = deepcopy(state.combat.roll_receipts)
         if blocked.result.get('retain_due'):
-            return {'ok': False, 'error': blocked.result['error'], 'blocked_by': blocked.result['blocked_by'],
+            return {'ok': blocked.result['blocked_by'] == 'pending_check',
+                    'pending': blocked.result['blocked_by'] == 'pending_check',
+                    'error': blocked.result['error'], 'blocked_by': blocked.result['blocked_by'],
                     'phase': state.combat.phase, 'interaction': deepcopy(state.combat.interaction)}
         restored = GroupState.from_dict(snapshot)
         if is_managed(state):
@@ -1780,7 +1787,7 @@ def managed_single_hit(
     if target is None:
         return {'ok': False, 'error': 'Investigator is not in this battle'}
     return apply_managed_damage(state, target.combatant_id, damage, event_id=event_id,
-                                source_id=reason, bypass_armor=True)
+                                source_id=reason, bypass_armor=True, entry_point='managed_single_hit')
 
 
 def close_legacy_combat(state: GroupState, *, event_id: str, reason: str) -> dict[str, Any]:
