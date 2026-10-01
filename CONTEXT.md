@@ -33,7 +33,7 @@ The player's choice, after a roll, of whether to spend Luck points to lower it t
 _Avoid_: luck buy-up (in prose)
 
 **Major wound**（重傷）:
-A single hit that deals at least half of an investigator's maximum HP without dropping them to 0. It requires a CON check.
+An injury caused by a single hit dealing at least half of an investigator's maximum HP; it is distinct from unconsciousness, dying and death.
 
 ### Scenario authority
 
@@ -80,3 +80,21 @@ An acknowledged change to how a prior scene was described when no consequential 
 
 **Unverified record（待驗證紀錄）**:
 A retained fact or clue without a verified source, including older records created before provenance was tracked. It may remain visible as history, but does not authorize consequential game actions until verified.
+
+### Combat design vocabulary
+
+**Combat working state（戰鬥工作狀態）**:
+The provisional resource and injury truth for participants in an unclosed battle, distinct from their last committed character state.
+_Avoid_: committed character state, shadow authority
+
+**Combat settlement（戰鬥結算）**:
+The explicit review and publication of a completed battle's final resource and injury changes.
+_Avoid_: end-of-action save
+
+**Roll receipt（擲骰紀錄）**:
+The durable result of a particular combat check or damage roll, retained when the same action is retried or resumed.
+_Avoid_: newly generated roll on retry
+
+**Combat rollback（戰鬥回滾）**:
+The explicit cancellation of an uncommitted battle's provisional changes, while retaining its historical record.
+_Avoid_: deleting combat history

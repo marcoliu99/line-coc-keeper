@@ -1484,6 +1484,15 @@
       ],
       "path": "docs/specs/enhancement/authority_provenance_design_spec.md",
       "zh_path": "docs/specs/enhancement/authority_provenance_design_spec_zh.md"
+    },
+    {
+      "title": "Table-driven combat turns and provisional settlement",
+      "zh": "查表式戰鬥回合與 provisional settlement",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
+      "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
     }
   ]
 }
