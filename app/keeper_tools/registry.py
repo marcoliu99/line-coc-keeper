@@ -1229,6 +1229,12 @@ for _spec in _SPECS:
 
 _SPECS += (
     ToolSpec(schema={
+        'name': 'run_combat_effect',
+        'description': '恢復已宣告的來源支持incident，沿用效果時點/骰值，不接受新的傷害或結果。',
+        'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'},
+                          'effect_id': {'type': 'string'}}, 'required': ['combat_id', 'effect_id']},
+    }, handler=managed_handlers.run_combat_effect, creates_check=True, invalidates_combat_status=True),
+    ToolSpec(schema={
         'name': 'run_enemy_combat_plan',
         'description': '執行plan_enemy_turn既有來源支持計畫；系統擲骰並等待原玩家防禦，不能外傳命中或傷害。',
         'input_schema': {'type': 'object', 'properties': {'plan_id': {'type': 'string'}}, 'required': ['plan_id']},

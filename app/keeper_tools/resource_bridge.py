@@ -68,3 +68,42 @@ def owned_character(state: GroupState, pending: dict[str, Any], owner_id: str) -
     if not active or not expected_id or active.character_id != expected_id:
         raise ValueError('The owned check investigator binding changed; explicit reconciliation required')
     return effective(state, active)
+
+
+def record_control_receipt(state, pending, owner_id, character, result, *, pending_luck=False, choice=None):
+    context = pending.get('combat_context', {})
+    if not context or context.get('combat_id') != state.combat.combat_id:
+        return
+    action = state.combat.actions.get(context.get('action_id', ''))
+    if action is None:
+        return
+    receipt = {'combat_id': state.combat.combat_id, 'timeline_id': pending.get('timeline_id'),
+               'owner_id': owner_id, 'character_id': character.character_id,
+               'check_id': pending['check_id'], 'decision_id': pending.get('decision_id', ''),
+               'skill': pending.get('skill_name') or pending.get('skill', ''),
+               'skill_value': result.skill_value, 'roll': result.roll, 'tier': result.tier,
+               'pending_luck': pending_luck, 'choice': choice,
+               'visibility': pending.get('visibility', 'public')}
+    cache = action.setdefault('control_delivery_receipts', {})
+    cache[pending['check_id']] = receipt
+    if pending.get('decision_id') and not pending_luck:
+        cache[pending['decision_id']] = dict(receipt)
+
+
+def control_receipt(state: GroupState, owner_id: str, identity: str, *, choice=None) -> dict | None:
+    """Read only a retained same-battle control; a new battle never replays it."""
+    if not identity or not state.combat.combat_id:
+        return None
+    closed = state.closed_combat_receipts.get(state.combat.combat_id, {})
+    if closed.get('status') == 'rolled_back':
+        return None
+    active = state.get_active_character(owner_id)
+    timeline = state.timeline_id or f'legacy-{state.group_id}'
+    for action in state.combat.actions.values():
+        receipt = action.get('control_delivery_receipts', {}).get(identity)
+        if (receipt and receipt.get('owner_id') == owner_id and receipt.get('timeline_id') == timeline
+                and receipt.get('combat_id') == state.combat.combat_id and active
+                and receipt.get('character_id') == active.character_id
+                and (choice is None or receipt.get('choice') == choice)):
+            return dict(receipt)
+    return None

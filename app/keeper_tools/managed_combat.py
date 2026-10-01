@@ -296,7 +296,8 @@ def reconcile_combat_correction(call: ToolCall) -> dict[str, Any]:
         reason = _battle(state, call)
         return combat_flow.reconcile_correction(state, event_id=call.input['event_id'], reason=reason,
             injury_by_character=call.input['injury_by_character'],
-            acknowledge_action_ids=call.input['acknowledge_action_ids'])
+            acknowledge_action_ids=call.input['acknowledge_action_ids'],
+            acknowledge_check_ids=call.input.get('acknowledge_check_ids'))
     return _mutate(call, operation)
 
 
@@ -335,3 +336,13 @@ def run_enemy_combat_plan(call: ToolCall) -> dict[str, Any]:
     from app import combat_flow
 
     return _mutate(call, lambda state: combat_flow.run_enemy_plan(state, call.input['plan_id']))
+
+
+def run_combat_effect(call: ToolCall) -> dict[str, Any]:
+    from app import combat_flow
+
+    def operation(state):
+        if call.input['combat_id'] != state.combat.combat_id:
+            return {'ok': False, 'error': 'Effect retry requires its current source battle'}
+        return combat_flow.run_effect(state, call.input['effect_id'])
+    return _mutate(call, operation)

@@ -504,3 +504,70 @@ def test_second_battle_same_enemy_never_reuses_closed_retained_order():
     assert not added.reused
     assert added.combatant is not enemy
     assert pc.hp == 10
+
+
+def test_incident_damage_uses_own_identity_even_after_shared_timing_processed():
+    state, pc, _ = battle()
+    assert combat.process_timing(state, 'round_end', 'pc:pc1') == []
+    with patch('app.dice.random.randint', return_value=2) as rng:
+        result = combat_flow.declare_effect(state, effect_id='incident', target_id='pc:pc1', severity_id='minor',
+                                           scope='incident', reason='Reviewed incident', stop_condition='Incident complete')
+        duplicate = combat_flow.declare_effect(state, effect_id='incident', target_id='pc:pc1', severity_id='minor',
+                                              scope='incident', reason='retry', stop_condition='Incident complete')
+    assert result == duplicate
+    assert rng.call_count == 1
+    assert combat_resources.effective_character(state, pc).hp == 8
+    assert state.combat.effects == []
+
+
+def test_blocked_incident_retries_same_draw_and_cannot_settle_due_hazard():
+    state, pc, _ = battle()
+    state.pending_checks['player'] = {'type': 'skill', 'check_id': 'other'}
+    with patch('app.dice.random.randint', return_value=6) as rng:
+        result = combat_flow.declare_effect(state, effect_id='incident', target_id='pc:pc1', severity_id='severe',
+                                           scope='incident', reason='Reviewed incident', stop_condition='Incident complete')
+        assert result['blocked_by'] == 'pending_check'
+        assert combat_resources.effective_character(state, pc).hp == 10
+        with pytest.raises(combat_resources.CombatAdmissionError):
+            combat_flow.postcombat_obligations(state)
+        state.pending_checks.clear()
+        applied = combat_flow.run_effect(state, 'incident')
+    assert applied['ok']
+    assert rng.call_count == 1
+    assert combat_resources.effective_character(state, pc).hp == 4
+
+
+def test_correction_reconciliation_is_explicit_injury_review_without_reroll():
+    state, pc, _ = battle()
+    combat.managed_single_hit(state, pc, 10, event_id='fatal', reason='Initial ruling')
+    original_rolls = deepcopy(state.combat.roll_receipts)
+    combat_resources.correct_event(state, 'fatal:hp', event_id='correction', changes={'after': 8}, reason='Verified smaller hit')
+    assert state.combat.phase == 'NEEDS_RULING'
+    with patch('app.dice.random.randint') as rng:
+        result = combat_flow.reconcile_correction(state, event_id='review', reason='Review corrected patient injury',
+            injury_by_character={'pc1': {}}, acknowledge_action_ids=list(state.combat.actions))
+    assert result['ok']
+    assert state.combat.roll_receipts == original_rolls
+    assert combat_resources.effective_character(state, pc).hp == 8
+    assert not combat_resources.effective_character(state, pc).injury
+    assert state.combat.phase == 'READY'
+    rng.assert_not_called()
+
+
+@pytest.mark.parametrize(('distance', 'base', 'allowed'), [(21, 20, True), (81, 20, False), (float('nan'), 20, False), (1, 0, False)])
+def test_npc_ranged_trusted_range_difficulty_or_refusal_before_draw(distance, base, allowed):
+    state, _, enemy = battle(npc_first=True)
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.source.update(attack_mode='single_shot', distance_yards=distance, base_range_yards=base)
+    card.attacks[0].ammo_or_uses = 3
+    card.attacks[0].range_band = 'near'
+    plan = combat.plan_enemy_turn(state)
+    with patch('app.dice.random.randint') as rng:
+        result = combat.resolve_enemy_action(state, plan['plan_id'])
+    assert result['ok'] == allowed
+    if allowed:
+        assert state.combat.actions['npc:' + plan['plan_id']]['difficulty'] == 'hard'
+    else:
+        assert result['phase'] == 'NEEDS_RULING'
+    assert card.attacks[0].ammo_or_uses == 3
+    rng.assert_not_called()

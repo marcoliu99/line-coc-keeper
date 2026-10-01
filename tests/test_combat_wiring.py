@@ -600,3 +600,81 @@ def test_committed_combat_report_uses_native_damage_and_existing_enemy_privacy(s
     assert status['last_ended_combat']['last_damage']['target'] == 'Cultist'
     assert 'hp' not in status['last_ended_combat']['last_damage']
     assert store['state'].last_combat_report['provisional'] is False
+
+
+def test_consumed_check_and_luck_buttons_replay_same_battle_receipts_without_mutation(store):
+    from app.commands.handlers import buttons
+    enemy = add_reviewed_enemy(store)
+    actor = next(p for p in store['state'].combat.order if p.is_pc)
+    with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(50, 55, 0, 0, 'fail', False)):
+        assert tool(store, 'declare_combat_action', {
+            'action_id': 'shot:replay', 'actor_id': actor.combatant_id, 'target_id': enemy.combatant_id,
+            'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
+        })['ok']
+        check_id = store['state'].pending_checks['player']['check_id']
+        resolved = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+    assert resolved.decision_id
+    notifications = []
+    async def notify(message):
+        notifications.append(message)
+    async def noop(*args):
+        return None
+    io = buttons.ButtonIO(notify, noop, noop, noop, noop, noop, noop)
+    before = deepcopy(store['state'].to_dict())
+    writes = store['writes']
+    with (patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())),
+          patch.object(dice, 'skill_check', side_effect=AssertionError('replay RNG'))):
+        asyncio.run(buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
+    assert '55' in notifications[-1] and 'Luck' in notifications[-1]
+    assert store['state'].to_dict() == before and store['writes'] == writes
+    assert legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'skip').should_finalize
+    before = deepcopy(store['state'].to_dict())
+    writes = store['writes']
+    with patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())):
+        asyncio.run(buttons.handle_luck_button('wiring', 'player', 'player', 'skip', resolved.decision_id, io))
+        assert '55' in notifications[-1] and '已保存' in notifications[-1]
+        asyncio.run(buttons.handle_check_button('wiring', 'foreign', 'player', '', check_id, io))
+        assert '不是你的' in notifications[-1]
+    assert store['state'].to_dict() == before and store['writes'] == writes
+    assert tool(store, 'rollback_combat', {'combat_id': 'combat:wiring', 'event_id': 'rollback:replay',
+                                         'reason': 'Keeper explicitly cancels source battle'})['ok']
+    with patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())):
+        asyncio.run(buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
+    assert '失效' in notifications[-1]
+
+
+def test_controller_reconciles_retained_injury_control_by_explicit_diagnostic_identity(store):
+    assert tool(store, 'adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': -6,
+                                           'event_id': 'correctable:hit', 'reason': 'Verified incident'})['ok']
+    check_id = store['state'].pending_checks['player']['check_id']
+    assert tool(store, 'correct_combat_event', {
+        'combat_id': 'combat:wiring', 'event_id': 'correctable:review', 'target_event_id': 'correctable:hit:hp',
+        'changes': {'after': 10}, 'reason': 'Keeper corrected the authoritative source incident',
+    })['ok']
+    status = tool(store, 'get_combat_status')
+    assert status['control']['retained_controls'][0]['check_id'] == check_id
+    with patch.object(dice, 'skill_check', side_effect=AssertionError('correction rerolled original')):
+        result = tool(store, 'reconcile_combat_correction', {
+            'combat_id': 'combat:wiring', 'event_id': 'correctable:reconcile',
+            'reason': 'Keeper acknowledged obsolete injury wait and every retained action',
+            'injury_by_character': {'char:ada': {}},
+            'acknowledge_action_ids': list(store['state'].combat.actions), 'acknowledge_check_ids': [check_id],
+        })
+    assert result['ok'], result
+    assert not store['state'].pending_checks
+    assert effective(store).hp == 10 and effective(store).injury == {}
+
+
+def test_explicit_incident_runner_retry_keeps_native_roll_and_damage(store):
+    assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
+    enemy = next(p for p in store['state'].combat.order if p.side == 'enemy')
+    assert tool(store, 'declare_combat_effect', {
+        'combat_id': 'combat:wiring', 'effect_id': 'incident:retry', 'target_id': enemy.combatant_id,
+        'severity_id': 'minor', 'scope': 'incident', 'stop_condition': 'One reviewed incident',
+        'reason': 'Keeper sourced minor incident',
+    })['ok']
+    before = deepcopy(store['state'].to_dict())
+    with patch.object(dice, 'roll_expression', side_effect=AssertionError('retry incident RNG')):
+        replay = tool(store, 'run_combat_effect', {'combat_id': 'combat:wiring', 'effect_id': 'incident:retry'})
+    assert replay['ok'], replay
+    assert store['state'].to_dict() == before
