@@ -1,6 +1,6 @@
 # Ordered source-backed route segments
 
-Status: implemented; independent review pending. PR #155; enhancement/pdf-multicolumn-ingestion.
+Status: implemented and independently reviewed. PR #155; enhancement/pdf-multicolumn-ingestion.
 
 ## Goal and scope
 Preserve source-defined sequential obstacles. One barrier is one state transition. Do not modify visual Phase 1/2, OCR, Docling, source publication policy, ordinary visual movement, or existing secret-route authority rules.
@@ -40,8 +40,8 @@ The Corbitt-shaped two-wall assertion and Beacon stairs tests are synthetic regr
 
 ## Verification
 
-Full pytest: 2163 passed, 2 skipped, 152 subtests passed. Ruff check . passed. Mypy app passed (137 files). Compileall app/tests and git diff --check passed. New segment regression file: 16 passed; existing hidden-topology regressions: 25 passed. Independent Standards/Spec review pending.
+Full pytest: 2163 passed, 2 skipped, 152 subtests passed. Ruff check . passed. Mypy app passed (137 files). Compileall app/tests and git diff --check passed. New segment regression file: 16 passed; existing hidden-topology regressions: 25 passed. Independent Standards and Spec rechecks: no remaining findings; reviewers independently confirmed the 41 segment/hidden-topology tests.
 
 ## Review remediation
 
-Initial Standards review found no documented-standard violations; its duplicated published-identity guard suggestion was addressed with a shared module-local guard. Initial Spec review found two issues: named jumps into deeper chain nodes from outside the chain and malformed matching segment/edge endpoints raising TypeError. Both received regressions and fixes. Explicit independent visible/source exits remain usable; uncertified jumps do not. Final review recheck pending.
+Initial Standards review found no documented-standard violations; its duplicated published-identity guard suggestion was addressed with a shared module-local guard. Initial Spec review found two issues: named jumps into deeper chain nodes from outside the chain and malformed matching segment/edge endpoints raising TypeError. Both received regressions and fixes. Explicit independent visible/source exits remain usable; uncertified jumps do not. Final Standards and Spec rechecks are clear; both Spec findings and the Standards maintenance suggestion are resolved.

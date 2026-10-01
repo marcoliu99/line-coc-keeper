@@ -1,6 +1,6 @@
 # 有來源依據的有序路線分段
 
-狀態：已實作；獨立 review 待完成。PR #155；enhancement/pdf-multicolumn-ingestion。
+狀態：已實作並完成獨立 review。PR #155；enhancement/pdf-multicolumn-ingestion。
 
 ## 目標與範圍
 保存劇本來源的逐段障礙；一道障礙對應一次狀態轉移。不改 visual Phase 1/2、OCR、Docling、來源發布政策、正常可見移動或既有秘密路線權威規則。
@@ -40,8 +40,8 @@ Corbitt 型雙牆與 Beacon stairs 測試是 synthetic regression fixtures；本
 
 ## 驗證
 
-完整 pytest：2163 passed、2 skipped、152 subtests passed。Ruff check . 通過；mypy app 通過（137 檔）；compileall app/tests、git diff --check 通過。新增 segment 回歸檔 16 passed；既有 hidden-topology 回歸 25 passed。獨立 Standards/Spec review 待完成。
+完整 pytest：2163 passed、2 skipped、152 subtests passed。Ruff check . 通過；mypy app 通過（137 檔）；compileall app/tests、git diff --check 通過。新增 segment 回歸檔 16 passed；既有 hidden-topology 回歸 25 passed。獨立 Standards 與 Spec 複查無剩餘 findings；reviewer 獨立確認 segment/hidden-topology 41 個測試通過。
 
 ## Review 修正
 
-初次 Standards review 無 documented-standard 違反；共用 module-local guard 處理重複 published identity 檢查建議。初次 Spec review 發現 chain 外房間可跳入深層位置，以及 segment/edge endpoint 同時損壞可能拋 TypeError；兩者均補回歸並修正。獨立、有效的 visible/source exits 保持可用；未授權跳躍拒絕。最終 review 複查待完成。
+初次 Standards review 無 documented-standard 違反；共用 module-local guard 處理重複 published identity 檢查建議。初次 Spec review 發現 chain 外房間可跳入深層位置，以及 segment/edge endpoint 同時損壞可能拋 TypeError；兩者均補回歸並修正。獨立、有效的 visible/source exits 保持可用；未授權跳躍拒絕。最終 Standards、Spec 複查皆通過；兩項 Spec finding 與 Standards 維護建議均已處理。
