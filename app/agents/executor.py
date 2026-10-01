@@ -17,6 +17,7 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
+from app.keeper_tools import resource_bridge
 from app.providers.conversation_session import ConversationSession
 from app.services import (
     canonical_facts,
@@ -98,6 +99,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         dynamic_system += "\n\n" + authority_block
     character = state.get_active_character(user_id)
     if character:
+        character = resource_bridge.effective(state, character)
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
             message.payload.get("resolved_check_events", []),
             {
@@ -105,7 +107,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 "SAN": f"{character.san}/{character.san_max}",
                 "MP": f"{character.mp}/{character.mp_max}",
                 "Luck": character.luck,
-            },
+            }, provisional=resource_bridge.participating(state, character),
         )
 
     new_message = f"{display_name}：{text}" + message.payload.get("correction_context", keeper._correction_context_message(state))

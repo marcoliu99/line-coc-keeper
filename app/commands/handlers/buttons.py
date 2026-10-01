@@ -106,6 +106,18 @@ def _stale(kind: str, reason: str, owner_id: str, **identity: Any) -> None:
     )
 
 
+async def _replay_control(state, owner_id, identity, io, *, choice=None):
+    from app.keeper_tools import resource_bridge
+
+    receipt = resource_bridge.control_receipt(state, owner_id, identity, choice=choice)
+    if not receipt:
+        return False
+    suffix = ('請使用目前的 Luck 按鈕決定，原骰值不會重擲。' if receipt.get('pending_luck')
+              else '這是已保存的同一檢定結果，沒有重新擲骰或再次套用資源。')
+    await io.notify(f"🎲 {receipt['skill']} {receipt['skill_value']}%，擲出 {receipt['roll']} → {receipt['tier']}。{suffix}")
+    return True
+
+
 async def handle_check_button(
     conversation_id: str, clicker_id: str, owner_id: str, option: str, check_id: str, io: ButtonIO,
 ) -> None:
@@ -114,12 +126,16 @@ async def handle_check_button(
     async def prepare(state: GroupState, snapshot: Callable[[], None]) -> Callable[[], Awaitable[None]] | None:
         pending = state.pending_checks.get(owner_id)
         if not pending:
+            if await _replay_control(state, owner_id, check_id, io):
+                return None
             _stale("check", "missing_pending", owner_id, check_id=check_id or None)
             await io.notify("這個檢定已經結束或失效了，請等待目前的檢定按鈕。")
             return None
         if not pending_buttons.check_button_matches_pending(
             owner_id, pending, check_id, state.timeline_id or f"legacy-{conversation_id}",
         ):
+            if await _replay_control(state, owner_id, check_id, io):
+                return None
             _stale("check", "identity_mismatch", owner_id, check_id=check_id or None)
             await io.notify("這個檢定按鈕已經過期，請使用最新的按鈕。")
             return None
@@ -152,12 +168,16 @@ async def handle_luck_button(
     async def prepare(state: GroupState, snapshot: Callable[[], None]) -> Callable[[], Awaitable[None]] | None:
         decision = state.pending_luck_decisions.get(owner_id)
         if not decision:
+            if await _replay_control(state, owner_id, decision_id, io, choice=choice):
+                return None
             _stale("luck", "missing_pending", owner_id, decision_id=decision_id or None)
             await io.notify("這個 Luck 決定已經結束或失效了。")
             return None
         if not pending_buttons.luck_button_matches_pending(
             owner_id, decision, decision_id, state.timeline_id or f"legacy-{conversation_id}",
         ):
+            if await _replay_control(state, owner_id, decision_id, io, choice=choice):
+                return None
             _stale("luck", "identity_mismatch", owner_id, decision_id=decision_id or None)
             await io.notify("這個 Luck 按鈕已經過期，請使用最新的按鈕。")
             return None
