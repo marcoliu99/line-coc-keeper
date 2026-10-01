@@ -245,3 +245,39 @@ def test_continued_draft_retains_previous_graph_repair_provenance(map_pdf, monke
     assert row['map_analysis_history'][0]['repair_attempts'] == 1
     assert row['map_analysis_history'][0]['attempts'][1]['output_graph'] == invalid
     assert saved['report']['layout_budget']['consumed_requests'] == 4
+
+
+@pytest.mark.parametrize(('response', 'status'), [(None, 'MAP_ANALYSIS_FAILED'),
+    ({'page_type': 'map', 'rooms': []}, 'MAP_GRAPH_MISSING'),
+    ({'page_type': 'other', 'description': 'Not a map'}, 'MAP_GRAPH_MISSING')])
+def test_attempted_analysis_failure_and_missing_graph_are_distinct(monkeypatch, response, status):
+    from app import pdf_map_analysis
+
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
+        analyze_image=lambda *_args, **_options: response))
+    result = pdf_map_analysis.analyze(b'image', reserve=lambda: True, candidate=True)
+    assert result.analysis['analysis_attempted'] is True
+    assert result.analysis['status'] == status
+    assert result.analysis['graph_generated'] is False
+    assert result.graph is None
+    assert result.analysis['repair_attempts'] == 0
+
+
+def test_repair_cannot_erase_previously_visible_missing_labels(monkeypatch):
+    from app import pdf_map_analysis
+
+    audits = []
+    missing = {**AUDIT, 'visible_locations': [*AUDIT['visible_locations'],
+                                             {'label': 'Lamp Room', 'room_id': ''}]}
+    def analyze(_png, tool, _prompt, **_options):
+        if tool['name'] == 'analyze_page_image':
+            return GRAPH
+        audits.append(tool['name'])
+        return missing if len(audits) == 1 else AUDIT
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
+                        SimpleNamespace(analyze_image=analyze))
+    result = pdf_map_analysis.analyze(b'image', reserve=lambda: True, candidate=True)
+    assert result.analysis['status'] == 'MAP_GRAPH_INCOMPLETE'
+    assert 'missing_prior_visible_location:Lamp Room' in result.analysis['completeness_errors']
+    assert result.analysis['repair_attempts'] == 1
+    assert result.graph is None

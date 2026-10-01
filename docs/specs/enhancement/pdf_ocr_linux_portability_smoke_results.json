@@ -1,0 +1,95 @@
+{
+  "platform": "Linux",
+  "machine": "x86_64",
+  "identity": {
+    "primary": "paddleocr",
+    "enabled": true,
+    "model": "PP-OCRv5_mobile_rec",
+    "device": "cpu",
+    "adapter_version": "local-ocr-v1",
+    "detector": "PP-OCRv5_server_det",
+    "detector_max_side": 960,
+    "cpu_threads": 4,
+    "model_state": "ready",
+    "model_digest": "3054de219047c25aacfcd922edaf20a7e196b59056dcab4a0835dbfaff0b7937",
+    "timeout_seconds": 60.0,
+    "paddleocr_version": "3.7.0",
+    "paddlepaddle_version": "3.3.0",
+    "paddlex_version": "3.7.2",
+    "pytesseract_version": "unavailable",
+    "tesseract_version": "unavailable"
+  },
+  "gate_role": "optional portability",
+  "fixtures": {
+    "font_name": "DejaVuSans",
+    "font_source": "https://raw.githubusercontent.com/matplotlib/matplotlib/v3.10.7/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
+    "font_sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22",
+    "pillow_version": "12.3.0",
+    "colorspace": "RGB",
+    "dpi": 300,
+    "size": [
+      1000,
+      250
+    ],
+    "position": [
+      30,
+      30
+    ],
+    "font_size": 40,
+    "spacing": 30,
+    "antialiasing": "Pillow FreeType native grayscale rendering; PNG pixels pinned, never rendered at runtime",
+    "crop": "none",
+    "fixtures": {
+      "neutral": {
+        "file": "neutral.png",
+        "source": "ARCHIVE ROOM\nNORTH DOOR\nSOUTH HALL",
+        "png_sha256": "f8638f87eda58fb6dd8b34897d3843c3c94faa06fcbf384f4909870ea6fda871"
+      },
+      "dice": {
+        "file": "dice.png",
+        "source": "STR 60 DEX 55 HP 12\nDamage 1d6+2",
+        "png_sha256": "8a235419e1e53cabb4e322c2ea5ec00e3ac3632a7021dac06538d945eac69f3e"
+      }
+    }
+  },
+  "network_probe": {
+    "connect_denied": true,
+    "connect_ex_denied": true,
+    "create_connection_denied": true
+  },
+  "attempts": {
+    "neutral": {
+      "engine": "paddleocr",
+      "model": "PP-OCRv5_mobile_rec",
+      "candidate": "ARCHIVE ROOM\nNORTH DOOR\nSOUTH HALL",
+      "status": "candidate",
+      "confidence": [
+        0.9708926677703857,
+        0.9789465069770813,
+        0.9683252573013306
+      ],
+      "elapsed_ms": 8326.298
+    },
+    "dice": {
+      "engine": "paddleocr",
+      "model": "PP-OCRv5_mobile_rec",
+      "candidate": "STR 60 DEX 55 HP 12\nDamage ld6+2",
+      "status": "candidate",
+      "confidence": [
+        0.9796611666679382,
+        0.9630202651023865
+      ],
+      "elapsed_ms": 6472.141
+    }
+  },
+  "runtime_network_policy": "actual worker Python socket calls denied",
+  "scope": "pinned synthetic CPU smoke, not real-page acceptance",
+  "runtime_positive": true,
+  "mechanics_corruption_rejection": true,
+  "known_ld6_candidate_rejected": true,
+  "observed_dice_candidate_accepted": false,
+  "observed_dice_mechanics_preserved": false,
+  "passed": true,
+  "ci_run": "https://github.com/marcoliu99/line-coc-keeper/actions/runs/36861007223",
+  "validated_commit": "403b3397ca008a0fdca59556821a953b2ab210cb"
+}

@@ -100,7 +100,7 @@ _AUDIT_PROMPT = (
     'open passages, stairs or explicitly shown one-way routes support an edge. Verify compass too. '
     'Do not infer hidden entrances, tunnels or rooms from CoC knowledge. Flag unsupported or uncertain '
     'edges, including solid walls. If any area is unclear set complete=false and list uncertainties. '
-    'An unmarked entry can have room_id="" and verdict=not_visible; never invent an entrance.\n'
+    'An unmarked entry remains unverified and blocks publication; never invent an entrance.\n'
     'Keep each evidence string under ten words; do not repeat graph descriptions.\n'
 )
 
@@ -184,7 +184,7 @@ def _audit_errors(graph: dict, evidence: dict, prior_labels: list[str]) -> list[
     entry = evidence.get('entry')
     if (not isinstance(entry, dict) or entry.get('room_id') != graph.get('entry_room_id', '')
             or not isinstance(entry.get('evidence'), str) or not entry['evidence'].strip()
-            or entry.get('verdict') != ('supported' if graph.get('entry_room_id') else 'not_visible')):
+            or entry.get('verdict') != 'supported'):
         errors.append('image_entry_unverified')
     return list(dict.fromkeys(errors))
 

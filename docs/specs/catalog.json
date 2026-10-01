@@ -1545,7 +1545,14 @@
         "tests/test_scene_map_validation.py",
         "tests/test_pdf_map_certification.py",
         "tests/test_pdf_cpu_smoke.py",
-        "tests/fixtures/pdf_ocr/cpu/manifest.json"
+        "tests/fixtures/pdf_ocr/cpu/manifest.json",
+        "scripts/experiments/validate_pdf_safe_page_sample.py",
+        "docs/specs/enhancement/pdf_map_correctness_results.json",
+        "docs/specs/enhancement/pdf_map_correctness_targeted_ab_results.json",
+        "docs/specs/enhancement/pdf_map_correctness_validation.md",
+        "docs/specs/enhancement/pdf_map_correctness_validation_zh.md",
+        "docs/specs/enhancement/pdf_ocr_macos_cpu_smoke_results.json",
+        "docs/specs/enhancement/pdf_ocr_linux_portability_smoke_results.json"
       ],
       "path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec.md",
       "zh_path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec_zh.md"
