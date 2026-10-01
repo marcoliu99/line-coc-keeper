@@ -504,7 +504,7 @@ def test_unknown_source_direction_cannot_bypass_a_known_blocked_barrier(certifie
     source = ('--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.\n'
               'A blocked passage connects Hall to Cellar.')
     result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
-    door, passage = result.graph['source_topology']
+    _, passage = result.graph['source_topology']
     allowed = frozenset({passage['id']})
     assert scene_map.visible_exits(result.graph, passage['from'], available_routes=allowed) == []
     assert not scene_map.resolve_source_route(result.graph, passage['from'], passage['to'], available_routes=allowed)['ok']

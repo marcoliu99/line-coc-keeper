@@ -22,7 +22,7 @@
 
 ## 已驗證 production behavior
 
-21 個新增 regression 經 production source extraction、visual graph build/audit/certificate replay、PDF loader、publication/library read、private draft、GroupState persistence、真實 command routing、map runtime。Image inference 與後續 AI turn 使用 stub；這些是 regression evidence，不代表真實 PDF vision 驗證。
+25 個新增 regression 經 production source extraction、visual graph build/audit/certificate replay、PDF loader、publication/library read、private draft、GroupState persistence、真實 command routing、map runtime。Image inference 與後續 AI turn 使用 stub；這些是 regression evidence，不代表真實 PDF vision 驗證。
 
 - Hidden passage／secret door 與 breakable wall／blocked passage／sealed door／collapsible barrier／explicit conditional route 分開。Hidden 預設 hidden/undiscovered；barrier 預設 blocked。
 - Source authority 綁 final canonical source、精確 inventory endpoints、physical page/spans、完整 source/span hashes。Private challenger prose 與共享牆不授權連線。Vision schema 保持 visual-only，wall 與 source-only traversal kind 被拒絕。
@@ -40,8 +40,13 @@ Standards：0 documented breaches；certificate TypedDict 為可 defer P3。Spec
 
 ## Checks
 
-pytest：2143 passed、2 skipped、10 dependency deprecation warnings、152 subtests passed，29.61 秒。Ruff PASS；mypy app PASS（137 source files，保留既有 annotation-unchecked note）；compileall app tests PASS；git diff --check PASS。最新 origin/main_v2 為 ancestor，無 unresolved conflicts。
+pytest：2147 passed、2 skipped、10 dependency deprecation warnings、152 subtests passed，29.98 秒。Ruff PASS；mypy app PASS（137 source files，保留既有 annotation-unchecked note）；compileall app tests PASS；git diff --check PASS。最新 origin/main_v2 為 ancestor，無 unresolved conflicts。
 
 ## 限制與 rollout
 
 本輪 provider image requests=0，未重跑 Haunting p7／Beacon p16，synthetic regression 不能宣稱 real maps verified。Production rollout 維持 HOLD，待 real map/source evidence 與既有 rollout gates。Extractor 僅支援保守英文 grammar、精確已知 inventory endpoints，不保證任意散文／語言 coverage，不建立 invisible room。Raw PDF images、provider outputs、actual candidate graphs 不加入 repository。
+
+
+## Availability 後續修正（1723a31；review base 7fa3db6）
+
+重現另一個 P1：activated source route 可繞過同一連線上另一個 blocked barrier。現在 activated source exits 與 named movement 也共用既有 barrier gate。方向不明不能據此認定有繞過已知障礙的替代路線。新增 4 個 regression：只解除任一障礙與全部解除、實際 library/KP persistence 的 failed/opened、unknown compass、明確不同方向的 available route。最終 Standards／Spec follow-up review 均無新增 actionable findings。上方 full checks 已更新為本次結果；未增加 provider requests。

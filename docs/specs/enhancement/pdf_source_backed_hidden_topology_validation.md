@@ -22,7 +22,7 @@ The English/Chinese spec, catalog and this sanitized validation evidence accompa
 
 ## Production behavior verified
 
-21 new regressions exercise production source extraction, visual graph build/audit/certificate replay, PDF loader, publication/library read, private drafts, GroupState persistence, real command routing and map runtime. Image inference and the subsequent AI turn are stubbed; results are regression evidence, not real PDF vision validation.
+25 new regressions exercise production source extraction, visual graph build/audit/certificate replay, PDF loader, publication/library read, private drafts, GroupState persistence, real command routing and map runtime. Image inference and the subsequent AI turn are stubbed; results are regression evidence, not real PDF vision validation.
 
 - Source routes distinguish hidden_passage/secret_door from blocked barriers (breakable_wall, blocked_passage, sealed_door, collapsible_barrier and explicit conditional_route).
 - Source authority requires final canonical source, exact inventory endpoints, physical page/spans and full-source/span hashes. Private challenger prose and wall adjacency cannot authorize source routes. Vision schemas remain visual-only; wall/hidden source-kind proposals are rejected.
@@ -40,8 +40,13 @@ Standards: 0 documented breaches; optional P3 certificate TypedDict remains defe
 
 ## Checks
 
-pytest: 2143 passed, 2 skipped, 10 dependency deprecation warnings, 152 subtests passed in 29.61 seconds. Ruff: PASS. Mypy app: PASS (137 source files; existing annotation-unchecked note). Compileall app tests: PASS. Git diff --check: PASS. Latest origin/main_v2 is an ancestor; no unresolved conflicts.
+pytest: 2147 passed, 2 skipped, 10 dependency deprecation warnings, 152 subtests passed in 29.98 seconds. Ruff: PASS. Mypy app: PASS (137 source files; existing annotation-unchecked note). Compileall app tests: PASS. Git diff --check: PASS. Latest origin/main_v2 is an ancestor; no unresolved conflicts.
 
 ## Limits and rollout
 
 This round dispatched zero provider image requests. The Haunting p7 and Beacon p16 were not rerun, and these synthetic regressions do not certify their real maps. Production rollout remains HOLD pending real map/source evidence and existing rollout gates. Extraction is conservative English grammar with exact known inventory endpoints; it does not claim arbitrary-language/prose coverage or create invisible rooms. Raw PDF images, provider outputs and actual candidate graphs remain outside repository evidence.
+
+
+## Availability follow-up (1723a31; review base 7fa3db6)
+
+Reproduced a second P1: an activated source route could bypass another blocked source barrier on the same connection. The existing barrier gate now also applies to activated source exits and named movement. Unknown route direction cannot establish an alternate path around a known blocked endpoint barrier. Four added regressions cover either single activation versus both, actual library/KP persistence with failed/opened outcomes, unknown compass, and a genuinely available alternate direction. Final Standards and Spec follow-up reviews: zero new actionable findings. Full checks above reflect this follow-up. No additional provider requests.
