@@ -7,14 +7,15 @@ Unrecognized prose never authorizes a route.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, TypedDict
 
-VERSION = 'source-topology-v1'
+VERSION = 'source-topology-v2'
 RouteKind = Literal['hidden_passage', 'secret_door', 'conditional_route', 'breakable_wall',
                     'blocked_passage', 'sealed_door', 'collapsible_barrier']
 Authority = Literal['visual', 'scenario_source']
@@ -48,10 +49,39 @@ SourceRoute = TypedDict('SourceRoute', {
 })
 
 
+class SourceTransitNode(TypedDict):
+    id: str
+    kind: Literal['source_transit']
+    player_label: Literal['']
+    source_evidence: SourceEvidence
+
+
+SourceSegment = TypedDict('SourceSegment', {
+    'id': str, 'from': str, 'to': str, 'barrier_id': str, 'route_kind': RouteKind,
+})
+
+
+class SourceBarrier(TypedDict):
+    barrier_id: str
+    state: Literal['blocked']
+    visibility: Visibility
+    progression_policy: ProgressionPolicy
+    source_evidence: SourceEvidence
+
+
+class SourceRouteChain(TypedDict):
+    id: str
+    segments: list[SourceSegment]
+    barriers: list[SourceBarrier]
+    source_evidence: SourceEvidence
+
+
 @dataclass(frozen=True)
 class SourceTopology:
     routes: list[SourceRoute]
     diagnostics: list[dict[str, str]]
+    chains: list[SourceRouteChain] = field(default_factory=list)
+    transit_nodes: list[SourceTransitNode] = field(default_factory=list)
 
 
 def source_hash(source: str) -> str:
@@ -93,6 +123,8 @@ def extract(graph: dict, canonical_source: str) -> SourceTopology:
     pages = list(_PAGE.finditer(canonical_source))
     routes: list[SourceRoute] = []
     diagnostics: list[dict[str, str]] = []
+    chains: list[SourceRouteChain] = []
+    transit_nodes: list[SourceTransitNode] = []
     seen = set()
     digest = source_hash(canonical_source)
     for index, page in enumerate(pages):
@@ -103,7 +135,22 @@ def extract(graph: dict, canonical_source: str) -> SourceTopology:
         for sentence in re.finditer(r'[^.!?]+(?:[.!?]|\Z)', canonical_source[start:end]):
             raw = sentence.group()
             stripped = raw.strip()
-            assertion = _ASSERTION.fullmatch(re.sub(r'\s+', ' ', stripped))
+            normalized = re.sub(r'\s+', ' ', stripped)
+            chain_match = _CHAIN.fullmatch(normalized)
+            if chain_match:
+                span_start = start + sentence.start() + len(raw) - len(raw.lstrip())
+                span_end = start + sentence.end() - len(raw) + len(raw.rstrip())
+                chain_evidence: SourceEvidence = {'page': int(page[1]), 'span_start': span_start, 'span_end': span_end,
+                    'span_sha256': source_hash(canonical_source[span_start:span_end]), 'canonical_source_sha256': digest}
+                chain = _extract_chain(chain_match, endpoints, chain_evidence)
+                if chain is None:
+                    diagnostics.append({'code': 'unresolved_ordered_route', 'span_sha256': chain_evidence['span_sha256']})
+                elif chain[0]['id'] not in {item['id'] for item in chains}:
+                    chains.append(chain[0])
+                    routes.extend(chain[1])
+                    transit_nodes.extend(chain[2])
+                continue
+            assertion = _ASSERTION.fullmatch(normalized)
             if assertion is None:
                 continue
             origin = (assertion['origin'] or assertion['from']).strip().casefold()
@@ -152,7 +199,7 @@ def extract(graph: dict, canonical_source: str) -> SourceTopology:
                     'progression_policy': progression,
                     'compass': compass if origin_id == endpoints[origin] else reverse_compass[compass],
                     'source_evidence': evidence})
-    return SourceTopology(routes, diagnostics)
+    return SourceTopology(routes, diagnostics, chains, transit_nodes)
 
 
 def structurally_valid(graph: dict) -> bool:
@@ -160,7 +207,10 @@ def structurally_valid(graph: dict) -> bool:
     routes = graph.get('source_topology', [])
     if not isinstance(routes, list) or not isinstance(graph.get('rooms'), list):
         return False
+    if not _valid_chains(graph):
+        return False
     ids = {room['id'] for room in graph['rooms'] if isinstance(room, dict) and isinstance(room.get('id'), str)}
+    ids.update(node['id'] for node in graph.get('source_transit_nodes', []))
     seen = set()
     for route in routes:
         if not isinstance(route, dict):
@@ -195,3 +245,136 @@ def structurally_valid(graph: dict) -> bool:
             return False
         seen.add(route['id'])
     return True
+
+
+# Explicit sequence only. Each non-final part must assert an enterable space;
+# adjacent walls alone cannot authorize a transit or an end-to-end edge.
+_CHAIN = re.compile(
+    r'(?:A|The) (?P<hidden>hidden )?route runs from (?P<origin>.+?) through '
+    r'(?P<steps>.+?)(?P<progress>; it is necessary for progress)?[.!]?\Z', re.IGNORECASE)
+_STEP = re.compile(
+    r'(?P<kind>breakable wall|blocked passage|sealed door|collapsible barrier) '
+    r'(?P<label>.+?) (?P<link>into|to) (?P<target>.+?)\Z', re.IGNORECASE)
+_SOURCE_OVERLAYS = ('source_topology', 'source_route_chains', 'source_transit_nodes')
+
+
+def visual_graph(graph: dict) -> dict:
+    """Remove all immutable source overlays before checking independent visual proof."""
+    visual = copy.deepcopy(graph)
+    for key in _SOURCE_OVERLAYS:
+        visual.pop(key, None)
+    return visual
+
+
+def merge(graph: dict, topology: SourceTopology) -> dict:
+    """Attach separately replayable source nodes/segments; never alter visual rooms."""
+    merged = visual_graph(graph)
+    if topology.routes:
+        merged['source_topology'] = topology.routes
+    if topology.chains:
+        merged['source_route_chains'] = topology.chains
+    if topology.transit_nodes:
+        merged['source_transit_nodes'] = topology.transit_nodes
+    return merged
+
+
+def _extract_chain(match: re.Match, endpoints: dict[str, str], evidence: SourceEvidence
+                   ) -> tuple[SourceRouteChain, list[SourceRoute], list[SourceTransitNode]] | None:
+    origin: str | None = endpoints.get(match['origin'].strip().casefold())
+    parts = re.split(r', then through ', match['steps'], flags=re.IGNORECASE)
+    if origin is None or len(parts) < 2:
+        return None
+    route_id = 'src_' + route_hash(['chain', evidence])[:24]
+    segments: list[SourceSegment] = []
+    barriers: list[SourceBarrier] = []
+    nodes: list[SourceTransitNode] = []
+    edges: list[SourceRoute] = []
+    visited = {origin}
+    for index, part in enumerate(parts):
+        step = _STEP.fullmatch(part)
+        final = index == len(parts) - 1
+        if not step or step['link'].casefold() != ('to' if final else 'into'):
+            return None
+        target: str | None
+        target_label = step['target'].strip()
+        if not final and target_label.casefold() == 'an unnamed enterable space':
+            target = 'source_transit_' + route_hash([route_id, index, evidence])[:24]
+            nodes.append({'id': target, 'kind': 'source_transit', 'player_label': '', 'source_evidence': evidence})
+        else:
+            target = endpoints.get(target_label.casefold())
+        if target is None or target in visited:
+            return None
+        visited.add(target)
+        kind = _KIND[step['kind'].casefold()]
+        barrier_id = 'barrier_' + route_hash([route_id, index, step['label']])[:24]
+        segment_id = 'src_' + route_hash([route_id, index, origin, target, barrier_id])[:24]
+        policy: ProgressionPolicy = 'fail_forward' if match['progress'] else 'retryable'
+        visibility: Visibility = 'hidden' if match['hidden'] else 'visible'
+        barriers.append({'barrier_id': barrier_id, 'state': 'blocked', 'visibility': visibility,
+                         'progression_policy': policy, 'source_evidence': evidence})
+        segments.append({'id': segment_id, 'from': origin, 'to': target,
+                         'barrier_id': barrier_id, 'route_kind': kind})
+        edge: SourceRoute = {'id': segment_id, 'from': origin, 'to': target, 'type': kind,
+            'authority': 'scenario_source', 'visibility': visibility, 'availability': 'blocked',
+            'condition': {'kind': 'world_state', 'key': segment_id + '_available', 'expected': True, 'source_text': ''},
+            'progression_policy': policy, 'compass': '', 'source_evidence': evidence}
+        edges.append(edge)
+        origin = target
+    return ({'id': route_id, 'segments': segments, 'barriers': barriers, 'source_evidence': evidence}, edges, nodes)
+
+
+def _valid_chains(graph: dict) -> bool:
+    chains, nodes = graph.get('source_route_chains', []), graph.get('source_transit_nodes', [])
+    if not isinstance(chains, list) or not isinstance(nodes, list):
+        return False
+    node_ids = set()
+    room_ids = {r.get('id') for r in graph['rooms'] if isinstance(r, dict) and isinstance(r.get('id'), str)}
+    for node in nodes:
+        if (not isinstance(node, dict) or not isinstance(node.get('id'), str)
+                or not re.fullmatch(r'source_transit_[a-f0-9]{24}', node['id'])
+                or node['id'] in node_ids or node['id'] in room_ids
+                or node.get('kind') != 'source_transit' or node.get('player_label') != ''
+                or not isinstance(node.get('source_evidence'), dict)):
+            return False
+        node_ids.add(node['id'])
+    edges = {e.get('id'): e for e in graph.get('source_topology', [])
+             if isinstance(e, dict) and isinstance(e.get('id'), str)}
+    seen_chains, used_segments, used_nodes = set(), set(), set()
+    for chain in chains:
+        if (not isinstance(chain, dict) or not isinstance(chain.get('id'), str)
+                or not re.fullmatch(r'src_[a-f0-9]{24}', chain['id']) or chain['id'] in seen_chains
+                or not isinstance(chain.get('segments'), list) or len(chain['segments']) < 2
+                or not isinstance(chain.get('barriers'), list)
+                or len(chain['barriers']) != len(chain['segments'])):
+            return False
+        seen_chains.add(chain['id'])
+        previous, visited, barrier_ids = None, set(), set()
+        for segment, barrier in zip(chain['segments'], chain['barriers'], strict=True):
+            if not isinstance(segment, dict) or not isinstance(barrier, dict):
+                return False
+            edge = edges.get(segment.get('id')) if isinstance(segment.get('id'), str) else None
+            if (edge is None or segment['id'] in used_segments
+                    or any(segment.get(k) != edge.get(k) for k in ('from', 'to'))
+                    or segment.get('route_kind') != edge.get('type')
+                    or not isinstance(segment.get('barrier_id'), str)
+                    or not re.fullmatch(r'barrier_[a-f0-9]{24}', segment['barrier_id'])
+                    or segment['barrier_id'] in barrier_ids or barrier.get('barrier_id') != segment['barrier_id']
+                    or barrier.get('state') != 'blocked' or barrier.get('visibility') != edge.get('visibility')
+                    or barrier.get('progression_policy') != edge.get('progression_policy')
+                    or barrier.get('source_evidence') != edge.get('source_evidence')
+                    or chain.get('source_evidence') != edge.get('source_evidence')
+                    or (previous is not None and segment['from'] != previous)
+                    or segment.get('to') in visited):
+                return False
+            used_segments.add(segment['id'])
+            barrier_ids.add(segment['barrier_id'])
+            visited.add(segment['from'])
+            visited.add(segment['to'])
+            previous = segment['to']
+            for endpoint in (segment['from'], segment['to']):
+                if endpoint in node_ids:
+                    used_nodes.add(endpoint)
+                    node = next(n for n in nodes if n['id'] == endpoint)
+                    if node['source_evidence'] != edge.get('source_evidence'):
+                        return False
+    return used_nodes == node_ids

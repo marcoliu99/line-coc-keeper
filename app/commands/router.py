@@ -60,7 +60,7 @@ async def _run_post_turn_hook(hook: PostTurnHook | None) -> None:
 
 _CHARACTER_COMMANDS = {"pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters", "retire"}
 _SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests", "autoroll"}
-_MAP_COMMANDS = {"showpage", "where", "enter", "leavemap", "route"}
+_MAP_COMMANDS = {"showpage", "where", "enter", "leavemap", "route", "traverse"}
 
 
 class _SudoDenied(Exception):

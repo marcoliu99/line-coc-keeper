@@ -1712,8 +1712,17 @@
       "title": "Ordered source-backed route segments",
       "zh": "有來源依據的有序路線分段",
       "category": "enhancement",
-      "status": "backlog",
-      "evidence": [],
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_source_topology.py",
+        "app/pdf_map_analysis.py",
+        "app/map_routes.py",
+        "app/scene_map.py",
+        "app/commands/handlers/map_handler.py",
+        "app/commands/router.py",
+        "tests/test_pdf_route_segments.py",
+        "tests/test_pdf_hidden_topology.py"
+      ],
       "path": "docs/specs/enhancement/pdf_ordered_source_route_segments.md",
       "zh_path": "docs/specs/enhancement/pdf_ordered_source_route_segments_zh.md"
     }

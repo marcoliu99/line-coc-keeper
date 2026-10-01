@@ -78,12 +78,12 @@ def verified_graph(graph: Any, analysis: dict | None, image: bytes | None = None
         return False
     if 'source_topology' in graph or 'source_topology_certificate' in analysis:
         certificate = analysis.get('source_topology_certificate')
-        visual = copy.deepcopy(graph)
-        routes = visual.pop('source_topology', None)
+        visual = pdf_source_topology.visual_graph(graph)
+        routes = graph.get('source_topology')
         if not isinstance(certificate, dict) or not isinstance(canonical_source, str):
             return False
         expected = _source_certificate(visual, routes, canonical_source, graph)
-        if certificate != expected or pdf_source_topology.extract(visual, canonical_source).routes != routes:
+        if certificate != expected or pdf_source_topology.merge(visual, pdf_source_topology.extract(visual, canonical_source)) != graph:
             return False
         analysis = copy.deepcopy(analysis)
         analysis.pop('source_topology_certificate')
@@ -115,6 +115,11 @@ def _source_certificate(visual: dict, routes: Any, source: str, merged: dict) ->
             'canonical_source_sha256': pdf_source_topology.source_hash(source),
             'condition_metadata_sha256': graph_hash([{'id': route['id'], 'condition': route['condition'],
                 'progression_policy': route['progression_policy']} for route in routes]),
+            'route_segments_sha256': graph_hash([c['segments'] for c in merged.get('source_route_chains', [])]),
+            'barrier_metadata_sha256': graph_hash([c['barriers'] for c in merged.get('source_route_chains', [])]),
+            'transit_nodes_sha256': graph_hash(merged.get('source_transit_nodes', [])),
+            'evidence_hashes_sha256': graph_hash([r['source_evidence'] for r in routes]),
+            'ordering_sha256': graph_hash([[s['id'] for s in c['segments']] for c in merged.get('source_route_chains', [])]),
             'merged_graph_sha256': graph_hash(merged)}
 
 
@@ -131,9 +136,8 @@ def certify_source_topology(graph: dict, analysis: MapAnalysis, canonical_source
         record['verified'] = False
         record['completeness_errors'].extend(issue['code'] for issue in topology.diagnostics)
         return MapResult(str(visual.get('description', '')), None, record)
-    merged = copy.deepcopy(visual)
+    merged = pdf_source_topology.merge(visual, topology)
     if topology.routes:
-        merged['source_topology'] = topology.routes
         record['source_topology_certificate'] = _source_certificate(visual, topology.routes, canonical_source, merged)
         record['graph_sha256'] = graph_hash(merged)
         record['candidate_graph'] = copy.deepcopy(merged)
@@ -148,8 +152,7 @@ def reusable_visual_graph(graph: Any, analysis: Any, image: bytes) -> MapResult 
     """
     if not isinstance(graph, dict) or not isinstance(analysis, dict):
         return None
-    visual, record = copy.deepcopy(graph), copy.deepcopy(analysis)
-    visual.pop('source_topology', None)
+    visual, record = pdf_source_topology.visual_graph(graph), copy.deepcopy(analysis)
     certificate = record.pop('source_topology_certificate', None)
     if certificate is not None:
         if not isinstance(certificate, dict) or certificate.get('visual_graph_sha256') != graph_hash(visual):

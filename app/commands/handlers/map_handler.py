@@ -20,18 +20,32 @@ async def handle_map_command(
     sub = parts[1].casefold() if len(parts) > 1 else ""
 
     if sub == 'route':
-        if len(parts) < 5 or parts[4] not in ('opened', 'discovered', 'failed'):
-            await reply('用法：/coc route 頁碼 route-id opened|discovered|failed [已裁定的後果]（僅 KP）')
+        outcome_index = 4 if len(parts) > 4 and parts[4] in ('opened', 'discovered', 'failed') else 5
+        if len(parts) <= outcome_index or parts[outcome_index] not in ('opened', 'discovered', 'failed'):
+            await reply('用法：/coc route 頁碼 route-id [barrier-id] opened|discovered|failed [已裁定的後果]（僅 KP）')
             return False
         try:
             # Explicit KP confirmation after normal action resolution; not a narrative inference.
-            result = map_routes.commit_outcome(conversation_id, user_id, parts[2], parts[3], cast(map_routes.RouteOutcome, parts[4]),
-                                               consequence=' '.join(parts[5:]))
+            result = map_routes.commit_outcome(conversation_id, user_id, parts[2], parts[3], cast(map_routes.RouteOutcome, parts[outcome_index]),
+                                               barrier_id=parts[4] if outcome_index == 5 else None,
+                                               consequence=' '.join(parts[outcome_index + 1:]))
         except (PermissionError, ValueError, OSError):
             await reply('無法確認路線狀態；需由目前 KP 確認有效來源地圖與已裁定的 action 結果。')
             return False
         await reply('地圖路線狀態已儲存。' if result['availability'] == 'available' else
                     '嘗試結果已儲存；路線仍可再次嘗試，尚未開通。')
+        return True
+
+    if sub == 'traverse':
+        if len(parts) != 3:
+            await reply('用法：/coc traverse segment-id（只可通過目前已開通的路段）')
+            return False
+        try:
+            map_routes.traverse_segment(conversation_id, user_id, parts[2])
+        except (ValueError, OSError):
+            await reply('目前無法通過此路段；需先到達並確認障礙已開通。')
+            return False
+        await reply('已通過已開通的路段。')
         return True
 
     if sub == "showpage":
@@ -63,10 +77,15 @@ async def handle_map_command(
             return False
         exits = scene_map_engine.visible_exits(scene_map, room["id"],
             available_routes=map_routes.available_routes(state, current_page))
-        exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
+        exits_text = "、".join(
+            f"/coc traverse {e['segment_id']}" if e.get('segment_id') else str(e.get('label') or e.get('compass'))
+            for e in exits) or "（沒有記錄到出口）"
         desc = f"\n{room['description']}" if room.get("description") else ""
         location_note = f"第 {current_page} 頁的地圖" if current_page.isdigit() else f"地圖「{current_page}」"
-        await reply(f"目前在「{room.get('name', '')}」（{location_note}）{desc}\n出口：{exits_text}")
+        barriers = map_routes.visible_barriers(state, current_page, room['id'])
+        barrier_note = '\n已確認的障礙尚未開通。' if any(b['state'] == 'blocked' for b in barriers) else ''
+        position = f"目前在「{room['name']}」" if room.get('name') else '目前位置'
+        await reply(f"{position}（{location_note}）{desc}\n出口：{exits_text}{barrier_note}")
         return True
 
     if sub == "enter":

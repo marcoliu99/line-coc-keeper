@@ -1,6 +1,6 @@
 # Ordered source-backed route segments
 
-Status: proposed. PR #155; enhancement/pdf-multicolumn-ingestion.
+Status: implemented; independent review pending. PR #155; enhancement/pdf-multicolumn-ingestion.
 
 ## Goal and scope
 Preserve source-defined sequential obstacles. One barrier is one state transition. Do not modify visual Phase 1/2, OCR, Docling, source publication policy, ordinary visual movement, or existing secret-route authority rules.
@@ -23,3 +23,21 @@ Bind ordered segments, barrier metadata, transit nodes, source evidence, orderin
 
 ## Tests and verification
 Vertical TDD at extraction/certification, runtime persistence, movement/projection and command seams. Include two-wall Corbitt-shaped canonical fixtures; independent A/B opening, B failure after A, final completion, unreachable B rejection, transit evidence/no-name cases, incremental hidden visibility, certificate reorder and source identity invalidation, single barrier, secret door and Beacon visible topology regressions. Run pytest, ruff check ., mypy app, python -m compileall app tests and git diff --check; then independent Standards and Spec reviews. Record results and remaining unsupported source grammar explicitly.
+
+## Implemented grammar and operational details
+
+The affirmative supported chain form is:
+`A [hidden] route runs from <exact origin label> through <barrier kind> <source barrier label> into <exact intermediate label | an unnamed enterable space>, then through <barrier kind> <source barrier label> to <exact destination label>[; it is necessary for progress].`
+Repeat `, then through ... into ...` for additional intermediate stages. Supported barrier kinds are breakable wall, blocked passage, sealed door and collapsible barrier. Intermediate names must already bind uniquely to canonical inventory. No reciprocal chain or compass is inferred. Necessary-for-progress explicitly selects fail_forward; otherwise these barriers remain retryable without invented checks.
+
+A hidden chain defaults every barrier to hidden. Explicit KP discovery confirms only the current layer; it never opens a barrier. Each layer must be discovered independently before opening. Confirmation requires a tracked party member at the segment origin and all preceding segments opened. Attempts count opened/failed outcomes, excluding discovery. A failed outcome preserves previous opened/discovered state and stores the supplied consequence separately for that barrier.
+
+`/coc where` reveals only the current layer's discovered blocked-barrier notice and individually opened segment commands. `/coc traverse <segment-id>` moves the issuing player through one currently available segment, reloading state under its lock and revalidating published source/map identity. This supplies a movement path for unnamed transit nodes without fabricated labels or direction. It cannot target a deeper segment, jump across a chain, change facing or transition barriers. Existing visible exits and single-barrier commands remain intact.
+
+Source topology certificate version changes from source-topology-v1 to source-topology-v2. The visual certificate/pipeline versions are unchanged. New receipts store route_id, barrier_id, source_sha256, state and discovered in addition to existing actor/timeline/map/graph/edge/condition audit fields. Source-overlay stripping includes all three collections, preserving independent visual draft reuse.
+
+The Corbitt-shaped two-wall assertion and Beacon stairs tests are synthetic regression fixtures. This change makes no claim to parse unsupported natural-language prose or to revalidate a real source PDF.
+
+## Verification
+
+Full pytest: 2161 passed, 2 skipped, 152 subtests passed. Ruff check . passed. Mypy app passed (137 files). Compileall app/tests and git diff --check passed. New segment regression file: 14 passed; existing hidden-topology regressions: 25 passed. Independent Standards/Spec review pending.
