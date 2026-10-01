@@ -1629,6 +1629,15 @@
       ],
       "path": "docs/specs/enhancement/pdf_two_phase_map_extraction.md",
       "zh_path": "docs/specs/enhancement/pdf_two_phase_map_extraction_zh.md"
+    },
+    {
+      "title": "PDF ingestion trust-boundary review fixes",
+      "zh": "PDF ingestion 信任邊界 review 修正",
+      "category": "bug",
+      "status": "in_progress",
+      "evidence": [],
+      "path": "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes.md",
+      "zh_path": "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes_zh.md"
     }
   ]
 }
