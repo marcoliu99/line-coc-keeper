@@ -230,7 +230,8 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
         call.state, include_private=(call.speaker_role == "kp_assistant")
     )
     if ended:
-        response["last_ended_combat"] = ended
+        response["last_ended_combat"] = managed_combat.public_result(
+            ended, include_private=call.speaker_role == "kp_assistant")
     return response
 
 
@@ -240,11 +241,14 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
             from app import combat_flow
-            return combat_flow.advance_combat(target_state, actor_id=call.input.get('actor_id', ''),
+            before = target_state.to_dict()
+            result = combat_flow.advance_combat(target_state, actor_id=call.input.get('actor_id', ''),
                                                event_id=resource_bridge.mutation_id(call.name, call.input))
+            return keeper.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return keeper.skip_save_if_blocked(combat.advance_turn(target_state))
 
-    return keeper.mutate_tool_state(call.state, mutate)
+    return managed_combat.public_result(keeper.mutate_tool_state(call.state, mutate),
+                                        include_private=call.speaker_role == 'kp_assistant')
 
 
 def damage_combatant(call: ToolCall) -> dict[str, Any]:

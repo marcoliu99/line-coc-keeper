@@ -143,7 +143,25 @@ def confirm_combat_settlement(call: ToolCall) -> dict[str, Any]:
         old = state.closed_combat_receipts.get(str(call.input.get('combat_id') or ''), {})
         if old.get('settlement_id') != call.input['settlement_id']:
             _battle(state, call)
+        first_commit = old.get('settlement_id') != call.input['settlement_id']
         receipt = combat_resources.commit_settlement(state, call.input['settlement_id'])
+        if first_commit:
+            from copy import deepcopy
+            report = state.last_combat_report
+            scoped = (report.get('timeline_id') == state.timeline_id
+                      and report.get('scenario_library_id') == state.scenario_library_id
+                      and report.get('scenario_title') == state.scenario_title)
+            last_damage = deepcopy(report.get('last_damage', {})) if scoped else {}
+            if last_damage.get('public_summary'):
+                last_damage['public_summary'] = last_damage['public_summary'].replace('（戰鬥暫定）', '（已結算）')
+            state.last_combat_report = {
+                'timeline_id': state.timeline_id, 'scenario_library_id': state.scenario_library_id,
+                'scenario_title': state.scenario_title, 'combat_id': receipt['combat_id'],
+                'settlement_id': receipt['settlement_id'], 'ended': True, 'provisional': False,
+                'combatants': [{'name': member.display_name, 'side': member.side, 'defeated': member.defeated,
+                               'hp': member.hp, 'hp_max': member.hp_max} for member in state.combat.order],
+                'last_damage': last_damage,
+            }
         return {'ok': True, 'receipt': receipt, 'provisional': False}
     return _mutate(call, operation)
 
