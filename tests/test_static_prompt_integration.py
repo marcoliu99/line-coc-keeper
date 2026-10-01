@@ -41,4 +41,6 @@ def test_merged_kp_prompt_keeps_dice_and_correction_authority() -> None:
     assert "Generic deterministic dice:" in prompt
     assert "`game_resolution`" in prompt
     assert "`ooc_randomizer`" in prompt
-    assert "不能使用 adjust_character、damage_combatant" in prompt
+    assert "一般主持資源調整須使用授權 controller route" in prompt
+    assert "不能代替武器攻擊 adjudication" in prompt
+    assert "不得另擲武器傷害、提供命中／傷害結果或重複扣彈藥" in prompt

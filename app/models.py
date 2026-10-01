@@ -5,7 +5,7 @@ import dataclasses
 import random
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Literal, TypedDict, cast
 
 from app import spoiler_policy
 
@@ -121,6 +121,125 @@ def _roll(expr_dice: int, expr_sides: int, mult: int = 1) -> int:
     return sum(random.randint(1, expr_sides) for _ in range(expr_dice)) * mult
 
 
+CombatPhase = Literal['READY', 'PLAYER_CHOICE', 'PLAYER_ROLL', 'LUCK_DECISION',
+                      'RESOLVE', 'INJURY_CHECK', 'NEEDS_RULING', 'SETTLEMENT', 'CLOSED', 'ROLLED_BACK']
+
+CombatCheckRole = Literal['attack', 'defense', 'defense_choice', 'injury', 'medical', 'counter']
+CombatActionStage = Literal['attack', 'defense', 'injury']
+
+
+@dataclass(frozen=True)
+class CombatCheckIdentity:
+    """Closed mechanical role plus optional per-patient injury identity."""
+
+    role: CombatCheckRole
+    character_id: str = ''
+
+    @property
+    def serialized_role(self) -> str:
+        return f'injury:{self.character_id}' if self.role == 'injury' and self.character_id else self.role
+
+    @classmethod
+    def from_serialized(cls, value: str) -> CombatCheckIdentity:
+        if not isinstance(value, str):
+            raise TypeError('Unknown combat check role')
+        if value.startswith('injury:') and value.removeprefix('injury:'):
+            return cls('injury', value.removeprefix('injury:'))
+        if value not in ('attack', 'defense', 'defense_choice', 'injury', 'medical', 'counter'):
+            raise ValueError('Unknown combat check role')
+        return cls(cast(CombatCheckRole, value))
+
+
+@dataclass(frozen=True)
+class CombatCheckContext:
+    combat_id: str
+    action_id: str
+    interaction_id: str
+    check: CombatCheckIdentity
+
+    def to_dict(self) -> dict[str, str]:
+        # Keep existing control/receipt IDs, including injury:<character_id>.
+        return {'combat_id': self.combat_id, 'action_id': self.action_id,
+                'interaction_id': self.interaction_id, 'check_role': self.check.serialized_role}
+
+
+class CombatAction(TypedDict, total=False):
+    """Durable action record; rule payloads remain JSON, stages are closed."""
+
+    action_id: str
+    actor_id: str
+    target_id: str
+    stage: CombatActionStage
+    completed: bool
+    checks: dict[str, Any]
+    raw_checks: dict[str, Any]
+    clock_round: int
+    mechanical_round: int
+    event_id: str
+    cancelled: bool
+    cancellation_reason: str
+    action_kind: Any
+    ammo_key: Any
+    ammunition_spent: Any
+    cancelled_interaction: Any
+    cancelled_luck: Any
+    cancelled_pending: Any
+    character_id: Any
+    consumed_checks: dict[str, Any]
+    control_delivery_receipts: dict[str, Any]
+    correction_acknowledgement: Any
+    counter_damage: Any
+    damage: Any
+    db: Any
+    defense_kind: Any
+    difficulty: Any
+    distance_yards: Any
+    injury_queue: Any
+    kind: Any
+    medical_context: dict[str, Any]
+    medical_receipt: dict[str, Any]
+    needs_ruling: Any
+    npc_attack_id: Any
+    obligation: PostcombatObligation
+    parent_action_id: Any
+    parent_con_receipt_id: Any
+    parent_obligation_id: Any
+    plan_id: Any
+    receipt: dict[str, Any]
+    result: dict[str, Any]
+    round: Any
+    skill: Any
+    skill_value: Any
+    source: dict[str, Any]
+    weapon: dict[str, Any]
+    weapon_reference: Any
+    obligation_baseline: Any
+    working_obligations: Any
+    choice_receipts: dict[str, Any]
+
+
+class InjuryState(TypedDict, total=False):
+    major_wound: bool
+    unconscious: bool
+    dying: bool
+    dead: bool
+
+
+class PostcombatObligation(TypedDict, total=False):
+    obligation_id: str
+    combat_id: str
+    character_id: str
+    kind: Literal['dying', 'effect']
+    status: Literal['future', 'due', 'pending', 'resolved']
+    next_trigger: dict[str, Any]
+    stop_condition: str
+    rule_source: dict[str, Any]
+    processed_timings: list[str]
+    roll_receipts: dict[str, dict[str, Any]]
+    injury: InjuryState
+    effect: dict[str, Any]
+
+
 @dataclass
 class Character:
     name: str
@@ -171,6 +290,8 @@ class Character:
     secret_goal: str = ""  # personal hook/motivation — Keeper-only, see keeper_notes_text()
     extra_fields: dict[str, Any] = field(default_factory=dict)
     status_tags: list[str] = field(default_factory=list)  # e.g. ["昏迷", "瀕死"]
+    injury: InjuryState = field(default_factory=lambda: InjuryState())
+    weapon_instances: dict[str, dict[str, Any]] = field(default_factory=dict)
     away: bool = False  # player stepped out — combat.py auto-skips their turn
     character_id: str = ""
     slot: str = "primary"
@@ -664,6 +785,18 @@ class CombatState:
     processed_timings: list[str] = field(default_factory=list)
     range_bands: dict[str, str] = field(default_factory=dict)
 
+    combat_id: str = ''
+    pipeline_version: str = ''
+    phase: CombatPhase = 'READY'
+    revision: int = 0
+    working_resources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    baseline_resources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    roll_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    interaction: dict[str, Any] = field(default_factory=dict)
+    actions: dict[str, CombatAction] = field(default_factory=dict)
+    settlement: dict[str, Any] = field(default_factory=dict)
+
     def retire_character(
         self,
         character_id: str,
@@ -779,6 +912,9 @@ class CombatState:
             "plans": self.plans,
             "processed_timings": self.processed_timings,
             "range_bands": self.range_bands,
+            **{name: getattr(self, name) for name in (
+                'combat_id', 'pipeline_version', 'phase', 'revision', 'working_resources',
+                'baseline_resources', 'events', 'roll_receipts', 'interaction', 'actions', 'settlement')},
         }
 
     @staticmethod
@@ -793,6 +929,9 @@ class CombatState:
             plans=data.get("plans", {}),
             processed_timings=list(data.get("processed_timings", [])),
             range_bands=dict(data.get("range_bands", {})),
+            **{name: data[name] for name in (
+                'combat_id', 'pipeline_version', 'phase', 'revision', 'working_resources',
+                'baseline_resources', 'events', 'roll_receipts', 'interaction', 'actions', 'settlement') if name in data},
         )
 
 
@@ -887,6 +1026,9 @@ class GroupState:
     creation_sessions: dict[str, CreationSession] = field(default_factory=dict)  # keyed by owner_id
     pregens: list[dict[str, Any]] = field(default_factory=list)  # extracted from scenario PDF, cached
     combat: CombatState = field(default_factory=CombatState)
+    mechanical_round: int = 0  # Explicit game-time clock; new battles never reset it.
+    postcombat_obligations: list[PostcombatObligation] = field(default_factory=list)
+    closed_combat_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
     # One latest authoritative receipt for the most recently ended fight.
     # It survives end_combat clearing the live initiative tracker, but a new
     # fight or timeline must not inherit it as current combat evidence.
@@ -1155,6 +1297,9 @@ class GroupState:
             "scenario_location_index": self.scenario_location_index,
             "keeper_persona": self.keeper_persona,
             "combat": self.combat.to_dict(),
+            "mechanical_round": self.mechanical_round,
+            "postcombat_obligations": self.postcombat_obligations,
+            "closed_combat_receipts": self.closed_combat_receipts,
             "last_combat_report": self.last_combat_report,
             "scene_maps": self.scene_maps,
             "current_map_page": self.current_map_page,
@@ -1243,6 +1388,9 @@ class GroupState:
             scenario_location_index=data.get("scenario_location_index", []),
             keeper_persona=data.get("keeper_persona", ""),
             combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
+            mechanical_round=data.get('mechanical_round', 0),
+            postcombat_obligations=data.get('postcombat_obligations', []),
+            closed_combat_receipts=data.get('closed_combat_receipts', {}),
             last_combat_report=(
                 dict(data["last_combat_report"])
                 if isinstance(data.get("last_combat_report"), dict) else {}

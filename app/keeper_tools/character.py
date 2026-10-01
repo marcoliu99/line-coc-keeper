@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from app.keeper_tools import resource_bridge
 from app.models import GroupState
 
 if TYPE_CHECKING:
@@ -28,7 +29,8 @@ def adjust_character(call: ToolCall) -> dict[str, Any]:
     if blocked_hit is not None:
         return blocked_hit
     refreshed_char = keeper.require_character(state, tool_input.get("investigator", ""))
-    response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val}
+    response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val,
+                "provisional": resource_bridge.participating(state, refreshed_char)}
     if major_wound:
         response["major_wound"] = True
         response["major_wound_check"] = wound_roll
@@ -67,4 +69,5 @@ def get_character_sheet(call: ToolCall) -> dict[str, Any]:
     char = keeper.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-    return {"ok": True, "sheet": char.to_dict()}
+    return {"ok": True, "sheet": resource_bridge.effective(state, char).to_dict(),
+            "provisional": resource_bridge.participating(state, char)}

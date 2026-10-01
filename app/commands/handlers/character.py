@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from app import creation, pregen_extractor, spoiler_policy
+from app.keeper_tools import resource_bridge
 from app.legacy_commands import (
     Reply,
     SendDM,
@@ -26,6 +27,12 @@ async def handle_character_command(
 ) -> bool:
     char = None
     sub = parts[1].casefold() if len(parts) > 1 else ""
+    if sub in {'switch', 'retire', 'pc', 'create', 'alloc', 'usepregen', 'pregen'}:
+        guarded_state = load_state(conversation_id)
+        replacement_block = resource_bridge.guard_replacement(guarded_state)
+        if replacement_block:
+            await reply(replacement_block)
+            return False
 
     if sub == "characters":
         state = load_state(conversation_id)
@@ -122,7 +129,10 @@ async def handle_character_command(
         if not char:
             await reply("你還沒有角色，先輸入「/coc pc 角色名 職業」建立一個吧。")
             return False
-        await reply(char.sheet_text())
+        sheet = resource_bridge.effective(state, char).sheet_text()
+        if resource_bridge.participating(state, char):
+            sheet = "【戰鬥暫定數值；尚未結算】\n" + sheet
+        await reply(sheet)
         return True
 
     if sub == "setskill":

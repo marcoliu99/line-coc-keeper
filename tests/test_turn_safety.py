@@ -24,7 +24,7 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
-from app.models import Character, Combatant, GroupState
+from app.models import Character, GroupState
 from app.providers import registry
 from app.repositories.group_state import load_state, save_state
 from app.services import mutation_admission as admission
@@ -82,14 +82,23 @@ def test_successful_tool_then_provider_failure_preserves_specific_results(state)
 
 
 def test_followup_tool_success_survives_narrator_failure(state):
-    state.combat.active = True
-    state.combat.order = [Combatant("Ada", 50, 10, 10, is_pc=True)]
+    source = 'Failure of the check causes 1 hit point of impact damage.'
+    state.scenario_text = source
+    state.check_consequence_origins['check:followup'] = {
+        'event_id': 'check:followup', 'check_id': 'check:followup', 'timeline_id': state.timeline_id,
+        'owner_id': 'u', 'character_id': state.get_active_character('u').character_id,
+        'investigator': 'Ada', 'skill': 'Climb', 'success': False,
+        'authorizations': [{'key': 'impact:1', 'kind': 'damage', 'when': 'failure',
+                            'damage_expression': '1', 'damage_type': 'impact', 'source_quote': source}],
+    }
     save_state(state)
     msg = message(state)
     msg.payload.update(turn_kind="resolved_check_followup", resolved_check_context={"roll": 12, "outcome": "成功"})
 
     async def provider(*args, **kwargs):
-        assert (await args[5]("apply_combat_damage", {"target": "Ada", "raw_damage": 1}))["ok"]
+        assert (await args[5]("apply_resolved_check_damage", {"investigator": "Ada", "damage_expression": "1",
+                    "damage_type": "impact", "source_check_id": "check:followup",
+                    "source_event_id": "check:followup", "consequence_key": "impact:1", "cause": "reviewed impact"}))["ok"]
         raise RuntimeError("narration interrupted")
 
     fake = AsyncMock(side_effect=provider)
@@ -600,20 +609,18 @@ def test_private_dm_failure_never_falls_back_to_public_result(state):
 
 
 @pytest.mark.parametrize('delta', [-2, 2])
-def test_damage_combatant_commit_survives_provider_failure(state, delta):
+def test_noncombat_attribute_commit_survives_provider_failure(state, delta):
     state.get_active_character('u').hp = 6
-    state.combat.active = True
-    state.combat.order = [Combatant('Ada', 50, 6, 10, is_pc=True)]
     save_state(state)
     msg = message(state)
     async def provider(*args, **kwargs):
-        assert (await args[5]('damage_combatant', {'name': 'Ada', 'delta': delta}))['ok']
+        assert (await args[5]('adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': delta}))['ok']
         raise RuntimeError('provider failed after committed damage/healing')
     with patch.object(config, 'LLM_PROVIDER', 'openai'), \
          patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=AsyncMock(side_effect=provider))}):
         asyncio.run(executor.run_executor(msg))
     reply, _ = turn_delivery.finalize(msg, '行動未完成')
-    assert 'Ada' in reply and ('已結算傷害 2' if delta < 0 else 'HP 6 → 8') in reply
+    assert 'Ada' in reply and f'hp 已更新為 {6 + delta}' in reply
     assert load_state(state.group_id).get_active_character('u').hp == 6 + delta
 
 

@@ -1,0 +1,9 @@
+# Keep the whole battle provisional until settlement
+
+The operator explicitly selected whole-battle provisional resources instead of the current per-action persistent character updates. All battle-caused resource, injury and healing changes therefore share a durable combat working state, with per-action checkpoints and unchanged dice on recovery; character resources publish only through an atomic final settlement. This supports whole-battle rollback at the cost of effective-state reads, conflict checks, append-only corrections and ensuring every resource mutation participates in the same contract.
+
+The operator confirmed that the bot Keeper approves settlement and rollback because human KP Assistants are optional. Keep explicit preview/confirmation commands and deterministic admission/conflict checks, without a mandatory human approval wait. This is combat authority deliberately chosen in this interview; it is not an extension inferred from ADR-0001's narrative-correction policy. Ordinary players cannot directly rollback a battle.
+
+Settlement may complete while a participant remains dying or exposed to a continuing effect. Currently due checks/applications must finish; future obligations transfer atomically into durable postcombat tracking with their timing and receipts, rather than disappearing with CombatState. New battles and restarts preserve these obligations. This accepts the cost of lifecycle tracking in order to end initiative combat without ending its medical or environmental consequences.
+
+The operator authorized implementation with `$implement-spec` on 2026-10-01. The runtime now uses durable working resources, source-bound actions, owned manual controls, explicit absolute settlement and continuing obligations. Final integration verification and the two-axis review are recorded in the implementation validation document; no deployment or branch merge is authorized by this decision.

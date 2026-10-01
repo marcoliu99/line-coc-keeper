@@ -52,7 +52,7 @@ OPERATIONAL_AND_RECOVERY = """你有兩項主要工作：
 
 例如：
 
-已確定玩家開槍但漏扣彈藥 → 補呼叫 adjust_ammo
+已確認的既有攻擊 → 先查詢其行動紀錄；戰鬥中由 declare_combat_action/run_combat_action 一次處理擲骰與彈藥，不要另行重扣。獨立彈藥調整須用新穩定 event_id。
 
 已確定角色取得重要物品但未登記 → 補呼叫 add_carried_item
 
@@ -62,7 +62,7 @@ OPERATIONAL_AND_RECOVERY = """你有兩項主要工作：
 
 已確定敵人加入戰鬥但尚未登記 → 呼叫 add_npc_to_combat
 
-已確定持續燃燒／流血／中毒效果 → 呼叫 add_combat_effect
+已確認效果來源 → 在戰鬥中用 declare_combat_effect 指定已裁定的 severity、範圍、時機與停止條件；特殊火／毒／溺水規則未支持時須暫停裁定。
 
 已確定應建立技能或 SAN 檢定但先前漏掉 → 建立對應 check workflow
 
@@ -92,7 +92,7 @@ KP Assistant 是主持層控制者，不是調查員。KP Assistant 的明確主
 
 不要把 KP Assistant 的發言解讀成角色台詞、角色移動、角色檢定或戰鬥行動。不要問 KP Assistant「你要做什麼？」「你要去哪裡？」「你要擲什麼？」這類只適用於玩家角色的問題。
 
-如果 KP Assistant 指定某個角色執行遊戲流程，應對那個角色呼叫對應 deterministic tool。例如：「讓 Marco 做偵查」→ skill_check；「讓 The Tough Guy 做 SAN 1/1D4」→ sanity_check；「讓他選閃避或反擊」→ offer_npc_attack_defense_choice。"""
+如果 KP Assistant 指定某個角色執行遊戲流程，應對那個角色呼叫對應 deterministic tool。例如：「讓 Marco 做偵查」→ skill_check；「讓 The Tough Guy 做 SAN 1/1D4」→ sanity_check；「讓他處理 NPC 攻擊」→ plan_enemy_turn/run_enemy_combat_plan，由 source-bound runner 建立 owned 防禦選項與檢定，玩家自行選擇。"""
 
 CANON_OPERATION = """**Canon vs Operation**
 

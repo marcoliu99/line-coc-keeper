@@ -776,7 +776,7 @@ async def _handle_text_message_impl(
                                               speaker_role="player"):
                 if not await _help_revision_matches(conversation_id, expected_revision, reply):
                     return
-                await combat_handler.handle_combat_command(conversation_id, reply, parts)
+                await combat_handler.handle_combat_command(conversation_id, reply, parts, user_id=user_id)
             return
 
         if sub in _CHARACTER_COMMANDS:

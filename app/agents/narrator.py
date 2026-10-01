@@ -8,6 +8,7 @@ from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
 from app.keeper_tools import registry as tool_registry
+from app.keeper_tools import resource_bridge
 from app.providers.conversation_session import ConversationSession
 from app.services import canonical_facts, mutation_admission, prompt_config
 
@@ -61,6 +62,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
         dynamic_system += "\n\n" + authority_block
     character = state.get_active_character(user_id)
     if character:
+        character = resource_bridge.effective(state, character)
         dynamic_system += "\n\n" + prompt_config.build_resolved_check_history_block(
             message.payload.get("resolved_check_events", []),
             {
@@ -68,7 +70,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
                 "SAN": f"{character.san}/{character.san_max}",
                 "MP": f"{character.mp}/{character.mp_max}",
                 "Luck": character.luck,
-            },
+            }, provisional=resource_bridge.participating(state, character),
         )
 
     if turn_kind == "resolved_check_followup":

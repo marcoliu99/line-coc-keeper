@@ -28,6 +28,7 @@ from app import (
 from app.agents import supervisor
 from app.commands import permissions
 from app.config import IMPORT_DIR
+from app.keeper_tools import resource_bridge
 from app.legacy_commands import (
     FormatMention,
     PdfChoice,
@@ -158,6 +159,14 @@ async def handle_system_command(
     server: permissions.ServerFacts = permissions.NO_SERVER_FACTS,
 ) -> None:
     sub = parts[1].casefold() if len(parts) > 1 else ""
+    if sub in {'newgame', 'end', 'rollback', 'start', 'era'} or (
+        sub == 'scenario' and len(parts) > 2 and parts[2].casefold() in {'use', 'merge', 'reparse', 'import'}
+    ):
+        guard_state = load_state(conversation_id)
+        replacement_block = resource_bridge.guard_replacement(guard_state)
+        if replacement_block:
+            await reply(replacement_block)
+            return
 
     if sub in ("checkpoint", "checkpoints", "rollback"):
         state = load_state(conversation_id)
@@ -662,6 +671,10 @@ async def handle_system_command(
         return
     if sub == "newgame":
         previous = load_state(conversation_id)
+        replacement_block = resource_bridge.guard_replacement(previous)
+        if replacement_block:
+            await reply(replacement_block)
+            return
         previous_id = previous.scenario_library_id or None
         previous_hash = ""
         if previous_id:
@@ -765,7 +778,10 @@ async def handle_system_command(
             return
         lines = [f"劇本：《{state.scenario_title}》", f"狀態：{'進行中' if state.active else '已結束'}", ""]
         if state.characters:
-            for c in state.characters.values():
+            for committed in state.characters.values():
+                c = resource_bridge.effective(state, committed)
+                if resource_bridge.participating(state, committed):
+                    lines.append("【戰鬥暫定數值；尚未結算】")
                 lines.append(f"・{c.name}（{c.occupation}）HP {c.hp}/{c.hp_max} SAN {c.san}/{c.san_max} MP {c.mp}/{c.mp_max}")
         else:
             lines.append("（尚無角色）")
@@ -774,6 +790,10 @@ async def handle_system_command(
 
     if sub == "end":
         state = load_state(conversation_id)
+        replacement_block = resource_bridge.guard_replacement(state)
+        if replacement_block:
+            await reply(replacement_block)
+            return
         state.active = False
         state.kp_assistant_user_id = ""
         state.kp_ooc_log = []

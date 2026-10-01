@@ -13,10 +13,18 @@ import random
 import re
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from copy import deepcopy
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-from app import check_lifecycle, checkpoints, dice, observability, spoiler_policy
+from app import (
+    check_lifecycle,
+    checkpoints,
+    combat_resources,
+    dice,
+    observability,
+    spoiler_policy,
+)
 from app.check_identity import PendingCheckBlocker
 from app.models import (
     ArmorRule,
@@ -27,6 +35,7 @@ from app.models import (
     EffectState,
     EnemyCombatCard,
     GroupState,
+    InjuryState,
     SpecialAbility,
 )
 
@@ -86,14 +95,24 @@ def _ensure_started(state: GroupState) -> None:
     _ensure_character_identity(state)
     if not state.combat.active:
         state.last_combat_report = {}
+        if state.combat.combat_id and state.combat.phase not in {'CLOSED', 'ROLLED_BACK'}:
+            raise combat_resources.CombatAdmissionError('Another combat is unclosed')
         state.combat = CombatState(active=True, round_number=1, order=_seed_from_characters(state), current_index=0)
+        combat_resources.initialize_working_state(state, new_combat=True)
+        from app import combat_flow
+        combat_flow.admit_continuing_state(state)
         process_timing(state, "round_start")
         _mark_round_start_abilities(state)
 
 
 def start_combat(state: GroupState) -> CombatState:
     _ensure_started(state)
+    combat_resources.initialize_working_state(state)
     return state.combat
+
+
+def is_managed(state: GroupState) -> bool:
+    return state.combat.active and state.combat.pipeline_version == combat_resources.PIPELINE_VERSION
 
 
 def _default_attack() -> AttackRule:
@@ -201,6 +220,8 @@ def add_npc(
     armor: list[dict[str, Any]] | None = None,
     attacks: list[dict[str, Any]] | None = None,
     abilities: list[dict[str, Any]] | None = None,
+    source: dict[str, Any] | None = None,
+    skills: dict[str, int] | None = None,
 ) -> CombatState:
     _ensure_started(state)
     if is_ally:
@@ -224,12 +245,14 @@ def add_npc(
         armor=armor,
         attacks=attacks,
         abilities=abilities,
+        source=source,
+        skills=skills,
         incomplete=not attacks and not abilities,
     )
     return add_enemy_card_to_combat(state, card.id)
 
 
-def _find_combatant(state: GroupState, name: str) -> Combatant | None:
+def find_combatant(state: GroupState, name: str) -> Combatant | None:
     """Look up a combatant by name/id, preferring an exact match and only
     falling back to substring matching when that's unambiguous.
 
@@ -273,7 +296,7 @@ def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
     """A non-defeated enemy-side combatant whose name/display_name exactly
     matches `name` (after normalization), or None.
 
-    Deliberately EXACT matching only, unlike `_find_combatant`'s bidirectional
+    Deliberately EXACT matching only, unlike `find_combatant`'s bidirectional
     substring matching — used by add_npc's caller to stop the Keeper from
     creating a second independent HP pool for a monster it already added
     (e.g. re-searching a scenario NPC and calling add_npc_to_combat again
@@ -438,6 +461,8 @@ def add_combatant(
     attacks: list[dict[str, Any]] | None = None,
     abilities: list[dict[str, Any]] | None = None,
     force_new_instance: bool = False,
+    source: dict[str, Any] | None = None,
+    skills: dict[str, int] | None = None,
 ) -> AddedCombatant:
     """Add an NPC or ally to the fight, starting it (with its checkpoint) if needed.
 
@@ -452,6 +477,8 @@ def add_combatant(
     reports the defeated namesake so the caller can ask whether it's really a
     new one, and the newcomer gets a numbered display name.
     """
+    if not state.combat.active:
+        begin_combat(state)
     if not is_ally and not force_new_instance:
         existing = find_live_enemy_by_any_alias(state, name)
         if existing is not None:
@@ -459,7 +486,7 @@ def add_combatant(
     namesake = None if is_ally else _defeated_enemy_by_any_alias(state, name)
     _checkpoint_before_combat(state)
     before = {id(c) for c in state.combat.order}
-    add_npc(state, name, dex, hp, is_ally=is_ally, armor=armor, attacks=attacks, abilities=abilities)
+    add_npc(state, name, dex, hp, is_ally=is_ally, armor=armor, attacks=attacks, abilities=abilities, source=source, skills=skills)
     # add_npc may also seed the investigators when it starts the fight.
     added = next(c for c in state.combat.order if id(c) not in before and not c.is_pc)
     _number_if_shared(state, added)
@@ -501,11 +528,11 @@ def _major_wound_pc(
 ) -> Character | None:
     """The investigator this hit gives a major wound, if any.
 
-    A major wound is a single hit of at least half max HP that leaves the
-    investigator above 0 HP; dropping to 0 is already unconscious/dying.
+    A major wound includes hits reaching zero HP. A fatal single hit needs
+    no CON check because death is already established.
     """
     pc = _pc_for_combatant(state, combatant)
-    if not pc or hp_after <= 0 or final_damage < pc.hp_max / 2:
+    if not pc or final_damage >= pc.hp_max or final_damage < pc.hp_max / 2:
         return None
     return pc
 
@@ -566,7 +593,7 @@ def _major_wound_block_for(
     """The investigator and reason a hit must be refused, before it is applied."""
     if state.autoroll_checks:
         return None
-    combatant = _find_combatant(state, target_name)
+    combatant = find_combatant(state, target_name)
     if not combatant:
         return None
     _, _, final = _planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
@@ -651,8 +678,13 @@ def apply_combat_damage(
     source_id: str = "",
     bypass_armor: bool = False,
     entry_point: str = "apply_combat_damage",
+    event_id: str = "",
 ) -> dict[str, Any]:
-    combatant = _find_combatant(state, target_name)
+    if is_managed(state):
+        return apply_managed_damage(state, target_name, raw_damage, event_id=event_id or f'damage:{uuid.uuid4().hex}',
+                                    damage_type=damage_type, tags=tags, source_id=source_id, bypass_armor=bypass_armor,
+                                    entry_point=entry_point)
+    combatant = find_combatant(state, target_name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
     blocked = _major_wound_block_for(
@@ -737,7 +769,7 @@ def apply_final_combat_damage(
 
 
 def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
-    combatant = _find_combatant(state, name)
+    combatant = find_combatant(state, name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{name}」"}
 
@@ -750,7 +782,13 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
     card = _card_for(state, combatant)
     if card:
         card.hp = combatant.hp
-    _sync_pc_hp(state, combatant)
+    if is_managed(state) and combatant.is_pc:
+        pc = character_for_combatant(state, combatant)
+        if pc:
+            combat_resources.set_resource(state, pc, 'hp', combatant.hp,
+                                          event_id=f'healing:{uuid.uuid4().hex}', reason='Combat healing')
+    else:
+        _sync_pc_hp(state, combatant)
 
     return {
         "ok": True,
@@ -763,7 +801,7 @@ def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
     }
 
 
-def _character_for_combatant(state: GroupState, combatant: Combatant) -> Character | None:
+def character_for_combatant(state: GroupState, combatant: Combatant) -> Character | None:
     if combatant.character_id and combatant.character_id in state.characters_by_id:
         return state.characters_by_id[combatant.character_id]
     # Legacy combat snapshots did not persist character_id. Only use a name
@@ -778,7 +816,7 @@ def _is_skippable(state: GroupState, combatant: Combatant) -> bool:
     if combatant.defeated:
         return True
     if combatant.is_pc:
-        character = _character_for_combatant(state, combatant)
+        character = character_for_combatant(state, combatant)
         if character is not None:
             return not character.active or character.away
     return False
@@ -939,7 +977,7 @@ def add_combat_effect(
     normalized_target = (target_name or "").strip().lower()
     is_environment = normalized_target in {"environment", "global", "環境", "場景"}
     is_all = normalized_target in {"all", "全體", "所有人"}
-    combatant = None if is_environment or is_all else _find_combatant(state, target_name)
+    combatant = None if is_environment or is_all else find_combatant(state, target_name)
     if not is_environment and not is_all and combatant is None:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
     if timing not in {"round_start", "turn_start", "turn_end", "round_end"}:
@@ -994,6 +1032,8 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
 
     More effect types can be added without changing the turn-order API.
     """
+    if is_managed(state):
+        return _process_managed_timing(state, timing, target_id)
     key = _timing_key(state, timing, target_id)
     if key in state.combat.processed_timings:
         return []
@@ -1170,6 +1210,8 @@ def _choose_target(state: GroupState, enemy_id: str) -> str:
 
 
 def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
+    if is_managed(state) and state.combat.interaction:
+        return {'ok': False, 'error': 'Resolve the current interaction before NPC planning'}
     return _all_or_nothing(state, lambda: _plan_enemy_turn(state, enemy_name))
 
 
@@ -1177,7 +1219,7 @@ def _plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
-    combatant = _find_combatant(state, enemy_name) if enemy_name else combat.order[combat.current_index]
+    combatant = find_combatant(state, enemy_name) if enemy_name else combat.order[combat.current_index]
     if not combatant or combatant.side != "enemy":
         return {"ok": False, "error": "目前輪到的不是敵人，或找不到指定敵人"}
     card = _card_for(state, combatant)
@@ -1349,6 +1391,11 @@ def resolve_enemy_action(
     plan_id: str,
     outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if is_managed(state):
+        from app import combat_flow
+        if outcome is not None:
+            return {'ok': False, 'error': 'Managed actions do not accept caller hit/damage results'}
+        return combat_flow.run_enemy_plan(state, plan_id)
     plan = state.combat.plans.get(plan_id)
     if not plan:
         return {"ok": False, "error": f"找不到行動計畫 {plan_id}"}
@@ -1452,6 +1499,11 @@ def _process_timing_or_stop(state: GroupState, timing: str, target_id: str = "")
     for result in process_timing(state, timing, target_id):
         if result.get("blocked_by"):
             raise _TimingBlocked(result)
+        if is_managed(state) and not result.get('ok'):
+            raise _TimingBlocked({**result, 'blocked_by': 'needs_ruling', 'retain_due': True})
+    if is_managed(state) and state.combat.interaction:
+        raise _TimingBlocked({'error': 'Resolve the due injury check before advancing',
+                              'blocked_by': 'pending_check', 'retain_due': True})
 
 
 def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -1463,11 +1515,20 @@ def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> di
     postpone the hit to the effect's next timing. Instead nothing advances,
     and the caller is told to resolve the check and advance again.
     """
-    snapshot = state.to_dict()
+    snapshot = deepcopy(state.to_dict())
     try:
         return step()
     except _TimingBlocked as blocked:
+        retained_rolls = deepcopy(state.combat.roll_receipts)
+        if blocked.result.get('retain_due'):
+            return {'ok': blocked.result['blocked_by'] == 'pending_check',
+                    'pending': blocked.result['blocked_by'] == 'pending_check',
+                    'error': blocked.result['error'], 'blocked_by': blocked.result['blocked_by'],
+                    'phase': state.combat.phase, 'interaction': deepcopy(state.combat.interaction)}
         restored = GroupState.from_dict(snapshot)
+        if is_managed(state):
+            restored.combat.roll_receipts.update(retained_rolls)
+            restored.combat.revision += len(set(retained_rolls) - set(snapshot['combat'].get('roll_receipts', {})))
         for field in fields(GroupState):
             setattr(state, field.name, getattr(restored, field.name))
         result = blocked.result
@@ -1493,19 +1554,30 @@ def _move_to_next_available(state: GroupState) -> bool:
     for _ in range(n):
         next_index = (combat.current_index + 1) % n
         wrapped = next_index == 0
-        combat.current_index = next_index
         if wrapped:
+            if is_managed(state):
+                from app import combat_flow
+                clock_id = f'{combat.combat_id}:round:{combat.round_number}'
+                clock_record = combat.actions.setdefault(clock_id, {'action_id': clock_id, 'completed': True,
+                                                                   'clock_round': state.mechanical_round + 1})
+                due = combat_flow.process_postcombat(state, logical_round=clock_record['clock_round'], event_id=clock_id)
+                if not due.get('ok') or any(r.get('pending') for r in due.get('results', [])):
+                    raise _TimingBlocked({'error': due.get('error', 'Due continuing CON check'),
+                                          'blocked_by': 'pending_check', 'retain_due': True})
             _process_timing_or_stop(state, "round_end")
             combat.round_number += 1
             _reset_round_usage(state)
             _process_timing_or_stop(state, "round_start")
             _mark_round_start_abilities(state)
+        combat.current_index = next_index
         if not _is_skippable(state, combat.order[combat.current_index]):
             return True
     return False
 
 
 def advance_turn(state: GroupState) -> dict:
+    if is_managed(state) and (state.combat.interaction or any(not a.get('completed') for a in state.combat.actions.values())):
+        return {'ok': False, 'error': 'Combat action or interaction is unresolved'}
     return _all_or_nothing(state, lambda: _advance_turn(state))
 
 
@@ -1540,7 +1612,12 @@ def _advance_turn(state: GroupState) -> dict:
     }
 
 
-def end_combat(state: GroupState) -> None:
+def end_combat(state: GroupState) -> dict[str, Any] | None:
+    if is_managed(state):
+        from app import combat_flow
+        return combat_resources.get_settlement(state, obligations=combat_flow.postcombat_obligations(state))
+    if state.combat.active:
+        raise combat_resources.CombatAdmissionError('Legacy combat requires explicit controller closure')
     if state.combat.active:
         report = state.last_combat_report
         if (
@@ -1567,6 +1644,7 @@ def end_combat(state: GroupState) -> None:
             "last_damage": report.get("last_damage", {}),
         }
     state.combat = CombatState()
+    return None
 
 
 def last_ended_combat_evidence(state: GroupState, *, include_private: bool) -> dict[str, Any]:
@@ -1601,14 +1679,14 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
     if not combat.active or not combat.order:
         return "目前沒有進行中的戰鬥。"
 
-    lines = [f"戰鬥中 - 第 {combat.round_number} 輪"]
+    lines = [f"戰鬥中 - 第 {combat.round_number} 輪" + ("（戰鬥暫定；尚未結算）" if is_managed(state) else "")]
     for i, c in enumerate(combat.order):
         card = _card_for(state, c)
         if card:
             _sync_combatant_from_card(c, card)
         skippable = _is_skippable(state, c)
         marker = "=> " if i == combat.current_index and not skippable else "   "
-        character = _character_for_combatant(state, c) if c.is_pc else None
+        character = character_for_combatant(state, c) if c.is_pc else None
         retired = character is not None and not character.active
         away = c.is_pc and not c.defeated and not retired and skippable
         tag = "（倒下）" if c.defeated else "（已退出）" if retired else "（暫離）" if away else ""
@@ -1624,3 +1702,187 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
                 line += "（戰鬥卡未完整）"
         lines.append(line)
     return "\n".join(lines)
+
+
+def apply_managed_damage(
+    state: GroupState, target_id: str, raw_damage: int, *, event_id: str,
+    damage_type: str = 'physical', tags: list[str] | None = None,
+    source_id: str = '', bypass_armor: bool = False, defer_injury: bool = False,
+    entry_point: str = 'apply_managed_damage',
+) -> dict[str, Any]:
+    """Trusted single-hit primitive; transport must not expose caller hit amounts."""
+    from app import combat_flow
+    combat_resources.initialize_working_state(state)
+    previous = next((e for e in state.combat.events if e['event_id'] == event_id), None)
+    if previous:
+        return dict(previous['data'])
+    if not event_id or not isinstance(raw_damage, int) or isinstance(raw_damage, bool) or raw_damage < 0:
+        return {'ok': False, 'error': 'Damage requires stable event identity and nonnegative integer'}
+    target = find_combatant(state, target_id)
+    if target is None:
+        return {'ok': False, 'error': 'Unknown combat participant'}
+    _, armor_label, final = _planned_damage(state, target, raw_damage, damage_type, tags or [], bypass_armor)
+    pc = character_for_combatant(state, target) if target.is_pc else None
+    effective = combat_resources.effective_character(state, pc) if pc else None
+    before = effective.hp if effective else target.hp
+    after = max(0, before - final)
+    requires_con = effective is not None and effective.hp_max / 2 <= final < effective.hp_max
+    if requires_con:
+        assert pc is not None
+        block = check_lifecycle.blocker(state, pc.owner_id)
+        if block and not state.autoroll_checks:
+            return major_wound_blocked(state, pc, block, entry_point=entry_point)
+        if state.combat.interaction and state.combat.interaction.get('owner_id') != pc.owner_id:
+            return {'ok': False, 'error': 'Another combat interaction is unresolved'}
+    injury: InjuryState = deepcopy(effective.injury) if effective else InjuryState()
+    if effective:
+        if final >= effective.hp_max:
+            injury.update({'dead': True, 'unconscious': True, 'dying': False})
+        elif final >= effective.hp_max / 2:
+            injury['major_wound'] = True
+        if after == 0:
+            injury['unconscious'] = True
+            injury['dying'] = bool(injury.get('major_wound') and not injury.get('dead'))
+        assert pc is not None
+        combat_resources.set_resource(state, pc, 'hp', after, event_id=event_id + ':hp', reason=source_id)
+        combat_resources.set_injury(state, pc, injury, event_id=event_id + ':injury', reason=source_id)
+        if injury.get('unconscious'):
+            for tag in ('昏迷', '倒地'):
+                combat_resources.set_status_tag(state, pc, tag, True, event_id=event_id + ':status:' + tag)
+        if injury.get('dying'):
+            combat_flow.ensure_dying_obligation(state, pc, event_id)
+    target.hp = after
+    target.defeated = after == 0 or bool(injury.get('unconscious'))
+    card = _card_for(state, target)
+    if card:
+        card.hp = after
+        if final and _damage_taken_trigger_tag() not in card.status_tags:
+            card.status_tags.append(_damage_taken_trigger_tag())
+    result: dict[str, Any] = {
+        'ok': True, 'event_id': event_id, 'name': target.display_name, 'target': target.display_name,
+        'target_id': target.combatant_id, 'side': target.side, 'raw_damage': raw_damage,
+        'final_damage': final, 'armor_reduction': raw_damage - final, 'armor_label': armor_label,
+        'damage_type': damage_type, 'weakness_bonus': 0,
+        'private_notes': f'raw={raw_damage}, armor={armor_label}, source={source_id}',
+        'hp_before': before, 'hp_after': after, 'hp': after, 'hp_max': target.hp_max,
+        'injury': injury, 'major_wound_triggered': requires_con, 'defeated': target.defeated,
+        'public_summary': f'{target.display_name} 受到 {final} 點傷害（戰鬥暫定）' + ('（部分傷害被擋下）' if armor_label else ''),
+    }
+    combat_resources.record_event(state, event_id, 'damage', data=result, reason=source_id)
+    if requires_con and pc and not defer_injury:
+        result['major_wound_check'] = combat_flow.request_injury_check(state, pc, event_id)
+        # The damage receipt includes the wait and remains identical on retry.
+        next(e for e in state.combat.events if e['event_id'] == event_id)['data'] = dict(result)
+    state.last_combat_report = {'timeline_id': state.timeline_id,
+                               'scenario_library_id': state.scenario_library_id,
+                               'scenario_title': state.scenario_title, 'last_damage': dict(result)}
+    return result
+
+
+def managed_single_hit(
+    state: GroupState, character: Character, damage: int, *, event_id: str, reason: str,
+) -> dict[str, Any]:
+    """Explicit resource adjustment's trusted injury seam, not primary attack adjudication."""
+    target = next((p for p in state.combat.order if p.character_id == character.character_id), None)
+    if target is None:
+        return {'ok': False, 'error': 'Investigator is not in this battle'}
+    return apply_managed_damage(state, target.combatant_id, damage, event_id=event_id,
+                                source_id=reason, bypass_armor=True, entry_point='managed_single_hit')
+
+
+def close_legacy_combat(state: GroupState, *, event_id: str, reason: str) -> dict[str, Any]:
+    """Controller explicitly closes old immediate-persistence history without guessing baselines."""
+    for receipt in state.closed_combat_receipts.values():
+        if receipt.get('legacy_close_event_id') == event_id:
+            return dict(receipt)
+    if not state.combat.active or state.combat.pipeline_version or not event_id or not reason.strip():
+        raise combat_resources.CombatAdmissionError('Explicit legacy closure requires an old active battle and reason')
+    owners = {c.owner_id for c in active_characters(state)}
+    if owners & (state.pending_checks.keys() | state.pending_luck_decisions.keys()):
+        raise combat_resources.CombatAdmissionError('Resolve legacy pending checks and Luck before closure')
+    identity = f'legacy-closed:{event_id}'
+    receipt = {'combat_id': identity, 'legacy_close_event_id': event_id, 'status': 'legacy_closed',
+               'reason': reason, 'legacy_state': state.combat.to_dict()}
+    state.closed_combat_receipts[identity] = receipt
+    state.last_combat_report = {'timeline_id': state.timeline_id,
+                               'scenario_library_id': state.scenario_library_id,
+                               'scenario_title': state.scenario_title, 'ended': True,
+                               'combatants': [{'name': p.display_name, 'side': p.side, 'defeated': p.defeated,
+                                               'hp': p.hp, 'hp_max': p.hp_max} for p in state.combat.order]}
+    state.combat = CombatState()
+    return receipt
+
+
+def _process_managed_timing(state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]:
+    """Recorded damage draws and all-target ownership admission before any effect hit."""
+    key = _timing_key(state, timing, target_id)
+    if key in state.combat.processed_timings:
+        return []
+    results: list[dict[str, Any]] = []
+    failed = False
+    for effect in list(state.combat.effects):
+        if effect.timing != timing or (target_id and effect.target_id not in (target_id, '__all__')):
+            continue
+        identity = f'{key}:effect:{effect.id}'
+        if identity in state.combat.processed_timings:
+            continue
+        if effect.damage and (not effect.save_or_check.get('rule_source')
+                              or effect.save_or_check.get('severity_id') is None):
+            state.combat.phase = 'NEEDS_RULING'
+            results.append({'ok': False, 'effect_id': effect.id, 'error': 'Effect requires reviewed severity and special-rule handling'})
+            failed = True
+            continue
+        targets = ([p.combatant_id for p in state.combat.order if not p.defeated]
+                   if effect.target_id == '__all__' else [effect.target_id])
+        raw = 0
+        if effect.damage:
+            def draw_effect_damage(expression: str = effect.damage) -> dict[str, Any]:
+                return asdict(dice.roll_expression(expression))
+            try:
+                receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{identity}:damage', draw_effect_damage)
+            except ValueError as exc:
+                results.append({'ok': False, 'effect_id': effect.id, 'error': f'無法解析效果傷害：{exc}'})
+                failed = True
+                state.combat.phase = 'NEEDS_RULING'
+                continue
+            raw = max(0, receipt['total'])
+        blocked = [(target, block) for target in targets
+                   if (block := _major_wound_block_for(state, target, raw, damage_type=effect.damage_type, tags=effect.tags))]
+        if blocked:
+            failed = True
+            for target, block in blocked:
+                result = major_wound_blocked(state, *block, entry_point='process_timing')
+                result.update(effect_id=effect.id, target_id=target)
+                results.append(result)
+            continue
+        required = [target for target in targets if (p := find_combatant(state, target))
+                    and _major_wound_pc(state, p, _planned_damage(state, p, raw, effect.damage_type, effect.tags, False)[2], 0)]
+        applied = True
+        for target in targets:
+            if effect.damage:
+                result = apply_managed_damage(state, target, raw, event_id=f'{identity}:{target}',
+                                              damage_type=effect.damage_type, tags=effect.tags, source_id=effect.source_id, defer_injury=True)
+                result['effect_id'] = effect.id
+                results.append(result)
+                applied = applied and result['ok']
+        if applied:
+            if required:
+                from app import combat_flow
+                characters = []
+                for injured_target_id in required:
+                    participant = find_combatant(state, injured_target_id)
+                    if participant is not None:
+                        pc = character_for_combatant(state, participant)
+                        if pc is not None:
+                            characters.append(pc)
+                combat_flow.request_injury_checks(state, characters, identity)
+            state.combat.processed_timings.append(identity)
+            _tick_effect(effect)
+            effect.save_or_check['next_round'] = state.mechanical_round + 1
+            combat_resources.record_event(state, identity, 'timing', data={'effect_id': effect.id, 'timing': timing})
+        else:
+            failed = True
+    state.combat.effects = [e for e in state.combat.effects if e.remaining_rounds is None or e.remaining_rounds > 0]
+    if not failed:
+        state.combat.processed_timings.append(key)
+    return results

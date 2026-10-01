@@ -59,6 +59,7 @@ from app.check_identity import (
     new_decision_id,
 )
 from app.config import SCENARIO_RAG_ENABLED
+from app.keeper_tools import resource_bridge
 from app.models import (
     BASE_SKILLS,
     OCCUPATIONS,
@@ -158,6 +159,9 @@ def _apply_new_scenario(
     """"全新劇本" (see handle_pdf_upload/resolve_pdf_upload_choice below),
     and also what a conversation's very first-ever PDF upload does, since
     there's no existing position to protect yet in that case either way."""
+    replacement_block = resource_bridge.guard_replacement(state)
+    if replacement_block:
+        raise ValueError(replacement_block)
     state.scenario_text = text
     state.scenario_title = title
     state.active = True
@@ -788,6 +792,10 @@ async def handle_role_sheet_upload(
 
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
+        replacement_block = resource_bridge.guard_replacement(state)
+        if replacement_block:
+            await reply(replacement_block)
+            return
         scenario_id = state.scenario_library_id or None
         try:
             context = scenario_library.load_context(scenario_id) if scenario_id else None
@@ -1065,6 +1073,7 @@ def _resolved_check_event_seed(
         "opposed_outcome": opposed_outcome,
         "player_declaration": (check_context or {}).get('player_declaration', ''),
         "action_basis": (check_context or {}).get('action_basis', ''),
+        "medical_context": dict((check_context or {}).get("medical_context") or {}),
     }
 
 
@@ -1106,6 +1115,16 @@ def _persist_resolved_check_event(conversation_id: str, event_seed: dict) -> Non
         event = {
             key: value for key, value in event_seed.items() if key != "state_before"
         }
+        if resource_bridge.participating(latest, char) or event_seed.get('provisional'):
+            event['provisional'] = True
+            event['combat_id'] = event_seed.get('combat_id') or latest.combat.combat_id
+            effective_after = _character_attribute_snapshot(resource_bridge.effective(latest, char))
+            event['provisional_state_effects'] = [
+                {'field': _CHECK_EVENT_ATTRIBUTE_NAMES[field], 'before': before,
+                 'after': effective_after[field], 'delta': effective_after[field] - before}
+                for field, before in event_seed['state_before'].items() if before != effective_after[field]
+            ]
+            effects = []
         event["state_effects"] = effects
         event.pop("tracked_roll_fields", None)
         event["resolved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1466,6 +1485,141 @@ async def _finalize_check_result(
         await run_keeper_phase()
 
 
+def _resolve_managed_check(state: GroupState, user_id: str, text: str, pending: dict) -> _CheckResolution:
+    """Consume only a server-owned combat/continuing-state interaction."""
+    from app import combat_flow
+
+    validation = combat_flow.validate_pending_context(state, pending, user_id)
+    if not validation['ok']:
+        return _audienced_check_resolution(user_id, pending, reply_text=validation['error'])
+    try:
+        resource_bridge.owned_character(state, pending, user_id)
+    except ValueError as error:
+        return _audienced_check_resolution(user_id, pending, reply_text=str(error))
+    args = text.split()
+    skill_arg = args[2] if len(args) > 2 else None
+    if pending.get('type') == 'choice':
+        option = next((o for o in pending.get('options', []) if skill_arg and (
+            _skill_names_match(o['label'], skill_arg) or _skill_names_match(o['skill'], skill_arg)
+            or o.get('kind') == skill_arg)), None)
+        if option is None:
+            labels = '、'.join(o['label'] for o in pending.get('options', []))
+            return _audienced_check_resolution(user_id, pending, reply_text=f'請選擇：{labels}')
+        outcome = combat_flow.submit_choice(
+            state, interaction_id=pending['combat_context']['interaction_id'],
+            owner_id=user_id, choice=option['kind'],
+        )
+        if not outcome.get('ok'):
+            return _audienced_check_resolution(user_id, pending, reply_text=outcome.get('error', '選擇遭拒'))
+        reply_text = f"已選擇「{option['label']}」。" + (
+            '請用 /coc check 或檢定按鈕擲骰。' if user_id in state.pending_checks
+            else '已依系統紀錄處理；請依目前戰鬥狀態繼續。')
+        resource_bridge.record_choice_control_receipt(state, pending, user_id, option, reply_text)
+        save_state(state, reason='combat_choice')
+        return _audienced_check_resolution(user_id, pending, reply_text=reply_text)
+    if pending.get('type') != 'skill' or (skill_arg and not _skill_names_match(pending.get('skill', ''), skill_arg)):
+        return _audienced_check_resolution(user_id, pending, reply_text='請使用目前待處理檢定的技能或檢定按鈕。')
+    try:
+        character = resource_bridge.owned_character(state, pending, user_id)
+    except ValueError as error:
+        return _audienced_check_resolution(user_id, pending, reply_text=str(error))
+    before = _character_attribute_snapshot(character)
+    result = combat_flow.roll_pending_check(state, pending, user_id)
+    state.pending_checks.pop(user_id, None)
+    options = luck.buyable_options(result.skill_value, result.roll, result.tier, character.luck, result.required_tier) if pending.get('allow_luck', True) else []
+    if options:
+        decision = {
+            **pending, 'decision_id': pending['check_id'] + ':luck',
+            'skill_name': pending['skill'], 'display_label': None,
+            'value': result.skill_value, 'roll': result.roll, 'original_tier': result.tier,
+            'attacker_tier': None, 'ranged_attacker': None,
+            'options': [{'tier': o.tier, 'cost': o.cost} for o in options],
+        }
+        state.pending_luck_decisions[user_id] = decision
+        outcome = combat_flow.on_authoritative_check_result(
+            state, pending_entry=decision, owner_id=user_id, result=result, final=False,
+        )
+        if not outcome.get('ok'):
+            save_state(state, reason='combat_check_paused')
+            return _audienced_check_resolution(user_id, pending, reply_text=f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
+        resource_bridge.record_control_receipt(state, decision, user_id, character, result, pending_luck=True)
+        save_state(state, reason='combat_check_luck')
+        options_text = '、'.join(f"{o.tier}（{o.cost} 點）" for o in options)
+        return _audienced_check_resolution(user_id, pending,
+            reply_text=f"🎲 {character.name} 的 {pending['skill']} 擲出 {result.roll} → {_tier_zh_for_result(result)}。目前 Luck {character.luck}；可選 {options_text} 或 skip。",
+            check_id=pending['check_id'], timeline_id=pending.get('timeline_id', ''), decision_id=decision['decision_id'])
+    outcome = combat_flow.on_authoritative_check_result(state, pending_entry=pending, owner_id=user_id, result=result)
+    if not outcome.get('ok'):
+        save_state(state, reason='combat_check_paused')
+        return _audienced_check_resolution(user_id, pending, reply_text=f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
+    resource_bridge.record_control_receipt(state, pending, user_id, character, result)
+    save_state(state, reason='combat_check')
+    return _managed_check_feedback(state, character, user_id, pending, result, outcome, before)
+
+
+def _managed_check_feedback(state, character, user_id, pending, result, outcome, before, *, luck_spent=0):
+    label = pending.get('skill_name') or pending.get('skill', '')
+    tier = _tier_zh_for_result(result)
+    provisional = bool(pending.get('combat_context'))
+    suffix = '【戰鬥機械結果暫定；尚未結算】' if provisional else '【戰鬥後待履行事項已處理】'
+    feedback, header = _build_split_check_feedback(character.name, label, str(result.skill_value), result.roll, tier)
+    feedback += '\n' + suffix
+    return _audienced_check_resolution(user_id, pending,
+        state=state, char=resource_bridge.effective(state, character),
+        roll_line=feedback, keeper_message=f'（{header}；{suffix}。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）',
+        roll_feedback_text=feedback, keeper_header=header, should_finalize=True,
+        check_id=pending['check_id'], decision_id=pending.get('decision_id', ''),
+        timeline_id=pending.get('timeline_id', ''), action_context=pending.get('action_context', ''),
+        resolved_event={**_resolved_check_event_seed(
+            check_id=pending['check_id'], timeline_id=pending.get('timeline_id', state.timeline_id or f'legacy-{state.group_id}'),
+            owner_id=user_id, character_id=character.character_id, investigator=character.name,
+            skill=label, skill_value=result.skill_value, roll=result.roll, difficulty=result.required_tier,
+            outcome=f'{result.tier} ' + ('成功' if result.success else '失敗'), before=before,
+            check_context=pending, success=result.success,
+        ), 'provisional': provisional, 'combat_id': pending.get('combat_context', {}).get('combat_id', ''),
+            'combat_receipt': {'combat_id': outcome.get('combat_id'), 'action_id': outcome.get('action_id'),
+                               'phase': outcome.get('phase'), 'completed': outcome.get('completed')},
+            'luck_spent': luck_spent})
+
+
+def _resolve_managed_luck(state: GroupState, user_id: str, choice: str, pending: dict) -> _CheckResolution:
+    from app import combat_flow, combat_resources
+
+    validation = combat_flow.validate_pending_context(state, pending, user_id)
+    if not validation['ok']:
+        return _audienced_check_resolution(user_id, pending, reply_text=validation['error'])
+    try:
+        character = resource_bridge.owned_character(state, pending, user_id)
+    except ValueError as error:
+        return _audienced_check_resolution(user_id, pending, reply_text=str(error))
+    before = _character_attribute_snapshot(character)
+    spent = 0
+    tier = pending['original_tier']
+    if choice != 'skip':
+        option = next((o for o in pending['options'] if o['tier'] == choice), None)
+        if option is None or character.luck < option['cost']:
+            return _audienced_check_resolution(user_id, pending, reply_text='無效或無法負擔的 Luck 選項；原決定仍保留。')
+        spent = option['cost']
+        tier = choice
+        if resource_bridge.participating(state, character):
+            combat_resources.adjust_resource(state, character, 'luck', -spent,
+                event_id=pending['decision_id'] + ':spend', reason='Player Luck decision')
+        else:
+            character.luck -= spent
+    required = pending.get('difficulty', 'regular')
+    result = dice.SkillCheckResult(skill_value=pending['value'], roll=pending['roll'],
+        bonus_dice=pending.get('bonus_dice', 0), penalty_dice=pending.get('penalty_dice', 0),
+        tier=tier, success=dice.TIER_RANK[tier] >= dice.TIER_RANK[required], required_tier=required)
+    state.pending_luck_decisions.pop(user_id, None)
+    outcome = combat_flow.on_authoritative_check_result(state, pending_entry=pending, owner_id=user_id, result=result)
+    if not outcome.get('ok'):
+        save_state(state, reason='combat_luck_paused')
+        return _audienced_check_resolution(user_id, pending, reply_text=f"Luck 決定與骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
+    resource_bridge.record_control_receipt(state, pending, user_id, character, result, choice=choice)
+    save_state(state, reason='combat_luck')
+    return _managed_check_feedback(state, character, user_id, pending, result, outcome, before, luck_spent=spent)
+
+
 def _resolve_check_deterministically(conversation_id: str, user_id: str, text: str) -> _CheckResolution:
     """Resolve /coc check without invoking the Keeper.
 
@@ -1482,7 +1636,11 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         char = state.get_active_character(user_id)
         if not char:
             return _audienced_check_resolution(user_id, audience_entry, reply_text="你還沒有調查員角色，先輸入「/coc pc 角色名 職業」建立角色吧！")
+        char = resource_bridge.effective(state, char)
         attributes_before = _character_attribute_snapshot(char)
+        owned = state.pending_checks.get(user_id) or {}
+        if owned.get('combat_context') or owned.get('postcombat_context') or owned.get('medical_context'):
+            return _resolve_managed_check(state, user_id, text, owned)
 
         parts = text.split()
         skill_arg: str | None = parts[2] if len(parts) > 2 else None
@@ -1660,6 +1818,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             roll_feedback_text, keeper_header = _build_split_check_feedback(
                 char.name, "理智檢定", f"SAN {san_before}", sanity_result.check.roll, outcome
             )
+            resource_bridge.reconcile(state, char, event_id=f"{check_id}:resources", reason="Authoritative player check")
             save_state(state)
             return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
@@ -1743,6 +1902,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             roll_feedback_text, keeper_header = _build_split_check_feedback(
                 char.name, "INT", str(value), skill_result.roll, tier_zh
             )
+            resource_bridge.reconcile(state, char, event_id=f"{check_id}:resources", reason="Authoritative player check")
             save_state(state)
             return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
@@ -1787,6 +1947,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "player_declaration": (pending_entry or {}).get('player_declaration', ''),
                 "action_basis": (pending_entry or {}).get('action_basis', ''),
                 "consequences": (pending_entry or {}).get('consequences', []),
+                "medical_context": dict((pending_entry or {}).get("medical_context") or {}),
             }
             save_state(state)
             options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
@@ -1828,6 +1989,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
         roll_feedback_text, keeper_header = _build_split_check_feedback(
             char.name, display_label or skill_name, str(value), skill_result.roll, _tier_zh_for_result(skill_result), opposed_text
         )
+        resource_bridge.reconcile(state, char, event_id=f"{check_id}:resources", reason="Authoritative player check")
         save_state(state)
         return _audienced_check_resolution(user_id, audience_entry,
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
@@ -1933,12 +2095,16 @@ def _resolve_luck_decision_deterministically(
         mutation_admission.assert_admitted(conversation_id)
         state = load_state(conversation_id)
         audience_entry = dict(state.pending_luck_decisions.get(user_id) or {})
+        owned = state.pending_luck_decisions.get(user_id) or {}
+        if owned.get('combat_context') or owned.get('postcombat_context') or owned.get('medical_context'):
+            return _resolve_managed_luck(state, user_id, choice, owned)
         pending = state.pending_luck_decisions.pop(user_id, None)
         if not pending:
             return _audienced_check_resolution(user_id, audience_entry, reply_text="目前沒有待決定的 Luck 花費。")
         char = state.get_active_character(user_id)
         if not char:
             return _audienced_check_resolution(user_id, audience_entry, reply_text="找不到你的角色。")
+        char = resource_bridge.effective(state, char)
         attributes_before = _character_attribute_snapshot(char)
 
         timeline_id = state.timeline_id or f"legacy-{conversation_id}"
@@ -2019,6 +2185,7 @@ def _resolve_luck_decision_deterministically(
             major_wound_trigger=bool(pending.get("major_wound_trigger", False)),
             ranged_opposed_text=ranged_opposed_text, is_counter=pending_is_counter,
         )
+        resource_bridge.reconcile(state, char, event_id=f"{decision_id}:resources", reason="Authoritative Luck decision")
         save_state(state)
         outcome_text = _tier_zh_for_tier(tier, required_tier)
         if luck_spent:
@@ -2307,6 +2474,9 @@ def _claim_pregen(state: GroupState, index: int, user_id: str, *, custom_name: s
 async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Reply) -> None:
     """Resolve the player's explicit LUCK roll for a newly claimed pregen."""
     state = load_state(conversation_id)
+    if state.combat.active:
+        await reply('戰鬥中不能補建未驗證的角色 Luck；原待處理事項仍保留。')
+        return
     character_id = state.pending_pregen_luck.get(user_id)
     if not character_id:
         await reply("目前沒有等待你擲 LUCK 的預製角色；請先用「/coc usepregen 編號」選角。")
@@ -2456,7 +2626,8 @@ def _build_readiness_roster(
     `format_mention` renders each owner_id for display (see FormatMention) —
     defaults to the bare id when no Discord mention formatter is supplied."""
     lines = ["📋 全團調查員集結就緒名冊", ""]
-    for owner_id, char in state.characters.items():
+    for owner_id, committed in state.characters.items():
+        char = resource_bridge.effective(state, committed)
         weapon_parts = []
         for weapon_name, ammo_info in char.weapons.items():
             if ammo_info.get("ammo_max"):
