@@ -59,3 +59,7 @@ Classification 採獨立有限 allowance：每 PDF/model/policy 預設／上限2
 作者 pregen 書籤本身不證明 optional。必須有安全 canonical source 中完整、肯定的 player 建立角色允許句，且 observation 明確是 asset-only pregen。NPC creation、否定／conditional permission、mixed/source-bearing、unknown output 不得套用 section shortcut。Required clue 不可改 optional；handout 必須有完整肯定 exact permission。Raw observation 保持 private。
 
 Image observation identity 綁 PDF/model/policy/page/image hash。Continue 的 source excerpt 可改變；replay 必須重新綁定目前安全 canonical source 中 permission／duplicate evidence，不為同一圖片再花 request。既有 attempt 消耗保留；malformed entry fail closed 且不重送。已證明 optional asset 的 geometry/order failure 不產生 required-source defect；final selected mechanics 與真正 required-source ordering gate 保持。
+
+## 已核准最終 appendix triage（2026-10-03）
+
+僅重用未解的作者 appendix 頁 classification。以 canonical section 邊界與肯定 player 自建角色 permission 判 optional。Candidate mechanics 不證明唯一必要 source。Bounded text-only source-necessity 問題可使用 private fragment observations 與安全 canonical excerpts；共用既有有限 classification ledger，dispatch 前 reserve、zero retry、不重送圖片。Region/fragment IDs 必須覆蓋所有 observed source。Character information 必須有 canonical optionality；duplicate reference 必須 exact canonical quote 與 deterministic mechanics preservation。Keeper-required／unknown region 保持保護，不 blanket override mixed、confidence publish、新 budget 或架構。Clean import 使用 fresh production draft caps 並重用 private classification evidence。測試公開 classification/extraction/upload/start seams，再實際 reload/start/普通 turn；可安全遊玩後停止追 enhancement。
