@@ -314,3 +314,38 @@ def test_docling_note_deferred_after_right_column_is_normalized(source):
     payload = {'regions': [{'bbox': [10, 10, 100, 40]}, {'bbox': [200, 10, 300, 40]},
                            {'bbox': [10, 60, 100, 90]}]}
     assert adapters.order_docling_regions(payload, decision['blocks'])['ordered_ids'] == ['l', 'note', 'r']
+
+@pytest.mark.parametrize('ids', [
+    ['heading', 'upper', 'lower'], ['upper', 'lower', 'heading'],
+    ['footer', 'header', 'upper', 'heading', 'lower'],
+    ['upper', 'header', 'heading', 'lower', 'footer'],
+    ['header', 'upper', 'heading', 'lower', 'side', 'footer'],
+])
+def test_reject_geometric_furniture_and_inverse_heading(ids):
+    blocks = [
+        {'id': 'header', 'text': 'Header', 'bbox': [10, 10, 590, 30], 'role': 'margin', 'column': None},
+        {'id': 'upper', 'text': 'Upper body', 'bbox': [60, 100, 280, 140], 'role': 'body', 'column': 'left'},
+        {'id': 'heading', 'text': 'Section', 'bbox': [60, 200, 550, 230], 'role': 'spanning', 'column': None},
+        {'id': 'side', 'text': 'Note', 'bbox': [5, 150, 30, 180], 'role': 'margin', 'column': None},
+        {'id': 'lower', 'text': 'Lower body', 'bbox': [60, 250, 280, 300], 'role': 'body', 'column': 'left'},
+        {'id': 'footer', 'text': 'Footer', 'bbox': [10, 750, 590, 775], 'role': 'margin', 'column': None},
+    ]
+    if len(ids) == 3:
+        blocks = [b for b in blocks if b['id'] in ids]
+    elif 'side' not in ids:
+        blocks = [b for b in blocks if b['id'] != 'side']
+    decision = {'blocks': blocks, 'dimensions': [600, 800]}
+    with pytest.raises(ValueError, match='geometrically impossible'):
+        adapters._validate(response(ids), decision)
+
+
+def test_valid_internal_heading_and_furniture_geometry():
+    blocks = [
+        {'id': 'header', 'text': 'Header', 'bbox': [10, 10, 590, 30], 'role': 'margin', 'column': None},
+        {'id': 'upper', 'text': 'Upper body', 'bbox': [60, 100, 280, 140], 'role': 'body', 'column': 'left'},
+        {'id': 'heading', 'text': 'Section', 'bbox': [60, 200, 550, 230], 'role': 'spanning', 'column': None},
+        {'id': 'lower', 'text': 'Lower body', 'bbox': [60, 250, 280, 300], 'role': 'body', 'column': 'left'},
+        {'id': 'footer', 'text': 'Footer', 'bbox': [10, 750, 590, 775], 'role': 'margin', 'column': None},
+    ]
+    ids = [b['id'] for b in blocks]
+    assert adapters._validate(response(ids), {'blocks': blocks, 'dimensions': [600, 800]})[0] == ids

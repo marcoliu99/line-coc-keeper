@@ -160,6 +160,14 @@ def record_budget(lease: ImportLease, budget: dict) -> None:
 
 
 @_serialized
+def record_ai_budget(lease: ImportLease, budget: dict) -> None:
+    """Region repair has its own persisted allowance, independent of layout."""
+    current = require_owner(lease)
+    current.setdefault('report', {})['ai_repair_budget'] = copy.deepcopy(budget)
+    _write(lease.conversation_id, current)
+
+
+@_serialized
 def checkpoint(lease: ImportLease, report: dict, result: tuple, *, release_attempt: bool = True) -> dict:
     """Only the active reservation can replace its durable page checkpoint."""
     data = require_owner(lease)

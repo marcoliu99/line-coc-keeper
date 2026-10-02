@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app import source_analysis
 from app.providers.registry import conversation_provider
 
 _REPORT_TOOL = {
@@ -103,8 +104,8 @@ def extract_opening_narration(scenario_text: str) -> dict[str, Any]:
     if provider is None or not scenario_text.strip():
         return {"found": False, "text": "", "page": 0, "opening_check": None}
 
-    result = provider.analyze_text(
-        scenario_text,
+    result = source_analysis.analyze(
+        provider, scenario_text,
         _REPORT_TOOL,
         "以下是一份 COC7e 劇本的文字內容。請判斷裡面有沒有明確寫給守密人、可以直接唸給玩家聽的"
         "開場白／開場介紹文字，以及這段開場白本身有沒有明確要求全隊在遊戲一開始就做一次檢定，"

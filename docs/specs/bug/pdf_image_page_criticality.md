@@ -39,3 +39,9 @@ Regressions: illustration, cover, truly empty/decorative low-text page, optional
 ## Open blockers
 
 Provider-ON baseline is PENDING because external transmission authorization review rejected the six-book action. Classification/true/false image counts and after-fix admission are not available. Region AI repair currently lacks explicit zero-retry/timeout and a separate durable AI request ledger/reservation retained across Continue. Existing heading inverse ordering and margin/header/footer ordering P1 must be fixed before MERGE READY. Merged-resume staged-part cleanup and AI budget resumability remain P2. No architecture changes can be inferred from this draft spec.
+
+## Approved minimal P1 follow-up (2026-10-02)
+
+User explicitly confirmed five P1 fixes and superseded the old two-image authorization with six-book bounded official OpenAI dispatch. Before any provider canary, reject inverse spanning-heading placement and out-of-geometry page furniture; max_retries=0 bypasses internal compatibility retries. Region repair retains a separate durable AI allowance and crop/request identity, persisted before dispatch and across Continue without refund. Index/pregen/opening extract only bounded source windows with private one-shot reservations; their failed optional metadata cannot create a canonical hard block. Normal successful card units retain their backstory; no OCR/map/topology/gameplay architecture changes. Add cache identity for stricter candidate ordering validation.
+
+Run five P1 regressions and full checks before Haunting-only handle_pdf_upload -> durable continue -> save/reload/activation/start/one turn. Do not expand to other books until the canary succeeds. Provider failures/budget/unknown genuine source remain accurately blocked; only real-evidence-confirmed false admission blocks may receive minimal correction. Preserve mechanics/order controls. Network reservations and actual SDK transports are observed independently.

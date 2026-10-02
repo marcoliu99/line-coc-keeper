@@ -468,7 +468,9 @@ async def _run_pdf_import(
             pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality,
             resume_pages=resume if draft else None,
             layout_budget=draft.get("report", {}).get("layout_budget"),
-            layout_budget_checkpoint=lambda budget: pdf_ingestion_drafts.record_budget(lease, budget)
+            layout_budget_checkpoint=lambda budget: pdf_ingestion_drafts.record_budget(lease, budget),
+            ai_repair_ledger=draft.get("report", {}).get("ai_repair_budget"),
+            ai_budget_checkpoint=lambda budget: pdf_ingestion_drafts.record_ai_budget(lease, budget)
         )
     except pdf_loader.LayoutReviewRequired as exc:
         async with locks.get_conversation_lock(conversation_id):
@@ -512,7 +514,10 @@ async def _run_pdf_import(
     # and the scenario's own embedded cast would never even get a chance to
     # reconcile against it. See _merge_extracted_pregens for how this result
     # gets folded into state.pregens without regard to upload order.
-    pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
+    try:
+        pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
+    except ValueError:
+        pregens = []  # Incomplete optional cards cannot prevent safe-source admission.
 
     if not preview:
         try:

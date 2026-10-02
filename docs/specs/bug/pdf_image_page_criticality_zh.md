@@ -37,3 +37,9 @@ Native/geometry -> page criticality -> 必要時 bounded classification -> 只�
 ## 尚未解決
 
 Provider-ON baseline 因六本外傳授權審查拒絕而 PENDING；true/false/unknown provider classification 和 after-fix admission 均未取得。Region AI repair 缺 explicit timeout/max_retries=0 和跨 Continue 保留的獨立 durable AI request ledger/reservation。既有 heading inverse order、margin/header/footer 是 P1，未修不可宣稱 MERGE READY；merged-resume staged-part cleanup 與 AI budget resumability 為 P2。此文件不授權重做其他架構。
+
+## 已明確確認的最小 P1 修正（2026-10-02）
+
+使用者本輪明確確認五個 P1，並 supersede 舊兩張圖片限制，授權六本 bounded payload 至 official OpenAI。Canary前先拒 inverse spanning heading、違反 geometry 的 page furniture；max_retries=0 不走 compatibility retry。Region repair保留獨立durable AI allowance/crop-request identity，dispatch前持久化、Continue保留、不refund。Index/pregen/opening只送 bounded window，以private one-shot reservation控制；optional metadata失敗不得新增canonical hard blocker。正常成功的card unit仍保留backstory，不改OCR/map/topology/gameplay架構；ordering validation加入cache identity。
+
+五項regression與full checks先通過，再單跑Haunting handle_pdf_upload -> draft/continue -> save/reload/activation/start/一turn；canary通過才擴其他五本。Provider/budget/真正unknown source據實保留block，只有real evidence確認false admission才最小修。Mechanics/ordering controls不放寬，獨立觀測reservation與actual transport。

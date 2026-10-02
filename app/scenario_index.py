@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app import observability
+from app import observability, source_analysis
 from app.providers.registry import conversation_provider
 
 _REPORT_TOOL = {
@@ -102,8 +102,8 @@ def extract_scenario_index(scenario_text: str) -> dict[str, list[dict[str, Any]]
     if provider is None or not scenario_text.strip():
         return {"npcs": [], "locations": []}
 
-    result = provider.analyze_text(
-        scenario_text,
+    result = source_analysis.analyze(
+        provider, scenario_text,
         _REPORT_TOOL,
         "以下是一份 COC7e 劇本的文字內容。請找出裡面所有有明確數值（尤其是生命值 HP）的 "
         "NPC／怪物，以及主要的地點，用 report_scenario_index 工具回報。",

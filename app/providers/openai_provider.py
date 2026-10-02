@@ -700,7 +700,8 @@ def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | No
             options['max_retries'] = max_retries
         client = openai.OpenAI(api_key=OPENAI_API_KEY, **options)
         output_options: dict = {'max_output_tokens': 4096} if timeout is not None else {}
-        response = _create_response(client, **output_options,
+        create: Any = client.responses.create if max_retries == 0 else lambda **kw: _create_response(client, **kw)
+        response = create(**output_options,
             model=OPENAI_MODEL,
             input=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
             tools=[{

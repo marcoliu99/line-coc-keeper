@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any
 
-from app import character_matcher, dictionary
+from app import character_matcher, dictionary, source_analysis
 from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
 from app.providers.registry import analysis_provider
 from app.skill_aliases import canonical_skill_name
@@ -265,7 +265,8 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     pregens: list[dict[str, Any]] = []
     card_pages: list[dict[int, str]] = []
     for text in inputs:
-        result = provider.analyze_text(text, _REPORT_TOOL, prompt)
+        result = source_analysis.analyze(provider, scenario_text, _REPORT_TOOL, prompt,
+            window=text if len(starts) > 1 else None)
         extracted = (result or {}).get("pregens", []) or []
         if len(starts) > 1 and not extracted:
             raise ValueError("預製角色卡分析未完成，請重試匯入；未發布不完整的角色清單。")

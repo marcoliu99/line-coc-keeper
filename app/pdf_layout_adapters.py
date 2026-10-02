@@ -232,7 +232,9 @@ def _validate(response: object, decision: LayoutDecision) -> tuple[list[str], st
             bx0, by0, bx1, _ = b['bbox']
             same_column = a.get('column') is not None and a.get('column') == b.get('column')
             spanning = a.get('role') in {'spanning', 'heading', 'full_width'} and ax0 <= bx0 and ax1 >= bx1
-            if (same_column or spanning) and ay1 <= by0 and ay0 < by0 and ranks[a['id']] > ranks[b['id']]:
+            beneath_spanning = b.get('role') in {'spanning', 'heading', 'full_width'} and bx0 <= ax0 and bx1 >= ax1
+            furniture = a.get('role') == 'margin' or b.get('role') == 'margin'
+            if (same_column or spanning or beneath_spanning or furniture) and ay1 <= by0 and ay0 < by0 and ranks[a['id']] > ranks[b['id']]:
                 raise ValueError('geometrically impossible order')
     return ordered, apply_order(decision, ordered)
 

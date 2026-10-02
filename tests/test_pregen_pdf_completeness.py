@@ -11,7 +11,8 @@ def test_extracts_each_explicit_card_with_its_backstory():
         f'--- 第 {page + 1} 頁 ---\nBACKSTORY for {name}'
         for page, name in [(31, 'Artist'), (33, 'Dealer'), (35, 'Agent'), (37, 'Biologist')]
     )
-    def analyze(text, tool, prompt):
+    def analyze(text, tool, prompt, **options):
+        assert options["max_retries"] == 0 and options["timeout"] > 0
         names = [name for name in ['Artist', 'Dealer', 'Agent', 'Biologist'] if f'Occupation {name}' in text]
         # Reproduce a provider that returns only the first card in a long input.
         return {'pregens': [{'name': names[0], 'skills': {}}]}

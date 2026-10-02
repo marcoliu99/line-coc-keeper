@@ -85,6 +85,7 @@ def extraction_identity() -> dict:
         except metadata.PackageNotFoundError:
             return 'unavailable'
     return {'pipeline_version': PIPELINE_VERSION, 'renderer_version': RENDERER_VERSION,
+            'ordering_validation_version': 2,
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
             'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
@@ -449,7 +450,9 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
 def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8,
                  ai_repair_limit: int = 8, resume_pages: dict[int, dict] | None = None,
                  layout_budget: dict | None = None,
-                 layout_budget_checkpoint: Callable[[dict], None] | None = None) -> PdfExtraction:
+                 layout_budget_checkpoint: Callable[[dict], None] | None = None,
+                 ai_repair_ledger: dict | None = None,
+                 ai_budget_checkpoint: Callable[[dict], None] | None = None) -> PdfExtraction:
     """Return complete source, review pages, legacy truncation flag, images, maps.
 
     The source is never cut to a prompt budget. The optional report distinguishes
@@ -463,7 +466,10 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                   pages=[], continuations=[], derived_descriptions={})
     local_budget = [max(0, local_ocr_limit)]
     local_page_budget = max(0, local_ocr_limit)
-    ai_budget = [max(0, ai_repair_limit)]
+    ai_repair_ledger = ai_repair_ledger if ai_repair_ledger is not None else {}
+    ai_used_before = ai_repair_ledger.get("consumed_requests", 0)
+    ai_budget = [max(0, ai_repair_limit - ai_used_before)]
+    report["ai_repair_budget"] = ai_repair_ledger
     layout_budget = pdf_layout_adapters.reconcile_budget(layout_budget)
     report["layout_budget"] = layout_budget
     cached_pages = {}
@@ -687,7 +693,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         for i, row in enumerate(report["pages"]):
             if row.get('resumed'):
                 continue
-            texts[i], ai_result = pdf_ai_repair.repair_page(doc[i], row, texts[i], ai_budget)
+            texts[i], ai_result = pdf_ai_repair.repair_page(doc[i], row, texts[i], ai_budget,
+                ledger=ai_repair_ledger, checkpoint=ai_budget_checkpoint)
             row["ai_repair"] = ai_result
             if any(r["status"] == "accepted" for r in ai_result["regions"]):
                 row["method"] += "+ai_repair"
@@ -896,7 +903,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             'CERTIFIED' if all(status == 'CERTIFIED' for status in candidate_outcomes) else next(status for status in candidate_outcomes if status != 'CERTIFIED'))
     report["review_pages"] = review
     report["source_chars"] = len(full_text)
-    report["ai_repair_requests"] = max(0, ai_repair_limit) - ai_budget[0]
+    report["ai_repair_requests"] = ai_repair_ledger.get("consumed_requests", 0) - ai_used_before
     report["local_ocr_attempts"] = max(0, local_ocr_limit) - local_budget[0]
     report["local_page_ocr_attempts"] = max(0, local_ocr_limit) - local_page_budget
     engine_attempts = [attempt for row in report['pages']

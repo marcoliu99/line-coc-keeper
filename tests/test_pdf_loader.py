@@ -271,7 +271,7 @@ class PdfQualityRegressionTests(unittest.TestCase):
         self.assertEqual(attempts[0]['status'], 'review_required')
 
     def test_import_pipeline_reuses_ai_transcription_and_marks_failures(self):
-        provider = types.SimpleNamespace(analyze_image=lambda *args: {
+        provider = types.SimpleNamespace(analyze_image=lambda *args, **options: {
             'regions': [{'block_id': 0, 'status': 'readable', 'text': 'Alice STR: 60'}]})
         report = {}
         with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
