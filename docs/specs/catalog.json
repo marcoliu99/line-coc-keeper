@@ -1707,6 +1707,15 @@
       ],
       "path": "docs/specs/enhancement/pdf_source_backed_hidden_topology.md",
       "zh_path": "docs/specs/enhancement/pdf_source_backed_hidden_topology_zh.md"
+    },
+    {
+      "title": "PDF image-page criticality admission",
+      "zh": "PDF 圖片頁 criticality 與 admission",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/bug/pdf_image_page_criticality.md",
+      "zh_path": "docs/specs/bug/pdf_image_page_criticality_zh.md"
     }
   ]
 }
