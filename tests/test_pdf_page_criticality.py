@@ -218,3 +218,104 @@ def test_source_context_change_reuses_image_observation_but_rebinds_source(monke
     assert criticality.classify(b'page', page=1, pdf_sha256='book', native='', safe={2: quote})['source_critical'] is False
     assert criticality.classify(b'page', page=1, pdf_sha256='book', native='', safe={2: 'Required clue only.'})['source_critical'] is None
     assert provider.analyze_image.call_count == 1
+
+
+def test_appendix_triage_reuses_observations_and_binds_every_region(monkeypatch, tmp_path):
+    import json
+    from unittest.mock import Mock
+
+    from app import pdf_page_criticality as criticality
+    monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    permission = 'Each player creates an investigator.'
+    rule = 'First Aid heals 1 HP.'
+    observed = classification('mixed', contains_gameplay_source=True, contains_mechanics=True,
+        asset_only=False, source_fragments=['Character gear and backstory.', rule])
+    provider = Mock(analyze_image=Mock(return_value=observed), analysis_model_identity=lambda: 'test')
+    provider.analyze_text = Mock(return_value={'pages': [{'page': 1, 'answer': 'NO', 'regions': [
+        {'fragment_ids': [1], 'kind': 'character_asset', 'source_evidence': []},
+        {'fragment_ids': [2], 'kind': 'duplicate_reference', 'source_evidence': [{'page': 3, 'quote': rule}]},
+    ]}]})
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, provider)
+    safe = {2: permission, 3: rule}
+    current = {1: criticality.classify(b'page', page=1, pdf_sha256='book', native='', safe=safe)}
+    assets = {1: {'kind': 'pregen', 'start_page': 1, 'end_page': 1, 'title_sha256': 'title'}}
+    result = criticality.triage({1: b'page'}, pdf_sha256='book', safe=safe, assets=assets, current=current)
+    assert result[1]['source_critical'] is False
+    assert result[1]['page_role'] == 'OPTIONAL_PREGEN'
+    assert result[1]['required_regions'] == []
+    assert len(result[1]['optional_regions']) == 2
+    assert provider.analyze_image.call_count == 1
+    for _ in range(2):
+        criticality.triage({1: b'page'}, pdf_sha256='book', safe=safe, assets=assets, current=current)
+    assert provider.analyze_text.call_count == 1
+    ledger = json.loads(next((tmp_path / '.page-criticality').glob('*/ledger.json')).read_text())
+    assert ledger['consumed_requests'] == 2
+    # Unsafe gameplay prevented: a unique Keeper instruction must not disappear as optional character material.
+    assert criticality.triage({1: b'page'}, pdf_sha256='book', safe={2: permission, 3: 'Unrelated rule.'},
+        assets=assets, current=current) == {}
+
+
+@pytest.mark.parametrize(('fragment', 'quote'), [
+    ('First Aid heals 10 HP.', 'First Aid causes 10 HP loss.'),
+    ('First Aid heals 10 HP.', 'First Aid cannot heal 10 HP.'),
+    ('Medicine heals 1d3 HP.', 'First Aid heals 1d3 HP.'),
+    ('A roll succeeds at 50%.', 'A roll succeeds at 50.'),
+    ('Damage is 1d6+2.', 'Damage is 1d6.'),
+])
+def test_reference_cannot_bind_opposite_or_damaged_mechanics(fragment, quote):
+    # Unsafe gameplay prevented: unique contradictory mechanics must not be discarded as duplicate reference.
+    from app import pdf_page_criticality as criticality
+    assert criticality.reference_compatible(fragment, quote) is False
+
+
+def test_optional_reference_needs_explicit_author_instruction():
+    from app import pdf_page_criticality as criticality
+    quote = 'Quick Reference Rules: a handy rules reminder and something you might refer to once you have more experience of playing the game.'
+    assert criticality.reference_permission(quote) is True
+    assert criticality.reference_permission('Quick Reference Rules: you must use these rules before playing.') is False
+
+
+def test_labelled_reference_ids_use_author_permission_without_losing_required_fragment(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+
+    from app import pdf_page_criticality as criticality
+    monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    reminder = 'Quick Reference Rules: a handy rules reminder and something you might refer to once you have more experience of playing the game.'
+    safe = {2: 'Each player creates an investigator.', 3: reminder}
+    fragments = ['Quick Reference Rules: Skill rolls.', 'Natural Heal rate: weekly healing roll.']
+    provider = Mock(analyze_image=Mock(return_value=classification('mixed', asset_only=False,
+        source_fragments=fragments)), analysis_model_identity=lambda: 'test')
+    provider.analyze_text = Mock(return_value={'pages': [{'page': 1, 'answer': 'NO', 'regions': [
+        {'fragment_ids': [1], 'kind': 'optional_reference', 'source_evidence': [{'page': 3, 'quote': reminder}]},
+    ]}]})
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, provider)
+    current = {1: criticality.classify(b'page', page=1, pdf_sha256='book', native='', safe=safe)}
+    assets = {1: {'kind': 'pregen', 'start_page': 1, 'end_page': 1, 'title_sha256': 'title'}}
+    result = criticality.triage({1: b'page'}, pdf_sha256='book', safe=safe, assets=assets, current=current)
+    # Unsafe gameplay prevented: omitted fragments may contain unique scenario-specific rules.
+    assert result == {}
+
+
+def test_missing_scenario_rule_cannot_be_filled_from_reference_heading():
+    from app import pdf_page_criticality as criticality
+    reminder = 'Quick Reference Rules: a handy rules reminder and something you might refer to once you have more experience of playing the game.'
+    regions = [{'fragment_ids': [1], 'kind': 'optional_reference', 'source_evidence': [{'page': 3, 'quote': reminder}]}]
+    fragments = ['Quick Reference Rules', 'Pushing rolls: In this scenario a pushed failure permanently kills the investigator.']
+    assert criticality._reference_regions(regions, fragments, {3: reminder}) == regions
+
+
+@pytest.mark.parametrize('counterpart,expected', [
+    ('Pushing rolls: failure causes 1d6 damage.', True),
+    ('Pushing rolls: failure heals 1d6 damage.', False),
+])
+def test_missing_reference_fragment_requires_exact_already_bound_counterpart(counterpart, expected):
+    from app import pdf_page_criticality as criticality
+    reminder = 'Quick Reference Rules: a handy rules reminder and something you might refer to once you have more experience of playing the game.'
+    safe = {2: 'Each player creates an investigator.', 3: reminder}
+    observed = {1: classification('mixed', asset_only=False, source_fragments=[counterpart]),
+                4: classification('mixed', asset_only=False, source_fragments=['Quick Reference Rules', 'Pushing rolls: failure causes 1d6 damage.'])}
+    region = {'fragment_ids': [1], 'kind': 'optional_reference', 'source_evidence': [{'page': 3, 'quote': reminder}]}
+    output = {'pages': [{'page': p, 'answer': 'NO', 'regions': [region]} for p in observed]}
+    assets = {p: {'kind': 'pregen', 'start_page': 1, 'end_page': 4, 'title_sha256': 'title'} for p in observed}
+    result = criticality._triage_decisions(output, observed, safe, assets)
+    assert (4 in result) is expected

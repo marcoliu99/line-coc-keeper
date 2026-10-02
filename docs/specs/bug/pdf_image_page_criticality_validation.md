@@ -1,6 +1,9 @@
 # PDF image-page criticality validation
 
-Current result: approved five-P1 fix implemented at `1bcb12b`; real Haunting canary **HARNESS_LIMITED**, not playable/proven. New six-book authorization accepted, eight actual OpenAI requests succeeded. See the latest follow-up below; earlier PENDING/zero-request statements are historical checkpoints. Merge and rollout HOLD.
+Current result (2026-10-03): Haunting READY_WITH_WARNINGS, zero hard blocks; publication/reload/activation/start passed. Ordinary turn incomplete, remaining five books not run. MERGE/ROLLOUT HOLD. Earlier checkpoint sections below are historical; see final exact-counterpart section and results JSON current_validation.
+
+
+Historical checkpoint: approved five-P1 fix implemented at `1bcb12b`; real Haunting canary **HARNESS_LIMITED**, not playable/proven. New six-book authorization accepted, eight actual OpenAI requests succeeded. See the latest follow-up below; earlier PENDING/zero-request statements are historical checkpoints. Merge and rollout HOLD.
 
 Baseline: enhancement/pdf-multicolumn-ingestion @ 5b87207a9a47ad2f0473ecda631504c833669a33. Six corpus SHA256 values match the earlier local 245-page extraction. Original book hard-block counts are 23/9/26/7/25/15 (105 pages); 86 pages have image transcription blocking reason. Original source reason totals: 86 image, 19 ordering, 1 mechanics, including one page with overlapping reasons.
 
@@ -77,3 +80,23 @@ Two map classifications were initially repeated when safe context changed. A fai
 Final checks: **2225 passed, 1 skipped, 152 subtests passed**; 26 criticality regressions; ruff PASS; mypy PASS (140 files); compileall PASS; diff-check PASS. Standards and Spec reviews have no remaining actionable code findings after the optionality/cache fixes. Existing first-upload/invalid-map publication/start integration tests pass, but mocked unit/integration success does not replace the missing real canary.
 
 **PR155 MERGE HOLD / Production rollout HOLD.** Remaining acceptance blocker: distinguish optional pregen/mixed reference information from genuinely unique required source on nine pages within production caps. No proof of true unique required image source was established for those pages. The implementation removes confirmed false blocks; it does not satisfy the user's final real-playability acceptance rule. Resumed merged-part cleanup remains deferred P2; no architecture expansion or gameplay semantics change.
+
+## 2026-10-03 final appendix triage
+
+Baseline: `7fabfc7c25eb49d4df307c50fb3bb62036be582d`. Existing nine page classifications replayed without new image requests. One bounded canonical-source/observed-fragment audit consumed the final existing classification allowance (24/24); official OpenAI `gpt-6-luna`, one reservation, one HTTP transport, no retries.
+
+Canonical authored investigator-field instructions explicitly describe Quick Reference Rules as a later-use reminder; canonical source permits player-created investigators. Optional reference permission is distinct from exact duplicate-source evidence. Provider NO alone cannot authorize publication. Every fragment must receive a bound, validated region judgment; missing fragment IDs are not synthesized from reference headings. A regression preserves a scenario-specific pushed-failure rule even under an otherwise optional reference heading.
+
+Pages 35,36,37,38,39,40,42,43 bind as OPTIONAL_PREGEN / SOFT_REVIEW. Page44 remains unresolved because the bounded audit omitted fragment IDs; no true unique Keeper-source loss has been proved, and no recovered-region transcription is claimed. Replaying the private audit requires zero additional dispatches.
+
+Local verification: full pytest exit0 (2235 collected; one existing skip), Ruff PASS, mypy PASS (140 files), compileall PASS, diff-check PASS. Standards/Spec reviews found and resolved missing-ID auto-fill; no remaining actionable findings. Real publication/start acceptance remains pending until the safe production canary completes. No gameplay or other-book success is inferred.
+
+### Final exact-counterpart replay and production result
+
+The omitted p44 fragments exactly match optional-reference fragments on pages already accepted by complete source-bound audit. Final binding uses only those accepted counterparts, exact normalized fragment equality, and canonical author reminder permission; no matching by title, number multiset, or dice equivalence. Regression rejects an opposite effect with identical dice. All nine targeted pages are now SOFT_REVIEW; no new image classification request or region transcription.
+
+Fresh conversation/draft production import succeeds: READY_WITH_WARNINGS, zero hard blocks, 13 soft pages, no unsafe gameplay map. Persisted library reload, real scenario-use activation and `/coc start` pass. The ordinary player turn **does not pass**: API responses succeed, but existing runtime resolution returns incomplete. State persists; observed import-time calls during the turn are zero. A first runtime probe rejects unsupported temperature; the existing `OPENAI_OMIT_TEMPERATURE=true` setting avoids that parameter, but does not resolve the incomplete-turn result. An instrumentation null-error parsing defect was corrected privately; its interrupted probes are not counted as successful gameplay. No Keeper/runtime production code changed.
+
+This round: 29 legitimate import reservations / 29 transports across the interrupted, blocked, and final published canaries; 9 runtime logical dispatches including failed instrumentation/model probes. SDK hidden retries zero; compatibility redispatch on unsupported temperature was prevented. Caps were unchanged, consumed reservations were not refunded. Final classification ledger 24/24; zero additional image-classification transports. Other five books NOT RUN because Haunting normal-turn acceptance failed.
+
+Final full suite: **2236 passed, 1 skipped, 152 subtests, zero failures/errors** (36.423s). Ruff, mypy (140 files), compileall and diff-check PASS. No newly failing tests. Standards/Spec review: no remaining actionable patch findings. Remaining P1 acceptance blocker: real ordinary turn incomplete; P2 existing staged-part cleanup deferred, configured-model capability setting requires deployment attention. P3 cleanup deferred. **PR155 MERGE HOLD; production rollout HOLD.**

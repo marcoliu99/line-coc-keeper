@@ -1,5 +1,8 @@
 # PDF 圖片頁 criticality validation
 
+目前結果（2026-10-03）：Haunting READY_WITH_WARNINGS、零 hard blocks；publication/reload/activation/start 成功。普通回合 incomplete，其餘五本未執行；MERGE／ROLLOUT HOLD。下列較早 checkpoint 均為歷史紀錄，最新結果見文末 exact-counterpart section 及 results JSON current_validation。
+
+
 最新結果：五項已核准 P1 已於 `1bcb12b` 修正；真實 Haunting canary 為 **HARNESS_LIMITED**，尚未證明可遊玩。新六本授權已接受，8 次 OpenAI 實際 request 均成功；下列舊 PENDING／零 request 敘述為歷史 checkpoint。Merge／rollout HOLD。
 
 Baseline branch enhancement/pdf-multicolumn-ingestion @ 5b87207a9a47ad2f0473ecda631504c833669a33，六本 SHA 6/6 與前次一致，245 頁。原 hard counts 23/9/26/7/25/15，共105頁；86頁 image、19頁 ordering、1頁 mechanics reason（1頁多重原因）。
@@ -76,3 +79,23 @@ Production classifier 只處理 Haunting 原21頁 image blockers，每次一張�
 Final checks：**2225 passed、1 skipped、152 subtests passed**；criticality regressions26；ruff PASS、mypy PASS（140 files）、compileall PASS、diff-check PASS。Optionality／cache 修正後 Standards／Spec review 無剩餘 actionable code finding。既有 first-upload＋invalid-map publication/start integration tests 通過，但 mock/unit 成功不取代真實 canary。
 
 **PR155 MERGE HOLD／Production rollout HOLD。** 剩餘 acceptance blocker：在 production cap 下分清九頁 optional pregen/mixed reference 與真正唯一必要 source；尚未證明它們是真正 source-critical。本 patch 移除已確認 false block，仍未達成使用者「真實劇本可開始並玩一回合」的最終規則。Resumed merged-part cleanup 維持 deferred P2，沒有擴架構或改 gameplay semantics。
+
+## 2026-10-03 最終附錄分流
+
+基準：`7fabfc7c25eb49d4df307c50fb3bb62036be582d`。九頁既有 classification 重播，沒有新增圖片請求。一次 bounded canonical-source / observed-fragment audit 使用既有最後一筆 allowance（24/24）；OpenAI `gpt-6-luna`，一次 reservation、一次 HTTP transport、沒有 retry。
+
+Canonical investigator-field instruction 明確把 Quick Reference Rules 定義為較熟悉遊戲後可參考的提醒；canonical source 允許自建 investigator。Optional reference permission 與 exact duplicate evidence 分開。Provider NO 不能單獨授權 publication；每個 fragment 都必須有完整且 source-bound 的 region 判定，不得因 reference 標題自動補齊缺漏 ID。Regression 保護混在 reference 中的劇本專用 pushed-failure 規則。
+
+35、36、37、38、39、40、42、43 頁綁定為 OPTIONAL_PREGEN / SOFT_REVIEW。44 頁因 audit 遺漏部分 fragment IDs 仍未解；尚未證明存在唯一必要 Keeper source，也沒有宣稱完成 region transcription。Private audit 重播不消耗新請求。
+
+本機驗證：完整 pytest exit0（2235 collected，一個既有 skip）、Ruff PASS、mypy PASS（140 files）、compileall PASS、diff-check PASS。Standards/Spec review 找到的 missing-ID auto-fill 已移除，無剩餘 actionable finding。真實 publication/start acceptance 仍待 safe production canary 完成，不推論 gameplay 或其他五本成功。
+
+### 最終 exact-counterpart 重播及 production 結果
+
+44 頁漏判 fragments 與已完成完整 source-bound audit 的 optional-reference fragments 正規化後逐字相同。最終 binding 只引用已接受 counterparts、exact equality 及 canonical 作者的 reminder permission，不依標題、數字集合或 dice 相同判定。Regression 拒絕相同 dice、相反效果。九頁均為 SOFT_REVIEW；沒有新增圖片 classification 或 region transcription。
+
+全新 conversation/draft production import 成功：READY_WITH_WARNINGS、零 hard blocks、13 soft pages，unsafe map 未進 gameplay。Persisted library reload、真正 scenario-use activation 與 `/coc start` 均成功。普通玩家回合 **未通過**：API 成功回應，但既有 runtime resolution 回傳 incomplete。State 已持久化，普通回合觀察到的 import-time calls 為零。第一個 runtime probe 的 temperature 參數被 provider 拒絕；既有 `OPENAI_OMIT_TEMPERATURE=true` 設定排除該參數，仍未排除 incomplete turn。Private instrumentation 的 null-error parsing bug 已修正，相關 probe 不算 gameplay 成功。沒有修改 Keeper/runtime production code。
+
+本輪涵蓋 interrupted、blocked 及最終 published canary：29 筆合法 import reservation／29 transports；9 筆 runtime logical dispatch，包含失敗 instrumentation/model probe。SDK hidden retries 為零；unsupported-temperature compatibility redispatch 被阻止。未提高 caps 或 refund。Classification ledger 最終24/24，新增圖片 classification transport 為零。Haunting 普通回合 acceptance 失敗，未執行其餘五本。
+
+最終 full suite：**2236 passed、1 skipped、152 subtests，零 failure/error**（36.423s）。Ruff、mypy（140 files）、compileall、diff-check PASS，沒有新增測試失敗。Standards/Spec review 無剩餘 actionable patch findings。P1 acceptance blocker：真實普通回合 incomplete；P2 既有 staged-part cleanup deferred，configured-model capability 設定仍需部署確認。P3 cleanup deferred。**PR155 MERGE HOLD；Production rollout HOLD。**

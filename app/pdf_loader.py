@@ -86,7 +86,7 @@ def extraction_identity() -> dict:
         except metadata.PackageNotFoundError:
             return 'unavailable'
     return {'pipeline_version': PIPELINE_VERSION, 'renderer_version': RENDERER_VERSION,
-            'ordering_validation_version': 2, 'page_criticality_version': pdf_page_criticality.VERSION,
+            'ordering_validation_version': 2, 'page_criticality_version': pdf_page_criticality.VERSION, 'appendix_triage_version': 1,
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
             'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
@@ -593,6 +593,13 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     map_candidates.add(number)
                 if number not in map_candidates:
                     pending.pop(number)
+        appendix = pdf_page_criticality.triage(pending, pdf_sha256=pdf_hash, safe=safe_pages,
+            assets=asset_sections, current={row['page']: row['page_criticality']
+                for row in report['pages'] if 'page_criticality' in row})
+        for number, criticality in appendix.items():
+            report['pages'][number - 1]['page_criticality'] = criticality
+            texts[number - 1] = f"[PDF_OPTIONAL_ASSET: {criticality['page_role']}; page {number}; original image retained]"
+            pending.pop(number, None)
         for i, page in enumerate(doc):
             row = report['pages'][i]
             if row.get('resumed') or row.get('page_criticality', {}).get('source_critical') is False:

@@ -1,5 +1,179 @@
 {
-  "status": "PLAYABLE_FIRST_IMPLEMENTED_CANARY_BLOCKED",
+  "status": "PUBLISHED_START_SUCCEEDED_NORMAL_TURN_INCOMPLETE",
+  "current_validation": {
+    "baseline_sha": "7fabfc7c25eb49d4df307c50fb3bb62036be582d",
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "destination": "https://api.openai.com/v1",
+    "authorization": "AUTHORIZATION_CONFIRMED",
+    "classification_image_requests": 0,
+    "bounded_source_necessity_requests": 1,
+    "criticality_ledger_consumed": 24,
+    "criticality_configured_cap": 24,
+    "page_results": [
+      {
+        "page": 35,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 36,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 37,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 38,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 39,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 40,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 42,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 43,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "canonical_source_backed_optional_asset",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      },
+      {
+        "page": 44,
+        "section": "pregen_appendix",
+        "page_role": "OPTIONAL_PREGEN",
+        "unique_required_source": false,
+        "final_disposition": "SOFT_REVIEW",
+        "reason": "exact_bound_optional_reference_counterpart",
+        "required_regions": [],
+        "authoritative_region_recoveries": 0
+      }
+    ],
+    "confirmed_true_unique_source_blockers": 0,
+    "downgraded_pages": 9,
+    "bounded_region_recoveries": 0,
+    "hard_block_pages": [],
+    "readiness": "READY_WITH_WARNINGS",
+    "soft_review_pages": [
+      4,
+      24,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "feature_warnings": [
+      "optional_pregen_unavailable",
+      "topology_assistance_unavailable"
+    ],
+    "gameplay_maps": 0,
+    "production_path": "handle_pdf_upload -> admission -> library save -> persisted reload -> scenario use -> start -> ordinary turn",
+    "publication": true,
+    "reload": true,
+    "activation": true,
+    "start": true,
+    "normal_turn": false,
+    "normal_turn_result": "INCOMPLETE_RESPONSE",
+    "state_persisted": true,
+    "import_time_calls_during_turn": 0,
+    "import_reservations": 29,
+    "import_transports": 29,
+    "runtime_dispatches": 9,
+    "sdk_hidden_retries": 0,
+    "runtime_diagnostics": {
+      "unsupported_parameter": "temperature",
+      "existing_configuration": "OPENAI_OMIT_TEMPERATURE=true",
+      "with_existing_configuration": "HTTP_200_BUT_TURN_INCOMPLETE",
+      "earlier_probe": "compatibility_redispatch_prevented"
+    },
+    "canary_runs": [
+      "interrupted_review_unsafe_ID_fill_removed",
+      "safe_binding_blocked_page44",
+      "exact_optional_counterpart_bound_published"
+    ],
+    "remaining_five_books": "NOT_RUN_HAUNTING_NORMAL_TURN_GATE_FAILED",
+    "playability": "NOT_PLAYABLE_BUG",
+    "pytest": {
+      "passed": 2236,
+      "skipped": 1,
+      "subtests": 152,
+      "failures": 0,
+      "errors": 0
+    },
+    "ruff": "PASS",
+    "mypy": "PASS_140_FILES",
+    "compileall": "PASS",
+    "diff_check": "PASS",
+    "standards_review": "NO_ACTIONABLE_FINDINGS",
+    "spec_review": "NO_ACTIONABLE_FINDINGS_AFTER_ID_FILL_REMOVED",
+    "remaining_blockers": [
+      "real_normal_turn_incomplete",
+      "configured_model_temperature_incompatible_without_existing_omit_setting"
+    ],
+    "merge": "HOLD",
+    "production_rollout": "HOLD"
+  },
+  "historical_root_fields_notice": "All other root fields below describe the historical checkpoint BEFORE final admission; current_validation is authoritative for 2026-10-03.",
   "baseline_sha": "e0873782a36ac140783e3715805d6807271f412a",
   "implementation_sha": "4f701e07b143ab1ad9f64ebe976b8db00f9c72b1",
   "provider": "openai",
@@ -6092,5 +6266,6 @@
     "canary_executed": true,
     "six_book_baseline_complete": false,
     "provider_requests_scope": "CURRENT_HAUNTING_CANARY_ONLY"
-  }
+  },
+  "historical_status": "PLAYABLE_FIRST_IMPLEMENTED_CANARY_BLOCKED"
 }
