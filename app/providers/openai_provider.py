@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import logging
@@ -94,7 +95,7 @@ class IncompleteResponseError(RuntimeError):
 def _ensure_complete(response) -> None:
     status = getattr(response, 'status', None)
     if status in ('incomplete', 'failed', 'cancelled'):
-        observability.event('llm.response.incomplete', provider='openai', status=status,
+        observability.event('llm.response.incomplete', provider='openai', status=status, completion_category='PROVIDER_INCOMPLETE',
                             reason=getattr(getattr(response, 'incomplete_details', None), 'reason', None))
         raise IncompleteResponseError('OpenAI response did not complete')
 
@@ -400,6 +401,9 @@ async def run_conversation(
                 "name": t["name"],
                 "description": t["description"],
                 "parameters": t["input_schema"],
+                # Runtime tools use optional fields; Responses must not silently require them.
+                # Deterministic tool handlers retain validation of every supplied argument.
+                "strict": False,
             }
             for t in current_tools
         ]
@@ -521,9 +525,19 @@ async def run_conversation(
         used_input, used_output = getattr(usage, 'input_tokens', None), getattr(usage, 'output_tokens', None)
         inherited_tokens = used_input + used_output if isinstance(used_input, int) and isinstance(used_output, int) else estimated_input
         function_calls = [item for item in response.output if item.type == "function_call"]
+        output_text = getattr(response, "output_text", None) or ""
+        observability.event('llm.response.shape', provider='openai', model=OPENAI_MODEL,
+                            stage=response_stage, iteration=iteration,
+                            response_id_sha256=hashlib.sha256(response.id.encode()).hexdigest(),
+                            response_status=getattr(response, 'status', None),
+                            output_count=len(response.output), output_types=[item.type for item in response.output],
+                            assistant_text_present=bool(output_text.strip()), assistant_text_length=len(output_text),
+                            tool_call_count=len(function_calls))
 
         if not function_calls:
-            final_text = (response.output_text or "").strip() or final_text
+            observability.event('llm.turn.stop', stage=response_stage, iteration=iteration,
+                                reason='assistant_output' if output_text.strip() else 'NO_ASSISTANT_OUTPUT')
+            final_text = output_text.strip() or final_text
             if on_response_id is not None:
                 on_response_id(response.id)
             break
@@ -550,6 +564,8 @@ async def run_conversation(
                 "call_id": fc.call_id,
                 "output": json.dumps(result, ensure_ascii=False),
             })
+        observability.event('llm.turn.continue', stage=response_stage, iteration=iteration,
+                            reason='tool_results', tool_result_count=len(next_input_items))
         active_previous_response_id = response.id
         input_items = next_input_items
     else:
@@ -572,6 +588,8 @@ async def run_conversation(
         # implies) whose output could never reach the player. Only
         # app/keeper.py's legacy run_turn path (its own single combined
         # tool+narration call, no separate Narrator) actually needs this.
+        observability.event('llm.turn.stop', stage=response_stage, iteration=iteration,
+                            reason='MAX_ITERATIONS', tool_result_count=len(input_items))
         if enable_wrapup:
             observability.event("llm.wrapup")
             wrapup_kwargs: dict[str, Any] = {
