@@ -288,7 +288,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
         return None
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Text-only sibling of analyze_image above — a single forced tool call,
     no image. Used by app/pregen_extractor.py. Returns the tool call's args
     dict, or None on any failure (no GEMINI_API_KEY, the call raised, or no
@@ -299,11 +299,17 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        options: dict = {}
+        if timeout is not None:
+            options['timeout'] = int(timeout * 1000)
+        if max_retries is not None:
+            options['retry_options'] = {'attempts': max_retries + 1}
+        client = genai.Client(api_key=GEMINI_API_KEY, **cast(Any, {'http_options': options} if options else {}))
         function_declaration = types.FunctionDeclaration(
             name=tool["name"], description=tool["description"], parameters_json_schema=tool["input_schema"]
         )
         config = types.GenerateContentConfig(
+            max_output_tokens=4096 if timeout is not None else None,
             tools=[types.Tool(function_declarations=[function_declaration])],
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(
@@ -320,3 +326,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         return None
     except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
+
+
+def analysis_model_identity() -> str:
+    return GEMINI_MODEL

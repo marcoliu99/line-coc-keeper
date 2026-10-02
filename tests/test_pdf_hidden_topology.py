@@ -2,8 +2,10 @@
 import copy
 
 from app import pdf_map_analysis, scene_map
+from app import pdf_source_topology_discovery as discovery
+from tests.pdf_source_helpers import certify, verify
 
-SOURCE = '--- 第 7 頁 ---\nA hidden passage connects Basement to Corbitt hiding place.'
+SOURCE = '--- 第 1 頁 ---\nA hidden passage connects Basement to Corbitt hiding place.'
 
 
 def visual_result(certified_map_result):
@@ -14,37 +16,37 @@ def visual_result(certified_map_result):
 
 def test_source_backed_hidden_route_keeps_visual_proof_and_is_not_an_exit(certified_map_result):
     original = visual_result(certified_map_result)
-    result = pdf_map_analysis.certify_source_topology(original.graph, original.analysis, SOURCE)
+    result = certify(original.graph, original.analysis, SOURCE)
     route = result.graph['source_topology'][0]
     basement, hiding_place = [room['id'] for room in original.graph['rooms']]
     assert (route['from'], route['to'], route['type']) == (basement, hiding_place, 'hidden_passage')
     assert (route['authority'], route['visibility'], route['availability']) == ('scenario_source', 'hidden', 'undiscovered')
-    assert route['source_evidence']['page'] == 7
+    assert route['source_evidence']['page'] == 1
     assert result.graph['rooms'] == original.graph['rooms']
     assert scene_map.get_room(result.graph, basement)['exits'] == []
     assert not scene_map.resolve_move({'7': result.graph}, '7', basement, 'N', 'right')['ok']
-    assert pdf_map_analysis.verified_graph(result.graph, result.analysis, b'map', canonical_source=SOURCE)
-    assert not pdf_map_analysis.verified_graph(result.graph, result.analysis, b'map')
-    assert not pdf_map_analysis.verified_graph(result.graph, result.analysis, b'map', canonical_source=SOURCE + ' changed')
-    assert pdf_map_analysis.verified_graph(original.graph, original.analysis, b'map')
+    assert verify(result.graph, result.analysis, b'map', canonical_source=SOURCE)
+    assert not verify(result.graph, result.analysis, b'map')
+    assert not verify(result.graph, result.analysis, b'map', canonical_source=SOURCE + ' changed')
+    assert verify(original.graph, original.analysis, b'map')
     assert 'source_topology' not in original.graph
 
 
 def test_hidden_proof_cannot_be_forged_by_changing_hashes(certified_map_result):
     original = visual_result(certified_map_result)
-    result = pdf_map_analysis.certify_source_topology(original.graph, original.analysis, SOURCE)
+    result = certify(original.graph, original.analysis, SOURCE)
     graph, analysis = copy.deepcopy(result.graph), copy.deepcopy(result.analysis)
     graph['source_topology'][0]['source_evidence']['span_start'] += 1
     analysis['graph_sha256'] = pdf_map_analysis.graph_hash(graph)
     analysis['source_topology_certificate']['merged_graph_sha256'] = analysis['graph_sha256']
     analysis['source_topology_certificate']['hidden_topology_sha256'] = pdf_map_analysis.graph_hash(graph['source_topology'])
-    assert not pdf_map_analysis.verified_graph(graph, analysis, canonical_source=SOURCE)
+    assert not verify(graph, analysis, canonical_source=SOURCE)
 
 
 def test_breakable_wall_is_blocked_source_backed_and_has_no_invented_difficulty(certified_map_result):
     original = visual_result(certified_map_result)
-    source = '--- 第 7 頁 ---\nA breakable wall connects Basement to Corbitt hiding place; it is necessary for progress.'
-    result = pdf_map_analysis.certify_source_topology(original.graph, original.analysis, source)
+    source = '--- 第 1 頁 ---\nA breakable wall connects Basement to Corbitt hiding place; it is necessary for progress.'
+    result = certify(original.graph, original.analysis, source)
     route = result.graph['source_topology'][0]
     assert route['type'] == 'breakable_wall'
     assert route['visibility'] == 'visible'
@@ -53,7 +55,7 @@ def test_breakable_wall_is_blocked_source_backed_and_has_no_invented_difficulty(
     assert route['condition']['kind'] == 'world_state'
     assert route['condition']['expected'] is True
     assert not {'difficulty', 'hp', 'armor', 'tool'} & route.keys()
-    assert pdf_map_analysis.verified_graph(result.graph, result.analysis, canonical_source=source)
+    assert verify(result.graph, result.analysis, canonical_source=source)
 
 
 def test_shared_wall_and_speculation_cannot_create_source_topology(certified_map_result):
@@ -61,8 +63,8 @@ def test_shared_wall_and_speculation_cannot_create_source_topology(certified_map
     for text in ('Basement shares a wall with Corbitt hiding place.',
                  'Perhaps a hidden passage connects Basement to Corbitt hiding place.',
                  'There is no secret door from Basement to Corbitt hiding place.'):
-        result = pdf_map_analysis.certify_source_topology(original.graph, original.analysis,
-            '--- 第 7 頁 ---\n' + text)
+        result = certify(original.graph, original.analysis,
+            '--- 第 1 頁 ---\n' + text)
         assert not result.graph.get('source_topology')
 
 
@@ -216,7 +218,8 @@ def test_hidden_overlay_is_rebuilt_on_resume_without_new_provider_requests(monke
     assert final['pages'][0]['resumed'] is True
     assert len(calls) == 4
     assert result[4][1] == graph
-    assert pdf_map_analysis.verified_graph(result[4][1], final['pages'][0]['map_analysis'], images[1], canonical_source=result[0])
+    assert pdf_map_analysis.verified_graph(result[4][1], final['pages'][0]['map_analysis'], images[1], canonical_source=result[0],
+        source_context=discovery.source_context(result[0], final, pdf_sha256=final['pdf_sha256']))
 
 
 def test_secret_door_discovery_and_public_where(monkeypatch, tmp_path):
@@ -258,13 +261,13 @@ def test_beacon_visual_door_and_stairs_still_work(certified_map_result):
         {'id': 'lamp', 'name': 'Lamp Room', 'exits': [{'to': 'gallery', 'compass': 'E', 'label': 'door'}]},
         {'id': 'gallery', 'name': 'Lantern Gallery', 'exits': []}]}
     result = certified_map_result('', graph, image=b'beacon')
-    result = pdf_map_analysis.certify_source_topology(result.graph, result.analysis,
+    result = certify(result.graph, result.analysis,
         '--- 第 16 頁 ---\nService Room, Lamp Room and Lantern Gallery are visible locations.')
     service, lamp, gallery = [r['id'] for r in result.graph['rooms']]
     assert not result.graph.get('source_topology')
     assert scene_map.resolve_move({'16': result.graph}, '16', service, 'N', 'up')['room']['id'] == lamp
     assert scene_map.resolve_move({'16': result.graph}, '16', lamp, 'N', 'right')['room']['id'] == gallery
-    assert pdf_map_analysis.verified_graph(result.graph, result.analysis, b'beacon')
+    assert verify(result.graph, result.analysis, b'beacon')
 
 
 def test_private_challenger_prose_cannot_authorize_hidden_route(monkeypatch):
@@ -333,14 +336,14 @@ def test_explicit_two_way_barrier_opens_both_directions(monkeypatch, tmp_path):
 
 def test_condition_metadata_tampering_invalidates_certificate(certified_map_result):
     original = visual_result(certified_map_result)
-    source = '--- 第 7 頁 ---\nIf the seal is removed, a conditional route connects Basement to Corbitt hiding place.'
-    result = pdf_map_analysis.certify_source_topology(original.graph, original.analysis, source)
-    assert pdf_map_analysis.verified_graph(result.graph, result.analysis, canonical_source=source)
+    source = '--- 第 1 頁 ---\nIf the seal is removed, a conditional route connects Basement to Corbitt hiding place.'
+    result = certify(original.graph, original.analysis, source)
+    assert verify(result.graph, result.analysis, canonical_source=source)
     route = result.graph['source_topology'][0]
     assert route['availability'] == 'blocked'
     assert route['condition']['source_text'] == 'the seal is removed'
     result.graph['source_topology'][0]['condition']['source_text'] = 'Extreme STR required'
-    assert not pdf_map_analysis.verified_graph(result.graph, result.analysis, canonical_source=source)
+    assert not verify(result.graph, result.analysis, canonical_source=source)
 
 
 def test_vision_wall_and_source_route_kinds_are_rejected():
@@ -394,12 +397,12 @@ def test_barrier_kinds_and_hidden_barrier_defaults(certified_map_result):
     original = visual_result(certified_map_result)
     for wording, kind in [('blocked passage', 'blocked_passage'), ('sealed door', 'sealed_door'),
                           ('collapsible barrier', 'collapsible_barrier'), ('hidden breakable wall', 'breakable_wall')]:
-        source = '--- 第 7 頁 ---\nA ' + wording + ' connects Basement to Corbitt hiding place.'
-        result = pdf_map_analysis.certify_source_topology(original.graph, original.analysis, source)
+        source = '--- 第 1 頁 ---\nA ' + wording + ' connects Basement to Corbitt hiding place.'
+        result = certify(original.graph, original.analysis, source)
         route = result.graph['source_topology'][0]
         assert route['type'] == kind and route['availability'] == 'blocked'
         assert route['visibility'] == ('hidden' if wording.startswith('hidden ') else 'visible')
-        assert pdf_map_analysis.verified_graph(result.graph, result.analysis, canonical_source=source)
+        assert verify(result.graph, result.analysis, canonical_source=source)
 
 
 def test_narrated_breakthrough_does_not_open_a_route(monkeypatch, tmp_path):
@@ -434,7 +437,7 @@ def test_source_sealed_door_blocks_matching_visual_exit(certified_map_result):
         {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
     visual = certified_map_result('', graph)
     source = '--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.'
-    merged = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    merged = certify(visual.graph, visual.analysis, source)
     route = merged.graph['source_topology'][0]
     assert not scene_map.resolve_move({'1': merged.graph}, '1', route['from'], 'N', 'right')['ok']
     assert not scene_map.resolve_source_route(merged.graph, route['from'], route['to'])['ok']
@@ -450,7 +453,7 @@ def test_alternate_secret_route_does_not_disable_an_ordinary_visible_door(certif
         {'id': 'cellar', 'name': 'Cellar', 'exits': []}]}
     visual = certified_map_result('', graph)
     source = '--- 第 1 頁 ---\nA secret door connects Hall to Cellar to the north.'
-    merged = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    merged = certify(visual.graph, visual.analysis, source)
     route = merged.graph['source_topology'][0]
     assert scene_map.resolve_move({'1': merged.graph}, '1', route['from'], 'N', 'right')['ok']
     assert not scene_map.resolve_move({'1': merged.graph}, '1', route['from'], 'N', 'forward')['ok']
@@ -485,7 +488,7 @@ def test_each_source_barrier_on_the_same_connection_must_be_opened(certified_map
     visual = certified_map_result('', graph)
     source = ('--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.\n'
               'A blocked passage connects Hall to Cellar to the east.')
-    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    result = certify(visual.graph, visual.analysis, source)
     door, passage = result.graph['source_topology']
     for allowed in (frozenset(), frozenset({door['id']}), frozenset({passage['id']})):
         assert scene_map.visible_exits(result.graph, door['from'], available_routes=allowed) == []
@@ -503,7 +506,7 @@ def test_unknown_source_direction_cannot_bypass_a_known_blocked_barrier(certifie
     visual = certified_map_result('', graph)
     source = ('--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.\n'
               'A blocked passage connects Hall to Cellar.')
-    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    result = certify(visual.graph, visual.analysis, source)
     _, passage = result.graph['source_topology']
     allowed = frozenset({passage['id']})
     assert scene_map.visible_exits(result.graph, passage['from'], available_routes=allowed) == []
@@ -539,7 +542,7 @@ def test_available_alternate_source_route_in_other_direction_remains_usable(cert
     visual = certified_map_result('', graph)
     source = ('--- 第 1 頁 ---\nA sealed door connects Hall to Cellar to the east.\n'
               'A secret door connects Hall to Cellar to the north.')
-    result = pdf_map_analysis.certify_source_topology(visual.graph, visual.analysis, source)
+    result = certify(visual.graph, visual.analysis, source)
     door, secret = result.graph['source_topology']
     allowed = frozenset({secret['id']})
     assert len(scene_map.visible_exits(result.graph, secret['from'], available_routes=allowed)) == 1

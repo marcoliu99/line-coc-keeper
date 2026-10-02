@@ -285,7 +285,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
         return None
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Text-only sibling of analyze_image above — a single forced tool call,
     no image. Used by app/pregen_extractor.py. Returns the tool's input dict,
     or None on any failure (no ANTHROPIC_API_KEY, the call raised, or no
@@ -295,7 +295,12 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
     try:
         import anthropic
 
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        options: dict = {}
+        if timeout is not None:
+            options['timeout'] = timeout
+        if max_retries is not None:
+            options['max_retries'] = max_retries
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, **options)
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
             response = cast(Any, client.messages).create(
                 model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
@@ -308,3 +313,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         return None
     except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
+
+
+def analysis_model_identity() -> str:
+    return ANTHROPIC_MODEL

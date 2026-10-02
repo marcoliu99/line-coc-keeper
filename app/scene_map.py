@@ -420,6 +420,8 @@ def visible_exits(graph: dict, room_id: str, *, available_routes: frozenset[str]
             target = get_room(graph, route['to'])
             exits.append({'to': route['to'], 'compass': route['compass'],
                           'label': (target or {}).get('name', ''), 'authority': 'scenario_source'})
+            if any(s['id'] == route['id'] for c in graph.get('source_route_chains', []) for s in c['segments']):
+                exits[-1]['segment_id'] = route['id']
     return exits
 
 
@@ -428,6 +430,21 @@ def resolve_source_route(graph: dict, origin: str, target: str, *,
     """Gate named movement without changing the pre-existing visual movement rules."""
     routes = [route for route in graph.get('source_topology', [])
               if {route['from'], route['to']} == {origin, target}]
+    # Entering a deeper node requires its adjacent source segment or an
+    # independently established visible/source exit, even from outside the chain.
+    for chain in graph.get('source_route_chains', []):
+        nodes = [chain['segments'][0]['from']] + [s['to'] for s in chain['segments']]
+        skips_segment = (target in nodes[1:] and origin not in nodes) or (
+            origin in nodes and target in nodes and abs(nodes.index(origin) - nodes.index(target)) > 1)
+        independent_exit = any(e.get('to') == target and ordinary_exit(e)
+                               and (compass is None or e.get('compass') == compass)
+                               and not _barrier_blocks(graph, origin, target, e.get('compass', ''), available_routes)
+                               for e in (get_room(graph, origin) or {}).get('exits', [])) or any(
+            route['from'] == origin and route['id'] in available_routes
+            and (compass is None or route['compass'] == compass)
+            and not _barrier_blocks(graph, origin, target, route['compass'], available_routes) for route in routes)
+        if skips_segment and not independent_exit:
+            return {'ok': False, 'blocked': True, 'interaction': '目前沒有已確認可通行的出口。'}
     if not routes or any(route['from'] == origin and route['id'] in available_routes
                          and (compass is None or route['compass'] == compass)
                          and not _barrier_blocks(graph, origin, target, route['compass'], available_routes)
@@ -448,6 +465,9 @@ def get_room(scene_map: dict[str, Any], room_id: str) -> dict[str, Any] | None:
     for room in scene_map.get("rooms", []):
         if room.get("id") == room_id:
             return room
+    for node in scene_map.get('source_transit_nodes', []):
+        if node.get('id') == room_id:
+            return {'id': node['id'], 'kind': 'source_transit', 'name': '', 'player_label': '', 'exits': []}
     return None
 
 

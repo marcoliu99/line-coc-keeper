@@ -225,9 +225,19 @@ def _publication_quality(report: dict) -> dict:
     from app import pdf_map_analysis
 
     public = copy.deepcopy(report)
+    proposal = public.pop('source_topology_discovery', None)
+    if isinstance(proposal, dict):
+        public['source_topology_discovery_summary'] = {'status': proposal.get('status'),
+            'candidate_count': len(proposal.get('candidates', [])), 'requests': proposal.get('requests', 0),
+            'certified_count': proposal.get('certified_count', 0), 'pending_count': proposal.get('pending_count', 0),
+            'certification_status': proposal.get('certification_status')}
+    if isinstance(public.get('layout_budget'), dict):
+        public['layout_budget'].pop('source_discovery', None)
     rows = public.get('pages', [])
     rows = list(rows.values()) if isinstance(rows, dict) else rows
     for row in rows:
+        row.pop('source_topology_discovery', None)
+        row.pop('source_topology_proof', None)
         if row.get('map_analysis'):
             row['map_analysis'] = pdf_map_analysis.publication_summary(row['map_analysis'])
         if row.get('map_analysis_history'):
@@ -243,7 +253,7 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
     if parse_quality and (parse_quality.get('blocked_pages') or parse_quality.get('hard_block_pages')
                           or parse_quality.get('scenario_readiness') == 'BLOCKED'):
         raise ValueError('PDF layout has unresolved pages; continue the import draft before publication')
-    from app import pdf_map_analysis, scene_map
+    from app import pdf_map_analysis, pdf_source_topology_discovery, scene_map
 
     rows = (parse_quality or {}).get('pages', [])
     rows = list(rows.values()) if isinstance(rows, dict) else rows
@@ -256,7 +266,7 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
         record = next((row.get('map_analysis') for row in rows if str(row.get('page')) == str(page)), None)
         image = page_images.get(page)
         if ((parse_quality or {}).get('pdf_sha256') != hashlib.sha256(pdf_bytes).hexdigest()
-                or not isinstance(image, bytes) or not pdf_map_analysis.verified_graph(graph, record, image, canonical_source=text)):
+                or not isinstance(image, bytes) or not pdf_map_analysis.verified_graph(graph, record, image, canonical_source=text, source_context=pdf_source_topology_discovery.source_context(text, parse_quality, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest()))):
             raise ValueError(f'Unverified scene_map on page {page}; retain the private import draft')
     with _LIBRARY_LOCK:
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
@@ -287,7 +297,7 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             (temporary / "source.pdf").write_bytes(pdf_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")
             (temporary / "scenario.txt").write_text(text, encoding="utf-8")
-            if any(row.get('map_analysis') for row in rows):
+            if any(row.get('map_analysis') for row in rows) or (parse_quality or {}).get('source_topology_discovery'):
                 private_provenance = temporary / '.ingestion-provenance.json'
                 private_provenance.write_text(json.dumps(parse_quality, ensure_ascii=False, indent=2), encoding='utf-8')
                 private_provenance.chmod(0o600)
@@ -321,7 +331,7 @@ def _filter_index(items: list[dict], pages: set[int]) -> list[dict]:
 
 def _certified_library_maps(root: Path, manifest: dict, pages: set[int]) -> dict:
     """Old or tampered PDF maps fail closed for Map Engine, never for source."""
-    from app import pdf_map_analysis
+    from app import pdf_map_analysis, pdf_source_topology_discovery
 
     candidates = _read_json(root / 'scene_maps.json', {})
     provenance = _read_json(root / '.ingestion-provenance.json', {})
@@ -354,7 +364,7 @@ def _certified_library_maps(root: Path, manifest: dict, pages: set[int]) -> dict
             continue
         try:
             image = (root / 'images' / f'page_{int(key)}.png').read_bytes()
-            if pdf_map_analysis.verified_graph(graph, matching[0].get('map_analysis'), image, canonical_source=canonical_source):
+            if pdf_map_analysis.verified_graph(graph, matching[0].get('map_analysis'), image, canonical_source=canonical_source, source_context=pdf_source_topology_discovery.source_context(canonical_source, provenance, pdf_sha256=pdf_hash)):
                 result[str(key)] = graph
         except (OSError, KeyError, TypeError, ValueError, IndexError, AttributeError):
             # Malformed archived evidence must not break canonical activation.
