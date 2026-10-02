@@ -1748,6 +1748,17 @@
       ],
       "path": "docs/specs/enhancement/pdf_semantic_topology_discovery.md",
       "zh_path": "docs/specs/enhancement/pdf_semantic_topology_discovery_zh.md"
+    },
+    {
+      "title": "Six-book production scenario import validation — preflight safety stop",
+      "zh": "六本 production scenario import 驗證：preflight 安全停止",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "docs/specs/enhancement/pdf_six_book_production_import_results.json"
+      ],
+      "path": "docs/specs/enhancement/pdf_six_book_production_import_validation.md",
+      "zh_path": "docs/specs/enhancement/pdf_six_book_production_import_validation_zh.md"
     }
   ]
 }
