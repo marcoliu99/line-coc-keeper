@@ -1,5 +1,5 @@
 {
-  "status": "PENDING_AUTHORIZATION_REVIEW_REJECTED",
+  "status": "PROVIDER_ON_CANARY_HARNESS_LIMITED",
   "baseline_branch": "enhancement/pdf-multicolumn-ingestion",
   "baseline_sha": "37e0bb80eb34d059c487a307c7a863c7890b8522",
   "integration_sha": "6024adfffad39860de2142e87dbf33e056f4960a",
@@ -8,7 +8,7 @@
   "destination": "https://api.openai.com/v1",
   "production_entrypoint_prepared": "app.legacy_commands.handle_pdf_upload",
   "production_provider_baseline_executed": false,
-  "provider_requests": 0,
+  "provider_requests": 8,
   "request_caps": {
     "requests_per_book": 8,
     "pages_per_book": 4,
@@ -24,21 +24,21 @@
   "true_source_critical_pages": null,
   "false_hard_block_pages": null,
   "unknown_image_audit_pages": 86,
-  "code_changes": false,
+  "code_changes": true,
   "books": [
     {
       "book": "01_The_Haunting_QuickStart.pdf",
       "pdf_sha256": "39b6a53915ddf9f48831ae45ac7180b6c7d5fc7bf49e1b7fe764c28ed1885436",
       "previous_hard_blocks": 23,
       "previous_readiness": "BLOCKED",
-      "current_hard_blocks": null,
-      "final_readiness": "PENDING",
+      "current_hard_blocks": 21,
+      "final_readiness": "BLOCKED_HARNESS_LIMITED",
       "start_success": null,
       "previous_reason_counts": {
         "source_image_transcription_unverified": 21,
         "source_ordering_unverified": 2
       },
-      "minimum_remaining_true_blocker": null
+      "minimum_remaining_true_blocker": "UNKNOWN_PAGE_CRITICALITY_NOT_PROVEN"
     },
     {
       "book": "02_Dead_Boarder.pdf",
@@ -4240,24 +4240,26 @@
   "merge_readiness": "HOLD",
   "production_rollout": "HOLD",
   "limitations": [
-    "No production provider-ON execution occurred",
-    "Local visual character-sheet identification does not establish optionality",
-    "No after-fix comparison or publication/start was performed",
-    "Known P1 review findings remain unresolved"
+    "Historical checkpoint: No production provider-ON execution occurred",
+    "Historical checkpoint: Local visual character-sheet identification does not establish optionality",
+    "Historical checkpoint: No after-fix comparison or publication/start was performed",
+    "Historical checkpoint: Known P1 review findings remain unresolved",
+    "Current canary: five MarkItDown reservations consumed without transport because the private observation guard incorrectly prohibited SDK-client reuse. No refund/reset/rerun. Haunting source-criticality and production playability remain unproven; other books intentionally not run."
   ],
   "verification": {
     "sha256_comparison": "6/6 MATCH",
     "integration_ancestor": "PASS",
     "runtime_full_suite": {
-      "passed": 2181,
-      "skipped": 2,
+      "passed": 2199,
+      "skipped": 1,
+      "subtests_passed": 152,
       "exit_code": 0,
-      "checked_commit": "17aa388"
+      "checked_commit": "1bcb12b"
     },
     "standards_review": "PASS_0_FINDINGS",
-    "spec_review": "COMPLETE_DOC_CORRECTIONS_APPLIED_ORDERING_P1_REMAIN",
+    "spec_review": "PASS_0_ACTIONABLE_FINDINGS_PLAYABILITY_PENDING",
     "ruff": "PASS",
-    "mypy": "PASS_138_SOURCE_FILES",
+    "mypy": "PASS_139_SOURCE_FILES",
     "compileall": "PASS",
     "diff_check": "PASS",
     "historical_checks": {
@@ -4269,7 +4271,24 @@
       "compileall": "PASS",
       "diff_check": "PASS"
     },
-    "checked_commit": "17aa388"
+    "checked_commit": "1bcb12b",
+    "post_merge_historical_checks": {
+      "sha256_comparison": "6/6 MATCH",
+      "integration_ancestor": "PASS",
+      "runtime_full_suite": {
+        "passed": 2181,
+        "skipped": 2,
+        "exit_code": 0,
+        "checked_commit": "17aa388"
+      },
+      "standards_review": "PASS_0_FINDINGS",
+      "spec_review": "COMPLETE_DOC_CORRECTIONS_APPLIED_ORDERING_P1_REMAIN",
+      "ruff": "PASS",
+      "mypy": "PASS_138_SOURCE_FILES",
+      "compileall": "PASS",
+      "diff_check": "PASS",
+      "checked_commit": "17aa388"
+    }
   },
   "remaining_findings": [
     {
@@ -4277,14 +4296,14 @@
       "code": "inverse_full_width_heading_order",
       "file": "app/pdf_layout_adapters.py",
       "function": "_validate",
-      "status": "REPRODUCED_UNRESOLVED"
+      "status": "FIXED_1bcb12b_REGRESSION_PASS"
     },
     {
       "severity": "P1",
       "code": "margin_header_footer_order",
       "file": "app/pdf_layout_adapters.py",
       "function": "_validate",
-      "status": "REPRODUCED_UNRESOLVED"
+      "status": "FIXED_1bcb12b_REGRESSION_PASS"
     },
     {
       "severity": "P2",
@@ -4296,7 +4315,7 @@
       "severity": "P2",
       "code": "region_ai_budget_resets_on_continue",
       "file": "app/pdf_ai_repair.py",
-      "status": "REPRODUCED_UNRESOLVED"
+      "status": "FIXED_1bcb12b_REGRESSION_PASS"
     }
   ],
   "historical_provider_off_sha": "5b87207a9a47ad2f0473ecda631504c833669a33",
@@ -4305,17 +4324,1018 @@
     {
       "severity": "P1",
       "code": "semantic_compatibility_retry_bypasses_single_dispatch",
-      "status": "STATIC_UNRESOLVED"
+      "status": "FIXED_1bcb12b_TRANSPORT_REGRESSION_PASS"
     },
     {
       "severity": "P1",
       "code": "region_repair_default_retries_and_unreserved_transport",
-      "status": "STATIC_UNRESOLVED"
+      "status": "FIXED_1bcb12b_TRANSPORT_REGRESSION_PASS"
     },
     {
       "severity": "P1",
       "code": "eager_full_source_calls_without_bounded_durable_admission",
-      "status": "STATIC_UNRESOLVED"
+      "status": "FIXED_1bcb12b_TRANSPORT_REGRESSION_PASS"
     }
-  ]
+  ],
+  "minimal_p1_followup": {
+    "baseline_sha": "fb3e8b746157e59c678476f549efecafc01bea33",
+    "implementation_sha": "1bcb12b700cfbacfbd8576f4521e0635319a6655",
+    "status": "CANARY_HARNESS_LIMITED",
+    "five_p1_fixes": "IMPLEMENTED_REGRESSION_CHECKED",
+    "files_changed": [
+      "app/legacy_commands.py",
+      "app/pdf_ai_repair.py",
+      "app/pdf_ingestion_drafts.py",
+      "app/pdf_layout_adapters.py",
+      "app/pdf_loader.py",
+      "app/pregen_extractor.py",
+      "app/providers/openai_provider.py",
+      "app/scenario_index.py",
+      "app/scenario_intro.py",
+      "app/source_analysis.py",
+      "tests/test_pdf_single_dispatch.py",
+      "tests/test_pdf_layout_adapters.py",
+      "tests/test_pdf_loader.py",
+      "tests/test_pregen_pdf_completeness.py",
+      "docs/specs/bug/pdf_image_page_criticality.md",
+      "docs/specs/bug/pdf_image_page_criticality_zh.md",
+      "docs/specs/bug/pdf_image_page_criticality_validation.md",
+      "docs/specs/bug/pdf_image_page_criticality_validation_zh.md",
+      "docs/specs/bug/pdf_image_page_criticality_results.json",
+      "docs/specs/catalog.json"
+    ],
+    "authorization": {
+      "scope": "six-book corpus",
+      "destination": "https://api.openai.com/v1",
+      "model": "gpt-6-luna",
+      "status": "AUTHORIZATION_CONFIRMED"
+    },
+    "production_entry": "app.legacy_commands.handle_pdf_upload",
+    "corpus_hashes": "6/6 MATCH",
+    "provider_requests": 8,
+    "accounting": {
+      "layout": {
+        "reservations": 8,
+        "transports": 3
+      },
+      "region_ai": {
+        "reservations": 1,
+        "transports": 1
+      },
+      "semantic": {
+        "reservations": 4,
+        "transports": 4
+      },
+      "total_reservations": 13,
+      "total_transports": 8,
+      "hidden_retries": 0,
+      "non_transported_reservations": 5,
+      "harness_issue": "SDK_CLIENT_REUSE_REJECTED_DESPITE_FRESH_MARKITDOWN_RESERVATION",
+      "budget_refunds": 0,
+      "budget_resets": 0,
+      "reruns": 0
+    },
+    "transport_receipts": [
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 16,
+        "stage": "order_pdf_blocks",
+        "lane": "layout",
+        "reservation_number": 1,
+        "transport_number": 1,
+        "status_code": 200,
+        "elapsed_seconds": 5.742,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 28,
+        "stage": "order_pdf_blocks",
+        "lane": "layout",
+        "reservation_number": 2,
+        "transport_number": 2,
+        "status_code": 200,
+        "elapsed_seconds": 3.226,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 1,
+        "stage": "markitdown_ocr",
+        "lane": "layout",
+        "reservation_number": 3,
+        "transport_number": 3,
+        "status_code": 200,
+        "elapsed_seconds": 21.835,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 4,
+        "stage": "transcribe_uncertain_regions",
+        "lane": "region",
+        "reservation_number": 1,
+        "transport_number": 1,
+        "status_code": 200,
+        "elapsed_seconds": 5.666,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "window_sha256": "72e9b74cf1fbedafec537605059284ea873536ec08a8ed9e9cc4001d6d02ab7d",
+        "pages": [
+          22,
+          23,
+          24
+        ],
+        "stage": "propose_source_routes",
+        "lane": "semantic",
+        "reservation_number": 1,
+        "transport_number": 1,
+        "status_code": 200,
+        "elapsed_seconds": 29.768,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "window_sha256": "978597c2797687854c25cce1e1a78468d3b7161f07cbd203e870a76f2a38bea3",
+        "pages": [
+          23,
+          24,
+          25
+        ],
+        "stage": "propose_source_routes",
+        "lane": "semantic",
+        "reservation_number": 2,
+        "transport_number": 2,
+        "status_code": 200,
+        "elapsed_seconds": 22.977,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "window_sha256": "103be7a17619a64438d0135fe57306421c82076d85d0feffab27b112b526bb42",
+        "pages": [
+          25,
+          26,
+          27
+        ],
+        "stage": "propose_source_routes",
+        "lane": "semantic",
+        "reservation_number": 3,
+        "transport_number": 3,
+        "status_code": 200,
+        "elapsed_seconds": 22.437,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "window_sha256": "90bb4d8bc52a5c488ecafa14c81c4fb9b0f52b7bb026f968da913856aae0afbe",
+        "pages": [
+          26,
+          27,
+          28
+        ],
+        "stage": "propose_source_routes",
+        "lane": "semantic",
+        "reservation_number": 4,
+        "transport_number": 4,
+        "status_code": 200,
+        "elapsed_seconds": 22.194,
+        "timeout_seconds": 30.0,
+        "max_retries": 0,
+        "error_type": null
+      }
+    ],
+    "haunting": {
+      "physical_pages": 50,
+      "previous_hard_blocks": 23,
+      "current_hard_blocks": 21,
+      "hard_block_pages": [
+        1,
+        2,
+        5,
+        17,
+        24,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49
+      ],
+      "ordering_blockers_before": [
+        16,
+        28
+      ],
+      "ordering_blockers_after": [],
+      "ordering_candidates": "REAL_PROVIDER_ACCEPTED",
+      "mechanics_blockers_after": [],
+      "image_blockers_after": 21,
+      "soft_review_pages": [
+        4
+      ],
+      "import_success": false,
+      "publication": false,
+      "activation": "NOT_RUN",
+      "start": "NOT_RUN",
+      "one_turn": "NOT_RUN",
+      "readiness": "BLOCKED",
+      "playability": "UNPROVEN_HARNESS_LIMITED",
+      "elapsed_seconds": 294.094,
+      "provider_classified_pages": 0,
+      "confirmed_false_hard_blocks": null,
+      "confirmed_true_source_critical_pages": null,
+      "unknown_image_pages": 21,
+      "minimum_remaining_true_blocker": "UNKNOWN_REQUIRES_PAGE_CRITICALITY_EVIDENCE",
+      "map_status": {
+        "24": "MAP_NOT_ANALYZED",
+        "34": "MAP_NOT_ANALYZED"
+      },
+      "gameplay_maps": 0,
+      "semantic_requests": 4,
+      "semantic_candidates": 1,
+      "semantic_certified": 0,
+      "semantic_status": "AWAITING_CANONICAL_SOURCE"
+    },
+    "page_criticality_audit": [
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 1,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 97,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_text_loss",
+          "low_text",
+          "ocr_pair_mismatch",
+          "ocr_evidence_loss",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 2,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 90,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "ocr_pair_mismatch",
+          "ocr_evidence_loss",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 5,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 1,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 17,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 2,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 24,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 64,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": true,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "ocr_pair_mismatch",
+          "ocr_evidence_loss",
+          "vision_empty",
+          "map_not_analyzed"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 34,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 29,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": true,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "vision_empty",
+          "map_not_analyzed"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 35,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 36,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 37,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 38,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 39,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 40,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 41,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 42,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 43,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 44,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 45,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 30,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 46,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 21,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 47,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 30,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 48,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 21,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "low_text",
+          "ocr_pair_mismatch",
+          "ocr_evidence_loss",
+          "image_verification_budget_exhausted"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_present_but_short",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      },
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "page": 49,
+        "previous_reason": "source_image_transcription_unverified",
+        "native_chars": 0,
+        "requires_image_transcription": true,
+        "raster_union_coverage": 1.0,
+        "map_candidate": false,
+        "provider_classification": null,
+        "actual_source_criticality": "UNKNOWN_NEEDS_REVIEW",
+        "source_critical": null,
+        "unique_source_missing": null,
+        "same_information_canonical": null,
+        "required_for_correct_play": null,
+        "authoritative_transcription_required": null,
+        "actual_disposition": "HARD_BLOCK",
+        "expected_disposition": "PENDING_AUDIT",
+        "false_hard_block": null,
+        "warning_codes": [
+          "layout_unavailable",
+          "no_native_text_geometry",
+          "low_text",
+          "image_verification_budget_exhausted",
+          "empty_page"
+        ],
+        "limitation": "NO_PRODUCTION_CRITICALITY_CLASSIFICATION; REQUEST_BUDGET_EXHAUSTED; HARNESS_INTERFERENCE",
+        "why_image_verification": {
+          "requires_image_transcription": true,
+          "raster_source_gap": true,
+          "source_kind": "native_text_absent",
+          "low_native_text": true
+        },
+        "information_type": "UNRESOLVED",
+        "geometry_evidence": "HASH_MATCHED_PRIOR_CORPUS_PAGE"
+      }
+    ],
+    "remaining_five_books": "NOT_RUN_HAUNTING_CANARY_GATE_NOT_MET",
+    "verification": {
+      "pytest_passed": 2199,
+      "pytest_skipped": 1,
+      "subtests_passed": 152,
+      "pytest_seconds": 39.17,
+      "ruff": "PASS",
+      "mypy": "PASS_139_FILES",
+      "compileall": "PASS",
+      "diff_check": "PASS",
+      "standards_review": "0_ACTIONABLE_FINDINGS",
+      "spec_review": "0_ACTIONABLE_FINDINGS",
+      "new_regressions": false
+    },
+    "remaining": {
+      "P0": [],
+      "P1": [
+        "REAL_PRODUCTION_PLAYABILITY_NOT_PROVEN",
+        "IMAGE_PAGE_CRITICALITY_UNRESOLVED_NOT_CONFIRMED_PRODUCT_DEFECT"
+      ],
+      "P2": [
+        "RESUMED_MERGE_STAGED_PART_CLEANUP_DEFERRED",
+        "PRIVATE_VALIDATION_GUARD_CORRECTED_NOT_RERUN"
+      ],
+      "P3": [
+        "PREVIOUS_OPTIONAL_CLEANUPS_DEFERRED"
+      ]
+    },
+    "merge": "HOLD",
+    "production_rollout": "HOLD"
+  },
+  "baseline_scope": "HISTORICAL_PROVIDER_OFF_AND_DOCS_ONLY_CHECKPOINT",
+  "implementation_sha": "1bcb12b700cfbacfbd8576f4521e0635319a6655",
+  "current_baseline_sha": "fb3e8b746157e59c678476f549efecafc01bea33",
+  "historical_checkpoint_code_changes": false,
+  "canary_executed": true,
+  "six_book_baseline_complete": false,
+  "provider_requests_scope": "CURRENT_HAUNTING_CANARY_ONLY"
 }

@@ -1765,7 +1765,11 @@
       "zh": "PDF 圖片頁 criticality 與 admission",
       "category": "bug",
       "status": "backlog",
-      "evidence": [],
+      "evidence": [
+        "docs/specs/bug/pdf_image_page_criticality_results.json",
+        "tests/test_pdf_layout_adapters.py",
+        "tests/test_pdf_single_dispatch.py"
+      ],
       "path": "docs/specs/bug/pdf_image_page_criticality.md",
       "zh_path": "docs/specs/bug/pdf_image_page_criticality_zh.md"
     }
