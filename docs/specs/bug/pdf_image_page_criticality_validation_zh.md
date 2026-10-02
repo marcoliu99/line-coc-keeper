@@ -23,3 +23,9 @@ Raw PDF/images/source/harness outputs private outside repo。Repository只存has
 ## 保留 review findings
 
 已重現兩個 P1：上方 body 可被排到下方 spanning heading 後；margin/header/footer 沒有幾何順序約束，可接受 footer -> body -> header。Resumed merge 在 Continue 成功後仍留 staged parts（P2）；region AI allowance 在 Continue 重置、未 durable reserve（P2）。應持久化原本獨立 AI allowance，不要求重設 architecture 或偷偷改扣 layout ledger。本次沒有修 runtime。文件 Standards review 0 findings。
+
+## 最新 branch 整合
+
+Remote PR155 已前進至 37e0bb80eb34d059c487a307c7a863c7890b8522，merge 為 17aa388，catalog 雙方entries保留。5b87207a9a47ad2f0473ecda631504c833669a33與2147-pass屬歷史 provider-OFF/code evidence，最新candidate baseline為37e0bb80eb34d059c487a307c7a863c7890b8522；merge後checks另記results。最新code已包含semantic discovery，不沿用歷史「沒有semantic fallback」結論。Static preflight仍見semantic analyze_text(max_retries=0)有internal compatibility retry、region repair缺bounded durable dispatch、index/pregen/start有full-source/default-retry路徑。這些network-contract P1與AI allowance persistence P2分開。整合前後都沒有實際provider-ON requests。
+
+17aa388 merge後本輪實測：pytest 2181 passed / 2 skipped；Ruff PASS；mypy 138 source files PASS；compileall PASS；diff-check PASS。後續只改sanitized文件。

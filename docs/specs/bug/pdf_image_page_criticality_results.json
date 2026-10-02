@@ -1,7 +1,7 @@
 {
   "status": "PENDING_AUTHORIZATION_REVIEW_REJECTED",
   "baseline_branch": "enhancement/pdf-multicolumn-ingestion",
-  "baseline_sha": "5b87207a9a47ad2f0473ecda631504c833669a33",
+  "baseline_sha": "37e0bb80eb34d059c487a307c7a863c7890b8522",
   "integration_sha": "6024adfffad39860de2142e87dbf33e056f4960a",
   "provider": "openai",
   "configured_model": "gpt-6-luna",
@@ -11,7 +11,8 @@
   "provider_requests": 0,
   "request_caps": {
     "requests_per_book": 8,
-    "pages_per_book": 4
+    "pages_per_book": 4,
+    "semantic_windows_per_book": 4
   },
   "corpus_hashes_match": true,
   "physical_pages": 245,
@@ -4248,16 +4249,27 @@
     "sha256_comparison": "6/6 MATCH",
     "integration_ancestor": "PASS",
     "runtime_full_suite": {
-      "passed": 2147,
+      "passed": 2181,
       "skipped": 2,
-      "exit_code": 0
+      "exit_code": 0,
+      "checked_commit": "17aa388"
     },
     "standards_review": "PASS_0_FINDINGS",
     "spec_review": "COMPLETE_DOC_CORRECTIONS_APPLIED_ORDERING_P1_REMAIN",
     "ruff": "PASS",
-    "mypy": "PASS_137_SOURCE_FILES",
+    "mypy": "PASS_138_SOURCE_FILES",
     "compileall": "PASS",
-    "diff_check": "PASS"
+    "diff_check": "PASS",
+    "historical_checks": {
+      "sha": "5b87207a9a47ad2f0473ecda631504c833669a33",
+      "passed": 2147,
+      "skipped": 2,
+      "ruff": "PASS",
+      "mypy_files": 137,
+      "compileall": "PASS",
+      "diff_check": "PASS"
+    },
+    "checked_commit": "17aa388"
   },
   "remaining_findings": [
     {
@@ -4285,6 +4297,25 @@
       "code": "region_ai_budget_resets_on_continue",
       "file": "app/pdf_ai_repair.py",
       "status": "REPRODUCED_UNRESOLVED"
+    }
+  ],
+  "historical_provider_off_sha": "5b87207a9a47ad2f0473ecda631504c833669a33",
+  "merged_checkpoint": "17aa388",
+  "network_preflight_findings": [
+    {
+      "severity": "P1",
+      "code": "semantic_compatibility_retry_bypasses_single_dispatch",
+      "status": "STATIC_UNRESOLVED"
+    },
+    {
+      "severity": "P1",
+      "code": "region_repair_default_retries_and_unreserved_transport",
+      "status": "STATIC_UNRESOLVED"
+    },
+    {
+      "severity": "P1",
+      "code": "eager_full_source_calls_without_bounded_durable_admission",
+      "status": "STATIC_UNRESOLVED"
     }
   ]
 }

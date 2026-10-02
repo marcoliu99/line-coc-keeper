@@ -2,7 +2,7 @@
 
 ## 狀態
 
-提案，尚未實作。Baseline branch enhancement/pdf-multicolumn-ingestion，SHA 5b87207a9a47ad2f0473ecda631504c833669a33；main_v2=6024adfffad39860de2142e87dbf33e056f4960a。先完成目前 production provider-ON upload baseline 和每頁 audit，才依真實失敗做 regression／最小修正。外部執行遭自動授權審查拒絕，沒有傳送資料；文件不代表 baseline 已完成或新 admission 已實作。
+提案，尚未實作。Historical provider-OFF baseline branch enhancement/pdf-multicolumn-ingestion，SHA 5b87207a9a47ad2f0473ecda631504c833669a33；最新待測 provider-ON baseline 37e0bb80eb34d059c487a307c7a863c7890b8522（merge 17aa388）；main_v2=6024adfffad39860de2142e87dbf33e056f4960a。先完成目前 production provider-ON upload baseline 和每頁 audit，才依真實失敗做 regression／最小修正。外部執行遭自動授權審查拒絕，沒有傳送資料；文件不代表 baseline 已完成或新 admission 已實作。
 
 ## 問題與目標
 

@@ -23,3 +23,9 @@ Raw PDF images, source and harness outputs remain private outside repository. On
 ## Review findings retained
 
 Spec review reproduced two P1 production-validator gaps: body above spanning heading may be reordered after it; margin/header/footer order is not constrained, accepting footer -> body -> header. Resumed merged upload keeps staged-part entries after a later successful Continue (P2), and separate region AI allowance resets on Continue without durable reservation (P2). Persist the existing separate AI allowance; do not require an architecture redesign or silently debit the layout ledger instead. No findings were fixed in this baseline-first checkpoint. Standards docs review: 0 findings.
+
+## Latest branch integration
+
+Remote PR155 advanced to 37e0bb80eb34d059c487a307c7a863c7890b8522; merged as 17aa388 with both catalog intents preserved. 5b87207a9a47ad2f0473ecda631504c833669a33 and its 2147-pass suite are historical provider-OFF/code evidence. Current candidate baseline is 37e0bb80eb34d059c487a307c7a863c7890b8522; post-merge checks are recorded separately below/results. Semantic discovery now exists; no claim of its absence applies to latest code. Current static network preflight still shows semantic analyze_text(max_retries=0) uses internal compatibility retries, region repair lacks bounded durable dispatch, and eager index/pregen/start calls have full-source/default retry paths. These are network-contract P1, separate from AI allowance persistence P2. No actual provider-ON request was made before or after integration.
+
+Post-merge verification on 17aa388: pytest 2181 passed / 2 skipped; Ruff PASS; mypy PASS (138 source files); compileall PASS; diff-check PASS. Later changes are sanitized docs only.

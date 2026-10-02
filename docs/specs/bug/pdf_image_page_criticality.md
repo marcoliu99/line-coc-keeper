@@ -2,7 +2,7 @@
 
 ## Status and evidence gate
 
-Proposed; implementation NOT authorized by a completed baseline. Baseline code is 5b87207a9a47ad2f0473ecda631504c833669a33 on enhancement/pdf-multicolumn-ingestion, integration main_v2=6024adfffad39860de2142e87dbf33e056f4960a. No runtime code changes before the existing-production provider-ON upload baseline and page audit. External dispatch was rejected by automatic authorization review; no payload was sent. This spec records a reviewable design, not implemented behavior or successful admission.
+Proposed; implementation NOT authorized by a completed baseline. Historical provider-OFF extraction code is 5b87207a9a47ad2f0473ecda631504c833669a33 on enhancement/pdf-multicolumn-ingestion. Latest provider-ON candidate baseline is 37e0bb80eb34d059c487a307c7a863c7890b8522 (merged in 17aa388), integration main_v2=6024adfffad39860de2142e87dbf33e056f4960a. No runtime code changes before the existing-production provider-ON upload baseline and page audit. External dispatch was rejected by automatic authorization review; no payload was sent. This spec records a reviewable design, not implemented behavior or successful admission.
 
 ## Problem and goal
 
