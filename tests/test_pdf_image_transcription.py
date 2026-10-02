@@ -276,6 +276,7 @@ def test_independent_verification_respects_durable_provider_budget(scanned_page,
     call = Mock(return_value={'page_type': 'character_sheet', 'text': 'STR 60 DEX 55 Damage 1d10+DB'})
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(analyze_image=call))
     monkeypatch.setattr(config, 'PDF_LAYOUT_MAX_REQUESTS', 0)
+    monkeypatch.setattr(config, 'PDF_PAGE_CRITICALITY_MAX_REQUESTS', 0)
     report = {}
     with pytest.raises(pdf_loader.LayoutReviewRequired):
         pdf_loader.extract_text(scanned_page, quality_report=report)

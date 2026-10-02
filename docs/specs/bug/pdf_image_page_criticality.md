@@ -1,3 +1,4 @@
+<!-- Current: playable-first admission implementation; real playability acceptance remains pending. Earlier sections preserve historical evidence. -->
 # PDF image-page criticality admission
 
 ## Status and evidence gate
@@ -53,3 +54,10 @@ The user explicitly approved implementation at baseline e087378. Tests use the p
 Use a separate finite classification allowance (default/max 24 physical page requests per PDF/model/policy, covering the explicitly requested 21 Haunting targets), persisted before dispatch and shared across Continue/clean imports. Existing layout/map/image-transcription and region-AI caps stay unchanged. One image unit per request, configured timeout, max_retries=0, no refund/retry. Cache replay reruns deterministic evidence binding against current safe source. Provider/budget failure preserves unknown unless deterministic non-source evidence exists. Non-source pages skip OCR/transcription; maps retain their dedicated pipeline and optional assets remain private originals with warnings. Clean isolated import may reuse hash-bound classification results, never unverified text/graphs.
 
 First classify only Haunting's 21 existing image blockers using the production classification service and actual page identities; then clean production upload, publication/reload/use/start/ordinary turn. Expand sequentially only after this canary passes. Do not weaken true mechanics/order/source-image controls. No new scenario state/publication state, retry layer, provider, OCR engine, map/topology ontology or gameplay rules.
+
+
+## Evidence binding and cache replay
+
+An authored pregen section alone is not optionality proof. Require a complete affirmative player-creation sentence bound to safe canonical source plus an unambiguous asset-only pregen observation. NPC creation, negated/conditional permission, mixed/source-bearing observations and unknown provider output cannot use the section shortcut. Required clues never become optional; handout permission must be affirmative and exact. Raw observations remain private.
+
+Image observation identity is PDF/model/policy/page/image hash. Source excerpts may change across Continue; replay rebinds every permission/duplicate claim against current safe canonical source rather than spending a second request for the same image. Existing consumed attempts remain consumed; malformed entries fail closed without re-dispatch. Geometry/order defects on proven optional assets do not create required-source defects. Final selected canonical mechanics and genuine required-source ordering gates remain unchanged.

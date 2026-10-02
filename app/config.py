@@ -325,6 +325,8 @@ PDF_MAP_REPAIR_TIMEOUT_SECONDS = _env_float('PDF_MAP_REPAIR_TIMEOUT_SECONDS', 60
 PDF_MAP_AUDIT_TIMEOUT_SECONDS = _env_float('PDF_MAP_AUDIT_TIMEOUT_SECONDS', 60, minimum=0.01)
 PDF_LAYOUT_MAX_REQUESTS = _env_int('PDF_LAYOUT_MAX_REQUESTS', 8)
 PDF_LAYOUT_MAX_PAGES = _env_int('PDF_LAYOUT_MAX_PAGES', 4)
+# Finite import-only source-criticality allowance, independent of derived map/layout work.
+PDF_PAGE_CRITICALITY_MAX_REQUESTS = min(24, max(0, _env_int('PDF_PAGE_CRITICALITY_MAX_REQUESTS', 24)))
 PDF_LAYOUT_RETRIES = min(3, _env_int('PDF_LAYOUT_RETRIES', 1))
 
 # Import-only local OCR. Models/dependencies are prepared by explicit setup only.

@@ -41,6 +41,7 @@ from app import (
     observability,
     pdf_ingestion_drafts,
     pdf_loader,
+    pdf_page_criticality,
     pregen_extractor,
     resolved_check_consequences,
     scenario_activation,
@@ -254,6 +255,7 @@ def _pdf_upload_confirmation_text(
     pregen_count: int,
     artifact_notice: str = "",
     disabled_map_pages: list[int] | None = None,
+    feature_warnings: list[pdf_page_criticality.FeatureWarning] | None = None,
 ) -> str:
     """Shared by the immediate (first-ever upload) and deferred (button-
     resolved) paths through handle_pdf_upload — the message is identical
@@ -274,6 +276,14 @@ def _pdf_upload_confirmation_text(
             f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
             "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
         )
+    if feature_warnings:
+        warning += "\n\n劇本已匯入，可開始遊戲。\n警告："
+        if 'optional_pregen_unavailable' in feature_warnings:
+            warning += "\n- 部分預製角色未解析；可使用自行建立的調查員。"
+        if 'optional_handout_unavailable' in feature_warnings:
+            warning += "\n- 部分 optional handout 未解析；原始圖片仍保留。"
+        if 'topology_assistance_unavailable' in feature_warnings:
+            warning += "\n- 隱藏路線自動輔助不可用，Keeper 仍依原劇本文字處理。"
     map_note = ""
     if disabled_map_pages:
         pages_str = "、".join(str(page) for page in disabled_map_pages)
@@ -556,6 +566,7 @@ async def _run_pdf_import(
                 "title": library_context["manifest"]["title"],
                 "low_text_pages": low_text_pages,
                 "disabled_map_pages": disabled_map_pages,
+                "feature_warnings": parse_quality.get("feature_warnings", []),
                 "truncated": truncated,
                 "npcs": extracted_index["npcs"],
                 "locations": extracted_index["locations"],
@@ -607,6 +618,7 @@ async def _run_pdf_import(
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
         disabled_map_pages=disabled_map_pages,
+        feature_warnings=parse_quality.get("feature_warnings", []),
     ) + (f"\n{variant_notice}" if variant_notice else "")
       + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
       + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
@@ -676,6 +688,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
         disabled_map_pages=pending.get("disabled_map_pages", []),
+        feature_warnings=pending.get("feature_warnings", []),
     ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "") + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
 
 @mutation_admission.guard_async_entry

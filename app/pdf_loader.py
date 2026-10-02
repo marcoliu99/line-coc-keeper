@@ -30,6 +30,7 @@ from app import (
     pdf_layout_adapters,
     pdf_map_analysis,
     pdf_ocr,
+    pdf_page_criticality,
     pdf_quality,
     pdf_raster_source,
     pdf_source_topology,
@@ -85,7 +86,7 @@ def extraction_identity() -> dict:
         except metadata.PackageNotFoundError:
             return 'unavailable'
     return {'pipeline_version': PIPELINE_VERSION, 'renderer_version': RENDERER_VERSION,
-            'ordering_validation_version': 2,
+            'ordering_validation_version': 2, 'page_criticality_version': pdf_page_criticality.VERSION,
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
             'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
@@ -539,11 +540,6 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 else:
                     text, method = candidate, 'multicolumn'
             warnings.extend(decision['diagnostics'])
-            text, repairs = _repair_local_regions(page, evidence, pairs, text, local_budget)
-            if repairs:
-                warnings.append("local_ocr_review" if any(r["status"] != "accepted" for r in repairs) else "local_ocr_repaired")
-                if any(r["status"] == "accepted" for r in repairs):
-                    method += "+local_ocr"
             graphic = _page_has_graphic_content(page) or _pymupdf4llm_has_graphic_evidence(chunk)
             if graphic:
                 images[number] = _render_page_png(page)
@@ -569,7 +565,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             texts.append(text)
             report["pages"].append({"page": number, "method": method, "native_chars": len(native),
                                     "warnings": warnings, "evidence": evidence,
-                                    "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": repairs,
+                                    "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": [],
                                     "candidates": {"native": native, "layout": layout_text},
                                     "layout_decision": decision, "graphic_evidence": graphic,
                                     "safe_short_native": safe_short_native,
@@ -579,10 +575,41 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                     "source_kind": ('native_text_absent' if not native.strip() else
                                                     'native_text_present_but_short' if len(native) < _LOW_TEXT_THRESHOLD
                                                     else 'native_text_present')})
+        safe_pages = pdf_page_criticality.source_pages(report['pages'], texts)
+        asset_sections = pdf_page_criticality.asset_sections(doc)
+        for number in list(pending):
+            row = report['pages'][number - 1]
+            if not row['requires_image_transcription'] or row.get('resumed'):
+                continue
+            criticality = pdf_page_criticality.classify(pending[number], page=number,
+                pdf_sha256=pdf_hash, native=row['candidates']['native'], safe=safe_pages, asset=asset_sections.get(number))
+            row['page_criticality'] = criticality
+            if criticality['source_critical'] is False:
+                if criticality['page_role'] in {'OPTIONAL_PREGEN', 'OPTIONAL_HANDOUT', 'DUPLICATE_SOURCE'}:
+                    texts[number - 1] = f"[PDF_OPTIONAL_ASSET: {criticality['page_role']}; page {number}; original image retained]"
+                if criticality['page_role'] == 'PURE_ILLUSTRATION':
+                    row['verified_illustration'] = True
+                if criticality['map_asset']:
+                    map_candidates.add(number)
+                if number not in map_candidates:
+                    pending.pop(number)
+        for i, page in enumerate(doc):
+            row = report['pages'][i]
+            if row.get('resumed') or row.get('page_criticality', {}).get('source_critical') is False:
+                continue
+            text, repairs = _repair_local_regions(page, row['evidence'], row['numeric_pairs'], texts[i], local_budget)
+            texts[i] = text
+            row['local_repairs'] = repairs
+            if repairs:
+                row['warnings'].append('local_ocr_review' if any(r['status'] != 'accepted' for r in repairs) else 'local_ocr_repaired')
+                if any(r['status'] == 'accepted' for r in repairs):
+                    row['method'] += '+local_ocr'
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         for number in list(pending):
             row = report['pages'][number - 1]
+            if row.get('page_criticality', {}).get('source_critical') is False:
+                continue
             if (len(texts[number - 1]) >= _LOW_TEXT_THRESHOLD and not row['requires_image_transcription']) or local_page_budget <= 0:
                 continue  # Readable map labels still require scene_map, not whole-page OCR.
             local_page_budget -= 1
@@ -602,7 +629,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 if (len(chosen) >= _LOW_TEXT_THRESHOLD and number not in map_candidates
                         and not row['requires_image_transcription']):
                     pending.pop(number)
-        alternate_pages = [number for number in pending if (len(texts[number - 1]) < _LOW_TEXT_THRESHOLD
+        alternate_pages = [number for number in pending if report['pages'][number - 1].get('page_criticality', {}).get('source_critical') is not False and (len(texts[number - 1]) < _LOW_TEXT_THRESHOLD
                            or report['pages'][number - 1]['requires_image_transcription'])
                            and (report['pages'][number - 1]['requires_image_transcription']
                                 or not any(a['status'] == 'accepted' for a in
@@ -654,7 +681,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         # Image-only candidates need independent image evidence, never native-empty certification.
         for number in list(pending):
             row = report['pages'][number - 1]
-            if not row['requires_image_transcription'] or number in map_candidates:
+            if row.get('page_criticality', {}).get('source_critical') is False or not row['requires_image_transcription'] or number in map_candidates:
                 continue
             if not pdf_image_transcription.reserve_verification(layout_budget, number, layout_budget_checkpoint):
                 row['warnings'].append('image_verification_budget_exhausted')
@@ -692,6 +719,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         # Repair only remaining numeric/corrupted blocks, before extraction consumers.
         for i, row in enumerate(report["pages"]):
             if row.get('resumed'):
+                continue
+            if row.get('page_criticality', {}).get('source_critical') is False:
+                row['ai_repair'] = {'regions': [], 'unresolved_labels': []}
                 continue
             texts[i], ai_result = pdf_ai_repair.repair_page(doc[i], row, texts[i], ai_budget,
                 ledger=ai_repair_ledger, checkpoint=ai_budget_checkpoint)
@@ -780,18 +810,20 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             verified_image = row.get('image_transcription', {}).get('status') == 'authoritative'
             # A derived map failure cannot certify or invalidate canonical source.
             source_blocking_reasons: list[SourceBlockingReason] = []
-            if status == 'needs_review':
+            noncritical_asset = row.get('page_criticality', {}).get('source_critical') is False
+            if status == 'needs_review' and not noncritical_asset:
                 source_blocking_reasons.append('source_ordering_unverified')
             if (row.get('requires_image_transcription') and not verified_image
-                    and not row.get('verified_illustration')):
+                    and not row.get('verified_illustration')
+                    and row.get('page_criticality', {}).get('source_critical') is not False):
                 source_blocking_reasons.append('source_image_transcription_unverified')
             if unresolved:
                 source_blocking_reasons.append('source_mechanics_unresolved')
-            if ('transcription_unverified' in row['warnings']
-                    or ('transcription_review' in row['warnings'] and not text.strip())):
+            if (not noncritical_asset and ('transcription_unverified' in row['warnings']
+                    or ('transcription_review' in row['warnings'] and not text.strip()))):
                 source_blocking_reasons.append('source_transcription_unverified')
             publication: PagePublication = {'disposition': _publication_disposition(
-                status, bool(source_blocking_reasons)), 'source_blocking_reasons': source_blocking_reasons}
+                'not_applicable' if noncritical_asset else status, bool(source_blocking_reasons)), 'source_blocking_reasons': source_blocking_reasons}
             row.update(publication)
         # Recheck the final canonical source even on reusable cached pages.
         if pdf_quality.has_corrupted_mechanics(text):
@@ -809,6 +841,10 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         accepted_order = row['layout_decision']['status'] == 'accepted'
         review_reasons = []
         for warning in row['warnings']:
+            if row.get('page_criticality', {}).get('source_critical') is False and warning in {
+                    'low_text', 'empty_page', 'vision_empty', 'vision_failed', 'transcription_review',
+                    'transcription_unverified', 'vision_review_required', 'image_verification_budget_exhausted'}:
+                continue
             if warning == 'table_or_character_grid' and row.get('graphic_evidence') and row.get('safe_short_native'):
                 continue
             if warning in {'low_text', 'vision_empty', 'vision_failed', 'transcription_review',
@@ -838,8 +874,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             review_reasons.append(warning)
         map_soft_failure = bool(row.get('map_analysis', {}).get('candidate') and i + 1 not in maps)
         row['derived_feature_warnings'] = ([row['map_analysis']['status']] if map_soft_failure else [])
+        criticality = row.get('page_criticality', {})
+        if criticality.get('page_role') in {'OPTIONAL_PREGEN', 'OPTIONAL_HANDOUT'}:
+            row['derived_feature_warnings'].append(criticality['page_role'] + '_QUARANTINED')
         severity: PublicationSeverity = ('HARD_BLOCK' if row['disposition'] == 'needs_review'
-                                          else 'SOFT_REVIEW' if map_soft_failure or review_reasons else 'NONE')
+                                          else 'SOFT_REVIEW' if row['derived_feature_warnings'] or review_reasons else 'NONE')
         row['publication_severity'] = severity
         row['review_reasons'] = review_reasons
         if review_reasons:
@@ -928,6 +967,17 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     readiness: ScenarioReadiness = ('BLOCKED' if report['hard_block_pages']
                                     else 'READY_WITH_WARNINGS' if report['soft_review_pages'] or review else 'READY')
     if readiness == 'READY' and report['source_topology_discovery']['pending_count']:
+        readiness = 'READY_WITH_WARNINGS'
+    feature_warnings: list[pdf_page_criticality.FeatureWarning] = []
+    if any(row.get('page_criticality', {}).get('page_role') == 'OPTIONAL_PREGEN' for row in report['pages']):
+        feature_warnings.append('optional_pregen_unavailable')
+    if any(row.get('page_criticality', {}).get('page_role') == 'OPTIONAL_HANDOUT' for row in report['pages']):
+        feature_warnings.append('optional_handout_unavailable')
+    if report['source_topology_discovery']['pending_count'] or any('provider' in reason or 'budget' in reason
+            for reason in report['source_topology_discovery']['diagnostics']):
+        feature_warnings.append('topology_assistance_unavailable')
+    report['feature_warnings'] = feature_warnings
+    if readiness == 'READY' and feature_warnings:
         readiness = 'READY_WITH_WARNINGS'
     report['scenario_readiness'] = readiness
     report['map_status'] = {str(row['page']): row['map_analysis']['status']

@@ -1,3 +1,4 @@
+<!-- Current: playable-first admission implementation; real playability acceptance remains pending. Earlier sections preserve historical evidence. -->
 # PDF 圖片頁 criticality 與 admission
 
 ## 狀態
@@ -51,3 +52,10 @@ Provider-ON baseline 因六本外傳授權審查拒絕而 PENDING；true/false/u
 Classification 採獨立有限 allowance：每 PDF/model/policy 預設／上限24個實體頁 request，涵蓋本輪明確要求的21頁；dispatch 前持久化，跨 Continue／clean import 共用。既有 layout/map/image-transcription 與 region-AI cap 不變。每 request 一張 page image、設定 timeout、max_retries=0、不退款／retry。Cache replay 必須重新 deterministic 綁定目前安全 source。Provider/budget failure 保留 unknown，除非 deterministic evidence 能證明非 source。非 source 跳過 OCR/transcription；map 維持 dedicated pipeline；optional 原始資產保留 private 並附 warning。
 
 先用 production classification service 與真實 page identity 只分類 Haunting 既有21頁，再 clean production upload/publication/reload/use/start/普通回合；canary 通過才逐本擴展。不得放寬真正 mechanics/order/source-image gate；不新增 scenario/publication state、retry layer、provider、OCR engine、map/topology ontology 或 gameplay rules。
+
+
+## Evidence 綁定與 cache replay
+
+作者 pregen 書籤本身不證明 optional。必須有安全 canonical source 中完整、肯定的 player 建立角色允許句，且 observation 明確是 asset-only pregen。NPC creation、否定／conditional permission、mixed/source-bearing、unknown output 不得套用 section shortcut。Required clue 不可改 optional；handout 必須有完整肯定 exact permission。Raw observation 保持 private。
+
+Image observation identity 綁 PDF/model/policy/page/image hash。Continue 的 source excerpt 可改變；replay 必須重新綁定目前安全 canonical source 中 permission／duplicate evidence，不為同一圖片再花 request。既有 attempt 消耗保留；malformed entry fail closed 且不重送。已證明 optional asset 的 geometry/order failure 不產生 required-source defect；final selected mechanics 與真正 required-source ordering gate 保持。
