@@ -1768,7 +1768,11 @@
       "evidence": [
         "docs/specs/bug/pdf_image_page_criticality_results.json",
         "tests/test_pdf_layout_adapters.py",
-        "tests/test_pdf_single_dispatch.py"
+        "tests/test_pdf_single_dispatch.py",
+        "app/pdf_page_criticality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_page_criticality.py",
+        "tests/test_pdf_publication_policy.py"
       ],
       "path": "docs/specs/bug/pdf_image_page_criticality.md",
       "zh_path": "docs/specs/bug/pdf_image_page_criticality_zh.md"

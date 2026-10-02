@@ -58,3 +58,21 @@ Haunting import 294.094秒後回傳 false。Hard pages 23→21；p16/p28 真實 
 Verification：**2199 passed、1 skipped、152 subtests passed，39.17秒**；Ruff PASS；mypy PASS（139 files）；compileall PASS；diff-check PASS。Standards／Spec review：本次最小 patch 無剩餘 actionable finding；沒有新增本機 suite regression。P2 resumed merge staged-part cleanup 延後；region-AI Continue reset 已修。P3 cleanup 延後。本 patch 未發現新增 P0/P1，但至少一個真實劇本可遊玩的 acceptance gate 尚未達成。**PR155 MERGE HOLD；production rollout HOLD**。
 
 完整 sanitized request receipts、changed files 與 per-page unknown audit 在 `pdf_image_page_criticality_results.json:minimal_p1_followup`。Raw images/provider responses/candidate graphs/full source 全部維持 private，不入 repository。
+
+## Playable-first 真實驗證 — 2026-10-02
+
+Baseline `e0873782a36ac140783e3715805d6807271f412a`；implementation `4f701e07b143ab1ad9f64ebe976b8db00f9c72b1`。六本 PDF hash 仍一致。本次已認列六本 bounded OpenAI 授權，official `api.openai.com/v1`／`gpt-6-luna` dispatch 成功；舊 authorization／harness-limited checkpoint 不代表本次結果，沒有改 provider 或繞 transport。
+
+Production classifier 只處理 Haunting 原21頁 image blockers，每次一張實體頁圖與最多三段安全 source excerpts（12k chars）。結果：9 cover/decorative、2 map-derived、1 source-backed optional pregen、5 source-critical **candidate**、4 unknown。五個 candidate 並不證明是唯一必要 source；mixed 角色表／reference 內容仍有歧義，不能因作者 pregen 書籤就丟掉 mixed／unknown instructions。Repo 不存版權全文、圖片、raw response 或引用原句。
+
+乾淨隔離 storage 走真實 `handle_pdf_upload`，再一次 durable Continue。Image hard pages **21 → 9**：**35、36、37、38、39、40、42、43、44**。Ordering blockers **0**、mechanics blockers **0**。移除12個已確認 false image blocks，保留 genuine unknown。Soft pages **4、24、34、41**；map p24/p34 為 `MAP_NOT_ANALYZED`，不進 gameplay，也未產生 source hard blocker。Optional pregen／topology assistance 另記 feature warning。
+
+帳本 **36 reservations / 36 SDK transports**：classification **23/24**、shared layout/image **8/8**、獨立 region repair **1**、semantic **4**。Stages：classification23、ordering2、MarkItDown4、page transcription2、region repair1、semantic4。**35 HTTP200**，一筆 request 沒有 HTTP response，reservation 仍消耗。Observer 未保存該筆精確 exception type，因此不猜成 APITimeoutError。沒有 SDK automatic retry、refund、提高 cap 或 framework bypass。
+
+兩張 map 因 safe context 變化曾重複分類；failing regression 證明 cache key 缺陷。Final code 改以同 PDF/model/policy/page/image observation replay，每次重新綁定當前 canonical optional/duplicate source；修正後21頁 replay **0 new request**。先前兩筆仍保留消耗。真實 import 執行於最後這項 cache-only 修正之前；final code 有 replay/regression 驗證，沒有再重跑 clean import。
+
+**Publication 未成功，reload／activation／start／普通 turn 未執行。** 不宣稱真實劇本已可玩，也不虛構 runtime import-call count=0。因 Haunting canary gate 未通過，其餘五本依要求不跑；歷史 extraction 不能推論本次 admission。
+
+Final checks：**2225 passed、1 skipped、152 subtests passed**；criticality regressions26；ruff PASS、mypy PASS（140 files）、compileall PASS、diff-check PASS。Optionality／cache 修正後 Standards／Spec review 無剩餘 actionable code finding。既有 first-upload＋invalid-map publication/start integration tests 通過，但 mock/unit 成功不取代真實 canary。
+
+**PR155 MERGE HOLD／Production rollout HOLD。** 剩餘 acceptance blocker：在 production cap 下分清九頁 optional pregen/mixed reference 與真正唯一必要 source；尚未證明它們是真正 source-critical。本 patch 移除已確認 false block，仍未達成使用者「真實劇本可開始並玩一回合」的最終規則。Resumed merged-part cleanup 維持 deferred P2，沒有擴架構或改 gameplay semantics。
