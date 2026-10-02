@@ -43,3 +43,11 @@ Provider-ON baseline 因六本外傳授權審查拒絕而 PENDING；true/false/u
 使用者本輪明確確認五個 P1，並 supersede 舊兩張圖片限制，授權六本 bounded payload 至 official OpenAI。Canary前先拒 inverse spanning heading、違反 geometry 的 page furniture；max_retries=0 不走 compatibility retry。Region repair保留獨立durable AI allowance/crop-request identity，dispatch前持久化、Continue保留、不refund。Index/pregen/opening只送 bounded window，以private one-shot reservation控制；optional metadata失敗不得新增canonical hard blocker。正常成功的card unit仍保留backstory，不改OCR/map/topology/gameplay架構；ordering validation加入cache identity。
 
 五項regression與full checks先通過，再單跑Haunting handle_pdf_upload -> draft/continue -> save/reload/activation/start/一turn；canary通過才擴其他五本。Provider/budget/真正unknown source據實保留block，只有real evidence確認false admission才最小修。Mechanics/ordering controls不放寬，獨立觀測reservation與actual transport。
+
+## 已核准 playable-first 實作（2026-10-02）
+
+使用者已明確核准於 baseline e087378 實作。測試使用公開 extraction/upload/library/start/router seams。Page criticality 在 page OCR 前執行，不改 numeric/dice/order acceptance 或 map/topology runtime。Source-critical 是正確遊玩必須保留的唯一資訊；真正未知仍保留既有 image-source block。Cover/decorative/illustration 必須確認沒有 gameplay-bearing content；optional asset 必須引用安全 source 的 exact citation；duplicate 必須 deterministic 對應 canonical source。Classification 不等於 transcription。Raw observations/citations 存 mode-600 private cache，report 僅保存 role/flags/reason codes/hashes。
+
+Classification 採獨立有限 allowance：每 PDF/model/policy 預設／上限24個實體頁 request，涵蓋本輪明確要求的21頁；dispatch 前持久化，跨 Continue／clean import 共用。既有 layout/map/image-transcription 與 region-AI cap 不變。每 request 一張 page image、設定 timeout、max_retries=0、不退款／retry。Cache replay 必須重新 deterministic 綁定目前安全 source。Provider/budget failure 保留 unknown，除非 deterministic evidence 能證明非 source。非 source 跳過 OCR/transcription；map 維持 dedicated pipeline；optional 原始資產保留 private 並附 warning。
+
+先用 production classification service 與真實 page identity 只分類 Haunting 既有21頁，再 clean production upload/publication/reload/use/start/普通回合；canary 通過才逐本擴展。不得放寬真正 mechanics/order/source-image gate；不新增 scenario/publication state、retry layer、provider、OCR engine、map/topology ontology 或 gameplay rules。
