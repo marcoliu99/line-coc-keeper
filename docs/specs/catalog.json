@@ -1515,6 +1515,24 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
+    },
+    {
+      "title": "Minimal local PaddleOCR backend",
+      "zh": "最小本機 PaddleOCR backend",
+      "category": "enhancement",
+      "status": "implemented",
+      "path": "docs/specs/enhancement/minimal_paddle_ocr.md",
+      "zh_path": "docs/specs/enhancement/minimal_paddle_ocr_zh.md",
+      "evidence": [
+        "app/pdf_ocr.py",
+        "app/pdf_loader.py",
+        "requirements-pdf-ocr.txt",
+        "scripts/setup_paddle_ocr.py",
+        "tests/test_pdf_paddle_ocr.py",
+        "docs/specs/enhancement/minimal_paddle_ocr_validation.md",
+        "docs/specs/enhancement/minimal_paddle_ocr_validation_zh.md",
+        "docs/specs/enhancement/minimal_paddle_ocr_results.json"
+      ]
     }
   ]
 }
