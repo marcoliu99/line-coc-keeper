@@ -15,3 +15,7 @@ No extraction identity change: accepted cached outputs and the native analyzer r
 ## Validation
 
 Synthetic regression first; reject broad/overlapping footer candidates and preserve mechanics, source blocks, budgets, and input objects. Review all 45 image and 12 ordering records, distinguishing proven required source from insufficient evidence. Resume sequentially without cap increases, refunds, new drafts, or hidden retries. Publish/reload/activate/start only source-safe results. Keep raw evidence private; commit hashes, enums, counts, geometry outcomes only. Full suite, lint, types, compile, diff checks and Standards/Spec review.
+
+## Additional reproduced evidence-binding defect
+
+Explicit affirmative alternative-creation permission can be conditional in form (player preference followed by explicit approval), or author-provided pregen sheets can explicitly include blank sheets for creating new investigators. The current matcher rejects both even when the complete sentence is canonical and source-bound. Extend only affirmative permission recognition; preserve required-pre gen conflict guards, exact source binding, authored section limits, mixed-region audit, and clue checks. No appearance-based optionality. Synthetic positive and negated/conditional-restriction tests precede implementation. Cached observations must be rebound against current canonical evidence without new classification dispatch.

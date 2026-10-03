@@ -11,3 +11,7 @@
 ## 驗證與隱私
 
 先 synthetic FAIL 再最小 fix/PASS；測 broad/overlap rejection、mechanics/text preservation、budget 不變。五本 sequential Continue，不 reset/refund/提高 cap/new draft。source-safe 才 publication/reload/activation/start。原圖、原文、provider response 留 private；repo 僅 hashes/enums/counts。執行完整 tests、lint、types、compile、diff 及 Standards/Spec review。
+
+## 另已重現 evidence-binding 缺陷
+
+完整 canonical sentence 明確提供自建角色替代選項，但以玩家偏好條件句加肯定允許，或明確提供預製角色與空白自建角色卡，現有 matcher 無法辨識。僅補肯定 permission；保留 mandatory-pregen conflict、exact source binding、author section、mixed-region audit、clue checks。不得依外觀判 optional。先 synthetic positive/negative FAIL/PASS；cache observations 重新綁 canonical evidence，不新增 classification request。
