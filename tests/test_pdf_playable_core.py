@@ -171,12 +171,13 @@ def test_title_only_native_page_cannot_publish_an_unread_raster_body(monkeypatch
                for row in report['pages'])
 
 
-@pytest.mark.parametrize('asset,counterpart,blocked', [
-    ('Setup sheet', '', True),
-    ('Cover', '', False),
-    ('Setup sheet', 'The Keeper sets the opening event to dusk.', False),
+@pytest.mark.parametrize('asset,counterpart,complete,blocked', [
+    ('Setup sheet', '', True, True),
+    ('Cover', '', True, False),
+    ('Setup sheet', 'The Keeper sets the opening event to dusk.', True, False),
+    ('Setup sheet', 'The Keeper sets the opening event to dusk.', False, True),
 ])
-def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_path, asset, counterpart, blocked):
+def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_path, asset, counterpart, complete, blocked):
     monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
     monkeypatch.setattr(config, 'PDF_SOURCE_DISCOVERY_ENABLED', False)
     monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
@@ -186,7 +187,7 @@ def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_pa
     classification = {'page_role': 'handout' if asset != 'Cover' else 'cover_decorative',
         'contains_gameplay_source': asset != 'Cover', 'contains_mechanics': False,
         'contains_required_clue': False, 'asset_only': True,
-        'all_source_fragments_accounted_for': True, 'source_fragments': [fragment] if asset != 'Cover' else [],
+        'all_source_fragments_accounted_for': complete, 'source_fragments': [fragment] if asset != 'Cover' else [],
         'optional_source_quote': '', 'optional_source_page': 0}
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
         SimpleNamespace(analyze_image=lambda *_a, **_kw: classification, analysis_model_identity=lambda: 'required-dependency'))

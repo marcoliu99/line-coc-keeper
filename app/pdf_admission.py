@@ -92,6 +92,10 @@ def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
             proof.get('page_image_sha256') != row.get('page_image_sha256')
             or proof.get('region_bbox') != row.get('source_image_bbox')):
         return False
+    if (proof.get('kind') == 'canonical_attachment_dependency'
+            and proof.get('fragment_coverage_complete') is not True):
+        # One duplicated observed fragment cannot account for unseen required text.
+        return True
     # Exact complete counterparts, never matching just dice/numbers, remove uniqueness.
     return not any(reference_compatible(fragment, text) for text in native_pages.values())
 
@@ -143,6 +147,7 @@ def bind_required_dependencies(rows: list[dict], native_pages: dict[int, str]) -
                 'kind': 'canonical_attachment_dependency', 'requirement_page': page,
                 'requirement_quote': quote, 'requirement_sha256': hashlib.sha256(quote.encode()).hexdigest(),
                 'region_bbox': region, 'page_image_sha256': image_hash,
+                'fragment_coverage_complete': role.get('observed_fragments_complete') is True,
                 'missing_fragment': fragments[0] if len(fragments) == 1 else dependency['information'],
             }
 
