@@ -349,3 +349,92 @@ def test_valid_internal_heading_and_furniture_geometry():
     ]
     ids = [b['id'] for b in blocks]
     assert adapters._validate(response(ids), {'blocks': blocks, 'dimensions': [600, 800]})[0] == ids
+
+
+def test_central_footer_cannot_define_body_gutter_or_spend_request(monkeypatch):
+    from app.pdf_layout import analyze_page
+
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((270, 55), 'Synthetic header')
+        for x, texts in [(72, ['A' * 34, 'B' * 34]), (315, ['C' * 34, 'D' * 34])]:
+            for y, text in zip([100, 200], texts, strict=True):
+                page.insert_text((x, y), text, fontname='cour', fontsize=11.14)
+        # Page number ascenders straddle the old 92% top-coordinate threshold.
+        page.insert_text((306.5, 741), '24', fontsize=12)
+        decision = analyze_page(page, {})
+        assert decision['status'] == 'needs_review'
+        assert 'ambiguous_gutter' in decision['diagnostics']
+        monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ENABLED', False)
+        monkeypatch.setattr(adapters, '_provider', lambda *_: pytest.fail('no transport allowed'))
+        budget = adapters.reconcile_budget({'consumed_requests': 8, 'visited_pages': [1, 2, 3, 4]})
+        result = adapters.resolve_page(page, decision, budget)
+        assert result['status'] == 'accepted'
+        assert result['selected_candidate'] == 'footer_geometry'
+        assert result['selected_text'].endswith('24')
+        assert set(result['ordered_ids']) == {b['id'] for b in decision['blocks']}
+        assert [b['text'] for b in result['blocks']] == [b['text'] for b in decision['blocks']]
+        assert budget['consumed_requests'] == 8
+        assert decision['status'] == 'needs_review'
+
+
+@pytest.mark.parametrize('defect', ['wide_footer', 'tall_footer', 'body_overlap', 'midpage_margin',
+                                    'narrow_body_gutter', 'spanning_body', 'source_gate_failure'])
+def test_footer_recovery_does_not_accept_other_uncertainty(monkeypatch, defect):
+    # Unsafe gameplay prevented: ambiguous source layout must not be silently accepted.
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=612, height=792)
+        blocks = [
+            {'id': 'l1', 'text': 'Damage 1d6+2', 'bbox': [72, 90, 299, 110], 'role': 'body', 'column': 'left'},
+            {'id': 'l2', 'text': 'Never lose 10%', 'bbox': [72, 190, 299, 210], 'role': 'body', 'column': 'left'},
+            {'id': 'r1', 'text': 'Gain +2', 'bbox': [315, 90, 540, 110], 'role': 'body', 'column': 'right'},
+            {'id': 'r2', 'text': 'Cost 20', 'bbox': [315, 190, 540, 210], 'role': 'body', 'column': 'right'},
+            {'id': 'f', 'text': '24', 'bbox': [306, 728, 318, 746], 'role': 'body', 'column': 'right'},
+        ]
+        decision = {'status': 'needs_review', 'selected_text': 'original', 'ordered_ids': [],
+                    'diagnostics': ['ambiguous_gutter'], 'blocks': blocks}
+        if defect == 'wide_footer':
+            blocks[-1]['bbox'][0] = 250
+        elif defect == 'tall_footer':
+            blocks[-1]['bbox'][3] = 780
+        elif defect == 'body_overlap':
+            blocks[1]['bbox'][3] = 735
+        elif defect == 'midpage_margin':
+            blocks.append({'id': 'm', 'text': 'Side note', 'bbox': [5, 100, 30, 150], 'role': 'margin', 'column': None})
+        elif defect == 'narrow_body_gutter':
+            blocks[2]['bbox'][0] = 303
+        elif defect == 'spanning_body':
+            blocks[1]['role'] = 'spanning'
+        else:
+            decision['diagnostics'].append('layout_source_gate_failed')
+        monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ENABLED', False)
+        monkeypatch.setattr(adapters, '_provider', lambda *_: pytest.fail('no request allowance'))
+        budget = {'remaining_requests': 0, 'remaining_pages': 0, 'consumed_requests': 8}
+        result = adapters.resolve_page(page, decision, budget)
+        assert result['status'] == 'needs_review'
+        assert result['selected_text'] == 'original'
+        assert result['blocks'] == blocks
+        assert budget['consumed_requests'] == 8
+
+
+def test_footer_recovery_preserves_all_mechanics_and_accepted_cache(monkeypatch):
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=612, height=792)
+        blocks = [
+            {'id': 'l1', 'text': 'Damage 1d6+2', 'bbox': [72, 90, 299, 110], 'role': 'body', 'column': 'left'},
+            {'id': 'l2', 'text': 'Never lose 10%', 'bbox': [72, 190, 299, 210], 'role': 'body', 'column': 'left'},
+            {'id': 'r1', 'text': 'Gain +2', 'bbox': [315, 90, 540, 110], 'role': 'body', 'column': 'right'},
+            {'id': 'r2', 'text': 'Cost 20', 'bbox': [315, 190, 540, 210], 'role': 'body', 'column': 'right'},
+            {'id': 'f', 'text': '24', 'bbox': [306, 728, 318, 746], 'role': 'body', 'column': 'right'},
+        ]
+        decision = {'status': 'needs_review', 'selected_text': 'original', 'ordered_ids': [],
+                    'diagnostics': ['ambiguous_gutter'], 'blocks': blocks}
+        monkeypatch.setattr(config, 'PDF_LAYOUT_DOCLING_ENABLED', False)
+        budget = {'remaining_requests': 0, 'remaining_pages': 0, 'consumed_requests': 8}
+        result = adapters.resolve_page(page, decision, budget)
+        assert result['selected_text'] == '\n\n'.join(b['text'] for b in blocks)
+        assert result['ordered_ids'] == ['l1', 'l2', 'r1', 'r2', 'f']
+        assert decision['blocks'][-1]['role'] == 'body'
+        assert result['blocks'][-1]['role'] == 'margin'
+        assert adapters.resolve_page(page, result, budget) is result
+        assert budget['metrics']['footer_geometry_recoveries'] == 1

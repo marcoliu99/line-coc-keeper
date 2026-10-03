@@ -319,3 +319,93 @@ def test_missing_reference_fragment_requires_exact_already_bound_counterpart(cou
     assets = {p: {'kind': 'pregen', 'start_page': 1, 'end_page': 4, 'title_sha256': 'title'} for p in observed}
     result = criticality._triage_decisions(output, observed, safe, assets)
     assert (4 in result) is expected
+
+
+@pytest.mark.parametrize('permission', [
+    'If your players want to create their own investigators, that is fine too!',
+    'If the players wish to create their own characters, that’s acceptable.',
+])
+def test_explicit_alternative_creation_permission_binds_optional_section(permission):
+    # Generic invariant: affirmative author permission may offer player creation as an alternative.
+    from app import pdf_page_criticality as criticality
+    output = classification('pregen')
+    asset = {'kind': 'pregen', 'start_page': 10, 'end_page': 12, 'title_sha256': 'section'}
+    result = criticality.optional_section({2: permission}, asset, output)
+    assert result is not None
+    assert result['page_role'] == 'OPTIONAL_PREGEN'
+    assert result['classification_evidence'][0]['page'] == 2
+
+
+@pytest.mark.parametrize('sentence', [
+    'If your players want to create their own investigators, the Keeper must refuse.',
+    'If your players want to create their own investigators, the Keeper chooses their clues.',
+    'If your players want to create their own investigators, that is fine only if approved.',
+    'Pregenerated investigators are required; a blank version for creating new investigators is not permitted.',
+    'The Keeper has a blank version for creating new investigators as enemies.',
+    'Pregenerated investigators are provided for the Keeper, with a blank sheet for creating new investigators.',
+    'Pregenerated investigators are provided, with a blank sheet for creating new investigators if the Keeper approves.',
+    'Pregenerated investigators are provided, along with a blank version for creating new investigators.',
+])
+def test_alternative_creation_requires_affirmative_player_permission(sentence):
+    # Unsafe gameplay prevented: optionality must not erase mandatory assigned-character instructions.
+    from app import pdf_page_criticality as criticality
+    output = classification('pregen')
+    asset = {'kind': 'pregen', 'start_page': 10, 'end_page': 12, 'title_sha256': 'section'}
+    assert criticality.optional_section({2: sentence}, asset, output) is None
+
+
+def test_npc_blank_sheet_is_not_player_alternative_permission():
+    from app import pdf_page_criticality as criticality
+    quote = 'Pre-generated characters are provided for Keeper NPC use, with a blank sheet for creating new characters.'
+    output = classification('pregen')
+    asset = {'kind': 'pregen', 'start_page': 10, 'end_page': 12, 'title_sha256': 'section'}
+    assert criticality.optional_section({2: quote}, asset, output) is None
+
+
+def test_cached_asset_only_pregen_can_rebind_current_canonical_permission():
+    from app import pdf_page_criticality as criticality
+    quote = 'If your players want to create their own investigators, that is fine too!'
+    output = classification('pregen', all_source_fragments_accounted_for=True)
+    result = criticality.decide(output, '', {2: quote}, {})
+    assert result['page_role'] == 'OPTIONAL_PREGEN'
+    assert result['classification_evidence'][0]['page'] == 2
+
+
+@pytest.mark.parametrize('change', [
+    {'asset_only': False}, {'contains_required_clue': True}, {'all_source_fragments_accounted_for': False},
+])
+def test_permission_does_not_discard_unaccounted_or_required_pregen_source(change):
+    from app import pdf_page_criticality as criticality
+    quote = 'If your players want to create their own investigators, that is fine too!'
+    output = classification('pregen', **{'all_source_fragments_accounted_for': True, **change})
+    assert criticality.decide(output, '', {2: quote}, {})['source_critical'] is not False
+
+
+def test_player_count_only_is_not_mandatory_character_selection():
+    from app import pdf_page_criticality as criticality
+    permission = 'If your players want to create their own investigators, that is fine too!'
+    safe = {2: permission, 3: 'If you only have two players and they would like to use the pre-generated investigators, offer a choice.'}
+    result = criticality.decide(classification('pregen', all_source_fragments_accounted_for=True), '', safe, {})
+    assert result['page_role'] == 'OPTIONAL_PREGEN'
+
+
+@pytest.mark.parametrize('restriction', ['Players must use the pre-generated investigators.',
+                                       'Players can only choose the assigned characters.',
+                                       'Players are required to play the ready-made investigators.'])
+def test_explicit_mandatory_character_selection_overrides_permission(restriction):
+    from app import pdf_page_criticality as criticality
+    safe = {2: 'Each player creates an investigator.', 3: restriction}
+    assert criticality.decide(classification('pregen', all_source_fragments_accounted_for=True), '', safe, {})['source_critical'] is not False
+
+
+@pytest.mark.parametrize('restriction', [
+    'Players may only ever use the pre-generated investigators.',
+    'The only option is to use the pre-generated investigators.',
+    'The only characters you can choose are assigned characters.',
+    'If you only have two players, they must use the pre-generated investigators.',
+    'If you only have two players, they can only choose assigned characters.',
+])
+def test_mandatory_selection_forms_are_not_lost_by_player_count_fix(restriction):
+    from app import pdf_page_criticality as criticality
+    safe = {2: 'Each player creates an investigator.', 3: restriction}
+    assert criticality.decide(classification('pregen', all_source_fragments_accounted_for=True), '', safe, {})['source_critical'] is not False

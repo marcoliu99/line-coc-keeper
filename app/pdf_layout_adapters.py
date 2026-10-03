@@ -239,11 +239,65 @@ def _validate(response: object, decision: LayoutDecision) -> tuple[list[str], st
     return ordered, apply_order(decision, ordered)
 
 
+def _footer_gutter_recovery(page: pymupdf.Page, decision: LayoutDecision) -> LayoutDecision | None:
+    """Recover only a gutter obscured by narrow bottom-center page furniture."""
+    if decision.get('diagnostics') != ['ambiguous_gutter']:
+        return None
+    width, height = page.rect.width, page.rect.height
+    result = copy.deepcopy(decision)
+    footers = []
+    for block in result['blocks']:
+        x0, y0, x1, y1 = block['bbox']
+        if (0 < x1 - x0 <= width * .05 and 0 < y1 - y0 <= height * .035
+                and y0 >= height * .90 and y1 >= height * .92
+                and abs((x0 + x1) / 2 - width / 2) <= width * .03):
+            footers.append(block)
+    if not footers:
+        return None
+    body = [b for b in result['blocks'] if b not in footers and b['role'] != 'margin']
+    left = sorted([b for b in body if b['column'] == 'left'], key=lambda b: b['bbox'][1])
+    right = sorted([b for b in body if b['column'] == 'right'], key=lambda b: b['bbox'][1])
+    if (len(left) < 2 or len(right) < 2 or len(left) + len(right) != len(body)
+            or any(b['role'] != 'body' for b in body)
+            or min(b['bbox'][0] for b in right) - max(b['bbox'][2] for b in left) < width * .015
+            or min(max(b['bbox'][3] for b in left), max(b['bbox'][3] for b in right))
+            <= max(min(b['bbox'][1] for b in left), min(b['bbox'][1] for b in right))):
+        return None
+    top = min(b['bbox'][1] for b in body)
+    bottom = max(b['bbox'][3] for b in body)
+    margins = [b for b in result['blocks'] if b['role'] == 'margin' and b not in footers]
+    if any(b['bbox'][1] < bottom and b['bbox'][3] > top for b in margins):
+        return None
+    if any(b['bbox'][1] < bottom for b in footers):
+        return None
+    for block in footers:
+        block['role'] = 'margin'
+        block['column'] = None
+    headers = sorted([b for b in margins if b['bbox'][3] <= top], key=lambda b: b['bbox'][1])
+    tail = sorted([b for b in margins if b not in headers] + footers, key=lambda b: b['bbox'][1])
+    try:
+        ordered, text = _validate({'ordered_ids': [b['id'] for b in headers + left + right + tail],
+                                   'unresolved_ids': []}, result)
+    except ValueError:
+        return None
+    result['status'] = 'accepted'
+    result['selected_text'] = text
+    result['ordered_ids'] = ordered
+    result['selected_candidate'] = 'footer_geometry'
+    result['diagnostics'].append('layout ordering accepted: footer_geometry')
+    return result
+
+
 def resolve_page(page: pymupdf.Page, decision: LayoutDecision, budget: dict,
                  *, budget_checkpoint: Callable[[dict], None] | None = None) -> LayoutDecision:
     """Return validated source ordering, retaining the original evidence on failure."""
     if decision.get('status') != 'needs_review':
         return decision
+    recovered = _footer_gutter_recovery(page, decision)
+    if recovered is not None:
+        metrics = budget.setdefault('metrics', {})
+        metrics['footer_geometry_recoveries'] = metrics.get('footer_geometry_recoveries', 0) + 1
+        return recovered
     result = copy.deepcopy(decision)
     result['diagnostics'] = list(decision.get('diagnostics', []))
     metrics = budget.setdefault('metrics', {})
