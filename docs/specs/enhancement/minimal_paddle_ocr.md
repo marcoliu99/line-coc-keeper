@@ -25,7 +25,7 @@ Setup alone downloads the two official models to a persistent directory outside 
 
 ## Candidate selection
 
-Nonempty bounded text, no replacement-character damage or obvious malformed dice, and source-preserving sanity checks when native/source evidence exists. Reuse existing pdf_quality text/numeric and known pair checks, plus exact dice/percent/signed-token preservation at the adapter boundary. Uncertain Paddle output falls back, without changing acceptance criteria for the legacy fallback. Existing source is passed only at local OCR repair call sites; whole-page legacy source validation remains unchanged.
+Nonempty bounded text, no replacement-character damage or obvious malformed dice, and source-preserving sanity checks when native/source evidence exists. Reuse existing pdf_quality text/numeric and known pair checks, plus exact dice/percent/signed-token preservation at the adapter boundary. Uncertain Paddle output falls back, without changing acceptance criteria for the legacy fallback. Existing selected source/pairs are passed to both region and whole-page local OCR; legacy source validators remain unchanged. Damaged-region candidates preflight the existing accept_region gate so they cannot preempt a working Tesseract repair.
 
 No confidence fusion, cloud calls, new admission states or new provider paths. Normal logs include only engine/status/type metadata, never OCR prose or raw errors.
 
@@ -34,3 +34,7 @@ No confidence fusion, cloud calls, new admission states or new provider paths. N
 TDD adapter/fallback integration; disabled/native equivalence, missing models/packages, init/inference/empty/malformed results, exact mechanics/pairs, lazy startup and offline no-download. Small CPU synthetic/plain scan/stat/bilingual smoke only; no maps, corpus imports or gameplay. Controlled OFF/ON reports characters, exact numeric/dice preservation and timing without changing admission. Full pytest, ruff, mypy, compileall, diff-check, Standards/Spec review.
 
 Compatibility limitation: Paddle cannot run in-process on current Python 3.14 official wheels. A supported-interpreter application can opt in; 3.14 continues existing OCR. Optional Linux inference is reported only if actually executed; wheel availability is not a smoke PASS.
+
+## Completed validation
+
+See [validation](minimal_paddle_ocr_validation.md); local suite and scoped two-axis review pass. No runtime/admission/map architecture changes.

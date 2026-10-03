@@ -25,7 +25,7 @@ python scripts/setup_paddle_ocr.py
 
 ## Candidate selection
 
-文字非空、有合理長度、無 replacement-char 或明顯 malformed dice。有 native/source 時重用 pdf_quality text／numeric／known pair checks，adapter 額外保留 exact dice／percent／signed token。不確定的 Paddle 結果只 fallback，不改既有 fallback acceptance。只在 local OCR repair 傳既有 source，whole-page legacy source validation 不改。
+文字非空、有合理長度、無 replacement-char 或明顯 malformed dice。有 native/source 時重用 pdf_quality text／numeric／known pair checks，adapter 額外保留 exact dice／percent／signed token。不確定的 Paddle 結果只 fallback，不改既有 fallback acceptance。Region／whole-page local OCR 均傳入既有 selected source／pairs，legacy validators 不改。受損 region 在 selection 前重用 accept_region，避免截住原本可成功的 Tesseract repair。
 
 不做 confidence fusion／cloud calls，不新增 admission states／provider path。普通 log 僅 engine／status／error type，不含 OCR prose 或 raw error。
 
@@ -34,3 +34,7 @@ python scripts/setup_paddle_ocr.py
 TDD adapter／fallback integration；disabled／native equivalence、模型／package 缺失、init／inference／empty／malformed output、exact mechanics／pairs、lazy startup、offline no-download。僅小量 CPU synthetic／scan／stat／bilingual smoke，不跑 maps／whole corpus／gameplay。OFF／ON 記錄 chars、numeric／dice preservation、timing，不調 admission。完整 pytest／ruff／mypy／compileall／diff-check、Standards／Spec review。
 
 相容性限制：官方 wheel 無法在目前 Python 3.14 in-process 執行 Paddle；supported-interpreter application 可選擇啟用，3.14 保留既有 OCR。Linux inference 只有實際執行才可報 smoke PASS，wheel availability 不等於 PASS。
+
+## Completed validation
+
+See [validation](minimal_paddle_ocr_validation_zh.md); local suite and scoped two-axis review pass. No runtime/admission/map architecture changes.

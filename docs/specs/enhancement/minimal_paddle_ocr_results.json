@@ -1,0 +1,159 @@
+{
+  "baseline_sha": "7d2cc8c",
+  "implementation_sha": "292995c53c258d8250b374b9421735e5451389f3",
+  "branch": "enhancement/minimal-paddle-ocr",
+  "versions": {
+    "paddleocr": "3.7.0",
+    "paddlepaddle": "3.3.0",
+    "paddlex": "3.7.2"
+  },
+  "models": [
+    "PP-OCRv5_mobile_det",
+    "PP-OCRv5_mobile_rec"
+  ],
+  "device": "cpu",
+  "macos_arm64_inference": "PASS Python3.11.15",
+  "linux_x86_64": "Official CPU wheel available; inference NOT RUN",
+  "python_3_14": "Paddle unavailable; pre-existing OCR fallback preserved",
+  "explicit_setup": "python scripts/setup_paddle_ocr.py",
+  "model_download_runtime": false,
+  "startup_initializes_paddle": false,
+  "synthetic_controlled_ab": {
+    "platform": "darwin",
+    "python": "3.11.15",
+    "sdk_import_seconds": 0.9020461660111323,
+    "initialization_seconds": [
+      1.1860678749799263
+    ],
+    "network_attempts": 0,
+    "external_provider_calls": 0,
+    "rows": [
+      {
+        "fixture": "neutral_scan",
+        "baseline_chars": 119,
+        "baseline_mechanics_preserved": true,
+        "baseline_seconds": 0.2475902090081945,
+        "paddle_chars": 118,
+        "paddle_status": "accepted",
+        "paddle_mechanics_preserved": true,
+        "paddle_seconds": 2.238731290999567,
+        "selected_chars": 118,
+        "selected_mechanics_preserved": true,
+        "selected_seconds": 1.1005574160080869
+      },
+      {
+        "fixture": "stat_sheet",
+        "baseline_chars": 79,
+        "baseline_mechanics_preserved": true,
+        "baseline_seconds": 0.4325223749910947,
+        "paddle_chars": 77,
+        "paddle_status": "accepted",
+        "paddle_mechanics_preserved": true,
+        "paddle_seconds": 0.9785319590009749,
+        "selected_chars": 77,
+        "selected_mechanics_preserved": true,
+        "selected_seconds": 0.9871049160137773
+      },
+      {
+        "fixture": "bilingual",
+        "baseline_chars": 84,
+        "baseline_mechanics_preserved": true,
+        "baseline_seconds": 0.30188520799856633,
+        "paddle_chars": 80,
+        "paddle_status": "accepted",
+        "paddle_mechanics_preserved": true,
+        "paddle_seconds": 1.0855091660050675,
+        "selected_chars": 80,
+        "selected_mechanics_preserved": true,
+        "selected_seconds": 1.06446079100715
+      }
+    ]
+  },
+  "private_real_candidate_smoke": {
+    "rows": [
+      {
+        "source": "private Haunting OCR smoke",
+        "page": 20,
+        "status": "accepted",
+        "chars": 3727,
+        "seconds": 16.629372165974928,
+        "authority": "OCR candidate only; no publication or verification claim"
+      },
+      {
+        "source": "private Haunting OCR smoke",
+        "page": 35,
+        "status": "accepted",
+        "chars": 1667,
+        "seconds": 17.1737741669931,
+        "authority": "OCR candidate only; no publication or verification claim"
+      }
+    ],
+    "network_attempts": 0,
+    "provider_calls": 0
+  },
+  "private_pdf_sha256": "39b6a53915ddf9f48831ae45ac7180b6c7d5fc7bf49e1b7fe764c28ed1885436",
+  "fixture_rendering": {
+    "dpi": 200,
+    "image_size": [
+      1700,
+      900
+    ],
+    "colorspace": "RGB converted to BGR for Paddle",
+    "english_font": "Arial",
+    "bilingual_font": "STHeiti Medium",
+    "font_pixels": 42,
+    "background": "white",
+    "text_color": "black",
+    "crop": false
+  },
+  "acceptance_limits": "OCR candidate only; not authoritative transcription or PDF publication validation. Small A/B preserves known mechanics; no broad accuracy improvement claim.",
+  "fallback_tests": {
+    "disabled": "PASS",
+    "missing_model": "PASS",
+    "missing_package": "PASS",
+    "init_error": "PASS",
+    "inference_error": "PASS",
+    "empty": "PASS",
+    "malformed": "PASS",
+    "dice_percent_sign": "PASS",
+    "numeric_pair_swap": "PASS",
+    "added_region_mechanics": "PASS",
+    "symbolic_dice_modifier_polarity": "PASS",
+    "whole_page_native_mechanics": "PASS",
+    "native_disabled_equivalence": "PASS",
+    "lazy_singleton_serialization": "PASS",
+    "prepared_setup_no_download": "PASS",
+    "no_external_provider": "PASS",
+    "nontext_noise": "PASS"
+  },
+  "ocr_specific_tests": 29,
+  "targeted_with_existing_pdf_tests": 60,
+  "pytest": {
+    "passed": 1891,
+    "skipped": 1,
+    "subtests_passed": 152,
+    "seconds": 13.766
+  },
+  "ruff": "PASS",
+  "mypy": {
+    "status": "PASS",
+    "files": 127
+  },
+  "compileall": "PASS",
+  "diff_check": "PASS",
+  "reviews": {
+    "Standards": "PASS at292995c; symbolic modifier defect closed; no remaining finding",
+    "Spec": "PASS at292995c; candidate preemption defect closed; no remaining finding"
+  },
+  "runtime_gameplay_changed": false,
+  "map_logic_changed": false,
+  "admission_publication_changed": false,
+  "provider_calls": 0,
+  "scope_creep": false,
+  "remaining_limitations": [
+    "Python3.14 cannot run Paddle in process with these official wheels",
+    "Linux inference not executed locally",
+    "Full private pages took roughly17s CPU; no performance optimization in scope"
+  ],
+  "merge_recommendation": "READY"
+}
