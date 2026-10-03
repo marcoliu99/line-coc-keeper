@@ -1,0 +1,154 @@
+{
+  "baseline_sha": "40f95d6a4de9c5745f72424bcdea6dc711593a11",
+  "verified_code_sha": "3eb7706246c50f2fcc3900016c038f50f3944e1a",
+  "production_files": [
+    "app/providers/codex_provider.py",
+    "app/providers/codex_transport.py",
+    "app/providers/openai_provider.py",
+    "app/providers/anthropic_provider.py",
+    "app/providers/gemini_provider.py",
+    "app/source_analysis.py",
+    "app/scenario_intro.py",
+    "app/scenario_library.py",
+    "app/scenario_activation.py"
+  ],
+  "source_analysis_version": 2,
+  "codex_final_start": {
+    "scope": "isolated synthetic production start",
+    "model": "gpt-6-luna",
+    "provider": "codex",
+    "opening_dispatch": 1,
+    "transport": 1,
+    "type_errors": 0,
+    "reservations": 1,
+    "cache_statuses": [
+      "completed"
+    ],
+    "helper": {
+      "found": true,
+      "text_length": 27,
+      "text_sha256": "58561264f3e84b058ecb6f4526dfe1a02ade2995558117308fa9b95496ffbd30"
+    },
+    "game_started": true,
+    "state_persisted": true,
+    "reply_count": 2,
+    "fallback_needed": false,
+    "trace": [
+      {
+        "event": "source.analysis.dispatch",
+        "stage": "report_opening_narration"
+      },
+      {
+        "event": "codex.analysis.completed"
+      },
+      {
+        "event": "source.analysis.result",
+        "stage": "report_opening_narration",
+        "status": "completed",
+        "error_type": null,
+        "reason": "completed"
+      },
+      {
+        "event": "scenario.opening.result",
+        "reason": "opening_found"
+      }
+    ]
+  },
+  "codex_probe_accounting": {
+    "opening_reservations": 3,
+    "analysis_cli_starts": 3,
+    "additional_runtime_fallback_cli_starts": 1,
+    "probes": [
+      "preliminary contract success",
+      "reserved-ID config failure (consumed, not success)",
+      "final bounded-alias helper success"
+    ],
+    "underlying_codex_http_count": "not directly instrumented",
+    "final_cli_http_retry_override": 0,
+    "final_cli_stream_retry_override": 0
+  },
+  "published_corpus_regression": [
+    {
+      "corpus": "01",
+      "transports": 0,
+      "reservations": 0,
+      "import_calls": 0,
+      "runtime_transports": 3,
+      "reload": true,
+      "activation": true,
+      "helper_found": false,
+      "start": true,
+      "start_mode": "cached helper found=false + real bounded RAG fallback"
+    },
+    {
+      "corpus": "02",
+      "transports": 0,
+      "reservations": 0,
+      "import_calls": 0,
+      "runtime_transports": 3,
+      "reload": true,
+      "activation": true,
+      "helper_found": false,
+      "start": true,
+      "start_mode": "cached helper found=false + real bounded RAG fallback"
+    },
+    {
+      "corpus": "04",
+      "transports": 0,
+      "reservations": 0,
+      "import_calls": 0,
+      "runtime_transports": 4,
+      "reload": true,
+      "activation": true,
+      "helper_found": false,
+      "start": true,
+      "start_mode": "cached helper found=false + real bounded RAG fallback"
+    }
+  ],
+  "openai_analysis_accounting": {
+    "reservations": 3,
+    "http_transports": 3,
+    "completed_found_false": 3,
+    "subsequent_cache_replays_new_dispatches": 0,
+    "additional_rag_runtime_http_transports": 10
+  },
+  "map_regressions": {
+    "tests_passed": 10,
+    "retention_after_persisted_reload": "PASS",
+    "compatible_visual_source_upgrade": "PASS",
+    "source_incompatible_hidden_map": "quarantined artifact only",
+    "verified_conflict": "keep published verified",
+    "active_position_compatible": "preserved",
+    "active_position_incompatible": "clear only disabled map page/room/facing",
+    "downgrades_applied": 0
+  },
+  "pytest": {
+    "passed": 2412,
+    "skipped": 1,
+    "subtests_passed": 152,
+    "junit_cases": 2565,
+    "failures": 0,
+    "errors": 0
+  },
+  "ruff": "PASS",
+  "mypy": {
+    "status": "PASS",
+    "files": 142
+  },
+  "compileall": "PASS",
+  "diff_check": "PASS",
+  "standards_findings": 0,
+  "spec_findings": 0,
+  "external_500_round_result": {
+    "status": "PENDING",
+    "available_report_progress": "7/500",
+    "reviewed_old_pr_head": "a0c4f7e",
+    "not_restarted": true
+  },
+  "source_boundary_rules_changed": false,
+  "image_reviews_touched": false,
+  "ordering_gates_changed": false,
+  "book_specific_rules_added": 0,
+  "merge_recommendation": "READY",
+  "production_rollout": "HOLD"
+}

@@ -1871,8 +1871,22 @@
       "title": "PR155 opening analysis and map retention",
       "zh": "PR155 opening analysis 與 map retention",
       "category": "bug",
-      "status": "in_progress",
-      "evidence": [],
+      "status": "implemented",
+      "evidence": [
+        "app/providers/codex_provider.py",
+        "app/providers/codex_transport.py",
+        "app/providers/openai_provider.py",
+        "app/providers/anthropic_provider.py",
+        "app/providers/gemini_provider.py",
+        "app/source_analysis.py",
+        "app/scenario_intro.py",
+        "app/scenario_library.py",
+        "app/scenario_activation.py",
+        "tests/test_codex_opening_contract.py",
+        "tests/test_reparse_map_retention.py",
+        "docs/specs/bug/pr155_opening_map_retention_validation.md",
+        "docs/specs/bug/pr155_opening_map_retention_results.json"
+      ],
       "path": "docs/specs/bug/pr155_opening_map_retention.md",
       "zh_path": "docs/specs/bug/pr155_opening_map_retention_zh.md"
     }
