@@ -271,7 +271,7 @@ def test_existing_same_pdf_does_not_fake_success_for_failed_attempt(monkeypatch,
     monkeypatch.setattr(drafts, 'SCENARIO_LIBRARY_DIR', tmp_path)
     state = GroupState(group_id='room', scenario_library_id='existing', scenario_text='Previously installed source')
     monkeypatch.setattr(commands, 'load_state', lambda _: state)
-    monkeypatch.setattr(commands.scenario_library, 'load_context', lambda _: {
+    monkeypatch.setattr(commands.scenario_library, 'load_context', lambda *_args, **_kwargs: {
         'manifest': {'content_hash': 'existing', 'pdf_sha256': hashlib.sha256(raw).hexdigest()}})
     def fail(_raw, *, quality_report, **_kwargs):
         quality_report.update(pipeline_version='v1', pages=[

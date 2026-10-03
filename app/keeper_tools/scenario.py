@@ -132,6 +132,7 @@ def search_scenario_images(call: ToolCall) -> dict[str, Any]:
         query=tool_input.get("query", ""),
         image_type=tool_input.get("image_type", ""),
         allowed_chapter_ids=allowed_chapter_ids(state),
+        **({"revision": revision} if (revision := scenario_activation.revision_for_state(state)) else {}),
     )
     # KP-only assets (see scenario_library._build_image_assets — currently
     # character_sheet pages, which may be NPC/villain stat blocks or a
@@ -165,7 +166,8 @@ def show_scenario_image(call: ToolCall) -> dict[str, Any]:
         return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
     page = int(tool_input["page_number"])
     assets = scenario_library.search_images(
-        state.scenario_library_id, allowed_chapter_ids=allowed_chapter_ids(state)
+        state.scenario_library_id, allowed_chapter_ids=allowed_chapter_ids(state),
+        **({"revision": revision} if (revision := scenario_activation.revision_for_state(state)) else {}),
     )
     asset = next((item for item in assets if item.get("page") == page), None)
     if asset is None:
@@ -190,10 +192,12 @@ def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
     def _advance(target_state: GroupState) -> dict:
         if not target_state.scenario_library_id:
             return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
-        next_id = scenario_library.next_chapter_id(target_state.scenario_library_id, target_state.active_chapter_id)
+        revision = scenario_activation.revision_for_state(target_state)
+        next_id = scenario_library.next_chapter_id(target_state.scenario_library_id, target_state.active_chapter_id,
+            **({"revision": revision} if revision else {}))
         if next_id is None:
             return {"ok": False, "error": "目前已是最後一個章節"}
-        context = scenario_library.load_context(target_state.scenario_library_id, next_id)
+        context = scenario_activation.load_state_context(target_state, next_id)
         scenario_activation.install_context_fields(
             target_state, target_state.scenario_library_id, context,
             variant_id=target_state.scenario_variant_id,

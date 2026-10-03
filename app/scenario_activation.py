@@ -20,6 +20,7 @@ def install_context_fields(
 ) -> None:
     """Install a library chapter while leaving transition policy to the caller."""
     state.scenario_library_id = scenario_id
+    state.scenario_library_revision = context.get("library_revision", "")
     state.scenario_variant_id = (
         variant_id if variant_id is not None
         else scenario_templates.preferred_variant(state.group_id, scenario_id)
@@ -40,9 +41,10 @@ def refresh_context_images(group_id: str, scenario_id: str, context: dict[str, A
     """Invalidate old pages before reading images for the committed scenario."""
     group_state.clear_page_images(group_id)
     images: dict[int, bytes] = {}
+    options = {"revision": context["library_revision"]} if context.get("library_revision") else {}
     scenario_library.copy_context_images(
         scenario_id, context["page_numbers"],
-        lambda page, image: images.__setitem__(page, image),
+        lambda page, image: images.__setitem__(page, image), **options,
     )
     for page, image in images.items():
         group_state.save_page_image(group_id, page, image)
@@ -73,10 +75,27 @@ def refresh_restored_images(state: GroupState) -> bool:
         group_state.clear_page_images(state.group_id)
         return True
     try:
-        context = scenario_library.load_context(state.scenario_library_id, state.active_chapter_id)
+        context = load_state_context(state)
     except FileNotFoundError:
         group_state.clear_page_images(state.group_id)
         _logger.warning("rollback_image_restore_skipped group_id=%s scenario_id=%s reason=library_missing",
                         state.group_id, state.scenario_library_id)
         return True
     return refresh_after_commit(state.group_id, state.scenario_library_id, context)
+
+
+def load_state_context(state: GroupState, chapter_id: str | None = None) -> dict[str, Any]:
+    """Read the group's pinned source; only explicit activation selects latest."""
+    revision = revision_for_state(state)
+    options = {"revision": revision} if revision else {}
+    return scenario_library.load_context(state.scenario_library_id,
+        state.active_chapter_id if chapter_id is None else chapter_id, **options)
+
+
+def revision_for_state(state: GroupState) -> str:
+    """Keep legacy snapshots readable and bind exact retained source when available."""
+    revision = getattr(state, 'scenario_library_revision', '')
+    if not revision and state.scenario_library_id and getattr(state, 'scenario_text', '').strip():
+        revision = scenario_library.matching_revision(state.scenario_library_id,
+            getattr(state, 'active_chapter_id', ''), state.scenario_text, getattr(state, 'scene_maps', {}))
+    return revision

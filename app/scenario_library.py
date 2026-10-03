@@ -42,6 +42,55 @@ def _path(scenario_id: str) -> Path:
     return SCENARIO_LIBRARY_DIR / scenario_id
 
 
+def revision_path(scenario_id: str, revision: str = "") -> Path:
+    """Resolve an immutable published revision; empty means legacy/current source."""
+    current = _path(scenario_id)
+    if not revision:
+        return current
+    if not re.fullmatch(r"[0-9a-f]{64}", revision):
+        raise ValueError("Invalid scenario revision")
+    root = SCENARIO_LIBRARY_DIR / '.revisions' / scenario_id / revision
+    if not root.is_dir() or _revision_digest(root) != revision:
+        raise ValueError("Scenario revision missing or changed")
+    return root
+
+
+def _revision_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink():
+            raise ValueError("Scenario revision cannot contain symlinks")
+        if path.is_file():
+            name = str(path.relative_to(root)).encode()
+            digest.update(len(name).to_bytes(8, 'big'))
+            digest.update(name)
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def _snapshot_revision(root: Path, scenario_id: str) -> tuple[Path, str]:
+    if not root.is_dir():
+        raise FileNotFoundError(scenario_id)
+    revision = _revision_digest(root)
+    directory = SCENARIO_LIBRARY_DIR / '.revisions' / scenario_id
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.parent.chmod(0o700)
+    directory.chmod(0o700)
+    target = directory / revision
+    if not target.exists():
+        staging = Path(tempfile.mkdtemp(prefix='.revision-', dir=directory))
+        try:
+            shutil.copytree(root, staging, dirs_exist_ok=True)
+            staging.chmod(0o700)
+            if _revision_digest(staging) != revision:
+                raise ValueError("Scenario changed while pinning revision")
+            staging.replace(target)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+    return revision_path(scenario_id, revision), revision
+
+
 def scenario_path(scenario_id: str) -> Path:
     """Return a library path after validating the scenario identifier."""
     return _path(scenario_id)
@@ -421,6 +470,7 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             if backup.exists():
                 shutil.rmtree(backup)
             if target.exists():
+                _snapshot_revision(target, scenario_id)
                 target.replace(backup)
                 moved_previous = True
             temporary.replace(target)
@@ -481,13 +531,15 @@ def _certified_library_maps(root: Path, manifest: dict, pages: set[int]) -> dict
     return result
 
 
-def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any]:
+def load_context(scenario_id: str, active_chapter_id: str = "", *, revision: str = "") -> dict[str, Any]:
     with _LIBRARY_LOCK:
-        return _load_context(scenario_id, active_chapter_id)
+        return _load_context(scenario_id, active_chapter_id, revision)
 
 
-def _load_context(scenario_id: str, active_chapter_id: str) -> dict[str, Any]:
-    root = _path(scenario_id)
+def _load_context(scenario_id: str, active_chapter_id: str, revision: str) -> dict[str, Any]:
+    root = revision_path(scenario_id, revision)
+    if not revision:
+        root, revision = _snapshot_revision(root, scenario_id)
     manifest = _read_json(root / "manifest.json", None)
     if not isinstance(manifest, dict):
         raise FileNotFoundError(scenario_id)
@@ -509,11 +561,25 @@ def _load_context(scenario_id: str, active_chapter_id: str) -> dict[str, Any]:
     page_set -= quarantined
     all_indexes = _read_json(root / "indexes.json", {"npcs": [], "locations": []})
     indexes = {"npcs": _filter_index(all_indexes.get("npcs", []), page_set), "locations": _filter_index(all_indexes.get("locations", []), page_set)}
-    return {"manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}
+    return {"library_revision": revision, "manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}
 
 
-def next_chapter_id(scenario_id: str, active_chapter_id: str) -> str | None:
-    manifest = _read_json(_path(scenario_id) / "manifest.json", {})
+def matching_revision(scenario_id: str, chapter_id: str, text: str, maps: dict) -> str:
+    """Bind legacy running state only to an exact retained chapter/source counterpart."""
+    with _LIBRARY_LOCK:
+        directory = SCENARIO_LIBRARY_DIR / '.revisions' / _path(scenario_id).name
+        for root in sorted(directory.glob('*')):
+            if not re.fullmatch(r"[0-9a-f]{64}", root.name):
+                continue
+            context = _load_context(scenario_id, chapter_id, root.name)
+            published_maps = {key: value for key, value in maps.items() if key.isdigit()}
+            if context['text'].strip() == text.strip() and context['scene_maps'] == published_maps:
+                return root.name
+    return ""
+
+
+def next_chapter_id(scenario_id: str, active_chapter_id: str, *, revision: str = "") -> str | None:
+    manifest = _read_json(revision_path(scenario_id, revision) / "manifest.json", {})
     chapters = [c for c in manifest.get("chapters", []) if c.get("kind") == "playable"]
     index = next((i for i, c in enumerate(chapters) if c.get("id") == active_chapter_id), -1)
     if index < 0 or index + 1 >= len(chapters):
@@ -521,8 +587,8 @@ def next_chapter_id(scenario_id: str, active_chapter_id: str) -> str | None:
     return chapters[index + 1]["id"]
 
 
-def copy_context_images(scenario_id: str, pages: set[int], save_image: Callable[[int, bytes], None]) -> None:
-    root = _path(scenario_id) / "images"
+def copy_context_images(scenario_id: str, pages: set[int], save_image: Callable[[int, bytes], None], *, revision: str = "") -> None:
+    root = revision_path(scenario_id, revision) / "images"
     for page in pages:
         image = root / f"page_{page}.png"
         if image.exists():
@@ -621,8 +687,8 @@ def kp_only_image_assets(pages: list[int], text: str, chapters: list[dict]) -> l
     return assets
 
 
-def search_images(scenario_id: str, query: str = "", image_type: str = "", allowed_chapter_ids: set[str] | None = None) -> list[dict[str, Any]]:
-    manifest = _read_json(_path(scenario_id) / "manifest.json", {})
+def search_images(scenario_id: str, query: str = "", image_type: str = "", allowed_chapter_ids: set[str] | None = None, *, revision: str = "") -> list[dict[str, Any]]:
+    manifest = _read_json(revision_path(scenario_id, revision) / "manifest.json", {})
     terms = query.lower().split()
     matches = []
     for asset in manifest.get("image_assets", []):

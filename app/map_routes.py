@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Literal, NotRequired, TypedDict, cast
 
-from app import locks, pdf_source_topology, scenario_library, scene_map
+from app import locks, pdf_source_topology, scenario_activation, scene_map
 from app.commands import permissions
 from app.models import GroupState
 from app.repositories.group_state import load_state, save_state
@@ -115,7 +115,7 @@ def _published_graph(state: GroupState, page: str) -> dict:
     if not graph or not state.scenario_library_id or not pdf_source_topology.structurally_valid(graph):
         raise ValueError('A published source-certified map is required')
     # Replay full published source/certificate at both authority boundaries.
-    current = scenario_library.load_context(state.scenario_library_id, state.active_chapter_id)['scene_maps'].get(page)
+    current = scenario_activation.load_state_context(state)['scene_maps'].get(page)
     if current != graph:
         raise ValueError('Map/source certificate changed; reload the scenario map')
     return graph

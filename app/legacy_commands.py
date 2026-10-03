@@ -390,9 +390,7 @@ async def handle_pdf_upload(
     previous_content_hash = ""
     if existing_state.scenario_library_id:
         try:
-            previous_content_hash = scenario_library.load_context(
-                existing_state.scenario_library_id
-            )["manifest"].get("content_hash", "")
+            previous_content_hash = scenario_activation.load_state_context(existing_state)["manifest"].get("content_hash", "")
         except (FileNotFoundError, ValueError):
             pass
     if existing_state.pending_pregen_luck:
@@ -590,6 +588,7 @@ async def _run_pdf_import(
             preview=preview, text=text, indexes=extracted_index, pregens=pregens,
             page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
             parse_quality=parse_quality,
+            scenario_id=f"upload-{uuid4().hex}" if state.scenario_text.strip() and not reparse_candidate_id else None,
         )
         current = load_state(conversation_id)
         correcting = bool(reparse_candidate_id == scenario_id == current.scenario_library_id)
@@ -709,7 +708,8 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
     if not scenario_id:
         return "這個待處理上傳缺少劇本庫資料，請重新上傳 PDF。"
     try:
-        context = scenario_library.load_context(scenario_id, pending.get("active_chapter_id", ""))
+        context = scenario_library.load_context(scenario_id,
+            state.active_chapter_id if choice != "new" else pending.get("active_chapter_id", ""))
     except (FileNotFoundError, ValueError):
         state.pending_pdf_upload = None
         save_state(state)
@@ -722,7 +722,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
         old_hash = pending.get("previous_content_hash", "")
     elif old_scenario_id:
         try:
-            old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
+            old_hash = scenario_activation.load_state_context(state)["manifest"].get("content_hash", "")
         except (FileNotFoundError, ValueError):
             pass
     if choice == "new":
@@ -905,7 +905,7 @@ async def handle_role_sheet_upload(
             return
         scenario_id = state.scenario_library_id or None
         try:
-            context = scenario_library.load_context(scenario_id) if scenario_id else None
+            context = scenario_activation.load_state_context(state) if scenario_id else None
         except (FileNotFoundError, ValueError):
             context = None
             scenario_id = None
