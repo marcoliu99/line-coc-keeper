@@ -15,12 +15,14 @@ PDF -> PyMuPDF4LLM 全部提供頁面的 Markdown chunks
     -> 每頁 PyMuPDF 原生文字/blocks/words
     -> 覆蓋率、數字保留、幾何欄位配對驗證
     -> 採用 layout 或回退 native
-    -> 有需要才執行有限局部修補 / AI repair
-    -> 低文字量且有圖形才走既有 MarkItDown OCR / vision fallback
+    -> 有需要才執行有限局部修補
+    -> 低文字量且有圖形才走既有 MarkItDown OCR
+    -> 有需要才執行有限 AI repair
+    -> 仍低文字量且有圖形才走既有 vision fallback
     -> unresolved 註記、頁碼標記 -> 完整 source text
 ```
 
-擷取在 `app/pdf_loader.py`；native 雙欄 heuristic 與候選驗證在 `app/pdf_quality.py`。preview 的原生文字只作相似度預覽。`legacy_commands.py` 把完整輸出傳給 `scenario_library.save_scenario` 原樣儲存；`load_context` 選頁範圍，沒有重新排列段落。source authoring/review 是明確編修或頁面渲染，不會自動用 raw blocks 蓋掉正常擷取。
+擷取在 `app/pdf_loader.py`；native 雙欄 heuristic 與候選驗證在 `app/pdf_quality.py`。`extract_preview` 的原生文字只作相似度預覽。`legacy_commands.py` 把完整輸出傳給 `scenario_library.save_scenario` 原樣儲存；`load_context` 選頁範圍，沒有重新排列段落。source authoring/review 是明確編修或頁面渲染，不會自動用 raw blocks 蓋掉正常擷取。
 
 此 baseline 的 app 與 requirements 沒有 Paddle。已有 OCR 是 pytesseract/Tesseract、MarkItDown OCR adapter，及既有 provider 圖像分析/欄位修補。安裝的 PyMuPDF4LLM 自己預設也可啟用 Tesseract，因此不能宣稱目前完全只處理原生文字。
 
@@ -59,7 +61,7 @@ PDF -> PyMuPDF4LLM 全部提供頁面的 Markdown chunks
 - 既有 full suite：**1862 passed、1 skipped**，另有 **152 passed subtests**。
 - 五頁未見 native 數字、骰子 token 或移除 Markdown 標記後的 native word token 遺失。token 保留不代表段落或語意正確。
 - 單欄順序正常；沒有程式修正，因此不宣稱修正前後改善。
-- 頁首頁尾仍保留；第 1 頁印刷頁碼與標題重複。第 3 頁左欄段落被插在右欄 Handout 4 下，雖然字沒少，段落歸屬已錯。
+- 頁首頁尾仍保留；第 1 頁印刷頁碼重複也存在於 raw native text；預設 OCR 輸出的標題另外重複。第 3 頁左欄段落被插在右欄 Handout 4 下，雖然字沒少，段落歸屬已錯。
 
 ## 決策
 

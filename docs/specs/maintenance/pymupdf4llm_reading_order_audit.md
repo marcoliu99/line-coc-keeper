@@ -15,12 +15,14 @@ PDF bytes -> PyMuPDF4LLM.to_markdown(page_chunks=True), all supplied pages
           -> native PyMuPDF text/blocks/words per page
           -> coverage + number preservation + geometric label/value checks
           -> select layout text OR native fallback
-          -> bounded local repairs / AI repairs when needed
-          -> low-text graphic pages only: MarkItDown OCR / existing vision fallback
+          -> bounded local repairs when needed
+          -> low-text graphic pages only: MarkItDown OCR
+          -> bounded AI repairs when needed
+          -> remaining low-text graphic pages: existing vision fallback
           -> unresolved annotations + page markers -> returned source text
 ```
 
-`app/pdf_loader.py` owns extraction. `app/pdf_quality.py` contains the native two-column heuristic and candidate checks. `preview_text` uses native text for similarity preview only. `legacy_commands.py` passes authoritative text to `scenario_library.save_scenario`, which writes it unchanged; `load_context` selects page ranges without reordering their paragraphs. Source-authoring and review helpers operate on explicit edits/rendering, rather than automatically replacing extraction with raw blocks.
+`app/pdf_loader.py` owns extraction. `app/pdf_quality.py` contains the native two-column heuristic and candidate checks. `extract_preview` uses native text for similarity preview only. `legacy_commands.py` passes authoritative text to `scenario_library.save_scenario`, which writes it unchanged; `load_context` selects page ranges without reordering their paragraphs. Source-authoring and review helpers operate on explicit edits/rendering, rather than automatically replacing extraction with raw blocks.
 
 Paddle is absent from this baseline's application and requirements. Existing OCR consists of pytesseract/Tesseract and the MarkItDown OCR adapter, plus existing provider image analysis/field repair. Installed PyMuPDF4LLM also defaults to automatic Tesseract OCR; its role is therefore not exclusively native text in this environment.
 
@@ -59,7 +61,7 @@ The public observation seam is `extract_text`'s returned text; direct library re
 - Existing full suite: **1862 passed, 1 skipped**, plus **152 passed subtests**.
 - No native numeric/dice token loss or missing native word tokens on these five pages after ignoring Markdown markers; this is token preservation, not proof of semantic or paragraph correctness.
 - Single-column order remains correct. No code change means no before/after fix claim.
-- Page headers/footers remain in the output; source 1 has a duplicated printed page number and duplicated heading. Source 3's left paragraph is placed beneath right `Handout 4`, changing its apparent ownership despite preserving the words.
+- Page headers/footers remain in the output; source 1 retains the printed page number twice (also present in raw native text) and has a duplicated heading in default OCR output. Source 3's left paragraph is placed beneath right `Handout 4`, changing its apparent ownership despite preserving the words.
 
 ## Decision
 
