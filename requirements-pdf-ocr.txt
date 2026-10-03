@@ -1,0 +1,5 @@
+# Optional CPU backend. Install with Python 3.9–3.13; no official 3.14 wheel.
+# Existing app requirements remain unchanged.
+paddleocr==3.7.0
+paddlepaddle==3.3.0
+paddlex==3.7.2

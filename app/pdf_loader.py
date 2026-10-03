@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import pymupdf
 
-from app import pdf_ai_repair, pdf_quality
+from app import pdf_ai_repair, pdf_ocr, pdf_quality
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
 
@@ -95,12 +95,15 @@ def _render_page_png(page: pymupdf.Page, dpi: int = 200) -> bytes:
     return page.get_pixmap(dpi=dpi).tobytes("png")
 
 
-def _ocr_image(png_bytes: bytes) -> str:
+def _ocr_image(png_bytes: bytes, *, source_text: str = '', pairs: list[dict] | None = None) -> str:
     """Best-effort OCR of a page image. Returns "" if OCR isn't available/fails
     (missing pytesseract, missing the tesseract binary, missing language pack, ...).
     Recovers text-in-image content, but — unlike _analyze_graphic_page — has no
     way to reconstruct the spatial relationships between what it reads.
     """
+    paddle = pdf_ocr.recognize_with_paddle(png_bytes, source_text=source_text, pairs=pairs)
+    if paddle.status == 'accepted':
+        return paddle.text
     languages = ("chi_tra+eng", "eng")
     try:
         import pytesseract
@@ -328,14 +331,14 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
         budget[0] -= 1
         rect = (pymupdf.Rect(block["bbox"]) + (-2, -2, 2, 2)) & page.rect
         attempt["crop_bbox"] = list(rect)
+        local_pairs = [p for p in pairs if p["block"] == block["id"]]
         try:
             png = page.get_pixmap(clip=rect, dpi=300).tobytes("png")
-            candidate = pdf_quality.normalize(_ocr_image(png))
+            candidate = pdf_quality.normalize(_ocr_image(png, source_text=original, pairs=local_pairs))
         except Exception:  # noqa: BLE001 - local optional OCR never discards source.
             attempt["status"] = "ocr_failed"
             continue
         attempt["ocr_text"] = candidate
-        local_pairs = [p for p in pairs if p["block"] == block["id"]]
         attempt["pair_checks"] = pdf_quality.check_pairs(local_pairs, candidate)
         if not candidate:
             attempt["status"] = "ocr_empty"
