@@ -1515,6 +1515,15 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
+    },
+    {
+      "title": "Minimal local PaddleOCR backend",
+      "zh": "最小本機 PaddleOCR backend",
+      "category": "enhancement",
+      "status": "in-progress",
+      "path": "docs/specs/enhancement/minimal_paddle_ocr.md",
+      "zh_path": "docs/specs/enhancement/minimal_paddle_ocr_zh.md",
+      "evidence": []
     }
   ]
 }
