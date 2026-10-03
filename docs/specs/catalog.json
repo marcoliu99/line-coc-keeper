@@ -1,6 +1,6 @@
 {
   "baseline": "afe8aced2614e6d1ba845727e42277436838cf0f",
-  "reviewed_date": "2026-09-27",
+  "reviewed_date": "2026-10-03",
   "specs": [
     {
       "title": "Pending-check ownership and duplicate protection",
@@ -874,6 +874,28 @@
       "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
     },
     {
+      "title": "PDF multicolumn ingestion and reading-order arbitration",
+      "zh": "PDF 多欄匯入與閱讀順序裁決",
+      "category": "enhancement",
+      "status": "partial",
+      "evidence": [
+        "app/pdf_layout.py",
+        "app/pdf_layout_adapters.py",
+        "app/pdf_loader.py",
+        "app/pdf_ingestion_drafts.py",
+        "app/scenario_library.py",
+        "tests/test_pdf_layout.py",
+        "tests/test_pdf_layout_adapters.py",
+        "tests/test_pdf_multicolumn_pipeline.py",
+        "tests/test_pdf_ingestion_drafts.py",
+        "app/pregen_extractor.py",
+        "tests/test_pregen_pdf_completeness.py",
+        "app/character_matcher.py"
+      ],
+      "path": "docs/specs/enhancement/pdf_multicolumn_ingestion_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pdf_multicolumn_ingestion_design_spec_zh.md"
+    },
+    {
       "title": "Atomic narrative purchases and acquisition provenance",
       "zh": "原子敘事購買與取得來源",
       "category": "bug",
@@ -1486,6 +1508,56 @@
       "zh_path": "docs/specs/enhancement/authority_provenance_design_spec_zh.md"
     },
     {
+      "title": "Import-time PaddleOCR recovery on PR155",
+      "zh": "PR155 匯入階段 PaddleOCR recovery",
+      "category": "enhancement",
+      "status": "partial",
+      "evidence": [
+        "app/pdf_ocr.py",
+        "app/pdf_loader.py",
+        "app/pdf_quality.py",
+        "app/config.py",
+        "scripts/setup_pdf_ocr.py",
+        "requirements-pdf-ocr.txt",
+        "tests/test_pdf_ocr_recovery.py",
+        "tests/fixtures/pdf_ocr/mixed_language.json",
+        "scripts/experiments/validate_pdf_ocr_integration.py",
+        "docs/specs/enhancement/pdf_ocr_production_integration_results.json",
+        "docs/specs/enhancement/pdf_ocr_production_model_validation.json",
+        "docs/specs/enhancement/pdf_ocr_production_integration_validation.md",
+        "app/pdf_ai_repair.py",
+        "tests/test_pdf_ai_repair.py",
+        "docs/specs/enhancement/pdf_ocr_production_integration_validation_zh.md",
+        "app/pdf_image_transcription.py",
+        "app/markitdown_shim.py",
+        "tests/test_pdf_image_transcription.py",
+        "scripts/experiments/validate_pdf_ocr_controlled_ab.py",
+        "scripts/experiments/validate_pdf_ocr_production_path.py",
+        "scripts/experiments/smoke_pdf_ocr_cpu.py",
+        ".github/workflows/pdf-ocr-cpu-smoke.yml",
+        "docs/specs/enhancement/pdf_ocr_image_only_validation.md",
+        "docs/specs/enhancement/pdf_ocr_controlled_ab_results.json",
+        "docs/specs/enhancement/pdf_ocr_production_path_results.json",
+        "docs/specs/enhancement/pdf_ocr_linux_cpu_smoke_results.json",
+        "app/scene_map.py",
+        "app/pdf_map_analysis.py",
+        "app/scenario_library.py",
+        "tests/test_scene_map_validation.py",
+        "tests/test_pdf_map_certification.py",
+        "tests/test_pdf_cpu_smoke.py",
+        "tests/fixtures/pdf_ocr/cpu/manifest.json",
+        "scripts/experiments/validate_pdf_safe_page_sample.py",
+        "docs/specs/enhancement/pdf_map_correctness_results.json",
+        "docs/specs/enhancement/pdf_map_correctness_targeted_ab_results.json",
+        "docs/specs/enhancement/pdf_map_correctness_validation.md",
+        "docs/specs/enhancement/pdf_map_correctness_validation_zh.md",
+        "docs/specs/enhancement/pdf_ocr_macos_cpu_smoke_results.json",
+        "docs/specs/enhancement/pdf_ocr_linux_portability_smoke_results.json"
+      ],
+      "path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pdf_ocr_production_integration_design_spec_zh.md"
+    },
+    {
       "title": "Table-driven combat turns and provisional settlement",
       "zh": "查表式戰鬥回合與 provisional settlement",
       "category": "enhancement",
@@ -1515,6 +1587,311 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
+    },
+    {
+      "title": "PDF source readiness and derived-feature quarantine",
+      "zh": "PDF source readiness 與 derived-feature quarantine",
+      "category": "bug",
+      "status": "implemented",
+      "path": "docs/specs/bug/pdf_derived_feature_publication_policy.md",
+      "zh_path": "docs/specs/bug/pdf_derived_feature_publication_policy_zh.md",
+      "evidence": [
+        "app/pdf_loader.py",
+        "app/pdf_ingestion_drafts.py",
+        "app/scenario_library.py",
+        "app/legacy_commands.py",
+        "tests/test_pdf_publication_policy.py",
+        "tests/test_pdf_map_certification.py",
+        "tests/test_pdf_image_transcription.py",
+        "tests/test_pdf_loader.py",
+        "tests/test_pdf_multicolumn_pipeline.py",
+        "docs/specs/bug/pdf_derived_feature_publication_policy_validation.md",
+        "docs/specs/bug/pdf_derived_feature_publication_policy_validation_zh.md"
+      ]
+    },
+    {
+      "title": "Two-phase image-grounded map evidence",
+      "zh": "兩階段 image-grounded map evidence",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_map_evidence.py",
+        "app/pdf_map_analysis.py",
+        "app/scenario_library.py",
+        "scripts/experiments/validate_pdf_ocr_production_path.py",
+        "tests/test_pdf_map_evidence.py",
+        "tests/test_pdf_two_phase_map.py",
+        "tests/test_pdf_map_certification.py",
+        "tests/test_pdf_publication_policy.py",
+        "docs/specs/enhancement/pdf_two_phase_map_extraction_validation.md",
+        "docs/specs/enhancement/pdf_two_phase_map_extraction_validation_zh.md",
+        "docs/specs/enhancement/pdf_two_phase_map_extraction_results.json"
+      ],
+      "path": "docs/specs/enhancement/pdf_two_phase_map_extraction.md",
+      "zh_path": "docs/specs/enhancement/pdf_two_phase_map_extraction_zh.md"
+    },
+    {
+      "title": "PDF ingestion trust-boundary review fixes",
+      "zh": "PDF ingestion 信任邊界 review 修正",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        ".env.example",
+        "app/config.py",
+        "app/markitdown_shim.py",
+        "app/pdf_loader.py",
+        "app/pdf_map_analysis.py",
+        "app/pdf_map_evidence.py",
+        "app/pdf_quality.py",
+        "app/pdf_raster_source.py",
+        "app/providers/anthropic_provider.py",
+        "app/providers/gemini_provider.py",
+        "app/providers/openai_provider.py",
+        "app/providers/image_diagnostics.py",
+        "app/scenario_library.py",
+        "tests/test_markitdown_request_budget.py",
+        "tests/test_pdf_image_transcription.py",
+        "tests/test_pdf_library_map_boundary.py",
+        "tests/test_pdf_provider_failures.py",
+        "tests/test_pdf_source_integrity.py",
+        "tests/test_pdf_two_phase_map.py",
+        "tests/test_scenario_library.py",
+        "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes_results.json",
+        "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes_validation.md",
+        "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes_validation_zh.md"
+      ],
+      "path": "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes.md",
+      "zh_path": "docs/specs/bug/pdf_ingestion_trust_boundary_review_fixes_zh.md"
+    },
+    {
+      "title": "Map connectivity reliability follow-up",
+      "zh": "Map connectivity reliability 補強",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        ".env.example",
+        "app/pdf_map_analysis.py",
+        "app/pdf_map_evidence.py",
+        "tests/test_pdf_map_evidence.py",
+        "tests/test_pdf_map_request_policy.py",
+        "tests/test_pdf_provider_failures.py",
+        "tests/test_pdf_two_phase_map.py",
+        "docs/specs/bug/pdf_map_connectivity_reliability_results.json",
+        "docs/specs/bug/pdf_map_connectivity_reliability_validation.md",
+        "docs/specs/bug/pdf_map_connectivity_reliability_validation_zh.md"
+      ],
+      "path": "docs/specs/bug/pdf_map_connectivity_reliability.md",
+      "zh_path": "docs/specs/bug/pdf_map_connectivity_reliability_zh.md"
+    },
+    {
+      "title": "Source-backed hidden map topology",
+      "zh": "具來源證據的隱藏地圖連線",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_source_topology.py",
+        "app/pdf_map_analysis.py",
+        "app/pdf_loader.py",
+        "app/map_routes.py",
+        "app/scene_map.py",
+        "app/models.py",
+        "app/scenario_library.py",
+        "app/commands/handlers/map_handler.py",
+        "app/commands/router.py",
+        "app/legacy_commands.py",
+        "app/keeper.py",
+        "tests/test_pdf_hidden_topology.py",
+        "docs/specs/enhancement/pdf_source_backed_hidden_topology_validation.md",
+        "docs/specs/enhancement/pdf_source_backed_hidden_topology_validation_zh.md",
+        "docs/specs/enhancement/pdf_source_backed_hidden_topology_validation_results.json"
+      ],
+      "path": "docs/specs/enhancement/pdf_source_backed_hidden_topology.md",
+      "zh_path": "docs/specs/enhancement/pdf_source_backed_hidden_topology_zh.md"
+    },
+    {
+      "title": "Ordered source-backed route segments",
+      "zh": "有來源依據的有序路線分段",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_source_topology.py",
+        "app/pdf_map_analysis.py",
+        "app/map_routes.py",
+        "app/scene_map.py",
+        "app/commands/handlers/map_handler.py",
+        "app/commands/router.py",
+        "tests/test_pdf_route_segments.py",
+        "tests/test_pdf_hidden_topology.py"
+      ],
+      "path": "docs/specs/enhancement/pdf_ordered_source_route_segments.md",
+      "zh_path": "docs/specs/enhancement/pdf_ordered_source_route_segments_zh.md"
+    },
+    {
+      "title": "The Haunting canonical source topology validation",
+      "zh": "The Haunting 正典來源 topology 驗證",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "docs/specs/enhancement/pdf_haunting_source_topology_validation_results.json"
+      ],
+      "path": "docs/specs/enhancement/pdf_haunting_source_topology_validation.md",
+      "zh_path": "docs/specs/enhancement/pdf_haunting_source_topology_validation_zh.md"
+    },
+    {
+      "title": "Semantic topology discovery with deterministic publication proof",
+      "zh": "Semantic topology discovery 與 deterministic publication proof",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "docs/specs/enhancement/pdf_semantic_topology_validation_results.json",
+        "tests/test_pdf_semantic_topology.py"
+      ],
+      "path": "docs/specs/enhancement/pdf_semantic_topology_discovery.md",
+      "zh_path": "docs/specs/enhancement/pdf_semantic_topology_discovery_zh.md"
+    },
+    {
+      "title": "Six-book production scenario import validation — preflight safety stop",
+      "zh": "六本 production scenario import 驗證：preflight 安全停止",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "docs/specs/enhancement/pdf_six_book_production_import_results.json"
+      ],
+      "path": "docs/specs/enhancement/pdf_six_book_production_import_validation.md",
+      "zh_path": "docs/specs/enhancement/pdf_six_book_production_import_validation_zh.md"
+    },
+    {
+      "title": "PDF image-page criticality admission",
+      "zh": "PDF 圖片頁 criticality 與 admission",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": [
+        "docs/specs/bug/pdf_image_page_criticality_results.json",
+        "tests/test_pdf_layout_adapters.py",
+        "tests/test_pdf_single_dispatch.py",
+        "app/pdf_page_criticality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_page_criticality.py",
+        "tests/test_pdf_publication_policy.py"
+      ],
+      "path": "docs/specs/bug/pdf_image_page_criticality.md",
+      "zh_path": "docs/specs/bug/pdf_image_page_criticality_zh.md"
+    },
+    {
+      "title": "OpenAI ordinary-turn optional-field compatibility and completion diagnostics",
+      "zh": "OpenAI 普通回合 optional-field 相容性與 completion diagnostics",
+      "category": "bug",
+      "status": "implemented",
+      "path": "docs/specs/bug/provider_ordinary_turn_completion.md",
+      "zh_path": "docs/specs/bug/provider_ordinary_turn_completion_zh.md",
+      "evidence": [
+        "app/providers/openai_provider.py",
+        "app/agents/executor.py",
+        "app/services/turn_resolution.py",
+        "tests/test_openai_runtime_completion.py",
+        "docs/specs/bug/provider_ordinary_turn_completion_results.json"
+      ]
+    },
+    {
+      "title": "PDF import result UX and corpus generalization",
+      "zh": "PDF 匯入結果 UX 與真實 corpus 泛用驗證",
+      "category": "bug",
+      "status": "implemented",
+      "path": "docs/specs/bug/pdf_import_result_ux_generalization.md",
+      "zh_path": "docs/specs/bug/pdf_import_result_ux_generalization_zh.md",
+      "source_revision": "1fe274acf09840d0c0518e74816829d01640ee2c",
+      "evidence": [
+        "app/legacy_commands.py",
+        "app/pdf_ingestion_drafts.py",
+        "tests/test_pdf_ingestion_drafts.py",
+        "tests/test_pdf_publication_policy.py",
+        "docs/specs/bug/pdf_import_result_ux_generalization_results.json",
+        "docs/specs/bug/pdf_import_result_ux_generalization_validation.md"
+      ]
+    },
+    {
+      "title": "Five-book pending evidence resolution",
+      "zh": "五本待處理證據收尾",
+      "category": "bug",
+      "status": "in_progress",
+      "path": "docs/specs/bug/pdf_pending_evidence_resolution.md",
+      "zh_path": "docs/specs/bug/pdf_pending_evidence_resolution_zh.md",
+      "evidence": [
+        "app/pdf_layout_adapters.py",
+        "tests/test_pdf_layout_adapters.py",
+        "docs/specs/bug/pdf_pending_evidence_resolution_results.json",
+        "docs/specs/bug/pdf_pending_evidence_resolution_validation.md",
+        "docs/specs/bug/pdf_pending_evidence_resolution_validation_zh.md"
+      ]
+    },
+    {
+      "title": "Non-blocking first import and monotonic reparse",
+      "zh": "首次可遊玩匯入與單調重新解析",
+      "category": "enhancement",
+      "status": "implemented",
+      "path": "docs/specs/enhancement/pdf_playable_first_monotonic_reparse.md",
+      "zh_path": "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_zh.md",
+      "evidence": [
+        "app/pdf_admission.py",
+        "app/scenario_reparse.py",
+        "app/scenario_library.py",
+        "tests/test_pdf_playable_core.py",
+        "tests/test_scenario_reparse_monotonic.py",
+        "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_results.json",
+        "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_validation.md",
+        "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_validation_zh.md"
+      ]
+    },
+    {
+      "title": "PR155 source boundary regressions",
+      "zh": "PR155 來源邊界回歸修正",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_page_criticality.py",
+        "app/pdf_loader.py",
+        "app/pdf_admission.py",
+        "app/legacy_commands.py",
+        "tests/test_pr155_review_regressions.py",
+        "app/scenario_library.py",
+        "app/scenario_activation.py",
+        "app/scenario_reparse.py",
+        "tests/test_pdf_preview_fallback.py",
+        "tests/test_pdf_playable_core.py",
+        "tests/test_pdf_criticality_retry.py",
+        "tests/test_pdf_publication_guard.py",
+        "tests/test_scenario_revision_pinning.py",
+        "docs/specs/bug/pr155_source_boundary_regressions_validation.md",
+        "docs/specs/bug/pr155_source_boundary_regressions_results.json"
+      ],
+      "path": "docs/specs/bug/pr155_source_boundary_regressions.md",
+      "zh_path": "docs/specs/bug/pr155_source_boundary_regressions_zh.md"
+    },
+    {
+      "title": "PR155 opening analysis and map retention",
+      "zh": "PR155 opening analysis 與 map retention",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/codex_provider.py",
+        "app/providers/codex_transport.py",
+        "app/providers/openai_provider.py",
+        "app/providers/anthropic_provider.py",
+        "app/providers/gemini_provider.py",
+        "app/source_analysis.py",
+        "app/scenario_intro.py",
+        "app/scenario_library.py",
+        "app/scenario_activation.py",
+        "tests/test_codex_opening_contract.py",
+        "tests/test_reparse_map_retention.py",
+        "docs/specs/bug/pr155_opening_map_retention_validation.md",
+        "docs/specs/bug/pr155_opening_map_retention_results.json",
+        "docs/specs/maintenance/pr155_merge_rollout_closeout_validation.md",
+        "docs/specs/maintenance/pr155_merge_rollout_closeout_validation_zh.md",
+        "docs/specs/maintenance/pr155_merge_rollout_closeout_results.json"
+      ],
+      "path": "docs/specs/bug/pr155_opening_map_retention.md",
+      "zh_path": "docs/specs/bug/pr155_opening_map_retention_zh.md"
     }
   ]
 }

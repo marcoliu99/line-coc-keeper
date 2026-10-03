@@ -60,7 +60,9 @@ def _name_variants(name: str) -> set[str]:
     """The name itself (with any bracket-alias suffix stripped) plus whatever
     text sits inside a bracket, if any — "卡特(Carter)" -> {"卡特", "Carter"}."""
     name = (name or "").strip()
-    if not name:
+    if name.casefold().strip('（）()[] ') in {
+            '', '未填', '未命名', '未命名調查員', '未命名角色', '姓名未填', 'unknown',
+            'unnamed', 'unnamed investigator', 'not filled', 'blank'}:
         return set()
     variants = {name}
     base = _BRACKET_RE.sub("", name).strip()
@@ -136,7 +138,7 @@ def _occupation_and_skills_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
 
 def _remember_name_pair(a: dict[str, Any], b: dict[str, Any]) -> None:
     name_a, name_b = (a.get("name") or "").strip(), (b.get("name") or "").strip()
-    if not name_a or not name_b or name_a == name_b:
+    if not _name_variants(name_a) or not _name_variants(name_b) or name_a == name_b:
         return
     # Store both directions — the dictionary's lookups are one-way, and
     # either name could be the one a future pregen shows up under first.

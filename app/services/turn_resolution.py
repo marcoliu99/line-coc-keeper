@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 
 from app import observability
 from app.domain.models import TurnResolution
@@ -24,6 +24,25 @@ _DISPOSITIONS = {
     "resolved", "cancelled", "blocked", "incomplete",
 }
 
+
+
+CompletionCategory = Literal['COMPLETED', 'PENDING_ACTION', 'MODEL_INCOMPLETE',
+                             'PARSER_INVALID_OUTPUT', 'UNVERIFIED_ACTION', 'RUNTIME_EXCEPTION']
+
+
+def completion_category(resolution: TurnResolution, *, runtime_error: bool = False) -> CompletionCategory:
+    """Diagnostic only: provider completion never overrides a validated gameplay decision."""
+    if runtime_error:
+        return 'RUNTIME_EXCEPTION'
+    if resolution.disposition in {'await_check', 'await_luck', 'deferred'}:
+        return 'PENDING_ACTION'
+    if resolution.disposition != 'incomplete':
+        return 'COMPLETED'
+    if resolution.validation_code == 'model_incomplete':
+        return 'MODEL_INCOMPLETE'
+    if resolution.validation_code in {'invalid_json', 'invalid_object', 'completion_too_long', 'invalid_fields'}:
+        return 'PARSER_INVALID_OUTPUT'
+    return 'UNVERIFIED_ACTION'
 
 
 def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: list[str], actor_name: str) -> tuple[bool, bool]:

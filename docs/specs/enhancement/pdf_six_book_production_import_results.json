@@ -1,0 +1,795 @@
+{
+  "baseline_sha": "105fe065c87a3cb204d138cfc432d488e8461e4a",
+  "branch": "enhancement/pdf-multicolumn-ingestion",
+  "phase0": {
+    "worktree_status_before_artifacts": "",
+    "main_v2_merge_base": "6024adfffad39860de2142e87dbf33e056f4960a",
+    "integration_branch_is_ancestor": true,
+    "configuration_source": "existing environment plus production checkout .env; storage paths isolated only",
+    "analysis_provider": "openai",
+    "analysis_model": "gpt-6-luna",
+    "analysis_credential_configured": true,
+    "conversation_provider": "openai",
+    "pipeline_identity": {
+      "pipeline_version": "multicolumn-v9",
+      "renderer_version": 1,
+      "quality_version": "ai-import-repair-v10",
+      "layout_version": "native-columns-v2",
+      "pymupdf": "1.28.2",
+      "pymupdf4llm": "1.28.2",
+      "markitdown": "0.1.7",
+      "ocr": {
+        "primary": "paddleocr",
+        "enabled": true,
+        "model": "PP-OCRv5_mobile_rec",
+        "device": "cpu",
+        "adapter_version": "local-ocr-v1",
+        "detector": "PP-OCRv5_server_det",
+        "detector_max_side": 960,
+        "cpu_threads": 4,
+        "model_state": "ready",
+        "model_digest": "3054de219047c25aacfcd922edaf20a7e196b59056dcab4a0835dbfaff0b7937",
+        "worker_python": "/Users/marcoliu/workspace/line-coc-keeper/.venv/bin/python",
+        "timeout_seconds": 60.0,
+        "paddleocr_version": "unavailable",
+        "paddlepaddle_version": "unavailable",
+        "paddlex_version": "unavailable",
+        "pytesseract_version": "0.3.13",
+        "tesseract_version": "tesseract 5.5.3"
+      },
+      "source_discovery": {
+        "version": "semantic-source-proof-v1",
+        "enabled": true,
+        "max_requests": 4,
+        "max_pages": 3,
+        "max_chars": 12000,
+        "max_candidates": 8,
+        "provider": "openai",
+        "model": "gpt-6-luna"
+      },
+      "map_version": "image-map-certification-v2",
+      "source_topology_version": "source-topology-v3",
+      "docling": "unavailable"
+    },
+    "map_identity": "image-map-certification-v2",
+    "source_topology_identity": "source-topology-v3",
+    "semantic_identity": {
+      "version": "semantic-source-proof-v1",
+      "enabled": true,
+      "max_requests": 4,
+      "max_pages": 3,
+      "max_chars": 12000,
+      "max_candidates": 8,
+      "provider": "openai",
+      "model": "gpt-6-luna"
+    },
+    "settings": {
+      "PDF_LAYOUT_DOCLING_ARTIFACTS_PATH": "/Users/marcoliu/workspace/line-coc-keeper/data/models/docling",
+      "PDF_LAYOUT_DOCLING_ENABLED": true,
+      "PDF_LAYOUT_DOCLING_TIMEOUT_SECONDS": 45.0,
+      "PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS": 30.0,
+      "PDF_LAYOUT_MAX_PAGES": 4,
+      "PDF_LAYOUT_MAX_REQUESTS": 8,
+      "PDF_LAYOUT_RETRIES": 1,
+      "PDF_MAP_AUDIT_TIMEOUT_SECONDS": 60.0,
+      "PDF_MAP_CONNECTIVITY_TIMEOUT_SECONDS": 60.0,
+      "PDF_MAP_INVENTORY_TIMEOUT_SECONDS": 30.0,
+      "PDF_MAP_REPAIR_TIMEOUT_SECONDS": 60.0,
+      "PDF_SOURCE_DISCOVERY_ENABLED": true,
+      "PDF_SOURCE_DISCOVERY_MAX_REQUESTS": 4
+    },
+    "local_ocr_attempt_cap": 8,
+    "ai_repair_attempt_cap": 8,
+    "conversation_retry_config": {
+      "max_retries": 3,
+      "timeout_retries": 1,
+      "timeout_seconds": 60.0
+    },
+    "sdk_versions": {
+      "openai": "3.13.0",
+      "anthropic": "1.5.0",
+      "google-genai": "2.23.0",
+      "markitdown": "0.1.7",
+      "markitdown-ocr": "0.1.0",
+      "docling": "unavailable"
+    },
+    "sdk_default_retries": {
+      "openai": 2,
+      "anthropic": 2,
+      "gemini_attempts": null
+    },
+    "docling": {
+      "enabled": true,
+      "persistent_model_path": "/Users/marcoliu/workspace/line-coc-keeper/data/models/docling",
+      "path_exists": false
+    },
+    "paddle_models_path": "/Users/marcoliu/workspace/line-coc-keeper/data/models/paddleocr",
+    "network_provider_requests": 0,
+    "production_import_requests": 0
+  },
+  "books": [
+    {
+      "file_name": "01_The_Haunting_QuickStart.pdf",
+      "title": "01_The_Haunting_QuickStart",
+      "sha256": "39b6a53915ddf9f48831ae45ac7180b6c7d5fc7bf49e1b7fe764c28ed1885436",
+      "pages": 50,
+      "pdf_modified": false,
+      "provider_off_hard_block_pages": 23,
+      "baseline_status": "NOT_RUN_PREFLIGHT_BLOCKED",
+      "import": {
+        "entry_point_planned": "app.commands.router.handle_text_message /coc scenario import -> app.legacy_commands.handle_pdf_upload",
+        "entry_point_invoked": false,
+        "draft_created": false,
+        "continue_count": 0,
+        "fully_imported": false
+      },
+      "source": {
+        "accepted": null,
+        "soft_review": null,
+        "hard_block": null,
+        "reasons": null
+      },
+      "ocr": {
+        "paddle_calls": 0,
+        "paddle_accepted": 0,
+        "tesseract_fallback": 0,
+        "ai_repair": 0
+      },
+      "provider": {
+        "text_requests": 0,
+        "image_requests": 0,
+        "transport_count": 0,
+        "usage": null
+      },
+      "semantic_topology": {
+        "grammar_hits": null,
+        "candidates": null,
+        "certified": null,
+        "rejected_ambiguous": null
+      },
+      "map": {
+        "candidate_pages": null,
+        "certificate_count": null
+      },
+      "image_classifications": null,
+      "publication": "NOT_REACHED",
+      "library": {
+        "saved": false,
+        "reload": false
+      },
+      "activation": {
+        "reached": false,
+        "success": false
+      },
+      "start": {
+        "reached": false,
+        "success": false
+      },
+      "timeline": [
+        {
+          "stage": "pdf_identity",
+          "status": "VERIFIED"
+        },
+        {
+          "stage": "network_preflight",
+          "status": "STOPPED"
+        }
+      ],
+      "preflight_stop_reasons": [
+        "P1_NETWORK_RETRY_ACCOUNTING",
+        "P1_FULL_SOURCE_PRIVACY",
+        "P1_READING_ORDER_ADMISSION"
+      ],
+      "image_classification_contract_static": [
+        "text",
+        "character_sheet",
+        "table",
+        "map",
+        "illustration",
+        "unreadable"
+      ]
+    },
+    {
+      "file_name": "02_Dead_Boarder.pdf",
+      "title": "Dead Boarder.indd",
+      "sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274",
+      "pages": 32,
+      "pdf_modified": false,
+      "provider_off_hard_block_pages": 9,
+      "baseline_status": "NOT_RUN_CANARY_NOT_COMPLETED",
+      "import": {
+        "entry_point_planned": "app.commands.router.handle_text_message /coc scenario import -> app.legacy_commands.handle_pdf_upload",
+        "entry_point_invoked": false,
+        "draft_created": false,
+        "continue_count": 0,
+        "fully_imported": false
+      },
+      "source": {
+        "accepted": null,
+        "soft_review": null,
+        "hard_block": null,
+        "reasons": null
+      },
+      "ocr": {
+        "paddle_calls": 0,
+        "paddle_accepted": 0,
+        "tesseract_fallback": 0,
+        "ai_repair": 0
+      },
+      "provider": {
+        "text_requests": 0,
+        "image_requests": 0,
+        "transport_count": 0,
+        "usage": null
+      },
+      "semantic_topology": {
+        "grammar_hits": null,
+        "candidates": null,
+        "certified": null,
+        "rejected_ambiguous": null
+      },
+      "map": {
+        "candidate_pages": null,
+        "certificate_count": null
+      },
+      "image_classifications": null,
+      "publication": "NOT_REACHED",
+      "library": {
+        "saved": false,
+        "reload": false
+      },
+      "activation": {
+        "reached": false,
+        "success": false
+      },
+      "start": {
+        "reached": false,
+        "success": false
+      },
+      "timeline": [
+        {
+          "stage": "pdf_identity",
+          "status": "VERIFIED"
+        },
+        {
+          "stage": "network_preflight",
+          "status": "STOPPED"
+        }
+      ],
+      "preflight_stop_reasons": [
+        "P1_NETWORK_RETRY_ACCOUNTING",
+        "P1_FULL_SOURCE_PRIVACY",
+        "P1_READING_ORDER_ADMISSION"
+      ],
+      "image_classification_contract_static": [
+        "text",
+        "character_sheet",
+        "table",
+        "map",
+        "illustration",
+        "unreadable"
+      ]
+    },
+    {
+      "file_name": "03_The_Lightless_Beacon.pdf",
+      "title": "03_The_Lightless_Beacon",
+      "sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
+      "pages": 43,
+      "pdf_modified": false,
+      "provider_off_hard_block_pages": 26,
+      "baseline_status": "NOT_RUN_CANARY_NOT_COMPLETED",
+      "import": {
+        "entry_point_planned": "app.commands.router.handle_text_message /coc scenario import -> app.legacy_commands.handle_pdf_upload",
+        "entry_point_invoked": false,
+        "draft_created": false,
+        "continue_count": 0,
+        "fully_imported": false
+      },
+      "source": {
+        "accepted": null,
+        "soft_review": null,
+        "hard_block": null,
+        "reasons": null
+      },
+      "ocr": {
+        "paddle_calls": 0,
+        "paddle_accepted": 0,
+        "tesseract_fallback": 0,
+        "ai_repair": 0
+      },
+      "provider": {
+        "text_requests": 0,
+        "image_requests": 0,
+        "transport_count": 0,
+        "usage": null
+      },
+      "semantic_topology": {
+        "grammar_hits": null,
+        "candidates": null,
+        "certified": null,
+        "rejected_ambiguous": null
+      },
+      "map": {
+        "candidate_pages": null,
+        "certificate_count": null
+      },
+      "image_classifications": null,
+      "publication": "NOT_REACHED",
+      "library": {
+        "saved": false,
+        "reload": false
+      },
+      "activation": {
+        "reached": false,
+        "success": false
+      },
+      "start": {
+        "reached": false,
+        "success": false
+      },
+      "timeline": [
+        {
+          "stage": "pdf_identity",
+          "status": "VERIFIED"
+        },
+        {
+          "stage": "network_preflight",
+          "status": "STOPPED"
+        }
+      ],
+      "preflight_stop_reasons": [
+        "P1_NETWORK_RETRY_ACCOUNTING",
+        "P1_FULL_SOURCE_PRIVACY",
+        "P1_READING_ORDER_ADMISSION"
+      ],
+      "image_classification_contract_static": [
+        "text",
+        "character_sheet",
+        "table",
+        "map",
+        "illustration",
+        "unreadable"
+      ]
+    },
+    {
+      "file_name": "04_Camp_Sunny.pdf",
+      "title": "Camp Sunny.indd",
+      "sha256": "ba21a5ea5744511d6290fde9377db71bd55f471e3b6867039808cc57c171b0bb",
+      "pages": 28,
+      "pdf_modified": false,
+      "provider_off_hard_block_pages": 7,
+      "baseline_status": "NOT_RUN_CANARY_NOT_COMPLETED",
+      "import": {
+        "entry_point_planned": "app.commands.router.handle_text_message /coc scenario import -> app.legacy_commands.handle_pdf_upload",
+        "entry_point_invoked": false,
+        "draft_created": false,
+        "continue_count": 0,
+        "fully_imported": false
+      },
+      "source": {
+        "accepted": null,
+        "soft_review": null,
+        "hard_block": null,
+        "reasons": null
+      },
+      "ocr": {
+        "paddle_calls": 0,
+        "paddle_accepted": 0,
+        "tesseract_fallback": 0,
+        "ai_repair": 0
+      },
+      "provider": {
+        "text_requests": 0,
+        "image_requests": 0,
+        "transport_count": 0,
+        "usage": null
+      },
+      "semantic_topology": {
+        "grammar_hits": null,
+        "candidates": null,
+        "certified": null,
+        "rejected_ambiguous": null
+      },
+      "map": {
+        "candidate_pages": null,
+        "certificate_count": null
+      },
+      "image_classifications": null,
+      "publication": "NOT_REACHED",
+      "library": {
+        "saved": false,
+        "reload": false
+      },
+      "activation": {
+        "reached": false,
+        "success": false
+      },
+      "start": {
+        "reached": false,
+        "success": false
+      },
+      "timeline": [
+        {
+          "stage": "pdf_identity",
+          "status": "VERIFIED"
+        },
+        {
+          "stage": "network_preflight",
+          "status": "STOPPED"
+        }
+      ],
+      "preflight_stop_reasons": [
+        "P1_NETWORK_RETRY_ACCOUNTING",
+        "P1_FULL_SOURCE_PRIVACY",
+        "P1_READING_ORDER_ADMISSION"
+      ],
+      "image_classification_contract_static": [
+        "text",
+        "character_sheet",
+        "table",
+        "map",
+        "illustration",
+        "unreadable"
+      ]
+    },
+    {
+      "file_name": "05_Scritch_Scratch.pdf",
+      "title": "05_Scritch_Scratch",
+      "sha256": "51357b89603410fb3d9f2005fcf003459588d16d4c149db49f301d8e11c1f9c4",
+      "pages": 42,
+      "pdf_modified": false,
+      "provider_off_hard_block_pages": 25,
+      "baseline_status": "NOT_RUN_CANARY_NOT_COMPLETED",
+      "import": {
+        "entry_point_planned": "app.commands.router.handle_text_message /coc scenario import -> app.legacy_commands.handle_pdf_upload",
+        "entry_point_invoked": false,
+        "draft_created": false,
+        "continue_count": 0,
+        "fully_imported": false
+      },
+      "source": {
+        "accepted": null,
+        "soft_review": null,
+        "hard_block": null,
+        "reasons": null
+      },
+      "ocr": {
+        "paddle_calls": 0,
+        "paddle_accepted": 0,
+        "tesseract_fallback": 0,
+        "ai_repair": 0
+      },
+      "provider": {
+        "text_requests": 0,
+        "image_requests": 0,
+        "transport_count": 0,
+        "usage": null
+      },
+      "semantic_topology": {
+        "grammar_hits": null,
+        "candidates": null,
+        "certified": null,
+        "rejected_ambiguous": null
+      },
+      "map": {
+        "candidate_pages": null,
+        "certificate_count": null
+      },
+      "image_classifications": null,
+      "publication": "NOT_REACHED",
+      "library": {
+        "saved": false,
+        "reload": false
+      },
+      "activation": {
+        "reached": false,
+        "success": false
+      },
+      "start": {
+        "reached": false,
+        "success": false
+      },
+      "timeline": [
+        {
+          "stage": "pdf_identity",
+          "status": "VERIFIED"
+        },
+        {
+          "stage": "network_preflight",
+          "status": "STOPPED"
+        }
+      ],
+      "preflight_stop_reasons": [
+        "P1_NETWORK_RETRY_ACCOUNTING",
+        "P1_FULL_SOURCE_PRIVACY",
+        "P1_READING_ORDER_ADMISSION"
+      ],
+      "image_classification_contract_static": [
+        "text",
+        "character_sheet",
+        "table",
+        "map",
+        "illustration",
+        "unreadable"
+      ]
+    },
+    {
+      "file_name": "06_Alone_Against_the_Flames.pdf",
+      "title": "Alone Against the Flames",
+      "sha256": "866ccff5742f9820b920c9a901a315baecc2913124530c3fb52bf5a70bef8a60",
+      "pages": 50,
+      "pdf_modified": false,
+      "provider_off_hard_block_pages": 15,
+      "baseline_status": "NOT_RUN_CANARY_NOT_COMPLETED",
+      "import": {
+        "entry_point_planned": "app.commands.router.handle_text_message /coc scenario import -> app.legacy_commands.handle_pdf_upload",
+        "entry_point_invoked": false,
+        "draft_created": false,
+        "continue_count": 0,
+        "fully_imported": false
+      },
+      "source": {
+        "accepted": null,
+        "soft_review": null,
+        "hard_block": null,
+        "reasons": null
+      },
+      "ocr": {
+        "paddle_calls": 0,
+        "paddle_accepted": 0,
+        "tesseract_fallback": 0,
+        "ai_repair": 0
+      },
+      "provider": {
+        "text_requests": 0,
+        "image_requests": 0,
+        "transport_count": 0,
+        "usage": null
+      },
+      "semantic_topology": {
+        "grammar_hits": null,
+        "candidates": null,
+        "certified": null,
+        "rejected_ambiguous": null
+      },
+      "map": {
+        "candidate_pages": null,
+        "certificate_count": null
+      },
+      "image_classifications": null,
+      "publication": "NOT_REACHED",
+      "library": {
+        "saved": false,
+        "reload": false
+      },
+      "activation": {
+        "reached": false,
+        "success": false
+      },
+      "start": {
+        "reached": false,
+        "success": false
+      },
+      "timeline": [
+        {
+          "stage": "pdf_identity",
+          "status": "VERIFIED"
+        },
+        {
+          "stage": "network_preflight",
+          "status": "STOPPED"
+        }
+      ],
+      "preflight_stop_reasons": [
+        "P1_NETWORK_RETRY_ACCOUNTING",
+        "P1_FULL_SOURCE_PRIVACY",
+        "P1_READING_ORDER_ADMISSION"
+      ],
+      "image_classification_contract_static": [
+        "text",
+        "character_sheet",
+        "table",
+        "map",
+        "illustration",
+        "unreadable"
+      ]
+    }
+  ],
+  "request_accounting": [],
+  "provider_usage": null,
+  "baseline_completed": false,
+  "baseline_scope": "Phase 0 only; mandatory STOP before canary",
+  "code_changes": [],
+  "regressions_added": [],
+  "merge_readiness": "MERGE_HOLD",
+  "rollout_readiness": "ROLLOUT_HOLD",
+  "layout_policy_counterexamples": [
+    {
+      "case": "full_width_heading_inverse",
+      "evidence_kind": "local_synthetic_policy_counterexample_not_corpus",
+      "expected_accepted": false,
+      "actual_accepted": true,
+      "provider_requests": 0
+    },
+    {
+      "case": "footer_before_body",
+      "evidence_kind": "local_synthetic_policy_counterexample_not_corpus",
+      "expected_accepted": false,
+      "actual_accepted": true,
+      "provider_requests": 0
+    }
+  ],
+  "remaining_github_review_threads": [
+    {
+      "resolved": false,
+      "path": "app/pdf_layout_adapters.py",
+      "line": 236,
+      "url": "https://github.com/marcoliu99/line-coc-keeper/pull/155#discussion_r4144259666"
+    },
+    {
+      "resolved": false,
+      "path": "app/pdf_layout_adapters.py",
+      "line": 235,
+      "url": "https://github.com/marcoliu99/line-coc-keeper/pull/155#discussion_r4144600290"
+    },
+    {
+      "resolved": false,
+      "path": "app/commands/handlers/system.py",
+      "line": 123,
+      "url": "https://github.com/marcoliu99/line-coc-keeper/pull/155#discussion_r4144600298"
+    }
+  ],
+  "failures": [
+    {
+      "id": "P1_SEMANTIC_TEXT_TRANSPORT_RETRY",
+      "severity": "P1",
+      "stage": "semantic_discovery",
+      "evidence": "analyze_text passes max_retries=0 to the SDK but always calls _create_response; its compatibility/transient loop can perform multiple transports",
+      "files": [
+        "app/providers/openai_provider.py:127",
+        "app/providers/openai_provider.py:703"
+      ],
+      "observed_by": "static_production_call_trace",
+      "external_path_status": "STOPPED"
+    },
+    {
+      "id": "P1_AI_REPAIR_SDK_RETRY_ACCOUNTING",
+      "severity": "P1",
+      "stage": "ai_repair",
+      "evidence": "repair_page calls analyze_image without timeout/max_retries; OpenAI SDK default max_retries=2 plus compatibility/transient loop. Its decrement-only list budget is not a persisted transport reservation.",
+      "files": [
+        "app/pdf_ai_repair.py:103",
+        "app/providers/openai_provider.py:648"
+      ],
+      "observed_by": "static_production_call_trace_and_installed_sdk_constant",
+      "external_path_status": "STOPPED"
+    },
+    {
+      "id": "P1_UNBOUNDED_AUXILIARY_SOURCE_TRANSMISSION",
+      "severity": "P1",
+      "stage": "index_pregens_opening",
+      "evidence": "production upload eagerly analyzes full scenario text for index; pregens falls back to full text; start passes complete active scenario context to opening extraction. No durable text reservation or zero-retry arguments.",
+      "files": [
+        "app/legacy_commands.py:500",
+        "app/scenario_index.py:106",
+        "app/pregen_extractor.py:264",
+        "app/scenario_intro.py:108"
+      ],
+      "observed_by": "static_production_call_trace",
+      "external_path_status": "STOPPED"
+    },
+    {
+      "id": "P1_FULL_WIDTH_HEADING_INVERSE",
+      "severity": "P1",
+      "stage": "layout_order_validation",
+      "evidence": "a heading before vertically preceding body text is still accepted by current _validate",
+      "files": [
+        "app/pdf_layout_adapters.py:235"
+      ],
+      "observed_by": "local_synthetic_policy_counterexample_not_corpus"
+    },
+    {
+      "id": "P1_MARGIN_GEOMETRIC_ORDER",
+      "severity": "P1",
+      "github_severity": "P2",
+      "stage": "layout_order_validation",
+      "evidence": "footer before body still accepted; escalated here because user requires known unsafe publication risk to hold merge",
+      "files": [
+        "app/pdf_layout_adapters.py:235"
+      ],
+      "observed_by": "local_synthetic_policy_counterexample_not_corpus"
+    },
+    {
+      "id": "P2_MERGED_PART_RESUME_CLEANUP",
+      "severity": "P2",
+      "stage": "continue_cleanup",
+      "evidence": "unresolved GitHub review: staged merge returns before cleanup on draft, continue lacks selected-part cleanup provenance; no successful resumed merged import run in this preflight",
+      "files": [
+        "app/commands/handlers/system.py:123"
+      ],
+      "observed_by": "static_trace_and_unresolved_review_thread"
+    },
+    {
+      "id": "P3_OPTIONAL_CPU_DEPENDENCIES",
+      "severity": "P3",
+      "stage": "environment",
+      "evidence": "persistent Paddle manifest valid, but configured worker has no Paddle packages; Docling package/cache unavailable. Local fallback must remain available, but was not exercised by this run.",
+      "observed_by": "offline_identity_probe"
+    }
+  ],
+  "safe_paths_static_preflight": {
+    "map_stages": "explicit stage timeout and max_retries=0; direct OpenAI transport; durable reservation used",
+    "image_transcription": "explicit max_retries=0 and configured timeout; reservation path present",
+    "markitdown_shim": "explicit zero SDK retries and configured timeout; image completion wrapper reserves before dispatch",
+    "layout_provider_worker": "explicit max_retries=0; bounded child-process timeout",
+    "runtime_transport_behavior_verified": false
+  },
+  "corbitt": {
+    "pdf_identity_scope": "full 50-page QuickStart, not trimmed source",
+    "physical_page_hints": [
+      24,
+      28,
+      29
+    ],
+    "actual_canonical_pages_verified": false,
+    "barrier_count": null,
+    "segment_count": null,
+    "transit_count": null,
+    "flattened": null,
+    "false_certified_topology_count": null,
+    "status": "NOT_REACHED"
+  },
+  "lightless_beacon_map": {
+    "service_room": null,
+    "lamp_room": null,
+    "lantern_gallery": null,
+    "stairs": null,
+    "certificate": null,
+    "status": "NOT_REACHED"
+  },
+  "verification": {
+    "this_run": {
+      "runtime_code_changed": false,
+      "full_pytest_rerun": false,
+      "ruff_rerun": false,
+      "mypy_rerun": false,
+      "compileall_rerun": false,
+      "diff_check": "passed",
+      "git_status": "only_three_validation_artifacts_and_catalog_changed; runtime_code_unchanged"
+    },
+    "previous_full_suite": {
+      "sha": "105fe065c87a3cb204d138cfc432d488e8461e4a",
+      "pytest_passed": 2181,
+      "pytest_skipped": 2,
+      "subtests_passed": 152,
+      "ruff": "passed",
+      "mypy": "passed_138_modules",
+      "compileall": "passed",
+      "diff_check": "passed",
+      "evidence": "docs/specs/enhancement/pdf_semantic_topology_validation_results.json"
+    },
+    "independent_review": "not_run_no_implementation_change",
+    "interpretation": "Previous green suite does not override new preflight P1 findings."
+  },
+  "provider_off_vs_on": {
+    "on_run_executed": false,
+    "released_hard_blocks": null,
+    "remaining_hard_blocks": null,
+    "interpretation": "No ON run; cannot compare against six supplied OFF counts."
+  },
+  "privacy": {
+    "pdf_bytes_committed": false,
+    "source_prose_committed": false,
+    "rendered_images_committed": false,
+    "raw_provider_response_committed": false,
+    "credentials_committed": false,
+    "public_artifacts_sanitized": true
+  },
+  "next_steps": [
+    "Resolve network retry/accounting and full-source privacy P1 defects before any external canary.",
+    "Resolve both geometric reading-order admission counterexamples before publication.",
+    "Rerun actual router import -> upload ownership/draft/continue -> admission/library -> activation -> start sequentially, without cap override.",
+    "Fix and test staged merged-part cleanup before merge readiness.",
+    "Record actual requests/usage and spot-check certified topology only after real transport is authorized and safe."
+  ]
+}

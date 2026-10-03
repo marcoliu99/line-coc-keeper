@@ -1,0 +1,96 @@
+{
+  "scope": "PR155 graph correctness follow-up; real provider execution blocked before dispatch",
+  "pipeline_version": "multicolumn-v6",
+  "production_rollout": "hold",
+  "map_status_counts": null,
+  "provider_validation": {
+    "state": "not_run",
+    "reason": "automatic approval review rejected third-party upload of real PDF-derived images; explicit payload/destination approval pending"
+  },
+  "maps": [
+    {
+      "book": "The Haunting",
+      "physical_page": 7,
+      "user_confirmed_before": {
+        "rooms": 20,
+        "directed_exits": 44,
+        "entry_room_valid": false,
+        "unsupported_solid_wall_exit": true
+      },
+      "after": null,
+      "verified": false
+    },
+    {
+      "book": "The Lightless Beacon",
+      "physical_page": 16,
+      "user_confirmed_before": {
+        "rooms": 9,
+        "directed_exits": 15,
+        "dangling_stairs_target": "Lamp Room",
+        "missing_visible_locations": [
+          "Service Room",
+          "Lamp Room",
+          "Lantern Gallery"
+        ]
+      },
+      "after": null,
+      "verified": false
+    }
+  ],
+  "image_only_real_positive": {
+    "state": "pending",
+    "whole_page_probe": "The Haunting physical page 19",
+    "real_source_crop_probe": "Dead Boarder physical page 17 hash-bound numeric crop; success would prove bounded crop only"
+  },
+  "historical_image_conflict": {
+    "source": "pdf_ocr_production_path_results.json",
+    "case": "The Haunting p20",
+    "result": "unverified",
+    "current_code_real_revalidation": "pending"
+  },
+  "macos_cpu_smoke": {
+    "runtime_positive": true,
+    "mechanics_corruption_rejection": true,
+    "observed_dice_candidate_accepted": false,
+    "network_denied": true,
+    "gate_role": "production correctness"
+  },
+  "linux_cpu_smoke": {
+    "gate_role": "optional portability",
+    "runtime_positive": true,
+    "mechanics_corruption_rejection": true,
+    "network_denied": true,
+    "ci_run": "https://github.com/marcoliu99/line-coc-keeper/actions/runs/36861007223"
+  },
+  "historical_controlled_ab": {
+    "source": "pdf_ocr_controlled_ab_results.json",
+    "pipeline_version": "multicolumn-v5",
+    "real_pages": 102,
+    "review_off_on": [
+      50,
+      50
+    ],
+    "blocked_off_on": [
+      48,
+      48
+    ],
+    "safe_page_regressions": 0
+  },
+  "final_code_targeted_ab": {
+    "source": "pdf_map_correctness_targeted_ab_results.json",
+    "safe_pages": 9,
+    "accepted_off_on": [
+      9,
+      9
+    ],
+    "regressions": 0,
+    "selected_text_hashes_identical": true
+  },
+  "tooling": {
+    "pytest": "2039 passed, 2 skipped",
+    "ruff": "pass",
+    "mypy": "pass (132 source files)",
+    "compileall": "pass",
+    "git_diff_check": "pass"
+  }
+}

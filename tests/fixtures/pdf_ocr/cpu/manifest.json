@@ -1,0 +1,32 @@
+{
+  "font_name": "DejaVuSans",
+  "font_source": "https://raw.githubusercontent.com/matplotlib/matplotlib/v3.10.7/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
+  "font_sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22",
+  "pillow_version": "12.3.0",
+  "colorspace": "RGB",
+  "dpi": 300,
+  "size": [
+    1000,
+    250
+  ],
+  "position": [
+    30,
+    30
+  ],
+  "font_size": 40,
+  "spacing": 30,
+  "antialiasing": "Pillow FreeType native grayscale rendering; PNG pixels pinned, never rendered at runtime",
+  "crop": "none",
+  "fixtures": {
+    "neutral": {
+      "file": "neutral.png",
+      "source": "ARCHIVE ROOM\nNORTH DOOR\nSOUTH HALL",
+      "png_sha256": "f8638f87eda58fb6dd8b34897d3843c3c94faa06fcbf384f4909870ea6fda871"
+    },
+    "dice": {
+      "file": "dice.png",
+      "source": "STR 60 DEX 55 HP 12\nDamage 1d6+2",
+      "png_sha256": "8a235419e1e53cabb4e322c2ea5ec00e3ac3632a7021dac06538d945eac69f3e"
+    }
+  }
+}

@@ -20,7 +20,7 @@ from app.config import (
     LOG_SLOW_OPERATION_MS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
-from app.providers import retry
+from app.providers import image_diagnostics, retry
 from app.providers.client_lifecycle import AsyncClientLifecycle
 
 _client_lifecycle = AsyncClientLifecycle("anthropic", PROVIDER_SHUTDOWN_GRACE_SECONDS)
@@ -242,19 +242,26 @@ async def run_conversation(
     return final_text
 
 
-def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
+                  timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Vision + a single forced tool call — used by app/scene_map.py's
     analyze_page_image, not the Keeper conversation loop above. Returns the
     tool's input dict, or None on any failure (no ANTHROPIC_API_KEY, the call
     raised, or no matching tool_use came back)."""
     if not ANTHROPIC_API_KEY:
+        image_diagnostics.record('anthropic', 'MissingCredentials')
         return None
     try:
         import base64
 
         import anthropic
 
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        client_options: dict[str, Any] = {}
+        if timeout is not None:
+            client_options['timeout'] = timeout
+        if max_retries is not None:
+            client_options['max_retries'] = max_retries
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, **client_options)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
             response = cast(Any, client.messages).create(
@@ -267,13 +274,18 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
             )
         for block in response.content:
             if block.type == "tool_use" and block.name == tool["name"]:
+                if not isinstance(block.input, dict):
+                    image_diagnostics.record('anthropic', 'InvalidToolArguments')
+                    return None
                 return block.input
+        image_diagnostics.record('anthropic', 'MissingToolCall')
         return None
-    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+    except Exception as error:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+        image_diagnostics.record('anthropic', error)
         return None
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = 0) -> dict | None:
     """Text-only sibling of analyze_image above — a single forced tool call,
     no image. Used by app/pregen_extractor.py. Returns the tool's input dict,
     or None on any failure (no ANTHROPIC_API_KEY, the call raised, or no
@@ -283,7 +295,12 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
     try:
         import anthropic
 
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        options: dict = {}
+        if timeout is not None:
+            options['timeout'] = timeout
+        if max_retries is not None:
+            options['max_retries'] = max_retries
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, **options)
         with observability.span("llm.request", provider="anthropic", model=ANTHROPIC_MODEL, api_operation="messages.create"):
             response = cast(Any, client.messages).create(
                 model=ANTHROPIC_MODEL, max_tokens=4096, tools=[tool],
@@ -296,3 +313,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         return None
     except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
+
+
+def analysis_model_identity() -> str:
+    return ANTHROPIC_MODEL

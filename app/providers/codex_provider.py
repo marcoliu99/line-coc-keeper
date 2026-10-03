@@ -7,6 +7,7 @@ import copy
 import functools
 import json
 import logging
+import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -252,10 +253,14 @@ def _analysis_prompt(text: str, tool: dict, prompt_text: str) -> str:
     return '\n\n'.join(parts)
 
 
-def _run_analysis(text: str, tool: dict, prompt_text: str) -> dict | None:
+def _run_analysis(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None) -> dict | None:
     started = time.monotonic()
     deadline = request_owner.deadline()
     try:
+        if timeout is not None:
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError('analysis timeout must be finite and positive')
+            deadline = min(deadline, started + timeout)
         original_schema = tool['input_schema']
         if not isinstance(original_schema, dict):
             raise TypeError('input schema must be an object')
@@ -268,7 +273,7 @@ def _run_analysis(text: str, tool: dict, prompt_text: str) -> dict | None:
             try:
                 return await asyncio.wait_for(
                     transport.request(prompt, output_schema,
-                                      instructions=ANALYSIS_INSTRUCTIONS),
+                                      instructions=ANALYSIS_INSTRUCTIONS, max_retries=0),
                     timeout=request_owner.remaining(deadline),
                 )
             finally:
@@ -307,9 +312,12 @@ ANALYSIS_INSTRUCTIONS = (
 )
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
-    """Run a general text analysis request through authenticated Codex CLI."""
-    return _run_analysis(text, tool, prompt_text)
+def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None,
+                 max_retries: int = 0) -> dict | None:
+    """One Codex transport request, bounded by caller and request-owner deadlines."""
+    if max_retries != 0:
+        raise ValueError('Codex analysis does not support retries')
+    return _run_analysis(text, tool, prompt_text, timeout=timeout)
 
 
 async def run_conversation(

@@ -1401,8 +1401,13 @@ def _build_dynamic_prompt(
     digest_block = turn_context.digest_history(state, digest)
     authority = turn_context.authority_block(state, include_private_checks=include_private_checks)
 
+    from app import map_routes, scene_map
+
     location_block = ""
-    if resolved_location:
+    if resolved_location and resolved_location.get('movement_blocked'):
+        location_block = ('\n# 地圖引擎：移動尚未完成\n' + resolved_location['interaction']
+                          + '\n玩家仍在原位置。依正常 action workflow 處理障礙，不要假設障礙已清除或自行增加難度。')
+    elif resolved_location:
         desc = resolved_location.get("room_description") or ""
         desc_part = f"（{desc}）" if desc else ""
         location_block = f"""
@@ -1419,7 +1424,8 @@ def _build_dynamic_prompt(
             (r for r in active_map.get("rooms", []) if r.get("id") == current_room_id), None
         )
         if current_room:
-            exits = current_room.get("exits", [])
+            exits = scene_map.visible_exits(active_map, current_room["id"],
+                available_routes=map_routes.available_routes(state, current_page))
             exits_text = "、".join(f"{e.get('label') or e.get('compass')}" for e in exits) or "（沒有記錄到出口）"
             location_block = f"""
 

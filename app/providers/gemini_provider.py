@@ -27,7 +27,7 @@ from app.config import (
     LOG_SLOW_OPERATION_MS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
-from app.providers import retry
+from app.providers import image_diagnostics, retry
 from app.providers.client_lifecycle import AsyncClientLifecycle
 
 _client_lifecycle = AsyncClientLifecycle("gemini", PROVIDER_SHUTDOWN_GRACE_SECONDS)
@@ -240,7 +240,8 @@ async def run_conversation(
     return final_text
 
 
-def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
+                  timeout: float | None = None, max_retries: int | None = None) -> dict | None:
     """Vision + a single forced tool call — used by app/scene_map.py's
     analyze_page_image, not the Keeper conversation loop above. Forces the
     one tool via ToolConfig(function_calling_config=FunctionCallingConfig(
@@ -249,12 +250,17 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
     tool call's args dict, or None on any failure (no GEMINI_API_KEY, the
     call raised, or no matching function call came back)."""
     if not GEMINI_API_KEY:
+        image_diagnostics.record('gemini', 'MissingCredentials')
         return None
     try:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        http_options = types.HttpOptions(
+            timeout=int(timeout * 1000) if timeout is not None else None,
+            retry_options=types.HttpRetryOptions(attempts=max_retries + 1) if max_retries is not None else None,
+        )
+        client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_options)
         function_declaration = types.FunctionDeclaration(
             name=tool["name"], description=tool["description"], parameters_json_schema=tool["input_schema"]
         )
@@ -275,12 +281,14 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None
         for fc in response.function_calls or []:
             if fc.name == tool["name"]:
                 return dict(fc.args or {})
+        image_diagnostics.record('gemini', 'MissingToolCall')
         return None
-    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+    except Exception as error:  # noqa: BLE001 - provider response shapes vary across SDK versions.
+        image_diagnostics.record('gemini', error)
         return None
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
+def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = 0) -> dict | None:
     """Text-only sibling of analyze_image above — a single forced tool call,
     no image. Used by app/pregen_extractor.py. Returns the tool call's args
     dict, or None on any failure (no GEMINI_API_KEY, the call raised, or no
@@ -291,11 +299,17 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        options: dict = {}
+        if timeout is not None:
+            options['timeout'] = int(timeout * 1000)
+        if max_retries is not None:
+            options['retry_options'] = {'attempts': max_retries + 1}
+        client = genai.Client(api_key=GEMINI_API_KEY, **cast(Any, {'http_options': options} if options else {}))
         function_declaration = types.FunctionDeclaration(
             name=tool["name"], description=tool["description"], parameters_json_schema=tool["input_schema"]
         )
         config = types.GenerateContentConfig(
+            max_output_tokens=4096 if timeout is not None else None,
             tools=[types.Tool(function_declarations=[function_declaration])],
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(
@@ -312,3 +326,7 @@ def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
         return None
     except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
+
+
+def analysis_model_identity() -> str:
+    return GEMINI_MODEL

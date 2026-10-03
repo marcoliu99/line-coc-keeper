@@ -35,6 +35,15 @@ _Avoid_: luck buy-up (in prose)
 **Major wound**（重傷）:
 An injury caused by a single hit dealing at least half of an investigator's maximum HP; it is distinct from unconsciousness, dying and death.
 
+### Scenario knowledge
+
+**Approved scenario source**（已核准劇本來源）:
+The published text of a scenario version, checked against its source PDF. It may describe secrets or conditional events that investigators have not discovered.
+_Avoid_: canonical fact (for extracted source text)
+
+**Established world fact**（已成立世界事實）:
+A fact established during play by applicable scenario evidence, a committed event, or an explicit valid Keeper correction. A passage in the approved scenario source is not automatically an investigator discovery.
+_Avoid_: extracted text, prior narration
 ### Scenario authority
 
 **Scenario rule（劇本規則）**:
