@@ -67,6 +67,74 @@ def test_paddle_does_not_replace_intact_mechanics(paddle_backend, source, candid
     assert result.status == 'rejected' and result.text == ''
 
 
+def test_paddle_preserves_complete_san_loss_expression(paddle_backend):
+    module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': ['SAN 1 and 1d6']}]
+    result = module.recognize_with_paddle(image, source_text='SAN 1/1d6')
+    assert result.status == 'rejected' and result.text == ''
+
+
+@pytest.mark.parametrize(('source', 'candidate', 'expected'), [
+    ('SAN 1/1d6', 'SAN 1/1d6', 'accepted'),
+    ('SAN 1/1d6', 'SAN 1 / 1d6', 'accepted'),
+    ('SAN 1/1d6', 'SAN 1/1D6', 'accepted'),
+    ('SAN 1/1d6', 'SAN 1d6/1', 'rejected'),
+    ('SAN 1/1d6', 'SAN 1 1d6', 'rejected'),
+    ('SAN 0/1d4', 'SAN 0/1d4', 'accepted'),
+    ('SAN 1d3/1d10', 'SAN 1d3/1d10', 'accepted'),
+    ('SAN 1d6/1d20', 'SAN 1d6/1d20', 'accepted'),
+    ('Damage 2d6', 'Damage 2d6', 'accepted'),
+])
+def test_paddle_preserves_san_pair_order_and_other_dice(paddle_backend, source, candidate, expected):
+    module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': [candidate]}]
+    result = module.recognize_with_paddle(image, source_text=source)
+    assert result.status == expected
+
+
+@pytest.mark.parametrize(('source', 'candidate', 'corrected'), [
+    ('SAN 1/1d6', 'SAN l/ld6', 'SAN 1/1d6'),
+    ('SAN 1/1d6', 'SAN I/Id6', 'SAN 1/1d6'),
+    ('Damage 1d6', 'Damage ld6', 'Damage 1d6'),
+    ('Damage 1d10', 'Damage Id10', 'Damage 1d10'),
+    ('Damage 1d20', 'Damage Id20', 'Damage 1d20'),
+])
+def test_paddle_repairs_source_bound_one_as_letter_in_dice(paddle_backend, source, candidate, corrected):
+    module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': [candidate]}]
+    result = module.recognize_with_paddle(image, source_text=source)
+    assert result.status == 'accepted' and result.text == corrected
+
+
+@pytest.mark.parametrize(('source', 'candidate'), [
+    ('SAN 1/1d6', 'SAN l/ld8'),
+    ('Damage 1d6', 'Damage ld8'),
+    ('', 'Damage ld6'),
+    ('SAN 1/1d6', 'SAN |/|d6'),
+])
+def test_paddle_does_not_guess_unknown_or_different_dice(paddle_backend, source, candidate):
+    module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': [candidate]}]
+    assert module.recognize_with_paddle(image, source_text=source).status == 'rejected'
+
+
+@pytest.mark.parametrize('formula', [
+    '1d4', '1d6', '1d8', '1d10', '1d20', '1d100', '2d6', '3d10', '1d6+2', '1d4-1',
+])
+def test_paddle_keeps_other_valid_dice_unchanged(paddle_backend, formula):
+    module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': [f'Damage {formula}']}]
+    result = module.recognize_with_paddle(image, source_text=f'Damage {formula}')
+    assert result.status == 'accepted' and result.text == f'Damage {formula}'
+
+
+def test_paddle_does_not_change_prose_letters(paddle_backend):
+    module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': ['Idea library Index. Damage ld6']}]
+    result = module.recognize_with_paddle(image, source_text='Idea library Index. Damage 1d6')
+    assert result.status == 'accepted' and result.text == 'Idea library Index. Damage 1d6'
+
+
 def test_paddle_swapped_stat_pairs_are_rejected(paddle_backend):
     module, backend, image = paddle_backend
     backend.output = [{'rec_texts': ['STR 70 DEX 50']}]
@@ -267,6 +335,29 @@ def test_whole_page_paddle_preserves_existing_native_dice(paddle_backend, monkey
     monkeypatch.setattr(pdf_loader, 'analyze_page_image', lambda _: ('', None))
     text, _, _, _, _ = pdf_loader.extract_text(payload, ai_repair_limit=0)
     assert 'Damage 2d6+2' not in text and 'Damage 1d6+2' in text
+
+
+def test_rejected_san_candidate_uses_existing_tesseract_fallback(paddle_backend, monkeypatch):
+    import pymupdf
+
+    from app import pdf_loader
+    _module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': ['SAN 1 and 1d6']}]
+    tesseract_calls = []
+    def tesseract(*args, **kwargs):
+        tesseract_calls.append(1)
+        return 'SAN 1/1d6'
+    monkeypatch.setitem(sys.modules, 'pytesseract', types.SimpleNamespace(image_to_string=tesseract))
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_image(page.rect, stream=image)
+        page.insert_text((40, 60), 'SAN 1/1d6')
+        payload = document.tobytes()
+    monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda _: None)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *args: None)
+    monkeypatch.setattr(pdf_loader, 'analyze_page_image', lambda _: ('', None))
+    text, _, _, _, _ = pdf_loader.extract_text(payload, ai_repair_limit=0)
+    assert tesseract_calls == [1] and 'SAN 1/1d6' in text
 
 
 @pytest.mark.parametrize(('source', 'candidate', 'fallback'), [

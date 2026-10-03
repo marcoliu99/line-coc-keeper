@@ -20,6 +20,11 @@ _lock = threading.Lock()
 _engine: Any = None
 _engine_root: Path | None = None
 _MECHANIC = re.compile(r'(?<!\w)[+-]?\d+(?:[dD]\d+(?:\s*[+-]\s*(?:\d+|[A-Za-z]+))?|\.\d+)?%?(?!\w)')
+_SAN_VALUE = r'(?:\d+[dD]\d+(?:\s*[+-]\s*(?:\d+|[A-Za-z]+))?|\d+)'
+_SAN_LOSS = re.compile(rf'(?<!\w){_SAN_VALUE}\s*/\s*{_SAN_VALUE}(?!\w)')
+_ONE_DIE = re.compile(r'(?<!\w)1[dD]\d+(?:\s*[+-]\s*(?:\d+|[A-Za-z]+))?(?!\w)')
+_MISREAD_DIE = re.compile(r'(?<!\w)[lI][dD]\d+(?:\s*[+-]\s*(?:\d+|[A-Za-z]+))?(?!\w)')
+_MISREAD_SAN_ONE = re.compile(rf'(?<!\w)[lI](\s*/\s*)({_SAN_VALUE})(?!\w)')
 
 
 @dataclass(frozen=True)
@@ -38,11 +43,35 @@ def models_ready(root: Path) -> bool:
                for model in MODELS for name in MODEL_FILES)
 
 
+def _normalize_dice_ocr(text: str, source: str) -> str:
+    """Repair l/I as 1 only when the exact die or SAN loss exists in source."""
+    if not source:
+        return text
+    source_dice = {re.sub(r'\s', '', match.group()).casefold() for match in _ONE_DIE.finditer(source)}
+    source_san = {re.sub(r'\s', '', token).casefold() for token in _SAN_LOSS.findall(source)}
+
+    def die(match: re.Match[str]) -> str:
+        corrected = '1' + match.group()[1:]
+        return corrected if re.sub(r'\s', '', corrected).casefold() in source_dice else match.group()
+
+    corrected_text = _MISREAD_DIE.sub(die, text)
+
+    def san_one(match: re.Match[str]) -> str:
+        corrected = '1' + match.group(1) + match.group(2)
+        return corrected if re.sub(r'\s', '', corrected).casefold() in source_san else match.group()
+
+    return _MISREAD_SAN_ONE.sub(san_one, corrected_text)
+
+
 def _candidate_safe(text: str, source: str, pairs: list[dict]) -> bool:
     if (not any(char.isalnum() for char in text) or len(text) > 100_000 or '\ufffd' in text
             or re.search(r'(?<!\w)[lI|][dD]\d', text)):
         return False
     if source:
+        required_san = Counter(re.sub(r'\s', '', token).casefold() for token in _SAN_LOSS.findall(source))
+        available_san = Counter(re.sub(r'\s', '', token).casefold() for token in _SAN_LOSS.findall(text))
+        if required_san - available_san:
+            return False
         required = Counter(re.sub(r'\s', '', token).casefold() for token in _MECHANIC.findall(source))
         available = Counter(re.sub(r'\s', '', token).casefold() for token in _MECHANIC.findall(text))
         if required - available:
@@ -86,7 +115,7 @@ def recognize_with_paddle(image_bytes: bytes, *, source_text: str = '', pairs: l
                 if not isinstance(entries, (list, tuple)) or not all(isinstance(line, str) for line in entries):
                     return OcrResult(status='rejected')
                 lines.extend(entries)
-            text = pdf_quality.normalize('\n'.join(lines))
+            text = _normalize_dice_ocr(pdf_quality.normalize('\n'.join(lines)), source_text)
         if not text:
             result = OcrResult(status='empty')
         elif not _candidate_safe(text, source_text, pairs or []):
