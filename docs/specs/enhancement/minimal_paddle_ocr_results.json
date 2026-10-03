@@ -1,6 +1,6 @@
 {
   "baseline_sha": "7d2cc8c",
-  "implementation_sha": "292995c53c258d8250b374b9421735e5451389f3",
+  "implementation_sha": "ca20c5b539c3964b63efd53045a873902e4892eb",
   "branch": "enhancement/minimal-paddle-ocr",
   "versions": {
     "paddleocr": "3.7.0",
@@ -124,15 +124,19 @@
     "lazy_singleton_serialization": "PASS",
     "prepared_setup_no_download": "PASS",
     "no_external_provider": "PASS",
-    "nontext_noise": "PASS"
+    "nontext_noise": "PASS",
+    "complete_san_loss": "PASS",
+    "source_bound_l_I_dice_repair": "PASS",
+    "incorrect_dice_faces_rejected": "PASS",
+    "rejected_san_candidate_tesseract_fallback": "PASS"
   },
-  "ocr_specific_tests": 29,
-  "targeted_with_existing_pdf_tests": 60,
+  "ocr_specific_tests": 60,
+  "targeted_with_existing_pdf_tests": 101,
   "pytest": {
-    "passed": 1891,
+    "passed": 1922,
     "skipped": 1,
     "subtests_passed": 152,
-    "seconds": 13.766
+    "seconds": 15.72
   },
   "ruff": "PASS",
   "mypy": {

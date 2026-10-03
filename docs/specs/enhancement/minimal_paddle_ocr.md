@@ -27,6 +27,8 @@ Setup alone downloads the two official models to a persistent directory outside 
 
 Nonempty bounded text, no replacement-character damage or obvious malformed dice, and source-preserving sanity checks when native/source evidence exists. Reuse existing pdf_quality text/numeric and known pair checks, plus exact dice/percent/signed-token preservation at the adapter boundary. Uncertain Paddle output falls back, without changing acceptance criteria for the legacy fallback. Existing selected source/pairs are passed to both region and whole-page local OCR; legacy source validators remain unchanged. Damaged-region candidates preflight the existing accept_region gate so they cannot preempt a working Tesseract repair.
 
+SAN losses compare as complete ordered `left/right` expressions, including fixed numbers and dice on either side; whitespace and dice-letter case do not change their meaning. With matching source evidence, an OCR `l` or `I` may become `1` only at a whole die-token boundary, or as the fixed `1` before a SAN slash. A mismatched face count, absent source evidence, or changed slash/order remains rejected. Ordinary prose is never rewritten.
+
 No confidence fusion, cloud calls, new admission states or new provider paths. Normal logs include only engine/status/type metadata, never OCR prose or raw errors.
 
 ## Validation

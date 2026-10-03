@@ -1,6 +1,6 @@
 # Minimal PaddleOCR validation
 
-Baseline reverted main_v2 `7d2cc8c`; implementation `292995c`. Independent work branch: `enhancement/minimal-paddle-ocr`. No PR155 code was cherry-picked.
+Baseline reverted main_v2 `7d2cc8c`; implementation `ca20c5b`. Independent work branch: `enhancement/minimal-paddle-ocr`. No PR155 code was cherry-picked.
 
 ## Implemented scope
 
@@ -21,9 +21,11 @@ Default model cache: `~/.cache/line-coc-keeper/paddleocr`. `PDF_PADDLE_MODEL_DIR
 
 Initial RED: adapter missing; then dice/numeric/pair loss; then image-only integration not connected. GREEN after the thin adapter/hook. Final review exposed three RED production-seam cases: whole-page source not forwarded, added candidate mechanics preempted a working Tesseract region repair, and 1d6+DB flipped to 1d6-DB. Fixed only local source forwarding and candidate validation. Damaged-region candidates reuse the existing accept_region check before selection; complete signed symbolic dice tokens are preserved. Legacy fallback/gates are unchanged. Punctuation-only noise also went RED then GREEN and falls back. Standards and Spec re-review pass with no remaining blocking finding.
 
-29 OCR-specific tests, 60 targeted including existing PDF/numeric-pair tests, pass. Disabled/unavailable/missing-model/init/inference/empty/malformed/rejected Paddle all preserve Tesseract fallback. Native PDF OFF/ON unchanged; startup imports no Paddle; prepared setup downloads nothing; singleton reuse/serialization and no external provider invocation pass.
+60 OCR-specific tests, 101 targeted including existing PDF/AI-repair/numeric-pair tests, pass. Disabled/unavailable/missing-model/init/inference/empty/malformed/rejected Paddle all preserve Tesseract fallback. Native PDF OFF/ON unchanged; startup imports no Paddle; prepared setup downloads nothing; singleton reuse/serialization and no external provider invocation pass.
 
-Full suite: **1891 passed, 1 skipped, 152 subtests passed**, 13.77s. Ruff PASS; mypy PASS (127 files); compileall PASS; diff-check PASS.
+PR #157 review fix: a SAN loss is checked as one ordered slash expression, so `SAN 1 and 1d6`, `SAN 1 1d6`, and `SAN 1d6/1` are rejected against `SAN 1/1d6`. Matching source can correct bounded `ld6`/`Id6` and a SAN numerator `l`/`I`; wrong faces and unknown-source candidates remain rejected. A production PDF seam test confirms SAN rejection still selects Tesseract. Ordinary words and other dice formulas remain intact.
+
+Full suite: **1922 passed, 1 skipped, 152 subtests passed**, 15.72s. Ruff PASS; mypy PASS (127 files); compileall PASS; diff-check PASS.
 
 ## Actual offline CPU smoke
 

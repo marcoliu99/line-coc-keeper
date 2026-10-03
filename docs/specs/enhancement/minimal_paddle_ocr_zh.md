@@ -27,6 +27,8 @@ python scripts/setup_paddle_ocr.py
 
 文字非空、有合理長度、無 replacement-char 或明顯 malformed dice。有 native/source 時重用 pdf_quality text／numeric／known pair checks，adapter 額外保留 exact dice／percent／signed token。不確定的 Paddle 結果只 fallback，不改既有 fallback acceptance。Region／whole-page local OCR 均傳入既有 selected source／pairs，legacy validators 不改。受損 region 在 selection 前重用 accept_region，避免截住原本可成功的 Tesseract repair。
 
+SAN 損失以完整且有順序的 `左值/右值` 比較，兩邊都可為固定數字或骰子；空白與骰子字母大小寫不影響判斷。只有 source 存在對應證據時，才在完整骰子 token 邊界，或 SAN 斜線前的固定值 `1`，將 OCR 的 `l`／`I` 修為 `1`。骰面不同、缺少 source 證據、斜線或順序改變時仍拒絕；一般文字不改寫。
+
 不做 confidence fusion／cloud calls，不新增 admission states／provider path。普通 log 僅 engine／status／error type，不含 OCR prose 或 raw error。
 
 ## Validation
