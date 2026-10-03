@@ -431,6 +431,7 @@ async def handle_pdf_upload(
         return await _run_pdf_import(
             conversation_id, reply, push, pdf_bytes, file_name, skip_similarity,
             reparse_candidate_id, expected_revision, previous_content_hash, lease, on_activation,
+            retry_failed_classification=bool(resume_draft_id or reparse_candidate_id),
         )
     except pdf_ingestion_drafts.ImportOwnershipError as exc:
         await push(str(exc))
@@ -463,6 +464,7 @@ async def _run_pdf_import(
     skip_similarity: bool, reparse_candidate_id: str | None, expected_revision: int | None,
     previous_content_hash: str, lease: pdf_ingestion_drafts.ImportLease,
     on_activation: Callable[[], None],
+    *, retry_failed_classification: bool = False,
 ) -> bool:
     draft = pdf_ingestion_drafts.require_owner(lease)
     resume = pdf_ingestion_drafts.resume_pages(draft, pdf_loader.extraction_identity())
@@ -507,6 +509,7 @@ async def _run_pdf_import(
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
             pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality,
             resume_pages=resume if draft else None,
+            retry_failed_classification=retry_failed_classification,
             layout_budget=draft.get("report", {}).get("layout_budget"),
             layout_budget_checkpoint=lambda budget: pdf_ingestion_drafts.record_budget(lease, budget),
             ai_repair_ledger=draft.get("report", {}).get("ai_repair_budget"),

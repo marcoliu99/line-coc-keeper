@@ -454,7 +454,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                  layout_budget: dict | None = None,
                  layout_budget_checkpoint: Callable[[dict], None] | None = None,
                  ai_repair_ledger: dict | None = None,
-                 ai_budget_checkpoint: Callable[[dict], None] | None = None) -> PdfExtraction:
+                 ai_budget_checkpoint: Callable[[dict], None] | None = None,
+                 retry_failed_classification: bool = False) -> PdfExtraction:
     """Return complete source, review pages, legacy truncation flag, images, maps.
 
     The source is never cut to a prompt budget. The optional report distinguishes
@@ -583,7 +584,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if not row['requires_image_transcription'] or row.get('resumed'):
                 continue
             criticality = pdf_page_criticality.classify(pending[number], page=number,
-                pdf_sha256=pdf_hash, native=row['candidates']['native'], safe=safe_pages, asset=asset_sections.get(number))
+                pdf_sha256=pdf_hash, native=row['candidates']['native'], safe=safe_pages, asset=asset_sections.get(number),
+                retry_failed=retry_failed_classification)
             row['page_criticality'] = criticality
             if criticality['source_critical'] is False:
                 if criticality['page_role'] in {'OPTIONAL_PREGEN', 'OPTIONAL_HANDOUT', 'DUPLICATE_SOURCE'}:
@@ -596,7 +598,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     pending.pop(number)
         appendix = pdf_page_criticality.triage(pending, pdf_sha256=pdf_hash, safe=safe_pages,
             assets=asset_sections, current={row['page']: row['page_criticality']
-                for row in report['pages'] if 'page_criticality' in row})
+                for row in report['pages'] if 'page_criticality' in row}, retry_failed=retry_failed_classification)
         for number, criticality in appendix.items():
             report['pages'][number - 1]['page_criticality'] = criticality
             texts[number - 1] = f"[PDF_OPTIONAL_ASSET: {criticality['page_role']}; page {number}; original image retained]"

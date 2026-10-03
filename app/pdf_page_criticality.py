@@ -12,7 +12,9 @@ from typing import Literal, NotRequired, TypedDict, cast
 from app import config, pdf_quality
 from app.providers.registry import analysis_provider
 
-VERSION = 'page-criticality-v1'
+VERSION = 'page-criticality-v2'
+# Policy changes invalidate page checkpoints, not the book's consumed request ledger.
+_LEDGER_NAMESPACE = 'page-criticality-v1'
 FeatureWarning = Literal['optional_pregen_unavailable', 'optional_handout_unavailable', 'topology_assistance_unavailable', 'source_review_quarantined']
 RegionKind = Literal['character_asset', 'optional_reference', 'duplicate_reference', 'keeper_instruction', 'unknown']
 
@@ -249,7 +251,8 @@ def _write(path: Path, value: Ledger) -> None:
     temporary.replace(path)
 
 
-def classify(png: bytes, *, page: int, pdf_sha256: str, native: str, safe: dict[int, str], asset: dict | None = None) -> Criticality:
+def classify(png: bytes, *, page: int, pdf_sha256: str, native: str, safe: dict[int, str], asset: dict | None = None,
+             retry_failed: bool = False) -> Criticality:
     """Durable per-book finite one-shot classification; cache replay rebinds current source."""
     provider = analysis_provider()
     if provider is None:
@@ -257,7 +260,7 @@ def classify(png: bytes, *, page: int, pdf_sha256: str, native: str, safe: dict[
     excerpts = context(safe, native)
     accessor = getattr(provider, 'analysis_model_identity', None)
     model = str(accessor()) if callable(accessor) else 'unavailable'
-    family = hashlib.sha256(json.dumps([pdf_sha256, VERSION, config.ANALYSIS_PROVIDER, model]).encode()).hexdigest()
+    family = hashlib.sha256(json.dumps([pdf_sha256, _LEDGER_NAMESPACE, config.ANALYSIS_PROVIDER, model]).encode()).hexdigest()
     image_hash = hashlib.sha256(png).hexdigest()
     key = hashlib.sha256(json.dumps([page, image_hash]).encode()).hexdigest()
     directory = config.SCENARIO_LIBRARY_DIR / '.page-criticality' / family
@@ -271,9 +274,13 @@ def classify(png: bytes, *, page: int, pdf_sha256: str, native: str, safe: dict[
             if (type(ledger['consumed_requests']) is not int or ledger['consumed_requests'] < 0
                     or not isinstance(ledger['attempts'], dict)):
                 return unknown('classification_storage_unavailable')
-            cached_key = key if key in ledger['attempts'] else next((stored_key
-                for stored_key, stored in ledger['attempts'].items() if isinstance(stored, dict)
-                and stored.get('page') == page and stored.get('image_sha256') == image_hash), None)
+            if key in ledger['attempts'] and not isinstance(ledger['attempts'][key], dict):
+                return unknown('classification_storage_unavailable')
+            matching = [(stored_key, stored) for stored_key, stored in ledger['attempts'].items()
+                        if isinstance(stored, dict) and stored.get('page') == page
+                        and stored.get('image_sha256') == image_hash]
+            cached_key = next((k for k, a in reversed(matching) if a.get('status') == 'completed'),
+                              matching[-1][0] if matching else None)
             if cached_key is not None:
                 attempt = ledger['attempts'][cached_key]
                 if (not isinstance(attempt, dict) or attempt.get('page') != page
@@ -282,12 +289,16 @@ def classify(png: bytes, *, page: int, pdf_sha256: str, native: str, safe: dict[
                         or (attempt.get('output') is not None and not isinstance(attempt.get('output'), dict))):
                     return unknown('classification_storage_unavailable')
                 output = attempt.get('output')
-                return optional_section(safe, asset, output) or decide(output, native, safe, excerpts)
+                if attempt['status'] == 'completed' or not retry_failed:
+                    return optional_section(safe, asset, output) or decide(output, native, safe, excerpts)
             supported = optional_section(safe, asset)
             if supported is not None:
                 return supported
             if ledger['consumed_requests'] >= config.PDF_PAGE_CRITICALITY_MAX_REQUESTS:
                 return unknown('classification_budget_exhausted')
+            # Explicit Continue/reparse can retry a failed request, never erase its receipt.
+            if key in ledger['attempts']:
+                key += ':attempt:' + str(ledger['consumed_requests'] + 1)
             ledger['consumed_requests'] += 1
             ledger['attempts'][key] = {'page': page, 'image_sha256': hashlib.sha256(png).hexdigest(), 'status': 'reserved', 'output': None}
             _write(path, ledger)
@@ -488,7 +499,8 @@ def _triage_decisions(output: object, observed: dict[int, dict], safe: dict[int,
     return result
 
 
-def triage(pngs: dict[int, bytes], *, pdf_sha256: str, safe: dict[int, str], assets: dict[int, dict], current: dict[int, Criticality]) -> dict[int, Criticality]:
+def triage(pngs: dict[int, bytes], *, pdf_sha256: str, safe: dict[int, str], assets: dict[int, dict], current: dict[int, Criticality],
+           retry_failed: bool = False) -> dict[int, Criticality]:
     """Bounded appendix-necessity question using cached fragments; no second image classification."""
     if not _permission(safe):
         return {}
@@ -497,7 +509,7 @@ def triage(pngs: dict[int, bytes], *, pdf_sha256: str, safe: dict[int, str], ass
         return {}
     accessor = getattr(provider, 'analysis_model_identity', None)
     model = str(accessor()) if callable(accessor) else 'unavailable'
-    family = hashlib.sha256(json.dumps([pdf_sha256, VERSION, config.ANALYSIS_PROVIDER, model]).encode()).hexdigest()
+    family = hashlib.sha256(json.dumps([pdf_sha256, _LEDGER_NAMESPACE, config.ANALYSIS_PROVIDER, model]).encode()).hexdigest()
     directory = config.SCENARIO_LIBRARY_DIR / '.page-criticality' / family
     try:
         with os.fdopen(os.open(directory / 'lock', os.O_CREAT | os.O_RDWR, 0o600), 'a') as lock:
@@ -510,7 +522,7 @@ def triage(pngs: dict[int, bytes], *, pdf_sha256: str, safe: dict[int, str], ass
                 if page not in assets or (classification is not None and classification['source_critical'] is False):
                     continue
                 image_hash = hashlib.sha256(png).hexdigest()
-                attempt: Attempt | None = next((a for a in ledger['attempts'].values() if isinstance(a, dict)
+                attempt: Attempt | None = next((a for a in reversed(list(ledger['attempts'].values())) if isinstance(a, dict)
                     and a.get('page') == page and a.get('image_sha256') == image_hash), None)
                 output = attempt.get('output') if attempt is not None else None
                 if isinstance(output, dict) and isinstance(output.get('source_fragments'), list):
@@ -533,12 +545,16 @@ def triage(pngs: dict[int, bytes], *, pdf_sha256: str, safe: dict[int, str], ass
             if len(window) > 24000:
                 return {}
             key = 'source-audit:' + hashlib.sha256(window.encode()).hexdigest()
-            # Replay old audit against current source before considering any dispatch.
-            old = next((a for k, a in ledger['attempts'].items() if k.startswith('source-audit:') and isinstance(a, dict)), None)
-            if old is not None:
+            matching = [(k, a) for k, a in ledger['attempts'].items()
+                        if (k == key or k.startswith(key + ':attempt:')) and isinstance(a, dict)]
+            old = next((a for _, a in reversed(matching) if a.get('status') == 'completed'),
+                       matching[-1][1] if matching else None)
+            if old is not None and (old.get('status') == 'completed' or not retry_failed):
                 return _triage_decisions(old.get('output'), observed, safe, assets)
             if ledger['consumed_requests'] >= config.PDF_PAGE_CRITICALITY_MAX_REQUESTS:
                 return {}
+            if key in ledger['attempts']:
+                key += ':attempt:' + str(ledger['consumed_requests'] + 1)
             ledger['consumed_requests'] += 1
             ledger['attempts'][key] = {'page': 0, 'image_sha256': hashlib.sha256(window.encode()).hexdigest(), 'status': 'reserved', 'output': None}
             _write(path, ledger)
