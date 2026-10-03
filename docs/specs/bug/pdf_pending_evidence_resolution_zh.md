@@ -17,3 +17,7 @@
 完整 canonical sentence 明確提供自建角色替代選項，但以玩家偏好條件句加肯定允許，或明確提供預製角色與空白自建角色卡，現有 matcher 無法辨識。僅補肯定 permission；保留 mandatory-pregen conflict、exact source binding、author section、mixed-region audit、clue checks。不得依外觀判 optional。先 synthetic positive/negative FAIL/PASS；cache observations 重新綁 canonical evidence，不新增 classification request。
 
 Cache replay 的 asset-only pregen 必須能綁定目前完整 canonical permission，即使先前 provider 未填 quote；要求完整 fragments accounted、無 required clue、無 mandatory-pregen conflict。NPC/enemy 空白卡不是玩家許可。Mixed/unaccounted pages 不降級。
+
+Review 收窄：僅提供空白角色卡不能證明玩家用途或無限制替代創角許可；不擴充這種 wording，保留 unresolved。只增加玩家偏好加明確無限制肯定允許的句式。
+
+另已重現通用 false conflict：only 修飾玩家人數不能當成 only 使用預製角色。只修 only 與 selection 動詞綁定；保留 must/required guards。先玩家人數與真正 mandatory regression，再 fix。
