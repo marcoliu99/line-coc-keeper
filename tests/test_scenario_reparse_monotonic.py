@@ -358,3 +358,16 @@ def test_reparse_explicit_id_reads_requested_published_pdf_without_switching_gam
     assert after.scenario_library_id == 'currently-active'
     assert after.scenario_text == 'Current approved source.'
     assert after.game_started
+
+
+def test_legacy_publication_is_not_reported_as_independent_source_verification():
+    from app import scenario_reparse
+    text = 'Legacy Keeper source remains readable.'
+    first = scenario_reparse.merge(text, {}, '', {'pages': []})
+    second = scenario_reparse.merge(first.text, first.report, '', {'pages': []})
+    assert first.text == second.text == text
+    for result in (first, second):
+        change = result.report['reparse_diff']['changes'][0]
+        assert change['old_evidence'] == 'legacy_published'
+        assert change['selected_evidence'] == 'legacy_published'
+        assert result.report['reparse_diff']['retained_legacy_published'] == 1

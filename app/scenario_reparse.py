@@ -38,7 +38,8 @@ def _verified(text: str, row: dict, *, published: bool = False) -> bool:
     if row.get('source_blocking_reasons') or row.get('publication_severity') == 'HARD_BLOCK':
         return False
     # Legacy publication is authority only on the published side.
-    if not published and (row.get('source_authority') != 'VERIFIED' or not row.get('selected_sha256')):
+    if not published and (row.get('source_authority') != 'VERIFIED' or not row.get('selected_sha256')
+                          or row.get('verification_basis') == 'legacy_published'):
         return False
     # A supplied digest must bind exact content.
     bound = row.get('selected_text', text)
@@ -105,6 +106,9 @@ def merge(old_text: str, old_report: dict, new_text: str, new_report: dict) -> M
         old, new = old_pages.get(page, ''), new_pages.get(page, '')
         old_row, new_row = old_rows.get(page, {}), new_rows.get(page, {})
         old_verified, new_verified = _verified(old, old_row, published=True), _verified(new, new_row)
+        legacy_published = old_verified and (old_row.get('verification_basis') == 'legacy_published'
+                                            or old_row.get('source_authority') != 'VERIFIED'
+                                            or not old_row.get('selected_sha256'))
         decision: Decision
         regional = (_region_upgrade(old, old_row, new, new_row)
                     if old_verified and new_verified and old_report.get('pdf_sha256')
@@ -140,10 +144,15 @@ def merge(old_text: str, old_report: dict, new_text: str, new_report: dict) -> M
                    source_blocking_reasons=[], disposition='accepted' if selected[page] else 'soft_review',
                    publication_severity=row.get('publication_severity', 'NONE') if selected[page] else 'SOFT_REVIEW')
         rows.append(row)
+        # Stable publication is not proof of a PDF verification that never happened.
+        if legacy_published and page not in selected_new:
+            row['verification_basis'] = 'legacy_published'
         changes.append({'page': page, 'decision': decision,
                             'old_authority': 'VERIFIED' if old_verified else 'UNKNOWN',
                             'new_authority': 'VERIFIED' if new_verified else 'UNKNOWN',
                             'selected_authority': row['source_authority'], 'old_sha256': _hash(old),
+                            'old_evidence': 'legacy_published' if legacy_published else 'source_verified' if old_verified else 'unknown',
+                            'selected_evidence': row.get('verification_basis', 'source_verified' if selected[page] else 'unknown'),
                             'new_sha256': _hash(new), 'selected_sha256': _hash(selected[page])})
     # Keep exact legacy serialization when no source upgrade occurred, including
     # whitespace on which existing source certificates may depend.
@@ -162,6 +171,7 @@ def merge(old_text: str, old_report: dict, new_text: str, new_report: dict) -> M
     report['reparse_diff'] = {'previous_source_sha256': _hash(old_text), 'candidate_source_sha256': _hash(new_text),
         'selected_source_sha256': _hash(text), 'changes': changes,
         'retained_verified': sum(change['old_authority'] == 'VERIFIED' for change in changes),
+        'retained_legacy_published': sum(change['old_evidence'] == 'legacy_published' for change in changes),
         'upgraded': sum(change['decision'] == 'upgraded' for change in changes),
         'conflicts': sum(change['decision'] == 'conflict' for change in changes), 'downgrades_applied': 0,
         'upgraded_regions': upgraded_regions}
