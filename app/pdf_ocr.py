@@ -43,12 +43,24 @@ def models_ready(root: Path) -> bool:
                for model in MODELS for name in MODEL_FILES)
 
 
+def _san_tokens(text: str) -> Counter[str]:
+    tokens: Counter[str] = Counter()
+    for match in _SAN_LOSS.finditer(text):
+        left = match.start() - 1
+        while left >= 0 and text[left].isspace():
+            left -= 1
+        if left >= 0 and text[left] == '/':
+            continue  # A matching suffix of a larger slash expression is not the source loss.
+        tokens[re.sub(r'\s', '', match.group()).casefold()] += 1
+    return tokens
+
+
 def _normalize_dice_ocr(text: str, source: str) -> str:
     """Repair l/I as 1 only when the exact die or SAN loss exists in source."""
     if not source:
         return text
     source_dice = {re.sub(r'\s', '', match.group()).casefold() for match in _ONE_DIE.finditer(source)}
-    source_san = {re.sub(r'\s', '', token).casefold() for token in _SAN_LOSS.findall(source)}
+    source_san = set(_san_tokens(source))
 
     def die(match: re.Match[str]) -> str:
         corrected = '1' + match.group()[1:]
@@ -68,8 +80,8 @@ def _candidate_safe(text: str, source: str, pairs: list[dict]) -> bool:
             or re.search(r'(?<!\w)[lI|][dD]\d', text)):
         return False
     if source:
-        required_san = Counter(re.sub(r'\s', '', token).casefold() for token in _SAN_LOSS.findall(source))
-        available_san = Counter(re.sub(r'\s', '', token).casefold() for token in _SAN_LOSS.findall(text))
+        required_san = _san_tokens(source)
+        available_san = _san_tokens(text)
         if required_san - available_san:
             return False
         required = Counter(re.sub(r'\s', '', token).casefold() for token in _MECHANIC.findall(source))
