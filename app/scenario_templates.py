@@ -37,8 +37,8 @@ def _root() -> Path:
     return scenario_library.SCENARIO_LIBRARY_DIR / ".variants"
 
 
-def _source(scenario_id: str, *, revision: str = "") -> tuple[dict[str, Any], str]:
-    root = scenario_library.revision_path(scenario_id, revision)
+def _source(scenario_id: str) -> tuple[dict[str, Any], str]:
+    root = scenario_library._path(scenario_id)
     manifest = scenario_library._read_json(root / "manifest.json", None)
     if not isinstance(manifest, dict):
         raise FileNotFoundError(scenario_id)
@@ -530,8 +530,8 @@ def status(scenario_id: str) -> dict[str, Any]:
                          for v in _all_variants(scenario_id)]}
 
 
-def _read_variant(scenario_id: str, variant_id: str, *, revision: str = "") -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    manifest, _ = _source(scenario_id, revision=revision)
+def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    manifest, _ = _source(scenario_id)
     path = _variant_dir(scenario_id, manifest["content_hash"], variant_id)
     variant = scenario_library._read_json(path / "manifest.json", None)
     records = scenario_library._read_json(path / "records.json", None)
@@ -554,11 +554,9 @@ def match_fact_source(state: Any, record_id: str, quote: str, *, historical: boo
     """
     if not record_id or not quote or len(quote) > 2000:
         return None
-    from app import scenario_activation
     scenario_id = state.scenario_library_id
     variant_id = state.scenario_variant_id or "original"
     try:
-        revision = scenario_activation.revision_for_state(state)
         if not scenario_id:
             if record_id != "scenario-text":
                 return None
@@ -567,7 +565,7 @@ def match_fact_source(state: Any, record_id: str, quote: str, *, historical: boo
             chapter_id = state.active_chapter_id
             visibility = "kp_only"
         else:
-            manifest, original_text = _source(scenario_id, revision=revision)
+            manifest, original_text = _source(scenario_id)
             source_hash = manifest["content_hash"]
             if variant_id == "original":
                 record = next((block for block in _blocks(manifest, original_text)
@@ -578,8 +576,7 @@ def match_fact_source(state: Any, record_id: str, quote: str, *, historical: boo
                 chapter_id = record["chapter_id"]
                 visibility = "kp_only"
             else:
-                variant, records = _read_variant(scenario_id, variant_id,
-                    **({"revision": revision} if revision else {}))
+                variant, records = _read_variant(scenario_id, variant_id)
                 if variant.get("review_status") != "approved" or variant.get("source_hash") != source_hash:
                     return None
                 record = next((row for row in records if row.get("id") == record_id), None)
@@ -740,8 +737,8 @@ def preference_notice(group_id: str, scenario_id: str) -> str:
 _selection_cache: dict[tuple, tuple[tuple, scenario_rag.ScenarioIndex]] = {}
 
 
-def _selection_stamp(scenario_id: str, variant_id: str, *, revision: str = "") -> tuple:
-    root = scenario_library.revision_path(scenario_id, revision)
+def _selection_stamp(scenario_id: str, variant_id: str) -> tuple:
+    root = scenario_library._path(scenario_id)
     manifest = scenario_library._read_json(root / "manifest.json", {})
     if not isinstance(manifest, dict):
         raise ValueError("劇本 manifest 格式錯誤")  # noqa: TRY004 - invalid persisted document
@@ -752,7 +749,7 @@ def _selection_stamp(scenario_id: str, variant_id: str, *, revision: str = "") -
 
 
 def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenario_rag.ScenarioIndex:
-    from app import scenario_activation, scenario_references
+    from app import scenario_references
     scenario_id = state.scenario_library_id
     variant_id = state.scenario_variant_id
     diagnostics = metrics if metrics is not None else {}
@@ -760,10 +757,8 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                        projection_version=scenario_projection.VERSION, variant_fallback="not_selected")
     if scenario_id and variant_id and variant_id != "original":
         try:
-            revision = scenario_activation.revision_for_state(state)
-            options = {"revision": revision} if revision else {}
-            key = (scenario_id, variant_id, revision, tuple(state.context_chapter_ids), SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER, scenario_references.VERSION)
-            stamp = _selection_stamp(scenario_id, variant_id, **options)
+            key = (scenario_id, variant_id, tuple(state.context_chapter_ids), SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER, scenario_references.VERSION)
+            stamp = _selection_stamp(scenario_id, variant_id)
             cached = _selection_cache.get(key)
             if cached is not None and cached[0] == stamp:
                 diagnostics.update(effective_variant=variant_id, variant_fallback="none", template_cache="memory")
@@ -771,7 +766,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                 cached[1].index_cache = "memory"
                 return cached[1]
             diagnostics["template_cache"] = "miss"
-            variant, records = _read_variant(scenario_id, variant_id, **options)
+            variant, records = _read_variant(scenario_id, variant_id)
             records, reference_diagnostics = scenario_references.link_records(records)
             diagnostics['cross_reference_diagnostic_count'] = len(reference_diagnostics)
             diagnostics["projection_version"] = variant["compiler_version"]
@@ -786,7 +781,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                          variant_id, window, SCENARIO_RAG_EMBEDDING_MODEL, scenario_projection.VERSION, _V4_COMPILER, scenario_references.VERSION],
                         ensure_ascii=False).encode("utf-8")).hexdigest()
                     index = scenario_rag.get_record_index(f"template:{scenario_id}:{digest}", selected)
-                    if _selection_stamp(scenario_id, variant_id, **options) != stamp:
+                    if _selection_stamp(scenario_id, variant_id) != stamp:
                         raise ValueError("模板來源在建立索引時改變")
                     if len(_selection_cache) >= 32:
                         _selection_cache.pop(next(iter(_selection_cache)))

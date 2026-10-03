@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import inspect
 import json
 import logging
@@ -38,7 +37,7 @@ from app.config import (
     OPENAI_MODEL,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
 )
-from app.providers import admission, image_diagnostics, retry, turn_budget
+from app.providers import admission, retry, turn_budget
 from app.providers.client_lifecycle import AsyncClientLifecycle
 from app.services import input_budget
 
@@ -95,7 +94,7 @@ class IncompleteResponseError(RuntimeError):
 def _ensure_complete(response) -> None:
     status = getattr(response, 'status', None)
     if status in ('incomplete', 'failed', 'cancelled'):
-        observability.event('llm.response.incomplete', provider='openai', status=status, completion_category='PROVIDER_INCOMPLETE',
+        observability.event('llm.response.incomplete', provider='openai', status=status,
                             reason=getattr(getattr(response, 'incomplete_details', None), 'reason', None))
         raise IncompleteResponseError('OpenAI response did not complete')
 
@@ -401,9 +400,6 @@ async def run_conversation(
                 "name": t["name"],
                 "description": t["description"],
                 "parameters": t["input_schema"],
-                # Runtime tools use optional fields; Responses must not silently require them.
-                # Deterministic tool handlers retain validation of every supplied argument.
-                "strict": False,
             }
             for t in current_tools
         ]
@@ -525,19 +521,9 @@ async def run_conversation(
         used_input, used_output = getattr(usage, 'input_tokens', None), getattr(usage, 'output_tokens', None)
         inherited_tokens = used_input + used_output if isinstance(used_input, int) and isinstance(used_output, int) else estimated_input
         function_calls = [item for item in response.output if item.type == "function_call"]
-        output_text = getattr(response, "output_text", None) or ""
-        observability.event('llm.response.shape', provider='openai', model=OPENAI_MODEL,
-                            stage=response_stage, iteration=iteration,
-                            response_id_sha256=hashlib.sha256(response.id.encode()).hexdigest(),
-                            response_status=getattr(response, 'status', None),
-                            output_count=len(response.output), output_types=[item.type for item in response.output],
-                            assistant_text_present=bool(output_text.strip()), assistant_text_length=len(output_text),
-                            tool_call_count=len(function_calls))
 
         if not function_calls:
-            observability.event('llm.turn.stop', stage=response_stage, iteration=iteration,
-                                reason='assistant_output' if output_text.strip() else 'NO_ASSISTANT_OUTPUT')
-            final_text = output_text.strip() or final_text
+            final_text = (response.output_text or "").strip() or final_text
             if on_response_id is not None:
                 on_response_id(response.id)
             break
@@ -564,8 +550,6 @@ async def run_conversation(
                 "call_id": fc.call_id,
                 "output": json.dumps(result, ensure_ascii=False),
             })
-        observability.event('llm.turn.continue', stage=response_stage, iteration=iteration,
-                            reason='tool_results', tool_result_count=len(next_input_items))
         active_previous_response_id = response.id
         input_items = next_input_items
     else:
@@ -588,8 +572,6 @@ async def run_conversation(
         # implies) whose output could never reach the player. Only
         # app/keeper.py's legacy run_turn path (its own single combined
         # tool+narration call, no separate Narrator) actually needs this.
-        observability.event('llm.turn.stop', stage=response_stage, iteration=iteration,
-                            reason='MAX_ITERATIONS', tool_result_count=len(input_items))
         if enable_wrapup:
             observability.event("llm.wrapup")
             wrapup_kwargs: dict[str, Any] = {
@@ -644,8 +626,7 @@ async def run_conversation(
     return final_text
 
 
-def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
-                  timeout: float | None = None, max_retries: int | None = None) -> dict | None:
+def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str) -> dict | None:
     """Vision + a single forced tool call via the Responses API — used by
     app/scene_map.py's analyze_page_image, not the Keeper conversation loop
     above. Image input uses the {"type": "input_image", "image_url": <data
@@ -655,22 +636,15 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
     parsed arguments dict, or None on any failure (no OPENAI_API_KEY, the
     call raised, or no matching function_call came back)."""
     if not OPENAI_API_KEY:
-        image_diagnostics.record('openai', 'MissingCredentials')
         return None
     try:
         import base64
 
         import openai
 
-        client_options: dict[str, Any] = {}
-        if timeout is not None:
-            client_options['timeout'] = timeout
-        if max_retries is not None:
-            client_options['max_retries'] = max_retries
-        client = openai.OpenAI(api_key=OPENAI_API_KEY, **client_options)
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
         image_b64 = base64.standard_b64encode(png_bytes).decode("utf-8")
-        create: Any = client.responses.create if max_retries == 0 else lambda **kw: _create_response(client, **kw)
-        response = create(
+        response = _create_response(client,
             model=OPENAI_MODEL,
             input=[{
                 "role": "user",
@@ -689,19 +663,13 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
         )
         for item in response.output:
             if item.type == "function_call" and item.name == tool["name"]:
-                arguments = json.loads(item.arguments or "{}")
-                if not isinstance(arguments, dict):
-                    image_diagnostics.record('openai', 'InvalidToolArguments')
-                    return None
-                return arguments
-        image_diagnostics.record('openai', 'MissingToolCall')
+                return json.loads(item.arguments or "{}")
         return None
-    except Exception as error:  # noqa: BLE001 - provider response shapes vary across SDK versions.
-        image_diagnostics.record('openai', error)
+    except Exception:  # noqa: BLE001 - provider response shapes vary across SDK versions.
         return None
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = 0) -> dict | None:
+def analyze_text(text: str, tool: dict, prompt_text: str) -> dict | None:
     """Text-only sibling of analyze_image above — a single forced tool call,
     no image. Used by app/pregen_extractor.py. Returns the tool call's parsed
     arguments dict, or None on any failure (no OPENAI_API_KEY, the call
@@ -711,15 +679,8 @@ def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | No
     try:
         import openai
 
-        options: dict = {}
-        if timeout is not None:
-            options['timeout'] = timeout
-        if max_retries is not None:
-            options['max_retries'] = max_retries
-        client = openai.OpenAI(api_key=OPENAI_API_KEY, **options)
-        output_options: dict = {'max_output_tokens': 4096} if timeout is not None else {}
-        create: Any = client.responses.create if max_retries == 0 else lambda **kw: _create_response(client, **kw)
-        response = create(**output_options,
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = _create_response(client,
             model=OPENAI_MODEL,
             input=[{"role": "user", "content": f"{prompt_text}\n\n{text}"}],
             tools=[{
@@ -739,7 +700,3 @@ def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | No
 
 SUPPORTS_DYNAMIC_TOOLS = True
 SUPPORTS_RESPONSE_STAGE = True
-
-
-def analysis_model_identity() -> str:
-    return OPENAI_MODEL

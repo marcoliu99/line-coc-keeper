@@ -12,7 +12,6 @@ from app import (
     keeper,
     locks,
     observability,
-    pdf_ingestion_drafts,
     scenario_activation,
     scenario_authoring,
     scenario_index,
@@ -76,7 +75,7 @@ async def _handle_local_import(
         await reply("找不到允許匯入的 PDF；只能使用 IMPORT_DIR 內的檔案名稱，不能帶路徑。")
         return
     await reply(f"已讀取伺服器檔案《{pdf_path.name}》，開始解析...")
-    await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pdf_path.name, owner_user_id=user_id,
+    await handle_pdf_upload(conversation_id, reply, reply, pdf_bytes, pdf_path.name,
                             expected_revision=expected_revision)
 
 
@@ -117,7 +116,7 @@ async def _handle_staged_merge(
     from app.pdf_loader import combine_pdfs
     merged = await asyncio.to_thread(combine_pdfs, payloads)
     merged_name = f"{selected[0]['file_name'].rsplit('.', 1)[0]}_merged.pdf"
-    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name, owner_user_id=user_id,
+    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name,
                                        expected_revision=expected_revision)
     if not accepted:
         return
@@ -272,35 +271,6 @@ async def handle_system_command(
     if sub == "scenario":
         action = parts[2].casefold() if len(parts) > 2 else "list"
         state = load_state(conversation_id)
-        if action in ("continue", "status", "cancel"):
-            if not permissions.may_manage_scenario_lifecycle(state, user_id):
-                await reply(permissions.kp_only("管理 PDF 匯入草稿"))
-                return
-            try:
-                draft = pdf_ingestion_drafts.load(conversation_id)
-            except (OSError, ValueError) as exc:
-                await reply(f"無法讀取匯入草稿：{exc}")
-                return
-            if draft:
-                if action == "status":
-                    await reply(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(draft), draft["draft_id"]))
-                elif action == "cancel":
-                    pdf_ingestion_drafts.discard(conversation_id, draft["draft_id"])
-                    await reply("已取消 PDF 匯入草稿。")
-                else:
-                    if len(parts) > 3 and parts[3] != draft["draft_id"]:
-                        await reply("這個匯入按鈕已過期，請重新查看 /coc scenario status。")
-                        return
-                    await handle_pdf_upload(
-                        conversation_id, reply, reply, pdf_ingestion_drafts.pdf_bytes(draft), draft["file_name"],
-                        skip_similarity=True, reparse_candidate_id=draft.get("reparse_candidate_id"),
-                        expected_revision=expected_revision, owner_user_id=draft.get("owner_id", ""),
-                        resume_draft_id=draft["draft_id"],
-                    )
-                return
-            if action in ("continue", "status"):
-                await reply("目前沒有等待處理的 PDF 匯入草稿。")
-                return
         if action == "source":
             if not permissions.is_kp(state, user_id):
                 await reply(permissions.kp_only("管理英文來源"))
@@ -443,7 +413,7 @@ async def handle_system_command(
             context = None
             if state.scenario_library_id == scenario_id:
                 try:
-                    context = scenario_activation.load_state_context(state)
+                    context = scenario_library.load_context(scenario_id)
                 except (FileNotFoundError, ValueError):
                     pass
             def remove_card(conn):
@@ -497,51 +467,31 @@ async def handle_system_command(
                     await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
                     return
                 pending = state.pending_scenario_upload
-                from_published = pending is None
-                requested_id = parts[3] if len(parts) > 3 else state.scenario_library_id
-                if not from_published and len(parts) > 3:
-                    await reply("目前有等待處理的 PDF；請先重新解析或取消，再指定劇本 ID。")
-                    return
-                if from_published and not requested_id:
-                    await reply("沒有可重新解析的劇本或等待重新解析的 PDF。")
+                if pending is None:
+                    await reply("沒有等待重新解析的 PDF。")
                     return
                 try:
-                    if from_published:
-                        pdf_bytes, filename = scenario_library.read_source_pdf(requested_id)
-                        pending = {'key': '', 'file_name': filename,
-                                   'matches': [{'id': requested_id}]}
-                    else:
-                        assert pending is not None
-                        pdf_bytes = scenario_library.read_staged_upload(pending["key"])
-                except (FileNotFoundError, ValueError):
+                    pdf_bytes = scenario_library.read_staged_upload(pending["key"])
+                except FileNotFoundError:
                     state.pending_scenario_upload = None
                     save_state(state)
-                    await reply("來源 PDF 已不存在或劇本 ID 無效，請查看 /coc scenario list 或重新上傳。")
+                    await reply("暫存 PDF 已不存在，請重新上傳。")
                     return
                 state.pending_scenario_upload = None
                 save_state(state)
                 commit_revision = state.state_revision
                 claimed_timeline = state.timeline_id
-            assert pending is not None
             candidate_matches = pending.get("matches") or []
             reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
             accepted = False
-            previous_draft = pdf_ingestion_drafts.load(conversation_id)
-            resume_id = (previous_draft["draft_id"] if previous_draft
-                         and previous_draft["file_name"] == pending["file_name"]
-                         and pdf_ingestion_drafts.pdf_bytes(previous_draft) == pdf_bytes else "")
             try:
                 accepted = await handle_pdf_upload(
                     conversation_id, reply, reply, pdf_bytes, pending["file_name"],
-                    skip_similarity=True, reparse_candidate_id=reparse_candidate_id, owner_user_id=user_id,
-                    resume_draft_id=resume_id,
+                    skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
                     expected_revision=commit_revision if expected_revision is not None else None,
                 )
             finally:
-                current_draft = pdf_ingestion_drafts.load(conversation_id)
-                if from_published:
-                    pass  # The published source remains available; no staged choice to restore.
-                elif accepted or (current_draft and current_draft.get("report", {}).get("blocked_pages")):
+                if accepted:
                     scenario_library.discard_staged_upload(pending["key"])
                 else:
                     # Do not save the pre-extraction snapshot over concurrent play.

@@ -31,11 +31,9 @@ it happens to be present.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
-from app import config
 from app.config import (
     ANALYSIS_PROVIDER,
     ANTHROPIC_API_KEY,
@@ -87,8 +85,7 @@ def _build_anthropic_openai_shim(model_default: str) -> Any:
     anthropic.Anthropic() instead."""
     import anthropic
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0,
-                                 timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     completions = _AnthropicChatCompletions(client, model_default)
     return SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
@@ -128,43 +125,13 @@ def _build_gemini_openai_shim(model_default: str) -> Any:
     google-genai (see app/providers/gemini_provider.py — same SDK, same
     "not exercised against a live key" caveat applies to this shim too)."""
     from google import genai
-    from google.genai import types
 
-    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(
-        timeout=int(config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS * 1000),
-        retry_options=types.HttpRetryOptions(attempts=1)))
+    client = genai.Client(api_key=GEMINI_API_KEY)
     completions = _GeminiChatCompletions(client, model_default)
     return SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
 
-class _RecordingImageCompletions:
-    """Audit actual vision completion responses, not converter/native/local text."""
-
-    def __init__(self, completions: Any, evidence: list[dict], reserve: Callable[[], bool] | None) -> None:
-        self._completions = completions
-        self._evidence = evidence
-        self._reserve = reserve
-
-    def create(self, **kwargs: Any) -> Any:
-        import hashlib
-
-        images = [part['image_url']['url'] for message in kwargs.get('messages', [])
-                  for part in message.get('content', []) if isinstance(part, dict)
-                  and part.get('type') == 'image_url']
-        if images and self._reserve is not None and not self._reserve():
-            raise ValueError('MarkItDown image verification budget exhausted')
-        response = self._completions.create(**kwargs)
-        choices = getattr(response, 'choices', [])
-        if images and choices and getattr(choices[0], 'finish_reason', 'stop') == 'stop':
-            text = choices[0].message.content
-            if isinstance(text, str) and text.strip():
-                self._evidence.append({'candidate': text.strip(), 'source_id': ANALYSIS_PROVIDER + ':'
-                    + hashlib.sha256('\n'.join(images).encode()).hexdigest()})
-        return response
-
-
-def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | None = None,
-                    reserve_image_request: Callable[[], bool] | None = None):
+def build_markitdown(vision_prompt: str):
     """Returns a configured MarkItDown instance (core PDF/office converters
     overridden by markitdown-ocr's OCR-enhanced ones, using our vision prompt
     for embedded-image description), or None if unavailable — ANALYSIS_PROVIDER's
@@ -181,12 +148,10 @@ def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | Non
     except ImportError:
         return None
 
-    llm_client: Any
     if ANALYSIS_PROVIDER == "openai" and OPENAI_API_KEY:
         import openai
 
-        llm_client = openai.OpenAI(api_key=OPENAI_API_KEY, max_retries=0,
-                                   timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS)
+        llm_client = openai.OpenAI(api_key=OPENAI_API_KEY)
         llm_model = OPENAI_MODEL
     elif ANALYSIS_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
         llm_client = _build_anthropic_openai_shim(ANTHROPIC_MODEL)
@@ -197,9 +162,6 @@ def build_markitdown(vision_prompt: str, *, image_ocr_evidence: list[dict] | Non
     else:
         return None
 
-    if image_ocr_evidence is not None:
-        llm_client = SimpleNamespace(chat=SimpleNamespace(completions=_RecordingImageCompletions(
-            llm_client.chat.completions, image_ocr_evidence, reserve_image_request)))
     return MarkItDown(
         enable_plugins=True,
         llm_client=llm_client,

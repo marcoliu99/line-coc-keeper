@@ -45,7 +45,6 @@ async def handle_uploads(
     reply: Reply,
     *,
     post_pdf_buttons: Callable[[], Awaitable[None]],
-    owner_user_id: str = "",
 ) -> bool:
     """Handle a message's attachments; True when one of them was handled."""
     pdfs = sorted((u for u in uploads if u.filename.lower().endswith(".pdf")), key=lambda u: u.filename.lower())
@@ -55,7 +54,7 @@ async def handle_uploads(
             return True
         # No reply-token/time-window constraint here, so the same callback
         # serves as both the immediate ack and the final result.
-        await handle_pdf_upload(conversation_id, reply, reply, await pdfs[0].read(), pdfs[0].filename, owner_user_id=owner_user_id)
+        await handle_pdf_upload(conversation_id, reply, reply, await pdfs[0].read(), pdfs[0].filename)
         await post_pdf_buttons()
         return True
 

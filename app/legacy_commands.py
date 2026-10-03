@@ -21,7 +21,6 @@ isn't reentrant.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -40,9 +39,7 @@ from app import (
     locks,
     luck,
     observability,
-    pdf_ingestion_drafts,
     pdf_loader,
-    pdf_page_criticality,
     pregen_extractor,
     resolved_check_consequences,
     scenario_activation,
@@ -255,8 +252,6 @@ def _pdf_upload_confirmation_text(
     extracted_index: dict,
     pregen_count: int,
     artifact_notice: str = "",
-    disabled_map_pages: list[int] | None = None,
-    feature_warnings: list[pdf_page_criticality.FeatureWarning] | None = None,
 ) -> str:
     """Shared by the immediate (first-ever upload) and deferred (button-
     resolved) paths through handle_pdf_upload — the message is identical
@@ -277,29 +272,14 @@ def _pdf_upload_confirmation_text(
             f"\n\n⚠️ 這份劇本內容超過長度上限（{len(text)} 字），後半段已經被截斷，"
             "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
         )
-    if feature_warnings:
-        warning += "\n"
-        if 'source_review_quarantined' in feature_warnings:
-            warning += ("\n- 尚未驗證的內容暫不作為 Keeper 權威資料；已確認的劇本正文可使用。"
-                        "稍後可使用 /coc scenario reparse 補強。")
-        if 'optional_pregen_unavailable' in feature_warnings:
-            warning += "\n- 部分預製角色未解析；可使用自行建立的調查員。"
-        if 'optional_handout_unavailable' in feature_warnings:
-            warning += "\n- 部分玩家手冊未解析；原始圖片仍保留。"
-        if 'topology_assistance_unavailable' in feature_warnings:
-            warning += "\n- 隱藏路線自動輔助不可用，Keeper 仍依原劇本文字處理。"
     map_note = ""
-    if disabled_map_pages:
-        pages_str = "、".join(str(page) for page in disabled_map_pages)
-        map_note = (f"\n\n⚠️ 第 {pages_str} 頁地圖尚未通過驗證，該頁自動地圖功能已停用；"
-                    "劇本已載入，可開始遊戲，遊戲仍使用劇本文字與原始圖片。")
     if page_maps:
         # Keys may be plain ints (fresh from pdf_loader.extract_text) or
         # strings (round-tripped through pending_pdf_upload's JSON storage —
         # see resolve_pdf_upload_choice) — sort numerically either way so a
         # page 10 doesn't sort before page 2.
         pages_str = "、".join(str(p) for p in sorted(page_maps.keys(), key=lambda k: int(k)))
-        map_note += (
+        map_note = (
             f"\n\n🗺️ 第 {pages_str} 頁偵測到平面圖，已經拆解成房間圖——玩家在裡面移動時"
             "（例如「進入燈塔，檢查右手邊第一個房間」）系統會直接算出正確房間，不用靠守密人自己猜方位。"
             "用 `/coc where` 可以看目前在哪個房間。"
@@ -329,13 +309,10 @@ def _pdf_upload_confirmation_text(
             "這時職業可選：\n" + "、".join(OCCUPATIONS.keys()) + "\n"
         )
 
-    warning_heading = ("\n\n⚠️ 部分輔助功能不可用或需要核對："
-                       if warning or disabled_map_pages else "")
     return (
-        f"✅ 劇本《{title}》已成功匯入，可以開始遊戲。（{len(text)} 字）\n"
+        f"已載入劇本《{title}》（{len(text)} 字）。\n"
         + pregen_note
-        + "建立角色後輸入 /coc start 開始遊戲。"
-        + warning_heading
+        + "建好角色後，直接在群組打字描述行動即可開始冒險！"
         + warning
         + map_note
         + index_note
@@ -352,8 +329,6 @@ async def handle_pdf_upload(
     skip_similarity: bool = False,
     reparse_candidate_id: str | None = None,
     expected_revision: int | None = None,
-    owner_user_id: str = "",
-    resume_draft_id: str = "",
 ) -> bool:
     """`reply` acknowledges the upload and `push` delivers the extracted result
     after the potentially long vision/OCR pass. Discord can pass the same
@@ -372,7 +347,7 @@ async def handle_pdf_upload(
     conversation's very first upload has no existing scenario to be
     ambiguous against, so it always applies immediately with no button."""
     if not file_name.lower().endswith(".pdf"):
-        await reply(f"❌ 劇本《{file_name}》目前無法匯入。只支援 PDF；請上傳 PDF 劇本檔案。")
+        await reply("目前只支援上傳 PDF 劇本檔案喔。")
         return False
 
     # Checked before any of the expensive extraction work below (and before
@@ -390,7 +365,9 @@ async def handle_pdf_upload(
     previous_content_hash = ""
     if existing_state.scenario_library_id:
         try:
-            previous_content_hash = scenario_activation.load_state_context(existing_state)["manifest"].get("content_hash", "")
+            previous_content_hash = scenario_library.load_context(
+                existing_state.scenario_library_id
+            )["manifest"].get("content_hash", "")
         except (FileNotFoundError, ValueError):
             pass
     if existing_state.pending_pregen_luck:
@@ -408,73 +385,15 @@ async def handle_pdf_upload(
         await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
         return False
 
-    async with locks.get_conversation_lock(conversation_id):
-        latest = load_state(conversation_id)
-        if latest.pending_pdf_upload is not None or (latest.pending_scenario_upload is not None and not skip_similarity):
-            await reply("目前已有等待處理的 PDF，請先完成或取消。")
-            return False
-        try:
-            lease = pdf_ingestion_drafts.reserve(
-                conversation_id, pdf_bytes, file_name, owner_id=owner_user_id,
-                resume_draft_id=resume_draft_id, reparse_candidate_id=reparse_candidate_id,
-            )
-        except pdf_ingestion_drafts.ImportOwnershipError as exc:
-            await reply(str(exc))
-            return False
-    activated = False
-    def on_activation() -> None:
-        nonlocal activated
-        activated = True
-    try:
-        return await _run_pdf_import(
-            conversation_id, reply, push, pdf_bytes, file_name, skip_similarity,
-            reparse_candidate_id, expected_revision, previous_content_hash, lease, on_activation,
-            retry_failed_classification=bool(resume_draft_id or reparse_candidate_id),
-        )
-    except pdf_ingestion_drafts.ImportOwnershipError as exc:
-        await push(str(exc))
-        return False
-    except Exception:
-        # A notification/cleanup error can occur after activation has committed.
-        current = load_state(conversation_id)
-        if activated:
-            await push(f"✅ 劇本《{current.scenario_title}》已成功匯入，可以開始遊戲。"
-                       "\n⚠️ 匯入後的輔助處理未完成；使用 /coc scenario status 查看狀態。"
-                       "\n建立角色後輸入 /coc start。")
-        elif current.pending_pdf_upload:
-            await push("等待你的選擇：劇本已解析，尚未套用；請先完成新劇本或修正劇本的選擇。")
-        else:
-            saved = pdf_ingestion_drafts.load(conversation_id)
-            if saved and saved.get('pages'):
-                await push(pdf_ingestion_drafts.ContinueImportMessage(
-                    pdf_ingestion_drafts.progress(saved), saved['draft_id']))
-            else:
-                await push(f"❌ 劇本《{file_name}》目前無法完成匯入。"
-                       "\n請使用 /coc scenario status 查看狀態；確認來源後重新上傳。")
-        raise
-    finally:
-        async with locks.get_conversation_lock(conversation_id):
-            pdf_ingestion_drafts.release(lease)
-
-
-async def _run_pdf_import(
-    conversation_id: str, reply: Reply, push: Reply, pdf_bytes: bytes, file_name: str,
-    skip_similarity: bool, reparse_candidate_id: str | None, expected_revision: int | None,
-    previous_content_hash: str, lease: pdf_ingestion_drafts.ImportLease,
-    on_activation: Callable[[], None],
-    *, retry_failed_classification: bool = False,
-) -> bool:
-    draft = pdf_ingestion_drafts.require_owner(lease)
-    resume = pdf_ingestion_drafts.resume_pages(draft, pdf_loader.extraction_identity())
     preview = ""
     if not skip_similarity:
         try:
             preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
-        except ValueError:
-            await reply(f"❌ 劇本《{file_name}》目前無法安全匯入，因此尚未啟用。\n來源 PDF 無法讀取；請檢查檔案後重新上傳。")
+        except ValueError as exc:
+            await reply(f"無法讀取 PDF 前幾頁：{exc}")
             return False
         preview_title = pdf_loader.guess_title(preview, file_name=file_name)
-        matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview) if preview else []
+        matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
         if matches:
             key = await asyncio.to_thread(scenario_library.stage_upload, pdf_bytes)
             # Reload under the lock right before saving — extract_preview and
@@ -483,7 +402,6 @@ async def _run_pdf_import(
             # turn, roll, or combat update landing in between); saving that
             # stale snapshot back would silently revert whatever changed.
             async with locks.get_conversation_lock(conversation_id):
-                pdf_ingestion_drafts.require_owner(lease)
                 state = load_state(conversation_id)
                 if expected_revision is not None and state.state_revision != expected_revision:
                     scenario_library.discard_staged_upload(key)
@@ -493,11 +411,10 @@ async def _run_pdf_import(
                     scenario_library.discard_staged_upload(key)
                     await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
                     return False
-                pdf_ingestion_drafts.discard_owned(lease)
                 state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
                 save_state(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
-            await reply(f"等待你的選擇：偵測到相似劇本：{labels}，尚未套用。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
+            await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
             return False
 
     await reply("收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...")
@@ -505,43 +422,12 @@ async def _run_pdf_import(
     parse_quality: dict = {}
     try:
         text, low_text_pages, truncated, page_images, page_maps = await asyncio.to_thread(
-            pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality,
-            resume_pages=resume if draft else None,
-            retry_failed_classification=retry_failed_classification,
-            layout_budget=draft.get("report", {}).get("layout_budget"),
-            layout_budget_checkpoint=lambda budget: pdf_ingestion_drafts.record_budget(lease, budget),
-            ai_repair_ledger=draft.get("report", {}).get("ai_repair_budget"),
-            ai_budget_checkpoint=lambda budget: pdf_ingestion_drafts.record_ai_budget(lease, budget)
+            pdf_loader.extract_text, pdf_bytes, quality_report=parse_quality
         )
-    except pdf_loader.LayoutReviewRequired as exc:
-        async with locks.get_conversation_lock(conversation_id):
-            saved = pdf_ingestion_drafts.checkpoint(lease, exc.report, exc.result)
-        await push(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(saved), saved["draft_id"]))
+    except ValueError as exc:
+        await push(f"讀取 PDF 失敗：{exc}")
         return False
-    except ValueError:
-        saved = None
-        async with locks.get_conversation_lock(conversation_id):
-            if parse_quality:
-                saved = pdf_ingestion_drafts.checkpoint(lease, parse_quality, ('', [], False, {}, {}))
-        if saved and saved.get('pages'):
-            await push(pdf_ingestion_drafts.ContinueImportMessage(
-                pdf_ingestion_drafts.progress(saved), saved['draft_id']))
-        else:
-            await push(f"❌ 劇本《{file_name}》目前無法安全匯入，因此尚未啟用。"
-                       "\n來源 PDF 無法可靠讀取；請檢查檔案後重新上傳，或使用 /coc scenario status 查看狀態。")
-        return False
-    except Exception:
-        async with locks.get_conversation_lock(conversation_id):
-            if parse_quality and pdf_ingestion_drafts.owns(lease):
-                pdf_ingestion_drafts.checkpoint(lease, parse_quality, ('', [], False, {}, {}))
-        raise
 
-    async with locks.get_conversation_lock(conversation_id):
-        pdf_ingestion_drafts.checkpoint(lease, parse_quality,
-            (text, low_text_pages, truncated, page_images, page_maps), release_attempt=False)
-    disabled_map_pages = sorted(int(page) for page, status in parse_quality.get('map_status', {}).items()
-                                if status != 'MAP_GRAPH_VERIFIED')
-    low_text_pages = [page for page in low_text_pages if page not in disabled_map_pages]
     title = pdf_loader.guess_title(text, file_name=file_name)
 
     # Built automatically here rather than left to a manual /coc index run —
@@ -561,44 +447,26 @@ async def _run_pdf_import(
     # and the scenario's own embedded cast would never even get a chance to
     # reconcile against it. See _merge_extracted_pregens for how this result
     # gets folded into state.pregens without regard to upload order.
-    try:
-        pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
-    except ValueError:
-        pregens = []  # Incomplete optional cards cannot prevent safe-source admission.
+    pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
 
     if not preview:
         try:
             preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
         except ValueError:
-            preview = ""
-        preview = preview or text[:12_000]
-    async with locks.get_conversation_lock(conversation_id):
-        pdf_ingestion_drafts.require_owner(lease)
-        # Reparse may update an existing library entry. Reject stale intent
-        # before publication, not merely before installing it into group state.
-        state = load_state(conversation_id)
-        if expected_revision is not None and state.state_revision != expected_revision:
-            await push("遊戲狀態已更新，這份 PDF 沒有套用；請重新開啟 Help 操作。")
-            return False
-        if state.pending_pdf_upload is not None:
-            await push("目前已有等待處理的 PDF，請先完成上一份的選擇，再重新上傳這份。")
-            return False
-        scenario_id = await asyncio.to_thread(
-            scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
-            preview=preview, text=text, indexes=extracted_index, pregens=pregens,
-            page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
-            parse_quality=parse_quality,
-            scenario_id=f"upload-{uuid4().hex}" if state.scenario_text.strip() and not reparse_candidate_id else None,
-        )
-        current = load_state(conversation_id)
-        correcting = bool(reparse_candidate_id == scenario_id == current.scenario_library_id)
-        library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id,
-            current.active_chapter_id if correcting else '')
-        text = library_context["text"]
-        extracted_index = library_context["indexes"]
-        pregens = library_context["pregens"]
-        page_maps = library_context["scene_maps"]
+            preview = text[:12_000]
+    scenario_id = await asyncio.to_thread(
+        scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
+        preview=preview, text=text, indexes=extracted_index, pregens=pregens,
+        page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
+        parse_quality=parse_quality,
+    )
+    library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
+    text = library_context["text"]
+    extracted_index = library_context["indexes"]
+    pregens = library_context["pregens"]
+    page_maps = library_context["scene_maps"]
 
+    async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if expected_revision is not None and state.state_revision != expected_revision:
             await push("遊戲狀態已更新，這份 PDF 沒有套用；請重新開啟 Help 操作。")
@@ -608,17 +476,6 @@ async def _run_pdf_import(
         # them; the selected two-chapter window is copied only on activation.
         if state.pending_pdf_upload is not None:
             raced = True
-        elif correcting:
-            raced = False
-            _apply_scenario_correction(state, text, library_context['manifest']['title'], extracted_index, pregens)
-            _install_library_context(state, scenario_id, library_context, preserve_maps=True, preserve_pregens=True)
-            for page, graph in library_context['scene_maps'].items():
-                state.scene_maps.setdefault(page, graph)
-            install_result: dict[str, bool] = {}
-            _, image_refreshed = scenario_activation.commit_and_refresh(
-                lambda: save_state(state), conversation_id, scenario_id, library_context)
-            confirmation_pending = False
-            final_pregen_count = len(state.pregens)
         elif state.scenario_text.strip():
             raced = False
             state.pending_pdf_upload = {
@@ -627,8 +484,6 @@ async def _run_pdf_import(
                 "text": text,
                 "title": library_context["manifest"]["title"],
                 "low_text_pages": low_text_pages,
-                "disabled_map_pages": disabled_map_pages,
-                "feature_warnings": parse_quality.get("feature_warnings", []),
                 "truncated": truncated,
                 "npcs": extracted_index["npcs"],
                 "locations": extracted_index["locations"],
@@ -645,7 +500,7 @@ async def _run_pdf_import(
             old_pool = list(state.pregens)
             _apply_new_scenario(state, text, library_context["manifest"]["title"], extracted_index, page_maps, pregens)
             _install_library_context(state, scenario_id, library_context)
-            install_result = {}
+            install_result: dict[str, bool] = {}
             def install_first(conn):
                 manual_pregens.capture_legacy(conn, conversation_id, None, old_pool)
                 state.pregens, install_result["stale"] = manual_pregens.install_pool(
@@ -655,10 +510,8 @@ async def _run_pdf_import(
                 lambda: save_state(state, mutate_tx=install_first),
                 conversation_id, scenario_id, library_context,
             )
-            on_activation()
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
-        pdf_ingestion_drafts.discard_owned(lease)
     if raced:
         await push(
             f"這份《{title}》來得比較慢——另一份幾乎同時上傳的 PDF 先卡進待確認狀態了，請先處理完"
@@ -674,24 +527,12 @@ async def _run_pdf_import(
         )
         return True
 
-    if correcting:
-        persisted = scenario_library.scenario_path(scenario_id) / 'parse_quality.json'
-        diff = json.loads(persisted.read_text(encoding='utf-8')).get('reparse_diff', {})
-        if diff.get('conflicts'):
-            await push(f"⚠️ 劇本《{title}》重新解析發現 {diff['conflicts']} 處衝突，已驗證內容未自動覆蓋；遊戲進度不受影響。")
-        elif diff.get('upgraded') or diff.get('newly_available_features'):
-            await push(f"✅ 劇本《{title}》重新解析完成，已補強通過驗證的內容；遊戲進度不受影響。")
-        else:
-            await push(f"劇本《{title}》重新解析完成，但沒有找到比目前版本更可靠的內容；目前版本與遊戲進度保持不變。")
-        return True
     variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count,
         scenario_index.report_location_index(
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
-        disabled_map_pages=disabled_map_pages,
-        feature_warnings=parse_quality.get("feature_warnings", []),
     ) + (f"\n{variant_notice}" if variant_notice else "")
       + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
       + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""))
@@ -708,8 +549,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
     if not scenario_id:
         return "這個待處理上傳缺少劇本庫資料，請重新上傳 PDF。"
     try:
-        context = scenario_library.load_context(scenario_id,
-            state.active_chapter_id if choice != "new" else pending.get("active_chapter_id", ""))
+        context = scenario_library.load_context(scenario_id, pending.get("active_chapter_id", ""))
     except (FileNotFoundError, ValueError):
         state.pending_pdf_upload = None
         save_state(state)
@@ -722,7 +562,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
         old_hash = pending.get("previous_content_hash", "")
     elif old_scenario_id:
         try:
-            old_hash = scenario_activation.load_state_context(state)["manifest"].get("content_hash", "")
+            old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
         except (FileNotFoundError, ValueError):
             pass
     if choice == "new":
@@ -761,8 +601,6 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
         scenario_index.report_location_index(
             state.scenario_location_index, source="pdf_upload",
             scenario_title=state.scenario_title, scene_maps=state.scene_maps),
-        disabled_map_pages=pending.get("disabled_map_pages", []),
-        feature_warnings=pending.get("feature_warnings", []),
     ) + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "") + (f"\n{variant_notice}" if variant_notice else "") + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
 
 @mutation_admission.guard_async_entry
@@ -818,10 +656,6 @@ async def handle_map_upload(
         # rooms/exits shape — see scene_map.import_node_graph's own docstring.
         data, import_warnings = scene_map_engine.import_node_graph(data)
 
-    # Custom YAML has no reviewed canonical-source certificate to authorize hidden topology.
-    if isinstance(data, dict) and data.get('source_topology'):
-        await reply('自訂地圖不可授權 hidden/conditional topology；需要 canonical source 驗證。')
-        return
     errors = scene_map_engine.validate_scene_map(data)
     if errors:
         error_list = "\n".join(f"・{e}" for e in errors)
@@ -905,7 +739,7 @@ async def handle_role_sheet_upload(
             return
         scenario_id = state.scenario_library_id or None
         try:
-            context = scenario_activation.load_state_context(state) if scenario_id else None
+            context = scenario_library.load_context(scenario_id) if scenario_id else None
         except (FileNotFoundError, ValueError):
             context = None
             scenario_id = None
@@ -2451,14 +2285,12 @@ def _resolve_map_action_core(
                 state.party_facing[user_id] = facing
                 resolved_room = scene_map_engine.get_room(scene_map, current_room)
 
-    from app import map_routes
     active_map = state.scene_maps.get(current_page) if current_page else None
     if active_map:
         movement = intent_parser.parse_movement_intent(text)
         if movement:
             result = scene_map_engine.resolve_move(
                 state.scene_maps, current_page, current_room, facing, movement["relative_direction"], movement["order"],
-                available_routes=map_routes.available_routes(state, current_page),
             )
             if result["ok"]:
                 if "map_key" in result:  # crossed into a different map — see scene_map.py's module docstring
@@ -2466,8 +2298,6 @@ def _resolve_map_action_core(
                 state.current_room_id[user_id] = result["room"]["id"]
                 state.party_facing[user_id] = result["facing"]
                 resolved_room = result["room"]
-            elif result.get('blocked'):
-                return _MapActionResolution(context={'movement_blocked': True, 'interaction': result['interaction']})
             # result["ok"] is False (no matching exit): deliberately not
             # returned as an error here — let the Keeper's own dynamic prompt
             # (see _build_dynamic_prompt) decide how to narrate a blocked or
@@ -2489,10 +2319,6 @@ def _resolve_map_action_core(
                 else:
                     needs_rag = True
             if target_room is not None:
-                route_result = scene_map_engine.resolve_source_route(active_map, current_room, target_room['id'],
-                    available_routes=map_routes.available_routes(state, current_page))
-                if not route_result['ok']:
-                    return _MapActionResolution(context={'movement_blocked': True, 'interaction': route_result['interaction']})
                 state.current_room_id[user_id] = target_room["id"]
                 state.party_facing[user_id] = "N"  # arbitrary jump, no direction to carry forward
                 resolved_room = target_room

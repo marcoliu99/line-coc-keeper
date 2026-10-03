@@ -60,12 +60,6 @@ class HelpNavigationTests(unittest.TestCase):
         self.assertIn("KP-only", page.text)
         self.assertIn("KP-only", detail.text)
 
-    def test_scenario_import_controls_and_core_commands_stay_on_first_page(self):
-        page = get_help_page(("scenario",), HelpContext())
-        paths = {action.path for action in page.actions}
-        for command in ("list", "use", "reparse", "cancel", "continue", "draft_status"):
-            self.assertIn(("scenario", command), paths)
-
     def test_manual_short_path_resolves_to_canonical_entry(self):
         state = GroupState(group_id="g")
         self.assertEqual(resolve_text_path(state, "u1", ["pc"]), ("character", "pc"))

@@ -1,5 +1,4 @@
 import os
-import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -312,32 +311,3 @@ SCENARIO_RETRIEVAL_TOKEN_BUDGET = _env_int('SCENARIO_RETRIEVAL_TOKEN_BUDGET', 60
 SCENARIO_CONTEXT_TOKEN_CEILING = _env_int('SCENARIO_CONTEXT_TOKEN_CEILING', 32000, minimum=1)
 SCENARIO_OUTPUT_TOKEN_RESERVE = _env_int('SCENARIO_OUTPUT_TOKEN_RESERVE', 4096, minimum=1)
 SCENARIO_CONTEXT_SAFETY_TOKENS = _env_int('SCENARIO_CONTEXT_SAFETY_TOKENS', 2048, minimum=1)
-
-# Import-only ordering challengers, with separate finite per-book image budgets.
-PDF_LAYOUT_DOCLING_ENABLED = _env_bool('PDF_LAYOUT_DOCLING_ENABLED', True)
-PDF_LAYOUT_DOCLING_ARTIFACTS_PATH = os.environ.get(
-    'PDF_LAYOUT_DOCLING_ARTIFACTS_PATH', '') or str(DATA_DIR.parent / 'models' / 'docling')
-PDF_LAYOUT_DOCLING_TIMEOUT_SECONDS = _env_float('PDF_LAYOUT_DOCLING_TIMEOUT_SECONDS', 45, minimum=0.01)
-PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS = _env_float('PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS', 30, minimum=0.01)
-PDF_MAP_INVENTORY_TIMEOUT_SECONDS = _env_float('PDF_MAP_INVENTORY_TIMEOUT_SECONDS', 30, minimum=0.01)
-PDF_MAP_CONNECTIVITY_TIMEOUT_SECONDS = _env_float('PDF_MAP_CONNECTIVITY_TIMEOUT_SECONDS', 60, minimum=0.01)
-PDF_MAP_REPAIR_TIMEOUT_SECONDS = _env_float('PDF_MAP_REPAIR_TIMEOUT_SECONDS', 60, minimum=0.01)
-PDF_MAP_AUDIT_TIMEOUT_SECONDS = _env_float('PDF_MAP_AUDIT_TIMEOUT_SECONDS', 60, minimum=0.01)
-PDF_LAYOUT_MAX_REQUESTS = _env_int('PDF_LAYOUT_MAX_REQUESTS', 8)
-PDF_LAYOUT_MAX_PAGES = _env_int('PDF_LAYOUT_MAX_PAGES', 4)
-# Finite import-only source-criticality allowance, independent of derived map/layout work.
-PDF_PAGE_CRITICALITY_MAX_REQUESTS = min(24, max(0, _env_int('PDF_PAGE_CRITICALITY_MAX_REQUESTS', 24)))
-PDF_LAYOUT_RETRIES = min(3, _env_int('PDF_LAYOUT_RETRIES', 1))
-
-# Import-only local OCR. Models/dependencies are prepared by explicit setup only.
-PDF_OCR_PADDLE_ENABLED = _env_bool('PDF_OCR_PADDLE_ENABLED', True)
-PDF_OCR_PADDLE_MODEL = os.environ.get('PDF_OCR_PADDLE_MODEL', 'PP-OCRv5_mobile_rec').strip()
-PDF_OCR_PADDLE_MODELS_PATH = os.environ.get(
-    'PDF_OCR_PADDLE_MODELS_PATH', '') or str(DATA_DIR.parent / 'models' / 'paddleocr')
-PDF_OCR_PADDLE_DEVICE = os.environ.get('PDF_OCR_PADDLE_DEVICE', 'cpu').strip()
-PDF_OCR_PADDLE_PYTHON = os.environ.get('PDF_OCR_PADDLE_PYTHON', '') or sys.executable
-PDF_OCR_PADDLE_TIMEOUT_SECONDS = _env_float('PDF_OCR_PADDLE_TIMEOUT_SECONDS', 60, minimum=0.01)
-
-# Bounded import-only semantic proposals. Publication still requires source proof.
-PDF_SOURCE_DISCOVERY_ENABLED = _env_bool('PDF_SOURCE_DISCOVERY_ENABLED', True)
-PDF_SOURCE_DISCOVERY_MAX_REQUESTS = min(4, max(0, _env_int('PDF_SOURCE_DISCOVERY_MAX_REQUESTS', 4)))

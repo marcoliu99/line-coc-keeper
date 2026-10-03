@@ -989,7 +989,6 @@ class GroupState:
     scenario_title: str = ""
     scenario_text: str = ""
     scenario_library_id: str = ""
-    scenario_library_revision: str = ""
     scenario_variant_id: str = "original"
     active_chapter_id: str = ""
     context_chapter_ids: list[str] = field(default_factory=list)
@@ -1054,8 +1053,6 @@ class GroupState:
     # string (JSON object keys are always strings, so this avoids an int/str
     # round-trip mismatch between what's written and what's read back).
     scene_maps: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Runtime outcomes are separate from immutable, source-certified topology.
-    map_route_states: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Per-character position — each entry keyed by owner_id, independent of
     # every other character. Deliberately NOT a single shared "party
@@ -1275,7 +1272,6 @@ class GroupState:
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
             "scenario_library_id": self.scenario_library_id,
-            "scenario_library_revision": self.scenario_library_revision,
             "scenario_variant_id": self.scenario_variant_id,
             "active_chapter_id": self.active_chapter_id,
             "context_chapter_ids": self.context_chapter_ids,
@@ -1306,7 +1302,6 @@ class GroupState:
             "closed_combat_receipts": self.closed_combat_receipts,
             "last_combat_report": self.last_combat_report,
             "scene_maps": self.scene_maps,
-            "map_route_states": self.map_route_states,
             "current_map_page": self.current_map_page,
             "current_room_id": self.current_room_id,
             "party_facing": self.party_facing,
@@ -1367,7 +1362,6 @@ class GroupState:
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
             scenario_library_id=data.get("scenario_library_id", ""),
-            scenario_library_revision=data.get("scenario_library_revision", ""),
             scenario_variant_id=data.get("scenario_variant_id", "original"),
             active_chapter_id=data.get("active_chapter_id", ""),
             context_chapter_ids=data.get("context_chapter_ids", []),
@@ -1402,7 +1396,6 @@ class GroupState:
                 if isinstance(data.get("last_combat_report"), dict) else {}
             ),
             scene_maps=data.get("scene_maps", {}),
-            map_route_states=(data.get("map_route_states", {}) if isinstance(data.get("map_route_states", {}), dict) else {}),
             # .get(..., {}) with an isinstance check rather than a bare .get
             # default: a save from before this became per-character tracking
             # left these as plain strings ("" / "N"), which would otherwise

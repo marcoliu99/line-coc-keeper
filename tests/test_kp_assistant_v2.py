@@ -497,17 +497,9 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 )
                 scenario_id = keeper.scenario_library.save_scenario(
                     b"%PDF-1.4 fake", title="Visibility Test", filename="t.pdf", preview=text[:200],
-                    text=text, indexes={}, pregens=[], page_maps={},
+                    text=text, indexes={}, pregens=[], page_maps={2: {"id": "map-2"}},
                     page_images={1: b"page-1", 2: b"page-2"},
                 )
-                # Seed a legacy map asset for the visibility-policy test.
-                import json
-                manifest_path = Path(temp) / scenario_id / "manifest.json"
-                manifest = json.loads(manifest_path.read_text())
-                for asset in manifest["image_assets"]:
-                    if asset["page"] == 2:
-                        asset["type"] = "map"
-                manifest_path.write_text(json.dumps(manifest))
                 state = GroupState(group_id="g")
                 state.scenario_library_id = scenario_id
                 state.context_chapter_ids = ["chapter-01"]

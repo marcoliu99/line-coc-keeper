@@ -243,7 +243,6 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             before_actor=before_actor, before_gameplay=before_gameplay,
         )
     observability.event("executor.resolution", disposition=resolution.disposition,
-                        completion_category=turn_resolution.completion_category(resolution, runtime_error=turn_status == "error"),
                         evidence_count=len(resolution.evidence_refs),
                         validation_code=resolution.validation_code, tool_event_count=len(tool_events))
     state_changed = turn_resolution.gameplay_snapshot(state) != before_gameplay

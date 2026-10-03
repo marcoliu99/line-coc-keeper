@@ -60,9 +60,3 @@ def supports_dynamic_tools(provider) -> bool:
 
 def supports_response_stage(provider) -> bool:
     return bool(getattr(provider, 'SUPPORTS_RESPONSE_STAGE', False))
-
-
-def analysis_model_identity() -> str:
-    provider = analysis_provider()
-    accessor = getattr(provider, 'analysis_model_identity', None)
-    return accessor() if accessor is not None else 'unavailable'

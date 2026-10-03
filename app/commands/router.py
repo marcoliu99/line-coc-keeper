@@ -60,7 +60,7 @@ async def _run_post_turn_hook(hook: PostTurnHook | None) -> None:
 
 _CHARACTER_COMMANDS = {"pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters", "retire"}
 _SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests", "autoroll"}
-_MAP_COMMANDS = {"showpage", "where", "enter", "leavemap", "route", "traverse"}
+_MAP_COMMANDS = {"showpage", "where", "enter", "leavemap"}
 
 
 class _SudoDenied(Exception):
@@ -416,7 +416,6 @@ async def handle_uploads(
     reply: Reply,
     *,
     post_pdf_buttons: Callable[[], Awaitable[None]],
-    owner_user_id: str = "",
 ) -> bool:
     """Discord attachments enter here, as text enters through handle_text_message.
 
@@ -426,7 +425,7 @@ async def handle_uploads(
         return False
     observability.event("turn.entry", entry="upload")
     with observability.span("router", command_name="upload"):
-        return await uploads_handler.handle_uploads(conversation_id, uploads, reply, post_pdf_buttons=post_pdf_buttons, owner_user_id=owner_user_id)
+        return await uploads_handler.handle_uploads(conversation_id, uploads, reply, post_pdf_buttons=post_pdf_buttons)
 
 
 async def handle_check_button(
@@ -796,7 +795,7 @@ async def _handle_text_message_impl(
             # sections. asyncio.Lock is not re-entrant.
             scenario_action = parts[2].casefold() if sub == "scenario" and len(parts) > 2 else ""
             is_long_scenario_operation = sub == "scenario" and scenario_action in {
-                "import", "merge", "reparse", "continue",
+                "import", "merge", "reparse",
             }
             if is_long_scenario_operation:
                 async with locks.get_conversation_lock(conversation_id):

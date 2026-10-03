@@ -49,9 +49,7 @@ class ScenarioLibraryContextTests(unittest.TestCase):
             self.assertIn("--- 第 4 頁 ---", context["text"])
             self.assertNotIn("--- 第 5 頁 ---", context["text"])
             self.assertEqual([item["name"] for item in context["indexes"]["npcs"]], ["visible"])
-            # Legacy asset stubs have no replay certificate: retain source/images,
-            # but do not install them as gameplay maps.
-            self.assertEqual(context["scene_maps"], {})
+            self.assertEqual(set(context["scene_maps"]), {"2"})
             copied = {}
             scenario_library.copy_context_images("test-scenario", context["page_numbers"], copied.__setitem__)
             self.assertEqual(copied, {2: b"page-2"})

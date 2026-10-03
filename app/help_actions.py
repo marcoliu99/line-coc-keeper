@@ -117,8 +117,6 @@ ACTIONS: tuple[HelpExecution, ...] = (
        "/coc scenario cards list", source="scenario"),
     _a("cards_delete", "scenario/cards", "刪除手動角色卡", "select",
        "/coc scenario cards delete", source="scenario_card", confirm=True),
-    _a("scenario_continue", "scenario/continue", "繼續匯入", "direct", "/coc scenario continue"),
-    _a("scenario_draft_status", "scenario/draft_status", "匯入進度", "direct", "/coc scenario status"),
     _a("scenario_reparse", "scenario/reparse", "重新解析", "direct",
        "/coc scenario reparse", confirm=True),
     _a("scenario_cancel", "scenario/cancel", "取消劇本處理", "direct",

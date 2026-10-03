@@ -189,20 +189,7 @@ class Process:
 
 
 class ExecTransport:
-    async def request(self, prompt: str, schema: dict, *, instructions: str = PROTOCOL_INSTRUCTIONS,
-                      max_retries: int | None = None) -> str:
-        overrides = dict(ISOLATION)
-        if max_retries is not None:
-            if max_retries != 0:
-                raise ValueError('Codex transport does not support retry overrides other than zero')
-            # CLI 0.159+ reserves built-in IDs. This config alias keeps the same
-            # OpenAI OAuth backend/model while overriding only analysis retries.
-            overrides.update({'model_provider': 'openai-bounded',
-                              'model_providers.openai-bounded.name': 'OpenAI',
-                              'model_providers.openai-bounded.wire_api': 'responses',
-                              'model_providers.openai-bounded.requires_openai_auth': True,
-                              'model_providers.openai-bounded.request_max_retries': 0,
-                              'model_providers.openai-bounded.stream_max_retries': 0})
+    async def request(self, prompt: str, schema: dict, *, instructions: str = PROTOCOL_INSTRUCTIONS) -> str:
         if len(prompt.encode()) > config.CODEX_MAX_INPUT_BYTES:
             raise CodexError('codex_input_limit')
         with tempfile.TemporaryDirectory(prefix='coc-codex-') as cwd:
@@ -215,7 +202,7 @@ class ExecTransport:
                 'exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules',
                 '--skip-git-repo-check', '--color', 'never', '--model', config.CODEX_MODEL,
                 '--output-schema', str(schema_path),
-                *config_args({**overrides, 'model_instructions_file': str(instructions_path)}), '-',
+                *config_args({**ISOLATION, 'model_instructions_file': str(instructions_path)}), '-',
             ], cwd)
             try:
                 assert process.proc and process.proc.stdin

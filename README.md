@@ -170,34 +170,3 @@ This README is an introduction. Detailed guides and all specifications are avail
 ## Local Codex OAuth experiment
 
 [Local Codex OAuth experiment](docs/guides/codex_oauth_testing.md)
-
-### Optional local PDF OCR setup
-
-Local OCR proposes candidates during PDF import; deterministic source checks decide
-acceptance. `PP-OCRv5_mobile_rec` is first, followed by retained Tesseract on rejection,
-missing dependencies/models or execution failure. MarkItDown OCR and bounded AI
-repair remain difficult-transcription routes. Reading-order-only Docling and map
-spatial analysis keep their separate responsibilities. Gameplay does not run OCR.
-
-Paddle is optional and intentionally absent from the minimal bot requirements.
-Use a compatible **persistent** CPU worker environment; for example:
-
-```sh
-python3.11 -m venv /persistent/ocr-env
-python scripts/setup_pdf_ocr.py --python /persistent/ocr-env/bin/python --models-dir /persistent/models/paddleocr
-```
-
-The explicit setup installs `requirements-pdf-ocr.txt`, downloads the selected
-recognizer and required `PP-OCRv5_server_det`, and records artifact hashes. Copy the
-printed configuration into the deployment environment. The default cache is
-`DATA_DIR.parent/models/paddleocr`; production caches must not live in temporary
-directories. A Python 3.14 bot must set `PDF_OCR_PADDLE_PYTHON` to the compatible
-worker interpreter. CPU only; no CUDA dependency or automatic GPU selection.
-Normal startup/import never installs packages or downloads models. Missing/corrupt
-artifacts, unavailable worker, init/inference errors and timeout retain local
-Tesseract fallback. Scanned numeric fields lacking source evidence remain reviewable;
-high OCR confidence cannot certify them. Worker setup must be repeated explicitly
-when changing the configured model, and extraction identity invalidates old caches.
-
-See [production OCR validation](docs/specs/enhancement/pdf_ocr_production_integration_validation.md)
-for measured scope, remaining pages and platform limitations.

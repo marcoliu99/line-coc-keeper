@@ -5,7 +5,6 @@ import hashlib
 import json
 import re
 from collections import Counter
-from collections.abc import Callable
 
 import pymupdf
 
@@ -31,8 +30,6 @@ _LUCK = re.compile(r'(?i)(?:\bLUCK\b|幸運)\s*[:：]?\s*\d+')
 
 def validate(original: str, candidate: str, pairs: list[dict]) -> bool:
     if not candidate.strip() or len(candidate) > max(4000, len(original) * 4):
-        return False
-    if not pdf_quality.preserves_expressions(original, candidate):
         return False
     # A crop repair must not turn a blank/unresolved Luck into a sheet value.
     filled_luck = any(p['label'] in {'LUCK', '幸運'} and p['status'] != 'unresolved' for p in pairs)
@@ -60,8 +57,7 @@ def validate(original: str, candidate: str, pairs: list[dict]) -> bool:
     return sum((words & incoming).values()) >= .9 * sum(words.values())
 
 
-def repair_page(page: pymupdf.Page, row: dict, text: str, budget: list[int], *,
-                ledger: dict | None = None, checkpoint: Callable[[dict], None] | None = None) -> tuple[str, dict]:
+def repair_page(page: pymupdf.Page, row: dict, text: str, budget: list[int]) -> tuple[str, dict]:
     pairs = row['numeric_pairs']
     # Luck alone is never sent for value completion.
     unresolved = [p for p in pairs if p['status'] == 'unresolved' and p['label'] not in {'LUCK', '幸運'}]
@@ -87,21 +83,9 @@ def repair_page(page: pymupdf.Page, row: dict, text: str, budget: list[int], *,
     request = [{'block_id': b['id'], 'bbox': b['bbox'],
                 'candidate': pdf_quality.normalize('\n'.join(line['text'] for line in b['lines']))} for b in blocks]
     result.update(crop_bbox=list(rect), crop_sha256=hashlib.sha256(png).hexdigest(), request=request)
-    ledger = ledger if ledger is not None else {}
-    key = hashlib.sha256((str(page.number) + result['crop_sha256'] + json.dumps(request)).encode()).hexdigest()
-    attempts = ledger.setdefault('attempts', {})
-    if key in attempts:
-        result['status'] = 'previous_dispatch_consumed'
-        return text, result
-    ledger['consumed_requests'] = ledger.get('consumed_requests', 0) + 1
-    attempts[key] = {'page': page.number + 1, 'status': 'reserved'}
     budget[0] -= 1
-    if checkpoint is not None:
-        checkpoint(ledger)
-    from app import config
     try:
-        response = provider.analyze_image(png, _TOOL, _PROMPT + json.dumps(request, ensure_ascii=False),
-            timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS, max_retries=0)
+        response = provider.analyze_image(png, _TOOL, _PROMPT + json.dumps(request, ensure_ascii=False))
     except Exception:  # noqa: BLE001 - optional repair must preserve other source pages.
         response = None
     result['response'] = response
