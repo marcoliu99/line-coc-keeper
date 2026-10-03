@@ -154,11 +154,7 @@ def decide(output: object, native: str, safe: dict[int, str], excerpts: dict[int
     offset = source.find(normalized) if normalized else -1
     bound = (len(normalized) >= 20 and offset >= 0 and normalized[-1:] in '.!?'
              and (offset == 0 or source[:offset].rstrip()[-1:] in '.!?'))
-    # Explicit source permission, not the model's own optionality assertion.
-    if (kind == 'pregen' and output['asset_only'] and not output['contains_required_clue'] and bound
-            and _player_creation_permission(quote)
-            and not re.search(r"\b(?:must|only|required|cannot|can't|not)\b", normalized)):
-        role = 'OPTIONAL_PREGEN'
+    # Both cited and discovered permissions share global selection and coverage guards.
     if (kind == 'pregen' and output['asset_only'] and output['all_source_fragments_accounted_for']
             and not output['contains_required_clue']):
         permissions = _permission(safe)
@@ -173,7 +169,7 @@ def decide(output: object, native: str, safe: dict[int, str], excerpts: dict[int
     fragments = output['source_fragments']
     if kind == 'handout' and output['all_source_fragments_accounted_for'] and fragments:
         matches = [next((number for number, text in safe.items()
-                        if len(_normalize(fragment)) >= 20 and _normalize(fragment) in _normalize(text)), None)
+                        if len(_normalize(fragment)) >= 20 and reference_compatible(fragment, text)), None)
                    for fragment in fragments]
         if all(number is not None for number in matches):
             role = 'DUPLICATE_SOURCE'
@@ -225,7 +221,8 @@ def optional_section(safe: dict[int, str], asset: dict | None, output: object = 
     if not asset or asset.get('kind') != 'pregen':
         return None
     if (not isinstance(output, dict) or output.get('page_role') != 'pregen'
-            or output.get('contains_required_clue') is not False or output.get('asset_only') is not True):
+            or output.get('contains_required_clue') is not False or output.get('asset_only') is not True
+            or output.get('all_source_fragments_accounted_for') is not True):
         return None
     all_text = _normalize(' '.join(safe.values()))
     if _mandatory_pregens(all_text):
@@ -340,7 +337,14 @@ def _permission(safe: dict[int, str]) -> list[dict]:
 
 def reference_compatible(fragment: str, source: str) -> bool:
     """An exact normalized counterpart preserves effect, negation and complete expressions."""
-    return bool(fragment.strip()) and _normalize(fragment) in _normalize(source)
+    # Match complete contiguous sentence units. Substrings can omit a subject,
+    # condition or polarity prefix; line wrapping never establishes a boundary.
+    fragment_units = re.split(r'(?<=[.!?。！？])\s+', _normalize(fragment))
+    source_units = re.split(r'(?<=[.!?。！？])\s+', _normalize(source))
+    width = len(fragment_units)
+    return bool(fragment.strip()) and any(
+        source_units[offset:offset + width] == fragment_units
+        for offset in range(len(source_units) - width + 1))
 
 
 def reference_permission(quote: str) -> bool:
@@ -356,7 +360,7 @@ def _reference_regions(regions: list, fragments: list[str], safe: dict[int, str]
     author_quotes = [quote for region in regions if isinstance(region, dict)
         and region.get('kind') == 'optional_reference' for quote in region.get('source_evidence', [])
         if isinstance(quote, dict) and type(quote.get('page')) is int and isinstance(quote.get('quote'), str)
-        and _normalize(quote['quote']) in _normalize(safe.get(quote['page'], '')) and reference_permission(quote['quote'])]
+        and reference_compatible(quote['quote'], safe.get(quote['page'], '')) and reference_permission(quote['quote'])]
     if not author_quotes:
         return regions
     labelled = {index for index, text in enumerate(fragments, 1) if re.match(
@@ -435,7 +439,7 @@ def _triage_decisions(output: object, observed: dict[int, dict], safe: dict[int,
                 for quote in quotes:
                     if (not isinstance(quote, dict) or type(quote.get('page')) is not int
                             or not isinstance(quote.get('quote'), str) or len(quote['quote']) < 20
-                            or _normalize(quote['quote']) not in _normalize(safe.get(quote['page'], ''))):
+                            or not reference_compatible(quote['quote'], safe.get(quote['page'], ''))):
                         valid = False
                         break
                     bound.append(quote['quote'])
