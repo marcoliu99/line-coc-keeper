@@ -1841,6 +1841,21 @@
         "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_validation.md",
         "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_validation_zh.md"
       ]
+    },
+    {
+      "title": "PR155 source boundary regressions",
+      "zh": "PR155 來源邊界回歸修正",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": [
+        "app/pdf_page_criticality.py",
+        "app/pdf_loader.py",
+        "app/pdf_admission.py",
+        "app/legacy_commands.py",
+        "tests/test_pr155_review_regressions.py"
+      ],
+      "path": "docs/specs/bug/pr155_source_boundary_regressions.md",
+      "zh_path": "docs/specs/bug/pr155_source_boundary_regressions_zh.md"
     }
   ]
 }
