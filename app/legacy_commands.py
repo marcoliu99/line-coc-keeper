@@ -476,7 +476,7 @@ async def _run_pdf_import(
             await reply(f"❌ 劇本《{file_name}》目前無法安全匯入，因此尚未啟用。\n來源 PDF 無法讀取；請檢查檔案後重新上傳。")
             return False
         preview_title = pdf_loader.guess_title(preview, file_name=file_name)
-        matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
+        matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview) if preview else []
         if matches:
             key = await asyncio.to_thread(scenario_library.stage_upload, pdf_bytes)
             # Reload under the lock right before saving — extract_preview and
@@ -572,7 +572,8 @@ async def _run_pdf_import(
         try:
             preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
         except ValueError:
-            preview = text[:12_000]
+            preview = ""
+        preview = preview or text[:12_000]
     async with locks.get_conversation_lock(conversation_id):
         pdf_ingestion_drafts.require_owner(lease)
         scenario_id = await asyncio.to_thread(
