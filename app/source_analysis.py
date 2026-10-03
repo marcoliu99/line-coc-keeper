@@ -9,11 +9,14 @@ import re
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
-from app import config
+from app import config, observability
+
+SOURCE_ANALYSIS_VERSION = 2
 
 
 class DispatchRecord(TypedDict):
     stage: str
+    implementation_version: int
     window_sha256: str
     consumed_requests: int
     status: Literal['reserved', 'completed', 'failed']
@@ -44,6 +47,7 @@ def analyze(provider: Any, source: str, tool: dict, prompt: str, *, window: str 
     try:
         return _analyze(provider, source, tool, prompt, window=window)
     except (OSError, ValueError):
+        observability.event('source.analysis.failed', stage=tool.get('name'), reason='storage_unavailable')
         return None
 
 
@@ -54,7 +58,8 @@ def _analyze(provider: Any, source: str, tool: dict, prompt: str, *, window: str
         return None
     accessor = getattr(provider, 'analysis_model_identity', None)
     model_identity = accessor() if callable(accessor) else config.CODEX_MODEL
-    identity = json.dumps([hashlib.sha256(source.encode()).hexdigest(), window, tool,
+    provider_identity = getattr(provider, '__name__', type(provider).__module__ + '.' + type(provider).__qualname__)
+    identity = json.dumps([SOURCE_ANALYSIS_VERSION, provider_identity, hashlib.sha256(source.encode()).hexdigest(), window, tool,
                            config.LLM_PROVIDER, config.ANALYSIS_PROVIDER, str(model_identity), prompt], sort_keys=True)
     key = hashlib.sha256(identity.encode()).hexdigest()
     directory = config.SCENARIO_LIBRARY_DIR / '.source-analysis'
@@ -67,9 +72,12 @@ def _analyze(provider: Any, source: str, tool: dict, prompt: str, *, window: str
             saved = json.loads(path.read_text())
             if not isinstance(saved, dict) or saved.get('consumed_requests') != 1:
                 return None
+            observability.event('source.analysis.cache_replay', stage=tool['name'],
+                                status=saved.get('status'), error_type=saved.get('error_type'),
+                                implementation_version=SOURCE_ANALYSIS_VERSION)
             response = saved.get('response')
             return response if saved.get('status') == 'completed' and isinstance(response, dict) else None
-        record: DispatchRecord = {'stage': tool['name'], 'window_sha256': hashlib.sha256(window.encode()).hexdigest(),
+        record: DispatchRecord = {'implementation_version': SOURCE_ANALYSIS_VERSION, 'stage': tool['name'], 'window_sha256': hashlib.sha256(window.encode()).hexdigest(),
                         'consumed_requests': 1, 'status': 'reserved', 'response': None}
         def checkpoint() -> None:
             temporary = Path(str(path) + '.tmp')
@@ -79,6 +87,8 @@ def _analyze(provider: Any, source: str, tool: dict, prompt: str, *, window: str
                 os.fsync(output.fileno())
             temporary.replace(path)
         checkpoint()
+        observability.event('source.analysis.dispatch', stage=tool['name'],
+                            implementation_version=SOURCE_ANALYSIS_VERSION)
         try:
             response = provider.analyze_text(window, tool, prompt,
                 timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS, max_retries=0)
@@ -88,4 +98,7 @@ def _analyze(provider: Any, source: str, tool: dict, prompt: str, *, window: str
             record['status'] = 'failed'
             record['error_type'] = type(error).__name__
         checkpoint()
+        observability.event('source.analysis.result', stage=tool['name'], status=record['status'],
+                            error_type=record.get('error_type'),
+                            reason='contract_error' if record.get('error_type') == 'TypeError' else record['status'])
         return record['response']

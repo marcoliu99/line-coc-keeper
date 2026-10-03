@@ -329,14 +329,25 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
     if any(row.get('publication_severity') == 'HARD_BLOCK' or row.get('disposition') == 'needs_review'
            or row.get('source_blocking_reasons') for row in rows):
         raise ValueError('PDF source has unresolved pages; retain the private import draft')
+    valid_candidate_maps = {}
+    rejected_maps = []
     for page, graph in page_maps.items():
-        if scene_map.validate_scene_map(graph):
-            raise ValueError(f'Invalid scene_map on page {page}; retain the private import draft')
         record = next((row.get('map_analysis') for row in rows if str(row.get('page')) == str(page)), None)
         image = page_images.get(page)
-        if ((parse_quality or {}).get('pdf_sha256') != hashlib.sha256(pdf_bytes).hexdigest()
-                or not isinstance(image, bytes) or not pdf_map_analysis.verified_graph(graph, record, image, canonical_source=text, source_context=pdf_source_topology_discovery.source_context(text, parse_quality, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest()))):
+        valid = (not scene_map.validate_scene_map(graph)
+            and (parse_quality or {}).get('pdf_sha256') == hashlib.sha256(pdf_bytes).hexdigest()
+            and isinstance(image, bytes) and pdf_map_analysis.verified_graph(graph, record, image,
+                canonical_source=text, source_context=pdf_source_topology_discovery.source_context(
+                    text, parse_quality, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest())))
+        if valid:
+            valid_candidate_maps[page] = graph
+        elif reparse_candidate_id:
+            # A rejected enhancer cannot erase published authority during reparse.
+            rejected_maps.append({'kind': 'map', 'page': int(page), 'reason': 'candidate_unverified',
+                                  'selection': 'quarantined_candidate'})
+        else:
             raise ValueError(f'Unverified scene_map on page {page}; retain the private import draft')
+    page_maps = valid_candidate_maps
     with _LIBRARY_LOCK:
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -372,6 +383,8 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
                     conflicts=candidate_diff['conflicts'], source_pdf_identity_changed=True,
                     deferred_upgrades=candidate_diff['upgraded'])
             text, parse_quality = merged.text, merged.report
+            if rejected_maps:
+                parse_quality['reparse_diff']['artifact_rejections'] = rejected_maps
             content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
             rows = parse_quality['pages']
             # Existing artifact certificates remain bound to their original PDF.
@@ -385,10 +398,36 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             page_images = {**page_images, **old_images}
             page_set = set(scenario_reparse.pages(text))
             old_maps = _certified_library_maps(published, _read_json(published / 'manifest.json', {}), page_set)
-            compatible_maps = dict(old_maps)
+            compatible_maps = {}
+            context = pdf_source_topology_discovery.source_context(text, parse_quality,
+                pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest())
+            old_rows = old_report.get('pages', [])
+            old_rows = list(old_rows.values()) if isinstance(old_rows, dict) else old_rows
+            for key, graph in old_maps.items():
+                record = next(row['map_analysis'] for row in old_rows if str(row.get('page')) == key)
+                row = next(row for row in rows if str(row.get('page')) == key)
+                # Artifact selection is independent of source-page selection. Its
+                # certificate must replay against the final source, never be reissued.
+                if pdf_map_analysis.verified_graph(graph, record, page_images[int(key)],
+                        canonical_source=text, source_context=context):
+                    compatible_maps[key] = graph
+                    row['map_analysis'] = copy.deepcopy(record)
+                    parse_quality['reparse_diff'].setdefault('retained_verified_maps', []).append(int(key))
+                else:
+                    row.setdefault('map_analysis_history', []).append(copy.deepcopy(record))
+                    row['map_analysis'] = copy.deepcopy(record)
+                    row['map_analysis'].update(status='MAP_GRAPH_INCOMPLETE', verified=False)
+                    row['map_analysis'].setdefault('validation_errors', []).append('source_binding_changed')
+                    row['publication_severity'] = 'SOFT_REVIEW'
+                    row['disposition'] = 'soft_review'
+                    row.setdefault('review_reasons', []).append('map_source_binding_changed')
+                    diff = parse_quality['reparse_diff']
+                    diff['conflicts'] += 1
+                    diff.setdefault('artifact_conflicts', []).append({'kind': 'map', 'page': int(key),
+                        'selection': 'quarantined', 'reason': 'source_binding_changed'})
             for page, graph in page_maps.items():
-                if str(page) in old_maps:
-                    if graph != old_maps[str(page)]:
+                if str(page) in compatible_maps:
+                    if graph != compatible_maps[str(page)]:
                         diff = parse_quality['reparse_diff']
                         diff['conflicts'] += 1
                         diff.setdefault('artifact_conflicts', []).append({'kind': 'map', 'page': int(page),
@@ -408,14 +447,10 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
                             row['map_analysis'] = copy.deepcopy(record)
                     parse_quality['reparse_diff'].setdefault('newly_available_features', []).append(
                         {'kind': 'map', 'page': int(page)})
-            # A source addition cannot invalidate a currently certified map.
-            context = pdf_source_topology_discovery.source_context(text, parse_quality,
-                pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest())
-            if any(not pdf_map_analysis.verified_graph(graph,
-                    next((row.get('map_analysis') for row in rows if str(row.get('page')) == key), None),
-                    page_images[int(key)], canonical_source=text, source_context=context)
-                    for key, graph in old_maps.items()):
-                raise ValueError('Source upgrade conflicts with existing certified map authority')
+            parse_quality['soft_review_pages'] = [row['page'] for row in rows
+                if row.get('publication_severity') == 'SOFT_REVIEW']
+            if parse_quality['soft_review_pages']:
+                parse_quality['scenario_readiness'] = 'READY_WITH_WARNINGS'
             page_maps = compatible_maps
             old_indexes = _read_json(published / 'indexes.json', {})
             # An upgraded source page alone does not validate an NPC's mechanics
@@ -566,7 +601,11 @@ def _load_context(scenario_id: str, active_chapter_id: str, revision: str) -> di
     page_set -= quarantined
     all_indexes = _read_json(root / "indexes.json", {"npcs": [], "locations": []})
     indexes = {"npcs": _filter_index(all_indexes.get("npcs", []), page_set), "locations": _filter_index(all_indexes.get("locations", []), page_set)}
-    return {"library_revision": revision, "manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}
+    quality = _read_json(root / 'parse_quality.json', {})
+    disabled = [str(item['page']) for item in quality.get('reparse_diff', {}).get('artifact_conflicts', [])
+                if isinstance(item, dict) and item.get('kind') == 'map'
+                and item.get('selection') == 'quarantined' and isinstance(item.get('page'), int)]
+    return {"library_revision": revision, "quarantined_map_pages": disabled, "manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}
 
 
 def matching_revision(scenario_id: str, chapter_id: str, text: str, maps: dict) -> str:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app import source_analysis
+from app import observability, source_analysis
 from app.providers.registry import conversation_provider
 
 _REPORT_TOOL = {
@@ -102,6 +102,7 @@ def extract_opening_narration(scenario_text: str) -> dict[str, Any]:
     of needing a separate one-off code path."""
     provider = conversation_provider()
     if provider is None or not scenario_text.strip():
+        observability.event('scenario.opening.result', reason='provider_unavailable' if provider is None else 'empty_source')
         return {"found": False, "text": "", "page": 0, "opening_check": None}
 
     result = source_analysis.analyze(
@@ -111,6 +112,8 @@ def extract_opening_narration(scenario_text: str) -> dict[str, Any]:
         "開場白／開場介紹文字，以及這段開場白本身有沒有明確要求全隊在遊戲一開始就做一次檢定，"
         "用 report_opening_narration 工具回報。",
     )
+    observability.event('scenario.opening.result', reason='provider_no_result' if result is None
+                        else 'opening_found' if result.get('found') else 'opening_absent')
     if not result or not result.get("found"):
         return {"found": False, "text": "", "page": 0, "opening_check": None}
     text = (result.get("text") or "").strip()

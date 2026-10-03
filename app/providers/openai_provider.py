@@ -701,7 +701,7 @@ def analyze_image(png_bytes: bytes, tool: dict, prompt_text: str, *,
         return None
 
 
-def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = None) -> dict | None:
+def analyze_text(text: str, tool: dict, prompt_text: str, *, timeout: float | None = None, max_retries: int | None = 0) -> dict | None:
     """Text-only sibling of analyze_image above — a single forced tool call,
     no image. Used by app/pregen_extractor.py. Returns the tool call's parsed
     arguments dict, or None on any failure (no OPENAI_API_KEY, the call

@@ -35,6 +35,17 @@ def install_context_fields(
         state.pregens = list(context.get("pregens", []))
     if not preserve_maps:
         state.scene_maps = context["scene_maps"]
+    else:
+        # Only an explicitly source-incompatible reparse artifact is withdrawn;
+        # compatible maps and positions outside this chapter remain unchanged.
+        disabled = set(context.get('quarantined_map_pages', []))
+        for page in disabled:
+            state.scene_maps.pop(page, None)
+        for owner, page in list(state.current_map_page.items()):
+            if page in disabled:
+                state.current_map_page.pop(owner, None)
+                state.current_room_id.pop(owner, None)
+                state.party_facing.pop(owner, None)
 
 
 def refresh_context_images(group_id: str, scenario_id: str, context: dict[str, Any]) -> None:
