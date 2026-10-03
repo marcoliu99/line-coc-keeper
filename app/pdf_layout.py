@@ -14,6 +14,10 @@ from typing import Any, Literal
 import pymupdf
 
 BBox = tuple[float, float, float, float]
+LayoutReason = Literal['two_columns', 'disabled', 'model_unavailable', 'backend_unavailable',
+                       'unsupported_rotation', 'initialization_error', 'inference_error',
+                       'malformed_result', 'not_two_columns', 'overlapping_regions',
+                       'incomplete_mapping', 'ambiguous_mapping', 'invalid_order', 'content_mismatch']
 
 
 @dataclass(frozen=True)
@@ -34,7 +38,7 @@ class LayoutRegion:
 class LayoutResult:
     text: str = ''
     status: Literal['accepted', 'fallback'] = 'fallback'
-    reason: str = 'model_unavailable'
+    reason: LayoutReason = 'model_unavailable'
     initialization_seconds: float = 0.0
     inference_seconds: float = 0.0
 
@@ -60,7 +64,7 @@ def _valid_box(box: BBox, width: float, height: float) -> bool:
 def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
                        width: float, height: float) -> LayoutResult:
     """Return native text only for completely mapped, noninterleaved two columns."""
-    def fallback(reason: str) -> LayoutResult:
+    def fallback(reason: LayoutReason) -> LayoutResult:
         return LayoutResult(reason=reason)
 
     if (not lines or not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0
@@ -145,17 +149,16 @@ def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
                         for line in sorted(assignments[i], key=lambda line: (line.bbox[1], line.bbox[0], line.id))]
         if column_lines != sorted(column_lines, key=lambda line: (line.bbox[1], line.bbox[0], line.id)):
             return fallback('invalid_order')
-    # Reject a merged body column containing parallel prose on opposite sides
-    # of a gutter. This is only a veto, never a second reading-order algorithm.
+    # Reject disconnected native horizontal bands inside a predicted column,
+    # including staggered short labels. This veto never constructs extra columns.
     for column in (0, 1):
-        prose = [line for i in ordered_regions if columns[i] == column for line in assignments[i]
-                 if line.bbox[2] - line.bbox[0] >= .15 * width]
-        for i, line in enumerate(prose):
-            for parallel in prose[i + 1:]:
-                vertical = min(line.bbox[3], parallel.bbox[3]) - max(line.bbox[1], parallel.bbox[1])
-                gap = max(line.bbox[0], parallel.bbox[0]) - min(line.bbox[2], parallel.bbox[2])
-                if vertical > .5 * min(line.bbox[3] - line.bbox[1], parallel.bbox[3] - parallel.bbox[1]) and gap >= .02 * width:
-                    return fallback('not_two_columns')
+        native = sorted((line for i in ordered_regions if columns[i] == column
+                         for line in assignments[i]), key=lambda line: line.bbox[0])
+        rightmost = native[0].bbox[2]
+        for line in native[1:]:
+            if line.bbox[0] - rightmost >= .02 * width:
+                return fallback('not_two_columns')
+            rightmost = max(rightmost, line.bbox[2])
     first = min(eligible[i].order or 0 for i in ordered_regions)
     last = max(eligible[i].order or 0 for i in ordered_regions)
     if (any(eligible[i].order is not None and (eligible[i].order or 0) >= first for i in prefixes)
@@ -214,7 +217,7 @@ def reorder_with_paddle(page: pymupdf.Page) -> LayoutResult:
     except (OSError, RuntimeError, ValueError):
         return _log_result(LayoutResult())
     initialization = inference = 0.0
-    stage = 'malformed_result'
+    stage: LayoutReason = 'malformed_result'
     try:
         if page.rotation:
             return _log_result(LayoutResult(reason='unsupported_rotation'))

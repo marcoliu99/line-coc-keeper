@@ -6,8 +6,8 @@
       "page": 1,
       "status": "accepted",
       "reason": "two_columns",
-      "initialization_seconds": 2.8753619999915827,
-      "inference_seconds": 1.225756542000454,
+      "initialization_seconds": 1.1955487910017837,
+      "inference_seconds": 1.2114149169938173,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -16,7 +16,7 @@
       "status": "accepted",
       "reason": "two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9905662089877296,
+      "inference_seconds": 0.9328058329992928,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -25,7 +25,7 @@
       "status": "accepted",
       "reason": "two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9673239999974612,
+      "inference_seconds": 0.9481864999979734,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -34,7 +34,7 @@
       "status": "fallback",
       "reason": "not_two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 1.0019064999942202,
+      "inference_seconds": 0.9129266250238288,
       "exact_expected_order": null,
       "native_unchanged": true
     },
@@ -43,7 +43,7 @@
       "status": "fallback",
       "reason": "not_two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9113832089933567,
+      "inference_seconds": 0.9202605420141481,
       "exact_expected_order": null,
       "native_unchanged": true
     }
@@ -64,10 +64,15 @@
   "gameplay_changed": false,
   "new_runtime_dependencies": false,
   "checks": {
-    "pytest": "1962 passed, 1 skipped; 152 subtests passed",
+    "pytest": "1964 passed, 1 skipped; 152 subtests passed",
     "ruff": "PASS",
     "mypy": "PASS: 128 source files",
     "compileall": "PASS",
-    "diff_check": "PASS"
+    "diff_check": "PASS",
+    "targeted": "34 passed"
+  },
+  "review": {
+    "standards": "PASS; fixed closed LayoutReason typing; no remaining hard findings",
+    "spec": "PASS; added aligned and staggered short merged-column rejection; no remaining material findings"
   }
 }

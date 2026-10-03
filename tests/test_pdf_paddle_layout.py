@@ -421,3 +421,14 @@ def test_merged_native_columns_cannot_be_mistaken_for_a_safe_double_column():
     ]
     result = order_recording(data)
     assert result.status == "fallback"
+
+
+@pytest.mark.parametrize("middle_offset", [0, 20])
+def test_short_three_column_lines_in_merged_region_are_not_accepted(middle_offset):
+    lines = [pdf_layout.NativeLine(i * 3 + j, (x, y + (middle_offset if j == 1 else 0), x + 65, y + 12 + (middle_offset if j == 1 else 0)), f"{name}{i + 1}")
+             for i, y in enumerate((100, 150))
+             for j, (x, name) in enumerate(((40, "LEFT"), (170, "MIDDLE"), (410, "RIGHT")))]
+    regions = [pdf_layout.LayoutRegion("text", (30, 90, 280, 190), 1),
+               pdf_layout.LayoutRegion("text", (400, 90, 570, 190), 2)]
+    result = pdf_layout.order_native_lines(lines, regions, width=600, height=800)
+    assert result.status == "fallback" and result.reason == "not_two_columns"
