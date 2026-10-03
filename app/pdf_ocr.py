@@ -39,7 +39,8 @@ def models_ready(root: Path) -> bool:
 
 
 def _candidate_safe(text: str, source: str, pairs: list[dict]) -> bool:
-    if len(text) > 100_000 or '\ufffd' in text or re.search(r'(?<!\w)[lI|][dD]\d', text):
+    if (not any(char.isalnum() for char in text) or len(text) > 100_000 or '\ufffd' in text
+            or re.search(r'(?<!\w)[lI|][dD]\d', text)):
         return False
     if source:
         required = Counter(re.sub(r'\s', '', token).casefold() for token in _MECHANIC.findall(source))

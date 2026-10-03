@@ -288,3 +288,9 @@ def test_unsafe_paddle_cannot_preempt_working_region_fallback(paddle_backend, mo
         evidence['blocks'][0]['lines'][0]['text'] = source
         text, attempts = pdf_loader._repair_local_regions(page, evidence, [], source, [1])
     assert text == fallback and attempts[0]['status'] == 'accepted'
+
+
+def test_nontext_paddle_noise_rejected(paddle_backend):
+    module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': ['... ??? ---']}]
+    assert module.recognize_with_paddle(image).status == 'rejected'
