@@ -443,7 +443,7 @@ async def handle_system_command(
             context = None
             if state.scenario_library_id == scenario_id:
                 try:
-                    context = scenario_library.load_context(scenario_id)
+                    context = scenario_activation.load_state_context(state)
                 except (FileNotFoundError, ValueError):
                     pass
             def remove_card(conn):
