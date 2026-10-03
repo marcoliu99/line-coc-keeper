@@ -63,7 +63,7 @@ def _has_body(text: str, row: dict, *, unread_body: bool) -> bool:
                for candidate in candidates)
 
 
-def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
+def _required_missing(row: dict, canonical_pages: dict[int, str]) -> bool:
     """A candidate label cannot substitute for a literal canonical requirement.
 
     A receipt must identify a missing image region and bind the requirement to
@@ -84,7 +84,7 @@ def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
             or not all(isinstance(n, (int, float)) and math.isfinite(n) for n in region)
             or region[0] >= region[2] or region[1] >= region[3]):
         return False
-    if not reference_compatible(quote, native_pages.get(page, '')):
+    if not reference_compatible(quote, canonical_pages.get(page, '')):
         return False
     if proof.get('requirement_sha256') != hashlib.sha256(quote.encode()).hexdigest():
         return False
@@ -92,22 +92,25 @@ def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
             proof.get('page_image_sha256') != row.get('page_image_sha256')
             or proof.get('region_bbox') != row.get('source_image_bbox')):
         return False
-    if (proof.get('kind') == 'canonical_attachment_dependency'
-            and proof.get('fragment_coverage_complete') is not True):
-        # One duplicated observed fragment cannot account for unseen required text.
+    if proof.get('kind') == 'canonical_attachment_dependency':
+        # The producer removes this receipt only after all complete observed
+        # fragments bind counterparts; a descriptor is never a counterpart.
         return True
     # Exact complete counterparts, never matching just dice/numbers, remove uniqueness.
-    return not any(reference_compatible(fragment, text) for text in native_pages.values())
+    return not any(reference_compatible(fragment, text) for text in canonical_pages.values())
 
 
 
-def bind_required_dependencies(rows: list[dict], native_pages: dict[int, str]) -> None:
+def bind_required_dependencies(rows: list[dict], canonical_pages: dict[int, str]) -> None:
     """Bind explicit unique-asset requirements, never infer them from UNKNOWN.
 
     This positive fast path recognizes direct Keeper instructions. Ambiguous
     references remain review candidates; a cover cannot stand in for a sheet.
     """
-    for page, native in native_pages.items():
+    for row in rows:
+        if row.get('required_source_evidence', {}).get('kind') == 'canonical_attachment_dependency':
+            row.pop('required_source_evidence')
+    for page, native in canonical_pages.items():
         for quote in re.split(r'(?<=[.!?])\s+', ' '.join(native.split())):
             dependency = re.fullmatch(
                 r'(?:The )?Keeper must (?:follow|use|read) the unique '
@@ -121,10 +124,12 @@ def bind_required_dependencies(rows: list[dict], native_pages: dict[int, str]) -
             for row in rows:
                 role = row.get('page_criticality', {})
                 if (row['page'] == page or not row.get('requires_image_transcription')
-                        or row.get('image_transcription', {}).get('status') == 'authoritative'
-                        or role.get('page_role') in {'PURE_ILLUSTRATION', 'COVER_DECORATIVE', 'EMPTY_NON_SOURCE', 'MAP_DERIVED'}):
+                        or row.get('image_transcription', {}).get('status') == 'authoritative'):
                     continue
                 target_page = dependency['page']
+                if not target_page and role.get('page_role') in {
+                        'PURE_ILLUSTRATION', 'COVER_DECORATIVE', 'EMPTY_NON_SOURCE', 'MAP_DERIVED'}:
+                    continue
                 heading = row.get('candidates', {}).get('native', '')
                 identified_asset = (role.get('observed_role') == 'handout'
                     or bool(re.search(r'(?im)^\s*(?:attached|setup|instruction|clue) sheet\b|^\s*handout\b', heading)))
@@ -140,7 +145,7 @@ def bind_required_dependencies(rows: list[dict], native_pages: dict[int, str]) -
                 continue
             role = row.get('page_criticality', {})
             fragments = role.get('observed_fragments', [])
-            if role.get('observed_fragments_complete') is True and fragments and all(any(reference_compatible(fragment, text) for text in native_pages.values())
+            if role.get('observed_fragments_complete') is True and fragments and all(any(reference_compatible(fragment, text) for text in canonical_pages.values())
                                  for fragment in fragments):
                 continue
             row['required_source_evidence'] = {
@@ -148,6 +153,7 @@ def bind_required_dependencies(rows: list[dict], native_pages: dict[int, str]) -
                 'requirement_quote': quote, 'requirement_sha256': hashlib.sha256(quote.encode()).hexdigest(),
                 'region_bbox': region, 'page_image_sha256': image_hash,
                 'fragment_coverage_complete': role.get('observed_fragments_complete') is True,
+                'observed_fragments': list(fragments),
                 'missing_fragment': fragments[0] if len(fragments) == 1 else dependency['information'],
             }
 
@@ -158,15 +164,19 @@ def compose(texts: list[str], rows: list[dict]) -> list[str]:
     Unsafe gameplay prevented by retained core gates: wrong rules, reordered
     instructions, or a concretely required image instruction missing from source.
     """
-    safe_native = {row['page']: row.get('candidates', {}).get('native', '') for row in rows
-                   if not row.get('requires_image_transcription')
+    safe_source = {row['page']: text for text, row in zip(texts, rows, strict=True)
+                   if (not row.get('requires_image_transcription')
+                       or row.get('image_transcription', {}).get('status') == 'authoritative')
+                   and row.get('source_authority') not in {'QUARANTINED', 'UNRESOLVED_CORE'}
                    and row.get('layout_decision', {}).get('status') != 'needs_review'
-                   and 'source_mechanics_unresolved' not in row.get('source_blocking_reasons', [])}
-    bind_required_dependencies(rows, safe_native)
+                   and not set(row.get('source_blocking_reasons', [])) & {
+                       'source_mechanics_unresolved', 'source_ordering_unverified'}
+                   and text.strip() and not text.lstrip().startswith('[PDF_')}
+    bind_required_dependencies(rows, safe_source)
     result = list(texts)
     for index, row in enumerate(rows):
         reasons = list(row.get('source_blocking_reasons', []))
-        required_missing = _required_missing(row, safe_native)
+        required_missing = _required_missing(row, safe_source)
         if required_missing and 'source_image_transcription_unverified' not in reasons:
             reasons.append('source_image_transcription_unverified')
         if row.get('source_authority') == 'QUARANTINED' and not reasons:
@@ -196,6 +206,11 @@ def compose(texts: list[str], rows: list[dict]) -> list[str]:
                                           'source_authority': 'UNRESOLVED_CORE'}
             row.update(selection)
             row['source_blocking_reasons'] = retained
+            row['disposition'] = 'needs_review'
+            row['publication_severity'] = 'HARD_BLOCK'
+            for reason in retained:
+                if reason not in row.setdefault('review_reasons', []):
+                    row['review_reasons'].append(reason)
             continue
         row['quarantine_evidence'] = {'selected_text': texts[index],
                                       'selected_sha256': row.get('selected_sha256'),

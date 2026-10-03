@@ -607,6 +607,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     map_candidates.add(number)
                 if number not in map_candidates:
                     pending.pop(number)
+            if row.get('resumed'):
+                # Explicit evidence retry does not restart source recovery or maps.
+                pending.pop(number, None)
         appendix = pdf_page_criticality.triage(pending, pdf_sha256=pdf_hash, safe=safe_pages,
             assets=asset_sections, current={row['page']: row['page_criticality']
                 for row in report['pages'] if 'page_criticality' in row}, retry_failed=retry_failed_classification)
@@ -917,6 +920,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if row['page'] not in review:
                 review.append(row['page'])
     texts = pdf_admission.compose(texts, report['pages'])
+    review = sorted(set(review) | {row['page'] for row in report['pages'] if row.get('review_reasons')})
     report['quarantined_pages'] = [row['page'] for row in report['pages']
                                    if row.get('source_authority') == 'QUARANTINED']
     full_text = render_source_pages(texts)

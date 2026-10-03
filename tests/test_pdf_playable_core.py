@@ -171,13 +171,14 @@ def test_title_only_native_page_cannot_publish_an_unread_raster_body(monkeypatch
                for row in report['pages'])
 
 
-@pytest.mark.parametrize('asset,counterpart,complete,blocked', [
-    ('Setup sheet', '', True, True),
-    ('Cover', '', True, False),
-    ('Setup sheet', 'The Keeper sets the opening event to dusk.', True, False),
-    ('Setup sheet', 'The Keeper sets the opening event to dusk.', False, True),
+@pytest.mark.parametrize('asset,counterpart,complete,explicit_page,blocked', [
+    ('Setup sheet', '', True, False, True),
+    ('Cover', '', True, False, False),
+    ('Cover', '', True, True, True),
+    ('Setup sheet', 'The Keeper sets the opening event to dusk.', True, False, False),
+    ('Setup sheet', 'The Keeper sets the opening event to dusk.', False, False, True),
 ])
-def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_path, asset, counterpart, complete, blocked):
+def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_path, asset, counterpart, complete, explicit_page, blocked):
     monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
     monkeypatch.setattr(config, 'PDF_SOURCE_DISCOVERY_ENABLED', False)
     monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
@@ -192,6 +193,8 @@ def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_pa
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
         SimpleNamespace(analyze_image=lambda *_a, **_kw: classification, analysis_model_identity=lambda: 'required-dependency'))
     quote = 'The Keeper must follow the unique setup instruction on the attached sheet to begin the scenario.'
+    if explicit_page:
+        quote = quote.replace('sheet to begin', 'sheet on physical page 2 to begin')
     with pymupdf.open() as doc:
         doc.new_page().insert_textbox((40, 60, 550, 700), quote + '\n' + counterpart)
         page = doc.new_page()
@@ -212,7 +215,8 @@ def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_pa
         assert 'required_source_evidence' not in report['pages'][1]
 
 
-def test_continue_retries_failed_classification_without_repeating_source_work(monkeypatch, tmp_path):
+@pytest.mark.parametrize("final_role", ["cover_decorative", "unknown"])
+def test_continue_retries_failed_classification_without_repeating_source_work(monkeypatch, tmp_path, final_role):
     import hashlib
 
     from app import pdf_page_criticality
@@ -222,7 +226,7 @@ def test_continue_retries_failed_classification_without_repeating_source_work(mo
     monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *_a, **_kw: None)
     monkeypatch.setattr(pdf_loader, 'recover_local_ocr', lambda *_a, **_kw: ('', []))
     calls = []
-    cover = {'page_role': 'cover_decorative', 'contains_gameplay_source': False, 'contains_mechanics': False,
+    cover = {'page_role': final_role, 'contains_gameplay_source': False, 'contains_mechanics': False,
         'contains_required_clue': False, 'asset_only': True, 'all_source_fragments_accounted_for': True,
         'source_fragments': [], 'optional_source_quote': '', 'optional_source_page': 0}
     def analyze(_png, tool, *_args, **_kwargs):
@@ -242,12 +246,73 @@ def test_continue_retries_failed_classification_without_repeating_source_work(mo
             'extraction_identity': pdf_loader.extraction_identity(), 'selected_text': row['selected_text'],
             'selected_sha256': row['selected_sha256'], 'report': row, 'image': images.get(row['page'])}
             for row in report['pages']}
+    from unittest.mock import Mock
+    recovery = Mock(return_value=('', []))
+    markitdown = Mock(return_value=None)
+    graphic = Mock()
+    monkeypatch.setattr(pdf_loader, 'recover_local_ocr', recovery)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', markitdown)
+    monkeypatch.setattr(pdf_loader, '_analyze_graphic_page', graphic)
     second = {}
     pdf_loader.extract_text(raw, quality_report=second, resume_pages=cached(first), retry_failed_classification=True)
     assert len(calls) == 2
     assert all(row['resumed'] for row in second['pages'])
     assert second['pages'][1]['page_criticality']['classification_attempt_status'] == 'completed'
-    assert second['pages'][1]['page_criticality']['page_role'] == 'COVER_DECORATIVE'
+    assert second['pages'][1]['page_criticality']['page_role'] == ('COVER_DECORATIVE' if final_role == 'cover_decorative' else 'UNKNOWN_NEEDS_REVIEW')
+    recovery.assert_not_called()
+    markitdown.assert_not_called()
+    graphic.assert_not_called()
     third = {}
     pdf_loader.extract_text(raw, quality_report=third, resume_pages=cached(second), retry_failed_classification=True)
     assert len(calls) == 2
+
+
+def test_partial_complete_counterparts_cannot_match_dependency_descriptor():
+    from app import pdf_admission
+    quote = 'The Keeper must follow the unique setup instruction on the attached sheet to begin the scenario.'
+    duplicate = 'Take 1d6 damage immediately.'
+    rows = [{'page': 1, 'candidates': {'native': quote + '\n' + duplicate + '\nsetup instruction'},
+        'source_blocking_reasons': []},
+        {'page': 2, 'requires_image_transcription': True, 'source_image_bbox': [0, 0, 100, 100],
+         'page_image_sha256': 'image', 'candidates': {'native': 'Setup sheet'},
+         'source_blocking_reasons': [], 'source_authority': 'QUARANTINED',
+         'page_criticality': {'observed_role': 'handout', 'observed_fragments_complete': True,
+             'observed_fragments': [duplicate, 'The Keeper must set the opening at dusk.']}}]
+    texts = [rows[0]['candidates']['native'], '']
+    pdf_admission.compose(texts, rows)
+    assert rows[1]['source_blocking_reasons'] == ['source_image_transcription_unverified']
+    rows.append({'page': 3, 'candidates': {'native': 'The Keeper must set the opening at dusk.'},
+                 'source_blocking_reasons': []})
+    pdf_admission.compose([rows[0]['candidates']['native'], '', rows[2]['candidates']['native']], rows)
+    assert 'required_source_evidence' not in rows[1]
+    assert rows[1]['source_blocking_reasons'] == []
+
+
+def test_dependency_is_bound_to_final_selected_source_not_historical_native():
+    from app import pdf_admission
+    quote = 'The Keeper must follow the unique setup instruction on the attached sheet to begin the scenario.'
+    rows = [{'page': 1, 'candidates': {'native': quote}, 'source_blocking_reasons': []},
+            {'page': 2, 'candidates': {'native': 'Setup sheet'}, 'requires_image_transcription': True,
+             'source_image_bbox': [0, 0, 100, 100], 'page_image_sha256': 'image',
+             'source_blocking_reasons': ['source_image_transcription_unverified']}]
+    pdf_admission.compose(['The Keeper begins in the entrance hall.', 'unverified'], rows)
+    assert not rows[1]['source_blocking_reasons']
+    assert 'required_source_evidence' not in rows[1]
+
+
+def test_authoritative_recovered_counterpart_can_release_required_image():
+    from app import pdf_admission
+    quote = 'The Keeper must follow the unique setup instruction on the attached sheet to begin the scenario.'
+    fragment = 'The Keeper starts the opening event at dusk.'
+    rows = [{'page': 1, 'candidates': {'native': quote}, 'source_blocking_reasons': []},
+            {'page': 2, 'candidates': {'native': 'Setup sheet'}, 'requires_image_transcription': True,
+             'source_image_bbox': [0, 0, 100, 100], 'page_image_sha256': 'image',
+             'source_blocking_reasons': ['source_image_transcription_unverified'],
+             'page_criticality': {'observed_role': 'handout', 'observed_fragments_complete': True,
+                 'observed_fragments': [fragment]}},
+            {'page': 3, 'candidates': {'native': ''}, 'requires_image_transcription': True,
+             'image_transcription': {'status': 'authoritative'}, 'source_blocking_reasons': []}]
+    pdf_admission.compose([quote, 'unverified', fragment], rows)
+    assert not rows[1]['source_blocking_reasons']
+    assert 'required_source_evidence' not in rows[1]
+    assert rows[2]['source_authority'] == 'VERIFIED'
