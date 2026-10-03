@@ -1846,13 +1846,23 @@
       "title": "PR155 source boundary regressions",
       "zh": "PR155 來源邊界回歸修正",
       "category": "bug",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/pdf_page_criticality.py",
         "app/pdf_loader.py",
         "app/pdf_admission.py",
         "app/legacy_commands.py",
-        "tests/test_pr155_review_regressions.py"
+        "tests/test_pr155_review_regressions.py",
+        "app/scenario_library.py",
+        "app/scenario_activation.py",
+        "app/scenario_reparse.py",
+        "tests/test_pdf_preview_fallback.py",
+        "tests/test_pdf_playable_core.py",
+        "tests/test_pdf_criticality_retry.py",
+        "tests/test_pdf_publication_guard.py",
+        "tests/test_scenario_revision_pinning.py",
+        "docs/specs/bug/pr155_source_boundary_regressions_validation.md",
+        "docs/specs/bug/pr155_source_boundary_regressions_results.json"
       ],
       "path": "docs/specs/bug/pr155_source_boundary_regressions.md",
       "zh_path": "docs/specs/bug/pr155_source_boundary_regressions_zh.md"
