@@ -15,3 +15,5 @@
 ## 另已重現 evidence-binding 缺陷
 
 完整 canonical sentence 明確提供自建角色替代選項，但以玩家偏好條件句加肯定允許，或明確提供預製角色與空白自建角色卡，現有 matcher 無法辨識。僅補肯定 permission；保留 mandatory-pregen conflict、exact source binding、author section、mixed-region audit、clue checks。不得依外觀判 optional。先 synthetic positive/negative FAIL/PASS；cache observations 重新綁 canonical evidence，不新增 classification request。
+
+Cache replay 的 asset-only pregen 必須能綁定目前完整 canonical permission，即使先前 provider 未填 quote；要求完整 fragments accounted、無 required clue、無 mandatory-pregen conflict。NPC/enemy 空白卡不是玩家許可。Mixed/unaccounted pages 不降級。
