@@ -1,23 +1,21 @@
 # 五本待處理證據收尾
 
-使用既有相容草稿與已消耗額度核對 45 頁圖片必要性、12 頁閱讀順序。分類 candidate 不是唯一必要 source 的證明；無法確認的證據保留 pending，不假稱必要。不改 admission、runtime、OCR、map、provider policy 或書籍特例。
+使用既有相容 production drafts 與已消耗 ledgers，核對 45 頁 image necessity、12 頁 ordering。Candidate 不是唯一必要 source 的證明。不改架構、taxonomy、admission、runtime、OCR、map、provider、retry、UX；不加書籍特例。
 
-## 已重現通用缺陷與最小修正
+## 已重現的通用修正
 
-頁底中央窄 block 的 bbox 跨過既有 footer threshold，被當右欄正文並縮窄 gutter。僅對 unresolved ambiguous_gutter 增加 deterministic recovery：窄、淺、中央、頁底 block；其餘正文必須形成有足夠間距的兩欄，不存在 spanning body；其餘 furniture 位置必須可確定。複製 evidence，只修 footer role，保留所有 ID/text，再通過原 geometry/permutation validator。不得花 provider request。
+1. 頁底中央窄 footer 被當正文，錯誤縮窄 gutter。僅 recovery unresolved ambiguous_gutter：窄、淺、中央、頁底；其餘正文必須形成有足夠 gutter 的兩欄、無 spanning、其餘 furniture 位置明確。複製 evidence，只修 footer role，保留全部 ID/text/bbox，再通過原 permutation/geometry validator；不花 provider request。
+2. 完整 safe canonical sentence 可明確肯定玩家自建角色偏好。辨識無限制肯定 permission；假設、否定、限制、NPC 用途不算許可。Cached asset-only pregen 必須 complete fragments accounted、無 required clue，才能重新綁目前 canonical permission；不依 provider 先前 quote selector。Mixed/unaccounted 不降級；只提供空白卡仍不足以證明玩家許可。
+3. only 修飾玩家人數加使用偏好，不是強制選用 pregens。保留原 must/required/only 的保守 coverage，只排除已重現的人數加偏好句型；overlapping matches 保留同句後續的 mandatory restriction。
 
-不改 accepted decisions/native analyzer，因此 accepted cache identity 保持；needs_review 不能作 safe cache reuse，Continue 必須重新驗證。
+## Cache／publication safety
 
-## 驗證與隱私
+不改 accepted native/cache semantics，不讓 safe pages 因 identity bump 全部失效。Footer recovery 只處理不可 reusable 的 unresolved pages；criticality observations 重新綁目前 source。無 ledger reset/refund/new draft/cap increase/hidden retry。驗證途中由已撤回 pattern 產生的一筆 provisional checkpoint 已恢復原始 unresolved evidence，最終 production Continue 重新處理；reservation 不變。
 
-先 synthetic FAIL 再最小 fix/PASS；測 broad/overlap rejection、mechanics/text preservation、budget 不變。五本 sequential Continue，不 reset/refund/提高 cap/new draft。source-safe 才 publication/reload/activation/start。原圖、原文、provider response 留 private；repo 僅 hashes/enums/counts。執行完整 tests、lint、types、compile、diff 及 Standards/Spec review。
+Ordering/mechanics/唯一必要 source 問題仍可 blocking。Map/topology/optional assets 保持 soft。必要性未解不代表已證實必要；不得強迫分類或 publication。
 
-## 另已重現 evidence-binding 缺陷
+## 驗證／剩餘限制
 
-完整 canonical sentence 明確提供自建角色替代選項，但以玩家偏好條件句加肯定允許，或明確提供預製角色與空白自建角色卡，現有 matcher 無法辨識。僅補肯定 permission；保留 mandatory-pregen conflict、exact source binding、author section、mixed-region audit、clue checks。不得依外觀判 optional。先 synthetic positive/negative FAIL/PASS；cache observations 重新綁 canonical evidence，不新增 classification request。
+Synthetic RED/PASS 覆蓋 geometry、overlap、完整 text/mechanics、無 request allowance、permission/NPC/blank/conditional negatives、cache rebinding、clue/unaccounted protection、player count 與 mandatory forms。Production Continue sequential，保留 drafts/ledgers。原圖、source、provider responses、graphs 保持 private；repo 僅 hashes/enums/counts/status。
 
-Cache replay 的 asset-only pregen 必須能綁定目前完整 canonical permission，即使先前 provider 未填 quote；要求完整 fragments accounted、無 required clue、無 mandatory-pregen conflict。NPC/enemy 空白卡不是玩家許可。Mixed/unaccounted pages 不降級。
-
-Review 收窄：僅提供空白角色卡不能證明玩家用途或無限制替代創角許可；不擴充這種 wording，保留 unresolved。只增加玩家偏好加明確無限制肯定允許的句式。
-
-另已重現通用 false conflict：only 修飾玩家人數不能當成 only 使用預製角色。只修 only 與 selection 動詞綁定；保留 must/required guards。先玩家人數與真正 mandatory regression，再 fix。
+本輪 evidence resolution 尚未完成：44 頁 image necessity、3 頁 ordering 未解；五本仍 IMPORT_PENDING。尚未證實任何唯一必要 image blocker，也未宣稱新劇本 publication/start 成功。PR merge／rollout HOLD，直到 evidence resolved 或真正必要 blocker 被證實。

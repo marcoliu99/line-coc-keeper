@@ -1,27 +1,23 @@
 # Five-book pending evidence resolution
 
-Resolve existing source-safety evidence using compatible saved drafts and their consumed budgets. Classification candidates are discovery signals, not proof of unique required source. Unknown evidence remains pending unless source-bound evidence resolves it. Do not change admission, runtime, OCR, maps, provider policy, or book-specific behavior.
+Use existing compatible production drafts and consumed ledgers to review 45 image-necessity and 12 ordering pages. Classification candidates are not unique-required-source proof. No architecture, taxonomy, admission, runtime, OCR, map, provider, retry, or UX redesign. No book-specific rules.
 
-## Confirmed generic defect
+## Reproduced generic corrections
 
-A narrow centered footer whose bounding box crosses the bottom furniture threshold can be classified as right-column body, falsely shrinking the gutter. Generic invariant: bottom-center page furniture must not define body gutter; all source text must remain preserved.
+1. A narrow bottom-center footer falsely defines body gutter. Recover only unresolved `ambiguous_gutter` with narrow/shallow centered footer geometry, two supported separated columns, no spanning body, and unambiguous remaining furniture. Preserve every ID/text/bbox; only the copied footer role changes. Existing permutation/geometry validation remains authoritative. No external request.
+2. Complete safe canonical permission may explicitly approve a player's preference to create investigators. Recognize unconditional affirmative permission, not hypothetical/negated/restricted/NPC permission. A cached asset-only pregen with complete source-fragment accounting and no required clue can rebind current canonical permission without relying on a provider's previous quote selector. Mixed/unaccounted pages cannot use this path. Blank-sheet availability alone remains insufficient.
+3. `only` modifying player count plus optional preference does not mandate pregen selection. Preserve the old conservative must/required/only restriction coverage, excluding only the reproduced count+preference construction. Overlapping matches preserve a later mandatory restriction in the same sentence.
 
-## Minimal correction
+## Cache and publication safety
 
-Only an unresolved `ambiguous_gutter` decision is eligible for deterministic footer recovery. Require a narrow, shallow, centered bottom block, two supported columns with a sufficient non-overlapping gutter, no spanning body, and unambiguous placement of remaining furniture. Copy evidence; change only the footer role in the copy. Keep every immutable block ID/text and pass the existing geometry/permutation validator before accepting. No provider dispatch or reservation. Accepted decisions are unchanged.
+Accepted native/cache semantics remain unchanged. No identity bump invalidates previously safe pages: footer recovery applies only to unresolved pages, which are never reusable safe cache; criticality observations are replayed and rebound against current source. No ledger resets, refunds, new drafts, cap increases, or hidden retries. One provisional checkpoint created by an intermediate rejected permission pattern was restored to its original unresolved source evidence before final production Continue; no reservation changed.
 
-No extraction identity change: accepted cached outputs and the native analyzer remain unchanged; unresolved pages are not reusable safe cache and are revalidated on Continue.
+Source ordering/mechanics/unique-required-source failures remain source gates. Map/topology/optional assets remain soft. Unresolved necessity is not a claim of proven required source. Do not force a final playability category or publication when evidence is insufficient.
 
-## Validation
+## Tests and evidence
 
-Synthetic regression first; reject broad/overlapping footer candidates and preserve mechanics, source blocks, budgets, and input objects. Review all 45 image and 12 ordering records, distinguishing proven required source from insufficient evidence. Resume sequentially without cap increases, refunds, new drafts, or hidden retries. Publish/reload/activate/start only source-safe results. Keep raw evidence private; commit hashes, enums, counts, geometry outcomes only. Full suite, lint, types, compile, diff checks and Standards/Spec review.
+Synthetic RED/PASS regressions cover footer geometry, overlapping furniture, immutable text/mechanics, no request allowance, affirmative creation permission, NPC/blank/conditional negatives, cache rebinding, clue/unaccounted protection, player count, and mandatory alternatives. Existing production Continue is sequential and retains drafts/ledgers. Raw images, source, provider outputs and graphs stay private. Repository artifacts contain only hashes/enums/counts/status. Full-suite and Standards/Spec review required.
 
-## Additional reproduced evidence-binding defect
+## Remaining limitations
 
-Explicit affirmative alternative-creation permission can be conditional in form (player preference followed by explicit approval), or author-provided pregen sheets can explicitly include blank sheets for creating new investigators. The current matcher rejects both even when the complete sentence is canonical and source-bound. Extend only affirmative permission recognition; preserve required-pre gen conflict guards, exact source binding, authored section limits, mixed-region audit, and clue checks. No appearance-based optionality. Synthetic positive and negated/conditional-restriction tests precede implementation. Cached observations must be rebound against current canonical evidence without new classification dispatch.
-
-Cache replay must rebind an already classified asset-only pregen to complete current canonical permission even when its earlier provider quote is empty. Require all source fragments accounted for and no required clue; preserve mandatory-pregen conflicts. NPC/enemy-only blank sheets are not player permission. This does not authorize mixed pages or classification candidates without source evidence.
-
-Review refinement: blank-sheet availability alone does not prove player ownership or unrestricted alternative creation. Do NOT expand permission for that wording; keep it unresolved. Only explicit player preference followed by unconditional affirmative approval is added.
-
-Another reproduced generic conflict: `only` modifying player count must not be treated as restricting pregen selection. Bind `only` directly to the selection predicate; preserve existing must/required guards. Synthetic player-count negative and explicit mandatory selection regressions precede the fix.
+Evidence resolution remains incomplete: 44 image necessity reviews and 3 ordering reviews. Five books remain IMPORT_PENDING. No confirmed unique-required image blocker has been established, and no new book publication/start is claimed. PR merge and rollout HOLD until evidence resolves or genuinely required blockers are proven.

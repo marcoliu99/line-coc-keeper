@@ -1818,7 +1818,10 @@
       "zh_path": "docs/specs/bug/pdf_pending_evidence_resolution_zh.md",
       "evidence": [
         "app/pdf_layout_adapters.py",
-        "tests/test_pdf_layout_adapters.py"
+        "tests/test_pdf_layout_adapters.py",
+        "docs/specs/bug/pdf_pending_evidence_resolution_results.json",
+        "docs/specs/bug/pdf_pending_evidence_resolution_validation.md",
+        "docs/specs/bug/pdf_pending_evidence_resolution_validation_zh.md"
       ]
     }
   ]
