@@ -240,18 +240,28 @@ def discard(conversation_id: str, draft_id: str = '') -> None:
 def progress(draft: dict) -> str:
     unresolved = [page for page, item in draft['pages'].items()
                   if item['report'].get('disposition', item['report'].get('status')) == 'needs_review']
-    message = (f"《{draft['file_name']}》匯入草稿已保存；待修復頁面：{', '.join(unresolved) or '處理中／尚未解析'}。"
-               '\n使用 /coc scenario continue 繼續匯入；/coc scenario status 查看；/coc scenario cancel 取消。')
-    unverified = [page for page, item in draft['pages'].items()
-                  if item['report'].get('image_transcription', {}).get('status') == 'unverified'
-                  and item['report'].get('disposition') == 'needs_review']
-    if unverified:
-        message += (f"\n第 {', '.join(unverified)} 頁影像轉錄尚未驗證；候選僅存於私人草稿，未發布。"
-                    '需要 AI/provider verification（設定影像供應商後繼續）或 manual approval（人工核對原稿與核准）。')
+    message = (f"⏳ 劇本《{draft['file_name']}》尚未完成匯入，進度已保存。"
+               '\n目前尚未啟用；待處理：')
+    explanations = {
+        'source_ordering_unverified': '正文閱讀順序仍無法可靠確認',
+        'source_mechanics_unresolved': '規則數值或數值配對仍無法可靠確認',
+        'source_image_transcription_unverified': '可能影響劇本的圖片文字尚未能可靠確認',
+    }
+    for page in unresolved:
+        reasons = draft['pages'][page]['report'].get('source_blocking_reasons', [])
+        details = '；'.join(dict.fromkeys(explanations.get(reason, '必要劇本內容仍需核對')
+                                        for reason in reasons)) or '必要劇本內容仍需核對'
+        message += f'\n- 第 {page} 頁：{details}。'
+    if not unresolved:
+        message += '\n- 尚未完成解析的頁面。'
+    if any('source_image_transcription_unverified' in draft['pages'][page]['report'].get(
+            'source_blocking_reasons', []) for page in unresolved):
+        message += '\n必要圖片文字須由影像分析或人工核對原稿確認後，才能發布。'
     budget = draft.get('report', {}).get('layout_budget', {})
     unseen = any(int(page) not in budget.get('visited_pages', []) for page in unresolved)
     if budget and (budget.get('remaining_requests', 0) <= 0
                    or (unseen and budget.get('remaining_pages', 0) <= 0)):
-        message += ('\n影像分析額度已用盡。請 KP 調高伺服器設定 PDF_LAYOUT_MAX_REQUESTS／'
-                    'PDF_LAYOUT_MAX_PAGES 後重新啟動服務再繼續，或取消匯入。既有使用量仍會保留。')
+        message += '\n目前分析額度已用盡，本次進度仍已保存；繼續匯入不會重設既有使用量。'
+    message += ('\n使用 /coc scenario continue 繼續匯入；'
+                '/coc scenario status 查看；/coc scenario cancel 取消。')
     return message

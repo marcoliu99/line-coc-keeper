@@ -87,6 +87,8 @@ def test_unresolved_upload_does_not_publish_or_index(monkeypatch, tmp_path):
                                                 'book.pdf', skip_similarity=True, owner_user_id='keeper'))
     assert drafts.load('room')['owner_id'] == 'keeper'
     assert isinstance(reply.call_args.args[0], drafts.ContinueImportMessage)
+    assert '尚未完成匯入，進度已保存' in str(reply.call_args.args[0])
+    assert '/coc scenario continue' in str(reply.call_args.args[0])
     publish.assert_not_called()
     index.assert_not_called()
 
@@ -224,3 +226,91 @@ def test_downstream_failure_keeps_accepted_pages_and_derived_description(monkeyp
     assert cached[1]['derived_description'] == 'Map analysis, not verbatim source'
     assert cached[1]['image'] == b'png'
     assert cached[1]['map'] == {'rooms': []}
+
+
+@pytest.mark.parametrize(('reason', 'explanation'), [
+    ('source_ordering_unverified', '正文閱讀順序'),
+    ('source_mechanics_unresolved', '規則數值'),
+    ('source_image_transcription_unverified', '圖片文字'),
+])
+def test_pending_summary_explains_source_gate_without_internal_codes(monkeypatch, tmp_path, reason, explanation):
+    draft = checkpoint(monkeypatch, tmp_path)
+    draft['pages']['2']['report']['source_blocking_reasons'] = [reason]
+    draft['report']['layout_budget'] = {'remaining_requests': 0}
+    message = drafts.progress(draft)
+    assert '⏳' in message and '進度已保存' in message
+    assert explanation in message and reason not in message
+    assert '分析額度已用盡' in message
+    assert '調高' not in message
+    assert all(command in message for command in ('scenario continue', 'scenario status', 'scenario cancel'))
+
+
+def test_unreadable_upload_has_safe_failure_summary(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock, Mock
+
+    from app import legacy_commands as commands
+    from app.models import GroupState
+
+    monkeypatch.setattr(drafts, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    monkeypatch.setattr(commands, 'load_state', lambda _: GroupState(group_id='room'))
+    monkeypatch.setattr(commands.pdf_loader, 'extract_preview', Mock(side_effect=ValueError('private-source-marker')))
+    reply = AsyncMock()
+    assert not asyncio.run(commands.handle_pdf_upload('room', reply, reply, b'broken', 'book.pdf'))
+    message = str(reply.call_args.args[0])
+    assert '❌' in message and '尚未啟用' in message and '重新上傳' in message
+    assert 'private-source-marker' not in message
+
+
+def test_existing_same_pdf_does_not_fake_success_for_failed_attempt(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from app import legacy_commands as commands
+    from app.models import GroupState
+
+    raw = b'%PDF-original'
+    monkeypatch.setattr(drafts, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    state = GroupState(group_id='room', scenario_library_id='existing', scenario_text='Previously installed source')
+    monkeypatch.setattr(commands, 'load_state', lambda _: state)
+    monkeypatch.setattr(commands.scenario_library, 'load_context', lambda _: {
+        'manifest': {'content_hash': 'existing', 'pdf_sha256': hashlib.sha256(raw).hexdigest()}})
+    def fail(_raw, *, quality_report, **_kwargs):
+        quality_report.update(pipeline_version='v1', pages=[
+            {'page': 1, 'disposition': 'needs_review', 'selected_text': ''}])
+        raise RuntimeError('private-extraction-marker')
+    monkeypatch.setattr(commands.pdf_loader, 'extract_text', fail)
+    reply = AsyncMock()
+    with pytest.raises(RuntimeError):
+        asyncio.run(commands.handle_pdf_upload('room', reply, reply, raw, 'book.pdf', skip_similarity=True))
+    message = str(reply.call_args.args[0])
+    assert '尚未完成匯入，進度已保存' in message
+    assert '已成功匯入' not in message and 'private-extraction-marker' not in message
+    assert state.scenario_text == 'Previously installed source'
+
+
+@pytest.mark.parametrize(('kind', 'fragment'), [
+    ('unsupported', '只支援'),
+    ('stale', '狀態已更新'),
+    ('pending_choice', '選擇'),
+    ('similar', 'reparse'),
+])
+def test_upload_early_false_exit_explains_next_action(monkeypatch, kind, fragment):
+    from unittest.mock import AsyncMock, Mock
+
+    from app import legacy_commands as commands
+    from app.models import GroupState
+
+    state = GroupState(group_id='room')
+    if kind == 'pending_choice':
+        state.pending_pdf_upload = {'title': 'Synthetic choice'}
+    if kind == 'similar':
+        state.pending_scenario_upload = {'title': 'Synthetic similarity'}
+    monkeypatch.setattr(commands, 'load_state', lambda _: state)
+    extractor = Mock(side_effect=AssertionError('early exits must not extract'))
+    monkeypatch.setattr(commands.pdf_loader, 'extract_text', extractor)
+    reply = AsyncMock()
+    assert not asyncio.run(commands.handle_pdf_upload('room', reply, reply, b'pdf',
+        'book.txt' if kind == 'unsupported' else 'book.pdf',
+        expected_revision=999 if kind == 'stale' else None))
+    assert fragment in str(reply.call_args.args[0])
+    assert reply.await_count == 1
+    extractor.assert_not_called()

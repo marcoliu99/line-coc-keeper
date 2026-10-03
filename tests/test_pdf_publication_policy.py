@@ -134,7 +134,8 @@ def test_important_image_only_source_without_independent_agreement_still_hard_bl
     assert scenario_library.list_scenarios() == []
 
 
-def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_pdf, monkeypatch, tmp_path, map_evidence_provider):
+@pytest.mark.parametrize('post_commit_error', [None, 'cleanup', 'notice'])
+def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_pdf, monkeypatch, tmp_path, map_evidence_provider, post_commit_error):
     import asyncio
     import json
 
@@ -157,6 +158,23 @@ def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_
     messages = []
     async def reply(message):
         messages.append(str(message))
+    if post_commit_error:
+        def fail(*_args, **_kwargs):
+            raise OSError('private-post-commit-marker')
+        if post_commit_error == 'cleanup':
+            from app import pdf_ingestion_drafts
+            monkeypatch.setattr(pdf_ingestion_drafts, 'discard_owned', fail)
+        else:
+            monkeypatch.setattr(commands.scenario_templates, 'preference_notice', fail)
+        with pytest.raises(OSError):
+            asyncio.run(commands.handle_pdf_upload('new-soft-scenario', reply, reply, raw,
+                                                  'new-scenario.pdf', skip_similarity=True))
+        installed = group_state.load_state('new-soft-scenario')
+        assert installed.scenario_library_id and installed.scenario_text
+        assert '已成功匯入，可以開始遊戲' in messages[-1]
+        assert '尚未啟用' not in messages[-1]
+        assert 'private-post-commit-marker' not in messages[-1]
+        return
     assert asyncio.run(commands.handle_pdf_upload('new-soft-scenario', reply, reply, raw,
         'new-scenario.pdf', skip_similarity=True)) is True
     state = group_state.load_state('new-soft-scenario')
@@ -170,7 +188,10 @@ def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_
     assert quality['page_count'] == 31
     assert quality['scenario_readiness'] == 'READY_WITH_WARNINGS'
     assert quality['blocked_pages'] == []
-    assert 'Map Engine 已停用' in '\n'.join(messages)
+    assert '自動地圖功能已停用' in '\n'.join(messages)
+    assert '已成功匯入，可以開始遊戲' in '\n'.join(messages)
+    assert '部分輔助功能不可用或需要核對' in '\n'.join(messages)
+    assert '/coc start' in '\n'.join(messages)
     assert '可開始遊戲' in '\n'.join(messages)
     assert not any('scenario continue' in message for message in messages)
 

@@ -180,8 +180,8 @@ def test_unverified_candidates_survive_draft_checkpoint_with_operator_instructio
     assert draft['pages']['1']['report']['image_transcription']['candidate'] == 'STR 60 DEX 55 Damage 1d10+DB'
     assert 'STR 60' not in draft['pages']['1']['selected_text']
     assert drafts.resume_pages(draft, report['extraction_identity']) == {}
-    assert 'AI/provider verification' in drafts.progress(draft)
-    assert 'manual approval' in drafts.progress(draft)
+    assert '影像分析或人工核對原稿' in drafts.progress(draft)
+    assert '確認後，才能發布' in drafts.progress(draft)
 
 
 @pytest.mark.parametrize('independent', ['Modifier -10', 'Cost 10'])

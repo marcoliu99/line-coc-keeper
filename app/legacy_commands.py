@@ -277,17 +277,17 @@ def _pdf_upload_confirmation_text(
             "守密人不會知道被截掉的內容；如果是很長的戰役合集，建議拆成幾份小一點的 PDF 分批上傳。"
         )
     if feature_warnings:
-        warning += "\n\n劇本已匯入，可開始遊戲。\n警告："
+        warning += "\n"
         if 'optional_pregen_unavailable' in feature_warnings:
             warning += "\n- 部分預製角色未解析；可使用自行建立的調查員。"
         if 'optional_handout_unavailable' in feature_warnings:
-            warning += "\n- 部分 optional handout 未解析；原始圖片仍保留。"
+            warning += "\n- 部分玩家手冊未解析；原始圖片仍保留。"
         if 'topology_assistance_unavailable' in feature_warnings:
             warning += "\n- 隱藏路線自動輔助不可用，Keeper 仍依原劇本文字處理。"
     map_note = ""
     if disabled_map_pages:
         pages_str = "、".join(str(page) for page in disabled_map_pages)
-        map_note = (f"\n\n⚠️ 第 {pages_str} 頁地圖尚未通過驗證，該頁 Map Engine 已停用；"
+        map_note = (f"\n\n⚠️ 第 {pages_str} 頁地圖尚未通過驗證，該頁自動地圖功能已停用；"
                     "劇本已載入，可開始遊戲，遊戲仍使用劇本文字與原始圖片。")
     if page_maps:
         # Keys may be plain ints (fresh from pdf_loader.extract_text) or
@@ -325,10 +325,13 @@ def _pdf_upload_confirmation_text(
             "這時職業可選：\n" + "、".join(OCCUPATIONS.keys()) + "\n"
         )
 
+    warning_heading = ("\n\n⚠️ 部分輔助功能不可用或需要核對："
+                       if warning or disabled_map_pages else "")
     return (
-        f"已載入劇本《{title}》（{len(text)} 字）。\n"
+        f"✅ 劇本《{title}》已成功匯入，可以開始遊戲。（{len(text)} 字）\n"
         + pregen_note
-        + "建好角色後，直接在群組打字描述行動即可開始冒險！"
+        + "建立角色後輸入 /coc start 開始遊戲。"
+        + warning_heading
         + warning
         + map_note
         + index_note
@@ -365,7 +368,7 @@ async def handle_pdf_upload(
     conversation's very first upload has no existing scenario to be
     ambiguous against, so it always applies immediately with no button."""
     if not file_name.lower().endswith(".pdf"):
-        await reply("目前只支援上傳 PDF 劇本檔案喔。")
+        await reply(f"❌ 劇本《{file_name}》目前無法匯入。只支援 PDF；請上傳 PDF 劇本檔案。")
         return False
 
     # Checked before any of the expensive extraction work below (and before
@@ -416,14 +419,36 @@ async def handle_pdf_upload(
         except pdf_ingestion_drafts.ImportOwnershipError as exc:
             await reply(str(exc))
             return False
+    activated = False
+    def on_activation() -> None:
+        nonlocal activated
+        activated = True
     try:
         return await _run_pdf_import(
             conversation_id, reply, push, pdf_bytes, file_name, skip_similarity,
-            reparse_candidate_id, expected_revision, previous_content_hash, lease,
+            reparse_candidate_id, expected_revision, previous_content_hash, lease, on_activation,
         )
     except pdf_ingestion_drafts.ImportOwnershipError as exc:
         await push(str(exc))
         return False
+    except Exception:
+        # A notification/cleanup error can occur after activation has committed.
+        current = load_state(conversation_id)
+        if activated:
+            await push(f"✅ 劇本《{current.scenario_title}》已成功匯入，可以開始遊戲。"
+                       "\n⚠️ 匯入後的輔助處理未完成；使用 /coc scenario status 查看狀態。"
+                       "\n建立角色後輸入 /coc start。")
+        elif current.pending_pdf_upload:
+            await push("等待你的選擇：劇本已解析，尚未套用；請先完成新劇本或修正劇本的選擇。")
+        else:
+            saved = pdf_ingestion_drafts.load(conversation_id)
+            if saved and saved.get('pages'):
+                await push(pdf_ingestion_drafts.ContinueImportMessage(
+                    pdf_ingestion_drafts.progress(saved), saved['draft_id']))
+            else:
+                await push(f"❌ 劇本《{file_name}》目前無法完成匯入。"
+                       "\n請使用 /coc scenario status 查看狀態；確認來源後重新上傳。")
+        raise
     finally:
         async with locks.get_conversation_lock(conversation_id):
             pdf_ingestion_drafts.release(lease)
@@ -433,6 +458,7 @@ async def _run_pdf_import(
     conversation_id: str, reply: Reply, push: Reply, pdf_bytes: bytes, file_name: str,
     skip_similarity: bool, reparse_candidate_id: str | None, expected_revision: int | None,
     previous_content_hash: str, lease: pdf_ingestion_drafts.ImportLease,
+    on_activation: Callable[[], None],
 ) -> bool:
     draft = pdf_ingestion_drafts.require_owner(lease)
     resume = pdf_ingestion_drafts.resume_pages(draft, pdf_loader.extraction_identity())
@@ -440,8 +466,8 @@ async def _run_pdf_import(
     if not skip_similarity:
         try:
             preview = await asyncio.to_thread(pdf_loader.extract_preview, pdf_bytes)
-        except ValueError as exc:
-            await reply(f"無法讀取 PDF 前幾頁：{exc}")
+        except ValueError:
+            await reply(f"❌ 劇本《{file_name}》目前無法安全匯入，因此尚未啟用。\n來源 PDF 無法讀取；請檢查檔案後重新上傳。")
             return False
         preview_title = pdf_loader.guess_title(preview, file_name=file_name)
         matches = await asyncio.to_thread(scenario_library.find_similar, preview_title, preview)
@@ -467,7 +493,7 @@ async def _run_pdf_import(
                 state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
                 save_state(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
-            await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
+            await reply(f"等待你的選擇：偵測到相似劇本：{labels}，尚未套用。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
             return False
 
     await reply("收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...")
@@ -487,11 +513,17 @@ async def _run_pdf_import(
             saved = pdf_ingestion_drafts.checkpoint(lease, exc.report, exc.result)
         await push(pdf_ingestion_drafts.ContinueImportMessage(pdf_ingestion_drafts.progress(saved), saved["draft_id"]))
         return False
-    except ValueError as exc:
+    except ValueError:
+        saved = None
         async with locks.get_conversation_lock(conversation_id):
             if parse_quality:
-                pdf_ingestion_drafts.checkpoint(lease, parse_quality, ('', [], False, {}, {}))
-        await push(f"讀取 PDF 失敗：{exc}")
+                saved = pdf_ingestion_drafts.checkpoint(lease, parse_quality, ('', [], False, {}, {}))
+        if saved and saved.get('pages'):
+            await push(pdf_ingestion_drafts.ContinueImportMessage(
+                pdf_ingestion_drafts.progress(saved), saved['draft_id']))
+        else:
+            await push(f"❌ 劇本《{file_name}》目前無法安全匯入，因此尚未啟用。"
+                       "\n來源 PDF 無法可靠讀取；請檢查檔案後重新上傳，或使用 /coc scenario status 查看狀態。")
         return False
     except Exception:
         async with locks.get_conversation_lock(conversation_id):
@@ -593,6 +625,7 @@ async def _run_pdf_import(
                 lambda: save_state(state, mutate_tx=install_first),
                 conversation_id, scenario_id, library_context,
             )
+            on_activation()
             confirmation_pending = False
             final_pregen_count = len(state.pregens)
         pdf_ingestion_drafts.discard_owned(lease)
