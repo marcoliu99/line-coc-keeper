@@ -1866,6 +1866,15 @@
       ],
       "path": "docs/specs/bug/pr155_source_boundary_regressions.md",
       "zh_path": "docs/specs/bug/pr155_source_boundary_regressions_zh.md"
+    },
+    {
+      "title": "PR155 opening analysis and map retention",
+      "zh": "PR155 opening analysis 與 map retention",
+      "category": "bug",
+      "status": "in_progress",
+      "evidence": [],
+      "path": "docs/specs/bug/pr155_opening_map_retention.md",
+      "zh_path": "docs/specs/bug/pr155_opening_map_retention_zh.md"
     }
   ]
 }
