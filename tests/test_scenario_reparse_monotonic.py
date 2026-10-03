@@ -160,8 +160,9 @@ def test_verified_pregen_added_without_replacing_existing_pool(monkeypatch, tmp_
     assert scenario_library.load_context(sid)['pregens'][0]['str_'] == 60
 
 
+@pytest.mark.parametrize('explicit_id', [False, True])
 @pytest.mark.parametrize('outcome', ['conflict', 'improved', 'no_improvement'])
-def test_reparse_command_preserves_live_game_and_reports_outcome(monkeypatch, tmp_path, outcome):
+def test_reparse_command_preserves_live_game_and_reports_outcome(monkeypatch, tmp_path, outcome, explicit_id):
     import asyncio
     from types import SimpleNamespace
 
@@ -215,7 +216,7 @@ def test_reparse_command_preserves_live_game_and_reports_outcome(monkeypatch, tm
     async def sink(*_args):
         pass
     asyncio.run(handle_text_message('reparse-live', 'keeper', display, reply, sink, sink, sink,
-                                    '/coc scenario reparse'))
+                                    '/coc scenario reparse' + (' ' + sid if explicit_id else '')))
     after = group_state.load_state('reparse-live').to_dict()
     for key in ('game_started', 'timeline_id', 'characters', 'pending_checks', 'pending_luck_decisions',
                 'current_map_page', 'current_room_id', 'combat', 'kp_assistant_user_id'):
@@ -320,3 +321,40 @@ def test_card_unseen_weapon_mechanics_are_not_adopted():
     card = {'name': 'Alice', 'str_': 40, 'con': 40, 'siz': 40, 'dex': 40,
             'weapons': {'pistol': {'ammo': 999, 'ammo_max': 999}}}
     assert scenario_reparse.validated_cards([card], text) == []
+
+
+def test_reparse_explicit_id_reads_requested_published_pdf_without_switching_game(monkeypatch, tmp_path):
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from app import db, pdf_ingestion_drafts
+    from app.commands.handlers import system
+    from app.commands.router import handle_text_message
+    from app.repositories import group_state
+    monkeypatch.setattr(db, 'DB_PATH', tmp_path / 'state.db')
+    monkeypatch.setattr(db, 'BACKUP_DIR', tmp_path / 'backups')
+    db._ensure_tables()
+    monkeypatch.setattr(group_state, 'DATA_DIR', tmp_path / 'groups')
+    monkeypatch.setattr(pdf_ingestion_drafts, 'SCENARIO_LIBRARY_DIR', tmp_path / 'library')
+    state = group_state.load_state('explicit-target')
+    state.kp_assistant_user_id = 'keeper'
+    state.scenario_library_id = 'currently-active'
+    state.scenario_text = 'Current approved source.'
+    state.game_started = True
+    group_state.save_state(state)
+    read = Mock(return_value=(b'saved bounded PDF', 'saved.pdf'))
+    upload = AsyncMock(return_value=False)
+    monkeypatch.setattr(scenario_library, 'read_source_pdf', read)
+    monkeypatch.setattr(system, 'handle_pdf_upload', upload)
+    async def sink(*_args):
+        pass
+    async def display(_user):
+        return 'Keeper'
+    asyncio.run(handle_text_message('explicit-target', 'keeper', display, sink, sink, sink, sink,
+                                    '/coc scenario reparse requested-published'))
+    read.assert_called_once_with('requested-published')
+    assert upload.await_args.kwargs['reparse_candidate_id'] == 'requested-published'
+    after = group_state.load_state('explicit-target')
+    assert after.scenario_library_id == 'currently-active'
+    assert after.scenario_text == 'Current approved source.'
+    assert after.game_started

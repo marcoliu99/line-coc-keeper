@@ -498,21 +498,25 @@ async def handle_system_command(
                     return
                 pending = state.pending_scenario_upload
                 from_published = pending is None
-                if from_published and not state.scenario_library_id:
+                requested_id = parts[3] if len(parts) > 3 else state.scenario_library_id
+                if not from_published and len(parts) > 3:
+                    await reply("目前有等待處理的 PDF；請先重新解析或取消，再指定劇本 ID。")
+                    return
+                if from_published and not requested_id:
                     await reply("沒有可重新解析的劇本或等待重新解析的 PDF。")
                     return
                 try:
                     if from_published:
-                        pdf_bytes, filename = scenario_library.read_source_pdf(state.scenario_library_id)
+                        pdf_bytes, filename = scenario_library.read_source_pdf(requested_id)
                         pending = {'key': '', 'file_name': filename,
-                                   'matches': [{'id': state.scenario_library_id}]}
+                                   'matches': [{'id': requested_id}]}
                     else:
                         assert pending is not None
                         pdf_bytes = scenario_library.read_staged_upload(pending["key"])
                 except FileNotFoundError:
                     state.pending_scenario_upload = None
                     save_state(state)
-                    await reply("暫存 PDF 已不存在，請重新上傳。")
+                    await reply("來源 PDF 已不存在或劇本 ID 無效，請查看 /coc scenario list 或重新上傳。")
                     return
                 state.pending_scenario_upload = None
                 save_state(state)
