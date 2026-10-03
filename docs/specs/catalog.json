@@ -1515,6 +1515,18 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
+    },
+    {
+      "title": "Paddle native-text reading-order comparison",
+      "zh": "Paddle 原生文字閱讀順序比較",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "docs/specs/maintenance/paddle_layout_order_comparison.md",
+        "docs/specs/maintenance/paddle_layout_order_comparison_zh.md"
+      ],
+      "path": "docs/specs/maintenance/paddle_layout_order_comparison.md",
+      "zh_path": "docs/specs/maintenance/paddle_layout_order_comparison_zh.md"
     }
   ]
 }
