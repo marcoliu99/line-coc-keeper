@@ -1828,10 +1828,19 @@
       "title": "Non-blocking first import and monotonic reparse",
       "zh": "首次可遊玩匯入與單調重新解析",
       "category": "enhancement",
-      "status": "in_progress",
+      "status": "implemented",
       "path": "docs/specs/enhancement/pdf_playable_first_monotonic_reparse.md",
       "zh_path": "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_zh.md",
-      "evidence": []
+      "evidence": [
+        "app/pdf_admission.py",
+        "app/scenario_reparse.py",
+        "app/scenario_library.py",
+        "tests/test_pdf_playable_core.py",
+        "tests/test_scenario_reparse_monotonic.py",
+        "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_results.json",
+        "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_validation.md",
+        "docs/specs/enhancement/pdf_playable_first_monotonic_reparse_validation_zh.md"
+      ]
     }
   ]
 }

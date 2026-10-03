@@ -160,7 +160,8 @@ def test_verified_pregen_added_without_replacing_existing_pool(monkeypatch, tmp_
     assert scenario_library.load_context(sid)['pregens'][0]['str_'] == 60
 
 
-def test_reparse_command_preserves_live_game_and_reports_conflict(monkeypatch, tmp_path):
+@pytest.mark.parametrize('outcome', ['conflict', 'improved', 'no_improvement'])
+def test_reparse_command_preserves_live_game_and_reports_outcome(monkeypatch, tmp_path, outcome):
     import asyncio
     from types import SimpleNamespace
 
@@ -184,10 +185,16 @@ def test_reparse_command_preserves_live_game_and_reports_conflict(monkeypatch, t
                                         analyze_text=lambda *_a, **_k: None))
     with pymupdf.open() as doc:
         doc.new_page().insert_textbox((30, 80, 550, 700), 'The Keeper describes the room. ' * 30 + 'Damage 1d8.')
+        if outcome == 'improved':
+            doc.new_page().insert_textbox((30, 80, 550, 700), 'The Keeper describes another room. ' * 5)
         raw = doc.tobytes()
-    published = '--- 第 1 頁 ---\n' + 'The Keeper describes the room. ' * 30 + 'Damage 1d6.'
+    published = '--- 第 1 頁 ---\n' + 'The Keeper describes the room. ' * 30 + ('Damage 1d6.' if outcome == 'conflict' else 'Damage 1d8.')
+    report = None
+    if outcome == 'improved':
+        published += '\n\n--- 第 2 頁 ---\n'
+        report = {'pages': [{'page': 2, 'source_authority': 'QUARANTINED'}]}
     sid = scenario_library.save_scenario(raw, title='Synthetic', filename='test.pdf', preview='',
-        text=published, indexes={}, pregens=[], page_maps={}, page_images={})
+        text=published, indexes={}, pregens=[], page_maps={}, page_images={}, parse_quality=report)
     state = group_state.load_state('reparse-live')
     state.kp_assistant_user_id = 'keeper'
     state.scenario_library_id = sid
@@ -214,9 +221,13 @@ def test_reparse_command_preserves_live_game_and_reports_conflict(monkeypatch, t
                 'current_map_page', 'current_room_id', 'combat', 'kp_assistant_user_id'):
         if key in before:
             assert after[key] == before[key], key
-    assert after['scenario_text'].strip() == published.strip()
+    if outcome == 'improved':
+        assert 'The Keeper describes another room.' in after['scenario_text']
+    else:
+        assert after['scenario_text'].strip() == published.strip()
     assert after['pending_pdf_upload'] is None
-    assert any('衝突' in message and '遊戲進度不受影響' in message for message in messages)
+    assert any({'conflict': '衝突', 'improved': '已補強', 'no_improvement': '沒有找到'}[outcome]
+               in message for message in messages)
 
 
 def test_library_rejects_quarantined_text_even_on_unrelated_reparse(monkeypatch, tmp_path):
