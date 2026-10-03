@@ -17,7 +17,7 @@ BBox = tuple[float, float, float, float]
 LayoutReason = Literal['two_columns', 'disabled', 'model_unavailable', 'backend_unavailable',
                        'unsupported_rotation', 'initialization_error', 'inference_error',
                        'malformed_result', 'not_two_columns', 'overlapping_regions',
-                       'incomplete_mapping', 'ambiguous_mapping', 'invalid_order', 'content_mismatch']
+                       'incomplete_mapping', 'ambiguous_mapping', 'invalid_order', 'content_mismatch', 'repair_required']
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,10 @@ def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
                           for i, region in enumerate(eligible)), reverse=True)
         if not matches or matches[0][0] < .15:
             return fallback('incomplete_mapping')
-        if len(matches) > 1 and matches[1][0] >= .15 and matches[0][0] - matches[1][0] < .1:
+        primary = eligible[matches[0][1]].bbox
+        if any((coverage >= .15 and matches[0][0] - coverage < .1) or (coverage > 0 and (eligible[i].bbox[0] >= primary[2]
+                                                   or eligible[i].bbox[2] <= primary[0]))
+               for coverage, i in matches[1:]):
             return fallback('ambiguous_mapping')
         assignments[matches[0][1]].append(line)
     body = [i for i, region in enumerate(eligible) if region.label == 'text' and assignments[i]]
@@ -205,11 +208,13 @@ def _log_result(result: LayoutResult) -> LayoutResult:
     return result
 
 
-def reorder_with_paddle(page: pymupdf.Page) -> LayoutResult:
+def reorder_with_paddle(page: pymupdf.Page, *, repair_required: bool = False) -> LayoutResult:
     """Try a locally prepared layout model; failures never supply replacement text."""
     global _engine, _engine_root
     if os.environ.get('PDF_PADDLE_LAYOUT_ENABLED', 'true').casefold() in {'false', '0', 'no'}:
         return _log_result(LayoutResult(reason='disabled'))
+    if repair_required:
+        return _log_result(LayoutResult(reason='repair_required'))
     try:
         root = model_directory()
         if not model_ready(root):

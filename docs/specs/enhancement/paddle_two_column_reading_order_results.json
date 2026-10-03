@@ -6,8 +6,8 @@
       "page": 1,
       "status": "accepted",
       "reason": "two_columns",
-      "initialization_seconds": 1.1955487910017837,
-      "inference_seconds": 1.2114149169938173,
+      "initialization_seconds": 2.394648874993436,
+      "inference_seconds": 1.2122599169961177,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -16,7 +16,7 @@
       "status": "accepted",
       "reason": "two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9328058329992928,
+      "inference_seconds": 0.9378523750056047,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -25,7 +25,7 @@
       "status": "accepted",
       "reason": "two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9481864999979734,
+      "inference_seconds": 0.9281370410171803,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -34,7 +34,7 @@
       "status": "fallback",
       "reason": "not_two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9129266250238288,
+      "inference_seconds": 0.9550894170242827,
       "exact_expected_order": null,
       "native_unchanged": true
     },
@@ -43,7 +43,7 @@
       "status": "fallback",
       "reason": "not_two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9202605420141481,
+      "inference_seconds": 0.963504124985775,
       "exact_expected_order": null,
       "native_unchanged": true
     }
@@ -64,15 +64,19 @@
   "gameplay_changed": false,
   "new_runtime_dependencies": false,
   "checks": {
-    "pytest": "1964 passed, 1 skipped; 152 subtests passed",
+    "pytest": "1966 passed, 1 skipped; 152 subtests passed",
     "ruff": "PASS",
     "mypy": "PASS: 128 source files",
     "compileall": "PASS",
     "diff_check": "PASS",
-    "targeted": "34 passed"
+    "targeted": "36 passed"
   },
   "review": {
     "standards": "PASS; fixed closed LayoutReason typing; no remaining hard findings",
     "spec": "PASS; added aligned and staggered short merged-column rejection; no remaining material findings"
-  }
+  },
+  "github_review_corrections": [
+    "Reject asymmetrically overlapping native lines across horizontally separated regions",
+    "Preserve legacy extraction input on pages requiring native numeric or replacement-character repair"
+  ]
 }

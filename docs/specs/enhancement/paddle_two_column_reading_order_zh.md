@@ -75,3 +75,5 @@ Threshold 是保守初值，不代表任意 PDF 語意保證。若三個已驗�
 三張既有真實雙欄頁的 production adapter 輸出完全符合獨立 expected text；單欄、三欄回舊流程。CI 使用保存的原生行與模型區域，並測試真正 extract_text 接點及缺模型／套件／初始化／inference／配對失敗 fallback。額外拒絕欄內逆序及合併區域內明顯平行正文，僅作安全 veto，不重建三欄。 合併區域的 veto 也檢查短文字與數字；同一預測欄內若有原生文字水平範圍斷開、間隔至少頁寬 2%，即使行高錯開也拒絕。這只否決不確定結果，不建立或排序其他欄；既有真實技能名稱／數值片段仍通過。
 
 本機 CPU smoke 封鎖 socket 連線，五頁零網路嘗試。模型 hash 與前輪 A/B 一致；詳見 [測試結果](paddle_two_column_reading_order_results.json)。正式 OCR 與遊戲流程未修改。
+
+GitHub PR review 修正：原生行若同時跨到水平分離的文字區域，即使其中一側配對分數較高也回舊流程。原生數值配對 unresolved 或含替代字元的頁面也略過 Paddle 排序，讓既有區塊式 OCR／AI 修補保留原本輸入。修補程式本身未修改。

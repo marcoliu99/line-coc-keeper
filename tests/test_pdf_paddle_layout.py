@@ -432,3 +432,35 @@ def test_short_three_column_lines_in_merged_region_are_not_accepted(middle_offse
                pdf_layout.LayoutRegion("text", (400, 90, 570, 190), 2)]
     result = pdf_layout.order_native_lines(lines, regions, width=600, height=800)
     assert result.status == "fallback" and result.reason == "not_two_columns"
+
+
+def test_asymmetric_native_line_spanning_columns_is_rejected():
+    lines = [pdf_layout.NativeLine(0, (40, 100, 460, 112), "LEFT LONG TEXT RIGHT FRAGMENT"),
+             pdf_layout.NativeLine(1, (40, 140, 240, 152), "LEFT SECOND"),
+             pdf_layout.NativeLine(2, (400, 130, 570, 142), "RIGHT EARLIER"),
+             pdf_layout.NativeLine(3, (400, 160, 570, 172), "RIGHT SECOND")]
+    regions = [pdf_layout.LayoutRegion("text", (30, 90, 300, 190), 1),
+               pdf_layout.LayoutRegion("text", (400, 90, 580, 190), 2)]
+    result = pdf_layout.order_native_lines(lines, regions, width=600, height=800)
+    assert result.status == "fallback" and result.reason == "ambiguous_mapping"
+
+
+def test_repair_required_page_keeps_legacy_extraction_and_does_not_infer(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    state = install_fake_layout(monkeypatch, tmp_path)
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", types.SimpleNamespace(
+        to_markdown=lambda doc, **kwargs: [{"metadata": {"page_number": 1}, "text": doc[0].get_text()}]))
+    loader = load_real_pdf_loader()
+    with make_double_column_document() as document:
+        document[0].insert_text((50, 300), "STR", fontsize=12)
+        content = document.tobytes()
+    monkeypatch.setenv("PDF_PADDLE_LAYOUT_ENABLED", "false")
+    original = loader.extract_text(content, local_ocr_limit=0, ai_repair_limit=0)
+    monkeypatch.setenv("PDF_PADDLE_LAYOUT_ENABLED", "true")
+    report = {}
+    assert loader.extract_text(content, quality_report=report, local_ocr_limit=0, ai_repair_limit=0) == original
+    assert any(p["status"] == "unresolved" for p in report["pages"][0]["numeric_pairs"])
+    assert report["pages"][0]["paddle_layout"]["reason"] == "repair_required"
+    assert state.predictions == 0

@@ -383,7 +383,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 text, method = native, "native"
                 selected_warnings.append("numeric_pair_review")
             warnings.extend(selected_warnings)
-            paddle_layout = pdf_layout.reorder_with_paddle(page)
+            # Existing repairs match contiguous native blocks; preserve their input.
+            repair_required = (any(p["status"] == "unresolved" for p in pairs)
+                               or any("\ufffd" in line["text"] for block in evidence["blocks"]
+                                      for line in block["lines"]))
+            paddle_layout = pdf_layout.reorder_with_paddle(page, repair_required=repair_required)
             if paddle_layout.status == 'accepted':
                 text, method = paddle_layout.text, 'paddle_layout'
             text, repairs = _repair_local_regions(page, evidence, pairs, text, local_budget)
