@@ -24,6 +24,7 @@ import pymupdf
 
 from app import (
     config,
+    pdf_admission,
     pdf_ai_repair,
     pdf_image_transcription,
     pdf_layout,
@@ -86,7 +87,7 @@ def extraction_identity() -> dict:
         except metadata.PackageNotFoundError:
             return 'unavailable'
     return {'pipeline_version': PIPELINE_VERSION, 'renderer_version': RENDERER_VERSION,
-            'ordering_validation_version': 2, 'page_criticality_version': pdf_page_criticality.VERSION, 'appendix_triage_version': 1,
+            'admission_version': pdf_admission.VERSION, 'ordering_validation_version': 2, 'page_criticality_version': pdf_page_criticality.VERSION, 'appendix_triage_version': 1,
             'quality_version': pdf_quality.VERSION, 'layout_version': pdf_layout.PIPELINE_VERSION,
             'pymupdf': version('PyMuPDF'), 'pymupdf4llm': version('pymupdf4llm'),
             'markitdown': version('markitdown'), 'ocr': pdf_ocr.identity(),
@@ -902,6 +903,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             row['review_reasons'].append('canonical_playable_source_missing')
             if row['page'] not in review:
                 review.append(row['page'])
+    texts = pdf_admission.compose(texts, report['pages'])
+    report['quarantined_pages'] = [row['page'] for row in report['pages']
+                                   if row.get('source_authority') == 'QUARANTINED']
     full_text = render_source_pages(texts)
     discovery_ledger = layout_budget.get('source_discovery', {})
     def checkpoint_discovery(ledger: dict) -> None:
@@ -976,6 +980,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     if readiness == 'READY' and report['source_topology_discovery']['pending_count']:
         readiness = 'READY_WITH_WARNINGS'
     feature_warnings: list[pdf_page_criticality.FeatureWarning] = []
+    if report['quarantined_pages']:
+        feature_warnings.append('source_review_quarantined')
     if any(row.get('page_criticality', {}).get('page_role') == 'OPTIONAL_PREGEN' for row in report['pages']):
         feature_warnings.append('optional_pregen_unavailable')
     if any(row.get('page_criticality', {}).get('page_role') == 'OPTIONAL_HANDOUT' for row in report['pages']):

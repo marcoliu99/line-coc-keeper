@@ -205,8 +205,8 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
     """Full-content ("二次比對") check used by reparse: is `text` still close
     enough to `scenario_id`'s existing scenario.txt to treat this as the same
     scenario? Exact-hash short-circuits (byte-identical re-upload); otherwise
-    falls back to a capped SequenceMatcher ratio, since full scenario texts
-    can be long enough that comparing them in full would be slow."""
+    compares the complete normalized source, so line wrapping cannot make the
+    same scenario look unrelated and a shared prefix cannot hide another book."""
     manifest = _read_json(_path(scenario_id) / "manifest.json", None)
     if not isinstance(manifest, dict):
         return False
@@ -217,7 +217,7 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
         existing_text = (_path(scenario_id) / "scenario.txt").read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return False
-    return SequenceMatcher(None, text[:20000], existing_text[:20000]).ratio() >= threshold
+    return SequenceMatcher(None, ' '.join(text.split()), ' '.join(existing_text.split())).ratio() >= threshold
 
 
 def _publication_quality(report: dict) -> dict:
@@ -225,6 +225,8 @@ def _publication_quality(report: dict) -> dict:
     from app import pdf_map_analysis
 
     public = copy.deepcopy(report)
+    public.pop('reparse_attempt_history', None)
+    public.pop('derived_descriptions', None)
     proposal = public.pop('source_topology_discovery', None)
     if isinstance(proposal, dict):
         public['source_topology_discovery_summary'] = {'status': proposal.get('status'),
@@ -236,6 +238,10 @@ def _publication_quality(report: dict) -> dict:
     rows = public.get('pages', [])
     rows = list(rows.values()) if isinstance(rows, dict) else rows
     for row in rows:
+        row.pop('quarantine_evidence', None)
+        row.pop('selected_text', None)
+        row.pop('candidates', None)
+        row.pop('required_source_evidence', None)
         row.pop('source_topology_discovery', None)
         row.pop('source_topology_proof', None)
         if row.get('map_analysis'):
@@ -243,9 +249,18 @@ def _publication_quality(report: dict) -> dict:
         if row.get('map_analysis_history'):
             row['map_analysis_history'] = [pdf_map_analysis.publication_summary(analysis)
                                            for analysis in row['map_analysis_history']]
-        if row.get('map_analysis'):
-            row.pop('map_candidate_description', None)
-            row.get('candidates', {}).pop('vision', None)
+        if row.get('source_authority') == 'QUARANTINED':
+            safe_keys = {'page', 'method', 'warnings', 'review_reasons', 'extracted_chars',
+                         'selected_sha256', 'source_authority', 'source_role', 'disposition',
+                         'publication_severity', 'source_blocking_reasons', 'derived_feature_warnings',
+                         'requires_image_transcription', 'raster_source_gap', 'resumed', 'map_analysis'}
+            criticality = row.get('page_criticality', {})
+            summary = {key: criticality[key] for key in ('page_role', 'source_critical', 'status')
+                       if key in criticality}
+            sanitized = {key: value for key, value in row.items() if key in safe_keys}
+            sanitized['page_criticality'] = summary
+            row.clear()
+            row.update(sanitized)
     return public
 
 
@@ -271,13 +286,105 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
     with _LIBRARY_LOCK:
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if scenario_id is None and reparse_candidate_id is None:
+            existing_id = f"{_slug(title)}-{content_hash[:8]}"
+            if _path(existing_id).exists():
+                reparse_candidate_id = existing_id
         # /coc scenario reparse's caller passes the KP-confirmed candidate here
         # instead of forcing scenario_id directly — content_similar re-verifies
         # it with the now-available full text (the spec's "完整內容二次比對") so a
         # reparse that turns out to be a genuinely different scenario still lands
         # in a new library entry instead of overwriting an unrelated one.
         if scenario_id is None and reparse_candidate_id and content_similar(reparse_candidate_id, text):
+            from app import scenario_reparse
             scenario_id = reparse_candidate_id
+            published = _path(scenario_id)
+            old_text = (published / 'scenario.txt').read_text(encoding='utf-8')
+            old_report = _read_json(published / '.ingestion-provenance.json',
+                                    _read_json(published / 'parse_quality.json', {}))
+            candidate_report = copy.deepcopy(parse_quality or {})
+            published_pdf = (published / 'source.pdf').read_bytes()
+            merged = scenario_reparse.merge(old_text, old_report, text, candidate_report)
+            if published_pdf != pdf_bytes:
+                # Physical page IDs from different PDF identities cannot be aligned
+                # by similarity. Retain current authority pending explicit source review.
+                candidate_diff = merged.report['reparse_diff']
+                merged = scenario_reparse.merge(old_text, old_report, old_text, old_report)
+                snapshot = copy.deepcopy(candidate_report)
+                snapshot.pop('reparse_attempt_history', None)
+                merged.report['reparse_attempt_history'][-1] = snapshot
+                merged.report['reparse_diff'].update(
+                    candidate_source_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                    conflicts=candidate_diff['conflicts'], source_pdf_identity_changed=True,
+                    deferred_upgrades=candidate_diff['upgraded'])
+            text, parse_quality = merged.text, merged.report
+            content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            rows = parse_quality['pages']
+            # Existing artifact certificates remain bound to their original PDF.
+            # Merge never recertifies model evidence or adopts an unrelated image.
+            if published_pdf != pdf_bytes:
+                pdf_bytes = published_pdf
+                page_maps = {}
+                page_images = {}
+            old_images = {int(image.stem.removeprefix('page_')): image.read_bytes()
+                          for image in (published / 'images').glob('page_*.png')}
+            page_images = {**page_images, **old_images}
+            page_set = set(scenario_reparse.pages(text))
+            old_maps = _certified_library_maps(published, _read_json(published / 'manifest.json', {}), page_set)
+            compatible_maps = dict(old_maps)
+            for page, graph in page_maps.items():
+                if str(page) in old_maps:
+                    if graph != old_maps[str(page)]:
+                        diff = parse_quality['reparse_diff']
+                        diff['conflicts'] += 1
+                        diff.setdefault('artifact_conflicts', []).append({'kind': 'map', 'page': int(page),
+                            'old_sha256': hashlib.sha256(json.dumps(old_maps[str(page)], sort_keys=True).encode()).hexdigest(),
+                            'new_sha256': hashlib.sha256(json.dumps(graph, sort_keys=True).encode()).hexdigest(),
+                            'selection': 'published_verified'})
+                    continue
+                record = next((row.get('map_analysis') for row in candidate_report.get('pages', [])
+                               if str(row.get('page')) == str(page)), None)
+                image = page_images.get(int(page))
+                if isinstance(image, bytes) and pdf_map_analysis.verified_graph(graph, record, image,
+                        canonical_source=text, source_context=pdf_source_topology_discovery.source_context(
+                            text, parse_quality, pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest())):
+                    compatible_maps[str(page)] = graph
+                    for row in rows:
+                        if str(row.get('page')) == str(page):
+                            row['map_analysis'] = copy.deepcopy(record)
+                    parse_quality['reparse_diff'].setdefault('newly_available_features', []).append(
+                        {'kind': 'map', 'page': int(page)})
+            # A source addition cannot invalidate a currently certified map.
+            context = pdf_source_topology_discovery.source_context(text, parse_quality,
+                pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest())
+            if any(not pdf_map_analysis.verified_graph(graph,
+                    next((row.get('map_analysis') for row in rows if str(row.get('page')) == key), None),
+                    page_images[int(key)], canonical_source=text, source_context=context)
+                    for key, graph in old_maps.items()):
+                raise ValueError('Source upgrade conflicts with existing certified map authority')
+            page_maps = compatible_maps
+            old_indexes = _read_json(published / 'indexes.json', {})
+            # An upgraded source page alone does not validate an NPC's mechanics
+            # or translated index summary. Preserve current artifacts until a
+            # source-bound artifact receipt can independently authorize additions.
+            indexes = old_indexes
+            old_pregens = _read_json(published / 'pregens.json', [])
+            # Only cards with literal source-page provenance may be newly merged.
+            additions = [card for card in scenario_reparse.validated_cards(pregens, text)
+                         if not any(old.get('name') == card.get('name') for old in old_pregens)]
+            pregens = old_pregens + additions
+            if additions:
+                parse_quality['reparse_diff'].setdefault('newly_available_features', []).append(
+                    {'kind': 'pregen', 'count': len(additions)})
+            preview = (published / 'preview.txt').read_text(encoding='utf-8')
+
+        from app import scenario_reparse
+        source_pages = scenario_reparse.pages(text)
+        if any(row.get('source_authority') == 'QUARANTINED'
+               and source_pages.get(row['page'], '').strip() for row in rows):
+            # Unsafe gameplay prevented: an unverified candidate cannot become
+            # Keeper source even if an upload caller bypasses composition.
+            raise ValueError('Quarantined content cannot enter canonical publication')
         scenario_id = scenario_id or f"{_slug(title)}-{content_hash[:8]}"
         target = _path(scenario_id)
         temporary = Path(tempfile.mkdtemp(prefix=f".{scenario_id}-", dir=SCENARIO_LIBRARY_DIR))
@@ -285,7 +392,9 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
         moved_previous = False
         try:
             chapters = build_chapters(pdf_bytes, text)
-            assets = _build_image_assets(page_images, page_maps, text, chapters)
+            quarantine = set((parse_quality or {}).get('quarantined_pages', []))
+            assets = _build_image_assets({page: image for page, image in page_images.items()
+                                          if page not in quarantine}, page_maps, text, chapters)
             previous_manifest = _read_json(target / "manifest.json", {})
             manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": previous_manifest.get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
             if parse_quality and parse_quality.get('pipeline_version'):
@@ -297,7 +406,7 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             (temporary / "source.pdf").write_bytes(pdf_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")
             (temporary / "scenario.txt").write_text(text, encoding="utf-8")
-            if any(row.get('map_analysis') for row in rows) or (parse_quality or {}).get('source_topology_discovery'):
+            if rows or (parse_quality or {}).get('source_topology_discovery'):
                 private_provenance = temporary / '.ingestion-provenance.json'
                 private_provenance.write_text(json.dumps(parse_quality, ensure_ascii=False, indent=2), encoding='utf-8')
                 private_provenance.chmod(0o600)
@@ -316,7 +425,7 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
                 moved_previous = True
             temporary.replace(target)
             if backup.exists():
-                shutil.rmtree(backup)
+                shutil.rmtree(backup, ignore_errors=True)
             return scenario_id
         except Exception:
             if moved_previous and not target.exists() and backup.exists():
@@ -373,6 +482,11 @@ def _certified_library_maps(root: Path, manifest: dict, pages: set[int]) -> dict
 
 
 def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any]:
+    with _LIBRARY_LOCK:
+        return _load_context(scenario_id, active_chapter_id)
+
+
+def _load_context(scenario_id: str, active_chapter_id: str) -> dict[str, Any]:
     root = _path(scenario_id)
     manifest = _read_json(root / "manifest.json", None)
     if not isinstance(manifest, dict):
@@ -389,7 +503,10 @@ def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any
     if not context_text.strip() and text.strip():
         context_text = text
     page_set = {p for c in window for p in range(c["start_page"], c["end_page"] + 1)}
+    quality = _read_json(root / 'parse_quality.json', {})
+    quarantined = set(quality.get('quarantined_pages', []))
     maps = _certified_library_maps(root, manifest, page_set)
+    page_set -= quarantined
     all_indexes = _read_json(root / "indexes.json", {"npcs": [], "locations": []})
     indexes = {"npcs": _filter_index(all_indexes.get("npcs", []), page_set), "locations": _filter_index(all_indexes.get("locations", []), page_set)}
     return {"manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}
@@ -429,6 +546,14 @@ def stage_upload(pdf_bytes: bytes) -> str:
     key = hashlib.sha256(pdf_bytes).hexdigest()
     (directory / f"{key}.pdf").write_bytes(pdf_bytes)
     return key
+
+
+def read_source_pdf(scenario_id: str) -> tuple[bytes, str]:
+    """Read the persisted source for the existing reparse command."""
+    with _LIBRARY_LOCK:
+        root = _path(scenario_id)
+        manifest = _read_json(root / 'manifest.json', {})
+        return (root / 'source.pdf').read_bytes(), manifest.get('source_filename', 'scenario.pdf')
 
 
 def read_staged_upload(key: str) -> bytes:

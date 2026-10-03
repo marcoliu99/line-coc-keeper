@@ -11,3 +11,8 @@
 先加 public extraction/library/command regression，再最小修正。驗證 unknown 隔離、真核心安全、authority 排除、page/region 單調性、feature 添加、衝突、transaction failure、state 保護。執行完整 pytest、ruff、mypy、compileall、diff-check 與 Standards/Spec review。六本 real validation 遵守既有 production cap 與 OpenAI bounded authorization；Haunting 僅已發布版本 reload/start，其他五本 fresh isolated first import，source-safe 才完成 publication/reload/use/start。Production reparse smoke 驗證無 downgrade、無 state reset。未驗證結果標 PENDING，不冒充成功。
 
 取捨：首次匯入可不啟用尚無權威的非核心內容。有具體核心缺失證據時可保留 blocking review；reparse 不用模型偏好或較新版本自動解決權威衝突。
+
+## 已實作的選擇邊界
+新 candidate 必須有明確 VERIFIED authority 與相符 source digest；只有已發布端保有 legacy authority。完全空白、插圖或 credits 的文件不能取代可遊玩核心。短篇但可信正文仍可使用，其他未解內容則隔離。
+
+PDF identity 改變時延後實體頁對齊，不將舊 receipt 綁至新 PDF。私人 attempt history 保存每次已消耗 candidate ledger，且不遞迴複製 history。缺少 artifact receipt 的新 index 延後採用。新增 pregen 需要完整名稱、原文數值配對及單一明確 stat set；多組角色數值同頁時不能把另一角色數值綁到名稱。既有角色池保持不變。

@@ -17,3 +17,8 @@ Regression-first public extraction/library/command tests cover unknown quarantin
 
 ## Tradeoffs
 First import may exclude unavailable non-core content. Positive core-source evidence can retain a blocking review. Reparse never resolves a source conflict through model preference or recency; conflicting current authority requires explicit source review.
+
+## Implemented selection boundaries
+New candidates require explicit verified authority and a matching source digest. Only the published side receives legacy authority. An entirely empty/art/credits document cannot substitute for playable core. Trusted short narrative source remains usable; uncertainty elsewhere is quarantined.
+
+A PDF identity change defers page alignment rather than assigning old receipts to a new PDF. Private attempt history preserves each consumed candidate ledger without recursively copying history. Reparse index additions without artifact receipts are deferred. Pregen additions require exact names, literal mechanics and unambiguous single stat sets; a page containing multiple stat sets cannot bind one character to another character's values. Existing pools remain intact.

@@ -81,7 +81,8 @@ def test_raster_source_with_header_requires_verified_transcription(extraction_wi
     assert row['raster_source_gap'] is True
     assert row['requires_image_transcription'] is True
     assert row['page_ocr_attempts']
-    assert 'source_image_transcription_unverified' in row['source_blocking_reasons']
+    # Unsafe gameplay prevented: a raster-only header cannot construct playable core.
+    assert 'canonical_playable_source_missing' in row['source_blocking_reasons']
 
 
 def test_overlapping_images_use_union_not_sum(extraction_without_providers):

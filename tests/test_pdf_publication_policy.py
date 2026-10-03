@@ -124,7 +124,7 @@ def test_important_image_only_source_without_independent_agreement_still_hard_bl
     assert report['blocked_pages'] == report['hard_block_pages'] == [1]
     assert report['soft_review_pages'] == []
     assert report['pages'][0]['publication_severity'] == 'HARD_BLOCK'
-    assert 'source_image_transcription_unverified' in report['pages'][0]['source_blocking_reasons']
+    assert 'canonical_playable_source_missing' in report['pages'][0]['source_blocking_reasons']
     assert report['pages'][0]['image_transcription']['reason'] == 'independent_evidence_conflict'
     assert 'STR 60' not in pending.value.result[0]
     monkeypatch.setattr(scenario_library, 'SCENARIO_LIBRARY_DIR', tmp_path)
@@ -271,7 +271,7 @@ def test_map_warning_does_not_hide_unresolved_source_mechanics(safe_map_pdf, mon
     assert report['hard_block_pages'] == [1]
     assert report['soft_review_pages'] == []
     assert report['pages'][0]['source_blocking_reasons'] == [
-        'source_image_transcription_unverified', 'source_mechanics_unresolved']
+        'source_mechanics_unresolved']
     assert report['pages'][0]['derived_feature_warnings'] == ['MAP_GRAPH_INVALID']
 
 

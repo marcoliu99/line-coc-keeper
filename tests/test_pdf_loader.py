@@ -203,11 +203,10 @@ class PdfQualityRegressionTests(unittest.TestCase):
         report = {}
         with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
              patch.object(pdf_loader, '_markitdown_page_texts', return_value=None), \
-             patch.object(pdf_loader.pdf_image_transcription, 'analyze', side_effect=RuntimeError('offline')), \
-             self.assertRaises(pdf_loader.LayoutReviewRequired) as raised:
-            pdf_loader.extract_text(payload, quality_report=report)
-        text, review, _, _, _ = raised.exception.result
-        self.assertEqual(report['blocked_pages'], [1])
+             patch.object(pdf_loader.pdf_image_transcription, 'analyze', side_effect=RuntimeError('offline')):
+            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+        self.assertEqual(report['blocked_pages'], [])
+        self.assertEqual(report['quarantined_pages'], [1])
         self.assertIn('Preserved source with 2d6', text)
         self.assertIn('image_verification_failed', report['pages'][0]['warnings'])
         self.assertIn(1, review)

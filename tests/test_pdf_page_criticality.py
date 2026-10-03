@@ -77,7 +77,7 @@ def test_noncritical_assets_publish_without_ocr(monkeypatch, tmp_path, kind, rol
 
 
 @pytest.mark.parametrize('kind', ['source_bearing', 'mixed', 'unknown'])
-def test_required_or_unknown_image_still_blocks(monkeypatch, tmp_path, kind):
+def test_candidate_or_unknown_image_is_quarantined(monkeypatch, tmp_path, kind):
     monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
     monkeypatch.setattr(config, 'PDF_SOURCE_DISCOVERY_ENABLED', False)
     monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
@@ -86,10 +86,11 @@ def test_required_or_unknown_image_still_blocks(monkeypatch, tmp_path, kind):
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
         analyze_image=lambda *_a, **_k: classification(kind), analysis_model_identity=lambda: 'test'))
     report = {}
-    with pytest.raises(pdf_loader.LayoutReviewRequired):
-        pdf_loader.extract_text(image_book(), quality_report=report)
-    assert report['hard_block_pages'] == [1]
-    assert report['pages'][0]['source_blocking_reasons'] == ['source_image_transcription_unverified']
+    text, *_ = pdf_loader.extract_text(image_book(), quality_report=report)
+    assert report['hard_block_pages'] == []
+    assert report['quarantined_pages'] == [1]
+    assert 'Quick-start cover' not in text
+    assert 'The Keeper describes' in text
 
 
 def test_optional_pregen_needs_bound_complete_permission():

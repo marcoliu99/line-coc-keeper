@@ -21,6 +21,7 @@ isn't reentrant.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -278,6 +279,9 @@ def _pdf_upload_confirmation_text(
         )
     if feature_warnings:
         warning += "\n"
+        if 'source_review_quarantined' in feature_warnings:
+            warning += ("\n- 尚未驗證的內容暫不作為 Keeper 權威資料；已確認的劇本正文可使用。"
+                        "稍後可使用 /coc scenario reparse 補強。")
         if 'optional_pregen_unavailable' in feature_warnings:
             warning += "\n- 部分預製角色未解析；可使用自行建立的調查員。"
         if 'optional_handout_unavailable' in feature_warnings:
@@ -574,7 +578,10 @@ async def _run_pdf_import(
             page_maps=page_maps, page_images=page_images, reparse_candidate_id=reparse_candidate_id,
             parse_quality=parse_quality,
         )
-        library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
+        current = load_state(conversation_id)
+        correcting = bool(reparse_candidate_id == scenario_id == current.scenario_library_id)
+        library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id,
+            current.active_chapter_id if correcting else '')
         text = library_context["text"]
         extracted_index = library_context["indexes"]
         pregens = library_context["pregens"]
@@ -589,6 +596,17 @@ async def _run_pdf_import(
         # them; the selected two-chapter window is copied only on activation.
         if state.pending_pdf_upload is not None:
             raced = True
+        elif correcting:
+            raced = False
+            _apply_scenario_correction(state, text, library_context['manifest']['title'], extracted_index, pregens)
+            _install_library_context(state, scenario_id, library_context, preserve_maps=True, preserve_pregens=True)
+            for page, graph in library_context['scene_maps'].items():
+                state.scene_maps.setdefault(page, graph)
+            install_result: dict[str, bool] = {}
+            _, image_refreshed = scenario_activation.commit_and_refresh(
+                lambda: save_state(state), conversation_id, scenario_id, library_context)
+            confirmation_pending = False
+            final_pregen_count = len(state.pregens)
         elif state.scenario_text.strip():
             raced = False
             state.pending_pdf_upload = {
@@ -615,7 +633,7 @@ async def _run_pdf_import(
             old_pool = list(state.pregens)
             _apply_new_scenario(state, text, library_context["manifest"]["title"], extracted_index, page_maps, pregens)
             _install_library_context(state, scenario_id, library_context)
-            install_result: dict[str, bool] = {}
+            install_result = {}
             def install_first(conn):
                 manual_pregens.capture_legacy(conn, conversation_id, None, old_pool)
                 state.pregens, install_result["stale"] = manual_pregens.install_pool(
@@ -644,6 +662,16 @@ async def _run_pdf_import(
         )
         return True
 
+    if correcting:
+        persisted = scenario_library.scenario_path(scenario_id) / 'parse_quality.json'
+        diff = json.loads(persisted.read_text(encoding='utf-8')).get('reparse_diff', {})
+        if diff.get('conflicts'):
+            await push(f"⚠️ 劇本《{title}》重新解析發現 {diff['conflicts']} 處衝突，已驗證內容未自動覆蓋；遊戲進度不受影響。")
+        elif diff.get('upgraded') or diff.get('newly_available_features'):
+            await push(f"✅ 劇本《{title}》重新解析完成，已補強通過驗證的內容；遊戲進度不受影響。")
+        else:
+            await push(f"劇本《{title}》重新解析完成，但沒有找到比目前版本更可靠的內容；目前版本與遊戲進度保持不變。")
+        return True
     variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
     await push(_pdf_upload_confirmation_text(
         title, text, low_text_pages, truncated, page_maps, extracted_index, final_pregen_count,

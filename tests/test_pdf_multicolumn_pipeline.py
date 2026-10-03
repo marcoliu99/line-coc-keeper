@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -53,11 +54,11 @@ def test_pending_page_never_reaches_library_publication(tmp_path, monkeypatch):
 
 
 def test_resumed_page_reuses_text_images_and_maps_without_parser_work(certified_map_result):
-    source = pdf('Accepted first page.', 'Pending second page.')
+    source = pdf('Accepted first page.', 'The Keeper describes the pending second page.')
     report = {}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None), \
          patch.object(loader.pdf_layout, 'analyze_page', side_effect=[
-             decision('Accepted first page.'), decision('Pending second page.', 'needs_review')]), \
+             decision('Accepted first page.'), decision('The Keeper describes the pending second page.', 'needs_review')]), \
          patch.object(loader.pdf_layout_adapters, 'resolve_page', side_effect=lambda page, result, budget: result), \
          pytest.raises(loader.LayoutReviewRequired):
         loader.extract_text(source, quality_report=report)
@@ -71,7 +72,7 @@ def test_resumed_page_reuses_text_images_and_maps_without_parser_work(certified_
         'map': graph, 'derived_description': 'labeled derived map'}}
     resumed = {}
     with patch.object(loader, '_pymupdf4llm_page_chunks', return_value=None) as parse, \
-         patch.object(loader.pdf_layout, 'analyze_page', return_value=decision('Pending second page.')) as analyze, \
+         patch.object(loader.pdf_layout, 'analyze_page', return_value=decision('The Keeper describes the pending second page.')) as analyze, \
          patch.object(loader, '_repair_local_regions', wraps=loader._repair_local_regions) as repair:
         text, _, _, images, maps = loader.extract_text(source, resume_pages=cached, quality_report=resumed)
     parse.assert_called_once_with(source, [2])
@@ -158,13 +159,13 @@ def test_unreadable_graphic_page_blocks_publication(failed, readable_page):
          patch.object(loader, '_markitdown_page_texts', return_value=None), \
          patch.object(loader.pdf_image_transcription, 'analyze', side_effect=RuntimeError('offline') if failed else None,
                       return_value=None), \
-         pytest.raises(loader.LayoutReviewRequired) as raised:
-        loader.extract_text(source, quality_report=report)
-    assert report['blocked_pages'] == [last_page + 1]
+         (nullcontext() if readable_page else pytest.raises(loader.LayoutReviewRequired)) as raised:
+        result = loader.extract_text(source, quality_report=report)
+    assert report['blocked_pages'] == ([] if readable_page else [last_page + 1])
     row = report['pages'][last_page]
-    assert row['disposition'] == 'needs_review'
+    assert row['disposition'] == ('soft_review' if readable_page else 'needs_review')
     assert ('image_verification_failed' if failed else 'vision_empty') in row['warnings']
-    assert raised.value.result[3][last_page + 1] == b'png'
+    assert (result if readable_page else raised.value.result)[3][last_page + 1] == b'png'
 
 
 def test_blank_page_without_graphics_keeps_legacy_disposition():

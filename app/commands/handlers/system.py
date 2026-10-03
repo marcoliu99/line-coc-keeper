@@ -497,11 +497,18 @@ async def handle_system_command(
                     await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
                     return
                 pending = state.pending_scenario_upload
-                if pending is None:
-                    await reply("沒有等待重新解析的 PDF。")
+                from_published = pending is None
+                if from_published and not state.scenario_library_id:
+                    await reply("沒有可重新解析的劇本或等待重新解析的 PDF。")
                     return
                 try:
-                    pdf_bytes = scenario_library.read_staged_upload(pending["key"])
+                    if from_published:
+                        pdf_bytes, filename = scenario_library.read_source_pdf(state.scenario_library_id)
+                        pending = {'key': '', 'file_name': filename,
+                                   'matches': [{'id': state.scenario_library_id}]}
+                    else:
+                        assert pending is not None
+                        pdf_bytes = scenario_library.read_staged_upload(pending["key"])
                 except FileNotFoundError:
                     state.pending_scenario_upload = None
                     save_state(state)
@@ -511,6 +518,7 @@ async def handle_system_command(
                 save_state(state)
                 commit_revision = state.state_revision
                 claimed_timeline = state.timeline_id
+            assert pending is not None
             candidate_matches = pending.get("matches") or []
             reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
             accepted = False
@@ -527,7 +535,9 @@ async def handle_system_command(
                 )
             finally:
                 current_draft = pdf_ingestion_drafts.load(conversation_id)
-                if accepted or (current_draft and current_draft.get("report", {}).get("blocked_pages")):
+                if from_published:
+                    pass  # The published source remains available; no staged choice to restore.
+                elif accepted or (current_draft and current_draft.get("report", {}).get("blocked_pages")):
                     scenario_library.discard_staged_upload(pending["key"])
                 else:
                     # Do not save the pre-extraction snapshot over concurrent play.

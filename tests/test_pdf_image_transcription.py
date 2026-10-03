@@ -96,7 +96,11 @@ def test_provider_verified_text_free_illustration_does_not_require_transcription
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
         analyze_image=lambda *_args, **_kwargs: {'page_type': 'illustration', 'text': ''}))
     report = {}
-    _, review, *_ = pdf_loader.extract_text(scanned_page, quality_report=report)
+    import pymupdf
+    with pymupdf.open(stream=scanned_page, filetype='pdf') as doc:
+        doc.new_page().insert_text((40, 100), 'The Keeper describes the scene.')
+        raw = doc.tobytes()
+    _, review, *_ = pdf_loader.extract_text(raw, quality_report=report)
     assert report['blocked_pages'] == []
     assert review == []
     assert report['pages'][0]['image_page_type'] == 'illustration'
@@ -297,7 +301,11 @@ def test_empty_paddle_and_provider_no_text_classification_can_resolve_tesseract_
     monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, SimpleNamespace(
         analyze_image=lambda *_args, **_kwargs: {'page_type': 'illustration', 'text': ''}))
     report = {}
-    text, review, *_ = pdf_loader.extract_text(scanned_page, quality_report=report)
+    import pymupdf
+    with pymupdf.open(stream=scanned_page, filetype='pdf') as doc:
+        doc.new_page().insert_text((40, 100), 'The Keeper describes the scene.')
+        raw = doc.tobytes()
+    text, review, *_ = pdf_loader.extract_text(raw, quality_report=report)
     assert report['blocked_pages'] == []
     assert review == []
     assert '5 es' not in text
@@ -386,5 +394,6 @@ def test_independent_agreement_cannot_change_an_intact_native_anchor(scanned_pag
     report = {}
     with pytest.raises(pdf_loader.LayoutReviewRequired) as pending:
         pdf_loader.extract_text(raw, quality_report=report)
-    assert native in pending.value.result[0]
+    assert native in report['pages'][0]['quarantine_evidence']['selected_text']
+    assert candidate not in pending.value.result[0]
     assert report['pages'][0]['image_transcription']['status'] == 'unverified'

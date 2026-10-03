@@ -1,0 +1,92 @@
+"""Uncertainty loses authority instead of blocking an independently safe core."""
+from types import SimpleNamespace
+
+import pymupdf
+import pytest
+
+from app import config, pdf_loader
+from app.providers import registry
+
+
+def book():
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.insert_textbox((40, 60, 550, 700), 'The Keeper describes the house and its occupants. ' * 12)
+        page = doc.new_page()
+        image = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 100, 100), False)
+        image.clear_with(200)
+        page.insert_image(page.rect, stream=image.tobytes('png'))
+        page.insert_text((40, 60), 'Unverified asset')
+        return doc.tobytes()
+
+
+@pytest.mark.parametrize('role', ['unknown', 'source_bearing', 'mixed'])
+def test_candidate_image_quarantined_before_gameplay_authority(monkeypatch, tmp_path, role):
+    monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    monkeypatch.setattr(config, 'PDF_SOURCE_DISCOVERY_ENABLED', False)
+    monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *_a, **_kw: None)
+    monkeypatch.setattr(pdf_loader, 'recover_local_ocr', lambda *_a, **_kw: ('', []))
+    result = {'page_role': role, 'contains_gameplay_source': True, 'contains_mechanics': False,
+                  'contains_required_clue': False, 'asset_only': False,
+                  'all_source_fragments_accounted_for': False, 'source_fragments': [],
+                  'optional_source_quote': '', 'optional_source_page': 0}
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
+                        SimpleNamespace(analyze_image=lambda *_a, **_kw: result,
+                                        analysis_model_identity=lambda: 'test'))
+    report = {}
+    text, *_ = pdf_loader.extract_text(book(), quality_report=report)
+    assert report['scenario_readiness'] == 'READY_WITH_WARNINGS'
+    assert report['hard_block_pages'] == []
+    assert report['quarantined_pages'] == [2]
+    assert 'Unverified asset' not in text
+    assert 'The Keeper describes' in text
+    assert report['pages'][1]['source_authority'] == 'QUARANTINED'
+    assert report['pages'][1]['selected_text'] == ''
+
+
+def test_credits_cannot_replace_quarantined_playable_core():
+    from app import pdf_admission
+    rows = [{'page': 1, 'candidates': {'native': 'Credits\nWritten by Example'},
+             'source_blocking_reasons': [], 'disposition': 'accepted'},
+            {'page': 2, 'candidates': {'native': ''}, 'requires_image_transcription': True,
+             'source_blocking_reasons': ['source_image_transcription_unverified']}]
+    pdf_admission.compose(['Credits\nWritten by Example', 'candidate'], rows)
+    # Unsafe gameplay prevented: publishing credits with no actual scenario source.
+    assert any('canonical_playable_source_missing' in row['source_blocking_reasons'] for row in rows)
+
+
+def test_required_receipt_overrides_noncore_heading():
+    import hashlib
+
+    from app import pdf_admission
+    quote = 'The Keeper must read the unique instruction in the attached sheet before opening the scene.'
+    rows = [{'page': 1, 'candidates': {'native': quote}, 'source_blocking_reasons': []},
+            {'page': 2, 'candidates': {'native': 'Character Sheet'},
+             'source_blocking_reasons': ['source_image_transcription_unverified'],
+             'required_source_evidence': {'requirement_page': 1, 'requirement_quote': quote,
+                'requirement_sha256': hashlib.sha256(quote.encode()).hexdigest(),
+                'missing_fragment': 'Unique Keeper-only setup instruction.', 'region_bbox': [0, 0, 100, 100]}}]
+    pdf_admission.compose([quote, 'Character Sheet'], rows)
+    # Unsafe gameplay prevented: loss of an explicitly required setup instruction.
+    assert rows[1]['source_blocking_reasons'] == ['source_image_transcription_unverified']
+
+
+def test_cached_quarantine_is_not_promoted_to_verified():
+    from app import pdf_admission
+    rows = [{'page': 1, 'candidates': {'native': 'The Keeper describes the scene.'},
+             'source_blocking_reasons': [], 'disposition': 'accepted'},
+            {'page': 2, 'source_authority': 'QUARANTINED', 'source_blocking_reasons': [],
+             'disposition': 'soft_review', 'selected_text': ''}]
+    result = pdf_admission.compose(['The Keeper describes the scene.', ''], rows)
+    assert result[1] == '' and rows[1]['source_authority'] == 'QUARANTINED'
+
+
+@pytest.mark.parametrize('native,illustration', [('Credits\nWritten by Example', False), ('', True)])
+def test_known_non_source_only_document_has_no_playable_core(native, illustration):
+    from app import pdf_admission
+    rows = [{'page': 1, 'candidates': {'native': native}, 'source_blocking_reasons': [],
+             'verified_illustration': illustration, 'disposition': 'accepted'}]
+    pdf_admission.compose([native], rows)
+    # Unsafe gameplay prevented: there are no scenario instructions to run at all.
+    assert rows[0]['source_blocking_reasons'] == ['canonical_playable_source_missing']

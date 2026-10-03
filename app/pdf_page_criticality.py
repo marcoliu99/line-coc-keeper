@@ -13,7 +13,7 @@ from app import config, pdf_quality
 from app.providers.registry import analysis_provider
 
 VERSION = 'page-criticality-v1'
-FeatureWarning = Literal['optional_pregen_unavailable', 'optional_handout_unavailable', 'topology_assistance_unavailable']
+FeatureWarning = Literal['optional_pregen_unavailable', 'optional_handout_unavailable', 'topology_assistance_unavailable', 'source_review_quarantined']
 RegionKind = Literal['character_asset', 'optional_reference', 'duplicate_reference', 'keeper_instruction', 'unknown']
 
 
