@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import pymupdf
 
-from app import pdf_ai_repair, pdf_ocr, pdf_quality
+from app import pdf_ai_repair, pdf_layout, pdf_ocr, pdf_quality
 from app.markitdown_shim import build_markitdown
 from app.scene_map import analyze_page_image
 
@@ -383,6 +383,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 text, method = native, "native"
                 selected_warnings.append("numeric_pair_review")
             warnings.extend(selected_warnings)
+            paddle_layout = pdf_layout.reorder_with_paddle(page)
+            if paddle_layout.status == 'accepted':
+                text, method = paddle_layout.text, 'paddle_layout'
             text, repairs = _repair_local_regions(page, evidence, pairs, text, local_budget)
             if repairs:
                 warnings.append("local_ocr_review" if any(r["status"] != "accepted" for r in repairs) else "local_ocr_repaired")
@@ -399,6 +402,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             report["pages"].append({"page": number, "method": method, "native_chars": len(native),
                                     "warnings": warnings, "evidence": evidence,
                                     "numeric_pairs": pairs, "layout_pair_checks": pair_checks, "local_repairs": repairs,
+                                    "paddle_layout": {"status": paddle_layout.status, "reason": paddle_layout.reason,
+                                                      "initialization_seconds": paddle_layout.initialization_seconds,
+                                                      "inference_seconds": paddle_layout.inference_seconds},
                                     "candidates": {"native": native, "layout": layout_text}})
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.

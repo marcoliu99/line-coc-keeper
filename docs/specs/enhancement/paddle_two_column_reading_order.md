@@ -1,6 +1,6 @@
 # Paddle two-column native-text reading order
 
-Status: awaiting design review; implementation has not started.
+Status: implemented following user approval of the design and public seams.
 
 ## Baseline and evidence
 
@@ -78,4 +78,10 @@ Use vertical TDD at the confirmed public seams: one failing behavior, minimal im
 
 Report baseline/final SHA, exact file scope, each of the five page outcomes, every fallback case, text/number/dice/SAN conservation, model initialization/page timing, all requested checks and MERGE READY/HOLD. Commit/push implementation to `enhancement/paddle-two-column-reading-order`; do not open a PR without an explicit request.
 
-Before implementation, confirm this spec and the observation seams above. The decision requiring particular attention is that the layout remains optional and local-only; Python 3.14 retains fallback rather than gaining a new Paddle execution mechanism. No production code is included in this design commit.
+The user approved this spec and its public seams with “開始實作”. Layout remains optional and local-only; Python 3.14 retains fallback without a new Paddle execution mechanism.
+
+## Implementation validation
+
+The production adapter matches independently frozen expected text on all three existing real two-column pages; single- and three-column pages fall back. CI exercises captured native lines/model regions and the actual extract_text integration, including missing models/packages, initialization/inference failures and incomplete mapping. Inverted in-column order and clearly parallel prose within a merged region are safety vetoes only, never three-column reconstruction.
+
+The live CPU smoke blocks socket connections: five pages, zero network attempts. Weight hashes match the prior A/B model. See [results](paddle_two_column_reading_order_results.json). OCR and gameplay code are unchanged.

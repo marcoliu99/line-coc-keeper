@@ -1,6 +1,6 @@
 # Paddle 雙欄原生文字閱讀順序
 
-狀態：等待設計審閱，尚未開始 implementation。
+狀態：使用者已核准設計與 public seams，implementation 已完成。
 
 ## Baseline 與證據
 
@@ -68,4 +68,10 @@ Threshold 是保守初值，不代表任意 PDF 語意保證。若三個已驗�
 
 交付 baseline/final SHA、實際檔案範圍、五頁結果、所有 fallback、文字/數字/骰子/SAN、init/每頁時間、指定checks與 MERGE READY/HOLD。implementation commit/push 到 `enhancement/paddle-two-column-reading-order`；沒有明確要求不開 PR。
 
-implementation 前確認本 spec 與 public seams。需特別確認：layout optional、本機cache限定；Python3.14維持fallback，不新增Paddle執行機制。本設計commit沒有productioncode。
+使用者以「開始實作」核准本 spec 與 public seams。layout optional、本機 cache 限定；Python 3.14 維持 fallback，不新增 Paddle 執行機制。
+
+## 實作驗證
+
+三張既有真實雙欄頁的 production adapter 輸出完全符合獨立 expected text；單欄、三欄回舊流程。CI 使用保存的原生行與模型區域，並測試真正 extract_text 接點及缺模型／套件／初始化／inference／配對失敗 fallback。額外拒絕欄內逆序及合併區域內明顯平行正文，僅作安全 veto，不重建三欄。
+
+本機 CPU smoke 封鎖 socket 連線，五頁零網路嘗試。模型 hash 與前輪 A/B 一致；詳見 [測試結果](paddle_two_column_reading_order_results.json)。正式 OCR 與遊戲流程未修改。
