@@ -576,6 +576,15 @@ async def _run_pdf_import(
         preview = preview or text[:12_000]
     async with locks.get_conversation_lock(conversation_id):
         pdf_ingestion_drafts.require_owner(lease)
+        # Reparse may update an existing library entry. Reject stale intent
+        # before publication, not merely before installing it into group state.
+        state = load_state(conversation_id)
+        if expected_revision is not None and state.state_revision != expected_revision:
+            await push("遊戲狀態已更新，這份 PDF 沒有套用；請重新開啟 Help 操作。")
+            return False
+        if state.pending_pdf_upload is not None:
+            await push("目前已有等待處理的 PDF，請先完成上一份的選擇，再重新上傳這份。")
+            return False
         scenario_id = await asyncio.to_thread(
             scenario_library.save_scenario, pdf_bytes, title=title, filename=file_name,
             preview=preview, text=text, indexes=extracted_index, pregens=pregens,
