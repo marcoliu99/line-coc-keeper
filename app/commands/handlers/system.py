@@ -513,7 +513,7 @@ async def handle_system_command(
                     else:
                         assert pending is not None
                         pdf_bytes = scenario_library.read_staged_upload(pending["key"])
-                except FileNotFoundError:
+                except (FileNotFoundError, ValueError):
                     state.pending_scenario_upload = None
                     save_state(state)
                     await reply("來源 PDF 已不存在或劇本 ID 無效，請查看 /coc scenario list 或重新上傳。")

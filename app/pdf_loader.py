@@ -96,7 +96,7 @@ def extraction_identity() -> dict:
             'docling': version('docling') if config.PDF_LAYOUT_DOCLING_ENABLED else 'disabled'}
 
 
-def _cached_page(cached: dict | None, pdf_hash: str, number: int, identity: dict) -> dict | None:
+def _cached_page(cached: dict | None, pdf_hash: str, number: int, identity: dict, *, retry_failed: bool = False) -> dict | None:
     if not isinstance(cached, dict):
         return None
     text = cached.get('selected_text')
@@ -108,6 +108,10 @@ def _cached_page(cached: dict | None, pdf_hash: str, number: int, identity: dict
             or row.get('page') != number or row.get('disposition') not in {'accepted', 'legacy_route', 'soft_review'}
             or row.get('publication_severity') == 'HARD_BLOCK' or row.get('source_blocking_reasons')
             or cached.get('selected_sha256') != hashlib.sha256(text.encode()).hexdigest()):
+        return None
+    if (retry_failed and row.get('source_authority') == 'QUARANTINED'
+            and row.get('page_criticality', {}).get('classification_attempt_status') in {'failed', 'reserved'}
+            and not isinstance(cached.get('image'), bytes)):
         return None
     if cached.get('map') is not None:
         if not isinstance(cached.get('image'), bytes):
@@ -479,7 +483,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     if resume_pages:
         with pymupdf.open(stream=pdf_bytes, filetype='pdf') as source:
             cached_pages = {number: cached for number in range(1, len(source) + 1)
-                            if (cached := _cached_page(resume_pages.get(number), pdf_hash, number, identity)) is not None}
+                            if (cached := _cached_page(resume_pages.get(number), pdf_hash, number, identity, retry_failed=retry_failed_classification)) is not None}
             unresolved_pages = [number for number in range(1, len(source) + 1) if number not in cached_pages]
         layout_pages = _pymupdf4llm_page_chunks(pdf_bytes, unresolved_pages)
     else:
@@ -501,6 +505,10 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 report['pages'].append(row)
                 if isinstance(cached.get('image'), bytes):
                     images[number] = cached['image']
+                    if (retry_failed_classification and row.get('source_authority') == 'QUARANTINED'
+                            and row.get('page_criticality', {}).get('classification_attempt_status') in {'failed', 'reserved'}):
+                        pending[number] = cached['image']
+                        row['retry_classification'] = True
                 if isinstance(cached.get('map'), dict):
                     maps[number] = copy.deepcopy(cached['map'])
                 if isinstance(cached.get('derived_description'), str):
@@ -572,6 +580,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                     "layout_decision": decision, "graphic_evidence": graphic,
                                     "safe_short_native": safe_short_native,
                                     "raster_source_gap": raster_source_gap,
+                                    "source_image_bbox": list(page.rect) if graphic else None,
+                                    "page_image_sha256": hashlib.sha256(images[number]).hexdigest() if graphic else None,
                                     "requires_image_transcription": bool(graphic and (raster_source_gap or len(text) < _LOW_TEXT_THRESHOLD)
                                                                            and not safe_short_native),
                                     "source_kind": ('native_text_absent' if not native.strip() else
@@ -581,12 +591,13 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         asset_sections = pdf_page_criticality.asset_sections(doc)
         for number in list(pending):
             row = report['pages'][number - 1]
-            if not row['requires_image_transcription'] or row.get('resumed'):
+            if not row['requires_image_transcription'] or (row.get('resumed') and not row.get('retry_classification')):
                 continue
             criticality = pdf_page_criticality.classify(pending[number], page=number,
                 pdf_sha256=pdf_hash, native=row['candidates']['native'], safe=safe_pages, asset=asset_sections.get(number),
                 retry_failed=retry_failed_classification)
             row['page_criticality'] = criticality
+            row.pop('retry_classification', None)
             if criticality['source_critical'] is False:
                 if criticality['page_role'] in {'OPTIONAL_PREGEN', 'OPTIONAL_HANDOUT', 'DUPLICATE_SOURCE'}:
                     texts[number - 1] = f"[PDF_OPTIONAL_ASSET: {criticality['page_role']}; page {number}; original image retained]"

@@ -410,3 +410,18 @@ def test_mandatory_selection_forms_are_not_lost_by_player_count_fix(restriction)
     from app import pdf_page_criticality as criticality
     safe = {2: 'Each player creates an investigator.', 3: restriction}
     assert criticality.decide(classification('pregen', all_source_fragments_accounted_for=True), '', safe, {})['source_critical'] is not False
+
+
+def test_malformed_classification_is_retryable_but_valid_unknown_is_completed(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+
+    from app import pdf_page_criticality as criticality
+    monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    provider = Mock(analyze_image=Mock(side_effect=[{'invalid': 'shape'}, classification('unknown')]),
+                    analysis_model_identity=lambda: 'invalid-schema')
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, provider)
+    kwargs = {'page': 1, 'pdf_sha256': 'book', 'native': '', 'safe': {}}
+    assert criticality.classify(b'image', **kwargs)['classification_attempt_status'] == 'failed'
+    assert criticality.classify(b'image', retry_failed=True, **kwargs)['classification_attempt_status'] == 'completed'
+    assert criticality.classify(b'image', retry_failed=True, **kwargs)['source_critical'] is None
+    assert provider.analyze_image.call_count == 2

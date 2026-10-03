@@ -13,7 +13,7 @@ from typing import Literal, TypedDict
 from app import pdf_quality
 from app.pdf_page_criticality import reference_compatible
 
-VERSION = 2
+VERSION = 3
 SourceAuthority = Literal['VERIFIED', 'QUARANTINED', 'UNRESOLVED_CORE']
 SourceRole = Literal['CORE_PLAYABLE_SOURCE', 'NON_AUTHORITATIVE_REVIEW']
 
@@ -69,6 +69,8 @@ def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
     A receipt must identify a missing image region and bind the requirement to
     safe canonical text on another page. Public booleans/confidence are ignored.
     """
+    if row.get('image_transcription', {}).get('status') == 'authoritative':
+        return False
     proof = row.get('required_source_evidence')
     if not isinstance(proof, dict):
         return False
@@ -82,12 +84,67 @@ def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
             or not all(isinstance(n, (int, float)) and math.isfinite(n) for n in region)
             or region[0] >= region[2] or region[1] >= region[3]):
         return False
-    if quote not in native_pages.get(page, ''):
+    if not reference_compatible(quote, native_pages.get(page, '')):
         return False
     if proof.get('requirement_sha256') != hashlib.sha256(quote.encode()).hexdigest():
         return False
+    if proof.get('kind') == 'canonical_attachment_dependency' and (
+            proof.get('page_image_sha256') != row.get('page_image_sha256')
+            or proof.get('region_bbox') != row.get('source_image_bbox')):
+        return False
     # Exact complete counterparts, never matching just dice/numbers, remove uniqueness.
     return not any(reference_compatible(fragment, text) for text in native_pages.values())
+
+
+
+def bind_required_dependencies(rows: list[dict], native_pages: dict[int, str]) -> None:
+    """Bind explicit unique-asset requirements, never infer them from UNKNOWN.
+
+    This positive fast path recognizes direct Keeper instructions. Ambiguous
+    references remain review candidates; a cover cannot stand in for a sheet.
+    """
+    for page, native in native_pages.items():
+        for quote in re.split(r'(?<=[.!?])\s+', ' '.join(native.split())):
+            dependency = re.fullmatch(
+                r'(?:The )?Keeper must (?:follow|use|read) the unique '
+                r'(?P<information>[^.!?]{1,160}\b(?:instruction|clue|mechanic)s?) '
+                r'(?:on|in|from) the (?:attached )?(?P<asset>sheet|handout)'
+                r'(?: on (?:physical )?page (?P<page>\d+))? '
+                r'to (?:begin|run|start) the scenario[.!]', quote, re.IGNORECASE)
+            if dependency is None:
+                continue
+            candidates = []
+            for row in rows:
+                role = row.get('page_criticality', {})
+                if (row['page'] == page or not row.get('requires_image_transcription')
+                        or row.get('image_transcription', {}).get('status') == 'authoritative'
+                        or role.get('page_role') in {'PURE_ILLUSTRATION', 'COVER_DECORATIVE', 'EMPTY_NON_SOURCE', 'MAP_DERIVED'}):
+                    continue
+                target_page = dependency['page']
+                heading = row.get('candidates', {}).get('native', '')
+                identified_asset = (role.get('observed_role') == 'handout'
+                    or bool(re.search(r'(?im)^\s*(?:attached|setup|instruction|clue) sheet\b|^\s*handout\b', heading)))
+                if ((target_page and row['page'] == int(target_page))
+                        or (not target_page and identified_asset)):
+                    candidates.append(row)
+            if len(candidates) != 1:
+                continue
+            row = candidates[0]
+            region = row.get('source_image_bbox')
+            image_hash = row.get('page_image_sha256')
+            if not isinstance(region, list) or not isinstance(image_hash, str):
+                continue
+            role = row.get('page_criticality', {})
+            fragments = role.get('observed_fragments', [])
+            if role.get('observed_fragments_complete') is True and fragments and all(any(reference_compatible(fragment, text) for text in native_pages.values())
+                                 for fragment in fragments):
+                continue
+            row['required_source_evidence'] = {
+                'kind': 'canonical_attachment_dependency', 'requirement_page': page,
+                'requirement_quote': quote, 'requirement_sha256': hashlib.sha256(quote.encode()).hexdigest(),
+                'region_bbox': region, 'page_image_sha256': image_hash,
+                'missing_fragment': fragments[0] if len(fragments) == 1 else dependency['information'],
+            }
 
 
 def compose(texts: list[str], rows: list[dict]) -> list[str]:
@@ -100,9 +157,13 @@ def compose(texts: list[str], rows: list[dict]) -> list[str]:
                    if not row.get('requires_image_transcription')
                    and row.get('layout_decision', {}).get('status') != 'needs_review'
                    and 'source_mechanics_unresolved' not in row.get('source_blocking_reasons', [])}
+    bind_required_dependencies(rows, safe_native)
     result = list(texts)
     for index, row in enumerate(rows):
         reasons = list(row.get('source_blocking_reasons', []))
+        required_missing = _required_missing(row, safe_native)
+        if required_missing and 'source_image_transcription_unverified' not in reasons:
+            reasons.append('source_image_transcription_unverified')
         if row.get('source_authority') == 'QUARANTINED' and not reasons:
             result[index] = ''
             continue
@@ -116,7 +177,7 @@ def compose(texts: list[str], rows: list[dict]) -> list[str]:
             not row.get('requires_image_transcription') and len(native.split()) >= 40)))
         retained = []
         # A source-bound requirement outranks a coarse heading/classification.
-        if _required_missing(row, safe_native):
+        if required_missing:
             retained.append('source_image_transcription_unverified')
         if not noncore or core_requirement:
             if 'source_mechanics_unresolved' in reasons:

@@ -24,6 +24,7 @@ class Region(TypedDict):
     kind: RegionKind
 
 
+ObservedRole = Literal['source_bearing', 'mixed', 'illustration', 'cover_decorative', 'empty', 'map', 'handout', 'pregen', 'unknown']
 Role = Literal['SOURCE_CRITICAL', 'PURE_ILLUSTRATION', 'COVER_DECORATIVE', 'EMPTY_NON_SOURCE',
                'MAP_DERIVED', 'OPTIONAL_HANDOUT', 'OPTIONAL_PREGEN', 'DUPLICATE_SOURCE', 'UNKNOWN_NEEDS_REVIEW']
 
@@ -38,6 +39,10 @@ class Criticality(TypedDict):
     optional_asset: bool
     classification_evidence: list[dict]
     reason: str
+    classification_attempt_status: NotRequired[Literal["reserved", "completed", "failed"]]
+    observed_role: NotRequired[ObservedRole]
+    observed_fragments_complete: NotRequired[bool]
+    observed_fragments: NotRequired[list[str]]
     required_regions: NotRequired[list[dict]]
     optional_regions: NotRequired[list[Region]]
 
@@ -180,7 +185,8 @@ def decide(output: object, native: str, safe: dict[int, str], excerpts: dict[int
     if pdf_quality.has_corrupted_mechanics(native) and role not in {'OPTIONAL_PREGEN', 'OPTIONAL_HANDOUT', 'DUPLICATE_SOURCE'}:
         role = 'SOURCE_CRITICAL'
     critical = True if role == 'SOURCE_CRITICAL' else None if role == 'UNKNOWN_NEEDS_REVIEW' else False
-    return {**result, 'page_role': role, 'source_critical': critical, 'unique_source_present': output['contains_gameplay_source'] and role != 'DUPLICATE_SOURCE',
+    return {**result, 'observed_role': cast(ObservedRole, kind),
+        'observed_fragments_complete': output['all_source_fragments_accounted_for'], 'observed_fragments': fragments, 'page_role': role, 'source_critical': critical, 'unique_source_present': output['contains_gameplay_source'] and role != 'DUPLICATE_SOURCE',
         'duplicate_source_present': role == 'DUPLICATE_SOURCE', 'requires_authoritative_transcription': critical is not False,
         'map_asset': kind == 'map', 'optional_asset': role in {'OPTIONAL_HANDOUT', 'OPTIONAL_PREGEN'},
         'classification_evidence': evidence, 'reason': role.lower()}
@@ -289,8 +295,11 @@ def classify(png: bytes, *, page: int, pdf_sha256: str, native: str, safe: dict[
                         or (attempt.get('output') is not None and not isinstance(attempt.get('output'), dict))):
                     return unknown('classification_storage_unavailable')
                 output = attempt.get('output')
-                if attempt['status'] == 'completed' or not retry_failed:
-                    return optional_section(safe, asset, output) or decide(output, native, safe, excerpts)
+                decision = decide(output, native, safe, excerpts)
+                outcome = attempt['status'] if decision['reason'] != 'classification_unavailable' else 'failed'
+                if outcome == 'completed' or not retry_failed:
+                    return {**(optional_section(safe, asset, output) or decision),
+                        'classification_attempt_status': outcome}
             supported = optional_section(safe, asset)
             if supported is not None:
                 return supported
@@ -307,10 +316,11 @@ def classify(png: bytes, *, page: int, pdf_sha256: str, native: str, safe: dict[
                     timeout=config.PDF_LAYOUT_IMAGE_TIMEOUT_SECONDS, max_retries=0)
             except Exception:  # noqa: BLE001 - failed classification preserves unknown, never invents source.
                 output = None
-            ledger['attempts'][key]['status'] = 'completed' if isinstance(output, dict) else 'failed'
+            decision = decide(output, native, safe, excerpts)
+            ledger['attempts'][key]['status'] = 'completed' if decision['reason'] != 'classification_unavailable' else 'failed'
             ledger['attempts'][key]['output'] = output if isinstance(output, dict) else None
             _write(path, ledger)
-            return decide(output, native, safe, excerpts)
+            return {**decision, 'classification_attempt_status': ledger['attempts'][key]['status']}
     except (OSError, ValueError, KeyError, TypeError):
         return unknown('classification_storage_unavailable')
 

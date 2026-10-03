@@ -169,3 +169,84 @@ def test_title_only_native_page_cannot_publish_an_unread_raster_body(monkeypatch
     assert report['scenario_readiness'] == 'BLOCKED'
     assert any('canonical_playable_source_missing' in row['source_blocking_reasons']
                for row in report['pages'])
+
+
+@pytest.mark.parametrize('asset,counterpart,blocked', [
+    ('Setup sheet', '', True),
+    ('Cover', '', False),
+    ('Setup sheet', 'The Keeper sets the opening event to dusk.', False),
+])
+def test_production_binds_explicit_required_sheet_dependency(monkeypatch, tmp_path, asset, counterpart, blocked):
+    monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    monkeypatch.setattr(config, 'PDF_SOURCE_DISCOVERY_ENABLED', False)
+    monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *_a, **_kw: None)
+    monkeypatch.setattr(pdf_loader, 'recover_local_ocr', lambda *_a, **_kw: ('', []))
+    fragment = 'The Keeper sets the opening event to dusk.'
+    classification = {'page_role': 'handout' if asset != 'Cover' else 'cover_decorative',
+        'contains_gameplay_source': asset != 'Cover', 'contains_mechanics': False,
+        'contains_required_clue': False, 'asset_only': True,
+        'all_source_fragments_accounted_for': True, 'source_fragments': [fragment] if asset != 'Cover' else [],
+        'optional_source_quote': '', 'optional_source_page': 0}
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
+        SimpleNamespace(analyze_image=lambda *_a, **_kw: classification, analysis_model_identity=lambda: 'required-dependency'))
+    quote = 'The Keeper must follow the unique setup instruction on the attached sheet to begin the scenario.'
+    with pymupdf.open() as doc:
+        doc.new_page().insert_textbox((40, 60, 550, 700), quote + '\n' + counterpart)
+        page = doc.new_page()
+        image = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 100, 100), False)
+        image.clear_with(200)
+        page.insert_image(page.rect, stream=image.tobytes('png'))
+        page.insert_text((40, 60), asset)
+        raw = doc.tobytes()
+    report = {}
+    if blocked:
+        with pytest.raises(pdf_loader.LayoutReviewRequired):
+            pdf_loader.extract_text(raw, quality_report=report)
+        assert report['hard_block_pages'] == [2]
+        assert report['pages'][1]['required_source_evidence']['requirement_page'] == 1
+    else:
+        pdf_loader.extract_text(raw, quality_report=report)
+        assert report['hard_block_pages'] == []
+        assert 'required_source_evidence' not in report['pages'][1]
+
+
+def test_continue_retries_failed_classification_without_repeating_source_work(monkeypatch, tmp_path):
+    import hashlib
+
+    from app import pdf_page_criticality
+    monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    monkeypatch.setattr(config, 'PDF_SOURCE_DISCOVERY_ENABLED', False)
+    monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *_a, **_kw: None)
+    monkeypatch.setattr(pdf_loader, 'recover_local_ocr', lambda *_a, **_kw: ('', []))
+    calls = []
+    cover = {'page_role': 'cover_decorative', 'contains_gameplay_source': False, 'contains_mechanics': False,
+        'contains_required_clue': False, 'asset_only': True, 'all_source_fragments_accounted_for': True,
+        'source_fragments': [], 'optional_source_quote': '', 'optional_source_page': 0}
+    def analyze(_png, tool, *_args, **_kwargs):
+        if tool['name'] == pdf_page_criticality.TOOL['name']:
+            calls.append(tool['name'])
+            return None if len(calls) == 1 else cover
+        return None
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER,
+        SimpleNamespace(analyze_image=analyze, analysis_model_identity=lambda: 'retry-production'))
+    raw = book()
+    first = {}
+    _, _, _, images, _ = pdf_loader.extract_text(raw, quality_report=first)
+    assert first['pages'][1]['page_criticality']['classification_attempt_status'] == 'failed'
+    def cached(report):
+        return {row['page']: {'pdf_sha256': hashlib.sha256(raw).hexdigest(),
+            'pipeline_version': pdf_loader.PIPELINE_VERSION, 'renderer_version': pdf_loader.RENDERER_VERSION,
+            'extraction_identity': pdf_loader.extraction_identity(), 'selected_text': row['selected_text'],
+            'selected_sha256': row['selected_sha256'], 'report': row, 'image': images.get(row['page'])}
+            for row in report['pages']}
+    second = {}
+    pdf_loader.extract_text(raw, quality_report=second, resume_pages=cached(first), retry_failed_classification=True)
+    assert len(calls) == 2
+    assert all(row['resumed'] for row in second['pages'])
+    assert second['pages'][1]['page_criticality']['classification_attempt_status'] == 'completed'
+    assert second['pages'][1]['page_criticality']['page_role'] == 'COVER_DECORATIVE'
+    third = {}
+    pdf_loader.extract_text(raw, quality_report=third, resume_pages=cached(second), retry_failed_classification=True)
+    assert len(calls) == 2

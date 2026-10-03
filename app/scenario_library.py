@@ -290,7 +290,12 @@ def _publication_quality(report: dict) -> dict:
         row.pop('quarantine_evidence', None)
         row.pop('selected_text', None)
         row.pop('candidates', None)
-        row.pop('required_source_evidence', None)
+        proof = row.pop('required_source_evidence', None)
+        if isinstance(proof, dict):
+            row['required_source_summary'] = {key: proof[key] for key in
+                ('kind', 'requirement_page', 'requirement_sha256', 'region_bbox', 'page_image_sha256') if key in proof}
+        criticality = row.get('page_criticality', {})
+        criticality.pop('observed_fragments', None)
         row.pop('source_topology_discovery', None)
         row.pop('source_topology_proof', None)
         if row.get('map_analysis'):
@@ -571,7 +576,10 @@ def matching_revision(scenario_id: str, chapter_id: str, text: str, maps: dict) 
         for root in sorted(directory.glob('*')):
             if not re.fullmatch(r"[0-9a-f]{64}", root.name):
                 continue
-            context = _load_context(scenario_id, chapter_id, root.name)
+            try:
+                context = _load_context(scenario_id, chapter_id, root.name)
+            except (ValueError, FileNotFoundError):
+                continue
             published_maps = {key: value for key, value in maps.items() if key.isdigit()}
             if context['text'].strip() == text.strip() and context['scene_maps'] == published_maps:
                 return root.name
@@ -603,6 +611,7 @@ def clean_scenario(scenario_id: str) -> None:
             raise FileNotFoundError(scenario_id)
         scenario_source_authoring._clean_preparation(scenario_id)
         shutil.rmtree(target)
+        shutil.rmtree(SCENARIO_LIBRARY_DIR / ".revisions" / scenario_id, ignore_errors=True)
 
 
 def stage_upload(pdf_bytes: bytes) -> str:

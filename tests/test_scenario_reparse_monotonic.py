@@ -371,3 +371,50 @@ def test_legacy_publication_is_not_reported_as_independent_source_verification()
         assert change['old_evidence'] == 'legacy_published'
         assert change['selected_evidence'] == 'legacy_published'
         assert result.report['reparse_diff']['retained_legacy_published'] == 1
+
+
+@pytest.mark.parametrize('requested_id', ['INVALID', '../private'])
+def test_invalid_explicit_reparse_id_does_not_crash_or_activate(monkeypatch, tmp_path, requested_id):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from app import db, pdf_ingestion_drafts
+    from app.commands.handlers import system
+    from app.commands.router import handle_text_message
+    from app.repositories import group_state
+    monkeypatch.setattr(db, 'DB_PATH', tmp_path / 'state.db')
+    monkeypatch.setattr(db, 'BACKUP_DIR', tmp_path / 'backups')
+    monkeypatch.setattr(pdf_ingestion_drafts, 'SCENARIO_LIBRARY_DIR', tmp_path / 'library')
+    db._ensure_tables()
+    state = group_state.load_state('invalid-reparse')
+    state.kp_assistant_user_id = 'keeper'
+    state.scenario_library_id = 'current'
+    state.scenario_text = 'Current approved source.'
+    state.game_started = True
+    group_state.save_state(state)
+    upload = AsyncMock()
+    monkeypatch.setattr(system, 'handle_pdf_upload', upload)
+    messages = []
+    async def sink(message):
+        messages.append(str(message))
+    async def display(_user):
+        return 'Keeper'
+    asyncio.run(handle_text_message(state.group_id, 'keeper', display, sink, sink, sink, sink,
+                                    '/coc scenario reparse ' + requested_id))
+    upload.assert_not_awaited()
+    after = group_state.load_state(state.group_id)
+    assert after.scenario_library_id == 'current' and after.game_started
+    assert messages
+
+
+def test_public_quality_never_contains_required_quotes_or_provider_fragments():
+    private = {'pages': [{'page': 1, 'source_authority': 'VERIFIED', 'page_criticality': {
+        'page_role': 'SOURCE_CRITICAL', 'observed_fragments': ['private-fragment-marker']},
+        'required_source_evidence': {'kind': 'canonical_attachment_dependency', 'requirement_page': 2,
+            'requirement_quote': 'private-quote-marker', 'missing_fragment': 'private-fragment-marker',
+            'requirement_sha256': 'safe-hash', 'region_bbox': [0, 0, 100, 100], 'page_image_sha256': 'image-hash'}}]}
+    public = scenario_library._publication_quality(private)
+    rendered = json.dumps(public)
+    assert 'private-quote-marker' not in rendered and 'private-fragment-marker' not in rendered
+    assert public['pages'][0]['required_source_summary']['requirement_sha256'] == 'safe-hash'
+    assert private['pages'][0]['page_criticality']['observed_fragments'] == ['private-fragment-marker']

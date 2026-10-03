@@ -146,3 +146,23 @@ def test_legacy_state_can_match_retained_source_revision(library):
             'selected_sha256': hashlib.sha256(recovered.encode()).hexdigest()}]})
     assert state.scenario_library_revision == ''
     assert recovered not in scenario_activation.load_state_context(state)['text']
+
+
+def test_explicit_clean_removes_private_revision_copies(library):
+    sid, _, _ = library
+    context = scenario_library.load_context(sid)
+    snapshot = scenario_library.revision_path(sid, context['library_revision'])
+    scenario_library.clean_scenario(sid)
+    assert not snapshot.exists()
+    assert not scenario_library.scenario_path(sid).exists()
+
+
+def test_invalid_historical_snapshot_does_not_hide_valid_legacy_match(library):
+    sid, _, _ = library
+    context = scenario_library.load_context(sid, 'chapter-3')
+    invalid = scenario_library.SCENARIO_LIBRARY_DIR / '.revisions' / sid / ('0' * 64)
+    invalid.mkdir()
+    invalid.joinpath('manifest.json').write_text('{}')
+    state = GroupState(group_id='legacy-history', scenario_library_id=sid,
+        active_chapter_id='chapter-3', scenario_text=context['text'])
+    assert scenario_activation.load_state_context(state)['library_revision'] == context['library_revision']
