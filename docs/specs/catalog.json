@@ -1515,6 +1515,18 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_state_machine_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_state_machine_design_spec_zh.md"
+    },
+    {
+      "title": "PyMuPDF4LLM reading-order audit",
+      "zh": "PyMuPDF4LLM 文字順序調查",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "docs/specs/maintenance/pymupdf4llm_reading_order_audit.md",
+        "docs/specs/maintenance/pymupdf4llm_reading_order_audit_zh.md"
+      ],
+      "path": "docs/specs/maintenance/pymupdf4llm_reading_order_audit.md",
+      "zh_path": "docs/specs/maintenance/pymupdf4llm_reading_order_audit_zh.md"
     }
   ]
 }
