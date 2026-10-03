@@ -1,6 +1,6 @@
 # 最小 PaddleOCR 驗證
 
-基準為已 revert 的 main_v2 `7d2cc8c`；implementation `7f221f2`；獨立 branch `enhancement/minimal-paddle-ocr`。未 cherry-pick PR155 code。
+基準為已 revert 的 main_v2 `7d2cc8c`；implementation `7418da0`；獨立 branch `enhancement/minimal-paddle-ocr`。未 cherry-pick PR155 code。
 
 ## Scope
 
@@ -21,11 +21,11 @@ python scripts/setup_paddle_ocr.py
 
 先 RED：adapter 缺失、dice／numeric／pair loss、image-only 接線缺失；再 GREEN。Review 找到三個 production-seam RED：whole-page source 未傳入、額外 candidate mechanics 搶先截住原本可成功的 Tesseract region repair、1d6+DB 改為 1d6-DB。修正只含 source forwarding／candidate validation：受損 region 在 selection 前重用 existing accept_region；保留完整 symbolic signed dice token，不改 legacy fallback／gates。純符號 noise 也先 RED 再 GREEN，reject 後回原 fallback。Standards／Spec re-review PASS，無剩餘 blocking finding。
 
-64 個 OCR-specific tests、加既有 PDF／AI repair／numeric-pair 共 105 targeted tests 通過。Disabled／unavailable／missing-model／init／inference／empty／malformed／rejected 全回原有 Tesseract。Native OFF／ON 不變、startup 不 import Paddle、prepared setup 不下載、singleton reuse／serialization、external provider 不呼叫均 PASS。
+68 個 OCR-specific tests、加既有 PDF／AI repair／numeric-pair 共 109 targeted tests 通過。Disabled／unavailable／missing-model／init／inference／empty／malformed／rejected 全回原有 Tesseract。Native OFF／ON 不變、startup 不 import Paddle、prepared setup 不下載、singleton reuse／serialization、external provider 不呼叫均 PASS。
 
-PR #157 review 修正：SAN 損失以完整有序的斜線式比較，因此 `SAN 1 and 1d6`、`SAN 1 1d6`、`SAN 1d6/1` 對 `SAN 1/1d6` 都會拒絕。只有 source 對應時才修正有限格式的 `ld6`／`Id6` 與 SAN 分子的 `l`／`I`；錯骰面及未知 source 仍拒絕。另有回歸測試拒絕多餘斜線尾段，避免只比對合法前綴。Production PDF 接點測試確認拒絕後回到 Tesseract；普通文字及其他骰子保持原樣。
+PR #157 review 修正：SAN 損失以完整有序的斜線式比較，因此 `SAN 1 and 1d6`、`SAN 1 1d6`、`SAN 1d6/1` 對 `SAN 1/1d6` 都會拒絕。只有 source 對應時才修正有限格式的 `ld6`／`Id6` 與 SAN 分子的 `l`／`I`；錯骰面及未知 source 仍拒絕。另有回歸測試拒絕多餘斜線尾段，避免只比對合法前綴；斜線前方多出字元或空白時，也不得只比對合法後綴。Production PDF 接點測試確認拒絕後回到 Tesseract；普通文字及其他骰子保持原樣。
 
-完整 suite **1926 passed、1 skipped、152 subtests passed**，13.94 秒。Ruff／mypy（127 files）／compileall／diff-check PASS。
+完整 suite **1930 passed、1 skipped、152 subtests passed**，15.26 秒。Ruff／mypy（127 files）／compileall／diff-check PASS。
 
 ## 真實 offline CPU smoke
 
