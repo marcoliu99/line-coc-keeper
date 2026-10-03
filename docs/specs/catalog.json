@@ -1808,6 +1808,18 @@
         "docs/specs/bug/pdf_import_result_ux_generalization_results.json",
         "docs/specs/bug/pdf_import_result_ux_generalization_validation.md"
       ]
+    },
+    {
+      "title": "Five-book pending evidence resolution",
+      "zh": "五本待處理證據收尾",
+      "category": "bug",
+      "status": "in_progress",
+      "path": "docs/specs/bug/pdf_pending_evidence_resolution.md",
+      "zh_path": "docs/specs/bug/pdf_pending_evidence_resolution_zh.md",
+      "evidence": [
+        "app/pdf_layout_adapters.py",
+        "tests/test_pdf_layout_adapters.py"
+      ]
     }
   ]
 }
