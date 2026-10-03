@@ -146,7 +146,7 @@ def _ocr_image(png_bytes: bytes, *, source_text: str = '', pairs: list[dict] | N
     return ""
 
 
-def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
+def _analyze_graphic_page(png_bytes: bytes, *, source_text: str = '', pairs: list[dict] | None = None) -> tuple[str, dict | None]:
     """One combined vision call (scene_map.analyze_page_image — see its own
     docstring for why this used to be two separate API calls per page)
     handles both the prose description (spatial layout for maps, exhaustive
@@ -156,7 +156,7 @@ def _analyze_graphic_page(png_bytes: bytes) -> tuple[str, dict | None]:
     produced nothing (no ANTHROPIC_API_KEY, or the call failed) — there's no
     fallback for the map half, a page just won't get one."""
     description, scene_map = analyze_page_image(png_bytes)
-    return description or _ocr_image(png_bytes), scene_map
+    return description or _ocr_image(png_bytes, source_text=source_text, pairs=pairs), scene_map
 
 
 _MARKITDOWN_PAGE_RE = re.compile(r"^##\s*Page\s+(\d+)\s*$", re.MULTILINE)
@@ -438,7 +438,9 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         maps: dict[int, dict] = {}
         if pending:
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT_PAGE_CALLS, len(pending))) as executor:
-                futures = {executor.submit(_analyze_graphic_page, png): number for number, png in pending.items()}
+                futures = {executor.submit(_analyze_graphic_page, png, source_text=texts[number - 1],
+                           pairs=report['pages'][number - 1]['numeric_pairs']): number
+                           for number, png in pending.items()}
                 for future in concurrent.futures.as_completed(futures):
                     number = futures[future]
                     row = report["pages"][number - 1]

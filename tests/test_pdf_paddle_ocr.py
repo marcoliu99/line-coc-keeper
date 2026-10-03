@@ -247,3 +247,44 @@ def test_local_paddle_does_not_call_external_analysis_provider(paddle_backend, m
         monkeypatch.setattr(provider, 'analyze_image', denied)
     assert module.recognize_with_paddle(image).status == 'accepted'
     assert calls == []
+
+
+def test_whole_page_paddle_preserves_existing_native_dice(paddle_backend, monkeypatch):
+    import pymupdf
+
+    from app import pdf_loader
+    _module, backend, image = paddle_backend
+    backend.output = [{'rec_texts': ['Damage 2d6+2']}]
+    monkeypatch.setitem(sys.modules, 'pytesseract', types.SimpleNamespace(
+        image_to_string=lambda *args, **kwargs: 'Damage 1d6+2'))
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_image(page.rect, stream=image)
+        page.insert_text((40, 60), 'Damage 1d6+2')
+        payload = document.tobytes()
+    monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda _: None)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *args: None)
+    monkeypatch.setattr(pdf_loader, 'analyze_page_image', lambda _: ('', None))
+    text, _, _, _, _ = pdf_loader.extract_text(payload, ai_repair_limit=0)
+    assert 'Damage 2d6+2' not in text and 'Damage 1d6+2' in text
+
+
+@pytest.mark.parametrize(('source', 'candidate', 'fallback'), [
+    ('Dam�age 1d6', 'Damage 1d6. Bonus 1d8', 'Damage 1d6'),
+    ('Dam�age 1d6+DB', 'Damage 1d6-DB', 'Damage 1d6+DB'),
+])
+def test_unsafe_paddle_cannot_preempt_working_region_fallback(paddle_backend, monkeypatch, source, candidate, fallback):
+    import pymupdf
+
+    from app import pdf_loader, pdf_quality
+    _module, backend, _image = paddle_backend
+    backend.output = [{'rec_texts': [candidate]}]
+    monkeypatch.setitem(sys.modules, 'pytesseract', types.SimpleNamespace(
+        image_to_string=lambda *args, **kwargs: fallback))
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((40, 60), fallback)
+        evidence = pdf_quality.block_evidence(page)
+        evidence['blocks'][0]['lines'][0]['text'] = source
+        text, attempts = pdf_loader._repair_local_regions(page, evidence, [], source, [1])
+    assert text == fallback and attempts[0]['status'] == 'accepted'

@@ -19,7 +19,7 @@ MODEL_FILES = ('inference.json', 'inference.pdiparams', 'inference.yml')
 _lock = threading.Lock()
 _engine: Any = None
 _engine_root: Path | None = None
-_MECHANIC = re.compile(r'(?<!\w)[+-]?\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?(?!\w)')
+_MECHANIC = re.compile(r'(?<!\w)[+-]?\d+(?:[dD]\d+(?:\s*[+-]\s*(?:\d+|[A-Za-z]+))?|\.\d+)?%?(?!\w)')
 
 
 @dataclass(frozen=True)
@@ -42,9 +42,12 @@ def _candidate_safe(text: str, source: str, pairs: list[dict]) -> bool:
     if len(text) > 100_000 or '\ufffd' in text or re.search(r'(?<!\w)[lI|][dD]\d', text):
         return False
     if source:
-        required = Counter(token.casefold() for token in _MECHANIC.findall(source))
-        available = Counter(token.casefold() for token in _MECHANIC.findall(text))
+        required = Counter(re.sub(r'\s', '', token).casefold() for token in _MECHANIC.findall(source))
+        available = Counter(re.sub(r'\s', '', token).casefold() for token in _MECHANIC.findall(text))
         if required - available:
+            return False
+        # A rejected region candidate must not preempt a working legacy repair.
+        if '\ufffd' in source and not pdf_quality.accept_region(source, text, pairs):
             return False
         intact = re.sub(r'\S*\ufffd\S*', '', source)
         if pdf_quality.select_text(intact, text)[1] != 'layout':
