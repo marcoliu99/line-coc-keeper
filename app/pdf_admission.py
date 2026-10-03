@@ -10,7 +10,10 @@ import math
 import re
 from typing import Literal, TypedDict
 
-VERSION = 1
+from app import pdf_quality
+from app.pdf_page_criticality import reference_compatible
+
+VERSION = 2
 SourceAuthority = Literal['VERIFIED', 'QUARANTINED', 'UNRESOLVED_CORE']
 SourceRole = Literal['CORE_PLAYABLE_SOURCE', 'NON_AUTHORITATIVE_REVIEW']
 
@@ -32,6 +35,32 @@ def _noncore(row: dict) -> bool:
         return True
     native = row.get('candidates', {}).get('native', '')
     return any(_NONCORE_HEADING.match(line.strip()) for line in native.splitlines()[:6])
+
+
+def _has_body(text: str, row: dict, *, unread_body: bool) -> bool:
+    """Titles and authority placeholders cannot stand in for unread instructions.
+
+    Use existing block roles and prose structure, not a minimum document size:
+    a complete one-sentence instruction is a legitimate short playable source.
+    Unpunctuated wrapped body text also remains eligible.
+    """
+    if not text.strip() or text.lstrip().startswith('[PDF_'):
+        return False
+    blocks = row.get('layout_decision', {}).get('blocks', [])
+    # A native paragraph can start inside the top margin and extend into the
+    # body; the layout role alone does not make that paragraph decorative.
+    body = [block.get('text', '') for block in blocks if block.get('role') != 'heading']
+    if blocks and not body:
+        return False
+    if not unread_body or row.get('image_transcription', {}).get('status') == 'authoritative':
+        return True
+    pairs = row.get('numeric_pairs', [])
+    if pairs and all(check['status'] == 'matched' for check in pdf_quality.check_pairs(pairs, text)):
+        return True
+    candidates = body if blocks else [text]
+    return any(re.search(r'\S.{1,}[.!?。！？](?:\s|$)', candidate)
+               or (blocks and len([line for line in candidate.splitlines() if line.strip()]) > 1)
+               for candidate in candidates)
 
 
 def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
@@ -58,8 +87,7 @@ def _required_missing(row: dict, native_pages: dict[int, str]) -> bool:
     if proof.get('requirement_sha256') != hashlib.sha256(quote.encode()).hexdigest():
         return False
     # Exact complete counterparts, never matching just dice/numbers, remove uniqueness.
-    normalized = ' '.join(fragment.split())
-    return not any(normalized in ' '.join(text.split()) for text in native_pages.values())
+    return not any(reference_compatible(fragment, text) for text in native_pages.values())
 
 
 def compose(texts: list[str], rows: list[dict]) -> list[str]:
@@ -117,7 +145,9 @@ def compose(texts: list[str], rows: list[dict]) -> list[str]:
         row['selected_text'] = ''
         row['selected_sha256'] = hashlib.sha256(b'').hexdigest()
         row['extracted_chars'] = 0
-    has_core = any(text.strip() and not _noncore(row)
+    unread_body = any(row.get('source_authority') == 'QUARANTINED'
+                      and row.get('requires_image_transcription') for row in rows)
+    has_core = any(_has_body(text, row, unread_body=unread_body) and not _noncore(row)
                    and row.get('source_authority') == 'VERIFIED'
                    for text, row in zip(result, rows, strict=True))
     existing_core_defect = any(row.get('source_authority') == 'UNRESOLVED_CORE' for row in rows)

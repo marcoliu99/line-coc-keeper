@@ -90,3 +90,82 @@ def test_known_non_source_only_document_has_no_playable_core(native, illustratio
     pdf_admission.compose([native], rows)
     # Unsafe gameplay prevented: there are no scenario instructions to run at all.
     assert rows[0]['source_blocking_reasons'] == ['canonical_playable_source_missing']
+
+@pytest.mark.parametrize('retained', ['Example Adventure', '[PDF_OPTIONAL_ASSET: unresolved]'])
+def test_title_or_placeholder_cannot_replace_unread_scenario_body(retained):
+    from app import pdf_admission
+    rows = [{'page': 1, 'candidates': {'native': retained}, 'source_blocking_reasons': []},
+            {'page': 2, 'candidates': {'native': ''}, 'requires_image_transcription': True,
+             'source_blocking_reasons': ['source_image_transcription_unverified']}]
+    pdf_admission.compose([retained, ''], rows)
+    # Unsafe gameplay prevented: publishing a title while all scenario instructions are unread.
+    assert any('canonical_playable_source_missing' in row['source_blocking_reasons'] for row in rows)
+
+
+@pytest.mark.parametrize('retained', ['Enter the house.', '開始時，調查員在屋外。'])
+def test_short_complete_body_can_publish_with_unknown_appendix(retained):
+    from app import pdf_admission
+    rows = [{'page': 1, 'candidates': {'native': retained}, 'source_blocking_reasons': []},
+            {'page': 2, 'candidates': {'native': ''}, 'requires_image_transcription': True,
+             'source_blocking_reasons': ['source_image_transcription_unverified']}]
+    assert pdf_admission.compose([retained, 'candidate'], rows) == [retained, '']
+    assert not any(row['source_blocking_reasons'] for row in rows)
+
+
+def test_geometry_identified_heading_does_not_count_as_body():
+    from app import pdf_admission
+    title = 'A Mystery.'
+    rows = [{'page': 1, 'candidates': {'native': title}, 'source_blocking_reasons': [],
+             'layout_decision': {'blocks': [{'text': title, 'role': 'heading'}]}}]
+    pdf_admission.compose([title], rows)
+    assert rows[0]['source_blocking_reasons'] == ['canonical_playable_source_missing']
+
+
+def test_required_missing_fragment_is_not_duplicated_by_opposite_instruction():
+    import hashlib
+
+    from app import pdf_admission
+    quote = 'The Keeper must read the unique image instruction before the scene.'
+    source = quote + ' Do not open the cellar door.'
+    rows = [{'page': 1, 'candidates': {'native': source}, 'source_blocking_reasons': []},
+            {'page': 2, 'candidates': {'native': ''}, 'requires_image_transcription': True,
+             'source_blocking_reasons': ['source_image_transcription_unverified'],
+             'required_source_evidence': {'requirement_page': 1, 'requirement_quote': quote,
+                'requirement_sha256': hashlib.sha256(quote.encode()).hexdigest(),
+                'missing_fragment': 'open the cellar door.', 'region_bbox': [0, 0, 100, 100]}}]
+    pdf_admission.compose([source, ''], rows)
+    # Unsafe gameplay prevented: losing a required instruction with the opposite rule effect.
+    assert rows[1]['source_blocking_reasons'] == ['source_image_transcription_unverified']
+
+
+def test_short_bound_mechanics_are_not_mistaken_for_a_title():
+    from app import pdf_admission
+    rows = [{'page': 1, 'candidates': {'native': 'STR 60'}, 'source_blocking_reasons': [],
+             'numeric_pairs': [{'label': 'STR', 'value': '60', 'status': 'same_row_candidate', 'block': 0}]},
+            {'page': 2, 'candidates': {'native': ''}, 'requires_image_transcription': True,
+             'source_blocking_reasons': ['source_image_transcription_unverified']}]
+    assert pdf_admission.compose(['STR 60', ''], rows) == ['STR 60', '']
+    assert not any(row['source_blocking_reasons'] for row in rows)
+
+
+def test_title_only_native_page_cannot_publish_an_unread_raster_body(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, 'SCENARIO_LIBRARY_DIR', tmp_path)
+    monkeypatch.setattr(config, 'PDF_SOURCE_DISCOVERY_ENABLED', False)
+    monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *_: None)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *_a, **_kw: None)
+    monkeypatch.setattr(pdf_loader, 'recover_local_ocr', lambda *_a, **_kw: ('', []))
+    monkeypatch.setitem(registry.ANALYSIS_PROVIDERS, config.ANALYSIS_PROVIDER, None)
+    with pymupdf.open() as doc:
+        doc.new_page().insert_text((40, 60), 'Example Adventure')
+        page = doc.new_page()
+        image = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 100, 100), False)
+        image.clear_with(200)
+        page.insert_image(page.rect, stream=image.tobytes('png'))
+        raw = doc.tobytes()
+    report = {}
+    # Unsafe gameplay prevented: a readable cover is not a recovered scenario body.
+    with pytest.raises(pdf_loader.LayoutReviewRequired):
+        pdf_loader.extract_text(raw, quality_report=report)
+    assert report['scenario_readiness'] == 'BLOCKED'
+    assert any('canonical_playable_source_missing' in row['source_blocking_reasons']
+               for row in report['pages'])
