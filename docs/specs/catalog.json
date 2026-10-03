@@ -1796,7 +1796,7 @@
       "title": "PDF import result UX and corpus generalization",
       "zh": "PDF 匯入結果 UX 與真實 corpus 泛用驗證",
       "category": "bug",
-      "status": "in_progress",
+      "status": "implemented",
       "path": "docs/specs/bug/pdf_import_result_ux_generalization.md",
       "zh_path": "docs/specs/bug/pdf_import_result_ux_generalization_zh.md",
       "source_revision": "1fe274acf09840d0c0518e74816829d01640ee2c",
@@ -1804,7 +1804,9 @@
         "app/legacy_commands.py",
         "app/pdf_ingestion_drafts.py",
         "tests/test_pdf_ingestion_drafts.py",
-        "tests/test_pdf_publication_policy.py"
+        "tests/test_pdf_publication_policy.py",
+        "docs/specs/bug/pdf_import_result_ux_generalization_results.json",
+        "docs/specs/bug/pdf_import_result_ux_generalization_validation.md"
       ]
     }
   ]

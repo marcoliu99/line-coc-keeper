@@ -1,0 +1,1363 @@
+{
+  "baseline_sha": "1fe274acf09840d0c0518e74816829d01640ee2c",
+  "provider": "openai",
+  "model": "gpt-6-luna",
+  "destination": "https://api.openai.com/v1",
+  "production_entry": "app.legacy_commands.handle_pdf_upload",
+  "books": [
+    {
+      "book": "02_Dead_Boarder.pdf",
+      "pdf_sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274",
+      "upload_success": false,
+      "scenario_library_id_set": false,
+      "scenario_text_available": false,
+      "state_scene_maps": 0,
+      "scenario_readiness": "BLOCKED",
+      "hard_block_pages": [
+        21,
+        23,
+        25,
+        27,
+        29,
+        31
+      ],
+      "soft_review_pages": [
+        3,
+        20
+      ],
+      "budget": {
+        "configured_max_requests": 8,
+        "configured_max_pages": 4,
+        "remaining_requests": 0,
+        "remaining_pages": 0,
+        "consumed_requests": 8,
+        "visited_pages": [
+          12,
+          19,
+          20,
+          21
+        ],
+        "retries": 1,
+        "metrics": {
+          "docling_calls": 3,
+          "docling_failures": 3,
+          "docling_seconds": 1.1410084589442704,
+          "image_calls": 3,
+          "image_seconds": 16.67611724996823
+        }
+      },
+      "source_blocking_reasons": {
+        "21": [
+          "source_image_transcription_unverified"
+        ],
+        "23": [
+          "source_image_transcription_unverified"
+        ],
+        "25": [
+          "source_image_transcription_unverified"
+        ],
+        "27": [
+          "source_image_transcription_unverified"
+        ],
+        "29": [
+          "source_image_transcription_unverified"
+        ],
+        "31": [
+          "source_image_transcription_unverified"
+        ]
+      },
+      "page_roles": {
+        "20": "MAP_DERIVED",
+        "21": "UNKNOWN_NEEDS_REVIEW",
+        "23": "UNKNOWN_NEEDS_REVIEW",
+        "25": "UNKNOWN_NEEDS_REVIEW",
+        "27": "UNKNOWN_NEEDS_REVIEW",
+        "29": "UNKNOWN_NEEDS_REVIEW",
+        "31": "UNKNOWN_NEEDS_REVIEW"
+      },
+      "feature_warnings": [
+        "topology_assistance_unavailable"
+      ],
+      "elapsed_seconds": 314.561,
+      "user_facing_status": "IMPORT_PENDING",
+      "final_message_sha256": "4d3d46c90cb16f925ece8e5ba904f46609a4a2faa9a96c7ffe92a0d4c1e53ed8",
+      "final_message_chars": 338,
+      "final_message_has_internal_reason_codes": false,
+      "publication": false,
+      "reload": false,
+      "activation": false,
+      "start": false,
+      "dispatches": 20,
+      "transports": 20,
+      "matched_reservations": 20,
+      "hidden_retries": false,
+      "prevented_dispatches": 0,
+      "http_status_counts": {
+        "200": 20
+      },
+      "page_audit": [
+        {
+          "page": 21,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 107,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 23,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 107,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 25,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 107,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 27,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 107,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 29,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 107,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 31,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 107,
+          "disposition": "needs_review"
+        }
+      ],
+      "map_status_counts": {
+        "MAP_GRAPH_INCOMPLETE": 1
+      },
+      "source_blocker_counts": {
+        "source_image_transcription_unverified": 6
+      },
+      "playability": "NOT_PLAYABLE_TRUE_SOURCE_BLOCK"
+    },
+    {
+      "book": "03_The_Lightless_Beacon.pdf",
+      "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07",
+      "upload_success": false,
+      "scenario_library_id_set": false,
+      "scenario_text_available": false,
+      "state_scene_maps": 0,
+      "scenario_readiness": "BLOCKED",
+      "hard_block_pages": [
+        13,
+        17,
+        18,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42
+      ],
+      "soft_review_pages": [
+        4,
+        16,
+        25,
+        26,
+        27
+      ],
+      "budget": {
+        "configured_max_requests": 8,
+        "configured_max_pages": 4,
+        "remaining_requests": 0,
+        "remaining_pages": 0,
+        "consumed_requests": 8,
+        "visited_pages": [
+          3,
+          13,
+          17,
+          18
+        ],
+        "retries": 1,
+        "metrics": {
+          "docling_calls": 2,
+          "docling_failures": 2,
+          "docling_seconds": 0.7454242930107284,
+          "image_calls": 3,
+          "image_seconds": 27.346710832993267,
+          "image_failures": 2
+        }
+      },
+      "source_blocking_reasons": {
+        "13": [
+          "source_ordering_unverified"
+        ],
+        "17": [
+          "source_image_transcription_unverified"
+        ],
+        "18": [
+          "source_image_transcription_unverified"
+        ],
+        "28": [
+          "source_image_transcription_unverified"
+        ],
+        "29": [
+          "source_image_transcription_unverified"
+        ],
+        "30": [
+          "source_image_transcription_unverified"
+        ],
+        "31": [
+          "source_image_transcription_unverified"
+        ],
+        "32": [
+          "source_image_transcription_unverified"
+        ],
+        "33": [
+          "source_image_transcription_unverified"
+        ],
+        "34": [
+          "source_image_transcription_unverified"
+        ],
+        "35": [
+          "source_image_transcription_unverified"
+        ],
+        "36": [
+          "source_image_transcription_unverified"
+        ],
+        "37": [
+          "source_image_transcription_unverified"
+        ],
+        "38": [
+          "source_image_transcription_unverified"
+        ],
+        "39": [
+          "source_image_transcription_unverified"
+        ],
+        "40": [
+          "source_image_transcription_unverified"
+        ],
+        "41": [
+          "source_image_transcription_unverified"
+        ],
+        "42": [
+          "source_image_transcription_unverified"
+        ]
+      },
+      "page_roles": {
+        "1": "COVER_DECORATIVE",
+        "2": "COVER_DECORATIVE",
+        "5": "COVER_DECORATIVE",
+        "16": "MAP_DERIVED",
+        "17": "SOURCE_CRITICAL",
+        "18": "SOURCE_CRITICAL",
+        "25": "MAP_DERIVED",
+        "26": "MAP_DERIVED",
+        "27": "MAP_DERIVED",
+        "28": "SOURCE_CRITICAL",
+        "29": "SOURCE_CRITICAL",
+        "30": "SOURCE_CRITICAL",
+        "31": "UNKNOWN_NEEDS_REVIEW",
+        "32": "UNKNOWN_NEEDS_REVIEW",
+        "33": "UNKNOWN_NEEDS_REVIEW",
+        "34": "UNKNOWN_NEEDS_REVIEW",
+        "35": "UNKNOWN_NEEDS_REVIEW",
+        "36": "UNKNOWN_NEEDS_REVIEW",
+        "37": "UNKNOWN_NEEDS_REVIEW",
+        "38": "UNKNOWN_NEEDS_REVIEW",
+        "39": "SOURCE_CRITICAL",
+        "40": "UNKNOWN_NEEDS_REVIEW",
+        "41": "UNKNOWN_NEEDS_REVIEW",
+        "42": "UNKNOWN_NEEDS_REVIEW"
+      },
+      "feature_warnings": [
+        "topology_assistance_unavailable"
+      ],
+      "elapsed_seconds": 433.441,
+      "user_facing_status": "IMPORT_PENDING",
+      "final_message_sha256": "c730718eda63759c796ac9b59b3debfcf974c93a3f0337f1b8ab552f222d6c60",
+      "final_message_chars": 689,
+      "final_message_has_internal_reason_codes": false,
+      "publication": false,
+      "reload": false,
+      "activation": false,
+      "start": false,
+      "dispatches": 36,
+      "transports": 36,
+      "matched_reservations": 36,
+      "hidden_retries": false,
+      "prevented_dispatches": 0,
+      "http_status_counts": {
+        "200": 36
+      },
+      "page_audit": [
+        {
+          "page": 13,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 3631,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 17,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 61,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 18,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 44,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 28,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 44,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 29,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 61,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 30,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 44,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 31,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 101,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 32,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 117,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 33,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 61,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 34,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 87,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 35,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 122,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 36,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 32,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 37,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 101,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 38,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 114,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 39,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 65,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 40,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 87,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 41,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 139,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 42,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 42,
+          "disposition": "needs_review"
+        }
+      ],
+      "map_status_counts": {
+        "MAP_NOT_ANALYZED": 4
+      },
+      "source_blocker_counts": {
+        "source_ordering_unverified": 1,
+        "source_image_transcription_unverified": 17
+      },
+      "playability": "NOT_PLAYABLE_TRUE_SOURCE_BLOCK"
+    },
+    {
+      "book": "04_Camp_Sunny.pdf",
+      "pdf_sha256": "ba21a5ea5744511d6290fde9377db71bd55f471e3b6867039808cc57c171b0bb",
+      "upload_success": false,
+      "scenario_library_id_set": false,
+      "scenario_text_available": false,
+      "state_scene_maps": 0,
+      "scenario_readiness": "BLOCKED",
+      "hard_block_pages": [
+        16,
+        18,
+        20,
+        22,
+        24,
+        26
+      ],
+      "soft_review_pages": [
+        3,
+        28
+      ],
+      "budget": {
+        "configured_max_requests": 8,
+        "configured_max_pages": 4,
+        "remaining_requests": 0,
+        "remaining_pages": 0,
+        "consumed_requests": 8,
+        "visited_pages": [
+          16,
+          18,
+          20,
+          22
+        ],
+        "retries": 1,
+        "metrics": {},
+        "legacy_consumed_pages": 0
+      },
+      "source_blocking_reasons": {
+        "16": [
+          "source_image_transcription_unverified"
+        ],
+        "18": [
+          "source_image_transcription_unverified"
+        ],
+        "20": [
+          "source_image_transcription_unverified"
+        ],
+        "22": [
+          "source_image_transcription_unverified"
+        ],
+        "24": [
+          "source_image_transcription_unverified"
+        ],
+        "26": [
+          "source_image_transcription_unverified"
+        ]
+      },
+      "page_roles": {
+        "16": "UNKNOWN_NEEDS_REVIEW",
+        "18": "UNKNOWN_NEEDS_REVIEW",
+        "20": "UNKNOWN_NEEDS_REVIEW",
+        "22": "UNKNOWN_NEEDS_REVIEW",
+        "24": "UNKNOWN_NEEDS_REVIEW",
+        "26": "UNKNOWN_NEEDS_REVIEW",
+        "28": "MAP_DERIVED"
+      },
+      "feature_warnings": [],
+      "elapsed_seconds": 548.096,
+      "user_facing_status": "IMPORT_PENDING",
+      "final_message_sha256": "c196af7b04f8aefc12ed56ba1557dea7e043df0122f4779ab19afa7afc9c1871",
+      "final_message_chars": 365,
+      "final_message_has_internal_reason_codes": false,
+      "publication": false,
+      "reload": false,
+      "activation": false,
+      "start": false,
+      "dispatches": 16,
+      "transports": 16,
+      "matched_reservations": 16,
+      "hidden_retries": false,
+      "prevented_dispatches": 0,
+      "http_status_counts": {
+        "200": 16
+      },
+      "page_audit": [
+        {
+          "page": 16,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 105,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 18,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 105,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 20,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 43,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 22,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 43,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 24,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 45,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 26,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 43,
+          "disposition": "needs_review"
+        }
+      ],
+      "map_status_counts": {
+        "MAP_NOT_ANALYZED": 1
+      },
+      "source_blocker_counts": {
+        "source_image_transcription_unverified": 6
+      },
+      "playability": "NOT_PLAYABLE_TRUE_SOURCE_BLOCK"
+    },
+    {
+      "book": "05_Scritch_Scratch.pdf",
+      "pdf_sha256": "51357b89603410fb3d9f2005fcf003459588d16d4c149db49f301d8e11c1f9c4",
+      "upload_success": false,
+      "scenario_library_id_set": false,
+      "scenario_text_available": false,
+      "state_scene_maps": 0,
+      "scenario_readiness": "BLOCKED",
+      "hard_block_pages": [
+        8,
+        24,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40
+      ],
+      "soft_review_pages": [
+        11,
+        16,
+        25,
+        26
+      ],
+      "budget": {
+        "configured_max_requests": 8,
+        "configured_max_pages": 4,
+        "remaining_requests": 0,
+        "remaining_pages": 0,
+        "consumed_requests": 8,
+        "visited_pages": [
+          3,
+          8,
+          39,
+          40
+        ],
+        "retries": 1,
+        "metrics": {
+          "docling_calls": 2,
+          "docling_failures": 2,
+          "docling_seconds": 0.7451896670099813,
+          "image_calls": 3,
+          "image_seconds": 19.766314041946316,
+          "image_failures": 2
+        }
+      },
+      "source_blocking_reasons": {
+        "8": [
+          "source_ordering_unverified"
+        ],
+        "24": [
+          "source_ordering_unverified"
+        ],
+        "27": [
+          "source_image_transcription_unverified"
+        ],
+        "28": [
+          "source_image_transcription_unverified"
+        ],
+        "29": [
+          "source_image_transcription_unverified"
+        ],
+        "30": [
+          "source_image_transcription_unverified"
+        ],
+        "31": [
+          "source_image_transcription_unverified"
+        ],
+        "32": [
+          "source_image_transcription_unverified"
+        ],
+        "33": [
+          "source_image_transcription_unverified"
+        ],
+        "34": [
+          "source_image_transcription_unverified"
+        ],
+        "35": [
+          "source_image_transcription_unverified"
+        ],
+        "36": [
+          "source_image_transcription_unverified"
+        ],
+        "37": [
+          "source_image_transcription_unverified"
+        ],
+        "38": [
+          "source_image_transcription_unverified"
+        ],
+        "39": [
+          "source_image_transcription_unverified"
+        ],
+        "40": [
+          "source_image_transcription_unverified"
+        ]
+      },
+      "page_roles": {
+        "1": "COVER_DECORATIVE",
+        "2": "COVER_DECORATIVE",
+        "11": "MAP_DERIVED",
+        "16": "MAP_DERIVED",
+        "25": "MAP_DERIVED",
+        "26": "MAP_DERIVED",
+        "27": "UNKNOWN_NEEDS_REVIEW",
+        "28": "SOURCE_CRITICAL",
+        "29": "UNKNOWN_NEEDS_REVIEW",
+        "30": "SOURCE_CRITICAL",
+        "31": "UNKNOWN_NEEDS_REVIEW",
+        "32": "UNKNOWN_NEEDS_REVIEW",
+        "33": "UNKNOWN_NEEDS_REVIEW",
+        "34": "UNKNOWN_NEEDS_REVIEW",
+        "35": "UNKNOWN_NEEDS_REVIEW",
+        "36": "UNKNOWN_NEEDS_REVIEW",
+        "37": "UNKNOWN_NEEDS_REVIEW",
+        "38": "UNKNOWN_NEEDS_REVIEW",
+        "39": "UNKNOWN_NEEDS_REVIEW",
+        "40": "SOURCE_CRITICAL",
+        "41": "COVER_DECORATIVE"
+      },
+      "feature_warnings": [
+        "topology_assistance_unavailable"
+      ],
+      "elapsed_seconds": 416.82,
+      "user_facing_status": "IMPORT_PENDING",
+      "final_message_sha256": "6cd90595b3fd2a19c1735f14f755ffc4ac351f1cc2766b03beab83f542d283bd",
+      "final_message_chars": 649,
+      "final_message_has_internal_reason_codes": false,
+      "publication": false,
+      "reload": false,
+      "activation": false,
+      "start": false,
+      "dispatches": 34,
+      "transports": 34,
+      "matched_reservations": 34,
+      "hidden_retries": false,
+      "prevented_dispatches": 0,
+      "http_status_counts": {
+        "200": 33
+      },
+      "page_audit": [
+        {
+          "page": 8,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 4302,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 24,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 701,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 27,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 28,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 29,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 30,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 31,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 32,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 33,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 34,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 35,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 36,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 37,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 38,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 39,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 40,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        }
+      ],
+      "map_status_counts": {
+        "MAP_NOT_ANALYZED": 4
+      },
+      "source_blocker_counts": {
+        "source_ordering_unverified": 2,
+        "source_image_transcription_unverified": 14
+      },
+      "playability": "NOT_PLAYABLE_TRUE_SOURCE_BLOCK"
+    },
+    {
+      "book": "06_Alone_Against_the_Flames.pdf",
+      "pdf_sha256": "866ccff5742f9820b920c9a901a315baecc2913124530c3fb52bf5a70bef8a60",
+      "upload_success": false,
+      "scenario_library_id_set": false,
+      "scenario_text_available": false,
+      "state_scene_maps": 0,
+      "scenario_readiness": "BLOCKED",
+      "hard_block_pages": [
+        3,
+        5,
+        7,
+        9,
+        11,
+        13,
+        15,
+        17,
+        19,
+        48,
+        49
+      ],
+      "soft_review_pages": [
+        28
+      ],
+      "budget": {
+        "configured_max_requests": 8,
+        "configured_max_pages": 4,
+        "remaining_requests": 0,
+        "remaining_pages": 0,
+        "consumed_requests": 8,
+        "visited_pages": [
+          3,
+          5,
+          7,
+          9
+        ],
+        "retries": 1,
+        "metrics": {
+          "docling_calls": 9,
+          "docling_failures": 9,
+          "docling_seconds": 3.4119431670114864,
+          "image_calls": 8,
+          "image_failures": 8,
+          "image_seconds": 85.80854820704553
+        }
+      },
+      "source_blocking_reasons": {
+        "3": [
+          "source_ordering_unverified"
+        ],
+        "5": [
+          "source_ordering_unverified"
+        ],
+        "7": [
+          "source_ordering_unverified"
+        ],
+        "9": [
+          "source_ordering_unverified"
+        ],
+        "11": [
+          "source_ordering_unverified"
+        ],
+        "13": [
+          "source_ordering_unverified"
+        ],
+        "15": [
+          "source_ordering_unverified"
+        ],
+        "17": [
+          "source_ordering_unverified"
+        ],
+        "19": [
+          "source_ordering_unverified"
+        ],
+        "48": [
+          "source_image_transcription_unverified"
+        ],
+        "49": [
+          "source_image_transcription_unverified"
+        ]
+      },
+      "page_roles": {
+        "1": "COVER_DECORATIVE",
+        "2": "COVER_DECORATIVE",
+        "28": "MAP_DERIVED",
+        "48": "UNKNOWN_NEEDS_REVIEW",
+        "49": "SOURCE_CRITICAL",
+        "50": "COVER_DECORATIVE"
+      },
+      "feature_warnings": [
+        "topology_assistance_unavailable"
+      ],
+      "elapsed_seconds": 234.756,
+      "user_facing_status": "IMPORT_PENDING",
+      "final_message_sha256": "879764ee68cfffedf048569bc9a13bc22404b6ed09f7dcde60ce2f555368d680",
+      "final_message_chars": 475,
+      "final_message_has_internal_reason_codes": false,
+      "publication": false,
+      "reload": false,
+      "activation": false,
+      "start": false,
+      "dispatches": 18,
+      "transports": 18,
+      "matched_reservations": 18,
+      "hidden_retries": false,
+      "prevented_dispatches": 0,
+      "http_status_counts": {
+        "200": 18
+      },
+      "page_audit": [
+        {
+          "page": 3,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 2070,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 5,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 4574,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 7,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 4330,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 9,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 4095,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 11,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 3343,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 13,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 4188,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 15,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 3717,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 17,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 4316,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 19,
+          "source_blocking_reasons": [
+            "source_ordering_unverified"
+          ],
+          "page_role": null,
+          "source_critical": null,
+          "criticality_reason": null,
+          "selected_text_chars": 3567,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 48,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "UNKNOWN_NEEDS_REVIEW",
+          "source_critical": null,
+          "criticality_reason": "unknown_needs_review",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        },
+        {
+          "page": 49,
+          "source_blocking_reasons": [
+            "source_image_transcription_unverified"
+          ],
+          "page_role": "SOURCE_CRITICAL",
+          "source_critical": true,
+          "criticality_reason": "source_critical",
+          "selected_text_chars": 0,
+          "disposition": "needs_review"
+        }
+      ],
+      "map_status_counts": {
+        "MAP_NOT_ANALYZED": 1
+      },
+      "source_blocker_counts": {
+        "source_ordering_unverified": 9,
+        "source_image_transcription_unverified": 2
+      },
+      "playability": "NOT_PLAYABLE_TRUE_SOURCE_BLOCK"
+    }
+  ],
+  "note": "UNKNOWN source gates mean required missing source cannot yet be ruled out; not proof of unique required content. No book-specific changes or source gate changes.",
+  "hash_validation": {
+    "all_six_match": true,
+    "books": [
+      {
+        "book": "01_The_Haunting_QuickStart.pdf",
+        "pdf_sha256": "39b6a53915ddf9f48831ae45ac7180b6c7d5fc7bf49e1b7fe764c28ed1885436"
+      },
+      {
+        "book": "02_Dead_Boarder.pdf",
+        "pdf_sha256": "cf485d43f41af6beb7d72cf4ff6948c67b86666a7411f5fb34ae6a66170d5274"
+      },
+      {
+        "book": "03_The_Lightless_Beacon.pdf",
+        "pdf_sha256": "14437ca4eca3b6c05b22403bdad30bdb8668f1837e0a2d0ee42e49c160d8aa07"
+      },
+      {
+        "book": "04_Camp_Sunny.pdf",
+        "pdf_sha256": "ba21a5ea5744511d6290fde9377db71bd55f471e3b6867039808cc57c171b0bb"
+      },
+      {
+        "book": "05_Scritch_Scratch.pdf",
+        "pdf_sha256": "51357b89603410fb3d9f2005fcf003459588d16d4c149db49f301d8e11c1f9c4"
+      },
+      {
+        "book": "06_Alone_Against_the_Flames.pdf",
+        "pdf_sha256": "866ccff5742f9820b920c9a901a315baecc2913124530c3fb52bf5a70bef8a60"
+      }
+    ]
+  },
+  "haunting_control": {
+    "historical_real_acceptance_sha": "1fe274acf09840d0c0518e74816829d01640ee2c",
+    "playability": "PLAYABLE_WITH_WARNINGS",
+    "publication": true,
+    "reload": true,
+    "activation": true,
+    "start": true,
+    "ordinary_turns_completed": 2,
+    "runtime_import_calls": 0,
+    "new_import_provider_requests": 0,
+    "current_generic_publication_start_regression": "PASS"
+  },
+  "summary": {
+    "five_book_validation_completed": true,
+    "five_book_new_publications": 0,
+    "ordering_review_pages": 12,
+    "image_review_pages": 45,
+    "mechanics_review_pages": 0,
+    "source_critical_image_candidates": 10,
+    "unknown_image_review_pages": 35,
+    "confirmed_unique_required_image_pages": null,
+    "confirmed_false_whole_scenario_blocks": null,
+    "new_book_specific_heuristics": 0,
+    "admission_policy_changes": false,
+    "generic_admission_fixes": 0,
+    "matched_reservations": 124,
+    "transport_attempts": 124,
+    "http_200": 123,
+    "transport_without_http_response": 1,
+    "transport_failure_stage": "markitdown_ocr",
+    "hidden_retries": 0,
+    "unauthorized_prevented_dispatches": 0,
+    "caps_increased": false,
+    "new_unsafe_publications": 0,
+    "merge_readiness": "HOLD",
+    "rollout_readiness": "HOLD"
+  },
+  "verification": {
+    "pytest": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "1",
+      "tests": "2424",
+      "time": "43.473",
+      "timestamp": "2026-10-03T08:16:09.759107+08:00",
+      "hostname": "Mac-mini.localdomain"
+    },
+    "ruff": "PASS",
+    "mypy": "PASS (140 files)",
+    "compileall": "PASS",
+    "diff_check": "PASS",
+    "standards_review": "no actionable findings; P3 message duplication deferred",
+    "spec_review": "postcommit false-outcome findings resolved",
+    "remaining": "Unknown image source necessity requires further evidence; ordering gates remain. No new P0/P1 proven; merge/rollout hold pending source-criticality audit."
+  }
+}

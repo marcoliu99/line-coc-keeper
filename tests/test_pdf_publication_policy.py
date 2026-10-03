@@ -134,8 +134,10 @@ def test_important_image_only_source_without_independent_agreement_still_hard_bl
     assert scenario_library.list_scenarios() == []
 
 
+@pytest.mark.parametrize('feature_warning', [None, 'optional_pregen_unavailable',
+                                           'optional_handout_unavailable', 'topology_assistance_unavailable'])
 @pytest.mark.parametrize('post_commit_error', [None, 'cleanup', 'notice'])
-def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_pdf, monkeypatch, tmp_path, map_evidence_provider, post_commit_error):
+def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_pdf, monkeypatch, tmp_path, map_evidence_provider, post_commit_error, feature_warning):
     import asyncio
     import json
 
@@ -149,6 +151,14 @@ def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_
     monkeypatch.setattr(group_state, 'DATA_DIR', tmp_path / 'images')
     monkeypatch.setattr(scenario_library, 'SCENARIO_LIBRARY_DIR', tmp_path / 'library')
     map_evidence_provider(phase_error='invalid')
+    if feature_warning:
+        original_extract = pdf_loader.extract_text
+        def extract_with_warning(*args, **kwargs):
+            result = original_extract(*args, **kwargs)
+            kwargs['quality_report'].setdefault('feature_warnings', []).append(feature_warning)
+            return result
+        monkeypatch.setattr(pdf_loader, 'extract_text', extract_with_warning)
+
     registry.ANALYSIS_PROVIDERS[config.ANALYSIS_PROVIDER].analyze_text = lambda *_args, **_options: None
     with pymupdf.open(stream=safe_map_pdf, filetype='pdf') as doc:
         for _ in range(30):
@@ -192,6 +202,13 @@ def test_first_upload_with_thirty_safe_pages_and_invalid_map_can_start(safe_map_
     assert '已成功匯入，可以開始遊戲' in '\n'.join(messages)
     assert '部分輔助功能不可用或需要核對' in '\n'.join(messages)
     assert '/coc start' in '\n'.join(messages)
+    if feature_warning:
+        explanations = {'optional_pregen_unavailable': '部分預製角色未解析',
+                        'optional_handout_unavailable': '部分玩家手冊未解析',
+                        'topology_assistance_unavailable': '隱藏路線自動輔助不可用'}
+        assert explanations[feature_warning] in messages[-1]
+        assert feature_warning not in messages[-1]
+
     assert '可開始遊戲' in '\n'.join(messages)
     assert not any('scenario continue' in message for message in messages)
 
