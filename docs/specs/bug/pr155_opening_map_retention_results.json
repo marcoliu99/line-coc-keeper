@@ -143,7 +143,10 @@
     "status": "PENDING",
     "available_report_progress": "7/500",
     "reviewed_old_pr_head": "a0c4f7e",
-    "not_restarted": true
+    "not_restarted": true,
+    "classification": "historical / superseded robustness evidence",
+    "current_implementation_failure": false,
+    "merge_gate": false
   },
   "source_boundary_rules_changed": false,
   "image_reviews_touched": false,

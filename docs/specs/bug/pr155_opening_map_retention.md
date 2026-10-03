@@ -19,3 +19,7 @@ Codex honors keyword bounds; analysis alone uses CLI request/stream retries zero
 Certified map provenance is independently selected, replayed against final merged source and persisted with original image/PDF identity. Incompatible certificates are never reissued: only map artifact/position is disabled; source/game remain active. Conflicting verified candidates retain valid published maps. Rejected reparse maps cannot replace them; first-publication certificate gate remains strict.
 
 See [validation](pr155_opening_map_retention_validation.md) and sanitized results. This patch does not change admission, source-boundary decisions or corpus ordering gates.
+
+## Merge / rollout closeout
+
+PR155 MERGE READY and Production PDF rollout HOLD are independent decisions. See [final closeout](../maintenance/pr155_merge_rollout_closeout_validation.md).

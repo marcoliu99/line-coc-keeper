@@ -18,7 +18,7 @@ Three Codex probes in total: preliminary contract-success; invalid reserved-ID o
 
 Published Haunting, Dead Boarder, Camp Sunny were copied into private isolated storage, reloaded and activated. Bounded OpenAI opening requests: 3 reservations / 3 measured HTTP transports, all legitimate completed found=false. Exact current-version replay made no new analysis requests. Real /coc start then passed for all three using normal bounded RAG fallback (3/3/4 runtime HTTP transports); model gpt-6-luna, only api.openai.com/v1/responses, SDK/host retries zero, no whole source/PDF dispatch. HTTP instrumentation initially had a duplicate http_client keyword; that local harness failure is excluded from successful starts. Runtime fallback had no PDF/OCR/classification/map/topology import calls. No six-book import re-run or cap/refund change.
 
-External 500-round report is still 7/500 at older a0c4f7e: **PENDING**, not restarted or claimed complete. Its legacy uncertified-map observation does not prove loss of a currently certified map; this patch does not change the existing read-boundary quarantine policy.
+External 500-round report is **historical / superseded robustness evidence**, 7/500 at older a0c4f7e. Its execution remains PENDING; it is not a current implementation failure or merge gate, and was not restarted or claimed complete. Its legacy uncertified-map observation does not prove loss of a currently certified map; this patch does not change the existing read-boundary quarantine policy.
 
 ## Remaining gates
 

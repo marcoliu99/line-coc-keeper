@@ -18,7 +18,7 @@ Map 重現：quarantined map page 的正文恢復時，new failed analysis 取�
 
 已發布 Haunting／Dead Boarder／Camp Sunny 複製到 private isolated storage，reload／activation PASS。Bounded OpenAI opening 共 **3 reservations／3 實測 HTTP transports**，皆 completed、合法 found=false；current-version replay 新 analysis dispatch 0。接著正常 bounded RAG fallback 真實 `/coc start` 三本全 PASS，runtime HTTP transports 分別 3／3／4；gpt-6-luna、僅 api.openai.com/v1/responses、SDK／host retries 0、未送整份 source／PDF。HTTP instrumentation 曾有重複 http_client keyword 的 harness failure，已排除於成功 starts。PDF／OCR／classification／map／topology import calls 0；沒有重跑六本 import，也未加 cap／refund。
 
-外部 500-round report 目前仍為舊 a0c4f7e 的 7/500：**PENDING**，未重啟、不宣稱完成。其 legacy uncertified map 觀察不等於目前 certified map 被降級；本輪不改既有 read-boundary quarantine policy。
+外部 500-round report 是 **historical / superseded robustness evidence**：舊 a0c4f7e 的 7/500，execution PENDING，未重啟、不宣稱完成；不是目前 implementation failure，也不是 merge gate。其 legacy uncertified map 觀察不等於目前 certified map 被降級；本輪不改既有 read-boundary quarantine policy。
 
 ## 結論與範圍
 
