@@ -135,6 +135,33 @@ class ScenarioLibraryChapterBuildingTests(unittest.TestCase):
         self.assertEqual(chapters[-1]["end_page"], 29, "must stop before the Appendix bookmark")
 
 
+class ScenarioLibraryMarkdownSourceTests(unittest.TestCase):
+    def test_markdown_source_is_preserved_without_fake_pdf(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            scenario_library, "SCENARIO_LIBRARY_DIR", Path(temp)
+        ):
+            payload = b"# The Haunting\n\nA haunted house awaits."
+            text = "--- 第 1 頁 ---\n# The Haunting\n\nA haunted house awaits."
+            scenario_id = scenario_library.save_markdown_scenario(
+                payload,
+                title="The Haunting",
+                filename="scenario_the_haunting.md",
+                preview=text,
+                text=text,
+                indexes={"npcs": [], "locations": []},
+                pregens=[],
+            )
+
+            root = Path(temp) / scenario_id
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["source_format"], "markdown")
+            self.assertEqual(manifest["source_file"], "source.md")
+            self.assertEqual((root / "source.md").read_bytes(), payload)
+            self.assertFalse((root / "source.pdf").exists())
+            self.assertEqual(scenario_library.load_context(scenario_id)["text"], text)
+
+
+
 class ScenarioLibraryReparseTests(unittest.TestCase):
     """Regression tests for the review finding that /coc scenario reparse
     discarded the KP-confirmed matched candidate and always let save_scenario
