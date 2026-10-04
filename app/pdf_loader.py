@@ -599,8 +599,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 row['layout_original_sha256'] = hashlib.sha256(texts[index].encode('utf-8')).hexdigest()
                 texts[index] = repaired
                 row['candidates']['layout'] = repaired
-                if len(repaired) < _LOW_TEXT_THRESHOLD and row['page'] in images:
-                    pending[row['page']] = images[row['page']]
+                if len(repaired) < _LOW_TEXT_THRESHOLD:
+                    if 'low_text' not in row['warnings']:
+                        row['warnings'].append('low_text')
+                    if row['page'] in images:
+                        pending[row['page']] = images[row['page']]
             deduplicated, duplicate_decision = pdf_quality.repair_duplicate_source_layout(
                 doc[index], texts[index], row['candidates']['native'],
                 method=row['method'], pairs=row['numeric_pairs'],

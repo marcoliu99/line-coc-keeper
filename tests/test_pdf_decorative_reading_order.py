@@ -158,3 +158,33 @@ def test_loader_selects_local_repair_and_keeps_review_history() -> None:
     assert reviews == [1, 2, 3]
     assert all(row['decorative_reading_order']['status'] == 'repaired' for row in report['pages'])
     assert all('ambiguous_columns' in row['warnings'] for row in report['pages'])
+
+
+@pytest.mark.parametrize('graphic', [False, True])
+def test_loader_records_low_text_after_decorative_repair(graphic: bool) -> None:
+    body = 'The keeper waits beside the lighthouse.'
+    layout = body + ' decorative glyphs ' * 12
+    assert len(layout) >= pdf_loader._LOW_TEXT_THRESHOLD
+    assert len(body) < pdf_loader._LOW_TEXT_THRESHOLD
+    with pymupdf.open() as doc:
+        doc.new_page()
+        payload = doc.tobytes()
+    report: dict = {}
+    with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': layout}}), \
+         patch.object(pdf_loader.pdf_quality, 'native_text',
+                      return_value=(body, ['ambiguous_columns'])), \
+         patch.object(pdf_loader.pdf_quality, 'repair_decorative_layout',
+                      return_value=(body, {'status': 'repaired'})), \
+         patch.object(pdf_loader.pdf_layout, 'reorder_with_paddle',
+                      return_value=pdf_loader.pdf_layout.LayoutResult(reason='model_unavailable')), \
+         patch.object(pdf_loader, '_page_has_graphic_content', return_value=graphic), \
+         patch.object(pdf_loader, '_render_page_png', return_value=b'png'), \
+         patch.object(pdf_loader, '_markitdown_page_texts', return_value={}) as markitdown, \
+         patch.object(pdf_loader, '_analyze_graphic_page', return_value=('', None)) as vision:
+        _text, reviews, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+    assert report['pages'][0]['decorative_reading_order']['status'] == 'repaired'
+    assert report['pages'][0]['extracted_chars'] < pdf_loader._LOW_TEXT_THRESHOLD
+    assert 'low_text' in report['pages'][0]['warnings']
+    assert reviews == [1]
+    assert markitdown.call_count == int(graphic)
+    assert vision.call_count == int(graphic)
