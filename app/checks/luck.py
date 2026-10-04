@@ -12,9 +12,10 @@ cannot disagree about it:
   injury, dying and stabilisation checks) offers none.
 
 Combat attack and defence rolls are *not* in that list: the managed combat flow
-has always offered them Luck and an existing test pins it. The architecture
-spec describes combat checks as Luck-free; that conflict is recorded in
-``docs/refactor/phase2-result.md`` rather than silently changed here.
+has always offered them Luck and an existing test pins it (product decision,
+recorded in ``docs/refactor/phase2-result.md``). Neither is the CON check chained
+onto a major wound outside combat (``adjust_character``): only the injury checks
+the combat engine registers carry ``allow_luck: False``.
 
 The tier arithmetic itself is ``app.luck`` (pure). Deducting the points happens
 in the caller's state transaction, after the balance is re-read from the latest

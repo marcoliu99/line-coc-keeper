@@ -4,7 +4,7 @@
 
 ## Status and goal
 
-Category: `refactor`. Status: **partial** — phases 1–3 are implemented; phase 4 lands as a stacked pull request. Based on `main_v2` at `2affd06` (2026-10-04). The Traditional Chinese edition is the full requirements document this summary is drawn from; where the two differ, treat the Chinese edition as the source of intent and this page as the index to what is built.
+Category: `refactor`. Status: **implemented** — the four phases landed as stacked pull requests. Based on `main_v2` at `2affd06` (2026-10-04). The Traditional Chinese edition is the full requirements document this summary is drawn from; where the two differ, treat the Chinese edition as the source of intent and this page as the index to what is built.
 
 Principle: **the AI understands intent, chooses legal operations and narrates; the engine owns dice, resource changes, the check lifecycle and consistency.** No extra model call, narrator service or reasoning round is introduced.
 
@@ -15,7 +15,7 @@ Principle: **the AI understands intent, chooses legal operations and narrates; t
 | 1 | One transaction boundary for every game-state write (lock, reload, timeline, action ledger, revision, atomic commit) | [state transaction](state_transaction_design_spec.md), [report](../../refactor/phase1-result.md) | implemented |
 | 2 | One check engine and lifecycle (command, button and tool share rules; Luck and pending; consequences) | [check engine](check_engine_design_spec.md), [report](../../refactor/phase2-result.md) | implemented |
 | 3 | One combat engine; remove the `combat` ↔ `combat_flow` cycle; keep legacy and managed modes | [combat engine](combat_engine_design_spec.md), [report](../../refactor/phase3-result.md) | implemented |
-| 4 | Retire `legacy_commands`; move the remaining duties to their owners | report in `docs/refactor/phase4-result.md` | planned |
+| 4 | Retire `legacy_commands`; move the remaining duties to their owners | [retirement](legacy_commands_retirement_design_spec.md), [report](../../refactor/phase4-result.md) | implemented |
 
 ## Invariants every phase keeps
 
@@ -27,7 +27,7 @@ Principle: **the AI understands intent, chooses legal operations and narrates; t
 6. Existing games, saves, commands, buttons and tool schemas keep working; new fields are optional on read.
 7. Not touched: OCR, layout, numeric validation, fallback order, scenario import thresholds, map extraction, provider selection, the supervisor / turn pipeline, Discord cleanup beyond wiring.
 
-Policies kept as-is: Traditional Chinese and the Keeper voice, spoiler boundaries, autoroll default off, the player roll / defend / Luck choices, and no Luck on SAN or combat checks.
+Policies kept as-is: Traditional Chinese and the Keeper voice, spoiler boundaries, autoroll default off, the player roll / defend / Luck choices, and no Luck on SAN checks, on the INT check that decides madness, or on the injury checks the combat engine registers (major wound, dying, stabilisation). Decision (product owner): combat attack and defence rolls, and the CON check chained onto a major wound outside combat, keep offering Luck exactly as before; the requirement is amended to match the shipped behaviour.
 
 ## Verification approach
 

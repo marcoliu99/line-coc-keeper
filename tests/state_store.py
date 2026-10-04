@@ -112,7 +112,6 @@ class MemoryTransactions:
     ) -> state_transaction.TxResult[Any]:
         ctx = state_transaction.TxContext(
             conn=cast(Any, None), state=self.state, conversation_id=conversation_id, action_id="",
-            revision_before=self.state.state_revision,
             timeline_id=state_transaction.effective_timeline(self.state),
         )
         value = mutation(ctx)

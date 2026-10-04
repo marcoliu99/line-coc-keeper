@@ -95,7 +95,7 @@ pytest                # 2202 passed, 1 skipped, 222 subtests passed（第 2 階�
 | baseline 既有（本 PR 修復） | 對**沒有進行中戰鬥**的對話呼叫只屬於 managed 的工具（例如 `run_combat_action`、`advance_combat_turn`、`preview_combat_settlement`），舊程式會先 `initialize_working_state`，憑空建立一場空的 managed 戰鬥（`active=True`、有 `combat_id`），並由工具存檔留下。已在基底 head 實際重現；現在引擎對 IDLE 回傳 `{"ok": false, "error": "目前沒有進行中的戰鬥"}` 且不寫入（`test_the_tools_do_not_fabricate_a_battle_when_none_is_running`）。LEGACY 的行為不變（仍丟出 admission 錯誤） |
 | baseline 既有（本 PR 修復） | `models.CombatState.retire_character` 在函式內匯入 `combat`（最低層向上依賴）；改由呼叫端傳入 `finish_turn` |
 | baseline 既有（本 PR 清理） | `combat.end_combat` 在 `raise` 之後還有一段永遠到不了的報告程式碼，已刪除；`combat.apply_final_combat_damage` 只是 `apply_combat_damage(bypass_armor=True)` 的包裝，改為 `ApplyDamage(bypass_armor=True)`（工具名稱與輸出不變） |
-| 未解決（沿用第 2 階段） | 戰鬥管轄的檢定骰仍直接用 `app.dice`（測試以 patch `app.dice` 腳本化），不是檢定引擎的 `DicePort` 實例；戰鬥傷害骰、反擊骰同理。同一個 Luck 政策衝突（需求說戰鬥檢定不可用 Luck，現況對攻擊／防禦擲骰提供）仍待產品決定 |
+| 未解決（沿用第 2 階段）／已決定 | 戰鬥管轄的檢定骰仍直接用 `app.dice`（測試以 patch `app.dice` 腳本化），不是檢定引擎的 `DicePort` 實例；戰鬥傷害骰、反擊骰同理。第 2 階段的 Luck 政策衝突已由產品決定（維持攻擊／防禦擲骰可用 Luck，規格修訂為與現況一致，程式未更動） |
 | 未解決（已記錄） | `combat_flow` 內仍有 18 處 `is_managed`：它們區分「進行中戰鬥的工作副本」與「已結束戰鬥的已提交義務」（例如 `postcombat_obligations`、`stabilize_investigator`、`stop_effect`），不是 legacy／managed 分支。要消除它們需要一個明確的「義務範圍」概念，超出本階段 |
 | 未解決（已記錄） | legacy 戰鬥的 `resolve_enemy_action` 仍接受呼叫端給的命中／傷害結果（舊存檔專用）；managed 戰鬥一律拒絕 |
 | 限制 | 沒有新增聚合 tool：既有 `declare_combat_action`／`advance_combat_turn` 已經是一次 domain action；多玩家同時等待的順序仍由既有的「一次一個等待」規則決定 |

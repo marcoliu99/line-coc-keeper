@@ -224,8 +224,8 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         pipeline = AsyncMock(return_value=("你站在書房門前。", [], []))
         with (
             patch.object(system, "load_state", return_value=state),
-            patch.object(system, "_heal_character", return_value=[]),
-            patch.object(system, "_build_readiness_roster", return_value="名冊"),
+            patch.object(system, "heal_character", return_value=[]),
+            patch.object(system, "build_readiness_roster", return_value="名冊"),
             patch.object(system.scenario_intro, "extract_opening_narration", return_value={"found": False}),
             patch.object(system.keeper, "_refresh_state_snapshot", return_value=state),
             patch.object(system.supervisor, "run_turn", pipeline),
@@ -252,8 +252,8 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(system, "load_state", return_value=state),
             patch("app.repositories.state_transaction.commit_snapshot") as save,
-            patch.object(system, "_heal_character", return_value=[]),
-            patch.object(system, "_build_readiness_roster", return_value="名冊"),
+            patch.object(system, "heal_character", return_value=[]),
+            patch.object(system, "build_readiness_roster", return_value="名冊"),
             patch.object(system.scenario_intro, "extract_opening_narration", return_value={
                 "found": True, "text": "開場白", "opening_check": {
                     "type": "skill", "skill": "偵查", "reason": "環顧四周",
@@ -285,8 +285,8 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(system, "load_state", return_value=state),
             patch("app.repositories.state_transaction.commit_snapshot") as save,
-            patch.object(system, "_heal_character", return_value=[]),
-            patch.object(system, "_build_readiness_roster", return_value="名冊"),
+            patch.object(system, "heal_character", return_value=[]),
+            patch.object(system, "build_readiness_roster", return_value="名冊"),
             patch.object(system.scenario_intro, "extract_opening_narration", return_value={
                 "found": True, "text": "開場白", "opening_check": {"type": "skill", "skill": "自訂古語"},
             }),

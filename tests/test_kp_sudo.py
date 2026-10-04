@@ -14,7 +14,6 @@ sys.modules.setdefault(
     ),
 )
 
-from app import legacy_commands as commands
 from app.commands import router
 from app.commands.sudo import parse_sudo_command
 from app.models import Character, Combatant, CombatState, EffectState, GroupState
@@ -300,7 +299,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_kp_actor_cannot_sudo_or_mutate_target(self):
         state = self._state()
-        with StateStorePatch(router, commands) as store:
+        with StateStorePatch(router) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -319,7 +318,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         run_turn = router.supervisor.run_turn
         router.supervisor.run_turn = lambda **kwargs: self.fail("run_turn must not be called")
         try:
-            with StateStorePatch(router, commands) as store:
+            with StateStorePatch(router) as store:
                 store.put(state)
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -334,7 +333,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_kp_can_mark_missing_player_away(self):
         state = self._state()
-        with StateStorePatch(router, commands, router.system_handler) as store:
+        with StateStorePatch(router, router.system_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -350,7 +349,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_kp_can_retire_missing_player_without_deleting_history(self):
         state = self._state()
-        with StateStorePatch(router, commands, router.character_handler) as store:
+        with StateStorePatch(router, router.character_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -378,13 +377,13 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
             await reply(public_message)
 
         original_run_turn = router.supervisor.run_turn
-        original_resolve = router._resolve_map_action_transaction
+        original_resolve = router.resolve_map_action
         original_maintenance = router.run_post_turn_maintenance_after_output
         router.supervisor.run_turn = fake_run_turn
-        router._resolve_map_action_transaction = lambda *args: None
+        router.resolve_map_action = lambda *args: None
         router.run_post_turn_maintenance_after_output = fake_maintenance
         try:
-            with StateStorePatch(router, commands) as store:
+            with StateStorePatch(router) as store:
                 store.put(state)
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -394,7 +393,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
                 )
         finally:
             router.supervisor.run_turn = original_run_turn
-            router._resolve_map_action_transaction = original_resolve
+            router.resolve_map_action = original_resolve
             router.run_post_turn_maintenance_after_output = original_maintenance
 
         self.assertEqual(calls[0]["user_id"], "p1")
@@ -404,7 +403,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_actor_with_player_role_cannot_sudo_and_luck_roll_is_unchanged(self):
         state = self._state(actor_has_character=True)
-        with StateStorePatch(router, commands, router.system_handler) as store:
+        with StateStorePatch(router, router.system_handler) as store:
             store.put(state)
             role_conflict = ReplyCollector()
             await router.handle_text_message(
@@ -429,7 +428,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         character = Character(name="小明", owner_id="p1")
         state.characters["p1"] = character
         state.set_active_character("p1", character.character_id)
-        with StateStorePatch(router, commands, router.character_handler, router.system_handler) as store:
+        with StateStorePatch(router, router.character_handler, router.system_handler) as store:
             store.put(state)
             retire_reply = ReplyCollector()
             await router.handle_text_message(
@@ -455,7 +454,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         state.characters_by_id[historical.character_id] = historical
         calls.retire_active_character(state, "p1", current.name)
 
-        with StateStorePatch(router, commands, router.character_handler) as store:
+        with StateStorePatch(router, router.character_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -475,7 +474,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         state.characters_by_id[historical.character_id] = historical
         state.pending_pregen_luck["p1"] = historical.character_id
 
-        with StateStorePatch(router, commands, router.character_handler) as store:
+        with StateStorePatch(router, router.character_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -490,7 +489,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sudo_audit_events_use_redacted_actor_and_subject_ids(self):
         state = self._state()
-        with StateStorePatch(router, commands, router.system_handler) as store, patch.object(
+        with StateStorePatch(router, router.system_handler) as store, patch.object(
             router.observability, "event"
         ) as event:
             store.put(state)
@@ -510,7 +509,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sudo_completed_status_is_rejected_for_handler_guard(self):
         state = self._state()
-        with StateStorePatch(router, commands) as store, patch.object(router.observability, "event") as event:
+        with StateStorePatch(router) as store, patch.object(router.observability, "event") as event:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -535,7 +534,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         async def unexpected_check(*args, **kwargs):
             self.fail("mismatched sudo check must not reach the roll handler")
 
-        with StateStorePatch(router, commands) as store, patch.object(
+        with StateStorePatch(router) as store, patch.object(
             router, "handle_check_command", unexpected_check
         ):
             store.put(state)
@@ -565,7 +564,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
             calls.append((args, kwargs))
             return True
 
-        with StateStorePatch(router, commands) as store, patch.object(router, "handle_check_command", fake_check):
+        with StateStorePatch(router) as store, patch.object(router, "handle_check_command", fake_check):
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(

@@ -225,7 +225,7 @@ class StatePersistenceTests(unittest.TestCase):
         with patch.object(system_handler, "load_state", return_value=state), patch.object(
             system_handler.permissions, "may_manage_scenario_lifecycle", return_value=False
         ), patch.object(
-            system_handler, "_resolve_pdf_upload_choice_locked"
+            system_handler, "apply_pdf_upload_choice"
         ) as resolve:
             asyncio.run(system_handler.handle_system_command(
                 state.group_id, "player", reply, None, None, None,

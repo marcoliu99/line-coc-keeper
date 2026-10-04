@@ -7,7 +7,7 @@ Each rule gives the target behaviour and the reason for it. When existing code b
 ## Layers
 
 **Discord events enter through the command router.** `discord_bot.py` translates Discord events (messages, uploads, button callbacks) and passes them to `app/commands/router.py`, which dispatches to `app/commands/handlers/*`.
-_Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls `legacy_commands` directly skips them.
+_Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls a service such as `scenario_ingestion` directly skips them.
 
 **Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `keeper.py` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.
 _Why:_ a copied guard drifts. The pre-combat checkpoint and the duplicate-enemy guard were once copied into the `/coc combat` handler, and the copies built the checkpoint `event_id` from a different field; both now live in `combat.py` (`begin_combat`, `add_combatant`).

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 
 from app import async_utils, locks, observability
@@ -104,6 +104,21 @@ class ControlCompletion:
             await publish_claimed_buttons(self.conversation_id, self.intents, send)
 
 
+def _new_entries(
+    state: GroupState, before_pending: dict, before_luck_pending: dict, kinds: frozenset[str],
+) -> Iterator[tuple[str, str, dict]]:
+    """Entries added or changed this turn that no button message has claimed yet."""
+    for kind, collection, before in (
+        ("check", state.pending_checks, before_pending),
+        ("luck", state.pending_luck_decisions, before_luck_pending),
+    ):
+        if kind not in kinds:
+            continue
+        for owner_id, entry in collection.items():
+            if before.get(owner_id) != entry and not entry.get("_buttons_posted"):
+                yield kind, owner_id, entry
+
+
 async def claim_pending_buttons_locked(
     conversation_id: str,
     before_pending: dict,
@@ -115,16 +130,18 @@ async def claim_pending_buttons_locked(
 ) -> list[PendingButtonIntent]:
     """Claim this turn's new buttons while its caller owns the conversation lock.
 
-    There is one state load and at most one save for both collections. No
+    A read-only load decides whether anything is new; the write transaction (and
+    its single save for both collections) is only opened when something is, so
+    the common turn with no new button never takes the database write lock. No
     Discord I/O occurs here; the caller sends returned intents after unlock.
     """
     # Imported here, not at module level: the router imports this module.
     from app.commands.router import sudo_public_marker
 
-    marker = public_marker
-    if sudo_command:
-        state = await asyncio.to_thread(load_state, conversation_id)
-        marker = sudo_public_marker(state, sudo_command)
+    snapshot = await asyncio.to_thread(load_state, conversation_id)
+    if not any(_new_entries(snapshot, before_pending, before_luck_pending, kinds)):
+        return []
+    marker = sudo_public_marker(snapshot, sudo_command) if sudo_command else public_marker
     claimed_at = time.perf_counter()
 
     working: list[GroupState] = []
@@ -134,27 +151,19 @@ async def claim_pending_buttons_locked(
         working.append(latest)
         timeline_id = latest.timeline_id or f"legacy-{conversation_id}"
         intents: list[PendingButtonIntent] = []
-        for kind, collection, before in (
-            ("check", latest.pending_checks, before_pending),
-            ("luck", latest.pending_luck_decisions, before_luck_pending),
-        ):
-            if kind not in kinds:
-                continue
-            for owner_id, entry in collection.items():
-                if before.get(owner_id) == entry or entry.get("_buttons_posted"):
-                    continue
-                original = dict(entry)
-                entry["_buttons_posted"] = True
-                character = latest.get_active_character(owner_id)
-                intents.append(PendingButtonIntent(
-                    kind=kind,
-                    owner_id=owner_id,
-                    entry=original,
-                    name=character.name if character else "你",
-                    timeline_id=timeline_id,
-                    public_marker=marker,
-                    claimed_at=claimed_at,
-                ))
+        for kind, owner_id, entry in _new_entries(latest, before_pending, before_luck_pending, kinds):
+            original = dict(entry)
+            entry["_buttons_posted"] = True
+            character = latest.get_active_character(owner_id)
+            intents.append(PendingButtonIntent(
+                kind=kind,
+                owner_id=owner_id,
+                entry=original,
+                name=character.name if character else "你",
+                timeline_id=timeline_id,
+                public_marker=marker,
+                claimed_at=claimed_at,
+            ))
         if not intents:
             ctx.skip_save()
         return intents

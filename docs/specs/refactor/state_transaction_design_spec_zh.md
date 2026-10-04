@@ -26,11 +26,11 @@ mutate(conversation_id, mutation, expected_timeline, action_id, request_fingerpr
   -> 寫入 state + 角色鏡像 + 暫存事件 + action 結果  -> COMMIT
 ```
 
-1. **結果是值。** `applied`、`duplicate`、`awaiting_input`（已提交，等待玩家）、`stale_timeline`、`conflict`、`rejected`。mutation 本身拋出的領域錯誤，在 rollback 後照常往外傳。
+1. **結果是值。** `applied`、`duplicate`、`awaiting_input`（已提交，等待玩家）、`stale_timeline`、`conflict`、`rejected`。`awaiting_input` 是 mutation 呼叫 `ctx.awaiting_input()` 才會得到的結果；檢定與戰鬥 service 目前沒有呼叫它，等待玩家只是以一般狀態（待處理檢定或決定、戰鬥階段）提交，結果為 `applied`，所以呼叫端不能只靠結果推論「接下來要玩家行動」。mutation 本身拋出的領域錯誤，在 rollback 後照常往外傳。
 2. **檢查順序。** 先擋過期 timeline，所以 reset／restore 之前的按鈕不會被重播。再查 action ledger：同 timeline、同 action id、同 payload 指紋，在比對 revision *之前* 就回傳已存的結果（`duplicate`，附原結果、事件與結果 payload）；同 id 不同指紋為 `conflict`。最後才是依快照計算的操作所用的 `expected_revision`。
 3. **兩種寫法。** `mutate` 對最新狀態套用 delta，是預設。`commit_snapshot` 是無法改寫成 delta 的「已驗證快照」操作的嚴格路徑：只有在存放的 revision 與快照*載入時*的 timeline（`GroupState.loaded_timeline_id`，只存在記憶體）都仍吻合才會寫入，否則丟出 `StateRevisionConflict`／`StaleTimelineError`。刻意開新 timeline 的流程（劇本上傳、`/coc scenario use`）以它讀取時的 timeline 為準。
 4. **與狀態同一個交易。** mutation 可透過 `ctx.conn` 寫其他表（手動角色卡資產、更正封存列、記憶片段）。這些寫入、state 列、角色鏡像、暫存事件與 ledger 列一起提交或一起失敗。`state_transaction.ambient(conversation_id)` 把已開啟的交易交給輔助函式；開戰前 checkpoint 就用它。mutation 內再呼叫 `mutate`、`db.transaction()` 或 `db.set_json()` 會立即報錯，而不是等 SQLite 自己的鎖逾時。
-5. **Action ledger。** 資料表 `state_actions`，以對話、timeline、action id 為鍵，與狀態在同一交易寫入。選擇不存檔（`ctx.skip_save()`）的 mutation 不留 ledger 列，之後的重試會重新評估。保留最近 1000 筆／每對話與 30 天，每 25 個 revision 清理一次；列被清掉後，終態領域狀態（已消耗的待處理檢定、既有 event id）仍會阻止重複結算。
+5. **Action ledger。** 資料表 `state_actions`，以對話、timeline、action id 為鍵，與狀態在同一交易寫入。選擇不存檔（`ctx.skip_save()`）的 mutation 不留 ledger 列，已經透過 `ctx.conn` 寫入的列也會一併 rollback（與拒絕相同），之後的重試會重新評估。保留最近 1000 筆／每對話與 30 天，每 25 個 revision 清理一次；列被清掉後，終態領域狀態（已消耗的待處理檢定、既有 event id）仍會阻止重複結算。
 6. **局部不變量。** 只檢查 mutation 實際改動的欄位：HP/MP/SAN/Luck 為整數且在 `0..max`（有 max 時），彈藥在 `0..ammo_max`，pending 項目必須是 mapping。舊存檔中本來就怪的值，不會因為這次操作沒碰它而被拒絕。違反時回 `rejected`，不寫任何東西。
 7. **快照。** 提交後，呼叫端的快照會以已提交的狀態同步。`sync_snapshot` 不會把快照移到同一 timeline 的較舊 revision，所以晚到的重新整理不會讓共享快照倒退；不同 timeline 一律勝出。
 8. **失敗。** 儲存 state、鏡像、事件或 ledger 時失敗，全部 rollback 並發出 `state.save.failed`。提交後的失敗（快取更新、Discord 傳送、敘事）不會重跑 mutation；用同一個 action id 重試會取回已存的結果。

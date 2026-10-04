@@ -67,16 +67,20 @@
 | `models.CombatState.retire_character` | 函式內 `from app import combat`（模型層向上依賴） | 由呼叫端傳入 `finish_turn`（`combat_engine.finish_retired_turn`） |
 | 開戰前 checkpoint | `combat._checkpoint_before_combat` | PR1 已加入同一個交易；不變 |
 
-## 4. legacy_commands（PR4 的盤點）
+## 4. legacy_commands（PR4 完成：檔案已刪除）
 
-`app/legacy_commands.py` 2590 行，runtime 匯入者：`commands/router.py`、`commands/__init__.py`、`handlers/{buttons,character,combat,correct,map_handler,system,uploads}.py`、`discord_bot.py`；另有 25 個測試檔與 3 個腳本。符號與預定 owner（PR4 實作）：
+`app/legacy_commands.py` 在 `2affd06` 為 2590 行，runtime 匯入者：`commands/router.py`、`commands/__init__.py`、`handlers/{buttons,character,combat,correct,map_handler,system,uploads}.py`、`discord_bot.py`；另有 25 個測試檔與 3 個腳本。PR2 先搬走型別別名、檢定與送出後處理（2590 → 1184 行），PR4 搬走其餘並刪除。符號與實際 owner：
 
-| 符號群 | 預定 owner |
+| 符號群 | 實際 owner |
 | --- | --- |
-| `Reply`／`SendDM`／`SendImage`／`FormatMention`／`PdfChoice` 型別 | **PR2 已完成**：`app/commands/types.py` |
-| `handle_pdf_upload`、`resolve_pdf_upload_choice`、`_apply_new_scenario`、`_apply_scenario_correction`、`_install_library_context`、`_pdf_upload_confirmation_text`、`_merge_extracted_pregens`、`handle_scenario_compare_upload`、`handle_role_sheet_upload` | ingestion application service |
-| `handle_map_upload`、`_resolve_map_action_*`、`_find_room_via_rag`、`_find_scene_map_by_location` | map service |
-| `_claim_pregen`、`handle_pregen_luck_roll`、`_blocked_by_*`、`_heal_character`、`_build_readiness_roster`、`_pregen_full_sheet_text`、`_set_character_away_state` | character service |
-| `_check_*`、`_resolve_*`、`_finalize_check_result`、`handle_check_command`、`handle_luck_decision` | **PR2 已完成**：`app/checks` 與 `commands/handlers/checks.py` |
-| `_deliver_side_effects`、`_spawn_post_turn_maintenance`、`_run_post_turn_maintenance_*` | **PR2 已完成**：`services/post_turn.py` |
-| `handle_roll_command`、`handle_unsupported_message` | handlers |
+| `Reply`／`SendDM`／`SendImage`／`FormatMention`／`PdfChoice` 型別 | `app/commands/types.py`（PR2） |
+| `_check_*`、`_resolve_*`、`_finalize_check_result`、`handle_check_command`、`handle_luck_decision` | `app/checks`、`commands/handlers/checks.py`（PR2） |
+| `_deliver_side_effects`、`_spawn_post_turn_maintenance`、`_run_post_turn_maintenance_*` | `services/post_turn.py`（PR2） |
+| `handle_pdf_upload`、`_apply_new_scenario`、`_apply_scenario_correction`、`_install_library_context`、`_pdf_upload_confirmation_text`、`_merge_extracted_pregens`、`handle_scenario_compare_upload`、`handle_role_sheet_upload`、`_resolve_pdf_upload_choice_locked`（現為 `apply_pdf_upload_choice`） | `services/scenario_ingestion.py` |
+| `resolve_pdf_upload_choice`（權限檢查＋鎖＋回覆） | `commands/handlers/uploads.py` |
+| `handle_map_upload`、`_resolve_map_action_transaction`（現為 `resolve_map_action`）、`_resolve_map_action_core`、`_find_room_via_rag`、`_find_scene_map_by_location`、`_map_position_snapshot`、`_save_if_map_position_changed` | `services/map_service.py` |
+| `_claim_pregen`、`_blocked_by_*`、`_set_character_away_state`、`_pregen_full_sheet_text`、`_heal_character`、`_build_readiness_roster`（皆去掉底線改為公開名稱） | `services/character_service.py` |
+| `handle_pregen_luck_roll` | `commands/handlers/character.py` |
+| `handle_roll_command`、`handle_unsupported_message` | `commands/handlers/messages.py` |
+
+檢查：27／29 個搬走的定義在忽略改名後與原本的語法樹完全相同；其餘兩個是 `build_readiness_roster`（docstring 一個詞）與 `resolve_pdf_upload_choice`（移除函式內的延遲匯入）。

@@ -90,7 +90,7 @@ def test_the_managed_pipeline_builds_on_combat_and_never_on_the_engine_or_a_tran
     reached = reachable(graph, FLOW)
     assert CORE in reached
     assert ENGINE not in reached
-    for forbidden in ("app.discord_bot", "app.keeper", "app.commands", "app.agents", "app.providers", "app.legacy_commands"):
+    for forbidden in ("app.discord_bot", "app.keeper", "app.commands", "app.agents", "app.providers"):
         assert not {m for m in reached if m == forbidden or m.startswith(forbidden + ".")}, forbidden
 
 

@@ -7,15 +7,15 @@ from app import creation, pregen_extractor, spoiler_policy
 from app.commands.handlers.transact import Outcome, done, refuse, transact
 from app.commands.types import Reply, SendDM
 from app.keeper_tools import resource_bridge
-from app.legacy_commands import (
-    _blocked_by_existing_character,
-    _blocked_by_kp_assistant,
-    _claim_pregen,
-    _pregen_full_sheet_text,
-)
 from app.models import OCCUPATIONS, GroupState, generate_investigator
 from app.repositories.group_state import load_state
 from app.services import combat_engine, mutation_admission
+from app.services.character_service import (
+    blocked_by_existing_character,
+    blocked_by_kp_assistant,
+    claim_pregen,
+    pregen_full_sheet_text,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def _retire(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     blocked = _guard_replacement(state)
     if blocked:
         return blocked
-    kp_block = _blocked_by_kp_assistant(state, user_id)
+    kp_block = blocked_by_kp_assistant(state, user_id)
     if kp_block:
         return refuse(kp_block)
     requested_name = " ".join(parts[2:]).strip() or None
@@ -73,7 +73,7 @@ def _pc(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     blocked = _guard_replacement(state)
     if blocked:
         return blocked
-    kp_block = _blocked_by_kp_assistant(state, user_id)
+    kp_block = blocked_by_kp_assistant(state, user_id)
     if kp_block:
         return refuse(kp_block)
     if state.pregens:
@@ -85,7 +85,7 @@ def _pc(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
             occ_hint += "\n（想用這份劇本裡的職業？先輸入 /coc pregens 讓守密人讀取劇本裡的角色卡）"
         return refuse("用法：/coc pc 角色名 [職業]\n可選職業：" + occ_hint)
 
-    existing = _blocked_by_existing_character(state, user_id)
+    existing = blocked_by_existing_character(state, user_id)
     if existing:
         return refuse(existing)
 
@@ -129,7 +129,7 @@ def _create(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if blocked:
         return blocked
     action = parts[2] if len(parts) > 2 else None
-    kp_block = _blocked_by_kp_assistant(state, user_id)
+    kp_block = blocked_by_kp_assistant(state, user_id)
     if kp_block:
         return refuse(kp_block)
 
@@ -164,7 +164,7 @@ def _create(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if user_id in state.creation_sessions:
         return refuse("你已經有一個建角流程進行中了，先用「/coc create done」完成或「/coc create cancel」取消。")
 
-    existing = _blocked_by_existing_character(state, user_id)
+    existing = blocked_by_existing_character(state, user_id)
     if existing:
         return refuse(existing)
 
@@ -180,7 +180,7 @@ def _alloc(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if len(parts) < 5:
         return refuse("用法：/coc alloc occ|int 技能名 點數")
     pool, skill, points_str = parts[2], parts[3], parts[4]
-    kp_block = _blocked_by_kp_assistant(state, user_id)
+    kp_block = blocked_by_kp_assistant(state, user_id)
     if kp_block:
         return refuse(kp_block)
     session = state.creation_sessions.get(user_id)
@@ -202,7 +202,7 @@ def _usepregen(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
         return blocked
     if len(parts) < 3:
         return refuse("用法：/coc usepregen 編號 [自訂名稱]")
-    kp_block = _blocked_by_kp_assistant(state, user_id)
+    kp_block = blocked_by_kp_assistant(state, user_id)
     if kp_block:
         return refuse(kp_block)
     if not state.pregens:
@@ -213,11 +213,11 @@ def _usepregen(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
         return refuse("編號必須是數字。")
     if not (1 <= idx <= len(state.pregens)):
         return refuse(f"編號超出範圍，目前有 {len(state.pregens)} 位預製角色。")
-    existing = _blocked_by_existing_character(state, user_id)
+    existing = blocked_by_existing_character(state, user_id)
     if existing:
         return refuse(existing)
     try:
-        char = _claim_pregen(state, idx - 1, user_id, custom_name=parts[3] if len(parts) > 3 else None)
+        char = claim_pregen(state, idx - 1, user_id, custom_name=parts[3] if len(parts) > 3 else None)
     except ValueError as exc:
         return refuse(str(exc) + " 輸入「/coc pregens」看看還有哪些可選。")
     luck_note = ("請輸入「/coc luck roll」完成玩家 LUCK 擲骰。"
@@ -345,8 +345,37 @@ async def handle_character_command(
         # §7.2: allowlist-redact before this goes to the whole channel — never
         # emits secret_goal, claimed_by's real user id, or unvetted extra_fields.
         pregen_view = spoiler_policy.redact_public_pregen(state.pregens[idx - 1])
-        await reply(_pregen_full_sheet_text(pregen_view, idx))
+        await reply(pregen_full_sheet_text(pregen_view, idx))
         return True
 
     await reply(f"未知的角色管理指令：{sub}")
     return False
+
+
+def _roll_pregen_luck(state: GroupState, user_id: str) -> Outcome:
+    if state.combat.active:
+        return refuse('戰鬥中不能補建未驗證的角色 Luck；原待處理事項仍保留。')
+    character_id = state.pending_pregen_luck.get(user_id)
+    if not character_id:
+        return refuse("目前沒有等待你擲 LUCK 的預製角色；請先用「/coc usepregen 編號」選角。")
+    char = state.characters_by_id.get(character_id)
+    if char is None:
+        state.pending_pregen_luck.pop(user_id, None)
+        return Outcome(False, "找不到等待擲 LUCK 的角色，請重新選擇預製角色。", save=True)
+    char.luck = pregen_extractor.roll_player_luck()
+    state.pending_pregen_luck.pop(user_id, None)
+    return done(f"🎲 {char.name} 的 LUCK 擲骰結果：{char.luck}。現在可以開始遊戲了。")
+
+
+@mutation_admission.guard_async_entry
+async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Reply) -> None:
+    """Resolve the player's explicit LUCK roll for a newly claimed pregen.
+
+    The roll is drawn and applied to the latest committed state inside the
+    transaction, so a concurrent write cannot discard it, and a retry after a
+    conflict draws again from the unchanged pending claim.
+    """
+    outcome = await transact(
+        conversation_id, lambda state: _roll_pregen_luck(state, user_id), reason="character",
+    )
+    await reply(outcome.text)

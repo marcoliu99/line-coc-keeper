@@ -7,7 +7,7 @@
 ## 分層
 
 **Discord 事件一律經過 command router。** `discord_bot.py` 負責轉換 Discord 事件（訊息、上傳、按鈕回呼），交給 `app/commands/router.py`，再由它分派到 `app/commands/handlers/*`。
-_理由：_ KP／sudo 權限檢查和回合路由都在 router 這層；直接呼叫 `legacy_commands` 的入口會繞過它們。
+_理由：_ KP／sudo 權限檢查和回合路由都在 router 這層；直接呼叫 `scenario_ingestion` 這類 service 的入口會繞過它們。
 
 **Handler 只負責解析和回覆，遊戲規則放在規則模組。** 戰鬥、檢定登記和存檔點分別放在 `combat.py`、`keeper.py`、`checkpoints.py`。Handler 呼叫這些模組，不自己複製一份防護邏輯。
 _理由：_ 複製出來的防護邏輯會慢慢不一致。開戰存檔點和敵人重複加入的防護，曾經被複製進 `/coc combat` handler，副本組 `event_id` 時用的還是另一個欄位；現在兩者都在 `combat.py`（`begin_combat`、`add_combatant`）。

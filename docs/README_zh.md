@@ -88,10 +88,11 @@
 
 | 規格 | 狀態 | 語言 |
 | --- | --- | --- |
-| [架構重構（第 1–4 階段）](specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md) | 部分完成（第 1–3 階段已實作） | [English](specs/refactor/architecture_refactor_phases_1_4_design_spec.md) |
+| [架構重構（第 1–4 階段）](specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md) | 已實作 | [English](specs/refactor/architecture_refactor_phases_1_4_design_spec.md) |
 | [遊戲狀態交易](specs/refactor/state_transaction_design_spec_zh.md) | 已實作 | [English](specs/refactor/state_transaction_design_spec.md) |
 | [檢定引擎](specs/refactor/check_engine_design_spec_zh.md) | 已實作 | [English](specs/refactor/check_engine_design_spec.md) |
 | [戰鬥引擎](specs/refactor/combat_engine_design_spec_zh.md) | 已實作 | [English](specs/refactor/combat_engine_design_spec.md) |
+| [移除 legacy_commands](specs/refactor/legacy_commands_retirement_design_spec_zh.md) | 已實作 | [English](specs/refactor/legacy_commands_retirement_design_spec.md) |
 | [每個戰鬥工具只有一個分派分支](specs/refactor/dead_combat_tool_branches_design_spec_zh.md) | 已實作 | [English](specs/refactor/dead_combat_tool_branches_design_spec.md) |
 | [移除未使用的舊指令分派器](specs/refactor/bug-remove-dead-legacy-coc-command-handler_zh.md) | 已實作 | [English](specs/refactor/bug-remove-dead-legacy-coc-command-handler.md) |
 | [統一玩家回合流程與獨立 KP Assistant](specs/refactor/unified_keeper_turn_flow_design_spec_zh.md) | 已實作 | [English](specs/refactor/unified_keeper_turn_flow_design_spec.md) |

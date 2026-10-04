@@ -7,12 +7,11 @@ admission hold.
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import legacy_commands
 from app.commands import router
 from app.commands.handlers import uploads
 from app.commands.handlers.uploads import Upload
 from app.models import GroupState
-from app.services import mutation_admission
+from app.services import mutation_admission, scenario_ingestion
 from tests.state_store import MemoryTransactions
 
 
@@ -54,14 +53,14 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_markdown_scenario_helpers_recognize_page_markers_and_title(self):
         self.assertIsNotNone(
-            legacy_commands._MARKDOWN_PAGE_MARKER_RE.search("--- 第 7 頁 ---\n內容")
+            scenario_ingestion._MARKDOWN_PAGE_MARKER_RE.search("--- 第 7 頁 ---\n內容")
         )
         self.assertEqual(
-            legacy_commands._markdown_scenario_title("# Ignored", "scenario_The_Haunting.md"),
+            scenario_ingestion._markdown_scenario_title("# Ignored", "scenario_The_Haunting.md"),
             "The Haunting",
         )
         self.assertEqual(
-            legacy_commands._markdown_scenario_title("# The Haunting\nBody", "scenario.md"),
+            scenario_ingestion._markdown_scenario_title("# The Haunting\nBody", "scenario.md"),
             "The Haunting",
         )
 

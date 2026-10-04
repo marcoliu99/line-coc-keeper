@@ -20,7 +20,6 @@ FORBIDDEN_FOR_ENGINE = (
     "discord",
     "app.discord_bot",
     "app.commands",
-    "app.legacy_commands",
     "app.keeper",
     "app.agents",
     "app.providers",

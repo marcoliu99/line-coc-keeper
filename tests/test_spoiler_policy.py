@@ -300,7 +300,7 @@ class ProtectedTermCollectionTests(unittest.TestCase):
 class PregenAndIndexCommandTests(unittest.TestCase):
     """§10.2: /coc pregen and /coc index behavior under the switch, exercised
     through the actual live handlers (app/commands/handlers/character.py and
-    system.py — not app/legacy_commands.py's `_handle_coc_command`, which
+    system.py — not the old legacy_commands `_handle_coc_command`, which
     this task discovered is unreachable dead code; see final report)."""
 
     def _pregen_state(self) -> GroupState:
