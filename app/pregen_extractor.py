@@ -209,6 +209,9 @@ _STAT_LABELS = {
 # whitespace-squashed text, and how many of them must be found to identify the sheet.
 _STAT_WINDOW = 500
 _STAT_MIN_MATCHES = 4
+# How much of the end of the previous page, and how far from the top of the cited page, a
+# sheet that runs over a page break is allowed to reach.
+_CARRY_CHARS = 300
 
 
 def _printed_stat(value: Any) -> int | None:
@@ -258,8 +261,9 @@ def _check_pdf_luck(
        characteristics match the most, at least ``_STAT_MIN_MATCHES`` and strictly more
        than any other, owns it (independent of name order and of how the name is spelt).
        Two sheets close enough that both are in reach are ambiguous, not guessed;
-    2. the nearest investigator name before it (on that page, or at the end of the page
-       before when a sheet runs over) is this pregen's;
+    2. the nearest investigator name before it (on that page, or in the last
+       ``_CARRY_CHARS`` characters of the page before when the Luck is within
+       ``_CARRY_CHARS`` of the top of this one) is this pregen's;
     3. this is the only investigator and the only occurrence.
 
     The Luck is kept when exactly one occurrence belongs to this pregen.
@@ -281,20 +285,22 @@ def _check_pdf_luck(
     occurrences = [found.start() for found in re.finditer(re.escape(quote), source)]
     if not occurrences:
         return None, "excerpt_not_on_cited_page"
-    # A sheet that runs over a page break still has its name at the end of the page before.
-    before = _squash(pages.get(page - 1, ""))
-    combined = f"{before} {source}" if before else source
-    offset = len(combined) - len(source)
+    # A sheet that runs over a page break has its name at the end of the page before and
+    # its Luck at the top of this one. Only that tail counts, and only for a Luck near the
+    # top; a name earlier on the previous page says nothing about a Luck here.
+    tail = _squash(pages.get(page - 1, ""))[-_CARRY_CHARS:]
     own = _squash(str(pregen.get("name") or ""))
     mine = next(i for i, candidate in enumerate(pregens) if candidate is pregen)
     attributed = 0
     for at in occurrences:
-        luck_at = offset + at + matched.start()
+        carries = bool(tail) and at <= _CARRY_CHARS
+        combined = f"{tail} {source}" if carries else source
+        luck_at = len(combined) - len(source) + at + matched.start()
         page_scores = _stat_scores(pregens, source, at + matched.start())
         owner = _stat_owner(page_scores)
         if owner is None and max(page_scores) < _STAT_MIN_MATCHES:
             # Nothing identifying on the cited page: the sheet may have begun on the page before.
-            owner = _stat_owner(_stat_scores(pregens, combined, luck_at))
+            owner = _stat_owner(_stat_scores(pregens, combined, luck_at)) if carries else None
         if owner is not None:
             attributed += owner == mine
             continue
