@@ -2,7 +2,7 @@
 
 [English](pdf_final_review_warnings.md)
 
-狀態：已實作；指定真實 PDF smoke 待確認來源。Branch：`fix/pdf-final-review-warnings`。
+狀態：已實作；The Haunting 真實 PDF smoke 已通過。Branch：`fix/pdf-final-review-warnings`。
 基準：最新 main_v2 `92b52e4da88063d14ae3c9585fda9d5060d19b37`。
 
 ## 問題與目標
@@ -36,10 +36,16 @@ Runtime 修改限定 pdf_loader 與必要 tests。不修改 OCR、Paddle Layout�
 
 ## 待確認事項
 
-同份 PDF 與 quality report 路徑尚待使用者指出；目前不能推測第 12、16、17 頁實際結果。除此之外直接沿用使用者給定規則，不擴大品質系統。
+使用者指定的 70dbe2a5 來源路徑已不存在；以現有 1f0e59f0/source.pdf 與其 quality report 進行驗證，PDF SHA256 與其他保存的 Haunting trimmed 副本一致。歷史與新環境的 OCR/provider 輸出未完全相同，不將兩者視為完全相同環境的 A/B。
 
 ## 本次實作驗證
 
 原條件下成功補足案例先重現誤報；修改後 `tests/test_pdf_loader.py` 通過，包括 199/200/250 字的 public extract_text 比較，warnings 不刪除。完整 pytest：1994 passed、1 skipped、183 subtests passed；ruff、mypy（128 files）、compileall、diff-check 全部 PASS。
 
-指定第 12、16、17 頁仍未取得同份 PDF／quality report 路徑，未執行該真實 smoke，未宣稱移除任何頁。合併結論暫為 HOLD，待補該證據。OCR、Layout、玩家訊息及資料庫均未修改。
+The Haunting PDF SHA256：`de28127fe4978a32076a4a5099496c0a377b91408b2eb402151bd5151009fcb1`。歷史 report 與新 extraction 的 review_pages 都為 [12,16,17]；舊條件套用同次新 evidence 也為相同清單。
+
+- 第 12 頁：3196 → 3196 字；native_two_columns 為 informational，numeric_pair_review 未解，保留。無 OCR 呼叫。
+- 第 16 頁：3356 → 3356 字；native_two_columns 為 informational，layout_numeric_loss 未解，保留。無 OCR 呼叫。
+- 第 17 頁：29 → 169 字；low_text 仍不足且 vision_review_required 未解，保留。Paddle accepted，無 Tesseract fallback。
+
+本機 Python 3.13 extraction 無 provider key，runtime network attempts=0，來源 hash 不變。使用原確認訊息函式得到第 12、16、17 頁警告。此 PDF 沒有僅剩已修復 warning 的案例；移除效果由 public extract_text regression 驗證，不宣稱真實頁號已移除。Evidence 保存在本機 temporary JSON，PR 描述提供上述摘要。重跑 pytest：1994 passed、1 skipped、183 subtests passed；ruff、mypy、compileall、diff-check 全部 PASS。OCR、Layout、玩家訊息及資料庫均未修改。

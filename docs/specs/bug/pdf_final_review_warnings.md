@@ -2,7 +2,7 @@
 
 [繁體中文](pdf_final_review_warnings_zh.md)
 
-Status: implemented; specified real-PDF smoke awaits source identification. Branch: `fix/pdf-final-review-warnings`.
+Status: implemented; The Haunting real-PDF smoke passed. Branch: `fix/pdf-final-review-warnings`.
 Baseline: main_v2 `92b52e4da88063d14ae3c9585fda9d5060d19b37`.
 
 ## Problem and goal
@@ -27,10 +27,16 @@ Use the same user-reported PDF/evidence for pages 12,16,17; record final text le
 
 ## Open input
 
-The exact affected PDF and quality report paths have not been identified. Their page outcomes cannot yet be claimed. No other design changes are proposed.
+The requested scenario ID 70dbe2a5 is absent. An existing 1f0e59f0/source.pdf and its historical quality report were used; the PDF hash matches other saved Haunting trimmed copies. Historical provider/OCR outputs are not claimed to reproduce the same environment.
 
 ## Implementation validation
 
 Resolved low-text cases reproduced the false review under the old condition, then passed with unchanged warning history. Public extract_text regressions cover 199/200/250 characters and successful repair history. Full pytest: 1994 passed, 1 skipped, 183 subtests passed. Ruff, mypy (128 files), compileall and diff-check passed.
 
-The exact PDF/quality report for pages 12,16,17 is still unidentified. That smoke has not run and no real page removal is claimed. Merge assessment remains HOLD pending that evidence. OCR, Layout, player copy and existing data are unchanged.
+The Haunting SHA256: `de28127fe4978a32076a4a5099496c0a377b91408b2eb402151bd5151009fcb1`. Historical and new review_pages are both [12,16,17]. Applying the old condition to this same new evidence also returns that list.
+
+- Page 12: 3196 → 3196 characters; native_two_columns is informational, numeric_pair_review remains unresolved. Retained; no OCR call.
+- Page 16: 3356 → 3356 characters; native_two_columns is informational, layout_numeric_loss remains unresolved. Retained; no OCR call.
+- Page 17: 29 → 169 characters; low_text and vision_review_required remain unresolved. Retained; Paddle accepted, no Tesseract fallback.
+
+Local Python 3.13 extraction had no provider keys, zero network attempts, and unchanged source hash. The actual confirmation function lists pages 12,16,17. This PDF has no page with only resolved warning history, so it does not demonstrate removal; public extract_text regressions cover that behavior. Evidence is saved as local temporary JSON; the PR includes this summary. Repeated checks: 1994 passed, 1 skipped, 183 subtests passed; ruff, mypy, compileall and diff-check passed. OCR, Layout, player copy and existing data are unchanged.
