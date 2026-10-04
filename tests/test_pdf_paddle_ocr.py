@@ -1,10 +1,47 @@
 """Optional local OCR must improve candidates without replacing the fallback contract."""
 import io
+import logging
 import sys
 import types
 
 import pytest
 from PIL import Image
+
+
+def test_ocr_selection_logs_accepted_paddle_without_tesseract(monkeypatch, caplog):
+    from app import pdf_loader, pdf_ocr
+
+    monkeypatch.setattr(pdf_ocr, 'recognize_with_paddle',
+                        lambda *args, **kwargs: pdf_ocr.OcrResult(text='private OCR result', status='accepted'))
+
+    def unexpected_tesseract(*args, **kwargs):
+        raise AssertionError('Tesseract must not run after Paddle acceptance')
+
+    monkeypatch.setitem(sys.modules, 'pytesseract', types.SimpleNamespace(image_to_string=unexpected_tesseract))
+    caplog.set_level(logging.INFO, logger='app.pdf_loader')
+
+    assert pdf_loader._ocr_image(b'image') == 'private OCR result'
+    assert 'ocr=paddle status=accepted' in caplog.text
+    assert 'ocr=tesseract status=accepted' not in caplog.text
+    assert 'private OCR result' not in caplog.text
+
+
+@pytest.mark.parametrize('status', ['unavailable', 'rejected', 'error', 'empty'])
+def test_ocr_selection_logs_paddle_fallback_and_tesseract_acceptance(monkeypatch, caplog, status):
+    from app import pdf_loader, pdf_ocr
+
+    monkeypatch.setattr(pdf_ocr, 'recognize_with_paddle',
+                        lambda *args, **kwargs: pdf_ocr.OcrResult(status=status))
+    monkeypatch.setitem(sys.modules, 'pytesseract', types.SimpleNamespace(
+        image_to_string=lambda *args, **kwargs: 'private Tesseract result'))
+    image = io.BytesIO()
+    Image.new('RGB', (10, 10), 'white').save(image, format='PNG')
+    caplog.set_level(logging.INFO, logger='app.pdf_loader')
+
+    assert pdf_loader._ocr_image(image.getvalue()) == 'private Tesseract result'
+    assert f'ocr=paddle status={status} fallback=tesseract' in caplog.text
+    assert 'ocr=tesseract status=accepted' in caplog.text
+    assert 'private Tesseract result' not in caplog.text
 
 
 def test_paddle_valid_candidate_uses_explicit_cpu_models(monkeypatch, tmp_path):

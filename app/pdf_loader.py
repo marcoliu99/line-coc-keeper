@@ -103,7 +103,9 @@ def _ocr_image(png_bytes: bytes, *, source_text: str = '', pairs: list[dict] | N
     """
     paddle = pdf_ocr.recognize_with_paddle(png_bytes, source_text=source_text, pairs=pairs)
     if paddle.status == 'accepted':
+        _logger.info('ocr=paddle status=accepted')
         return paddle.text
+    _logger.info('ocr=paddle status=%s fallback=tesseract', paddle.status)
     languages = ("chi_tra+eng", "eng")
     try:
         import pytesseract
@@ -118,6 +120,7 @@ def _ocr_image(png_bytes: bytes, *, source_text: str = '', pairs: list[dict] | N
             for lang in languages:
                 text = pytesseract.image_to_string(image, lang=lang).strip()
                 if text:
+                    _logger.info('ocr=tesseract status=accepted')
                     return text
         except Exception:  # OCR libraries have version-specific failures; fallback below is intentional.
             _logger.debug("pytesseract image OCR failed", exc_info=True)
@@ -142,6 +145,7 @@ def _ocr_image(png_bytes: bytes, *, source_text: str = '', pairs: list[dict] | N
                 continue
             text = (result.stdout or "").strip()
             if text:
+                _logger.info('ocr=tesseract status=accepted')
                 return text
     return ""
 
